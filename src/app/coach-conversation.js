@@ -2064,7 +2064,18 @@ import * as sessionQuestion from './sessionQuestion.js';
       ...(Array.isArray(ctx.current_preview) ? ctx.current_preview.map(p => p && p.exercise) : []),
     ].filter(Boolean);
     const plannedLiftValue = sessionQuestion.isPlannedLiftQuestion(message, planLiftNames);
-    const skipSme = hasActiveWorkout && (sessionShaped || plannedLiftValue);
+    // Plan disputes/corrections ("that isn't what you planned", "you said 195",
+    // "the workout says 200×10") are NOT session-state questions and often omit the
+    // lift name (the active exercise supplies it), so the two classifiers above miss
+    // them — the 2026-07-21 production failure where a Seated Row correction fell to
+    // the SME and got generic warm-up advice. When an active workout exists, treat a
+    // plan reference/correction as session-shaped so it reaches the session-aware
+    // coach (which holds the current plan) instead of the generic SME. Routing here
+    // does NOT accept the athlete's claim as fact — the coach still compares it to the
+    // real plan and states the actual prescription. Education ("what is RIR?") names
+    // no plan and stays on the SME.
+    const planReference = sessionQuestion.isPlanReference(message);
+    const skipSme = hasActiveWorkout && (sessionShaped || plannedLiftValue || planReference);
 
     // SME first: a training-knowledge question gets a deterministic, LLM-free answer
     // from /api/coach/ask. Anything it has no card for (depth log_only / no answer) —

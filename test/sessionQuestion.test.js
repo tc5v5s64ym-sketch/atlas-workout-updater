@@ -6,9 +6,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 // PR-08: ES module now — dynamic import (Node 20 CI has no require(esm)).
-let isSessionStateQuestion, isPlannedLiftQuestion;
+let isSessionStateQuestion, isPlannedLiftQuestion, isPlanReference;
 test.before(async () => {
-  ({ isSessionStateQuestion, isPlannedLiftQuestion } = await import('../src/app/sessionQuestion.js'));
+  ({ isSessionStateQuestion, isPlannedLiftQuestion, isPlanReference } = await import('../src/app/sessionQuestion.js'));
 });
 
 const repoRoot = path.join(__dirname, '..');
@@ -111,11 +111,14 @@ test('getChatReply gates the SME on active-session + session-shaped message', ()
     'inCoachingConversation should be derived from a non-empty history');
 
   // The SME call is skipped only with an active workout AND either a bare-shaped
-  // question OR a named-planned-lift value question (e.g. "what's the RIR for bench?").
-  assert.match(src, /skipSme\s*=\s*hasActiveWorkout\s*&&\s*\(sessionShaped\s*\|\|\s*plannedLiftValue\)/,
-    'skipSme should require an active workout AND (session-shaped OR a planned-lift value question)');
+  // question OR a named-planned-lift value question ("what's the RIR for bench?")
+  // OR a plan reference/correction ("that isn't what you planned", "you said 195").
+  assert.match(src, /skipSme\s*=\s*hasActiveWorkout\s*&&\s*\(sessionShaped\s*\|\|\s*plannedLiftValue\s*\|\|\s*planReference\)/,
+    'skipSme should require an active workout AND (session-shaped OR a planned-lift value question OR a plan reference/correction)');
   assert.match(src, /sessionQuestion\.isPlannedLiftQuestion\(message,\s*planLiftNames\)/,
     'getChatReply should classify named-planned-lift value questions via isPlannedLiftQuestion');
+  assert.match(src, /sessionQuestion\.isPlanReference\(message\)/,
+    'getChatReply should classify plan references/corrections via isPlanReference');
   assert.match(src, /if\s*\(\s*!skipSme\s*\)\s*try\s*\{/,
     'the /api/coach/ask SME block should run only when not skipped');
 
@@ -174,4 +177,76 @@ test('isPlannedLiftQuestion is safe on empty / missing inputs', () => {
   assert.equal(isPlannedLiftQuestion("What's the RIR for bench?", null), false);
   assert.equal(isPlannedLiftQuestion("What's the RIR for bench?", []), false);
   assert.equal(isPlannedLiftQuestion(null, ['Bench Press']), false);
+});
+
+// ---------------------------------------------------------------------------
+// isPlanReference — plan DISPUTE / CORRECTION / reference to what Atlas planned,
+// prescribed, recommended, or previously said. The 2026-07-21 production failure:
+// a correction ("That isn't what you planned. You planned 3 sets at 8 reps.") is
+// not a session-state QUESTION and carries no lift name, so it matched neither
+// classifier above, fell to the generic SME, and got unrelated warm-up advice.
+// The caller gates this on an active workout; this function judges message shape
+// only, and must leave pure education alone.
+// ---------------------------------------------------------------------------
+
+test('isPlanReference flags plan corrections, disputes, and references', () => {
+  const corrections = [
+    // The exact production sentence (both apostrophe forms).
+    'That isn’t what you planned. You planned 3 sets at 8 reps.',
+    "That isn't what you planned. You planned 3 sets at 8 reps.",
+    // Attribution to Atlas (verb-only, lift name omitted — the active exercise supplies it).
+    'That isn’t what you planned.',
+    'You planned 3 sets at 8 reps.',
+    'No, you told me 10 reps.',
+    'No, you told me 8 reps.',
+    'That’s not the weight you gave me.',
+    'That’s not the weight you gave me. You said 195.',
+    'You had me at 1 RIR, not 2.',
+    'That’s not what you said earlier.',
+    'You programmed three sets, not four.',
+    'You planned 2 RIR, not 1.',
+    'Didn’t you prescribe seated rows at 1 RIR?',
+    // Reference to "the plan"/"the workout" with a stating/comparison/numeric context.
+    'I thought the plan said 200.',
+    'Why is this different from the plan?',
+    'The plan was 8 reps.',
+    'Actually, the workout says 200 × 10.',
+  ];
+  for (const c of corrections) {
+    assert.equal(isPlanReference(c), true, `expected plan reference/correction: ${JSON.stringify(c)}`);
+  }
+});
+
+test('isPlanReference leaves pure education alone (SME education preserved)', () => {
+  const education = [
+    'What is RIR?',
+    'What does RIR mean?',
+    'How should I warm up?',
+    'How should I warm up for seated rows?',
+    'What is progressive overload?',
+    'What muscles do seated rows work?',
+    'What is a ramp set?',
+    'What rep range builds strength?',
+    'Explain RPE.',
+    // An abstract mention of a "training plan" is not a reference to THE current plan.
+    'How does a training plan work?',
+  ];
+  for (const q of education) {
+    assert.equal(isPlanReference(q), false, `education must stay off the plan-reference route: ${JSON.stringify(q)}`);
+  }
+});
+
+test('isPlanReference does not fire on ordinary logging shorthand or chatter', () => {
+  assert.equal(isPlanReference('bench 225 5/2'), false);
+  assert.equal(isPlanReference('seated row 200 10/1'), false);
+  assert.equal(isPlanReference('crushed that set'), false);
+  assert.equal(isPlanReference('thanks coach'), false);
+});
+
+test('isPlanReference is safe on empty / non-string input', () => {
+  assert.equal(isPlanReference(''), false);
+  assert.equal(isPlanReference('   '), false);
+  assert.equal(isPlanReference(null), false);
+  assert.equal(isPlanReference(undefined), false);
+  assert.equal(isPlanReference(42), false);
 });

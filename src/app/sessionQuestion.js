@@ -83,9 +83,53 @@ const _exports = (function () {
     });
   }
 
-  const exported = { isSessionStateQuestion, isPlannedLiftQuestion };
+  // A plan REFERENCE / DISPUTE / CORRECTION about what Atlas planned, prescribed,
+  // recommended, or previously said. The 2026-07-21 production failure: an active
+  // workout was running (Seated Row 200×10 @ 1 RIR ×3) and the athlete corrected
+  // "That isn't what you planned. You planned 3 sets at 8 reps." — a correction, not
+  // one of the enumerated session-state QUESTION shapes and carrying no lift name, so
+  // it matched neither classifier above, fell to the generic SME, and got unrelated
+  // warm-up advice. This flags such references so the caller (gated on an active
+  // workout) routes them to the session-aware coach — which holds the current plan —
+  // instead of the SME. It deliberately does NOT match pure education ("what is RIR?",
+  // "how should I warm up?", "what muscles do seated rows work?"): those name no plan
+  // and attribute nothing to Atlas, so they keep the SME education path untouched.
+  //
+  // Two shapes qualify (numbers optional; the active exercise supplies missing lift
+  // context, so a lift name is never required):
+  //   1. an ATTRIBUTION to Atlas — second-person "you planned / told me / said /
+  //      gave me / programmed / prescribed / recommended / had me at …"; or
+  //   2. a reference to "the plan / the workout / your program / …" paired with a
+  //      stating, comparison, dispute, or numeric context (the bare noun alone is
+  //      too broad — a plain mention must not skip the SME).
+  function isPlanReference(message) {
+    let m = (typeof message === 'string' ? message : '').toLowerCase().trim();
+    if (!m) return false;
+    // Normalize curly / typographic apostrophes to straight so "isn't" == "isn’t".
+    m = m.replace(/[‘’ʼ′]/g, "'");
+
+    // 1 — Atlas attribution: "you planned", "you told me", "you said", "you gave me",
+    // "you programmed", "you prescribed", "you recommended", "you set", etc.
+    const YOU_PRESCRIBED = /\byou(?:'ve|'d| have| did)?\s+(?:just |already |only |actually |even )?(plan(?:n(?:ed|ing))?|prescrib(?:e|ed|ing)|programm?(?:ed|ing)?|program|recommend(?:ed|ing)?|told|telling|said|say|gave|give|giving|given|set)\b/;
+    // "you had / have / got / put me (at) …" — had/have/got/put are too generic on
+    // their own, so require the "me" that makes it a prescription to the athlete.
+    const YOU_HAD_ME = /\byou (?:had|have|got|put) me\b/;
+    if (YOU_PRESCRIBED.test(m) || YOU_HAD_ME.test(m)) return true;
+
+    // 2 — a reference to the plan/workout/program paired with a stating / comparison /
+    // dispute / numeric signal (so an abstract mention like "how does a training plan
+    // work?" — which has no leading the/your/this determiner and no such signal — does
+    // NOT skip the SME).
+    const PLAN_NOUN = /\b(?:the|your|this|that|my|today's) (?:plan|workout|program|prescription|routine|session)\b/;
+    const PLAN_CONTEXT = /\b(said?|says?|say|was|were|is|are|calls?|called|show(?:s|ed|n)?|reads?|had|has|different|differs?|change[ds]?|not|no|wrong|thought|meant|supposed)\b|\d/;
+    if (PLAN_NOUN.test(m) && PLAN_CONTEXT.test(m)) return true;
+
+    return false;
+  }
+
+  const exported = { isSessionStateQuestion, isPlannedLiftQuestion, isPlanReference };
 
   return exported;
 })();
 
-export const { isSessionStateQuestion, isPlannedLiftQuestion } = _exports;
+export const { isSessionStateQuestion, isPlannedLiftQuestion, isPlanReference } = _exports;
