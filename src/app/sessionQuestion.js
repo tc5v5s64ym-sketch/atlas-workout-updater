@@ -109,19 +109,25 @@ const _exports = (function () {
     m = m.replace(/[‘’ʼ′]/g, "'");
 
     // 1 — Atlas attribution: "you planned", "you told me", "you said", "you gave me",
-    // "you programmed", "you prescribed", "you recommended", "you set", etc.
-    const YOU_PRESCRIBED = /\byou(?:'ve|'d| have| did)?\s+(?:just |already |only |actually |even )?(plan(?:n(?:ed|ing))?|prescrib(?:e|ed|ing)|programm?(?:ed|ing)?|program|recommend(?:ed|ing)?|told|telling|said|say|gave|give|giving|given|set)\b/;
+    // "you programmed", "you prescribed", "you recommended", "you suggested", "you
+    // set", etc. (suggest/recommend are the same coaching act — a correction like
+    // "that's not what you suggested" must reach the session coach, not the SME).
+    const YOU_PRESCRIBED = /\byou(?:'ve|'d| have| did)?\s+(?:just |already |only |actually |even )?(plan(?:n(?:ed|ing))?|prescrib(?:e|ed|ing)|programm?(?:ed|ing)?|program|recommend(?:ed|ing)?|suggest(?:ed|ing)?|told|telling|said|say|gave|give|giving|given|set)\b/;
     // "you had / have / got / put me (at) …" — had/have/got/put are too generic on
     // their own, so require the "me" that makes it a prescription to the athlete.
     const YOU_HAD_ME = /\byou (?:had|have|got|put) me\b/;
     if (YOU_PRESCRIBED.test(m) || YOU_HAD_ME.test(m)) return true;
 
-    // 2 — a reference to the plan/workout/program paired with a stating / comparison /
-    // dispute / numeric signal (so an abstract mention like "how does a training plan
-    // work?" — which has no leading the/your/this determiner and no such signal — does
-    // NOT skip the SME).
+    // 2 — a reference to the plan/workout/program paired with a genuine stating /
+    // comparison / dispute / numeric signal. A bare copula (is/was/are) is deliberately
+    // NOT such a signal: "was this workout good for hypertrophy?" is education the SME
+    // answers deterministically, and must stay on the SME — so a plan-content statement
+    // must carry a content verb (said/says/calls…), a dispute word (different/not/
+    // wrong/changed…), a cognitive framing (thought/meant/supposed), or a number. An
+    // abstract mention ("how does a training plan work?") has no determiner and no such
+    // signal, so it never skips the SME either.
     const PLAN_NOUN = /\b(?:the|your|this|that|my|today's) (?:plan|workout|program|prescription|routine|session)\b/;
-    const PLAN_CONTEXT = /\b(said?|says?|say|was|were|is|are|calls?|called|show(?:s|ed|n)?|reads?|had|has|different|differs?|change[ds]?|not|no|wrong|thought|meant|supposed)\b|\d/;
+    const PLAN_CONTEXT = /\b(said?|says?|say|calls?|called|show(?:s|ed|n)?|reads?|different|differs?|change[ds]?|not|no|wrong|thought|meant|supposed|instead)\b|\d/;
     if (PLAN_NOUN.test(m) && PLAN_CONTEXT.test(m)) return true;
 
     return false;

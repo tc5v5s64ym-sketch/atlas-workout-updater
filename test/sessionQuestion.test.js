@@ -206,6 +206,9 @@ test('isPlanReference flags plan corrections, disputes, and references', () => {
     'You programmed three sets, not four.',
     'You planned 2 RIR, not 1.',
     'Didn’t you prescribe seated rows at 1 RIR?',
+    // suggest/recommend are the same coaching act (Codex P1, 2026-07-21).
+    'That’s not what you suggested for my warm-up.',
+    'You suggested 8 reps, not 10.',
     // Reference to "the plan"/"the workout" with a stating/comparison/numeric context.
     'I thought the plan said 200.',
     'Why is this different from the plan?',
@@ -230,6 +233,12 @@ test('isPlanReference leaves pure education alone (SME education preserved)', ()
     'Explain RPE.',
     // An abstract mention of a "training plan" is not a reference to THE current plan.
     'How does a training plan work?',
+    // A bare copula next to a plan noun is NOT a correction — evaluative education
+    // stays on the SME's deterministic answer (Codex P1, 2026-07-21).
+    'Was this workout good for hypertrophy?',
+    'Is this workout good?',
+    'Is my program working?',
+    'Is this a hard session?',
   ];
   for (const q of education) {
     assert.equal(isPlanReference(q), false, `education must stay off the plan-reference route: ${JSON.stringify(q)}`);
