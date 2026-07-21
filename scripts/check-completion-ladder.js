@@ -11,6 +11,14 @@
 // those rungs), so a self-test (test/completionLadderGuard.test.js) proves the
 // guard actually bites on a synthetic violation, i.e. it is a real failing check.
 //
+// A linked artifact is validated, not merely non-blank (a bare "trust me" string
+// would defeat the guard's purpose):
+//   • type: 'test'  — ref is a path to an EXISTING test file under test/ or
+//     tests/ ending .test.js/.spec.js, with an optional '#<test name>' anchor.
+//   • type: 'trace' — ref matches the defined trace-id format
+//     <trace|flight|turn|session>:<token> (a Flight Recorder / InteractionTrace
+//     id; the turn id minted at Phase 3's first trusted boundary).
+//
 // It also fails on a structurally invalid ladder (shape / monotonicity /
 // name-the-consumer) by delegating to services/capabilityManifest.validateManifest,
 // so the ladder cannot drift out of contract without CI going red.
@@ -26,25 +34,45 @@ const CAPS_FILE = path.join(ROOT, 'config', 'coaching', 'manifests', 'capabiliti
 
 // The rungs whose claim demands linked evidence.
 const EVIDENCE_REQUIRED_RUNGS = Object.freeze(['route_consumed', 'live_proven']);
-// A linked artifact is a test id or a trace id.
-const EVIDENCE_TYPES = Object.freeze(new Set(['test', 'trace']));
+// A test artifact lives under test/ or tests/ and is a real test/spec file.
+const TEST_FILE_RE = /^(?:test|tests)\/.+\.(?:test|spec)\.js$/;
+// A trace id: a recognized prefix + a non-empty token. Deterministically checkable
+// in CI without reaching the (Sheets-backed) trace store.
+const TRACE_ID_RE  = /^(?:trace|flight|turn|session):[A-Za-z0-9][A-Za-z0-9._:@/-]*$/;
 
-// Pure: given the capabilities map, return an array of violation strings. A
+// Is a single evidence entry a genuinely linked test or trace id?
+function evidenceIsLinked(e, root) {
+  if (!e || typeof e.ref !== 'string' || !e.ref.trim()) return false;
+  const ref = e.ref.trim();
+  if (e.type === 'test') {
+    // Drop an optional '#<test name>' anchor; validate + resolve the file part.
+    const file = ref.split('#')[0].trim();
+    if (!TEST_FILE_RE.test(file)) return false;
+    return fs.existsSync(path.join(root, file));
+  }
+  if (e.type === 'trace') {
+    return TRACE_ID_RE.test(ref);
+  }
+  return false;
+}
+
+// Pure over (capabilities, root): return an array of violation strings. A
 // capability at route_consumed or live_proven must carry at least one evidence
-// entry { type: 'test'|'trace', ref: '<non-empty>' }.
-function findEvidenceViolations(capabilities) {
+// entry that resolves to a real linked test artifact or a well-formed trace id.
+function findEvidenceViolations(capabilities, opts) {
+  const root = (opts && opts.root) || ROOT;
   const violations = [];
   for (const [id, cap] of Object.entries(capabilities || {})) {
     const l = (cap && cap.ladder) || {};
     const claimed = EVIDENCE_REQUIRED_RUNGS.filter(r => l[r] === true);
     if (!claimed.length) continue;
     const evidence = Array.isArray(cap.evidence) ? cap.evidence : [];
-    const linked = evidence.filter(e =>
-      e && EVIDENCE_TYPES.has(e.type) && typeof e.ref === 'string' && e.ref.trim());
+    const linked = evidence.filter(e => evidenceIsLinked(e, root));
     if (!linked.length) {
       violations.push(
         `capability '${id}' claims ${claimed.join(' + ')} but cites no linked test or trace id ` +
-        `— add an "evidence" entry like { "type": "test"|"trace", "ref": "<id>" }`);
+        `— add an "evidence" entry: { "type": "test", "ref": "test/<file>.test.js[#name]" } ` +
+        `(an existing test file) or { "type": "trace", "ref": "trace|flight|turn|session:<id>" }`);
     }
   }
   return violations;
@@ -78,4 +106,7 @@ if (require.main === module) {
     'route_consumed/live_proven claim carries a linked test or trace id.');
 }
 
-module.exports = { findEvidenceViolations, run, readCapabilities, EVIDENCE_REQUIRED_RUNGS, EVIDENCE_TYPES };
+module.exports = {
+  findEvidenceViolations, evidenceIsLinked, run, readCapabilities,
+  EVIDENCE_REQUIRED_RUNGS, TEST_FILE_RE, TRACE_ID_RE,
+};

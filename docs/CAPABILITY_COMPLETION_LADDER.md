@@ -26,7 +26,7 @@ The ladder is **monotonic**: a higher rung may not be true while a lower rung is
 
 1. **Understate when unsure.** When a capability is genuinely ambiguous between two rungs, the **lower** one is assigned. Understating is safe; overstating is the disease being cured.
 2. **Name the consumer.** Nothing may claim `route_consumed` or higher without a non-empty `consumer` naming the live route/seam. (Validated in `capabilityManifest.js`.)
-3. **Evidence for `route_consumed` / `live_proven`.** A capability at either rung must carry an `evidence` array of linked test or trace ids. (Enforced by **Drift Guard 4**.)
+3. **Evidence for `route_consumed` / `live_proven`.** A capability at either rung must carry an `evidence` array with at least one **validated** linked artifact — not a bare string. A `{ "type": "test", "ref": "test/<file>.test.js[#name]" }` must point at an existing test file; a `{ "type": "trace", "ref": "<trace|flight|turn|session>:<id>" }` must match the trace-id format. (Enforced by **Drift Guard 4**.)
 4. **`owner_accepted` is owner-gate-only.** No agent may ever self-assign `owner_accepted = true`; it is set solely at an explicit owner gate. Every capability is therefore `owner_accepted = false` today.
 
 ## The ladder table
@@ -79,4 +79,4 @@ So on the default production path no capability's orchestrated output shapes use
 - **Shape + monotonicity + name-the-consumer:** `services/capabilityManifest.js` `validateManifest()` (unit-tested in `test/capabilityManifest.test.js`).
 - **Not-built ↔ missing-file drift:** `test/manifest-module-files.test.js` and `test/contracts-integrity.test.js` (a built capability must resolve on disk; a not-built one must not).
 - **Runtime skip-with-flag:** `services/coachOrchestrator.js` skips `ladder.built === false` capabilities (`test/coachOrchestrator.test.js`).
-- **Evidence for consumption claims:** **Drift Guard 4** — `scripts/check-completion-ladder.js` / `npm run check:ladder` — fails CI if any capability claims `route_consumed` or `live_proven` without a linked test or trace id. (Lands in its own PR.)
+- **Evidence for consumption claims:** **Drift Guard 4** — `scripts/check-completion-ladder.js` / `npm run check:ladder`, self-tested by `test/completionLadderGuard.test.js` — fails CI if any capability claims `route_consumed` or `live_proven` without a **validated** linked artifact: a `test` ref must resolve to an existing `test/<file>.test.js` file (optionally `#test-name`), and a `trace` ref must match `<trace|flight|turn|session>:<id>`. A bare non-blank string does not count.
