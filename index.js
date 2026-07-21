@@ -106,6 +106,21 @@ const { evaluateSessionSafety } = require('./rules/safetyRules');
 const { holdUntilClean } = require('./rules/progressionRules');
 
 async function runStartupDiagnostics() {
+  // Telemetry-capture visibility — make inactive capture obvious at boot (no secrets, just
+  // flag state). Coach_Shadow AND its Coach_Response companion capture require
+  // ATLAS_INTERACTION_TRACE=shadow; the server Flight_Recorder api_response lane requires
+  // ATLAS_FLIGHT_RECORDER. Both default to inert, so a silent config gap is visible here.
+  try {
+    const { isShadowEnabled } = require('./services/interactionTraceShadow');
+    const { isFlightRecorderEnabled } = require('./services/flightRecorder');
+    const shadow = isShadowEnabled();
+    console.log(JSON.stringify({
+      event: 'telemetry_capture',
+      coach_shadow_and_response: shadow ? 'active' : 'inactive',
+      interaction_trace: shadow ? 'shadow' : 'off',
+      flight_recorder: isFlightRecorderEnabled() ? 'active' : 'inactive',
+    }));
+  } catch (_) { /* diagnostic must never block boot */ }
   try {
     const tabs = await getSpreadsheetTabs();
     console.log(JSON.stringify({ event: 'startup_diagnostics', ok: true, tabs_present: tabs.length, required_env: ['ATLAS_API_KEY','GOOGLE_SHEETS_ID','GOOGLE_SERVICE_ACCOUNT_EMAIL','GOOGLE_PRIVATE_KEY','OPENAI_API_KEY'] }));
