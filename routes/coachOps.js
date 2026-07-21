@@ -35,6 +35,7 @@ const { deriveChatCoachMode } = require('../services/chatCoachMode');
 const { detectDiscouragement } = require('../services/discouragementSignal');
 const interactionTraceShadow = require('../services/interactionTraceShadow');
 const coachTurnPacketShadow = require('../services/coachTurnPacketShadow');
+const coachResponseSheet = require('../services/coachResponseSheet');
 const { INTENSITIES, grantRegister } = require('../services/registerPermissions');
 const { computeCelebrationScarcity } = require('../services/celebrationScarcity');
 const { assessLayoff } = require('../services/layoffGuard');
@@ -516,6 +517,22 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
           // — the bypasses the nightly divergence report surfaces (H-03/H-08/H-11/H-12).
           const assembled = coachTurnPacketShadow.assembleShadowPacket({ turnId: turn.turnId, profileGoal: getProfileGoal() });
           coachTurnPacketShadow.observe({ trace: traceRecord, assembled, visible: visibleBody });
+          // Companion durable record of the FINAL visible response (Coach_Response),
+          // keyed by the SAME turn id — restores reviewable response evidence that does
+          // not depend on the browser Flight Recorder. `visibleBody` is the exact payload
+          // returned to the client, so `data.message` is the final post-validator text,
+          // never a model draft. Observational only, best-effort, off the served path.
+          const reqBody = req.body && typeof req.body === 'object' ? req.body : {};
+          const bodyFacts = reqBody.facts && typeof reqBody.facts === 'object' ? reqBody.facts : {};
+          coachResponseSheet.persist({
+            turnId: turn.turnId,
+            sessionId: bodyFacts.sessionId || bodyFacts.session_id || reqBody.sessionId || reqBody.session_id || null,
+            route: '/api/coach/message',
+            intentType: kind,
+            visible: visibleBody,
+            modelStatus,
+            appVersion: reqBody.appVersion || reqBody.app_version || null,
+          });
         } catch (_) { /* shadow must never affect the response */ }
       });
     }
