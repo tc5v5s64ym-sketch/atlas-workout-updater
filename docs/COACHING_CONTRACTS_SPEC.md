@@ -15,7 +15,7 @@ config/coaching/contracts/
   decision.contract.json        # decision_type enum, payload-type registry, caveat/safety enums
 config/coaching/manifests/
   intent-capabilities.json      # intent → [capability ids] + decision_type + read_only
-  capabilities.json             # capability descriptors (requires/optional/depends_on/produces/module/status)
+  capabilities.json             # capability descriptors (requires/optional/depends_on/produces/module/ladder)
 services/
   intentEnvelope.js             # buildIntentEnvelope(), validateIntentEnvelope()
   capabilityManifest.js         # load, resolve(intent) → ordered capability DAG
@@ -151,7 +151,9 @@ Two declarative files that let the Orchestrator turn an intent into an ordered m
 | `optional` | string[] | ✅ | enrichers that improve output if present |
 | `depends_on` | string[] | ✅ | capability ids whose output this consumes (DAG edges) |
 | `produces` | string[] | ✅ | **output keys** this capability contributes to the decision — a separate namespace from input keys; declarative (NOT validated against the §2.3 vocabulary) |
-| `status` | string (enum) | ✅ | `complete \| partial \| missing` — mirrors the architecture audit |
+| `ladder` | object | ✅ | the nine-rung completion ladder (retired the single `status` on 2026-07-21; closes H-05/H-15). Booleans in order: `built`, `unit_tested`, `runner_wired`, `inputs_available`, `route_consumed`, `user_visible`, `validator_covered`, `live_proven`, `owner_accepted`. Monotonic (no true rung above a false rung). Full definitions + published table: `docs/CAPABILITY_COMPLETION_LADDER.md` |
+| `consumer` | string | at `route_consumed`+ | names the live route/seam that consumes the capability — required once `route_consumed` (or any higher rung) is true |
+| `evidence` | object[] | at `route_consumed`/`live_proven` | linked test or trace ids substantiating the consumption/live claim — enforced by Drift Guard 4 (`npm run check:ladder`) |
 
 ### 2.3 Input-key vocabulary (the "known + provided" universe)
 
@@ -168,7 +170,8 @@ A capability's `requires`/`optional` draw only from this vocabulary. `depends_on
 4. Every `intents[*].decision_type` ∈ the decision-type enum (§3.2) — required when `brain:true`. A `brain:false` intent carries `routes_to` and no `decision_type`.
 5. `read_only = true` ⟹ `decision_type ∈ { progress_readout }`.
 6. The resolver computes the **transitive `depends_on` closure** of the intent's requested capabilities, so an intent need not hand-list transitive deps. Every `depends_on` id must resolve to a descriptor (rule 1) and the global graph must be acyclic (rule 2); the closure then topo-sorts so a capability always runs after everything it depends on.
-7. Resolver output is a **topologically ordered** capability list over the closure; ties are broken by stable (sorted) id order for determinism; `status:missing` capabilities are skipped-with-flag (never silently dropped) and reported in `missing[]`. At runtime the Orchestrator additionally reports `requires`-unmet capabilities (drives clarification) once it knows the hydrated input keys.
+7. Resolver output is a **topologically ordered** capability list over the closure; ties are broken by stable (sorted) id order for determinism; not-built capabilities (`ladder.built === false`) are skipped-with-flag (never silently dropped) and reported in `missing[]`. At runtime the Orchestrator additionally reports `requires`-unmet capabilities (drives clarification) once it knows the hydrated input keys.
+8. Each capability's `ladder` is present, has all nine boolean rungs, and is **monotonic** (no true rung sits above a false rung). A capability at `route_consumed` or higher names a `consumer`. **Reject** a malformed or non-monotonic ladder, or a `route_consumed`+ claim with no consumer.
 
 ### 2.5 Worked manifest fragments
 
@@ -195,28 +198,35 @@ A capability's `requires`/`optional` draw only from this vocabulary. `depends_on
 ```
 
 ```jsonc
-// capabilities.json (excerpt — status mirrors the architecture audit)
+// capabilities.json (excerpt — each capability carries the nine-rung ladder)
 { "id":"scenario_classifier",
   "module":{ "file":"services/scenarioClassifier.js", "export":"classifyScenario" },
   "requires":["log_history","constraint.target_lift"], "optional":["readiness_inputs"],
   "depends_on":["user_state","expected_performance"],
-  "produces":["scenario_id"], "status":"missing" },
+  "produces":["scenario_id"],
+  "ladder":{ "built":true, "unit_tested":true, "runner_wired":true, "inputs_available":true,
+             "route_consumed":false, "user_visible":false, "validator_covered":false,
+             "live_proven":false, "owner_accepted":false } },
 
-{ "id":"progression",
-  "module":{ "file":"services/progressionModule.js", "export":"recommendProgression" },
-  "requires":["log_history"], "optional":[],
-  "depends_on":["scenario_classifier"],
-  "produces":["target_weight","target_reps","lever","action","rationale"], "status":"partial" },
+{ "id":"onboarding",
+  "module":{ "file":"services/onboardingRouter.js", "export":"routeOnboarding" },
+  "requires":["profile_goal","training_level"], "optional":["constraint.equipment","log_history"],
+  "depends_on":["safety","goals"],
+  "produces":["route","program_id","plan"],
+  "ladder":{ "built":true, "unit_tested":true, "runner_wired":false, "inputs_available":false,
+             "route_consumed":false, "user_visible":false, "validator_covered":false,
+             "live_proven":false, "owner_accepted":false } },
 
-{ "id":"session_generator",
-  "module":{ "file":"services/sessionGenerator.js", "export":"buildSession" },
-  "requires":["log_history","profile_goal"],
-  "optional":["constraint.focus","constraint.duration_minutes","constraint.equipment"],
-  "depends_on":["progression","fatigue","volume","safety","equipment"],
-  "produces":["session_blocks","why_today"], "status":"missing" }
+{ "id":"nutrition",
+  "module":{ "file":"services/nutritionModule.js", "export":"assessNutrition" },
+  "requires":["profile_goal","bodyweight_history"], "optional":[], "depends_on":["goals"],
+  "produces":["protein_target","calorie_target"],
+  "ladder":{ "built":false, "unit_tested":false, "runner_wired":false, "inputs_available":false,
+             "route_consumed":false, "user_visible":false, "validator_covered":false,
+             "live_proven":false, "owner_accepted":false } }
 ```
 
-The two `status:"missing"` rows are the architecture keystones (Scenario Classifier, Session Generator). The manifest makes their absence *machine-visible*: an intent requiring a missing capability resolves to degraded/`clarification_needed` rather than a wrong answer.
+A `ladder.built === false` row (e.g. `nutrition`, whose module file does not exist yet) is a build-ahead slot. The manifest makes its absence *machine-visible*: the Orchestrator skips it with a provenance flag, and an intent requiring it resolves to degraded/`clarification_needed` rather than a wrong answer.
 
 ### 2.6 Tests to eventually prove
 
@@ -224,7 +234,8 @@ The two `status:"missing"` rows are the architecture keystones (Scenario Classif
 - Resolver returns capabilities in dependency order (e.g. `scenario_classifier` before `progression` before `session_generator`).
 - `read_only` intents map only to `progress_readout`.
 - A `requires`-unmet capability surfaces as a missing-input report, not a crash.
-- A `status:missing` capability is skipped-with-flag and recorded in `provenance.modules_run` as not-run.
+- A not-built (`ladder.built === false`) capability is skipped-with-flag and recorded in `provenance.skipped` as not-run.
+- A malformed or non-monotonic `ladder`, or a `route_consumed`+ claim with no `consumer`, is rejected by `validateManifest()`.
 - Resolver computes the transitive closure (an intent listing `scenario_classifier` auto-pulls `user_state`, `expected_performance`, `intensity`) and is deterministic across calls.
 - **Orchestrator-is-rule-free guard:** the routing layer imports no Brain decision module — only `node:` builtins + the JSON manifests. Pinned now against `services/capabilityManifest.js` (the manifest reader); extended to the Orchestrator module itself when it lands (PR-5).
 

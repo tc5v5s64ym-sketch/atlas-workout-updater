@@ -126,10 +126,10 @@ describe('resolve — closure & topological order', () => {
                      resolve('best_workout').order.map(d => d.id));
   });
 
-  it('flags missing-status capabilities (skip-with-flag, never dropped)', () => {
+  it('flags not-built capabilities (skip-with-flag, never dropped)', () => {
     const r = resolve('best_workout');
-    // Both keystones shipped as 'partial' (scenario_classifier, session_generator),
-    // so the remaining missing capability in this plan is `equipment`.
+    // Both keystones are built (scenario_classifier, session_generator), so the
+    // remaining not-built capability in this plan is `equipment` (no module file).
     assert.ok(r.missing.includes('equipment'));
     assert.ok(!r.missing.includes('scenario_classifier'));
     assert.ok(!r.missing.includes('session_generator'));
@@ -164,6 +164,108 @@ describe('resolve — closure & topological order', () => {
     for (const type of ALL_INTENTS) assert.doesNotThrow(() => resolve(type));
   });
 });
+
+// ─── completion ladder ───────────────────────────────────────────────────────
+
+describe('completion ladder — the manifest speaks the nine rungs, not a single status', () => {
+  const CAPS = require('../config/coaching/manifests/capabilities.json').capabilities;
+  const { LADDER_RUNGS } = manifest;
+
+  it('exposes the nine ordered rungs', () => {
+    assert.deepEqual(LADDER_RUNGS, [
+      'built', 'unit_tested', 'runner_wired', 'inputs_available',
+      'route_consumed', 'user_visible', 'validator_covered', 'live_proven', 'owner_accepted',
+    ]);
+  });
+
+  it('the retired single status is gone from every capability', () => {
+    for (const [id, cap] of Object.entries(CAPS)) {
+      assert.ok(!('status' in cap), `capability '${id}' still carries a single 'status'`);
+      assert.ok(cap.ladder && typeof cap.ladder === 'object', `capability '${id}' has no ladder`);
+    }
+  });
+
+  it('every capability ladder is complete (nine booleans) and monotonic', () => {
+    for (const [id, cap] of Object.entries(CAPS)) {
+      const l = cap.ladder;
+      for (const rung of LADDER_RUNGS) {
+        assert.strictEqual(typeof l[rung], 'boolean', `capability '${id}': ladder.${rung} must be boolean`);
+      }
+      for (let i = 1; i < LADDER_RUNGS.length; i++) {
+        if (l[LADDER_RUNGS[i]]) {
+          assert.ok(l[LADDER_RUNGS[i - 1]],
+            `capability '${id}': ladder non-monotonic — ${LADDER_RUNGS[i]} true but ${LADDER_RUNGS[i - 1]} false`);
+        }
+      }
+    }
+  });
+
+  it('no agent-assigned owner_accepted — owner_accepted is an owner-gate-only rung', () => {
+    for (const [id, cap] of Object.entries(CAPS)) {
+      assert.strictEqual(cap.ladder.owner_accepted, false,
+        `capability '${id}': owner_accepted may only be set at an explicit owner gate`);
+    }
+  });
+
+  it('nothing claims route_consumed or higher without naming a consumer', () => {
+    const CONSUME_RUNGS = LADDER_RUNGS.slice(LADDER_RUNGS.indexOf('route_consumed'));
+    for (const [id, cap] of Object.entries(CAPS)) {
+      const claims = CONSUME_RUNGS.some(r => cap.ladder[r]);
+      if (claims) {
+        assert.ok(typeof cap.consumer === 'string' && cap.consumer.trim(),
+          `capability '${id}' claims route_consumed+ but names no consumer`);
+      }
+    }
+  });
+
+  it('the REAL validateManifest rejects a non-monotonic ladder', () => {
+    const errs = _validateWithMutation(caps => {
+      // route_consumed true while inputs_available false — a non-monotonic overstate.
+      caps.capabilities.safety.ladder.route_consumed = true;
+      caps.capabilities.safety.ladder.inputs_available = false;
+    });
+    assert.strictEqual(errs.valid, false);
+    assert.ok(errs.errors.some(e => /non-monotonic/.test(e)), `expected a non-monotonic error, got: ${errs.errors.join(' | ')}`);
+  });
+
+  it('the REAL validateManifest rejects route_consumed with no named consumer', () => {
+    const errs = _validateWithMutation(caps => {
+      // inputs_available is already true for safety, so this stays monotonic — the
+      // only violation is the missing consumer name.
+      caps.capabilities.safety.ladder.route_consumed = true;
+    });
+    assert.strictEqual(errs.valid, false);
+    assert.ok(errs.errors.some(e => /names no 'consumer'/.test(e)), `expected a consumer error, got: ${errs.errors.join(' | ')}`);
+  });
+
+  it('the REAL validateManifest accepts route_consumed WITH a named consumer', () => {
+    const errs = _validateWithMutation(caps => {
+      caps.capabilities.safety.ladder.route_consumed = true;
+      caps.capabilities.safety.consumer = 'routes/coachOps.js POST /api/coach/message';
+    });
+    assert.strictEqual(errs.valid, true, `errors: ${errs.errors.join(' | ')}`);
+  });
+});
+
+// Exercise the REAL validateManifest() against a mutated manifest by intercepting
+// the loader's fs.readFileSync for the caps file only (the validator reads the
+// file directly, not via require), then restoring. Faithful to the live path.
+function _validateWithMutation(mutate) {
+  const fsMod = require('node:fs');
+  const pathMod = require('node:path');
+  const CAPS_FILE = pathMod.join(__dirname, '..', 'config', 'coaching', 'manifests', 'capabilities.json');
+  const original = fsMod.readFileSync;
+  const mutated = JSON.parse(original(CAPS_FILE, 'utf8'));
+  mutate(mutated);
+  fsMod.readFileSync = (file, enc) => (file === CAPS_FILE ? JSON.stringify(mutated) : original(file, enc));
+  try {
+    _resetForTesting();
+    return validateManifest();
+  } finally {
+    fsMod.readFileSync = original;
+    _resetForTesting();
+  }
+}
 
 // ─── validator robustness ────────────────────────────────────────────────────
 

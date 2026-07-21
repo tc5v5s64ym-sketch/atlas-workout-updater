@@ -29,6 +29,7 @@ These govern direction and constraints. They do not independently select the nex
 - [`docs/AUTOMATION_PROTOCOL.md`](./AUTOMATION_PROTOCOL.md) — deterministic hard gates and standing merge authority.
 - [`docs/ATLAS_OPERATIONS_CONTRACT.md`](./ATLAS_OPERATIONS_CONTRACT.md) — the agent-first status surface (`npm run atlas:status` and the public `GET /.well-known/atlas-status.json`). A status contract, not a work-selection plan.
 - [`docs/ATLAS_OWNERSHIP_CONNECTIVITY_INVENTORY.md`](./ATLAS_OWNERSHIP_CONNECTIVITY_INVENTORY.md) — the single connectivity inventory of every route, service, client module, flag, Sheet tab, and planning doc, each with a provisional keep/adapt/retire disposition (Atlas Recovery Campaign, Phase 2 Work item 1b). An assessment that feeds later owner gates; it authorizes nothing.
+- [`docs/CAPABILITY_COMPLETION_LADDER.md`](./CAPABILITY_COMPLETION_LADDER.md) — the published nine-rung completion ladder for every coach capability (Atlas Recovery Campaign, Phase 2 Work item 3; closes H-05/H-15). The skimmable view of the `ladder` fields in `config/coaching/manifests/capabilities.json`, replacing the retired single `status`.
 - [`docs/OWNER_CHECKIN_RULES.md`](./OWNER_CHECKIN_RULES.md) — the narrow owner-reserved categories and absolute data safety.
 - [`docs/DECISION_ROUTING.md`](./DECISION_ROUTING.md) — ChatGPT decision desk for genuinely non-derivable product/trust forks.
 - [`docs/RISK_LABELS.md`](./RISK_LABELS.md) — primary risk labels.

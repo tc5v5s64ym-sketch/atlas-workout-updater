@@ -79,7 +79,7 @@ function manifestModuleRoots() {
   const caps = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
   const roots = [];
   for (const cap of Object.values(caps.capabilities || {})) {
-    if (cap.status === 'missing') continue; // build-ahead slot; its file may not exist yet
+    if (!(cap.ladder && cap.ladder.built === true)) continue; // not built (build-ahead slot); its file may not exist yet
     const file = cap.module && cap.module.file;
     if (typeof file === 'string' && fs.existsSync(path.join(ROOT, file))) roots.push(path.join(ROOT, file));
   }
