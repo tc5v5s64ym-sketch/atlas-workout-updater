@@ -1,6 +1,6 @@
 # Atlas Ownership & Connectivity Inventory
 
-**Current as of:** 2026-07-20 · **Owner:** Atlas Recovery Campaign (Issue #1073), Phase 2 Work item 1b · **Status:** living inventory, refreshed as surfaces change.
+**Current as of:** 2026-07-21 · **Owner:** Atlas Recovery Campaign (Issue #1073), Phase 2 Work item 1b · **Status:** living inventory, refreshed as surfaces change.
 
 This is the single ownership/connectivity inventory the recovery campaign calls for: every **route, service, client module, flag, Sheet tab, and planning document**, each with a connectivity note and a provisional **disposition**. It is the human-judgement companion to the deterministic wiring guard (`scripts/check-wired-modules.js`), which as of Work item 1a proves *semantic* reachability (a module's binding is actually referenced) but cannot judge whether an output reaches a user-visible decision — that judgement lives here.
 
@@ -128,6 +128,7 @@ Server-side only. Grouped by kind; disposition notes the campaign relevance.
 | `ATLAS_COACH_ENGINE` | One-Brain engine mode (`hybrid`/shadow); `brian`→`brain` rename pending | **adapt** — Phase 5g dual-accept rename (H-23); One-Brain owner-gated (H-04) |
 | `ATLAS_INTENT_ROUTER` | Gemini intent-router shadow | **retire** (after Phase 3) — no permanent shadow lane (H-14) |
 | `ATLAS_BRAIN_SHADOW_PERSIST`, `ATLAS_DRIFT_SHADOW` | Brain/drift shadow persistence | **retire** (after Phase 3/5f) — shadow-only |
+| `ATLAS_INTERACTION_TRACE` | Phase 3 InteractionTrace shadow (`=shadow`; default off): mints the turn_id at the first trusted boundary and opens the trace spine, log-only | **keep** — the one turn_id/trace spine; graduates to live route consumption in Phase 4 (H-14/H-03) |
 | `ATLAS_FLIGHT_RECORDER` | Flight Recorder capture (default OFF) | **keep** — trace spine (H-14) |
 | `ATLAS_COACH_PROFANITY` | Coach profanity register (default off) | **keep** — voice setting; owner-controlled |
 | `ATLAS_PROFILE_GOAL`, `ATLAS_TIMEZONE`, `ATLAS_LLM_PROVIDER`, `ATLAS_LLM_MODEL`, `GEMINI_COACH_MODEL`, `GEMINI_ROUTER_MODEL` | Profile/tz/provider/model selection | **keep** — provider/model selection is owner-reserved |
