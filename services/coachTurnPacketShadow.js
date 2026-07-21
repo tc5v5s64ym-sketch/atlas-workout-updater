@@ -6,9 +6,9 @@
 // spanning InteractionTrace in shadow. This module (concern 3) assembles the
 // CoachTurnPacket — the assembled truth of one coach turn (services/coachTurnPacket.js,
 // the ratified read-only contract) — for that same turn, keyed by the same turn id,
-// and logs the packet and the actual visible response SIDE BY SIDE. The nightly
-// divergence report (concern 4) reads these records and lists every place production
-// contradicted or bypassed packet truth.
+// and logs the packet and the actual visible response SIDE BY SIDE. The divergence
+// report reads these records and lists every place production contradicted or bypassed
+// packet truth.
 //
 // WHAT PHASE 3 POPULATES — and why the packet is deliberately sparse.
 // The read-only coach route produces almost nothing in canonical contract form today;
@@ -31,21 +31,15 @@
 // packet truth on every turn, which is exactly what Phase 4/5 retires.
 //
 // Gated by the same flag as the trace shadow (ATLAS_INTERACTION_TRACE=shadow; default
-// inert). LOG-ONLY, best-effort — writes no Sheet, never blocks or alters the response.
-// The logged visible summary is bounded/redacted (presence and shape only) — never the
-// coaching prose or any workout number.
-//
-// Public API:
-//   isShadowEnabled()                         → boolean (shared with the trace shadow)
-//   assembleShadowPacket({turnId, profileGoal}) → { packet, valid, errors }
-//   summarizeVisible(body)                    → bounded visible summary
-//   observe({ trace, assembled, visible })    → record | null (logs packet vs visible)
-//   getShadowLog()                            → record[]  (newest last; diagnostics/tests)
-//   _resetForTesting()
+// inert). Best-effort and response-invisible: each record is logged and mirrored to the
+// dedicated Coach_Shadow diagnostics tab, but the coach response never waits for or
+// depends on that append. The visible summary remains bounded/redacted (presence and
+// shape only) — never the coaching prose or any workout number.
 
 const { buildCoachTurnPacket, validateCoachTurnPacket } = require('./coachTurnPacket');
 const { buildAthleteContext } = require('./athleteContext');
 const { isShadowEnabled } = require('./interactionTraceShadow');
+const coachShadowSheet = require('./coachShadowSheet');
 
 const MAX_LOG = 200;
 const _log = [];
@@ -55,11 +49,6 @@ function _push(record) {
   if (_log.length > MAX_LOG) _log.shift();
 }
 
-// Assemble the shadow CoachTurnPacket from the turn's canonically-available facts.
-// Always builds a STRUCTURALLY COMPLETE packet (every embedded field present) so the
-// validator's explicit-null rule is satisfied; populates only what is canonical today
-// (see the header). Validates via the packet's own contract (which validates every
-// embedded fact by its own validator — "one Brain" as a schema invariant).
 function assembleShadowPacket(params) {
   const p = params && typeof params === 'object' ? params : {};
   const athlete = buildAthleteContext({ profile_goal: p.profileGoal != null ? p.profileGoal : null });
@@ -76,9 +65,6 @@ function assembleShadowPacket(params) {
   return { packet, valid: v.valid, errors: v.errors };
 }
 
-// Bounded, redacted summary of the visible coach response — presence and shape only,
-// never the coaching prose or any workout number. Enough for the divergence report to
-// detect "the visible reply carried coaching the packet does not represent".
 function summarizeVisible(body) {
   const data = body && typeof body === 'object' && body.data && typeof body.data === 'object' ? body.data : {};
   const msg = typeof data.message === 'string' ? data.message : null;
@@ -93,9 +79,6 @@ function summarizeVisible(body) {
   };
 }
 
-// Which embedded facts the assembled packet actually carries — booleans (and the
-// exercises count). The report treats a null/empty embedded fact as bypassed packet
-// truth (production computed it route-locally instead of from the packet).
 function _embeddedFields(packet) {
   return {
     athlete: packet.athlete != null,
@@ -108,18 +91,11 @@ function _embeddedFields(packet) {
   };
 }
 
-// One line per turn — a stable, single-line JSON record prefixed `[coach-turn-shadow]`,
-// self-contained (packet summary + visible summary + trace summary), so the nightly
-// divergence report parses everything it needs from this one line. Carries only
-// structural/synthetic fields — no prose, no workout data, no secrets.
 function _logShadow(record) {
   try { console.log(`[coach-turn-shadow] ${JSON.stringify(record)}`); }
   catch (_) { /* log-only best-effort */ }
 }
 
-// Log the assembled packet and the visible response side by side (plus the concern-2
-// trace summary, so the record is self-contained). Best-effort; never throws; inert
-// when the shadow flag is off.
 function observe(params) {
   if (!isShadowEnabled()) return null;
   const p = params && typeof params === 'object' ? params : {};
@@ -127,12 +103,17 @@ function observe(params) {
     const a = p.assembled && typeof p.assembled === 'object' ? p.assembled : {};
     const packet = a.packet && typeof a.packet === 'object' ? a.packet : null;
     const traceRec = p.trace && typeof p.trace === 'object' && p.trace.trace ? p.trace : null;
+    const visible = summarizeVisible(p.visible);
+    const recordedAt = new Date().toISOString();
     const record = {
+      recorded_at: recordedAt,
       turn_id: packet ? packet.turn_id : (traceRec ? traceRec.trace.turn_id : null),
+      intent_type: traceRec ? traceRec.intent_type : null,
+      source: traceRec ? traceRec.source : null,
       packet_valid: a.valid === true,
       packet_errors: Array.isArray(a.errors) ? a.errors.slice(0, 10) : [],
       embedded: packet ? _embeddedFields(packet) : null,
-      visible: summarizeVisible(p.visible),
+      visible,
       trace: traceRec ? {
         valid: traceRec.valid,
         stages: traceRec.trace.stages.map((s) => ({ stage: s.stage, status: s.status })),
@@ -141,6 +122,7 @@ function observe(params) {
     };
     _logShadow(record);
     _push(record);
+    coachShadowSheet.persist({ recordedAt, trace: traceRec, assembled: a, visible });
     return record;
   } catch (_) {
     return null; // shadow must never surface a failure
