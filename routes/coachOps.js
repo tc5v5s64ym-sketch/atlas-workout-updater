@@ -485,14 +485,26 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     const isSetLike = kind === 'set' || kind === 'block';
 
     // Phase 3 (shadow the packet and the trace, H-14): mint ONE turn id at this
-    // first trusted boundary and open the InteractionTrace. Flag-gated
-    // (ATLAS_INTERACTION_TRACE=shadow; default inert), log-only, best-effort — it
-    // writes no Sheet and can never block or alter the coach response.
-    if (interactionTraceShadow.isShadowEnabled()) {
-      try {
-        const turnId = interactionTraceShadow.mintTurnId();
-        interactionTraceShadow.observeTurnStart({ turnId, intentType: kind, source: 'coach_message' });
-      } catch (_) { /* shadow must never affect the response */ }
+    // first trusted boundary and carry it through every stage of the turn, assembling
+    // the InteractionTrace in shadow. Flag-gated (ATLAS_INTERACTION_TRACE=shadow;
+    // default inert → the recorder is a no-op), log-only, best-effort — it writes no
+    // Sheet and can never block or alter the coach response. The spanning trace is
+    // emitted once when the response finishes (whichever of the paths below fires).
+    // `modelStatus`/`validatorRan` are cheap flags the model paths set so the
+    // response-finished hook can record the model_response / validator_result stages.
+    let modelStatus = 'skipped'; // 'ok' once the LLM is called, 'error' if it throws
+    let validatorRan = false;    // true once finalizeCoachVoice (the deterministic validator) runs
+    const turn = interactionTraceShadow.beginTurn({ intentType: kind, source: 'coach_message' });
+    turn.stage('intent', 'ok');
+    if (turn.enabled) {
+      res.on('finish', () => {
+        try {
+          turn.stage('model_response', modelStatus);
+          turn.stage('validator_result', validatorRan ? 'ok' : 'skipped');
+          turn.stage('rendered_output', res.statusCode >= 500 ? 'error' : 'ok', req.requestId || null);
+          turn.finish();
+        } catch (_) { /* shadow must never affect the response */ }
+      });
     }
 
     // effort_verdict is ENGINE-RULE-BOUND on the set path (sibling of the engine-only
@@ -559,6 +571,9 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     if (enrichmentFailed && facts.rec && typeof facts.rec === 'object' && facts.rec.progression_verdict != null) {
       facts = { ...facts, rec: { ...facts.rec, progression_verdict: null } };
     }
+    // Shadow spine: the session/history snapshot is now assembled ('error' when the
+    // Sheets read failed and the route degraded to an empty-history context).
+    turn.stage('session_snapshot', enrichmentFailed ? 'error' : 'ok');
     const flight_recorder_context = isSetLike ? flightRecorderContext(facts.live_set_context) : null;
 
     // PR-3 block-note tier: engine-owned classification of the just-logged block via
@@ -614,6 +629,9 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     const subVoiceBase = (facts.substitution && typeof facts.substitution === 'object')
       ? renderSubstitutionVoice({ substitution: facts.substitution, candidateProse: '' })
       : null;
+    // Shadow spine: the deterministic engine's decision for this turn (effort/tier/
+    // progression verdict + set-effort and substitution voice) is now computed.
+    turn.stage('engine_decision', 'ok');
 
     // Plan voice: derive the return-after-layoff signal from the log server-side so
     // a "volume pulled back" claim can only come from the engine, never the client.
@@ -786,6 +804,9 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // voice may legitimately reference a real personal best in its rationale.
       registerCtx = { mode: null, register: { profanity_ok: false }, profanity_only: true };
     }
+    // Shadow spine: the coaching strategy — the coach mode/register and the
+    // silence-vs-speak decision — is now fixed for this turn.
+    turn.stage('coaching_strategy', 'ok');
 
     // PR-3: a routine block (tier ack_only) is acknowledged by the client-side ✅
     // receipt alone — return NO coaching prose and DO NOT call Gemini. Keeps routine
@@ -827,6 +848,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     }
     if (!coach.isConfigured()) {
       const fin = finalizeCoachVoice(null, voiceBase, subVoiceBase);
+      validatorRan = true; // the deterministic validator ran; the model was skipped (outage)
       if (surfacedSignalBlock) return ackOnlyBlockResponse();
       return standardSuccess(req, res, 'Coach voice unavailable — use templated fallback', {
         message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: false, model: coach.coachModel(), ...noteMeta, ...effortExtras, flight_recorder_context
@@ -837,15 +859,19 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       const message = kind === 'plan'
         ? await coach.generatePlanMessage(facts)
         : await coach.generateCoachMessage(facts);
+      modelStatus = 'ok'; // the LLM was called and returned
       // Deterministic engine controls the coaching meaning: suppress the LLM prose
       // when it contradicts (or would speak over) a non-neutral set-effort signal,
       // or when it outruns its granted register (slice 3).
       const fin = finalizeCoachVoice(message, voiceBase, subVoiceBase, registerCtx);
+      validatorRan = true;
       return standardSuccess(req, res, 'Coach message', { message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: true, model: coach.coachModel(), source: 'gemini', kind, ...noteMeta, ...effortExtras, flight_recorder_context });
     } catch (error) {
+      modelStatus = 'error'; // the LLM was called but threw
       // Degrade gracefully: tell the client to use its templated fallback rather
       // than surfacing an error in the chat.
       const fin = finalizeCoachVoice(null, voiceBase, subVoiceBase);
+      validatorRan = true;
       if (surfacedSignalBlock) return ackOnlyBlockResponse();
       return standardSuccess(req, res, 'Coach generation failed — use templated fallback', {
         message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: true, model: coach.coachModel(), error: error.message, ...noteMeta, ...effortExtras, flight_recorder_context
