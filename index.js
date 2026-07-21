@@ -117,6 +117,7 @@ async function runStartupDiagnostics() {
     console.log(JSON.stringify({
       event: 'telemetry_capture',
       coach_shadow_and_response: shadow ? 'active' : 'inactive',
+      coach_qa_shadow: shadow ? 'active' : 'inactive', // /api/coach/chat + /api/coach/ask coverage (same flag)
       interaction_trace: shadow ? 'shadow' : 'off',
       flight_recorder: isFlightRecorderEnabled() ? 'active' : 'inactive',
     }));
