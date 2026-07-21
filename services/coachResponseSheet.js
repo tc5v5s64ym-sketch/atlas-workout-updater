@@ -37,6 +37,7 @@ const RESPONSE_HEADERS = Object.freeze([
 const MAX_MESSAGE_CHARS = 4000; // bound the stored visible text (coach lines are short)
 const MAX_FIELD_CHARS = 256;    // bound short string fields
 const MAX_SEEN = 1000;          // dedup ring bound
+const REVALIDATE_EVERY = 50;    // re-check the header at least this often (bounded staleness)
 
 let _append = null;
 let _ensure = null;
@@ -45,6 +46,8 @@ let _ready = null;
 let _tail = Promise.resolve();
 const _seen = new Set(); // turn_ids already queued — dedup across retries/double-finish
 let _buildTag; // cached server build tag (lazy)
+let _appendsSinceValidate = 0;
+let _revalidateEvery = REVALIDATE_EVERY;
 
 function _clip(value, max) {
   if (value == null) return '';
@@ -171,8 +174,15 @@ function persist(params) {
       const ensure = _ensure || sheets.ensureSheetTab;
       const getHeader = _getHeader || sheets.getHeaderRow;
       const append = _append || sheets.appendRows;
+      // Periodically re-validate the header so a post-startup column edit (reorder/delete)
+      // is caught within a bounded window and fails closed, instead of silently landing
+      // values under the wrong labels for the whole process lifetime. Costs ~1 read per
+      // REVALIDATE_EVERY turns — not a read on every turn (the codebase's quota-conscious
+      // Sheets discipline). The primary review evidence is the text, so this is worth it.
+      if (_appendsSinceValidate >= _revalidateEvery) { _ready = null; _appendsSinceValidate = 0; }
       await _ensureReady(ensure, getHeader);
       await append(RESPONSE_TAB, [row]);
+      _appendsSinceValidate += 1;
     })
     .catch((error) => {
       const message = error && error.message ? error.message : String(error || 'unknown error');
@@ -186,7 +196,7 @@ function _flushForTesting() {
   return _tail;
 }
 
-function _resetForTesting({ append, ensure, getHeader } = {}) {
+function _resetForTesting({ append, ensure, getHeader, revalidateEvery } = {}) {
   _append = typeof append === 'function' ? append : null;
   _ensure = typeof ensure === 'function' ? ensure : null;
   _getHeader = typeof getHeader === 'function' ? getHeader : null;
@@ -194,6 +204,8 @@ function _resetForTesting({ append, ensure, getHeader } = {}) {
   _tail = Promise.resolve();
   _seen.clear();
   _buildTag = undefined;
+  _appendsSinceValidate = 0;
+  _revalidateEvery = (typeof revalidateEvery === 'number' && revalidateEvery > 0) ? revalidateEvery : REVALIDATE_EVERY;
 }
 
 module.exports = {

@@ -139,6 +139,32 @@ describe('coachResponseSheet', () => {
     assert.deepEqual(appended, ['turn:dup'], 'the same turn_id is persisted exactly once');
   });
 
+  it('re-validates the header periodically so a post-startup column edit fails closed', async () => {
+    let headerCalls = 0;
+    const appended = [];
+    responseSheet._resetForTesting({
+      revalidateEvery: 2,
+      ensure: async () => {},
+      // Good header at startup; a later edit reorders it — caught on the next re-validation.
+      getHeader: async () => { headerCalls += 1; return headerCalls === 1 ? responseSheet.RESPONSE_HEADERS.slice() : ['turn_id', 'recorded_at']; },
+      append: async (tab, rows) => { appended.push(rows[0][1]); },
+    });
+
+    const originalWarn = console.warn;
+    console.warn = () => {};
+    try {
+      responseSheet.persist(sampleParams({ turnId: 'turn:1' }));
+      responseSheet.persist(sampleParams({ turnId: 'turn:2' }));
+      responseSheet.persist(sampleParams({ turnId: 'turn:3' })); // re-validation fires here → bad header
+      await responseSheet._flushForTesting();
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    assert.deepEqual(appended, ['turn:1', 'turn:2'], 'appends stop once a re-validated header no longer matches');
+    assert.equal(headerCalls, 2, 'the header was re-read on the bounded cadence, not every append');
+  });
+
   it('fails closed and appends nothing when the existing header is mismatched', async () => {
     const calls = [];
     responseSheet._resetForTesting({
