@@ -314,15 +314,28 @@ function buildGroundedPlanStatement(context, opts = {}) {
 // completed-write claim structurally impossible on this read-only route: no model prose
 // (any wording) reaches the athlete for a dispute, so there is no denylist to outrun.
 
+const MODIFY_VERB = 'change|make|switch|update|set|adjust|swap|replace|bump|drop|remove|redo|rework|cut|lower|raise|increase|decrease';
+
 // An IMPERATIVE request to change the plan ("change it to 3 sets of 8", "make it 8 reps",
 // "switch to…", "update the plan to…") — NOT a factual dispute. It must keep flowing to
 // the model's proposal → approval → write lane, so it is excluded from the dispute path.
 // The verb must open a clause (start / after punctuation / after please|can you|let's) so
 // an assertion like "you didn't change the plan" is NOT read as a change request.
-const PLAN_MODIFY_RE = /(?:^|[.!?;,]\s*|\b(?:please|can you|could you|would you|will you|let'?s|i want you to|i'd like you to)\s+)(change|make|switch|update|set|adjust|swap|replace|bump|drop|remove|redo|rework|cut|lower|raise|increase|decrease)\b/;
+const PLAN_MODIFY_RE = new RegExp(`(?:^|[.!?;,]\\s*|\\b(?:please|can you|could you|would you|will you|let'?s|i want you to|i'd like you to)\\s+)(${MODIFY_VERB})\\b`);
+
+// A REQUEST/DESIRE framing where the change verb does NOT open the clause
+// ("I want to change the plan to 3x8", "can we change the plan", "I'd like to change it",
+// "could you switch it to 8 reps"). The leading cue must be a first-person desire or a
+// polite request ("i want/need/like…", "can/could we|you", "would/will you", "let's",
+// "please"), so a plain assertion about what was planned ("you set the plan to 3x8") is
+// NOT swept in. An over-match here degrades safely: the turn falls through to the model,
+// where the mutation-truth backstop still grounds any false completed-write claim — an
+// UNDER-match, by contrast, would wrongly deny the athlete the proposal flow (Codex #1126).
+const PLAN_MODIFY_REQUEST_RE = new RegExp(`\\b(?:i(?:'d| would)? (?:want|wanna|need|like|love)(?: to| you to)?|we (?:want|need|should|could|can)|can (?:you|we)|could (?:you|we)|would you|will you|let'?s|let us|please)\\b[^.?!;]*?\\b(?:${MODIFY_VERB})\\b`);
 
 function isPlanModificationRequest(message) {
-  return PLAN_MODIFY_RE.test(normalize(message));
+  const m = normalize(message);
+  return PLAN_MODIFY_RE.test(m) || PLAN_MODIFY_REQUEST_RE.test(m);
 }
 
 // True for a FACTUAL plan dispute/correction during an active session — the turn whose

@@ -273,3 +273,15 @@ test('modification request ("change it to…") still reaches the model and its p
   assert.deepEqual(json.data.propose_plan_edit, { action: 'replace_plan', exercises: [{ name: 'Seated Row', sets: 3, reps: 8, weight: 200, rir: 1 }] }, 'the proposal survives to the approval flow');
   assert.equal(json.data.source, 'gemini');
 });
+
+test('natural-language change request ("Can we change the plan to 3x8?") reaches the model, not the dispute path (Codex #1126)', async () => {
+  resetCoach();
+  coachState.reply = 'Sure — I can change Seated Row to 3 sets of 8. Want me to?';
+  coachState.propose_plan_edit = { action: 'replace_plan', exercises: [{ name: 'Seated Row', sets: 3, reps: 8, weight: 200, rir: 1 }] };
+  const { res, json } = await post({ message: 'Can we change the plan to 3x8?', context: SEATED_PLAN });
+  assert.equal(res.status, 200);
+  assert.equal(coachState.chatReplyCalls, 1, 'a request-framed change reaches the model — it is NOT short-circuited as a factual dispute');
+  assert.doesNotMatch(json.data.message, /haven't changed it/i, 'the athlete is not wrongly told nothing changed on a change request');
+  assert.deepEqual(json.data.propose_plan_edit, { action: 'replace_plan', exercises: [{ name: 'Seated Row', sets: 3, reps: 8, weight: 200, rir: 1 }] }, 'the proposal is preserved so the approval flow can proceed');
+  assert.equal(json.data.source, 'gemini');
+});

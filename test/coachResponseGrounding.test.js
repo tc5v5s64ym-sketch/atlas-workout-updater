@@ -184,6 +184,28 @@ test('isPlanModificationRequest: imperative change requests, not assertions', ()
   }
 });
 
+// Codex #1126 P1 — natural-language change REQUESTS (verb not opening the clause) must be
+// preserved as modifications so the athlete can still start the proposal → approval flow;
+// they must NOT be swept into the deterministic dispute path.
+test('isPlanModificationRequest / isFactualPlanDispute: natural-language change requests stay modifications (Codex #1126)', () => {
+  const ctx = seatedPlanCtx();
+  for (const m of [
+    'I want to change the plan to 3x8',
+    'Can we change the plan?',
+    "I'd like to change the plan",
+    'Could you switch it to 8 reps?',
+    'I need you to set it to 3 sets of 8',
+    'can we make it 3x8',
+  ]) {
+    assert.equal(g.isPlanModificationRequest(m), true, `request is a modification: ${JSON.stringify(m)}`);
+    assert.equal(g.isFactualPlanDispute(m, ctx), false, `request is NOT a factual dispute: ${JSON.stringify(m)}`);
+  }
+  // A plain assertion about what was planned that mentions a change verb is still a dispute,
+  // not a request — the request cue ("i want / can we / could you …") must be present.
+  assert.equal(g.isPlanModificationRequest('You set the plan to 3x8.'), false, 'an assertion is not a request');
+  assert.equal(g.isFactualPlanDispute('You set the plan to 3x8.', ctx), true, 'an assertion about the plan stays a dispute');
+});
+
 // ── deterministic dispute answer ─────────────────────────────────────────────
 
 test('buildDisputeAnswer: states the current plan, distinguishes the claim, says nothing changed — never a mutation claim', () => {
