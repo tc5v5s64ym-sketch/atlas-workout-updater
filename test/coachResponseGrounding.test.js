@@ -315,6 +315,11 @@ test('resolveDisputedLiftEntry: a correction naming multiple plan lifts fails cl
   // even though namedLiftsInMessage only surfaced the in-plan Bench.
   assert.equal(g.resolveDisputedLiftEntry('Bench Press and Deadlift are not what you planned.', plan, [], { lastDiscussedLift: g.canonicalKey('Seated Row') }), null);
   assert.equal(g.resolveDisputedLiftEntry('Deadlift and Bench Press are not what you planned.', plan, [], { lastDiscussedLift: g.canonicalKey('Seated Row') }), null);
+  // A SHARED-WORD variant ("Bench Press and Incline Bench Press") — the second lift shares
+  // words with the in-plan match, so stripping leaves only the variant modifier. Still
+  // multi-lift → fail closed.
+  assert.equal(g.resolveDisputedLiftEntry('Bench Press and Incline Bench Press are not what you planned.', plan, [], { lastDiscussedLift: g.canonicalKey('Seated Row') }), null);
+  assert.equal(g.resolveDisputedLiftEntry('Bench Press and Dumbbell Bench Press are not what you planned.', plan, [], { lastDiscussedLift: g.canonicalKey('Seated Row') }), null);
   // A single-named correction still resolves (unchanged).
   assert.equal((g.resolveDisputedLiftEntry("Seated Row isn't what you planned, you said 8.", plan, [], { lastDiscussedLift: g.canonicalKey('Bench Press') }) || {}).name, 'Seated Row');
 });

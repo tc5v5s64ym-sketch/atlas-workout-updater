@@ -127,16 +127,25 @@ function messageNamesALift(message) {
   return !!(canon && canon.canonicalName);
 }
 
-// After a lift has been matched, does the message ALSO name a DIFFERENT canonical lift?
-// Strips the matched lift's significant words and re-checks — so "Bench Press and Deadlift
-// are not what you planned" (Bench in plan, Deadlift off-snapshot) is seen as multi-lift and
-// fails closed, even though namedLiftsInMessage only surfaced the in-plan Bench (Codex #1128).
+// A variant MODIFIER that turns a base lift into a DISTINCT exercise. When one survives the
+// strip of the matched lift's words, the message named a second, SHARED-WORD variant that
+// the canonicalizer can't recognize on its own — e.g. "Bench Press and Incline Bench Press"
+// leaves "incline" after removing bench/press; "Dumbbell Bench Press" leaves "dumbbell".
+const LIFT_VARIANT_MODIFIER = /\b(incline|decline|dumbbell|db|cable|machine|smith|goblet|romanian|sumo|hack|bulgarian|deficit|pendlay|zercher|landmine|preacher|spider|reverse|paused?|close[- ]?grip|wide[- ]?grip|single[- ]?arm|one[- ]?arm|neutral[- ]?grip)\b/;
+
+// After a lift has been matched, does the message ALSO name a DIFFERENT lift? Strips the
+// matched lift's significant words, then flags either a distinct canonical lift in the
+// remainder ("Bench Press and Deadlift…" → Deadlift, off-snapshot) OR a surviving variant
+// modifier ("Bench Press and Incline Bench Press…" → "incline"). Either means the correction
+// is multi-lift and must fail closed, even though namedLiftsInMessage surfaced only the
+// in-plan lift (Codex #1128). The interim heuristic can't perfectly enumerate every free-text
+// lift mention — the definitive fix is the Phase-4 packet referent set at answer time.
 function mentionsAnotherLift(message, matchedName) {
   const words = significantWords(matchedName);
   if (!words.length) return false;
   let stripped = normalize(message);
   for (const w of words) stripped = stripped.replace(new RegExp(`\\b${escapeRe(w)}\\w*`, 'g'), ' ');
-  return messageNamesALift(stripped);
+  return messageNamesALift(stripped) || LIFT_VARIANT_MODIFIER.test(stripped);
 }
 
 function namedLiftsInMessage(message, context) {
