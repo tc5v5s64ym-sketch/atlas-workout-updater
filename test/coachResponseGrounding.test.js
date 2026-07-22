@@ -314,6 +314,25 @@ test('resolveDisputedLiftEntry: a correction naming multiple plan lifts fails cl
   assert.equal((g.resolveDisputedLiftEntry("Seated Row isn't what you planned, you said 8.", plan, [], { lastDiscussedLift: g.canonicalKey('Bench Press') }) || {}).name, 'Seated Row');
 });
 
+// A message that names exactly one lift which is NOT in current_plan — e.g. an unplanned
+// preview/history lift that knownLiftNames surfaces — must fail closed rather than answer
+// for a stale referent (Codex #1128).
+test('resolveDisputedLiftEntry: a named lift not in the current plan fails closed (never a stale referent)', () => {
+  const ctx = {
+    current_plan: [
+      { name: 'Bench Press', sets: 4, reps: 6, weight: 185, rir: 2 },
+      { name: 'Seated Row', sets: 3, reps: 10, weight: 200, rir: 1 },
+    ],
+    current_preview: [{ exercise: 'Deadlift' }], // unplanned — in the preview, not the plan
+  };
+  // "Deadlift isn't what you planned" names Deadlift (a preview row), which is not a plan
+  // entry → clarify, do NOT answer for the saved Bench referent.
+  assert.equal(g.resolveDisputedLiftEntry("Deadlift isn't what you planned. 3 sets at 6.", ctx, [], { lastDiscussedLift: g.canonicalKey('Bench Press') }), null);
+  assert.match(g.buildDisputeAnswer("Deadlift isn't what you planned.", ctx, [], { lastDiscussedLift: g.canonicalKey('Bench Press') }), /not sure which exercise|tell me the lift/i);
+  // A named lift that IS in the plan still resolves.
+  assert.equal((g.resolveDisputedLiftEntry("Bench Press isn't what you planned, you said 8.", ctx, [], { lastDiscussedLift: g.canonicalKey('Seated Row') }) || {}).name, 'Bench Press');
+});
+
 // ── fail-closed property: no denylist reliance ───────────────────────────────
 
 test('FAIL-CLOSED: buildDisputeAnswer never emits a completed-mutation claim for ANY dispute, incl. novel wording the denylist would miss', () => {

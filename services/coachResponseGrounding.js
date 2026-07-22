@@ -442,14 +442,20 @@ function resolveDisputedLiftEntry(message, context, history, opts) {
     return plan.find((e) => canonicalKey(e.name || e.exercise) === key) || null;
   };
 
-  // 1. Named in the current message (exactly one).
+  // 1. Named in the current message. The athlete explicitly named a lift, so the answer
+  //    must be about THAT lift or a clarification — never a substituted referent. Resolve
+  //    only when EXACTLY ONE named lift maps to a current_plan entry. Otherwise fail closed
+  //    before the referent/history fallbacks (Codex #1128):
+  //      • more than one named ("Bench Press and Seated Row aren't what you planned") is an
+  //        ambiguous correction, not an omitted-lift one; and
+  //      • a single named lift that is NOT in the current plan — e.g. an unplanned preview
+  //        or history lift that knownLiftNames surfaces ("Deadlift isn't what you planned"
+  //        when Deadlift is only a preview row) — must clarify, not answer for a stale lift.
   const named = namedLiftsInMessage(message, c);
-  if (named.length === 1) { const e = findEntry(named[0]); if (e) return e; }
-  // The message explicitly names MORE THAN ONE active-session lift ("Bench Press and Seated
-  // Row aren't what you planned") — an AMBIGUOUS correction, not an omitted-lift one. Fail
-  // closed rather than letting a single-lift referent (tier 2) or the history scan answer
-  // for just one of them (Codex #1128).
-  if (named.length > 1) return null;
+  if (named.length >= 1) {
+    if (named.length === 1) { const e = findEntry(named[0]); if (e) return e; }
+    return null;
+  }
 
   // 2. The session's server-recorded last-discussed lift (already freshness-bounded).
   if (o.lastDiscussedLift) { const e = findEntry(o.lastDiscussedLift); if (e) return e; }
