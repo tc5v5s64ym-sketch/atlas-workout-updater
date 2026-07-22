@@ -333,6 +333,20 @@ test('resolveDisputedLiftEntry: a named lift not in the current plan fails close
   assert.equal((g.resolveDisputedLiftEntry("Bench Press isn't what you planned, you said 8.", ctx, [], { lastDiscussedLift: g.canonicalKey('Seated Row') }) || {}).name, 'Bench Press');
 });
 
+// A named canonical lift that appears NOWHERE in the snapshot (not plan, preview, or
+// history) — namedLiftsInMessage returns [] for it, but messageNamesALift recognizes it —
+// must also fail closed, not answer for a referent (Codex #1128).
+test('resolveDisputedLiftEntry: a named lift absent from the whole snapshot fails closed', () => {
+  const ctx = { current_plan: [
+    { name: 'Bench Press', sets: 4, reps: 6, weight: 185, rir: 2 },
+    { name: 'Seated Row', sets: 3, reps: 10, weight: 200, rir: 1 },
+  ] }; // Deadlift is nowhere — not plan, preview, stalls, or recent sessions
+  assert.equal(g.resolveDisputedLiftEntry("Deadlift isn't what you planned. 3 sets at 6.", ctx, [], { lastDiscussedLift: g.canonicalKey('Bench Press') }), null);
+  assert.match(g.buildDisputeAnswer("Deadlift isn't what you planned.", ctx, [], { lastDiscussedLift: g.canonicalKey('Bench Press') }), /not sure which exercise|tell me the lift/i);
+  // A genuine omitted-lift correction (names no lift) still resolves via the referent.
+  assert.equal((g.resolveDisputedLiftEntry("That isn't what you planned. 3 sets at 6.", ctx, [], { lastDiscussedLift: g.canonicalKey('Bench Press') }) || {}).name, 'Bench Press');
+});
+
 // ── fail-closed property: no denylist reliance ───────────────────────────────
 
 test('FAIL-CLOSED: buildDisputeAnswer never emits a completed-mutation claim for ANY dispute, incl. novel wording the denylist would miss', () => {

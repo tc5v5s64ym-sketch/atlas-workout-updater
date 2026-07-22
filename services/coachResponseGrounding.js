@@ -456,6 +456,12 @@ function resolveDisputedLiftEntry(message, context, history, opts) {
     if (named.length === 1) { const e = findEntry(named[0]); if (e) return e; }
     return null;
   }
+  // The athlete named a canonical lift that appears NOWHERE in the snapshot (not plan,
+  // preview, or history) — namedLiftsInMessage returns [] for it, but messageNamesALift
+  // still recognizes it. It is an explicitly named lift, so fail closed rather than answer
+  // for a referent (Codex #1128). A genuine omitted-lift correction names no lift, so
+  // messageNamesALift is false there and tier 2/3 below still run.
+  if (messageNamesALift(message)) return null;
 
   // 2. The session's server-recorded last-discussed lift (already freshness-bounded).
   if (o.lastDiscussedLift) { const e = findEntry(o.lastDiscussedLift); if (e) return e; }
