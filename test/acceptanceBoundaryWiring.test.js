@@ -26,7 +26,7 @@ test('boundary wiring: the gate SILENTLY auto-accepts and resumes the held set â
   assert.match(branch, /return;/, 'the gate returns without committing on this path');
   assert.doesNotMatch(branch, /emitSetLogged/, 'nothing commits on the blocked path');
   // The gate sits INSIDE the mid-session commit branch â€” before classification.
-  const mid = appSrc.indexOf('if (logRows.length && !file && !manualEffort && !sessionCompiledAwaitingPreview && !screenshotConvertedCloseout)');
+  const mid = appSrc.indexOf('if (logRows.length && !file && !manualEffort && !sessionCompiledAwaitingPreview && !screenshotConvertedCloseout');
   const gate = appSrc.indexOf('const gateRec = unacceptedPlanGateRec(logRows);');
   const classify = appSrc.indexOf('Substitution classification:');
   assert.ok(mid !== -1 && mid < gate && gate < classify, 'gate placement: mid-session branch top, before classification');

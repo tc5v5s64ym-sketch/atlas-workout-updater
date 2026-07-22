@@ -3498,6 +3498,22 @@ let lastIntentData = null;
 // Cleared immediately after being read — single-use gate.
 let sessionCompiledAwaitingPreview = false;
 
+// P0 (#1123) — LATCHED closeout-stage guard. Once a closeout dry-run preview has
+// been staged from sessionLog, this stays true until the session resets (a verified
+// approved write or a deliberate Start Over / discard — all of which fire
+// atlas:session-reset and clear it below). It exists because
+// `sessionCompiledAwaitingPreview` is single-use: after the first closeout preview it
+// resets, so a later plain preview-btn submit — with the buffered closeout rows still
+// in the editor — used to satisfy the ordinary mid-workout log branch and call
+// emitSetLogged, appending those same rows back into sessionLog (5 squat sets → 10,
+// duplicating permanent history). While this latch is set, a submit that introduces NO
+// new parsed input (a plain re-preview/edit of the staged table) REBUILDS the closeout
+// preview from the (edited) editor table instead of re-logging it. A genuinely new set
+// typed after Finish DOES parse new input and still logs normally, so "log one more set"
+// after Finish is never lost (Codex #1125). Fail-closed: once staged, an ambiguous
+// re-preview never re-enters the append lane.
+let closeoutPreviewStaged = false;
+
 // Populated after a successful manual write. Cleared only after undo or when
 // the user explicitly picks "Log as new" in the correction dialog. NOT cleared
 // by invalidatePreview so the correction guard can fire even after the user
@@ -4335,6 +4351,11 @@ document.addEventListener('atlas:session-reset', () => setFinishSessionVisible(f
 // The pin re-derives (and hides) on every session reset — same signal that
 // clears the finish button, so the two can never disagree about "in progress".
 document.addEventListener('atlas:session-reset', renderSessionPin);
+// #1123: a session reset is the ONLY thing that clears the closeout-stage latch — it
+// fires on a verified approved write, Start Over, and discard-of-restored, i.e. exactly
+// when sessionLog is cleared. So the latch is true only between a staged closeout and
+// the next reset, and can never leak the append-block into a genuinely new session.
+document.addEventListener('atlas:session-reset', () => { closeoutPreviewStaged = false; });
 
 function collectManualEffort(sessionId, date, location, notes) {
   const duration = document.getElementById('effort-duration').value.trim();
@@ -6261,6 +6282,13 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     return;
   }
 
+  // #1123: capture whether THIS submit introduces NEW parsed input. rowsFromWorkoutInput()
+  // advances lastParsedWorkoutText ONLY on a real parse; it early-returns (leaving the
+  // value — and the editor table — untouched) when there is no new/changed workout text,
+  // i.e. a plain re-preview of the already-staged closeout table. That distinction lets the
+  // closeout-stage guard block the re-preview REPLAY without swallowing a genuinely new
+  // "log one more set after Finish", which must still append to the buffer.
+  const parsedTextBeforeSubmit = lastParsedWorkoutText;
   let logRows = [];
   try {
     await rowsFromWorkoutInput();
@@ -6490,7 +6518,12 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
   // screenshot, or manual effort. This makes "no mid-workout Save" a STRUCTURAL
   // invariant — the preview/approve/write surface is unreachable from logging a
   // set, by construction (not just hidden by styling).
-  if (logRows.length && !file && !manualEffort && !sessionCompiledAwaitingPreview && !screenshotConvertedCloseout) {
+  // #1123: a plain re-preview of the staged closeout table parses no new input, so it must
+  // NOT re-enter this append lane (that was the 5→10 replay). A genuinely new set typed
+  // after Finish DID parse new input and must still log here — otherwise it would be staged
+  // as a one-row closeout and the buffered work would be dropped on the approved write.
+  const isCloseoutRePreview = closeoutPreviewStaged && lastParsedWorkoutText === parsedTextBeforeSubmit;
+  if (logRows.length && !file && !manualEffort && !sessionCompiledAwaitingPreview && !screenshotConvertedCloseout && !isCloseoutRePreview) {
     // F10D acceptance boundary: a set from an unaccepted displayed/engaged plan
     // holds HERE — nothing commits — until the athlete presses the one existing
     // "Start this plan" action. The held message resumes through this same
@@ -6601,9 +6634,15 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
   // converted lane above — flagged separately so an unreadable screenshot's
   // rows-only closeout still gets its confirmation).
   const isSessionCloseout = sessionCompiledAwaitingPreview === true
+    || closeoutPreviewStaged === true   // #1123: a re-preview of an already-staged closeout is still a closeout
     || (logRows.length > 0 && Boolean(manualEffort))
     || screenshotConvertedCloseout;
   sessionCompiledAwaitingPreview = false;
+  // #1123: latch the closeout stage so it survives the single-use flag reset above. From
+  // here a re-preview/edit that parses no new input rebuilds the closeout preview from the
+  // editor table (the mid-workout append lane above is skipped for it), until the session
+  // resets on a verified write or deliberate Start Over.
+  if (isSessionCloseout) closeoutPreviewStaged = true;
 
   const previewBtn = document.getElementById('preview-btn');
   previewBtn.disabled = true;
