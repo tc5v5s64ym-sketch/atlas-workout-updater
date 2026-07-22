@@ -89,6 +89,8 @@ Examples:
 - `docs/COACH_INTERACTION_TRUST_INVESTIGATION.md`
 - `docs/proposals/`
 - `docs/reference/ATLAS_RECOVERY_CAMPAIGN_SPEC.md` — verbatim owner input for the Atlas Recovery Campaign. **Reference input only**; the executable truth is the campaign embedded in the execution plan.
+- `docs/reference/ATLAS_SOUL_CORPUS_V2_SESSIONS.md` + `docs/reference/ATLAS_SOUL_CORPUS_V2_SYNTHESIS.md` — the owner-provided Atlas Soul Corpus V2 (fifteen annotated coaching sessions + its engineering synthesis). **Reference input only** — a behavioral corpus, not a prompt/template/roadmap; it selects no work. Replayed against the real read-only code by the Corpus Baseline Runner (scoreboard: `docs/verification/CORPUS_BASELINE_SCOREBOARD.md`).
+- `docs/reference/ATLAS_SOUL_CORPUS_V2_SECTION_F_RECONCILIATION.md` — maps each Soul Corpus V2 Section-F gap to the campaign phase that already owns it; genuinely-new items filed as `BACKLOG.md` intake. **A mapping, not a plan** — sequences nothing; the execution plan governs.
 - `docs/SOUL_RECOVERY_AUDIT.md` — the Phase 1 recovery audit: every live workout voice path mapped to its facts/model/persona/override/output. Evidence for Issue #1073; read-only.
 
 ## Retired compatibility pointers
