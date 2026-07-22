@@ -408,25 +408,76 @@ function claimDiffersFromPlan(claim, entry) {
   return false;
 }
 
+// The plan entry a factual dispute is about, resolved DETERMINISTICALLY (never the model,
+// never numeric similarity) by a fixed precedence. The production correction ("That isn't
+// what you planned. You planned 3 sets at 8 reps.") omits the lift name while the active
+// plan holds several exercises — the referent is the lift the athlete was just discussing,
+// recovered from the prior turn (step 3). Returns the plan entry, or null so the caller
+// fails closed with the ambiguity response.
+//
+//   1. a lift explicitly named in the CURRENT message (exactly one);
+//   2. an EXISTING explicit active/current-exercise field carried in the trusted context —
+//      honored only if present. The current client (src/app/app.js `routeMessageToCoach`)
+//      sends current_plan / current_preview / session_tally / plan_completed / plan_state
+//      and NO active-exercise field, so this tier is inert today; it is NOT inventing the
+//      field, only deferring to one should a future context carry it;
+//   3. the most recent prior ATHLETE (role:'user') message in `history` that names exactly
+//      one current_plan exercise — the omitted-lift referent (e.g. the Seated Row the
+//      athlete asked about one turn earlier). Atlas's own replies are never a referent;
+//   4. the sole current_plan exercise when the plan has exactly one;
+//   5. otherwise null (fail closed).
+function resolveDisputedLiftEntry(message, context, history) {
+  const c = context && typeof context === 'object' ? context : {};
+  const plan = Array.isArray(c.current_plan) ? c.current_plan.filter((e) => e && (e.name || e.exercise)) : [];
+  if (!plan.length) return null;
+  const findEntry = (name) => {
+    if (!name) return null;
+    const key = canonicalKey(name);
+    return plan.find((e) => canonicalKey(e.name || e.exercise) === key) || null;
+  };
+
+  // 1. Named in the current message (exactly one).
+  const named = namedLiftsInMessage(message, c);
+  if (named.length === 1) { const e = findEntry(named[0]); if (e) return e; }
+
+  // 2. An existing explicit active-exercise field in the trusted context (inert today).
+  const activeName = typeof c.active_exercise === 'string' ? c.active_exercise
+    : (typeof c.current_exercise === 'string' ? c.current_exercise : null);
+  if (activeName) { const e = findEntry(activeName); if (e) return e; }
+
+  // 3. Most recent prior athlete message naming exactly one plan exercise.
+  if (Array.isArray(history)) {
+    for (let i = history.length - 1; i >= 0; i -= 1) {
+      const turn = history[i];
+      if (!turn || typeof turn !== 'object' || turn.role !== 'user') continue;
+      const text = typeof turn.text === 'string' ? turn.text
+        : (typeof turn.message === 'string' ? turn.message : '');
+      if (!text) continue;
+      const inTurn = namedLiftsInMessage(text, c);
+      if (inTurn.length === 1) { const e = findEntry(inTurn[0]); if (e) return e; }
+    }
+  }
+
+  // 4. Sole plan exercise.
+  if (plan.length === 1) return plan[0];
+
+  // 5. Fail closed.
+  return null;
+}
+
 // The deterministic answer to a factual plan dispute: state what the plan currently
 // shows for the disputed lift, distinguish the athlete's claim, and state plainly that
 // nothing was changed. Never claims an update/save/switch/adjustment. When the plan (or
 // the specific lift) is not in view, it states that uncertainty rather than inventing a
-// target. This bypasses the model entirely for the factual answer (fail-closed).
-function buildDisputeAnswer(message, context) {
+// target. This bypasses the model entirely for the factual answer (fail-closed). `history`
+// (prior `{role,text}` turns) supplies the omitted-lift referent for a bare correction.
+function buildDisputeAnswer(message, context, history) {
   const c = context && typeof context === 'object' ? context : {};
   const plan = Array.isArray(c.current_plan) ? c.current_plan.filter((e) => e && (e.name || e.exercise)) : [];
   if (!plan.length) {
     return "I don't have the current plan in view here, so I can't confirm what it shows — and I haven't changed anything.";
   }
-  const named = namedLiftsInMessage(message, c);
-  let entry = null;
-  if (named.length === 1) {
-    const key = canonicalKey(named[0]);
-    entry = plan.find((e) => canonicalKey(e.name || e.exercise) === key) || null;
-  } else if (named.length === 0 && plan.length === 1) {
-    entry = plan[0];
-  }
+  const entry = resolveDisputedLiftEntry(message, c, history);
   if (!entry) {
     return "I have the current plan in view, but I'm not sure which exercise you mean — tell me the lift and I'll read back exactly what it shows. I haven't changed anything.";
   }
@@ -461,6 +512,7 @@ module.exports = {
   narrowContextToPlanTurn,
   detectUnsupportedMutationClaim,
   extractClaimedTargets,
+  resolveDisputedLiftEntry,
   buildGroundedPlanStatement,
   buildDisputeAnswer,
 };

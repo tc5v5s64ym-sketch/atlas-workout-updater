@@ -1297,7 +1297,11 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // was changed — never a denylist to outrun. "Why did you…" explanations and
       // modification requests ("change it to…") are excluded and fall through below.
       if (coachResponseGrounding.isFactualPlanDispute(message, context)) {
-        const disputeAnswer = coachResponseGrounding.buildDisputeAnswer(message, context);
+        // `history` (prior {role,text} turns) supplies the omitted-lift referent when the
+        // correction names no lift and the plan holds several exercises — the exact
+        // production sequence (athlete asks about Seated Row, then disputes without naming
+        // it). Deterministic resolver; the model is still never called on this branch.
+        const disputeAnswer = coachResponseGrounding.buildDisputeAnswer(message, context, history);
         return standardSuccess(req, res, 'Coach chat — grounded active-plan dispute (deterministic)', {
           message: disputeAnswer, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
           configured: true, model: coach.coachModel(), source: 'engine'

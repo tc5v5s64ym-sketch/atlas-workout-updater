@@ -228,6 +228,36 @@ test('buildDisputeAnswer: weight and no-plan variants stay grounded and invent n
   assert.doesNotMatch(none, /\b\d+ sets\b/, 'no fabricated numbers when the plan is absent');
 });
 
+// Omitted-lift correction in a MULTI-exercise plan — the disputed lift is resolved by a
+// deterministic precedence (current message → context active field → prior athlete turn →
+// sole plan exercise), never the model, never numeric similarity.
+test('buildDisputeAnswer: resolves the omitted-lift referent from history in a multi-exercise plan', () => {
+  const plan = { current_plan: [
+    { name: 'Seated Row', sets: 3, reps: 10, weight: 200, rir: 1 },
+    { name: 'Bench Press', sets: 4, reps: 6, weight: 185, rir: 2 },
+    { name: 'Back Squat', sets: 5, reps: 5, weight: 275, rir: 2 },
+  ] };
+  const correction = "That isn't what you planned. You planned 3 sets at 8 reps.";
+  // step 3 — the prior athlete turn named Seated Row, so the bare correction resolves to it.
+  const hist = [
+    { role: 'user', text: 'Why did you program seated rows for 200 at 10 reps with 1 RIR?' },
+    { role: 'atlas', text: 'To add back volume.' },
+  ];
+  const a = g.buildDisputeAnswer(correction, plan, hist);
+  assert.match(a, /Seated Row/); assert.match(a, /3 sets of 10/); assert.match(a, /200/); assert.match(a, /1 RIR/);
+  assert.match(a, /not 3 sets of 8/i); assert.match(a, /haven't changed/i);
+  assert.equal(g.detectUnsupportedMutationClaim(a).length, 0);
+  // Atlas's own reply is NEVER a referent; a two-lift athlete turn is ambiguous → fail closed.
+  assert.match(g.buildDisputeAnswer(correction, plan, [{ role: 'atlas', text: 'Bench Press looks strong.' }]), /not sure which exercise/i);
+  assert.match(g.buildDisputeAnswer(correction, plan, [{ role: 'user', text: 'How are Bench Press and Back Squat?' }]), /not sure which exercise/i);
+  // No usable history + multi-exercise plan → fail closed (never guesses a lift).
+  assert.match(g.buildDisputeAnswer(correction, plan, []), /not sure which exercise/i);
+  // step 1 — a lift named in the CURRENT message wins over history.
+  assert.match(g.buildDisputeAnswer('You planned Bench Press at 3 sets of 8, not 6.', plan, hist), /Bench Press/);
+  // step 2 — an explicit active-exercise field is honored if a context carries one.
+  assert.match(g.buildDisputeAnswer(correction, { ...plan, active_exercise: 'Back Squat' }, []), /Back Squat/);
+});
+
 // ── fail-closed property: no denylist reliance ───────────────────────────────
 
 test('FAIL-CLOSED: buildDisputeAnswer never emits a completed-mutation claim for ANY dispute, incl. novel wording the denylist would miss', () => {

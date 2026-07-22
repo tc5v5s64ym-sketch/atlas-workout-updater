@@ -253,6 +253,59 @@ test('FAIL-CLOSED: a factual dispute never invokes the model — novel "already 
   assert.equal(json.data.source, 'engine');
 });
 
+// The exact production sequence: an explanation about Seated Row, then a correction that
+// OMITS the lift name while the active plan holds several exercises. The disputed lift is
+// recovered deterministically from the prior turn — the model is still never called.
+const MULTI_PLAN = { current_plan: [
+  { name: 'Seated Row', sets: 3, reps: 10, weight: 200, rir: 1 },
+  { name: 'Bench Press', sets: 4, reps: 6, weight: 185, rir: 2 },
+  { name: 'Back Squat', sets: 5, reps: 5, weight: 275, rir: 2 },
+], plan_completed: [] };
+
+test('FAIL-CLOSED (production sequence): a bare correction resolves the disputed lift from the prior turn in a multi-exercise plan', async () => {
+  resetCoach();
+  // False completed-write prose the model must never get the chance to emit.
+  coachState.reply = 'Done — I rewrote Seated Row to 3 sets of 8 and saved it.';
+  coachState.propose_plan_edit = { action: 'replace_plan', exercises: [{ name: 'Seated Row', sets: 3, reps: 8, weight: 200, rir: 1 }] };
+  const history = [
+    { role: 'user', text: 'Why did you program seated rows for 200 pounds at 10 reps with 1 RIR?' },
+    { role: 'atlas', text: 'Seated Row is set at 200 for 10 at 1 RIR to add back volume.' },
+  ];
+  const { res, json } = await post({ message: "That isn't what you planned. You planned 3 sets at 8 reps.", context: MULTI_PLAN, history });
+  assert.equal(res.status, 200);
+  assert.equal(coachState.chatReplyCalls, 0, 'the model is never called — the referent is resolved deterministically from the prior turn');
+  const msg = json.data.message;
+  assert.match(msg, /Seated Row/, 'names the disputed lift, recovered from the prior athlete turn');
+  assert.match(msg, /3 sets of 10/, 'states the real prescription (3 sets of 10)');
+  assert.match(msg, /200/, 'at 200');
+  assert.match(msg, /1 RIR/, 'and 1 RIR');
+  assert.match(msg, /not 3 sets of 8/i, "distinguishes the athlete's 3-sets-of-8 claim");
+  assert.match(msg, /haven't changed/i, 'states plainly that nothing was changed');
+  assert.doesNotMatch(msg, /rewrote|saved|locked|rewritten/i, 'the false completed-write prose never reaches the athlete');
+  assert.equal(json.data.propose_plan_edit, null, 'no proposal survives a bypassed dispute turn');
+  assert.equal(json.data.source, 'engine');
+  // Read-only: appendRows throws if hit, so reaching here proves no write occurred.
+});
+
+test('FAIL-CLOSED negative control: an unresolvable bare correction in a multi-exercise plan states uncertainty, still never calls the model', async () => {
+  resetCoach();
+  coachState.reply = 'All set — the plan now reads 3 sets of 8.';
+  coachState.propose_plan_edit = { action: 'replace_plan', exercises: [{ name: 'Seated Row', sets: 3, reps: 8, weight: 200, rir: 1 }] };
+  // Prior conversation exists but names no single plan lift, and no active-exercise context.
+  const history = [
+    { role: 'user', text: 'Thanks, that helps a lot.' },
+    { role: 'atlas', text: 'Anytime — glad it landed.' },
+  ];
+  const { res, json } = await post({ message: "That isn't what you planned. You planned 3 sets at 8 reps.", context: MULTI_PLAN, history });
+  assert.equal(res.status, 200);
+  assert.equal(coachState.chatReplyCalls, 0, 'still fail-closed — the model is not called even when the referent is unresolved');
+  assert.match(json.data.message, /not sure which exercise|tell me the lift/i, 'states uncertainty instead of guessing a lift');
+  assert.match(json.data.message, /haven't changed/i);
+  assert.doesNotMatch(json.data.message, /now reads|All set|3 sets of 8/i, 'no model prose and no invented target');
+  assert.equal(json.data.propose_plan_edit, null);
+  assert.equal(json.data.source, 'engine');
+});
+
 test('explanation ("why did you…") still reaches the model — only factual disputes are short-circuited', async () => {
   resetCoach();
   coachState.reply = 'On Seated Row the plan calls for 200 for 10 at 1 RIR to progress from 195.';
