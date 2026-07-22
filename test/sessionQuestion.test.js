@@ -401,6 +401,51 @@ test('isWorkoutGenerationRequest is safe on empty / non-string input', () => {
 });
 
 // ---------------------------------------------------------------------------
+// 2026-07-22 production routing gap (deployed 9f72ee5): telemetry classified these
+// three real athlete messages as generate_workout, but the browser classifier returned
+// false because "work out" was written as TWO words — so they leaked to /api/coach/chat.
+// The fix normalizes the equivalent noun spellings (workout | work out | work-out) before
+// matching. These lock in the exact production messages and the equivalence.
+// ---------------------------------------------------------------------------
+
+const PROD_GEN_MESSAGES = [
+  'Plan me a work out but have it start with bench press',
+  'Plan me a work out but have it start with squats',
+  'Plan me a work out but have it start with lat pull',
+];
+
+test('isWorkoutGenerationRequest recognizes the exact two-word "work out" production messages', () => {
+  for (const m of PROD_GEN_MESSAGES) {
+    assert.equal(isWorkoutGenerationRequest(m), true, `two-word "work out" must route to generation: ${JSON.stringify(m)}`);
+  }
+});
+
+test('isWorkoutGenerationRequest treats workout / work out / work-out as the same noun', () => {
+  assert.equal(isWorkoutGenerationRequest('Plan me a workout'), true);
+  assert.equal(isWorkoutGenerationRequest('Plan me a work out'), true);
+  assert.equal(isWorkoutGenerationRequest('Plan me a work-out'), true);
+  // Multiple internal spaces (mobile keyboards) still normalize.
+  assert.equal(isWorkoutGenerationRequest('Plan me a work  out'), true);
+});
+
+test('isWorkoutGenerationRequest preserves education for the two-word spelling (no plan generated)', () => {
+  const education = [
+    'How do I work out?',            // how-to — education, never a plan
+    'How do I plan a workout?',      // how-to — education
+    'What muscles does this work out?', // "work out" as a VERB about a movement — not a plan request
+  ];
+  for (const q of education) {
+    assert.equal(isWorkoutGenerationRequest(q), false, `education must not generate a plan: ${JSON.stringify(q)}`);
+  }
+});
+
+test('extractGenerationConstraints preserves the requested first exercise for the two-word messages', () => {
+  assert.equal(extractGenerationConstraints(PROD_GEN_MESSAGES[0]).firstExercise, 'bench press');
+  assert.equal(extractGenerationConstraints(PROD_GEN_MESSAGES[1]).firstExercise, 'squats');
+  assert.equal(extractGenerationConstraints(PROD_GEN_MESSAGES[2]).firstExercise, 'lat pull');
+});
+
+// ---------------------------------------------------------------------------
 // extractGenerationConstraints — the structured planning INPUTS carried by a
 // generation request: a requested FIRST exercise ("start with back squats") and a
 // focus / movement pattern ("pull workout", "upper body", "leg day"). These become

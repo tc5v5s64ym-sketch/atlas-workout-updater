@@ -153,3 +153,25 @@ test('the requested-first generation path never writes to the Sheet (read-only t
   await getRec('?firstExercise=Zercher%20Carry');
   assert.equal(sheetState.appendCalls.length, before, 'generation/preview must never append rows');
 });
+
+// 2026-07-22 production messages (deployed 9f72ee5): "Plan me a work out but have it start
+// with {bench press | squats | lat pull}". Once the two-word "work out" is classified as a
+// generation request, extractGenerationConstraints threads these exact first exercises into
+// this authoritative route. Each must LEAD the returned plan — the requested first exercise
+// preserved, and the plan's lead row consistent with the recorded requested lead.
+const { normKey } = require('../services/planFirstExercise');
+
+for (const firstExercise of ['bench press', 'squats', 'lat pull']) {
+  test(`the production first exercise "${firstExercise}" leads the authoritative plan`, async () => {
+    const { res, body } = await getRec(`?firstExercise=${encodeURIComponent(firstExercise)}`);
+    assert.equal(res.status, 200);
+    const rec = recommendedIntent(body);
+    assert.ok(rec && Array.isArray(rec.exercises) && rec.exercises.length, 'a recommended intent with exercises');
+    assert.ok(rec.requested_first_exercise, 'the intent records the requested lead (first exercise preserved)');
+    // The plan's visible lead row IS the recorded requested lead — no divergence at the source.
+    assert.equal(
+      normKey(rec.exercises[0].exercise || rec.exercises[0].name),
+      normKey(rec.requested_first_exercise),
+      'the plan leads with the requested first exercise');
+  });
+}

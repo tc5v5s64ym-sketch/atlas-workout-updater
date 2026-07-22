@@ -183,8 +183,24 @@ const _exports = (function () {
   // have a session generated ("How do I plan a workout?", "How to program a push day?").
   const GEN_HOWTO_RE = /\bhow (?:to|do|does|can|could|should|would)\b/;
 
+  // "work out" (two words) and "work-out" (hyphenated) are the completely normal noun
+  // spellings of "workout". Normalize them to the closed form BEFORE matching so a
+  // generation request is recognized regardless of spelling. 2026-07-22 production
+  // failure (deployed 9f72ee5): three real athlete messages ("Plan me a work out but
+  // have it start with …") were classified generate_workout by telemetry yet missed
+  // this client classifier — because only the closed "workout" was recognized — and
+  // leaked to the free-form /api/coach/chat pseudo-plan lane. Fail closed: this only
+  // WIDENS recognition of the noun; the how-to education guard still runs on the
+  // normalized text ("How do I work out?" → "how do i workout?" → GEN_HOWTO_RE bails),
+  // and the verb "working out" is untouched (no space/hyphen directly after "work").
+  const WORKOUT_NOUN_RE = /\bwork[\s-]+out\b/g;
+  function normalizeWorkoutNoun(m) {
+    return m.replace(WORKOUT_NOUN_RE, 'workout');
+  }
+
   function isWorkoutGenerationRequest(message) {
-    const m = (typeof message === 'string' ? message : '').toLowerCase().replace(/[‘’ʼ′]/g, "'").trim();
+    const m = normalizeWorkoutNoun(
+      (typeof message === 'string' ? message : '').toLowerCase().replace(/[‘’ʼ′]/g, "'").trim());
     if (!m) return false;
     if (GEN_HOWTO_RE.test(m)) return false; // "how do I plan a workout?" is education
     return GEN_REQUEST_RE.test(m) || GEN_ASK_RE.test(m);
