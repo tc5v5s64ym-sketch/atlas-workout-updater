@@ -3506,10 +3506,12 @@ let sessionCompiledAwaitingPreview = false;
 // resets, so a later plain preview-btn submit — with the buffered closeout rows still
 // in the editor — used to satisfy the ordinary mid-workout log branch and call
 // emitSetLogged, appending those same rows back into sessionLog (5 squat sets → 10,
-// duplicating permanent history). While this latch is set the mid-workout append lane
-// is skipped, so a re-preview/edit/re-submit REBUILDS the closeout preview from the
-// (edited) editor table instead of re-logging it. Fail-closed: once staged, an
-// ambiguous re-submit never re-enters the append lane.
+// duplicating permanent history). While this latch is set, a submit that introduces NO
+// new parsed input (a plain re-preview/edit of the staged table) REBUILDS the closeout
+// preview from the (edited) editor table instead of re-logging it. A genuinely new set
+// typed after Finish DOES parse new input and still logs normally, so "log one more set"
+// after Finish is never lost (Codex #1125). Fail-closed: once staged, an ambiguous
+// re-preview never re-enters the append lane.
 let closeoutPreviewStaged = false;
 
 // Populated after a successful manual write. Cleared only after undo or when
@@ -6280,6 +6282,13 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     return;
   }
 
+  // #1123: capture whether THIS submit introduces NEW parsed input. rowsFromWorkoutInput()
+  // advances lastParsedWorkoutText ONLY on a real parse; it early-returns (leaving the
+  // value — and the editor table — untouched) when there is no new/changed workout text,
+  // i.e. a plain re-preview of the already-staged closeout table. That distinction lets the
+  // closeout-stage guard block the re-preview REPLAY without swallowing a genuinely new
+  // "log one more set after Finish", which must still append to the buffer.
+  const parsedTextBeforeSubmit = lastParsedWorkoutText;
   let logRows = [];
   try {
     await rowsFromWorkoutInput();
@@ -6509,7 +6518,12 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
   // screenshot, or manual effort. This makes "no mid-workout Save" a STRUCTURAL
   // invariant — the preview/approve/write surface is unreachable from logging a
   // set, by construction (not just hidden by styling).
-  if (logRows.length && !file && !manualEffort && !sessionCompiledAwaitingPreview && !screenshotConvertedCloseout && !closeoutPreviewStaged) {
+  // #1123: a plain re-preview of the staged closeout table parses no new input, so it must
+  // NOT re-enter this append lane (that was the 5→10 replay). A genuinely new set typed
+  // after Finish DID parse new input and must still log here — otherwise it would be staged
+  // as a one-row closeout and the buffered work would be dropped on the approved write.
+  const isCloseoutRePreview = closeoutPreviewStaged && lastParsedWorkoutText === parsedTextBeforeSubmit;
+  if (logRows.length && !file && !manualEffort && !sessionCompiledAwaitingPreview && !screenshotConvertedCloseout && !isCloseoutRePreview) {
     // F10D acceptance boundary: a set from an unaccepted displayed/engaged plan
     // holds HERE — nothing commits — until the athlete presses the one existing
     // "Start this plan" action. The held message resumes through this same
@@ -6624,10 +6638,10 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     || (logRows.length > 0 && Boolean(manualEffort))
     || screenshotConvertedCloseout;
   sessionCompiledAwaitingPreview = false;
-  // #1123: latch the closeout stage so it survives the single-use flag reset above.
-  // From here every re-preview/edit/re-submit rebuilds the closeout preview from the
-  // editor table (the mid-workout append lane above is skipped while this is set),
-  // until the session resets on a verified write or deliberate Start Over.
+  // #1123: latch the closeout stage so it survives the single-use flag reset above. From
+  // here a re-preview/edit that parses no new input rebuilds the closeout preview from the
+  // editor table (the mid-workout append lane above is skipped for it), until the session
+  // resets on a verified write or deliberate Start Over.
   if (isSessionCloseout) closeoutPreviewStaged = true;
 
   const previewBtn = document.getElementById('preview-btn');

@@ -80,16 +80,22 @@ function extractMidWorkoutCondition(src) {
 }
 const CONDITION = extractMidWorkoutCondition(appSrc);
 const midWorkoutFires = new Function(
-  'logRows', 'file', 'manualEffort', 'sessionCompiledAwaitingPreview', 'screenshotConvertedCloseout', 'closeoutPreviewStaged',
+  'logRows', 'file', 'manualEffort', 'sessionCompiledAwaitingPreview', 'screenshotConvertedCloseout', 'isCloseoutRePreview',
   `return (${CONDITION});`);
 
-// A faithful submit-decision driver: it runs the REAL mid-workout condition; when that
-// fires it calls the REAL emitSetLogged (the append). Otherwise it takes the closeout
-// path and latches the stage (mirroring `if (isSessionCloseout) closeoutPreviewStaged =
-// true;`, which is pinned by source-introspection below). `fires` is injected so the
-// same driver can run the shipped (guarded) condition OR the pre-fix (unguarded) one.
-function runSubmit(h, tableRows, state, fires = midWorkoutFires) {
-  if (fires(tableRows, state.file, state.manualEffort, state.sessionCompiledAwaitingPreview, state.screenshotConvertedCloseout, state.closeoutPreviewStaged)) {
+// A faithful submit-decision driver over the REAL mid-workout condition. `newParse`
+// models whether this submit introduced new workout input (a real parse advances
+// lastParsedWorkoutText); the app derives `isCloseoutRePreview = closeoutPreviewStaged &&
+// !newParse` — so a plain re-preview (no new parse) is blocked from the append lane while
+// a genuinely new set still logs. When the condition fires it calls the REAL emitSetLogged
+// (the append); otherwise it takes the closeout path and latches the stage (mirroring
+// `if (isSessionCloseout) closeoutPreviewStaged = true;`, pinned below). `fires` is
+// injected so the same driver can run the shipped (guarded) condition OR the pre-fix one.
+function runSubmit(h, tableRows, state, opts = {}) {
+  const newParse = opts.newParse === true;
+  const fires = opts.fires || midWorkoutFires;
+  const isCloseoutRePreview = state.closeoutPreviewStaged && !newParse;
+  if (fires(tableRows, state.file, state.manualEffort, state.sessionCompiledAwaitingPreview, state.screenshotConvertedCloseout, isCloseoutRePreview)) {
     h.emitSetLogged(tableRows, '', [], null);
     return 'mid-workout-append';
   }
@@ -117,11 +123,11 @@ const freshState = (over = {}) => Object.assign(
 
 test('REPRO (#1123): without the closeout-stage guard, a re-preview replays the 5 squat sets into sessionLog (5 → 10)', () => {
   // The pre-fix condition is the shipped one with the new guard token removed — proving
-  // it is precisely `!closeoutPreviewStaged` that stops the replay.
-  const preFixCondition = CONDITION.replace(/\s*&&\s*!closeoutPreviewStaged/, '');
-  assert.notEqual(preFixCondition, CONDITION, 'the shipped condition must carry the !closeoutPreviewStaged guard');
+  // it is precisely `!isCloseoutRePreview` that stops the replay.
+  const preFixCondition = CONDITION.replace(/\s*&&\s*!isCloseoutRePreview/, '');
+  assert.notEqual(preFixCondition, CONDITION, 'the shipped condition must carry the !isCloseoutRePreview guard');
   const preFixFires = new Function(
-    'logRows', 'file', 'manualEffort', 'sessionCompiledAwaitingPreview', 'screenshotConvertedCloseout', 'closeoutPreviewStaged',
+    'logRows', 'file', 'manualEffort', 'sessionCompiledAwaitingPreview', 'screenshotConvertedCloseout', 'isCloseoutRePreview',
     `return (${preFixCondition});`);
 
   const h = buildEmitHarness();
@@ -130,12 +136,12 @@ test('REPRO (#1123): without the closeout-stage guard, a re-preview replays the 
   const state = freshState({ sessionCompiledAwaitingPreview: true });
 
   // 1. Finish session: the compiled flag routes to closeout — no append.
-  assert.equal(runSubmit(h, tableRows, state, preFixFires), 'closeout-preview');
+  assert.equal(runSubmit(h, tableRows, state, { fires: preFixFires }), 'closeout-preview');
   assert.equal(h.sessionLogLength(), 5);
 
   // 2. Re-preview (preview-btn) with the buffered rows still staged. WITHOUT the guard,
   //    the ordinary mid-workout branch fires and re-appends the block.
-  assert.equal(runSubmit(h, tableRows, state, preFixFires), 'mid-workout-append');
+  assert.equal(runSubmit(h, tableRows, state, { fires: preFixFires }), 'mid-workout-append');
   assert.equal(h.sessionLogLength(), 10, 'the production defect: the squat block is written into sessionLog twice');
   assert.equal(h.setLoggedEvents().length, 1, 'and a DUPLICATE coach block event was emitted');
 });
@@ -161,6 +167,23 @@ test('#1123 FIX: a closeout re-preview never appends the staged rows back into s
   for (let i = 0; i < 5; i++) runSubmit(h, tableRows, state);
   assert.equal(h.sessionLogLength(), 5, 'repeated re-preview never grows the buffer');
   assert.equal(h.setLoggedEvents().length, 0, 'no duplicate coach block event is emitted during closeout');
+});
+
+// ── Codex #1125: "log one more set after Finish" must APPEND, never lose the buffer ──
+
+test('#1125 (Codex P1): a NEW set typed after a staged closeout appends to the buffer (never staged as a one-row closeout that drops history)', () => {
+  const h = buildEmitHarness();
+  h.setSessionLog(SQUAT_BLOCK());
+  const state = freshState({ sessionCompiledAwaitingPreview: true });
+  // 1. Finish → closeout staged (latched).
+  assert.equal(runSubmit(h, SQUAT_BLOCK(), state), 'closeout-preview');
+  assert.equal(h.sessionLogLength(), 5);
+  // 2. Athlete types ONE MORE set. This submit parses NEW input (newParse), so it is NOT a
+  //    re-preview — it must log through the ordinary append lane, growing the buffer to 6.
+  //    (Before this refinement it was routed to a one-row closeout, dropping the 5 on save.)
+  const oneMore = [{ exercise: 'Back Squat', weight: 225, reps: 6, rir: 1 }];
+  assert.equal(runSubmit(h, oneMore, state, { newParse: true }), 'mid-workout-append');
+  assert.equal(h.sessionLogLength(), 6, 'the five buffered sets are preserved AND the new set is logged');
 });
 
 // ── Coverage across every closeout trigger + edit/delete/cancel/double-tap ────────
@@ -235,7 +258,10 @@ test('#1123 regression: a normal mid-workout set (no closeout staged) still logs
 
 test('#1123 wiring: the closeout-stage latch and its reset are wired into the built bundle', () => {
   assert.match(appSrc, /let closeoutPreviewStaged = false;/, 'the latch flag is declared');
-  assert.match(appSrc, /&& !closeoutPreviewStaged\)/, 'the mid-workout branch is guarded by the latch');
+  assert.match(appSrc, /const parsedTextBeforeSubmit = lastParsedWorkoutText;/, 'the submit captures whether a new parse happened');
+  assert.match(appSrc, /const isCloseoutRePreview = closeoutPreviewStaged && lastParsedWorkoutText === parsedTextBeforeSubmit;/,
+    'a re-preview = staged AND no new parse (a new set still logs)');
+  assert.match(appSrc, /&& !isCloseoutRePreview\)/, 'the mid-workout branch is guarded against a closeout re-preview only');
   assert.match(appSrc, /\|\|\s*closeoutPreviewStaged === true/, 'a re-preview stays a closeout via the latch');
   assert.match(appSrc, /if \(isSessionCloseout\) closeoutPreviewStaged = true;/, 'the stage latches when a closeout is detected');
   assert.match(appSrc, /addEventListener\('atlas:session-reset',\s*\(\)\s*=>\s*\{\s*closeoutPreviewStaged = false;\s*\}\)/,
