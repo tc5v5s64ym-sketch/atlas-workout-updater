@@ -445,6 +445,11 @@ function resolveDisputedLiftEntry(message, context, history, opts) {
   // 1. Named in the current message (exactly one).
   const named = namedLiftsInMessage(message, c);
   if (named.length === 1) { const e = findEntry(named[0]); if (e) return e; }
+  // The message explicitly names MORE THAN ONE active-session lift ("Bench Press and Seated
+  // Row aren't what you planned") — an AMBIGUOUS correction, not an omitted-lift one. Fail
+  // closed rather than letting a single-lift referent (tier 2) or the history scan answer
+  // for just one of them (Codex #1128).
+  if (named.length > 1) return null;
 
   // 2. The session's server-recorded last-discussed lift (already freshness-bounded).
   if (o.lastDiscussedLift) { const e = findEntry(o.lastDiscussedLift); if (e) return e; }

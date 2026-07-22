@@ -294,6 +294,26 @@ test('resolveDisputedLiftEntry: tier 3 is bounded to the recent athlete turns an
   function resolveGround(msg, ctx, hist) { return g.resolveDisputedLiftEntry(msg, ctx, hist, {}); }
 });
 
+// A correction that explicitly names MORE THAN ONE plan lift is AMBIGUOUS, not an
+// omitted-lift correction — it must fail closed rather than let a single-lift referent
+// (tier 2) or the history scan answer for just one of them (Codex #1128).
+test('resolveDisputedLiftEntry: a correction naming multiple plan lifts fails closed, even with a fresh referent', () => {
+  const plan = { current_plan: [
+    { name: 'Bench Press', sets: 4, reps: 6, weight: 185, rir: 2 },
+    { name: 'Seated Row', sets: 3, reps: 10, weight: 200, rir: 1 },
+    { name: 'Back Squat', sets: 5, reps: 5, weight: 275, rir: 2 },
+  ] };
+  const multi = "Bench Press and Seated Row aren't what you planned.";
+  // A recent Bench referent must NOT override a message that names two lifts.
+  assert.equal(g.resolveDisputedLiftEntry(multi, plan, [], { lastDiscussedLift: g.canonicalKey('Bench Press') }), null);
+  // The history scan must not pick one either.
+  assert.equal(g.resolveDisputedLiftEntry(multi, plan, [{ role: 'user', text: 'why bench press?' }, { role: 'atlas', text: 'a' }], {}), null);
+  // The dispute answer is the clarification response.
+  assert.match(g.buildDisputeAnswer(multi, plan, [], { lastDiscussedLift: g.canonicalKey('Bench Press') }), /not sure which exercise|tell me the lift/i);
+  // A single-named correction still resolves (unchanged).
+  assert.equal((g.resolveDisputedLiftEntry("Seated Row isn't what you planned, you said 8.", plan, [], { lastDiscussedLift: g.canonicalKey('Bench Press') }) || {}).name, 'Seated Row');
+});
+
 // ── fail-closed property: no denylist reliance ───────────────────────────────
 
 test('FAIL-CLOSED: buildDisputeAnswer never emits a completed-mutation claim for ANY dispute, incl. novel wording the denylist would miss', () => {
