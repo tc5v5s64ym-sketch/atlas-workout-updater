@@ -85,6 +85,7 @@ require.cache[require.resolve('../services/coach')] = {
 
 const responseSheet = require('../services/coachResponseSheet');
 const packetShadow = require('../services/coachTurnPacketShadow');
+const discussionReferent = require('../services/coachDiscussionReferent');
 const RESP = Object.fromEntries(responseSheet.RESPONSE_HEADERS.map((h, i) => [h, i]));
 const appended = [];
 function installCapture() {
@@ -112,6 +113,10 @@ function resetCoach() {
   coachState.violations = [];
   coachState.lastChatContext = null;
   coachState.chatReplyCalls = 0;
+  // The discussion-referent store is a process singleton; clear it at each test's start so
+  // a referent recorded by one test can't leak into another's dispute resolution. Within a
+  // test the store persists across post() calls (needed for the what's-next→dispute case).
+  discussionReferent._resetForTesting();
 }
 
 async function post(body) {
@@ -304,6 +309,105 @@ test('FAIL-CLOSED negative control: an unresolvable bare correction in a multi-e
   assert.doesNotMatch(json.data.message, /now reads|All set|3 sets of 8/i, 'no model prose and no invented target');
   assert.equal(json.data.propose_plan_edit, null);
   assert.equal(json.data.source, 'engine');
+});
+
+// The MISSING CLASS the prior fix couldn't cover: ATLAS named the lift ("what's next?" →
+// "Bench Press…"), the athlete disputed without naming it and with NO prior athlete turn
+// naming a lift. The server records the discussed lift at answer time (tier 2), so the bare
+// dispute resolves to Bench deterministically — the model is never called.
+const NEXTUP_PLAN = { current_plan: [
+  { name: 'Bench Press', sets: 4, reps: 6, weight: 175, rir: 5 },
+  { name: 'Seated Row', sets: 3, reps: 10, weight: 200, rir: 1 },
+  { name: 'Back Squat', sets: 5, reps: 5, weight: 275, rir: 2 },
+], plan_completed: [] };
+
+test('MISSING CLASS (server tier 2): "what\'s next?" → Atlas answers Bench → bare dispute resolves to Bench, model never called', async () => {
+  resetCoach();
+  // Turn 1 — "what's next?": the server records Bench (the next-up lift) as the session's
+  // discussion referent on the way to answering (the model words it here).
+  coachState.reply = 'Next up is Bench Press — 4 sets of 6 at 175, 5 RIR.';
+  const t1 = await post({ message: "What's next?", context: NEXTUP_PLAN });
+  assert.equal(t1.res.status, 200);
+  assert.equal(coachState.chatReplyCalls, 1, "the what's-next turn reaches the model (recording the referent on the way)");
+
+  // Turn 2 — a BARE dispute with NO history naming any lift. The ONLY way to resolve it is
+  // the server-recorded referent from turn 1 (tier 2). A false completed-write reply is
+  // staged to prove the model is bypassed.
+  coachState.reply = 'Done — I switched Bench to 3 sets of 6 and saved it.';
+  coachState.propose_plan_edit = { action: 'replace_plan', exercises: [{ name: 'Bench Press', sets: 3, reps: 6, weight: 175, rir: 5 }] };
+  const t2 = await post({ message: "That isn't what you planned. You planned 3 sets at 6 reps.", context: NEXTUP_PLAN });
+  assert.equal(t2.res.status, 200);
+  assert.equal(coachState.chatReplyCalls, 1, 'the dispute turn does NOT call the model (still 1 from turn 1)');
+  const msg = t2.json.data.message;
+  assert.match(msg, /Bench Press/, 'resolves to Bench — the lift Atlas named when answering "what\'s next?"');
+  assert.match(msg, /4 sets of 6/, 'states the real prescription');
+  assert.match(msg, /175/);
+  assert.match(msg, /not 3 sets of 6/i, "distinguishes the athlete's claim");
+  assert.match(msg, /haven't changed/i);
+  assert.doesNotMatch(msg, /switched|saved|Done/i, 'no false completed-write prose reaches the athlete');
+  assert.equal(t2.json.data.propose_plan_edit, null, 'no proposal survives a bypassed dispute turn');
+  assert.equal(t2.json.data.source, 'engine');
+});
+
+test('MISSING CLASS control: the SAME bare dispute WITHOUT a preceding "what\'s next?" fails closed (proves tier 2 did the work)', async () => {
+  resetCoach();
+  coachState.reply = 'Done — I switched Bench to 3 sets of 6.';
+  // No preceding turn, no history → nothing recorded → multi-plan bare dispute fails closed.
+  const t = await post({ message: "That isn't what you planned. You planned 3 sets at 6 reps.", context: NEXTUP_PLAN });
+  assert.equal(t.res.status, 200);
+  assert.equal(coachState.chatReplyCalls, 0, 'still fail-closed — model not called');
+  assert.match(t.json.data.message, /not sure which exercise|tell me the lift/i, 'no referent → states uncertainty');
+  assert.doesNotMatch(t.json.data.message, /switched|Done/i);
+});
+
+// The referent must not bleed ACROSS workouts. A DIFFERENT plan (a different planned-lift
+// set) is a different session key, so a bare dispute in the new workout fails closed rather
+// than inheriting the previous workout's referent (Codex #1128).
+test('referent is scoped per workout: a dispute in a DIFFERENT plan does not inherit the prior plan\'s referent', async () => {
+  resetCoach();
+  const PLAN_A = { current_plan: [
+    { name: 'Overhead Press', sets: 4, reps: 8, weight: 95, rir: 2 },
+    { name: 'Lat Pulldown', sets: 3, reps: 12, weight: 120, rir: 1 },
+  ], plan_completed: [] };
+  // Turn 1 — "what's next?" in PLAN A records Overhead Press under PLAN A's key.
+  coachState.reply = 'Next up is Overhead Press.';
+  const a = await post({ message: "What's next?", context: PLAN_A });
+  assert.equal(a.res.status, 200);
+  assert.equal(coachState.chatReplyCalls, 1);
+  // Turn 2 — a bare dispute in a DIFFERENT workout (NEXTUP_PLAN: Bench/Row/Squat). Its
+  // session key differs, so PLAN A's Overhead Press referent is NOT visible → fail closed.
+  coachState.reply = 'Done — switched it.';
+  const b = await post({ message: "That isn't what you planned. You planned 3 sets at 6 reps.", context: NEXTUP_PLAN });
+  assert.equal(b.res.status, 200);
+  assert.equal(coachState.chatReplyCalls, 1, 'the dispute is still handled deterministically (model not called)');
+  assert.match(b.json.data.message, /not sure which exercise|tell me the lift/i, 'no cross-workout referent → states uncertainty');
+  assert.doesNotMatch(b.json.data.message, /Overhead Press/, 'the prior workout\'s lift never leaks in');
+});
+
+// A workout RESTARTED with the same lift set but a DIFFERENT order/prescription is a
+// different plan fingerprint, so its referent cannot bleed in (Codex #1128 — order and
+// prescriptions participate in the key, not just the sorted lift names).
+test('referent does not bleed when a workout is re-ordered/re-prescribed with the same lift set', async () => {
+  resetCoach();
+  // Workout 1: Bench first (next-up) — records Bench under fingerprint #1.
+  const W1 = { current_plan: [
+    { name: 'Bench Press', sets: 4, reps: 6, weight: 175, rir: 5 },
+    { name: 'Seated Row', sets: 3, reps: 10, weight: 200, rir: 1 },
+  ], plan_completed: [] };
+  coachState.reply = 'Next up is Bench Press.';
+  const a = await post({ message: "What's next?", context: W1 });
+  assert.equal(a.res.status, 200);
+  // Workout 2: SAME two lifts, REORDERED (Seated Row first) + different prescription → a
+  // different fingerprint. A bare dispute must NOT inherit workout 1's Bench referent.
+  const W2 = { current_plan: [
+    { name: 'Seated Row', sets: 4, reps: 8, weight: 210, rir: 2 },
+    { name: 'Bench Press', sets: 5, reps: 5, weight: 185, rir: 3 },
+  ], plan_completed: [] };
+  coachState.reply = 'Done — switched it.';
+  const b = await post({ message: "That isn't what you planned. You planned 3 sets at 6 reps.", context: W2 });
+  assert.equal(b.res.status, 200);
+  assert.equal(coachState.chatReplyCalls, 1, 'model not called (still 1 from the what\'s-next turn)');
+  assert.match(b.json.data.message, /not sure which exercise|tell me the lift/i, 'the re-ordered workout does not inherit the prior Bench referent');
 });
 
 test('explanation ("why did you…") still reaches the model — only factual disputes are short-circuited', async () => {

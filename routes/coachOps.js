@@ -66,9 +66,46 @@ const { BUG_REPORT_TAB, BUG_REPORT_COLUMNS, buildBugReportRow } = require('../se
 const { readCurrentDeloadState } = require('../services/deloadState');
 const driftShadow = require('../services/driftShadow');
 const coachResponseGrounding = require('../services/coachResponseGrounding');
+const coachDiscussionReferent = require('../services/coachDiscussionReferent');
 const { beginDeload, recordDeloadSession, resolvePostDeload } = require('../services/deloadEngine');
 const { selectProtocol } = require('../services/deloadProtocols');
 const { buildSheetContractStatus } = require('../config/sheetContract');
+
+// The session key for the discussion-referent store. The chat request carries no
+// authoritative server session id (state is client-supplied; `routeMessageToCoach` in
+// src/app/app.js sends no session_id), so:
+//   • prefer an explicit context.session_id/sessionId if a future client provides one;
+//   • otherwise scope to a FINGERPRINT of the current plan — each lift plus its prescription,
+//     in PLAN ORDER (not sorted) — so a different workout gets a different key. Order and
+//     prescriptions participate, so re-ordering or re-prescribing a workout with the same
+//     lift set is a different key and its referent cannot bleed in (Codex #1128). The
+//     fingerprint is stable across a session's turns (plan targets don't change turn-to-turn);
+//     an actual plan edit changes it and naturally resets the referent (fails closed →
+//     clarify). The freshness bound is a second guard.
+//   • fall back to a single owner slot only when there is no plan at all — then there is no
+//     dispute to resolve anyway.
+// Never a trust boundary; only scopes the ephemeral last-discussed lift. The only residual
+// collision is a byte-identical plan restarted within the freshness window; the permanent
+// fix is a session-scoped CoachTurnPacket/WorkoutSession referent field (Phase 4 punch list).
+function coachChatSessionKey(clientCtx) {
+  const c = clientCtx && typeof clientCtx === 'object' ? clientCtx : {};
+  const explicit = c.session_id || c.sessionId;
+  if (explicit) return String(explicit);
+  const plan = Array.isArray(c.current_plan) ? c.current_plan : [];
+  const fingerprint = plan
+    .map((e) => {
+      const o = e && typeof e === 'object' ? e : {};
+      const name = String(o.name || o.exercise || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (!name) return '';
+      const s = o.sets != null ? o.sets : '';
+      const r = o.reps != null ? o.reps : '';
+      const w = o.weight != null ? o.weight : '';
+      const rir = o.rir != null ? o.rir : '';
+      return `${name}:${s}x${r}@${w}/${rir}`;
+    })
+    .filter(Boolean);
+  return fingerprint.length ? `plan:${fingerprint.join('|')}` : 'owner-session';
+}
 
 module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
   const router = express.Router();
@@ -1289,6 +1326,38 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
           message: recoveryReply, configured: true, model: coach.coachModel(), source: 'engine'
         });
       }
+      // ── Discussion-referent (server-side tier-2 backing for the dispute resolver) ──
+      // The lift the coach last grounded an answer about — recorded server-side, keyed by
+      // session, freshness-bounded — so a later BARE correction ("that isn't what you
+      // planned") resolves to it even when ATLAS named the lift and the athlete did not
+      // (e.g. "what's next?" → "Bench Press…" → the dispute). READ the prior turn's
+      // referent (used to resolve a dispute below), then RECORD this turn's referent for
+      // the next turn. NEVER a client-sent field: the value is a lift the SERVER resolved
+      // from the current plan. Ephemeral; the permanent form is a CoachTurnPacket/
+      // WorkoutSession field set at answer time (Phase 4 punch list).
+      const referentSessionKey = coachChatSessionKey(clientCtx);
+      const referentNowMs = Date.now();
+      const lastDiscussedLift = coachDiscussionReferent.readFreshDiscussedLift(referentSessionKey, { nowMs: referentNowMs });
+      const isDisputeTurn = coachResponseGrounding.isFactualPlanDispute(message, context);
+      // This turn's referent: a dispute resolves to its disputed entry (using the prior
+      // referent just read); any other turn to the lift its answer is about (a named-lift
+      // explanation/value question, or the next-up lift for "what's next?").
+      const disputeEntryForReferent = isDisputeTurn
+        ? coachResponseGrounding.resolveDisputedLiftEntry(message, context, history, { lastDiscussedLift })
+        : null;
+      const turnReferentKey = disputeEntryForReferent
+        ? coachResponseGrounding.canonicalKey(disputeEntryForReferent.name || disputeEntryForReferent.exercise)
+        : (isDisputeTurn ? null : coachResponseGrounding.resolveDiscussedLift(message, context));
+      if (turnReferentKey) {
+        coachDiscussionReferent.recordDiscussedLift(referentSessionKey, turnReferentKey, { nowMs: referentNowMs });
+      }
+      // Off-path shadow signal: expose the route's chosen referent so the coach-turn shadow
+      // can compare it to the packet's referent (null until Phase 4 adds the field). It is
+      // the divergence report's Phase-4 TODO marker — this pick is computed route-locally.
+      // res.locals is read only by the shadow's res.on('finish') hook; the reply is untouched.
+      res.locals = res.locals || {};
+      res.locals.coachTurnReferent = { route: turnReferentKey || null, is_dispute: isDisputeTurn };
+
       // FAIL-CLOSED active-plan dispute (2026-07-22). A FACTUAL plan dispute/correction
       // ("that isn't what you planned", "you said 195") is answered DETERMINISTICALLY from
       // the current plan — the model is BYPASSED for the factual answer, so no model prose
@@ -1296,12 +1365,11 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // route. State the current plan, distinguish the athlete's claim, and say nothing
       // was changed — never a denylist to outrun. "Why did you…" explanations and
       // modification requests ("change it to…") are excluded and fall through below.
-      if (coachResponseGrounding.isFactualPlanDispute(message, context)) {
-        // `history` (prior {role,text} turns) supplies the omitted-lift referent when the
-        // correction names no lift and the plan holds several exercises — the exact
-        // production sequence (athlete asks about Seated Row, then disputes without naming
-        // it). Deterministic resolver; the model is still never called on this branch.
-        const disputeAnswer = coachResponseGrounding.buildDisputeAnswer(message, context, history);
+      if (isDisputeTurn) {
+        // `history` (prior {role,text} turns) and the server-recorded `lastDiscussedLift`
+        // supply the omitted-lift referent when the correction names no lift and the plan
+        // holds several exercises. Deterministic resolver; the model is never called here.
+        const disputeAnswer = coachResponseGrounding.buildDisputeAnswer(message, context, history, { lastDiscussedLift });
         return standardSuccess(req, res, 'Coach chat — grounded active-plan dispute (deterministic)', {
           message: disputeAnswer, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
           configured: true, model: coach.coachModel(), source: 'engine'

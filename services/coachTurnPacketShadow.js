@@ -91,6 +91,18 @@ function _embeddedFields(packet) {
   };
 }
 
+// The packet's discussion referent — the lift a bare correction should resolve to. The
+// packet has NO such field today; Phase 4 adds it to the CoachTurnPacket/WorkoutSession set
+// at answer time. Read it defensively so the divergence comparison goes live automatically
+// once the field exists (packet.referent, or session.discussion_referent).
+function _packetReferent(packet) {
+  if (!packet || typeof packet !== 'object') return null;
+  if (packet.referent != null) return packet.referent;
+  const s = packet.session;
+  if (s && typeof s === 'object' && s.discussion_referent != null) return s.discussion_referent;
+  return null;
+}
+
 function _logShadow(record) {
   try { console.log(`[coach-turn-shadow] ${JSON.stringify(record)}`); }
   catch (_) { /* log-only best-effort */ }
@@ -104,6 +116,7 @@ function observe(params) {
     const packet = a.packet && typeof a.packet === 'object' ? a.packet : null;
     const traceRec = p.trace && typeof p.trace === 'object' && p.trace.trace ? p.trace : null;
     const visible = summarizeVisible(p.visible);
+    const routeRef = p.routeReferent && typeof p.routeReferent === 'object' ? p.routeReferent : null;
     const recordedAt = new Date().toISOString();
     const record = {
       recorded_at: recordedAt,
@@ -113,6 +126,14 @@ function observe(params) {
       packet_valid: a.valid === true,
       packet_errors: Array.isArray(a.errors) ? a.errors.slice(0, 10) : [],
       embedded: packet ? _embeddedFields(packet) : null,
+      // The lift a bare correction resolves to: the route's pick vs the packet's field
+      // (null until Phase 4). A route pick with a null packet referent is the divergence
+      // signal that the referent is computed route-locally.
+      referent: {
+        route: routeRef && routeRef.route != null ? routeRef.route : null,
+        packet: _packetReferent(packet),
+        is_dispute: routeRef ? !!routeRef.is_dispute : false,
+      },
       visible,
       trace: traceRec ? {
         valid: traceRec.valid,
