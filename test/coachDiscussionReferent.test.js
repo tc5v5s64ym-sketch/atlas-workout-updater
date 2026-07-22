@@ -50,3 +50,34 @@ test('missing session id or key is a no-op; reads on absent sessions return null
   assert.equal(referent.readFreshDiscussedLift('', { nowMs: 1000 }), null);
   assert.equal(referent.peekRecord('nope'), null);
 });
+
+test('a write evicts every entry older than the window (the map stays bounded)', () => {
+  // Three distinct session keys recorded at t=1000.
+  referent.recordDiscussedLift('a', 'BENCHPRESS', { nowMs: 1000 });
+  referent.recordDiscussedLift('b', 'SEATEDROW', { nowMs: 1000 });
+  referent.recordDiscussedLift('c', 'BACKSQUAT', { nowMs: 1000 });
+  assert.equal(referent._sizeForTesting(), 3);
+  // A later write past the window sweeps the three now-stale entries.
+  referent.recordDiscussedLift('d', 'DEADLIFT', { nowMs: 1000 + referent.DEFAULT_MAX_AGE_MS + 1 });
+  assert.equal(referent._sizeForTesting(), 1, 'only the fresh entry remains');
+  assert.equal(referent.readFreshDiscussedLift('d', { nowMs: 1000 + referent.DEFAULT_MAX_AGE_MS + 1 }), 'DEADLIFT');
+});
+
+test('a stale read removes the entry (reads also bound the map)', () => {
+  referent.recordDiscussedLift('s1', 'BENCHPRESS', { nowMs: 1000 });
+  assert.equal(referent._sizeForTesting(), 1);
+  assert.equal(referent.readFreshDiscussedLift('s1', { nowMs: 1000 + referent.DEFAULT_MAX_AGE_MS + 1 }), null);
+  assert.equal(referent._sizeForTesting(), 0, 'the stale entry was evicted on read');
+});
+
+test('the map never exceeds the hard size cap under sustained distinct-key traffic', () => {
+  // All within the freshness window so eviction-by-age does not apply — only the cap can
+  // bound the map. Record well past MAX_ENTRIES distinct keys.
+  for (let i = 0; i < referent.MAX_ENTRIES + 250; i += 1) {
+    referent.recordDiscussedLift(`plan:${i}`, 'BENCHPRESS', { nowMs: 1000 + i });
+  }
+  assert.ok(referent._sizeForTesting() <= referent.MAX_ENTRIES, `size ${referent._sizeForTesting()} must be ≤ ${referent.MAX_ENTRIES}`);
+  // The most recent key survives; the oldest was evicted.
+  assert.equal(referent.readFreshDiscussedLift(`plan:${referent.MAX_ENTRIES + 249}`, { nowMs: 1000 + referent.MAX_ENTRIES + 249 }), 'BENCHPRESS');
+  assert.equal(referent.readFreshDiscussedLift('plan:0', { nowMs: 1000 + referent.MAX_ENTRIES + 249 }), null);
+});

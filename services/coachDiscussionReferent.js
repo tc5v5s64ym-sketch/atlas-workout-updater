@@ -27,6 +27,10 @@
 
 // A live-workout "we were just discussing this lift" window.
 const DEFAULT_MAX_AGE_MS = 8 * 60 * 1000;
+// Hard cap on distinct session keys held at once, so distinct plan fingerprints /
+// sustained chat traffic can never grow the map without bound. Far above any realistic
+// concurrent-session count (single-owner V1); the oldest entries are evicted past it.
+const MAX_ENTRIES = 500;
 
 // sessionId -> { canonicalKey, turnId, atMs }
 const store = new Map();
@@ -35,20 +39,40 @@ function asKey(v) {
   return v == null ? '' : String(v);
 }
 
+// Drop every entry older than the default window (definitely stale for any reader). Cheap
+// (the map is capped at MAX_ENTRIES), run on each write so stale plan fingerprints never
+// accumulate for the life of the process.
+function _evictExpired(nowMs) {
+  for (const [k, rec] of store) {
+    if (nowMs - rec.atMs > DEFAULT_MAX_AGE_MS) store.delete(k);
+  }
+}
+
+// Enforce the hard size cap by evicting the oldest entries (by recorded time).
+function _enforceCap() {
+  if (store.size <= MAX_ENTRIES) return;
+  const oldestFirst = [...store.entries()].sort((a, b) => a[1].atMs - b[1].atMs);
+  for (let i = 0; i < store.size - MAX_ENTRIES; i += 1) store.delete(oldestFirst[i][0]);
+}
+
 // Record the lift a grounded answer was just about. `canonicalKey` is the plan entry's
 // canonical key (coachResponseGrounding.canonicalKey). `opts.turnId` is stored for the
 // divergence shadow + the Phase-4 migration; `opts.nowMs` lets callers/tests pass an
-// explicit clock (defaults to Date.now()). No-op if session or key is missing.
+// explicit clock (defaults to Date.now()). No-op if session or key is missing. Evicts
+// expired entries and enforces the size cap so the map stays bounded.
 function recordDiscussedLift(sessionId, canonicalKey, opts = {}) {
   const sid = asKey(sessionId);
   const key = asKey(canonicalKey);
   if (!sid || !key) return;
   const atMs = typeof opts.nowMs === 'number' ? opts.nowMs : Date.now();
   store.set(sid, { canonicalKey: key, turnId: opts.turnId != null ? String(opts.turnId) : null, atMs });
+  _evictExpired(atMs);
+  _enforceCap();
 }
 
 // Read the session's last-discussed lift IF it is fresh (within maxAgeMs). Returns the
-// stored canonical key, or null when absent/stale. Never throws.
+// stored canonical key, or null when absent/stale. Removes a definitely-stale entry (older
+// than the default window) on the way through so reads also bound the map. Never throws.
 function readFreshDiscussedLift(sessionId, opts = {}) {
   const sid = asKey(sessionId);
   if (!sid) return null;
@@ -56,7 +80,11 @@ function readFreshDiscussedLift(sessionId, opts = {}) {
   if (!rec) return null;
   const nowMs = typeof opts.nowMs === 'number' ? opts.nowMs : Date.now();
   const maxAgeMs = typeof opts.maxAgeMs === 'number' ? opts.maxAgeMs : DEFAULT_MAX_AGE_MS;
-  if (nowMs - rec.atMs > maxAgeMs) return null;
+  const age = nowMs - rec.atMs;
+  // Housekeeping eviction uses the DEFAULT window (a tight per-call maxAgeMs must not evict
+  // an entry a later default-policy read would still accept).
+  if (age > DEFAULT_MAX_AGE_MS) store.delete(sid);
+  if (age > maxAgeMs) return null;
   return rec.canonicalKey;
 }
 
@@ -71,10 +99,16 @@ function _resetForTesting() {
   store.clear();
 }
 
+function _sizeForTesting() {
+  return store.size;
+}
+
 module.exports = {
   DEFAULT_MAX_AGE_MS,
+  MAX_ENTRIES,
   recordDiscussedLift,
   readFreshDiscussedLift,
   peekRecord,
   _resetForTesting,
+  _sizeForTesting,
 };
