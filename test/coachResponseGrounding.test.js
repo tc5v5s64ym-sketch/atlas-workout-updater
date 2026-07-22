@@ -143,3 +143,164 @@ test('Test 7: buildGroundedPlanStatement states uncertainty (no fabrication) whe
   assert.match(s, /haven't changed/i);
   assert.doesNotMatch(s, /\b\d+ sets\b/, 'no fabricated set/rep numbers when the plan is absent');
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FAIL-CLOSED active-plan dispute (2026-07-22) — deterministic factual answers,
+// abbreviation resolution, and modification-request preservation.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const seatedPlanCtx = () => ({ current_plan: [{ name: 'Seated Row', sets: 3, reps: 10, weight: 200, rir: 1 }] });
+
+// ── turn classification ──────────────────────────────────────────────────────
+
+test('isFactualPlanDispute: factual disputes, but NOT explanations / modifications / education', () => {
+  const ctx = seatedPlanCtx();
+  // Factual disputes → deterministic path.
+  for (const m of [
+    "That isn't what you planned. You planned 3 sets at 8 reps.",
+    'No, you told me 10 reps.',
+    "That's not the weight you gave me. You said 195.",
+    'You had me at 1 RIR, not 2.',
+    'The plan was 8 reps.',
+    'I thought the plan said 200.',
+  ]) assert.equal(g.isFactualPlanDispute(m, ctx), true, `dispute: ${JSON.stringify(m)}`);
+  // Explanations keep model narration.
+  assert.equal(g.isFactualPlanDispute('Why did you program Seated Row at 200×10?', ctx), false, 'explanation is not a dispute');
+  // Modification requests keep the proposal flow.
+  assert.equal(g.isFactualPlanDispute('Change it to 3 sets of 8.', ctx), false, 'modify(it) is not a dispute');
+  assert.equal(g.isFactualPlanDispute('Change the plan to 8 reps.', ctx), false, 'modify(the plan) is not a dispute');
+  assert.equal(g.isFactualPlanDispute('Please update the plan to 3x8.', ctx), false, 'modify(update the plan) is not a dispute');
+  // Education / no active plan.
+  assert.equal(g.isFactualPlanDispute('What is progressive overload?', ctx), false, 'education is not a dispute');
+  assert.equal(g.isFactualPlanDispute("That isn't what you planned.", {}), false, 'no active plan → not a dispute');
+});
+
+test('isPlanModificationRequest: imperative change requests, not assertions', () => {
+  for (const m of ['Change it to 3 sets of 8.', 'Make it 8 reps.', 'Switch to Front Squat.', 'Please update the plan to 3x8.', "Let's bump it to 225."]) {
+    assert.equal(g.isPlanModificationRequest(m), true, `modify: ${JSON.stringify(m)}`);
+  }
+  for (const m of ["That isn't what you planned.", 'You planned 3 sets at 8 reps.', "you didn't change the plan", 'The plan says 200.']) {
+    assert.equal(g.isPlanModificationRequest(m), false, `assertion: ${JSON.stringify(m)}`);
+  }
+});
+
+// Codex #1126 P1 — natural-language change REQUESTS (verb not opening the clause) must be
+// preserved as modifications so the athlete can still start the proposal → approval flow;
+// they must NOT be swept into the deterministic dispute path.
+test('isPlanModificationRequest / isFactualPlanDispute: natural-language change requests stay modifications (Codex #1126)', () => {
+  const ctx = seatedPlanCtx();
+  for (const m of [
+    'I want to change the plan to 3x8',
+    'Can we change the plan?',
+    "I'd like to change the plan",
+    'Could you switch it to 8 reps?',
+    'I need you to set it to 3 sets of 8',
+    'can we make it 3x8',
+  ]) {
+    assert.equal(g.isPlanModificationRequest(m), true, `request is a modification: ${JSON.stringify(m)}`);
+    assert.equal(g.isFactualPlanDispute(m, ctx), false, `request is NOT a factual dispute: ${JSON.stringify(m)}`);
+  }
+  // A plain assertion about what was planned that mentions a change verb is still a dispute,
+  // not a request — the request cue ("i want / can we / could you …") must be present.
+  assert.equal(g.isPlanModificationRequest('You set the plan to 3x8.'), false, 'an assertion is not a request');
+  assert.equal(g.isFactualPlanDispute('You set the plan to 3x8.', ctx), true, 'an assertion about the plan stays a dispute');
+});
+
+// ── deterministic dispute answer ─────────────────────────────────────────────
+
+test('buildDisputeAnswer: states the current plan, distinguishes the claim, says nothing changed — never a mutation claim', () => {
+  const a = g.buildDisputeAnswer("That isn't what you planned. You planned 3 sets at 8 reps.", seatedPlanCtx());
+  assert.match(a, /current plan shows/i, 'states what the plan currently shows');
+  assert.match(a, /3 sets of 10/, 'the real prescription');
+  assert.match(a, /200/);
+  assert.match(a, /1 RIR/);
+  assert.match(a, /not 3 sets of 8/i, "distinguishes the athlete's claim");
+  assert.match(a, /haven't changed/i, 'states no change was made');
+  assert.equal(g.detectUnsupportedMutationClaim(a).length, 0, 'the deterministic answer is never a completed-mutation claim');
+});
+
+test('buildDisputeAnswer: weight and no-plan variants stay grounded and invent nothing', () => {
+  const w = g.buildDisputeAnswer("That's not the weight you gave me. You said 195.", seatedPlanCtx());
+  assert.match(w, /200/); assert.match(w, /not 195/i); assert.match(w, /haven't changed/i);
+  const none = g.buildDisputeAnswer("That isn't what you planned.", {});
+  assert.match(none, /don't have the current plan/i);
+  assert.match(none, /haven't changed/i);
+  assert.doesNotMatch(none, /\b\d+ sets\b/, 'no fabricated numbers when the plan is absent');
+});
+
+// Omitted-lift correction in a MULTI-exercise plan — the disputed lift is resolved by a
+// deterministic precedence (current message → context active field → prior athlete turn →
+// sole plan exercise), never the model, never numeric similarity.
+test('buildDisputeAnswer: resolves the omitted-lift referent from history in a multi-exercise plan', () => {
+  const plan = { current_plan: [
+    { name: 'Seated Row', sets: 3, reps: 10, weight: 200, rir: 1 },
+    { name: 'Bench Press', sets: 4, reps: 6, weight: 185, rir: 2 },
+    { name: 'Back Squat', sets: 5, reps: 5, weight: 275, rir: 2 },
+  ] };
+  const correction = "That isn't what you planned. You planned 3 sets at 8 reps.";
+  // step 3 — the prior athlete turn named Seated Row, so the bare correction resolves to it.
+  const hist = [
+    { role: 'user', text: 'Why did you program seated rows for 200 at 10 reps with 1 RIR?' },
+    { role: 'atlas', text: 'To add back volume.' },
+  ];
+  const a = g.buildDisputeAnswer(correction, plan, hist);
+  assert.match(a, /Seated Row/); assert.match(a, /3 sets of 10/); assert.match(a, /200/); assert.match(a, /1 RIR/);
+  assert.match(a, /not 3 sets of 8/i); assert.match(a, /haven't changed/i);
+  assert.equal(g.detectUnsupportedMutationClaim(a).length, 0);
+  // Atlas's own reply is NEVER a referent; a two-lift athlete turn is ambiguous → fail closed.
+  assert.match(g.buildDisputeAnswer(correction, plan, [{ role: 'atlas', text: 'Bench Press looks strong.' }]), /not sure which exercise/i);
+  assert.match(g.buildDisputeAnswer(correction, plan, [{ role: 'user', text: 'How are Bench Press and Back Squat?' }]), /not sure which exercise/i);
+  // No usable history + multi-exercise plan → fail closed (never guesses a lift).
+  assert.match(g.buildDisputeAnswer(correction, plan, []), /not sure which exercise/i);
+  // step 1 — a lift named in the CURRENT message wins over history.
+  assert.match(g.buildDisputeAnswer('You planned Bench Press at 3 sets of 8, not 6.', plan, hist), /Bench Press/);
+  // step 2 — an explicit active-exercise field is honored if a context carries one.
+  assert.match(g.buildDisputeAnswer(correction, { ...plan, active_exercise: 'Back Squat' }, []), /Back Squat/);
+});
+
+// ── fail-closed property: no denylist reliance ───────────────────────────────
+
+test('FAIL-CLOSED: buildDisputeAnswer never emits a completed-mutation claim for ANY dispute, incl. novel wording the denylist would miss', () => {
+  // The denylist is a finite backstop; prove it does NOT catch this novel completed-write
+  // wording — so if the model produced it on a dispute, a denylist alone would let it
+  // through. The deterministic answer below never contains it, which is the point.
+  const novel = 'Boom — your program is locked in and rewritten to 3x8. All set!';
+  assert.equal(g.detectUnsupportedMutationClaim(novel).length, 0, 'the denylist does NOT catch this novel wording');
+  // The deterministic dispute answer is model-free and mutation-claim-free by construction.
+  for (const m of [
+    "That isn't what you planned. You planned 3 sets at 8 reps.",
+    'No, you told me 8 reps.',
+    'The workout says 200 × 10.',
+    'You said 195.',
+  ]) {
+    const a = g.buildDisputeAnswer(m, seatedPlanCtx());
+    assert.equal(g.detectUnsupportedMutationClaim(a).length, 0, `dispute answer is claim-free: ${JSON.stringify(m)}`);
+    assert.match(a, /haven't changed/i);
+  }
+});
+
+// ── abbreviation resolution (Codex #1122) ────────────────────────────────────
+
+test('abbreviation resolution: RDL / OHP map to their plan lift so narrowing drops unrelated diagnostics', () => {
+  const ctx = {
+    current_plan: [{ name: 'Romanian Deadlift', sets: 3, reps: 8, weight: 225, rir: 2 }, { name: 'Bench Press', sets: 3, reps: 5, weight: 225, rir: 2 }],
+    stalls: [{ exercise: 'Bench Press' }, { exercise: 'Romanian Deadlift' }],
+    memory_patterns: [{ liftCode: generateLiftCode('Bench Press'), patterns: [{ type: 'consistent_underperformance', details: { sessions_below: 5, sessions_checked: 5 } }] }],
+    muscle_gaps: [{ muscle: 'chest' }], coach_mode: 'challenge',
+  };
+  assert.deepEqual(g.namedLiftsInMessage('Why did you program RDL?', ctx).map(n => g.nameKey(n)), [g.nameKey('Romanian Deadlift')], 'RDL → Romanian Deadlift');
+  assert.deepEqual(g.namedLiftsInMessage('why did you program OHP', { current_plan: [{ name: 'Overhead Press' }, { name: 'Bench Press' }] }).map(g.nameKey), [g.nameKey('Overhead Press')], 'OHP → Overhead Press');
+  const n = g.narrowContextToPlanTurn(ctx, 'Why did you program RDL?', {});
+  assert.ok(!n.stalls.some(s => /bench/i.test(s.exercise)), 'Bench stall dropped (no leak into an RDL answer)');
+  assert.ok(n.stalls.some(s => /romanian/i.test(s.exercise)), 'RDL stall kept');
+  assert.notEqual(n.coach_mode, 'challenge', 'the unrelated Bench challenge is suppressed');
+});
+
+test('resolveTurnExercises: a message that names an unmappable lift does NOT fall back to the whole plan', () => {
+  const ctx = { current_plan: [{ name: 'Seated Row' }, { name: 'Bench Press' }] };
+  // Names a specific lift (abbreviation the canonicalizer resolves) that is NOT in the
+  // plan → narrow to nothing (no leak), never the whole plan's diagnostics.
+  assert.deepEqual(g.resolveTurnExercises('Why did you program RDL?', ctx), []);
+  // Names nothing → the active plan it refers to.
+  assert.deepEqual(g.resolveTurnExercises("That isn't what you planned.", { current_plan: [{ name: 'Seated Row' }] }), ['Seated Row']);
+});

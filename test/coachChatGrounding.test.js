@@ -57,6 +57,7 @@ const coachState = {
   propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
   violations: [],
   lastChatContext: null,
+  chatReplyCalls: 0,
 };
 require.cache[require.resolve('../services/coach')] = {
   id: require.resolve('../services/coach'), filename: require.resolve('../services/coach'), loaded: true,
@@ -64,6 +65,7 @@ require.cache[require.resolve('../services/coach')] = {
     isConfigured: () => coachState.configured,
     coachModel: () => 'gemini-2.5-flash-lite',
     generateChatReply: async (args) => {
+      coachState.chatReplyCalls += 1;
       coachState.lastChatContext = args && args.context ? args.context : null;
       return {
         reply: coachState.reply,
@@ -109,6 +111,7 @@ function resetCoach() {
   coachState.propose_edit = null; coachState.propose_note = null; coachState.propose_constraint = null; coachState.propose_plan_edit = null;
   coachState.violations = [];
   coachState.lastChatContext = null;
+  coachState.chatReplyCalls = 0;
 }
 
 async function post(body) {
@@ -224,4 +227,114 @@ test('Test 8: a grounded correction turn still produces ONE Coach_Shadow + Coach
   } finally {
     delete process.env.ATLAS_INTERACTION_TRACE;
   }
+});
+
+// ── Fail-closed — the model is BYPASSED entirely on a factual plan dispute ────
+// These prove requirement 6: arbitrary completed-write wording cannot reach the
+// athlete on this read-only route WITHOUT relying on a finite denylist. The proof
+// is structural — `generateChatReply` is never called on a dispute turn, so no
+// model prose (however phrased) is ever in a position to be returned.
+
+test('FAIL-CLOSED: a factual dispute never invokes the model — novel "already rewritten" prose cannot reach the athlete', async () => {
+  resetCoach();
+  // Wording NO denylist would enumerate — if this ever reached the athlete it would be a false write claim.
+  coachState.reply = 'Boom — your program is locked in and fully rewritten to 3x8. All set, it now shows 3 sets of 8!';
+  coachState.propose_plan_edit = { action: 'replace_plan', exercises: [{ name: 'Seated Row', sets: 3, reps: 8, weight: 200, rir: 1 }] };
+  const { res, json } = await post({ message: "That isn't what you planned. You planned 3 sets at 8 reps.", context: SEATED_PLAN });
+  assert.equal(res.status, 200);
+  assert.equal(coachState.chatReplyCalls, 0, 'the model is NOT called at all — the answer is built deterministically (no denylist to outrun)');
+  const msg = json.data.message;
+  assert.match(msg, /current plan shows/i, 'states what the plan actually shows');
+  assert.match(msg, /3 sets of 10/, 'the real prescription');
+  assert.match(msg, /not 3 sets of 8/i, "distinguishes the athlete's claim");
+  assert.match(msg, /haven't changed/i, 'states plainly that nothing was changed');
+  assert.doesNotMatch(msg, /rewritten|locked in|Boom|All set/i, 'none of the model prose reaches the athlete — it was never generated for this turn');
+  assert.equal(json.data.propose_plan_edit, null, 'no proposal leaks from a bypassed turn');
+  assert.equal(json.data.source, 'engine');
+});
+
+// The exact production sequence: an explanation about Seated Row, then a correction that
+// OMITS the lift name while the active plan holds several exercises. The disputed lift is
+// recovered deterministically from the prior turn — the model is still never called.
+const MULTI_PLAN = { current_plan: [
+  { name: 'Seated Row', sets: 3, reps: 10, weight: 200, rir: 1 },
+  { name: 'Bench Press', sets: 4, reps: 6, weight: 185, rir: 2 },
+  { name: 'Back Squat', sets: 5, reps: 5, weight: 275, rir: 2 },
+], plan_completed: [] };
+
+test('FAIL-CLOSED (production sequence): a bare correction resolves the disputed lift from the prior turn in a multi-exercise plan', async () => {
+  resetCoach();
+  // False completed-write prose the model must never get the chance to emit.
+  coachState.reply = 'Done — I rewrote Seated Row to 3 sets of 8 and saved it.';
+  coachState.propose_plan_edit = { action: 'replace_plan', exercises: [{ name: 'Seated Row', sets: 3, reps: 8, weight: 200, rir: 1 }] };
+  const history = [
+    { role: 'user', text: 'Why did you program seated rows for 200 pounds at 10 reps with 1 RIR?' },
+    { role: 'atlas', text: 'Seated Row is set at 200 for 10 at 1 RIR to add back volume.' },
+  ];
+  const { res, json } = await post({ message: "That isn't what you planned. You planned 3 sets at 8 reps.", context: MULTI_PLAN, history });
+  assert.equal(res.status, 200);
+  assert.equal(coachState.chatReplyCalls, 0, 'the model is never called — the referent is resolved deterministically from the prior turn');
+  const msg = json.data.message;
+  assert.match(msg, /Seated Row/, 'names the disputed lift, recovered from the prior athlete turn');
+  assert.match(msg, /3 sets of 10/, 'states the real prescription (3 sets of 10)');
+  assert.match(msg, /200/, 'at 200');
+  assert.match(msg, /1 RIR/, 'and 1 RIR');
+  assert.match(msg, /not 3 sets of 8/i, "distinguishes the athlete's 3-sets-of-8 claim");
+  assert.match(msg, /haven't changed/i, 'states plainly that nothing was changed');
+  assert.doesNotMatch(msg, /rewrote|saved|locked|rewritten/i, 'the false completed-write prose never reaches the athlete');
+  assert.equal(json.data.propose_plan_edit, null, 'no proposal survives a bypassed dispute turn');
+  assert.equal(json.data.source, 'engine');
+  // Read-only: appendRows throws if hit, so reaching here proves no write occurred.
+});
+
+test('FAIL-CLOSED negative control: an unresolvable bare correction in a multi-exercise plan states uncertainty, still never calls the model', async () => {
+  resetCoach();
+  coachState.reply = 'All set — the plan now reads 3 sets of 8.';
+  coachState.propose_plan_edit = { action: 'replace_plan', exercises: [{ name: 'Seated Row', sets: 3, reps: 8, weight: 200, rir: 1 }] };
+  // Prior conversation exists but names no single plan lift, and no active-exercise context.
+  const history = [
+    { role: 'user', text: 'Thanks, that helps a lot.' },
+    { role: 'atlas', text: 'Anytime — glad it landed.' },
+  ];
+  const { res, json } = await post({ message: "That isn't what you planned. You planned 3 sets at 8 reps.", context: MULTI_PLAN, history });
+  assert.equal(res.status, 200);
+  assert.equal(coachState.chatReplyCalls, 0, 'still fail-closed — the model is not called even when the referent is unresolved');
+  assert.match(json.data.message, /not sure which exercise|tell me the lift/i, 'states uncertainty instead of guessing a lift');
+  assert.match(json.data.message, /haven't changed/i);
+  assert.doesNotMatch(json.data.message, /now reads|All set|3 sets of 8/i, 'no model prose and no invented target');
+  assert.equal(json.data.propose_plan_edit, null);
+  assert.equal(json.data.source, 'engine');
+});
+
+test('explanation ("why did you…") still reaches the model — only factual disputes are short-circuited', async () => {
+  resetCoach();
+  coachState.reply = 'On Seated Row the plan calls for 200 for 10 at 1 RIR to progress from 195.';
+  const { res, json } = await post({ message: 'Why did you program seated rows for 200 pounds at 10 reps with 1 RIR?', context: SEATED_PLAN });
+  assert.equal(res.status, 200);
+  assert.equal(coachState.chatReplyCalls, 1, 'a genuine explanation is answered by the model, not the deterministic dispute path');
+  assert.equal(json.data.message, coachState.reply, 'the truthful present-state explanation passes through');
+  assert.equal(json.data.source, 'gemini');
+});
+
+test('modification request ("change it to…") still reaches the model and its proposal passes through — not a dispute', async () => {
+  resetCoach();
+  coachState.reply = 'I can change that to 3 sets of 8 if you want.';
+  coachState.propose_plan_edit = { action: 'replace_plan', exercises: [{ name: 'Seated Row', sets: 3, reps: 8, weight: 200, rir: 1 }] };
+  const { res, json } = await post({ message: 'Change it to 3 sets of 8.', context: SEATED_PLAN });
+  assert.equal(res.status, 200);
+  assert.equal(coachState.chatReplyCalls, 1, 'an explicit modification request is a proposal turn, not a factual dispute — the model runs');
+  assert.deepEqual(json.data.propose_plan_edit, { action: 'replace_plan', exercises: [{ name: 'Seated Row', sets: 3, reps: 8, weight: 200, rir: 1 }] }, 'the proposal survives to the approval flow');
+  assert.equal(json.data.source, 'gemini');
+});
+
+test('natural-language change request ("Can we change the plan to 3x8?") reaches the model, not the dispute path (Codex #1126)', async () => {
+  resetCoach();
+  coachState.reply = 'Sure — I can change Seated Row to 3 sets of 8. Want me to?';
+  coachState.propose_plan_edit = { action: 'replace_plan', exercises: [{ name: 'Seated Row', sets: 3, reps: 8, weight: 200, rir: 1 }] };
+  const { res, json } = await post({ message: 'Can we change the plan to 3x8?', context: SEATED_PLAN });
+  assert.equal(res.status, 200);
+  assert.equal(coachState.chatReplyCalls, 1, 'a request-framed change reaches the model — it is NOT short-circuited as a factual dispute');
+  assert.doesNotMatch(json.data.message, /haven't changed it/i, 'the athlete is not wrongly told nothing changed on a change request');
+  assert.deepEqual(json.data.propose_plan_edit, { action: 'replace_plan', exercises: [{ name: 'Seated Row', sets: 3, reps: 8, weight: 200, rir: 1 }] }, 'the proposal is preserved so the approval flow can proceed');
+  assert.equal(json.data.source, 'gemini');
 });
