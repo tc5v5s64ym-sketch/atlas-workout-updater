@@ -6611,7 +6611,7 @@ test('mid-session substitution: app.js classifies prescribed pairs before emitSe
   // F10D readiness: the guard also excludes the converted screenshot-with-rows
   // closeout (screenshotConvertedCloseout) — a converted upload must reach the
   // confirmation, never the mid-session set-note lane.
-  const branchStart = appSource.indexOf('if (logRows.length && !file && !manualEffort && !sessionCompiledAwaitingPreview && !screenshotConvertedCloseout)');
+  const branchStart = appSource.indexOf('if (logRows.length && !file && !manualEffort && !sessionCompiledAwaitingPreview && !screenshotConvertedCloseout');
   const branchEnd = appSource.indexOf('emitSetLogged(logRows', branchStart) + 60;
   const branch = appSource.slice(branchStart, branchEnd);
   assert.match(branch, /lastPrescribed/, 'mid-session branch must consult lastPrescribed');
