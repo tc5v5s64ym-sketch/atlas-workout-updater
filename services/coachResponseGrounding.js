@@ -127,6 +127,18 @@ function messageNamesALift(message) {
   return !!(canon && canon.canonicalName);
 }
 
+// After a lift has been matched, does the message ALSO name a DIFFERENT canonical lift?
+// Strips the matched lift's significant words and re-checks — so "Bench Press and Deadlift
+// are not what you planned" (Bench in plan, Deadlift off-snapshot) is seen as multi-lift and
+// fails closed, even though namedLiftsInMessage only surfaced the in-plan Bench (Codex #1128).
+function mentionsAnotherLift(message, matchedName) {
+  const words = significantWords(matchedName);
+  if (!words.length) return false;
+  let stripped = normalize(message);
+  for (const w of words) stripped = stripped.replace(new RegExp(`\\b${escapeRe(w)}\\w*`, 'g'), ' ');
+  return messageNamesALift(stripped);
+}
+
 function namedLiftsInMessage(message, context) {
   const m = normalize(message);
   if (!m) return [];
@@ -453,7 +465,14 @@ function resolveDisputedLiftEntry(message, context, history, opts) {
   //        when Deadlift is only a preview row) — must clarify, not answer for a stale lift.
   const named = namedLiftsInMessage(message, c);
   if (named.length >= 1) {
-    if (named.length === 1) { const e = findEntry(named[0]); if (e) return e; }
+    // Resolve ONLY when the message names exactly one lift total and it maps to the plan.
+    // `mentionsAnotherLift` catches a second, off-snapshot canonical lift that
+    // namedLiftsInMessage didn't surface ("Bench Press and Deadlift are not what you
+    // planned"); any such ambiguity fails closed.
+    if (named.length === 1 && !mentionsAnotherLift(message, named[0])) {
+      const e = findEntry(named[0]);
+      if (e) return e;
+    }
     return null;
   }
   // The athlete named a canonical lift that appears NOWHERE in the snapshot (not plan,

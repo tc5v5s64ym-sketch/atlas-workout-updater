@@ -310,6 +310,11 @@ test('resolveDisputedLiftEntry: a correction naming multiple plan lifts fails cl
   assert.equal(g.resolveDisputedLiftEntry(multi, plan, [{ role: 'user', text: 'why bench press?' }, { role: 'atlas', text: 'a' }], {}), null);
   // The dispute answer is the clarification response.
   assert.match(g.buildDisputeAnswer(multi, plan, [], { lastDiscussedLift: g.canonicalKey('Bench Press') }), /not sure which exercise|tell me the lift/i);
+  // A correction that names an IN-PLAN lift AND a canonical lift absent from the snapshot
+  // ("Bench Press and Deadlift are not what you planned") is still multi-lift → fail closed,
+  // even though namedLiftsInMessage only surfaced the in-plan Bench.
+  assert.equal(g.resolveDisputedLiftEntry('Bench Press and Deadlift are not what you planned.', plan, [], { lastDiscussedLift: g.canonicalKey('Seated Row') }), null);
+  assert.equal(g.resolveDisputedLiftEntry('Deadlift and Bench Press are not what you planned.', plan, [], { lastDiscussedLift: g.canonicalKey('Seated Row') }), null);
   // A single-named correction still resolves (unchanged).
   assert.equal((g.resolveDisputedLiftEntry("Seated Row isn't what you planned, you said 8.", plan, [], { lastDiscussedLift: g.canonicalKey('Bench Press') }) || {}).name, 'Seated Row');
 });
