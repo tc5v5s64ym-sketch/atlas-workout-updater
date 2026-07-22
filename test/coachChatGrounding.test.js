@@ -360,6 +360,30 @@ test('MISSING CLASS control: the SAME bare dispute WITHOUT a preceding "what\'s 
   assert.doesNotMatch(t.json.data.message, /switched|Done/i);
 });
 
+// The referent must not bleed ACROSS workouts. A DIFFERENT plan (a different planned-lift
+// set) is a different session key, so a bare dispute in the new workout fails closed rather
+// than inheriting the previous workout's referent (Codex #1128).
+test('referent is scoped per workout: a dispute in a DIFFERENT plan does not inherit the prior plan\'s referent', async () => {
+  resetCoach();
+  const PLAN_A = { current_plan: [
+    { name: 'Overhead Press', sets: 4, reps: 8, weight: 95, rir: 2 },
+    { name: 'Lat Pulldown', sets: 3, reps: 12, weight: 120, rir: 1 },
+  ], plan_completed: [] };
+  // Turn 1 — "what's next?" in PLAN A records Overhead Press under PLAN A's key.
+  coachState.reply = 'Next up is Overhead Press.';
+  const a = await post({ message: "What's next?", context: PLAN_A });
+  assert.equal(a.res.status, 200);
+  assert.equal(coachState.chatReplyCalls, 1);
+  // Turn 2 — a bare dispute in a DIFFERENT workout (NEXTUP_PLAN: Bench/Row/Squat). Its
+  // session key differs, so PLAN A's Overhead Press referent is NOT visible → fail closed.
+  coachState.reply = 'Done — switched it.';
+  const b = await post({ message: "That isn't what you planned. You planned 3 sets at 6 reps.", context: NEXTUP_PLAN });
+  assert.equal(b.res.status, 200);
+  assert.equal(coachState.chatReplyCalls, 1, 'the dispute is still handled deterministically (model not called)');
+  assert.match(b.json.data.message, /not sure which exercise|tell me the lift/i, 'no cross-workout referent → states uncertainty');
+  assert.doesNotMatch(b.json.data.message, /Overhead Press/, 'the prior workout\'s lift never leaks in');
+});
+
 test('explanation ("why did you…") still reaches the model — only factual disputes are short-circuited', async () => {
   resetCoach();
   coachState.reply = 'On Seated Row the plan calls for 200 for 10 at 1 RIR to progress from 195.';

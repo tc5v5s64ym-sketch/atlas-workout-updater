@@ -72,14 +72,29 @@ const { selectProtocol } = require('../services/deloadProtocols');
 const { buildSheetContractStatus } = require('../config/sheetContract');
 
 // The session key for the discussion-referent store. The chat request carries no
-// authoritative server session id (state is client-supplied), so prefer an explicit
-// context.session_id/sessionId when present and fall back to a single owner slot — Atlas
-// is single-owner in V1, and the referent store's freshness bound is the real staleness
-// guard. Never used as a trust boundary; only to scope the ephemeral last-discussed lift.
+// authoritative server session id (state is client-supplied; `routeMessageToCoach` in
+// src/app/app.js sends no session_id), so:
+//   • prefer an explicit context.session_id/sessionId if a future client provides one;
+//   • otherwise scope to the current plan's IDENTITY — the sorted set of planned lift keys
+//     — so a DIFFERENT workout (a different planned-lift set) never shares a referent slot.
+//     Two turns of the same workout share the same plan identity; a new workout with a
+//     different plan gets a different key, so a stale referent can't bleed across workouts
+//     (Codex #1128). The freshness bound is a second guard.
+//   • fall back to a single owner slot only when there is no plan at all — then there is no
+//     dispute to resolve anyway.
+// Never a trust boundary; only scopes the ephemeral last-discussed lift. The permanent fix
+// is a session-scoped CoachTurnPacket/WorkoutSession referent field (Phase 4 punch list).
 function coachChatSessionKey(clientCtx) {
   const c = clientCtx && typeof clientCtx === 'object' ? clientCtx : {};
-  const id = c.session_id || c.sessionId;
-  return id ? String(id) : 'owner-session';
+  const explicit = c.session_id || c.sessionId;
+  if (explicit) return String(explicit);
+  const plan = Array.isArray(c.current_plan) ? c.current_plan : [];
+  const names = plan
+    .map((e) => (e && (e.name || e.exercise)) || '')
+    .map((n) => String(n).toUpperCase().replace(/[^A-Z0-9]/g, ''))
+    .filter(Boolean)
+    .sort();
+  return names.length ? `plan:${names.join('|')}` : 'owner-session';
 }
 
 module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
