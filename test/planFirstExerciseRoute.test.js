@@ -16,7 +16,10 @@ const assert = require('node:assert/strict');
 process.env.ATLAS_API_KEY = 'test-api-key';
 process.env.GOOGLE_SHEETS_ID = 'stub-sheet';
 process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = 'stub@example.com';
-process.env.GOOGLE_PRIVATE_KEY = '-----BEGIN PRIVATE KEY-----\\nstub\\n-----END PRIVATE KEY-----';
+// A non-PEM placeholder: sheets.js is fully stubbed via require.cache, so this value is
+// never parsed. It deliberately avoids a PEM key block (the changed-file secret scan
+// flags "BEGIN PRIVATE KEY" even in an obvious stub, since it scans new files).
+process.env.GOOGLE_PRIVATE_KEY = 'stub-google-private-key';
 delete process.env.ATLAS_COACH_ENGINE; // legacy engine (deterministic) for these tests
 
 // Log_Cleaned rows: 11 cols per CLAUDE.md (date, session, exercise, canonical, muscle,
