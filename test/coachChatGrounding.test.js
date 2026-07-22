@@ -384,6 +384,32 @@ test('referent is scoped per workout: a dispute in a DIFFERENT plan does not inh
   assert.doesNotMatch(b.json.data.message, /Overhead Press/, 'the prior workout\'s lift never leaks in');
 });
 
+// A workout RESTARTED with the same lift set but a DIFFERENT order/prescription is a
+// different plan fingerprint, so its referent cannot bleed in (Codex #1128 — order and
+// prescriptions participate in the key, not just the sorted lift names).
+test('referent does not bleed when a workout is re-ordered/re-prescribed with the same lift set', async () => {
+  resetCoach();
+  // Workout 1: Bench first (next-up) — records Bench under fingerprint #1.
+  const W1 = { current_plan: [
+    { name: 'Bench Press', sets: 4, reps: 6, weight: 175, rir: 5 },
+    { name: 'Seated Row', sets: 3, reps: 10, weight: 200, rir: 1 },
+  ], plan_completed: [] };
+  coachState.reply = 'Next up is Bench Press.';
+  const a = await post({ message: "What's next?", context: W1 });
+  assert.equal(a.res.status, 200);
+  // Workout 2: SAME two lifts, REORDERED (Seated Row first) + different prescription → a
+  // different fingerprint. A bare dispute must NOT inherit workout 1's Bench referent.
+  const W2 = { current_plan: [
+    { name: 'Seated Row', sets: 4, reps: 8, weight: 210, rir: 2 },
+    { name: 'Bench Press', sets: 5, reps: 5, weight: 185, rir: 3 },
+  ], plan_completed: [] };
+  coachState.reply = 'Done — switched it.';
+  const b = await post({ message: "That isn't what you planned. You planned 3 sets at 6 reps.", context: W2 });
+  assert.equal(b.res.status, 200);
+  assert.equal(coachState.chatReplyCalls, 1, 'model not called (still 1 from the what\'s-next turn)');
+  assert.match(b.json.data.message, /not sure which exercise|tell me the lift/i, 'the re-ordered workout does not inherit the prior Bench referent');
+});
+
 test('explanation ("why did you…") still reaches the model — only factual disputes are short-circuited', async () => {
   resetCoach();
   coachState.reply = 'On Seated Row the plan calls for 200 for 10 at 1 RIR to progress from 195.';

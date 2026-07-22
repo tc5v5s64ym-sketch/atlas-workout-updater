@@ -75,26 +75,36 @@ const { buildSheetContractStatus } = require('../config/sheetContract');
 // authoritative server session id (state is client-supplied; `routeMessageToCoach` in
 // src/app/app.js sends no session_id), so:
 //   • prefer an explicit context.session_id/sessionId if a future client provides one;
-//   • otherwise scope to the current plan's IDENTITY — the sorted set of planned lift keys
-//     — so a DIFFERENT workout (a different planned-lift set) never shares a referent slot.
-//     Two turns of the same workout share the same plan identity; a new workout with a
-//     different plan gets a different key, so a stale referent can't bleed across workouts
-//     (Codex #1128). The freshness bound is a second guard.
+//   • otherwise scope to a FINGERPRINT of the current plan — each lift plus its prescription,
+//     in PLAN ORDER (not sorted) — so a different workout gets a different key. Order and
+//     prescriptions participate, so re-ordering or re-prescribing a workout with the same
+//     lift set is a different key and its referent cannot bleed in (Codex #1128). The
+//     fingerprint is stable across a session's turns (plan targets don't change turn-to-turn);
+//     an actual plan edit changes it and naturally resets the referent (fails closed →
+//     clarify). The freshness bound is a second guard.
 //   • fall back to a single owner slot only when there is no plan at all — then there is no
 //     dispute to resolve anyway.
-// Never a trust boundary; only scopes the ephemeral last-discussed lift. The permanent fix
-// is a session-scoped CoachTurnPacket/WorkoutSession referent field (Phase 4 punch list).
+// Never a trust boundary; only scopes the ephemeral last-discussed lift. The only residual
+// collision is a byte-identical plan restarted within the freshness window; the permanent
+// fix is a session-scoped CoachTurnPacket/WorkoutSession referent field (Phase 4 punch list).
 function coachChatSessionKey(clientCtx) {
   const c = clientCtx && typeof clientCtx === 'object' ? clientCtx : {};
   const explicit = c.session_id || c.sessionId;
   if (explicit) return String(explicit);
   const plan = Array.isArray(c.current_plan) ? c.current_plan : [];
-  const names = plan
-    .map((e) => (e && (e.name || e.exercise)) || '')
-    .map((n) => String(n).toUpperCase().replace(/[^A-Z0-9]/g, ''))
-    .filter(Boolean)
-    .sort();
-  return names.length ? `plan:${names.join('|')}` : 'owner-session';
+  const fingerprint = plan
+    .map((e) => {
+      const o = e && typeof e === 'object' ? e : {};
+      const name = String(o.name || o.exercise || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (!name) return '';
+      const s = o.sets != null ? o.sets : '';
+      const r = o.reps != null ? o.reps : '';
+      const w = o.weight != null ? o.weight : '';
+      const rir = o.rir != null ? o.rir : '';
+      return `${name}:${s}x${r}@${w}/${rir}`;
+    })
+    .filter(Boolean);
+  return fingerprint.length ? `plan:${fingerprint.join('|')}` : 'owner-session';
 }
 
 module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
