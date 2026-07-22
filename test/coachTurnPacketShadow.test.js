@@ -119,6 +119,26 @@ describe('coachTurnPacketShadow — observe (packet vs visible side by side)', (
     assert.equal(packetShadow.getShadowLog().length, 1);
   });
 
+  it('carries the route referent pick vs the packet referent (null until Phase 4)', () => {
+    const assembled = packetShadow.assembleShadowPacket({ turnId: 'turn:x_9_z', profileGoal: 'strength' });
+    const rec = packetShadow.observe({
+      trace: TRACE_REC,
+      assembled,
+      visible: { data: { message: 'The current plan shows Bench Press…', source: 'engine', configured: true } },
+      routeReferent: { route: 'BENCHPRESS', is_dispute: true },
+    });
+    assert.ok(rec.referent, 'the record carries a referent block');
+    assert.equal(rec.referent.route, 'BENCHPRESS', 'the route pick is recorded');
+    assert.equal(rec.referent.packet, null, 'the packet carries no referent yet (Phase 4 adds the field)');
+    assert.equal(rec.referent.is_dispute, true);
+  });
+
+  it('defaults the referent block to nulls when the route recorded none', () => {
+    const assembled = packetShadow.assembleShadowPacket({ turnId: 'turn:x_9_z', profileGoal: 'strength' });
+    const rec = packetShadow.observe({ trace: TRACE_REC, assembled, visible: { data: { message: 'x' } } });
+    assert.deepEqual(rec.referent, { route: null, packet: null, is_dispute: false });
+  });
+
   it('records an invalid packet honestly (packet_valid:false + errors)', () => {
     const assembled = packetShadow.assembleShadowPacket({ turnId: '', profileGoal: 'strength' });
     const rec = packetShadow.observe({ trace: null, assembled, visible: { data: {} } });

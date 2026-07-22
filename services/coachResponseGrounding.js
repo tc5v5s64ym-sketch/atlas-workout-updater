@@ -408,26 +408,32 @@ function claimDiffersFromPlan(claim, entry) {
   return false;
 }
 
+// How many of the most recent ATHLETE turns tier 3 may scan. Bounded on purpose: a
+// referent recovered from deep history is a stale confident answer, which is worse than
+// asking (the whole resolver fails closed instead).
+const RECENT_USER_TURN_WINDOW = 3;
+
 // The plan entry a factual dispute is about, resolved DETERMINISTICALLY (never the model,
 // never numeric similarity) by a fixed precedence. The production correction ("That isn't
 // what you planned. You planned 3 sets at 8 reps.") omits the lift name while the active
-// plan holds several exercises — the referent is the lift the athlete was just discussing,
-// recovered from the prior turn (step 3). Returns the plan entry, or null so the caller
-// fails closed with the ambiguity response.
+// plan holds several exercises — the referent is the lift that was just under discussion.
+// Returns the plan entry, or null so the caller fails closed with the ambiguity response.
 //
 //   1. a lift explicitly named in the CURRENT message (exactly one);
-//   2. an EXISTING explicit active/current-exercise field carried in the trusted context —
-//      honored only if present. The current client (src/app/app.js `routeMessageToCoach`)
-//      sends current_plan / current_preview / session_tally / plan_completed / plan_state
-//      and NO active-exercise field, so this tier is inert today; it is NOT inventing the
-//      field, only deferring to one should a future context carry it;
-//   3. the most recent prior ATHLETE (role:'user') message in `history` that names exactly
-//      one current_plan exercise — the omitted-lift referent (e.g. the Seated Row the
-//      athlete asked about one turn earlier). Atlas's own replies are never a referent;
+//   2. the session's LAST-DISCUSSED lift — recorded SERVER-SIDE at answer time and passed
+//      in via `opts.lastDiscussedLift`, already freshness-bounded by the caller. It is
+//      NEVER read from client context (unspoofable). This is the case the prior fix missed:
+//      Atlas named the lift ("what's next?" → "Bench Press…"), the athlete disputed without
+//      naming it. The route records it in services/coachDiscussionReferent;
+//   3. a BOUNDED scan of the last few ATHLETE (role:'user') turns in `history`: stop at the
+//      FIRST (most recent) user turn that names ANY plan lift — exactly one is the referent,
+//      MORE THAN ONE fails closed. Deep history is never consulted. Atlas replies are never
+//      a referent;
 //   4. the sole current_plan exercise when the plan has exactly one;
 //   5. otherwise null (fail closed).
-function resolveDisputedLiftEntry(message, context, history) {
+function resolveDisputedLiftEntry(message, context, history, opts) {
   const c = context && typeof context === 'object' ? context : {};
+  const o = opts && typeof opts === 'object' ? opts : {};
   const plan = Array.isArray(c.current_plan) ? c.current_plan.filter((e) => e && (e.name || e.exercise)) : [];
   if (!plan.length) return null;
   const findEntry = (name) => {
@@ -440,21 +446,24 @@ function resolveDisputedLiftEntry(message, context, history) {
   const named = namedLiftsInMessage(message, c);
   if (named.length === 1) { const e = findEntry(named[0]); if (e) return e; }
 
-  // 2. An existing explicit active-exercise field in the trusted context (inert today).
-  const activeName = typeof c.active_exercise === 'string' ? c.active_exercise
-    : (typeof c.current_exercise === 'string' ? c.current_exercise : null);
-  if (activeName) { const e = findEntry(activeName); if (e) return e; }
+  // 2. The session's server-recorded last-discussed lift (already freshness-bounded).
+  if (o.lastDiscussedLift) { const e = findEntry(o.lastDiscussedLift); if (e) return e; }
 
-  // 3. Most recent prior athlete message naming exactly one plan exercise.
+  // 3. Bounded scan of the last few athlete turns; stop at the first that names any plan
+  //    lift (1 → referent, >1 → fail closed). Never scan deep history.
   if (Array.isArray(history)) {
-    for (let i = history.length - 1; i >= 0; i -= 1) {
+    let userTurnsSeen = 0;
+    for (let i = history.length - 1; i >= 0 && userTurnsSeen < RECENT_USER_TURN_WINDOW; i -= 1) {
       const turn = history[i];
       if (!turn || typeof turn !== 'object' || turn.role !== 'user') continue;
+      userTurnsSeen += 1;
       const text = typeof turn.text === 'string' ? turn.text
         : (typeof turn.message === 'string' ? turn.message : '');
       if (!text) continue;
       const inTurn = namedLiftsInMessage(text, c);
-      if (inTurn.length === 1) { const e = findEntry(inTurn[0]); if (e) return e; }
+      if (inTurn.length === 0) continue;                 // named no plan lift — keep scanning the window
+      if (inTurn.length === 1) return findEntry(inTurn[0]) || null;  // first lift-naming turn → single referent
+      return null;                                       // first lift-naming turn named >1 → fail closed
     }
   }
 
@@ -465,19 +474,62 @@ function resolveDisputedLiftEntry(message, context, history) {
   return null;
 }
 
+// A "what's next? / what am I doing next?" next-up question. Tight on purpose: this only
+// seeds the discussion-referent, so over-matching would mis-seed a later bare dispute.
+const NEXT_UP_RE = /\bwhat('?s| is)? next\b|\bwhat am i (?:doing|lifting|on|up to)(?: next)?\b|\bnext (?:exercise|lift|movement|up)\b/;
+
+function isNextUpQuestion(message) {
+  return NEXT_UP_RE.test(normalize(message));
+}
+
+// The next planned lift's NAME, from the server-recomputed plan_state.remaining[0] (the
+// same client-derived plan state the route already holds), else the first plan entry when
+// no completion info is present. Used to seed the referent for a next-up answer.
+function nextPlannedLiftName(context) {
+  const c = context && typeof context === 'object' ? context : {};
+  const ps = c.plan_state;
+  if (ps && Array.isArray(ps.remaining) && ps.remaining.length) {
+    const r0 = ps.remaining[0];
+    const name = typeof r0 === 'string' ? r0 : (r0 && (r0.name || r0.exercise)) || null;
+    if (name) return name;
+  }
+  const plan = Array.isArray(c.current_plan) ? c.current_plan.filter((e) => e && (e.name || e.exercise)) : [];
+  return plan.length ? (plan[0].name || plan[0].exercise) : null;
+}
+
+// The single plan lift THIS turn's answer is about — recorded server-side as the session's
+// last-discussed lift so a later bare dispute can resolve to it (resolver tier 2). Covers
+// "Atlas named the lift, the athlete didn't": a lift named in the message (an explanation
+// or a value question), or the next-up lift for a "what's next?" answer. Returns the
+// canonical key, or null when the turn is about no single identifiable plan lift. The
+// dispute turn's referent is the RESOLVED disputed entry (the route records that separately).
+function resolveDiscussedLift(message, context) {
+  const c = context && typeof context === 'object' ? context : {};
+  const plan = Array.isArray(c.current_plan) ? c.current_plan.filter((e) => e && (e.name || e.exercise)) : [];
+  if (!plan.length) return null;
+  const named = namedLiftsInMessage(message, c);
+  if (named.length === 1) return canonicalKey(named[0]);
+  if (isNextUpQuestion(message)) {
+    const nextName = nextPlannedLiftName(c);
+    if (nextName) return canonicalKey(nextName);
+  }
+  return null;
+}
+
 // The deterministic answer to a factual plan dispute: state what the plan currently
 // shows for the disputed lift, distinguish the athlete's claim, and state plainly that
 // nothing was changed. Never claims an update/save/switch/adjustment. When the plan (or
 // the specific lift) is not in view, it states that uncertainty rather than inventing a
 // target. This bypasses the model entirely for the factual answer (fail-closed). `history`
-// (prior `{role,text}` turns) supplies the omitted-lift referent for a bare correction.
-function buildDisputeAnswer(message, context, history) {
+// (prior `{role,text}` turns) and `opts.lastDiscussedLift` (server-recorded, freshness-
+// bounded) supply the omitted-lift referent for a bare correction.
+function buildDisputeAnswer(message, context, history, opts) {
   const c = context && typeof context === 'object' ? context : {};
   const plan = Array.isArray(c.current_plan) ? c.current_plan.filter((e) => e && (e.name || e.exercise)) : [];
   if (!plan.length) {
     return "I don't have the current plan in view here, so I can't confirm what it shows — and I haven't changed anything.";
   }
-  const entry = resolveDisputedLiftEntry(message, c, history);
+  const entry = resolveDisputedLiftEntry(message, c, history, opts);
   if (!entry) {
     return "I have the current plan in view, but I'm not sure which exercise you mean — tell me the lift and I'll read back exactly what it shows. I haven't changed anything.";
   }
@@ -513,6 +565,9 @@ module.exports = {
   detectUnsupportedMutationClaim,
   extractClaimedTargets,
   resolveDisputedLiftEntry,
+  isNextUpQuestion,
+  nextPlannedLiftName,
+  resolveDiscussedLift,
   buildGroundedPlanStatement,
   buildDisputeAnswer,
 };

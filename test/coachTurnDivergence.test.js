@@ -102,6 +102,23 @@ describe('coachTurnDivergence — analyzeDivergences', () => {
     assert.equal(a.total, 0);
     assert.equal(a.packets_valid, 0);
   });
+
+  it('compares the route referent pick to the packet referent (Phase-4 discussion-referent signal)', () => {
+    const records = [
+      // route picked a referent the packet does not carry (today: always) → route-local
+      rec({ turn_id: 'r1', referent: { route: 'BENCHPRESS', packet: null, is_dispute: true } }),
+      // a (future) packet referent that DIFFERS from the route pick → mismatch to investigate
+      rec({ turn_id: 'r2', referent: { route: 'SEATEDROW', packet: 'BACKSQUAT', is_dispute: true } }),
+      // a (future) packet referent that AGREES → neither route-local nor mismatch
+      rec({ turn_id: 'r3', referent: { route: 'BENCHPRESS', packet: 'BENCHPRESS', is_dispute: true } }),
+      // no referent picked this turn → not counted
+      rec({ turn_id: 'r4', referent: { route: null, packet: null, is_dispute: false } }),
+    ];
+    const a = analyzeDivergences(records);
+    assert.equal(a.with_referent, 3, 'three turns picked a referent (r4 did not)');
+    assert.equal(a.referent_route_local, 1, 'r1 has a route pick the packet does not carry');
+    assert.equal(a.referent_mismatch, 1, 'r2 has a packet referent that differs from the route pick');
+  });
 });
 
 describe('coachTurnDivergence — formatReport', () => {
@@ -120,6 +137,23 @@ describe('coachTurnDivergence — formatReport', () => {
   it('renders a clear message when there are no records (never a false green)', () => {
     const out = formatReport(analyzeDivergences([]), {});
     assert.match(out, /No \[coach-turn-shadow\] records found/);
+  });
+
+  it('renders the discussion-referent section with the route-local and mismatch signals', () => {
+    const a = analyzeDivergences([
+      rec({ turn_id: 'r1', referent: { route: 'BENCHPRESS', packet: null, is_dispute: true } }),
+      rec({ turn_id: 'r2', referent: { route: 'SEATEDROW', packet: 'BACKSQUAT', is_dispute: true } }),
+    ]);
+    const out = formatReport(a, {});
+    assert.match(out, /Discussion referent/);
+    assert.match(out, /route-local referent/);
+    assert.match(out, /CoachTurnPacket\/WorkoutSession field/);
+    assert.match(out, /referent MISMATCH/);
+  });
+
+  it('notes when no turn picked a referent', () => {
+    const out = formatReport(analyzeDivergences([rec()]), {});
+    assert.match(out, /no turn picked a discussion referent/i);
   });
 });
 

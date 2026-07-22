@@ -90,7 +90,11 @@ function observeQaTurn(req, res, opts) {
       turn.stage('rendered_output', res.statusCode >= 500 ? 'error' : 'ok', req.requestId || null);
       const traceRecord = turn.finish();
       const assembled = coachTurnPacketShadow.assembleShadowPacket({ turnId: turn.turnId, profileGoal: getProfileGoal() });
-      coachTurnPacketShadow.observe({ trace: traceRecord, assembled, visible });
+      // The route stashes its chosen discussion referent on res.locals (the dispute
+      // resolver's / discussed-lift pick). Forward it so the shadow record can compare it to
+      // the packet's referent — the Phase-4 divergence signal. Absent on non-referent turns.
+      const routeReferent = res.locals && typeof res.locals.coachTurnReferent === 'object' ? res.locals.coachTurnReferent : null;
+      coachTurnPacketShadow.observe({ trace: traceRecord, assembled, visible, routeReferent });
       const reqBody = req.body && typeof req.body === 'object' ? req.body : {};
       const ctx = reqBody.context && typeof reqBody.context === 'object' ? reqBody.context : {};
       coachResponseSheet.persist({

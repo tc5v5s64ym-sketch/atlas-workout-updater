@@ -26,6 +26,12 @@
 //   • visible↔packet   — the visible reply carried coaching prose while the packet's
 //                        decision was null: the reply bypassed packet truth (the H-03
 //                        headline the report exists to quantify).
+//   • discussion ref.  — the route picked a disputed-lift referent (which lift a bare
+//                        correction resolves to) that the packet does not carry: the
+//                        referent is computed route-locally (services/coachDiscussionReferent
+//                        + resolver tiers 2–3). Phase 4 makes discussion_referent a packet /
+//                        WorkoutSession field, and a packet referent that DIFFERS from the
+//                        route pick then becomes a mismatch to investigate.
 //
 // Public API:
 //   parseShadowLines(text)     → record[]           (tolerant; skips non-matching lines)
@@ -91,6 +97,9 @@ function analyzeDivergences(records) {
   let visibleNullDecision = 0;  // reply carried coaching prose while decision was null
   let visibleErrors = 0;
   let withEmbedded = 0;
+  let withReferent = 0;         // turns where the route picked a discussion referent
+  let referentRouteLocal = 0;   // route picked a referent the packet does not carry (Phase-4 TODO)
+  let referentMismatch = 0;     // packet carries a referent that DIFFERS from the route's pick
 
   for (const r of recs) {
     if (r.packet_valid === true) packetsValid += 1;
@@ -120,6 +129,16 @@ function analyzeDivergences(records) {
     const v = _isPlainObject(r.visible) ? r.visible : null;
     if (v && v.error_present === true) visibleErrors += 1;
     if (v && v.message_present === true && e && e.decision === false) visibleNullDecision += 1;
+
+    // Discussion referent: the route's pick vs the packet's field. A pick with no packet
+    // referent is the route-local signal Phase 4 clears; a differing packet referent is a
+    // genuine contradiction to investigate.
+    const ref = _isPlainObject(r.referent) ? r.referent : null;
+    if (ref && ref.route != null) {
+      withReferent += 1;
+      if (ref.packet == null) referentRouteLocal += 1;
+      else if (String(ref.packet) !== String(ref.route)) referentMismatch += 1;
+    }
   }
 
   return {
@@ -136,6 +155,9 @@ function analyzeDivergences(records) {
     stage_bypass: stageBypass,
     visible_null_decision: visibleNullDecision,
     visible_errors: visibleErrors,
+    with_referent: withReferent,
+    referent_route_local: referentRouteLocal,
+    referent_mismatch: referentMismatch,
   };
 }
 
@@ -181,6 +203,17 @@ function formatReport(analysis, opts = {}) {
   lines.push('Visible ↔ packet contradiction:');
   lines.push(_line('reply w/ null decision', a.visible_null_decision || 0, total, 'the visible coaching reply had no canonical packet decision (the H-03 headline)'));
   if (a.visible_errors) lines.push(_line('degraded/outage replies', a.visible_errors, total, 'informational — LLM outage/degrade path'));
+  lines.push('');
+
+  lines.push('Discussion referent (the lift a bare correction resolves to):');
+  if ((a.with_referent || 0) === 0) {
+    lines.push('  (no turn picked a discussion referent in this window)');
+  } else {
+    lines.push(_line('route-local referent', a.referent_route_local || 0, a.with_referent || total,
+      'the route picked a referent the packet does not carry — Phase 4 makes discussion-referent a CoachTurnPacket/WorkoutSession field set at answer time'));
+    if (a.referent_mismatch) lines.push(_line('referent MISMATCH', a.referent_mismatch, a.with_referent || total,
+      'the packet referent DIFFERS from the route pick — investigate'));
+  }
   lines.push('');
 
   lines.push('Trace spine health:');

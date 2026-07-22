@@ -229,8 +229,8 @@ test('buildDisputeAnswer: weight and no-plan variants stay grounded and invent n
 });
 
 // Omitted-lift correction in a MULTI-exercise plan — the disputed lift is resolved by a
-// deterministic precedence (current message → context active field → prior athlete turn →
-// sole plan exercise), never the model, never numeric similarity.
+// deterministic precedence (current message → server-recorded last-discussed lift → prior
+// athlete turn → sole plan exercise), never the model, never numeric similarity.
 test('buildDisputeAnswer: resolves the omitted-lift referent from history in a multi-exercise plan', () => {
   const plan = { current_plan: [
     { name: 'Seated Row', sets: 3, reps: 10, weight: 200, rir: 1 },
@@ -254,8 +254,44 @@ test('buildDisputeAnswer: resolves the omitted-lift referent from history in a m
   assert.match(g.buildDisputeAnswer(correction, plan, []), /not sure which exercise/i);
   // step 1 — a lift named in the CURRENT message wins over history.
   assert.match(g.buildDisputeAnswer('You planned Bench Press at 3 sets of 8, not 6.', plan, hist), /Bench Press/);
-  // step 2 — an explicit active-exercise field is honored if a context carries one.
-  assert.match(g.buildDisputeAnswer(correction, { ...plan, active_exercise: 'Back Squat' }, []), /Back Squat/);
+  // step 2 — the server-recorded last-discussed lift (opts.lastDiscussedLift) is honored
+  // over history, and a client-sent active_exercise field is NOT (server-side, unspoofable).
+  assert.match(g.buildDisputeAnswer(correction, plan, [], { lastDiscussedLift: g.canonicalKey('Back Squat') }), /Back Squat/);
+  assert.match(g.buildDisputeAnswer(correction, { ...plan, active_exercise: 'Back Squat' }, []), /not sure which exercise/i,
+    'a client-sent active_exercise field is ignored — tier 2 is server-recorded only');
+});
+
+// Tier 3 is bounded: it scans only the last few athlete turns and stops at the first that
+// names any plan lift (a referent recovered from deep history would be a stale, confident
+// guess — worse than asking).
+test('resolveDisputedLiftEntry: tier 3 is bounded to the recent athlete turns and stops at the first lift-naming turn', () => {
+  const plan = { current_plan: [
+    { name: 'Seated Row', sets: 3, reps: 10, weight: 200, rir: 1 },
+    { name: 'Bench Press', sets: 4, reps: 6, weight: 185, rir: 2 },
+    { name: 'Back Squat', sets: 5, reps: 5, weight: 275, rir: 2 },
+  ] };
+  const nameOf = (e) => (e && (e.name || e.exercise)) || null;
+  const D = "That isn't what you planned. You planned 3 sets at 6 reps.";
+  // The most recent lift-naming athlete turn names TWO plan lifts → fail closed, even though
+  // an older turn names exactly one.
+  const twoThenOne = [
+    { role: 'user', text: 'Why did you program seated rows?' }, { role: 'atlas', text: 'a' },
+    { role: 'user', text: 'How are Bench Press and Back Squat looking?' }, { role: 'atlas', text: 'b' },
+  ];
+  assert.equal(resolveGround(D, plan, twoThenOne), null, 'stops at the first lift-naming turn; >1 name fails closed');
+  // A lift-naming turn beyond the recent-turn window is NOT consulted (deep history).
+  const deep = [
+    { role: 'user', text: 'Why did you program seated rows?' }, { role: 'atlas', text: 'a' },
+    { role: 'user', text: 'ok' }, { role: 'atlas', text: 'b' },
+    { role: 'user', text: 'cool' }, { role: 'atlas', text: 'c' },
+    { role: 'user', text: 'got it' }, { role: 'atlas', text: 'd' },
+  ];
+  assert.equal(resolveGround(D, plan, deep), null, 'a lift named beyond the recent window is not resolved');
+  // Within the window, a single recent referent resolves.
+  const recent = [{ role: 'user', text: 'Why did you program bench press?' }, { role: 'atlas', text: 'a' }];
+  assert.equal(nameOf(g.resolveDisputedLiftEntry(D, plan, recent, {})), 'Bench Press');
+
+  function resolveGround(msg, ctx, hist) { return g.resolveDisputedLiftEntry(msg, ctx, hist, {}); }
 });
 
 // ── fail-closed property: no denylist reliance ───────────────────────────────
