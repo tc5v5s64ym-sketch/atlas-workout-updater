@@ -2315,6 +2315,29 @@ import * as sessionQuestion from './sessionQuestion.js';
     return "Got it — keep logging your sets and say \"log it\" when you're done.";
   }
 
+  // Defense in depth (2026-07-22, deployed 9f72ee5). A workout-GENERATION request
+  // ("plan me a workout …") belongs on the AUTHORITATIVE recommendation pipeline
+  // (Coach's Pick → /api/plan/intent-recommendation), reached via the composer gate
+  // (looksLikeSessionRequest → sessionQuestion.isWorkoutGenerationRequest). If one still
+  // slips past that gate into THIS free-form chat lane, a model-authored propose_plan_edit
+  // would MATERIALIZE a local active plan (activePlannedSession / plan_order / remaining
+  // lifts) out of prose that carries no plan_version and no canonical lift codes — the exact
+  // production divergence (Lat Pulldown became first in plan_order while the visible prose
+  // still led with Bench Press). FAIL CLOSED: strip the plan edit and answer with a retryable
+  // planner line, so no plan state is ever created from model output on this lane. Only
+  // GENERATION turns are affected — plan disputes/corrections/modifications and education are
+  // not generation-shaped, so their propose_plan_edit still flows through preview → approve.
+  const GENERATION_CHAT_FAILSAFE_MESSAGE =
+    'Let me put that together as a proper plan — ask again (for example, “plan me a workout”) and I’ll pull up your recommended session.';
+
+  function guardGenerationChatResult(text, chatResult) {
+    const r = chatResult || {};
+    if (r.propose_plan_edit && sessionQuestion.isWorkoutGenerationRequest(text)) {
+      return { ...r, propose_plan_edit: null, message: GENERATION_CHAT_FAILSAFE_MESSAGE };
+    }
+    return r;
+  }
+
   async function handleChatMessage(detail) {
     const text = (detail && detail.text || '').trim();
     if (!text) return;
@@ -2333,6 +2356,9 @@ import * as sessionQuestion from './sessionQuestion.js';
 
     let chatResult = { message: null, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null };
     try { chatResult = await getChatReply(text, priorTurns, detail && detail.context); } catch { /* stays null */ }
+    // Fail closed: a generation request that reached this lane must never materialize a
+    // local active plan from the model's propose_plan_edit (see guardGenerationChatResult).
+    chatResult = guardGenerationChatResult(text, chatResult);
 
     let reply = chatResult.message;
     if (!reply || !reply.trim()) reply = chatFallback(text);
