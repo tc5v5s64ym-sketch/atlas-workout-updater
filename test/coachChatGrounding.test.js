@@ -1,0 +1,227 @@
+'use strict';
+
+// Integration tests for active-session response grounding through the LIVE
+// /api/coach/chat route (2026-07-21 production failures). Harness mirrors
+// test/coachQaShadowRoute.test.js: require-cache stubs for sheets + coach, the real
+// Express app, HTTP requests. The REAL services/coachResponseGrounding is exercised
+// (only the Gemini reply and sheet reads are stubbed).
+//
+//   Failure 1 (relevance): a Seated Row explanation must reach the model with the
+//     unrelated Bench Press diagnostic filtered out of the context.
+//   Failure 2 (mutation truth): a reply that falsely claims "the plan was updated" is
+//     replaced with a truthful grounded statement of the current plan; no write occurs.
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+
+process.env.ATLAS_API_KEY = 'test-api-key';
+process.env.GOOGLE_SHEETS_ID = 'stub-sheet';
+process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = 'stub@example.com';
+process.env.GOOGLE_PRIVATE_KEY = 'stub-private-key-sheets-is-stubbed';
+delete process.env.ATLAS_INTERACTION_TRACE;
+process.env.ATLAS_PROFILE_GOAL = 'strength';
+
+// Log_Cleaned columns: date_clean|session_id|exercise|canonical_exercise|muscle_group|
+// lift_code|set_number|weight|reps|rir|notes|volume_calc. Three flat Bench sessions →
+// detectStalls yields a Bench Press stall the narrowing must exclude from a Seated Row turn.
+const BENCH_STALL_ROWS = [
+  ['2026-07-01', 's1', 'Bench Press', 'Bench Press', 'chest', 'BPX01', 1, 225, 5, 2, '', 1125],
+  ['2026-07-03', 's2', 'Bench Press', 'Bench Press', 'chest', 'BPX01', 1, 225, 5, 2, '', 1125],
+  ['2026-07-05', 's3', 'Bench Press', 'Bench Press', 'chest', 'BPX01', 1, 225, 5, 2, '', 1125],
+];
+
+// The injected getSheetRows (index.js) caches log/effort reads for 30s and the cache
+// is not test-invalidatable, so the log rows are held STABLE for the whole file (the
+// Bench Press stall is always present). Tests that don't assert on stalls are
+// unaffected — their grounding reads current_plan from the request context, not the log.
+const sheetsState = { logRows: BENCH_STALL_ROWS };
+const fakeSheets = {
+  validateConfig: () => {},
+  appendRows: async () => { throw new Error('appendRows must not be called by the read-only chat path'); },
+  deleteRowsByRange: async () => { throw new Error('no deletes on the chat path'); },
+  getExerciseCatalog: async () => [],
+  getEffortSessionIds: async () => [],
+  getLogCompositeKeys: async () => [],
+  getRecentRows: async () => [],
+  getSheetRows: async (name) => (name === 'Log_Cleaned' ? sheetsState.logRows.slice() : []),
+  getSpreadsheetTabs: async () => ['Log_Cleaned', 'Effort'],
+  logSheetName: 'Log_Cleaned',
+  effortSheetName: 'Effort',
+};
+require.cache[require.resolve('../sheets')] = { id: require.resolve('../sheets'), filename: require.resolve('../sheets'), loaded: true, exports: fakeSheets };
+require.cache[require.resolve('../services/vision')] = { id: require.resolve('../services/vision'), filename: require.resolve('../services/vision'), loaded: true, exports: { parseWorkoutScreenshot: async () => ({ parsed_metrics: {} }) } };
+
+const coachState = {
+  configured: true,
+  reply: 'ok',
+  propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
+  violations: [],
+  lastChatContext: null,
+};
+require.cache[require.resolve('../services/coach')] = {
+  id: require.resolve('../services/coach'), filename: require.resolve('../services/coach'), loaded: true,
+  exports: {
+    isConfigured: () => coachState.configured,
+    coachModel: () => 'gemini-2.5-flash-lite',
+    generateChatReply: async (args) => {
+      coachState.lastChatContext = args && args.context ? args.context : null;
+      return {
+        reply: coachState.reply,
+        propose_edit: coachState.propose_edit,
+        propose_note: coachState.propose_note,
+        propose_constraint: coachState.propose_constraint,
+        propose_plan_edit: coachState.propose_plan_edit,
+      };
+    },
+    findRegisterViolations: () => coachState.violations,
+    looksLikePrClaim: () => false,
+    generateCoachMessage: async () => 'Solid work.',
+    generatePlanMessage: async () => 'Solid work.',
+    sanitizeFacts: (f) => f,
+  },
+};
+
+const responseSheet = require('../services/coachResponseSheet');
+const packetShadow = require('../services/coachTurnPacketShadow');
+const RESP = Object.fromEntries(responseSheet.RESPONSE_HEADERS.map((h, i) => [h, i]));
+const appended = [];
+function installCapture() {
+  responseSheet._resetForTesting({ ensure: async () => {}, getHeader: async () => responseSheet.RESPONSE_HEADERS.slice(), append: async (tab, rows) => { for (const r of rows) appended.push(r); } });
+}
+
+const originalConsoleLog = console.log;
+const { app } = require('../index');
+let server; let baseUrl;
+
+test.before(async () => {
+  console.log = () => {};
+  server = await new Promise((resolve) => { const l = app.listen(0, '127.0.0.1', () => resolve(l)); });
+  baseUrl = `http://127.0.0.1:${server.address().port}`;
+});
+test.after(async () => {
+  try { if (server) await new Promise((res, rej) => server.close((e) => (e ? rej(e) : res()))); }
+  finally { console.log = originalConsoleLog; delete process.env.ATLAS_INTERACTION_TRACE; delete process.env.ATLAS_PROFILE_GOAL; }
+});
+
+function resetCoach() {
+  coachState.configured = true;
+  coachState.reply = 'ok';
+  coachState.propose_edit = null; coachState.propose_note = null; coachState.propose_constraint = null; coachState.propose_plan_edit = null;
+  coachState.violations = [];
+  coachState.lastChatContext = null;
+}
+
+async function post(body) {
+  appended.length = 0;
+  installCapture();
+  const before = packetShadow.getShadowLog().length;
+  const res = await fetch(`${baseUrl}/api/coach/chat`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-atlas-api-key': process.env.ATLAS_API_KEY },
+    body: JSON.stringify(body),
+  });
+  const json = await res.json();
+  for (let i = 0; i < 50; i++) { await new Promise((r) => setImmediate(r)); if (appended.length) break; }
+  await responseSheet._flushForTesting();
+  const shadowLog = packetShadow.getShadowLog();
+  return { res, json, respRow: appended[appended.length - 1] || null, respCount: appended.length, shadowRow: shadowLog.length > before ? shadowLog[shadowLog.length - 1] : null, shadowCount: shadowLog.length - before };
+}
+
+const SEATED_PLAN = { current_plan: [{ name: 'Seated Row', sets: 3, reps: 10, weight: 200, rir: 1 }], plan_completed: [] };
+
+// ── Failure 2 — unsupported completed-mutation claim is replaced ────────────
+
+test('Failure 2: a "the plan was updated" correction reply is grounded to the current plan (no false write claim, no write)', async () => {
+  resetCoach();
+  // The exact production Failure-2 model prose.
+  coachState.reply = 'The plan was updated. It now calls for 3 sets of 10 reps at 200, aiming for 1 RIR.';
+  // A model that (wrongly) also attaches an edit must not have it treated as approved.
+  coachState.propose_plan_edit = { action: 'replace_plan', exercises: [{ name: 'Seated Row', sets: 3, reps: 8, weight: 200, rir: 1 }] };
+
+  const { res, json } = await post({ message: "That isn't what you planned. You planned 3 sets at 8 reps.", context: SEATED_PLAN });
+  assert.equal(res.status, 200);
+  const msg = json.data.message;
+  assert.match(msg, /current plan shows/i, 'states what the current plan actually shows');
+  assert.match(msg, /3 sets of 10/, 'the real prescription (3 sets of 10)');
+  assert.match(msg, /200/);
+  assert.match(msg, /haven't changed/i, 'plainly states nothing was changed');
+  assert.doesNotMatch(msg, /was updated|now calls for|i (changed|switched|adjusted)/i, 'the false completed-mutation prose never reaches the athlete');
+  assert.equal(json.data.propose_plan_edit, null, 'the proposal is dropped — a false "already done" turn is not a trustworthy proposal');
+  assert.equal(json.data.source, 'engine', 'the deterministic grounded statement replaces the model prose');
+  // Read-only: appendRows throws if hit, so reaching here proves no write occurred.
+});
+
+test('Failure 2 (Test 7): ambiguous evidence — a mutation-claim reply with no plan in view states uncertainty, invents nothing', async () => {
+  resetCoach();
+  coachState.reply = 'The plan was updated. It now calls for 3 sets of 10.';
+  const { res, json } = await post({ message: "That isn't what you planned. You planned 3 sets at 8 reps.", context: {} });
+  assert.equal(res.status, 200);
+  assert.match(json.data.message, /don't have the current plan|not sure which/i, 'states uncertainty rather than a target');
+  assert.match(json.data.message, /haven't changed/i);
+  assert.doesNotMatch(json.data.message, /was updated|now calls for/i);
+});
+
+test('Test 3: a genuine proposal ("I can change it… want me to?") passes through unchanged with its plan edit', async () => {
+  resetCoach();
+  coachState.reply = 'I can change that to 3 sets of 8 if you want.';
+  coachState.propose_plan_edit = { action: 'replace_plan', exercises: [{ name: 'Seated Row', sets: 3, reps: 8, weight: 200, rir: 1 }] };
+  const { res, json } = await post({ message: 'Change it to 3 sets of 8.', context: SEATED_PLAN });
+  assert.equal(res.status, 200);
+  assert.equal(json.data.message, 'I can change that to 3 sets of 8 if you want.', 'a conditional proposal is not a mutation claim — prose preserved');
+  assert.deepEqual(json.data.propose_plan_edit, { action: 'replace_plan', exercises: [{ name: 'Seated Row', sets: 3, reps: 8, weight: 200, rir: 1 }] }, 'the proposal is preserved');
+  assert.equal(json.data.source, 'gemini');
+});
+
+test('regression: the acceptable production explanation prose is NOT rewritten', async () => {
+  resetCoach();
+  // The production explanation that was "acceptable" — present-state, no completed-mutation claim.
+  coachState.reply = 'The plan calls for 200 for 10 reps at 1 RIR on Seated Row to increase volume on a lift that has stalled.';
+  const { res, json } = await post({ message: 'Why did you program seated rows for 200 pounds at 10 reps with 1 RIR?', context: SEATED_PLAN });
+  assert.equal(res.status, 200);
+  assert.equal(json.data.message, coachState.reply, 'a truthful present-state explanation passes through unchanged');
+  assert.equal(json.data.source, 'gemini');
+});
+
+// ── Failure 1 — relevance narrowing wired into the route ────────────────────
+
+test('Failure 1: a Seated Row explanation reaches the model with the unrelated Bench Press diagnostic filtered out', async () => {
+  resetCoach();
+  coachState.reply = 'On Seated Row the plan calls for 200 for 10 at 1 RIR to progress from 195.';
+  const { res } = await post({ message: 'Why did you program seated rows for 200 pounds at 10 reps with 1 RIR?', context: SEATED_PLAN });
+  assert.equal(res.status, 200);
+  const ctx = coachState.lastChatContext;
+  assert.ok(ctx, 'the model was actually called (not short-circuited)');
+  assert.ok(!(ctx.stalls || []).some(s => /bench/i.test(s.exercise || '')), 'the unrelated Bench Press stall is filtered out of the model context');
+  assert.deepEqual(ctx.muscle_gaps, [], 'muscle_gaps dropped for a focused plan explanation');
+});
+
+test('Failure 1 control: a broad-session review still receives the full diagnostics (Bench stall present)', async () => {
+  resetCoach();
+  coachState.reply = 'A few things stand out across your recent training.';
+  const { res } = await post({ message: "Are there any problems with today's workout or my recent training?", context: SEATED_PLAN });
+  assert.equal(res.status, 200);
+  const ctx = coachState.lastChatContext;
+  assert.ok(ctx, 'the model was called');
+  assert.ok((ctx.stalls || []).some(s => /bench/i.test(s.exercise || '')), 'a broad review is NOT narrowed — the Bench stall remains available');
+});
+
+// ── Test 8 — telemetry integrity (one correlated pair, final grounded text) ──
+
+test('Test 8: a grounded correction turn still produces ONE Coach_Shadow + Coach_Response pair storing the final text', async () => {
+  resetCoach();
+  coachState.reply = 'The plan was updated. It now calls for 3 sets of 10.';
+  process.env.ATLAS_INTERACTION_TRACE = 'shadow';
+  try {
+    const { res, json, respRow, respCount, shadowRow } = await post({ message: "That isn't what you planned. You planned 3 sets at 8 reps.", context: SEATED_PLAN });
+    assert.equal(res.status, 200);
+    assert.ok(shadowRow, 'one Coach_Shadow record');
+    assert.ok(respRow, 'one Coach_Response record');
+    assert.equal(respCount, 1, 'exactly one response row (no duplicate telemetry)');
+    assert.equal(respRow[RESP.turn_id], shadowRow.turn_id, 'the pair shares one turn_id');
+    // The stored visible text is the FINAL grounded statement, byte-for-byte.
+    assert.equal(respRow[RESP.visible_message], json.data.message, 'Coach_Response stores the exact final visible text');
+    assert.match(json.data.message, /haven't changed/i);
+  } finally {
+    delete process.env.ATLAS_INTERACTION_TRACE;
+  }
+});

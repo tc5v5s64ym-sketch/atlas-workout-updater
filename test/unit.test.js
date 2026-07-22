@@ -1358,8 +1358,10 @@ test('two-way chat: coach-conversation handles the chat event read-only via /api
   const idxSrc = fs.readFileSync(path.join(repoRoot, 'routes', 'coachOps.js'), 'utf8');
   const chatTimeout = Number((idxSrc.match(/const COACH_CHAT_TIMEOUT_MS = (\d+)/) || [])[1]);
   assert.ok(chatTimeout > 8000 && chatTimeout <= 15000, `chat timeout must be >8s default and <=15s client budget, got ${chatTimeout}`);
-  assert.match(idxSrc, /generateChatReply\(\{ message, context, history \}, \{ timeoutMs: COACH_CHAT_TIMEOUT_MS \}\)/,
-    'the chat route must pass the longer chat timeout to generateChatReply');
+  // The context passed is the response-grounding-narrowed `llmContext` (2026-07-21
+  // Failure 1), a no-op for non-plan turns; the longer chat timeout is still passed.
+  assert.match(idxSrc, /generateChatReply\(\{ message, context: llmContext, history \}, \{ timeoutMs: COACH_CHAT_TIMEOUT_MS \}\)/,
+    'the chat route must pass the longer chat timeout to generateChatReply (with the narrowed llmContext)');
 
   assert.match(convSource, /addEventListener\('atlas:chat-message'/);
   assert.match(convSource, /'\/api\/coach\/chat'/);

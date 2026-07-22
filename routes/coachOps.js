@@ -65,6 +65,7 @@ const { getFlightRecorderLog, isFlightRecorderEnabled, recordClientBatch } = req
 const { BUG_REPORT_TAB, BUG_REPORT_COLUMNS, buildBugReportRow } = require('../services/bugReport');
 const { readCurrentDeloadState } = require('../services/deloadState');
 const driftShadow = require('../services/driftShadow');
+const coachResponseGrounding = require('../services/coachResponseGrounding');
 const { beginDeload, recordDeloadSession, resolvePostDeload } = require('../services/deloadEngine');
 const { selectProtocol } = require('../services/deloadProtocols');
 const { buildSheetContractStatus } = require('../config/sheetContract');
@@ -1288,16 +1289,25 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
           message: recoveryReply, configured: true, model: coach.coachModel(), source: 'engine'
         });
       }
+      // Response-grounding RELEVANCE narrowing (2026-07-21 Failure 1). For an active
+      // plan explanation/dispute/correction, filter the all-lift diagnostics (stalls,
+      // memory_patterns) to the exercise the turn is actually about and recompute
+      // coach_mode from the narrowed patterns — so an unrelated lift's "challenge"
+      // (e.g. a Bench Press benchmark paragraph) can never contaminate an answer about
+      // Seated Row. A broad-session review is left untouched (still gets the full
+      // picture). No-op for every non-grounded turn. Applied AFTER the drift shadow /
+      // recovery routing above, so observability sees the unmodified context.
+      const llmContext = coachResponseGrounding.narrowContextToPlanTurn(context, message, { discouraged });
       // Chat is interactive and the client waits 15s (CHAT_REPLY_TIMEOUT_MS), so give
       // Gemini more than the 8s default before aborting — a merely-SLOW (not-down)
       // response then lands instead of being killed early and dead-ending the lifter
       // on "Coach is unavailable." Stays under the client budget with network margin.
       const { reply, propose_edit, propose_note, propose_constraint, propose_plan_edit } =
-        await coach.generateChatReply({ message, context, history }, { timeoutMs: COACH_CHAT_TIMEOUT_MS });
+        await coach.generateChatReply({ message, context: llmContext, history }, { timeoutMs: COACH_CHAT_TIMEOUT_MS });
       const hasReply = Boolean(reply && String(reply).trim());
       const personalBestFacts = Object.entries(
-        context.athlete_identity && context.athlete_identity.lift_prs
-          ? context.athlete_identity.lift_prs
+        llmContext.athlete_identity && llmContext.athlete_identity.lift_prs
+          ? llmContext.athlete_identity.lift_prs
           : {}
       ).map(([exercise, entry]) => ({
         exercise,
@@ -1312,8 +1322,8 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       const registerViolations = hasReply
         ? (typeof coach.findRegisterViolations === 'function'
           ? coach.findRegisterViolations(reply, {
-            mode: context.coach_mode,
-            register: context.register,
+            mode: llmContext.coach_mode,
+            register: llmContext.register,
             allow_personal_best_reference: true,
             personal_best_facts: personalBestFacts
           })
@@ -1328,6 +1338,24 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       const isPrClaim = typeof coach.looksLikePrClaim === 'function' && coach.looksLikePrClaim(message);
       const safeNote = isPrClaim ? null : (propose_note || null);
       const safeConstraint = isPrClaim ? null : (propose_constraint || null);
+      // Mutation-truth guard (2026-07-21 Failure 2). /api/coach/chat is READ-ONLY and
+      // never carries verified write proof, so a completed-mutation claim in the prose
+      // ("the plan was updated", "it now calls for…", "I switched it") is always false.
+      // Replace such prose with a deterministic, grounded statement of what the current
+      // plan actually shows plus that nothing changed, and drop any proposal — a turn
+      // that falsely claims an already-done change is not a trustworthy proposal. The
+      // detector is state-aware: proposals, questions, athlete quotations, and negations
+      // are NOT completed claims and pass through unchanged (Test 3's "I can propose…"
+      // and its plan-edit proposal are preserved by the block below).
+      if (hasSafeReply && coachResponseGrounding.detectUnsupportedMutationClaim(reply).length > 0) {
+        const grounded = coachResponseGrounding.buildGroundedPlanStatement(llmContext, {
+          exercises: coachResponseGrounding.resolveTurnExercises(message, llmContext)
+        });
+        return standardSuccess(req, res, 'Coach chat — grounded (unsupported mutation claim rejected)', {
+          message: grounded, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
+          configured: true, model: coach.coachModel(), source: 'engine'
+        });
+      }
       // Return the Gemini result when it has usable prose OR carries a structured
       // proposal (edit/note/constraint) — a proposal must never be dropped just
       // because the prose came back empty. Only a truly empty result (no prose, no
