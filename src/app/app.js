@@ -17,6 +17,7 @@ import { loadHistory, loadSessions } from './historyView.js';
 import { liftListCache, loadProgressLiftList, openLiftDrillDown, renderTrends } from './progressView.js';
 import { checkConnection, runHealthCheck, setBoxSpan } from './settingsHealth.js';
 import { buildSessionTally } from './sessionTally.js';
+import * as sessionQuestion from './sessionQuestion.js';
 // PR-10 — single state store (session/plan slice). These loose top-level `let`s
 // used to live here; ownership moved to store.js so every surface reads one source
 // of truth. Getters return the live reference; setters take the reassignments the
@@ -1408,7 +1409,9 @@ function renderTodaysPick(data) {
   // Composer-first Phase B: the card is a LINK into the canonical in-thread
   // Coach's Pick, not a second recommendation home of its own.
   const link = el('button', { type: 'button', class: 'today-pick-link', text: 'Open with your coach →' });
-  link.addEventListener('click', openCoachPickInThread);
+  // No constraints from a plain entry point — call with none so the click Event is
+  // never mistaken for a constraints object (the default recommendation).
+  link.addEventListener('click', () => openCoachPickInThread());
   box.appendChild(link);
 }
 
@@ -1418,11 +1421,13 @@ function renderTodaysPick(data) {
 // and render the same in-thread Coach's Pick (window.atlasOpenCoachPick, which
 // engages the suggestion). The intent DRAWER remains only for the
 // non-recommended "Other training options" grid.
-function openCoachPickInThread() {
+function openCoachPickInThread(constraints) {
   // Land on the coach surface via the tab engine (the Phase D header has no
   // surface toggle; the hidden logger tab-btn is the programmatic route).
   document.querySelector('.tab-btn[data-tab="logger"]')?.click();
-  if (typeof window.atlasOpenCoachPick === 'function') window.atlasOpenCoachPick();
+  // `constraints` (requested first exercise / focus) flow to the authoritative pipeline;
+  // undefined for the plain entry points (link/tile), which keep the default recommendation.
+  if (typeof window.atlasOpenCoachPick === 'function') window.atlasOpenCoachPick(constraints);
 }
 
 function buildConsistencyText(s) {
@@ -1460,7 +1465,7 @@ function wireStartSessionBtn(data) {
   if (recommended) {
     btn.textContent = 'START SESSION';
     btn.hidden = false;
-    btn.onclick = openCoachPickInThread;
+    btn.onclick = () => openCoachPickInThread();
   } else {
     btn.hidden = true;
   }
@@ -2756,6 +2761,10 @@ function openTodaySessionPlan() {
 function looksLikeSessionRequest(text) {
   const t = String(text || '').trim().toLowerCase();
   if (!t || /\d/.test(t)) return false;
+  // Workout-GENERATION requests ("plan me a workout", "plan me a workout but have it start
+  // with back squats", "build me a pull workout") must reach the AUTHORITATIVE recommendation
+  // pipeline here, not the free-form /api/coach/chat pseudo-plan lane (2026-07-22 failure).
+  if (sessionQuestion.isWorkoutGenerationRequest(t)) return true;
   return /\b(recommended (workout|session)|what should i train|what (should|do) (i|we) do today|what are we doing|today'?s plan|what'?s the plan|what (workout|session) (would|do|should|can) you (suggest|recommend)|(suggest|recommend) (a |an |me |today'?s )?(\w+ )?(workout|session)|do (my|the|your) (workout|session)|let'?s (do|start|run) (it|this|the workout|my workout|the session|your recommended workout))\b/.test(t);
 }
 
@@ -6145,8 +6154,11 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
   // typed sentence IS the pick's entry; a chat-prose answer here would be a
   // second recommendation voice.
   if (looksLikeSessionRequest(workoutTextInput.value)) {
+    // Carry the athlete's structured constraints (requested first exercise, focus) into the
+    // authoritative pipeline so it can honor them — never a client-built plan.
+    const genConstraints = sessionQuestion.extractGenerationConstraints(workoutTextInput.value);
     setTimeout(() => { workoutTextInput.value = ''; }, 0);
-    openCoachPickInThread();
+    openCoachPickInThread(genConstraints);
     return;
   }
 

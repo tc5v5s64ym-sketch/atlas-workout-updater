@@ -7,8 +7,10 @@ const path = require('node:path');
 
 // PR-08: ES module now — dynamic import (Node 20 CI has no require(esm)).
 let isSessionStateQuestion, isPlannedLiftQuestion, isPlanReference, isPlanModificationRequest;
+let isWorkoutGenerationRequest, extractGenerationConstraints;
 test.before(async () => {
-  ({ isSessionStateQuestion, isPlannedLiftQuestion, isPlanReference, isPlanModificationRequest } = await import('../src/app/sessionQuestion.js'));
+  ({ isSessionStateQuestion, isPlannedLiftQuestion, isPlanReference, isPlanModificationRequest,
+     isWorkoutGenerationRequest, extractGenerationConstraints } = await import('../src/app/sessionQuestion.js'));
 });
 
 const repoRoot = path.join(__dirname, '..');
@@ -322,4 +324,119 @@ test('isPlanModificationRequest is safe on empty / non-string input', () => {
   assert.equal(isPlanModificationRequest(null), false);
   assert.equal(isPlanModificationRequest(undefined), false);
   assert.equal(isPlanModificationRequest(42), false);
+});
+
+// ---------------------------------------------------------------------------
+// isWorkoutGenerationRequest — a request to CREATE / PLAN a new session. The
+// 2026-07-22 production failure: "Plan me a workout but have it start with back
+// squats" leaked to the free-form /api/coach/chat lane, which had the model write
+// an incomplete pseudo-plan (no plan_version, no canonical lift codes) the client
+// wrongly treated as an active plan. Generation must instead route to the
+// AUTHORITATIVE recommendation pipeline. Education/how-to, disputes, corrections,
+// and plan-MODIFICATION requests must NOT match (they keep their #1126–#1128 routes).
+// ---------------------------------------------------------------------------
+
+test('isWorkoutGenerationRequest flags create/plan-a-workout requests', () => {
+  const requests = [
+    // The exact production phrase.
+    'Plan me a workout but have it start with back squats.',
+    'Plan me a workout.',
+    'Build me a pull workout.',
+    'Make me a push session.',
+    'Create a leg day.',
+    'Generate a full body workout.',
+    'Design me an upper body session.',
+    'Put together a workout for me.',
+    'Give me a workout.',
+    'Program a lower body session.',
+    // Direct "what should I train" asks.
+    'What should I train today?',
+    'What are we training today?',
+    'What are we doing today?',
+    "What's the plan today?",
+  ];
+  for (const r of requests) {
+    assert.equal(isWorkoutGenerationRequest(r), true, `expected generation request: ${JSON.stringify(r)}`);
+  }
+});
+
+test('isWorkoutGenerationRequest leaves education/how-to alone', () => {
+  const education = [
+    'How do I plan a workout?',
+    'How should I build a workout?',
+    'How to program a push day?',
+    'What is a good workout split?',
+    'Why do we plan workouts around movement patterns?',
+  ];
+  for (const q of education) {
+    assert.equal(isWorkoutGenerationRequest(q), false, `education must not be a generation request: ${JSON.stringify(q)}`);
+  }
+});
+
+test('isWorkoutGenerationRequest does not fire on disputes/corrections/modifications (#1126–#1128 preserved)', () => {
+  const others = [
+    // dispute / correction (isPlanReference route)
+    "That isn't what you planned. You planned 3 sets at 8 reps.",
+    'You said 195.',
+    // plan-modification (isPlanModificationRequest route)
+    'Can we change it to 3 sets of 6?',
+    'Switch to Front Squat.',
+    'Make that 8 reps.',
+    // ordinary logging shorthand / chatter
+    'bench 225 5/2',
+    'crushed that set',
+    'thanks coach',
+  ];
+  for (const q of others) {
+    assert.equal(isWorkoutGenerationRequest(q), false, `non-generation turn must stay off the generation route: ${JSON.stringify(q)}`);
+  }
+});
+
+test('isWorkoutGenerationRequest is safe on empty / non-string input', () => {
+  assert.equal(isWorkoutGenerationRequest(''), false);
+  assert.equal(isWorkoutGenerationRequest('   '), false);
+  assert.equal(isWorkoutGenerationRequest(null), false);
+  assert.equal(isWorkoutGenerationRequest(undefined), false);
+  assert.equal(isWorkoutGenerationRequest(42), false);
+});
+
+// ---------------------------------------------------------------------------
+// extractGenerationConstraints — the structured planning INPUTS carried by a
+// generation request: a requested FIRST exercise ("start with back squats") and a
+// focus / movement pattern ("pull workout", "upper body", "leg day"). These become
+// query params to the authoritative pipeline; they are NEVER a model-built plan.
+// ---------------------------------------------------------------------------
+
+test('extractGenerationConstraints pulls the requested first exercise', () => {
+  assert.deepEqual(
+    extractGenerationConstraints('Plan me a workout but have it start with back squats.'),
+    { firstExercise: 'back squats' });
+  assert.deepEqual(
+    extractGenerationConstraints('Build me a session beginning with the deadlift, then accessories.'),
+    { firstExercise: 'deadlift' });
+  assert.deepEqual(
+    extractGenerationConstraints('Make me a workout, open with bench press please.'),
+    { firstExercise: 'bench press' });
+});
+
+test('extractGenerationConstraints pulls the focus / movement pattern', () => {
+  assert.equal(extractGenerationConstraints('Build me a pull workout.').focus, 'pull');
+  assert.equal(extractGenerationConstraints('Plan me a push day.').focus, 'push');
+  assert.equal(extractGenerationConstraints('Give me an upper body session.').focus, 'upper_body');
+  assert.equal(extractGenerationConstraints('Make me a leg day.').focus, 'lower_body');
+  assert.equal(extractGenerationConstraints('Design a full body workout.').focus, 'full_body');
+});
+
+test('extractGenerationConstraints does not mistake a lift name for a focus', () => {
+  // "leg press" contains "leg" but is NOT a lower-body FOCUS keyword — only an
+  // explicit "leg day" / "legs" sets lower_body (avoids the 2026-07-22 mis-extraction).
+  const c = extractGenerationConstraints('Plan a session, start with the leg press.');
+  assert.equal(c.focus, undefined, 'a bare "leg press" first-exercise must not set a lower-body focus');
+  assert.equal(c.firstExercise, 'leg press');
+});
+
+test('extractGenerationConstraints returns an empty object when there are no constraints', () => {
+  assert.deepEqual(extractGenerationConstraints('Plan me a workout.'), {});
+  assert.deepEqual(extractGenerationConstraints(''), {});
+  assert.deepEqual(extractGenerationConstraints(null), {});
 });

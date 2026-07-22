@@ -163,9 +163,59 @@ const _exports = (function () {
     return PLAN_MODIFY_RE.test(m) || PLAN_MODIFY_REQUEST_RE.test(m);
   }
 
-  const exported = { isSessionStateQuestion, isPlannedLiftQuestion, isPlanReference, isPlanModificationRequest };
+  // A WORKOUT-GENERATION request — asking Atlas to create/plan a NEW session
+  // ("Plan me a workout", "Plan me a workout but have it start with back squats",
+  // "Build me a pull workout", "What should I train today?"). The 2026-07-22 production
+  // failure: these leaked to the free-form /api/coach/chat lane, which had Gemini write a
+  // pseudo-plan (incomplete prescriptions, no plan_version, no canonical lift codes) that
+  // the client wrongly treated as an active plan. Generation must instead route to the
+  // AUTHORITATIVE recommendation/plan pipeline (Coach's Pick → /api/plan/intent-recommendation).
+  //
+  // It must NOT match education/how-to ("how do I plan a workout?"), plan disputes /
+  // corrections / explanations, or plan-MODIFICATION requests (those keep their #1126–#1128
+  // routes). A generation verb (plan/build/make/create/generate/…) must precede a workout
+  // noun within a couple words; a "how do I / how to …" framing is education and bails.
+  const GEN_VERB = 'plan|build|make|create|generate|program|design|assemble|put together|set up|give me|throw together|write me';
+  const GEN_NOUN = 'workout|session|training|lift|split|routine|program|leg day|push day|pull day|upper day|lower day';
+  const GEN_REQUEST_RE = new RegExp(`\\b(?:${GEN_VERB})\\b\\s+(?:me\\s+|us\\s+)?(?:a|an|my|the|this|today'?s)?\\s*(?:\\w+\\s+){0,2}\\b(?:${GEN_NOUN})\\b`);
+  const GEN_ASK_RE = /\bwhat should i train\b|\bwhat (?:should|do) (?:i|we) do today\b|\bwhat are we (?:doing|training)(?: today)?\b|\bwhat'?s the plan(?: today)?\b/;
+  // A "how to / how do I / how does one …" framing is a request to be TAUGHT, not to
+  // have a session generated ("How do I plan a workout?", "How to program a push day?").
+  const GEN_HOWTO_RE = /\bhow (?:to|do|does|can|could|should|would)\b/;
+
+  function isWorkoutGenerationRequest(message) {
+    const m = (typeof message === 'string' ? message : '').toLowerCase().replace(/[‘’ʼ′]/g, "'").trim();
+    if (!m) return false;
+    if (GEN_HOWTO_RE.test(m)) return false; // "how do I plan a workout?" is education
+    return GEN_REQUEST_RE.test(m) || GEN_ASK_RE.test(m);
+  }
+
+  // Structured planning constraints carried by a generation request, so the authoritative
+  // pipeline can honor them: a requested FIRST exercise ("start with back squats") and a
+  // focus / movement pattern ("pull workout", "upper body", "leg day"). Returns raw phrases;
+  // the server canonicalizes the first-exercise name to a lift code. Exclusions/equipment
+  // are not extracted here because the legacy authoritative engine does not honor them
+  // (they exist only on the flag-gated One-Brain path) — "preserve when already supported".
+  function extractGenerationConstraints(message) {
+    const m = (typeof message === 'string' ? message : '').toLowerCase().replace(/[‘’ʼ′]/g, "'").trim();
+    const out = {};
+    if (!m) return out;
+    const first = m.match(/\b(?:start(?:ing)?|begin(?:ning)?|open(?:ing)?|lead(?:ing)?|kick(?:ing)? off)\s+(?:it\s+|the\s+(?:workout|session)\s+)?with\s+([a-z][a-z '-]*?)\s*(?:,|\.|;|!|\?|\band\b|\bthen\b|\bplease\b|\bbut\b|$)/);
+    if (first && first[1]) {
+      out.firstExercise = first[1].trim().replace(/^(?:the|a|an|some|my)\s+/, '').trim();
+      if (!out.firstExercise) delete out.firstExercise;
+    }
+    if (/\bupper(?:\s*body)?\b/.test(m)) out.focus = 'upper_body';
+    else if (/\blower(?:\s*body)?\b|\bleg\s*day\b|\blegs\b/.test(m)) out.focus = 'lower_body';
+    else if (/\bpush(?:\s*(?:day|workout|session))?\b/.test(m)) out.focus = 'push';
+    else if (/\bpull(?:\s*(?:day|workout|session))?\b/.test(m)) out.focus = 'pull';
+    else if (/\bfull[\s-]*body\b/.test(m)) out.focus = 'full_body';
+    return out;
+  }
+
+  const exported = { isSessionStateQuestion, isPlannedLiftQuestion, isPlanReference, isPlanModificationRequest, isWorkoutGenerationRequest, extractGenerationConstraints };
 
   return exported;
 })();
 
-export const { isSessionStateQuestion, isPlannedLiftQuestion, isPlanReference, isPlanModificationRequest } = _exports;
+export const { isSessionStateQuestion, isPlannedLiftQuestion, isPlanReference, isPlanModificationRequest, isWorkoutGenerationRequest, extractGenerationConstraints } = _exports;

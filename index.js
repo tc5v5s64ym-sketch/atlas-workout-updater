@@ -85,7 +85,8 @@ const coach = require('./services/coach');
 const coachPolish = require('./services/coachPolish');
 const { normalizeExerciseKey, generateLiftCode, makeLiftCodeRegistry, buildExerciseCatalogMap, enrichLogRow, closestExerciseMatches } = require('./services/exerciseEnrichment');
 const { normalizeDurationString } = require('./services/duration');
-const { buildWorkoutTextParseDryRunResponse } = require('./services/workoutTextParser');
+const { buildWorkoutTextParseDryRunResponse, canonicalizeExerciseName } = require('./services/workoutTextParser');
+const { applyFirstExercise } = require('./services/planFirstExercise');
 const { recognizeModalityInput } = require('./services/multiModalityParser');
 const { toModalityLogRow } = require('./services/modalityLogRow');
 const { resolveExercise } = require('./services/exerciseResolver');
@@ -1458,7 +1459,12 @@ app.get('/api/plan/intent-recommendation', async (req, res) => {
       getSheetRows(logSheetName),
       getSheetRows(effortSheetName)
     ]);
-    const upperOnly = req.query.upperOnly === 'true' || req.query.scope === 'upper';
+    // A workout-generation request routes here (authoritative pipeline) with its structured
+    // constraints as query params. `focus` is honored only where the engine already supports
+    // it — upper_body maps to the existing upperOnly scope; other focuses are accepted but
+    // the legacy engine does not act on them ("preserve when already supported").
+    const upperOnly = req.query.upperOnly === 'true' || req.query.scope === 'upper'
+      || req.query.focus === 'upper_body' || req.query.focus === 'upper';
     const result = scoreIntents(allLog, allEffort, {
       goal: req.query.goal ? normalizeTrainingGoal(req.query.goal) : getProfileGoal(),
       ...(upperOnly && { upperOnly }),
@@ -1533,6 +1539,28 @@ app.get('/api/plan/intent-recommendation', async (req, res) => {
           result.engine_source = { mode: 'brian', driven_by: 'legacy', reason: 'orchestrator_error' };
         }
       }
+    }
+
+    // Requested FIRST exercise ("Plan me a workout but have it start with back squats"):
+    // make the recommended intent LEAD with it. Authoritative-only — a resolved target comes
+    // from the deterministic engine (recommendNextSet); if history can't support a load the
+    // injected entry carries an EXPLICIT unresolved-load state (never a fabricated number).
+    // Runs BEFORE the barbell snap so an injected/reordered weight gets the same loadability
+    // rule. Read-only: reorders/annotates the already-built recommendation.
+    const firstExerciseRaw = typeof req.query.firstExercise === 'string' ? req.query.firstExercise.trim() : '';
+    if (firstExerciseRaw && result) {
+      let name = firstExerciseRaw;
+      let code = null;
+      let target = null;
+      try { const c = canonicalizeExerciseName(firstExerciseRaw); if (c && c.canonicalName) name = c.canonicalName; } catch (_) { /* keep raw */ }
+      try { code = generateLiftCode(name) || null; } catch (_) { code = null; }
+      if (code) {
+        try {
+          const r = recommendNextSet(allLog, code);
+          if (r && r.next_target) target = { ...r.next_target, rir: r.target_rir != null ? r.target_rir : null };
+        } catch (_) { target = null; }
+      }
+      applyFirstExercise(result, { name, code, target });
     }
 
     // P0 AC12: snap each intent's BARBELL target weights to loadable plate totals

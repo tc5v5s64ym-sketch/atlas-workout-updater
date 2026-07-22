@@ -754,10 +754,12 @@ test('stacked plans: the chat prompt tells the model NOT to enumerate the plan i
     'the app owns the plan render; the model words the focus only');
 });
 
-test('stacked plans: suggest/recommend phrasings route to the canonical pick (deterministic, stacked)', () => {
+test('stacked plans: suggest/recommend phrasings route to the canonical pick (deterministic, stacked)', async () => {
   const app = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'app.js'), 'utf8');
   const src = app.slice(app.indexOf('function looksLikeSessionRequest'), app.indexOf('function looksLikeArtifactRequest'));
-  const fn = new Function(`${src}; return looksLikeSessionRequest;`)();
+  // looksLikeSessionRequest now consults sessionQuestion.isWorkoutGenerationRequest — inject it.
+  const sessionQuestion = await import('../src/app/sessionQuestion.js');
+  const fn = new Function('sessionQuestion', `${src}; return looksLikeSessionRequest;`)(sessionQuestion);
   for (const t of ['What workout would you suggest for today', 'can you suggest a workout', 'recommend me a session']) {
     assert.equal(fn(t), true, `must route to the pick: "${t}"`);
   }
@@ -853,22 +855,24 @@ test('F10S5 SMOKE REPRODUCE (behavioral): the same prescribed→logged pair rend
 // saw. Drives the REAL looksLikeSessionRequest sliced from the built bundle.
 // ---------------------------------------------------------------------------
 
-function sessionRequestFn() {
+function sessionRequestFn(sessionQuestion) {
   const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
   const src = app.slice(app.indexOf('function looksLikeSessionRequest'), app.indexOf('function looksLikeArtifactRequest'));
   assert.ok(src.includes('function looksLikeSessionRequest'), 'slice must contain looksLikeSessionRequest');
-  return new Function(`${src}; return looksLikeSessionRequest;`)();
+  // looksLikeSessionRequest now consults sessionQuestion.isWorkoutGenerationRequest
+  // (workout-generation routing, 2026-07-22), so the classifier must be injected.
+  return new Function('sessionQuestion', `${src}; return looksLikeSessionRequest;`)(sessionQuestion);
 }
 
-test('F10S6a SMOKE REPRODUCE: "What should I do today?" routes to the canonical pick', () => {
-  const fn = sessionRequestFn();
+test('F10S6a SMOKE REPRODUCE: "What should I do today?" routes to the canonical pick', async () => {
+  const fn = sessionRequestFn(await import('../src/app/sessionQuestion.js'));
   for (const t of ['What should I do today?', 'what should i do today', 'What do I do today?', 'what should we do today']) {
     assert.equal(fn(t), true, `the day-planning ask must route to the pick: "${t}"`);
   }
 });
 
-test('F10S6a: bare "what should I do" stays OFF the pick route (mid-session state lane owns it)', () => {
-  const fn = sessionRequestFn();
+test('F10S6a: bare "what should I do" stays OFF the pick route (mid-session state lane owns it)', async () => {
+  const fn = sessionRequestFn(await import('../src/app/sessionQuestion.js'));
   // sessionQuestion.js answers the bare phrase from the live prescription during
   // an active session; only the "today"-scoped ask is a day-planning request.
   // Digits still rule a phrase out, so workout shorthand can never be swallowed.

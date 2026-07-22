@@ -27,7 +27,7 @@ const EXPECTED = {
     'normalizeDisplayBlocks', 'looksLikeDisplayBlock', 'parseDisplaySetLine', 'isSetLine',
     'setLineHasLeftoverSets', 'isHeaderLine', 'cleanHeaderName',
   ],
-  sessionQuestion: ['isSessionStateQuestion', 'isPlannedLiftQuestion', 'isPlanReference', 'isPlanModificationRequest'],
+  sessionQuestion: ['isSessionStateQuestion', 'isPlannedLiftQuestion', 'isPlanReference', 'isPlanModificationRequest', 'isWorkoutGenerationRequest', 'extractGenerationConstraints'],
   coachVoiceTemplates: [
     'liftLabel', 'templatedSubstitutionLine', 'formatSubstituteCoachLine',
     'templatedNextMoveAdvisoryLine', 'templatedRecoveryAdvisoryLine',
