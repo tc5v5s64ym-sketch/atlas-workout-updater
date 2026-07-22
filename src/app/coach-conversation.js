@@ -2075,7 +2075,18 @@ import * as sessionQuestion from './sessionQuestion.js';
     // real plan and states the actual prescription. Education ("what is RIR?") names
     // no plan and stays on the SME.
     const planReference = sessionQuestion.isPlanReference(message);
-    const skipSme = hasActiveWorkout && (sessionShaped || plannedLiftValue || planReference);
+    // Plan-MODIFICATION requests ("change it to 3x6", "can we change it to 3 sets of 6?",
+    // "make that 8 reps", "could we lower it to 175?") ask to CHANGE the active plan.
+    // A shorthand request often carries neither a lift name nor the word "plan", so the
+    // three classifiers above all miss it and it leaked to the generic SME (the 2026-07-22
+    // production failure — a change request got a warm-up card and never reached the
+    // proposal → approval flow). When an active workout exists, route it to the
+    // session-aware coach; #1126's server classifier then drives the model → proposal →
+    // approval flow. Education ("how do I change my grip?", "can changing rep ranges build
+    // muscle?") is not a modification request and stays on the SME. Read-only: chat never
+    // writes; a plan edit still passes through preview → approve → write.
+    const planModification = sessionQuestion.isPlanModificationRequest(message);
+    const skipSme = hasActiveWorkout && (sessionShaped || plannedLiftValue || planReference || planModification);
 
     // SME first: a training-knowledge question gets a deterministic, LLM-free answer
     // from /api/coach/ask. Anything it has no card for (depth log_only / no answer) —

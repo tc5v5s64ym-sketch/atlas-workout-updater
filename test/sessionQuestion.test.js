@@ -6,9 +6,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 // PR-08: ES module now — dynamic import (Node 20 CI has no require(esm)).
-let isSessionStateQuestion, isPlannedLiftQuestion, isPlanReference;
+let isSessionStateQuestion, isPlannedLiftQuestion, isPlanReference, isPlanModificationRequest;
 test.before(async () => {
-  ({ isSessionStateQuestion, isPlannedLiftQuestion, isPlanReference } = await import('../src/app/sessionQuestion.js'));
+  ({ isSessionStateQuestion, isPlannedLiftQuestion, isPlanReference, isPlanModificationRequest } = await import('../src/app/sessionQuestion.js'));
 });
 
 const repoRoot = path.join(__dirname, '..');
@@ -112,13 +112,16 @@ test('getChatReply gates the SME on active-session + session-shaped message', ()
 
   // The SME call is skipped only with an active workout AND either a bare-shaped
   // question OR a named-planned-lift value question ("what's the RIR for bench?")
-  // OR a plan reference/correction ("that isn't what you planned", "you said 195").
-  assert.match(src, /skipSme\s*=\s*hasActiveWorkout\s*&&\s*\(sessionShaped\s*\|\|\s*plannedLiftValue\s*\|\|\s*planReference\)/,
-    'skipSme should require an active workout AND (session-shaped OR a planned-lift value question OR a plan reference/correction)');
+  // OR a plan reference/correction ("that isn't what you planned", "you said 195")
+  // OR a plan-modification request ("can we change it to 3 sets of 6?").
+  assert.match(src, /skipSme\s*=\s*hasActiveWorkout\s*&&\s*\(sessionShaped\s*\|\|\s*plannedLiftValue\s*\|\|\s*planReference\s*\|\|\s*planModification\)/,
+    'skipSme should require an active workout AND (session-shaped OR a planned-lift value question OR a plan reference/correction OR a plan-modification request)');
   assert.match(src, /sessionQuestion\.isPlannedLiftQuestion\(message,\s*planLiftNames\)/,
     'getChatReply should classify named-planned-lift value questions via isPlannedLiftQuestion');
   assert.match(src, /sessionQuestion\.isPlanReference\(message\)/,
     'getChatReply should classify plan references/corrections via isPlanReference');
+  assert.match(src, /sessionQuestion\.isPlanModificationRequest\(message\)/,
+    'getChatReply should classify plan-modification requests via isPlanModificationRequest');
   assert.match(src, /if\s*\(\s*!skipSme\s*\)\s*try\s*\{/,
     'the /api/coach/ask SME block should run only when not skipped');
 
@@ -258,4 +261,65 @@ test('isPlanReference is safe on empty / non-string input', () => {
   assert.equal(isPlanReference(null), false);
   assert.equal(isPlanReference(undefined), false);
   assert.equal(isPlanReference(42), false);
+});
+
+// ---------------------------------------------------------------------------
+// isPlanModificationRequest — the athlete asking to CHANGE the active plan. The
+// 2026-07-22 production failure: a shorthand change request ("Can we change it to
+// 3 sets of 6?") carried neither a lift name nor "plan", so the three classifiers
+// above all missed it, `skipSme` was false, and it leaked to the generic SME —
+// which returned a warm-up card, so the request never reached the proposal → approval
+// flow. Mirrors services/coachResponseGrounding.isPlanModificationRequest exactly;
+// education must stay off this route.
+// ---------------------------------------------------------------------------
+
+test('isPlanModificationRequest flags imperative and request-framed change requests', () => {
+  const requests = [
+    // Imperative (verb opens the clause).
+    'Change it to 3x6.',
+    'Make that 8 reps.',
+    'Switch to Front Squat.',
+    'Update the plan to 3 sets of 8.',
+    'Lower it to 175.',
+    "Let's bump it to 225.",
+    // Request / desire framing (verb does not open the clause).
+    'Can we change it to 3 sets of 6?',
+    'Could we lower it to 175?',
+    'I want to change it to 3 sets.',
+    "I'd like to change the plan.",
+    'Can you switch it to 8 reps?',
+    'Please update it to 3x8.',
+  ];
+  for (const r of requests) {
+    assert.equal(isPlanModificationRequest(r), true, `expected modification request: ${JSON.stringify(r)}`);
+  }
+});
+
+test('isPlanModificationRequest leaves education alone (never an active-plan mutation)', () => {
+  const education = [
+    'What is progressive overload?',
+    'How do I change my grip?',
+    'Can changing rep ranges build muscle?',
+    'What does RIR mean?',
+    'How should I warm up for seated rows?',
+    'Does changing tempo matter?',
+  ];
+  for (const q of education) {
+    assert.equal(isPlanModificationRequest(q), false, `education must not be a modification request: ${JSON.stringify(q)}`);
+  }
+});
+
+test('isPlanModificationRequest does not fire on factual disputes/explanations (preserves #1126 routing)', () => {
+  // A dispute/explanation is handled by isPlanReference / isPlannedLiftQuestion, not here.
+  assert.equal(isPlanModificationRequest("That isn't what you planned. You planned 3 sets at 6 reps."), false);
+  assert.equal(isPlanModificationRequest('You set the plan to 3x8.'), false);
+  assert.equal(isPlanModificationRequest('Why did you program bench press for 175 at 9 reps?'), false);
+});
+
+test('isPlanModificationRequest is safe on empty / non-string input', () => {
+  assert.equal(isPlanModificationRequest(''), false);
+  assert.equal(isPlanModificationRequest('   '), false);
+  assert.equal(isPlanModificationRequest(null), false);
+  assert.equal(isPlanModificationRequest(undefined), false);
+  assert.equal(isPlanModificationRequest(42), false);
 });

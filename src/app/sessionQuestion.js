@@ -133,9 +133,39 @@ const _exports = (function () {
     return false;
   }
 
-  const exported = { isSessionStateQuestion, isPlannedLiftQuestion, isPlanReference };
+  // A plan-MODIFICATION REQUEST — the athlete asking to CHANGE the active plan
+  // ("change it to 3x6", "can we change it to 3 sets of 6?", "make that 8 reps",
+  // "could we lower it to 175?", "I want to change it to 3 sets"). During an active
+  // workout these must reach the session-aware coach (/api/coach/chat), where #1126's
+  // server-side classifier routes them into the proposal → approval → write flow —
+  // NOT the generic SME. A shorthand request often carries neither a lift name nor the
+  // word "plan", so isPlanReference / the session-state classifiers miss it and it
+  // leaked to /api/coach/ask (the 2026-07-22 production failure: "Can we change it to
+  // 3 sets of 6?" got a generic warm-up card).
+  //
+  // Mirrors services/coachResponseGrounding.isPlanModificationRequest EXACTLY (kept in
+  // sync intentionally, like isPlanReference above) — same normalize, same two regexes:
+  //   1. an IMPERATIVE change verb opening a clause ("change it…", "…, switch to…"); or
+  //   2. a first-person desire / polite request cue ("i want/need/like…", "can/could
+  //      we|you", "would/will you", "let's", "please") followed by a change verb.
+  // Education carries neither shape, so it stays on the SME: "how do I change my grip?"
+  // has no clause-opening verb and no request-cue+verb pair; "can changing rep ranges
+  // build muscle?" never matches ("changing" isn't the bare verb; "can changing" isn't a
+  // request cue). An over-match degrades safely — the turn reaches the read-only chat
+  // coach, which proposes (never writes); an under-match strands a real change request.
+  const MODIFY_VERB = 'change|make|switch|update|set|adjust|swap|replace|bump|drop|remove|redo|rework|cut|lower|raise|increase|decrease';
+  const PLAN_MODIFY_RE = new RegExp(`(?:^|[.!?;,]\\s*|\\b(?:please|can you|could you|would you|will you|let'?s|i want you to|i'd like you to)\\s+)(${MODIFY_VERB})\\b`);
+  const PLAN_MODIFY_REQUEST_RE = new RegExp(`\\b(?:i(?:'d| would)? (?:want|wanna|need|like|love)(?: to| you to)?|we (?:want|need|should|could|can)|can (?:you|we)|could (?:you|we)|would you|will you|let'?s|let us|please)\\b[^.?!;]*?\\b(?:${MODIFY_VERB})\\b`);
+
+  function isPlanModificationRequest(message) {
+    const m = (typeof message === 'string' ? message : '').toLowerCase().replace(/[‘’ʼ′]/g, "'").trim();
+    if (!m) return false;
+    return PLAN_MODIFY_RE.test(m) || PLAN_MODIFY_REQUEST_RE.test(m);
+  }
+
+  const exported = { isSessionStateQuestion, isPlannedLiftQuestion, isPlanReference, isPlanModificationRequest };
 
   return exported;
 })();
 
-export const { isSessionStateQuestion, isPlannedLiftQuestion, isPlanReference } = _exports;
+export const { isSessionStateQuestion, isPlannedLiftQuestion, isPlanReference, isPlanModificationRequest } = _exports;
