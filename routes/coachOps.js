@@ -1289,14 +1289,28 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
           message: recoveryReply, configured: true, model: coach.coachModel(), source: 'engine'
         });
       }
+      // FAIL-CLOSED active-plan dispute (2026-07-22). A FACTUAL plan dispute/correction
+      // ("that isn't what you planned", "you said 195") is answered DETERMINISTICALLY from
+      // the current plan — the model is BYPASSED for the factual answer, so no model prose
+      // (any wording) can reach the athlete claiming a completed write on this read-only
+      // route. State the current plan, distinguish the athlete's claim, and say nothing
+      // was changed — never a denylist to outrun. "Why did you…" explanations and
+      // modification requests ("change it to…") are excluded and fall through below.
+      if (coachResponseGrounding.isFactualPlanDispute(message, context)) {
+        const disputeAnswer = coachResponseGrounding.buildDisputeAnswer(message, context);
+        return standardSuccess(req, res, 'Coach chat — grounded active-plan dispute (deterministic)', {
+          message: disputeAnswer, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
+          configured: true, model: coach.coachModel(), source: 'engine'
+        });
+      }
       // Response-grounding RELEVANCE narrowing (2026-07-21 Failure 1). For an active
-      // plan explanation/dispute/correction, filter the all-lift diagnostics (stalls,
-      // memory_patterns) to the exercise the turn is actually about and recompute
-      // coach_mode from the narrowed patterns — so an unrelated lift's "challenge"
-      // (e.g. a Bench Press benchmark paragraph) can never contaminate an answer about
-      // Seated Row. A broad-session review is left untouched (still gets the full
-      // picture). No-op for every non-grounded turn. Applied AFTER the drift shadow /
-      // recovery routing above, so observability sees the unmodified context.
+      // plan EXPLANATION ("why did you…"), filter the all-lift diagnostics (stalls,
+      // memory_patterns) to the exercise the turn is actually about (abbreviations
+      // resolved) and recompute coach_mode from the narrowed patterns — so an unrelated
+      // lift's "challenge" (e.g. a Bench Press benchmark paragraph) can never contaminate
+      // an answer about Seated Row. A broad-session review is left untouched (still gets
+      // the full picture). No-op for every non-grounded turn. Applied AFTER the drift
+      // shadow / recovery routing above, so observability sees the unmodified context.
       const llmContext = coachResponseGrounding.narrowContextToPlanTurn(context, message, { discouraged });
       // Chat is interactive and the client waits 15s (CHAT_REPLY_TIMEOUT_MS), so give
       // Gemini more than the 8s default before aborting — a merely-SLOW (not-down)
@@ -1338,15 +1352,17 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       const isPrClaim = typeof coach.looksLikePrClaim === 'function' && coach.looksLikePrClaim(message);
       const safeNote = isPrClaim ? null : (propose_note || null);
       const safeConstraint = isPrClaim ? null : (propose_constraint || null);
-      // Mutation-truth guard (2026-07-21 Failure 2). /api/coach/chat is READ-ONLY and
-      // never carries verified write proof, so a completed-mutation claim in the prose
-      // ("the plan was updated", "it now calls for…", "I switched it") is always false.
-      // Replace such prose with a deterministic, grounded statement of what the current
-      // plan actually shows plus that nothing changed, and drop any proposal — a turn
-      // that falsely claims an already-done change is not a trustworthy proposal. The
-      // detector is state-aware: proposals, questions, athlete quotations, and negations
-      // are NOT completed claims and pass through unchanged (Test 3's "I can propose…"
-      // and its plan-edit proposal are preserved by the block below).
+      // Mutation-truth BACKSTOP (defense-in-depth). Factual disputes are now answered
+      // deterministically above (fail-closed), so this only guards the remaining MODEL
+      // paths — a "why did you…" explanation or free-form chat. /api/coach/chat is
+      // READ-ONLY and never carries verified write proof, so a completed-mutation claim
+      // in the prose ("the plan was updated", "it now calls for…", "I switched it") is
+      // always false. Replace such prose with a deterministic, grounded statement of what
+      // the current plan actually shows plus that nothing changed, and drop any proposal —
+      // a turn that falsely claims an already-done change is not a trustworthy proposal.
+      // State-aware: proposals, questions, athlete quotations, and negations are NOT
+      // completed claims and pass through unchanged (a genuine "I can propose…" plan edit
+      // is preserved by the block below).
       if (hasSafeReply && coachResponseGrounding.detectUnsupportedMutationClaim(reply).length > 0) {
         const grounded = coachResponseGrounding.buildGroundedPlanStatement(llmContext, {
           exercises: coachResponseGrounding.resolveTurnExercises(message, llmContext)

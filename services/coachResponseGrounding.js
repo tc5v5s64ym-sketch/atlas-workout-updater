@@ -23,11 +23,22 @@
 //      are NOT claims), and `buildGroundedPlanStatement` supplies a truthful,
 //      grounded replacement that states the current plan and that nothing changed.
 //
-// The engine owns numbers/decisions; these helpers only select context and validate
-// wording. They never mutate a plan, never write, and never invent a fact.
+// FAIL-CLOSED follow-up (2026-07-22): a factual plan dispute/correction is now answered
+// DETERMINISTICALLY (`isFactualPlanDispute` → `buildDisputeAnswer`), bypassing the model
+// for the factual answer — so arbitrary completed-write wording cannot reach the athlete
+// on this read-only route without depending on a finite denylist. The model keeps
+// narrating genuine "why did you…" explanations (with context narrowed to the requested
+// lift, abbreviations resolved); `detectUnsupportedMutationClaim` stays as a backstop on
+// that model path only. Explicit modification requests ("change it to…") are excluded
+// from the dispute path and keep flowing to the model's proposal → approval → write lane.
+//
+// The engine owns numbers/decisions; these helpers only select context, construct the
+// deterministic dispute answer, and validate wording. They never mutate a plan, never
+// write, and never invent a fact.
 
 const { generateLiftCode } = require('./exerciseEnrichment');
 const { deriveChatCoachMode } = require('./chatCoachMode');
+const { canonicalizeExerciseName } = require('./workoutTextParser');
 
 // ── text utilities ──────────────────────────────────────────────────────────
 
@@ -96,20 +107,55 @@ function dedupeByKey(names) {
   return out;
 }
 
+// A canonical comparison key for a lift name, resolving abbreviations/aliases via the
+// parser's canonicalizer ("RDL" → "RDL", "OHP" → "Overhead Press", "Romanian Deadlift" →
+// "RDL"). Falls back to the raw name key when the canonicalizer finds nothing, so a plain
+// name still matches itself. This is what lets "why did you program RDL?" resolve to the
+// plan's Romanian Deadlift instead of falling through to the whole plan (Codex #1122).
+function canonicalKey(name) {
+  let canon = null;
+  try { canon = canonicalizeExerciseName(name); } catch { canon = null; }
+  const resolved = canon && canon.canonicalName ? canon.canonicalName : name;
+  return nameKey(resolved);
+}
+
+// Does the message name a specific lift at all (by full name OR abbreviation)? Used to
+// avoid the whole-plan fallback for a targeted question whose lift we couldn't map.
+function messageNamesALift(message) {
+  let canon = null;
+  try { canon = canonicalizeExerciseName(message); } catch { canon = null; }
+  return !!(canon && canon.canonicalName);
+}
+
 function namedLiftsInMessage(message, context) {
   const m = normalize(message);
   if (!m) return [];
-  return knownLiftNames(context).filter((name) => {
+  const known = knownLiftNames(context);
+  // 1. Loose significant-word match ("seated rows" → "Seated Row").
+  const wordMatched = known.filter((name) => {
     const words = significantWords(name);
     return words.length > 0 && words.some((w) => new RegExp(`\\b${escapeRe(w)}`).test(m));
   });
+  if (wordMatched.length) return wordMatched;
+  // 2. Abbreviation/alias resolution via the canonicalizer (RDL, OHP, …): map the message
+  // to a canonical lift and match it against the known lifts by canonical key.
+  const msgKey = canonicalKey(message);
+  if (msgKey) {
+    const aliasMatched = known.filter((name) => canonicalKey(name) === msgKey);
+    if (aliasMatched.length) return aliasMatched;
+  }
+  return [];
 }
 
-// The exercise(s) the turn is about: those named in the message, else (a correction
-// that omits the lift) the active plan/preview exercises the correction refers to.
+// The exercise(s) the turn is about: those named in the message (full name or
+// abbreviation), else — for a bare correction that names no lift — the active plan the
+// correction refers to. A message that DID name a lift we couldn't map to the plan
+// returns [] (never the whole plan), so an unrelated lift's diagnostics can't leak in.
 function resolveTurnExercises(message, context) {
   const named = namedLiftsInMessage(message, context);
-  return named.length ? named : planLiftNames(context);
+  if (named.length) return named;
+  if (messageNamesALift(message)) return [];
+  return planLiftNames(context);
 }
 
 // ── turn classification ─────────────────────────────────────────────────────
@@ -260,6 +306,130 @@ function buildGroundedPlanStatement(context, opts = {}) {
   return "I don't have the current plan in view here, so I can't confirm what it shows — and I haven't changed anything.";
 }
 
+// ── fail-closed active-plan dispute answer ──────────────────────────────────
+//
+// A FACTUAL plan dispute/correction ("that isn't what you planned", "you said 195",
+// "the workout says 200×10") is answered DETERMINISTICALLY from the current plan — the
+// model is never asked to narrate the factual answer. That is what makes an arbitrary
+// completed-write claim structurally impossible on this read-only route: no model prose
+// (any wording) reaches the athlete for a dispute, so there is no denylist to outrun.
+
+// An IMPERATIVE request to change the plan ("change it to 3 sets of 8", "make it 8 reps",
+// "switch to…", "update the plan to…") — NOT a factual dispute. It must keep flowing to
+// the model's proposal → approval → write lane, so it is excluded from the dispute path.
+// The verb must open a clause (start / after punctuation / after please|can you|let's) so
+// an assertion like "you didn't change the plan" is NOT read as a change request.
+const PLAN_MODIFY_RE = /(?:^|[.!?;,]\s*|\b(?:please|can you|could you|would you|will you|let'?s|i want you to|i'd like you to)\s+)(change|make|switch|update|set|adjust|swap|replace|bump|drop|remove|redo|rework|cut|lower|raise|increase|decrease)\b/;
+
+function isPlanModificationRequest(message) {
+  return PLAN_MODIFY_RE.test(normalize(message));
+}
+
+// True for a FACTUAL plan dispute/correction during an active session — the turn whose
+// factual answer is built deterministically (model bypassed). Excludes broad reviews,
+// "why did you…" explanations (those keep model narration, narrowed), and modification
+// requests (those keep the proposal flow).
+function isFactualPlanDispute(message, context) {
+  if (!hasActiveSession(context)) return false;
+  const m = normalize(message);
+  if (!m || BROAD_REVIEW_RE.test(m)) return false;
+  if (PLAN_EXPLAIN_RE.test(m)) return false;
+  if (isPlanModificationRequest(m)) return false;
+  return isPlanReferenceLike(m);
+}
+
+// Extract the numeric targets the athlete CLAIMS (sets / reps / weight / rir), so the
+// answer can distinguish the claim from the plan. Deterministic, invents nothing; an
+// unparseable claim simply yields fewer fields (the answer then states the plan alone).
+function extractClaimedTargets(message) {
+  const m = normalize(message).replace(/×/g, 'x');
+  const out = {};
+  let mm;
+  if ((mm = m.match(/\b(\d+)\s*sets?\b/))) out.sets = Number(mm[1]);
+  if ((mm = m.match(/\b(\d+)\s*reps?\b/))) out.reps = Number(mm[1]);
+  if ((mm = m.match(/\b(\d+)\s*(?:lb|lbs|pounds?)\b/))) out.weight = Number(mm[1]);
+  if ((mm = m.match(/\brir\s*(\d+)\b/)) || (mm = m.match(/\b(\d+)\s*rir\b/))) out.rir = Number(mm[1]);
+  if ((mm = m.match(/\b(\d+)\s+sets?\s+of\s+(\d+)\b/))) {
+    if (out.sets == null) out.sets = Number(mm[1]);
+    if (out.reps == null) out.reps = Number(mm[2]);
+  }
+  // "NxN": weight×reps when the lead number is a plausible load (≥45), else sets×reps.
+  if ((mm = m.match(/\b(\d+)\s*x\s*(\d+)\b/))) {
+    const a = Number(mm[1]), b = Number(mm[2]);
+    if (a >= 45) { if (out.weight == null) out.weight = a; if (out.reps == null) out.reps = b; }
+    else { if (out.sets == null) out.sets = a; if (out.reps == null) out.reps = b; }
+  }
+  // A bare, untagged number that reads like a load — "you said 195". Strip the tokens
+  // already claimed above, then a leftover load-sized number (≥45) is the claimed weight.
+  if (out.weight == null) {
+    const stripped = m
+      .replace(/\b\d+\s*sets?\b/g, ' ')
+      .replace(/\b\d+\s*reps?\b/g, ' ')
+      .replace(/\brir\s*\d+\b|\b\d+\s*rir\b/g, ' ')
+      .replace(/\b\d+\s*x\s*\d+\b/g, ' ')
+      .replace(/\b\d+\s+sets?\s+of\s+\d+\b/g, ' ')
+      .replace(/\b\d+\s*(?:lb|lbs|pounds?)\b/g, ' ');
+    const bare = stripped.match(/\b(\d{2,4})\b/);
+    if (bare && Number(bare[1]) >= 45) out.weight = Number(bare[1]);
+  }
+  return out;
+}
+
+function formatClaim(claim) {
+  const c = claim && typeof claim === 'object' ? claim : {};
+  const parts = [];
+  if (c.sets != null && c.reps != null) parts.push(`${c.sets} sets of ${c.reps} reps`);
+  else if (c.reps != null) parts.push(`${c.reps} reps`);
+  else if (c.sets != null) parts.push(`${c.sets} sets`);
+  if (c.weight != null) parts.push(`${c.weight} lb`);
+  if (c.rir != null) parts.push(`${c.rir} RIR`);
+  return parts.join(', ');
+}
+
+// Does the claim differ from the plan entry on any field the athlete specified?
+function claimDiffersFromPlan(claim, entry) {
+  const c = claim || {}, e = entry || {};
+  for (const k of ['sets', 'reps', 'weight', 'rir']) {
+    if (c[k] != null && e[k] != null && Number(c[k]) !== Number(e[k])) return true;
+  }
+  return false;
+}
+
+// The deterministic answer to a factual plan dispute: state what the plan currently
+// shows for the disputed lift, distinguish the athlete's claim, and state plainly that
+// nothing was changed. Never claims an update/save/switch/adjustment. When the plan (or
+// the specific lift) is not in view, it states that uncertainty rather than inventing a
+// target. This bypasses the model entirely for the factual answer (fail-closed).
+function buildDisputeAnswer(message, context) {
+  const c = context && typeof context === 'object' ? context : {};
+  const plan = Array.isArray(c.current_plan) ? c.current_plan.filter((e) => e && (e.name || e.exercise)) : [];
+  if (!plan.length) {
+    return "I don't have the current plan in view here, so I can't confirm what it shows — and I haven't changed anything.";
+  }
+  const named = namedLiftsInMessage(message, c);
+  let entry = null;
+  if (named.length === 1) {
+    const key = canonicalKey(named[0]);
+    entry = plan.find((e) => canonicalKey(e.name || e.exercise) === key) || null;
+  } else if (named.length === 0 && plan.length === 1) {
+    entry = plan[0];
+  }
+  if (!entry) {
+    return "I have the current plan in view, but I'm not sure which exercise you mean — tell me the lift and I'll read back exactly what it shows. I haven't changed anything.";
+  }
+  const planLine = formatPlanLine(entry);
+  const claim = extractClaimedTargets(message);
+  const claimStr = formatClaim(claim);
+  if (claimStr && claimDiffersFromPlan(claim, entry)) {
+    return `The current plan shows ${planLine} — not ${claimStr}. I haven't changed it.`;
+  }
+  if (claimStr) {
+    // The athlete's numbers match the plan (they misremembered it as a mismatch).
+    return `The current plan shows ${planLine} — that's what you said. I haven't changed it.`;
+  }
+  return `The current plan shows ${planLine}. I haven't changed it.`;
+}
+
 module.exports = {
   normalize,
   nameKey,
@@ -268,10 +438,16 @@ module.exports = {
   knownLiftNames,
   namedLiftsInMessage,
   resolveTurnExercises,
+  messageNamesALift,
+  canonicalKey,
   hasActiveSession,
   isPlanReferenceLike,
+  isPlanModificationRequest,
+  isFactualPlanDispute,
   isActivePlanGroundedTurn,
   narrowContextToPlanTurn,
   detectUnsupportedMutationClaim,
+  extractClaimedTargets,
   buildGroundedPlanStatement,
+  buildDisputeAnswer,
 };
