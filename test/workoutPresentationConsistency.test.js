@@ -171,6 +171,34 @@ test('F09E: an exercise with no rep target asks for clarification, never a bare 
   assert.match(clarify[0].text, /confirm|reps|target/i, 'the prompt asks for the missing target');
 });
 
+/* ══════════ 2026-07-22 — requested-first UNRESOLVED-LOAD state ══════════ */
+
+test('unresolved-load: a requested-first lift with no engine load renders an EXPLICIT load-needed line (not the generic rep-clarify, never a fabricated weight)', () => {
+  const { appendWorkoutPlan } = loadPlanRenderer();
+  const container = makeEl();
+  // The injected requested-first entry (services/planFirstExercise.buildInjectedEntry):
+  // an EXPLICIT unresolved-load state — target_* all null, unresolved_load true, plus the
+  // engine's reason. In this harness (no normalizePlanExercise) the raw entry is used
+  // verbatim, so it carries both `name` and the raw unresolved flags.
+  const reason = "You asked to start with Back Squat, but I don't have enough history to set a working weight — log a set (or tell me a starting weight) and I'll anchor it.";
+  const rendered = appendWorkoutPlan(container, {
+    exercises: [{ name: 'Back Squat', unresolved_load: true, reason, target_weight: null, reps: null, sets: null, rir: null }],
+  });
+  assert.equal(rendered, 1, 'the requested lift still renders and leads');
+  const nodes = collect(container);
+  assert.equal(nodes.filter((n) => n.cls === 'workout-plan-name').length, 1, 'the lift name is shown');
+  assert.match(nodes.find((n) => n.cls === 'workout-plan-name').text, /Back Squat/);
+  // The distinct unresolved-load line carries the engine's reason verbatim.
+  const unresolved = nodes.filter((n) => n.cls && n.cls.includes('workout-plan-unresolved-load'));
+  assert.equal(unresolved.length, 1, 'an explicit unresolved-LOAD line is shown');
+  assert.equal(unresolved[0].text, reason, 'the engine reason is surfaced verbatim');
+  assert.match(unresolved[0].text, /history|starting weight/i, 'the line explains the LOAD is unresolved (a load state, not a rep clarify)');
+  // It is NOT the generic rep-clarify fallback, and it never fabricates a set line / weight.
+  assert.equal(nodes.filter((n) => n.cls && n.cls.includes('workout-plan-clarify')).length, 0, 'not the generic rep-clarify fallback');
+  assert.equal(nodes.filter((n) => n.cls === 'workout-plan-set').length, 0, 'no fabricated set line');
+  assert.ok(!nodes.some((n) => /null|lbs/.test(n.text || '')), 'no "null" / fabricated weight leaks');
+});
+
 test('F09E regression: weighted and load-omitted (non-zero) rendering is unchanged', () => {
   const { appendWorkoutPlan, formatPlanSetLine } = loadPlanRenderer();
   assert.equal(formatPlanSetLine({ weight: 60, reps: 15, rir: 2 }), '60lbs 15/2', 'weighted unchanged');

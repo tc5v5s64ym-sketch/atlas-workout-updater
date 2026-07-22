@@ -531,7 +531,12 @@ import * as sessionQuestion from './sessionQuestion.js';
       // Render the working sets whenever reps are known — a load-less accessory
       // (no snapshot weight) still shows reps/sets/RIR; the prescription never
       // disappears (PR-12 Bug 2). formatPlanSetLine handles the absent weight.
-      if (ex.reps != null) {
+      if (raw && raw.unresolved_load) {
+        // Requirement 2026-07-22: a requested-first lift the engine can't load yet
+        // surfaces an EXPLICIT unresolved-LOAD state (never a fabricated number and
+        // never a silently omitted field). Show the engine's reason verbatim.
+        lines.push(raw.reason || `I don't have enough history to set a working weight for ${ex.name} yet — log a set or tell me a starting weight and I'll anchor it.`);
+      } else if (ex.reps != null) {
         const count = (ex.sets != null && ex.sets > 1) ? ex.sets : 1;
         if (isBodyweightTarget(ex)) {
           lines.push(count > 1 ? `${formatPlanSetLine(ex)} ×${count}` : formatPlanSetLine(ex));
@@ -580,7 +585,17 @@ import * as sessionQuestion from './sessionQuestion.js';
       // Working sets render whenever reps are known — a load-less accessory
       // (no snapshot weight) still shows its reps/sets/RIR rather than collapsing
       // to a bare name (PR-12 Bug 2). formatPlanSetLine renders the absent weight.
-      if (ex.reps != null) {
+      if (raw && raw.unresolved_load) {
+        // Requirement 2026-07-22: a requested-first lift the engine can't load yet
+        // surfaces an EXPLICIT unresolved-LOAD state — the exercise stays visible and
+        // leads the plan, but its own line says the load is unresolved (never a
+        // fabricated weight, never a silently dropped field). Marked with its own class
+        // so it reads as "needs a starting weight", distinct from the F09E rep-clarify.
+        const unresolved = document.createElement('div');
+        unresolved.className = 'workout-plan-set workout-plan-unresolved-load';
+        unresolved.textContent = raw.reason || `I don't have enough history to set a working weight for ${ex.name} yet — log a set or tell me a starting weight and I'll anchor it.`;
+        exEl.appendChild(unresolved);
+      } else if (ex.reps != null) {
         const count = (ex.sets != null && ex.sets > 1) ? ex.sets : 1;
         if (isBodyweightTarget(ex)) {
           // F09E: group identical bodyweight sets into ONE explicit "×N" line
@@ -883,7 +898,26 @@ import * as sessionQuestion from './sessionQuestion.js';
     }).filter(Boolean);
   }
 
-  async function typeSuggestedWorkout() {
+  // Turn the composer-extracted generation constraints (extractGenerationConstraints:
+  // { firstExercise, focus }) into the authoritative recommendation query string. This
+  // is the ONLY channel by which a "Plan me a workout but have it start with back squats"
+  // request reaches the plan — the constraints become structured planning INPUTS to the
+  // deterministic engine (services/planFirstExercise.applyFirstExercise + upperOnly),
+  // never a model-written exercise list. Empty/absent constraints → no params → the
+  // plain recommendation, exactly as before.
+  function buildIntentRecommendationQuery(constraints) {
+    const c = constraints && typeof constraints === 'object' ? constraints : {};
+    const params = [];
+    if (typeof c.firstExercise === 'string' && c.firstExercise.trim()) {
+      params.push('firstExercise=' + encodeURIComponent(c.firstExercise.trim()));
+    }
+    if (typeof c.focus === 'string' && c.focus.trim()) {
+      params.push('focus=' + encodeURIComponent(c.focus.trim()));
+    }
+    return params.length ? '?' + params.join('&') : '';
+  }
+
+  async function typeSuggestedWorkout(constraints) {
     hideHomeEmpty();
     // A fresh session re-announces its first next-up: clear any stale handoff memory
     // from a prior (possibly abandoned, no-closeout) session so the first handoff is
@@ -907,7 +941,7 @@ import * as sessionQuestion from './sessionQuestion.js';
     }
     body.textContent = 'Reading your recent training…';
     try {
-      const res = await api('/api/plan/intent-recommendation');
+      const res = await api('/api/plan/intent-recommendation' + buildIntentRecommendationQuery(constraints));
       const data = res.data || {};
       // Keep the acceptance gate's source aligned with the plan we're about to show:
       // logging the first set from this pick auto-accepts it (the retired button used

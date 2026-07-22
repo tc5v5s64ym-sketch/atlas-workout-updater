@@ -50,7 +50,9 @@ test('the Coach\'s Pick fetch syncs the displayed plan into the gate\'s source (
   assert.match(app, /window\.atlasSyncDisplayedIntent = \(intentData\) =>/, 'app.js exposes the displayed-intent sync');
   assert.match(app, /lastIntentData = intentData;/, 'the sync refreshes lastIntentData (the gate source)');
   assert.match(cc, /window\.atlasSyncDisplayedIntent\(data\)/, 'the Coach\'s Pick fetch syncs its displayed plan into the gate source');
-  const fetchIdx = cc.indexOf("api('/api/plan/intent-recommendation')");
+  // The fetch now appends buildIntentRecommendationQuery(constraints) (workout-generation
+  // routing, 2026-07-22), so match the endpoint prefix rather than the exact call.
+  const fetchIdx = cc.indexOf("api('/api/plan/intent-recommendation'");
   const syncIdx = cc.indexOf('window.atlasSyncDisplayedIntent(data)');
   assert.ok(fetchIdx !== -1 && syncIdx > fetchIdx, 'the sync follows the coach intent fetch');
 });
@@ -78,7 +80,9 @@ test('acceptance never touches the main workout-write / trust path', () => {
 test('the generic "Start Session" control is unchanged (still non-authoritative)', () => {
   // #start-session-btn still only opens the Coach\'s Pick surface — it is NOT wired to
   // acceptance (owner test 19). The distinct plan-card button owns acceptance.
-  assert.match(app, /btn\.onclick = openCoachPickInThread;/, 'the generic Start Session button still just opens the coach surface');
+  // Wrapped in an arrow so the click Event is never passed as generation constraints
+  // (2026-07-22) — still just opens the pick, never acceptance.
+  assert.match(app, /btn\.onclick = \(\) => openCoachPickInThread\(\);/, 'the generic Start Session button still just opens the coach surface');
   assert.doesNotMatch(app, /start-session-btn[\s\S]{0,200}atlasAcceptPlan/, 'the generic control is not repurposed for acceptance');
 });
 
