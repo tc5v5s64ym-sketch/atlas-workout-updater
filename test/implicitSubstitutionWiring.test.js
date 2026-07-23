@@ -159,7 +159,7 @@ test('E2E control: a non-substitution message is not handled here', async () => 
   assert.equal(apiState.calls.length, 0, 'the recommender is never consulted for a non-mutation');
 });
 
-test('E2E control: TRUE skip and explicit NAMED replace still work via the sync path (unchanged)', () => {
+test('E2E control: a TRUE skip still applies via the sync path; an explicit REPLACE is now gated (deferred)', () => {
   // "Skip back squats" — deterministic skip removes the slot (Back Squat gone, order kept).
   const apiState = { recommendation: LEG_PRESS_REC, calls: [] };
   let h = loadHarness(apiState);
@@ -173,14 +173,13 @@ test('E2E control: TRUE skip and explicit NAMED replace still work via the sync 
   assert.equal(h.tryApplyPlanMutation("I don't want to do squats today"), true);
   assert.ok(!h.getExercises().includes('Back Squat'), 'plain decline still skips Back Squat');
 
-  // "Swap back squats for leg press" — explicit NAMED substitution applies in place.
+  // "Swap back squats for leg press" — an explicit REPLACE is NO LONGER applied by the sync
+  // skip lane (production trust fix FR-20260723031748: a direct replacement is a GATED
+  // proposal, so the source must not be mutated here). tryApplyPlanMutation defers it.
   h = loadHarness(apiState);
   h.setActivePlannedSession(fourExercisePlan());
-  assert.equal(h.tryApplyPlanMutation('swap back squats for leg press'), true);
-  const names = h.getExercises();
-  assert.ok(names.includes('leg press') || names.includes('Leg Press'), 'named substitute took the slot');
-  assert.ok(!names.includes('Back Squat'), 'Back Squat replaced');
-  assert.equal(apiState.calls.length, 0, 'the named path never calls the recommender endpoint');
+  assert.equal(h.tryApplyPlanMutation('swap back squats for leg press'), false, 'an explicit replace is deferred to the gated proposer');
+  assert.ok(h.getExercises().includes('Back Squat'), 'Back Squat is NOT removed by the sync lane — it stays until approval');
 });
 
 test('E2E control: the sync mutation path DEFERS an implicit substitution (returns false)', () => {

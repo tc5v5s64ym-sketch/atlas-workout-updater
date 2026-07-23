@@ -46,6 +46,11 @@ async function mockApis(page, capture) {
         { canonical_name: 'Leg Press', lift_code: 'LEP01' },
       ] } }));
     }
+    // Read-only prescription source for a gated replacement proposal (LEP01 = Leg Press).
+    // The real route wraps next_target / target_rir in the standard { status, data } envelope.
+    if (path.startsWith('/api/recommend/next/')) {
+      return route.fulfill(json({ status: 'success', data: { next_target: { weight: 200, reps: 12, sets: 3, rir: 2 }, target_rir: 2 } }));
+    }
     if (path === '/api/parse-workout-text') {
       // Only a slash-set log parses; swap/skip commands must FAIL parsing so the submit
       // handler routes them to the deterministic mutation lane (not log them as sets).
@@ -98,10 +103,14 @@ test('full Session_Plans lifecycle fires accept + completed/substituted/skipped 
   await expect(done).toHaveText('Done with Seated Row');
   await done.click();
 
-  // 3) substitute Leg Extension → Leg Press — wait for the substituted outcome before
-  //    the next command (each mutation is a fire-and-forget sidecar; sequencing the
-  //    waits keeps the flow deterministic on slower/mobile timing).
+  // 3) substitute Leg Extension → Leg Press. A NAMED replacement is now a GATED proposal
+  //    (production trust fix FR-20260723031748): typing the swap stages ONE proposal — the
+  //    plan is NOT mutated until the athlete approves — so the substituted outcome fires on
+  //    APPROVAL, not on the command. Approve the proposal, then wait for the outcome (each
+  //    mutation is a fire-and-forget sidecar; sequencing the waits keeps the flow deterministic).
   await submit(page, 'swap leg extension for leg press');
+  await expect(page.locator('#thread-messages .replacement-proposal-line').last()).toContainText('Leg Press');
+  await page.locator('#thread-messages .replacement-approve-btn').last().click();
   await expect.poll(() => capture.posts.filter(p => p.path === '/api/session-plans/outcome' && p.body?.item?.outcome === 'substituted').length).toBeGreaterThan(0);
   // 4) skip Overhead Press — wait for the skipped outcome.
   await submit(page, 'skip overhead press');

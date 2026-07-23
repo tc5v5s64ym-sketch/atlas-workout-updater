@@ -33,6 +33,7 @@ import {
   getSessionRevisions, setSessionRevisions,
   getSessionImplicitRecs, setSessionImplicitRecs,
   getCoachDiscussionSinceLog, setCoachDiscussionSinceLog,
+  getPendingReplacement, setPendingReplacement,
   getAtlasLastError, setHistoryLoaded,
   persistSessionSnapshot, hydrateSessionSnapshot, clearPersistedSnapshot,
 } from './store.js';
@@ -2072,10 +2073,13 @@ function tryApplyPlanMutation(text) {
   if (!PM) return false;
   const intent = PM.classifyMutationIntent(text);
   if (!intent) return false;                  // classify FIRST — never materialize on non-mutations
-  // An IMPLICIT substitution (engine picks the sub) needs the async recommender —
-  // tryApplyImplicitSubstitution owns it. This deterministic sync path handles skip
-  // and explicit (named/positional) replace only.
-  if (intent.action === 'substitute') return false;
+  // This deterministic sync path handles a one-sided SKIP only. An IMPLICIT substitution
+  // (engine picks the sub) is async (tryApplyImplicitSubstitution); an EXPLICIT REPLACE is
+  // now a GATED PROPOSAL (tryProposeReplacement, which runs BEFORE this lane) — a direct
+  // "replace X with Y" must never immediately mutate the plan (production trust fix
+  // FR-20260723031748). Guard defensively so a replace can never fall into the immediate
+  // splice below even if the proposer declined it.
+  if (intent.action !== 'skip') return false;
   if (!ensureActivePlannedSession()) return false; // no plan at all (freestyle) → fall through
   // Resolve the (possibly compound, e.g. "deadlifts/rdls") target to PENDING plan
   // slots via the canonical session — singular-aware (matches "Romanian Deadlift")
@@ -2112,38 +2116,179 @@ function tryApplyPlanMutation(text) {
     announcePlanMutation(`Skipped ${toSkip.join(', ')}.`, curName());
     return true;
   }
-  // Replace: swap the first matched target with the substitute. Only skip the OTHER
-  // matched slots when the user named a GENUINELY COMPOUND target ("skip
-  // deadlifts/rdls and do squats" removes both). A single token that fuzzily
-  // over-matched several slots (e.g. "curls" → Bicep Curl + Leg Curl) replaces only
-  // the first — it must never silently drop un-named planned work.
+  return false; // not a skip we can apply here → fall through
+}
+
+// ── Atomic exercise REPLACEMENT via a gated proposal ─────────────────────────
+// A direct "replace X with Y" command ("remove back squats and change it out for bench
+// press", "swap squats for bench", "instead of squats, bench") is ONE atomic operation:
+// source → replacement. It must NOT immediately delete the source or silently activate the
+// replacement (production trust failure FR-20260723031748: "remove back squats and change
+// it out for bench press" one-sidedly skipped Back Squat and dropped the replacement).
+// Instead it stages ONE pending proposal (store.pendingReplacement) with the replacement's
+// authoritative prescription, and the plan is mutated only once the athlete APPROVES.
+// Read-only planning: resolves the prescription from the read-only /api/recommend/next
+// engine route; NO Sheet write occurs until (and only via) the existing log/accept boundary.
+// Runs BEFORE tryApplyPlanMutation and the SME/coach routes (req 4/5). Returns true when it
+// staged (or is holding) a proposal; false to fall through.
+async function tryProposeReplacement(text) {
+  const PM = (typeof window !== 'undefined' && window.planMutationIntent) || null;
+  const AR = (typeof window !== 'undefined' && window.activeReplacement) || null;
+  if (!PM || !AR) return false;
+  const intent = PM.classifyMutationIntent(text);
+  if (!intent || intent.action !== 'replace') return false;   // only an explicit replace
+  if (!ensureActivePlannedSession()) return false;            // no plan → coach handles it
+  const planExercises = getActivePlannedSession().exercises || [];
+  const canon = getCanonicalSession();
+  const planEntries = canon && Array.isArray(canon.exercises) && canon.exercises.length
+    ? canon.exercises
+    : planExercises.map(e => ({ name: e.canonicalName || e.name, liftCode: e.liftCode || '', status: 'pending' }));
+  // Resolve the SOURCE slot (positional → the current pending lift; else the named target).
+  const targetNames = intent.positional
+    ? [firstUnloggedPlannedLift()].filter(Boolean)
+    : PM.resolvePlanTargets(intent.target, planEntries);
+  if (!targetNames.length) return false; // no pending slot named → coach handles it
+  const sourceName = targetNames[0];
+  // Resolve the REPLACEMENT identity. A NAMED swap keeps an unknown-but-typed exercise
+  // (the named source is strong evidence of a real substitution); a positional/destination
+  // swap requires a real catalog exercise, else it is likely a coaching phrase.
   const resolved = resolveCatalogExercise(intent.substitute);
-  // A POSITIONAL / destination-only swap ("switch to X", "swap next workout for X")
-  // names no source lift, so an unrecognized substitute is more likely a coaching
-  // phrase ("switch to a lighter weight", "swap to higher reps") than a plan swap —
-  // require it to resolve to a real catalog exercise, else fall through to the coach.
-  // A NAMED swap ("swap bench for X") keeps applying an unknown-but-typed exercise
-  // (the named source is strong evidence the lifter means a real substitution).
   if (intent.positional && !resolved.matched) return false;
-  const swapped = applySessionSubstitution(targetNames[0], resolved.name, resolved.liftCode);
-  const extraSkipped = PM.splitTargets(intent.target).length > 1
-    ? targetNames.slice(1).filter(skipPlannedExercise)
-    : [];
-  // Only announce a change that actually happened — a no-op swap (the resolved
-  // substitute collapsed to the target, applySessionSubstitution early-returned)
-  // with no extra slots skipped must not narrate a phantom "Swapped X → Y"
-  // (PR-570 cosmetic note).
-  if (!swapped && !extraSkipped.length) return false;  // nothing changed → fall through
-  // Narrate what ACTUALLY happened: a real swap (optionally noting extra compound
-  // slots skipped), or — when the first slot no-op'd but later compound slots were
-  // skipped — a skip-only outcome. Never announce a swap that didn't occur (PR-571
-  // review). Re-point to the ACTUAL current lift (the cursor) — swapping a LATER
-  // slot must not yank the composer off the lift in progress.
-  const summary = swapped
-    ? `Swapped ${targetNames[0]} → ${resolved.name}.${extraSkipped.length ? ` Skipped ${extraSkipped.join(', ')}.` : ''}`
-    : `Skipped ${extraSkipped.join(', ')}.`;
-  announcePlanMutation(summary, curName() || (swapped ? resolved.name : null));
+  if (!resolved.name) return false;
+  // A no-op (replacement collapses to the source) is not a replacement — fall through.
+  if (String(resolved.name).toLowerCase() === String(sourceName).toLowerCase()) return false;
+  // Resolve the replacement's AUTHORITATIVE prescription from the read-only engine route.
+  // Never invents a load: an unresolved load is carried as an explicit unresolved state.
+  let prescription = null;
+  if (resolved.liftCode) {
+    try {
+      const rec = await api(`/api/recommend/next/${encodeURIComponent(resolved.liftCode)}`);
+      // api() returns the server's standard { status, data } envelope; the engine puts
+      // next_target and target_rir INSIDE data (same read as the other two recommend/next
+      // consumers). Reading the target off the top-level envelope would always be null → every
+      // proposal would falsely show "no authoritative load" and approval would discard the
+      // engine prescription (Codex P1, 2026-07-23).
+      const data = (rec && rec.data) || null;
+      const t = (data && data.next_target) || null;
+      if (t) prescription = { weight: t.weight ?? null, reps: t.reps ?? null, sets: t.sets ?? null, rir: (data.target_rir ?? t.rir ?? null) };
+    } catch (_) { prescription = null; } // engine unavailable → unresolved-load proposal
+  }
+  const proposal = AR.buildReplacementProposal({
+    source: { name: sourceName },
+    replacement: { name: resolved.name, lift_code: resolved.liftCode, ...(prescription || {}) },
+    planExercises,
+  });
+  setPendingReplacement(proposal);
+  persistSessionSnapshot(document.getElementById('log-session-id')?.value || null);
+  renderReplacementProposal(proposal);
   return true;
+}
+
+// Render the pending replacement PROPOSAL to the coach thread — one coherent proposal with
+// the complete proposed prescription and an Approve / Reject affordance. The plan is NOT
+// mutated here; approval is what applies it. Reuses the coach layer via an event so the
+// composer stays the single owner of thread rendering.
+function renderReplacementProposal(proposal) {
+  const AR = window.activeReplacement;
+  document.dispatchEvent(new CustomEvent('atlas:replacement-proposed', {
+    detail: { proposal, line: AR.formatProposalLine(proposal) }
+  }));
+}
+
+// APPROVE the pending replacement: remove exactly the source and insert exactly the
+// replacement in the SAME planned position, ONCE, via the tested applySessionSubstitution
+// executor (it preserves order + plan_item_id and emits the substituted outcome). Idempotent:
+// a re-tap after it is applied (source already gone / no pending proposal) is a no-op. No
+// Sheet write occurs. Returns true when an approval was handled.
+function approvePendingReplacement(fromCard) {
+  const proposal = getPendingReplacement();
+  if (!proposal || proposal.status !== 'pending') return false;
+  // A tap on a stale card (its proposal was superseded by a newer pending one) must never
+  // apply the newer swap. When the decision carries the card's own proposal id, it must match
+  // the current pending proposal; a mismatch is a no-op (Codex P1). The conversational path
+  // (a typed "yes"/"do bench") passes no card, so it always targets the current proposal.
+  if (fromCard && fromCard.proposal_id && fromCard.proposal_id !== proposal.proposal_id) return false;
+  const planExercises = (getActivePlannedSession() && getActivePlannedSession().exercises) || [];
+  const AR = window.activeReplacement;
+  // Fail closed on a stale proposal (the plan changed under it) — never apply to the wrong slots.
+  if (!AR.isProposalFresh(proposal, planExercises)) {
+    setPendingReplacement(null);
+    persistSessionSnapshot(document.getElementById('log-session-id')?.value || null);
+    announcePlanMutation('That plan changed, so I didn\'t apply the swap. Tell me again what to replace.', firstUnloggedPlannedLift());
+    return true;
+  }
+  const r = proposal.replacement || {};
+  const prescription = { weight: r.weight ?? null, reps: r.reps ?? null, sets: r.sets ?? null, rir: r.rir ?? null };
+  const swapped = applySessionSubstitution(proposal.source.name, r.name, r.lift_code || '', prescription);
+  setPendingReplacement(null);
+  persistSessionSnapshot(document.getElementById('log-session-id')?.value || null);
+  if (swapped) {
+    announcePlanMutation(`Replaced ${proposal.source.name} with ${r.name}.`, curNameAfterMutation());
+  } else {
+    // Source already gone (e.g. approved twice) — idempotent no-op, not a phantom swap.
+    announcePlanMutation('', curNameAfterMutation());
+  }
+  return true;
+}
+
+// REJECT / cancel the pending replacement — the plan is left exactly as it was.
+function rejectPendingReplacement(fromCard) {
+  const proposal = getPendingReplacement();
+  if (!proposal) return false;
+  // Same stale-card guard as approve: a reject tap on a superseded card must not discard the
+  // newer pending proposal (Codex P1). A typed rejection passes no card and targets the current.
+  if (fromCard && fromCard.proposal_id && fromCard.proposal_id !== proposal.proposal_id) return false;
+  setPendingReplacement(null);
+  persistSessionSnapshot(document.getElementById('log-session-id')?.value || null);
+  announcePlanMutation(`Kept ${proposal.source && proposal.source.name ? proposal.source.name : 'the plan'} as-is.`, firstUnloggedPlannedLift());
+  return true;
+}
+
+// The current lift after a plan mutation (the new first unlogged slot).
+function curNameAfterMutation() {
+  const unlogged = firstUnloggedPlannedLift();
+  if (unlogged) return unlogged;
+  const s = getActivePlannedSession();
+  const cur = s && s.exercises[s.index];
+  return cur ? (cur.canonicalName || cur.name) : null;
+}
+
+// Resolve a follow-up turn against a PENDING replacement proposal (production sequence:
+// "No let's do bench press" / "yes bench" → approve; "what weight should I put on the bar"
+// → answer from the proposal, never a broad benchmark challenge). Returns true when the turn
+// was a response to the proposal (approve / reject / prescription query); false to fall
+// through with the proposal still pending. Deterministic + read-only; never calls the coach.
+function tryResolvePendingReplacement(text) {
+  const AR = (typeof window !== 'undefined' && window.activeReplacement) || null;
+  if (!AR) return false;
+  const proposal = getPendingReplacement();
+  if (!proposal || proposal.status !== 'pending') return false;
+  // A brand-new, self-contained explicit replacement ("replace RDL with leg press") typed while
+  // a proposal is pending is a NEW command, not a follow-up to the old one — even when it shares a
+  // word with the pending replacement ("leg PRESS" vs "bench PRESS", which would otherwise read as
+  // an approval). Defer it to tryProposeReplacement (which stages the new proposal, superseding
+  // this one); the stale card is then inert via the proposal-id guard on approve/reject.
+  const PM = (typeof window !== 'undefined' && window.planMutationIntent) || null;
+  if (PM) {
+    const intent = PM.classifyMutationIntent(text);
+    if (intent && intent.action === 'replace' && !intent.positional && intent.substitute) return false;
+  }
+  const kind = AR.classifyFollowup(text, proposal);
+  if (kind === 'approve') return approvePendingReplacement();
+  if (kind === 'reject') return rejectPendingReplacement();
+  if (kind === 'query') {
+    // Weight/prescription truth boundary (req 7): the replacement is PROPOSED, not yet
+    // active. State the proposed authoritative prescription (or that no load is resolved) and
+    // ask for approval — never a broad Bench Press benchmark/challenge, never an invented load.
+    const r = proposal.replacement || {};
+    const rx = AR.formatReplacementPrescription(r);
+    const msg = rx
+      ? `${r.name} is the proposed replacement for ${proposal.source.name} — not active yet. Proposed target: ${rx}. Approve the swap and I'll set it.`
+      : `${r.name} is the proposed replacement for ${proposal.source.name} — not active yet, and I don't have an authoritative load for it. Tell me the weight and approve, and I'll set it.`;
+    announcePlanMutation(msg, firstUnloggedPlannedLift());
+    return true;
+  }
+  return false; // unrelated turn — keep the proposal pending, route normally
 }
 
 // An IMPLICIT substitution — the athlete declined the current/named lift and asked
@@ -2741,6 +2886,20 @@ document.addEventListener('atlas:plan-edit-proposed', e => {
       detail: { applied, edit: e.detail && e.detail.edit }
     }));
   } catch { /* diagnostic event is optional */ }
+});
+
+// A tap on the pending-replacement proposal card (Approve / Keep it) — apply or reject the
+// staged replacement through the SAME idempotent handlers the conversational "yes"/"no"
+// path uses. Repeated taps are no-ops (the card disables itself and the handlers no-op once
+// the proposal is resolved). No Sheet write occurs.
+document.addEventListener('atlas:replacement-decision', e => {
+  const decision = e && e.detail && e.detail.decision;
+  // Bind the decision to the proposal that RENDERED the card (Codex P1, 2026-07-23): if a
+  // second proposal superseded this card's proposal in the store, a tap on the older, still
+  // visible card must NOT apply the newer swap. approve/reject verify the id before mutating.
+  const fromCard = e && e.detail && e.detail.proposal;
+  if (decision === 'approve') approvePendingReplacement(fromCard);
+  else if (decision === 'reject') rejectPendingReplacement(fromCard);
 });
 
 // Open the recommended workout — Composer-first Phase B: routes to the ONE
@@ -4787,6 +4946,20 @@ function restoreSessionSnapshot() {
   const log = getSessionLog();
   renderResumeNotice(log.length, log);
   if (getActivePlannedSession()) { setCoachSuggestionEngaged(true); renderActiveSessionBanner(); }
+  // Re-surface a restored replacement PROPOSAL — the plan was never half-mutated (nothing is
+  // removed before approval), so a reload simply re-presents the SAME proposal against the
+  // intact plan. Discard it (never apply) if the plan changed under it (stale fingerprint).
+  const pending = getPendingReplacement();
+  if (pending) {
+    const AR = (typeof window !== 'undefined' && window.activeReplacement) || null;
+    const planExercises = (getActivePlannedSession() && getActivePlannedSession().exercises) || [];
+    if (AR && AR.isProposalFresh(pending, planExercises)) {
+      renderReplacementProposal(pending);
+    } else {
+      setPendingReplacement(null);
+      persistSessionSnapshot(res.sessionId || null);
+    }
+  }
   return true;
 }
 
@@ -6352,11 +6525,28 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
         activeExercise = null;
         return;
       }
+      // A PENDING replacement proposal owns the follow-up turn first (production trust fix
+      // FR-20260723031748): "No let's do bench press" / "yes bench" approves it, "what weight
+      // should I put on the bar" answers from the proposal — never a modality probe, a
+      // one-sided skip, the SME, or a broad Bench Press benchmark challenge. A loggable set
+      // parsed+logged above, so it never reaches here; only a conversational follow-up does.
+      if (tryResolvePendingReplacement(pendingChatText)) {
+        activeExercise = null;
+        return;
+      }
       // A cardio / interval / circuit / timed-hold input isn't a slash workout, so
       // the slash parser threw above. Try the modality trust loop (dry-run preview
       // → approve → /api/log-modality) before treating it as a coach question. On a
       // 422 / non-modality this returns false and we fall through to the coach.
       if (await tryPreviewModality(pendingChatText, sessionId, date)) {
+        activeExercise = null;
+        return;
+      }
+      // An EXPLICIT REPLACE ("replace back squats with bench", "remove squats and change out
+      // for bench") stages ONE gated proposal — source stays, replacement is not activated
+      // until approval — BEFORE the skip/suggest/coach routes (req 4/5), so a direct
+      // replacement can never be split into a one-sided skip plus a free-form chat challenge.
+      if (await tryProposeReplacement(pendingChatText)) {
         activeExercise = null;
         return;
       }

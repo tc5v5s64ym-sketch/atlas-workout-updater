@@ -14,12 +14,14 @@
 
 import * as activeSession from './activeSession.js';
 import * as planMutationIntent from './planMutationIntent.js';
+import * as activeReplacement from './activeReplacement.js';
 import * as identityCorrection from './identityCorrection.js';
 import * as displayBlockNormalizer from './displayBlockNormalizer.js';
 import * as hybridCompare from './hybridCompare.js';
 
 window.activeSession = { ...activeSession };
 window.planMutationIntent = { ...planMutationIntent };
+window.activeReplacement = { ...activeReplacement };
 window.identityCorrection = { ...identityCorrection };
 window.displayBlockNormalizer = { ...displayBlockNormalizer };
 window.hybridCompare = { ...hybridCompare };

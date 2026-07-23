@@ -46,6 +46,14 @@ const _sessionImplicitRecs = signal([]);
 // scoped state (reset when a set enters the log buffer), so it lives in the session
 // slice and resetSessionStore() clears it — unlike the app-level flags below.
 const _coachDiscussionSinceLog = signal(false);
+// Active-session exercise-REPLACEMENT proposal awaiting approval (production trust fix
+// FR-20260723031748-ux7ogmwp). A direct "replace Back Squat with Bench Press" command must
+// NOT mutate the plan immediately — it stages ONE proposal here (source lift, resolved
+// replacement + prescription, planned position, and a plan fingerprint), and the plan is
+// only mutated once the athlete approves. Held in the session slice so it is cleared on
+// session reset and persisted across a reload (the plan itself is never half-mutated because
+// nothing is removed until approval). Null when no replacement is pending.
+const _pendingReplacement = signal(null);
 
 // ── getters (live reference; callers read fields / iterate / spread) ────────────
 export function getActivePlannedSession() { return _activePlannedSession.value; }
@@ -58,6 +66,7 @@ export function getSessionSavedLog() { return _sessionSavedLog.value; }
 export function getSessionRevisions() { return _sessionRevisions.value; }
 export function getSessionImplicitRecs() { return _sessionImplicitRecs.value; }
 export function getCoachDiscussionSinceLog() { return _coachDiscussionSinceLog.value; }
+export function getPendingReplacement() { return _pendingReplacement.value; }
 
 // ── actions (every reassignment the old top-level `let`s took) ──────────────────
 export function setActivePlannedSession(v) { _activePlannedSession.value = v || null; }
@@ -70,6 +79,7 @@ export function setSessionSavedLog(v) { _sessionSavedLog.value = Array.isArray(v
 export function setSessionRevisions(v) { _sessionRevisions.value = Array.isArray(v) ? v : []; }
 export function setSessionImplicitRecs(v) { _sessionImplicitRecs.value = Array.isArray(v) ? v : []; }
 export function setCoachDiscussionSinceLog(v) { _coachDiscussionSinceLog.value = !!v; }
+export function setPendingReplacement(v) { _pendingReplacement.value = (v && typeof v === 'object') ? v : null; }
 
 // Derived values: none live here yet. The derivations callers actually need
 // (remainingPlannedExercises / plannedExerciseOrder / firstUnloggedPlannedLift)
@@ -113,6 +123,7 @@ export function getState() {
     sessionRevisions: _sessionRevisions.value,
     sessionImplicitRecs: _sessionImplicitRecs.value,
     coachDiscussionSinceLog: _coachDiscussionSinceLog.value,
+    pendingReplacement: _pendingReplacement.value,
   };
 }
 
@@ -130,8 +141,12 @@ export function getState() {
 // revisions), so the effective plan survives a reload; older snapshots restore [].
 // v3 → v4 carries `sessionImplicitRecs` (F10C — implicit recommendations for
 // unannounced exercises); older snapshots restore [].
+// v4 → v5 carries `pendingReplacement` (the active-session exercise-replacement proposal
+// awaiting approval), so a reload with a pending proposal re-surfaces the SAME proposal
+// against the SAME still-intact plan (nothing was removed pre-approval); older snapshots
+// restore null.
 const SNAPSHOT_KEY = 'atlas_session_snapshot_v1';
-const SNAPSHOT_SHAPE_VERSION = 4;
+const SNAPSHOT_SHAPE_VERSION = 5;
 const SNAPSHOT_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 
 function storage() {
@@ -154,6 +169,7 @@ export function persistSessionSnapshot(sessionId) {
     const sub = _pendingSubstitution.value;
     const revs = _sessionRevisions.value;
     const implicit = _sessionImplicitRecs.value;
+    const pendingReplacement = _pendingReplacement.value;
     store.setItem(SNAPSHOT_KEY, JSON.stringify({
       v: SNAPSHOT_SHAPE_VERSION,
       ts: Date.now(),
@@ -163,6 +179,7 @@ export function persistSessionSnapshot(sessionId) {
       ...(sub ? { pendingSubstitution: sub } : {}),
       ...(Array.isArray(revs) && revs.length ? { sessionRevisions: revs } : {}),
       ...(Array.isArray(implicit) && implicit.length ? { sessionImplicitRecs: implicit } : {}),
+      ...(pendingReplacement ? { pendingReplacement } : {}),
       ...(sessionId ? { sessionId } : {}),
     }));
   } catch { /* storage full / disabled — persistence is best-effort, never fatal */ }
@@ -209,6 +226,11 @@ export function hydrateSessionSnapshot() {
     setSessionRevisions(Array.isArray(snap.sessionRevisions) ? snap.sessionRevisions : []);
     // F10C: restore the implicit recommendations (v4+); older snapshots restore [].
     setSessionImplicitRecs(Array.isArray(snap.sessionImplicitRecs) ? snap.sessionImplicitRecs : []);
+    // Restore a pending replacement proposal (v5+); older snapshots restore null. The plan
+    // was never half-mutated (nothing is removed before approval), so the restored proposal
+    // simply re-surfaces against the intact plan; the caller re-validates its fingerprint.
+    setPendingReplacement((snap.pendingReplacement && typeof snap.pendingReplacement === 'object')
+      ? snap.pendingReplacement : null);
     return {
       resumed: true,
       sessionId: snap.sessionId || null,
@@ -235,4 +257,5 @@ export function resetSessionStore() {
   _sessionRevisions.value = [];
   _sessionImplicitRecs.value = [];
   _coachDiscussionSinceLog.value = false;
+  _pendingReplacement.value = null;
 }

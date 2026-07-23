@@ -1961,6 +1961,38 @@ import * as sessionQuestion from './sessionQuestion.js';
     if (d.current) setWorkoutPlaceholder(buildWorkoutPlaceholder([{ name: d.current }]) || d.current);
   });
 
+  // Active-session exercise REPLACEMENT proposal (production trust fix FR-20260723031748).
+  // A direct "replace X with Y" is staged by app.js as ONE pending proposal — the plan is
+  // NOT mutated yet. Render one coherent proposal with the complete proposed prescription and
+  // an Approve / Reject affordance. Approval (a tap, or a conversational "yes"/"do bench")
+  // is what applies it; the buttons only dispatch the decision and disable themselves so
+  // repeated taps are idempotent (app.js's approve/reject are also no-ops once resolved).
+  function renderReplacementProposalCard(d) {
+    const proposal = d && d.proposal;
+    if (!proposal) return;
+    const node = appendAtlasBubble();
+    if (!node || !node.body) return;
+    node.body.appendChild(elc('div', 'replacement-proposal-line', d.line || 'Replace exercise?'));
+    const actions = elc('div', 'replacement-proposal-actions');
+    const approve = elc('button', 'replacement-approve-btn', 'Approve');
+    const reject = elc('button', 'replacement-reject-btn', 'Keep it');
+    approve.type = 'button'; reject.type = 'button';
+    approve.setAttribute('data-proposal-id', proposal.proposal_id || '');
+    let resolved = false;
+    const decide = (decision) => {
+      if (resolved) return;                 // idempotent — one decision per card
+      resolved = true;
+      approve.disabled = true; reject.disabled = true;
+      document.dispatchEvent(new CustomEvent('atlas:replacement-decision', { detail: { decision, proposal } }));
+    };
+    approve.addEventListener('click', () => decide('approve'));
+    reject.addEventListener('click', () => decide('reject'));
+    actions.appendChild(approve);
+    actions.appendChild(reject);
+    node.body.appendChild(actions);
+  }
+  document.addEventListener('atlas:replacement-proposed', e => renderReplacementProposalCard((e && e.detail) || {}));
+
   // P0 PR 4: a deterministic identity correction ("sorry that was squats") — app.js
   // already relabeled the logged lift in the session buffers; confirm it in the
   // thread. Read-only narration; the engine OWNS the relabel.
