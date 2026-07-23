@@ -34,6 +34,7 @@ const {
 const { classifySubstitution } = require('./services/substitutionIntent');
 const { inferPrescribedPairs } = require('./services/planMatcher');
 const { isConstraintMessage } = require('./services/constraintDetector');
+const { decideTurnPrecedence, isTurnPrecedenceEnabled } = require('./services/turnPrecedence');
 const { recommendSubstitute } = require('./services/substitutionRecommender');
 const { scoreSubstitutionQuality } = require('./services/substitutionQuality');
 const { buildRecommendation, parseRecommendationConstraints } = require('./services/recommendationPipeline');
@@ -1002,6 +1003,23 @@ app.post('/api/suggest-substitute', async (req, res) => {
   }
   if (!explicitSubstitute && !isConstraintMessage(message)) {
     return standardSuccess(req, res, 'Not a constraint message', { recommendation: null });
+  }
+  // Phase 4 (first concern, flag-gated ATLAS_TURN_PRECEDENCE — default inert): one
+  // authoritative current-message decision owns whether this turn requests a substitution.
+  // A conversational aside (greeting / presence-check / malfunction complaint) is never a
+  // substitution, even when it trips a constraint keyword by coincidence ("Are you broken?"
+  // matches /\bbroken\b/). Declining here lets the client's existing fall-through route the
+  // turn to the coach, which handles the aside correctly. Read-only; no write, no plan
+  // change. Off ⇒ byte-identical to the prior behavior. See Phase-3 divergence summary /
+  // FR-20260723120852-hw56ws9y turn 4.
+  if (isTurnPrecedenceEnabled()) {
+    const precedence = decideTurnPrecedence({ message, intent });
+    if (!precedence.allowSubstitution) {
+      return standardSuccess(req, res, 'No recommendation — not a substitution turn', {
+        recommendation: null,
+        turn_precedence: { lane: precedence.lane, reason: precedence.reason },
+      });
+    }
   }
   // CONTEXT-AWARE: the client passes the remaining planned exercises (esp. the next
   // slot) so the recommender skips a substitute that would be redundant back-to-back

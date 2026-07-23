@@ -7522,3 +7522,68 @@ test('F10D: a fresh-write_id all-duplicate closeout retry re-attempts the seal (
     fakeSheetsState.logCompositeKeys = [];
   }
 });
+
+// ── Phase 4 (first concern): authoritative turn precedence on /api/suggest-substitute ──
+// FR-20260723120852-hw56ws9y turn 4: "Are you broken?" (a malfunction complaint) tripped
+// isConstraintMessage's /\bbroken\b/ and the substitute route answered "No Bench Press today
+// — Incline Press is your best swap…", contradicting the active plan. With the flag ON, one
+// authoritative decision recognizes the aside and declines the substitution so the client
+// falls through to the coach; genuine constraints and explicit swaps still substitute; and
+// the route never writes. Flag OFF reproduces the prior behavior (proving the flag gates it).
+
+test('turn precedence OFF (default): a malfunction complaint still substitutes — prior behavior preserved', async () => {
+  const before = fakeSheetsState.appendCalls.length;
+  delete process.env.ATLAS_TURN_PRECEDENCE;
+  const { response, body } = await requestJson('/api/suggest-substitute', {
+    method: 'POST',
+    body: JSON.stringify({ message: 'Are you broken?', current_exercise: 'Bench Press' })
+  });
+  assert.equal(response.status, 200);
+  assert.ok(body.data.recommendation, 'flag off ⇒ the constraint keyword still yields a substitution (unchanged)');
+  assert.equal(fakeSheetsState.appendCalls.length, before, 'suggest-substitute never writes');
+});
+
+test('turn precedence ON: a malfunction complaint yields NO substitution (the FR turn-4 fix)', async () => {
+  const before = fakeSheetsState.appendCalls.length;
+  process.env.ATLAS_TURN_PRECEDENCE = 'on';
+  try {
+    const { response, body } = await requestJson('/api/suggest-substitute', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'Are you broken?', current_exercise: 'Bench Press' })
+    });
+    assert.equal(response.status, 200);
+    assert.equal(body.data.recommendation, null, 'the aside no longer invokes substitution');
+    assert.equal(body.data.turn_precedence.lane, 'aside');
+  } finally {
+    delete process.env.ATLAS_TURN_PRECEDENCE;
+  }
+  assert.equal(fakeSheetsState.appendCalls.length, before, 'suggest-substitute never writes');
+});
+
+test('turn precedence ON: a genuine equipment constraint still substitutes', async () => {
+  process.env.ATLAS_TURN_PRECEDENCE = 'on';
+  try {
+    const { response, body } = await requestJson('/api/suggest-substitute', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'the bench is broken', current_exercise: 'Bench Press' })
+    });
+    assert.equal(response.status, 200);
+    assert.ok(body.data.recommendation, 'a real constraint ("the bench is broken") still yields a substitute');
+  } finally {
+    delete process.env.ATLAS_TURN_PRECEDENCE;
+  }
+});
+
+test('turn precedence ON: an explicit substitute intent still substitutes', async () => {
+  process.env.ATLAS_TURN_PRECEDENCE = 'on';
+  try {
+    const { response, body } = await requestJson('/api/suggest-substitute', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'give me something else', current_exercise: 'Bench Press', intent: 'substitute' })
+    });
+    assert.equal(response.status, 200);
+    assert.ok(body.data.recommendation, 'an explicit substitution request still yields a substitute');
+  } finally {
+    delete process.env.ATLAS_TURN_PRECEDENCE;
+  }
+});
