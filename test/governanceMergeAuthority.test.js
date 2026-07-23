@@ -11,7 +11,7 @@ function read(relPath) {
 
 // Models the owner-ratified Atlas contract:
 // deterministic hard gates + advisory findings + risk-triggered ChatGPT review.
-// Cold review is fully retired — never a merge requirement or a status gate.
+// Builder identity is not a merge input.
 function evaluateMergeAuthority(pr) {
   const blockers = [];
   const chatgptRequired = Boolean(
@@ -60,7 +60,7 @@ const GREEN_ROUTINE_PR = {
   chatgptReview: 'not-required',
 };
 
-test('routine green PRs are merge-authorized by Claude without owner handoff', () => {
+test('routine green PRs are merge-authorized by the active builder without owner handoff', () => {
   const result = evaluateMergeAuthority(GREEN_ROUTINE_PR);
   assert.equal(result.canMerge, true);
   assert.equal(result.chatgptRequired, false);
@@ -113,7 +113,6 @@ test('failed CI and real unresolved findings block merge', async (t) => {
 });
 
 test('the retired cold-review gate is fully removed and no doc mandates a compatibility marker', () => {
-  // The workflow, script, doc, and pure-logic test are deleted (F04A).
   for (const rel of [
     '.github/workflows/cold-review-gate.yml',
     'scripts/cold-review-gate.js',
@@ -122,12 +121,13 @@ test('the retired cold-review gate is fully removed and no doc mandates a compat
   ]) {
     assert.ok(!fs.existsSync(path.join(ROOT, rel)), `${rel} must be deleted — cold review is fully retired`);
   }
-  // No active governance entrypoint may reference the retired status or tell an
-  // agent to publish a cold-review compatibility marker.
+
   for (const rel of [
     'CLAUDE.md',
     'AGENTS.md',
+    'CODEX.md',
     'docs/AGENT_WORKFLOW.md',
+    'docs/BUILDER_PORTABILITY.md',
     'docs/AUTOMATION_PROTOCOL.md',
     'docs/OWNER_CHECKIN_RULES.md',
     '.github/PULL_REQUEST_TEMPLATE.md',
@@ -137,13 +137,13 @@ test('the retired cold-review gate is fully removed and no doc mandates a compat
     assert.doesNotMatch(body, /cold-review\/exact-head/i, `${rel} must not reference the retired cold-review status`);
     assert.doesNotMatch(body, /compatibility marker/i, `${rel} must not tell an agent to post a compatibility marker`);
   }
-  // And it was never (and still is not) a merge input.
+
   const result = evaluateMergeAuthority(GREEN_ROUTINE_PR);
   assert.equal(result.canMerge, true);
   assert.deepEqual(result.blockers, []);
 });
 
-test('Claude continues the canonical campaign after merge', () => {
+test('the active builder continues the canonical campaign after merge', () => {
   const result = evaluateMergeAuthority(GREEN_ROUTINE_PR);
   assert.deepEqual(result.postMergeContinuation, [
     'verify-main',
@@ -154,19 +154,26 @@ test('Claude continues the canonical campaign after merge', () => {
   ]);
 });
 
-test('CLAUDE.md is canonical and compatibility files define no independent process', () => {
+test('CLAUDE.md stays canonical while AGENTS and CODEX provide the same portability mapping', () => {
   const claude = read('CLAUDE.md');
   const agents = read('AGENTS.md');
   const codex = read('CODEX.md');
+  const portability = read('docs/BUILDER_PORTABILITY.md');
 
   assert.match(claude, /# Atlas — Canonical Agent Brief/);
   assert.match(claude, /docs\/ATLAS_V1_EXECUTION_PLAN\.md/);
 
   for (const [name, body] of [['AGENTS.md', agents], ['CODEX.md', codex]]) {
-    assert.match(body, /compatibility pointer/i, name);
+    assert.match(body, /compatibility adapter/i, name);
     assert.match(body, /CLAUDE\.md/, name);
-    assert.match(body, /no independent role, review, branch, merge, or sequencing rules/i, name);
+    assert.match(body, /BUILDER_PORTABILITY\.md/, name);
+    assert.match(body, /active implementation agent|primary implementation and merge agent/i, name);
+    assert.match(body, /no independent product, safety, branch, merge, or sequencing rules/i, name);
   }
+
+  assert.match(portability, /Claude Code or Codex as the active implementation agent/i);
+  assert.match(portability, /does not select work/i);
+  assert.match(portability, /sole active work-selection authority/i);
 });
 
 test('one canonical plan selects work', () => {
@@ -174,8 +181,9 @@ test('one canonical plan selects work', () => {
   const index = read('docs/DOCS_INDEX.md');
   const governance = read('docs/GOVERNANCE.md');
   const workflow = read('docs/AGENT_WORKFLOW.md');
+  const portability = read('docs/BUILDER_PORTABILITY.md');
 
-  for (const body of [plan, index, governance, workflow]) {
+  for (const body of [plan, index, governance, workflow, portability]) {
     assert.match(body, /one|sole/i);
     assert.match(body, /ATLAS_V1_EXECUTION_PLAN\.md|canonical execution/i);
   }
@@ -185,24 +193,34 @@ test('one canonical plan selects work', () => {
   assert.match(plan, /Do not add a second roadmap/i);
 });
 
-test('active governance makes Codex advisory and cold review optional', () => {
+test('active governance makes independent agent review advisory and optional', () => {
   const docs = [
     read('CLAUDE.md'),
+    read('AGENTS.md'),
+    read('CODEX.md'),
     read('docs/AGENT_WORKFLOW.md'),
+    read('docs/BUILDER_PORTABILITY.md'),
     read('docs/AUTOMATION_PROTOCOL.md'),
     read('docs/OWNER_CHECKIN_RULES.md'),
     read('.github/PULL_REQUEST_TEMPLATE.md'),
   ].join('\n');
 
-  assert.match(docs, /Codex comments are advisory|Codex review comments are advisory|Codex comments and optional clean-context review are advisory/i);
-  assert.match(docs, /optional clean-context review|clean-context review is optional/i);
-  assert.match(docs, /not a required status|not a required marker/i);
+  assert.match(docs, /independent agent review[^\n]*advisory|Codex comments are advisory|Codex review comments are advisory/i);
+  assert.match(docs, /optional clean-context review|clean-context review is optional|missing optional agent review does not block/i);
+  assert.match(docs, /not a required status|not a required marker|not a required marker, status/i);
   assert.doesNotMatch(docs, /cold review is required/i);
   assert.doesNotMatch(docs, /Dale remains the merge authority for owner-reserved PRs/i);
 });
 
-test('standing authority preserves data-safety owner gates', () => {
+test('builder identity is portable without weakening data-safety owner gates', () => {
   const claude = read('CLAUDE.md');
+  const agents = read('AGENTS.md');
+  const portability = read('docs/BUILDER_PORTABILITY.md');
+
+  assert.match(agents, /Claude Code and Codex are both approved Atlas implementation agents/i);
+  assert.match(portability, /same responsibilities and standing authority/i);
+  assert.match(portability, /Tool identity never changes production-write, schema, security, invariant, promotion, or owner-evidence gates/i);
+
   assert.match(claude, /No real Google Sheets write without explicit owner authorization/i);
   assert.match(claude, /schema, migration, deletion, credentials, or security-sensitive infrastructure/i);
   assert.match(claude, /Constitution\/Invariant amendments/i);
@@ -210,8 +228,12 @@ test('standing authority preserves data-safety owner gates', () => {
   assert.match(claude, /routine PRs do not wait for him to click merge/i);
 });
 
-test('claude/* and agent/* branches are the campaign branch pattern', () => {
+test('new work uses tool-neutral agent branches and prevents duplicate parallel implementation', () => {
   const workflow = read('docs/AGENT_WORKFLOW.md');
-  assert.match(workflow, /`claude\/<concern>` or `agent\/<concern>`/);
-  assert.doesNotMatch(workflow, /Never create new `claude\/\*`/);
+  const portability = read('docs/BUILDER_PORTABILITY.md');
+
+  assert.match(workflow, /fresh `agent\/<concern>` branch/);
+  assert.match(workflow, /Never run Claude and Codex on the same concern in parallel/i);
+  assert.match(portability, /New branches use \*\*`agent\/<concern>`\*\*/);
+  assert.match(portability, /Never have Claude and Codex independently implement the same concern/i);
 });
