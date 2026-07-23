@@ -91,6 +91,17 @@ const MAGNITUDE_RE = /\b(only|just|so\s+(?:light|heavy|low|high|easy|hard|little
 // "did I just barely hit") so an adverbial history question is not misrouted (Codex #1133).
 const HISTORY_PAST_RE = /\b(?:last (?:time|week|session|month|year|workout|training)|previous(?:ly)?|history|before|used to|yesterday|ago|earlier|the other (?:day|week)|when i (?:did|last)|did\s+i(?:\s+\w+){0,3}\s+(?:do|does|hit|get|got|gotten|use|used|run|ran|bench|squat|press(?:ed)?|lift(?:ed)?|pull(?:ed)?|row(?:ed)?|curl(?:ed)?|manage[d]?|perform(?:ed)?|finish(?:ed)?|complete[d]?|score[d]?))\b/;
 
+// The clause the "why" question is actually asking about — the first segment (split on
+// sentence/clause punctuation) that contains "why". The history exclusion is tested against
+// THIS clause, not the whole message, so a recommendation question that merely CITES a prior
+// session as CONTEXT ("Why only 175 for bench today? I benched 225 last week.") is still
+// grounded and challenge-demoted, while a question whose SUBJECT is the past ("Why did I do
+// 175 last week?") is excluded (Codex #1133).
+function questionClause(normalizedMessage) {
+  const segments = String(normalizedMessage == null ? '' : normalizedMessage).split(/[.!?;,]+/).map((s) => s.trim()).filter(Boolean);
+  return segments.find((s) => WHY_RE.test(s)) || String(normalizedMessage == null ? '' : normalizedMessage);
+}
+
 // A broad-session review legitimately wants the full diagnostics — never narrowed to a
 // single lift. Mirrors coachResponseGrounding's broad-review guard (kept minimal here
 // on purpose; the WHY+MAGNITUDE+resolvable-target gate already excludes most reviews).
@@ -132,7 +143,7 @@ function isRecommendationExplanationTurn(message, context) {
   const m = normalize(message);
   if (!m) return false;
   if (BROAD_REVIEW_RE.test(m)) return false;
-  if (HISTORY_PAST_RE.test(m)) return false;           // a past-session question — history owns it
+  if (HISTORY_PAST_RE.test(questionClause(m))) return false;  // the QUESTION (not a cited prior session) is about the past — history owns it
   if (isPlanModificationRequest(m)) return false;
   if (isFactualPlanDispute(message, c)) return false;
   if (!WHY_RE.test(m) || !MAGNITUDE_RE.test(m)) return false;
