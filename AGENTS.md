@@ -1,9 +1,18 @@
-# Atlas Agent Compatibility Pointer
+# Atlas Agent Compatibility Adapter
 
-The canonical implementation-agent brief is [`CLAUDE.md`](CLAUDE.md). The sole active campaign is [`docs/ATLAS_V1_EXECUTION_PLAN.md`](docs/ATLAS_V1_EXECUTION_PLAN.md).
+Codex and Claude Code are both approved Atlas implementation agents. The active builder for a task has the same implementation, PR, and merge authority; the tool name does not change the safety contract.
 
-Read those two files first. This file exists only for tools that look for `AGENTS.md`; it defines no independent role, review, branch, merge, or sequencing rules.
+Read in this order:
 
-To check Atlas at a glance — where the campaign is, whether prod is healthy, and whether the latest write+undo held — run `npm run atlas:status` (`-- --json` for the machine schema) or read the public, redacted `GET /.well-known/atlas-status.json`. No Sheet ID, tab name, or session id is required. Contract: [`docs/ATLAS_OPERATIONS_CONTRACT.md`](docs/ATLAS_OPERATIONS_CONTRACT.md).
+1. [`CLAUDE.md`](CLAUDE.md) — canonical Atlas operating and safety brief.
+2. [`docs/BUILDER_PORTABILITY.md`](docs/BUILDER_PORTABILITY.md) — compatibility mapping for switching between Claude Code and Codex.
+3. [`docs/ATLAS_V1_EXECUTION_PLAN.md`](docs/ATLAS_V1_EXECUTION_PLAN.md) — sole active work-selection authority.
+4. Relevant specs, invariants, tests, and evidence ledgers.
 
-Deterministic GitHub checks are hard gates. Codex comments are advisory. Claude holds standing authority to merge the exact passing head for authorized routine work; owner approval remains required only for the reserved safety/product categories defined in `CLAUDE.md` and `docs/OWNER_CHECKIN_RULES.md`.
+Compatibility rule: wherever `CLAUDE.md` or another active governance document says **Claude** as the implementation or merge operator, read it as **the active implementation agent (Claude Code or Codex)**. Wherever it says **Codex review/comments are advisory**, read that as **independent agent review is advisory**; Codex is not reduced to reviewer status when Codex is the active builder.
+
+This file adapts tool-specific wording only. It defines no independent product, safety, branch, merge, or sequencing rules. The execution plan still selects the work, deterministic GitHub checks remain the hard gates, and all owner-reserved stops remain unchanged.
+
+Use `agent/<concern>` for new branches regardless of builder. Do not continue another agent's stale branch without first verifying current `main`, open PRs, and the Current-State Verification Gate.
+
+At a glance: run `npm run atlas:status` (`-- --json` for machine output). For the newest genuine owner app session, run `npm run atlas:review-live` (`-- --json`).
