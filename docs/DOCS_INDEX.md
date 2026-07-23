@@ -5,10 +5,11 @@ This index tells agents which documents have authority and prevents old plans fr
 ## Read first
 
 1. [`CLAUDE.md`](../CLAUDE.md) — canonical agent operating brief: safety, roles, branches, review, merge, and execution rules.
-2. [`docs/ATLAS_V1_EXECUTION_PLAN.md`](./ATLAS_V1_EXECUTION_PLAN.md) — **the sole active execution queue and work-selection authority** through V1 stabilization. It currently carries the **Atlas Recovery Campaign (Issue #1073)** as the active controlling owner insertion; that campaign lives inside the plan, never beside it.
-3. [`docs/DECISION_KERNEL.md`](./DECISION_KERNEL.md) — durable principles for routine decisions.
-4. [`BACKLOG.md`](../BACKLOG.md) — open/deferred intake ledger and supporting finding detail; not a competing queue while the V1 plan has eligible work.
-5. The relevant spec, invariant, test, or evidence document for the active card.
+2. [`docs/BUILDER_PORTABILITY.md`](./BUILDER_PORTABILITY.md) — tool-neutral compatibility and handoff mapping so Claude Code and Codex can serve as the active implementation agent under the same rules. It selects no work.
+3. [`docs/ATLAS_V1_EXECUTION_PLAN.md`](./ATLAS_V1_EXECUTION_PLAN.md) — **the sole active execution queue and work-selection authority** through V1 stabilization. It currently carries the **Atlas Recovery Campaign (Issue #1073)** as the active controlling owner insertion; that campaign lives inside the plan, never beside it.
+4. [`docs/DECISION_KERNEL.md`](./DECISION_KERNEL.md) — durable principles for routine decisions.
+5. [`BACKLOG.md`](../BACKLOG.md) — open/deferred intake ledger and supporting finding detail; not a competing queue while the V1 plan has eligible work.
+6. The relevant spec, invariant, test, or evidence document for the active card.
 
 If another document appears to sequence work, the V1 execution plan wins and the conflict must be corrected.
 
@@ -25,7 +26,9 @@ These govern direction and constraints. They do not independently select the nex
 ## Active execution and workflow
 
 - [`docs/ATLAS_V1_EXECUTION_PLAN.md`](./ATLAS_V1_EXECUTION_PLAN.md) — milestones M0–M6, executable cards F01–F12, five-session proving run, stabilization, the parallel One-Brain evidence lane, and the embedded **Atlas Recovery Campaign (Phases 1–7, Issue #1073)** — the active controlling insertion that freezes M2/F10E until its Phase 1 owner gate passes.
-- [`docs/AGENT_WORKFLOW.md`](./AGENT_WORKFLOW.md) — Current-State Verification Gate, branch hygiene, PR loop, and compact-prompt rules.
+- [`docs/AGENT_WORKFLOW.md`](./AGENT_WORKFLOW.md) — Current-State Verification Gate, branch hygiene, PR loop, and compact-prompt rules for the active implementation agent.
+- [`docs/BUILDER_PORTABILITY.md`](./BUILDER_PORTABILITY.md) — Claude Code/Codex role equivalence, repository-state handoff, and the shared launcher. A compatibility contract, not a plan.
+- [`docs/CODEX_SESSION_STARTER.md`](./CODEX_SESSION_STARTER.md) — retained filename containing the common Claude Code/Codex fresh-session launcher. It selects no work.
 - [`docs/AUTOMATION_PROTOCOL.md`](./AUTOMATION_PROTOCOL.md) — deterministic hard gates and standing merge authority.
 - [`docs/ATLAS_OPERATIONS_CONTRACT.md`](./ATLAS_OPERATIONS_CONTRACT.md) — the agent-first status surface (`npm run atlas:status` and the public `GET /.well-known/atlas-status.json`). A status contract, not a work-selection plan.
 - [`docs/ATLAS_OWNERSHIP_CONNECTIVITY_INVENTORY.md`](./ATLAS_OWNERSHIP_CONNECTIVITY_INVENTORY.md) — the single connectivity inventory of every route, service, client module, flag, Sheet tab, and planning doc, each with a provisional keep/adapt/retire disposition (Atlas Recovery Campaign, Phase 2 Work item 1b). An assessment that feeds later owner gates; it authorizes nothing.
@@ -35,7 +38,7 @@ These govern direction and constraints. They do not independently select the nex
 - [`docs/RISK_LABELS.md`](./RISK_LABELS.md) — primary risk labels.
 - [`.github/PULL_REQUEST_TEMPLATE.md`](../.github/PULL_REQUEST_TEMPLATE.md) — merge-card evidence format.
 
-`AGENTS.md` and `CODEX.md` are compatibility pointers to `CLAUDE.md`; they define no independent process.
+`AGENTS.md` and `CODEX.md` are compatibility adapters to `CLAUDE.md` plus `docs/BUILDER_PORTABILITY.md`; they define no independent product, safety, branch, merge, or sequencing process.
 
 ## Evidence and operational ledgers
 
@@ -111,7 +114,6 @@ The following filenames remain only because old docs, PRs, and issues link to th
 - `docs/COACH_INTELLIGENCE_ROADMAP.md`
 - `docs/ATLAS_CONVERSATION_PROTOTYPE_V1_PLAN.md`
 - `docs/COMPOSER_FIRST_MIGRATION.md`
-- `docs/CODEX_SESSION_STARTER.md`
 
 `docs/ATLAS_SOUL_READINESS_PLAN.md` was deleted because its useful content was fully reconciled and it had no independent durable authority.
 
