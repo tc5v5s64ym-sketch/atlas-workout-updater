@@ -210,9 +210,12 @@ test('unit: a past-tense history question is NOT a recommendation-explanation tu
   assert.equal(explanationGrounding.isRecommendationExplanationTurn('Why did you recommend only 175 for bench?', ctx), true);
   assert.equal(explanationGrounding.isRecommendationExplanationTurn('Why so light on bench today?', ctx), true);
   // A recommendation question that merely CITES a prior session as context must still fire
-  // (the history is not the question's subject) — the exclusion is scoped to the why-clause.
+  // (the history is not the question's subject) — the exclusion is scoped to the why-clause,
+  // with a present-session cue covering the UNPUNCTUATED run-on form.
   assert.equal(explanationGrounding.isRecommendationExplanationTurn('Why only 175 for bench today? I benched 225 last week.', ctx), true);
   assert.equal(explanationGrounding.isRecommendationExplanationTurn('Why only 175 for bench today, I benched 225 last week?', ctx), true);
+  assert.equal(explanationGrounding.isRecommendationExplanationTurn('Why only 175 for bench today I benched 225 last week', ctx), true);
+  assert.equal(explanationGrounding.isRecommendationExplanationTurn('why only 175 for bench? i did 225 before', ctx), true);
 });
 
 // Codex P2 (follow-up): a configured provider whose Sheets read fails mid-turn must still

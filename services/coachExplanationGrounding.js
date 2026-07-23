@@ -82,24 +82,40 @@ function entryName(entry) {
 const WHY_RE = /\bwhy\b/;
 const MAGNITUDE_RE = /\b(only|just|so\s+(?:light|heavy|low|high|easy|hard|little|much|few|many)|too\s+(?:light|heavy|low|high|easy|hard|much|little)|light(?:er)?|heav(?:y|ier)|low(?:er)?|high(?:er)?|few(?:er)?)\b|\d/;
 
-// A PAST-tense / history question ("why did I do 175 for bench last week?") is about a
-// prior session, NOT the currently displayed recommendation — history owns it. Mirrors
-// sessionQuestionAnswer.HISTORY_RE (kept in sync) plus the athlete-past-action forms
-// ("did i do/hit/…", "yesterday", "ago"), so a number-bearing history question is never
-// hijacked into the current-recommendation lane and answered from an unrelated plan. The
-// "did I … <verb>" form tolerates up to three intervening adverbs ("did I only get",
-// "did I just barely hit") so an adverbial history question is not misrouted (Codex #1133).
-const HISTORY_PAST_RE = /\b(?:last (?:time|week|session|month|year|workout|training)|previous(?:ly)?|history|before|used to|yesterday|ago|earlier|the other (?:day|week)|when i (?:did|last)|did\s+i(?:\s+\w+){0,3}\s+(?:do|does|hit|get|got|gotten|use|used|run|ran|bench|squat|press(?:ed)?|lift(?:ed)?|pull(?:ed)?|row(?:ed)?|curl(?:ed)?|manage[d]?|perform(?:ed)?|finish(?:ed)?|complete[d]?|score[d]?))\b/;
+// A history question is about a prior session, NOT the currently displayed recommendation.
+// Split into two strengths so a recommendation question that merely CITES a prior session as
+// context is not wrongly excluded (Codex #1133):
+//
+//   STRONG — the athlete's own past action is the QUESTION'S SUBJECT: "did I [adverbs]
+//   <verb>" (tolerating up to three intervening adverbs — "did I only get", "did I just
+//   barely hit") or "when I did/last". This always means history.
+const ATHLETE_PAST_RE = /\b(?:when i (?:did|last)|did\s+i(?:\s+\w+){0,3}\s+(?:do|does|hit|get|got|gotten|use|used|run|ran|bench|squat|press(?:ed)?|lift(?:ed)?|pull(?:ed)?|row(?:ed)?|curl(?:ed)?|manage[d]?|perform(?:ed)?|finish(?:ed)?|complete[d]?|score[d]?))\b/;
+//
+//   WEAK — a bare temporal reference to a prior session ("last week", "before", "yesterday",
+//   "ago", …). Mirrors sessionQuestionAnswer.HISTORY_RE. This owns the turn ONLY when the
+//   question carries no present-session cue — otherwise the prior session is cited context.
+const WEAK_HISTORY_RE = /\b(?:last (?:time|week|session|month|year|workout|training)|previous(?:ly)?|history|before|used to|yesterday|ago|earlier|the other (?:day|week))\b/;
+//
+//   PRESENT cue — the question is about TODAY's prescription, so a cited prior session is
+//   context, not the subject ("why only 175 for bench today I benched 225 last week").
+const PRESENT_CUE_RE = /\b(?:today|tonight|right now|now|currently|this (?:session|workout|week|block|time))\b/;
 
 // The clause the "why" question is actually asking about — the first segment (split on
 // sentence/clause punctuation) that contains "why". The history exclusion is tested against
-// THIS clause, not the whole message, so a recommendation question that merely CITES a prior
-// session as CONTEXT ("Why only 175 for bench today? I benched 225 last week.") is still
-// grounded and challenge-demoted, while a question whose SUBJECT is the past ("Why did I do
-// 175 last week?") is excluded (Codex #1133).
+// THIS clause, not the whole message, so a punctuated recommendation question that cites a
+// prior session in a SEPARATE clause ("Why only 175 for bench today? I benched 225 last
+// week.") is grounded; the present-cue override (above) covers the unpunctuated run-on form.
 function questionClause(normalizedMessage) {
   const segments = String(normalizedMessage == null ? '' : normalizedMessage).split(/[.!?;,]+/).map((s) => s.trim()).filter(Boolean);
   return segments.find((s) => WHY_RE.test(s)) || String(normalizedMessage == null ? '' : normalizedMessage);
+}
+
+// True when the QUESTION (not a merely-cited prior session) is about the past — the strong
+// athlete-past-action subject, or a weak temporal reference with no present-session cue.
+function isHistoryQuestion(normalizedMessage) {
+  const clause = questionClause(normalizedMessage);
+  if (ATHLETE_PAST_RE.test(clause)) return true;
+  return WEAK_HISTORY_RE.test(clause) && !PRESENT_CUE_RE.test(clause);
 }
 
 // A broad-session review legitimately wants the full diagnostics — never narrowed to a
@@ -143,7 +159,7 @@ function isRecommendationExplanationTurn(message, context) {
   const m = normalize(message);
   if (!m) return false;
   if (BROAD_REVIEW_RE.test(m)) return false;
-  if (HISTORY_PAST_RE.test(questionClause(m))) return false;  // the QUESTION (not a cited prior session) is about the past — history owns it
+  if (isHistoryQuestion(m)) return false;              // the QUESTION (not a cited prior session) is about the past — history owns it
   if (isPlanModificationRequest(m)) return false;
   if (isFactualPlanDispute(message, c)) return false;
   if (!WHY_RE.test(m) || !MAGNITUDE_RE.test(m)) return false;
