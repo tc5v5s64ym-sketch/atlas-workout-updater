@@ -408,6 +408,20 @@ const HISTORY_RE = /\b(last time|last (week|session|month|workout|time)|previous
 // words that collide with lift names (e.g. "raise" in Lateral Raise, "lower").
 const ADVICE_RE = /\b(why|should|explain|recommend|increase|decrease|heavier|lighter|progress|better|instead)\b|\btoo\s+(low|high|light|heavy|easy|hard|much|little)/i;
 
+// A WARM-UP turn — "No warm up sets for bench?", "how do I warm up?", "warmup sets?". The phrase
+// mirrors the core token of services/warmupTag.WARMUP_NOTE_RE (`warm[\s-]?up`, matching "warmup",
+// "warm up", "warm-up", "warmups"), WITHOUT that regex's log-note alternations (`\bwu\b`, `(w)`)
+// which would over-match ordinary prose. Recognizing it lets the chat route DECLINE to answer a
+// warm-up question as a working-set-count restatement — the named-lift/total lanes match
+// "sets"+"bench" and reply "Bench Press today: 3 sets." to a warm-up question (Phase-3 divergence
+// D4, FR-20260723120852-hw56ws9y turn 3). This is RECOGNITION/ROUTING only; the substantive
+// warm-up ramp (what the warm-up should be) is a Phase-6 knowledge capability (D4b), not this.
+const WARMUP_QUESTION_RE = /\bwarm[\s-]?ups?\b/i;
+
+function isWarmupQuestion(message) {
+  return WARMUP_QUESTION_RE.test(String(message == null ? '' : message));
+}
+
 /**
  * Answer a NAMED-LIFT session-value question directly from the live plan/preview.
  *
@@ -496,4 +510,4 @@ function answerTotalRepsQuestion(message, { history = [], clientContext = null }
   return `${name} today: ${total} total reps planned (${target.sets} sets × ${target.reps}).`;
 }
 
-module.exports = { buildSessionQuestionAnswer, buildSessionAdviceFallback, attributesAsked, resolveLiftName, answerBareShorthand, isBareSessionShorthand, isCurrentExercisePrescriptionQuestion, answerCurrentExercisePrescription, answerPlannedLiftQuestion, answerTotalRepsQuestion };
+module.exports = { buildSessionQuestionAnswer, buildSessionAdviceFallback, attributesAsked, resolveLiftName, answerBareShorthand, isBareSessionShorthand, isCurrentExercisePrescriptionQuestion, answerCurrentExercisePrescription, isWarmupQuestion, answerPlannedLiftQuestion, answerTotalRepsQuestion };

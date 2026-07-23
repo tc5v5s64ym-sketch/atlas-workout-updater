@@ -1226,6 +1226,76 @@ test('turn precedence OFF (default): the same prescription question falls throug
   }
 });
 
+// ── Phase 4 (chat/SME lane — divergence D4): a warm-up question is recognized as a warm-up
+// question, not answered as a working-set-count restatement. Flag-gated ATLAS_TURN_PRECEDENCE
+// (default inert). FR-20260723120852-hw56ws9y turn 3: "No warm up sets for bench?" named a lift
+// and matched the "sets" attribute, so the named-lift lane replied "Bench Press today: 3 sets."
+const D4_BENCH_CTX = { current_plan: [{ name: 'Bench Press', weight: 230, reps: 5, sets: 3, rir: 3 }] };
+
+test('turn precedence ON: a warm-up question is NOT answered as a working-set count (D4) — it reaches the coach', async () => {
+  const before = fakeSheetsState.appendCalls.length;
+  process.env.ATLAS_TURN_PRECEDENCE = 'on';
+  fakeCoachState.configured = true;
+  fakeCoachState.chatMessage = 'For bench, ramp up with a couple of lighter sets first.'; // a coach-authored warm-up reply
+  try {
+    const { response, body } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'No warm up sets for bench?', context: D4_BENCH_CTX })
+    });
+    assert.equal(response.status, 200);
+    assert.equal(body.data.source, 'gemini', 'the warm-up question reaches the coach, not the set-count lane');
+    assert.notEqual(body.data.message, 'Bench Press today: 3 sets.', 'a warm-up question must not be answered as a working-set count');
+  } finally {
+    delete process.env.ATLAS_TURN_PRECEDENCE;
+    fakeCoachState.configured = false;
+  }
+  assert.equal(fakeSheetsState.appendCalls.length, before, 'coach/chat never writes');
+});
+
+test('turn precedence OFF (default): the warm-up question still gets the set-count answer — prior behavior preserved', async () => {
+  delete process.env.ATLAS_TURN_PRECEDENCE;
+  fakeCoachState.configured = true;
+  fakeCoachState.chatMessage = 'stub-llm-reply';
+  try {
+    const { response, body } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'No warm up sets for bench?', context: D4_BENCH_CTX })
+    });
+    assert.equal(response.status, 200);
+    assert.equal(body.data.source, 'engine', 'flag off ⇒ the deterministic set-count lane answers exactly as before');
+    assert.equal(body.data.message, 'Bench Press today: 3 sets.');
+  } finally {
+    fakeCoachState.configured = false;
+  }
+});
+
+test('turn precedence ON, model DOWN: a warm-up question degrades honestly, never to a set-count (Codex #1140 P2)', async () => {
+  // With Gemini unconfigured the model-down fallback (deterministicAnswer → buildSessionQuestionAnswer)
+  // would otherwise still see "sets" + the plan and return "Bench Press: 3 sets." — the deferral
+  // must carry into that path too, so the warm-up turn gets an honest "unavailable", never a wrong count.
+  process.env.ATLAS_TURN_PRECEDENCE = 'on';
+  fakeCoachState.configured = false;
+  try {
+    const { response, body } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'No warm up sets for bench?', context: D4_BENCH_CTX })
+    });
+    assert.equal(response.status, 200);
+    assert.equal(body.data.configured, false);
+    assert.equal(body.data.message, null, 'a warm-up question must not regress to a set-count on the model-down path');
+    // control: with the flag OFF, the same unconfigured turn still restates the count (unchanged).
+    process.env.ATLAS_TURN_PRECEDENCE = '';
+    const off = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'No warm up sets for bench?', context: D4_BENCH_CTX })
+    });
+    assert.equal(off.body.data.message, 'Bench Press today: 3 sets.', 'flag off ⇒ model-down path unchanged');
+  } finally {
+    delete process.env.ATLAS_TURN_PRECEDENCE;
+    fakeCoachState.configured = false;
+  }
+});
+
 // ── Slice 3: recovery routing — a tired lifter never gets motivation hype ──────
 const HYPE = /push through|you('?| )ve got this|you got this|no excuses|grind it out|dig deep|beast mode|crush it|let'?s go champ/i;
 

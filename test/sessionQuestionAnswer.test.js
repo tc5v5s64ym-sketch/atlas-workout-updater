@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { buildSessionQuestionAnswer, buildSessionAdviceFallback, attributesAsked, resolveLiftName, answerBareShorthand, isBareSessionShorthand, isCurrentExercisePrescriptionQuestion, answerCurrentExercisePrescription, answerPlannedLiftQuestion, answerTotalRepsQuestion } = require('../services/sessionQuestionAnswer');
+const { buildSessionQuestionAnswer, buildSessionAdviceFallback, attributesAsked, resolveLiftName, answerBareShorthand, isBareSessionShorthand, isCurrentExercisePrescriptionQuestion, answerCurrentExercisePrescription, isWarmupQuestion, answerPlannedLiftQuestion, answerTotalRepsQuestion } = require('../services/sessionQuestionAnswer');
 
 // Engine target stub — stands in for recommendNextSet-derived numbers.
 const benchTarget = { exercise_name: 'Bench Press', weight: 230, reps: 5, sets: 3, rir: 2 };
@@ -277,6 +277,31 @@ test('non-bare shorthand defers (null) — named-lift and off-topic go to the no
   const ctx = { current_plan: [{ name: 'Deadlift', rir: 2 }] };
   assert.equal(answerBareShorthand('For deadlifts how many RIR?', ctx), null);
   assert.equal(answerBareShorthand('how much should I sleep?', ctx), null);
+});
+
+// ---------------------------------------------------------------------------
+// isWarmupQuestion — a warm-up turn is recognized so the chat route can DECLINE to
+// answer it as a working-set-count restatement (Phase-3 divergence D4, FR turn 3:
+// "No warm up sets for bench?" → "Bench Press today: 3 sets."). Recognition only —
+// the warm-up ramp content is Phase 6 (D4b). The route gate (not the lane) does the
+// deferral, so answerPlannedLiftQuestion itself is unchanged (flag-off byte-identical).
+// ---------------------------------------------------------------------------
+
+test('D4: isWarmupQuestion recognizes the warm-up phrase in all spellings, not ordinary prose', () => {
+  for (const q of ['No warm up sets for bench?', 'how do I warm up?', 'warmup sets for bench?', 'do I need a warm-up?', 'warmups?', 'any warm-up sets today?']) {
+    assert.equal(isWarmupQuestion(q), true, `warm-up: ${q}`);
+  }
+  for (const q of ['how many sets?', 'What weight and how many reps?', 'how is my bench trending?', 'what is RIR?', "I'm warmed up, what's next?"]) {
+    assert.equal(isWarmupQuestion(q), false, `not warm-up: ${q}`);
+  }
+});
+
+test('D4: the deterministic set-count lane itself is unchanged — the fix lives in the flag-gated route gate', () => {
+  // answerPlannedLiftQuestion still restates the working-set count; the route only DECLINES to
+  // call it for a warm-up question when the flag is on (proven in the api-smoke route regressions),
+  // so flag-off behavior is byte-identical.
+  const ctx = { current_plan: [{ name: 'Bench Press', weight: 230, reps: 5, sets: 3, rir: 3 }] };
+  assert.equal(answerPlannedLiftQuestion('No warm up sets for bench?', ctx), 'Bench Press today: 3 sets.');
 });
 
 // ---------------------------------------------------------------------------

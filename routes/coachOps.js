@@ -53,7 +53,7 @@ const { patternFor } = require('../services/movementPattern');
 const { musclesFor } = require('../services/muscleCoverage');
 const { assembleBatchNoteFacts } = require('../services/batchNoteFacts');
 const { detectExtraWork } = require('../services/extraWorkDetector');
-const { buildSessionQuestionAnswer, buildSessionAdviceFallback, answerBareShorthand, isBareSessionShorthand, isCurrentExercisePrescriptionQuestion, answerCurrentExercisePrescription, answerPlannedLiftQuestion, answerTotalRepsQuestion } = require('../services/sessionQuestionAnswer');
+const { buildSessionQuestionAnswer, buildSessionAdviceFallback, answerBareShorthand, isBareSessionShorthand, isCurrentExercisePrescriptionQuestion, answerCurrentExercisePrescription, isWarmupQuestion, answerPlannedLiftQuestion, answerTotalRepsQuestion } = require('../services/sessionQuestionAnswer');
 const { isTurnPrecedenceEnabled } = require('../services/turnPrecedence');
 const { isTirednessExpression, buildTirednessRecoveryAnswer } = require('../services/recoveryRouting');
 const { planStateFromContext, buildSessionCloseAnswer } = require('../services/sessionPlanExecutor');
@@ -1194,13 +1194,23 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     // lane sees all typed messages exactly once. Still fire-and-forget, still no-op
     // when the flag is off; the reply below is unchanged.
 
+    // Phase 4 (chat/SME lane — divergence D4), flag-gated ATLAS_TURN_PRECEDENCE (default inert).
+    // A WARM-UP question ("No warm up sets for bench?") names a lift and matches the "sets"
+    // attribute, so the deterministic named-lift/total lanes below answer it as a working-set-
+    // count restatement — "Bench Press today: 3 sets." — instead of recognizing it as a warm-up
+    // question (FR-20260723120852-hw56ws9y turn 3). When the flag is on, skip those lanes for a
+    // warm-up question so it falls through to the coach; the substantive warm-up ramp is a Phase-6
+    // knowledge capability (D4b), out of scope here. Off ⇒ byte-identical (the lanes answer exactly
+    // as before). Read-only; no write, no plan mutation.
+    const warmupDefer = isTurnPrecedenceEnabled() && isWarmupQuestion(message);
+
     // The deterministic lift-answer lanes (bare shorthand → planned total → planned
     // value) answer factual "what's my RIR/reps/total" questions before the LLM. They
     // are SKIPPED for an explicit-discouragement message (Owner Decision 1): a phrase
     // like "my bench reps are going nowhere" names a lift and asks a value, so a lane
     // would otherwise swallow it as a terse fact instead of letting it reach the
     // reassure voice. A tired message is NOT bypassed here — recovery still owns it.
-    if (!reassureBypass) {
+    if (!reassureBypass && !warmupDefer) {
       // P0 follow-up (2026-06-21): BARE in-session shorthand ("RIR?", "Reps?",
       // "How much?", "How many sets?") is answered deterministically from the CURRENT
       // lift — whether or not Gemini is up — so the lifter gets the current-lift fact,
@@ -1293,6 +1303,13 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     // outage no longer turns workout-state questions into "Coach is unavailable".
     // logRowsForTarget supplies recommendNextSet history; [] when Sheets weren't read.
     const deterministicAnswer = (logRowsForTarget) => {
+      // D4 (model-down path): a warm-up question must NOT regress to the working-set-count
+      // restatement here either — buildSessionQuestionAnswer below would see "sets" + the active
+      // plan and return "Bench Press: 3 sets." for "No warm up sets for bench?". When the flag
+      // recognizes the warm-up turn, degrade HONESTLY to no deterministic answer (the route then
+      // emits "coach unavailable") rather than a wrong set-count — the warm-up ramp is a Phase-6
+      // capability, never a guess (Codex #1140 P2). Off ⇒ warmupDefer is false ⇒ unchanged.
+      if (warmupDefer) return null;
       const close = buildSessionCloseAnswer(message, planStateFromContext(clientCtx));
       if (close) return close;
       const valueAnswer = buildSessionQuestionAnswer(message, {
