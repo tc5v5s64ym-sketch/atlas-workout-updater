@@ -228,6 +228,12 @@ test('unit: a clarification is recognized and its demote drops the standing chal
   assert.equal(explanationGrounding.isClarificationTurn(BENCH_EXPLAIN_MSG), false);
   assert.equal(explanationGrounding.isClarificationTurn('how is my training going?'), false);
   assert.equal(explanationGrounding.isClarificationTurn('I was just wondering how my training is going'), false);
+  // Codex #1141: a genuine full-picture review (via the established broad-review guard) is NOT a
+  // clarification, and a hedged review QUESTION is a question, not a scope correction — both keep
+  // their diagnostics.
+  for (const q of ['is anything wrong?', 'any problems with my training?', 'anything I should fix?', 'I was just wondering if anything is wrong', 'I was just checking']) {
+    assert.equal(explanationGrounding.isClarificationTurn(q), false, `broad review / hedged question keeps its diagnostics: ${q}`);
+  }
   // the demote empties the broad diagnostics and floors coach_mode off "challenge"
   const ctx = {
     memory_patterns: [

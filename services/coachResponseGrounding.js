@@ -193,6 +193,13 @@ const PLAN_EXPLAIN_RE = /\bwhy\b[^?]*\byou\b[^?]*\b(program(?:med|ming)?|program
 // A broad-session review request keeps the full diagnostics — never narrowed.
 const BROAD_REVIEW_RE = /\b(any (problems?|issues?|concerns?|red flags?)|anything (wrong|off|else|i should)|overall|in general|recent training|my (recent )?training|everything|all my|the whole (session|workout|plan|program)|review my|how('?s| is) (my )?(training|progress|everything)|what should i (train|do today))\b/;
 
+// The single, established broad-review classifier — a turn that legitimately wants the FULL
+// diagnostics ("any problems?", "is anything wrong?", "how's my training going?"). Exported so
+// other lanes reuse the SAME definition instead of a narrower copy (D7 clarification demote).
+function isBroadReview(message) {
+  return BROAD_REVIEW_RE.test(normalize(message));
+}
+
 // A plan reference / dispute / correction — mirrors src/app/sessionQuestion.isPlanReference
 // (the client routing classifier from PR #1121). Kept in sync intentionally; this is the
 // server-side grounding lane, that is the client-side routing lane.
@@ -605,6 +612,7 @@ module.exports = {
   isPlanReferenceLike,
   isPlanModificationRequest,
   isFactualPlanDispute,
+  isBroadReview,
   isActivePlanGroundedTurn,
   narrowContextToPlanTurn,
   detectUnsupportedMutationClaim,
