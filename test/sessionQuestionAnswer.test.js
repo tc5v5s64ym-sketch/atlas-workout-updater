@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { buildSessionQuestionAnswer, buildSessionAdviceFallback, attributesAsked, resolveLiftName, answerBareShorthand, isBareSessionShorthand, answerPlannedLiftQuestion, answerTotalRepsQuestion } = require('../services/sessionQuestionAnswer');
+const { buildSessionQuestionAnswer, buildSessionAdviceFallback, attributesAsked, resolveLiftName, answerBareShorthand, isBareSessionShorthand, isCurrentExercisePrescriptionQuestion, answerCurrentExercisePrescription, answerPlannedLiftQuestion, answerTotalRepsQuestion } = require('../services/sessionQuestionAnswer');
 
 // Engine target stub — stands in for recommendNextSet-derived numbers.
 const benchTarget = { exercise_name: 'Bench Press', weight: 230, reps: 5, sets: 3, rir: 2 };
@@ -277,6 +277,81 @@ test('non-bare shorthand defers (null) — named-lift and off-topic go to the no
   const ctx = { current_plan: [{ name: 'Deadlift', rir: 2 }] };
   assert.equal(answerBareShorthand('For deadlifts how many RIR?', ctx), null);
   assert.equal(answerBareShorthand('how much should I sleep?', ctx), null);
+});
+
+// ---------------------------------------------------------------------------
+// answerCurrentExercisePrescription — a BARE, no-lift-named COMPOUND prescription
+// question ("What weight and how many reps?") is scoped to the single ACTIVE lift
+// from session state, retiring the "all-six prescription dump" (Phase-3 divergence
+// D3, FR-20260723120852-hw56ws9y turn 1). This is the compound shape the tight
+// bare-shorthand gate excludes, so before this lane the turn reached Gemini with the
+// whole current_plan and the model enumerated every exercise.
+// ---------------------------------------------------------------------------
+
+// A representative six-exercise active session with Bench Press current (remaining[0]).
+function sixExercisePlanCtx() {
+  return {
+    current_plan: [
+      { name: 'Bench Press', weight: 230, reps: 5, sets: 3, rir: 3 },
+      { name: 'Incline Press', weight: 150, reps: 8, sets: 3, rir: 2 },
+      { name: 'Cable Fly', weight: 40, reps: 12, sets: 3, rir: 1 },
+      { name: 'Triceps Pushdown', weight: 60, reps: 12, sets: 3, rir: 1 },
+      { name: 'Lateral Raise', weight: 20, reps: 15, sets: 3, rir: 0 },
+      { name: 'Overhead Press', weight: 115, reps: 6, sets: 3, rir: 2 },
+    ],
+    plan_state: { remaining: ['Bench Press', 'Incline Press', 'Cable Fly', 'Triceps Pushdown', 'Lateral Raise', 'Overhead Press'], isComplete: false },
+  };
+}
+
+test('D3: a bare compound prescription question is scoped to the ACTIVE lift only — not the whole plan', () => {
+  const ctx = sixExercisePlanCtx();
+  const r = answerCurrentExercisePrescription('What weight and how many reps?', ctx);
+  assert.deepEqual(r, { kind: 'answer', text: 'Bench Press: 230 lbs, 5 reps.' });
+  // The "all-six dump" cannot recur: the answer names ONLY the active lift.
+  for (const other of ['Incline Press', 'Cable Fly', 'Triceps Pushdown', 'Lateral Raise', 'Overhead Press']) {
+    assert.ok(!r.text.includes(other), `answer must not enumerate ${other}`);
+  }
+});
+
+test('D3: recognizes the compound/scoped shapes the tight bare gate misses; still rejects off-topic and education', () => {
+  for (const q of ['What weight and how many reps?', 'weight and reps?', 'sets and reps', 'how many reps and rir?', "what's my weight, reps and rir", 'what is the weight for this lift?']) {
+    assert.equal(isCurrentExercisePrescriptionQuestion(q), true, `should own: ${q}`);
+    assert.equal(isBareSessionShorthand(q), false, `tight bare gate deliberately misses: ${q}`);
+  }
+  for (const q of ['what is RIR?', 'how much water do I drink?', 'how much protein and how many reps do I need?', 'why is my weight so low?', 'how many reps did I do last time?', 'what weight and reps for bench?', 'how do I bench?']) {
+    assert.equal(isCurrentExercisePrescriptionQuestion(q), false, `must defer: ${q}`);
+  }
+});
+
+test('D3: a single unscoped attribute ("what is RIR?") is NOT hijacked — education keeps the ambiguity', () => {
+  assert.equal(answerCurrentExercisePrescription('what is RIR?', sixExercisePlanCtx()), null);
+  // …but the same single attribute EXPLICITLY scoped to the current lift is answered.
+  assert.deepEqual(
+    answerCurrentExercisePrescription('what is the rir for this lift?', sixExercisePlanCtx()),
+    { kind: 'answer', text: 'Bench Press: RIR 3.' });
+});
+
+test('D3: a named lift, history, or advice framing defers to the existing lanes', () => {
+  const ctx = sixExercisePlanCtx();
+  assert.equal(answerCurrentExercisePrescription('what weight and reps for bench?', ctx), null, 'named lift → named-lift lane');
+  assert.equal(answerCurrentExercisePrescription('what weight and reps did I do last time?', ctx), null, 'history → history/LLM');
+  assert.equal(answerCurrentExercisePrescription('should I increase the weight and reps?', ctx), null, 'advice → LLM');
+});
+
+test('D3: an ambiguous current lift asks which one; no active session defers', () => {
+  const ambiguous = { current_plan: [{ name: 'Deadlift', weight: 245, reps: 7, sets: 3, rir: 2 }, { name: 'Leg Press', weight: 300, reps: 10, sets: 3, rir: 1 }] };
+  assert.deepEqual(answerCurrentExercisePrescription('weight and reps?', ambiguous), { kind: 'clarify', text: 'For which lift — Deadlift or Leg Press?' });
+  assert.equal(answerCurrentExercisePrescription('weight and reps?', {}), null);
+  assert.equal(answerCurrentExercisePrescription('weight and reps?', null), null);
+});
+
+test('D3: engine-fill supplies an attribute the plan lacks (missing set count) — parity with bare shorthand', () => {
+  // The accepted plan lift carries weight/reps/rir but no set count; the engine resolver fills
+  // only that gap, exactly like the bare-shorthand lane. The answer stays the PLAN's.
+  const ctx = { current_plan: [{ name: 'Bench Press', weight: 230, reps: 5, sets: null, rir: 3 }], plan_state: { remaining: ['Bench Press'] } };
+  const r = answerCurrentExercisePrescription('what are the weight, reps and sets?', ctx, () => ({ exercise_name: 'Bench Press', sets: 3 }));
+  assert.equal(r.kind, 'answer');
+  assert.ok(/230 lbs/.test(r.text) && /5 reps/.test(r.text) && /3 sets/.test(r.text), `engine-filled sets present: ${r.text}`);
 });
 
 test('bare shorthand fills a missing attribute from the engine when context lacks it', () => {

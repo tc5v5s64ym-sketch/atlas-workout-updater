@@ -304,6 +304,80 @@ function answerBareShorthand(message, clientContext = null, resolveTarget = null
   return text ? { kind: 'answer', text } : null;
 }
 
+// A bare CURRENT-EXERCISE prescription question — a COMPOUND attribute question that names
+// NO lift ("What weight and how many reps?", "sets and reps?", "what's my weight, reps and
+// rir?"). This is the shape `isBareSessionShorthand` deliberately EXCLUDES (its regex is
+// anchored to a single token), so before this lane the turn reached Gemini with the whole
+// `current_plan` and the model enumerated EVERY exercise (Phase-3 divergence D3, FR turn 1:
+// "answered all six exercises instead of the active Bench Press only"). The answer must be
+// scoped to the single active exercise from session state.
+//
+// Fully anchored to attribute tokens + connectors ("and"/","/"&"/"+"/"/") with an optional
+// "for this/current lift" scope, so an off-topic sentence that merely contains a token
+// ("how much protein and how many reps do I need?") does NOT match — only a message that is
+// wholly a prescription question does. The caller additionally requires ≥2 distinct attributes
+// (or an explicit current-lift scope) so a bare single "what is RIR?" stays with education,
+// and defers on a named lift / history / advice framing.
+const PRESCRIPTION_ATTR_TOKEN = '(?:rir|rpe|reps?|sets?|weight|load|how much(?: weight)?|how many (?:reps?|sets?)|how heavy|how light)';
+const PRESCRIPTION_SCOPE_CLAUSE = '(?:\\s+for\\s+(?:this|it|the\\s+(?:current\\s+)?(?:lift|exercise|set|movement|one)|this\\s+(?:lift|exercise|set|movement)))?';
+const CURRENT_EXERCISE_PRESCRIPTION_RE = new RegExp(
+  '^(?:(?:what(?:\'?s| is| are)?|tell me|give me|remind me)\\s+)?'      // optional lead-in
+  + '(?:(?:the|my|your)\\s+)?' + PRESCRIPTION_ATTR_TOKEN               // first attribute
+  + '(?:[\\s,]*(?:and|&|\\+|/)?[\\s,]*(?:(?:the|my|your)\\s+)?' + PRESCRIPTION_ATTR_TOKEN + ')*' // more attributes
+  + PRESCRIPTION_SCOPE_CLAUSE
+  + '\\s*\\??$', 'i');
+// An EXPLICIT "for this/current lift" scope lets a single-attribute question through
+// ("what's the weight for this lift?"); without it a single-attribute question defers so the
+// education-ambiguous "what is RIR?" is never answered as a current-lift fact.
+const PRESCRIPTION_SCOPE_RE = /\bfor\s+(?:this|it|the\s+(?:current\s+)?(?:lift|exercise|set|movement|one)|this\s+(?:lift|exercise|set|movement))\b/i;
+
+// True for a BARE, no-lift-named prescription question this lane owns — the pure message-shape
+// gate (mirrors isBareSessionShorthand), so the caller can decide whether the rare engine-fill
+// Sheets read is warranted before doing it. A message qualifies when it is wholly a prescription
+// question (the anchored regex), asks ≥2 distinct attributes OR is explicitly scoped to the
+// current lift, names no lift, and is not a past/advice framing.
+function isCurrentExercisePrescriptionQuestion(message) {
+  const raw = String(message == null ? '' : message);
+  if (!CURRENT_EXERCISE_PRESCRIPTION_RE.test(raw.trim())) return false;
+  if (HISTORY_RE.test(raw) || ADVICE_RE.test(raw)) return false; // past / reasoning → not this lane
+  if (attributesAsked(raw).length < 2 && !PRESCRIPTION_SCOPE_RE.test(raw)) return false; // bare single "what is RIR?" → education
+  const named = canonicalizeExerciseName(raw);
+  if (named && named.canonicalName) return false; // a named lift is the named-lift lane's job
+  return true;
+}
+
+/**
+ * Answer a BARE, no-lift-named CURRENT-EXERCISE prescription question scoped to the single
+ * active lift — the compound shorthand `answerBareShorthand` misses. Mirrors its return shape:
+ *   { kind:'answer', text } — the current lift's scoped prescription
+ *   { kind:'clarify', text } — an active session whose current lift is ambiguous
+ *   null — not a bare current-exercise prescription question, a named-lift/history/advice
+ *          framing, a single unscoped attribute (education-ambiguous), or no active-lift context
+ * READ-ONLY: no Sheets, no LLM, no invented numbers — only session-state values (engine-filled
+ * exactly like the bare-shorthand lane when the plan lacks an asked attribute).
+ */
+function answerCurrentExercisePrescription(message, clientContext = null, resolveTarget = null) {
+  if (!isCurrentExercisePrescriptionQuestion(message)) return null;
+  const attrs = attributesAsked(message);
+
+  const { current, candidates } = currentLiftFromContext(clientContext);
+  if (!current) {
+    if (candidates.length > 1) {
+      return { kind: 'clarify', text: `For which lift — ${formatLiftChoices(candidates)}?` };
+    }
+    return null; // no active lift context → defer (education / LLM)
+  }
+  const planTarget = targetFromContext(current, clientContext);
+  const planMissingAsked = !planTarget || attrs.some(a => planTarget[a] == null);
+  const engineTarget = (planMissingAsked && typeof resolveTarget === 'function')
+    ? resolveTarget(current)
+    : null;
+  const resolved = resolveAnswerTarget(planTarget, engineTarget);
+  if (!resolved.target) return null; // nothing groundable → defer (LLM-down floor owns it)
+  const text = formatAnswer(current, attrs, resolved);
+  return text ? { kind: 'answer', text } : null;
+}
+
 // Past-tense / history signals. A question about the PAST is NOT a current-plan
 // question — history owns "last time / previous / before", so the plan-first
 // answer must defer on these (the caller's history/LLM path answers them).
@@ -404,4 +478,4 @@ function answerTotalRepsQuestion(message, { history = [], clientContext = null }
   return `${name} today: ${total} total reps planned (${target.sets} sets × ${target.reps}).`;
 }
 
-module.exports = { buildSessionQuestionAnswer, buildSessionAdviceFallback, attributesAsked, resolveLiftName, answerBareShorthand, isBareSessionShorthand, answerPlannedLiftQuestion, answerTotalRepsQuestion };
+module.exports = { buildSessionQuestionAnswer, buildSessionAdviceFallback, attributesAsked, resolveLiftName, answerBareShorthand, isBareSessionShorthand, isCurrentExercisePrescriptionQuestion, answerCurrentExercisePrescription, answerPlannedLiftQuestion, answerTotalRepsQuestion };

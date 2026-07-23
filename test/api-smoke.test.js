@@ -1169,6 +1169,63 @@ test('api smoke: coach/chat returns Gemini prose when configured', async () => {
   }
 });
 
+// ── Phase 4 (chat/SME lane — divergence D3): a bare compound prescription question is
+// scoped to the ACTIVE exercise, not dumped for the whole session. Flag-gated
+// ATLAS_TURN_PRECEDENCE (default inert): OFF ⇒ the LLM owns the turn exactly as before.
+// FR-20260723120852-hw56ws9y turn 1: "What weight and how many reps?" reached Gemini with
+// the whole current_plan and the model enumerated all six exercises instead of the active one.
+const D3_SIX_PLAN_CTX = {
+  current_plan: [
+    { name: 'Bench Press', weight: 230, reps: 5, sets: 3, rir: 3 },
+    { name: 'Incline Press', weight: 150, reps: 8, sets: 3, rir: 2 },
+    { name: 'Cable Fly', weight: 40, reps: 12, sets: 3, rir: 1 },
+    { name: 'Triceps Pushdown', weight: 60, reps: 12, sets: 3, rir: 1 },
+    { name: 'Lateral Raise', weight: 20, reps: 15, sets: 3, rir: 0 },
+    { name: 'Overhead Press', weight: 115, reps: 6, sets: 3, rir: 2 },
+  ],
+  plan_state: { remaining: ['Bench Press', 'Incline Press', 'Cable Fly', 'Triceps Pushdown', 'Lateral Raise', 'Overhead Press'], isComplete: false },
+};
+
+test('turn precedence ON: a bare compound prescription question is scoped to the active exercise (D3), bypassing the LLM dump', async () => {
+  const before = fakeSheetsState.appendCalls.length;
+  process.env.ATLAS_TURN_PRECEDENCE = 'on';
+  fakeCoachState.configured = true;
+  fakeCoachState.chatMessage = 'Bench Press 230×5, Incline Press 150×8, Cable Fly 40×12, Triceps Pushdown 60×12, Lateral Raise 20×15, Overhead Press 115×6'; // the all-six dump we must NOT surface
+  try {
+    const { response, body } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'What weight and how many reps?', context: D3_SIX_PLAN_CTX })
+    });
+    assert.equal(response.status, 200);
+    assert.equal(body.data.source, 'engine', 'the deterministic scoped lane owns the turn, not Gemini');
+    assert.equal(body.data.message, 'Bench Press: 230 lbs, 5 reps.', 'answered the active exercise only');
+    for (const other of ['Incline Press', 'Cable Fly', 'Triceps Pushdown', 'Lateral Raise', 'Overhead Press']) {
+      assert.ok(!body.data.message.includes(other), `the all-six dump must not recur (${other})`);
+    }
+  } finally {
+    delete process.env.ATLAS_TURN_PRECEDENCE;
+    fakeCoachState.configured = false;
+  }
+  assert.equal(fakeSheetsState.appendCalls.length, before, 'coach/chat never writes');
+});
+
+test('turn precedence OFF (default): the same prescription question falls through to the LLM — prior behavior preserved', async () => {
+  delete process.env.ATLAS_TURN_PRECEDENCE;
+  fakeCoachState.configured = true;
+  fakeCoachState.chatMessage = 'stub-llm-reply';
+  try {
+    const { response, body } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'What weight and how many reps?', context: D3_SIX_PLAN_CTX })
+    });
+    assert.equal(response.status, 200);
+    assert.equal(body.data.source, 'gemini', 'flag off ⇒ the LLM owns the turn exactly as before');
+    assert.equal(body.data.message, 'stub-llm-reply');
+  } finally {
+    fakeCoachState.configured = false;
+  }
+});
+
 // ── Slice 3: recovery routing — a tired lifter never gets motivation hype ──────
 const HYPE = /push through|you('?| )ve got this|you got this|no excuses|grind it out|dig deep|beast mode|crush it|let'?s go champ/i;
 
