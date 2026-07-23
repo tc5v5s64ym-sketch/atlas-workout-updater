@@ -17,8 +17,9 @@
 //   • athlete → AthleteContext with profile_goal (services/profileGoal.js already
 //     normalizes it to the canonical training-goal vocabulary, so it always validates).
 // Everything else is left at its honest empty value:
-//   • session   → null  (the server sees only log history, not the client session
-//                        slots — H-08; Phase 4 consumes the client WorkoutSession)
+//   • session   → the canonical client WorkoutSession when the /api/coach/chat boundary
+//                 assembled and validated one this turn (H-08A, flag-gated), else null (the
+//                 server otherwise sees only log history, not the client session slots — H-08)
 //   • exercises → []    (there is no canonical ExerciseIdentity registry yet — a
 //                        name/lift_code slug would be a fabricated immutable key; H-11,
 //                        Phase 5b builds the registry)
@@ -38,6 +39,7 @@
 
 const { buildCoachTurnPacket, validateCoachTurnPacket } = require('./coachTurnPacket');
 const { buildAthleteContext } = require('./athleteContext');
+const { validateWorkoutSession } = require('./workoutSession');
 const { isShadowEnabled } = require('./interactionTraceShadow');
 const coachShadowSheet = require('./coachShadowSheet');
 
@@ -52,10 +54,17 @@ function _push(record) {
 function assembleShadowPacket(params) {
   const p = params && typeof params === 'object' ? params : {};
   const athlete = buildAthleteContext({ profile_goal: p.profileGoal != null ? p.profileGoal : null });
+  // Embed the canonical client WorkoutSession (H-08A) ONLY when it genuinely validates — a
+  // caller passes a session already built + validated at the boundary, but re-check here so
+  // an absent or malformed session is honestly dropped to null (never a half-populated
+  // packet.session). exercises/decision/safety/closeout stay empty: those are still owned by
+  // their own campaign phases (H-11/H-03/H-12) and are out of scope for this seam.
+  let session = null;
+  if (p.session != null && validateWorkoutSession(p.session).valid) session = p.session;
   const packet = buildCoachTurnPacket({
     turn_id:   p.turnId,
     athlete,
-    session:   null,
+    session,
     exercises: [],
     decision:  null,
     safety:    null,
