@@ -62,7 +62,7 @@ const LOG_ROWS = [
   row('2026-06-18', 'qs5', 'Back Squat', 'legs', 275, 5),
 ];
 
-const sheetsState = { logRows: LOG_ROWS };
+const sheetsState = { logRows: LOG_ROWS, throwOnRead: false };
 const fakeSheets = {
   validateConfig: () => {},
   appendRows: async () => { throw new Error('appendRows must not be called by the read-only chat/recommendation path'); },
@@ -71,7 +71,11 @@ const fakeSheets = {
   getEffortSessionIds: async () => [],
   getLogCompositeKeys: async () => [],
   getRecentRows: async () => [],
-  getSheetRows: async (name) => (name === 'Log_Cleaned' ? sheetsState.logRows.slice() : []),
+  getSheetRows: async (name) => {
+    // Simulate a Sheets outage on the cached full reads (log/effort) when armed.
+    if (sheetsState.throwOnRead && (name === 'Log_Cleaned' || name === 'Effort')) throw new Error('simulated Sheets outage');
+    return name === 'Log_Cleaned' ? sheetsState.logRows.slice() : [];
+  },
   getSpreadsheetTabs: async () => ['Log_Cleaned', 'Effort'],
   logSheetName: 'Log_Cleaned',
   effortSheetName: 'Effort',
@@ -203,6 +207,28 @@ test('unit: a past-tense history question is NOT a recommendation-explanation tu
   assert.equal(explanationGrounding.isRecommendationExplanationTurn('Why did you recommend only 175 for bench?', ctx), true);
 });
 
+// Codex P2 (follow-up): a configured provider whose Sheets read fails mid-turn must still
+// explain the displayed recommendation — never regress to the generic advice fallback. Runs
+// FIRST so the log/effort cache is cold and the simulated outage actually propagates (a
+// rejected read is never cached).
+test('provider configured but Sheets read fails: the explanation is still grounded in the displayed 175', async () => {
+  resetCoach();
+  sheetsState.throwOnRead = true;
+  try {
+    const { res, json } = await chat({ message: BENCH_EXPLAIN_MSG, context: DISPLAYED_RECOMMENDATION });
+    assert.equal(res.status, 200);
+    assert.equal(json.data.source, 'engine', 'deterministic engine answer on the outage path');
+    assert.match(json.data.message, /Bench Press/, 'names the target lift');
+    assert.match(json.data.message, /175/, 'explains the displayed 175 recommendation despite the Sheets outage');
+    // The reasoning phrase distinguishes the recommendation EXPLANATION from the generic
+    // advice fallback ("Bench Press: use 175 lbs, 9 reps, 3 sets, RIR 5."), which lacks it.
+    assert.match(json.data.message, /heavier top set/i, 'explains WHY the target was chosen — not the generic advice fallback');
+    assert.doesNotMatch(json.data.message, /benchmark|below your recent/i, 'never a challenge paragraph');
+  } finally {
+    sheetsState.throwOnRead = false;
+  }
+});
+
 // ── the five-turn production sequence ────────────────────────────────────────
 
 test('Turn 1 — "what\'s the plan today" returns the authoritative recommendation pipeline (no write)', async () => {
@@ -305,6 +331,8 @@ test('provider unconfigured: the recommendation explanation is grounded in the d
   assert.equal(json.data.source, 'engine');
   assert.match(json.data.message, /Bench Press/, 'names the target lift');
   assert.match(json.data.message, /175/, 'explains the displayed 175 recommendation even during an outage');
+  // Distinguishes the recommendation explanation from the generic advice fallback.
+  assert.match(json.data.message, /heavier top set/i, 'explains WHY the target was chosen — not the generic advice fallback');
   assert.doesNotMatch(json.data.message, /benchmark|below your recent/i, 'never a challenge paragraph');
 });
 

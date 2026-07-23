@@ -1305,9 +1305,12 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     let allLog = [];
     let chatError = null;
     // A recommendation-explanation turn ("why only 175 for bench") grounds the reply in the
-    // displayed recommendation. Declared out here so the deterministic fallback below can
-    // reuse the snapshot even when the model read/generation throws.
-    let recExplain = null;
+    // displayed recommendation. SEEDED from the client-forwarded context (current_plan)
+    // BEFORE the Sheets read, so the deterministic fallback still explains the displayed
+    // target even if the Sheets read (Promise.all below) throws — an infrastructure outage
+    // must not regress to the generic advice fallback. Upgraded to the richer server-context
+    // snapshot (label/readiness/history) once buildChatContext runs inside the try.
+    let recExplain = coachExplanationGrounding.resolveRecommendationExplanation(message, clientCtx || {});
     try {
       const [logR, allEffort, notesRows, constraintRows] = await Promise.all([
         getSheetRows(logSheetName),
