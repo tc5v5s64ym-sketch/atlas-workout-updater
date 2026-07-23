@@ -2163,8 +2163,14 @@ async function tryProposeReplacement(text) {
   if (resolved.liftCode) {
     try {
       const rec = await api(`/api/recommend/next/${encodeURIComponent(resolved.liftCode)}`);
-      const t = (rec && rec.next_target) || null;
-      if (t) prescription = { weight: t.weight ?? null, reps: t.reps ?? null, sets: t.sets ?? null, rir: (rec.target_rir ?? t.rir ?? null) };
+      // api() returns the server's standard { status, data } envelope; the engine puts
+      // next_target and target_rir INSIDE data (same read as the other two recommend/next
+      // consumers). Reading the target off the top-level envelope would always be null → every
+      // proposal would falsely show "no authoritative load" and approval would discard the
+      // engine prescription (Codex P1, 2026-07-23).
+      const data = (rec && rec.data) || null;
+      const t = (data && data.next_target) || null;
+      if (t) prescription = { weight: t.weight ?? null, reps: t.reps ?? null, sets: t.sets ?? null, rir: (data.target_rir ?? t.rir ?? null) };
     } catch (_) { prescription = null; } // engine unavailable → unresolved-load proposal
   }
   const proposal = AR.buildReplacementProposal({
@@ -2194,9 +2200,14 @@ function renderReplacementProposal(proposal) {
 // executor (it preserves order + plan_item_id and emits the substituted outcome). Idempotent:
 // a re-tap after it is applied (source already gone / no pending proposal) is a no-op. No
 // Sheet write occurs. Returns true when an approval was handled.
-function approvePendingReplacement() {
+function approvePendingReplacement(fromCard) {
   const proposal = getPendingReplacement();
   if (!proposal || proposal.status !== 'pending') return false;
+  // A tap on a stale card (its proposal was superseded by a newer pending one) must never
+  // apply the newer swap. When the decision carries the card's own proposal id, it must match
+  // the current pending proposal; a mismatch is a no-op (Codex P1). The conversational path
+  // (a typed "yes"/"do bench") passes no card, so it always targets the current proposal.
+  if (fromCard && fromCard.proposal_id && fromCard.proposal_id !== proposal.proposal_id) return false;
   const planExercises = (getActivePlannedSession() && getActivePlannedSession().exercises) || [];
   const AR = window.activeReplacement;
   // Fail closed on a stale proposal (the plan changed under it) — never apply to the wrong slots.
@@ -2221,9 +2232,12 @@ function approvePendingReplacement() {
 }
 
 // REJECT / cancel the pending replacement — the plan is left exactly as it was.
-function rejectPendingReplacement() {
+function rejectPendingReplacement(fromCard) {
   const proposal = getPendingReplacement();
   if (!proposal) return false;
+  // Same stale-card guard as approve: a reject tap on a superseded card must not discard the
+  // newer pending proposal (Codex P1). A typed rejection passes no card and targets the current.
+  if (fromCard && fromCard.proposal_id && fromCard.proposal_id !== proposal.proposal_id) return false;
   setPendingReplacement(null);
   persistSessionSnapshot(document.getElementById('log-session-id')?.value || null);
   announcePlanMutation(`Kept ${proposal.source && proposal.source.name ? proposal.source.name : 'the plan'} as-is.`, firstUnloggedPlannedLift());
@@ -2249,6 +2263,16 @@ function tryResolvePendingReplacement(text) {
   if (!AR) return false;
   const proposal = getPendingReplacement();
   if (!proposal || proposal.status !== 'pending') return false;
+  // A brand-new, self-contained explicit replacement ("replace RDL with leg press") typed while
+  // a proposal is pending is a NEW command, not a follow-up to the old one — even when it shares a
+  // word with the pending replacement ("leg PRESS" vs "bench PRESS", which would otherwise read as
+  // an approval). Defer it to tryProposeReplacement (which stages the new proposal, superseding
+  // this one); the stale card is then inert via the proposal-id guard on approve/reject.
+  const PM = (typeof window !== 'undefined' && window.planMutationIntent) || null;
+  if (PM) {
+    const intent = PM.classifyMutationIntent(text);
+    if (intent && intent.action === 'replace' && !intent.positional && intent.substitute) return false;
+  }
   const kind = AR.classifyFollowup(text, proposal);
   if (kind === 'approve') return approvePendingReplacement();
   if (kind === 'reject') return rejectPendingReplacement();
@@ -2870,8 +2894,12 @@ document.addEventListener('atlas:plan-edit-proposed', e => {
 // the proposal is resolved). No Sheet write occurs.
 document.addEventListener('atlas:replacement-decision', e => {
   const decision = e && e.detail && e.detail.decision;
-  if (decision === 'approve') approvePendingReplacement();
-  else if (decision === 'reject') rejectPendingReplacement();
+  // Bind the decision to the proposal that RENDERED the card (Codex P1, 2026-07-23): if a
+  // second proposal superseded this card's proposal in the store, a tap on the older, still
+  // visible card must NOT apply the newer swap. approve/reject verify the id before mutating.
+  const fromCard = e && e.detail && e.detail.proposal;
+  if (decision === 'approve') approvePendingReplacement(fromCard);
+  else if (decision === 'reject') rejectPendingReplacement(fromCard);
 });
 
 // Open the recommended workout — Composer-first Phase B: routes to the ONE

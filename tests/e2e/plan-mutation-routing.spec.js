@@ -55,9 +55,10 @@ async function mockPlanMutation(page, capture) {
     }
 
     // Read-only prescription source for a gated replacement proposal (the swap's
-    // authoritative target load). ROW02 = Bent Over Row.
+    // authoritative target load). ROW02 = Bent Over Row. The real route wraps next_target
+    // / target_rir in the standard { status, data } envelope — mirror it exactly.
     if (path.startsWith('/api/recommend/next/')) {
-      return route.fulfill(json({ next_target: { weight: 135, reps: 10, sets: 3, rir: 2 }, target_rir: 2 }));
+      return route.fulfill(json({ status: 'success', data: { next_target: { weight: 135, reps: 10, sets: 3, rir: 2 }, target_rir: 2 } }));
     }
 
     // The coach lanes must NOT be reached for a deterministic mutation. Record any

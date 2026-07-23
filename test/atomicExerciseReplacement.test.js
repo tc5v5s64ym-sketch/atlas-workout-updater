@@ -112,6 +112,16 @@ test('req 9: approval applies the replacement exactly ONCE, in the same position
   assert.deepEqual(again.exercises.map((e) => e.name), applied.exercises.map((e) => e.name));
 });
 
+test('Codex P1: two different swaps get DISTINCT proposal ids (so a stale card can be told apart)', () => {
+  const plan = fivePlan();
+  const a = AR.buildReplacementProposal({ source: { name: 'Back Squat' }, replacement: BENCH, planExercises: plan });
+  const b = AR.buildReplacementProposal({ source: { name: 'Romanian Deadlift' }, replacement: { name: 'Leg Press', lift_code: 'LEP01' }, planExercises: plan });
+  assert.notEqual(a.proposal_id, b.proposal_id, 'distinct source→replacement pairs yield distinct ids');
+  // The same swap against the same plan is deterministic (idempotent id — a re-tap/retry is safe).
+  const aAgain = AR.buildReplacementProposal({ source: { name: 'Back Squat' }, replacement: BENCH, planExercises: plan });
+  assert.equal(a.proposal_id, aAgain.proposal_id, 'the same swap on the same plan is a stable id');
+});
+
 test('req 9: a stale proposal (the plan changed under it) is detected and never applied', () => {
   const plan = fivePlan();
   const proposal = AR.buildReplacementProposal({ source: { name: 'Back Squat' }, replacement: BENCH, planExercises: plan });

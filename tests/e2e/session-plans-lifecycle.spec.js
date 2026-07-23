@@ -47,8 +47,9 @@ async function mockApis(page, capture) {
       ] } }));
     }
     // Read-only prescription source for a gated replacement proposal (LEP01 = Leg Press).
+    // The real route wraps next_target / target_rir in the standard { status, data } envelope.
     if (path.startsWith('/api/recommend/next/')) {
-      return route.fulfill(json({ next_target: { weight: 200, reps: 12, sets: 3, rir: 2 }, target_rir: 2 }));
+      return route.fulfill(json({ status: 'success', data: { next_target: { weight: 200, reps: 12, sets: 3, rir: 2 }, target_rir: 2 } }));
     }
     if (path === '/api/parse-workout-text') {
       // Only a slash-set log parses; swap/skip commands must FAIL parsing so the submit

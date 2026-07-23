@@ -5887,6 +5887,11 @@ test('P0 wiring 2a: deterministic plan-mutation intent is wired into the message
   assert.match(prop, /resolveCatalogExercise\(/, 'resolves the replacement identity');
   assert.match(prop, /intent\.positional && !resolved\.matched.*return false/s, 'a positional swap only proposes a recognized exercise');
   assert.match(prop, /api\(`\/api\/recommend\/next\//, 'reads the replacement prescription from the read-only engine route');
+  // Codex P1 (2026-07-23): the engine route returns the standard { status, data } envelope with
+  // next_target INSIDE data. Reading rec.next_target directly is always null in production, so the
+  // proposer MUST read the envelope (rec.data.next_target) or every proposal loses its load.
+  assert.match(prop, /rec\s*&&\s*rec\.data|\(rec && rec\.data\)/, 'reads next_target from the API response envelope (rec.data), not the top level');
+  assert.doesNotMatch(prop, /\brec\.next_target\b/, 'never reads next_target off the top-level envelope');
   assert.match(prop, /buildReplacementProposal\(/, 'builds the pending proposal');
   assert.match(prop, /setPendingReplacement\(/, 'stages the proposal in the store (no immediate mutation)');
   assert.match(prop, /renderReplacementProposal\(/, 'surfaces one coherent proposal');

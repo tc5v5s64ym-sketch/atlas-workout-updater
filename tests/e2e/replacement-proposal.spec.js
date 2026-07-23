@@ -59,14 +59,18 @@ async function mockLegDay(page, capture) {
           { canonical_name: 'Back Squat', lift_code: 'SQ01' },
           { canonical_name: 'Bench Press', lift_code: 'BEN01' },
           { canonical_name: 'Romanian Deadlift', lift_code: 'RDL01' },
+          { canonical_name: 'Leg Press', lift_code: 'LEP01' },
         ] },
       }));
     }
 
-    // Read-only prescription source for the gated proposal. BEN01 = Bench Press.
+    // Read-only prescription source for the gated proposal. BEN01 = Bench Press, LEP01 = Leg
+    // Press. The real route wraps next_target / target_rir in the standard { status, data }
+    // envelope — mirror it exactly (a top-level next_target would hide the production read bug).
     if (path.startsWith('/api/recommend/next/')) {
       capture.recommendCalls.push(path);
-      return route.fulfill(json({ next_target: { weight: 175, reps: 9, sets: 3, rir: 2 }, target_rir: 2 }));
+      const weight = path.includes('LEP01') ? 260 : 175;
+      return route.fulfill(json({ status: 'success', data: { next_target: { weight, reps: 9, sets: 3, rir: 2 }, target_rir: 2 } }));
     }
 
     // The coach chat lane must NEVER be reached for the deterministic swap or its
@@ -155,6 +159,39 @@ test('Approve button applies the swap exactly once (in-place, same position)', a
 
   // Idempotent: the Approve button is disabled after one tap, so a re-tap is a no-op.
   await expect(page.locator('#thread-messages .replacement-approve-btn').last()).toBeDisabled();
+  expect(capture.chatCalls).toHaveLength(0);
+});
+
+test('a stale card whose proposal was superseded does NOT apply the newer swap (Codex P1)', async ({ page }) => {
+  const capture = {};
+  await openApp(page, capture);
+  await engageLegDay(page);
+
+  // Stage proposal A (Back Squat → Bench Press) — do NOT approve it.
+  await submit(page, 'replace back squats with bench press');
+  await expect(lastProposal(page)).toContainText('Replace Back Squat with Bench Press');
+
+  // Stage proposal B (Romanian Deadlift → Leg Press). It supersedes A in the store, but card A
+  // is still visible and enabled.
+  await submit(page, 'replace romanian deadlift with leg press');
+  await expect(lastProposal(page)).toContainText('Replace Romanian Deadlift with Leg Press');
+
+  // Tap the STALE card A's Approve. It must be a no-op — it must NOT apply proposal B, and it
+  // must NOT apply A either (A was superseded). The plan stays intact.
+  const approves = page.locator('#thread-messages .replacement-approve-btn');
+  await approves.nth(0).click(); // card A (the older, superseded one)
+  await expect(page.locator('#active-session-banner')).toContainText('Back Squat'); // nothing swapped
+  const threadAfterStale = await page.locator('#thread-messages').innerText();
+  expect(threadAfterStale).not.toContain('Replaced Romanian Deadlift'); // card A never applied B
+  expect(threadAfterStale).not.toContain('Replaced Back Squat');         // and never applied A
+
+  // Tapping the LIVE card B applies exactly proposal B (RDL → Leg Press); Back Squat untouched.
+  await approves.nth(1).click();
+  await expect(lastAtlas(page)).toContainText('Replaced Romanian Deadlift with Leg Press');
+  const finalPlan = await page.evaluate(() => window.getActivePlannedSession().exercises.map(e => e.canonicalName || e.name));
+  expect(finalPlan).toContain('Back Squat');   // the superseded source is still present
+  expect(finalPlan).toContain('Leg Press');    // B applied
+  expect(finalPlan).not.toContain('Romanian Deadlift');
   expect(capture.chatCalls).toHaveLength(0);
 });
 
