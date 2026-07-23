@@ -5842,17 +5842,24 @@ test('P0 wiring 2a: deterministic plan-mutation intent is wired into the message
   assert.match(bridge, /import \* as planMutationIntent from '\.\/planMutationIntent\.js'/, 'legacyBridge must import planMutationIntent.js');
 
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
-  // The mutation check runs BEFORE checkAndSuggestSubstitute / routeMessageToCoach.
+  // Composer lane order: the pending-replacement follow-up is resolved FIRST, then an
+  // explicit REPLACE is staged as a gated proposal, then a one-sided SKIP, all BEFORE the
+  // suggest/coach route (production trust fix FR-20260723031748 — a direct replacement must
+  // never be split into a one-sided skip plus a free-form chat challenge).
+  const followIdx = appSrc.indexOf('tryResolvePendingReplacement(pendingChatText)');
+  const propIdx = appSrc.indexOf('tryProposeReplacement(pendingChatText)');
   const mutIdx = appSrc.indexOf('tryApplyPlanMutation(pendingChatText)');
   const subIdx = appSrc.indexOf('checkAndSuggestSubstitute(pendingChatText)');
-  assert.ok(mutIdx !== -1 && subIdx !== -1, 'both routes present');
-  assert.ok(mutIdx < subIdx, 'deterministic mutation is tried before the suggest/coach route');
+  assert.ok(followIdx !== -1 && propIdx !== -1 && mutIdx !== -1 && subIdx !== -1, 'all routes present');
+  assert.ok(followIdx < propIdx && propIdx < mutIdx && mutIdx < subIdx,
+    'pending-replacement follow-up → propose replacement → skip → suggest/coach');
 
-  const fn = appSrc.slice(appSrc.indexOf('function tryApplyPlanMutation('), appSrc.indexOf('function tryApplyPlanMutation(') + 5400);
+  // Slice tryApplyPlanMutation up to the next function (the gated proposer) so the skip
+  // branch is included and the propose/approve bodies are excluded.
+  const fn = appSrc.slice(appSrc.indexOf('function tryApplyPlanMutation('), appSrc.indexOf('async function tryProposeReplacement('));
   assert.match(fn, /classifyMutationIntent\(/, 'uses the deterministic classifier (not LLM prose)');
   // v48 fix: classify FIRST, then materialize an engaged Coach's Pick suggestion into
-  // a live session — so a swap fires even when the session wasn't formally "started"
-  // (the live-gym "let's do rdls instead of deadlifts" fell through to the coach).
+  // a live session — so a mutation fires even when the session wasn't formally "started".
   const classifyAt = fn.indexOf('classifyMutationIntent(');
   const ensureAt = fn.indexOf('ensureActivePlannedSession()');
   assert.ok(ensureAt > classifyAt, 'materializes the session only AFTER classifying a genuine mutation');
@@ -5861,30 +5868,34 @@ test('P0 wiring 2a: deterministic plan-mutation intent is wired into the message
   assert.match(ensureFn, /getCoachSuggestionEngaged\(\)/, 'materializes from an engaged Coach\'s Pick suggestion');
   assert.match(ensureFn, /lastIntentData/, 'sources the suggestion plan from lastIntentData');
   assert.match(ensureFn, /normalizePlanExercise/, 'carries the suggestion prescription into the live session');
-  assert.match(fn, /resolvePlanTargets\(/, 'resolves the (compound) target against the canonical session, pending-aware');
-  assert.match(fn, /getCanonicalSession\(\)/, 'target resolution uses the canonical session state');
-  assert.match(fn, /applySessionSubstitution\(/, 'a replace mutates the live session');
+  // tryApplyPlanMutation now handles a one-sided SKIP only — an explicit REPLACE is guarded
+  // out (it is a gated proposal) and never mutates the plan here.
+  assert.match(fn, /intent\.action !== 'skip'.*return false/s, 'a non-skip (incl. an explicit replace) never immediately mutates here');
   assert.match(fn, /skipPlannedExercise/, 'a skip mutates the live session');
-  // PR-11 review guard: a POSITIONAL / destination-only swap ("switch to X") must
-  // require the substitute to resolve to a real catalog exercise before mutating, so
-  // a coaching phrase ("switch to a lighter weight") falls through to the coach.
-  assert.match(fn, /intent\.positional && !resolved\.matched.*return false/,
-    'a positional swap only mutates when the substitute is a recognized exercise');
-  // A replace skips the OTHER matched slots ONLY for a genuinely compound target
-  // ("deadlifts/rdls"). A single token that fuzzily over-matches several slots
-  // ("curls" → Bicep Curl + Leg Curl) must replace only the first and never
-  // silently drop the un-named planned work (PR-570 review).
-  assert.match(fn, /splitTargets\(intent\.target\)\.length\s*>\s*1\s*\n?\s*\?\s*targetNames\.slice\(1\)\.filter\(skipPlannedExercise\)/,
-    'extra-slot skip on a replace is gated on a genuinely compound target');
-  // The skip branch mirrors the replace guard: a single token that over-matches
-  // several slots skips only the first; only a compound target skips them all
-  // (PR-570 review — no removing planned work the lifter never named).
+  assert.doesNotMatch(fn, /applySessionSubstitution\(/, 'the skip lane never applies a substitution (replace is gated elsewhere)');
+  // The skip branch: a single token that over-matches skips only the first; only a
+  // compound target skips them all (PR-570 — no removing planned work the lifter never named).
   assert.match(fn, /PM\.splitTargets\(intent\.target\)\.length\s*>\s*1\s*\?\s*targetNames\s*:\s*targetNames\.slice\(0,\s*1\)/,
     'a single-token skip that over-matches skips only the first slot');
-  // The announced "current" is derived from the cursor, not hardcoded to the
-  // substitute, so swapping a LATER slot doesn't yank the composer (PR-570 review).
-  assert.match(fn, /getActivePlannedSession\(\)\.exercises\[getActivePlannedSession\(\)\.index\]/,
-    'current lift is read from the cursor after a mutation');
+
+  // The GATED replacement proposer: classifies a replace, resolves the source slot + the
+  // replacement identity + its authoritative prescription (read-only /api/recommend/next),
+  // stages ONE proposal, and does NOT mutate the plan (no applySessionSubstitution here).
+  const prop = appSrc.slice(appSrc.indexOf('async function tryProposeReplacement('), appSrc.indexOf('function renderReplacementProposal('));
+  assert.match(prop, /intent\.action !== 'replace'.*return false/s, 'the proposer only stages an explicit replace');
+  assert.match(prop, /resolvePlanTargets\(/, 'resolves the source slot against the canonical session');
+  assert.match(prop, /resolveCatalogExercise\(/, 'resolves the replacement identity');
+  assert.match(prop, /intent\.positional && !resolved\.matched.*return false/s, 'a positional swap only proposes a recognized exercise');
+  assert.match(prop, /api\(`\/api\/recommend\/next\//, 'reads the replacement prescription from the read-only engine route');
+  assert.match(prop, /buildReplacementProposal\(/, 'builds the pending proposal');
+  assert.match(prop, /setPendingReplacement\(/, 'stages the proposal in the store (no immediate mutation)');
+  assert.match(prop, /renderReplacementProposal\(/, 'surfaces one coherent proposal');
+  assert.doesNotMatch(prop, /applySessionSubstitution\(/, 'the proposer NEVER mutates the plan — approval does');
+
+  // Approval is the ONLY place the replacement is applied — via the tested executor, once.
+  const approve = appSrc.slice(appSrc.indexOf('function approvePendingReplacement('), appSrc.indexOf('function rejectPendingReplacement('));
+  assert.match(approve, /applySessionSubstitution\(/, 'approval applies the replacement in place');
+  assert.match(approve, /isProposalFresh\(/, 'approval fails closed on a stale proposal');
 
   // resolveCatalogExercise must use the conservative singularization (drop a plural
   // "s" only after a non-"s"), never the loose every-word strip that mangled "press".
@@ -5936,15 +5947,12 @@ test('P0 wiring 2b: a no-op swap does not announce a phantom mutation (PR-570 co
   assert.match(sub, /return false; \/\/ nothing to swap/, 'a same-name swap returns false (no-op)');
   assert.match(sub, /return true;/, 'a real swap/dedupe returns true');
 
-  // tryApplyPlanMutation only announces when something changed.
-  const fn = appSrc.slice(appSrc.indexOf('function tryApplyPlanMutation('), appSrc.indexOf('function tryApplyPlanMutation(') + 5400);
-  assert.match(fn, /const swapped = applySessionSubstitution\(/, 'captures whether the swap changed the plan');
-  assert.match(fn, /if \(!swapped && !extraSkipped\.length\) return false/, 'a no-op swap with no skips falls through (no phantom announce)');
-  // The announce text reflects what ACTUALLY happened: a real swap, or a skip-only
-  // outcome when the first slot no-op'd but later compound slots were skipped — it
-  // never says "Swapped" when no swap occurred (PR-571 review).
-  assert.match(fn, /const summary = swapped\s*\n?\s*\?\s*`Swapped /, 'announces a swap only when one occurred');
-  assert.match(fn, /:\s*`Skipped \$\{extraSkipped\.join/, 'a skip-only outcome is narrated as a skip, not a swap');
+  // Approval only announces a real replacement — a no-op (source already gone, idempotent
+  // re-tap) makes an EMPTY announce, never a phantom "Replaced X with Y".
+  const approve = appSrc.slice(appSrc.indexOf('function approvePendingReplacement('), appSrc.indexOf('function rejectPendingReplacement('));
+  assert.match(approve, /const swapped = applySessionSubstitution\(/, 'captures whether the swap changed the plan');
+  assert.match(approve, /if \(swapped\)/, 'announces the replacement only when one occurred');
+  assert.match(approve, /Replaced \$\{proposal\.source\.name\} with/, 'a real approval narrates the replacement');
 });
 
 // P0 wiring Sub-PR 2c: barbell loadability rounding is surfaced on the

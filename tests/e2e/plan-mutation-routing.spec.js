@@ -4,11 +4,14 @@ const { test, expect } = require('@playwright/test');
 // mutations that were WRONGLY intercepted by the coach lane:
 //   "Swapping seated row for bent over row"  → hit the standing challenge reply
 //   "I don't want to do leg extensions"      → produced a coach early-stop message
-// Both should deterministically mutate the engaged plan (a gerund swap verb and an
-// explicit decline of a NAMED exercise). This browser spec drives the real UI —
-// engage Coach's Pick, then type each command — and asserts the plan mutates in
-// the thread (a "Swapped …" / "Skipped …" narration) and that the coach chat
-// endpoint is NEVER reached for these deterministic commands.
+// Both must be handled DETERMINISTICALLY, never leaking to the coach chat endpoint.
+//
+// Production trust fix FR-20260723031748 refined the swap half: a NAMED replacement
+// ("swap X for Y") is no longer an immediate in-place mutation — it stages ONE gated
+// proposal (source stays, replacement not active) that the athlete approves before the
+// plan changes. So the gerund-swap test now asserts the proposal card appears (still
+// deterministic, still no chat call), the plan is untouched pre-approval, and Approve
+// applies the swap. The explicit DECLINE half is a skip and stays immediate.
 
 const TEST_KEY = 'playwright-test-key';
 
@@ -51,6 +54,12 @@ async function mockPlanMutation(page, capture) {
       }));
     }
 
+    // Read-only prescription source for a gated replacement proposal (the swap's
+    // authoritative target load). ROW02 = Bent Over Row.
+    if (path.startsWith('/api/recommend/next/')) {
+      return route.fulfill(json({ next_target: { weight: 135, reps: 10, sets: 3, rir: 2 }, target_rir: 2 }));
+    }
+
     // The coach lanes must NOT be reached for a deterministic mutation. Record any
     // call so the test can prove the mutation never leaked to the coach.
     if (path === '/api/coach/chat') {
@@ -79,7 +88,7 @@ async function submit(page, text) {
   await page.locator('#preview-btn').click();
 }
 
-test('a gerund swap ("Swapping X for Y") deterministically substitutes the plan slot', async ({ page }) => {
+test('a gerund swap ("Swapping X for Y") stages a GATED proposal — no chat, no mutation until Approve', async ({ page }) => {
   const capture = {};
   await openApp(page, capture);
 
@@ -90,10 +99,20 @@ test('a gerund swap ("Swapping X for Y") deterministically substitutes the plan 
 
   await submit(page, 'Swapping seated row for bent over row');
 
-  // Deterministic substitution narration in the thread — NOT a coach reply.
-  await expect(page.locator('#thread-messages .chat-bubble-atlas').last()).toContainText('Swapped');
-  await expect(page.locator('#thread-messages .chat-bubble-atlas').last()).toContainText('Bent Over Row');
-  // The active-session banner reflects the swapped current slot.
+  // Deterministic PROPOSAL in the thread (production trust fix FR-20260723031748):
+  // one coherent "Replace Seated Row with Bent Over Row …" line — NOT a coach reply,
+  // and NOT an immediate "Swapped" mutation.
+  const proposal = page.locator('#thread-messages .replacement-proposal-line').last();
+  await expect(proposal).toContainText('Replace Seated Row with Bent Over Row');
+  await expect(proposal).toContainText('135 lb'); // the read-only engine prescription, not invented
+  expect(capture.chatCalls).toHaveLength(0);
+
+  // Pre-approval boundary: the source is STILL the active slot; nothing was swapped.
+  await expect(page.locator('#active-session-banner')).toContainText('Seated Row');
+
+  // Approve → the swap applies exactly once, and the banner re-points to the replacement.
+  await page.locator('#thread-messages .replacement-approve-btn').last().click();
+  await expect(page.locator('#thread-messages .chat-bubble-atlas').last()).toContainText('Replaced Seated Row with Bent Over Row');
   await expect(page.locator('#active-session-banner')).toContainText('Bent Over Row');
   expect(capture.chatCalls).toHaveLength(0);
 });

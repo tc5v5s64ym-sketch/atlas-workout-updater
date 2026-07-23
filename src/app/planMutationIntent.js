@@ -283,19 +283,33 @@ const _exports = (function () {
     if (/^(?:do|does|did|is|are|am|was|were|will|have|has)\s+(?:i|you|we|it|they|he|she)\b/.test(t)) return null;
 
     let m;
-    // "swap/replace/switch/sub X for|with|to Y"
-    m = t.match(/^(?:swap|switch|sub(?:stitute)?|replace)\s+(.+?)\s+(?:for|with|to|->|→)\s+(.+)$/);
+    // "swap/replace/switch/sub/change X for|with|to Y". `change` is included so
+    // "change back squats to bench" and "change out squats for bench" are a REPLACE,
+    // not a one-sided skip (production FR-20260723031748). The optional "out" after the
+    // source lets "change squats out for bench" through too.
+    m = t.match(/^(?:swap|switch|sub(?:stitute)?|replace|change)(?:\s+out)?\s+(.+?)(?:\s+out)?\s+(?:for|with|to|into|->|→)\s+(.+)$/);
     if (m) return replace(m[1], m[2]);
 
-    // Destination-only: "swap/switch/sub/replace to|for|in|with Y" — no source named,
-    // so Y goes INTO the current/next slot (positional). Distinct from the pattern
+    // Destination-only: "swap/switch/sub/replace/change to|for|in|with Y" — no source
+    // named, so Y goes INTO the current/next slot (positional). Distinct from the pattern
     // above, which needs a source before the preposition.
-    m = t.match(/^(?:swap|switch|sub(?:stitute)?|replace)\s+(?:to|for|in|with)\s+(.+)$/);
+    m = t.match(/^(?:swap|switch|sub(?:stitute)?|replace|change)\s+(?:to|for|in|with)\s+(.+)$/);
     if (m) return replaceInto(m[1]);
 
-    // "skip/drop/cut/remove X [,/and] do|hit|use Y"  (explicit swap-by-skip)
-    m = t.match(/^(?:skip|drop|cut|ditch|remove|delete)\s+(.+?)[,\s]+(?:and\s+|then\s+)?(?:do|doing|hit|use|go with|run)\s+(.+)$/);
+    // "skip/drop/cut/remove X [,/and] <replace-verb> Y"  (explicit swap-by-skip). The
+    // replace-verb set is broad: do/hit/use/run/go-with, "change (it) out for/to/with",
+    // "swap (it) (out) for/to/with/in", "sub/put/throw/bring in", "switch to/in",
+    // "replace (it) with". This is the production repro — "remove back squats and change
+    // it out for bench press" — which previously fell to the skip-only pattern below and
+    // dropped the replacement (FR-20260723031748).
+    m = t.match(/^(?:skip|drop|cut|ditch|remove|delete|take\s+out|get\s+rid\s+of)\s+(.+?)[,\s]+(?:and\s+|then\s+|so\s+|,\s*)?(?:do|doing|hit|use|go\s+with|run|change(?:\s+(?:it|them|those|these))?(?:\s+out)?\s+(?:for|to|into|with)|swap(?:\s+(?:it|them))?(?:\s+out)?\s+(?:for|to|with|in\s+for|in)|sub(?:stitute)?\s+in|put\s+in|throw\s+in|bring\s+in|switch\s+(?:to|in)|replace(?:\s+(?:it|them))?\s+with)\s+(.+)$/);
     if (m) return replace(m[1], m[2]);
+
+    // "instead of X, [let's/do/hit/use] Y" (leading instead-of). The trailing lead-in
+    // ("let's"/"we'll"/"i'll") + optional verb is stripped so Y is the bare lift. Distinct
+    // from the "Y instead of X" forms below (which name the substitute FIRST).
+    m = t.match(/^instead of\s+(.+?)[,\s]+(?:let'?s\s+|we'?ll\s+|i'?ll\s+|lets\s+|just\s+)?(?:do|doing|hit|use|go\s+with|run|try)?\s*(.+)$/);
+    if (m && looksLikeExercise(cleanName(m[2]))) return replace(m[1], m[2]);
 
     // "X is/are/'s taken|busy|in use ... do|use|hit Y"
     m = t.match(/^(.+?)\s+(?:is|are|'?s)\s+(?:taken|busy|in use|unavailable|occupied|down)\b.*?\b(?:do|use|hit|run|go with)\s+(.+)$/);

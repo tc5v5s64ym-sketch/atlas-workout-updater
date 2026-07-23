@@ -173,15 +173,16 @@ test('E2E control: preserved behavior — a plain named skip still works with th
   assert.equal(h.getCalls().length, 0, 'a skip never consults the recommender endpoint');
 });
 
-test('E2E control: preserved behavior — an explicit NAMED current-slot swap still applies in place', async () => {
-  // "Swap leg extensions for leg press" — an explicit named substitute goes through the
-  // sync mutation path (no recommender call) and replaces the slot in place.
+test('E2E control: an explicit NAMED swap is now GATED — the sync lane defers it and never mutates in place', async () => {
+  // "Swap leg extensions for leg press" — an explicit named replacement is no longer applied
+  // immediately by the sync skip lane (production trust fix FR-20260723031748: a direct
+  // replacement is a gated proposal, so the source must NOT be removed here). It defers to
+  // the proposer; Leg Extension stays until approval.
   const h = loadHarness(COMPLETED);
   h.setActivePlannedSession(legDayPlan());
 
-  assert.equal(h.tryApplyPlanMutation('swap leg extensions for leg press'), true);
+  assert.equal(h.tryApplyPlanMutation('swap leg extensions for leg press'), false, 'the explicit replace is deferred to the gated proposer');
   const names = h.getExercises();
-  assert.ok(!names.includes('Leg Extension'), 'Leg Extension replaced');
-  assert.ok(names.some(n => n.toLowerCase() === 'leg press'), 'the named substitute took the slot');
-  assert.equal(h.getCalls().length, 0, 'the explicit named path never calls the recommender endpoint');
+  assert.ok(names.includes('Leg Extension'), 'Leg Extension is NOT removed by the sync lane — it stays until approval');
+  assert.equal(h.getCalls().length, 0, 'no recommender call from the sync lane');
 });

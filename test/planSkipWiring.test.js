@@ -135,17 +135,19 @@ test('wrong-target guard: "skip leg press" removes the EXACT Leg Press slot, nev
   );
 });
 
-test('wrong-target guard: "swap leg press for hack squat" replaces the EXACT slot, single-leg variant untouched', () => {
+test('an explicit "swap X for Y" is now GATED — the sync skip lane defers it and mutates nothing', () => {
   const h = loadMutationHarness();
   h.setActivePlannedSession(planWithLegPressVariants());
 
+  // Production trust fix FR-20260723031748: an explicit replacement is a gated proposal, so
+  // the sync skip lane must NOT apply it in place. It defers; the plan is left intact.
   const result = h.tryApplyPlanMutation('swap leg press for hack squat');
 
-  assert.equal(result, true, 'the named swap is handled deterministically');
+  assert.equal(result, false, 'the explicit replace is deferred to the gated proposer');
   const names = h.getExercises();
+  assert.ok(names.includes('Leg Press'), 'the named slot is NOT swapped out by the sync lane');
   assert.ok(names.includes('Single-Leg Seated Leg Press'), 'the un-named variant is untouched');
-  assert.ok(!names.includes('Leg Press'), 'the named slot is swapped out');
-  assert.ok(names.some(n => /hack squat/i.test(n)), 'the substitute takes the named slot');
+  assert.ok(!names.some(n => /hack squat/i.test(n)), 'no substitute is inserted before approval');
 });
 
 test('ADD-2: a non-plan "no X" (nothing in the plan matches) falls through, mutates nothing', () => {
