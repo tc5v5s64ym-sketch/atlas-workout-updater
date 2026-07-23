@@ -218,6 +218,33 @@ test('unit: a past-tense history question is NOT a recommendation-explanation tu
   assert.equal(explanationGrounding.isRecommendationExplanationTurn('why only 175 for bench? i did 225 before', ctx), true);
 });
 
+// D7: a clarification is recognized (broad review excluded) and its demote strips the broad
+// diagnostics + floors coach_mode off "challenge".
+test('unit: a clarification is recognized and its demote drops the standing challenge', () => {
+  assert.equal(explanationGrounding.isClarificationTurn('Whoa, I was just asking for bench'), true);
+  assert.equal(explanationGrounding.isClarificationTurn('no I meant bench'), true);
+  assert.equal(explanationGrounding.isClarificationTurn("that's not what I asked"), true);
+  // NOT a clarification: a real explanation question, or a broad review that keeps the full picture.
+  assert.equal(explanationGrounding.isClarificationTurn(BENCH_EXPLAIN_MSG), false);
+  assert.equal(explanationGrounding.isClarificationTurn('how is my training going?'), false);
+  assert.equal(explanationGrounding.isClarificationTurn('I was just wondering how my training is going'), false);
+  // the demote empties the broad diagnostics and floors coach_mode off "challenge"
+  const ctx = {
+    memory_patterns: [
+      { liftCode: BENCH_CODE, patterns: [{ type: 'consistent_underperformance' }] },
+      { liftCode: SQUAT_CODE, patterns: [{ type: 'consistent_underperformance' }] },
+    ],
+    stalls: [{ exercise: 'Bench Press' }], muscle_gaps: [{ x: 1 }], coach_mode: 'challenge',
+  };
+  const out = explanationGrounding.narrowContextForClarification(ctx, { discouraged: false });
+  assert.notEqual(out.coach_mode, 'challenge', 'coach_mode floored off challenge');
+  assert.deepEqual(out.memory_patterns, []);
+  assert.deepEqual(out.stalls, []);
+  assert.deepEqual(out.muscle_gaps, []);
+  // an explicit discouragement is still honored (reassure precedence preserved)
+  assert.equal(explanationGrounding.narrowContextForClarification(ctx, { discouraged: true }).coach_mode, 'reassure');
+});
+
 // Codex P2 (follow-up): a configured provider whose Sheets read fails mid-turn must still
 // explain the displayed recommendation — never regress to the generic advice fallback. Runs
 // FIRST so the log/effort cache is cold and the simulated outage actually propagates (a
@@ -318,6 +345,40 @@ test('Turn 5 — "Hello what\'s the plan today" still uses the authoritative rec
   const { res, json } = await planRecommendation();
   assert.equal(res.status, 200);
   assert.ok(json.data && Array.isArray(json.data.intents), 'the final plan request routes through the authoritative pipeline');
+});
+
+// ── D7: a clarification cannot replay a stale diagnostic ─────────────────────
+// FR-20260723120852-hw56ws9y turn 5: a clarification ("Whoa, I was just asking for bench")
+// matches neither the recommendation-explanation nor the plan-grounded narrowing lane, so the
+// standing benchmark challenge (coach_mode:'challenge') reached the model and replayed. The demote
+// is flag-gated behind ATLAS_TURN_PRECEDENCE — off ⇒ the challenge still reaches the model.
+const CLARIFICATION_MSG = 'Whoa, I was just asking for bench';
+
+test('D7 turn precedence ON: a clarification does NOT replay the standing benchmark challenge (demoted)', async () => {
+  resetCoach();
+  process.env.ATLAS_TURN_PRECEDENCE = 'on';
+  try {
+    const { res, json } = await chat({ message: CLARIFICATION_MSG, context: DISPLAYED_RECOMMENDATION });
+    assert.equal(res.status, 200);
+    const ctx = coachState.lastChatContext;
+    assert.ok(ctx, 'the model was called for the clarification');
+    assert.notEqual(ctx.coach_mode, 'challenge', 'coach_mode is demoted off challenge for a clarification');
+    assert.ok(!(ctx.memory_patterns || []).some((p) => Array.isArray(p.patterns) && p.patterns.some((x) => x.type === 'consistent_underperformance')),
+      'no standing challenge survives into the clarification context');
+    assert.doesNotMatch(json.data.message, /benchmark|below your recent|5 of the last 5/i, 'the stale benchmark critique is not replayed');
+  } finally {
+    delete process.env.ATLAS_TURN_PRECEDENCE;
+  }
+});
+
+test('D7 turn precedence OFF (default): the clarification still reaches the model with the standing challenge — prior behavior preserved', async () => {
+  resetCoach();
+  delete process.env.ATLAS_TURN_PRECEDENCE;
+  const { res, json } = await chat({ message: CLARIFICATION_MSG, context: DISPLAYED_RECOMMENDATION });
+  assert.equal(res.status, 200);
+  const ctx = coachState.lastChatContext;
+  assert.equal(ctx.coach_mode, 'challenge', 'flag off ⇒ the standing challenge reaches the model exactly as before');
+  assert.match(json.data.message, /benchmark|below your recent/i, 'flag off ⇒ the benchmark critique replays (unchanged)');
 });
 
 // ── the deterministic explanation (LLM down) ─────────────────────────────────

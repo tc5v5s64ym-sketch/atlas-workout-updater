@@ -252,6 +252,39 @@ function resolveRecommendationExplanation(message, context) {
   return { target, snapshot: buildRecommendationSnapshot(context, target, message) };
 }
 
+// ── clarification (scope correction) turn ──────────────────────────────────────
+//
+// A CLARIFICATION pushes back that the athlete was only asking a narrow thing — "Whoa, I was
+// just asking for bench", "I only asked about reps", "no I meant bench", "that's not what I
+// asked". It carries no coaching request, so a STANDING challenge (a broad memory diagnostic
+// about some lift) must never REPLAY onto it: production FR-20260723120852-hw56ws9y turn 5, a
+// clarification drew back the unrelated Bench-Press-underperformance challenge because the turn
+// matches neither the recommendation-explanation nor the plan-grounded narrowing lane, so the
+// all-lift diagnostics + `coach_mode:'challenge'` reached the model unchanged. Recognized as a
+// coherent metacommunicative-correction category (not an open-ended phrase list); a broad-session
+// review is EXCLUDED — it legitimately wants the full picture, so a politely-worded review ("I was
+// just wondering how my training is going") is not treated as a bare clarification.
+const CLARIFICATION_RE = /\b(?:i(?:'m| am| was)?\s+(?:just|only|merely|simply)\s+(?:ask(?:ing|ed)?|wonder(?:ing|ed)?|sa(?:y|ying)|check(?:ing)?|curious)|just\s+(?:ask(?:ing)|wonder(?:ing)|check(?:ing)|curious)|(?:i\s+)?meant\b|i\s+mean\b|not\s+what\s+i\s+(?:asked|meant|said)|didn'?t\s+ask|that'?s\s+not\s+my\s+question)\b/;
+
+function isClarificationTurn(message) {
+  const m = normalize(message);
+  if (!m || BROAD_REVIEW_RE.test(m)) return false; // a broad review keeps the full picture
+  return CLARIFICATION_RE.test(m);
+}
+
+// A clarification turn's llmContext: the broad memory diagnostics that could replay a standing
+// challenge are dropped (memory_patterns/stalls emptied, muscle_gaps dropped) and coach_mode is
+// recomputed from the emptied patterns so it floors OFF "challenge" — the model answers the
+// clarification plainly instead of raising a stale, unrelated critique. An explicit discouragement
+// is still honored (reassure). Active-session truth outranks the broad memory diagnostic (D7).
+// Message-scoped: the next ordinary turn recomputes and a genuinely-relevant challenge fires again.
+function narrowContextForClarification(context, opts = {}) {
+  const c = context && typeof context === 'object' ? context : {};
+  const memory_patterns = [];
+  const coach_mode = deriveChatCoachMode({ memory_patterns }, { discouraged: opts.discouraged === true });
+  return { ...c, stalls: [], memory_patterns, muscle_gaps: [], coach_mode };
+}
+
 // ── deterministic explanation (LLM-down / fallback) ────────────────────────────
 
 function formatLoad(t) {
@@ -332,6 +365,8 @@ module.exports = {
   buildRecommendationSnapshot,
   narrowContextForRecommendationExplanation,
   resolveRecommendationExplanation,
+  isClarificationTurn,
+  narrowContextForClarification,
   buildDeterministicRecommendationExplanation,
   isConversationalAside,
   buildConversationalAck,
