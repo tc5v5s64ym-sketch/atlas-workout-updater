@@ -56,7 +56,7 @@ const { detectExtraWork } = require('../services/extraWorkDetector');
 const { buildSessionQuestionAnswer, buildSessionAdviceFallback, answerBareShorthand, isBareSessionShorthand, isCurrentExercisePrescriptionQuestion, answerCurrentExercisePrescription, isWarmupQuestion, answerPlannedLiftQuestion, answerTotalRepsQuestion } = require('../services/sessionQuestionAnswer');
 const { isTurnPrecedenceEnabled } = require('../services/turnPrecedence');
 const { isTirednessExpression, buildTirednessRecoveryAnswer } = require('../services/recoveryRouting');
-const { planStateFromContext, buildSessionCloseAnswer } = require('../services/sessionPlanExecutor');
+const { planStateFromContext, buildSessionCloseAnswer, buildNextUpAnswer } = require('../services/sessionPlanExecutor');
 const { generateLiftCode, buildExerciseCatalogMap, normalizeExerciseKey, closestExerciseMatches } = require('../services/exerciseEnrichment');
 const { getShadowLog, observeChatMessage } = require('../services/intentShadow');
 const { getBrainShadowLog } = require('../services/brainShadow');
@@ -1312,6 +1312,17 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       if (warmupDefer) return null;
       const close = buildSessionCloseAnswer(message, planStateFromContext(clientCtx));
       if (close) return close;
+      // Phase 4 (chat/SME lane — divergence D2/D9, packet/session consumption), flag-gated
+      // ATLAS_TURN_PRECEDENCE (default inert). A "what's next?" question is STATE-ANSWERABLE from
+      // session truth, but today it dead-ends to "coach unavailable" on the model-down path —
+      // while the sibling "are we done?" already answers deterministically above. Consume the
+      // WorkoutSession's remaining slots (plan_state) so a next-up question is answerable even
+      // with the model down. Off ⇒ this branch is skipped, so the turn dead-ends exactly as
+      // before (byte-identical). Read-only; no write, no plan mutation.
+      if (isTurnPrecedenceEnabled() && coachResponseGrounding.isNextUpQuestion(message)) {
+        const nextUp = buildNextUpAnswer(planStateFromContext(clientCtx));
+        if (nextUp) return nextUp;
+      }
       const valueAnswer = buildSessionQuestionAnswer(message, {
         history,
         clientContext: clientCtx,
