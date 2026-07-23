@@ -1296,6 +1296,64 @@ test('turn precedence ON, model DOWN: a warm-up question degrades honestly, neve
   }
 });
 
+// ── Phase 4 (chat/SME lane — divergence D2/D9, packet/session consumption): a "what's next?"
+// question is answerable from session truth (plan_state) even with the model down. Flag-gated
+// ATLAS_TURN_PRECEDENCE (default inert). Today "are we done?" answers deterministically model-down
+// but "what's next?" dead-ends to "coach unavailable" — this consumes the WorkoutSession's
+// remaining slots to close that asymmetry, WITHOUT overriding the model's richer answer when up.
+const D2_NEXTUP_CTX = {
+  current_plan: [{ name: 'Bench Press' }, { name: 'Back Squat' }],
+  plan_state: { planned: ['Bench Press', 'Back Squat'], completed: ['Bench Press'], remaining: ['Back Squat'], isComplete: false },
+};
+
+test('turn precedence ON, model DOWN: "what\'s next?" answers from session truth, no dead-end (D2)', async () => {
+  const before = fakeSheetsState.appendCalls.length;
+  process.env.ATLAS_TURN_PRECEDENCE = 'on';
+  fakeCoachState.configured = false; // model down
+  try {
+    const { response, body } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: "what's next?", context: D2_NEXTUP_CTX })
+    });
+    assert.equal(response.status, 200);
+    assert.equal(body.data.source, 'engine', 'the deterministic engine answers from session state');
+    assert.equal(body.data.message, 'Next up: Back Squat.', 'names the next remaining slot from plan_state');
+  } finally {
+    delete process.env.ATLAS_TURN_PRECEDENCE;
+    fakeCoachState.configured = false;
+  }
+  assert.equal(fakeSheetsState.appendCalls.length, before, 'coach/chat never writes');
+});
+
+test('turn precedence OFF (default), model DOWN: "what\'s next?" still dead-ends to unavailable — prior behavior preserved', async () => {
+  delete process.env.ATLAS_TURN_PRECEDENCE;
+  fakeCoachState.configured = false;
+  const { response, body } = await requestJson('/api/coach/chat', {
+    method: 'POST',
+    body: JSON.stringify({ message: "what's next?", context: D2_NEXTUP_CTX })
+  });
+  assert.equal(response.status, 200);
+  assert.equal(body.data.message, null, 'flag off ⇒ the next-up question dead-ends exactly as before');
+});
+
+test('turn precedence ON, model UP: "what\'s next?" still reaches the coach — no model-up regression', async () => {
+  process.env.ATLAS_TURN_PRECEDENCE = 'on';
+  fakeCoachState.configured = true;
+  fakeCoachState.chatMessage = 'Next up is Back Squat — let us get after it.';
+  try {
+    const { response, body } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: "what's next?", context: D2_NEXTUP_CTX })
+    });
+    assert.equal(response.status, 200);
+    assert.equal(body.data.source, 'gemini', 'the deterministic fallback is model-down only; the coach still answers when up');
+    assert.equal(body.data.message, 'Next up is Back Squat — let us get after it.');
+  } finally {
+    delete process.env.ATLAS_TURN_PRECEDENCE;
+    fakeCoachState.configured = false;
+  }
+});
+
 // ── Slice 3: recovery routing — a tired lifter never gets motivation hype ──────
 const HYPE = /push through|you('?| )ve got this|you got this|no excuses|grind it out|dig deep|beast mode|crush it|let'?s go champ/i;
 

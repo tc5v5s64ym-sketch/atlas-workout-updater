@@ -3,7 +3,7 @@ const test   = require('node:test');
 const assert = require('node:assert/strict');
 const fs   = require('node:fs');
 const path = require('node:path');
-const { computePlanState, nextExerciseFromPlan, nextRemainingExercise, isPlanComplete, applySubstitution, planStateFromContext, detectSessionCloseQuestion, buildSessionCloseAnswer } = require('../services/sessionPlanExecutor');
+const { computePlanState, nextExerciseFromPlan, nextRemainingExercise, isPlanComplete, applySubstitution, planStateFromContext, detectSessionCloseQuestion, buildSessionCloseAnswer, buildNextUpAnswer } = require('../services/sessionPlanExecutor');
 
 /* ===== Shape ===== */
 
@@ -670,4 +670,30 @@ test('computePlanState: singularization never collapses "press" / distinct movem
   const s = computePlanState(['Overhead Press', 'Incline Bench Press'], ['Overhead Press', 'Bench Press']);
   assert.deepEqual(s.remaining, ['Incline Bench Press'], 'Bench Press must NOT complete Incline Bench Press');
   assert.equal(s.completed.includes('Overhead Press'), true);
+});
+
+// ── buildNextUpAnswer (Phase 4 — divergence D2/D9, packet/session consumption) ──
+// A "what's next?" question answers deterministically from session truth (plan_state.remaining),
+// so it is answerable even when the coach is down — closing the asymmetry with "are we done?".
+
+test('buildNextUpAnswer: names the next remaining exercise from session truth', () => {
+  const ps = computePlanState(['Bench Press', 'Back Squat', 'Seated Row'], ['Bench Press']);
+  assert.equal(buildNextUpAnswer(ps), 'Next up: Back Squat.');
+});
+
+test('buildNextUpAnswer: honors plan_state.remaining order (client selector verdict)', () => {
+  // plan_state (the client's canonical selector verdict) is authoritative over recomputation.
+  const ps = planStateFromContext({ plan_state: { planned: ['A', 'B', 'C'], completed: ['A'], remaining: ['B', 'C'] } });
+  assert.equal(buildNextUpAnswer(ps), 'Next up: B.');
+});
+
+test('buildNextUpAnswer: a complete plan confirms completion, does not name a lift', () => {
+  const ps = computePlanState(['Bench Press'], ['Bench Press']);
+  assert.match(buildNextUpAnswer(ps), /plan done — nothing left/);
+});
+
+test('buildNextUpAnswer: no authoritative plan → null (defer to the caller)', () => {
+  assert.equal(buildNextUpAnswer(null), null);
+  assert.equal(buildNextUpAnswer({ planned: [], remaining: [], isComplete: false }), null);
+  assert.equal(buildNextUpAnswer(planStateFromContext({})), null, 'no plan in context → null');
 });

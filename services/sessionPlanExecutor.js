@@ -361,6 +361,27 @@ function buildSessionCloseAnswer(message, planState) {
 }
 
 /**
+ * buildNextUpAnswer(planState) → string | null   (Phase 4 — divergence D2/D9)
+ *
+ * Deterministic "what's next?" answer from session truth (plan_state.remaining) — model-
+ * INDEPENDENT, so a next-up question is answerable even when the coach is down. Today
+ * "are we done?" already answers deterministically (buildSessionCloseAnswer) but "what's
+ * next?" dead-ends to "coach unavailable" on the model-down path; this closes that asymmetry
+ * by consuming the WorkoutSession's remaining slots. Names the next remaining exercise, or
+ * confirms completion. Returns null when there is no authoritative plan to answer from (defer
+ * to the caller). The engine owns the plan/order; this only words it — never writes. Pure.
+ */
+function buildNextUpAnswer(planState) {
+  if (!planState || !Array.isArray(planState.planned) || planState.planned.length === 0) return null;
+  const remaining = Array.isArray(planState.remaining)
+    ? planState.remaining.filter(x => typeof x === 'string' && x.trim())
+    : [];
+  if (remaining.length) return `Next up: ${remaining[0]}.`;
+  if (planState.isComplete) return 'That\'s your plan done — nothing left. Say "log it" to save.';
+  return null;
+}
+
+/**
  * nextRemainingExercise(planned, completed) → string | null
  *
  * The next exercise still to do: the FIRST planned entry (in the planned/visible
@@ -387,4 +408,5 @@ module.exports = {
   planStateFromContext,
   detectSessionCloseQuestion,
   buildSessionCloseAnswer,
+  buildNextUpAnswer,
 };
