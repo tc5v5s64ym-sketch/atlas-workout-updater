@@ -1464,9 +1464,21 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // an answer about Seated Row. A broad-session review is left untouched (still gets
       // the full picture). No-op for every non-grounded turn. Applied AFTER the drift
       // shadow / recovery routing above, so observability sees the unmodified context.
-      const llmContext = recExplain
+      let llmContext = recExplain
         ? coachExplanationGrounding.narrowContextForRecommendationExplanation(context, recExplain.target, { discouraged })
         : coachResponseGrounding.narrowContextToPlanTurn(context, message, { discouraged });
+      // Phase 4 (chat/SME lane — divergence D7), flag-gated ATLAS_TURN_PRECEDENCE (default inert).
+      // A CLARIFICATION ("Whoa, I was just asking for bench") matches neither narrowing lane
+      // above, so the all-lift memory diagnostics + coach_mode:'challenge' reach the model
+      // unchanged and a standing benchmark critique REPLAYS onto the clarification
+      // (FR-20260723120852-hw56ws9y turn 5). When the flag is on, drop the broad memory diagnostics
+      // for a clarification so active-session truth outranks them and no stale challenge replays; a
+      // broad-session review is excluded (keeps the full picture). Off ⇒ byte-identical. Read-only.
+      if (isTurnPrecedenceEnabled() && !recExplain
+        && coachExplanationGrounding.isClarificationTurn(message)
+        && coachResponseGrounding.hasActiveSession(context)) {
+        llmContext = coachExplanationGrounding.narrowContextForClarification(llmContext, { discouraged });
+      }
       // Expose the trusted recommendation snapshot for the Coach_Shadow explanation path
       // (session/recommendation snapshot, target exercise, engine decision, coaching
       // strategy). res.locals is read only by the shadow's res.on('finish') hook; the reply
