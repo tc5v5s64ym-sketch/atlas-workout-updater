@@ -67,6 +67,21 @@ describe('turnPrecedence — decideTurnPrecedence', () => {
     }
   });
 
+  it('a named equipment report with a trailing follow-up pronoun still substitutes — ambiguity is judged on the constraint clause, not any later pronoun (Codex P2)', () => {
+    // "the cable machine is broken, can it be fixed?" names a concrete subject ("the cable
+    // machine") in the constraint clause and only trails an "it" in a SEPARATE clause — it must
+    // NOT be blocked as ambiguous. Same for a coordinating conjunction ("… and I can't use it").
+    for (const m of [
+      'the cable machine is broken, can it be fixed?',
+      "the cable machine is broken and I can't use it",
+      'the rack is taken, is it free yet?',
+    ]) {
+      const d = decideTurnPrecedence({ message: m });
+      assert.equal(d.allowSubstitution, true, `"${m}" names concrete equipment in the constraint clause — it must still substitute`);
+      assert.equal(d.lane, LANES.SUBSTITUTION);
+    }
+  });
+
   it('an Atlas-directed malfunction that overlaps a constraint keyword is still vetoed', () => {
     // Distinguishes the named equipment report above from a genuine Atlas complaint.
     for (const m of ['Are you broken?', 'you are not working', 'atlas you broke again']) {

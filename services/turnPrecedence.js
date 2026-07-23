@@ -61,7 +61,7 @@
 // Pure / deterministic — no I/O, no clock, no randomness.
 
 const { isConversationalAside } = require('./coachExplanationGrounding');
-const { isConstraintMessage } = require('./constraintDetector');
+const { isConstraintMessage, CONSTRAINT_PATTERNS } = require('./constraintDetector');
 const { messageNamesALift, normalize } = require('./coachResponseGrounding');
 
 // The ONE narrow disambiguator this module owns, used ONLY to resolve the aside∩constraint
@@ -74,12 +74,29 @@ const { messageNamesALift, normalize } = require('./coachResponseGrounding');
 //     "you are not working".
 // Either way there is no authoritative referent for a plan-changing swap, so the turn fails
 // closed. A GENUINE report names a concrete noun subject ("the cable machine is not working",
-// "the rack is not working") that matches none of these tokens and is left to the constraint
-// path, and the parser's messageNamesALift ("the bench is broken") is an authoritative referent
-// that overrides this test entirely. Erring toward the pronoun (fail closed) is the required
-// under-call: ambiguity must never fabricate an equipment referent. Superseded later in Phase 4
-// when `discussion_referent` becomes a canonical CoachTurnPacket field.
+// "the rack is not working") that matches none of these tokens. Erring toward the pronoun (fail
+// closed) is the required under-call: ambiguity must never fabricate an equipment referent.
+// Superseded later in Phase 4 when `discussion_referent` becomes a canonical CoachTurnPacket field.
 const AMBIGUOUS_PRONOUN_REFERENT_RE = /\b(?:it|its|you|youre|u|ur|your|atlas)\b/i;
+
+// Ambiguity is decided from the CONSTRAINT'S OWN CLAUSE, not the whole message — a pronoun in a
+// SEPARATE clause must never make a concrete report ambiguous. "the cable machine is broken, can
+// it be fixed?" names a concrete subject ("the cable machine") and only trails an "it" in a
+// second clause, so it still substitutes; "it's broken" / "is it broken?" have a bare pronoun as
+// the constraint's own subject and fail closed (Codex P2, 2026-07-23). We split on clause
+// punctuation and coordinating conjunctions (none of which appear inside a multi-word constraint
+// phrase like "out of order" / "not working"), then a clause is ambiguous only when it (a) carries
+// a constraint keyword, (b) names no concrete lift/equipment (the parser's messageNamesALift —
+// "the bench is broken"), and (c) its own text still matches a bare ambiguous pronoun.
+const CLAUSE_SPLIT_RE = /[.,;:!?]+|\s+(?:and|but|so|then|or)\s+/;
+
+function constraintClauseIsAmbiguous(normalizedMessage) {
+  const clauses = String(normalizedMessage).split(CLAUSE_SPLIT_RE).map((c) => c.trim()).filter(Boolean);
+  return clauses.some((c) =>
+    CONSTRAINT_PATTERNS.some((re) => re.test(c))     // this clause carries the constraint
+    && !messageNamesALift(c)                          // …and names no concrete lift/equipment referent
+    && AMBIGUOUS_PRONOUN_REFERENT_RE.test(c));        // …so its own subject is a bare ambiguous pronoun
+}
 
 // The flag that gates route consumption of this decision. Default inert: absent/off ⇒ the
 // live routes behave exactly as before. The owner turns it on at the Phase-4 owner gate.
@@ -114,14 +131,13 @@ function decideTurnPrecedence(params) {
   const aside = isConversationalAside(message);
   const constraint = isConstraintMessage(message);
 
-  // AUTHORITATIVE REFERENT vs AMBIGUOUS PRONOUN. The parser recognizing a named lift/equipment
-  // (messageNamesALift — "the bench is broken", "the squat rack is broken") is authoritative and
-  // always overrides the pronoun test. Absent that, an `ambiguousReferent` is a constraint whose
-  // only referent is a bare ambiguous pronoun ("it"/second-person Atlas) — no concrete noun to
-  // point a swap at. A genuine impersonal report ("the cable machine is not working") names a
-  // concrete noun that matches none of the pronoun tokens, so it is NOT ambiguous.
-  const namedReferent = messageNamesALift(message);
-  const ambiguousReferent = !namedReferent && AMBIGUOUS_PRONOUN_REFERENT_RE.test(normalize(message));
+  // AUTHORITATIVE REFERENT vs AMBIGUOUS PRONOUN, decided from the constraint's own clause. An
+  // `ambiguousReferent` is a constraint clause whose subject is a bare ambiguous pronoun ("it" /
+  // second-person Atlas) and that names no concrete lift/equipment — no referent to point a swap
+  // at. A genuine report names a concrete noun ("the bench is broken", "the cable machine is not
+  // working") — or trails a pronoun only in a SEPARATE clause ("the cable machine is broken, can
+  // it be fixed?") — so it is NOT ambiguous and stays on the constraint path.
+  const ambiguousReferent = constraintClauseIsAmbiguous(normalize(message));
 
   // (1) A conversational aside owns the turn: a greeting / presence-check / malfunction complaint
   //     is never a substitution. When it overlaps a constraint keyword it still yields to a
