@@ -85,6 +85,20 @@ function observeQaTurn(req, res, opts) {
       const modelStatus = hasError ? 'error' : (modelRan ? 'ok' : 'skipped');
       // The register validator runs only on the /chat gemini path.
       const validatorRan = !hasError && data.source === 'gemini';
+      // Recommendation-explanation grounding — the route stashes the trusted recommendation
+      // snapshot on res.locals for a "why did the recommendation choose X" turn. When present
+      // the route GENUINELY assembled a session/recommendation snapshot, consumed the engine's
+      // recommendation decision, and applied the explain-recommendation coaching strategy for
+      // this turn, so those spine stages are recorded HONESTLY (in canonical order, before
+      // model_response) instead of surfacing as `missing`. Absent on every other turn — the
+      // read-only route still bypasses packet truth there (the divergence report's headline).
+      const grounding = res.locals && typeof res.locals.coachRecommendationGrounding === 'object'
+        ? res.locals.coachRecommendationGrounding : null;
+      if (grounding) {
+        turn.stage('session_snapshot', 'ok');
+        turn.stage('engine_decision', 'ok');
+        turn.stage('coaching_strategy', 'ok');
+      }
       turn.stage('model_response', modelStatus);
       turn.stage('validator_result', validatorRan ? 'ok' : 'skipped');
       turn.stage('rendered_output', res.statusCode >= 500 ? 'error' : 'ok', req.requestId || null);
@@ -94,7 +108,7 @@ function observeQaTurn(req, res, opts) {
       // resolver's / discussed-lift pick). Forward it so the shadow record can compare it to
       // the packet's referent — the Phase-4 divergence signal. Absent on non-referent turns.
       const routeReferent = res.locals && typeof res.locals.coachTurnReferent === 'object' ? res.locals.coachTurnReferent : null;
-      coachTurnPacketShadow.observe({ trace: traceRecord, assembled, visible, routeReferent });
+      coachTurnPacketShadow.observe({ trace: traceRecord, assembled, visible, routeReferent, grounding });
       const reqBody = req.body && typeof req.body === 'object' ? req.body : {};
       const ctx = reqBody.context && typeof reqBody.context === 'object' ? reqBody.context : {};
       coachResponseSheet.persist({
