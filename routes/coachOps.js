@@ -53,7 +53,8 @@ const { patternFor } = require('../services/movementPattern');
 const { musclesFor } = require('../services/muscleCoverage');
 const { assembleBatchNoteFacts } = require('../services/batchNoteFacts');
 const { detectExtraWork } = require('../services/extraWorkDetector');
-const { buildSessionQuestionAnswer, buildSessionAdviceFallback, answerBareShorthand, isBareSessionShorthand, answerPlannedLiftQuestion, answerTotalRepsQuestion } = require('../services/sessionQuestionAnswer');
+const { buildSessionQuestionAnswer, buildSessionAdviceFallback, answerBareShorthand, isBareSessionShorthand, isCurrentExercisePrescriptionQuestion, answerCurrentExercisePrescription, answerPlannedLiftQuestion, answerTotalRepsQuestion } = require('../services/sessionQuestionAnswer');
+const { isTurnPrecedenceEnabled } = require('../services/turnPrecedence');
 const { isTirednessExpression, buildTirednessRecoveryAnswer } = require('../services/recoveryRouting');
 const { planStateFromContext, buildSessionCloseAnswer } = require('../services/sessionPlanExecutor');
 const { generateLiftCode, buildExerciseCatalogMap, normalizeExerciseKey, closestExerciseMatches } = require('../services/exerciseEnrichment');
@@ -1251,6 +1252,31 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
         return standardSuccess(req, res, 'Coach chat — current plan answer', {
           message: planned, configured: coach.isConfigured(), model: coach.coachModel(), source: 'engine'
         });
+      }
+
+      // Phase 4 (chat/SME lane — divergence D3), flag-gated ATLAS_TURN_PRECEDENCE (default
+      // inert). A BARE, no-lift-named COMPOUND prescription question ("What weight and how
+      // many reps?") is the shape the tight bare-shorthand gate above misses, so it otherwise
+      // reached Gemini with the whole current_plan and the model enumerated EVERY exercise
+      // (the "all-six prescription dump", FR-20260723120852-hw56ws9y turn 1). Scope it to the
+      // single active exercise from session state — the SAME currentLiftFromContext resolver
+      // the bare-shorthand lane uses — before the LLM. Engine-fill (a rare Sheets read, gated
+      // to an active session the context couldn't answer) mirrors the bare-shorthand lane.
+      // Off ⇒ byte-identical (the turn falls through to the LLM exactly as before). Read-only;
+      // no write, no plan mutation.
+      if (isTurnPrecedenceEnabled()) {
+        let scoped = answerCurrentExercisePrescription(message, clientCtx);
+        if (!scoped && isCurrentExercisePrescriptionQuestion(message) && hasActiveSessionContext(clientCtx)) {
+          const scopedLog = await getSheetRows(logSheetName).catch(() => []);
+          scoped = answerCurrentExercisePrescription(message, clientCtx, (liftName) => recommendTargetForLift(liftName, scopedLog));
+        }
+        if (scoped) {
+          return standardSuccess(req, res, scoped.kind === 'clarify'
+            ? 'Coach chat — clarify which lift'
+            : 'Coach chat — current-exercise prescription answer', {
+            message: scoped.text, configured: coach.isConfigured(), model: coach.coachModel(), source: 'engine'
+          });
+        }
       }
     }
 
