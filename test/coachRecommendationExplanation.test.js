@@ -231,9 +231,12 @@ test('provider configured but Sheets read fails: the explanation is still ground
     assert.equal(json.data.source, 'engine', 'deterministic engine answer on the outage path');
     assert.match(json.data.message, /Bench Press/, 'names the target lift');
     assert.match(json.data.message, /175/, 'explains the displayed 175 recommendation despite the Sheets outage');
-    // The reasoning phrase distinguishes the recommendation EXPLANATION from the generic
+    // The prescription phrasing distinguishes the recommendation EXPLANATION from the generic
     // advice fallback ("Bench Press: use 175 lbs, 9 reps, 3 sets, RIR 5."), which lacks it.
-    assert.match(json.data.message, /heavier top set/i, 'explains WHY the target was chosen — not the generic advice fallback');
+    assert.match(json.data.message, /is set at 175/i, 'states the displayed prescription — not the generic advice fallback');
+    // With no engine label or history in view (client-plan-only snapshot), it must NOT invent
+    // a history-derived rationale.
+    assert.doesNotMatch(json.data.message, /recent training|based on your/i, 'no invented history basis when the server has no history');
     assert.doesNotMatch(json.data.message, /benchmark|below your recent/i, 'never a challenge paragraph');
   } finally {
     sheetsState.throwOnRead = false;
@@ -342,8 +345,10 @@ test('provider unconfigured: the recommendation explanation is grounded in the d
   assert.equal(json.data.source, 'engine');
   assert.match(json.data.message, /Bench Press/, 'names the target lift');
   assert.match(json.data.message, /175/, 'explains the displayed 175 recommendation even during an outage');
-  // Distinguishes the recommendation explanation from the generic advice fallback.
-  assert.match(json.data.message, /heavier top set/i, 'explains WHY the target was chosen — not the generic advice fallback');
+  // Distinguishes the recommendation explanation from the generic advice fallback, and — with
+  // no engine label/history in view — never invents a history-derived rationale.
+  assert.match(json.data.message, /is set at 175/i, 'states the displayed prescription — not the generic advice fallback');
+  assert.doesNotMatch(json.data.message, /recent training|based on your/i, 'no invented history basis when the server has no history');
   assert.doesNotMatch(json.data.message, /benchmark|below your recent/i, 'never a challenge paragraph');
 });
 

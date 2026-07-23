@@ -263,9 +263,12 @@ function formatLoad(t) {
   return parts.join(' ');
 }
 
-// A grounded, deterministic explanation of WHY the recommendation chose its numbers —
-// the target prescription, tied to the engine's readiness/label reason, plus the
-// relevant history. Never a completed-write claim, never an invented number. Returns
+// A grounded, deterministic explanation of the recommendation — the target prescription,
+// and the engine's readiness/label REASON only when the engine actually provided one. Never
+// a completed-write claim, never an invented number, and — critically — never an invented
+// rationale: when the snapshot carries no engine label and no history (the common outage
+// path, where it is built from the client `current_plan` alone), it states ONLY the
+// displayed prescription rather than claiming a history-derived decision (Codex). Returns
 // null (no fabrication) when the target has no weight to explain.
 function buildDeterministicRecommendationExplanation(snapshot) {
   const s = snapshot && typeof snapshot === 'object' ? snapshot : {};
@@ -273,13 +276,16 @@ function buildDeterministicRecommendationExplanation(snapshot) {
   if (!t.name || t.weight == null) return null;
   const load = formatLoad(t);
   const parts = [];
-  parts.push(`${t.name} is set at ${load}${s.label ? ` — that's today's ${s.label} recommendation` : ''}.`);
   if (s.label) {
+    // Engine-provided day-type label → a grounded reason tied to that label.
+    parts.push(`${t.name} is set at ${load} — that's today's ${s.label} recommendation.`);
     parts.push(`The load fits a ${s.label.toLowerCase()} focus for today, which is why ${t.name} comes in at ${t.weight} rather than a heavier top set.`);
   } else {
-    parts.push(`That's the engine's target for ${t.name} today, based on your recent training — not a heavier top set.`);
+    // No engine reason available — state only the displayed prescription; invent nothing.
+    parts.push(`${t.name} is set at ${load} — that's today's target.`);
   }
   if (s.history && s.history.last_date) {
+    // A real logged fact (never a claimed causal basis).
     parts.push(`Your last logged ${t.name} was ${s.history.last_date}${s.history.last_top ? ` at ${s.history.last_top}` : ''}.`);
   }
   return parts.join(' ');
