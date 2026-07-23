@@ -1,6 +1,6 @@
 # Atlas Agent Compatibility Adapter
 
-Codex and Claude Code are both approved Atlas implementation agents. The active builder for a task has the same implementation, PR, and merge authority; the tool name does not change the safety contract.
+Claude Code and Codex are both approved Atlas implementation agents. The active builder for a task has the same implementation, PR, and merge authority; the tool name does not change the safety contract.
 
 Read in this order:
 
