@@ -306,26 +306,43 @@ function answerBareShorthand(message, clientContext = null, resolveTarget = null
 
 // A bare CURRENT-EXERCISE prescription question — a COMPOUND attribute question that names
 // NO lift ("What weight and how many reps?", "sets and reps?", "what's my weight, reps and
-// rir?"). This is the shape `isBareSessionShorthand` deliberately EXCLUDES (its regex is
-// anchored to a single token), so before this lane the turn reached Gemini with the whole
-// `current_plan` and the model enumerated EVERY exercise (Phase-3 divergence D3, FR turn 1:
-// "answered all six exercises instead of the active Bench Press only"). The answer must be
-// scoped to the single active exercise from session state.
+// rir?", "what weight and reps today?", "what weight and how many reps should I do?"). This is
+// the shape `isBareSessionShorthand` deliberately EXCLUDES (its regex is anchored to a single
+// token), so before this lane the turn reached Gemini with the whole `current_plan` and the
+// model enumerated EVERY exercise (Phase-3 divergence D3, FR turn 1: "answered all six exercises
+// instead of the active Bench Press only"). The answer must be scoped to the single active
+// exercise from session state.
 //
-// Fully anchored to attribute tokens + connectors ("and"/","/"&"/"+"/"/") with an optional
-// "for this/current lift" scope, so an off-topic sentence that merely contains a token
-// ("how much protein and how many reps do I need?") does NOT match — only a message that is
-// wholly a prescription question does. The caller additionally requires ≥2 distinct attributes
-// (or an explicit current-lift scope) so a bare single "what is RIR?" stays with education,
-// and defers on a named lift / history / advice framing.
-const PRESCRIPTION_ATTR_TOKEN = '(?:rir|rpe|reps?|sets?|weight|load|how much(?: weight)?|how many (?:reps?|sets?)|how heavy|how light)';
-const PRESCRIPTION_SCOPE_CLAUSE = '(?:\\s+for\\s+(?:this|it|the\\s+(?:current\\s+)?(?:lift|exercise|set|movement|one)|this\\s+(?:lift|exercise|set|movement)))?';
-const CURRENT_EXERCISE_PRESCRIPTION_RE = new RegExp(
-  '^(?:(?:what(?:\'?s| is| are)?|tell me|give me|remind me)\\s+)?'      // optional lead-in
-  + '(?:(?:the|my|your)\\s+)?' + PRESCRIPTION_ATTR_TOKEN               // first attribute
-  + '(?:[\\s,]*(?:and|&|\\+|/)?[\\s,]*(?:(?:the|my|your)\\s+)?' + PRESCRIPTION_ATTR_TOKEN + ')*' // more attributes
-  + PRESCRIPTION_SCOPE_CLAUSE
-  + '\\s*\\??$', 'i');
+// Recognition is by RESIDUE, not a rigid grammar: strip the attribute tokens and the contentless
+// scaffolding of a prescription question (question words, auxiliaries, determiners, pronouns,
+// connectors, and present-session / current-lift cues), then the message qualifies only when
+// NOTHING contentful remains. This accepts normal phrasing and word order ("…today?", "…should I
+// do?") while any off-topic content noun ("how much protein and how many reps?") or advice verb
+// ("should I increase the weight?") SURVIVES the strip and disqualifies it — so this lane owns a
+// bare prescription question and defers everything else (Codex #1138 P2). The caller additionally
+// requires ≥2 distinct attributes (or an explicit current-lift scope) so a bare single "what is
+// RIR?" stays with education, and defers on a named lift / history framing.
+//
+// Attribute phrases stripped first (multi-word before their parts).
+const PRESCRIPTION_ATTR_STRIP_RE = /\b(?:how\s+much(?:\s+weight)?|how\s+many\s+(?:reps?|sets?)|how\s+heavy|how\s+light|reps?\s+in\s+reserve|rir|rpe|reps?|sets?|weight|load)\b/gi;
+// Contentless scaffolding: question words, auxiliaries, determiners, pronouns, connectors, and
+// present-session / current-lift cues. Deliberately EXCLUDES advice/action verbs (increase,
+// heavier, why, recommend, …) and content nouns, so those survive the strip and disqualify.
+const PRESCRIPTION_SCAFFOLD_RE = /\b(?:what|whats|which|how|is|are|am|do|does|should|shall|will|would|can|could|be|being|gonna|wanna|supposed|to|i|my|your|our|the|a|an|this|that|these|those|it|for|of|on|at|and|or|plus|currently|current|right|now|today|tonight|please|tell|me|give|remind|us|here|again|doing|use|using|need|lift|exercise|movement|set|one)\b/gi;
+
+// True when the message is WHOLLY a prescription question — nothing contentful left after
+// removing attribute tokens + scaffolding. An off-topic noun or advice verb survives ⇒ false.
+function prescriptionResidueIsEmpty(message) {
+  const residue = String(message == null ? '' : message)
+    .toLowerCase()
+    .replace(/[‘’ʼ′']/g, '')       // drop apostrophes so "what's" → "whats"
+    .replace(/[^a-z0-9\s]/g, ' ')   // other punctuation → space
+    .replace(PRESCRIPTION_ATTR_STRIP_RE, ' ')
+    .replace(PRESCRIPTION_SCAFFOLD_RE, ' ')
+    .replace(/\s+/g, '');
+  return residue === '';
+}
+
 // An EXPLICIT "for this/current lift" scope lets a single-attribute question through
 // ("what's the weight for this lift?"); without it a single-attribute question defers so the
 // education-ambiguous "what is RIR?" is never answered as a current-lift fact.
@@ -333,17 +350,18 @@ const PRESCRIPTION_SCOPE_RE = /\bfor\s+(?:this|it|the\s+(?:current\s+)?(?:lift|e
 
 // True for a BARE, no-lift-named prescription question this lane owns — the pure message-shape
 // gate (mirrors isBareSessionShorthand), so the caller can decide whether the rare engine-fill
-// Sheets read is warranted before doing it. A message qualifies when it is wholly a prescription
-// question (the anchored regex), asks ≥2 distinct attributes OR is explicitly scoped to the
-// current lift, names no lift, and is not a past/advice framing.
+// Sheets read is warranted before doing it. A message qualifies when it asks ≥2 distinct
+// attributes OR is explicitly scoped to the current lift, names no lift, is not a past framing,
+// and is wholly a prescription question (empty residue).
 function isCurrentExercisePrescriptionQuestion(message) {
   const raw = String(message == null ? '' : message);
-  if (!CURRENT_EXERCISE_PRESCRIPTION_RE.test(raw.trim())) return false;
-  if (HISTORY_RE.test(raw) || ADVICE_RE.test(raw)) return false; // past / reasoning → not this lane
-  if (attributesAsked(raw).length < 2 && !PRESCRIPTION_SCOPE_RE.test(raw)) return false; // bare single "what is RIR?" → education
+  if (HISTORY_RE.test(raw)) return false; // past → history/LLM
+  const attrs = attributesAsked(raw);
+  if (!attrs.length) return false;
+  if (attrs.length < 2 && !PRESCRIPTION_SCOPE_RE.test(raw)) return false; // bare single "what is RIR?" → education
   const named = canonicalizeExerciseName(raw);
   if (named && named.canonicalName) return false; // a named lift is the named-lift lane's job
-  return true;
+  return prescriptionResidueIsEmpty(raw); // an off-topic noun / advice verb would survive → defer
 }
 
 /**
