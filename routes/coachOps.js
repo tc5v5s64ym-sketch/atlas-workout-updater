@@ -66,6 +66,7 @@ const { BUG_REPORT_TAB, BUG_REPORT_COLUMNS, buildBugReportRow } = require('../se
 const { readCurrentDeloadState } = require('../services/deloadState');
 const driftShadow = require('../services/driftShadow');
 const coachResponseGrounding = require('../services/coachResponseGrounding');
+const coachExplanationGrounding = require('../services/coachExplanationGrounding');
 const coachDiscussionReferent = require('../services/coachDiscussionReferent');
 const { beginDeload, recordDeloadSession, resolvePostDeload } = require('../services/deloadEngine');
 const { selectProtocol } = require('../services/deloadProtocols');
@@ -1167,6 +1168,22 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     const discouraged = detectDiscouragement(message, {}).discouraged;
     const reassureBypass = discouraged && !tired;
 
+    // Conversational aside (2026-07-22 production, FR-20260722231349-ckbvri1o turns 3–4).
+    // A bare greeting / presence-check / malfunction complaint ("Hello, atlas are you
+    // there?", "Uh oh your broken again") carries no coaching content. It is answered with
+    // a direct acknowledgement, bypassing the model — so a standing challenge/coach_mode
+    // can never REPLAY the prior recommendation explanation onto an unrelated turn (a prior
+    // model answer must not become the next answer merely because history/coach_mode are
+    // unchanged). Resolved before the recovery/reassure/challenge lanes; a tired message is
+    // NOT treated as an aside (recovery still owns it).
+    if (!tired && coachExplanationGrounding.isConversationalAside(message)) {
+      return standardSuccess(req, res, 'Coach chat — conversational acknowledgement', {
+        message: coachExplanationGrounding.buildConversationalAck(message),
+        propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
+        configured: coach.isConfigured(), model: coach.coachModel(), source: 'engine'
+      });
+    }
+
     // Phase C2 — intent-router SHADOW observation is NOT here anymore. This route
     // only ever saw the RESIDUE that fell through every deterministic composer lane
     // (and only when the SME didn't answer first), so the shadow log missed most
@@ -1268,10 +1285,15 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     if (!coach.isConfigured()) {
       // No Sheets read on the unconfigured path — answer from client context only.
       // A tired lifter still gets recovery routing (no engine signals available here,
-      // so the safe no-numbers recovery line), never a dead-end or hype.
+      // so the safe no-numbers recovery line), never a dead-end or hype. A
+      // recommendation-explanation turn is still grounded in the DISPLAYED recommendation
+      // the client forwarded (current_plan), so an outage never turns "why only 175 for
+      // bench?" into a generic advice fallback — it explains the displayed target
+      // deterministically (recovery still outranks it).
+      const recExplainOffline = coachExplanationGrounding.resolveRecommendationExplanation(message, clientCtx || {});
       const answer = tired
         ? buildTirednessRecoveryAnswer({ readiness: Array.isArray(clientCtx && clientCtx.readiness) ? clientCtx.readiness : null })
-        : deterministicAnswer([]);
+        : ((recExplainOffline && coachExplanationGrounding.buildDeterministicRecommendationExplanation(recExplainOffline.snapshot)) || deterministicAnswer([]));
       return standardSuccess(req, res, answer
         ? 'Coach chat unavailable — deterministic engine answer'
         : 'Coach chat unavailable — Gemini not configured', {
@@ -1282,6 +1304,13 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
 
     let allLog = [];
     let chatError = null;
+    // A recommendation-explanation turn ("why only 175 for bench") grounds the reply in the
+    // displayed recommendation. SEEDED from the client-forwarded context (current_plan)
+    // BEFORE the Sheets read, so the deterministic fallback still explains the displayed
+    // target even if the Sheets read (Promise.all below) throws — an infrastructure outage
+    // must not regress to the generic advice fallback. Upgraded to the richer server-context
+    // snapshot (label/readiness/history) once buildChatContext runs inside the try.
+    let recExplain = coachExplanationGrounding.resolveRecommendationExplanation(message, clientCtx || {});
     try {
       const [logR, allEffort, notesRows, constraintRows] = await Promise.all([
         getSheetRows(logSheetName),
@@ -1375,6 +1404,15 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
           configured: true, model: coach.coachModel(), source: 'engine'
         });
       }
+      // Recommendation-explanation grounding (2026-07-22 production, FR-20260722231349).
+      // "Why only 175 for bench?" asks why the DISPLAYED recommendation chose its numbers.
+      // narrowContextToPlanTurn cannot fix it — the challenged lift IS the lift being asked
+      // about, so filtering diagnostics to the target keeps its challenge. This lane grounds
+      // the reply in the displayed recommendation (target exercise + prescribed
+      // sets/reps/weight/RIR + engine reason) and DEMOTES the target's challenge so the
+      // model explains the prescription instead of substituting a benchmark critique. The
+      // snapshot is exposed for Coach_Shadow and reused by the deterministic fallback below.
+      recExplain = coachExplanationGrounding.resolveRecommendationExplanation(message, context);
       // Response-grounding RELEVANCE narrowing (2026-07-21 Failure 1). For an active
       // plan EXPLANATION ("why did you…"), filter the all-lift diagnostics (stalls,
       // memory_patterns) to the exercise the turn is actually about (abbreviations
@@ -1383,7 +1421,17 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // an answer about Seated Row. A broad-session review is left untouched (still gets
       // the full picture). No-op for every non-grounded turn. Applied AFTER the drift
       // shadow / recovery routing above, so observability sees the unmodified context.
-      const llmContext = coachResponseGrounding.narrowContextToPlanTurn(context, message, { discouraged });
+      const llmContext = recExplain
+        ? coachExplanationGrounding.narrowContextForRecommendationExplanation(context, recExplain.target, { discouraged })
+        : coachResponseGrounding.narrowContextToPlanTurn(context, message, { discouraged });
+      // Expose the trusted recommendation snapshot for the Coach_Shadow explanation path
+      // (session/recommendation snapshot, target exercise, engine decision, coaching
+      // strategy). res.locals is read only by the shadow's res.on('finish') hook; the reply
+      // is untouched. Absent on every non-recommendation-explanation turn.
+      if (recExplain) {
+        res.locals = res.locals || {};
+        res.locals.coachRecommendationGrounding = recExplain.snapshot;
+      }
       // Chat is interactive and the client waits 15s (CHAT_REPLY_TIMEOUT_MS), so give
       // Gemini more than the 8s default before aborting — a merely-SLOW (not-down)
       // response then lands instead of being killed early and dead-ending the lifter
@@ -1460,7 +1508,12 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // empty (the Sheets read itself failed); the fallback handles both.
       chatError = error.message;
     }
-    const answer = deterministicAnswer(allLog);
+    // When the model returned nothing (or threw) on a recommendation-explanation turn,
+    // answer deterministically FROM the displayed recommendation — the target prescription
+    // and the engine's readiness/label reason — never a stall/challenge paragraph and never
+    // an invented number. Falls back to the generic engine answer for every other turn.
+    const answer = (recExplain && coachExplanationGrounding.buildDeterministicRecommendationExplanation(recExplain.snapshot))
+      || deterministicAnswer(allLog);
     return standardSuccess(req, res, answer
       ? 'Coach chat — deterministic engine answer'
       : 'Coach chat failed — use fallback', {

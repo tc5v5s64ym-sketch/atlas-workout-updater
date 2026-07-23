@@ -103,6 +103,36 @@ function _packetReferent(packet) {
   return null;
 }
 
+// The recommendation-explanation grounding the route actually used to build the reply — a
+// bounded snapshot of the session/recommendation, the target exercise, the engine decision
+// (the prescription), and the coaching strategy. Recorded on the SHADOW RECORD (the
+// `[coach-turn-shadow]` log + the ring buffer), NOT on the canonical packet's
+// session/exercises/decision fields: an ExerciseIdentity needs an immutable registry key
+// that does not exist yet (H-11, Phase 5b), and claiming canonical packet facts the route
+// does not yet produce would OVERSTATE (the disease being cured, H-05/H-15). The Coach_Shadow
+// Sheet schema is unchanged — coachShadowSheet.buildRow serializes only its fixed columns and
+// never reads this field. Absent on every non-recommendation-explanation turn.
+function _summarizeGrounding(grounding) {
+  if (!grounding || typeof grounding !== 'object') return null;
+  const t = grounding.target && typeof grounding.target === 'object' ? grounding.target : {};
+  const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  const str = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+  return {
+    coaching_strategy: str(grounding.coaching_strategy),
+    recommendation_label: str(grounding.label),
+    fingerprint_lifts: grounding.fingerprint && Array.isArray(grounding.fingerprint.lifts) ? grounding.fingerprint.lifts.slice(0, 10) : [],
+    target: {
+      name: str(t.name),
+      weight: num(t.weight),
+      reps: num(t.reps),
+      sets: num(t.sets),
+      rir: t.rir == null ? null : num(t.rir),
+    },
+    readiness_count: Array.isArray(grounding.readiness) ? grounding.readiness.length : 0,
+    has_history: !!(grounding.history && grounding.history.last_date),
+  };
+}
+
 function _logShadow(record) {
   try { console.log(`[coach-turn-shadow] ${JSON.stringify(record)}`); }
   catch (_) { /* log-only best-effort */ }
@@ -135,6 +165,9 @@ function observe(params) {
         is_dispute: routeRef ? !!routeRef.is_dispute : false,
       },
       visible,
+      // The recommendation-explanation grounding the route used for this turn (target
+      // exercise, prescription, engine reason, coaching strategy). Null on every other turn.
+      grounding: _summarizeGrounding(p.grounding),
       trace: traceRec ? {
         valid: traceRec.valid,
         stages: traceRec.trace.stages.map((s) => ({ stage: s.stage, status: s.status })),
