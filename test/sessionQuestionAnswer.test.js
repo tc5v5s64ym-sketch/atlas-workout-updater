@@ -338,6 +338,26 @@ test('D3: a named lift, history, or advice framing defers to the existing lanes'
   assert.equal(answerCurrentExercisePrescription('should I increase the weight and reps?', ctx), null, 'advice → LLM');
 });
 
+test('D3: normal present-session phrasing is recognized, not just the anchored shape (Codex #1138 P2)', () => {
+  const ctx = sixExercisePlanCtx();
+  // A trailing present-session cue or a "should I do?" request suffix is still a bare
+  // prescription question scoped to the active lift — it must not fall through to the dump.
+  for (const q of [
+    'what weight and reps today?',
+    'what weight and how many reps should I do?',
+    'weight and reps for today?',
+    'what are the weight and reps right now?',
+    'what weight and reps should I be doing?',
+  ]) {
+    assert.equal(isCurrentExercisePrescriptionQuestion(q), true, `should own: ${q}`);
+    assert.deepEqual(answerCurrentExercisePrescription(q, ctx), { kind: 'answer', text: 'Bench Press: 230 lbs, 5 reps.' }, `scoped: ${q}`);
+  }
+  // …but a genuine ADVICE or off-topic framing whose content word survives the residue still defers.
+  for (const q of ['should I go heavier on weight and reps?', 'what weight and reps are better?', 'how much protein and how many reps today?', 'why the weight and reps?']) {
+    assert.equal(isCurrentExercisePrescriptionQuestion(q), false, `must defer: ${q}`);
+  }
+});
+
 test('D3: an ambiguous current lift asks which one; no active session defers', () => {
   const ambiguous = { current_plan: [{ name: 'Deadlift', weight: 245, reps: 7, sets: 3, rir: 2 }, { name: 'Leg Press', weight: 300, reps: 10, sets: 3, rir: 1 }] };
   assert.deepEqual(answerCurrentExercisePrescription('weight and reps?', ambiguous), { kind: 'clarify', text: 'For which lift — Deadlift or Leg Press?' });
