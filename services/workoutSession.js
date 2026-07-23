@@ -55,6 +55,11 @@ function _isNonNegInt(v) { return Number.isInteger(v) && v >= 0; }
  * and slots to [], and normalizes each slot (status→'pending', source→'planned',
  * sets_logged→0, sets_target→null, lift_code→null) like createActiveSession. Does
  * NOT validate.
+ *
+ * `discussion_referent` (D10): the canonical key of the lift the conversation is
+ * currently about, set at answer time so a bare correction resolves from ONE state
+ * read instead of the interim in-memory store + history scan. Optional + nullable;
+ * defaults to null. Not yet populated on the live route (that layers on later).
  */
 function buildWorkoutSession(params) {
   const p = _isPlainObject(params) ? params : {};
@@ -70,9 +75,10 @@ function buildWorkoutSession(params) {
     };
   });
   return {
-    schema_version: SCHEMA_VERSION,
-    session_id:     p.session_id != null ? p.session_id : null,
+    schema_version:      SCHEMA_VERSION,
+    session_id:          p.session_id != null ? p.session_id : null,
     slots,
+    discussion_referent: p.discussion_referent != null ? p.discussion_referent : null,
   };
 }
 
@@ -95,6 +101,13 @@ function validateWorkoutSession(session) {
   // session_id follows the explicit-null rule: present, null or a non-empty string.
   if (!_has(session, 'session_id')) errors.push('session_id: must be present (null or a non-empty string)');
   else if (session.session_id !== null && !_isNonEmptyString(session.session_id)) errors.push('session_id: must be a non-empty string or null');
+
+  // discussion_referent (D10) is OPTIONAL (absent is fine — an older/hand-built session omits
+  // it); when present it is null or a non-empty canonical key. Never required, so it never
+  // breaks a session literal that predates the field.
+  if (_has(session, 'discussion_referent') && session.discussion_referent !== null && !_isNonEmptyString(session.discussion_referent)) {
+    errors.push('discussion_referent: must be a non-empty string or null when present');
+  }
 
   if (!Array.isArray(session.slots)) {
     errors.push('slots: must be an array');
@@ -151,10 +164,11 @@ function isComplete(session) {
 // `liftCode` → `lift_code`; the client model carries no set tallies, so
 // `sets_logged` defaults to 0 and `sets_target` to null; `status`/`source` pass
 // through (they already use this contract's enums). Pure; validates clean.
-function fromActiveSession(active, { session_id = null } = {}) {
+function fromActiveSession(active, { session_id = null, discussion_referent = null } = {}) {
   const exercises = _isPlainObject(active) && Array.isArray(active.exercises) ? active.exercises : [];
   return buildWorkoutSession({
     session_id,
+    discussion_referent,
     slots: exercises.map((e) => {
       const ex = _isPlainObject(e) ? e : {};
       return {
