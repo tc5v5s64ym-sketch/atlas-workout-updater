@@ -43,6 +43,25 @@ describe('turnPrecedence — decideTurnPrecedence', () => {
     assert.equal(d.lane, LANES.SUBSTITUTION);
   });
 
+  it('an IMPERSONAL equipment report still substitutes even though it overlaps a malfunction aside (Codex P2)', () => {
+    // "not working" makes isConversationalAside fire, and isConstraintMessage also matches it,
+    // but the report does not address Atlas — so it must stay a constraint and substitute.
+    for (const m of ['the cable machine is not working', 'the rack is not working', "it's broken", 'is it broken']) {
+      const d = decideTurnPrecedence({ message: m });
+      assert.equal(d.allowSubstitution, true, `"${m}" is an equipment report — it must still substitute`);
+      assert.equal(d.lane, LANES.SUBSTITUTION);
+    }
+  });
+
+  it('an Atlas-directed malfunction that overlaps a constraint keyword is still vetoed', () => {
+    // Distinguishes the equipment report above from a genuine Atlas complaint.
+    for (const m of ['Are you broken?', 'you are not working', 'atlas you broke again']) {
+      const d = decideTurnPrecedence({ message: m });
+      assert.equal(d.allowSubstitution, false, `"${m}" addresses Atlas — it must not substitute`);
+      assert.equal(d.lane, LANES.ASIDE);
+    }
+  });
+
   it('an explicit substitute intent from the client is authoritative even without a constraint keyword', () => {
     const d = decideTurnPrecedence({ message: 'swap rdls out for bench press', intent: 'substitute' });
     assert.equal(d.lane, LANES.SUBSTITUTION);

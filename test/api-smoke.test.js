@@ -7574,6 +7574,22 @@ test('turn precedence ON: a genuine equipment constraint still substitutes', asy
   }
 });
 
+test('turn precedence ON: an IMPERSONAL equipment report still substitutes (Codex P2 — not vetoed as an aside)', async () => {
+  // "not working" makes isConversationalAside fire and isConstraintMessage match, but the
+  // report does not address Atlas — so it stays a constraint and the route still substitutes.
+  process.env.ATLAS_TURN_PRECEDENCE = 'on';
+  try {
+    const { response, body } = await requestJson('/api/suggest-substitute', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'the cable machine is not working', current_exercise: 'Bench Press' })
+    });
+    assert.equal(response.status, 200);
+    assert.ok(body.data.recommendation, 'an impersonal equipment report still yields a substitute');
+  } finally {
+    delete process.env.ATLAS_TURN_PRECEDENCE;
+  }
+});
+
 test('turn precedence ON: an explicit substitute intent still substitutes', async () => {
   process.env.ATLAS_TURN_PRECEDENCE = 'on';
   try {

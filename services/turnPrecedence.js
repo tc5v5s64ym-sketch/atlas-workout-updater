@@ -26,10 +26,13 @@
 // NEVER a substitution, even when it trips a constraint keyword by coincidence
 // ("Are you broken?" contains "broken"). A genuine substitution is an explicit substitute
 // intent from the client's deterministic classifier, or an equipment/exercise constraint
-// message ("the rack is taken", "bench is broken"). The aside guard in
-// coachExplanationGrounding vetoes itself whenever the message names a lift or a plan word
-// ("the bench is broken" contains "bench" → not an aside → a genuine constraint), so real
-// equipment constraints still substitute.
+// message ("the rack is taken", "bench is broken"). Two things keep a genuine equipment
+// report substituting: the aside guard in coachExplanationGrounding vetoes itself whenever
+// the message names a lift or a plan word ("the bench is broken" contains "bench" → not an
+// aside), and when an aside DOES overlap a bare constraint keyword the veto applies only if
+// the message addresses Atlas in the second person — so an impersonal report like "the cable
+// machine is not working" (an aside via "not working", also a constraint) is left to the
+// constraint path and still substitutes, while "Are you broken?" is vetoed.
 //
 // SCOPE OF THIS FIRST CONCERN. The decision is consumed by the substitution lane
 // (POST /api/suggest-substitute), behind the ATLAS_TURN_PRECEDENCE flag (default inert).
@@ -46,6 +49,14 @@
 
 const { isConversationalAside } = require('./coachExplanationGrounding');
 const { isConstraintMessage } = require('./constraintDetector');
+
+// A second-person address to Atlas ("are YOU broken?", "ATLAS you there?") is what separates
+// an Atlas-directed malfunction complaint (veto — FR turn 4) from an IMPERSONAL equipment
+// report ("the cable machine is not working", "the rack is broken") that isConversationalAside
+// also matches (its "not working" / "broken" alternations) and that isConstraintMessage
+// correctly recognizes. Only used to disambiguate the aside∩constraint overlap so a genuine
+// equipment report still substitutes.
+const ATLAS_ADDRESSED_RE = /\b(?:you|u|ur|your|you['’]?re|youre|atlas)\b/i;
 
 // The flag that gates route consumption of this decision. Default inert: absent/off ⇒ the
 // live routes behave exactly as before. The owner turns it on at the Phase-4 owner gate.
@@ -77,16 +88,23 @@ function decideTurnPrecedence(params) {
   const p = params && typeof params === 'object' ? params : {};
   const message = typeof p.message === 'string' ? p.message : '';
   const explicitIntent = p.intent === 'substitute';
+  const aside = isConversationalAside(message);
+  const constraint = isConstraintMessage(message);
 
-  // A conversational aside owns the turn over any coincidental constraint keyword. This is
-  // the required rule "a greeting or malfunction complaint cannot invoke substitution".
-  if (isConversationalAside(message)) {
-    return { lane: LANES.ASIDE, allowSubstitution: false, reason: 'greeting/presence/malfunction aside — not a substitution request' };
+  // A conversational aside owns the turn over a substitution — the required rule "a greeting
+  // or malfunction complaint cannot invoke substitution". But when it OVERLAPS a constraint
+  // keyword it must still yield to a genuine equipment report: an aside that is also a
+  // constraint only vetoes when it actually addresses Atlas in the second person
+  // ("Are you broken?"). An impersonal equipment report ("the cable machine is not working")
+  // is an aside AND a constraint but does NOT address Atlas, so it stays a constraint and
+  // still substitutes.
+  if (aside && (!constraint || ATLAS_ADDRESSED_RE.test(message))) {
+    return { lane: LANES.ASIDE, allowSubstitution: false, reason: 'greeting/presence/Atlas-directed malfunction aside — not a substitution request' };
   }
   if (explicitIntent) {
     return { lane: LANES.SUBSTITUTION, allowSubstitution: true, reason: 'explicit substitution intent' };
   }
-  if (isConstraintMessage(message)) {
+  if (constraint) {
     return { lane: LANES.SUBSTITUTION, allowSubstitution: true, reason: 'equipment/exercise constraint' };
   }
   return { lane: LANES.NONE, allowSubstitution: false, reason: 'no authoritative substitution signal' };
