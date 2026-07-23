@@ -50,6 +50,47 @@ describe('coachTurnPacketShadow — assembleShadowPacket', () => {
   });
 });
 
+describe('coachTurnPacketShadow — assembleShadowPacket embeds the canonical session (H-08A)', () => {
+  const { buildCanonicalSessionSnapshot } = require('../services/coachSessionSnapshot');
+  const session = () => buildCanonicalSessionSnapshot({ active_session: { exercises: [
+    { name: 'Back Squat', liftCode: 'SQ', status: 'completed', source: 'planned' },
+    { name: 'Bench Press', liftCode: 'BENCH', status: 'pending', source: 'substituted' },
+    { name: 'Bench Press', liftCode: 'BENCH', status: 'pending', source: 'planned' },
+  ] } });
+
+  it('a valid canonical session produces packet.session !== null, still schema-valid', () => {
+    const { packet, valid } = packetShadow.assembleShadowPacket({ turnId: 'turn:x_1_a', profileGoal: 'strength', session: session() });
+    assert.equal(valid, true);
+    assert.notEqual(packet.session, null, 'the canonical session is embedded');
+    assert.equal(validateCoachTurnPacket(packet).valid, true);
+    // slot identity survives into the packet: order + duplicate slots preserved.
+    assert.deepEqual(packet.session.slots.map((s) => s.name), ['Back Squat', 'Bench Press', 'Bench Press']);
+    assert.equal(packet.session.slots[0].status, 'completed');
+    assert.equal(packet.session.slots[1].source, 'substituted');
+  });
+
+  it('embedding the session leaves exercises/decision/safety/closeout honestly empty', () => {
+    const { packet } = packetShadow.assembleShadowPacket({ turnId: 'turn:x_1_b', profileGoal: 'strength', session: session() });
+    assert.deepEqual(packet.exercises, []);
+    assert.equal(packet.decision, null);
+    assert.equal(packet.safety, null);
+    assert.equal(packet.closeout, null);
+  });
+
+  it('an absent session keeps packet.session === null (unchanged prior behavior)', () => {
+    const { packet, valid } = packetShadow.assembleShadowPacket({ turnId: 'turn:x_1_c', profileGoal: 'strength' });
+    assert.equal(valid, true);
+    assert.equal(packet.session, null);
+  });
+
+  it('an INVALID session is honestly dropped to null (never a half-populated packet.session)', () => {
+    const bad = { schema_version: 1, session_id: null, slots: [{ name: 'Bench', status: 'bogus' }] };
+    const { packet, valid } = packetShadow.assembleShadowPacket({ turnId: 'turn:x_1_d', profileGoal: 'strength', session: bad });
+    assert.equal(packet.session, null, 'a session that does not validate is not embedded');
+    assert.equal(valid, true, 'the packet itself stays valid (session honestly null)');
+  });
+});
+
 describe('coachTurnPacketShadow — summarizeVisible (bounded/redacted)', () => {
   it('reports presence and shape only — never the prose text', () => {
     const s = packetShadow.summarizeVisible({ data: { message: 'Nice work on that squat PR.', source: 'gemini', configured: true, note_tier: null, kind: 'set' } });
@@ -117,6 +158,20 @@ describe('coachTurnPacketShadow — observe (packet vs visible side by side)', (
     assert.deepEqual(rec.trace.stages.map((s) => s.stage), ['intent', 'rendered_output']);
     // newest-last ring buffer
     assert.equal(packetShadow.getShadowLog().length, 1);
+  });
+
+  it('records embedded.session:true when a canonical session was embedded (H-08A)', () => {
+    const { buildCanonicalSessionSnapshot } = require('../services/coachSessionSnapshot');
+    const session = buildCanonicalSessionSnapshot({ active_session: { exercises: [
+      { name: 'Bench Press', liftCode: 'BENCH', status: 'pending', source: 'planned' },
+    ] } });
+    const assembled = packetShadow.assembleShadowPacket({ turnId: 'turn:x_9_z', profileGoal: 'strength', session });
+    const rec = packetShadow.observe({ trace: TRACE_REC, assembled, visible: { data: { message: 'x' } } });
+    assert.equal(rec.packet_valid, true);
+    assert.equal(rec.embedded.session, true, 'the shadow record reports the embedded session');
+    // the other embedded facts stay honestly empty
+    assert.equal(rec.embedded.exercises, 0);
+    assert.equal(rec.embedded.decision, false);
   });
 
   it('carries the route referent pick vs the packet referent (null until Phase 4)', () => {

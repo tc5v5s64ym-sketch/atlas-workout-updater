@@ -6245,6 +6245,20 @@ function routeMessageToCoach(text) {
       isComplete: remaining.length === 0,
     };
   }
+  // Phase 4 H-08A — carry the AUTHORITATIVE client active session (the same canonical
+  // getCanonicalSession() model the save payload/confirmation card/bug report derive from) so
+  // the server can build the canonical WorkoutSession from real slot identity instead of
+  // reverse-engineering it from the lossy plan_state name arrays. Additive + bounded: ONLY the
+  // four contract fields per slot (name, liftCode, status, source) — no set details, prose,
+  // history, ids, or secrets. Sent only when a real session exists; old clients omit it and the
+  // server keeps working (packet.session stays null). Read-only; the server consumes it only in
+  // the flag-gated CoachTurnPacket shadow and never changes its answer because of it.
+  const canonical = (typeof getCanonicalSession === 'function') ? getCanonicalSession() : null;
+  if (canonical && Array.isArray(canonical.exercises) && canonical.exercises.length) {
+    context.active_session = {
+      exercises: canonical.exercises.map(e => ({ name: e.name, liftCode: e.liftCode, status: e.status, source: e.source })),
+    };
+  }
   // Defer one tick so chat.js's submit listener paints the user bubble first —
   // without this, the Atlas "Thinking…" bubble appends before the user bubble.
   setTimeout(() => {

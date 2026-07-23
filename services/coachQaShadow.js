@@ -17,14 +17,26 @@
 // TRUTHFULNESS: it claims only the stages it can prove from the served response — the
 // model ran (model_response 'ok') and the register validator ran (validator_result 'ok')
 // ONLY when the answer came back tagged source 'gemini'; an errored generation is
-// 'error'; everything deterministic is 'skipped'. parser/session_snapshot/engine_decision/
+// 'error'; everything deterministic is 'skipped'. parser/engine_decision/
 // knowledge_retrieval/coaching_strategy/write_proof are never claimed — they surface as
 // `missing`. Understating is safe; overstating is the disease being cured (H-05/H-15).
+//
+// PHASE 4 H-08A — the canonical session crosses the /api/coach/chat boundary here. When the
+// request forwards the live client active-session snapshot (context.active_session), this
+// boundary builds + validates the canonical WorkoutSession once (buildCanonicalSessionSnapshot)
+// and embeds it in the shadow packet as packet.session, recording session_snapshot as a
+// genuinely-present stage. This is gated by the Phase-4 ATLAS_TURN_PRECEDENCE flag (default
+// inert): flag off ⇒ packet.session stays null and the trace is byte-identical to before.
+// It records session_snapshot ONLY — it never claims engine_decision merely because session
+// state exists (that spine stage is still route-local, H-03/Phase 4). Shadow-only and
+// response-invisible throughout: the visible coach reply is unchanged in either flag state.
 
 const interactionTraceShadow = require('./interactionTraceShadow');
 const coachTurnPacketShadow = require('./coachTurnPacketShadow');
 const coachResponseSheet = require('./coachResponseSheet');
 const { getProfileGoal } = require('./profileGoal');
+const { buildCanonicalSessionSnapshot } = require('./coachSessionSnapshot');
+const { isTurnPrecedenceEnabled } = require('./turnPrecedence');
 
 // The two Q&A routes carry the final visible answer in different fields: /api/coach/chat
 // uses data.message, /api/coach/ask uses data.answer. Normalize to the Coach_Response /
@@ -85,6 +97,16 @@ function observeQaTurn(req, res, opts) {
       const modelStatus = hasError ? 'error' : (modelRan ? 'ok' : 'skipped');
       // The register validator runs only on the /chat gemini path.
       const validatorRan = !hasError && data.source === 'gemini';
+      const reqBody = req.body && typeof req.body === 'object' ? req.body : {};
+      const ctx = reqBody.context && typeof reqBody.context === 'object' ? reqBody.context : {};
+      // Phase 4 H-08A — the canonical client WorkoutSession crosses the boundary here. Build
+      // (+validate) it ONCE from the additive context.active_session snapshot, gated by the
+      // ATLAS_TURN_PRECEDENCE flag: flag off ⇒ null ⇒ packet.session stays null and the trace
+      // is byte-identical to before. null when the field is absent/invalid (old clients,
+      // /api/coach/ask, or a malformed snapshot) — the honest missing-session result.
+      const canonicalSession = isTurnPrecedenceEnabled()
+        ? buildCanonicalSessionSnapshot(ctx)
+        : null;
       // Recommendation-explanation grounding — the route stashes the trusted recommendation
       // snapshot on res.locals for a "why did the recommendation choose X" turn. When present
       // the route GENUINELY assembled a session/recommendation snapshot, consumed the engine's
@@ -94,8 +116,14 @@ function observeQaTurn(req, res, opts) {
       // read-only route still bypasses packet truth there (the divergence report's headline).
       const grounding = res.locals && typeof res.locals.coachRecommendationGrounding === 'object'
         ? res.locals.coachRecommendationGrounding : null;
-      if (grounding) {
+      // session_snapshot is genuinely present when a canonical WorkoutSession was assembled for
+      // this turn (H-08A) OR a recommendation grounding was built. Do NOT mark engine_decision
+      // merely because session state exists — that stage stays route-local until Phase 4 wires
+      // the canonical decision (H-03).
+      if (canonicalSession || grounding) {
         turn.stage('session_snapshot', 'ok');
+      }
+      if (grounding) {
         turn.stage('engine_decision', 'ok');
         turn.stage('coaching_strategy', 'ok');
       }
@@ -103,14 +131,12 @@ function observeQaTurn(req, res, opts) {
       turn.stage('validator_result', validatorRan ? 'ok' : 'skipped');
       turn.stage('rendered_output', res.statusCode >= 500 ? 'error' : 'ok', req.requestId || null);
       const traceRecord = turn.finish();
-      const assembled = coachTurnPacketShadow.assembleShadowPacket({ turnId: turn.turnId, profileGoal: getProfileGoal() });
+      const assembled = coachTurnPacketShadow.assembleShadowPacket({ turnId: turn.turnId, profileGoal: getProfileGoal(), session: canonicalSession });
       // The route stashes its chosen discussion referent on res.locals (the dispute
       // resolver's / discussed-lift pick). Forward it so the shadow record can compare it to
       // the packet's referent — the Phase-4 divergence signal. Absent on non-referent turns.
       const routeReferent = res.locals && typeof res.locals.coachTurnReferent === 'object' ? res.locals.coachTurnReferent : null;
       coachTurnPacketShadow.observe({ trace: traceRecord, assembled, visible, routeReferent, grounding });
-      const reqBody = req.body && typeof req.body === 'object' ? req.body : {};
-      const ctx = reqBody.context && typeof reqBody.context === 'object' ? reqBody.context : {};
       coachResponseSheet.persist({
         turnId: turn.turnId,
         sessionId: reqBody.sessionId || reqBody.session_id || ctx.session_id || ctx.sessionId || null,
