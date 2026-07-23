@@ -45,7 +45,7 @@ const { deriveChatCoachMode } = require('./chatCoachMode');
 const coachResponseGrounding = require('./coachResponseGrounding');
 
 const { normalize, nameKey, canonicalKey, namedLiftsInMessage, extractClaimedTargets,
-  hasActiveSession, isPlanModificationRequest, isFactualPlanDispute } = coachResponseGrounding;
+  hasActiveSession, isPlanModificationRequest, isFactualPlanDispute, isBroadReview } = coachResponseGrounding;
 
 // ── small utilities ──────────────────────────────────────────────────────────
 
@@ -261,14 +261,18 @@ function resolveRecommendationExplanation(message, context) {
 // clarification drew back the unrelated Bench-Press-underperformance challenge because the turn
 // matches neither the recommendation-explanation nor the plan-grounded narrowing lane, so the
 // all-lift diagnostics + `coach_mode:'challenge'` reached the model unchanged. Recognized as a
-// coherent metacommunicative-correction category (not an open-ended phrase list); a broad-session
-// review is EXCLUDED — it legitimately wants the full picture, so a politely-worded review ("I was
-// just wondering how my training is going") is not treated as a bare clarification.
-const CLARIFICATION_RE = /\b(?:i(?:'m| am| was)?\s+(?:just|only|merely|simply)\s+(?:ask(?:ing|ed)?|wonder(?:ing|ed)?|sa(?:y|ying)|check(?:ing)?|curious)|just\s+(?:ask(?:ing)|wonder(?:ing)|check(?:ing)|curious)|(?:i\s+)?meant\b|i\s+mean\b|not\s+what\s+i\s+(?:asked|meant|said)|didn'?t\s+ask|that'?s\s+not\s+my\s+question)\b/;
+// coherent SCOPE-CORRECTION category (not an open-ended phrase list) — the athlete narrowing what
+// they ASKED ("just asking / I only asked / I meant / not what I asked"). Deliberately NARROW: a
+// hedged review QUESTION ("I was just wondering if anything is wrong") is NOT a scope correction,
+// so "wondering/checking/curious" are excluded — it stays a question. A broad-session review is
+// EXCLUDED too, via the ESTABLISHED broad-review classifier (coachResponseGrounding.isBroadReview,
+// not a narrower local copy), so genuine full-picture reviews ("any problems?", "is anything
+// wrong?") keep their diagnostics (Codex #1141).
+const CLARIFICATION_RE = /\b(?:i(?:'m| am| was)?\s+(?:just|only|merely|simply)\s+(?:ask(?:ing|ed)?|sa(?:y|ying))|just\s+ask(?:ing|ed)|(?:i\s+)?meant\b|i\s+mean\b|not\s+what\s+i\s+(?:asked|meant|said)|didn'?t\s+ask|that'?s\s+not\s+my\s+question)\b/;
 
 function isClarificationTurn(message) {
   const m = normalize(message);
-  if (!m || BROAD_REVIEW_RE.test(m)) return false; // a broad review keeps the full picture
+  if (!m || isBroadReview(m)) return false; // a broad review keeps the full picture (established guard)
   return CLARIFICATION_RE.test(m);
 }
 
