@@ -1,8 +1,8 @@
 <!--
 Atlas Merge Card — complete every field. Missing, stale, skipped, errored,
-unavailable, or incomplete required GitHub checks are failures. Codex comments
-are advisory; no separate review status, reviewer account, marker, or owner merge
-click is required for a routine authorized PR.
+unavailable, or incomplete required GitHub checks are failures. Independent agent
+review comments are advisory; no separate review status, reviewer account, marker,
+or owner merge click is required for a routine authorized PR.
 -->
 
 ## 🟦 Atlas Merge Card
@@ -16,11 +16,11 @@ click is required for a routine authorized PR.
 | **Files / categories touched** | <!-- concise --> |
 | **Current-state verdict** | <!-- STILL BROKEN / ALREADY FIXED / PARTIALLY FIXED / FIXED BUT UNTESTED / STALE-SUPERSEDED / NEEDS OWNER APP-TEST --> |
 | **Tests / hard gates** | <!-- exact commands/checks + results --> |
-| **Advisory findings** | <!-- Codex/optional clean review: fixed / non-issue / none --> |
+| **Advisory findings** | <!-- independent agent/optional clean review: fixed / non-issue / none --> |
 | **ChatGPT Atlas Contract Review** | <!-- NON-BLOCKING / READY / BLOCKING / not risk-triggered --> |
 | **Owner authorization required** | <!-- No, or exact reserved category and status --> |
 | **Live validation** | <!-- evidence/script needed, or n/a --> |
-| **Merge authority** | <!-- Claude merges exact passing head / blocked on owner authorization --> |
+| **Merge authority** | <!-- active builder merges exact passing head / blocked on owner authorization --> |
 
 ---
 
