@@ -43,18 +43,32 @@ describe('turnPrecedence — decideTurnPrecedence', () => {
     assert.equal(d.lane, LANES.SUBSTITUTION);
   });
 
-  it('an IMPERSONAL equipment report still substitutes even though it overlaps a malfunction aside (Codex P2)', () => {
+  it('an IMPERSONAL equipment report with a NAMED referent still substitutes even though it overlaps a malfunction aside (Codex P2)', () => {
     // "not working" makes isConversationalAside fire, and isConstraintMessage also matches it,
-    // but the report does not address Atlas — so it must stay a constraint and substitute.
-    for (const m of ['the cable machine is not working', 'the rack is not working', "it's broken", 'is it broken']) {
+    // but the report names a concrete noun subject (a cable machine, a rack) — no ambiguous
+    // pronoun referent — so it must stay a constraint and substitute.
+    for (const m of ['the cable machine is not working', 'the rack is not working']) {
       const d = decideTurnPrecedence({ message: m });
-      assert.equal(d.allowSubstitution, true, `"${m}" is an equipment report — it must still substitute`);
+      assert.equal(d.allowSubstitution, true, `"${m}" is a named equipment report — it must still substitute`);
       assert.equal(d.lane, LANES.SUBSTITUTION);
     }
   });
 
+  it('an AMBIGUOUS pronoun-only malfunction fails closed — no named exercise/equipment referent (Phase-4 hardening)', () => {
+    // "it's broken" / "is it broken?" trip isConstraintMessage (/\bbroken\b/) and
+    // isConversationalAside (the malfunction alternations), but their only referent is the bare
+    // pronoun "it" — which could mean the equipment OR Atlas itself (especially right after an
+    // incorrect answer). With no authoritative referent, a plan-changing swap must NOT be
+    // authorized on a guess: the turn fails closed and the client falls through to the coach.
+    for (const m of ["it's broken", 'is it broken', 'is it broken?', 'it is broken']) {
+      const d = decideTurnPrecedence({ message: m });
+      assert.equal(d.allowSubstitution, false, `"${m}" is an ambiguous pronoun-only malfunction — it must not substitute`);
+      assert.equal(d.lane, LANES.ASIDE);
+    }
+  });
+
   it('an Atlas-directed malfunction that overlaps a constraint keyword is still vetoed', () => {
-    // Distinguishes the equipment report above from a genuine Atlas complaint.
+    // Distinguishes the named equipment report above from a genuine Atlas complaint.
     for (const m of ['Are you broken?', 'you are not working', 'atlas you broke again']) {
       const d = decideTurnPrecedence({ message: m });
       assert.equal(d.allowSubstitution, false, `"${m}" addresses Atlas — it must not substitute`);

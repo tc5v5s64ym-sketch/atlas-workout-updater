@@ -20,19 +20,32 @@
 // lane intercepted upstream.
 //
 // THE DECISION. `decideTurnPrecedence` is the single authority for "does this message
-// authoritatively request a substitution?" It composes the EXISTING authoritative
-// classifiers (it introduces no new phrase regex — that would just be another route-local
-// patch): a conversational aside (greeting / presence-check / malfunction complaint) is
-// NEVER a substitution, even when it trips a constraint keyword by coincidence
-// ("Are you broken?" contains "broken"). A genuine substitution is an explicit substitute
-// intent from the client's deterministic classifier, or an equipment/exercise constraint
-// message ("the rack is taken", "bench is broken"). Two things keep a genuine equipment
-// report substituting: the aside guard in coachExplanationGrounding vetoes itself whenever
-// the message names a lift or a plan word ("the bench is broken" contains "bench" → not an
-// aside), and when an aside DOES overlap a bare constraint keyword the veto applies only if
-// the message addresses Atlas in the second person — so an impersonal report like "the cable
-// machine is not working" (an aside via "not working", also a constraint) is left to the
-// constraint path and still substitutes, while "Are you broken?" is vetoed.
+// authoritatively request a substitution?" It leans on the EXISTING authoritative classifiers
+// (isConversationalAside, isConstraintMessage) plus the parser's named-lift recognition
+// (messageNamesALift), and owns ONE narrow disambiguator regex for the ambiguity they cannot
+// resolve on their own (documented at AMBIGUOUS_PRONOUN_REFERENT_RE below). A conversational
+// aside (greeting / presence-check / malfunction complaint) is NEVER a substitution, even when
+// it trips a constraint keyword by coincidence ("Are you broken?" contains "broken"). A genuine
+// substitution is an explicit substitute intent from the client's deterministic classifier, or
+// an equipment/exercise constraint message ("the rack is taken", "bench is broken").
+//
+// Three things keep a genuine equipment report substituting while ambiguity fails closed. The
+// aside guard in coachExplanationGrounding vetoes ITSELF whenever the message names a lift or a
+// plan word ("the bench is broken" contains "bench" → not an aside). When an aside DOES overlap
+// a bare constraint keyword, the overlap yields to the constraint path only when the message
+// carries an AUTHORITATIVE REFERENT — the parser recognizes a lift/equipment, or the malfunction
+// names a concrete noun subject rather than a bare ambiguous pronoun. So "the cable machine is
+// not working" (an aside via "not working", also a constraint, no ambiguous pronoun) still
+// substitutes, while "Are you broken?", "you are not working", "it's broken", and "is it broken?"
+// — whose only referent is a bare pronoun that could mean Atlas OR the equipment — fail closed.
+//
+// PHASE-4 HARDENING (this concern). The prior disambiguator vetoed only a SECOND-PERSON address
+// ("are YOU broken?"), which let the IMPERSONAL ambiguous pronoun through: "it's broken" and
+// "is it broken?" reached the constraint path and produced a plan-changing swap on a guess. In
+// conversation those phrases often refer to Atlas itself (particularly after an incorrect
+// answer), so until `discussion_referent` becomes a canonical CoachTurnPacket field later in
+// Phase 4, an ambiguous pronoun-only malfunction must UNDER-CALL — decline the substitution —
+// rather than fabricate an equipment referent.
 //
 // SCOPE OF THIS FIRST CONCERN. The decision is consumed by the substitution lane
 // (POST /api/suggest-substitute), behind the ATLAS_TURN_PRECEDENCE flag (default inert).
@@ -49,14 +62,24 @@
 
 const { isConversationalAside } = require('./coachExplanationGrounding');
 const { isConstraintMessage } = require('./constraintDetector');
+const { messageNamesALift, normalize } = require('./coachResponseGrounding');
 
-// A second-person address to Atlas ("are YOU broken?", "ATLAS you there?") is what separates
-// an Atlas-directed malfunction complaint (veto — FR turn 4) from an IMPERSONAL equipment
-// report ("the cable machine is not working", "the rack is broken") that isConversationalAside
-// also matches (its "not working" / "broken" alternations) and that isConstraintMessage
-// correctly recognizes. Only used to disambiguate the aside∩constraint overlap so a genuine
-// equipment report still substitutes.
-const ATLAS_ADDRESSED_RE = /\b(?:you|u|ur|your|you['’]?re|youre|atlas)\b/i;
+// The ONE narrow disambiguator this module owns, used ONLY to resolve the aside∩constraint
+// overlap (a message that is both a conversational aside AND trips a constraint keyword). It
+// recognizes a malfunction predicated on a BARE AMBIGUOUS PRONOUN whose referent is not a named
+// exercise or equipment:
+//   • the IMPERSONAL "it" — "it's broken", "is it broken?" — which could mean the equipment OR
+//     Atlas itself; and
+//   • a SECOND-PERSON address to Atlas — "you", "u", "ur", "your", "atlas" — "are you broken?",
+//     "you are not working".
+// Either way there is no authoritative referent for a plan-changing swap, so the turn fails
+// closed. A GENUINE report names a concrete noun subject ("the cable machine is not working",
+// "the rack is not working") that matches none of these tokens and is left to the constraint
+// path, and the parser's messageNamesALift ("the bench is broken") is an authoritative referent
+// that overrides this test entirely. Erring toward the pronoun (fail closed) is the required
+// under-call: ambiguity must never fabricate an equipment referent. Superseded later in Phase 4
+// when `discussion_referent` becomes a canonical CoachTurnPacket field.
+const AMBIGUOUS_PRONOUN_REFERENT_RE = /\b(?:it|its|you|youre|u|ur|your|atlas)\b/i;
 
 // The flag that gates route consumption of this decision. Default inert: absent/off ⇒ the
 // live routes behave exactly as before. The owner turns it on at the Phase-4 owner gate.
@@ -91,18 +114,32 @@ function decideTurnPrecedence(params) {
   const aside = isConversationalAside(message);
   const constraint = isConstraintMessage(message);
 
-  // A conversational aside owns the turn over a substitution — the required rule "a greeting
-  // or malfunction complaint cannot invoke substitution". But when it OVERLAPS a constraint
-  // keyword it must still yield to a genuine equipment report: an aside that is also a
-  // constraint only vetoes when it actually addresses Atlas in the second person
-  // ("Are you broken?"). An impersonal equipment report ("the cable machine is not working")
-  // is an aside AND a constraint but does NOT address Atlas, so it stays a constraint and
-  // still substitutes.
-  if (aside && (!constraint || ATLAS_ADDRESSED_RE.test(message))) {
-    return { lane: LANES.ASIDE, allowSubstitution: false, reason: 'greeting/presence/Atlas-directed malfunction aside — not a substitution request' };
+  // AUTHORITATIVE REFERENT vs AMBIGUOUS PRONOUN. The parser recognizing a named lift/equipment
+  // (messageNamesALift — "the bench is broken", "the squat rack is broken") is authoritative and
+  // always overrides the pronoun test. Absent that, an `ambiguousReferent` is a constraint whose
+  // only referent is a bare ambiguous pronoun ("it"/second-person Atlas) — no concrete noun to
+  // point a swap at. A genuine impersonal report ("the cable machine is not working") names a
+  // concrete noun that matches none of the pronoun tokens, so it is NOT ambiguous.
+  const namedReferent = messageNamesALift(message);
+  const ambiguousReferent = !namedReferent && AMBIGUOUS_PRONOUN_REFERENT_RE.test(normalize(message));
+
+  // (1) A conversational aside owns the turn: a greeting / presence-check / malfunction complaint
+  //     is never a substitution. When it overlaps a constraint keyword it still yields to a
+  //     GENUINE (named/concrete) report, but fails closed on an ambiguous one.
+  if (aside && (!constraint || ambiguousReferent)) {
+    return { lane: LANES.ASIDE, allowSubstitution: false, reason: 'greeting/presence/ambiguous-referent malfunction aside — not a substitution request' };
   }
+  // (2) An explicit substitution intent from the client's deterministic classifier is
+  //     authoritative even without a constraint keyword ("give me something else").
   if (explicitIntent) {
     return { lane: LANES.SUBSTITUTION, allowSubstitution: true, reason: 'explicit substitution intent' };
+  }
+  // (3) A constraint message substitutes ONLY with an authoritative referent. An ambiguous
+  //     pronoun-only malfunction the aside classifier did not recognize ("it is broken") still
+  //     fails closed here rather than fabricate an equipment referent — the required under-call
+  //     until `discussion_referent` becomes canonical later in Phase 4.
+  if (constraint && ambiguousReferent) {
+    return { lane: LANES.ASIDE, allowSubstitution: false, reason: 'ambiguous pronoun-only malfunction — no authoritative referent for a substitution' };
   }
   if (constraint) {
     return { lane: LANES.SUBSTITUTION, allowSubstitution: true, reason: 'equipment/exercise constraint' };

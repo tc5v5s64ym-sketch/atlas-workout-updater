@@ -7603,3 +7603,42 @@ test('turn precedence ON: an explicit substitute intent still substitutes', asyn
     delete process.env.ATLAS_TURN_PRECEDENCE;
   }
 });
+
+// ── Phase 4 hardening: an AMBIGUOUS pronoun-only malfunction must not authorize a swap ──
+// "it's broken" / "is it broken?" trip isConstraintMessage (/\bbroken\b/) but their only referent
+// is the bare pronoun "it" — which could mean the equipment OR Atlas itself, especially right
+// after an incorrect answer. With the flag ON one authoritative decision declines the swap so the
+// client falls through to the coach; with the flag OFF the prior (unsafe) behavior is preserved,
+// proving the flag gates the change and that flag-off is byte-identical to pre-Phase-4.
+
+test('turn precedence ON: an ambiguous pronoun-only malfunction yields NO substitution (Phase-4 hardening)', async () => {
+  const before = fakeSheetsState.appendCalls.length;
+  process.env.ATLAS_TURN_PRECEDENCE = 'on';
+  try {
+    for (const message of ["it's broken", 'is it broken?', 'it is broken']) {
+      const { response, body } = await requestJson('/api/suggest-substitute', {
+        method: 'POST',
+        body: JSON.stringify({ message, current_exercise: 'Bench Press' })
+      });
+      assert.equal(response.status, 200);
+      assert.equal(body.data.recommendation, null, `"${message}" is ambiguous — it must not invoke a substitution`);
+      assert.equal(body.data.turn_precedence.lane, 'aside', `"${message}" routes to the coach, not the substitute lane`);
+    }
+  } finally {
+    delete process.env.ATLAS_TURN_PRECEDENCE;
+  }
+  assert.equal(fakeSheetsState.appendCalls.length, before, 'suggest-substitute never writes');
+});
+
+test('turn precedence OFF (default): an ambiguous pronoun-only malfunction still substitutes — prior behavior preserved', async () => {
+  const before = fakeSheetsState.appendCalls.length;
+  delete process.env.ATLAS_TURN_PRECEDENCE;
+  const { response, body } = await requestJson('/api/suggest-substitute', {
+    method: 'POST',
+    body: JSON.stringify({ message: "it's broken", current_exercise: 'Bench Press' })
+  });
+  assert.equal(response.status, 200);
+  assert.ok(body.data.recommendation, 'flag off ⇒ the constraint keyword still yields a substitution (unchanged)');
+  assert.equal(body.data.turn_precedence, undefined, 'flag off ⇒ no turn_precedence envelope is emitted');
+  assert.equal(fakeSheetsState.appendCalls.length, before, 'suggest-substitute never writes');
+});
