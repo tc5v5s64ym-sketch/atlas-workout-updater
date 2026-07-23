@@ -15,4 +15,4 @@ This file adapts tool-specific wording only. It defines no independent product, 
 
 Use `agent/<concern>` for new branches regardless of builder. Do not continue another agent's stale branch without first verifying current `main`, open PRs, and the Current-State Verification Gate.
 
-At a glance: run `npm run atlas:status` (`-- --json` for machine output). For the newest genuine owner app session, run `npm run atlas:review-live` (`-- --json`).
+At a glance: run `npm run atlas:status` (`-- --json` for machine output). The same bounded, redacted status is available at `GET /.well-known/atlas-status.json`; see [`docs/ATLAS_OPERATIONS_CONTRACT.md`](docs/ATLAS_OPERATIONS_CONTRACT.md). No Sheet ID or tab names need to be supplied. For the newest genuine owner app session, run `npm run atlas:review-live` (`-- --json`).
