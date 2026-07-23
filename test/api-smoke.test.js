@@ -1269,6 +1269,33 @@ test('turn precedence OFF (default): the warm-up question still gets the set-cou
   }
 });
 
+test('turn precedence ON, model DOWN: a warm-up question degrades honestly, never to a set-count (Codex #1140 P2)', async () => {
+  // With Gemini unconfigured the model-down fallback (deterministicAnswer → buildSessionQuestionAnswer)
+  // would otherwise still see "sets" + the plan and return "Bench Press: 3 sets." — the deferral
+  // must carry into that path too, so the warm-up turn gets an honest "unavailable", never a wrong count.
+  process.env.ATLAS_TURN_PRECEDENCE = 'on';
+  fakeCoachState.configured = false;
+  try {
+    const { response, body } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'No warm up sets for bench?', context: D4_BENCH_CTX })
+    });
+    assert.equal(response.status, 200);
+    assert.equal(body.data.configured, false);
+    assert.equal(body.data.message, null, 'a warm-up question must not regress to a set-count on the model-down path');
+    // control: with the flag OFF, the same unconfigured turn still restates the count (unchanged).
+    process.env.ATLAS_TURN_PRECEDENCE = '';
+    const off = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'No warm up sets for bench?', context: D4_BENCH_CTX })
+    });
+    assert.equal(off.body.data.message, 'Bench Press today: 3 sets.', 'flag off ⇒ model-down path unchanged');
+  } finally {
+    delete process.env.ATLAS_TURN_PRECEDENCE;
+    fakeCoachState.configured = false;
+  }
+});
+
 // ── Slice 3: recovery routing — a tired lifter never gets motivation hype ──────
 const HYPE = /push through|you('?| )ve got this|you got this|no excuses|grind it out|dig deep|beast mode|crush it|let'?s go champ/i;
 

@@ -1303,6 +1303,13 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     // outage no longer turns workout-state questions into "Coach is unavailable".
     // logRowsForTarget supplies recommendNextSet history; [] when Sheets weren't read.
     const deterministicAnswer = (logRowsForTarget) => {
+      // D4 (model-down path): a warm-up question must NOT regress to the working-set-count
+      // restatement here either — buildSessionQuestionAnswer below would see "sets" + the active
+      // plan and return "Bench Press: 3 sets." for "No warm up sets for bench?". When the flag
+      // recognizes the warm-up turn, degrade HONESTLY to no deterministic answer (the route then
+      // emits "coach unavailable") rather than a wrong set-count — the warm-up ramp is a Phase-6
+      // capability, never a guess (Codex #1140 P2). Off ⇒ warmupDefer is false ⇒ unchanged.
+      if (warmupDefer) return null;
       const close = buildSessionCloseAnswer(message, planStateFromContext(clientCtx));
       if (close) return close;
       const valueAnswer = buildSessionQuestionAnswer(message, {
