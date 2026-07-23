@@ -82,6 +82,13 @@ function entryName(entry) {
 const WHY_RE = /\bwhy\b/;
 const MAGNITUDE_RE = /\b(only|just|so\s+(?:light|heavy|low|high|easy|hard|little|much|few|many)|too\s+(?:light|heavy|low|high|easy|hard|much|little)|light(?:er)?|heav(?:y|ier)|low(?:er)?|high(?:er)?|few(?:er)?)\b|\d/;
 
+// A PAST-tense / history question ("why did I do 175 for bench last week?") is about a
+// prior session, NOT the currently displayed recommendation — history owns it. Mirrors
+// sessionQuestionAnswer.HISTORY_RE (kept in sync) plus the athlete-past-action forms
+// ("did i do/hit/…", "yesterday", "ago"), so a number-bearing history question is never
+// hijacked into the current-recommendation lane and answered from an unrelated plan.
+const HISTORY_PAST_RE = /\b(last (?:time|week|session|month|year|workout|training)|previous(?:ly)?|history|before|used to|yesterday|ago|earlier|the other (?:day|week)|did i (?:do|hit|get|use|run|bench|squat|press|lift|pull|row|curl)|when i (?:did|last))\b/;
+
 // A broad-session review legitimately wants the full diagnostics — never narrowed to a
 // single lift. Mirrors coachResponseGrounding's broad-review guard (kept minimal here
 // on purpose; the WHY+MAGNITUDE+resolvable-target gate already excludes most reviews).
@@ -123,6 +130,7 @@ function isRecommendationExplanationTurn(message, context) {
   const m = normalize(message);
   if (!m) return false;
   if (BROAD_REVIEW_RE.test(m)) return false;
+  if (HISTORY_PAST_RE.test(m)) return false;           // a past-session question — history owns it
   if (isPlanModificationRequest(m)) return false;
   if (isFactualPlanDispute(message, c)) return false;
   if (!WHY_RE.test(m) || !MAGNITUDE_RE.test(m)) return false;

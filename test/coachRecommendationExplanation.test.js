@@ -192,6 +192,17 @@ test('unit: an aside is recognized but a "why 175" explanation and a plan reques
   assert.equal(explanationGrounding.isConversationalAside("Hello what's the plan today"), false);
 });
 
+// Codex P1: a PAST-tense history question with a number must NOT be hijacked into the
+// current-recommendation lane — history owns it.
+test('unit: a past-tense history question is NOT a recommendation-explanation turn', () => {
+  const ctx = { current_plan: [{ name: 'Bench Press', weight: 175, reps: 9, sets: 3, rir: 5 }], recommended_label: 'Recovery / Pump' };
+  assert.equal(explanationGrounding.isRecommendationExplanationTurn('Why did I do 175 for bench last week?', ctx), false);
+  assert.equal(explanationGrounding.isRecommendationExplanationTurn('why was my bench 175 last session?', ctx), false);
+  // A question about the CURRENT displayed recommendation still fires.
+  assert.equal(explanationGrounding.isRecommendationExplanationTurn(BENCH_EXPLAIN_MSG, ctx), true);
+  assert.equal(explanationGrounding.isRecommendationExplanationTurn('Why did you recommend only 175 for bench?', ctx), true);
+});
+
 // ── the five-turn production sequence ────────────────────────────────────────
 
 test('Turn 1 — "what\'s the plan today" returns the authoritative recommendation pipeline (no write)', async () => {
@@ -279,6 +290,21 @@ test('LLM-down: the recommendation explanation is answered deterministically fro
   assert.equal(json.data.source, 'engine', 'the deterministic engine explanation answers when the model is empty');
   assert.match(json.data.message, /Bench Press/, 'names the target lift');
   assert.match(json.data.message, /175/, 'explains the current 175 recommendation');
+  assert.doesNotMatch(json.data.message, /benchmark|below your recent/i, 'never a challenge paragraph');
+});
+
+// Codex P2: with the provider unconfigured, the recommendation explanation is still
+// grounded in the displayed recommendation (client-forwarded current_plan) — not a
+// generic advice fallback.
+test('provider unconfigured: the recommendation explanation is grounded in the displayed 175, not a generic fallback', async () => {
+  resetCoach();
+  coachState.configured = false;
+  const { res, json } = await chat({ message: BENCH_EXPLAIN_MSG, context: DISPLAYED_RECOMMENDATION });
+  assert.equal(res.status, 200);
+  assert.equal(coachState.chatReplyCalls, 0, 'the model is never called when unconfigured');
+  assert.equal(json.data.source, 'engine');
+  assert.match(json.data.message, /Bench Press/, 'names the target lift');
+  assert.match(json.data.message, /175/, 'explains the displayed 175 recommendation even during an outage');
   assert.doesNotMatch(json.data.message, /benchmark|below your recent/i, 'never a challenge paragraph');
 });
 

@@ -1285,10 +1285,15 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     if (!coach.isConfigured()) {
       // No Sheets read on the unconfigured path — answer from client context only.
       // A tired lifter still gets recovery routing (no engine signals available here,
-      // so the safe no-numbers recovery line), never a dead-end or hype.
+      // so the safe no-numbers recovery line), never a dead-end or hype. A
+      // recommendation-explanation turn is still grounded in the DISPLAYED recommendation
+      // the client forwarded (current_plan), so an outage never turns "why only 175 for
+      // bench?" into a generic advice fallback — it explains the displayed target
+      // deterministically (recovery still outranks it).
+      const recExplainOffline = coachExplanationGrounding.resolveRecommendationExplanation(message, clientCtx || {});
       const answer = tired
         ? buildTirednessRecoveryAnswer({ readiness: Array.isArray(clientCtx && clientCtx.readiness) ? clientCtx.readiness : null })
-        : deterministicAnswer([]);
+        : ((recExplainOffline && coachExplanationGrounding.buildDeterministicRecommendationExplanation(recExplainOffline.snapshot)) || deterministicAnswer([]));
       return standardSuccess(req, res, answer
         ? 'Coach chat unavailable — deterministic engine answer'
         : 'Coach chat unavailable — Gemini not configured', {
