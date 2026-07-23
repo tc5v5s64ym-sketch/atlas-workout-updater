@@ -114,6 +114,41 @@ describe('fromActiveSession (boundary adapter — Codex #1090)', () => {
   });
 });
 
+// D10 — discussion_referent: the canonical key of the lift the conversation is about, set at
+// answer time so a bare correction resolves from ONE state read. Optional + nullable: this first
+// increment adds the field; a session that predates it still validates.
+describe('discussion_referent (D10 — packet referent field)', () => {
+  it('the builder defaults it to null and carries a provided referent', () => {
+    assert.equal(buildWorkoutSession({ slots: [] }).discussion_referent, null);
+    assert.equal(buildWorkoutSession({ discussion_referent: 'BENCHPRESS', slots: [] }).discussion_referent, 'BENCHPRESS');
+  });
+
+  it('validates when present as null or a non-empty canonical key', () => {
+    assert.equal(validateWorkoutSession({ ...valid(), discussion_referent: 'BENCHPRESS' }).valid, true);
+    assert.equal(validateWorkoutSession({ ...valid(), discussion_referent: null }).valid, true);
+    assert.equal(validateWorkoutSession(buildWorkoutSession({ session_id: 's', discussion_referent: 'SQUAT', slots: [] })).valid, true);
+  });
+
+  it('is OPTIONAL — a session that omits the field (predating D10) still validates', () => {
+    const legacy = { ...valid() };
+    delete legacy.discussion_referent; // valid() never sets it
+    assert.equal(validateWorkoutSession(legacy).valid, true);
+  });
+
+  it('rejects a non-string, non-null referent when present', () => {
+    assert.equal(validateWorkoutSession({ ...valid(), discussion_referent: 42 }).valid, false);
+    assert.equal(validateWorkoutSession({ ...valid(), discussion_referent: '' }).valid, false);
+    assert.equal(validateWorkoutSession({ ...valid(), discussion_referent: {} }).valid, false);
+  });
+
+  it('fromActiveSession carries a provided referent through the boundary adapter', () => {
+    const ws = fromActiveSession({ exercises: [{ name: 'Bench Press', liftCode: 'BEN01', status: 'pending', source: 'planned' }] }, { session_id: 's', discussion_referent: 'BENCHPRESS' });
+    assert.equal(ws.discussion_referent, 'BENCHPRESS');
+    assert.equal(validateWorkoutSession(ws).valid, true);
+    assert.equal(fromActiveSession({ exercises: [] }).discussion_referent, null, 'defaults to null when not provided');
+  });
+});
+
 describe('derived selectors (single owner of session-truth cursor)', () => {
   it('currentSlot is the first pending slot; advances as slots complete', () => {
     const s = { ...valid(), slots: [slot({ name: 'A', status: 'completed' }), slot({ name: 'B' }), slot({ name: 'C' })] };
