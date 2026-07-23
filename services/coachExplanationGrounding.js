@@ -86,8 +86,10 @@ const MAGNITUDE_RE = /\b(only|just|so\s+(?:light|heavy|low|high|easy|hard|little
 // prior session, NOT the currently displayed recommendation — history owns it. Mirrors
 // sessionQuestionAnswer.HISTORY_RE (kept in sync) plus the athlete-past-action forms
 // ("did i do/hit/…", "yesterday", "ago"), so a number-bearing history question is never
-// hijacked into the current-recommendation lane and answered from an unrelated plan.
-const HISTORY_PAST_RE = /\b(last (?:time|week|session|month|year|workout|training)|previous(?:ly)?|history|before|used to|yesterday|ago|earlier|the other (?:day|week)|did i (?:do|hit|get|use|run|bench|squat|press|lift|pull|row|curl)|when i (?:did|last))\b/;
+// hijacked into the current-recommendation lane and answered from an unrelated plan. The
+// "did I … <verb>" form tolerates up to three intervening adverbs ("did I only get",
+// "did I just barely hit") so an adverbial history question is not misrouted (Codex #1133).
+const HISTORY_PAST_RE = /\b(?:last (?:time|week|session|month|year|workout|training)|previous(?:ly)?|history|before|used to|yesterday|ago|earlier|the other (?:day|week)|when i (?:did|last)|did\s+i(?:\s+\w+){0,3}\s+(?:do|does|hit|get|got|gotten|use|used|run|ran|bench|squat|press(?:ed)?|lift(?:ed)?|pull(?:ed)?|row(?:ed)?|curl(?:ed)?|manage[d]?|perform(?:ed)?|finish(?:ed)?|complete[d]?|score[d]?))\b/;
 
 // A broad-session review legitimately wants the full diagnostics — never narrowed to a
 // single lift. Mirrors coachResponseGrounding's broad-review guard (kept minimal here

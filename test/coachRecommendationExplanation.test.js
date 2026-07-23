@@ -202,9 +202,13 @@ test('unit: a past-tense history question is NOT a recommendation-explanation tu
   const ctx = { current_plan: [{ name: 'Bench Press', weight: 175, reps: 9, sets: 3, rir: 5 }], recommended_label: 'Recovery / Pump' };
   assert.equal(explanationGrounding.isRecommendationExplanationTurn('Why did I do 175 for bench last week?', ctx), false);
   assert.equal(explanationGrounding.isRecommendationExplanationTurn('why was my bench 175 last session?', ctx), false);
+  // Adverbial past-tense forms — "did I <adverb> <verb>" — must also be excluded (Codex).
+  assert.equal(explanationGrounding.isRecommendationExplanationTurn('Why did I only get 5 reps on bench?', ctx), false);
+  assert.equal(explanationGrounding.isRecommendationExplanationTurn('Why did I just barely hit 175 on bench?', ctx), false);
   // A question about the CURRENT displayed recommendation still fires.
   assert.equal(explanationGrounding.isRecommendationExplanationTurn(BENCH_EXPLAIN_MSG, ctx), true);
   assert.equal(explanationGrounding.isRecommendationExplanationTurn('Why did you recommend only 175 for bench?', ctx), true);
+  assert.equal(explanationGrounding.isRecommendationExplanationTurn('Why so light on bench today?', ctx), true);
 });
 
 // Codex P2 (follow-up): a configured provider whose Sheets read fails mid-turn must still
