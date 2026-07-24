@@ -300,32 +300,70 @@ function formatLoad(t) {
   return parts.join(' ');
 }
 
-// A grounded, deterministic explanation of the recommendation — the target prescription,
-// and the engine's readiness/label REASON only when the engine actually provided one. Never
-// a completed-write claim, never an invented number, and — critically — never an invented
-// rationale: when the snapshot carries no engine label and no history (the common outage
-// path, where it is built from the client `current_plan` alone), it states ONLY the
-// displayed prescription rather than claiming a history-derived decision (Codex). Returns
-// null (no fabrication) when the target has no weight to explain.
+// The SINGLE prose home for the deterministic recommendation explanation. Takes a NORMALIZED
+// facts object — the displayed prescription (name/weight/reps/rir/sets), the engine's day-type
+// label, and the target lift's last logged session (last_date/last_top) — and words the exact
+// explanation, or null when there is no name/weight to explain. Both the route-local grounding
+// snapshot (buildDeterministicRecommendationExplanation) and the canonical CoachTurnPacket
+// decision (buildDeterministicRecommendationExplanationFromDecision) funnel their facts through
+// here, so the two can NEVER word the explanation differently — the invariant that lets the live
+// route consume packet.decision byte-identically as Phase 4 wires it (H-03).
+//
+// It is a faithful extraction of the prior inline logic: the engine's readiness/label REASON is
+// stated only when a label is present; with no label and no history (the common outage path,
+// built from the client `current_plan` alone) it states ONLY the displayed prescription rather
+// than claiming a history-derived decision (Codex); a logged last session is a real fact, never
+// a claimed causal basis; and it never invents a number or claims a write.
+function _wordRecommendationExplanation(facts) {
+  const f = facts && typeof facts === 'object' ? facts : {};
+  if (!f.name || f.weight == null) return null;
+  const load = formatLoad(f); // formatLoad reads weight/reps/rir/sets only
+  const parts = [];
+  if (f.label) {
+    // Engine-provided day-type label → a grounded reason tied to that label.
+    parts.push(`${f.name} is set at ${load} — that's today's ${f.label} recommendation.`);
+    parts.push(`The load fits a ${f.label.toLowerCase()} focus for today, which is why ${f.name} comes in at ${f.weight} rather than a heavier top set.`);
+  } else {
+    // No engine reason available — state only the displayed prescription; invent nothing.
+    parts.push(`${f.name} is set at ${load} — that's today's target.`);
+  }
+  if (f.last_date) {
+    // A real logged fact (never a claimed causal basis).
+    parts.push(`Your last logged ${f.name} was ${f.last_date}${f.last_top ? ` at ${f.last_top}` : ''}.`);
+  }
+  return parts.join(' ');
+}
+
+// A grounded, deterministic explanation of the recommendation from the ROUTE-LOCAL grounding
+// snapshot (coachExplanationGrounding.buildRecommendationSnapshot). Extracts the readout facts
+// from the snapshot and words them through the shared worder. Returns null (no fabrication) when
+// the target has no weight to explain. This is the EXISTING behavior, unchanged.
 function buildDeterministicRecommendationExplanation(snapshot) {
   const s = snapshot && typeof snapshot === 'object' ? snapshot : {};
   const t = s.target && typeof s.target === 'object' ? s.target : {};
-  if (!t.name || t.weight == null) return null;
-  const load = formatLoad(t);
-  const parts = [];
-  if (s.label) {
-    // Engine-provided day-type label → a grounded reason tied to that label.
-    parts.push(`${t.name} is set at ${load} — that's today's ${s.label} recommendation.`);
-    parts.push(`The load fits a ${s.label.toLowerCase()} focus for today, which is why ${t.name} comes in at ${t.weight} rather than a heavier top set.`);
-  } else {
-    // No engine reason available — state only the displayed prescription; invent nothing.
-    parts.push(`${t.name} is set at ${load} — that's today's target.`);
-  }
-  if (s.history && s.history.last_date) {
-    // A real logged fact (never a claimed causal basis).
-    parts.push(`Your last logged ${t.name} was ${s.history.last_date}${s.history.last_top ? ` at ${s.history.last_top}` : ''}.`);
-  }
-  return parts.join(' ');
+  const h = s.history && typeof s.history === 'object' ? s.history : {};
+  return _wordRecommendationExplanation({
+    name: t.name, weight: t.weight, reps: t.reps, rir: t.rir, sets: t.sets,
+    label: s.label, last_date: h.last_date, last_top: h.last_top,
+  });
+}
+
+// Build the SAME deterministic explanation from a canonical CoachTurnPacket decision
+// (services/coachDecisionSnapshot.js buildCoachingDecisionFromExplanation) instead of the
+// route-local grounding snapshot — reading the readout facts the decision carries in
+// explanation_inputs. The key names mirror coachDecisionSnapshot._explanationInputsFrom
+// (target_name/target_weight/target_reps/target_rir/target_sets, recommendation_label,
+// target_last_date/target_last_top). Funnels through the SAME worder, so for a decision built
+// from a snapshot the output is byte-identical to buildDeterministicRecommendationExplanation of
+// that snapshot — the bridge that lets the live route word the explanation from packet.decision
+// (Phase 4 H-03 live-consumption). Returns null when the decision carries no explainable facts.
+function buildDeterministicRecommendationExplanationFromDecision(decision) {
+  const d = decision && typeof decision === 'object' ? decision : {};
+  const ei = d.explanation_inputs && typeof d.explanation_inputs === 'object' ? d.explanation_inputs : {};
+  return _wordRecommendationExplanation({
+    name: ei.target_name, weight: ei.target_weight, reps: ei.target_reps, rir: ei.target_rir, sets: ei.target_sets,
+    label: ei.recommendation_label, last_date: ei.target_last_date, last_top: ei.target_last_top,
+  });
 }
 
 // ── conversational aside ───────────────────────────────────────────────────────
@@ -372,6 +410,7 @@ module.exports = {
   isClarificationTurn,
   narrowContextForClarification,
   buildDeterministicRecommendationExplanation,
+  buildDeterministicRecommendationExplanationFromDecision,
   isConversationalAside,
   buildConversationalAck,
 };
