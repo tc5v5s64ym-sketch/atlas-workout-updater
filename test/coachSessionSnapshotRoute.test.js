@@ -202,3 +202,25 @@ test('the session seam never appends to a training Sheet', async () => {
   assert.equal(r.res.status, 200);
   delete process.env.ATLAS_INTERACTION_TRACE; delete process.env.ATLAS_TURN_PRECEDENCE;
 });
+
+// D10 — the route resolves a discussion referent AT ANSWER TIME (the lift a bare correction
+// resolves to). With the canonical session carried (H-08A), that referent is now set on the
+// packet's session (packet.session.discussion_referent), so the divergence report's
+// "route-local referent" signal clears: referent.packet == referent.route.
+test('D10: the answer-time referent is carried on the packet session (referent.packet == route)', async () => {
+  process.env.ATLAS_TURN_PRECEDENCE = 'on';
+  process.env.ATLAS_INTERACTION_TRACE = 'shadow';
+  // A "why …" turn naming a lift IN the plan resolves a discussion referent; active_session
+  // carries the same lift so the canonical session validates and takes the referent.
+  const ctx = {
+    current_plan: [{ name: 'Bench Press' }],
+    active_session: { exercises: [{ name: 'Bench Press', liftCode: '', status: 'pending', source: 'planned' }] },
+  };
+  const r = await post('/api/coach/chat', { message: 'Why only 185 for bench press?', history: [], context: ctx });
+  assert.equal(r.res.status, 200);
+  assert.ok(r.shadowRow);
+  assert.ok(r.shadowRow.referent.route, 'the route resolved a referent this turn');
+  assert.equal(r.shadowRow.referent.packet, r.shadowRow.referent.route, 'the packet session now carries the referent (route-local cleared)');
+  assert.equal(r.shadowRow.embedded.session, true);
+  delete process.env.ATLAS_INTERACTION_TRACE; delete process.env.ATLAS_TURN_PRECEDENCE;
+});

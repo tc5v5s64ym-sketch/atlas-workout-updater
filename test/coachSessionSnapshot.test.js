@@ -78,12 +78,23 @@ describe('buildCanonicalSessionSnapshot — valid conversions', () => {
     assert.equal(s.slots[0].sets_target, null);
   });
 
-  it('leaves the optional session id null when the client supplies none', () => {
+  it('leaves the optional session id and discussion_referent null when none is supplied', () => {
     const s = buildCanonicalSessionSnapshot(active([
       { name: 'Back Squat', liftCode: 'SQ', status: 'pending', source: 'planned' },
     ]));
     assert.equal(s.session_id, null);
-    assert.equal(s.discussion_referent, null, 'discussion_referent stays null in this PR');
+    assert.equal(s.discussion_referent, null, 'no referent option ⇒ null');
+  });
+
+  it('sets discussion_referent from the answer-time referent option (D10) and still validates', () => {
+    const s = buildCanonicalSessionSnapshot(active([
+      { name: 'Bench Press', liftCode: '', status: 'pending', source: 'planned' },
+    ]), { discussion_referent: 'BENCHPRESS' });
+    assert.equal(s.discussion_referent, 'BENCHPRESS');
+    assert.equal(validateWorkoutSession(s).valid, true);
+    // an empty / non-string referent coerces to null (never a fabricated referent)
+    assert.equal(buildCanonicalSessionSnapshot(active([{ name: 'Bench Press', liftCode: '', status: 'pending', source: 'planned' }]), { discussion_referent: '' }).discussion_referent, null);
+    assert.equal(buildCanonicalSessionSnapshot(active([{ name: 'Bench Press', liftCode: '', status: 'pending', source: 'planned' }]), { discussion_referent: 42 }).discussion_referent, null);
   });
 
   it('a REAL un-coded client session (liftCode: "") still produces a valid canonical session (H-08 boundary)', () => {
