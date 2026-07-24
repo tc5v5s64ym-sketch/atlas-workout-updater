@@ -1593,6 +1593,66 @@ test('api smoke: coach/chat — tired lifter gets recovery routing even when Gem
   assert.doesNotMatch(body.data.message, HYPE);
 });
 
+// ── Phase 4 (H-03 live consumption): the recovery reply is the second engine decision the live
+// route reads from packet.decision. When ATLAS_TURN_PRECEDENCE is on, a tired lifter's reply is
+// sourced from the canonical recovery decision (buildRecoveryDecision → buildTiredness…FromDecision)
+// instead of the route-local signals — PROVEN byte-identical to the signals path here, at BOTH the
+// configured/engine-grounded site and the unconfigured/offline site. Flag off ⇒ the signals path
+// verbatim. Read-only in both states (zero Sheet appends).
+test('turn precedence ON: the CONFIGURED recovery reply is sourced from the canonical decision, byte-identical to the signals path (H-03)', async () => {
+  const before = fakeSheetsState.appendCalls.length;
+  fakeCoachState.configured = true;
+  fakeCoachState.throwError = null;
+  const ask = () => requestJson('/api/coach/chat', { method: 'POST', body: JSON.stringify({ message: "I'm completely wiped out and exhausted today" }) });
+  let onMsg, offMsg;
+  try {
+    process.env.ATLAS_TURN_PRECEDENCE = 'on';
+    const on = await ask();
+    assert.equal(on.response.status, 200);
+    assert.equal(on.body.data.source, 'engine', 'recovery routing owns the tired turn');
+    onMsg = on.body.data.message;
+    assert.doesNotMatch(onMsg, HYPE, 'never hypes a tired lifter, even via the decision path');
+
+    delete process.env.ATLAS_TURN_PRECEDENCE;
+    const off = await ask();
+    assert.equal(off.body.data.source, 'engine');
+    offMsg = off.body.data.message;
+  } finally {
+    fakeCoachState.configured = false;
+    delete process.env.ATLAS_TURN_PRECEDENCE;
+  }
+  assert.equal(onMsg, offMsg, 'flag ON (decision path) is byte-identical to flag OFF (signals path)');
+  assert.equal(fakeSheetsState.appendCalls.length, before, 'recovery routing never writes');
+});
+
+test('turn precedence ON: the UNCONFIGURED recovery reply (fatigued-patterns branch) is byte-identical via the canonical decision (H-03)', async () => {
+  const before = fakeSheetsState.appendCalls.length;
+  fakeCoachState.configured = false;
+  // Client readiness with two flagged-fatigued patterns → the outage "patterns" branch, exercised
+  // through the decision path (its explanation_inputs carries fatigued_patterns).
+  const ctx = { readiness: [{ pattern: 'horizontal push', status: 'fatigued' }, { pattern: 'hinge', status: 'fatigued' }] };
+  const ask = () => requestJson('/api/coach/chat', { method: 'POST', body: JSON.stringify({ message: 'legs are toast', context: ctx }) });
+  let onMsg, offMsg;
+  try {
+    process.env.ATLAS_TURN_PRECEDENCE = 'on';
+    const on = await ask();
+    assert.equal(on.response.status, 200);
+    assert.equal(on.body.data.source, 'engine');
+    onMsg = on.body.data.message;
+    assert.match(onMsg, /patterns are already flagged fatigued/, 'the outage patterns branch is exercised through the decision path');
+
+    delete process.env.ATLAS_TURN_PRECEDENCE;
+    const off = await ask();
+    assert.equal(off.body.data.source, 'engine');
+    offMsg = off.body.data.message;
+  } finally {
+    fakeCoachState.configured = false;
+    delete process.env.ATLAS_TURN_PRECEDENCE;
+  }
+  assert.equal(onMsg, offMsg, 'flag ON (decision path) is byte-identical to flag OFF (signals path)');
+  assert.equal(fakeSheetsState.appendCalls.length, before, 'recovery routing never writes');
+});
+
 test('api smoke: coach/chat — a non-tired question still reaches the LLM (no over-capture)', async () => {
   fakeCoachState.configured = true;
   fakeCoachState.throwError = null;

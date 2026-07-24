@@ -55,10 +55,10 @@ const { assembleBatchNoteFacts } = require('../services/batchNoteFacts');
 const { detectExtraWork } = require('../services/extraWorkDetector');
 const { buildSessionQuestionAnswer, buildSessionAdviceFallback, answerBareShorthand, isBareSessionShorthand, isCurrentExercisePrescriptionQuestion, answerCurrentExercisePrescription, isWarmupQuestion, answerPlannedLiftQuestion, answerTotalRepsQuestion } = require('../services/sessionQuestionAnswer');
 const { isTurnPrecedenceEnabled } = require('../services/turnPrecedence');
-const { isTirednessExpression, buildTirednessRecoveryAnswer } = require('../services/recoveryRouting');
+const { isTirednessExpression, buildTirednessRecoveryAnswer, buildTirednessRecoveryAnswerFromDecision } = require('../services/recoveryRouting');
 const { planStateFromContext, buildSessionCloseAnswer, buildSessionCloseAnswerFromSession, buildNextUpAnswer, buildNextUpAnswerFromSession } = require('../services/sessionPlanExecutor');
 const { buildCanonicalSessionSnapshot } = require('../services/coachSessionSnapshot');
-const { buildCoachingDecisionFromExplanation } = require('../services/coachDecisionSnapshot');
+const { buildCoachingDecisionFromExplanation, buildRecoveryDecision } = require('../services/coachDecisionSnapshot');
 const { generateLiftCode, buildExerciseCatalogMap, normalizeExerciseKey, closestExerciseMatches } = require('../services/exerciseEnrichment');
 const { getShadowLog, observeChatMessage } = require('../services/intentShadow');
 const { getBrainShadowLog } = require('../services/brainShadow');
@@ -100,6 +100,26 @@ function wordRecommendationExplanation(snapshot) {
     if (fromDecision != null) return fromDecision;
   }
   return coachExplanationGrounding.buildDeterministicRecommendationExplanation(snapshot);
+}
+
+// Phase 4 H-03 (live consumption): word a tired lifter's recovery reply. When ATLAS_TURN_PRECEDENCE
+// is on, the reply is sourced from the canonical CoachTurnPacket recovery decision
+// (buildRecoveryDecision → packet.decision, worded via buildTirednessRecoveryAnswerFromDecision) —
+// the recovery counterpart of wordRecommendationExplanation, retiring the route-local recomputation
+// the divergence report flags (H-03). PROVEN byte-identical to the signals path
+// (test/recoveryWorder.test.js): the decision's explanation_inputs are recoveryReasonFacts(signal),
+// and both paths word them through the SAME worder. Flag OFF ⇒ the signals path verbatim
+// (byte-identical). FAIL CLOSED: a signal that yields no canonical decision falls back to the signals
+// path, so the recovery reply (always non-empty) is never lost or changed. `signal` is the same
+// object stashed on res.locals.coachRecoveryDecision ({ engine_grounded, fatigueStatus?, readiness?,
+// daysSinceLastSession? }); buildTirednessRecoveryAnswer reads only the recovery fields and ignores
+// engine_grounded, so the signals path is unaffected by it.
+function wordRecoveryReply(signal) {
+  if (isTurnPrecedenceEnabled()) {
+    const decision = buildRecoveryDecision(signal);
+    if (decision) return buildTirednessRecoveryAnswerFromDecision(decision);
+  }
+  return buildTirednessRecoveryAnswer(signal);
 }
 
 // The session key for the discussion-referent store. The chat request carries no
@@ -1389,14 +1409,16 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // fatigueStatus / days-since). Built ONCE and used for BOTH the reply and the shadow recovery
       // decision, so the canonical explanation_inputs are exactly the facts the reply words.
       const offlineRecoverySignals = { readiness: Array.isArray(clientCtx && clientCtx.readiness) ? clientCtx.readiness : null };
-      // H-03 (shadow-first): mark that the route made a recovery decision this turn, for the
-      // CoachTurnPacket shadow. engine_grounded:false — the unconfigured path has only client
-      // readiness (no fatigueStatus / days-since); the signals ride along so the shadow decision's
-      // explanation_inputs match the reply. res.locals is read only by the shadow's res.on('finish')
-      // hook; the reply is untouched.
-      if (tired) { res.locals = res.locals || {}; res.locals.coachRecoveryDecision = { engine_grounded: false, ...offlineRecoverySignals }; }
+      // engine_grounded:false — the unconfigured path has only client readiness (no fatigueStatus /
+      // days-since). This ONE object is both the shadow signal (res.locals, read by the shadow's
+      // res.on('finish') hook) AND the input wordRecoveryReply consumes: flag OFF ⇒ the signals path
+      // (buildTirednessRecoveryAnswer, which ignores engine_grounded); flag ON ⇒ the canonical
+      // recovery decision worded via the proven bridge (byte-identical), failing closed to the
+      // signals path.
+      const offlineRecoveryDecisionSignal = { engine_grounded: false, ...offlineRecoverySignals };
+      if (tired) { res.locals = res.locals || {}; res.locals.coachRecoveryDecision = offlineRecoveryDecisionSignal; }
       const answer = tired
-        ? buildTirednessRecoveryAnswer(offlineRecoverySignals)
+        ? wordRecoveryReply(offlineRecoveryDecisionSignal)
         : ((recExplainOffline && wordRecommendationExplanation(recExplainOffline.snapshot)) || deterministicAnswer([]));
       return standardSuccess(req, res, answer
         ? 'Coach chat unavailable — deterministic engine answer'
@@ -1459,12 +1481,15 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
           readiness: context.readiness,
           daysSinceLastSession: assessLayoff(allLog).days_since_last_session,
         };
-        // engine_grounded:true for the conservative confidence; the signals ride along for the
-        // shadow decision's explanation_inputs. res.locals is read only by the shadow's
-        // res.on('finish') hook; the reply is untouched.
+        // engine_grounded:true for the conservative confidence. This ONE object is both the shadow
+        // signal (res.locals, read by the shadow's res.on('finish') hook) AND the input
+        // wordRecoveryReply consumes: flag OFF ⇒ the signals path (buildTirednessRecoveryAnswer,
+        // which ignores engine_grounded); flag ON ⇒ the canonical recovery decision worded via the
+        // proven bridge (byte-identical), failing closed to the signals path.
+        const recoveryDecisionSignal = { engine_grounded: true, ...recoverySignals };
         res.locals = res.locals || {};
-        res.locals.coachRecoveryDecision = { engine_grounded: true, ...recoverySignals };
-        const recoveryReply = buildTirednessRecoveryAnswer(recoverySignals);
+        res.locals.coachRecoveryDecision = recoveryDecisionSignal;
+        const recoveryReply = wordRecoveryReply(recoveryDecisionSignal);
         return standardSuccess(req, res, 'Coach chat — recovery routing', {
           message: recoveryReply, configured: true, model: coach.coachModel(), source: 'engine'
         });
