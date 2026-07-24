@@ -23,6 +23,40 @@ describe('Drift Guard 5 — packet & trace honesty', () => {
     assert.ok(v.some((s) => /embedded\.session/.test(s)), 'the guard flags the session overclaim');
   });
 
+  it('BITES: a decision claimed present while it does not validate is an overclaim (H-03)', () => {
+    // A route-local decision shape dressed up as canonical — embedded.decision true while the
+    // object fails validateCoachingDecision. As the live route consumes packet.decision (H-03),
+    // this is the overclaim the guard must catch.
+    const packet = { athlete: null, session: null, exercises: [], decision: { decision_type: 'not_a_real_type' }, safety: null, closeout: null };
+    const claim = { athlete: false, session: false, exercises: 0, decision: true, safety: false, closeout: false };
+    const v = checkPacketHonesty(packet, claim);
+    assert.ok(v.some((s) => /embedded\.decision/.test(s)), 'the guard flags the decision overclaim');
+  });
+
+  it('does NOT flag a genuinely-valid embedded decision (H-03, no overclaim)', () => {
+    const { buildRecoveryDecision } = require('../services/coachDecisionSnapshot');
+    const decision = buildRecoveryDecision({ engine_grounded: true, fatigueStatus: { status: 'high' }, daysSinceLastSession: 1 });
+    const packet = { athlete: null, session: null, exercises: [], decision, safety: null, closeout: null };
+    const claim = { athlete: false, session: false, exercises: 0, decision: true, safety: false, closeout: false };
+    assert.deepEqual(checkPacketHonesty(packet, claim), [], 'a validating decision claimed present is honest');
+  });
+
+  it('the shadow assembler genuinely EMBEDS a valid decision and DROPS an invalid one (Codex #1161 P2)', () => {
+    // The anti-overclaim guard is underclaim-safe, so a silently-dropped valid decision would pass
+    // as an allowed underclaim — leaving the valid-decision coverage toothless. Assert the positive
+    // functional behavior directly against the real assembler so a drop-valid regression is caught.
+    const { assembleShadowPacket } = require('../services/coachTurnPacketShadow');
+    const { validateCoachingDecision } = require('../services/coachingDecision');
+    const { buildRecoveryDecision } = require('../services/coachDecisionSnapshot');
+    const good = buildRecoveryDecision({ engine_grounded: true, fatigueStatus: { status: 'high' }, daysSinceLastSession: 2 });
+    const embedded = assembleShadowPacket({ turnId: 'turn:selftest_embed', profileGoal: 'strength', decision: good });
+    assert.ok(embedded.packet.decision != null, 'a valid decision reaches packet.decision (not silently dropped)');
+    assert.equal(validateCoachingDecision(embedded.packet.decision).valid, true, 'and the embedded decision validates');
+    const bad = { schema_version: 1, decision_type: 'not_a_real_type', intent: {}, confidence: {}, safety: {}, payload: {}, explanation_inputs: {} };
+    const dropped = assembleShadowPacket({ turnId: 'turn:selftest_drop', profileGoal: 'strength', decision: bad });
+    assert.equal(dropped.packet.decision, null, 'an invalid decision is dropped to null, never embedded');
+  });
+
   it('BITES: an exercises count exceeding the genuinely-valid identities is an overclaim', () => {
     const packet = { session: null, exercises: [{ not: 'a valid identity' }], decision: null, safety: null, closeout: null };
     const claim = { athlete: false, session: false, exercises: 1, decision: false, safety: false, closeout: false };

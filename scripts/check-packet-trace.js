@@ -41,6 +41,7 @@ const { fromActiveSession, validateWorkoutSession } = require('../services/worko
 const { validateAthleteContext }      = require('../services/athleteContext');
 const { validateExerciseIdentity }    = require('../services/exerciseIdentity');
 const { validateCoachingDecision }    = require('../services/coachingDecision');
+const { buildRecoveryDecision }       = require('../services/coachDecisionSnapshot');
 const { validateSafetyDecision }      = require('../services/safetyDecision');
 const { validateCloseoutTransaction } = require('../services/closeoutTransaction');
 const { STAGES } = require('../services/interactionTrace');
@@ -140,13 +141,30 @@ function analyze() {
     { name: 'Bench Press', liftCode: '', status: 'pending', source: 'planned' },
   ] }, { discussion_referent: 'BENCHPRESS' });
   const badSession = { schema_version: 1, session_id: null, slots: [{ name: 'X', status: 'bogus', source: 'planned', lift_code: null, sets_logged: 0, sets_target: null }] };
+  // A genuinely-valid canonical decision (the recovery decision the live route now consumes,
+  // H-03) and a malformed one — so the matrix exercises the packet.decision embed path, not only
+  // session. A valid decision must embed AND validate (no overclaim); an invalid decision must be
+  // dropped to null (embedded.decision false — an honest underclaim, never an overclaim).
+  const goodDecision = buildRecoveryDecision({ engine_grounded: true, fatigueStatus: { status: 'high' }, daysSinceLastSession: 2, readiness: [{ pattern: 'push', status: 'fatigued' }] });
+  const badDecision = { schema_version: 1, decision_type: 'not_a_real_type', intent: {}, confidence: {}, safety: {}, payload: {}, explanation_inputs: {} };
+  // `expect.decision` is a CONTROLLED-INPUT embed expectation (distinct from the underclaim-safe
+  // anti-overclaim check): `true` ⇒ this valid decision input MUST reach a validating
+  // packet.decision; `false` ⇒ this invalid decision input MUST be dropped to null. Without it, a
+  // regression that silently drops a VALID decision is invisible — _embeddedFields would report
+  // decision:false, an allowed underclaim the anti-overclaim check never flags, leaving the
+  // decision-embed coverage toothless (Codex #1161 P2). The expectation is asserted ONLY for these
+  // controlled matrix inputs; the guard never demands embedding of a real per-turn shadow (whose
+  // honest underclaims stay safe).
   const inputs = [
     { label: 'no session', params: { turnId: 'turn:g_1_a', profileGoal: 'strength' } },
     { label: 'null profile goal', params: { turnId: 'turn:g_2_a', profileGoal: null } },
     { label: 'valid session + referent', params: { turnId: 'turn:g_3_a', profileGoal: 'strength', session: goodSession } },
     { label: 'invalid session (must drop to null)', params: { turnId: 'turn:g_4_a', profileGoal: 'strength', session: badSession } },
+    { label: 'valid decision (must embed + validate)', params: { turnId: 'turn:g_5_a', profileGoal: 'strength', decision: goodDecision }, expect: { decision: true } },
+    { label: 'invalid decision (must drop to null)', params: { turnId: 'turn:g_6_a', profileGoal: 'strength', decision: badDecision }, expect: { decision: false } },
+    { label: 'valid session + valid decision together', params: { turnId: 'turn:g_7_a', profileGoal: 'strength', session: goodSession, decision: goodDecision }, expect: { decision: true } },
   ];
-  for (const { label, params } of inputs) {
+  for (const { label, params, expect } of inputs) {
     const assembled = assembleShadowPacket(params);
     checked += 1;
     // (a) validity honesty
@@ -156,6 +174,15 @@ function analyze() {
     // (b) anti-overclaim over the shadow's OWN presence computation
     for (const v of checkPacketHonesty(assembled.packet, _embeddedFields(assembled.packet))) {
       violations.push(`[${label}] ${v}`);
+    }
+    // (b2) controlled-input embed expectation — catches a silently-dropped valid decision (an
+    // underclaim the anti-overclaim check cannot see) and a wrongly-retained invalid decision.
+    if (expect && expect.decision === true &&
+        !(assembled.packet.decision != null && validateCoachingDecision(assembled.packet.decision).valid)) {
+      violations.push(`[${label}] a valid decision input did not reach a validating packet.decision (embed regression)`);
+    }
+    if (expect && expect.decision === false && assembled.packet.decision != null) {
+      violations.push(`[${label}] an invalid decision input was not dropped to null (packet.decision must be null)`);
     }
   }
 
