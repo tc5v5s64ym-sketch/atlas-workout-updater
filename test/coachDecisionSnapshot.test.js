@@ -14,7 +14,7 @@ const assert = require('node:assert/strict');
 const { buildCoachingDecisionFromExplanation, buildRecoveryDecision } = require('../services/coachDecisionSnapshot');
 const { validateCoachingDecision } = require('../services/coachingDecision');
 
-const grounded = () => ({ coaching_strategy: 'explain_recommendation', label: 'Upper Power', target: { name: 'Bench Press', weight: 185, reps: 5, rir: 2 }, history: { last_date: '2026-07-20' } });
+const grounded = () => ({ coaching_strategy: 'explain_recommendation', label: 'Upper Power', target: { name: 'Bench Press', weight: 185, reps: 5, rir: 2 }, history: { last_date: '2026-07-20', last_top: '190 for 5 at 2 RIR' } });
 const outage = () => ({ coaching_strategy: 'explain_recommendation', label: null, target: { name: 'Bench Press', weight: 185 }, history: null });
 
 describe('buildCoachingDecisionFromExplanation — valid canonicalization', () => {
@@ -51,6 +51,22 @@ describe('buildCoachingDecisionFromExplanation — valid canonicalization', () =
     // the decision stays contract-valid (progress_readout has no prescribed PAYLOAD numbers,
     // so these readout facts in explanation_inputs never trip the trust contract)
     assert.equal(validateCoachingDecision(d).valid, true, validateCoachingDecision(d).errors.join(' | '));
+  });
+
+  it('carries the target lift history facts the route explanation words (last_date + top set)', () => {
+    const d = buildCoachingDecisionFromExplanation(grounded());
+    // The SAME grounded prior fact coachExplanationGrounding.buildDeterministicRecommendationExplanation
+    // cites ("Your last logged <lift> was <date> at <top set>") — so the canonical decision fully
+    // captures what the route says (a precondition for future byte-identical live consumption).
+    assert.equal(d.explanation_inputs.target_last_date, '2026-07-20');
+    assert.equal(d.explanation_inputs.target_last_top, '190 for 5 at 2 RIR');
+    assert.equal(validateCoachingDecision(d).valid, true, validateCoachingDecision(d).errors.join(' | '));
+  });
+
+  it('omits a last_top when history carries only a date (honest — nothing more to word)', () => {
+    const d = buildCoachingDecisionFromExplanation({ coaching_strategy: 'explain_recommendation', label: 'Upper Power', target: { name: 'Bench Press', weight: 185 }, history: { last_date: '2026-07-20' } });
+    assert.equal(d.explanation_inputs.target_last_date, '2026-07-20');
+    assert.ok(!('target_last_top' in d.explanation_inputs), 'no top set ⇒ key absent, never null/empty');
   });
 
   it('omits absent facts — an outage snapshot with no numbers yields empty explanation_inputs', () => {

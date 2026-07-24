@@ -34,15 +34,22 @@ function _strOrNull(v) { return typeof v === 'string' && v.trim() ? v.trim() : n
 function _numOrNull(v) { return typeof v === 'number' && Number.isFinite(v) ? v : null; }
 
 // The readout facts the output-LLM may word for an explain-recommendation turn — the DISPLAYED
-// recommendation's prescription (name + weight/reps/sets/rir) and the engine's label/focus. Only
-// non-null facts are included ("here are the facts you may word"); an outage snapshot with no
-// numbers yields a near-empty set (honest — nothing to word). These are the EXISTING displayed
-// recommendation being explained, NOT a new prescription — so the payload stays empty
+// recommendation's prescription (name + weight/reps/sets/rir), the engine's label/focus, and the
+// target lift's most-recent logged session (last_date + top set). Only non-null facts are included
+// ("here are the facts you may word"); an outage snapshot with no numbers yields a near-empty set
+// (honest — nothing to word). These are the EXISTING displayed recommendation being explained (plus
+// a genuinely-logged prior fact), NOT a new prescription — so the payload stays empty
 // (progress_readout carries no prescription, contract rule 6) and the trust contract (which
-// governs prescribed PAYLOAD numbers) is unaffected. Pure.
+// governs prescribed PAYLOAD numbers) is unaffected.
+//
+// The history facts (target_last_date/target_last_top) are the SAME logged fact the route's
+// deterministic explanation words ("Your last logged <lift> was <date> at <top set>"); carrying
+// them here completes the readout fact set so the canonical decision fully captures what the route
+// says, a precondition for a future byte-identical live consumption of packet.decision. Pure.
 function _explanationInputsFrom(snapshot) {
   const s = _isPlainObject(snapshot) ? snapshot : {};
   const t = _isPlainObject(s.target) ? s.target : {};
+  const h = _isPlainObject(s.history) ? s.history : {};
   const out = {};
   const put = (k, v) => { if (v != null) out[k] = v; };
   put('target_name', _strOrNull(t.name));
@@ -52,6 +59,11 @@ function _explanationInputsFrom(snapshot) {
   put('target_rir', _numOrNull(t.rir));
   put('recommendation_label', _strOrNull(s.label));
   put('focus', _strOrNull(s.focus));
+  // The target lift's most-recent logged session — the same grounded prior fact the route's
+  // deterministic explanation cites. last_top is the pre-formatted top-set string (e.g.
+  // "185 for 5 at 2 RIR") built by coachExplanationGrounding.buildTargetHistory.
+  put('target_last_date', _strOrNull(h.last_date));
+  put('target_last_top', _strOrNull(h.last_top));
   return out;
 }
 
