@@ -19,8 +19,10 @@
 //       canonical validator, and `embedded.exercises` equals the count of genuinely-valid
 //       ExerciseIdentity entries. An UNDERclaim (a valid fact reported absent) is safe and is
 //       NOT flagged — only overclaims are.
-//   (c) TRACE HONESTY — a representative InteractionTrace validates and its `missing` list is
-//       exactly the canonical stages it did not record (a stage cannot silently vanish).
+//   (c) TRACE HONESTY — a record from the REAL shadow emitter (interactionTraceShadow.beginTurn
+//       /finish, not just the contract helper) validates and its EMITTED `missing` list is
+//       exactly the canonical stages it did not record — so a stale/hard-coded missing list in
+//       the production finish() path cannot slip past (Codex #1150 P2).
 // The two contract files must also load and be versioned (schema_version === 1).
 //
 // The honesty CHECKER (`checkPacketHonesty`) is exported so the self-test
@@ -41,9 +43,8 @@ const { validateExerciseIdentity }    = require('../services/exerciseIdentity');
 const { validateCoachingDecision }    = require('../services/coachingDecision');
 const { validateSafetyDecision }      = require('../services/safetyDecision');
 const { validateCloseoutTransaction } = require('../services/closeoutTransaction');
-const {
-  buildInteractionTrace, validateInteractionTrace, missingStages, STAGES,
-} = require('../services/interactionTrace');
+const { STAGES } = require('../services/interactionTrace');
+const interactionTraceShadow = require('../services/interactionTraceShadow');
 
 const ROOT = path.join(__dirname, '..');
 const PACKET_CONTRACT = path.join(ROOT, 'config', 'coaching', 'contracts', 'coach-turn-packet.contract.json');
@@ -71,6 +72,51 @@ function checkPacketHonesty(packet, claim) {
   const validEx = Array.isArray(p.exercises) ? p.exercises.filter((e) => e && typeof e === 'object' && validateExerciseIdentity(e).valid).length : 0;
   if (typeof c.exercises === 'number' && c.exercises > validEx) {
     violations.push(`embedded.exercises claims ${c.exercises} identities but only ${validEx} validate`);
+  }
+  return violations;
+}
+
+// Produce ONE representative shadow InteractionTrace record through the REAL emitter
+// (interactionTraceShadow.beginTurn/finish), flag forced on locally then restored, console
+// output suppressed so the guard stays quiet. Returns the emitted record (or an {_error} marker).
+function _emitShadowTrace(recordedStages) {
+  const prevFlag = process.env.ATLAS_INTERACTION_TRACE;
+  const prevLog = console.log;
+  process.env.ATLAS_INTERACTION_TRACE = 'shadow';
+  console.log = () => {};
+  try {
+    interactionTraceShadow._resetForTesting();
+    const turn = interactionTraceShadow.beginTurn({ intentType: 'guard', source: 'packet-trace-guard' });
+    for (const s of recordedStages) turn.stage(s, 'ok');
+    return turn.finish();
+  } catch (e) {
+    return { _error: e && e.message ? e.message : String(e) };
+  } finally {
+    console.log = prevLog;
+    if (prevFlag === undefined) delete process.env.ATLAS_INTERACTION_TRACE; else process.env.ATLAS_INTERACTION_TRACE = prevFlag;
+    interactionTraceShadow._resetForTesting();
+  }
+}
+
+// Trace honesty CHECKER (H-14): an EMITTED shadow record's `missing` list must be EXACTLY the
+// canonical stages its own trace did not record. Exercising the real record (not just the
+// contract helper) catches a stale/hard-coded missing list in the production finish() path
+// (Codex #1150 P2). Returns violations.
+function checkTraceHonesty(record) {
+  const violations = [];
+  if (!record || record._error) {
+    violations.push(`shadow trace record was not emitted: ${record && record._error ? record._error : 'null'}`);
+    return violations;
+  }
+  if (record.valid !== true || !record.trace || !Array.isArray(record.trace.stages)) {
+    violations.push('emitted shadow trace record does not validate');
+    return violations;
+  }
+  const recordedStages = record.trace.stages.map((s) => s && s.stage);
+  const expected = STAGES.filter((s) => !recordedStages.includes(s));
+  const missing = Array.isArray(record.missing) ? record.missing : null;
+  if (missing === null || JSON.stringify(missing) !== JSON.stringify(expected)) {
+    violations.push(`emitted trace missing-stage list is dishonest: got ${JSON.stringify(missing)}, expected ${JSON.stringify(expected)}`);
   }
   return violations;
 }
@@ -113,22 +159,18 @@ function analyze() {
     }
   }
 
-  // (c) trace honesty — a partial trace validates and its missing list is exactly the
-  // canonical stages it did not record.
-  const recorded = ['intent', 'session_snapshot', 'rendered_output'];
-  const trace = buildInteractionTrace({ turn_id: 'turn:g_t_1', started_at: null, stages: recorded.map((s) => ({ stage: s, status: 'ok' })) });
+  // (c) trace honesty — exercise the REAL shadow emitter (beginTurn/finish), not just the
+  // contract helper, so a stale/hard-coded missing-stage list in the production finish() path
+  // is caught (Codex #1150 P2). Compare the EMITTED record.missing to the canonical complement
+  // of the record's own recorded stages.
+  const record = _emitShadowTrace(['intent', 'session_snapshot', 'rendered_output']);
   checked += 1;
-  if (!validateInteractionTrace(trace).valid) violations.push('representative InteractionTrace does not validate');
-  const missing = missingStages(trace);
-  const expected = STAGES.filter((s) => !recorded.includes(s));
-  if (JSON.stringify(missing) !== JSON.stringify(expected)) {
-    violations.push(`trace missing-stage list is dishonest: got ${JSON.stringify(missing)}, expected ${JSON.stringify(expected)}`);
-  }
+  for (const v of checkTraceHonesty(record)) violations.push(v);
 
   return { ok: violations.length === 0, violations, checked };
 }
 
-module.exports = { analyze, checkPacketHonesty };
+module.exports = { analyze, checkPacketHonesty, checkTraceHonesty };
 
 if (require.main === module) {
   const { ok, violations, checked } = analyze();

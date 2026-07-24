@@ -7,7 +7,7 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { analyze, checkPacketHonesty } = require('../scripts/check-packet-trace');
+const { analyze, checkPacketHonesty, checkTraceHonesty } = require('../scripts/check-packet-trace');
 
 describe('Drift Guard 5 — packet & trace honesty', () => {
   it('the REAL shadow assembler is honest (analyze passes clean)', () => {
@@ -35,5 +35,19 @@ describe('Drift Guard 5 — packet & trace honesty', () => {
     const packet = { session: null, exercises: [], decision: null, safety: null, closeout: null };
     const claim = { athlete: false, session: false, exercises: 0, decision: false, safety: false, closeout: false };
     assert.deepEqual(checkPacketHonesty(packet, claim), []);
+  });
+
+  it('BITES: an emitted trace whose missing list is hard-coded empty despite omitted stages (Codex #1150 P2)', () => {
+    // Simulates a broken finish() that emits `missing: []` while stages were omitted.
+    const lying = { valid: true, missing: [], trace: { stages: [{ stage: 'intent' }, { stage: 'rendered_output' }] } };
+    const v = checkTraceHonesty(lying);
+    assert.ok(v.some((s) => /missing-stage list is dishonest/.test(s)), 'the guard flags the dishonest missing list');
+  });
+
+  it('checkTraceHonesty passes an honest emitted record (missing == the omitted stages)', () => {
+    const { STAGES } = require('../services/interactionTrace');
+    const stages = [{ stage: 'intent' }, { stage: 'rendered_output' }];
+    const honest = { valid: true, trace: { stages }, missing: STAGES.filter((s) => s !== 'intent' && s !== 'rendered_output') };
+    assert.deepEqual(checkTraceHonesty(honest), []);
   });
 });
