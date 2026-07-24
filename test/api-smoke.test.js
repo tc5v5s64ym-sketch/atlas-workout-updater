@@ -1295,6 +1295,41 @@ test('turn precedence ON: the UNCONFIGURED-path recommendation explanation is so
   assert.equal(fakeSheetsState.appendCalls.length, before, 'coach/chat never writes');
 });
 
+// Retrospective-review regression (2026-07-24): the canonical-decision path must reproduce the
+// snapshot path EXACTLY even for the one snapshot field the route leaves un-normalized — the lift
+// name. A client current_plan name with surrounding whitespace reaches the worder raw; flag ON
+// (decision path) must word the SAME raw name as flag OFF (snapshot path), never a trimmed variant
+// and never a lost reply. Both live reply sites are the same helper; the model-down site exercises it.
+test('turn precedence ON: a padded current_plan lift name stays byte-identical between flag states (no trimmed/lost reply) (H-03 fidelity)', async () => {
+  const before = fakeSheetsState.appendCalls.length;
+  fakeCoachState.configured = true;
+  fakeCoachState.throwError = 'gemini down'; // force the model-down deterministic fallback
+  const paddedCtx = { current_plan: [{ name: '  Bench Press  ', weight: 175, reps: 9, sets: 3, rir: 5 }], recommended_label: 'Recovery/Pump' };
+  const ask = () => requestJson('/api/coach/chat', {
+    method: 'POST',
+    body: JSON.stringify({ message: 'Why only 175 for bench?', context: paddedCtx })
+  });
+  let onMsg, offMsg;
+  try {
+    process.env.ATLAS_TURN_PRECEDENCE = 'on';
+    const on = await ask();
+    assert.equal(on.response.status, 200);
+    assert.equal(on.body.data.source, 'engine', 'the deterministic explanation still owns the turn');
+    onMsg = on.body.data.message;
+    assert.ok(onMsg && onMsg.includes('  Bench Press  '), `flag ON must word the RAW padded name (byte-identical to flag off), got: ${onMsg}`);
+
+    delete process.env.ATLAS_TURN_PRECEDENCE;
+    const off = await ask();
+    offMsg = off.body.data.message;
+  } finally {
+    fakeCoachState.throwError = null;
+    fakeCoachState.configured = false;
+    delete process.env.ATLAS_TURN_PRECEDENCE;
+  }
+  assert.equal(onMsg, offMsg, 'flag ON (decision path) is byte-identical to flag OFF (snapshot path) for a padded name');
+  assert.equal(fakeSheetsState.appendCalls.length, before, 'coach/chat never writes');
+});
+
 // ── Phase 4 (chat/SME lane — divergence D4): a warm-up question is recognized as a warm-up
 // question, not answered as a working-set-count restatement. Flag-gated ATLAS_TURN_PRECEDENCE
 // (default inert). FR-20260723120852-hw56ws9y turn 3: "No warm up sets for bench?" named a lift

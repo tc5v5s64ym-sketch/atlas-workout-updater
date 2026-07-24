@@ -12,10 +12,12 @@
 // isolated equivalence proof that de-risks the subsequent flag-gated route wiring.
 //
 // Scope of the byte-identical guarantee: the realistic snapshot shape the route actually produces
-// (coachExplanationGrounding.buildRecommendationSnapshot — trimmed strings, finite numbers). The
-// decision's explanation_inputs are built by coachDecisionSnapshot._explanationInputsFrom, which
-// trims strings; buildRecommendationSnapshot / buildTargetHistory never emit surrounding
-// whitespace, so the two paths coincide exactly for every input the route can send.
+// (coachExplanationGrounding.buildRecommendationSnapshot — finite numbers; label/focus/history
+// trimmed by the builder). The one field the builder leaves RAW is target.name (= entryName(entry)),
+// so a client current_plan lift name with surrounding whitespace reaches the worder un-trimmed. The
+// decision path therefore carries the raw name too (coachDecisionSnapshot._presentStr, not _strOrNull)
+// so the two paths coincide EXACTLY for every input the route can send — including padded and
+// whitespace-only names (the two regression cases below; retrospective review, 2026-07-24).
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
@@ -62,6 +64,22 @@ const SNAPSHOTS = {
   },
   'empty target ⇒ both paths null': {
     coaching_strategy: 'explain_recommendation', label: null, focus: null, target: {}, history: null,
+  },
+  // Regression (retrospective review, 2026-07-24): buildRecommendationSnapshot leaves target.name
+  // RAW (unlike label/focus/history, which the builder trims), so a client current_plan lift name
+  // with surrounding whitespace reaches the worder un-trimmed. The snapshot path words it raw; the
+  // decision path must reproduce that EXACTLY (byte-identical flag-off), so the fact carries the
+  // raw name too — proving the equivalence holds for a name the builder does not normalize.
+  'padded name (client whitespace) — the un-trimmed field': {
+    coaching_strategy: 'explain_recommendation', label: 'Upper Power', focus: null,
+    target: { name: '  Bench Press  ', weight: 175, reps: 5, sets: 3, rir: 2 },
+    history: { last_date: '2026-07-20', last_top: '190 for 5 at 2 RIR' },
+  },
+  // A whitespace-ONLY name is truthy, so the snapshot path words it (non-null); the decision path
+  // must also word it (never lose the reply to null and fall through to a generic engine answer).
+  'whitespace-only name — non-null, never lost': {
+    coaching_strategy: 'explain_recommendation', label: null, focus: null,
+    target: { name: '   ', weight: 175, reps: 5 }, history: null,
   },
 };
 

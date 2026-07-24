@@ -89,7 +89,15 @@ function wordRecommendationExplanation(snapshot) {
   if (!snapshot) return null;
   if (isTurnPrecedenceEnabled()) {
     const decision = buildCoachingDecisionFromExplanation(snapshot);
-    if (decision) return coachExplanationGrounding.buildDeterministicRecommendationExplanationFromDecision(decision);
+    // FAIL CLOSED to the pre-existing snapshot path whenever the canonical decision cannot word the
+    // reply — either no valid decision was built, OR a valid decision worded to null (no name/weight
+    // in explanation_inputs). The prior `if (decision) return …` returned that null directly, so the
+    // fallback was dead for the valid-but-unwordable case; consuming only a non-null decision reply
+    // keeps the promise real — the grounded reply is never lost to a generic engine answer. Under the
+    // 2026-07-24 fidelity fix both paths word identically, so this is a no-op today and a guard against
+    // any future explanation_inputs field that might normalize differently from the snapshot.
+    const fromDecision = decision && coachExplanationGrounding.buildDeterministicRecommendationExplanationFromDecision(decision);
+    if (fromDecision != null) return fromDecision;
   }
   return coachExplanationGrounding.buildDeterministicRecommendationExplanation(snapshot);
 }

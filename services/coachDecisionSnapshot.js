@@ -32,6 +32,14 @@ const { buildCoachingDecision, validateCoachingDecision } = require('./coachingD
 function _isPlainObject(v) { return v != null && typeof v === 'object' && !Array.isArray(v); }
 function _strOrNull(v) { return typeof v === 'string' && v.trim() ? v.trim() : null; }
 function _numOrNull(v) { return typeof v === 'number' && Number.isFinite(v) ? v : null; }
+// A string present iff it is truthy — NOT trimmed. This mirrors EXACTLY what the shared worder
+// (coachExplanationGrounding._wordRecommendationExplanation) treats as "a name to word": `!f.name`.
+// The target lift name is the one snapshot field buildRecommendationSnapshot does NOT normalize
+// (it trims label/focus/dates but leaves target.name = entryName(entry) raw), so trimming it here
+// would make the canonical-decision path word a DIFFERENT name than the flag-off snapshot path for
+// a client current_plan name carrying surrounding whitespace — breaking byte-identity. Carrying the
+// raw name reproduces the flag-off reply exactly (retrospective review, 2026-07-24).
+function _presentStr(v) { return typeof v === 'string' && v ? v : null; }
 
 // The readout facts the output-LLM may word for an explain-recommendation turn — the DISPLAYED
 // recommendation's prescription (name + weight/reps/sets/rir), the engine's label/focus, and the
@@ -52,7 +60,10 @@ function _explanationInputsFrom(snapshot) {
   const h = _isPlainObject(s.history) ? s.history : {};
   const out = {};
   const put = (k, v) => { if (v != null) out[k] = v; };
-  put('target_name', _strOrNull(t.name));
+  // Raw (un-trimmed) to stay byte-identical with the flag-off snapshot path, which words the
+  // un-normalized target.name verbatim (see _presentStr above). Every OTHER fact below is already
+  // normalized identically by buildRecommendationSnapshot, so _strOrNull/_numOrNull are faithful there.
+  put('target_name', _presentStr(t.name));
   put('target_weight', _numOrNull(t.weight));
   put('target_reps', _numOrNull(t.reps));
   put('target_sets', _numOrNull(t.sets));
