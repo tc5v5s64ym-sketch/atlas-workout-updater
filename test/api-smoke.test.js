@@ -1354,6 +1354,66 @@ test('turn precedence ON, model UP: "what\'s next?" still reaches the coach — 
   }
 });
 
+// ── Phase 4 (H-08 consumption): the "what's next?" lane consumes the CANONICAL WorkoutSession
+// (context.active_session → remainingSlots/isComplete) instead of the lossy plan_state name
+// array. Proven with a DISCRIMINATING context: active_session and plan_state name DIFFERENT
+// next-up lifts, so the answer reveals which source the lane actually read.
+const H08B_DISCRIMINATING_CTX = {
+  current_plan: [{ name: 'Bench Press' }, { name: 'Overhead Press' }],
+  // The lossy plan_state name array would answer "Overhead Press"…
+  plan_state: { planned: ['Bench Press', 'Overhead Press'], completed: ['Bench Press'], remaining: ['Overhead Press'], isComplete: false },
+  // …but the AUTHORITATIVE canonical session says the next pending slot is Back Squat.
+  active_session: { exercises: [
+    { name: 'Bench Press', liftCode: '', status: 'completed', source: 'planned' },
+    { name: 'Back Squat', liftCode: '', status: 'pending', source: 'planned' },
+  ] },
+};
+
+test('turn precedence ON, model DOWN: "what\'s next?" reads the CANONICAL session, not plan_state (H-08)', async () => {
+  const before = fakeSheetsState.appendCalls.length;
+  process.env.ATLAS_TURN_PRECEDENCE = 'on';
+  fakeCoachState.configured = false; // model down
+  try {
+    const { response, body } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: "what's next?", context: H08B_DISCRIMINATING_CTX })
+    });
+    assert.equal(response.status, 200);
+    assert.equal(body.data.source, 'engine');
+    assert.equal(body.data.message, 'Next up: Back Squat.', 'answers from the canonical active_session, not the plan_state name array');
+  } finally {
+    delete process.env.ATLAS_TURN_PRECEDENCE;
+    fakeCoachState.configured = false;
+  }
+  assert.equal(fakeSheetsState.appendCalls.length, before, 'coach/chat never writes');
+});
+
+test('turn precedence ON, model DOWN: an OLD client (no active_session) falls back to plan_state unchanged (H-08)', async () => {
+  process.env.ATLAS_TURN_PRECEDENCE = 'on';
+  fakeCoachState.configured = false;
+  try {
+    const oldClientCtx = { current_plan: [{ name: 'Bench Press' }, { name: 'Overhead Press' }], plan_state: { planned: ['Bench Press', 'Overhead Press'], completed: ['Bench Press'], remaining: ['Overhead Press'], isComplete: false } };
+    const { body } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: "what's next?", context: oldClientCtx })
+    });
+    assert.equal(body.data.message, 'Next up: Overhead Press.', 'no active_session ⇒ the plan_state fallback answers exactly as before');
+  } finally {
+    delete process.env.ATLAS_TURN_PRECEDENCE;
+    fakeCoachState.configured = false;
+  }
+});
+
+test('turn precedence OFF: the additive active_session is inert — "what\'s next?" still dead-ends (H-08)', async () => {
+  delete process.env.ATLAS_TURN_PRECEDENCE;
+  fakeCoachState.configured = false;
+  const { body } = await requestJson('/api/coach/chat', {
+    method: 'POST',
+    body: JSON.stringify({ message: "what's next?", context: H08B_DISCRIMINATING_CTX })
+  });
+  assert.equal(body.data.message, null, 'flag off ⇒ byte-identical dead-end even with active_session present');
+});
+
 // ── Slice 3: recovery routing — a tired lifter never gets motivation hype ──────
 const HYPE = /push through|you('?| )ve got this|you got this|no excuses|grind it out|dig deep|beast mode|crush it|let'?s go champ/i;
 

@@ -56,7 +56,8 @@ const { detectExtraWork } = require('../services/extraWorkDetector');
 const { buildSessionQuestionAnswer, buildSessionAdviceFallback, answerBareShorthand, isBareSessionShorthand, isCurrentExercisePrescriptionQuestion, answerCurrentExercisePrescription, isWarmupQuestion, answerPlannedLiftQuestion, answerTotalRepsQuestion } = require('../services/sessionQuestionAnswer');
 const { isTurnPrecedenceEnabled } = require('../services/turnPrecedence');
 const { isTirednessExpression, buildTirednessRecoveryAnswer } = require('../services/recoveryRouting');
-const { planStateFromContext, buildSessionCloseAnswer, buildNextUpAnswer } = require('../services/sessionPlanExecutor');
+const { planStateFromContext, buildSessionCloseAnswer, buildNextUpAnswer, buildNextUpAnswerFromSession } = require('../services/sessionPlanExecutor');
+const { buildCanonicalSessionSnapshot } = require('../services/coachSessionSnapshot');
 const { generateLiftCode, buildExerciseCatalogMap, normalizeExerciseKey, closestExerciseMatches } = require('../services/exerciseEnrichment');
 const { getShadowLog, observeChatMessage } = require('../services/intentShadow');
 const { getBrainShadowLog } = require('../services/brainShadow');
@@ -1315,12 +1316,19 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // Phase 4 (chat/SME lane — divergence D2/D9, packet/session consumption), flag-gated
       // ATLAS_TURN_PRECEDENCE (default inert). A "what's next?" question is STATE-ANSWERABLE from
       // session truth, but today it dead-ends to "coach unavailable" on the model-down path —
-      // while the sibling "are we done?" already answers deterministically above. Consume the
-      // WorkoutSession's remaining slots (plan_state) so a next-up question is answerable even
-      // with the model down. Off ⇒ this branch is skipped, so the turn dead-ends exactly as
-      // before (byte-identical). Read-only; no write, no plan mutation.
+      // while the sibling "are we done?" already answers deterministically above. Off ⇒ this
+      // branch is skipped, so the turn dead-ends exactly as before (byte-identical). Read-only;
+      // no write, no plan mutation.
       if (isTurnPrecedenceEnabled() && coachResponseGrounding.isNextUpQuestion(message)) {
-        const nextUp = buildNextUpAnswer(planStateFromContext(clientCtx));
+        // H-08 CONSUMPTION — first live lane to read the canonical WorkoutSession. When the
+        // client forwards the authoritative active-session snapshot (context.active_session),
+        // answer from the canonical session's remaining slots (remainingSlots/isComplete) —
+        // real, ordered, duplicate-aware slot identity — instead of the lossy plan_state name
+        // array. Old clients that omit the field fall back to the plan_state path unchanged.
+        const canonicalSession = buildCanonicalSessionSnapshot(clientCtx);
+        const nextUp = canonicalSession
+          ? buildNextUpAnswerFromSession(canonicalSession)
+          : buildNextUpAnswer(planStateFromContext(clientCtx));
         if (nextUp) return nextUp;
       }
       const valueAnswer = buildSessionQuestionAnswer(message, {

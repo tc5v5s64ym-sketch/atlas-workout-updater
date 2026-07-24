@@ -24,6 +24,12 @@
  */
 'use strict';
 
+// Canonical WorkoutSession selectors (Phase 4 H-08 consumption) — the deterministic
+// "what's next?" answer can read the ONE canonical session-truth cursor
+// (remainingSlots/isComplete) instead of the lossy route-local plan_state name array.
+// Server-only module; the browser uses its own inline twins, so this require is safe.
+const { remainingSlots, isComplete: sessionIsComplete } = require('./workoutSession');
+
 function toRecord(entry) {
   if (typeof entry === 'string') {
     const name = entry.trim();
@@ -376,9 +382,38 @@ function buildNextUpAnswer(planState) {
   const remaining = Array.isArray(planState.remaining)
     ? planState.remaining.filter(x => typeof x === 'string' && x.trim())
     : [];
-  if (remaining.length) return `Next up: ${remaining[0]}.`;
-  if (planState.isComplete) return 'That\'s your plan done — nothing left. Say "log it" to save.';
+  return _wordNextUp({ nextName: remaining[0] || null, isComplete: !!planState.isComplete });
+}
+
+// The SINGLE next-up wording home, so the route-local plan_state path and the canonical
+// WorkoutSession path (below) can never word "what's next?" differently. Names the next
+// remaining exercise, or — only when the plan is genuinely complete — confirms completion.
+// Returns null (defer to the caller) when neither holds. Pure.
+function _wordNextUp(state) {
+  const s = state && typeof state === 'object' ? state : {};
+  const nextName = typeof s.nextName === 'string' && s.nextName.trim() ? s.nextName.trim() : null;
+  if (nextName) return `Next up: ${nextName}.`;
+  if (s.isComplete) return 'That\'s your plan done — nothing left. Say "log it" to save.';
   return null;
+}
+
+/**
+ * buildNextUpAnswerFromSession(session) → string | null   (Phase 4 — H-08 consumption)
+ *
+ * The canonical-WorkoutSession twin of buildNextUpAnswer: it names the next-up exercise from
+ * the session's DERIVED cursor — remainingSlots(session)[0] (identical to currentSlot) — and
+ * confirms completion via isComplete(session), instead of the lossy route-local plan_state
+ * name array. This is the first live answer lane to consume the canonical session-truth
+ * selectors (H-08), so a "what's next?" answer reads real, ordered, duplicate-aware slot
+ * identity. Shares _wordNextUp with the plan_state path, so the two can never diverge in
+ * wording. Returns null (defer) when the session has no slots. Pure — never writes.
+ */
+function buildNextUpAnswerFromSession(session) {
+  if (!session || !Array.isArray(session.slots) || session.slots.length === 0) return null;
+  const remaining = remainingSlots(session)
+    .map(s => (s && typeof s.name === 'string' ? s.name.trim() : ''))
+    .filter(Boolean);
+  return _wordNextUp({ nextName: remaining[0] || null, isComplete: sessionIsComplete(session) });
 }
 
 /**
@@ -409,4 +444,5 @@ module.exports = {
   detectSessionCloseQuestion,
   buildSessionCloseAnswer,
   buildNextUpAnswer,
+  buildNextUpAnswerFromSession,
 };
