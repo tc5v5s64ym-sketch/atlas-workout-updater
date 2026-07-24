@@ -206,5 +206,8 @@ module.exports = {
   summarizeVisible,
   observe,
   getShadowLog,
+  // Exposed for Drift Guard 5 (scripts/check-packet-trace.js): the guard verifies these
+  // embedded-presence flags never overclaim a fact its own contract does not validate.
+  _embeddedFields,
   _resetForTesting,
 };

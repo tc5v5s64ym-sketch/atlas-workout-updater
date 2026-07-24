@@ -106,6 +106,12 @@ jobs:
         # (config/coaching/manifests/capabilities.json; H-05/H-15).
         run: npm run -s check:ladder
 
+      - name: Packet & trace honesty guard (Drift Guard 5)
+        # Fails if the CoachTurnPacket/InteractionTrace shadow overclaims — an embedded
+        # fact reported present that does not validate under its own canonical contract,
+        # or a packet reported valid that is not (H-05/H-15). Self-test: test/packetTraceGuard.test.js.
+        run: npm run -s check:packet-trace
+
       - name: Test
         run: npm test --silent
 
