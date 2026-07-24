@@ -108,24 +108,29 @@ function recoveryReasonFacts(signals) {
   return facts;
 }
 
-/**
- * Build a short, deterministic, recovery-routed reply for a tired lifter. Grounds
- * in the engine's real signals; invents no lift-specific numbers; never hypes.
- *
- * @param {object} signals
- * @param {object|null} signals.fatigueStatus         - computeFatigueStatus() output ({status,...}).
- * @param {Array|null}  signals.readiness             - [{pattern,status,detail}] readiness snapshot.
- * @param {number|null} signals.daysSinceLastSession  - days since the last logged session.
- * @returns {string} a recovery-routed reply (always non-empty).
- */
-function buildTirednessRecoveryAnswer({ fatigueStatus = null, readiness = null, daysSinceLastSession = null } = {}) {
-  const fs = fatigueStatus && typeof fatigueStatus === 'object' ? fatigueStatus : {};
-  const elevated = fs.status === 'high';
-  // Guard null/undefined/'' explicitly — Number(null) is 0, which would wrongly
-  // read as "trained today". Only a real numeric day count counts.
-  const d = (daysSinceLastSession == null || daysSinceLastSession === '') ? NaN : Number(daysSinceLastSession);
-  const backToBack = Number.isFinite(d) && d <= 1;
-  const patterns = fatiguedPatternNames(readiness);
+// The SINGLE prose home for the deterministic recovery reply. Takes the canonical recovery-reason
+// FACTS (recoveryReasonFacts shape: fatigue_status / days_since_last_session / fatigued_patterns)
+// and words the exact reply. Both the route-input path (buildTirednessRecoveryAnswer, via
+// recoveryReasonFacts) and the canonical CoachTurnPacket decision path
+// (buildTirednessRecoveryAnswerFromDecision, via _recoveryFactsFromDecision) funnel their facts
+// through here, so the two can NEVER word the recovery reply differently — the invariant that lets
+// the live route consume packet.decision byte-identically as Phase 4 wires it (H-03).
+//
+// It is a faithful extraction of the prior inline logic: the reasons are built in the SAME order
+// (elevated → back-to-back → fatigued patterns), the "because" clause takes the first two reasons,
+// the recovered branch is reached only with a real day count ≥ 3 at a normal fatigue status, and
+// the fallback never invents a number or hypes. Because recoveryReasonFacts carries every value
+// VERBATIM as the reply reads it (fatigue_status untrimmed; the day count already Number()-normalized;
+// the full fatigued-pattern list), reading the facts here reproduces the original byte-for-byte.
+function _wordRecovery(facts) {
+  const f = facts && typeof facts === 'object' ? facts : {};
+  const elevated = f.fatigue_status === 'high';
+  // recoveryReasonFacts already applied the reply's Number()/finite guard, so a present
+  // days_since_last_session is a finite number; absent ⇒ no day-count reasons.
+  const hasD = typeof f.days_since_last_session === 'number' && Number.isFinite(f.days_since_last_session);
+  const d = hasD ? f.days_since_last_session : NaN;
+  const backToBack = hasD && d <= 1;
+  const patterns = Array.isArray(f.fatigued_patterns) ? f.fatigued_patterns : [];
 
   const reasons = [];
   if (elevated) reasons.push('your last 7 days are well above your usual volume');
@@ -140,7 +145,7 @@ function buildTirednessRecoveryAnswer({ fatigueStatus = null, readiness = null, 
   }
 
   // Logs look recovered — say so honestly, still no pressure to grind.
-  if (Number.isFinite(d) && d >= 3 && fs.status === 'normal') {
+  if (hasD && d >= 3 && f.fatigue_status === 'normal') {
     return `Your logs actually look recovered — it's been ${d} days since your last session and your volume's in a normal range. If you're still flat, trust that and keep it easy: a short technique session or a rest day both beat forcing it.`;
   }
 
@@ -148,4 +153,55 @@ function buildTirednessRecoveryAnswer({ fatigueStatus = null, readiness = null, 
   return `Then don't force it. A lighter session or a full rest day both beat grinding through fatigue — recovery is when the training pays off. If you do train, leave more in reserve than usual and stop while it still feels clean.`;
 }
 
-module.exports = { isTirednessExpression, buildTirednessRecoveryAnswer, recoveryReasonFacts };
+/**
+ * Build a short, deterministic, recovery-routed reply for a tired lifter from the ROUTE-LOCAL
+ * signals — extract the canonical reason facts (recoveryReasonFacts) and word them through the
+ * shared worder. Grounds in the engine's real signals; invents no lift-specific numbers; never
+ * hypes. This is the EXISTING behavior, unchanged.
+ *
+ * @param {object} signals
+ * @param {object|null} signals.fatigueStatus         - computeFatigueStatus() output ({status,...}).
+ * @param {Array|null}  signals.readiness             - [{pattern,status,detail}] readiness snapshot.
+ * @param {number|null} signals.daysSinceLastSession  - days since the last logged session.
+ * @returns {string} a recovery-routed reply (always non-empty).
+ */
+function buildTirednessRecoveryAnswer(signals) {
+  return _wordRecovery(recoveryReasonFacts(signals));
+}
+
+// Extract the recovery reason facts from a canonical CoachTurnPacket decision's explanation_inputs
+// (services/coachDecisionSnapshot.js buildRecoveryDecision → recoveryReasonFacts). The key names
+// mirror recoveryReasonFacts's output exactly, so for a decision built from route signals the facts
+// round-trip and the reply is byte-identical. Defensive: only well-typed facts are read; anything
+// missing/malformed is dropped (the worder then degrades to the safe fallback, never a fabrication).
+function _recoveryFactsFromDecision(decision) {
+  const d = decision && typeof decision === 'object' ? decision : {};
+  const ei = d.explanation_inputs && typeof d.explanation_inputs === 'object' ? d.explanation_inputs : {};
+  const facts = {};
+  if (typeof ei.fatigue_status === 'string' && ei.fatigue_status) facts.fatigue_status = ei.fatigue_status;
+  if (typeof ei.days_since_last_session === 'number' && Number.isFinite(ei.days_since_last_session)) facts.days_since_last_session = ei.days_since_last_session;
+  if (Array.isArray(ei.fatigued_patterns) && ei.fatigued_patterns.length) facts.fatigued_patterns = ei.fatigued_patterns;
+  return facts;
+}
+
+/**
+ * Build the SAME recovery reply from a canonical CoachTurnPacket decision (the recovery decision's
+ * explanation_inputs) instead of the route-local signals — the bridge that lets the live route word
+ * the recovery reply from packet.decision (Phase 4 H-03 live consumption, PR 3). Funnels through the
+ * SAME worder, so for a decision built from signals the output is byte-identical to
+ * buildTirednessRecoveryAnswer of those signals. Falls back to the safe no-numbers routing when the
+ * decision carries no recovery facts.
+ *
+ * @param {object} decision  a canonical `recovery` CoachingDecision.
+ * @returns {string} a recovery-routed reply (always non-empty).
+ */
+function buildTirednessRecoveryAnswerFromDecision(decision) {
+  return _wordRecovery(_recoveryFactsFromDecision(decision));
+}
+
+module.exports = {
+  isTirednessExpression,
+  buildTirednessRecoveryAnswer,
+  buildTirednessRecoveryAnswerFromDecision,
+  recoveryReasonFacts,
+};
