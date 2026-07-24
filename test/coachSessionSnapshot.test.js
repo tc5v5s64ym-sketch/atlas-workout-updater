@@ -137,6 +137,15 @@ describe('buildCanonicalSessionSnapshot — fails closed (never repairs, never g
     ])), null);
   });
 
+  it('returns null on a malformed NON-STRING liftCode (fails closed, not coerced — Codex #1146 P2)', () => {
+    assert.equal(buildCanonicalSessionSnapshot(active([
+      { name: 'Bench Press', liftCode: 123, status: 'pending', source: 'planned' },
+    ])), null, 'a numeric liftCode fails closed');
+    assert.equal(buildCanonicalSessionSnapshot(active([
+      { name: 'Bench Press', liftCode: {}, status: 'pending', source: 'planned' },
+    ])), null, 'an object liftCode fails closed');
+  });
+
   it('NEVER reverse-engineers a session from current_plan / plan_state when active_session is malformed', () => {
     const context = {
       current_plan: [{ name: 'Bench Press', sets: 3, reps: 5 }, { name: 'Back Squat', sets: 3, reps: 5 }],

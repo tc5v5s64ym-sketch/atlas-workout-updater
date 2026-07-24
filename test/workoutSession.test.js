@@ -129,10 +129,21 @@ describe('fromActiveSession (boundary adapter — Codex #1090)', () => {
     assert.equal(r.valid, true, r.errors.join(' | '));
   });
 
-  it('trims a padded liftCode and prefers a non-empty liftCode over lift_code', () => {
+  it('trims a padded liftCode; a genuinely-absent liftCode falls back to lift_code', () => {
     assert.equal(fromActiveSession({ exercises: [{ name: 'Row', liftCode: ' RW ', status: 'pending', source: 'planned' }] }).slots[0].lift_code, 'RW');
-    // an empty camelCase liftCode falls back to a non-empty snake_case lift_code
-    assert.equal(fromActiveSession({ exercises: [{ name: 'Row', liftCode: '', lift_code: 'RW', status: 'pending', source: 'planned' }] }).slots[0].lift_code, 'RW');
+    // liftCode absent (not present) → the snake_case lift_code is used
+    assert.equal(fromActiveSession({ exercises: [{ name: 'Row', lift_code: 'RW', status: 'pending', source: 'planned' }] }).slots[0].lift_code, 'RW');
+  });
+
+  // Codex #1146 P2: the empty→null coercion is STRING-ONLY. A present non-string liftCode is a
+  // malformed snapshot and must fail closed (validateWorkoutSession rejects it), never be
+  // silently coerced to null and accepted as a "genuine" canonical session.
+  it('FAILS CLOSED on a malformed non-string liftCode (never coerced to null)', () => {
+    for (const bad of [123, {}, true, ['x']]) {
+      const ws = fromActiveSession({ exercises: [{ name: 'Row', liftCode: bad, status: 'pending', source: 'planned' }] });
+      assert.notEqual(ws.slots[0].lift_code, null, `liftCode ${JSON.stringify(bad)} must NOT be coerced to null`);
+      assert.equal(validateWorkoutSession(ws).valid, false, `liftCode ${JSON.stringify(bad)} must fail closed`);
+    }
   });
 });
 
