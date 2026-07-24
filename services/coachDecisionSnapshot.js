@@ -52,7 +52,10 @@ function buildCoachingDecisionFromExplanation(grounding) {
     : { score: 45, tier: 'low', action: 'act_with_caveat', caveats: ['insufficient_history'] };
 
   const decision = buildCoachingDecision({
-    intent: { type: 'explain_recommendation', constraints: {}, source: 'coach_chat' },
+    // `source` is the IntentEnvelope source vocabulary (config/coaching/contracts/
+    // intent.vocabulary.json: button|chat|voice|api|wearable|schedule) — the /api/coach/chat
+    // boundary is `chat` (Codex #1151 P2). NOT 'coach_chat' (not in the closed vocabulary).
+    intent: { type: 'explain_recommendation', constraints: {}, source: 'chat' },
     decision_type: 'progress_readout',
     status: 'answered',
     confidence,

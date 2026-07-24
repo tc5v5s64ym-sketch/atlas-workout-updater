@@ -27,6 +27,14 @@ describe('buildCoachingDecisionFromExplanation — valid canonicalization', () =
     assert.equal(d.status, 'answered');
   });
 
+  it('uses the CANONICAL IntentEnvelope source "chat" for the /api/coach/chat boundary (Codex #1151 P2)', () => {
+    const d = buildCoachingDecisionFromExplanation(grounded());
+    const vocab = require('../config/coaching/contracts/intent.vocabulary.json');
+    assert.equal(d.intent.source, 'chat');
+    assert.ok(vocab.sources.includes(d.intent.source), 'source must be in the closed IntentEnvelope vocabulary');
+    assert.ok(!vocab.sources.includes('coach_chat'), 'coach_chat is deliberately NOT the canonical source');
+  });
+
   it('carries NO prescription (progress_readout, contract rule 6) and no prescribed numbers', () => {
     const d = buildCoachingDecisionFromExplanation(grounded());
     assert.deepEqual(d.payload, {});
