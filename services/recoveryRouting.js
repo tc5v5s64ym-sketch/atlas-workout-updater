@@ -76,6 +76,39 @@ function fatiguedPatternNames(readiness) {
 }
 
 /**
+ * The canonical recovery-reason FACTS a tiredness/recovery turn is grounded in — the exact,
+ * authoritative signals buildTirednessRecoveryAnswer consumes, extracted once into a small
+ * shape suitable for a CoachingDecision's explanation_inputs (Phase 4 H-03). Pure.
+ *
+ * Only genuinely-present facts are included ("here are the facts you may word"); a signal the
+ * reply cannot use is omitted, never null-padded — an outage snapshot with only client readiness
+ * yields at most `fatigued_patterns` (honest: nothing else is grounded). Values are carried
+ * VERBATIM as the reply reads them (fatigue_status is NOT trimmed — the reply tests
+ * `fatigueStatus.status === 'high'` exactly, so trimming could diverge; days_since_last_session is
+ * normalized with the SAME `Number()`/finite guard the reply uses; fatigued_patterns is the FULL
+ * flagged-pattern list, because the reply words slice(0,2) for names but the full length for the
+ * singular/plural boundary). This shape is the single source both the reply worder and the
+ * canonical decision read from as Phase 4 wires live consumption.
+ *
+ * @param {object} signals  same shape buildTirednessRecoveryAnswer takes.
+ * @returns {{fatigue_status?: string, days_since_last_session?: number, fatigued_patterns?: string[]}}
+ */
+function recoveryReasonFacts(signals) {
+  const s = signals && typeof signals === 'object' ? signals : {};
+  const fs = s.fatigueStatus && typeof s.fatigueStatus === 'object' ? s.fatigueStatus : {};
+  const facts = {};
+  // Verbatim, present-iff-truthy — never trimmed (the reply compares fs.status exactly).
+  if (typeof fs.status === 'string' && fs.status) facts.fatigue_status = fs.status;
+  // Same normalization as the reply: null/''/non-finite ⇒ absent (Number(null) is 0 — guard it).
+  const d = (s.daysSinceLastSession == null || s.daysSinceLastSession === '') ? NaN : Number(s.daysSinceLastSession);
+  if (Number.isFinite(d)) facts.days_since_last_session = d;
+  // The full flagged-fatigued pattern list (the reply needs both slice(0,2) and the true length).
+  const patterns = fatiguedPatternNames(s.readiness);
+  if (patterns.length) facts.fatigued_patterns = patterns;
+  return facts;
+}
+
+/**
  * Build a short, deterministic, recovery-routed reply for a tired lifter. Grounds
  * in the engine's real signals; invents no lift-specific numbers; never hypes.
  *
@@ -115,4 +148,4 @@ function buildTirednessRecoveryAnswer({ fatigueStatus = null, readiness = null, 
   return `Then don't force it. A lighter session or a full rest day both beat grinding through fatigue — recovery is when the training pays off. If you do train, leave more in reserve than usual and stop while it still feels clean.`;
 }
 
-module.exports = { isTirednessExpression, buildTirednessRecoveryAnswer };
+module.exports = { isTirednessExpression, buildTirednessRecoveryAnswer, recoveryReasonFacts };

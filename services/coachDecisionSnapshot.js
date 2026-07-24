@@ -28,6 +28,7 @@
 // Pure / deterministic — no I/O, no clock, no randomness. Read-only; it builds a value.
 
 const { buildCoachingDecision, validateCoachingDecision } = require('./coachingDecision');
+const { recoveryReasonFacts } = require('./recoveryRouting');
 
 function _isPlainObject(v) { return v != null && typeof v === 'object' && !Array.isArray(v); }
 function _strOrNull(v) { return typeof v === 'string' && v.trim() ? v.trim() : null; }
@@ -131,6 +132,10 @@ function buildCoachingDecisionFromExplanation(grounding) {
  *        fabricated high value — grounded ⇒ moderate/act; outage ⇒ low/act_with_caveat +
  *        limited_readiness_inputs. safety stays green/non-blocking (recovery routing is an
  *        advisory, not a write block).
+ * @param {object} [signal.fatigueStatus]         computeFatigueStatus() output — carried into
+ *        explanation_inputs as the exact recovery reason facts the reply is grounded in.
+ * @param {Array}  [signal.readiness]             readiness snapshot ([{pattern,status,detail}]).
+ * @param {number} [signal.daysSinceLastSession]  days since the last logged session.
  * @returns {object|null}  the decision, or null when it fails validation.
  */
 function buildRecoveryDecision(signal) {
@@ -147,7 +152,12 @@ function buildRecoveryDecision(signal) {
     safety: { level: 'green', flags: [], blocking: false },
     payload: {},
     missing_info: [],
-    explanation_inputs: {},
+    // The exact recovery-reason facts buildTirednessRecoveryAnswer consumes (fatigue_status,
+    // days_since_last_session, fatigued_patterns) — only genuinely-present facts, extracted by the
+    // one shared recoveryReasonFacts. An outage/limited signal (client readiness only) yields at
+    // most fatigued_patterns; a bare signal yields {}. recovery carries no prescribed PAYLOAD
+    // numbers, so these facts never trip the trust contract and the decision stays valid.
+    explanation_inputs: recoveryReasonFacts(signal),
     provenance: { modules_run: [], skipped: [], state_asOf: null, engine_version: null },
   });
 
