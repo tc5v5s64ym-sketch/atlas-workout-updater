@@ -36,7 +36,7 @@ const coachTurnPacketShadow = require('./coachTurnPacketShadow');
 const coachResponseSheet = require('./coachResponseSheet');
 const { getProfileGoal } = require('./profileGoal');
 const { buildCanonicalSessionSnapshot } = require('./coachSessionSnapshot');
-const { buildCoachingDecisionFromExplanation } = require('./coachDecisionSnapshot');
+const { buildCoachingDecisionFromExplanation, buildRecoveryDecision } = require('./coachDecisionSnapshot');
 const { isTurnPrecedenceEnabled } = require('./turnPrecedence');
 
 // The two Q&A routes carry the final visible answer in different fields: /api/coach/chat
@@ -125,22 +125,30 @@ function observeQaTurn(req, res, opts) {
       // read-only route still bypasses packet truth there (the divergence report's headline).
       const grounding = res.locals && typeof res.locals.coachRecommendationGrounding === 'object'
         ? res.locals.coachRecommendationGrounding : null;
-      // Phase 4 H-03 (shadow-first) — canonicalize the route's read-only explain-recommendation
-      // decision into a `progress_readout` CoachingDecision for the packet, gated by the same
-      // ATLAS_TURN_PRECEDENCE flag: flag off ⇒ null ⇒ packet.decision stays null (byte-identical
-      // shadow). null on every non-explain turn. Shadow-only; the live route is unchanged.
-      const canonicalDecision = (isTurnPrecedenceEnabled() && grounding)
-        ? buildCoachingDecisionFromExplanation(grounding)
-        : null;
+      // The route stashes a recovery-decision signal for a tiredness/recovery-routing turn.
+      const recoverySignal = res.locals && typeof res.locals.coachRecoveryDecision === 'object'
+        ? res.locals.coachRecoveryDecision : null;
+      // Phase 4 H-03 (shadow-first) — canonicalize the route's route-local coaching decision into
+      // a CoachingDecision for the packet, gated by the same ATLAS_TURN_PRECEDENCE flag: flag off
+      // ⇒ null ⇒ packet.decision stays null (byte-identical shadow). An explain-recommendation
+      // turn ⇒ progress_readout; a recovery-routing turn ⇒ recovery; else null. Shadow-only.
+      let canonicalDecision = null;
+      if (isTurnPrecedenceEnabled()) {
+        if (grounding) canonicalDecision = buildCoachingDecisionFromExplanation(grounding);
+        else if (recoverySignal) canonicalDecision = buildRecoveryDecision(recoverySignal);
+      }
       // session_snapshot is genuinely present when a canonical WorkoutSession was assembled for
       // this turn (H-08A) OR a recommendation grounding was built. engine_decision is genuinely
-      // present when the route made a recommendation decision (grounding) — now ALSO carried
-      // canonically in packet.decision (H-03). Do NOT mark engine_decision from session state alone.
+      // present when the route made a coaching decision (a recommendation explanation OR recovery
+      // routing) — now ALSO carried canonically in packet.decision (H-03). Do NOT mark
+      // engine_decision from session state alone.
       if (canonicalSession || grounding) {
         turn.stage('session_snapshot', 'ok');
       }
-      if (grounding) {
+      if (grounding || recoverySignal) {
         turn.stage('engine_decision', 'ok');
+      }
+      if (grounding) {
         turn.stage('coaching_strategy', 'ok');
       }
       turn.stage('model_response', modelStatus);
