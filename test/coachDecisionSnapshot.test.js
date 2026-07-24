@@ -35,11 +35,28 @@ describe('buildCoachingDecisionFromExplanation — valid canonicalization', () =
     assert.ok(!vocab.sources.includes('coach_chat'), 'coach_chat is deliberately NOT the canonical source');
   });
 
-  it('carries NO prescription (progress_readout, contract rule 6) and no prescribed numbers', () => {
+  it('carries NO prescription in the PAYLOAD (progress_readout, contract rule 6); no Brain re-run', () => {
     const d = buildCoachingDecisionFromExplanation(grounded());
     assert.deepEqual(d.payload, {});
-    assert.deepEqual(d.explanation_inputs, {});
     assert.deepEqual(d.provenance.modules_run, [], 'the shadow does not re-run the Brain');
+  });
+
+  it('populates explanation_inputs with the DISPLAYED readout facts (the LLM may word these)', () => {
+    const d = buildCoachingDecisionFromExplanation(grounded());
+    assert.equal(d.explanation_inputs.target_name, 'Bench Press');
+    assert.equal(d.explanation_inputs.target_weight, 185);
+    assert.equal(d.explanation_inputs.target_reps, 5);
+    assert.equal(d.explanation_inputs.target_rir, 2);
+    assert.equal(d.explanation_inputs.recommendation_label, 'Upper Power');
+    // the decision stays contract-valid (progress_readout has no prescribed PAYLOAD numbers,
+    // so these readout facts in explanation_inputs never trip the trust contract)
+    assert.equal(validateCoachingDecision(d).valid, true, validateCoachingDecision(d).errors.join(' | '));
+  });
+
+  it('omits absent facts — an outage snapshot with no numbers yields empty explanation_inputs', () => {
+    const d = buildCoachingDecisionFromExplanation({ coaching_strategy: 'explain_recommendation', label: null, target: {}, history: null });
+    assert.deepEqual(d.explanation_inputs, {}, 'nothing to word ⇒ empty (honest)');
+    assert.equal(validateCoachingDecision(d).valid, true);
   });
 
   it('derives conservative confidence from the grounding signal (never fabricates high)', () => {

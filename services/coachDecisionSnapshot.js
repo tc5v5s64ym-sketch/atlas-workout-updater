@@ -30,6 +30,30 @@
 const { buildCoachingDecision, validateCoachingDecision } = require('./coachingDecision');
 
 function _isPlainObject(v) { return v != null && typeof v === 'object' && !Array.isArray(v); }
+function _strOrNull(v) { return typeof v === 'string' && v.trim() ? v.trim() : null; }
+function _numOrNull(v) { return typeof v === 'number' && Number.isFinite(v) ? v : null; }
+
+// The readout facts the output-LLM may word for an explain-recommendation turn — the DISPLAYED
+// recommendation's prescription (name + weight/reps/sets/rir) and the engine's label/focus. Only
+// non-null facts are included ("here are the facts you may word"); an outage snapshot with no
+// numbers yields a near-empty set (honest — nothing to word). These are the EXISTING displayed
+// recommendation being explained, NOT a new prescription — so the payload stays empty
+// (progress_readout carries no prescription, contract rule 6) and the trust contract (which
+// governs prescribed PAYLOAD numbers) is unaffected. Pure.
+function _explanationInputsFrom(snapshot) {
+  const s = _isPlainObject(snapshot) ? snapshot : {};
+  const t = _isPlainObject(s.target) ? s.target : {};
+  const out = {};
+  const put = (k, v) => { if (v != null) out[k] = v; };
+  put('target_name', _strOrNull(t.name));
+  put('target_weight', _numOrNull(t.weight));
+  put('target_reps', _numOrNull(t.reps));
+  put('target_sets', _numOrNull(t.sets));
+  put('target_rir', _numOrNull(t.rir));
+  put('recommendation_label', _strOrNull(s.label));
+  put('focus', _strOrNull(s.focus));
+  return out;
+}
 
 /**
  * Build a canonical CoachingDecision from the route's recommendation-explanation grounding
@@ -62,7 +86,10 @@ function buildCoachingDecisionFromExplanation(grounding) {
     safety: { level: 'green', flags: [], blocking: false },
     payload: {},               // progress_readout carries no prescription (contract rule 6)
     missing_info: [],
-    explanation_inputs: {},     // no prescribed numbers to echo (trust contract satisfied vacuously)
+    // The readout facts the LLM may word (the displayed prescription + label/focus). No
+    // prescribed PAYLOAD numbers exist for progress_readout, so the trust contract is satisfied
+    // vacuously regardless of what non-prescription facts appear here.
+    explanation_inputs: _explanationInputsFrom(s),
     provenance: { modules_run: [], skipped: [], state_asOf: null, engine_version: null },
   });
 
