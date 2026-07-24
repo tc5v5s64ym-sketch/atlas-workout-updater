@@ -22,6 +22,7 @@
     "check:allowlist": "node scripts/check-allowlist-ratchet.js",
     "check:paper-weight": "node scripts/check-paper-weight.js",
     "check:ladder": "node scripts/check-completion-ladder.js",
+    "check:packet-trace": "node scripts/check-packet-trace.js",
     "archive:backlog": "node scripts/archive-backlog.js",
     "check:syntax": "find . -path ./node_modules -prune -o -name '*.js' -print0 | xargs -0 -n1 node --check",
     "test": "node --test --test-reporter=spec",
