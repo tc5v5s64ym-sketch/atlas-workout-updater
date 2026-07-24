@@ -141,3 +141,52 @@ describe('buildRecoveryDecision — the recovery-routing decision (H-03)', () =>
     assert.equal(buildRecoveryDecision('nope').confidence.tier, 'low');
   });
 });
+
+describe('buildRecoveryDecision — explanation_inputs carries the recovery reason facts (H-03)', () => {
+  it('an engine-grounded, elevated + back-to-back turn carries fatigue_status + days_since_last_session', () => {
+    const d = buildRecoveryDecision({ engine_grounded: true, fatigueStatus: { status: 'high' }, daysSinceLastSession: 1, readiness: [] });
+    assert.deepEqual(d.explanation_inputs, { fatigue_status: 'high', days_since_last_session: 1 });
+    assert.equal(validateCoachingDecision(d).valid, true, validateCoachingDecision(d).errors.join(' | '));
+  });
+
+  it('carries the fatigued-pattern list from the readiness snapshot', () => {
+    const d = buildRecoveryDecision({ engine_grounded: true, fatigueStatus: { status: 'normal' }, daysSinceLastSession: 2, readiness: [
+      { pattern: 'horizontal push', status: 'fatigued' },
+      { pattern: 'hinge', status: 'fatigued' },
+      { pattern: 'squat', status: 'ready' },
+    ] });
+    assert.deepEqual(d.explanation_inputs.fatigued_patterns, ['horizontal push', 'hinge']);
+    assert.equal(d.explanation_inputs.fatigue_status, 'normal');
+    assert.equal(d.explanation_inputs.days_since_last_session, 2);
+    assert.equal(validateCoachingDecision(d).valid, true, validateCoachingDecision(d).errors.join(' | '));
+  });
+
+  it('days === 0 (trained today) is carried, not dropped as falsy', () => {
+    const d = buildRecoveryDecision({ engine_grounded: true, fatigueStatus: { status: 'normal' }, daysSinceLastSession: 0 });
+    assert.equal(d.explanation_inputs.days_since_last_session, 0);
+  });
+
+  it('the recovered branch carries a normal status + day count', () => {
+    const d = buildRecoveryDecision({ engine_grounded: true, fatigueStatus: { status: 'normal' }, daysSinceLastSession: 5, readiness: [] });
+    assert.deepEqual(d.explanation_inputs, { fatigue_status: 'normal', days_since_last_session: 5 });
+  });
+
+  it('an OUTAGE/limited signal (client readiness only) carries at most fatigued_patterns + the limited caveat', () => {
+    const d = buildRecoveryDecision({ engine_grounded: false, readiness: [{ pattern: 'hinge', status: 'fatigued' }] });
+    assert.deepEqual(d.explanation_inputs, { fatigued_patterns: ['hinge'] }, 'no engine fatigue_status / days on the outage path');
+    assert.deepEqual(d.confidence.caveats, ['limited_readiness_inputs'], 'the engine-grounded vs outage distinction is preserved');
+    assert.equal(validateCoachingDecision(d).valid, true, validateCoachingDecision(d).errors.join(' | '));
+  });
+
+  it('a bare / malformed signal yields empty explanation_inputs (honest — nothing to word), still valid', () => {
+    assert.deepEqual(buildRecoveryDecision({ engine_grounded: false }).explanation_inputs, {});
+    assert.deepEqual(buildRecoveryDecision({ engine_grounded: true, fatigueStatus: 'nope', readiness: 'nope', daysSinceLastSession: 'abc' }).explanation_inputs, {});
+    assert.equal(validateCoachingDecision(buildRecoveryDecision()).valid, true);
+  });
+
+  it('the fatigued_patterns array value never trips the trust contract (recovery has no prescribed numbers)', () => {
+    const d = buildRecoveryDecision({ engine_grounded: true, readiness: [{ pattern: 'a', status: 'fatigued' }, { pattern: 'b', status: 'fatigued' }] });
+    assert.ok(Array.isArray(d.explanation_inputs.fatigued_patterns));
+    assert.equal(validateCoachingDecision(d).valid, true, validateCoachingDecision(d).errors.join(' | '));
+  });
+});

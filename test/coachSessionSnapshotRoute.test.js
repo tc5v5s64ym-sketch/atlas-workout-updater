@@ -251,6 +251,26 @@ test('H-03: flag ON + a tired turn carries a canonical RECOVERY decision (embedd
   delete process.env.ATLAS_INTERACTION_TRACE; delete process.env.ATLAS_TURN_PRECEDENCE;
 });
 
+// PR 1 (canonical recovery reason facts): enriching the shadow recovery decision's
+// explanation_inputs is SHADOW-ONLY — the route hoists the recovery signals it already computes
+// and stashes them on res.locals for the shadow; the visible recovery reply is untouched.
+test('H-03: the recovery reply is byte-identical whether the shadow enrichment is on or off', async () => {
+  const body = { message: "I'm completely exhausted and cooked today.", history: [], context: {} };
+  // Shadow OFF baseline (TP on so lane behavior is held constant).
+  const base = await baselineData(true, body);
+  // Shadow ON — the recovery decision is enriched with reason facts, but the reply must not change.
+  process.env.ATLAS_TURN_PRECEDENCE = 'on';
+  process.env.ATLAS_INTERACTION_TRACE = 'shadow';
+  const on = await post('/api/coach/chat', body);
+  assert.equal(on.res.status, 200);
+  assert.equal(on.json.data.source, 'engine', 'recovery routing still owns the reply');
+  assert.deepEqual(on.json.data, base, 'the visible recovery reply is byte-identical with the enrichment live');
+  assert.equal(on.shadowRow.embedded.decision, true, 'the enriched recovery decision is still embedded');
+  // Read-only: the stubbed sheets.appendRows throws if a training write is attempted, so a 200 here
+  // proves the recovery path never wrote.
+  delete process.env.ATLAS_INTERACTION_TRACE; delete process.env.ATLAS_TURN_PRECEDENCE;
+});
+
 // D10 — the route resolves a discussion referent AT ANSWER TIME (the lift a bare correction
 // resolves to). With the canonical session carried (H-08A), that referent is now set on the
 // packet's session (packet.session.discussion_referent), so the divergence report's

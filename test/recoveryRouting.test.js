@@ -6,7 +6,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 
-const { isTirednessExpression, buildTirednessRecoveryAnswer } = require('../services/recoveryRouting');
+const { isTirednessExpression, buildTirednessRecoveryAnswer, recoveryReasonFacts } = require('../services/recoveryRouting');
 
 const HYPE = /push through|you('?| )ve got this|you got this|no excuses|grind it out|dig deep|beast mode|crush it|let'?s go champ|keep grinding/i;
 
@@ -111,4 +111,69 @@ test('buildTirednessRecoveryAnswer: never hypes across every signal combination'
     { fatigueStatus: { status: 'no_baseline' } },
   ];
   for (const c of combos) assert.doesNotMatch(buildTirednessRecoveryAnswer(c), HYPE, JSON.stringify(c));
+});
+
+// ── recoveryReasonFacts — the canonical recovery-reason facts (Phase 4 H-03) ──────────────────
+//
+// The exact, authoritative facts buildTirednessRecoveryAnswer consumes, extracted once for a
+// CoachingDecision's explanation_inputs. Only genuinely-present facts appear; values are carried
+// as the reply reads them (verbatim fatigue_status; same day normalization; the FULL fatigued
+// pattern list). These prove the extractor captures every branch discriminator faithfully.
+
+test('recoveryReasonFacts: engine-grounded elevated + back-to-back carries fatigue_status + days', () => {
+  const f = recoveryReasonFacts({ fatigueStatus: { status: 'high' }, daysSinceLastSession: 1, readiness: [] });
+  assert.deepEqual(f, { fatigue_status: 'high', days_since_last_session: 1 });
+});
+
+test('recoveryReasonFacts: days === 0 (trained today) is carried, not dropped as falsy', () => {
+  const f = recoveryReasonFacts({ fatigueStatus: { status: 'normal' }, daysSinceLastSession: 0 });
+  assert.equal(f.days_since_last_session, 0);
+});
+
+test('recoveryReasonFacts: carries the FULL flagged-fatigued pattern list (reply needs slice+length)', () => {
+  const f = recoveryReasonFacts({ readiness: [
+    { pattern: 'horizontal push', status: 'fatigued' },
+    { pattern: 'squat', status: 'fatigued' },
+    { pattern: 'hinge', status: 'fatigued' },
+    { pattern: 'row', status: 'caution' }, // not fatigued → excluded
+  ] });
+  assert.deepEqual(f.fatigued_patterns, ['horizontal push', 'squat', 'hinge']);
+});
+
+test('recoveryReasonFacts: recovered branch carries normal status + day count', () => {
+  const f = recoveryReasonFacts({ fatigueStatus: { status: 'normal' }, daysSinceLastSession: 5 });
+  assert.deepEqual(f, { fatigue_status: 'normal', days_since_last_session: 5 });
+});
+
+test('recoveryReasonFacts: outage/limited (client readiness only) yields at most fatigued_patterns', () => {
+  assert.deepEqual(recoveryReasonFacts({ readiness: [{ pattern: 'hinge', status: 'fatigued' }] }), { fatigued_patterns: ['hinge'] });
+  assert.deepEqual(recoveryReasonFacts({ readiness: [{ pattern: 'hinge', status: 'caution' }] }), {}, 'no fatigued pattern ⇒ nothing');
+});
+
+test('recoveryReasonFacts: a bare / empty signal yields {} (honest — nothing grounded)', () => {
+  assert.deepEqual(recoveryReasonFacts({}), {});
+  assert.deepEqual(recoveryReasonFacts(), {});
+  assert.deepEqual(recoveryReasonFacts(null), {});
+});
+
+test('recoveryReasonFacts: malformed inputs fail closed (no fabricated facts)', () => {
+  assert.deepEqual(recoveryReasonFacts({ fatigueStatus: 'nope', readiness: 'nope', daysSinceLastSession: 'abc' }), {},
+    'non-object status / non-array readiness / non-numeric days ⇒ all omitted');
+  assert.deepEqual(recoveryReasonFacts({ fatigueStatus: {}, daysSinceLastSession: null }), {}, 'no status / null days ⇒ omitted');
+});
+
+test('recoveryReasonFacts: coerces a numeric-string day count exactly as the reply does', () => {
+  const f = recoveryReasonFacts({ daysSinceLastSession: '3' });
+  assert.equal(f.days_since_last_session, 3);
+});
+
+test('recoveryReasonFacts: the facts capture the branch the reply actually takes (spot check)', () => {
+  // Elevated → the reply's "well above your usual volume" branch; the fact records fatigue_status:'high'.
+  const elevated = { fatigueStatus: { status: 'high' }, daysSinceLastSession: 3, readiness: [] };
+  assert.equal(recoveryReasonFacts(elevated).fatigue_status, 'high');
+  assert.match(buildTirednessRecoveryAnswer(elevated), /well above your usual volume/);
+  // Recovered → the reply's "look recovered" branch; the facts record normal + the day count.
+  const recovered = { fatigueStatus: { status: 'normal' }, daysSinceLastSession: 4, readiness: [] };
+  assert.deepEqual(recoveryReasonFacts(recovered), { fatigue_status: 'normal', days_since_last_session: 4 });
+  assert.match(buildTirednessRecoveryAnswer(recovered), /look recovered/);
 });

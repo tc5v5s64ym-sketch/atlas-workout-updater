@@ -1385,13 +1385,18 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // bench?" into a generic advice fallback — it explains the displayed target
       // deterministically (recovery still outranks it).
       const recExplainOffline = coachExplanationGrounding.resolveRecommendationExplanation(message, clientCtx || {});
+      // The recovery signals available on the unconfigured path — client readiness ONLY (no engine
+      // fatigueStatus / days-since). Built ONCE and used for BOTH the reply and the shadow recovery
+      // decision, so the canonical explanation_inputs are exactly the facts the reply words.
+      const offlineRecoverySignals = { readiness: Array.isArray(clientCtx && clientCtx.readiness) ? clientCtx.readiness : null };
       // H-03 (shadow-first): mark that the route made a recovery decision this turn, for the
       // CoachTurnPacket shadow. engine_grounded:false — the unconfigured path has only client
-      // readiness (no fatigueStatus / days-since). res.locals is read only by the shadow's
-      // res.on('finish') hook; the reply is untouched.
-      if (tired) { res.locals = res.locals || {}; res.locals.coachRecoveryDecision = { engine_grounded: false }; }
+      // readiness (no fatigueStatus / days-since); the signals ride along so the shadow decision's
+      // explanation_inputs match the reply. res.locals is read only by the shadow's res.on('finish')
+      // hook; the reply is untouched.
+      if (tired) { res.locals = res.locals || {}; res.locals.coachRecoveryDecision = { engine_grounded: false, ...offlineRecoverySignals }; }
       const answer = tired
-        ? buildTirednessRecoveryAnswer({ readiness: Array.isArray(clientCtx && clientCtx.readiness) ? clientCtx.readiness : null })
+        ? buildTirednessRecoveryAnswer(offlineRecoverySignals)
         : ((recExplainOffline && wordRecommendationExplanation(recExplainOffline.snapshot)) || deterministicAnswer([]));
       return standardSuccess(req, res, answer
         ? 'Coach chat unavailable — deterministic engine answer'
@@ -1445,16 +1450,21 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // recovery state (weekly-load fatigue, days since last session, fatigued
       // patterns). Deterministic + read-only; the LLM is bypassed so it can't hype.
       if (tired) {
-        // H-03 (shadow-first): mark the engine-GROUNDED recovery decision (real fatigueStatus +
-        // days-since) for the CoachTurnPacket shadow. res.locals is read only by the shadow's
-        // res.on('finish') hook; the reply is untouched.
-        res.locals = res.locals || {};
-        res.locals.coachRecoveryDecision = { engine_grounded: true };
-        const recoveryReply = buildTirednessRecoveryAnswer({
+        // H-03 (shadow-first): the engine-GROUNDED recovery signals (real fatigueStatus + days-since
+        // + readiness). Built ONCE and used for BOTH the reply and the shadow recovery decision, so
+        // the canonical explanation_inputs are exactly the facts the reply words (computeFatigueStatus
+        // / assessLayoff are each still called once).
+        const recoverySignals = {
           fatigueStatus: computeFatigueStatus(allLog),
           readiness: context.readiness,
           daysSinceLastSession: assessLayoff(allLog).days_since_last_session,
-        });
+        };
+        // engine_grounded:true for the conservative confidence; the signals ride along for the
+        // shadow decision's explanation_inputs. res.locals is read only by the shadow's
+        // res.on('finish') hook; the reply is untouched.
+        res.locals = res.locals || {};
+        res.locals.coachRecoveryDecision = { engine_grounded: true, ...recoverySignals };
+        const recoveryReply = buildTirednessRecoveryAnswer(recoverySignals);
         return standardSuccess(req, res, 'Coach chat — recovery routing', {
           message: recoveryReply, configured: true, model: coach.coachModel(), source: 'engine'
         });
