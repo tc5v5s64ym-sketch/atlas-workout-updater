@@ -28,21 +28,27 @@ function _nonEmptyString(v) { return typeof v === 'string' && v.trim() ? v.trim(
  * Build a canonical, validated WorkoutSession from a chat request context.
  *
  * @param {object} context  the /api/coach/chat request `context` object
+ * @param {object} [opts]
+ * @param {string|null} [opts.discussion_referent]  the canonical key of the lift the turn's
+ *        answer is about, resolved server-side AT ANSWER TIME (Phase 4 D10). Set on the
+ *        session so the packet CARRIES the referent (packet.session.discussion_referent)
+ *        instead of it living only in the route-local in-memory store. Empty/non-string → null.
  * @returns {object|null}   a valid WorkoutSession, or null when the additive
  *                          `active_session` field is absent, malformed, or fails validation.
  *
  * Carries an authoritative session id ONLY when the active-session object itself supplies a
- * real one — never the plan fingerprint, never invented. discussion_referent is left null in
- * this increment (Phase 4 D10 punch list) unless the same object already carries a canonical
- * value (fromActiveSession would pass it through, but the client sends none yet).
+ * real one — never the plan fingerprint, never invented.
  */
-function buildCanonicalSessionSnapshot(context) {
+function buildCanonicalSessionSnapshot(context, { discussion_referent = null } = {}) {
   const ctx = _isPlainObject(context) ? context : {};
   const active = ctx.active_session;
   // The additive field must be the live client session shape: an object with an exercises
   // array. Anything else (absent, a string, an array, no exercises list) → no session.
   if (!_isPlainObject(active) || !Array.isArray(active.exercises)) return null;
-  const session = fromActiveSession(active, { session_id: _nonEmptyString(active.session_id) });
+  const session = fromActiveSession(active, {
+    session_id: _nonEmptyString(active.session_id),
+    discussion_referent: _nonEmptyString(discussion_referent),
+  });
   // Fail closed: a malformed slot (invalid status/source, blank name, …) never becomes a
   // half-repaired session — the whole snapshot is dropped to null.
   return validateWorkoutSession(session).valid ? session : null;

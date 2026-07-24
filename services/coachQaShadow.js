@@ -99,13 +99,21 @@ function observeQaTurn(req, res, opts) {
       const validatorRan = !hasError && data.source === 'gemini';
       const reqBody = req.body && typeof req.body === 'object' ? req.body : {};
       const ctx = reqBody.context && typeof reqBody.context === 'object' ? reqBody.context : {};
+      // The route stashes its chosen discussion referent on res.locals (the dispute resolver's /
+      // discussed-lift pick, resolved AT ANSWER TIME). Read it up front so D10 can set it on the
+      // canonical session below — carrying the referent on the packet instead of only in the
+      // route-local in-memory store. Also forwarded to observe() for the route-vs-packet compare.
+      const routeReferent = res.locals && typeof res.locals.coachTurnReferent === 'object' ? res.locals.coachTurnReferent : null;
       // Phase 4 H-08A — the canonical client WorkoutSession crosses the boundary here. Build
       // (+validate) it ONCE from the additive context.active_session snapshot, gated by the
       // ATLAS_TURN_PRECEDENCE flag: flag off ⇒ null ⇒ packet.session stays null and the trace
       // is byte-identical to before. null when the field is absent/invalid (old clients,
-      // /api/coach/ask, or a malformed snapshot) — the honest missing-session result.
+      // /api/coach/ask, or a malformed snapshot) — the honest missing-session result. D10: the
+      // route's answer-time referent is set on the session (packet.session.discussion_referent),
+      // so the divergence report's "route-local referent" signal clears as clients forward the
+      // active session.
       const canonicalSession = isTurnPrecedenceEnabled()
-        ? buildCanonicalSessionSnapshot(ctx)
+        ? buildCanonicalSessionSnapshot(ctx, { discussion_referent: routeReferent ? routeReferent.route : null })
         : null;
       // Recommendation-explanation grounding — the route stashes the trusted recommendation
       // snapshot on res.locals for a "why did the recommendation choose X" turn. When present
@@ -132,10 +140,8 @@ function observeQaTurn(req, res, opts) {
       turn.stage('rendered_output', res.statusCode >= 500 ? 'error' : 'ok', req.requestId || null);
       const traceRecord = turn.finish();
       const assembled = coachTurnPacketShadow.assembleShadowPacket({ turnId: turn.turnId, profileGoal: getProfileGoal(), session: canonicalSession });
-      // The route stashes its chosen discussion referent on res.locals (the dispute
-      // resolver's / discussed-lift pick). Forward it so the shadow record can compare it to
-      // the packet's referent — the Phase-4 divergence signal. Absent on non-referent turns.
-      const routeReferent = res.locals && typeof res.locals.coachTurnReferent === 'object' ? res.locals.coachTurnReferent : null;
+      // Forward the route's referent pick so the shadow record can compare it to the packet's
+      // referent (now carried on the session, D10) — the Phase-4 divergence signal.
       coachTurnPacketShadow.observe({ trace: traceRecord, assembled, visible, routeReferent, grounding });
       coachResponseSheet.persist({
         turnId: turn.turnId,

@@ -174,7 +174,7 @@ describe('coachTurnPacketShadow — observe (packet vs visible side by side)', (
     assert.equal(rec.embedded.decision, false);
   });
 
-  it('carries the route referent pick vs the packet referent (null until Phase 4)', () => {
+  it('carries the route referent pick vs the packet referent (null when no session carries it)', () => {
     const assembled = packetShadow.assembleShadowPacket({ turnId: 'turn:x_9_z', profileGoal: 'strength' });
     const rec = packetShadow.observe({
       trace: TRACE_REC,
@@ -184,8 +184,20 @@ describe('coachTurnPacketShadow — observe (packet vs visible side by side)', (
     });
     assert.ok(rec.referent, 'the record carries a referent block');
     assert.equal(rec.referent.route, 'BENCHPRESS', 'the route pick is recorded');
-    assert.equal(rec.referent.packet, null, 'the packet carries no referent yet (Phase 4 adds the field)');
+    assert.equal(rec.referent.packet, null, 'no session ⇒ the packet carries no referent');
     assert.equal(rec.referent.is_dispute, true);
+  });
+
+  it('D10: a session carrying discussion_referent makes referent.packet == the route pick (route-local cleared)', () => {
+    const { buildCanonicalSessionSnapshot } = require('../services/coachSessionSnapshot');
+    const session = buildCanonicalSessionSnapshot({ active_session: { exercises: [
+      { name: 'Bench Press', liftCode: '', status: 'pending', source: 'planned' },
+    ] } }, { discussion_referent: 'BENCHPRESS' });
+    const assembled = packetShadow.assembleShadowPacket({ turnId: 'turn:x_9_z', profileGoal: 'strength', session });
+    const rec = packetShadow.observe({ trace: TRACE_REC, assembled, visible: { data: { message: 'x' } }, routeReferent: { route: 'BENCHPRESS', is_dispute: false } });
+    assert.equal(rec.referent.route, 'BENCHPRESS');
+    assert.equal(rec.referent.packet, 'BENCHPRESS', 'the packet now carries the referent (D10)');
+    assert.equal(rec.embedded.session, true);
   });
 
   it('defaults the referent block to nulls when the route recorded none', () => {
