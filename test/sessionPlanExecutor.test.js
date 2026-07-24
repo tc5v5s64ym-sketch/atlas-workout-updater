@@ -697,3 +697,48 @@ test('buildNextUpAnswer: no authoritative plan → null (defer to the caller)', 
   assert.equal(buildNextUpAnswer({ planned: [], remaining: [], isComplete: false }), null);
   assert.equal(buildNextUpAnswer(planStateFromContext({})), null, 'no plan in context → null');
 });
+
+// ── buildNextUpAnswerFromSession (Phase 4 — H-08 consumption) ──
+// The canonical-WorkoutSession twin: names the next-up exercise from the session's DERIVED
+// cursor (remainingSlots/isComplete), not the lossy plan_state name array. Same wording home.
+const { buildNextUpAnswerFromSession } = require('../services/sessionPlanExecutor');
+const { buildCanonicalSessionSnapshot } = require('../services/coachSessionSnapshot');
+const sessionOf = (exercises) => buildCanonicalSessionSnapshot({ active_session: { exercises } });
+
+test('buildNextUpAnswerFromSession: names the first remaining slot (the derived cursor)', () => {
+  const s = sessionOf([
+    { name: 'Bench Press', liftCode: 'B', status: 'completed', source: 'planned' },
+    { name: 'Back Squat', liftCode: 'SQ', status: 'pending', source: 'planned' },
+    { name: 'Seated Row', liftCode: 'SR', status: 'pending', source: 'planned' },
+  ]);
+  assert.equal(buildNextUpAnswerFromSession(s), 'Next up: Back Squat.');
+});
+
+test('buildNextUpAnswerFromSession: duplicate slots — points at the first PENDING occurrence', () => {
+  // First Bench Press is done; the next-up is the SECOND Bench Press slot, not Back Squat.
+  const s = sessionOf([
+    { name: 'Bench Press', liftCode: 'B', status: 'completed', source: 'planned' },
+    { name: 'Bench Press', liftCode: 'B', status: 'pending', source: 'planned' },
+    { name: 'Back Squat', liftCode: 'SQ', status: 'pending', source: 'planned' },
+  ]);
+  assert.equal(buildNextUpAnswerFromSession(s), 'Next up: Bench Press.');
+});
+
+test('buildNextUpAnswerFromSession: a complete session confirms completion, names no lift', () => {
+  const s = sessionOf([{ name: 'Bench Press', liftCode: 'B', status: 'completed', source: 'planned' }]);
+  assert.match(buildNextUpAnswerFromSession(s), /plan done — nothing left/);
+});
+
+test('buildNextUpAnswerFromSession: an empty / null session → null (defer to the caller)', () => {
+  assert.equal(buildNextUpAnswerFromSession(null), null);
+  assert.equal(buildNextUpAnswerFromSession(sessionOf([])), null, 'a session with no slots defers');
+});
+
+test('buildNextUpAnswerFromSession: wording is IDENTICAL to the plan_state path for the same state', () => {
+  const s = sessionOf([
+    { name: 'Bench Press', liftCode: 'B', status: 'completed', source: 'planned' },
+    { name: 'Back Squat', liftCode: 'SQ', status: 'pending', source: 'planned' },
+  ]);
+  const ps = computePlanState(['Bench Press', 'Back Squat'], ['Bench Press']);
+  assert.equal(buildNextUpAnswerFromSession(s), buildNextUpAnswer(ps), 'the two paths word next-up the same');
+});
