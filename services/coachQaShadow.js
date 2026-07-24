@@ -36,6 +36,7 @@ const coachTurnPacketShadow = require('./coachTurnPacketShadow');
 const coachResponseSheet = require('./coachResponseSheet');
 const { getProfileGoal } = require('./profileGoal');
 const { buildCanonicalSessionSnapshot } = require('./coachSessionSnapshot');
+const { buildCoachingDecisionFromExplanation } = require('./coachDecisionSnapshot');
 const { isTurnPrecedenceEnabled } = require('./turnPrecedence');
 
 // The two Q&A routes carry the final visible answer in different fields: /api/coach/chat
@@ -124,10 +125,17 @@ function observeQaTurn(req, res, opts) {
       // read-only route still bypasses packet truth there (the divergence report's headline).
       const grounding = res.locals && typeof res.locals.coachRecommendationGrounding === 'object'
         ? res.locals.coachRecommendationGrounding : null;
+      // Phase 4 H-03 (shadow-first) — canonicalize the route's read-only explain-recommendation
+      // decision into a `progress_readout` CoachingDecision for the packet, gated by the same
+      // ATLAS_TURN_PRECEDENCE flag: flag off ⇒ null ⇒ packet.decision stays null (byte-identical
+      // shadow). null on every non-explain turn. Shadow-only; the live route is unchanged.
+      const canonicalDecision = (isTurnPrecedenceEnabled() && grounding)
+        ? buildCoachingDecisionFromExplanation(grounding)
+        : null;
       // session_snapshot is genuinely present when a canonical WorkoutSession was assembled for
-      // this turn (H-08A) OR a recommendation grounding was built. Do NOT mark engine_decision
-      // merely because session state exists — that stage stays route-local until Phase 4 wires
-      // the canonical decision (H-03).
+      // this turn (H-08A) OR a recommendation grounding was built. engine_decision is genuinely
+      // present when the route made a recommendation decision (grounding) — now ALSO carried
+      // canonically in packet.decision (H-03). Do NOT mark engine_decision from session state alone.
       if (canonicalSession || grounding) {
         turn.stage('session_snapshot', 'ok');
       }
@@ -139,7 +147,7 @@ function observeQaTurn(req, res, opts) {
       turn.stage('validator_result', validatorRan ? 'ok' : 'skipped');
       turn.stage('rendered_output', res.statusCode >= 500 ? 'error' : 'ok', req.requestId || null);
       const traceRecord = turn.finish();
-      const assembled = coachTurnPacketShadow.assembleShadowPacket({ turnId: turn.turnId, profileGoal: getProfileGoal(), session: canonicalSession });
+      const assembled = coachTurnPacketShadow.assembleShadowPacket({ turnId: turn.turnId, profileGoal: getProfileGoal(), session: canonicalSession, decision: canonicalDecision });
       // Forward the route's referent pick so the shadow record can compare it to the packet's
       // referent (now carried on the session, D10) — the Phase-4 divergence signal.
       coachTurnPacketShadow.observe({ trace: traceRecord, assembled, visible, routeReferent, grounding });

@@ -83,6 +83,27 @@ describe('coachTurnPacketShadow — assembleShadowPacket embeds the canonical se
     assert.equal(packet.session, null);
   });
 
+  it('a valid canonical decision produces packet.decision !== null, still schema-valid (H-03)', () => {
+    const { buildCoachingDecisionFromExplanation } = require('../services/coachDecisionSnapshot');
+    const decision = buildCoachingDecisionFromExplanation({ coaching_strategy: 'explain_recommendation', label: 'Upper', target: { name: 'Bench' }, history: { last_date: '2026-07-20' } });
+    const { packet, valid } = packetShadow.assembleShadowPacket({ turnId: 'turn:x_1_e', profileGoal: 'strength', decision });
+    assert.equal(valid, true);
+    assert.notEqual(packet.decision, null, 'the canonical decision is embedded');
+    assert.equal(packet.decision.decision_type, 'progress_readout');
+    assert.equal(validateCoachTurnPacket(packet).valid, true);
+    // the OTHER embedded facts stay honestly empty
+    assert.deepEqual(packet.exercises, []);
+    assert.equal(packet.safety, null);
+    assert.equal(packet.closeout, null);
+  });
+
+  it('an INVALID decision is honestly dropped to null (never a half-populated packet.decision)', () => {
+    const bad = { schema_version: 1, decision_type: 'bogus', intent: {}, confidence: {}, safety: {}, payload: {}, missing_info: [], explanation_inputs: {}, provenance: { modules_run: [], skipped: [] } };
+    const { packet, valid } = packetShadow.assembleShadowPacket({ turnId: 'turn:x_1_f', profileGoal: 'strength', decision: bad });
+    assert.equal(packet.decision, null, 'a decision that does not validate is not embedded');
+    assert.equal(valid, true, 'the packet itself stays valid (decision honestly null)');
+  });
+
   it('an INVALID session is honestly dropped to null (never a half-populated packet.session)', () => {
     const bad = { schema_version: 1, session_id: null, slots: [{ name: 'Bench', status: 'bogus' }] };
     const { packet, valid } = packetShadow.assembleShadowPacket({ turnId: 'turn:x_1_d', profileGoal: 'strength', session: bad });

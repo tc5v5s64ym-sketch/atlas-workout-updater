@@ -40,6 +40,7 @@
 const { buildCoachTurnPacket, validateCoachTurnPacket } = require('./coachTurnPacket');
 const { buildAthleteContext } = require('./athleteContext');
 const { validateWorkoutSession } = require('./workoutSession');
+const { validateCoachingDecision } = require('./coachingDecision');
 const { isShadowEnabled } = require('./interactionTraceShadow');
 const coachShadowSheet = require('./coachShadowSheet');
 
@@ -54,19 +55,21 @@ function _push(record) {
 function assembleShadowPacket(params) {
   const p = params && typeof params === 'object' ? params : {};
   const athlete = buildAthleteContext({ profile_goal: p.profileGoal != null ? p.profileGoal : null });
-  // Embed the canonical client WorkoutSession (H-08A) ONLY when it genuinely validates — a
-  // caller passes a session already built + validated at the boundary, but re-check here so
-  // an absent or malformed session is honestly dropped to null (never a half-populated
-  // packet.session). exercises/decision/safety/closeout stay empty: those are still owned by
-  // their own campaign phases (H-11/H-03/H-12) and are out of scope for this seam.
+  // Embed the canonical client WorkoutSession (H-08A) and the canonical CoachingDecision (H-03)
+  // ONLY when each genuinely validates — a caller passes them already built + validated at the
+  // boundary, but re-check here so an absent or malformed fact is honestly dropped to null
+  // (never a half-populated embed). exercises/safety/closeout stay empty: those are still owned
+  // by their own campaign phases (H-11/H-12) and are out of scope for this seam.
   let session = null;
   if (p.session != null && validateWorkoutSession(p.session).valid) session = p.session;
+  let decision = null;
+  if (p.decision != null && validateCoachingDecision(p.decision).valid) decision = p.decision;
   const packet = buildCoachTurnPacket({
     turn_id:   p.turnId,
     athlete,
     session,
     exercises: [],
-    decision:  null,
+    decision,
     safety:    null,
     closeout:  null,
   });
