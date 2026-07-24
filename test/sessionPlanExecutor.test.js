@@ -742,3 +742,51 @@ test('buildNextUpAnswerFromSession: wording is IDENTICAL to the plan_state path 
   const ps = computePlanState(['Bench Press', 'Back Squat'], ['Bench Press']);
   assert.equal(buildNextUpAnswerFromSession(s), buildNextUpAnswer(ps), 'the two paths word next-up the same');
 });
+
+// ── buildSessionCloseAnswerFromSession (Phase 4 — H-08 consumption) ──
+// "Are we done?" answered from the canonical session's own slots (isComplete/remainingSlots).
+const { buildSessionCloseAnswerFromSession } = require('../services/sessionPlanExecutor');
+
+test('buildSessionCloseAnswerFromSession: names the outstanding lifts when work remains', () => {
+  const s = sessionOf([
+    { name: 'Bench Press', liftCode: 'B', status: 'completed', source: 'planned' },
+    { name: 'Back Squat', liftCode: 'SQ', status: 'pending', source: 'planned' },
+    { name: 'Seated Row', liftCode: 'SR', status: 'pending', source: 'planned' },
+  ]);
+  const ans = buildSessionCloseAnswerFromSession('are we done?', s);
+  assert.match(ans, /Not done yet — 2 still on your list: Back Squat, Seated Row/);
+});
+
+test('buildSessionCloseAnswerFromSession: confirms a complete session with the exercise count', () => {
+  const s = sessionOf([
+    { name: 'Bench Press', liftCode: 'B', status: 'completed', source: 'planned' },
+    { name: 'Back Squat', liftCode: 'SQ', status: 'completed', source: 'planned' },
+  ]);
+  const ans = buildSessionCloseAnswerFromSession('Ok so we are done?', s);
+  assert.match(ans, /That's your plan done — 2 exercises complete/);
+});
+
+test('buildSessionCloseAnswerFromSession: counts an off-plan INSERT in the total (session truth)', () => {
+  // plan_state (planned-only) would say 2; the session includes the completed finisher → 3.
+  const s = sessionOf([
+    { name: 'Bench Press', liftCode: 'B', status: 'completed', source: 'planned' },
+    { name: 'Back Squat', liftCode: 'SQ', status: 'completed', source: 'planned' },
+    { name: 'Hammer Curl', liftCode: 'HC', status: 'completed', source: 'inserted' },
+  ]);
+  assert.match(buildSessionCloseAnswerFromSession('done?', s), /3 exercises complete/);
+});
+
+test('buildSessionCloseAnswerFromSession: not a close question, or an empty session → null (defer)', () => {
+  const s = sessionOf([{ name: 'Bench Press', liftCode: 'B', status: 'pending', source: 'planned' }]);
+  assert.equal(buildSessionCloseAnswerFromSession('what weight for bench?', s), null, 'not a close question');
+  assert.equal(buildSessionCloseAnswerFromSession('are we done?', sessionOf([])), null, 'no slots → defer');
+});
+
+test('buildSessionCloseAnswerFromSession: words identically to the plan_state path for the same state', () => {
+  const s = sessionOf([
+    { name: 'Bench Press', liftCode: 'B', status: 'completed', source: 'planned' },
+    { name: 'Back Squat', liftCode: 'SQ', status: 'pending', source: 'planned' },
+  ]);
+  const ps = computePlanState(['Bench Press', 'Back Squat'], ['Bench Press']);
+  assert.equal(buildSessionCloseAnswerFromSession('are we done?', s), buildSessionCloseAnswer('are we done?', ps));
+});
