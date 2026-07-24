@@ -86,6 +86,19 @@ describe('buildCanonicalSessionSnapshot — valid conversions', () => {
     assert.equal(s.discussion_referent, null, 'discussion_referent stays null in this PR');
   });
 
+  it('a REAL un-coded client session (liftCode: "") still produces a valid canonical session (H-08 boundary)', () => {
+    // The live client sends liftCode: '' for exercises with no lift code (the common case).
+    // Regression: this must NOT sink the whole session to null.
+    const s = buildCanonicalSessionSnapshot(active([
+      { name: 'Back Squat', liftCode: '', status: 'completed', source: 'planned' },
+      { name: 'Bench Press', liftCode: '', status: 'pending', source: 'planned' },
+    ]));
+    assert.ok(s, 'an un-coded session is not dropped to null');
+    assert.equal(validateWorkoutSession(s).valid, true);
+    assert.equal(s.slots[0].lift_code, null);
+    assert.equal(currentSlot(s).name, 'Bench Press');
+  });
+
   it('carries a REAL authoritative session id only when the active-session object supplies one', () => {
     const s = buildCanonicalSessionSnapshot({ active_session: { session_id: '20260723-PM-01', exercises: [
       { name: 'Back Squat', liftCode: 'SQ', status: 'pending', source: 'planned' },

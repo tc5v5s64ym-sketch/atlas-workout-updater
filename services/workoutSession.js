@@ -157,13 +157,24 @@ function isComplete(session) {
 
 // ─── boundary adapter: live client session → canonical WorkoutSession ────────────
 
+// The live client model (src/app/activeSession.js) carries `liftCode` as a STRING and uses
+// `''` for "no lift code" (createActiveSession → toEntry normalizes an absent code to ''),
+// but the canonical contract requires `lift_code` to be `null` or a NON-EMPTY string. Bridge
+// the two representations faithfully: trim, and coerce an empty/whitespace-only code → null.
+// Without this, a real un-coded exercise (the common case — most planned lifts carry no code)
+// would produce `lift_code: ''`, failing validation and sinking the WHOLE session to null at
+// the H-08 boundary. Prefer a non-empty `liftCode`, then a non-empty `lift_code`, else null.
+function _canonicalLiftCode(v) {
+  return (typeof v === 'string' && v.trim()) ? v.trim() : null;
+}
+
 // Convert the live client model (src/app/activeSession.js —
 // `{ exercises: [{ name, liftCode, status, source }] }`) into a canonical, valid
 // WorkoutSession. This is the single boundary Phase 4 crosses when the route
 // consumes the client's active session for the outage/session-priority fallback:
-// `liftCode` → `lift_code`; the client model carries no set tallies, so
-// `sets_logged` defaults to 0 and `sets_target` to null; `status`/`source` pass
-// through (they already use this contract's enums). Pure; validates clean.
+// `liftCode` → `lift_code` (empty → null, see _canonicalLiftCode); the client model carries
+// no set tallies, so `sets_logged` defaults to 0 and `sets_target` to null; `status`/`source`
+// pass through (they already use this contract's enums). Pure; validates clean.
 function fromActiveSession(active, { session_id = null, discussion_referent = null } = {}) {
   const exercises = _isPlainObject(active) && Array.isArray(active.exercises) ? active.exercises : [];
   return buildWorkoutSession({
@@ -173,7 +184,7 @@ function fromActiveSession(active, { session_id = null, discussion_referent = nu
       const ex = _isPlainObject(e) ? e : {};
       return {
         name:        ex.name,
-        lift_code:   ex.liftCode != null ? ex.liftCode : (ex.lift_code != null ? ex.lift_code : null),
+        lift_code:   _canonicalLiftCode(ex.liftCode) || _canonicalLiftCode(ex.lift_code),
         status:      ex.status,
         source:      ex.source,
         sets_logged: 0,

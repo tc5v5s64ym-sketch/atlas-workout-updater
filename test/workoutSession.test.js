@@ -112,6 +112,28 @@ describe('fromActiveSession (boundary adapter — Codex #1090)', () => {
     assert.equal(validateWorkoutSession(fromActiveSession(null)).valid, true);
     assert.deepEqual(fromActiveSession({ exercises: 'nope' }).slots, []);
   });
+
+  // H-08 boundary fix: the live client model uses `liftCode: ''` for an un-coded exercise
+  // (the common case), but the contract needs null-or-non-empty. Coerce empty/whitespace → null
+  // so a real un-coded session still validates instead of sinking the whole session to invalid.
+  it("maps an empty / whitespace liftCode to null so an un-coded session VALIDATES", () => {
+    const ws = fromActiveSession({ exercises: [
+      { name: 'Back Squat', liftCode: '', status: 'pending', source: 'planned' },
+      { name: 'Bench Press', liftCode: '   ', status: 'pending', source: 'planned' },
+      { name: 'Deadlift', liftCode: 'DL', status: 'pending', source: 'planned' },
+    ] });
+    assert.equal(ws.slots[0].lift_code, null, "'' → null");
+    assert.equal(ws.slots[1].lift_code, null, "whitespace → null");
+    assert.equal(ws.slots[2].lift_code, 'DL', 'a real code survives (trimmed)');
+    const r = validateWorkoutSession(ws);
+    assert.equal(r.valid, true, r.errors.join(' | '));
+  });
+
+  it('trims a padded liftCode and prefers a non-empty liftCode over lift_code', () => {
+    assert.equal(fromActiveSession({ exercises: [{ name: 'Row', liftCode: ' RW ', status: 'pending', source: 'planned' }] }).slots[0].lift_code, 'RW');
+    // an empty camelCase liftCode falls back to a non-empty snake_case lift_code
+    assert.equal(fromActiveSession({ exercises: [{ name: 'Row', liftCode: '', lift_code: 'RW', status: 'pending', source: 'planned' }] }).slots[0].lift_code, 'RW');
+  });
 });
 
 // D10 — discussion_referent: the canonical key of the lift the conversation is about, set at
