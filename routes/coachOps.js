@@ -58,6 +58,7 @@ const { isTurnPrecedenceEnabled } = require('../services/turnPrecedence');
 const { isTirednessExpression, buildTirednessRecoveryAnswer } = require('../services/recoveryRouting');
 const { planStateFromContext, buildSessionCloseAnswer, buildSessionCloseAnswerFromSession, buildNextUpAnswer, buildNextUpAnswerFromSession } = require('../services/sessionPlanExecutor');
 const { buildCanonicalSessionSnapshot } = require('../services/coachSessionSnapshot');
+const { buildCoachingDecisionFromExplanation } = require('../services/coachDecisionSnapshot');
 const { generateLiftCode, buildExerciseCatalogMap, normalizeExerciseKey, closestExerciseMatches } = require('../services/exerciseEnrichment');
 const { getShadowLog, observeChatMessage } = require('../services/intentShadow');
 const { getBrainShadowLog } = require('../services/brainShadow');
@@ -73,6 +74,25 @@ const coachDiscussionReferent = require('../services/coachDiscussionReferent');
 const { beginDeload, recordDeloadSession, resolvePostDeload } = require('../services/deloadEngine');
 const { selectProtocol } = require('../services/deloadProtocols');
 const { buildSheetContractStatus } = require('../config/sheetContract');
+
+// Phase 4 H-03 (live consumption): word the deterministic recommendation explanation for a
+// "why is the recommendation X" turn. When ATLAS_TURN_PRECEDENCE is on, the reply is sourced from
+// the canonical CoachTurnPacket decision (buildCoachingDecisionFromExplanation → packet.decision,
+// worded via buildDeterministicRecommendationExplanationFromDecision) instead of directly from the
+// route-local grounding snapshot — the first live consumption of a canonical engine decision,
+// retiring the route-local recomputation the divergence report flags (H-03). It is PROVEN
+// byte-identical to the snapshot path (test/coachExplanationWorder.test.js): the same worder over
+// the same facts (the decision's explanation_inputs are built from this very snapshot). Flag OFF ⇒
+// the snapshot path verbatim (byte-identical). A snapshot that yields no canonical decision (fails
+// validation) also falls back to the snapshot path, so the reply is never lost.
+function wordRecommendationExplanation(snapshot) {
+  if (!snapshot) return null;
+  if (isTurnPrecedenceEnabled()) {
+    const decision = buildCoachingDecisionFromExplanation(snapshot);
+    if (decision) return coachExplanationGrounding.buildDeterministicRecommendationExplanationFromDecision(decision);
+  }
+  return coachExplanationGrounding.buildDeterministicRecommendationExplanation(snapshot);
+}
 
 // The session key for the discussion-referent store. The chat request carries no
 // authoritative server session id (state is client-supplied; `routeMessageToCoach` in
@@ -1364,7 +1384,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       if (tired) { res.locals = res.locals || {}; res.locals.coachRecoveryDecision = { engine_grounded: false }; }
       const answer = tired
         ? buildTirednessRecoveryAnswer({ readiness: Array.isArray(clientCtx && clientCtx.readiness) ? clientCtx.readiness : null })
-        : ((recExplainOffline && coachExplanationGrounding.buildDeterministicRecommendationExplanation(recExplainOffline.snapshot)) || deterministicAnswer([]));
+        : ((recExplainOffline && wordRecommendationExplanation(recExplainOffline.snapshot)) || deterministicAnswer([]));
       return standardSuccess(req, res, answer
         ? 'Coach chat unavailable — deterministic engine answer'
         : 'Coach chat unavailable — Gemini not configured', {
@@ -1600,7 +1620,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     // answer deterministically FROM the displayed recommendation — the target prescription
     // and the engine's readiness/label reason — never a stall/challenge paragraph and never
     // an invented number. Falls back to the generic engine answer for every other turn.
-    const answer = (recExplain && coachExplanationGrounding.buildDeterministicRecommendationExplanation(recExplain.snapshot))
+    const answer = (recExplain && wordRecommendationExplanation(recExplain.snapshot))
       || deterministicAnswer(allLog);
     return standardSuccess(req, res, answer
       ? 'Coach chat — deterministic engine answer'
