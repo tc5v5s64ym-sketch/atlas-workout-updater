@@ -1226,6 +1226,75 @@ test('turn precedence OFF (default): the same prescription question falls throug
   }
 });
 
+// ── Phase 4 (H-03 live consumption): the deterministic recommendation explanation is the FIRST
+// engine decision the live route reads from packet.decision. When ATLAS_TURN_PRECEDENCE is on, the
+// "why is the recommendation X" reply is sourced from the canonical CoachTurnPacket decision
+// (buildCoachingDecisionFromExplanation → buildDeterministicRecommendationExplanationFromDecision)
+// instead of the route-local grounding snapshot — PROVEN byte-identical to the snapshot path here,
+// at both the configured/model-down site and the unconfigured/offline site. Flag off ⇒ the snapshot
+// path verbatim. Read-only in both states (zero Sheet appends).
+const REC_EXPLAIN_CTX = {
+  current_plan: [{ name: 'Bench Press', weight: 175, reps: 9, sets: 3, rir: 5 }],
+  recommended_label: 'Recovery/Pump',
+};
+
+test('turn precedence ON: the model-down recommendation explanation is sourced from the canonical decision, byte-identical to the snapshot path (H-03)', async () => {
+  const before = fakeSheetsState.appendCalls.length;
+  fakeCoachState.configured = true;
+  fakeCoachState.throwError = 'gemini down'; // force the model-down deterministic fallback
+  const ask = () => requestJson('/api/coach/chat', {
+    method: 'POST',
+    body: JSON.stringify({ message: 'Why only 175 for bench?', context: REC_EXPLAIN_CTX })
+  });
+  let onMsg, offMsg;
+  try {
+    process.env.ATLAS_TURN_PRECEDENCE = 'on';
+    const on = await ask();
+    assert.equal(on.response.status, 200);
+    assert.equal(on.body.data.source, 'engine', 'the deterministic explanation owns the model-down turn');
+    onMsg = on.body.data.message;
+    assert.ok(onMsg && onMsg.startsWith('Bench Press is set at 175 lb'), `deterministic recommendation explanation expected, got: ${onMsg}`);
+
+    delete process.env.ATLAS_TURN_PRECEDENCE;
+    const off = await ask();
+    assert.equal(off.body.data.source, 'engine');
+    offMsg = off.body.data.message;
+  } finally {
+    fakeCoachState.throwError = null;
+    fakeCoachState.configured = false;
+    delete process.env.ATLAS_TURN_PRECEDENCE;
+  }
+  assert.equal(onMsg, offMsg, 'flag ON (decision path) is byte-identical to flag OFF (snapshot path)');
+  assert.equal(fakeSheetsState.appendCalls.length, before, 'coach/chat never writes');
+});
+
+test('turn precedence ON: the UNCONFIGURED-path recommendation explanation is sourced from the canonical decision, byte-identical to the snapshot path (H-03)', async () => {
+  const before = fakeSheetsState.appendCalls.length;
+  fakeCoachState.configured = false; // unconfigured ⇒ client-context-only, no Sheets read
+  const ask = () => requestJson('/api/coach/chat', {
+    method: 'POST',
+    body: JSON.stringify({ message: 'Why only 175 for bench?', context: REC_EXPLAIN_CTX })
+  });
+  let onMsg, offMsg;
+  try {
+    process.env.ATLAS_TURN_PRECEDENCE = 'on';
+    const on = await ask();
+    assert.equal(on.response.status, 200);
+    assert.equal(on.body.data.source, 'engine', 'the deterministic explanation owns the unconfigured turn');
+    onMsg = on.body.data.message;
+    assert.ok(onMsg && onMsg.startsWith('Bench Press is set at 175 lb'), `deterministic recommendation explanation expected, got: ${onMsg}`);
+
+    delete process.env.ATLAS_TURN_PRECEDENCE;
+    const off = await ask();
+    offMsg = off.body.data.message;
+  } finally {
+    fakeCoachState.configured = false;
+    delete process.env.ATLAS_TURN_PRECEDENCE;
+  }
+  assert.equal(onMsg, offMsg, 'flag ON (decision path) is byte-identical to flag OFF (snapshot path)');
+  assert.equal(fakeSheetsState.appendCalls.length, before, 'coach/chat never writes');
+});
+
 // ── Phase 4 (chat/SME lane — divergence D4): a warm-up question is recognized as a warm-up
 // question, not answered as a working-set-count restatement. Flag-gated ATLAS_TURN_PRECEDENCE
 // (default inert). FR-20260723120852-hw56ws9y turn 3: "No warm up sets for bench?" named a lift
