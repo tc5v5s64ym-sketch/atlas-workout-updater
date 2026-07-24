@@ -96,4 +96,39 @@ function buildCoachingDecisionFromExplanation(grounding) {
   return validateCoachingDecision(decision).valid ? decision : null;
 }
 
-module.exports = { buildCoachingDecisionFromExplanation };
+/**
+ * Build a canonical `recovery` CoachingDecision for a tiredness/recovery-routing turn (the route
+ * decides "a tired lifter — answer with recovery routing" and returns early, stashing a shadow
+ * signal on res.locals.coachRecoveryDecision). Read-only, no prescription.
+ *
+ * @param {object} [signal]
+ * @param {boolean} [signal.engine_grounded]  true when the engine's fatigue signals were
+ *        available (the configured path computes fatigueStatus + days-since-last-session); false
+ *        on the outage path (client readiness only). Drives the CONSERVATIVE confidence, never a
+ *        fabricated high value — grounded ⇒ moderate/act; outage ⇒ low/act_with_caveat +
+ *        limited_readiness_inputs. safety stays green/non-blocking (recovery routing is an
+ *        advisory, not a write block).
+ * @returns {object|null}  the decision, or null when it fails validation.
+ */
+function buildRecoveryDecision(signal) {
+  const grounded = !!(_isPlainObject(signal) && signal.engine_grounded === true);
+  const confidence = grounded
+    ? { score: 70, tier: 'moderate', action: 'act', caveats: [] }
+    : { score: 45, tier: 'low', action: 'act_with_caveat', caveats: ['limited_readiness_inputs'] };
+
+  const decision = buildCoachingDecision({
+    intent: { type: 'readiness_checkin', constraints: {}, source: 'chat' },
+    decision_type: 'recovery',
+    status: 'answered',
+    confidence,
+    safety: { level: 'green', flags: [], blocking: false },
+    payload: {},
+    missing_info: [],
+    explanation_inputs: {},
+    provenance: { modules_run: [], skipped: [], state_asOf: null, engine_version: null },
+  });
+
+  return validateCoachingDecision(decision).valid ? decision : null;
+}
+
+module.exports = { buildCoachingDecisionFromExplanation, buildRecoveryDecision };

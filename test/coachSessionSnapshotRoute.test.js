@@ -238,6 +238,19 @@ test('H-03: flag OFF ⇒ packet.decision stays null (byte-identical prior shadow
   delete process.env.ATLAS_INTERACTION_TRACE;
 });
 
+test('H-03: flag ON + a tired turn carries a canonical RECOVERY decision (embedded.decision)', async () => {
+  process.env.ATLAS_TURN_PRECEDENCE = 'on';
+  process.env.ATLAS_INTERACTION_TRACE = 'shadow';
+  const r = await post('/api/coach/chat', { message: "I'm completely exhausted and cooked today.", history: [], context: {} });
+  assert.equal(r.res.status, 200);
+  assert.equal(r.json.data.source, 'engine', 'recovery routing owns the reply');
+  assert.ok(r.shadowRow);
+  assert.equal(r.shadowRow.embedded.decision, true, 'the recovery decision is carried in the packet');
+  const st = Object.fromEntries(r.shadowRow.trace.stages.map((s) => [s.stage, s.status]));
+  assert.equal(st.engine_decision, 'ok', 'engine_decision recorded for the recovery turn');
+  delete process.env.ATLAS_INTERACTION_TRACE; delete process.env.ATLAS_TURN_PRECEDENCE;
+});
+
 // D10 — the route resolves a discussion referent AT ANSWER TIME (the lift a bare correction
 // resolves to). With the canonical session carried (H-08A), that referent is now set on the
 // packet's session (packet.session.discussion_referent), so the divergence report's

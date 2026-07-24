@@ -11,7 +11,7 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { buildCoachingDecisionFromExplanation } = require('../services/coachDecisionSnapshot');
+const { buildCoachingDecisionFromExplanation, buildRecoveryDecision } = require('../services/coachDecisionSnapshot');
 const { validateCoachingDecision } = require('../services/coachingDecision');
 
 const grounded = () => ({ coaching_strategy: 'explain_recommendation', label: 'Upper Power', target: { name: 'Bench Press', weight: 185, reps: 5, rir: 2 }, history: { last_date: '2026-07-20' } });
@@ -93,5 +93,35 @@ describe('buildCoachingDecisionFromExplanation — fails closed', () => {
     assert.equal(buildCoachingDecisionFromExplanation(undefined), null);
     assert.equal(buildCoachingDecisionFromExplanation('nope'), null);
     assert.equal(buildCoachingDecisionFromExplanation([]), null);
+  });
+});
+
+describe('buildRecoveryDecision — the recovery-routing decision (H-03)', () => {
+  it('builds a contract-VALID recovery decision (readiness_checkin intent, no prescription)', () => {
+    const d = buildRecoveryDecision({ engine_grounded: true });
+    assert.equal(validateCoachingDecision(d).valid, true, validateCoachingDecision(d).errors.join(' | '));
+    assert.equal(d.decision_type, 'recovery');
+    assert.equal(d.intent.type, 'readiness_checkin');
+    assert.equal(d.intent.source, 'chat');
+    assert.deepEqual(d.payload, {});
+    assert.deepEqual(d.safety, { level: 'green', flags: [], blocking: false });
+  });
+
+  it('derives conservative confidence from engine-grounding (never fabricates high)', () => {
+    const g = buildRecoveryDecision({ engine_grounded: true });
+    assert.equal(g.confidence.tier, 'moderate');
+    assert.equal(g.confidence.action, 'act');
+    assert.deepEqual(g.confidence.caveats, []);
+    const o = buildRecoveryDecision({ engine_grounded: false });
+    assert.equal(o.confidence.tier, 'low');
+    assert.equal(o.confidence.action, 'act_with_caveat');
+    assert.deepEqual(o.confidence.caveats, ['limited_readiness_inputs']);
+    assert.equal(validateCoachingDecision(o).valid, true, validateCoachingDecision(o).errors.join(' | '));
+  });
+
+  it('tolerates a missing / malformed signal (defaults to the ungrounded, valid decision)', () => {
+    assert.equal(validateCoachingDecision(buildRecoveryDecision()).valid, true);
+    assert.equal(buildRecoveryDecision(null).confidence.tier, 'low');
+    assert.equal(buildRecoveryDecision('nope').confidence.tier, 'low');
   });
 });
