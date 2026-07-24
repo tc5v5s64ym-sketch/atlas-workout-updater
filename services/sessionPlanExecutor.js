@@ -355,15 +355,42 @@ function detectSessionCloseQuestion(message) {
 function buildSessionCloseAnswer(message, planState) {
   if (!detectSessionCloseQuestion(message)) return null;
   if (!planState || !Array.isArray(planState.planned) || planState.planned.length === 0) return null;
+  return _wordSessionClose({
+    total: planState.planned.length,
+    remaining: Array.isArray(planState.remaining) ? planState.remaining : [],
+    isComplete: !!planState.isComplete,
+  });
+}
 
-  if (planState.isComplete) {
-    const n = planState.planned.length;
-    return `That's your plan done — ${n} exercise${n === 1 ? '' : 's'} complete. Say "log it" to save.`;
+// The SINGLE session-close wording home, so the route-local plan_state path and the canonical
+// WorkoutSession path (buildSessionCloseAnswerFromSession) can never word "are we done?"
+// differently. `total` is the plan size (exercise count), `remaining` the still-to-do names.
+// Pure.
+function _wordSessionClose({ total, remaining, isComplete }) {
+  if (isComplete) {
+    return `That's your plan done — ${total} exercise${total === 1 ? '' : 's'} complete. Say "log it" to save.`;
   }
+  const names = Array.isArray(remaining) ? remaining : [];
+  const left = names.length;
+  return `Not done yet — ${left} still on your list: ${names.join(', ')}. Knock ${left === 1 ? 'it' : 'those'} out, then say "log it" to save.`;
+}
 
-  const remaining = Array.isArray(planState.remaining) ? planState.remaining : [];
-  const left = remaining.length;
-  return `Not done yet — ${left} still on your list: ${remaining.join(', ')}. Knock ${left === 1 ? 'it' : 'those'} out, then say "log it" to save.`;
+/**
+ * buildSessionCloseAnswerFromSession(message, session) → string | null   (Phase 4 — H-08 consumption)
+ *
+ * The canonical-WorkoutSession twin of buildSessionCloseAnswer: answers "are we done?" from the
+ * session's OWN slots (`isComplete(session)` + `remainingSlots(session)`), reading real, ordered,
+ * duplicate-aware slot identity — including off-plan inserts in the total — instead of the lossy
+ * route-local plan_state name array. Shares _wordSessionClose with the plan_state path so the two
+ * can never diverge in wording. Returns null when the session has no slots. Pure — never writes.
+ */
+function buildSessionCloseAnswerFromSession(message, session) {
+  if (!detectSessionCloseQuestion(message)) return null;
+  if (!session || !Array.isArray(session.slots) || session.slots.length === 0) return null;
+  const remaining = remainingSlots(session)
+    .map(s => (s && typeof s.name === 'string' ? s.name.trim() : ''))
+    .filter(Boolean);
+  return _wordSessionClose({ total: session.slots.length, remaining, isComplete: sessionIsComplete(session) });
 }
 
 /**
@@ -443,6 +470,7 @@ module.exports = {
   planStateFromContext,
   detectSessionCloseQuestion,
   buildSessionCloseAnswer,
+  buildSessionCloseAnswerFromSession,
   buildNextUpAnswer,
   buildNextUpAnswerFromSession,
 };

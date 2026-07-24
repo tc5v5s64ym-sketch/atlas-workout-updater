@@ -56,7 +56,7 @@ const { detectExtraWork } = require('../services/extraWorkDetector');
 const { buildSessionQuestionAnswer, buildSessionAdviceFallback, answerBareShorthand, isBareSessionShorthand, isCurrentExercisePrescriptionQuestion, answerCurrentExercisePrescription, isWarmupQuestion, answerPlannedLiftQuestion, answerTotalRepsQuestion } = require('../services/sessionQuestionAnswer');
 const { isTurnPrecedenceEnabled } = require('../services/turnPrecedence');
 const { isTirednessExpression, buildTirednessRecoveryAnswer } = require('../services/recoveryRouting');
-const { planStateFromContext, buildSessionCloseAnswer, buildNextUpAnswer, buildNextUpAnswerFromSession } = require('../services/sessionPlanExecutor');
+const { planStateFromContext, buildSessionCloseAnswer, buildSessionCloseAnswerFromSession, buildNextUpAnswer, buildNextUpAnswerFromSession } = require('../services/sessionPlanExecutor');
 const { buildCanonicalSessionSnapshot } = require('../services/coachSessionSnapshot');
 const { generateLiftCode, buildExerciseCatalogMap, normalizeExerciseKey, closestExerciseMatches } = require('../services/exerciseEnrichment');
 const { getShadowLog, observeChatMessage } = require('../services/intentShadow');
@@ -1311,7 +1311,16 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // emits "coach unavailable") rather than a wrong set-count — the warm-up ramp is a Phase-6
       // capability, never a guess (Codex #1140 P2). Off ⇒ warmupDefer is false ⇒ unchanged.
       if (warmupDefer) return null;
-      const close = buildSessionCloseAnswer(message, planStateFromContext(clientCtx));
+      // H-08 CONSUMPTION — build the canonical WorkoutSession ONCE (flag-gated ATLAS_TURN_PRECEDENCE,
+      // default inert) and let the deterministic state-answer lanes read it — real, ordered,
+      // duplicate-aware slot identity — instead of the lossy route-local plan_state name array.
+      // null when the flag is off OR the client omits the authoritative active-session snapshot;
+      // those turns fall back to the plan_state path UNCHANGED (old clients / flag off byte-identical).
+      const canonicalSession = isTurnPrecedenceEnabled() ? buildCanonicalSessionSnapshot(clientCtx) : null;
+      // "Are we done?" — answer from the canonical session's own slots (isComplete/remainingSlots)
+      // when present, else the plan_state path exactly as before.
+      const close = (canonicalSession && buildSessionCloseAnswerFromSession(message, canonicalSession))
+        || buildSessionCloseAnswer(message, planStateFromContext(clientCtx));
       if (close) return close;
       // Phase 4 (chat/SME lane — divergence D2/D9, packet/session consumption), flag-gated
       // ATLAS_TURN_PRECEDENCE (default inert). A "what's next?" question is STATE-ANSWERABLE from
@@ -1320,12 +1329,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // branch is skipped, so the turn dead-ends exactly as before (byte-identical). Read-only;
       // no write, no plan mutation.
       if (isTurnPrecedenceEnabled() && coachResponseGrounding.isNextUpQuestion(message)) {
-        // H-08 CONSUMPTION — first live lane to read the canonical WorkoutSession. When the
-        // client forwards the authoritative active-session snapshot (context.active_session),
-        // answer from the canonical session's remaining slots (remainingSlots/isComplete) —
-        // real, ordered, duplicate-aware slot identity — instead of the lossy plan_state name
-        // array. Old clients that omit the field fall back to the plan_state path unchanged.
-        const canonicalSession = buildCanonicalSessionSnapshot(clientCtx);
+        // Old clients that omit active_session fall back to the plan_state path unchanged.
         const nextUp = canonicalSession
           ? buildNextUpAnswerFromSession(canonicalSession)
           : buildNextUpAnswer(planStateFromContext(clientCtx));

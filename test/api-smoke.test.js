@@ -1414,6 +1414,47 @@ test('turn precedence OFF: the additive active_session is inert — "what\'s nex
   assert.equal(body.data.message, null, 'flag off ⇒ byte-identical dead-end even with active_session present');
 });
 
+// ── Phase 4 (H-08 consumption): the "are we done?" lane consumes the CANONICAL session too.
+// DISCRIMINATING context: plan_state (planned-only) is complete with 2; active_session adds a
+// completed off-plan finisher, so the session-truth total is 3 — the answer reveals the source.
+const H08C_DONE_CTX = {
+  current_plan: [{ name: 'Bench Press' }, { name: 'Back Squat' }],
+  plan_state: { planned: ['Bench Press', 'Back Squat'], completed: ['Bench Press', 'Back Squat'], remaining: [], isComplete: true },
+  active_session: { exercises: [
+    { name: 'Bench Press', liftCode: '', status: 'completed', source: 'planned' },
+    { name: 'Back Squat', liftCode: '', status: 'completed', source: 'planned' },
+    { name: 'Hammer Curl', liftCode: '', status: 'completed', source: 'inserted' },
+  ] },
+};
+
+test('turn precedence ON, model DOWN: "are we done?" reads the CANONICAL session total, not plan_state (H-08)', async () => {
+  const before = fakeSheetsState.appendCalls.length;
+  process.env.ATLAS_TURN_PRECEDENCE = 'on';
+  fakeCoachState.configured = false;
+  try {
+    const { body } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'are we done?', context: H08C_DONE_CTX })
+    });
+    assert.equal(body.data.source, 'engine');
+    assert.match(body.data.message, /3 exercises complete/, 'counts the off-plan insert from session truth, not the plan_state 2');
+  } finally {
+    delete process.env.ATLAS_TURN_PRECEDENCE;
+    fakeCoachState.configured = false;
+  }
+  assert.equal(fakeSheetsState.appendCalls.length, before, 'coach/chat never writes');
+});
+
+test('turn precedence OFF: "are we done?" answers from plan_state unchanged (byte-identical)', async () => {
+  delete process.env.ATLAS_TURN_PRECEDENCE;
+  fakeCoachState.configured = false;
+  const { body } = await requestJson('/api/coach/chat', {
+    method: 'POST',
+    body: JSON.stringify({ message: 'are we done?', context: H08C_DONE_CTX })
+  });
+  assert.match(body.data.message, /2 exercises complete/, 'flag off ⇒ the plan_state answer (planned-only total) exactly as before');
+});
+
 // ── Slice 3: recovery routing — a tired lifter never gets motivation hype ──────
 const HYPE = /push through|you('?| )ve got this|you got this|no excuses|grind it out|dig deep|beast mode|crush it|let'?s go champ/i;
 
