@@ -23,6 +23,24 @@ describe('Drift Guard 5 — packet & trace honesty', () => {
     assert.ok(v.some((s) => /embedded\.session/.test(s)), 'the guard flags the session overclaim');
   });
 
+  it('BITES: a decision claimed present while it does not validate is an overclaim (H-03)', () => {
+    // A route-local decision shape dressed up as canonical — embedded.decision true while the
+    // object fails validateCoachingDecision. As the live route consumes packet.decision (H-03),
+    // this is the overclaim the guard must catch.
+    const packet = { athlete: null, session: null, exercises: [], decision: { decision_type: 'not_a_real_type' }, safety: null, closeout: null };
+    const claim = { athlete: false, session: false, exercises: 0, decision: true, safety: false, closeout: false };
+    const v = checkPacketHonesty(packet, claim);
+    assert.ok(v.some((s) => /embedded\.decision/.test(s)), 'the guard flags the decision overclaim');
+  });
+
+  it('does NOT flag a genuinely-valid embedded decision (H-03, no overclaim)', () => {
+    const { buildRecoveryDecision } = require('../services/coachDecisionSnapshot');
+    const decision = buildRecoveryDecision({ engine_grounded: true, fatigueStatus: { status: 'high' }, daysSinceLastSession: 1 });
+    const packet = { athlete: null, session: null, exercises: [], decision, safety: null, closeout: null };
+    const claim = { athlete: false, session: false, exercises: 0, decision: true, safety: false, closeout: false };
+    assert.deepEqual(checkPacketHonesty(packet, claim), [], 'a validating decision claimed present is honest');
+  });
+
   it('BITES: an exercises count exceeding the genuinely-valid identities is an overclaim', () => {
     const packet = { session: null, exercises: [{ not: 'a valid identity' }], decision: null, safety: null, closeout: null };
     const claim = { athlete: false, session: false, exercises: 1, decision: false, safety: false, closeout: false };

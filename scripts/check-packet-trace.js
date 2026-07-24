@@ -41,6 +41,7 @@ const { fromActiveSession, validateWorkoutSession } = require('../services/worko
 const { validateAthleteContext }      = require('../services/athleteContext');
 const { validateExerciseIdentity }    = require('../services/exerciseIdentity');
 const { validateCoachingDecision }    = require('../services/coachingDecision');
+const { buildRecoveryDecision }       = require('../services/coachDecisionSnapshot');
 const { validateSafetyDecision }      = require('../services/safetyDecision');
 const { validateCloseoutTransaction } = require('../services/closeoutTransaction');
 const { STAGES } = require('../services/interactionTrace');
@@ -140,11 +141,20 @@ function analyze() {
     { name: 'Bench Press', liftCode: '', status: 'pending', source: 'planned' },
   ] }, { discussion_referent: 'BENCHPRESS' });
   const badSession = { schema_version: 1, session_id: null, slots: [{ name: 'X', status: 'bogus', source: 'planned', lift_code: null, sets_logged: 0, sets_target: null }] };
+  // A genuinely-valid canonical decision (the recovery decision the live route now consumes,
+  // H-03) and a malformed one — so the matrix exercises the packet.decision embed path, not only
+  // session. A valid decision must embed AND validate (no overclaim); an invalid decision must be
+  // dropped to null (embedded.decision false — an honest underclaim, never an overclaim).
+  const goodDecision = buildRecoveryDecision({ engine_grounded: true, fatigueStatus: { status: 'high' }, daysSinceLastSession: 2, readiness: [{ pattern: 'push', status: 'fatigued' }] });
+  const badDecision = { schema_version: 1, decision_type: 'not_a_real_type', intent: {}, confidence: {}, safety: {}, payload: {}, explanation_inputs: {} };
   const inputs = [
     { label: 'no session', params: { turnId: 'turn:g_1_a', profileGoal: 'strength' } },
     { label: 'null profile goal', params: { turnId: 'turn:g_2_a', profileGoal: null } },
     { label: 'valid session + referent', params: { turnId: 'turn:g_3_a', profileGoal: 'strength', session: goodSession } },
     { label: 'invalid session (must drop to null)', params: { turnId: 'turn:g_4_a', profileGoal: 'strength', session: badSession } },
+    { label: 'valid decision (must embed + validate)', params: { turnId: 'turn:g_5_a', profileGoal: 'strength', decision: goodDecision } },
+    { label: 'invalid decision (must drop to null)', params: { turnId: 'turn:g_6_a', profileGoal: 'strength', decision: badDecision } },
+    { label: 'valid session + valid decision together', params: { turnId: 'turn:g_7_a', profileGoal: 'strength', session: goodSession, decision: goodDecision } },
   ];
   for (const { label, params } of inputs) {
     const assembled = assembleShadowPacket(params);
