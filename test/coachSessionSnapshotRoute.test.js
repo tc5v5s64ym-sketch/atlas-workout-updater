@@ -203,6 +203,41 @@ test('the session seam never appends to a training Sheet', async () => {
   delete process.env.ATLAS_INTERACTION_TRACE; delete process.env.ATLAS_TURN_PRECEDENCE;
 });
 
+// H-03 (shadow-first) — a "why …" turn makes the route decide "explain the displayed
+// recommendation" (grounding). With the flag on, that decision is canonicalized into
+// packet.decision (a progress_readout CoachingDecision), clearing the "null decision"
+// divergence signal for those turns. Flag off ⇒ packet.decision stays null. Visible reply
+// unchanged either way.
+test('H-03: flag ON + a "why …" turn carries a canonical decision in the packet (embedded.decision)', async () => {
+  process.env.ATLAS_TURN_PRECEDENCE = 'on';
+  process.env.ATLAS_INTERACTION_TRACE = 'shadow';
+  const ctx = {
+    current_plan: [{ name: 'Bench Press', weight: 185, reps: 5, rir: 2, sets: 3 }],
+    recommended_label: 'Upper Power',
+    active_session: { exercises: [{ name: 'Bench Press', liftCode: '', status: 'pending', source: 'planned' }] },
+  };
+  const r = await post('/api/coach/chat', { message: 'Why only 185 for bench press?', history: [], context: ctx });
+  assert.equal(r.res.status, 200);
+  assert.ok(r.shadowRow);
+  assert.equal(r.shadowRow.embedded.decision, true, 'packet.decision is carried for the explain-recommendation turn');
+  assert.equal(r.shadowRow.packet_valid, true);
+  // the engine_decision spine stage is present for this turn
+  const st = Object.fromEntries(r.shadowRow.trace.stages.map((s) => [s.stage, s.status]));
+  assert.equal(st.engine_decision, 'ok');
+  delete process.env.ATLAS_INTERACTION_TRACE; delete process.env.ATLAS_TURN_PRECEDENCE;
+});
+
+test('H-03: flag OFF ⇒ packet.decision stays null (byte-identical prior shadow behavior)', async () => {
+  delete process.env.ATLAS_TURN_PRECEDENCE;
+  process.env.ATLAS_INTERACTION_TRACE = 'shadow';
+  const ctx = { current_plan: [{ name: 'Bench Press', weight: 185 }], recommended_label: 'Upper Power' };
+  const r = await post('/api/coach/chat', { message: 'Why only 185 for bench press?', history: [], context: ctx });
+  assert.equal(r.res.status, 200);
+  assert.ok(r.shadowRow);
+  assert.equal(r.shadowRow.embedded.decision, false, 'flag off ⇒ no canonical decision embedded');
+  delete process.env.ATLAS_INTERACTION_TRACE;
+});
+
 // D10 — the route resolves a discussion referent AT ANSWER TIME (the lift a bare correction
 // resolves to). With the canonical session carried (H-08A), that referent is now set on the
 // packet's session (packet.session.discussion_referent), so the divergence report's
