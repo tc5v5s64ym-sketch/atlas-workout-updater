@@ -67,15 +67,19 @@
 // corroboration and four of five write paths never send it at preview.
 //
 // SO THE PAYLOAD IS GATED TOO. `_previewIdentity` fingerprints the write identity the SERVER
-// received at preview (session_id + date + log_rows) and the live payload must reproduce it.
-// It depends on nothing the client mints, so it holds on every route rather than one of five.
+// received at preview and the live payload must reproduce it. It depends on nothing the client
+// mints, so it holds on every route rather than one of five. The fingerprint is DEFAULT-DENY over
+// the whole payload — see IDENTITY_EXCLUDED_FIELDS for the three fields outside it and why, and
+// `_payloadMatchesPairing` for the one permitted transition.
 //
-// THE CEILING, STATED HONESTLY. With the payload gate this establishes: "this turn previewed a
-// write of exactly this identity, and this write presented that preview's token". Where no
-// identity is computable the pairing degrades to turn-level and says so — `payload_bound:false`,
-// never an assumed match. Neither form is cryptographic authorization, which no client round-trip
-// can deliver. The previewed write_id stays CORROBORATION (`previewed_write_id_match`) and never a
-// gate, precisely so the legitimate seal retry keeps its evidence instead of being locked out.
+// THE CEILING, STATED HONESTLY. Where the payload gate applied and matched, this establishes:
+// "this turn previewed a write of exactly this identity, and this write presented that preview's
+// token". `payload_bound` is true ONLY in that case — never on a preview record (no live payload
+// exists yet to compare) and never where no identity was computable, both of which degrade to a
+// turn-level claim and say so rather than assume a match. Neither form is cryptographic
+// authorization, which no client round-trip can deliver. The previewed write_id stays
+// CORROBORATION (`previewed_write_id_match`) and never a gate, precisely so the legitimate seal
+// retry keeps its evidence instead of being locked out.
 //
 // UNTIL SLICE 2 CARRIES THE TOKEN, NO LIVE WRITE CORRELATES — previews still do. That is
 // fail-closed and deliberate: it is why #1173 orders this item before the client round-trip.
@@ -425,7 +429,7 @@ function _payloadMatchesPairing(pairing, payload) {
 // The pairing facts a record may publish. Server-owned scalars only. Neither the TOKEN nor the
 // IDENTITY digest is ever included: the token stays a live capability for the rest of the window,
 // and the digest is derived from workout content.
-function _pairingSummary(rec, pairing, writeId, effortTransition = false) {
+function _pairingSummary(rec, pairing, writeId, opts = {}) {
   if (!pairing) {
     return {
       established_at_preview: false,
@@ -438,7 +442,7 @@ function _pairingSummary(rec, pairing, writeId, effortTransition = false) {
   return {
     // true when the match came via the effort-removal transition rather than an exact identity —
     // so a reviewer can tell an exactly-bound record from a relaxed one instead of guessing.
-    effort_transition: effortTransition === true,
+    effort_transition: opts.effortTransition === true,
     established_at_preview: true,
     write_attempt: writeId && rec ? rec.writeIds.indexOf(writeId) + 1 : 0,
     // null = the preview carried no write_id to compare (four of the five write paths), which
@@ -446,8 +450,12 @@ function _pairingSummary(rec, pairing, writeId, effortTransition = false) {
     previewed_write_id_match: pairing.previewedWriteId && writeId
       ? pairing.previewedWriteId === writeId
       : null,
-    // true ONLY when the server fingerprinted the previewed write and the live payload matched it.
-    payload_bound: pairing.identity !== null,
+    // true ONLY when the server fingerprinted the previewed write AND a LIVE payload has actually
+    // been compared against it and matched. A PREVIEW record must therefore report false: at that
+    // point no live payload exists, so a computable identity is a capability, not a match
+    // (Codex r3649604170 — the code contradicted this very comment and published the write-level
+    // claim on preview-only records).
+    payload_bound: opts.live === true && pairing.identity !== null,
   };
 }
 
@@ -562,7 +570,7 @@ function resolveCorrelation(payload, opts = {}) {
         turn_id: turnId,
         reason: REASONS.OK,
         pairing_token: pairing.token,
-        pairing: _pairingSummary(rec, pairing, ''),
+        pairing: _pairingSummary(rec, pairing, '', { live: false }),
       };
     }
 
@@ -598,7 +606,7 @@ function resolveCorrelation(payload, opts = {}) {
       ok: true,
       turn_id: turnId,
       reason: REASONS.OK,
-      pairing: _pairingSummary(rec, pairing, writeId, match.effortTransition),
+      pairing: _pairingSummary(rec, pairing, writeId, { live: true, effortTransition: match.effortTransition }),
     };
   } catch (_) {
     return miss(REASONS.MALFORMED);

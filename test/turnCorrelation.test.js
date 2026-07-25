@@ -329,6 +329,32 @@ test('a preview establishes a pairing and mints an opaque server-owned token', (
   assert.equal(r.pairing.write_attempt, 0, 'a preview is not a write attempt');
 });
 
+// Codex sixth round P1 (r3649604170). A PREVIEW record reported `payload_bound: true` merely
+// because an identity was computable — before any live payload existed to compare. The record
+// therefore published the write-level match on a preview-only flow, contradicting the comment on
+// the very line that produced it. A computable identity at preview is a CAPABILITY, not a match.
+
+test('a PREVIEW record never claims payload_bound — no live payload has been compared yet', () => {
+  reset();
+  const now = 1_000_000;
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  // A fully computable identity: session_id + log_rows are both present.
+  const preview = tc.resolveCorrelation(
+    payloadWith({ correlation: { turn_id: TURN_ID } }), { sessionId: SESSION, nowMs: now + 1, ...PREVIEW },
+  );
+  assert.equal(preview.ok, true);
+  assert.equal(preview.pairing.established_at_preview, true, 'the pairing IS established');
+  assert.equal(preview.pairing.payload_bound, false, 'but nothing has been payload-matched yet');
+  assert.equal(preview.pairing.write_attempt, 0);
+
+  // Only the live match may claim it.
+  const live = tc.resolveCorrelation(
+    payloadWith({ correlation: { turn_id: TURN_ID, pairing_token: preview.pairing_token } }),
+    { sessionId: SESSION, nowMs: now + 2, writeId: 'w-1' },
+  );
+  assert.equal(live.pairing.payload_bound, true, 'the live write that matched may');
+});
+
 test('a live write with NO established pairing is refused (unpaired) — first-write-wins is gone', () => {
   reset();
   const now = 1_000_000;

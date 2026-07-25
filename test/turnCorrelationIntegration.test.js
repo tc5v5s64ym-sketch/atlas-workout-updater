@@ -282,6 +282,21 @@ test('the pairing token never appears in the response BODY, only in its own head
   assert.ok(!JSON.stringify(tc.recentWriteProofs()).includes(pairingToken), 'nor the correlation record');
 });
 
+test('the EMITTED preview record does not claim a payload match (Codex P1)', async () => {
+  tc._resetForTesting();
+  tc.issueTurn(TURN_ID, SESSION_ID);
+  await previewForToken({ correlation: { turn_id: TURN_ID } });
+
+  // This is the record a reviewer actually reads, so the honesty has to hold in the emitted
+  // artifact and not only in the resolver's return value.
+  const records = tc.recentWriteProofs();
+  assert.equal(records.length, 1);
+  assert.equal(records[0].pairing.established_at_preview, true);
+  assert.equal(records[0].pairing.payload_bound, false, 'no live payload has been compared yet');
+  assert.equal(records[0].pairing.effort_transition, false);
+  assert.equal(records[0].proof.no_write_confirmed, true, 'and it still carries the W1–W3 no-write proof');
+});
+
 test('fail-closed: a live write with NO pairing correlates nothing, and still succeeds', async () => {
   tc._resetForTesting();
   resetIdempotencyStore();
