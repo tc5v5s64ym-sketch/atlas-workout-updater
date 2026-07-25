@@ -38,6 +38,13 @@ const { getProfileGoal } = require('./profileGoal');
 const { buildCanonicalSessionSnapshot } = require('./coachSessionSnapshot');
 const { buildCoachingDecisionFromExplanation, buildRecoveryDecision } = require('./coachDecisionSnapshot');
 const { isTurnPrecedenceEnabled } = require('./turnPrecedence');
+const turnCorrelation = require('./turnCorrelation');
+
+// The session identity a coach request carries — delegated to the ONE shared definition in
+// turnCorrelation so this site and /api/coach/message cannot drift apart (#1165).
+function _requestSessionId(req) {
+  return turnCorrelation.sessionIdFromRequestBody(req && req.body);
+}
 
 // The two Q&A routes carry the final visible answer in different fields: /api/coach/chat
 // uses data.message, /api/coach/ask uses data.answer. Normalize to the Coach_Response /
@@ -79,6 +86,12 @@ function observeQaTurn(req, res, opts) {
 
   const turn = interactionTraceShadow.beginTurn({ intentType, source });
   turn.stage('intent', 'ok');
+  // #1165 — publish the turn id to the client and register its session binding, so the write
+  // this turn authorizes (a LATER request, on a different route) can be correlated back to it.
+  // Header-only; the response body is untouched. Runs before the `turn.enabled` early return
+  // because the id is minted regardless of the shadow flag — but the correlation RECORD is
+  // still shadow-gated in recordWriteProof, so nothing is emitted with the shadow off.
+  turnCorrelation.attachTurnToResponse(res, turn.turnId, _requestSessionId(req));
   if (!turn.enabled) return turn;
 
   let visibleBody = null;

@@ -59,6 +59,7 @@ const { isTirednessExpression, buildTirednessRecoveryAnswer, buildTirednessRecov
 const { planStateFromContext, buildSessionCloseAnswer, buildSessionCloseAnswerFromSession, buildNextUpAnswer, buildNextUpAnswerFromSession } = require('../services/sessionPlanExecutor');
 const { buildCanonicalSessionSnapshot } = require('../services/coachSessionSnapshot');
 const { buildCoachingDecisionFromExplanation, buildRecoveryDecision } = require('../services/coachDecisionSnapshot');
+const turnCorrelation = require('../services/turnCorrelation');
 const { generateLiftCode, buildExerciseCatalogMap, normalizeExerciseKey, closestExerciseMatches } = require('../services/exerciseEnrichment');
 const { getShadowLog, observeChatMessage } = require('../services/intentShadow');
 const { getBrainShadowLog } = require('../services/brainShadow');
@@ -588,6 +589,10 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     let validatorRan = false;    // true once finalizeCoachVoice (the deterministic validator) runs
     const turn = interactionTraceShadow.beginTurn({ intentType: kind, source: 'coach_message' });
     turn.stage('intent', 'ok');
+    // #1165 — publish the turn id (header only) and register its session binding so a later
+    // write on a different route can be correlated back to this turn. Unbound when the request
+    // carries no explicit session id, which fails closed to no correlation.
+    turnCorrelation.attachTurnToResponse(res, turn.turnId, turnCorrelation.sessionIdFromRequestBody(req.body));
     if (turn.enabled) {
       // Concern 3: capture the visible payload (shadow-only wrapper — always delegates,
       // never alters the response) so the finish hook can assemble the CoachTurnPacket
