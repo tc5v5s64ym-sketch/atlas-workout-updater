@@ -99,6 +99,24 @@ const registerSessionPlanRoutes = require('./routes/sessionPlans');
 // F10D — closeout confirmation + ledger seal (dry-run until the owner enables
 // SESSION_PLAN_SETS_WRITE_ENABLED; the store gates every write internally).
 const { sealCloseout, readLedgerRows } = require('./services/sessionPlanSetsStore');
+const turnCorrelation = require('./services/turnCorrelation');
+
+// #1165 — join a completed write back to the coach turn that authorized it.
+//
+// The coach turn ends on a READ-ONLY route, so the write always lands on a separate request;
+// this is the only place the two can meet. Best-effort and strictly observational: it runs
+// after the write and its proof exist, never alters the response, and returns nothing the
+// route depends on. A rejected or absent correlation claim is silent — a write must never
+// fail because its telemetry could not be joined.
+function recordTurnWriteProof(payload, sessionId, route, proof) {
+  try {
+    const resolved = turnCorrelation.resolveCorrelation(payload, { sessionId });
+    if (!resolved.ok) return null;
+    return turnCorrelation.recordWriteProof({ turnId: resolved.turn_id, sessionId, route, proof });
+  } catch (_) {
+    return null;
+  }
+}
 const { buildCloseoutSummary, boundCloseoutContextItems } = require('./services/closeoutSummary');
 // F10D (Codex P1, PR #1069) — the finalized Session_Plans closeout event records
 // INSIDE the one approved write, with proof, instead of a client fire-and-forget.
@@ -3024,6 +3042,11 @@ app.post('/api/log-workout', async (req, res) => {
     if (autoMatchesForPreview.length > 0) previewBody.auto_matches = autoMatchesForPreview;
     if (ruleFlags.length > 0) previewBody.rule_flags = ruleFlags;
     if (substitutions.length > 0) previewBody.substitutions = substitutions;
+    // #1165 — a dry-run is a correlated turn outcome too: its W1–W3 no-write proof
+    // (sheet_written:false / no_write_confirmed:true) is exactly what a reviewer needs to see
+    // that a turn previewed rather than wrote. The row previews on this body are arrays and
+    // are dropped by the record's scalar-only whitelist.
+    recordTurnWriteProof(payload, session_id, '/api/log-workout', previewBody);
     return standardSuccess(req, res, 'log-workout processed', previewBody, 200);
   }
 
@@ -3295,6 +3318,13 @@ app.post('/api/log-workout', async (req, res) => {
       responseBody.idempotency_status = 'completed';
       completeWrite(idempotency.write_id, idempotency.token, responseBody);
     }
+
+    // #1165 — correlate this write back to the coach turn that authorized it. The claim is
+    // client-carried and NON-AUTHORITATIVE: resolveCorrelation accepts it only if the server
+    // issued that id, for THIS session, recently. Everything else drops the correlation.
+    // Strictly after the write and its proof exist, strictly observational — it cannot alter
+    // or block the response, and the proof fields are copied verbatim (W1–W3 untouched).
+    recordTurnWriteProof(payload, session_id, '/api/log-workout', responseBody);
 
     return standardSuccess(req, res, 'log-workout processed', responseBody, 200);
   } catch (error) {
