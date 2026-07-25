@@ -353,7 +353,8 @@ test('buildWriteProofRecord: projects the closeout event envelope as bounded sca
     // The exact `_envelope('written', true, …)` shape, `plan_version` and null `reason` included.
     proof: {
       session_plans_closeout: {
-        status: 'written', captured: true, written: 1, skipped: 0, plan_version: 'pv_abc', reason: null,
+        status: 'written', captured: true, written: 1, skipped: 0,
+        plan_version: 'pv_3f2504e0-4f89-41d3-9a0c-0305e82c3301', reason: null,
       },
     },
   });
@@ -367,7 +368,69 @@ test('buildWriteProofRecord: projects the closeout event envelope as bounded sca
   // leaves the record unable to say WHICH session_closeout row this was — and the slice-3 artifact
   // join could not substantiate its own turn→closeout claim. (Excluded in the first draft as "a
   // plan token rather than write proof"; being the discriminator is what makes it write proof.)
-  assert.equal(record.proof.session_plans_closeout_plan_version, 'pv_abc');
+  assert.equal(record.proof.session_plans_closeout_plan_version, 'pv_3f2504e0-4f89-41d3-9a0c-0305e82c3301');
+});
+
+// Codex P1 (r3649675188) — projecting plan_version without bounding it made the record a
+// pass-through for arbitrary client text. `closeoutPlanVersion` accepts ANY string matching
+// /^pv_.+/ straight from the request body (index.js:2842), `sessionPlanCapture` echoes it, and the
+// scalar filter imposes no length or vocabulary bound — so a corrupted client could push most of
+// the 1 MB body limit into the `[turn-write-proof]` line. Genuine tokens are `pv_` + a UUID
+// (src/app/planAcceptance.js mintId), a fixed 39-char shape, so requiring it costs nothing real.
+
+const VALID_PV = 'pv_3f2504e0-4f89-41d3-9a0c-0305e82c3301';
+
+test('buildWriteProofRecord: a canonical pv_ UUID projects', () => {
+  const record = tc.buildWriteProofRecord({
+    turnId: TURN_ID, sessionId: SESSION, route: '/api/log-workout',
+    proof: { session_plans_closeout: { status: 'written', captured: true, plan_version: VALID_PV } },
+  });
+  assert.equal(record.proof.session_plans_closeout_plan_version, VALID_PV);
+});
+
+test('buildWriteProofRecord: a malformed plan_version is NOT projected, and never reaches the record', () => {
+  const smuggled = `pv_${'PRIVATE-NOTE-'.repeat(200)}`;
+  for (const bad of [
+    smuggled,                       // arbitrary text behind a valid-looking prefix
+    'pv_not-a-uuid',
+    'pv_',
+    `pv_${'a'.repeat(4096)}`,       // unbounded
+    'plan_v1',                      // no prefix
+    `${VALID_PV} `,                 // padded
+    `${VALID_PV}x`,                 // suffixed
+    VALID_PV.replace('-', ''),      // wrong UUID shape
+  ]) {
+    const record = tc.buildWriteProofRecord({
+      turnId: TURN_ID, sessionId: SESSION, route: '/api/log-workout',
+      proof: { session_plans_closeout: { status: 'written', captured: true, written: 1, plan_version: bad } },
+    });
+    assert.ok(
+      !('session_plans_closeout_plan_version' in record.proof),
+      `plan_version ${JSON.stringify(bad).slice(0, 40)} must not project`,
+    );
+    // The rest of the envelope still projects — one bad field costs its own key, not the evidence.
+    assert.equal(record.proof.session_plans_closeout_captured, true);
+    assert.equal(record.proof.session_plans_closeout_written, 1);
+  }
+  // And the smuggled text must appear nowhere in the serialized record.
+  const record = tc.buildWriteProofRecord({
+    turnId: TURN_ID, sessionId: SESSION, route: '/api/log-workout',
+    proof: { session_plans_closeout: { status: 'written', captured: true, plan_version: smuggled } },
+  });
+  assert.ok(!JSON.stringify(record).includes('PRIVATE-NOTE'), 'no smuggled text in the record');
+});
+
+test('buildWriteProofRecord: every projected string is length-bounded, whatever the field', () => {
+  // The structural backstop for the root cause Codex named: the scalar filter bounds no string
+  // length. `ledger_seal.reason` is fixed-vocabulary TODAY (verified by enumeration), but that is a
+  // property of code that could change, so the projection must not rely on it alone.
+  const record = tc.buildWriteProofRecord({
+    turnId: TURN_ID, sessionId: SESSION, route: '/api/log-workout',
+    proof: { ledger_seal: { sealed_ok: false, reason: `x${'LEAK'.repeat(2000)}` } },
+  });
+  assert.ok(!('ledger_seal_reason' in record.proof), 'an over-long projected string is dropped');
+  assert.equal(record.proof.ledger_seal_sealed_ok, false, 'its bounded siblings still project');
+  assert.ok(!JSON.stringify(record).includes('LEAKLEAK'));
 });
 
 test('buildWriteProofRecord: a null plan_version projects as null, never as absent-so-assumed', () => {

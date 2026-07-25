@@ -250,9 +250,34 @@ const PROOF_PROJECTIONS = Object.freeze({
   // WHICH `session_closeout` row was written or skipped — and the slice-3 artifact join would be
   // unable to substantiate its own turn→closeout claim. It was excluded in the first draft as "a
   // plan token rather than write proof" (Codex r3649662429 corrected that: being the discriminator
-  // is precisely what makes it write proof). It is an opaque server-generated `pv_` id already
-  // present in the response body — not a credential, not workout data.
+  // is precisely what makes it write proof).
+  //
+  // It is CLIENT-SUPPLIED and must therefore be validated before publication. An earlier version of
+  // this comment called it "server-generated", which is simply false: it is minted client-side as
+  // `pv_` + crypto.randomUUID (src/app/planAcceptance.js mintId) and the server accepts anything
+  // matching /^pv_.+/ straight off the request body (index.js:2842). Unvalidated, the projection was
+  // a pass-through for arbitrary client text up to the body limit (Codex r3649675188) — see
+  // PROJECTION_VALIDATORS.
   session_plans_closeout: Object.freeze(['status', 'captured', 'written', 'skipped', 'plan_version']),
+});
+
+// A projected STRING may never be unbounded. The scalar filter checks shape, not size, and every
+// enumeration proving a field is fixed-vocabulary is a property of code that can change — so this is
+// the structural backstop rather than a restatement of that reasoning. Comfortably above every real
+// value (the longest is a 39-char `pv_` UUID; seal reasons are short literals).
+const MAX_PROJECTED_STRING_LENGTH = 128;
+
+// The canonical accepted-plan token: `pv_` + a UUID, as minted by src/app/planAcceptance.js.
+const PLAN_VERSION_RE = /^pv_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Per-field validators for projected values that are CLIENT-INFLUENCED, keyed `envelope.field`. A
+// value that fails is DROPPED — the record then simply cannot name that fact, which is an honest
+// under-claim, and the rest of the envelope still projects: one bad field costs its own key, never
+// the evidence around it. This mirrors how the rest of the module treats every client-supplied id
+// (MAX_TURN_ID_LENGTH + TURN_ID_RE for a turn id, the exact PAIRING_TOKEN_RE for a token); the first
+// draft of the projection bounded neither, which was the inconsistency Codex found.
+const PROJECTION_VALIDATORS = Object.freeze({
+  'session_plans_closeout.plan_version': v => v === null || PLAN_VERSION_RE.test(String(v)),
 });
 
 // The resolution outcomes. Exactly one is returned per claim; each rejection names WHY, so a
@@ -730,8 +755,13 @@ function buildWriteProofRecord(params) {
     for (const field of fields) {
       if (!Object.prototype.hasOwnProperty.call(nested, field)) continue;
       const v = nested[field];
-      if (v === undefined) continue;
-      if (isScalar(v)) proof[`${envelope}_${field}`] = v;
+      if (v === undefined || !isScalar(v)) continue;
+      // No projected string may be unbounded, whatever the field.
+      if (typeof v === 'string' && v.length > MAX_PROJECTED_STRING_LENGTH) continue;
+      // Client-influenced fields must also satisfy their own shape.
+      const validate = PROJECTION_VALIDATORS[`${envelope}.${field}`];
+      if (validate && !validate(v)) continue;
+      proof[`${envelope}_${field}`] = v;
     }
   }
 

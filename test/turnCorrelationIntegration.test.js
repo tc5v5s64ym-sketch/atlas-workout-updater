@@ -422,7 +422,9 @@ test('the duplicate-closeout branch projects the seal and closeout envelopes it 
   state.logCompositeKeys = [`${SESSION_ID.toLowerCase()}||bench press||1`];
   tc.issueTurn(TURN_ID, SESSION_ID);
 
-  const closeout = { plan_version: 'pv_int_1', items: [] };
+  // A canonical accepted-plan token (`pv_` + UUID, as src/app/planAcceptance.js mints them) —
+  // the projection validates the shape, so a made-up token would be dropped and prove nothing.
+  const closeout = { plan_version: 'pv_9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d', items: [] };
   const { pairingToken } = await previewForToken({ correlation: { turn_id: TURN_ID }, closeout_context: closeout });
 
   const { status, body } = await postWrite({
