@@ -32,6 +32,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const tc = require('../services/turnCorrelation');
+const { logCleanedColumns } = require('../config/columns');
 
 const SESSION = '20260725-AM-01';
 const OTHER_SESSION = '20260725-PM-02';
@@ -692,6 +693,97 @@ test('a log row that repeats the bound session explicitly is fine', () => {
     log_rows: [{ exercise: 'Bench Press', weight: 225, reps: 5, set_number: 1, session_id: SESSION }],
   });
   assert.equal(tc.resolveCorrelation(ok, { sessionId: SESSION, nowMs: now + 1, ...PREVIEW }).ok, true);
+});
+
+// Codex fourth round P1 (r3649569662) — the third path, and the one I asked for. `log_rows` also
+// accepts the POSITIONAL Log_Cleaned array form, and `logRowArrayToObject` (index.js:512) sets
+// `session_id: row[1]` with NO top-level fallback at all. So a positional row's session is ALWAYS
+// explicit, and skipping non-object rows left it entirely unchecked.
+
+// A positional Log_Cleaned row: date_clean | session_id | exercise | … (12 columns, 11 also legal).
+function positionalRow(sessionValue) {
+  const row = new Array(logCleanedColumns.length).fill('');
+  row[logCleanedColumns.indexOf('date_clean')] = '2026-07-25';
+  row[logCleanedColumns.indexOf('session_id')] = sessionValue;
+  row[logCleanedColumns.indexOf('exercise')] = 'Bench Press';
+  row[logCleanedColumns.indexOf('set_number')] = 1;
+  row[logCleanedColumns.indexOf('weight')] = 225;
+  row[logCleanedColumns.indexOf('reps')] = 5;
+  return row;
+}
+
+test('a POSITIONAL log row naming a different session is refused', () => {
+  reset();
+  const now = 1_000_000;
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  const rogue = payloadWith({ correlation: { turn_id: TURN_ID }, log_rows: [positionalRow(OTHER_SESSION)] });
+  assert.equal(tc.resolveCorrelation(rogue, { sessionId: SESSION, nowMs: now + 1, ...PREVIEW }).reason, 'session_mismatch');
+  assert.equal(tc.resolveCorrelation(rogue, { sessionId: SESSION, nowMs: now + 2, writeId: 'w-1' }).reason, 'session_mismatch');
+});
+
+test('a POSITIONAL log row carrying the bound session is fine', () => {
+  reset();
+  const now = 1_000_000;
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  const ok = payloadWith({ correlation: { turn_id: TURN_ID }, log_rows: [positionalRow(SESSION)] });
+  assert.equal(tc.resolveCorrelation(ok, { sessionId: SESSION, nowMs: now + 1, ...PREVIEW }).ok, true);
+});
+
+test('a POSITIONAL log row with an EMPTY session is refused — there is no fallback to inherit', () => {
+  reset();
+  const now = 1_000_000;
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  // Unlike the object form, `logRowArrayToObject` has no `|| topLevelSessionId`: an empty element 1
+  // is WRITTEN as an empty session_id, so it is a different session, not an inherited one.
+  for (const empty of ['', '   ', null, undefined]) {
+    const rogue = payloadWith({ correlation: { turn_id: TURN_ID }, log_rows: [positionalRow(empty)] });
+    assert.equal(
+      tc.resolveCorrelation(rogue, { sessionId: SESSION, nowMs: now + 1, ...PREVIEW }).reason,
+      'session_mismatch',
+      `positional session ${JSON.stringify(empty)} must fail closed`,
+    );
+  }
+});
+
+test('a PRESENT but non-string row session fails closed rather than being skipped', () => {
+  reset();
+  const now = 1_000_000;
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  // `normalizeLogRowObject` uses `row.session_id || row.sessionId || topLevel`, so any TRUTHY
+  // value wins — including a number or an object. A string-only check silently skipped these.
+  // '   ' belongs here, not with the falsy set below: whitespace is TRUTHY, so it WINS the `||`
+  // chain and the row is written under a whitespace session — a different session, not an
+  // inherited one. (This corrects my own first expectation, which the test caught.)
+  for (const weird of [12345, true, { nested: 'x' }, ['a'], '   ']) {
+    const rogue = payloadWith({
+      correlation: { turn_id: TURN_ID },
+      log_rows: [{ exercise: 'Bench Press', weight: 225, reps: 5, set_number: 1, session_id: weird }],
+    });
+    assert.equal(
+      tc.resolveCorrelation(rogue, { sessionId: SESSION, nowMs: now + 1, ...PREVIEW }).reason,
+      'session_mismatch',
+      `row session ${JSON.stringify(weird)} must fail closed`,
+    );
+  }
+});
+
+test('an object row with a FALSY session inherits the top level and is fine', () => {
+  reset();
+  const now = 1_000_000;
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  // Falsy ⇒ `normalizeLogRowObject` falls through to topLevelSessionId, which is already checked.
+  // Note '   ' is NOT here — whitespace is truthy, so it wins the `||` and is a real mismatch.
+  for (const falsy of ['', null, undefined, 0, false]) {
+    const fine = payloadWith({
+      correlation: { turn_id: TURN_ID },
+      log_rows: [{ exercise: 'Bench Press', weight: 225, reps: 5, set_number: 1, session_id: falsy }],
+    });
+    assert.equal(
+      tc.resolveCorrelation(fine, { sessionId: SESSION, nowMs: now + 1, ...PREVIEW }).ok,
+      true,
+      `falsy row session ${JSON.stringify(falsy)} inherits and must not be refused`,
+    );
+  }
 });
 
 test('an effort_row naming a DIFFERENT session is refused, array or object form', () => {

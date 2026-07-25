@@ -84,7 +84,7 @@ const crypto = require('crypto');
 const { isShadowEnabled } = require('./interactionTraceShadow');
 // Only to locate the Effort contract's session column by NAME rather than a hardcoded index, so a
 // schema change cannot silently move the session identity out from under the check below.
-const { effortColumns } = require('../config/columns');
+const { effortColumns, logCleanedColumns } = require('../config/columns');
 
 // A correlation claim is good for one live-workout beat — long enough for a lifter to read
 // a reply, do the set, and save; short enough that a stale client cannot attribute a write
@@ -316,38 +316,57 @@ function _previewIdentity(payload, opts = {}) {
   return crypto.createHash('sha256').update(serialized).digest('hex');
 }
 
-// Where the Effort contract keeps its session identity. An array `effort_row` is passed through
-// VERBATIM (index.js:541-545), so this column is client-controlled.
+// Where each contract keeps its session identity, located by NAME so a schema change cannot move
+// it out from under the checks below. Positional rows in either shape are written VERBATIM from
+// these columns (index.js:512 for Log_Cleaned, 541-545 for Effort), so both are client-controlled.
 const EFFORT_SESSION_INDEX = effortColumns.indexOf('session_id');
+const LOG_SESSION_INDEX = logCleanedColumns.indexOf('session_id');
+
+// Any value the write path would use as a session, rendered for comparison. Deliberately NOT a
+// string-only check: `normalizeLogRowObject` accepts any TRUTHY value (`row.session_id ||
+// row.sessionId || topLevel`), so a number, boolean or object would win at write time while a
+// string-only gate silently skipped it (Codex r3649569662). Rendering everything and comparing
+// fails closed — a non-matching or unusable value simply is not the bound session.
+function _renderSessionValue(v) {
+  return v === null || v === undefined ? '' : String(v).trim();
+}
 
 /**
- * Every session identity a payload EXPLICITLY names below its top level (Codex P1, r3649557069).
+ * Every session identity a payload names BELOW its top level (Codex r3649557069, r3649569662).
  *
- * `normalizeLogRowObject` resolves a row's session as `row.session_id || row.sessionId ||
- * topLevelSessionId` (index.js:449) — a row-level id WINS — and an array `effort_row` is written
- * as given. So comparing only the top-level session let a request write rows under session B while
- * the correlation record named session A: cross-session contamination inside the evidence itself.
+ * Comparing only the top-level session let a request write rows under session B while the
+ * correlation record named session A — cross-session contamination inside the evidence itself.
  *
- * Returns the explicit identities found. An absent row-level id is not a mismatch (it inherits the
- * top level, which is already checked); only an id that DISAGREES is.
+ * The two row shapes differ in a way that matters, and the difference is NOT cosmetic:
+ *   • OBJECT rows resolve as `row.session_id || row.sessionId || topLevelSessionId`
+ *     (index.js:449), so a FALSY value inherits the top level — already checked, so not a
+ *     mismatch. Only a truthy value that disagrees is.
+ *   • POSITIONAL rows have NO fallback: `logRowArrayToObject` sets `session_id: row[1]` flat
+ *     (index.js:512). Every positional row is therefore an EXPLICIT session, and an empty one is
+ *     written as an empty session_id — a different session, not an inherited one. So positional
+ *     rows are always compared, empty included.
+ * An array `effort_row` is likewise written as given (index.js:541-545).
  */
 function _explicitRowSessionIds(payload) {
   const p = _isPlainObject(payload) ? payload : {};
   const found = [];
   if (Array.isArray(p.log_rows)) {
     for (const row of p.log_rows) {
-      if (!_isPlainObject(row)) continue;
-      const raw = row.session_id || row.sessionId;
-      if (_isNonEmptyString(raw)) found.push(String(raw).trim());
+      if (Array.isArray(row)) {
+        // Always explicit — there is nothing to inherit from.
+        if (LOG_SESSION_INDEX >= 0) found.push(_renderSessionValue(row[LOG_SESSION_INDEX]));
+      } else if (_isPlainObject(row)) {
+        const raw = row.session_id || row.sessionId;
+        if (raw) found.push(_renderSessionValue(raw));
+      }
     }
   }
   const effort = p.effort_row;
-  if (Array.isArray(effort) && EFFORT_SESSION_INDEX >= 0) {
-    const raw = effort[EFFORT_SESSION_INDEX];
-    if (_isNonEmptyString(raw)) found.push(String(raw).trim());
+  if (Array.isArray(effort)) {
+    if (EFFORT_SESSION_INDEX >= 0) found.push(_renderSessionValue(effort[EFFORT_SESSION_INDEX]));
   } else if (_isPlainObject(effort)) {
     const raw = effort.session_id || effort.sessionId;
-    if (_isNonEmptyString(raw)) found.push(String(raw).trim());
+    if (raw) found.push(_renderSessionValue(raw));
   }
   return found;
 }
