@@ -204,6 +204,40 @@ const PROOF_KEYS = Object.freeze([
   'skipped_duplicates',
 ]);
 
+// #1173 item 2 — the CLOSEOUT PROOF ENVELOPES, projected as bounded scalars.
+//
+// The all-rows-duplicate branch in index.js correlates when `ledger_seal` or
+// `session_plans_closeout` is present, because with the Session Plan lanes enabled that branch
+// genuinely appends the Session_Plans closeout event and stamps the Session_Plan_Sets seal — the
+// sealed sidecar write the Phase-4 trace exists to capture. But neither envelope was in
+// PROOF_KEYS, and both are nested objects that the scalar-only filter drops regardless, so the
+// record emitted for that branch reported zero rows and NO seal evidence whatsoever. A trigger had
+// been added without its evidence, and it could not prove the write it was added to capture.
+//
+// PROJECT, NEVER PASS THROUGH. Each envelope is flattened to `<envelope>_<field>` under a closed
+// per-envelope whitelist, and every projected value still goes through the same scalar-only filter.
+// Both disciplines matter and neither substitutes for the other: the whitelist decides WHICH
+// fields, the scalar filter decides WHAT SHAPE.
+//
+// What is deliberately NOT listed, because a closed whitelist excludes by default:
+//   • `conflicting_write_ids` (array) and `diagnostics` (object) — droppable by shape anyway, but
+//     naming them here records that their omission is a decision, not an oversight;
+//   • the seal's `error` and the closeout's `reason` — both carry an ARBITRARY exception message
+//     (index.js wraps a seal throw as `{ reason:'seal_error', error: String(error.message) }`, and
+//     sessionPlanCapture._capture sets `reason: e.message`), which could carry a Sheet id or other
+//     internals into a telemetry line. The seal's own `reason` IS listed because every value it
+//     takes inside sessionPlanSetsStore is a fixed vocabulary literal, and the closeout's fixed
+//     vocabulary lives on `status` instead.
+const PROOF_PROJECTIONS = Object.freeze({
+  ledger_seal: Object.freeze([
+    'sheet_written', 'no_write_confirmed', 'dry_run',
+    'sealed', 'already_sealed', 'would_seal', 'sealed_ok',
+    'no_ledger', 'read_failed', 'expected_cells', 'updated_cells',
+    'reason',
+  ]),
+  session_plans_closeout: Object.freeze(['status', 'captured', 'written', 'skipped']),
+});
+
 // The resolution outcomes. Exactly one is returned per claim; each rejection names WHY, so a
 // reviewer can tell a client that never claimed from one whose claim was refused.
 // `write_mismatch` is deliberately ABSENT: first-write-wins is retired, not bypassed, so no
@@ -644,14 +678,27 @@ function buildWriteProofRecord(params) {
 
   const src = _isPlainObject(p.proof) ? p.proof : {};
   const proof = {};
+  // Scalars only. A nested object or array on a proof key could smuggle rows or a body into the
+  // record, so it is dropped rather than serialized.
+  const isScalar = v => v === null || typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean';
   for (const key of PROOF_KEYS) {
     if (Object.prototype.hasOwnProperty.call(src, key) && src[key] !== undefined) {
-      const v = src[key];
-      // Scalars only. A nested object or array on a proof key could smuggle rows or a body
-      // into the record, so it is dropped rather than serialized.
-      if (v === null || typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
-        proof[key] = v;
-      }
+      if (isScalar(src[key])) proof[key] = src[key];
+    }
+  }
+
+  // #1173 item 2 — flatten the closeout proof envelopes to bounded scalars. Namespaced as
+  // `<envelope>_<field>` so a projected key can never collide with a top-level proof key, and each
+  // value still passes the same scalar-only filter: the whitelist decides WHICH fields, the filter
+  // decides WHAT SHAPE. The envelope object itself is never carried.
+  for (const [envelope, fields] of Object.entries(PROOF_PROJECTIONS)) {
+    const nested = src[envelope];
+    if (!_isPlainObject(nested)) continue;
+    for (const field of fields) {
+      if (!Object.prototype.hasOwnProperty.call(nested, field)) continue;
+      const v = nested[field];
+      if (v === undefined) continue;
+      if (isScalar(v)) proof[`${envelope}_${field}`] = v;
     }
   }
 
@@ -812,6 +859,7 @@ module.exports = {
   MAX_OUTSTANDING_PAIRINGS,
   IDENTITY_EXCLUDED_FIELDS,
   PROOF_KEYS,
+  PROOF_PROJECTIONS,
   REASONS,
   isWellFormedTurnId,
   isWellFormedPairingToken,

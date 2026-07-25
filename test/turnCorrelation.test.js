@@ -280,6 +280,157 @@ test('buildWriteProofRecord: is a CLOSED whitelist — no rows, prose, or unknow
   }
 });
 
+// ─── #1173 item 2 — the closeout proof envelopes ──────────────────────────────
+//
+// The all-rows-duplicate branch in index.js correlates when `ledger_seal` or
+// `session_plans_closeout` is present, because with the Session Plan lanes enabled that branch
+// really can append the Session_Plans closeout event and stamp the Session_Plan_Sets seal — the
+// sealed sidecar write the Phase-4 trace exists to capture. But NEITHER envelope was in
+// PROOF_KEYS, and both are nested objects that the scalar-only copier drops regardless, so the
+// emitted record reported zero rows and no seal evidence at all: a trigger with no evidence.
+//
+// The fix is bounded scalar PROJECTIONS — flattened, closed-whitelist, never a pass-through. The
+// envelopes carry fields that must NOT be published: the seal's `conflicting_write_ids` (array)
+// and `diagnostics` (object), its `error` (an arbitrary exception message), and the closeout's
+// `reason` (also `e.message`). A closed projection excludes all of those by default.
+
+test('buildWriteProofRecord: projects the ledger seal envelope as bounded scalars', () => {
+  const record = tc.buildWriteProofRecord({
+    turnId: TURN_ID,
+    sessionId: SESSION,
+    route: '/api/log-workout',
+    proof: {
+      sheet_write: 'skipped_duplicate',
+      log_rows_written: 0,
+      ledger_seal: {
+        sheet_written: true,
+        no_write_confirmed: false,
+        sealed: 5,
+        already_sealed: 2,
+        sealed_ok: true,
+        reason: 'all_sealed',
+      },
+    },
+  });
+  // The seal really did write — that is the whole justification for correlating this branch.
+  assert.equal(record.proof.ledger_seal_sheet_written, true);
+  assert.equal(record.proof.ledger_seal_sealed, 5);
+  assert.equal(record.proof.ledger_seal_already_sealed, 2);
+  assert.equal(record.proof.ledger_seal_sealed_ok, true);
+  assert.equal(record.proof.ledger_seal_reason, 'all_sealed');
+  // The nested envelope itself must never survive — project, never pass through.
+  assert.ok(!('ledger_seal' in record.proof), 'the nested envelope must not be carried');
+});
+
+test('buildWriteProofRecord: projects the closeout event envelope as bounded scalars', () => {
+  const record = tc.buildWriteProofRecord({
+    turnId: TURN_ID,
+    sessionId: SESSION,
+    route: '/api/log-workout',
+    proof: {
+      session_plans_closeout: { status: 'written', captured: true, written: 1, skipped: 0 },
+    },
+  });
+  assert.equal(record.proof.session_plans_closeout_status, 'written');
+  assert.equal(record.proof.session_plans_closeout_captured, true);
+  assert.equal(record.proof.session_plans_closeout_written, 1);
+  assert.equal(record.proof.session_plans_closeout_skipped, 0);
+  assert.ok(!('session_plans_closeout' in record.proof));
+});
+
+test('buildWriteProofRecord: a FAILED seal is projected honestly, never softened', () => {
+  const record = tc.buildWriteProofRecord({
+    turnId: TURN_ID,
+    sessionId: SESSION,
+    route: '/api/log-workout',
+    proof: {
+      ledger_seal: { sheet_written: false, sealed: 0, already_sealed: 0, sealed_ok: false, reason: 'ledger_read_failed' },
+      session_plans_closeout: { status: 'error', captured: false, written: 0 },
+      closeout_fully_verified: false,
+    },
+  });
+  assert.equal(record.proof.ledger_seal_sealed_ok, false);
+  assert.equal(record.proof.ledger_seal_reason, 'ledger_read_failed');
+  assert.equal(record.proof.session_plans_closeout_captured, false);
+  assert.equal(record.proof.closeout_fully_verified, false);
+});
+
+test('buildWriteProofRecord: the projection is CLOSED — diagnostics, ids and error text never survive', () => {
+  const record = tc.buildWriteProofRecord({
+    turnId: TURN_ID,
+    sessionId: SESSION,
+    route: '/api/log-workout',
+    proof: {
+      ledger_seal: {
+        sealed_ok: false,
+        reason: 'conflicting_seal',
+        // Arrays and objects: droppable by shape.
+        conflicting_write_ids: ['w-someone-elses-closeout'],
+        diagnostics: { plan_item_id: 'pi_dip', set_index: 2 },
+        // A scalar, but an ARBITRARY exception string — index.js wraps a seal throw as
+        // { reason:'seal_error', error: String(error.message) }. Excluded by not being listed.
+        error: 'Sheets API 403 for spreadsheet 1AbCdEfGhIjKlMnOpQrStUvWxYz',
+      },
+      session_plans_closeout: {
+        status: 'error',
+        captured: false,
+        // Also an arbitrary message (`e.message` in sessionPlanCapture._capture).
+        reason: 'revision collision on 1AbCdEfGhIjKlMnOpQrStUvWxYz',
+      },
+    },
+  });
+  for (const banned of [
+    'ledger_seal_conflicting_write_ids', 'ledger_seal_diagnostics', 'ledger_seal_error',
+    'session_plans_closeout_reason',
+  ]) {
+    assert.ok(!(banned in record.proof), `${banned} must not survive the projection`);
+  }
+  const serialized = JSON.stringify(record);
+  for (const secret of ['1AbCdEfGhIjKlMnOpQrStUvWxYz', 'w-someone-elses-closeout', 'pi_dip', 'Sheets API 403']) {
+    assert.ok(!serialized.includes(secret), `record must not carry "${secret}"`);
+  }
+  // The honest verdict still comes through.
+  assert.equal(record.proof.ledger_seal_sealed_ok, false);
+  assert.equal(record.proof.ledger_seal_reason, 'conflicting_seal');
+});
+
+test('buildWriteProofRecord: a non-object or absent envelope projects nothing, and never throws', () => {
+  for (const ledger_seal of [null, undefined, 'sealed', 42, [], true]) {
+    const record = tc.buildWriteProofRecord({
+      turnId: TURN_ID, sessionId: SESSION, route: '/api/log-workout',
+      proof: { sheet_written: true, ledger_seal },
+    });
+    assert.ok(record, `must still build for ledger_seal=${JSON.stringify(ledger_seal)}`);
+    assert.equal(record.proof.sheet_written, true, 'the flat proof keys are unaffected');
+    for (const key of Object.keys(record.proof)) {
+      assert.ok(!key.startsWith('ledger_seal_'), `no seal projection for ${JSON.stringify(ledger_seal)}`);
+    }
+    assert.ok(!('ledger_seal' in record.proof));
+  }
+});
+
+test('buildWriteProofRecord: a nested value INSIDE a projected envelope is dropped, not serialized', () => {
+  const record = tc.buildWriteProofRecord({
+    turnId: TURN_ID, sessionId: SESSION, route: '/api/log-workout',
+    // `sealed` is whitelisted, but an object on it must still be refused by the scalar filter —
+    // the whitelist says WHICH fields, the scalar filter says WHAT SHAPE. Both must hold.
+    proof: { ledger_seal: { sealed: { rows: [['Bench Press', 225]] }, sealed_ok: true } },
+  });
+  assert.ok(!('ledger_seal_sealed' in record.proof), 'a nested value on a whitelisted field is dropped');
+  assert.equal(record.proof.ledger_seal_sealed_ok, true, 'its scalar siblings still project');
+  assert.ok(!JSON.stringify(record).includes('Bench Press'));
+});
+
+test('PROOF_PROJECTIONS: every projected key is namespaced, so none can collide with a flat proof key', () => {
+  const flat = new Set(tc.PROOF_KEYS);
+  for (const [envelope, fields] of Object.entries(tc.PROOF_PROJECTIONS)) {
+    for (const field of fields) {
+      const projected = `${envelope}_${field}`;
+      assert.ok(!flat.has(projected), `${projected} would collide with a top-level proof key`);
+    }
+  }
+});
+
 test('buildWriteProofRecord: refuses to build without a resolved turn id', () => {
   for (const turnId of [null, undefined, '', 'not-a-turn-id']) {
     assert.equal(
