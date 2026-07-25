@@ -332,13 +332,27 @@ const EFFORT_SESSION_ALIASES = Object.freeze(
   (effortRowFieldAliases && effortRowFieldAliases.session_id) || ['session_id'],
 );
 
-// Any value the write path would use as a session, rendered for comparison. Deliberately NOT a
-// string-only check: `normalizeLogRowObject` accepts any TRUTHY value (`row.session_id ||
-// row.sessionId || topLevel`), so a number, boolean or object would win at write time while a
-// string-only gate silently skipped it (Codex r3649569662). Rendering everything and comparing
-// fails closed — a non-matching or unusable value simply is not the bound session.
-function _renderSessionValue(v) {
-  return v === null || v === undefined ? '' : String(v).trim();
+/**
+ * Does a session value the write path would use equal the bound session?
+ *
+ * Deliberately NOT a string-only check: `normalizeLogRowObject` accepts any TRUTHY value
+ * (`row.session_id || row.sessionId || topLevel`), so a number, boolean or object would win at
+ * write time while a string-only gate silently skipped it (Codex r3649569662). Everything present
+ * is rendered and compared, so anything that is not the bound session fails closed.
+ *
+ * And deliberately NOT trimmed. Trimming made the GATE more permissive than the WRITE PATH
+ * (Codex r3649614757): row sessions are written verbatim — `normalizeLogRowObject` keeps the
+ * truthy value, positional Log rows and Effort rows pass straight through — and
+ * `/api/log-workout` does not trim the top-level `session_id` either (index.js:2865). So `'S1 '`
+ * would have matched a bound `'S1'` while the row was appended under `'S1 '` and the record named
+ * `'S1'`: the cross-session evidence mismatch this gate exists to prevent. A PADDED value is
+ * therefore refused outright rather than normalized into a match — equivalence-by-trim is simply
+ * not a property the write path has, so the gate must not invent it.
+ */
+function _sessionValueMatches(boundSessionId, v) {
+  const raw = v === null || v === undefined ? '' : String(v);
+  if (raw !== raw.trim()) return false;
+  return raw === boundSessionId;
 }
 
 /**
@@ -363,30 +377,30 @@ function _renderSessionValue(v) {
  * truthiness rule here skipped exactly those values (Codex r3649591244), and the comparison must
  * use the SAME alias normalization will select: the first one PRESENT, in the map's own order.
  */
-function _explicitRowSessionIds(payload) {
+function _explicitRowSessionValues(payload) {
   const p = _isPlainObject(payload) ? payload : {};
   const found = [];
   if (Array.isArray(p.log_rows)) {
     for (const row of p.log_rows) {
       if (Array.isArray(row)) {
         // Always explicit — there is nothing to inherit from.
-        if (LOG_SESSION_INDEX >= 0) found.push(_renderSessionValue(row[LOG_SESSION_INDEX]));
+        if (LOG_SESSION_INDEX >= 0) found.push(row[LOG_SESSION_INDEX]);
       } else if (_isPlainObject(row)) {
         const raw = row.session_id || row.sessionId;
-        if (raw) found.push(_renderSessionValue(raw));
+        if (raw) found.push(raw);
       }
     }
   }
   const effort = p.effort_row;
   if (Array.isArray(effort)) {
-    if (EFFORT_SESSION_INDEX >= 0) found.push(_renderSessionValue(effort[EFFORT_SESSION_INDEX]));
+    if (EFFORT_SESSION_INDEX >= 0) found.push(effort[EFFORT_SESSION_INDEX]);
   } else if (_isPlainObject(effort)) {
     // Presence, not truthiness — and the FIRST present alias, which is the one normalization
     // writes. An alias it would ignore must not decide the correlation. No session property at all
     // makes `normalizeEffortRow` throw before any write, so there is nothing to contaminate.
     for (const alias of EFFORT_SESSION_ALIASES) {
       if (Object.prototype.hasOwnProperty.call(effort, alias)) {
-        found.push(_renderSessionValue(effort[alias]));
+        found.push(effort[alias]);
         break;
       }
     }
@@ -523,14 +537,17 @@ function resolveCorrelation(payload, opts = {}) {
 
     // Session binding. A write with no session identity can never claim a correlation —
     // there is nothing to bind it to, so it fails as a mismatch rather than defaulting open.
-    const sid = _isNonEmptyString(opts.sessionId) ? String(opts.sessionId).trim() : '';
-    if (!sid || sid !== rec.sessionId) return miss(REASONS.SESSION_MISMATCH);
+    // The top-level session must equal the bound one EXACTLY — no trim. `/api/log-workout` writes
+    // it verbatim (index.js:2865), so a padded value would be appended padded while the record
+    // named the trimmed form.
+    if (!_isNonEmptyString(opts.sessionId)) return miss(REASONS.SESSION_MISMATCH);
+    if (!_sessionValueMatches(rec.sessionId, opts.sessionId)) return miss(REASONS.SESSION_MISMATCH);
 
     // ...and the same check for every session identity the payload names BELOW its top level. A
     // row-level `session_id` beats the top-level one at write time (index.js:449), so without this
     // a request could write rows under another session while the record named this one.
-    for (const rowSid of _explicitRowSessionIds(payload)) {
-      if (rowSid !== rec.sessionId) return miss(REASONS.SESSION_MISMATCH);
+    for (const rowSid of _explicitRowSessionValues(payload)) {
+      if (!_sessionValueMatches(rec.sessionId, rowSid)) return miss(REASONS.SESSION_MISMATCH);
     }
 
     // Freshness. Inclusive at the boundary so a legitimately slow save is not dropped.

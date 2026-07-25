@@ -710,6 +710,51 @@ test('a log row naming a DIFFERENT session is refused (session_mismatch)', () =>
   }
 });
 
+// Codex seventh round P1 (r3649614757). `_renderSessionValue` trimmed before comparing, which made
+// the GATE more permissive than the WRITE PATH: `normalizeLogRowObject` keeps the truthy value
+// as-is, and positional Log rows and Effort rows are written verbatim. So `'S1 '` passed the gate
+// as `'S1'` while the row was appended under `'S1 '`, and the record named `'S1'` — the exact
+// cross-session evidence mismatch this gate exists to prevent. Padded values are now REFUSED
+// rather than normalized, at every level, because equivalence-by-trim is not a property the write
+// path has.
+
+test('a PADDED session value is refused everywhere — the write path does not trim', () => {
+  reset();
+  const now = 1_000_000;
+  const padded = `${SESSION} `;
+  const shapes = {
+    'object log row': { log_rows: [{ exercise: 'Bench Press', weight: 225, reps: 5, set_number: 1, session_id: padded }] },
+    'positional log row': { log_rows: [positionalRow(padded)] },
+    'array effort_row': { effort_row: ['2026-07-25', padded, 3600, 400, 500, 130, 165, 'Gym', ''] },
+    'object effort_row': { effort_row: { date: '2026-07-25', session_id: padded, duration: 3600 } },
+  };
+  for (const [label, extra] of Object.entries(shapes)) {
+    reset();
+    tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+    const rogue = payloadWith({ correlation: { turn_id: TURN_ID }, ...extra });
+    assert.equal(
+      tc.resolveCorrelation(rogue, { sessionId: SESSION, nowMs: now + 1, ...PREVIEW }).reason,
+      'session_mismatch',
+      `${label}: a padded session must be refused, not trimmed into a match`,
+    );
+  }
+});
+
+test('a PADDED top-level session is refused too — the same defect, one level up', () => {
+  reset();
+  const now = 1_000_000;
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  // /api/log-workout destructures session_id without trimming (index.js:2865), so a padded
+  // top-level session is written verbatim into every row while the record would name the
+  // trimmed form. Codex named the row-level half; this is the same class above it.
+  const r = tc.resolveCorrelation(
+    payloadWith({ correlation: { turn_id: TURN_ID } }),
+    { sessionId: `${SESSION} `, nowMs: now + 1, ...PREVIEW },
+  );
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'session_mismatch');
+});
+
 test('a log row that repeats the bound session explicitly is fine', () => {
   reset();
   const now = 1_000_000;
