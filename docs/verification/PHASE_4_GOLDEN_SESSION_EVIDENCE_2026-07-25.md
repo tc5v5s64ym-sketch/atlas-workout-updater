@@ -29,8 +29,18 @@ Sheet edit was made, and no historical rewrite occurred.
 
 **Current production state.** `SESSION_PLAN_SETS_WRITE_ENABLED` is back to **`0`** — owner-confirmed
 2026-07-25, before this document was written. Planned-set checkpoints and seals are therefore back to
-dry-run, returning the W1–W3 no-write proof. `ATLAS_TURN_PRECEDENCE=1` may remain enabled; the seams it
-gates are proven byte-identical to the prior path.
+dry-run, returning the W1–W3 no-write proof.
+
+`ATLAS_TURN_PRECEDENCE=1` **may remain enabled** — an owner instruction of 2026-07-25, recorded here as the
+authority for leaving it on. It is *not* justified by a blanket byte-identity claim, and this document does
+not make one. Byte-identity **between flag states** is proven only for the **two H-03 decision-consumption
+seams** (the recommendation-explanation worder and the recovery worder, PRs #1157–#1160). The same flag
+also gates paths that change behaviour **by design** when it is on — substitution rejection
+([`index.js`](../../index.js) `isTurnPrecedenceEnabled()` returning `recommendation: null` for a
+non-substitution turn), warm-up deferral, the scoped prescription and next-up answer lanes, and
+clarification narrowing (all in [`routes/coachOps.js`](../../routes/coachOps.js)). For those, byte-identity
+holds with the flag **off**, which is what their code comments assert; each carries its own validation from
+the PR that landed it, not a shared identity guarantee.
 
 ## 2. Evidence provenance and bounds
 
@@ -57,9 +67,17 @@ criterion 7: the end-to-end trace the gate asked for does not exist to cite, for
 ### 1–2. H-03 — recommendation-explanation and recovery-routing: live-proven
 
 Both canonical-decision consumption seams landed in PRs #1156–#1160 were exercised live with
-`ATLAS_TURN_PRECEDENCE=1`, at both reply sites each, and both produced the expected replies from the
-canonical decision. These are the two capabilities the phase staged for the canonical proof, and they
-carried it.
+`ATLAS_TURN_PRECEDENCE=1`, and both produced the expected replies from the canonical decision. These are
+the two capabilities the phase staged for the canonical proof, and they carried it.
+
+**Scope of "live" here — one reply site each, not both.** Each helper sits at two **mutually exclusive**
+sites in [`routes/coachOps.js`](../../routes/coachOps.js): a configured-LLM site and an
+unconfigured/offline site (recovery: the `configured: true` recovery-routing reply vs the
+`configured: false` "Gemini not configured" reply; recommendation-explanation: the configured
+model-returned-nothing fallback vs the offline reply). A single request reaches exactly one of them, and
+the run's configuration was fixed throughout, so **one run cannot exercise both**. What the run proves is
+the site reachable in its own configuration. Both-site coverage is **test-level** (from PRs #1157–#1160)
+and is not promoted to live proof by this document.
 
 This is a **seam-level** disposition: the live route read `packet.decision` and the reply it served was
 the canonical one. It is not a claim about any other decision type — every other decision type remains
