@@ -13,6 +13,16 @@
 //   • every fail-closed case (unknown / cross-session / stale / malformed / absent) emits
 //     NOTHING — and the write still succeeds unchanged, because correlation is telemetry
 //     riding alongside the trust loop, never part of it.
+//
+// And, for #1173 item 1 (preview-established binding, replacing first-write-wins):
+//   • the real dry-run hands back a pairing token on its own header, never in the body;
+//   • the live write that presents it correlates, stamped with its attempt and — on
+//     /api/log-workout, the one path whose dry-run carries the write_id it will approve with —
+//     with the previewed-write_id corroboration;
+//   • a live write with NO pairing, or a forged token, correlates NOTHING and still writes its
+//     rows unchanged (the exact claim #1172 used to accept via first-write-wins);
+//   • the pairing header is CORS-exposed, or a browser would hide it and the round-trip would
+//     silently never happen.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -102,7 +112,14 @@ async function postWrite(body) {
     headers: { 'content-type': 'application/json', 'x-atlas-api-key': 'test-api-key' },
     body: JSON.stringify(body),
   });
-  return { status: res.status, body: await res.json() };
+  return { status: res.status, body: await res.json(), headers: res.headers };
+}
+
+// #1173 item 1 — run the real dry-run through the route to obtain the pairing token the
+// server hands back, exactly as the client will in slice 2.
+async function previewForToken(extra) {
+  const res = await postWrite(dryRunPayload(extra));
+  return { ...res, pairingToken: res.headers.get(tc.PAIRING_TOKEN_HEADER) };
 }
 
 // A dry-run keeps every assertion write-free while still exercising the identical
@@ -183,16 +200,21 @@ test('a PARTIAL write correlates too — committed rows must never go unjoined',
   tc._resetForTesting();
   resetIdempotencyStore();
   state.appends.length = 0;
-  state.failEffortAppend = true;
   tc.issueTurn(TURN_ID, SESSION_ID);
+  // The preview must carry the effort row the approve will write — app.js:6962 sets
+  // `payload.effort_row` at preview time whenever there is one. An effort row that appeared only
+  // on the live request would be an unpreviewed Effort append, which the payload gate refuses.
+  const effortRow = ['2026-07-25', SESSION_ID, 3600, 400, 500, 130, 165, 'Gym', ''];
+  const { pairingToken } = await previewForToken({ correlation: { turn_id: TURN_ID }, effort_row: effortRow });
 
+  state.failEffortAppend = true;
   const { status, body } = await postWrite({
     session_id: SESSION_ID,
     date: '2026-07-25',
     write_id: 'wid-int-partial',
     log_rows: logRows(),
-    effort_row: ['2026-07-25', SESSION_ID, 3600, 400, 500, 130, 165, 'Gym', ''],
-    correlation: { turn_id: TURN_ID },
+    effort_row: effortRow,
+    correlation: { turn_id: TURN_ID, pairing_token: pairingToken },
   });
   state.failEffortAppend = false;
 
@@ -203,10 +225,13 @@ test('a PARTIAL write correlates too — committed rows must never go unjoined',
 
   // The whole point: rows landed, so this turn really did write. It must be joinable.
   const records = tc.recentWriteProofs();
-  assert.equal(records.length, 1, 'a partial write must emit a correlation record');
-  assert.equal(records[0].turn_id, TURN_ID);
-  assert.equal(records[0].proof.sheet_write, 'partial');
-  assert.equal(records[0].proof.sheet_written, true);
+  assert.equal(records.length, 2, 'the preview record, then the partial write record');
+  const rec = records[1];
+  assert.equal(rec.turn_id, TURN_ID);
+  assert.equal(rec.proof.sheet_write, 'partial');
+  assert.equal(rec.proof.sheet_written, true);
+  assert.equal(rec.pairing.established_at_preview, true);
+  assert.equal(rec.pairing.write_attempt, 1);
 });
 
 test('a live write correlates its success proof, including the appended range', async () => {
@@ -214,23 +239,180 @@ test('a live write correlates its success proof, including the appended range', 
   resetIdempotencyStore();
   state.appends.length = 0;
   tc.issueTurn(TURN_ID, SESSION_ID);
+  // The write_id the dry-run carries is the one the approve will use (app.js:6960 → 7506),
+  // so the server can corroborate the pairing — the check that makes the record's claim
+  // "this turn authorized THIS write" rather than "some write in this session".
+  const { pairingToken } = await previewForToken({ correlation: { turn_id: TURN_ID }, write_id: 'wid-int-1' });
+  assert.ok(pairingToken, 'the dry-run response must hand the client its pairing token');
 
   const { status, body } = await postWrite({
     session_id: SESSION_ID,
     date: '2026-07-25',
     write_id: 'wid-int-1',
     log_rows: logRows(),
-    correlation: { turn_id: TURN_ID },
+    correlation: { turn_id: TURN_ID, pairing_token: pairingToken },
   });
   assert.equal(status, 200);
   assert.equal(body.data.sheet_write, 'success');
 
   const records = tc.recentWriteProofs();
-  assert.equal(records.length, 1);
-  assert.equal(records[0].turn_id, TURN_ID);
-  assert.equal(records[0].proof.sheet_write, 'success');
+  assert.equal(records.length, 2);
+  const rec = records[1];
+  assert.equal(rec.turn_id, TURN_ID);
+  assert.equal(rec.proof.sheet_write, 'success');
   // The appended range is the write's identity and the undo's authority — the single most
   // useful thing to have joined to the turn.
-  assert.equal(records[0].proof.logAppendedRange, body.data.logAppendedRange);
-  assert.ok(!JSON.stringify(records[0]).includes('stub-sheet'), 'no Sheet ID in the record');
+  assert.equal(rec.proof.logAppendedRange, body.data.logAppendedRange);
+  assert.ok(!JSON.stringify(rec).includes('stub-sheet'), 'no Sheet ID in the record');
+  assert.equal(rec.pairing.established_at_preview, true);
+  assert.equal(rec.pairing.previewed_write_id_match, true, 'this really is the previewed write');
+});
+
+// ─── #1173 item 1 — the binding is established at preview, through the real route ───────
+
+test('the pairing token never appears in the response BODY, only in its own header', async () => {
+  tc._resetForTesting();
+  tc.issueTurn(TURN_ID, SESSION_ID);
+  const { body, headers, pairingToken } = await previewForToken({ correlation: { turn_id: TURN_ID } });
+  assert.ok(pairingToken, 'the header must carry the token');
+  assert.equal(headers.get(tc.PAIRING_TOKEN_HEADER), pairingToken);
+  // Every coach and preview body shape is pinned by tests, and the token is a live
+  // capability — it belongs in a header, and must never be logged into the record either.
+  assert.ok(!JSON.stringify(body).includes(pairingToken), 'the token must not reach the response body');
+  assert.ok(!JSON.stringify(tc.recentWriteProofs()).includes(pairingToken), 'nor the correlation record');
+});
+
+test('the EMITTED preview record does not claim a payload match (Codex P1)', async () => {
+  tc._resetForTesting();
+  tc.issueTurn(TURN_ID, SESSION_ID);
+  await previewForToken({ correlation: { turn_id: TURN_ID } });
+
+  // This is the record a reviewer actually reads, so the honesty has to hold in the emitted
+  // artifact and not only in the resolver's return value.
+  const records = tc.recentWriteProofs();
+  assert.equal(records.length, 1);
+  assert.equal(records[0].pairing.established_at_preview, true);
+  assert.equal(records[0].pairing.payload_bound, false, 'no live payload has been compared yet');
+  assert.equal(records[0].pairing.effort_transition, false);
+  assert.equal(records[0].proof.no_write_confirmed, true, 'and it still carries the W1–W3 no-write proof');
+});
+
+test('fail-closed: a live write with NO pairing correlates nothing, and still succeeds', async () => {
+  tc._resetForTesting();
+  resetIdempotencyStore();
+  state.appends.length = 0;
+  tc.issueTurn(TURN_ID, SESSION_ID);
+
+  // Exactly what #1172 accepted: a fresh, same-session, well-formed turn id on a live write,
+  // with no preview behind it. It used to bind first-write-wins; it must now correlate nothing.
+  const { status, body } = await postWrite({
+    session_id: SESSION_ID,
+    date: '2026-07-25',
+    write_id: 'wid-int-unpaired',
+    log_rows: logRows(),
+    correlation: { turn_id: TURN_ID },
+  });
+  assert.equal(status, 200, 'correlation must never block or alter a write');
+  assert.equal(body.data.sheet_write, 'success');
+  assert.equal(body.data.log_rows_written, 1, 'the rows are written exactly as without a claim');
+  assert.equal(tc.recentWriteProofs().length, 0, 'an unpaired live write must correlate nothing');
+});
+
+test('fail-closed: a forged pairing token correlates nothing, and still succeeds', async () => {
+  tc._resetForTesting();
+  resetIdempotencyStore();
+  state.appends.length = 0;
+  tc.issueTurn(TURN_ID, SESSION_ID);
+  await previewForToken({ correlation: { turn_id: TURN_ID } });
+  const before = tc.recentWriteProofs().length;
+
+  const { status, body } = await postWrite({
+    session_id: SESSION_ID,
+    date: '2026-07-25',
+    write_id: 'wid-int-forged',
+    log_rows: logRows(),
+    // Well-formed but never minted — the registry, not the format, is the authority.
+    correlation: { turn_id: TURN_ID, pairing_token: 'pair:deadbeefdeadbeefdeadbeefdeadbeef' },
+  });
+  assert.equal(status, 200);
+  assert.equal(body.data.sheet_write, 'success');
+  assert.equal(tc.recentWriteProofs().length, before, 'a forged token must add no record');
+});
+
+test('fail-closed: a valid token on a DIFFERENT workout correlates nothing (Codex P1)', async () => {
+  tc._resetForTesting();
+  resetIdempotencyStore();
+  state.appends.length = 0;
+  tc.issueTurn(TURN_ID, SESSION_ID);
+  const { pairingToken } = await previewForToken({ correlation: { turn_id: TURN_ID } });
+  const before = tc.recentWriteProofs().length;
+
+  // Same turn, same session, GENUINE token — but not the workout that was previewed. Before the
+  // server-computed payload identity this resolved ok and attributed the wrong write to the turn.
+  const { status, body } = await postWrite({
+    session_id: SESSION_ID,
+    date: '2026-07-25',
+    write_id: 'wid-int-otherwork',
+    log_rows: [{ exercise: 'Bench Press', weight: 315, reps: 1, rir: 0, set_number: 1 }],
+    correlation: { turn_id: TURN_ID, pairing_token: pairingToken },
+  });
+  assert.equal(status, 200, 'correlation must never block or alter a write');
+  assert.equal(body.data.sheet_write, 'success');
+  assert.equal(body.data.log_rows_written, 1, 'the unrelated workout is written exactly as normal');
+  assert.equal(tc.recentWriteProofs().length, before, 'a mismatched payload must add no record');
+});
+
+test('fail-closed: a FIRST live write that drops the previewed effort row correlates nothing', async () => {
+  tc._resetForTesting();
+  resetIdempotencyStore();
+  state.appends.length = 0;
+  tc.issueTurn(TURN_ID, SESSION_ID);
+  // The preview stages an Effort append. The first approve silently omits it — so the write that
+  // happens is NOT the write that was previewed, and it is not the documented seal retry either
+  // (that only follows a committed write, app.js:7563-7567). It must not be recorded as bound.
+  const { pairingToken } = await previewForToken({
+    correlation: { turn_id: TURN_ID },
+    write_id: 'wid-int-seal-1',
+    effort_row: ['2026-07-25', SESSION_ID, 3600, 400, 500, 130, 165, 'Gym', ''],
+  });
+  const before = tc.recentWriteProofs().length;
+
+  const { status, body } = await postWrite({
+    session_id: SESSION_ID,
+    date: '2026-07-25',
+    write_id: 'wid-int-seal-2',
+    log_rows: logRows(),
+    correlation: { turn_id: TURN_ID, pairing_token: pairingToken },
+  });
+  assert.equal(status, 200, 'correlation must never block or alter a write');
+  assert.equal(body.data.sheet_write, 'success');
+  assert.equal(tc.recentWriteProofs().length, before, 'the dropped Effort append must cost the correlation');
+  // The transition itself (effort removal AFTER an exact write) is unit-covered in
+  // test/turnCorrelation.test.js; exercising it end-to-end needs the duplicate-closeout branch,
+  // i.e. the Session Plan lanes and a seal fixture — #1173 item 3's harness, not this file's.
+});
+
+test('a live write that names another session in a ROW correlates nothing (Codex P1)', async () => {
+  tc._resetForTesting();
+  resetIdempotencyStore();
+  state.appends.length = 0;
+  tc.issueTurn(TURN_ID, SESSION_ID);
+  // A row-level session_id WINS at write time (index.js:449), so this row lands under
+  // OTHER_SESSION while the record would have named SESSION_ID. Refused outright.
+  const rows = [{ exercise: 'Bench Press', weight: 225, reps: 5, rir: 2, set_number: 1, session_id: OTHER_SESSION }];
+  const { pairingToken } = await previewForToken({ correlation: { turn_id: TURN_ID }, log_rows: rows });
+  assert.equal(pairingToken, null, 'a rogue row session must not even establish a pairing');
+  assert.equal(tc.recentWriteProofs().length, 0, 'and it must record nothing');
+});
+
+test('the pairing header is exposed to CORS clients, or a browser would hide it', async () => {
+  // Same failure the turn-id header had: not CORS-safelisted, so a cross-origin frontend
+  // would read null and the round-trip would silently never happen.
+  const res = await fetch(`${baseUrl}/api/log-workout`, {
+    method: 'OPTIONS',
+    headers: { 'x-atlas-api-key': 'test-api-key' },
+  });
+  const exposed = String(res.headers.get('access-control-expose-headers') || '').toLowerCase();
+  assert.ok(exposed.includes(tc.TURN_ID_HEADER), `turn id header must stay exposed, got "${exposed}"`);
+  assert.ok(exposed.includes(tc.PAIRING_TOKEN_HEADER), `pairing header must be exposed, got "${exposed}"`);
 });

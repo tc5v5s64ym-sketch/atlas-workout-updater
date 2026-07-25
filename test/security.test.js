@@ -85,7 +85,11 @@ test('security: CORS defaults to allow-list behavior instead of wildcard', () =>
   // expose-headers the browser hides it from a cross-origin frontend: the coach request would
   // succeed while the client silently read null and correlation simply never happened. That
   // failure is invisible without this assertion.
-  assert.equal(allowedRes.headers['access-control-expose-headers'], 'x-atlas-turn-id');
+  //
+  // #1173 item 1 — x-atlas-turn-pairing carries the preview-established pairing token and has
+  // the identical exposure requirement: hidden, every live write fails closed to `unpaired`.
+  // Both are opaque ids and carry no data, so exposing them leaks nothing.
+  assert.equal(allowedRes.headers['access-control-expose-headers'], 'x-atlas-turn-id, x-atlas-turn-pairing');
 
   const blockedReq = mockReq({ method: 'OPTIONS', headers: { origin: 'https://unknown.example' } });
   const blockedRes = mockRes();

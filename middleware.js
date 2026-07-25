@@ -86,7 +86,10 @@ function createCorsMiddleware({ allowedOrigins = process.env.CORS_ORIGIN || '' }
     // frontend (the existing CORS_ORIGIN support) would have the browser hide it: the coach
     // request would succeed while the client silently read null, and correlation would just
     // never happen. Exposing it costs nothing — it carries an opaque turn id, no data.
-    res.setHeader('Access-Control-Expose-Headers', 'x-atlas-turn-id');
+    // #1173 item 1 — x-atlas-turn-pairing carries the preview-established pairing token and
+    // has the identical exposure requirement: unexposed, the browser hides it, the client reads
+    // null, and every live write would fail closed to `unpaired`. Both are opaque ids, no data.
+    res.setHeader('Access-Control-Expose-Headers', 'x-atlas-turn-id, x-atlas-turn-pairing');
 
     if (origin && (allowAny || allowed.has(origin))) {
       res.setHeader('Access-Control-Allow-Origin', allowAny ? '*' : origin);
