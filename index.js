@@ -3259,6 +3259,12 @@ app.post('/api/log-workout', async (req, res) => {
         partialBody.idempotency_status = 'completed';
         completeWrite(idempotency.write_id, idempotency.token, partialBody);
       }
+      // #1165 — a PARTIAL write is the outcome most worth correlating, not the least: the log
+      // rows are already committed, so this turn really did write, and the reviewer needs that
+      // joined to the turn exactly as a success is. Correlating only the happy path would hide
+      // the one case where turn↔write evidence matters most. Same non-authoritative resolve,
+      // same verbatim proof (`sheet_write:'partial'`, `sheet_written:true`).
+      recordTurnWriteProof(payload, session_id, '/api/log-workout', partialBody);
       return standardError(req, res, 'Effort row append failed after log rows were written.', partialBody, 500);
     }
   }

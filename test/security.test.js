@@ -81,6 +81,11 @@ test('security: CORS defaults to allow-list behavior instead of wildcard', () =>
   assert.equal(allowedNext, true);
   assert.equal(allowedRes.headers['access-control-allow-origin'], 'https://atlas.example');
   assert.equal(allowedRes.headers.vary, 'Origin');
+  // #1165 — x-atlas-turn-id is NOT a CORS-safelisted response header, so without an explicit
+  // expose-headers the browser hides it from a cross-origin frontend: the coach request would
+  // succeed while the client silently read null and correlation simply never happened. That
+  // failure is invisible without this assertion.
+  assert.equal(allowedRes.headers['access-control-expose-headers'], 'x-atlas-turn-id');
 
   const blockedReq = mockReq({ method: 'OPTIONS', headers: { origin: 'https://unknown.example' } });
   const blockedRes = mockRes();

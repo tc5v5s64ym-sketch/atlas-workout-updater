@@ -17,6 +17,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { logCleanedColumns, effortColumns, sessionPlansColumns } = require('../config/columns');
+const { resetIdempotencyStore } = require('../services/idempotency');
 
 process.env.ATLAS_API_KEY = 'test-api-key';
 process.env.GOOGLE_SHEETS_ID = 'stub-sheet';
@@ -29,10 +30,11 @@ process.env.ATLAS_WRITE_RATE_LIMIT_MAX = '1000000';
 // feature stays silent.
 process.env.ATLAS_INTERACTION_TRACE = 'shadow';
 
-const state = { appends: [] };
+const state = { appends: [], failEffortAppend: false };
 
 const fakeSheets = {
   appendRows: async (tab, rows) => {
+    if (tab === 'Effort' && state.failEffortAppend) throw new Error('Simulated Effort append failure');
     state.appends.push({ tab, rows: rows.map(r => [...r]) });
     return { data: { updates: { updatedRange: `${tab}!A100:L${99 + rows.length}`, updatedRows: rows.length } } };
   },
@@ -177,8 +179,39 @@ test('fail-closed: malformed and absent claims correlate nothing, and never brea
   }
 });
 
+test('a PARTIAL write correlates too — committed rows must never go unjoined', async () => {
+  tc._resetForTesting();
+  resetIdempotencyStore();
+  state.appends.length = 0;
+  state.failEffortAppend = true;
+  tc.issueTurn(TURN_ID, SESSION_ID);
+
+  const { status, body } = await postWrite({
+    session_id: SESSION_ID,
+    date: '2026-07-25',
+    write_id: 'wid-int-partial',
+    log_rows: logRows(),
+    effort_row: ['2026-07-25', SESSION_ID, 3600, 400, 500, 130, 165, 'Gym', ''],
+    correlation: { turn_id: TURN_ID },
+  });
+  state.failEffortAppend = false;
+
+  assert.equal(status, 500, 'a partial write is reported as an error with an authoritative proof');
+  const data = body.data || body.details || body;
+  assert.equal(data.sheet_write, 'partial');
+  assert.equal(data.sheet_written, true, 'log rows ARE committed on this path');
+
+  // The whole point: rows landed, so this turn really did write. It must be joinable.
+  const records = tc.recentWriteProofs();
+  assert.equal(records.length, 1, 'a partial write must emit a correlation record');
+  assert.equal(records[0].turn_id, TURN_ID);
+  assert.equal(records[0].proof.sheet_write, 'partial');
+  assert.equal(records[0].proof.sheet_written, true);
+});
+
 test('a live write correlates its success proof, including the appended range', async () => {
   tc._resetForTesting();
+  resetIdempotencyStore();
   state.appends.length = 0;
   tc.issueTurn(TURN_ID, SESSION_ID);
 

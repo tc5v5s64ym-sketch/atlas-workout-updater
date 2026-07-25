@@ -82,6 +82,11 @@ function createCorsMiddleware({ allowedOrigins = process.env.CORS_ORIGIN || '' }
     res.setHeader('Vary', 'Origin');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-atlas-api-key');
+    // #1165 — x-atlas-turn-id is not a CORS-safelisted response header, so a cross-origin
+    // frontend (the existing CORS_ORIGIN support) would have the browser hide it: the coach
+    // request would succeed while the client silently read null, and correlation would just
+    // never happen. Exposing it costs nothing — it carries an opaque turn id, no data.
+    res.setHeader('Access-Control-Expose-Headers', 'x-atlas-turn-id');
 
     if (origin && (allowAny || allowed.has(origin))) {
       res.setHeader('Access-Control-Allow-Origin', allowAny ? '*' : origin);
