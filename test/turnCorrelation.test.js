@@ -362,9 +362,23 @@ test('buildWriteProofRecord: projects the closeout event envelope as bounded sca
   assert.equal(record.proof.session_plans_closeout_written, 1);
   assert.equal(record.proof.session_plans_closeout_skipped, 0);
   assert.ok(!('session_plans_closeout' in record.proof));
-  // plan_version is a plan identity token, not write proof — deliberately not projected.
-  assert.ok(!('session_plans_closeout_plan_version' in record.proof));
-  assert.ok(!JSON.stringify(record).includes('pv_abc'));
+  // plan_version IS projected: it is hashed into sessionPlanEvents.idempotencyKey, so it is the
+  // event's row discriminator. Without it, a session with more than one accepted plan version
+  // leaves the record unable to say WHICH session_closeout row this was — and the slice-3 artifact
+  // join could not substantiate its own turn→closeout claim. (Excluded in the first draft as "a
+  // plan token rather than write proof"; being the discriminator is what makes it write proof.)
+  assert.equal(record.proof.session_plans_closeout_plan_version, 'pv_abc');
+});
+
+test('buildWriteProofRecord: a null plan_version projects as null, never as absent-so-assumed', () => {
+  // `_envelope` defaults plan_version to null (e.g. the no_plan / disabled paths), and null is a
+  // scalar, so it must come through as an explicit null rather than being silently omitted.
+  const record = tc.buildWriteProofRecord({
+    turnId: TURN_ID, sessionId: SESSION, route: '/api/log-workout',
+    proof: { session_plans_closeout: { status: 'disabled', captured: false, written: 0, skipped: 0, plan_version: null } },
+  });
+  assert.ok('session_plans_closeout_plan_version' in record.proof);
+  assert.equal(record.proof.session_plans_closeout_plan_version, null);
 });
 
 test('buildWriteProofRecord: a FAILED seal is projected honestly, never softened', () => {

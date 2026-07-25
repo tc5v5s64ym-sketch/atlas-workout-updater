@@ -453,10 +453,13 @@ test('the duplicate-closeout branch projects the seal and closeout envelopes it 
   assert.equal(rec.proof.session_plans_closeout_status, body.data.session_plans_closeout.status);
   assert.equal(rec.proof.session_plans_closeout_captured, body.data.session_plans_closeout.captured);
   assert.equal(rec.proof.session_plans_closeout_written, body.data.session_plans_closeout.written);
-  // Project, never pass through — and never the plan identity token.
+  // Project, never pass through: the flattened keys arrive, the nested envelopes never do.
   assert.ok(!('ledger_seal' in rec.proof), 'the nested envelope must not be carried');
   assert.ok(!('session_plans_closeout' in rec.proof));
-  assert.ok(!JSON.stringify(rec).includes('pv_int_1'), 'no plan token in the record');
+  // The plan version IS carried — it is the closeout event's row discriminator (hashed into
+  // sessionPlanEvents.idempotencyKey), so without it the artifact join cannot say WHICH
+  // session_closeout row this record refers to.
+  assert.equal(rec.proof.session_plans_closeout_plan_version, closeout.plan_version);
 
   // HONEST LIMIT of this harness: both lanes are OFF here, so the seal is a dry-run
   // (`dry_run:true`, `reason:'write_disabled'`) and the capture reports `status:'disabled'`. That

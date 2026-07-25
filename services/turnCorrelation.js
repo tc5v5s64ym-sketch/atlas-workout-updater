@@ -235,7 +235,15 @@ const PROOF_PROJECTIONS = Object.freeze({
     'no_ledger', 'read_failed', 'expected_cells', 'updated_cells',
     'reason',
   ]),
-  session_plans_closeout: Object.freeze(['status', 'captured', 'written', 'skipped']),
+  // `plan_version` is the closeout event's ROW DISCRIMINATOR, not decoration: it is one of the
+  // fields hashed into `sessionPlanEvents.idempotencyKey` (services/sessionPlanEvents.js:74), so
+  // where a session has more than one accepted plan version, `session_id` alone cannot recover
+  // WHICH `session_closeout` row was written or skipped — and the slice-3 artifact join would be
+  // unable to substantiate its own turn→closeout claim. It was excluded in the first draft as "a
+  // plan token rather than write proof" (Codex r3649662429 corrected that: being the discriminator
+  // is precisely what makes it write proof). It is an opaque server-generated `pv_` id already
+  // present in the response body — not a credential, not workout data.
+  session_plans_closeout: Object.freeze(['status', 'captured', 'written', 'skipped', 'plan_version']),
 });
 
 // The resolution outcomes. Exactly one is returned per claim; each rejection names WHY, so a
