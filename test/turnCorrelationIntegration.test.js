@@ -320,6 +320,58 @@ test('fail-closed: a forged pairing token correlates nothing, and still succeeds
   assert.equal(tc.recentWriteProofs().length, before, 'a forged token must add no record');
 });
 
+test('fail-closed: a valid token on a DIFFERENT workout correlates nothing (Codex P1)', async () => {
+  tc._resetForTesting();
+  resetIdempotencyStore();
+  state.appends.length = 0;
+  tc.issueTurn(TURN_ID, SESSION_ID);
+  const { pairingToken } = await previewForToken({ correlation: { turn_id: TURN_ID } });
+  const before = tc.recentWriteProofs().length;
+
+  // Same turn, same session, GENUINE token — but not the workout that was previewed. Before the
+  // server-computed payload identity this resolved ok and attributed the wrong write to the turn.
+  const { status, body } = await postWrite({
+    session_id: SESSION_ID,
+    date: '2026-07-25',
+    write_id: 'wid-int-otherwork',
+    log_rows: [{ exercise: 'Bench Press', weight: 315, reps: 1, rir: 0, set_number: 1 }],
+    correlation: { turn_id: TURN_ID, pairing_token: pairingToken },
+  });
+  assert.equal(status, 200, 'correlation must never block or alter a write');
+  assert.equal(body.data.sheet_write, 'success');
+  assert.equal(body.data.log_rows_written, 1, 'the unrelated workout is written exactly as normal');
+  assert.equal(tc.recentWriteProofs().length, before, 'a mismatched payload must add no record');
+});
+
+test('the seal-retry shape still correlates through the real route (effort_row dropped)', async () => {
+  tc._resetForTesting();
+  resetIdempotencyStore();
+  state.appends.length = 0;
+  tc.issueTurn(TURN_ID, SESSION_ID);
+  // Preview carries an effort row; the retry-shaped approve drops it and re-mints the write_id,
+  // exactly as app.js:7566-7567 does. Both are outside the identity, so this must still join.
+  const { pairingToken } = await previewForToken({
+    correlation: { turn_id: TURN_ID },
+    write_id: 'wid-int-seal-1',
+    effort_row: ['2026-07-25', SESSION_ID, 3600, 400, 500, 130, 165, 'Gym', ''],
+  });
+
+  const { status, body } = await postWrite({
+    session_id: SESSION_ID,
+    date: '2026-07-25',
+    write_id: 'wid-int-seal-2',
+    log_rows: logRows(),
+    correlation: { turn_id: TURN_ID, pairing_token: pairingToken },
+  });
+  assert.equal(status, 200);
+  assert.equal(body.data.sheet_write, 'success');
+
+  const records = tc.recentWriteProofs();
+  assert.equal(records.length, 2, 'the seal retry must not be locked out of its correlation');
+  assert.equal(records[1].pairing.payload_bound, true);
+  assert.equal(records[1].pairing.previewed_write_id_match, false, 'the re-mint stays visible');
+});
+
 test('the pairing header is exposed to CORS clients, or a browser would hide it', async () => {
   // Same failure the turn-id header had: not CORS-safelisted, so a cross-origin frontend
   // would read null and the round-trip would silently never happen.

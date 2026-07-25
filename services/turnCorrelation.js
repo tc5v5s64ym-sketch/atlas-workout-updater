@@ -57,15 +57,25 @@
 // remove. It is also CLIENT-minted, so the client would keep supplying the pairing key.
 //
 // WHAT THE TOKEN BUYS. It is minted only in the response to a preview that carried this turn's
-// claim, so: a turn that never previewed can never correlate a write; a client that only
-// scraped the turn id from the response header cannot claim one; and a re-preview supersedes
-// it, matching app.js's own re-preview invalidation.
+// claim, so a turn that never previewed can never correlate a write, and a client that only
+// scraped the turn id from the response header cannot claim one.
 //
-// THE CEILING, STATED HONESTLY. This proves "this turn previewed this write, and the write
-// presented that preview's token" — not cryptographic authorization, which no client
-// round-trip can deliver. The previewed write_id is recorded as CORROBORATION
-// (`previewed_write_id_match`) and never as a gate, precisely so the legitimate seal retry
-// keeps its evidence instead of being locked out.
+// BUT A TOKEN ALONE IS ONLY A TURN-LEVEL BINDING. The first cut of this change stopped there and
+// claimed a write-level one; Codex refuted that (r3649520130) and was right — a valid token
+// attached to a DIFFERENT same-session payload was accepted, so the record proved only "this turn
+// previewed something, and this write presented its token". The previewed `write_id` was the only
+// corroboration and four of five write paths never send it at preview.
+//
+// SO THE PAYLOAD IS GATED TOO. `_previewIdentity` fingerprints the write identity the SERVER
+// received at preview (session_id + date + log_rows) and the live payload must reproduce it.
+// It depends on nothing the client mints, so it holds on every route rather than one of five.
+//
+// THE CEILING, STATED HONESTLY. With the payload gate this establishes: "this turn previewed a
+// write of exactly this identity, and this write presented that preview's token". Where no
+// identity is computable the pairing degrades to turn-level and says so — `payload_bound:false`,
+// never an assumed match. Neither form is cryptographic authorization, which no client round-trip
+// can deliver. The previewed write_id stays CORROBORATION (`previewed_write_id_match`) and never a
+// gate, precisely so the legitimate seal retry keeps its evidence instead of being locked out.
 //
 // UNTIL SLICE 2 CARRIES THE TOKEN, NO LIVE WRITE CORRELATES — previews still do. That is
 // fail-closed and deliberate: it is why #1173 orders this item before the client round-trip.
@@ -96,13 +106,40 @@ const TURN_ID_RE = /^turn:[A-Za-z0-9][A-Za-z0-9._:@/-]*$/;
 const PAIRING_TOKEN_BYTES = 16;
 const PAIRING_TOKEN_RE = /^pair:[a-f0-9]{32}$/;
 
-// How many DISTINCT write_ids one pairing may correlate. Not one: the documented closeout
-// seal retry (app.js:7563-7568) re-mints the write_id for the same staged write, and refusing
-// it is exactly the lost-evidence lockout #1173 records. Not unlimited either — that would let
-// one token be replayed against every save in the freshness window, which is the replay
-// protection #1172's first-write-wins existed to provide and this must not simply drop. Each
-// correlated write is stamped with its attempt number, so a reviewer always sees which it was.
+// How many DISTINCT write_ids one turn may correlate. Not one: the documented closeout seal
+// retry (app.js:7563-7568) re-mints the write_id for the same staged write, and refusing it is
+// exactly the lost-evidence lockout #1173 records. Not unlimited either — that would let one
+// token be replayed against every save in the freshness window, which is the replay protection
+// #1172's first-write-wins existed to provide and this must not simply drop. Each correlated
+// write is stamped with its attempt number, so a reviewer always sees which it was.
 const MAX_WRITES_PER_PAIRING = 5;
+
+// How many of a turn's preview pairings may be outstanding at once (Codex P2, this PR).
+//
+// The first cut kept ONE and superseded it on every preview — last COMPLETION wins. That is the
+// wrong order: two previews for the same turn can overlap, and the client keeps whichever
+// response is newest by INITIATION order (`previewRequestSeq` / `submitSeq`,
+// src/app/app.js:6416, 6881), discarding a superseded response even when it arrives last. So an
+// older request finishing last left the registry holding a token the client had already thrown
+// away, and the approved write lost its correlation to `pairing_mismatch` — lost evidence, the
+// very failure mode this item exists to remove. The server cannot observe the client's
+// initiation order, so it must not pretend to: it accepts any of the turn's recent pairings.
+//
+// This costs nothing in claim strength. Every outstanding pairing belongs to the SAME turn and
+// each is independently payload-bound, so accepting any of them cannot mis-attribute a write.
+const MAX_OUTSTANDING_PAIRINGS = 3;
+
+// Cap the fingerprint input so a pathological payload cannot turn identity computation into
+// unbounded work. Past it the identity is null — which under-claims (payload_bound:false)
+// rather than failing a legitimate write's correlation on size alone.
+const MAX_IDENTITY_INPUT_CHARS = 200_000;
+
+// The write-identity fields the preview fingerprint covers. DELIBERATELY EXCLUDED:
+//   • `test_mode`   — the one field that always differs between a preview and its approve;
+//   • `write_id`    — re-minted on the seal retry (app.js:7566);
+//   • `effort_row`  — deleted on that same retry (app.js:7567).
+// Including any of them would refuse the legitimate retry, i.e. re-create the lockout.
+const IDENTITY_FIELDS = Object.freeze(['session_id', 'date', 'log_rows']);
 
 // The ONLY proof keys that may be copied into a correlation record. A closed whitelist, not
 // a denylist: a field added to a write response in future is excluded by default rather than
@@ -148,16 +185,19 @@ const REASONS = Object.freeze({
   UNPAIRED: 'unpaired',
   PAIRING_MISMATCH: 'pairing_mismatch',
   PAIRING_EXHAUSTED: 'pairing_exhausted',
+  PAYLOAD_MISMATCH: 'payload_mismatch',
 });
 
-// turnId -> { sessionId, atMs, pairing? }
+// turnId -> { sessionId, atMs, pairings: [], writeIds: [] }
 //
-// `atMs` is the turn's ISSUANCE time and stays the freshness anchor — establishing or
-// re-establishing a pairing never refreshes it, so a client cannot keep a turn alive by
-// previewing in a loop and then correlate a write to a conversation that has moved on.
+// `atMs` is the turn's ISSUANCE time and stays the freshness anchor — establishing a pairing
+// never refreshes it, so a client cannot keep a turn alive by previewing in a loop and then
+// correlate a write to a conversation that has moved on.
 //
-// pairing: { token, atMs, previewedWriteId, writeIds: [] }  — one per preview, superseded by
-// the next preview of the same turn. Bounded by riding the turn's own capped/TTL'd entry.
+// `pairings` holds up to MAX_OUTSTANDING_PAIRINGS entries, one per preview, oldest evicted:
+//   { token, atMs, identity, previewedWriteId }
+// `writeIds` is per TURN, not per pairing, so the replay cap bounds the turn however many
+// overlapping previews it accumulated. Both ride the turn's own capped/TTL'd entry.
 const registry = new Map();
 
 // The emitted correlation records, for the reviewable artifact. Ring-buffered like the
@@ -194,22 +234,72 @@ function _mintPairingToken() {
   return `pair:${crypto.randomBytes(PAIRING_TOKEN_BYTES).toString('hex')}`;
 }
 
-// The pairing facts a record may publish. Server-owned scalars only — the TOKEN IS NEVER
-// INCLUDED: it stays a live capability for the rest of the window, so logging it would hand
-// anyone reading the log the ability to claim the write.
-function _pairingSummary(pairing, writeId) {
-  if (!pairing) {
-    return { established_at_preview: false, write_attempt: 0, previewed_write_id_match: null };
+// Deterministic, key-order-independent serialization. A client that re-serializes the same
+// payload (different key order, an added unrelated field on a nested row) must still fingerprint
+// identically, or a legitimate approve would be refused on formatting alone. Bounded in depth so
+// a hostile nesting cannot drive unbounded recursion.
+function _canonicalJson(v, depth = 0) {
+  if (depth > 8) return '"__depth__"';
+  if (v === undefined) return 'null';
+  if (v === null || typeof v === 'number' || typeof v === 'boolean' || typeof v === 'string') {
+    return JSON.stringify(v);
   }
-  const attempt = writeId ? pairing.writeIds.indexOf(writeId) + 1 : 0;
+  if (Array.isArray(v)) return `[${v.map(x => _canonicalJson(x, depth + 1)).join(',')}]`;
+  if (_isPlainObject(v)) {
+    const keys = Object.keys(v).filter(k => v[k] !== undefined).sort();
+    return `{${keys.map(k => `${JSON.stringify(k)}:${_canonicalJson(v[k], depth + 1)}`).join(',')}}`;
+  }
+  return 'null';
+}
+
+/**
+ * The SERVER-COMPUTED identity of the write a payload describes (Codex P1, this PR).
+ *
+ * This is what makes the record's claim "this turn previewed THIS write" rather than "this turn
+ * previewed something and this write presented its token". It is derived entirely from what the
+ * SERVER received — nothing the client mints — so unlike the previewed `write_id` (present at
+ * preview on one of five write paths) it holds on every route.
+ *
+ * Returns null when the payload carries no identity to fingerprint. Null must degrade to an
+ * UNBOUND pairing that reports `payload_bound:false`, never to an assumed match: a turn-level
+ * join is still real evidence, but it must not be published as a write-level one.
+ */
+function _previewIdentity(payload) {
+  const p = _isPlainObject(payload) ? payload : {};
+  const sessionId = _isNonEmptyString(p.session_id) ? String(p.session_id).trim() : '';
+  // No session identity, or no row set to identify: nothing to bind the write to.
+  if (!sessionId || !Array.isArray(p.log_rows)) return null;
+  const projection = {
+    session_id: sessionId,
+    date: _isNonEmptyString(p.date) ? String(p.date).trim() : '',
+    log_rows: p.log_rows,
+  };
+  const serialized = _canonicalJson(projection);
+  if (serialized.length > MAX_IDENTITY_INPUT_CHARS) return null;
+  // A digest, so the registry never holds workout content — and it is never logged or published
+  // either, exactly like the token: only the derived `payload_bound` boolean reaches the record.
+  return crypto.createHash('sha256').update(serialized).digest('hex');
+}
+
+// The pairing facts a record may publish. Server-owned scalars only. Neither the TOKEN nor the
+// IDENTITY digest is ever included: the token stays a live capability for the rest of the window,
+// and the digest is derived from workout content.
+function _pairingSummary(rec, pairing, writeId) {
+  if (!pairing) {
+    return {
+      established_at_preview: false, write_attempt: 0, previewed_write_id_match: null, payload_bound: false,
+    };
+  }
   return {
     established_at_preview: true,
-    write_attempt: attempt,
+    write_attempt: writeId && rec ? rec.writeIds.indexOf(writeId) + 1 : 0,
     // null = the preview carried no write_id to compare (four of the five write paths), which
     // must read as UNKNOWN and never as a match. Evidence for the reviewer, never a gate.
     previewed_write_id_match: pairing.previewedWriteId && writeId
       ? pairing.previewedWriteId === writeId
       : null,
+    // true ONLY when the server fingerprinted the previewed write and the live payload matched it.
+    payload_bound: pairing.identity !== null,
   };
 }
 
@@ -236,7 +326,7 @@ function issueTurn(turnId, sessionId, opts = {}) {
     const sid = _isNonEmptyString(sessionId) ? String(sessionId).trim() : '';
     if (!sid) return;
     const atMs = _now(opts);
-    registry.set(String(turnId).trim(), { sessionId: sid, atMs });
+    registry.set(String(turnId).trim(), { sessionId: sid, atMs, pairings: [], writeIds: [] });
     _evictExpired(atMs);
     _enforceCap();
   } catch (_) { /* best-effort — correlation must never surface on the write path */ }
@@ -288,51 +378,65 @@ function resolveCorrelation(payload, opts = {}) {
 
     // THE PREVIEW ESTABLISHES THE PAIRING. Reached only after every gate above, so a claim the
     // server never issued, one from another session, or a stale one can never leave a pairing
-    // behind for a later write to find. A second preview of the same turn SUPERSEDES the first
-    // (app.js tears the staged write down on re-preview), so the old token stops working.
+    // behind for a later write to find.
+    //
+    // Each preview ADDS a pairing rather than replacing the last one, bounded and oldest-first
+    // evicted (Codex P2): the server cannot see the client's preview initiation order, so
+    // last-completion-wins would discard a token the client legitimately kept.
     if (opts.isPreview === true) {
-      rec.pairing = {
+      const pairing = {
         token: _mintPairingToken(),
         atMs: nowMs,
+        // What makes this a WRITE-level binding rather than a turn-level one. Null ⇒ unbound,
+        // reported honestly as payload_bound:false.
+        identity: _previewIdentity(payload),
         // The one path whose dry-run carries the write_id it will approve with. Recorded as
         // corroboration only; four of five paths send nothing here.
         previewedWriteId: _isNonEmptyString(opts.previewedWriteId) ? String(opts.previewedWriteId).trim() : null,
-        writeIds: [],
       };
+      rec.pairings.push(pairing);
+      while (rec.pairings.length > MAX_OUTSTANDING_PAIRINGS) rec.pairings.shift();
       return {
         ok: true,
         turn_id: turnId,
         reason: REASONS.OK,
-        pairing_token: rec.pairing.token,
-        pairing: _pairingSummary(rec.pairing, ''),
+        pairing_token: pairing.token,
+        pairing: _pairingSummary(rec, pairing, ''),
       };
     }
 
-    // A LIVE WRITE MUST PRESENT THE PAIRING ITS PREVIEW ESTABLISHED — this is the difference
+    // A LIVE WRITE MUST PRESENT A PAIRING ITS OWN PREVIEW ESTABLISHED — this is the difference
     // between "some recent turn in this session" and "this turn previewed this write".
-    const pairing = rec.pairing;
-    if (!pairing) return miss(REASONS.UNPAIRED);
+    if (rec.pairings.length === 0) return miss(REASONS.UNPAIRED);
 
-    // Shape gate before comparison: an unbounded or junk token is refused without being
+    // Shape gate before comparison: an unbounded or junk token is refused without ever being
     // measured against a live one.
     const claimed = claim.pairing_token;
-    if (!isWellFormedPairingToken(claimed) || claimed !== pairing.token) {
-      return miss(REASONS.PAIRING_MISMATCH);
+    if (!isWellFormedPairingToken(claimed)) return miss(REASONS.PAIRING_MISMATCH);
+    const pairing = rec.pairings.find(p => p.token === claimed);
+    if (!pairing) return miss(REASONS.PAIRING_MISMATCH);
+
+    // THE PAYLOAD GATE. A genuine token on a DIFFERENT write is the hole Codex found: it used to
+    // resolve ok and attribute the wrong write to this turn. The live payload must fingerprint to
+    // the identity the server computed at preview. An unbound pairing (identity null) has nothing
+    // to check, so it correlates but can only ever report payload_bound:false.
+    if (pairing.identity !== null && _previewIdentity(payload) !== pairing.identity) {
+      return miss(REASONS.PAYLOAD_MISMATCH);
     }
 
-    // Bound the replay. A repeat of a write_id already recorded is the SAME attempt (an
+    // Bound the replay, per TURN. A repeat of a write_id already recorded is the SAME attempt (an
     // idempotent retry of one logical write must not be dropped); a new write_id is the next
     // attempt, which the documented seal retry legitimately needs.
-    if (writeId && !pairing.writeIds.includes(writeId)) {
-      if (pairing.writeIds.length >= MAX_WRITES_PER_PAIRING) return miss(REASONS.PAIRING_EXHAUSTED);
-      pairing.writeIds.push(writeId);
+    if (writeId && !rec.writeIds.includes(writeId)) {
+      if (rec.writeIds.length >= MAX_WRITES_PER_PAIRING) return miss(REASONS.PAIRING_EXHAUSTED);
+      rec.writeIds.push(writeId);
     }
 
     return {
       ok: true,
       turn_id: turnId,
       reason: REASONS.OK,
-      pairing: _pairingSummary(pairing, writeId),
+      pairing: _pairingSummary(rec, pairing, writeId),
     };
   } catch (_) {
     return miss(REASONS.MALFORMED);
@@ -377,6 +481,7 @@ function buildWriteProofRecord(params) {
     previewed_write_id_match: typeof src2.previewed_write_id_match === 'boolean'
       ? src2.previewed_write_id_match
       : null,
+    payload_bound: src2.payload_bound === true,
   };
 
   return {
@@ -516,6 +621,8 @@ module.exports = {
   PAIRING_TOKEN_HEADER,
   PAIRING_TOKEN_RE,
   MAX_WRITES_PER_PAIRING,
+  MAX_OUTSTANDING_PAIRINGS,
+  IDENTITY_FIELDS,
   PROOF_KEYS,
   REASONS,
   isWellFormedTurnId,

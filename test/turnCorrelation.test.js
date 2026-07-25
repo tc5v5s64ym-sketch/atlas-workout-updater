@@ -41,6 +41,17 @@ const TURN_ID = 'turn:2026-07-25T00:00:00.000Z_1_ab12cd';
 
 function reset() { tc._resetForTesting(); }
 
+// A request body carrying the write identity the server fingerprints at preview and re-checks
+// on the live write (#1173 item 1, Codex P1). Overrides let a test vary exactly one field.
+function payloadWith(extra = {}) {
+  return {
+    session_id: SESSION,
+    date: '2026-07-25',
+    log_rows: [{ exercise: 'Bench Press', weight: 225, reps: 5, rir: 2, set_number: 1 }],
+    ...extra,
+  };
+}
+
 // ─── the claim envelope ───────────────────────────────────────────────────────
 
 test('resolveCorrelation: a valid, fresh, same-session claim resolves ok', () => {
@@ -421,28 +432,164 @@ test('one pairing cannot be replayed without bound (pairing_exhausted)', () => {
   assert.equal(over.turn_id, null);
 });
 
-test('a RE-PREVIEW supersedes the pairing — the old token is dead', () => {
+// Codex P2 on this PR (r3649520140). The first cut superseded the pairing on every preview,
+// last-completion-wins. But two previews for the SAME turn can overlap, and the client keeps
+// whichever response it considers newest by INITIATION order (`previewRequestSeq` / `submitSeq`,
+// src/app/app.js:6416, 6881) — it discards a superseded response even if that response arrived
+// last. So when the older request's handler finishes last, the registry held the older token
+// while the client held the newer one, and the approved write lost its correlation to
+// `pairing_mismatch`. The server cannot know the client's initiation order, so it must not
+// pretend to: it keeps a BOUNDED SET of the turn's outstanding preview tokens instead.
+//
+// This costs nothing in claim strength: every outstanding pairing belongs to the SAME turn, and
+// each is independently payload-bound, so accepting any of them cannot mis-attribute a write.
+
+test('overlapping previews: the newer token survives even when the older request finishes last', () => {
   reset();
   const now = 1_000_000;
   tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
-  const first = tc.resolveCorrelation({ correlation: { turn_id: TURN_ID } }, { sessionId: SESSION, nowMs: now + 1, ...PREVIEW });
-  const second = tc.resolveCorrelation({ correlation: { turn_id: TURN_ID } }, { sessionId: SESSION, nowMs: now + 2, ...PREVIEW });
-  assert.notEqual(first.pairing_token, second.pairing_token, 'each preview mints its own pairing');
-
-  // app.js invalidates the staged write on re-preview (invalidatePreview / a fresh dry-run),
-  // so the superseded preview's token must not still authorize a write.
-  const stale = tc.resolveCorrelation(
-    { correlation: { turn_id: TURN_ID, pairing_token: first.pairing_token } },
-    { sessionId: SESSION, nowMs: now + 3, writeId: 'w-1' },
-  );
-  assert.equal(stale.ok, false);
-  assert.equal(stale.reason, 'pairing_mismatch');
+  // Preview B (the one the client will keep) resolves first...
+  const newer = tc.resolveCorrelation(payloadWith({ correlation: { turn_id: TURN_ID } }), { sessionId: SESSION, nowMs: now + 1, ...PREVIEW });
+  // ...then preview A, initiated earlier, finishes late. It must not evict B.
+  const older = tc.resolveCorrelation(payloadWith({ correlation: { turn_id: TURN_ID } }), { sessionId: SESSION, nowMs: now + 2, ...PREVIEW });
+  assert.notEqual(newer.pairing_token, older.pairing_token, 'each preview mints its own pairing');
 
   const live = tc.resolveCorrelation(
-    { correlation: { turn_id: TURN_ID, pairing_token: second.pairing_token } },
-    { sessionId: SESSION, nowMs: now + 4, writeId: 'w-1' },
+    payloadWith({ correlation: { turn_id: TURN_ID, pairing_token: newer.pairing_token } }),
+    { sessionId: SESSION, nowMs: now + 3, writeId: 'w-1' },
   );
-  assert.equal(live.ok, true, 'the current preview\'s token still works');
+  assert.equal(live.ok, true, 'the token the client kept must still correlate');
+});
+
+test('outstanding pairings are bounded — the oldest is evicted, not kept forever', () => {
+  reset();
+  const now = 1_000_000;
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  const tokens = [];
+  for (let i = 0; i < tc.MAX_OUTSTANDING_PAIRINGS + 1; i += 1) {
+    tokens.push(tc.resolveCorrelation(
+      payloadWith({ correlation: { turn_id: TURN_ID } }), { sessionId: SESSION, nowMs: now + i, ...PREVIEW },
+    ).pairing_token);
+  }
+  // The oldest fell out of the window.
+  const evicted = tc.resolveCorrelation(
+    payloadWith({ correlation: { turn_id: TURN_ID, pairing_token: tokens[0] } }),
+    { sessionId: SESSION, nowMs: now + 50, writeId: 'w-1' },
+  );
+  assert.equal(evicted.ok, false);
+  assert.equal(evicted.reason, 'pairing_mismatch');
+  // Every one still in the bounded set works.
+  for (const token of tokens.slice(1)) {
+    const r = tc.resolveCorrelation(
+      payloadWith({ correlation: { turn_id: TURN_ID, pairing_token: token } }),
+      { sessionId: SESSION, nowMs: now + 51, writeId: 'w-1' },
+    );
+    assert.equal(r.ok, true, 'an outstanding pairing must still correlate');
+  }
+});
+
+// ─── the payload gate: proving WHICH write, not merely "a write" (Codex P1) ────
+//
+// Codex P1 on this PR (r3649520130) refuted the first cut's headline claim, and it was right.
+// A valid token attached to a DIFFERENT same-session live payload was accepted, and the only
+// corroboration was a client-minted `previewedWriteId` that four of five write paths never send
+// at preview. So the record established "this turn previewed something, and this write presented
+// its token" while the module, plan and commit all claimed "this turn previewed THIS write".
+//
+// The fix is a SERVER-COMPUTED preview identity — a fingerprint of the write identity the server
+// itself received at preview (session_id + date + log_rows) which the live payload must satisfy.
+// It depends on nothing the client mints, so it holds on every route rather than one of five.
+//
+// Deliberately EXCLUDED from the identity: `write_id` (re-minted on the seal retry,
+// app.js:7566), `effort_row` (deleted on that same retry, app.js:7567), and `test_mode` (the one
+// field that always differs between a preview and its approve). Including any of them would
+// refuse the legitimate retry — the lockout this whole item exists to remove.
+
+test('a valid token on a DIFFERENT payload is refused (payload_mismatch)', () => {
+  reset();
+  const now = 1_000_000;
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  const { pairing_token } = tc.resolveCorrelation(
+    payloadWith({ correlation: { turn_id: TURN_ID } }), { sessionId: SESSION, nowMs: now + 1, ...PREVIEW },
+  );
+  // Same turn, same session, genuine token — but a different workout. This is the exact hole
+  // Codex found: it used to resolve ok and record the wrong write against this turn.
+  const other = payloadWith({
+    correlation: { turn_id: TURN_ID, pairing_token },
+    log_rows: [{ exercise: 'Squat', weight: 315, reps: 3, rir: 1, set_number: 1 }],
+  });
+  const r = tc.resolveCorrelation(other, { sessionId: SESSION, nowMs: now + 2, writeId: 'w-1' });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'payload_mismatch');
+  assert.equal(r.turn_id, null);
+});
+
+test('a different date or session in the payload is also refused', () => {
+  reset();
+  const now = 1_000_000;
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  const { pairing_token } = tc.resolveCorrelation(
+    payloadWith({ correlation: { turn_id: TURN_ID } }), { sessionId: SESSION, nowMs: now + 1, ...PREVIEW },
+  );
+  const shiftedDate = payloadWith({ correlation: { turn_id: TURN_ID, pairing_token }, date: '2026-07-26' });
+  assert.equal(tc.resolveCorrelation(shiftedDate, { sessionId: SESSION, nowMs: now + 2, writeId: 'w-1' }).reason, 'payload_mismatch');
+});
+
+test('the seal RETRY still matches — write_id, effort_row and test_mode are outside the identity', () => {
+  reset();
+  const now = 1_000_000;
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  // The preview carries test_mode, a write_id, and an effort row.
+  const { pairing_token } = tc.resolveCorrelation(
+    payloadWith({ correlation: { turn_id: TURN_ID }, test_mode: 'true', write_id: 'w-1', effort_row: ['2026-07-25', SESSION, 3600] }),
+    { sessionId: SESSION, nowMs: now + 1, isPreview: true, previewedWriteId: 'w-1' },
+  );
+  // The approve drops test_mode. The seal retry then re-mints write_id and deletes effort_row
+  // (app.js:7566-7567). All three must be irrelevant to the identity, or the retry is locked out.
+  const retry = payloadWith({ correlation: { turn_id: TURN_ID, pairing_token }, write_id: 'w-2' });
+  const r = tc.resolveCorrelation(retry, { sessionId: SESSION, nowMs: now + 2, writeId: 'w-2' });
+  assert.equal(r.ok, true, 'the documented seal retry must never be locked out by the payload gate');
+  assert.equal(r.pairing.payload_bound, true);
+  assert.equal(r.pairing.previewed_write_id_match, false, 'and the re-mint is still visibly recorded');
+});
+
+test('the identity is insensitive to key order, so a re-serialized payload still matches', () => {
+  reset();
+  const now = 1_000_000;
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  const { pairing_token } = tc.resolveCorrelation(
+    { correlation: { turn_id: TURN_ID }, session_id: SESSION, date: '2026-07-25', log_rows: [{ exercise: 'Bench Press', weight: 225, reps: 5 }] },
+    { sessionId: SESSION, nowMs: now + 1, ...PREVIEW },
+  );
+  const reordered = {
+    log_rows: [{ reps: 5, exercise: 'Bench Press', weight: 225 }],
+    date: '2026-07-25',
+    session_id: SESSION,
+    correlation: { pairing_token, turn_id: TURN_ID },
+  };
+  assert.equal(tc.resolveCorrelation(reordered, { sessionId: SESSION, nowMs: now + 2, writeId: 'w-1' }).ok, true);
+});
+
+test('a preview with no computable identity binds UNBOUND, and never claims otherwise', () => {
+  reset();
+  const now = 1_000_000;
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  // A route whose payload carries no log_rows identity (the seam is wired only to
+  // /api/log-workout today; this is the honest degradation for anything else).
+  const { pairing_token, pairing } = tc.resolveCorrelation(
+    { correlation: { turn_id: TURN_ID }, session_id: SESSION },
+    { sessionId: SESSION, nowMs: now + 1, ...PREVIEW },
+  );
+  assert.equal(pairing.payload_bound, false, 'an unbound pairing must say so at preview');
+
+  const r = tc.resolveCorrelation(
+    { correlation: { turn_id: TURN_ID, pairing_token }, session_id: SESSION },
+    { sessionId: SESSION, nowMs: now + 2, writeId: 'w-1' },
+  );
+  // It still correlates — a turn-level join is real evidence — but the record must never
+  // report payload_bound:true, because nothing checked which write this was.
+  assert.equal(r.ok, true);
+  assert.equal(r.pairing.payload_bound, false, 'absent a payload gate the record must under-claim');
 });
 
 test('a pairing is refused across sessions and past the freshness window', () => {
@@ -552,14 +699,21 @@ test('buildWriteProofRecord: carries the server-owned pairing block, and only sc
       established_at_preview: true,
       write_attempt: 2,
       previewed_write_id_match: false,
+      payload_bound: true,
       // Server-owned or not, anything unrecognised or non-scalar is dropped.
       token: 'pair:deadbeefdeadbeefdeadbeefdeadbeef',
+      identity: 'a1b2c3d4e5f6',
       nested: { rows: [['Bench Press', 225]] },
     },
   });
   assert.equal(record.pairing.established_at_preview, true);
   assert.equal(record.pairing.write_attempt, 2);
   assert.equal(record.pairing.previewed_write_id_match, false);
+  assert.equal(record.pairing.payload_bound, true);
+  // The identity fingerprint is derived from workout content — it stays internal, exactly like
+  // the token, so neither the log nor the artifact ever carries it.
+  assert.ok(!('identity' in record.pairing), 'the payload fingerprint must never reach the record');
+  assert.ok(!JSON.stringify(record).includes('a1b2c3d4e5f6'));
   // The token is a live capability for the rest of the window — it must never be logged.
   assert.ok(!('token' in record.pairing), 'the pairing token must never reach the record');
   assert.ok(!('nested' in record.pairing));
@@ -574,10 +728,12 @@ test('buildWriteProofRecord: an unpaired record can never claim it was preview-e
     route: '/api/log-workout',
     proof: { sheet_written: true },
   });
-  // No pairing evidence ⇒ the flag must read false, never true and never absent-so-assumed.
+  // No pairing evidence ⇒ every flag must read its under-claiming default, never true and
+  // never absent-so-assumed.
   assert.equal(record.pairing.established_at_preview, false);
   assert.equal(record.pairing.write_attempt, 0);
   assert.equal(record.pairing.previewed_write_id_match, null);
+  assert.equal(record.pairing.payload_bound, false);
 });
 
 // ─── the pairing token's own shape gate ───────────────────────────────────────
