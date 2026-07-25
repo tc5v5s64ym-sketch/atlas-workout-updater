@@ -1,5 +1,13 @@
 # Phase 4 — Owner-gate readiness handoff (2026-07-24)
 
+> **Superseded as a current-state description (2026-07-25).** The gate has since been run once. This
+> document remains accurate as the *pre-run readiness statement* — it is what was staged and how the run
+> was to be sequenced — but it is no longer the current state. The gate's result is
+> [`PHASE_4_GOLDEN_SESSION_EVIDENCE_2026-07-25.md`](PHASE_4_GOLDEN_SESSION_EVIDENCE_2026-07-25.md):
+> **verdict NOT YET; Phase 4 remains open.** In particular, §11's "what evidence would permit Phase 4 to
+> advance" was only partly satisfied, and the end-to-end trace it asks for is now known to be blocked by
+> architecture rather than by missing evidence.
+
 **Status:** Phase 4 ("The canonical proof") — all technically-derivable read/decision-consumption work
 that can be landed WITHOUT crossing the owner gate is complete and staged. The gate has **not** been
 crossed. No production flag was changed; `SESSION_PLAN_SETS_WRITE_ENABLED` remained `0` throughout.
