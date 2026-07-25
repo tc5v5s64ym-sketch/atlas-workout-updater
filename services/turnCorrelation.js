@@ -32,6 +32,45 @@
 // record COPIES those fields verbatim. D10 (cross-turn discussion referent) will later
 // reuse this same round-trip envelope by adding its own field; it is NOT implemented here.
 
+// #1173 item 1 — PREVIEW-ESTABLISHED BINDING (replaces #1172's first-write-wins).
+//
+// #1172 bound a turn to the FIRST write_id it correlated. With no prior binding the CLIENT
+// still chose which write became "the authorized one", so a record established only "this turn
+// exists in this session" — not the property #1165 exists to prove. Worse, a turn id attached
+// to the wrong same-session write LOCKED THE LEGITIMATE WRITE OUT, turning a client bug into
+// LOST evidence rather than wrong evidence.
+//
+// The pairing is now established at the PREVIEW and keyed on a server-minted token.
+//
+// WHY NOT write_id, which the direction in #1173 proposed. Checked against src/app/app.js
+// rather than assumed, and the prerequisite does NOT hold:
+//   • /api/log-workout is the ONE path whose dry-run really carries the write_id it will later
+//     approve with — app.js:6960 puts it inside the test_mode payload, 7012 stores that same
+//     object on pendingWrite, 7506 re-sends it with only test_mode deleted;
+//   • both /api/complete-workout paths WITHHOLD it from the dry-run by design
+//     (app.js:7113 `if (writeId && !testMode)`), minting it only after the preview returns
+//     (6918, 6944); modality (6114/6133) and bodyweight (7790) mint it after the preview too;
+//   • and even on log-workout the client DELIBERATELY RE-MINTS it mid-flow on the documented
+//     seal retry (app.js:7563-7568) — same turn, same preview, new write_id.
+// So a write_id key would be correct on one route of five, would force the contract to change
+// again the moment the seam extends, and would re-create the very lockout it was meant to
+// remove. It is also CLIENT-minted, so the client would keep supplying the pairing key.
+//
+// WHAT THE TOKEN BUYS. It is minted only in the response to a preview that carried this turn's
+// claim, so: a turn that never previewed can never correlate a write; a client that only
+// scraped the turn id from the response header cannot claim one; and a re-preview supersedes
+// it, matching app.js's own re-preview invalidation.
+//
+// THE CEILING, STATED HONESTLY. This proves "this turn previewed this write, and the write
+// presented that preview's token" — not cryptographic authorization, which no client
+// round-trip can deliver. The previewed write_id is recorded as CORROBORATION
+// (`previewed_write_id_match`) and never as a gate, precisely so the legitimate seal retry
+// keeps its evidence instead of being locked out.
+//
+// UNTIL SLICE 2 CARRIES THE TOKEN, NO LIVE WRITE CORRELATES — previews still do. That is
+// fail-closed and deliberate: it is why #1173 orders this item before the client round-trip.
+
+const crypto = require('crypto');
 const { isShadowEnabled } = require('./interactionTraceShadow');
 
 // A correlation claim is good for one live-workout beat — long enough for a lifter to read
@@ -51,6 +90,19 @@ const MAX_TURN_ID_LENGTH = 128;
 // Drift Guard 4's TRACE_ID_RE (which also admits trace:/flight:/session: ids) — only a TURN
 // id may correlate a turn to its write.
 const TURN_ID_RE = /^turn:[A-Za-z0-9][A-Za-z0-9._:@/-]*$/;
+
+// The pairing token's shape. Server-minted ONLY, so the gate demands the exact minted form
+// rather than a permissive pattern — a token is never anything a client composed.
+const PAIRING_TOKEN_BYTES = 16;
+const PAIRING_TOKEN_RE = /^pair:[a-f0-9]{32}$/;
+
+// How many DISTINCT write_ids one pairing may correlate. Not one: the documented closeout
+// seal retry (app.js:7563-7568) re-mints the write_id for the same staged write, and refusing
+// it is exactly the lost-evidence lockout #1173 records. Not unlimited either — that would let
+// one token be replayed against every save in the freshness window, which is the replay
+// protection #1172's first-write-wins existed to provide and this must not simply drop. Each
+// correlated write is stamped with its attempt number, so a reviewer always sees which it was.
+const MAX_WRITES_PER_PAIRING = 5;
 
 // The ONLY proof keys that may be copied into a correlation record. A closed whitelist, not
 // a denylist: a field added to a write response in future is excluded by default rather than
@@ -84,6 +136,8 @@ const PROOF_KEYS = Object.freeze([
 
 // The resolution outcomes. Exactly one is returned per claim; each rejection names WHY, so a
 // reviewer can tell a client that never claimed from one whose claim was refused.
+// `write_mismatch` is deliberately ABSENT: first-write-wins is retired, not bypassed, so no
+// caller can fall back to it (test/turnCorrelation.test.js pins its removal).
 const REASONS = Object.freeze({
   OK: 'ok',
   ABSENT: 'absent',
@@ -91,10 +145,19 @@ const REASONS = Object.freeze({
   UNKNOWN: 'unknown',
   SESSION_MISMATCH: 'session_mismatch',
   STALE: 'stale',
-  WRITE_MISMATCH: 'write_mismatch',
+  UNPAIRED: 'unpaired',
+  PAIRING_MISMATCH: 'pairing_mismatch',
+  PAIRING_EXHAUSTED: 'pairing_exhausted',
 });
 
-// turnId -> { sessionId, atMs, writeId? }  (writeId set on first correlated real write)
+// turnId -> { sessionId, atMs, pairing? }
+//
+// `atMs` is the turn's ISSUANCE time and stays the freshness anchor — establishing or
+// re-establishing a pairing never refreshes it, so a client cannot keep a turn alive by
+// previewing in a loop and then correlate a write to a conversation that has moved on.
+//
+// pairing: { token, atMs, previewedWriteId, writeIds: [] }  — one per preview, superseded by
+// the next preview of the same turn. Bounded by riding the turn's own capped/TTL'd entry.
 const registry = new Map();
 
 // The emitted correlation records, for the reviewable artifact. Ring-buffered like the
@@ -115,6 +178,39 @@ function isWellFormedTurnId(v) {
   const id = v.trim();
   if (id.length > MAX_TURN_ID_LENGTH) return false;
   return TURN_ID_RE.test(id);
+}
+
+// Is this the exact minted pairing-token shape? Shape only — says nothing about whether this
+// server minted THIS token. Checked BEFORE any comparison so an unbounded or junk value is
+// refused without being compared against a live token.
+function isWellFormedPairingToken(v) {
+  if (!_isNonEmptyString(v)) return false;
+  return PAIRING_TOKEN_RE.test(v);
+}
+
+// A fresh, unguessable pairing capability. crypto, never Math.random: a predictable token
+// would let a client that never previewed compose one and claim a write.
+function _mintPairingToken() {
+  return `pair:${crypto.randomBytes(PAIRING_TOKEN_BYTES).toString('hex')}`;
+}
+
+// The pairing facts a record may publish. Server-owned scalars only — the TOKEN IS NEVER
+// INCLUDED: it stays a live capability for the rest of the window, so logging it would hand
+// anyone reading the log the ability to claim the write.
+function _pairingSummary(pairing, writeId) {
+  if (!pairing) {
+    return { established_at_preview: false, write_attempt: 0, previewed_write_id_match: null };
+  }
+  const attempt = writeId ? pairing.writeIds.indexOf(writeId) + 1 : 0;
+  return {
+    established_at_preview: true,
+    write_attempt: attempt,
+    // null = the preview carried no write_id to compare (four of the five write paths), which
+    // must read as UNKNOWN and never as a match. Evidence for the reviewer, never a gate.
+    previewed_write_id_match: pairing.previewedWriteId && writeId
+      ? pairing.previewedWriteId === writeId
+      : null,
+  };
 }
 
 function _evictExpired(nowMs) {
@@ -152,9 +248,14 @@ function issueTurn(turnId, sessionId, opts = {}) {
  *   resolveCorrelation(payload, { sessionId, nowMs })
  *     → { ok, turn_id, reason }
  *
- * `payload` is the raw request body. Only `payload.correlation.turn_id` is ever read — every
- * other key on the correlation object is ignored outright, never stored and never echoed, so
- * the envelope can grow (D10) without this becoming a pass-through for client data.
+ * `payload` is the raw request body. Only `payload.correlation.turn_id` and
+ * `payload.correlation.pairing_token` are ever read — every other key on the correlation object
+ * is ignored outright, never stored and never echoed, so the envelope can grow (D10) without
+ * this becoming a pass-through for client data.
+ *
+ * `opts.isPreview` must be passed EXPLICITLY by a dry-run call site. It is never inferred from
+ * a missing write_id: a live route that forgot to pass one would then silently mint a pairing
+ * for itself. The default is therefore live, which fails closed to `unpaired`.
  *
  * Returns ok:false with a naming reason for every rejection. Never throws.
  */
@@ -180,26 +281,59 @@ function resolveCorrelation(payload, opts = {}) {
     if (!sid || sid !== rec.sessionId) return miss(REASONS.SESSION_MISMATCH);
 
     // Freshness. Inclusive at the boundary so a legitimately slow save is not dropped.
-    const age = _now(opts) - rec.atMs;
-    if (age > DEFAULT_MAX_AGE_MS) return miss(REASONS.STALE);
+    const nowMs = _now(opts);
+    if (nowMs - rec.atMs > DEFAULT_MAX_AGE_MS) return miss(REASONS.STALE);
 
-    // WRITE BINDING — the difference between "some recent turn in this session" and "THIS
-    // turn authorized THIS write". Without it a single id could be replayed against every
-    // save in the window, and the record would claim more than it establishes.
-    //
-    // A dry-run carries no write_id: it is a preview, not the authorized write, so it may
-    // correlate but never binds or retires the turn — the approve that follows still needs it.
-    // A real write binds the turn to its write_id on first use. After that the turn answers
-    // ONLY to that write_id: a different one is refused (a second write is a second turn's
-    // business), while the same one may correlate again so an idempotent retry of the same
-    // logical write is not silently dropped.
     const writeId = _isNonEmptyString(opts.writeId) ? String(opts.writeId).trim() : '';
-    if (writeId) {
-      if (rec.writeId && rec.writeId !== writeId) return miss(REASONS.WRITE_MISMATCH);
-      if (!rec.writeId) rec.writeId = writeId;
+
+    // THE PREVIEW ESTABLISHES THE PAIRING. Reached only after every gate above, so a claim the
+    // server never issued, one from another session, or a stale one can never leave a pairing
+    // behind for a later write to find. A second preview of the same turn SUPERSEDES the first
+    // (app.js tears the staged write down on re-preview), so the old token stops working.
+    if (opts.isPreview === true) {
+      rec.pairing = {
+        token: _mintPairingToken(),
+        atMs: nowMs,
+        // The one path whose dry-run carries the write_id it will approve with. Recorded as
+        // corroboration only; four of five paths send nothing here.
+        previewedWriteId: _isNonEmptyString(opts.previewedWriteId) ? String(opts.previewedWriteId).trim() : null,
+        writeIds: [],
+      };
+      return {
+        ok: true,
+        turn_id: turnId,
+        reason: REASONS.OK,
+        pairing_token: rec.pairing.token,
+        pairing: _pairingSummary(rec.pairing, ''),
+      };
     }
 
-    return { ok: true, turn_id: turnId, reason: REASONS.OK };
+    // A LIVE WRITE MUST PRESENT THE PAIRING ITS PREVIEW ESTABLISHED — this is the difference
+    // between "some recent turn in this session" and "this turn previewed this write".
+    const pairing = rec.pairing;
+    if (!pairing) return miss(REASONS.UNPAIRED);
+
+    // Shape gate before comparison: an unbounded or junk token is refused without being
+    // measured against a live one.
+    const claimed = claim.pairing_token;
+    if (!isWellFormedPairingToken(claimed) || claimed !== pairing.token) {
+      return miss(REASONS.PAIRING_MISMATCH);
+    }
+
+    // Bound the replay. A repeat of a write_id already recorded is the SAME attempt (an
+    // idempotent retry of one logical write must not be dropped); a new write_id is the next
+    // attempt, which the documented seal retry legitimately needs.
+    if (writeId && !pairing.writeIds.includes(writeId)) {
+      if (pairing.writeIds.length >= MAX_WRITES_PER_PAIRING) return miss(REASONS.PAIRING_EXHAUSTED);
+      pairing.writeIds.push(writeId);
+    }
+
+    return {
+      ok: true,
+      turn_id: turnId,
+      reason: REASONS.OK,
+      pairing: _pairingSummary(pairing, writeId),
+    };
   } catch (_) {
     return miss(REASONS.MALFORMED);
   }
@@ -230,12 +364,28 @@ function buildWriteProofRecord(params) {
     }
   }
 
+  // How the turn was bound to this write — the evidence that makes the record's claim
+  // reviewable rather than asserted. Rebuilt from a closed set of server-owned scalars, so an
+  // unrecognised or nested field cannot ride along, and the live pairing TOKEN never can.
+  // Absent pairing evidence reads `established_at_preview:false`, never true and never missing.
+  const src2 = _isPlainObject(p.pairing) ? p.pairing : {};
+  const pairing = {
+    established_at_preview: src2.established_at_preview === true,
+    write_attempt: typeof src2.write_attempt === 'number' && Number.isFinite(src2.write_attempt)
+      ? src2.write_attempt
+      : 0,
+    previewed_write_id_match: typeof src2.previewed_write_id_match === 'boolean'
+      ? src2.previewed_write_id_match
+      : null,
+  };
+
   return {
     schema_version: 1,
     turn_id: String(p.turnId).trim(),
     session_id: _isNonEmptyString(p.sessionId) ? String(p.sessionId).trim() : null,
     route: _isNonEmptyString(p.route) ? String(p.route).trim() : null,
     recorded_at: _isNonEmptyString(p.recordedAt) ? p.recordedAt : new Date().toISOString(),
+    pairing,
     proof,
   };
 }
@@ -269,7 +419,7 @@ function recordWriteProof(params) {
 
 // Read the ring buffer (newest last) for the reviewable artifact / debugging.
 function recentWriteProofs() {
-  return _log.map(r => ({ ...r, proof: { ...r.proof } }));
+  return _log.map(r => ({ ...r, pairing: { ...r.pairing }, proof: { ...r.proof } }));
 }
 
 /**
@@ -298,6 +448,13 @@ function sessionIdFromRequestBody(body) {
 // id without touching either.
 const TURN_ID_HEADER = 'x-atlas-turn-id';
 
+// The response header carrying a preview's pairing token back to the client (#1173 item 1).
+// A header for the same reason the turn id is one: every preview and coach body shape is
+// pinned by tests, and a header hands the client its capability without touching either.
+// Must be CORS-exposed (middleware.js) or a cross-origin frontend would read null and the
+// round-trip would silently never happen — the same trap the turn-id header had.
+const PAIRING_TOKEN_HEADER = 'x-atlas-turn-pairing';
+
 /**
  * Publish a turn to its response and register its session binding — the server half of the
  * round-trip, called where the turn opens.
@@ -325,6 +482,22 @@ function attachTurnToResponse(res, turnId, sessionId, opts = {}) {
   }
 }
 
+/**
+ * Hand a preview's pairing token back to the client. Best-effort and header-only: it never
+ * touches the response body, and a failure costs a correlation, never the write.
+ */
+function attachPairingToResponse(res, pairingToken) {
+  try {
+    if (!isWellFormedPairingToken(pairingToken)) return null;
+    if (res && typeof res.setHeader === 'function' && !res.headersSent) {
+      res.setHeader(PAIRING_TOKEN_HEADER, pairingToken);
+    }
+    return pairingToken;
+  } catch (_) {
+    return null;
+  }
+}
+
 function _resetForTesting() {
   registry.clear();
   _log.length = 0;
@@ -340,12 +513,17 @@ module.exports = {
   MAX_TURN_ID_LENGTH,
   TURN_ID_RE,
   TURN_ID_HEADER,
+  PAIRING_TOKEN_HEADER,
+  PAIRING_TOKEN_RE,
+  MAX_WRITES_PER_PAIRING,
   PROOF_KEYS,
   REASONS,
   isWellFormedTurnId,
+  isWellFormedPairingToken,
   sessionIdFromRequestBody,
   issueTurn,
   attachTurnToResponse,
+  attachPairingToResponse,
   resolveCorrelation,
   buildWriteProofRecord,
   recordWriteProof,

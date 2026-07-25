@@ -15,12 +15,15 @@
 // must fail CLOSED — drop the correlation, never associate write proof with an id the
 // server did not issue for this session.
 //
-// The four failure modes the concern names, plus the honest no-claim case:
-//   absent          → no claim; not an error (a write without correlation is legal)
-//   malformed       → shape/format/length rejected before any lookup
-//   unknown         → well-formed but never issued (or already evicted) → rejected
-//   session_mismatch→ issued, but under a DIFFERENT session → rejected (contamination)
-//   stale           → issued, same session, but outside the freshness window → rejected
+// The failure modes, plus the honest no-claim case:
+//   absent           → no claim; not an error (a write without correlation is legal)
+//   malformed        → shape/format/length rejected before any lookup
+//   unknown          → well-formed but never issued (or already evicted) → rejected
+//   session_mismatch → issued, but under a DIFFERENT session → rejected (contamination)
+//   stale            → issued, same session, but outside the freshness window → rejected
+//   unpaired         → a live write on a turn no preview ever paired → rejected (#1173 item 1)
+//   pairing_mismatch → a pairing exists, but the presented token is wrong/absent → rejected
+//   pairing_exhausted→ one pairing replayed past its write cap → rejected
 //
 // A rejected claim must NEVER block or alter the write itself: correlation is telemetry
 // riding alongside the trust loop, never part of it.
@@ -44,7 +47,12 @@ test('resolveCorrelation: a valid, fresh, same-session claim resolves ok', () =>
   reset();
   const now = 1_000_000;
   tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
-  const r = tc.resolveCorrelation({ correlation: { turn_id: TURN_ID } }, { sessionId: SESSION, nowMs: now + 1000 });
+  // A turn's FIRST legal claim is its preview — that is where the pairing is established
+  // (#1173 item 1). A bare live claim on an unpaired turn is covered below as `unpaired`.
+  const r = tc.resolveCorrelation(
+    { correlation: { turn_id: TURN_ID } },
+    { sessionId: SESSION, nowMs: now + 1000, isPreview: true },
+  );
   assert.equal(r.ok, true);
   assert.equal(r.reason, 'ok');
   assert.equal(r.turn_id, TURN_ID);
@@ -138,9 +146,14 @@ test('resolveCorrelation: a claim exactly at the window edge is still accepted',
   reset();
   const now = 1_000_000;
   tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
-  const r = tc.resolveCorrelation(
+  const { pairing_token } = tc.resolveCorrelation(
     { correlation: { turn_id: TURN_ID } },
-    { sessionId: SESSION, nowMs: now + tc.DEFAULT_MAX_AGE_MS },
+    { sessionId: SESSION, nowMs: now, isPreview: true },
+  );
+  // The case this protects is a real slow save, so prove it on the LIVE write at the exact edge.
+  const r = tc.resolveCorrelation(
+    { correlation: { turn_id: TURN_ID, pairing_token } },
+    { sessionId: SESSION, nowMs: now + tc.DEFAULT_MAX_AGE_MS, writeId: 'w-1' },
   );
   assert.equal(r.ok, true, 'the boundary must be inclusive, so a legitimate slow write is not dropped');
 });
@@ -265,46 +278,335 @@ test('buildWriteProofRecord: refuses to build without a resolved turn id', () =>
   }
 });
 
-// ─── write binding (#1172 review, P1) ─────────────────────────────────────────
+// ─── PREVIEW-ESTABLISHED PAIRING (#1173 item 1) ───────────────────────────────
 //
-// Without this, a single fresh id could be replayed against every save in the 8-minute
-// window and each record would read as "this turn authorized this write" while only
-// establishing "some recent turn in this session". These pin the stronger claim.
+// #1172 shipped first-write-wins: with no prior binding, a turn bound to whichever write
+// correlated FIRST. That left the CLIENT choosing which write became "the authorized one",
+// so a record established only "this turn exists in this session" — and worse, a turn id
+// attached to the wrong same-session write LOCKED THE LEGITIMATE WRITE OUT, turning a client
+// bug into LOST evidence rather than wrong evidence.
+//
+// The replacement: the PREVIEW establishes the pairing, and only the write that presents that
+// preview's server-minted token may correlate. The prerequisite #1173 flagged was checked
+// against src/app/app.js and the answer is NO — `write_id` is shared between preview and
+// approve on exactly ONE of five write paths (/api/log-workout, app.js:6960 → 7506), is
+// withheld from the dry-run by design on the two /api/complete-workout paths (app.js:7113),
+// is minted only after the preview on modality and bodyweight (app.js:6133, 7790), and is
+// DELIBERATELY RE-MINTED mid-flow on the documented seal retry even where it is shared
+// (app.js:7563-7568). So the pairing key is a dedicated server-minted token, and the
+// previewed write_id is recorded as corroborating evidence only, never as a gate.
+//
+// What these pin is the honest property — "this turn previewed this write, and this write
+// presented that preview's token" — not cryptographic authorization, which no client
+// round-trip can deliver.
 
-test('a turn binds to the first real write_id it correlates', () => {
+const PREVIEW = { isPreview: true };
+
+test('a preview establishes a pairing and mints an opaque server-owned token', () => {
   reset();
   const now = 1_000_000;
   tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
-  const claim = { correlation: { turn_id: TURN_ID } };
-
-  const first = tc.resolveCorrelation(claim, { sessionId: SESSION, nowMs: now + 1, writeId: 'w-1' });
-  assert.equal(first.ok, true);
-
-  // A DIFFERENT write is a different turn's business — refused.
-  const second = tc.resolveCorrelation(claim, { sessionId: SESSION, nowMs: now + 2, writeId: 'w-2' });
-  assert.equal(second.ok, false);
-  assert.equal(second.reason, 'write_mismatch');
-  assert.equal(second.turn_id, null);
+  const r = tc.resolveCorrelation({ correlation: { turn_id: TURN_ID } }, { sessionId: SESSION, nowMs: now + 1, isPreview: true });
+  assert.equal(r.ok, true);
+  assert.equal(r.reason, 'ok');
+  assert.ok(tc.isWellFormedPairingToken(r.pairing_token), `token must be well-formed, got ${r.pairing_token}`);
+  // The token is the whole point: it must not be derivable from the turn id the client
+  // already holds from the response header.
+  assert.ok(!r.pairing_token.includes(TURN_ID));
+  assert.equal(r.pairing.established_at_preview, true);
+  assert.equal(r.pairing.write_attempt, 0, 'a preview is not a write attempt');
 });
 
-test('an idempotent retry of the SAME write still correlates', () => {
+test('a live write with NO established pairing is refused (unpaired) — first-write-wins is gone', () => {
   reset();
   const now = 1_000_000;
   tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
-  const claim = { correlation: { turn_id: TURN_ID } };
-  assert.equal(tc.resolveCorrelation(claim, { sessionId: SESSION, nowMs: now + 1, writeId: 'w-1' }).ok, true);
-  const retry = tc.resolveCorrelation(claim, { sessionId: SESSION, nowMs: now + 2, writeId: 'w-1' });
+  // Exactly the #1172 behaviour: a well-formed, fresh, same-session claim on a real write.
+  // It used to bind and resolve ok. It must now be refused, because no preview established it.
+  const r = tc.resolveCorrelation({ correlation: { turn_id: TURN_ID } }, { sessionId: SESSION, nowMs: now + 1, writeId: 'w-1' });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'unpaired');
+  assert.equal(r.turn_id, null);
+});
+
+test('the live write presenting the preview\'s token correlates, and is stamped attempt 1', () => {
+  reset();
+  const now = 1_000_000;
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  const { pairing_token } = tc.resolveCorrelation(
+    { correlation: { turn_id: TURN_ID } }, { sessionId: SESSION, nowMs: now + 1, ...PREVIEW },
+  );
+  const r = tc.resolveCorrelation(
+    { correlation: { turn_id: TURN_ID, pairing_token } },
+    { sessionId: SESSION, nowMs: now + 2, writeId: 'w-1' },
+  );
+  assert.equal(r.ok, true);
+  assert.equal(r.turn_id, TURN_ID);
+  assert.equal(r.pairing.write_attempt, 1);
+});
+
+test('a live write presenting a WRONG or absent token is refused (pairing_mismatch)', () => {
+  reset();
+  const now = 1_000_000;
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  tc.resolveCorrelation({ correlation: { turn_id: TURN_ID } }, { sessionId: SESSION, nowMs: now + 1, ...PREVIEW });
+
+  const bad = [
+    undefined,                              // the #1172 client: turn id only
+    null,
+    '',
+    'pair:deadbeefdeadbeefdeadbeefdeadbeef', // well-formed but never minted
+    'not-a-token',
+    42,
+    {},
+    `pair:${'a'.repeat(4096)}`,              // unbounded → refused, never compared
+  ];
+  for (const pairing_token of bad) {
+    const claim = { turn_id: TURN_ID };
+    if (pairing_token !== undefined) claim.pairing_token = pairing_token;
+    const r = tc.resolveCorrelation({ correlation: claim }, { sessionId: SESSION, nowMs: now + 2, writeId: 'w-1' });
+    assert.equal(r.ok, false, `token ${JSON.stringify(pairing_token)} must not resolve`);
+    assert.equal(r.reason, 'pairing_mismatch', `token ${JSON.stringify(pairing_token)} → ${r.reason}`);
+    assert.equal(r.turn_id, null);
+  }
+});
+
+test('an idempotent retry of the SAME write still correlates, and does not advance the attempt', () => {
+  reset();
+  const now = 1_000_000;
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  const { pairing_token } = tc.resolveCorrelation(
+    { correlation: { turn_id: TURN_ID } }, { sessionId: SESSION, nowMs: now + 1, ...PREVIEW },
+  );
+  const claim = { correlation: { turn_id: TURN_ID, pairing_token } };
+  assert.equal(tc.resolveCorrelation(claim, { sessionId: SESSION, nowMs: now + 2, writeId: 'w-1' }).ok, true);
+  const retry = tc.resolveCorrelation(claim, { sessionId: SESSION, nowMs: now + 3, writeId: 'w-1' });
   assert.equal(retry.ok, true, 'the same logical write must not be silently dropped on retry');
+  assert.equal(retry.pairing.write_attempt, 1, 'a replay of the same write_id is the same attempt');
 });
 
-test('a dry-run correlates without binding the turn — the approve that follows still needs it', () => {
+test('the documented seal RETRY keeps its correlation — a fresh write_id is not a lockout', () => {
   reset();
   const now = 1_000_000;
   tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
-  const claim = { correlation: { turn_id: TURN_ID } };
-  // Preview: no write_id.
-  assert.equal(tc.resolveCorrelation(claim, { sessionId: SESSION, nowMs: now + 1 }).ok, true);
-  // The real write that follows must still be able to bind and correlate.
-  const approved = tc.resolveCorrelation(claim, { sessionId: SESSION, nowMs: now + 2, writeId: 'w-1' });
-  assert.equal(approved.ok, true, 'a preview must not consume the turn');
+  const { pairing_token } = tc.resolveCorrelation(
+    { correlation: { turn_id: TURN_ID } }, { sessionId: SESSION, nowMs: now + 1, ...PREVIEW },
+  );
+  const claim = { correlation: { turn_id: TURN_ID, pairing_token } };
+  // First approval: rows commit, but closeout_fully_verified came back false.
+  assert.equal(tc.resolveCorrelation(claim, { sessionId: SESSION, nowMs: now + 2, writeId: 'w-1' }).ok, true);
+  // app.js:7563-7568 re-mints the write_id and re-enables Save for the SAME staged write.
+  // Under #1172's first-write-wins this was `write_mismatch` — the legitimate retry lost its
+  // evidence. It must now correlate, and be visibly the SECOND attempt.
+  const retry = tc.resolveCorrelation(claim, { sessionId: SESSION, nowMs: now + 3, writeId: 'w-2' });
+  assert.equal(retry.ok, true, 'the seal retry must not be locked out');
+  assert.equal(retry.pairing.write_attempt, 2, 'a reviewer must see this is a second write, not the first');
+});
+
+test('one pairing cannot be replayed without bound (pairing_exhausted)', () => {
+  reset();
+  const now = 1_000_000;
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  const { pairing_token } = tc.resolveCorrelation(
+    { correlation: { turn_id: TURN_ID } }, { sessionId: SESSION, nowMs: now + 1, ...PREVIEW },
+  );
+  const claim = { correlation: { turn_id: TURN_ID, pairing_token } };
+  for (let i = 0; i < tc.MAX_WRITES_PER_PAIRING; i += 1) {
+    const r = tc.resolveCorrelation(claim, { sessionId: SESSION, nowMs: now + 2 + i, writeId: `w-${i}` });
+    assert.equal(r.ok, true, `attempt ${i + 1} must resolve`);
+  }
+  const over = tc.resolveCorrelation(claim, { sessionId: SESSION, nowMs: now + 99, writeId: 'w-over' });
+  assert.equal(over.ok, false);
+  assert.equal(over.reason, 'pairing_exhausted');
+  assert.equal(over.turn_id, null);
+});
+
+test('a RE-PREVIEW supersedes the pairing — the old token is dead', () => {
+  reset();
+  const now = 1_000_000;
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  const first = tc.resolveCorrelation({ correlation: { turn_id: TURN_ID } }, { sessionId: SESSION, nowMs: now + 1, ...PREVIEW });
+  const second = tc.resolveCorrelation({ correlation: { turn_id: TURN_ID } }, { sessionId: SESSION, nowMs: now + 2, ...PREVIEW });
+  assert.notEqual(first.pairing_token, second.pairing_token, 'each preview mints its own pairing');
+
+  // app.js invalidates the staged write on re-preview (invalidatePreview / a fresh dry-run),
+  // so the superseded preview's token must not still authorize a write.
+  const stale = tc.resolveCorrelation(
+    { correlation: { turn_id: TURN_ID, pairing_token: first.pairing_token } },
+    { sessionId: SESSION, nowMs: now + 3, writeId: 'w-1' },
+  );
+  assert.equal(stale.ok, false);
+  assert.equal(stale.reason, 'pairing_mismatch');
+
+  const live = tc.resolveCorrelation(
+    { correlation: { turn_id: TURN_ID, pairing_token: second.pairing_token } },
+    { sessionId: SESSION, nowMs: now + 4, writeId: 'w-1' },
+  );
+  assert.equal(live.ok, true, 'the current preview\'s token still works');
+});
+
+test('a pairing is refused across sessions and past the freshness window', () => {
+  reset();
+  const now = 1_000_000;
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  const { pairing_token } = tc.resolveCorrelation(
+    { correlation: { turn_id: TURN_ID } }, { sessionId: SESSION, nowMs: now + 1, ...PREVIEW },
+  );
+  const claim = { correlation: { turn_id: TURN_ID, pairing_token } };
+
+  // A valid token is NOT a bypass of the earlier gates: session and freshness still decide
+  // first, so a leaked token cannot contaminate another session or revive a dead turn.
+  const cross = tc.resolveCorrelation(claim, { sessionId: OTHER_SESSION, nowMs: now + 2, writeId: 'w-1' });
+  assert.equal(cross.ok, false);
+  assert.equal(cross.reason, 'session_mismatch');
+
+  const late = tc.resolveCorrelation(claim, { sessionId: SESSION, nowMs: now + tc.DEFAULT_MAX_AGE_MS + 1, writeId: 'w-1' });
+  assert.equal(late.ok, false);
+  assert.equal(late.reason, 'stale');
+});
+
+test('a re-preview cannot keep a turn alive past its own freshness window', () => {
+  reset();
+  const now = 1_000_000;
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  // Establishing a pairing must not refresh the turn's issuance anchor — otherwise a client
+  // could preview in a loop and correlate a write to a conversation that had moved on.
+  const late = tc.resolveCorrelation(
+    { correlation: { turn_id: TURN_ID } },
+    { sessionId: SESSION, nowMs: now + tc.DEFAULT_MAX_AGE_MS + 1, ...PREVIEW },
+  );
+  assert.equal(late.ok, false);
+  assert.equal(late.reason, 'stale');
+});
+
+test('a preview claim is still subject to every earlier gate', () => {
+  reset();
+  const now = 1_000_000;
+  // Never issued.
+  assert.equal(tc.resolveCorrelation({ correlation: { turn_id: TURN_ID } }, { sessionId: SESSION, nowMs: now, ...PREVIEW }).reason, 'unknown');
+  // Malformed.
+  assert.equal(tc.resolveCorrelation({ correlation: { turn_id: 'nope' } }, { sessionId: SESSION, nowMs: now, ...PREVIEW }).reason, 'malformed');
+  // Wrong session.
+  tc.issueTurn(TURN_ID, OTHER_SESSION, { nowMs: now });
+  assert.equal(tc.resolveCorrelation({ correlation: { turn_id: TURN_ID } }, { sessionId: SESSION, nowMs: now, ...PREVIEW }).reason, 'session_mismatch');
+  // And none of those may leave a pairing behind that a later write could claim.
+  assert.equal(tc.resolveCorrelation({ correlation: { turn_id: TURN_ID } }, { sessionId: SESSION, nowMs: now + 1, writeId: 'w-1' }).ok, false);
+});
+
+test('first-write-wins is retired, not merely bypassed', () => {
+  // The reason it produced no longer exists, so no caller can fall back to it.
+  assert.equal(tc.REASONS.WRITE_MISMATCH, undefined);
+  assert.ok(!Object.values(tc.REASONS).includes('write_mismatch'));
+});
+
+// ─── the previewed write_id: recorded evidence, never a gate ──────────────────
+
+test('the previewed write_id corroborates the approve without ever gating it', () => {
+  reset();
+  const now = 1_000_000;
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  // /api/log-workout is the one path whose dry-run really carries the write_id it will
+  // later approve with (app.js:6960 → 7506), so the server can corroborate the pairing.
+  const { pairing_token } = tc.resolveCorrelation(
+    { correlation: { turn_id: TURN_ID } },
+    { sessionId: SESSION, nowMs: now + 1, isPreview: true, previewedWriteId: 'w-1' },
+  );
+  const claim = { correlation: { turn_id: TURN_ID, pairing_token } };
+
+  const matched = tc.resolveCorrelation(claim, { sessionId: SESSION, nowMs: now + 2, writeId: 'w-1' });
+  assert.equal(matched.ok, true);
+  assert.equal(matched.pairing.previewed_write_id_match, true);
+
+  // The seal retry's fresh write_id is recorded as a NON-match — and still correlates,
+  // because corroboration is evidence for the reviewer, not a gate.
+  const remint = tc.resolveCorrelation(claim, { sessionId: SESSION, nowMs: now + 3, writeId: 'w-2' });
+  assert.equal(remint.ok, true, 'a non-matching write_id must never cost the correlation');
+  assert.equal(remint.pairing.previewed_write_id_match, false);
+});
+
+test('a preview that carried no write_id reports the match as unknown, never as true', () => {
+  reset();
+  const now = 1_000_000;
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  // The four other write paths: the dry-run carries no write_id at all.
+  const { pairing_token } = tc.resolveCorrelation(
+    { correlation: { turn_id: TURN_ID } }, { sessionId: SESSION, nowMs: now + 1, ...PREVIEW },
+  );
+  const r = tc.resolveCorrelation(
+    { correlation: { turn_id: TURN_ID, pairing_token } },
+    { sessionId: SESSION, nowMs: now + 2, writeId: 'w-1' },
+  );
+  assert.equal(r.ok, true);
+  assert.equal(r.pairing.previewed_write_id_match, null, 'absent evidence must read null, never true');
+});
+
+// ─── the record carries the binding, so a reviewer can see it was preview-established ──
+
+test('buildWriteProofRecord: carries the server-owned pairing block, and only scalars', () => {
+  const record = tc.buildWriteProofRecord({
+    turnId: TURN_ID,
+    sessionId: SESSION,
+    route: '/api/log-workout',
+    proof: { sheet_write: 'success', sheet_written: true },
+    pairing: {
+      established_at_preview: true,
+      write_attempt: 2,
+      previewed_write_id_match: false,
+      // Server-owned or not, anything unrecognised or non-scalar is dropped.
+      token: 'pair:deadbeefdeadbeefdeadbeefdeadbeef',
+      nested: { rows: [['Bench Press', 225]] },
+    },
+  });
+  assert.equal(record.pairing.established_at_preview, true);
+  assert.equal(record.pairing.write_attempt, 2);
+  assert.equal(record.pairing.previewed_write_id_match, false);
+  // The token is a live capability for the rest of the window — it must never be logged.
+  assert.ok(!('token' in record.pairing), 'the pairing token must never reach the record');
+  assert.ok(!('nested' in record.pairing));
+  assert.ok(!JSON.stringify(record).includes('deadbeef'), 'no token material in the record');
+  assert.ok(!JSON.stringify(record).includes('Bench Press'));
+});
+
+test('buildWriteProofRecord: an unpaired record can never claim it was preview-established', () => {
+  const record = tc.buildWriteProofRecord({
+    turnId: TURN_ID,
+    sessionId: SESSION,
+    route: '/api/log-workout',
+    proof: { sheet_written: true },
+  });
+  // No pairing evidence ⇒ the flag must read false, never true and never absent-so-assumed.
+  assert.equal(record.pairing.established_at_preview, false);
+  assert.equal(record.pairing.write_attempt, 0);
+  assert.equal(record.pairing.previewed_write_id_match, null);
+});
+
+// ─── the pairing token's own shape gate ───────────────────────────────────────
+
+test('isWellFormedPairingToken: accepts only the minted shape, bounded', () => {
+  reset();
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: 1 });
+  const { pairing_token } = tc.resolveCorrelation(
+    { correlation: { turn_id: TURN_ID } }, { sessionId: SESSION, nowMs: 2, isPreview: true },
+  );
+  assert.equal(tc.isWellFormedPairingToken(pairing_token), true);
+  for (const bad of [
+    null, undefined, '', '   ', 42, {}, [],
+    'pair:', 'pair:xyz', 'pair:DEADBEEFDEADBEEFDEADBEEFDEADBEEF', // uppercase is not the minted shape
+    'turn:2026-07-25T00:00:00.000Z_1_ab12cd',                      // a turn id is not a token
+    `pair:${'0'.repeat(31)}`, `pair:${'0'.repeat(33)}`,            // wrong length
+    `pair:${'0'.repeat(32)} `,
+  ]) {
+    assert.equal(tc.isWellFormedPairingToken(bad), false, `${JSON.stringify(bad)} must not be well-formed`);
+  }
+});
+
+test('the pairing registry stays bounded — a pairing rides its turn entry and dies with it', () => {
+  reset();
+  const now = 1_000_000;
+  for (let i = 0; i < tc.MAX_ENTRIES + 50; i += 1) {
+    const id = `turn:2026-07-25T00:00:00.000Z_${i}_abcdef`;
+    tc.issueTurn(id, SESSION, { nowMs: now + i });
+    tc.resolveCorrelation({ correlation: { turn_id: id } }, { sessionId: SESSION, nowMs: now + i, isPreview: true });
+  }
+  assert.ok(tc._sizeForTesting() <= tc.MAX_ENTRIES, `registry must stay capped, got ${tc._sizeForTesting()}`);
 });

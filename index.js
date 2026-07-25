@@ -108,14 +108,28 @@ const turnCorrelation = require('./services/turnCorrelation');
 // after the write and its proof exist, never alters the response, and returns nothing the
 // route depends on. A rejected or absent correlation claim is silent — a write must never
 // fail because its telemetry could not be joined.
+// #1173 item 1 — the binding is ESTABLISHED AT PREVIEW. A dry-run call site passes
+// `isPreview: true` EXPLICITLY (never inferred from a missing write_id — a live route that
+// forgot one would then mint itself a pairing) and gets back a token, handed to the client in
+// its own response header. Only a live write presenting that token correlates; an unpaired one
+// records nothing, which is why first-write-wins could be retired without a client change.
 function recordTurnWriteProof(payload, sessionId, route, proof, opts = {}) {
   try {
-    // A dry-run passes no writeId: a preview is not the authorized write, so it correlates
-    // without binding the turn. A real write passes one, binding the turn to it for good.
+    const isPreview = opts.isPreview === true;
     const writeId = opts.writeId != null ? opts.writeId : (proof && proof.write_id);
-    const resolved = turnCorrelation.resolveCorrelation(payload, { sessionId, writeId });
+    const resolved = turnCorrelation.resolveCorrelation(payload, {
+      sessionId,
+      writeId,
+      isPreview,
+      // The write_id this dry-run will approve with, where the client sends one — recorded as
+      // corroboration on the record, never as a gate.
+      previewedWriteId: isPreview && payload ? payload.write_id : undefined,
+    });
     if (!resolved.ok) return null;
-    return turnCorrelation.recordWriteProof({ turnId: resolved.turn_id, sessionId, route, proof });
+    if (isPreview) turnCorrelation.attachPairingToResponse(opts.res, resolved.pairing_token);
+    return turnCorrelation.recordWriteProof({
+      turnId: resolved.turn_id, sessionId, route, proof, pairing: resolved.pairing,
+    });
   } catch (_) {
     return null;
   }
@@ -3049,7 +3063,11 @@ app.post('/api/log-workout', async (req, res) => {
     // (sheet_written:false / no_write_confirmed:true) is exactly what a reviewer needs to see
     // that a turn previewed rather than wrote. The row previews on this body are arrays and
     // are dropped by the record's scalar-only whitelist.
-    recordTurnWriteProof(payload, session_id, '/api/log-workout', previewBody);
+    //
+    // #1173 item 1 — and it is where the turn↔write pairing is ESTABLISHED: `res` lets the
+    // minted pairing token ride back on its own header, so the approve that follows can prove
+    // it is this preview's write. Emitted before the response is sent, and header-only.
+    recordTurnWriteProof(payload, session_id, '/api/log-workout', previewBody, { isPreview: true, res });
     return standardSuccess(req, res, 'log-workout processed', previewBody, 200);
   }
 
