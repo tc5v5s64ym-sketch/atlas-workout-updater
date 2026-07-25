@@ -6,7 +6,10 @@
 > [`PHASE_4_GOLDEN_SESSION_EVIDENCE_2026-07-25.md`](PHASE_4_GOLDEN_SESSION_EVIDENCE_2026-07-25.md):
 > **verdict NOT YET; Phase 4 remains open.** In particular, §11's "what evidence would permit Phase 4 to
 > advance" was only partly satisfied, and the end-to-end trace it asks for is now known to be blocked by
-> architecture rather than by missing evidence.
+> architecture rather than by missing evidence. One mechanism description here is also superseded: §8's
+> phrasing that the route "reads `packet.decision`" is imprecise — the worders build a canonical decision
+> object of their own from the same builders, while `packet.decision` is assembled later in the
+> `res.on('finish')` shadow hook. The evidence document states the mechanism precisely.
 
 **Status:** Phase 4 ("The canonical proof") — all technically-derivable read/decision-consumption work
 that can be landed WITHOUT crossing the owner gate is complete and staged. The gate has **not** been

@@ -31,9 +31,12 @@ Sheet edit was made, and no historical rewrite occurred.
 2026-07-25, before this document was written. Planned-set checkpoints and seals are therefore back to
 dry-run, returning the W1–W3 no-write proof.
 
-`ATLAS_TURN_PRECEDENCE=1` **may remain enabled** — an owner instruction of 2026-07-25, recorded here as the
-authority for leaving it on. It is *not* justified by a blanket byte-identity claim, and this document does
-not make one. Byte-identity **between flag states** is proven only for the **two H-03 decision-consumption
+`ATLAS_TURN_PRECEDENCE=1` **may remain enabled** — an owner instruction of 2026-07-25. The **governing
+record of that authorization is the `CAMPAIGN STATE` block of
+[`docs/ATLAS_V1_EXECUTION_PLAN.md`](../ATLAS_V1_EXECUTION_PLAN.md)**, not this document: per `CLAUDE.md` an
+owner instruction governs only once it is recorded in the canonical execution plan, so an evidence file
+cannot supply that authority. The paragraph here is a pointer to it. It is *not* justified by a blanket
+byte-identity claim, and this document does not make one. Byte-identity **between flag states** is proven only for the **two H-03 decision-consumption
 seams** (the recommendation-explanation worder and the recovery worder, PRs #1157–#1160). The same flag
 also gates paths that change behaviour **by design** when it is on — substitution rejection
 ([`index.js`](../../index.js) `isTurnPrecedenceEnabled()` returning `recommendation: null` for a
@@ -79,9 +82,21 @@ the run's configuration was fixed throughout, so **one run cannot exercise both*
 the site reachable in its own configuration. Both-site coverage is **test-level** (from PRs #1157–#1160)
 and is not promoted to live proof by this document.
 
-This is a **seam-level** disposition: the live route read `packet.decision` and the reply it served was
-the canonical one. It is not a claim about any other decision type — every other decision type remains
-shadow-only, unchanged from the handoff document's §5 inventory.
+**What was consumed — the canonical decision object, not `packet.decision`.** The precise mechanism
+matters, because the looser phrasing would claim packet consumption the code does not perform.
+`wordRecommendationExplanation` calls `buildCoachingDecisionFromExplanation(snapshot)` and
+`wordRecoveryReply` calls `buildRecoveryDecision(signal)` — each constructs a **canonical decision object
+of its own** from the same builders in [`services/coachDecisionSnapshot.js`](../../services/coachDecisionSnapshot.js)
+and words the reply from it, failing closed to the prior path when no valid decision is produced.
+`packet.decision` is assembled **separately and later**, in `assembleShadowPacket` inside the
+`res.on('finish')` handler of [`services/coachQaShadow.js`](../../services/coachQaShadow.js) — after the
+response has been served. The reply therefore cannot have read the packet field.
+
+The two share a **source of truth**, not an object. So what this run proves is live consumption of the
+**canonical decision**, retiring the route-local recomputation H-03 flags; it does **not** prove that the
+live route reads the CoachTurnPacket. Packet consumption proper remains ahead. This is also a
+**seam-level** disposition and not a claim about any other decision type — every other decision type
+remains shadow-only, unchanged from the handoff document's §5 inventory.
 
 ### 3. H-08A — `packet.session`: live-observed and schema-valid, but not consumed
 
