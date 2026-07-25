@@ -188,6 +188,22 @@ async function post(payload) {
   return { response, body: await response.json(), headers: response.headers };
 }
 
+// EVERY case in this file must assert it really landed in the all-rows-duplicate branch, not just
+// that a seal happened (Codex r3649715189). The NORMAL append path also calls recordCloseoutEvent
+// and sealCloseout and also sets both envelopes on its response (index.js:3339-3341) — so if the
+// duplicate fixture or the route regressed, a case that checked only the seal and the projections
+// would stay green while silently testing the wrong branch. Shared rather than repeated so a case
+// added later cannot quietly omit it.
+function assertDuplicateBranch(d) {
+  assert.equal(d.all_rows_duplicate, true, 'this case must land in the all-rows-duplicate branch');
+  assert.equal(d.log_rows_written, 0, 'the duplicate branch appends no Log_Cleaned rows');
+  assert.equal(d.sheet_write, 'skipped_duplicate');
+  assert.equal(
+    state.appends.filter(a => a.tab === 'Log_Cleaned').length, 0,
+    'no Log_Cleaned append may have happened at all',
+  );
+}
+
 function closeoutPayload(extra = {}) {
   return {
     session_id: SESSION_ID,
@@ -227,14 +243,7 @@ test('the duplicate-closeout branch: a REAL seal + closeout event, with the proj
 
   assert.equal(response.status, 200);
   const d = body.data;
-  // It really is the branch under test.
-  assert.equal(d.all_rows_duplicate, true, 'this must be the all-rows-duplicate branch');
-  assert.equal(d.log_rows_written, 0, 'and it appended no Log_Cleaned rows');
-  assert.equal(d.sheet_write, 'skipped_duplicate');
-  assert.equal(
-    state.appends.filter(a => a.tab === 'Log_Cleaned').length, 0,
-    'no Log_Cleaned append happened at all',
-  );
+  assertDuplicateBranch(d);
 
   // …and yet it performed a genuine SEALED SIDECAR WRITE. This is what the lanes-off case could
   // not reach, and it is the write the correlation trigger was added to capture.
@@ -304,6 +313,7 @@ test('a duplicate replay that seals NOTHING new still reports honestly', async (
   }));
   assert.equal(response.status, 200);
   const d = body.data;
+  assertDuplicateBranch(d);
   assert.equal(d.ledger_seal.sealed_ok, true, 'an already-sealed ledger is verified');
   assert.equal(d.ledger_seal.sheet_written, false, 'but nothing was written');
   assert.equal(state.updates.length, updatesBefore, 'and no cell update was issued');
@@ -331,6 +341,7 @@ test('a FAILED seal never lets the record read as a verified closeout', async ()
     correlation: { turn_id: TURN_ID, pairing_token: pairingToken },
   }));
   const d = body.data;
+  assertDuplicateBranch(d);
   assert.equal(d.ledger_seal.sealed_ok, false, 'a conflicting seal fails closed');
   assert.equal(d.closeout_fully_verified, false);
 
