@@ -264,3 +264,47 @@ test('buildWriteProofRecord: refuses to build without a resolved turn id', () =>
     );
   }
 });
+
+// ─── write binding (#1172 review, P1) ─────────────────────────────────────────
+//
+// Without this, a single fresh id could be replayed against every save in the 8-minute
+// window and each record would read as "this turn authorized this write" while only
+// establishing "some recent turn in this session". These pin the stronger claim.
+
+test('a turn binds to the first real write_id it correlates', () => {
+  reset();
+  const now = 1_000_000;
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  const claim = { correlation: { turn_id: TURN_ID } };
+
+  const first = tc.resolveCorrelation(claim, { sessionId: SESSION, nowMs: now + 1, writeId: 'w-1' });
+  assert.equal(first.ok, true);
+
+  // A DIFFERENT write is a different turn's business — refused.
+  const second = tc.resolveCorrelation(claim, { sessionId: SESSION, nowMs: now + 2, writeId: 'w-2' });
+  assert.equal(second.ok, false);
+  assert.equal(second.reason, 'write_mismatch');
+  assert.equal(second.turn_id, null);
+});
+
+test('an idempotent retry of the SAME write still correlates', () => {
+  reset();
+  const now = 1_000_000;
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  const claim = { correlation: { turn_id: TURN_ID } };
+  assert.equal(tc.resolveCorrelation(claim, { sessionId: SESSION, nowMs: now + 1, writeId: 'w-1' }).ok, true);
+  const retry = tc.resolveCorrelation(claim, { sessionId: SESSION, nowMs: now + 2, writeId: 'w-1' });
+  assert.equal(retry.ok, true, 'the same logical write must not be silently dropped on retry');
+});
+
+test('a dry-run correlates without binding the turn — the approve that follows still needs it', () => {
+  reset();
+  const now = 1_000_000;
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  const claim = { correlation: { turn_id: TURN_ID } };
+  // Preview: no write_id.
+  assert.equal(tc.resolveCorrelation(claim, { sessionId: SESSION, nowMs: now + 1 }).ok, true);
+  // The real write that follows must still be able to bind and correlate.
+  const approved = tc.resolveCorrelation(claim, { sessionId: SESSION, nowMs: now + 2, writeId: 'w-1' });
+  assert.equal(approved.ok, true, 'a preview must not consume the turn');
+});

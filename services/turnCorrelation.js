@@ -91,9 +91,10 @@ const REASONS = Object.freeze({
   UNKNOWN: 'unknown',
   SESSION_MISMATCH: 'session_mismatch',
   STALE: 'stale',
+  WRITE_MISMATCH: 'write_mismatch',
 });
 
-// turnId -> { sessionId, atMs }
+// turnId -> { sessionId, atMs, writeId? }  (writeId set on first correlated real write)
 const registry = new Map();
 
 // The emitted correlation records, for the reviewable artifact. Ring-buffered like the
@@ -181,6 +182,22 @@ function resolveCorrelation(payload, opts = {}) {
     // Freshness. Inclusive at the boundary so a legitimately slow save is not dropped.
     const age = _now(opts) - rec.atMs;
     if (age > DEFAULT_MAX_AGE_MS) return miss(REASONS.STALE);
+
+    // WRITE BINDING — the difference between "some recent turn in this session" and "THIS
+    // turn authorized THIS write". Without it a single id could be replayed against every
+    // save in the window, and the record would claim more than it establishes.
+    //
+    // A dry-run carries no write_id: it is a preview, not the authorized write, so it may
+    // correlate but never binds or retires the turn — the approve that follows still needs it.
+    // A real write binds the turn to its write_id on first use. After that the turn answers
+    // ONLY to that write_id: a different one is refused (a second write is a second turn's
+    // business), while the same one may correlate again so an idempotent retry of the same
+    // logical write is not silently dropped.
+    const writeId = _isNonEmptyString(opts.writeId) ? String(opts.writeId).trim() : '';
+    if (writeId) {
+      if (rec.writeId && rec.writeId !== writeId) return miss(REASONS.WRITE_MISMATCH);
+      if (!rec.writeId) rec.writeId = writeId;
+    }
 
     return { ok: true, turn_id: turnId, reason: REASONS.OK };
   } catch (_) {

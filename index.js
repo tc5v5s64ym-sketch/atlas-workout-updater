@@ -108,9 +108,12 @@ const turnCorrelation = require('./services/turnCorrelation');
 // after the write and its proof exist, never alters the response, and returns nothing the
 // route depends on. A rejected or absent correlation claim is silent — a write must never
 // fail because its telemetry could not be joined.
-function recordTurnWriteProof(payload, sessionId, route, proof) {
+function recordTurnWriteProof(payload, sessionId, route, proof, opts = {}) {
   try {
-    const resolved = turnCorrelation.resolveCorrelation(payload, { sessionId });
+    // A dry-run passes no writeId: a preview is not the authorized write, so it correlates
+    // without binding the turn. A real write passes one, binding the turn to it for good.
+    const writeId = opts.writeId != null ? opts.writeId : (proof && proof.write_id);
+    const resolved = turnCorrelation.resolveCorrelation(payload, { sessionId, writeId });
     if (!resolved.ok) return null;
     return turnCorrelation.recordWriteProof({ turnId: resolved.turn_id, sessionId, route, proof });
   } catch (_) {
@@ -3164,6 +3167,15 @@ app.post('/api/log-workout', async (req, res) => {
       duplicateBody.idempotency_status = 'completed';
       completeWrite(idempotency.write_id, idempotency.token, duplicateBody);
     }
+    // #1165 — an all-rows-duplicate retry is NOT always a non-write. With closeout_context
+    // and the Session Plan lanes enabled, this branch can append the Session_Plans closeout
+    // event and stamp the Session_Plan_Sets seal before returning — i.e. it can perform
+    // exactly the sealed write the Phase-4 trace exists to capture. Correlate it whenever a
+    // seal was actually attempted; a bare duplicate replay that wrote nothing still records
+    // nothing. (This corrects an earlier claim of mine that the branch was a pure non-write.)
+    if (duplicateBody.ledger_seal || duplicateBody.session_plans_closeout) {
+      recordTurnWriteProof(payload, session_id, '/api/log-workout', duplicateBody);
+    }
     return standardSuccess(req, res, duplicateBody.message, duplicateBody, 200);
   }
 
@@ -3264,7 +3276,14 @@ app.post('/api/log-workout', async (req, res) => {
       // joined to the turn exactly as a success is. Correlating only the happy path would hide
       // the one case where turn↔write evidence matters most. Same non-authoritative resolve,
       // same verbatim proof (`sheet_write:'partial'`, `sheet_written:true`).
-      recordTurnWriteProof(payload, session_id, '/api/log-workout', partialBody);
+      // Correlate ONLY when THIS attempt actually committed rows. When every log row was
+      // already a duplicate and a supplied Effort repair fails, nothing is written by this
+      // request, yet partialBody still reads sheet_written:true (pre-existing route
+      // behaviour, not reshaped here — W1–W3 are owner-reserved). Recording that as
+      // correlated evidence would falsely prove the turn wrote.
+      if (logRowsWritten > 0) {
+        recordTurnWriteProof(payload, session_id, '/api/log-workout', partialBody);
+      }
       return standardError(req, res, 'Effort row append failed after log rows were written.', partialBody, 500);
     }
   }
