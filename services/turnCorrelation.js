@@ -204,6 +204,82 @@ const PROOF_KEYS = Object.freeze([
   'skipped_duplicates',
 ]);
 
+// #1173 item 2 — the CLOSEOUT PROOF ENVELOPES, projected as bounded scalars.
+//
+// The all-rows-duplicate branch in index.js correlates when `ledger_seal` or
+// `session_plans_closeout` is present, because with the Session Plan lanes enabled that branch
+// genuinely appends the Session_Plans closeout event and stamps the Session_Plan_Sets seal — the
+// sealed sidecar write the Phase-4 trace exists to capture. But neither envelope was in
+// PROOF_KEYS, and both are nested objects that the scalar-only filter drops regardless, so the
+// record emitted for that branch reported zero rows and NO seal evidence whatsoever. A trigger had
+// been added without its evidence, and it could not prove the write it was added to capture.
+//
+// PROJECT, NEVER PASS THROUGH. Each envelope is flattened to `<envelope>_<field>` under a closed
+// per-envelope whitelist, and every projected value still goes through the same scalar-only filter.
+// Both disciplines matter and neither substitutes for the other: the whitelist decides WHICH
+// fields, the scalar filter decides WHAT SHAPE.
+//
+// What is deliberately NOT listed, because a closed whitelist excludes by default:
+//   • `conflicting_write_ids` (array) and `diagnostics` (object) — droppable by shape anyway, but
+//     naming them here records that their omission is a decision, not an oversight;
+//   • the seal's `error` and the closeout's `reason` — both carry an ARBITRARY exception message
+//     (index.js wraps a seal throw as `{ reason:'seal_error', error: String(error.message) }`, and
+//     sessionPlanCapture._capture sets `reason: e.message`), which could carry a Sheet id or other
+//     internals into a telemetry line.
+//
+// The seal's own `reason` IS listed, and that asymmetry was VERIFIED by enumeration rather than
+// assumed, because it is the one place here where guessing would publish an arbitrary string:
+//   • every `reason` assignment in sessionPlanSetsStore is a string literal, except
+//     `reason: dryReason` — and `dryReason` is a ternary over two literals
+//     ('test_mode' | 'write_disabled'). ('unparseable_rows' sits inside `diagnostics`, which is
+//     not projected.) The index.js seal-throw wrappers use the literal 'seal_error' and isolate
+//     the arbitrary text in `error`, which is excluded above.
+//   • the CLOSEOUT's `reason`, by contrast, genuinely can be anything: sessionPlanCapture
+//     interpolates `${e.message}` into it and its writer catch falls back to `e.message` outright.
+//     So its fixed vocabulary lives on `status`, which is what gets projected instead.
+const PROOF_PROJECTIONS = Object.freeze({
+  ledger_seal: Object.freeze([
+    'sheet_written', 'no_write_confirmed', 'dry_run',
+    'sealed', 'already_sealed', 'would_seal', 'sealed_ok',
+    'no_ledger', 'read_failed', 'expected_cells', 'updated_cells',
+    'reason',
+  ]),
+  // `plan_version` is the closeout event's ROW DISCRIMINATOR, not decoration: it is one of the
+  // fields hashed into `sessionPlanEvents.idempotencyKey` (services/sessionPlanEvents.js:74), so
+  // where a session has more than one accepted plan version, `session_id` alone cannot recover
+  // WHICH `session_closeout` row was written or skipped — and the slice-3 artifact join would be
+  // unable to substantiate its own turn→closeout claim. It was excluded in the first draft as "a
+  // plan token rather than write proof" (Codex r3649662429 corrected that: being the discriminator
+  // is precisely what makes it write proof).
+  //
+  // It is CLIENT-SUPPLIED and must therefore be validated before publication. An earlier version of
+  // this comment called it "server-generated", which is simply false: it is minted client-side as
+  // `pv_` + crypto.randomUUID (src/app/planAcceptance.js mintId) and the server accepts anything
+  // matching /^pv_.+/ straight off the request body (index.js:2842). Unvalidated, the projection was
+  // a pass-through for arbitrary client text up to the body limit (Codex r3649675188) — see
+  // PROJECTION_VALIDATORS.
+  session_plans_closeout: Object.freeze(['status', 'captured', 'written', 'skipped', 'plan_version']),
+});
+
+// A projected STRING may never be unbounded. The scalar filter checks shape, not size, and every
+// enumeration proving a field is fixed-vocabulary is a property of code that can change — so this is
+// the structural backstop rather than a restatement of that reasoning. Comfortably above every real
+// value (the longest is a 39-char `pv_` UUID; seal reasons are short literals).
+const MAX_PROJECTED_STRING_LENGTH = 128;
+
+// The canonical accepted-plan token: `pv_` + a UUID, as minted by src/app/planAcceptance.js.
+const PLAN_VERSION_RE = /^pv_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Per-field validators for projected values that are CLIENT-INFLUENCED, keyed `envelope.field`. A
+// value that fails is DROPPED — the record then simply cannot name that fact, which is an honest
+// under-claim, and the rest of the envelope still projects: one bad field costs its own key, never
+// the evidence around it. This mirrors how the rest of the module treats every client-supplied id
+// (MAX_TURN_ID_LENGTH + TURN_ID_RE for a turn id, the exact PAIRING_TOKEN_RE for a token); the first
+// draft of the projection bounded neither, which was the inconsistency Codex found.
+const PROJECTION_VALIDATORS = Object.freeze({
+  'session_plans_closeout.plan_version': v => v === null || PLAN_VERSION_RE.test(String(v)),
+});
+
 // The resolution outcomes. Exactly one is returned per claim; each rejection names WHY, so a
 // reviewer can tell a client that never claimed from one whose claim was refused.
 // `write_mismatch` is deliberately ABSENT: first-write-wins is retired, not bypassed, so no
@@ -633,10 +709,26 @@ function resolveCorrelation(payload, opts = {}) {
 /**
  * Build the bounded correlation record joining a turn to the write it authorized.
  *
- * The proof is COPIED VERBATIM from the write response under a closed whitelist — invariants
- * W1–W3 are owner-reserved, so nothing here renames, reshapes, derives or infers a proof
- * field. Returns null without a resolved, well-formed turn id: a record that cannot name its
- * turn is not evidence.
+ * TWO proof mechanisms with DIFFERENT contracts. Keeping them straight is the whole point:
+ *
+ *   1. TOP-LEVEL proof fields (`PROOF_KEYS`) are COPIED VERBATIM under a closed whitelist. Nothing
+ *      here renames, reshapes, derives or infers one — invariants W1–W3 are owner-reserved, so such
+ *      a field appears under its own name with its own value, or not at all.
+ *
+ *   2. The CLOSEOUT ENVELOPES (`PROOF_PROJECTIONS`) are nested objects, which the scalar-only
+ *      filter drops outright, so they are PROJECTED: flattened to `<envelope>_<field>` under a
+ *      closed per-envelope whitelist. That IS a deliberate rename, and it is safe precisely because
+ *      it is not a W1–W3 field being reshaped — `ledger_seal` and `session_plans_closeout` are
+ *      sidecar-write envelopes, the projection ADDS namespaced keys rather than replacing anything,
+ *      and the original envelope is never carried.
+ *
+ * (#1173 item 2. The earlier wording said every proof field was copied verbatim and that this
+ * function never renames one, which the projection loop contradicts — Codex r3649648867. A stale
+ * invariant is worse than none: it could lead a future proof-safety change to preserve the wrong
+ * behaviour.)
+ *
+ * Returns null without a resolved, well-formed turn id: a record that cannot name its turn is not
+ * evidence.
  */
 function buildWriteProofRecord(params) {
   const p = _isPlainObject(params) ? params : {};
@@ -644,14 +736,32 @@ function buildWriteProofRecord(params) {
 
   const src = _isPlainObject(p.proof) ? p.proof : {};
   const proof = {};
+  // Scalars only. A nested object or array on a proof key could smuggle rows or a body into the
+  // record, so it is dropped rather than serialized.
+  const isScalar = v => v === null || typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean';
   for (const key of PROOF_KEYS) {
     if (Object.prototype.hasOwnProperty.call(src, key) && src[key] !== undefined) {
-      const v = src[key];
-      // Scalars only. A nested object or array on a proof key could smuggle rows or a body
-      // into the record, so it is dropped rather than serialized.
-      if (v === null || typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
-        proof[key] = v;
-      }
+      if (isScalar(src[key])) proof[key] = src[key];
+    }
+  }
+
+  // #1173 item 2 — flatten the closeout proof envelopes to bounded scalars. Namespaced as
+  // `<envelope>_<field>` so a projected key can never collide with a top-level proof key, and each
+  // value still passes the same scalar-only filter: the whitelist decides WHICH fields, the filter
+  // decides WHAT SHAPE. The envelope object itself is never carried.
+  for (const [envelope, fields] of Object.entries(PROOF_PROJECTIONS)) {
+    const nested = src[envelope];
+    if (!_isPlainObject(nested)) continue;
+    for (const field of fields) {
+      if (!Object.prototype.hasOwnProperty.call(nested, field)) continue;
+      const v = nested[field];
+      if (v === undefined || !isScalar(v)) continue;
+      // No projected string may be unbounded, whatever the field.
+      if (typeof v === 'string' && v.length > MAX_PROJECTED_STRING_LENGTH) continue;
+      // Client-influenced fields must also satisfy their own shape.
+      const validate = PROJECTION_VALIDATORS[`${envelope}.${field}`];
+      if (validate && !validate(v)) continue;
+      proof[`${envelope}_${field}`] = v;
     }
   }
 
@@ -812,6 +922,7 @@ module.exports = {
   MAX_OUTSTANDING_PAIRINGS,
   IDENTITY_EXCLUDED_FIELDS,
   PROOF_KEYS,
+  PROOF_PROJECTIONS,
   REASONS,
   isWellFormedTurnId,
   isWellFormedPairingToken,
