@@ -84,7 +84,7 @@ const crypto = require('crypto');
 const { isShadowEnabled } = require('./interactionTraceShadow');
 // Only to locate the Effort contract's session column by NAME rather than a hardcoded index, so a
 // schema change cannot silently move the session identity out from under the check below.
-const { effortColumns, logCleanedColumns } = require('../config/columns');
+const { effortColumns, logCleanedColumns, effortRowFieldAliases } = require('../config/columns');
 
 // A correlation claim is good for one live-workout beat — long enough for a lifter to read
 // a reply, do the set, and save; short enough that a stale client cannot attribute a write
@@ -322,6 +322,12 @@ function _previewIdentity(payload, opts = {}) {
 const EFFORT_SESSION_INDEX = effortColumns.indexOf('session_id');
 const LOG_SESSION_INDEX = logCleanedColumns.indexOf('session_id');
 
+// The object-form Effort session aliases, IN NORMALIZATION ORDER — taken from the shared contract
+// rather than restated, so an alias added there is covered here automatically.
+const EFFORT_SESSION_ALIASES = Object.freeze(
+  (effortRowFieldAliases && effortRowFieldAliases.session_id) || ['session_id'],
+);
+
 // Any value the write path would use as a session, rendered for comparison. Deliberately NOT a
 // string-only check: `normalizeLogRowObject` accepts any TRUTHY value (`row.session_id ||
 // row.sessionId || topLevel`), so a number, boolean or object would win at write time while a
@@ -345,7 +351,13 @@ function _renderSessionValue(v) {
  *     (index.js:512). Every positional row is therefore an EXPLICIT session, and an empty one is
  *     written as an empty session_id — a different session, not an inherited one. So positional
  *     rows are always compared, empty included.
- * An array `effort_row` is likewise written as given (index.js:541-545).
+ *
+ * The Effort row is a THIRD set of semantics, opposite to an object log row: an array is written as
+ * given (index.js:541-545), and `normalizeEffortRow` resolves the OBJECT form by PROPERTY PRESENCE
+ * via `effortRowFieldAliases` (`hasOwnProperty`, index.js:548-555), NOT truthiness — so a falsy
+ * `session_id` is written VERBATIM rather than inheriting the top level. Reusing the log-row
+ * truthiness rule here skipped exactly those values (Codex r3649591244), and the comparison must
+ * use the SAME alias normalization will select: the first one PRESENT, in the map's own order.
  */
 function _explicitRowSessionIds(payload) {
   const p = _isPlainObject(payload) ? payload : {};
@@ -365,8 +377,15 @@ function _explicitRowSessionIds(payload) {
   if (Array.isArray(effort)) {
     if (EFFORT_SESSION_INDEX >= 0) found.push(_renderSessionValue(effort[EFFORT_SESSION_INDEX]));
   } else if (_isPlainObject(effort)) {
-    const raw = effort.session_id || effort.sessionId;
-    if (raw) found.push(_renderSessionValue(raw));
+    // Presence, not truthiness — and the FIRST present alias, which is the one normalization
+    // writes. An alias it would ignore must not decide the correlation. No session property at all
+    // makes `normalizeEffortRow` throw before any write, so there is nothing to contaminate.
+    for (const alias of EFFORT_SESSION_ALIASES) {
+      if (Object.prototype.hasOwnProperty.call(effort, alias)) {
+        found.push(_renderSessionValue(effort[alias]));
+        break;
+      }
+    }
   }
   return found;
 }

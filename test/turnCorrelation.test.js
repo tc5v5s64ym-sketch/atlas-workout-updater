@@ -809,6 +809,73 @@ test('an effort_row naming a DIFFERENT session is refused, array or object form'
   );
 });
 
+// Codex fifth round P1 (r3649591244) — the fourth shape, and the semantics here are the OPPOSITE
+// of an object log row. `normalizeEffortRow` selects aliases by PROPERTY PRESENCE
+// (`hasOwnProperty`, index.js:548-555), not truthiness, so a FALSY session_id is written VERBATIM
+// to the Effort session column instead of inheriting the top level. Reusing the log-row truthiness
+// rule here skipped exactly those values.
+
+test('an object-form effort_row with a FALSY session is refused — presence, not truthiness', () => {
+  reset();
+  const now = 1_000_000;
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  for (const falsy of ['', 0, false, null]) {
+    const rogue = payloadWith({
+      correlation: { turn_id: TURN_ID },
+      effort_row: { date: '2026-07-25', session_id: falsy, duration: 3600 },
+    });
+    assert.equal(
+      tc.resolveCorrelation(rogue, { sessionId: SESSION, nowMs: now + 1, ...PREVIEW }).reason,
+      'session_mismatch',
+      `effort session ${JSON.stringify(falsy)} is written verbatim and must fail closed`,
+    );
+  }
+});
+
+test('the sessionId alias on an object-form effort_row is checked too', () => {
+  reset();
+  const now = 1_000_000;
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  for (const bad of [OTHER_SESSION, '', 0]) {
+    const rogue = payloadWith({
+      correlation: { turn_id: TURN_ID },
+      effort_row: { date: '2026-07-25', sessionId: bad, duration: 3600 },
+    });
+    assert.equal(
+      tc.resolveCorrelation(rogue, { sessionId: SESSION, nowMs: now + 1, ...PREVIEW }).reason,
+      'session_mismatch',
+      `effort sessionId ${JSON.stringify(bad)} must fail closed`,
+    );
+  }
+});
+
+test('the effort session is compared via the SAME alias normalization will select', () => {
+  reset();
+  const now = 1_000_000;
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  // Both aliases present. `effortRowFieldAliases.session_id` is ['session_id','sessionId'] and
+  // normalization takes the FIRST present, so the value actually WRITTEN is the bound session —
+  // this must not be refused on account of the ignored alias.
+  const ok = payloadWith({
+    correlation: { turn_id: TURN_ID },
+    effort_row: { date: '2026-07-25', session_id: SESSION, sessionId: OTHER_SESSION, duration: 3600 },
+  });
+  assert.equal(
+    tc.resolveCorrelation(ok, { sessionId: SESSION, nowMs: now + 1, ...PREVIEW }).ok,
+    true,
+    'the alias normalization ignores must not decide the correlation',
+  );
+  // And the reverse: the FIRST alias is the rogue one, so it IS what gets written.
+  const rogue = payloadWith({
+    correlation: { turn_id: TURN_ID },
+    effort_row: { date: '2026-07-25', session_id: OTHER_SESSION, sessionId: SESSION, duration: 3600 },
+  });
+  assert.equal(
+    tc.resolveCorrelation(rogue, { sessionId: SESSION, nowMs: now + 2, ...PREVIEW }).reason,
+    'session_mismatch',
+  );
+});
+
 test('a preview with NO effort_row cannot have one added by the live write', () => {
   reset();
   const now = 1_000_000;
