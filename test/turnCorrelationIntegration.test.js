@@ -347,18 +347,20 @@ test('fail-closed: a valid token on a DIFFERENT workout correlates nothing (Code
   assert.equal(tc.recentWriteProofs().length, before, 'a mismatched payload must add no record');
 });
 
-test('the seal-retry shape still correlates through the real route (effort_row dropped)', async () => {
+test('fail-closed: a FIRST live write that drops the previewed effort row correlates nothing', async () => {
   tc._resetForTesting();
   resetIdempotencyStore();
   state.appends.length = 0;
   tc.issueTurn(TURN_ID, SESSION_ID);
-  // Preview carries an effort row; the retry-shaped approve drops it and re-mints the write_id,
-  // exactly as app.js:7566-7567 does. Both are outside the identity, so this must still join.
+  // The preview stages an Effort append. The first approve silently omits it — so the write that
+  // happens is NOT the write that was previewed, and it is not the documented seal retry either
+  // (that only follows a committed write, app.js:7563-7567). It must not be recorded as bound.
   const { pairingToken } = await previewForToken({
     correlation: { turn_id: TURN_ID },
     write_id: 'wid-int-seal-1',
     effort_row: ['2026-07-25', SESSION_ID, 3600, 400, 500, 130, 165, 'Gym', ''],
   });
+  const before = tc.recentWriteProofs().length;
 
   const { status, body } = await postWrite({
     session_id: SESSION_ID,
@@ -367,13 +369,25 @@ test('the seal-retry shape still correlates through the real route (effort_row d
     log_rows: logRows(),
     correlation: { turn_id: TURN_ID, pairing_token: pairingToken },
   });
-  assert.equal(status, 200);
+  assert.equal(status, 200, 'correlation must never block or alter a write');
   assert.equal(body.data.sheet_write, 'success');
+  assert.equal(tc.recentWriteProofs().length, before, 'the dropped Effort append must cost the correlation');
+  // The transition itself (effort removal AFTER an exact write) is unit-covered in
+  // test/turnCorrelation.test.js; exercising it end-to-end needs the duplicate-closeout branch,
+  // i.e. the Session Plan lanes and a seal fixture — #1173 item 3's harness, not this file's.
+});
 
-  const records = tc.recentWriteProofs();
-  assert.equal(records.length, 2, 'the seal retry must not be locked out of its correlation');
-  assert.equal(records[1].pairing.payload_bound, true);
-  assert.equal(records[1].pairing.previewed_write_id_match, false, 'the re-mint stays visible');
+test('a live write that names another session in a ROW correlates nothing (Codex P1)', async () => {
+  tc._resetForTesting();
+  resetIdempotencyStore();
+  state.appends.length = 0;
+  tc.issueTurn(TURN_ID, SESSION_ID);
+  // A row-level session_id WINS at write time (index.js:449), so this row lands under
+  // OTHER_SESSION while the record would have named SESSION_ID. Refused outright.
+  const rows = [{ exercise: 'Bench Press', weight: 225, reps: 5, rir: 2, set_number: 1, session_id: OTHER_SESSION }];
+  const { pairingToken } = await previewForToken({ correlation: { turn_id: TURN_ID }, log_rows: rows });
+  assert.equal(pairingToken, null, 'a rogue row session must not even establish a pairing');
+  assert.equal(tc.recentWriteProofs().length, 0, 'and it must record nothing');
 });
 
 test('the pairing header is exposed to CORS clients, or a browser would hide it', async () => {

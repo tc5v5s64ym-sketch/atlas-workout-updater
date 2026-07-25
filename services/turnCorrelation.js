@@ -82,6 +82,9 @@
 
 const crypto = require('crypto');
 const { isShadowEnabled } = require('./interactionTraceShadow');
+// Only to locate the Effort contract's session column by NAME rather than a hardcoded index, so a
+// schema change cannot silently move the session identity out from under the check below.
+const { effortColumns } = require('../config/columns');
 
 // A correlation claim is good for one live-workout beat — long enough for a lifter to read
 // a reply, do the set, and save; short enough that a stale client cannot attribute a write
@@ -313,6 +316,42 @@ function _previewIdentity(payload, opts = {}) {
   return crypto.createHash('sha256').update(serialized).digest('hex');
 }
 
+// Where the Effort contract keeps its session identity. An array `effort_row` is passed through
+// VERBATIM (index.js:541-545), so this column is client-controlled.
+const EFFORT_SESSION_INDEX = effortColumns.indexOf('session_id');
+
+/**
+ * Every session identity a payload EXPLICITLY names below its top level (Codex P1, r3649557069).
+ *
+ * `normalizeLogRowObject` resolves a row's session as `row.session_id || row.sessionId ||
+ * topLevelSessionId` (index.js:449) — a row-level id WINS — and an array `effort_row` is written
+ * as given. So comparing only the top-level session let a request write rows under session B while
+ * the correlation record named session A: cross-session contamination inside the evidence itself.
+ *
+ * Returns the explicit identities found. An absent row-level id is not a mismatch (it inherits the
+ * top level, which is already checked); only an id that DISAGREES is.
+ */
+function _explicitRowSessionIds(payload) {
+  const p = _isPlainObject(payload) ? payload : {};
+  const found = [];
+  if (Array.isArray(p.log_rows)) {
+    for (const row of p.log_rows) {
+      if (!_isPlainObject(row)) continue;
+      const raw = row.session_id || row.sessionId;
+      if (_isNonEmptyString(raw)) found.push(String(raw).trim());
+    }
+  }
+  const effort = p.effort_row;
+  if (Array.isArray(effort) && EFFORT_SESSION_INDEX >= 0) {
+    const raw = effort[EFFORT_SESSION_INDEX];
+    if (_isNonEmptyString(raw)) found.push(String(raw).trim());
+  } else if (_isPlainObject(effort)) {
+    const raw = effort.session_id || effort.sessionId;
+    if (_isNonEmptyString(raw)) found.push(String(raw).trim());
+  }
+  return found;
+}
+
 /**
  * Does this live payload describe the write its preview fingerprinted?
  *
@@ -321,27 +360,47 @@ function _previewIdentity(payload, opts = {}) {
  * is allowed only as a REMOVAL from a preview that had one — a changed effort row, or one ADDED by
  * a live write that never previewed it, is an unpreviewed Effort append and stays refused.
  *
+ * The relaxed comparison is further gated on the pairing having ALREADY accepted an exact-identity
+ * write (Codex P1, r3649557072). Without that, the very FIRST live request could silently omit the
+ * previewed Effort append and still be reported exactly bound, having never performed the write
+ * that was previewed. The real retry cannot occur first: app.js deletes `effort_row` only after a
+ * live write committed rows and returned `closeout_fully_verified:false` (app.js:7563-7567).
+ *
+ * Returns { matched, effortTransition } so the record can state which comparison succeeded rather
+ * than leave a reviewer unable to tell an exact binding from a relaxed one.
+ *
  * An unbound pairing (identity null) has nothing to check and matches trivially; it can only ever
  * report `payload_bound:false`, so it never publishes a write-level claim it cannot support.
  */
 function _payloadMatchesPairing(pairing, payload) {
-  if (!pairing || pairing.identity === null) return true;
-  if (_previewIdentity(payload) === pairing.identity) return true;
-  const liveHasEffort = _isPlainObject(payload) && payload.effort_row !== undefined;
-  if (liveHasEffort || pairing.identityEffortDropped === null) return false;
-  return _previewIdentity(payload, { dropEffort: true }) === pairing.identityEffortDropped;
+  const no = { matched: false, effortTransition: false };
+  if (!pairing || pairing.identity === null) return { matched: true, effortTransition: false };
+  if (_previewIdentity(payload) === pairing.identity) return { matched: true, effortTransition: false };
+  // Only a REMOVAL, only from a preview that had one, and only after an exact write.
+  if (!pairing.exactMatched) return no;
+  if (pairing.identityEffortDropped === null) return no;
+  if (_isPlainObject(payload) && payload.effort_row !== undefined) return no;
+  if (_previewIdentity(payload, { dropEffort: true }) !== pairing.identityEffortDropped) return no;
+  return { matched: true, effortTransition: true };
 }
 
 // The pairing facts a record may publish. Server-owned scalars only. Neither the TOKEN nor the
 // IDENTITY digest is ever included: the token stays a live capability for the rest of the window,
 // and the digest is derived from workout content.
-function _pairingSummary(rec, pairing, writeId) {
+function _pairingSummary(rec, pairing, writeId, effortTransition = false) {
   if (!pairing) {
     return {
-      established_at_preview: false, write_attempt: 0, previewed_write_id_match: null, payload_bound: false,
+      established_at_preview: false,
+      write_attempt: 0,
+      previewed_write_id_match: null,
+      payload_bound: false,
+      effort_transition: false,
     };
   }
   return {
+    // true when the match came via the effort-removal transition rather than an exact identity —
+    // so a reviewer can tell an exactly-bound record from a relaxed one instead of guessing.
+    effort_transition: effortTransition === true,
     established_at_preview: true,
     write_attempt: writeId && rec ? rec.writeIds.indexOf(writeId) + 1 : 0,
     // null = the preview carried no write_id to compare (four of the five write paths), which
@@ -421,6 +480,13 @@ function resolveCorrelation(payload, opts = {}) {
     const sid = _isNonEmptyString(opts.sessionId) ? String(opts.sessionId).trim() : '';
     if (!sid || sid !== rec.sessionId) return miss(REASONS.SESSION_MISMATCH);
 
+    // ...and the same check for every session identity the payload names BELOW its top level. A
+    // row-level `session_id` beats the top-level one at write time (index.js:449), so without this
+    // a request could write rows under another session while the record named this one.
+    for (const rowSid of _explicitRowSessionIds(payload)) {
+      if (rowSid !== rec.sessionId) return miss(REASONS.SESSION_MISMATCH);
+    }
+
     // Freshness. Inclusive at the boundary so a legitimately slow save is not dropped.
     const nowMs = _now(opts);
     if (nowMs - rec.atMs > DEFAULT_MAX_AGE_MS) return miss(REASONS.STALE);
@@ -444,6 +510,9 @@ function resolveCorrelation(payload, opts = {}) {
         // The same identity with `effort_row` omitted, so the documented seal retry's effort
         // REMOVAL is a permitted transition without loosening the gate for anything else.
         identityEffortDropped: _previewIdentity(payload, { dropEffort: true }),
+        // Set once this pairing accepts an EXACT-identity write. The effort-removal transition is
+        // legal only after that, because the real retry cannot happen before it.
+        exactMatched: false,
         // The one path whose dry-run carries the write_id it will approve with. Recorded as
         // corroboration only; four of five paths send nothing here.
         previewedWriteId: _isNonEmptyString(opts.previewedWriteId) ? String(opts.previewedWriteId).trim() : null,
@@ -474,7 +543,10 @@ function resolveCorrelation(payload, opts = {}) {
     // resolve ok and attribute the wrong write to this turn. The live payload must fingerprint to
     // the identity the server computed at preview. An unbound pairing (identity null) has nothing
     // to check, so it correlates but can only ever report payload_bound:false.
-    if (!_payloadMatchesPairing(pairing, payload)) return miss(REASONS.PAYLOAD_MISMATCH);
+    const match = _payloadMatchesPairing(pairing, payload);
+    if (!match.matched) return miss(REASONS.PAYLOAD_MISMATCH);
+    // An exact match unlocks the effort-removal transition for the retry that may follow.
+    if (pairing.identity !== null && !match.effortTransition) pairing.exactMatched = true;
 
     // Bound the replay, per TURN. A repeat of a write_id already recorded is the SAME attempt (an
     // idempotent retry of one logical write must not be dropped); a new write_id is the next
@@ -488,7 +560,7 @@ function resolveCorrelation(payload, opts = {}) {
       ok: true,
       turn_id: turnId,
       reason: REASONS.OK,
-      pairing: _pairingSummary(rec, pairing, writeId),
+      pairing: _pairingSummary(rec, pairing, writeId, match.effortTransition),
     };
   } catch (_) {
     return miss(REASONS.MALFORMED);
@@ -534,6 +606,7 @@ function buildWriteProofRecord(params) {
       ? src2.previewed_write_id_match
       : null,
     payload_bound: src2.payload_bound === true,
+    effort_transition: src2.effort_transition === true,
   };
 
   return {

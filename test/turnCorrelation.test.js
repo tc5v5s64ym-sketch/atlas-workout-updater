@@ -599,39 +599,121 @@ test('the excluded fields really are excluded: test_mode, write_id and the token
   assert.equal(r.pairing.payload_bound, true);
 });
 
-test('effort_row REMOVAL is a permitted transition, but only removal', () => {
+// Codex third round P1 (r3649557072). Permitting the effort-dropped digest unconditionally let
+// the VERY FIRST live request silently omit the previewed Effort append and still be reported
+// `payload_bound: true` — it never performed the write that was previewed. The real retry is
+// distinguishable and Codex named the distinguisher: app.js only deletes `effort_row` AFTER a
+// first live write committed rows and came back `closeout_fully_verified:false` (app.js:7563-7567),
+// so by then this same pairing has already accepted an EXACT-identity write. The relaxed
+// comparison is gated on exactly that pairing state, and the transition is recorded.
+
+test('effort_row REMOVAL is permitted only AFTER an exact-identity write on the same pairing', () => {
   reset();
   const now = 1_000_000;
   tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
-  const preview = payloadWith({
-    correlation: { turn_id: TURN_ID },
-    test_mode: 'true',
-    write_id: 'w-1',
-    effort_row: ['2026-07-25', SESSION, 3600, 400],
-    closeout_context: { plan_version: 'pv_1', items: [] },
-  });
-  const { pairing_token } = tc.resolveCorrelation(preview, { sessionId: SESSION, nowMs: now + 1, ...PREVIEW });
+  const closeout = { plan_version: 'pv_1', items: [] };
+  const effort = ['2026-07-25', SESSION, 3600, 400];
+  const { pairing_token } = tc.resolveCorrelation(
+    payloadWith({ correlation: { turn_id: TURN_ID }, test_mode: 'true', write_id: 'w-1', effort_row: effort, closeout_context: closeout }),
+    { sessionId: SESSION, nowMs: now + 1, ...PREVIEW },
+  );
 
-  // The documented seal retry: effort_row DELETED, write_id re-minted (app.js:7566-7567).
-  const retry = payloadWith({
-    correlation: { turn_id: TURN_ID, pairing_token },
-    write_id: 'w-2',
-    closeout_context: { plan_version: 'pv_1', items: [] },
-  });
-  const ok = tc.resolveCorrelation(retry, { sessionId: SESSION, nowMs: now + 2, writeId: 'w-2' });
-  assert.equal(ok.ok, true, 'the documented retry must be a permitted transition');
+  // The FIRST live write drops effort. That is NOT the documented retry — it is a client mutation
+  // on the initial approval, and the previewed Effort append never happens.
+  const droppedFirst = payloadWith({ correlation: { turn_id: TURN_ID, pairing_token }, write_id: 'w-1', closeout_context: closeout });
+  const early = tc.resolveCorrelation(droppedFirst, { sessionId: SESSION, nowMs: now + 2, writeId: 'w-1' });
+  assert.equal(early.ok, false, 'an effort drop before any exact write must not claim an exact binding');
+  assert.equal(early.reason, 'payload_mismatch');
+
+  // The real first approve matches exactly.
+  const exact = payloadWith({ correlation: { turn_id: TURN_ID, pairing_token }, write_id: 'w-1', effort_row: effort, closeout_context: closeout });
+  const first = tc.resolveCorrelation(exact, { sessionId: SESSION, nowMs: now + 3, writeId: 'w-1' });
+  assert.equal(first.ok, true);
+  assert.equal(first.pairing.effort_transition, false, 'an exact match is not a transition');
+
+  // NOW the documented retry is legal: effort deleted, write_id re-minted (app.js:7566-7567).
+  const retry = payloadWith({ correlation: { turn_id: TURN_ID, pairing_token }, write_id: 'w-2', closeout_context: closeout });
+  const ok = tc.resolveCorrelation(retry, { sessionId: SESSION, nowMs: now + 4, writeId: 'w-2' });
+  assert.equal(ok.ok, true, 'the documented retry must not be locked out');
   assert.equal(ok.pairing.payload_bound, true);
+  assert.equal(ok.pairing.effort_transition, true, 'and the reviewer must see it was the relaxed match');
 
-  // But dropping effort AND altering the closeout context is not the documented transition.
+  // Still only removal: dropping effort AND altering the closeout context is refused even now.
   const overreach = payloadWith({
     correlation: { turn_id: TURN_ID, pairing_token },
     write_id: 'w-3',
     closeout_context: { plan_version: 'pv_2', items: [] },
   });
   assert.equal(
-    tc.resolveCorrelation(overreach, { sessionId: SESSION, nowMs: now + 3, writeId: 'w-3' }).reason,
+    tc.resolveCorrelation(overreach, { sessionId: SESSION, nowMs: now + 5, writeId: 'w-3' }).reason,
     'payload_mismatch',
     'the permitted transition is effort REMOVAL alone, not a licence to change anything else',
+  );
+});
+
+// ─── row-level session identity (Codex third round P1, r3649557069) ────────────
+//
+// `normalizeLogRowObject` (index.js:449) resolves each row's session as
+// `row.session_id || row.sessionId || topLevelSessionId` — a row-level id WINS. And an array
+// `effort_row` is passed through verbatim (index.js:541-545), so its session column is
+// client-controlled too. Comparing only the top-level session let a request write rows under
+// session B while the correlation record named session A: cross-session contamination inside the
+// evidence itself. Every EXPLICIT row-level session identity must match the bound session.
+
+test('a log row naming a DIFFERENT session is refused (session_mismatch)', () => {
+  reset();
+  const now = 1_000_000;
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  for (const key of ['session_id', 'sessionId']) {
+    const rogue = payloadWith({
+      correlation: { turn_id: TURN_ID },
+      log_rows: [
+        { exercise: 'Bench Press', weight: 225, reps: 5, set_number: 1 },
+        { exercise: 'Bench Press', weight: 225, reps: 5, set_number: 2, [key]: OTHER_SESSION },
+      ],
+    });
+    // Refused at PREVIEW, so no pairing is left behind for a live write to find either.
+    const preview = tc.resolveCorrelation(rogue, { sessionId: SESSION, nowMs: now + 1, ...PREVIEW });
+    assert.equal(preview.ok, false, `row-level ${key} must not establish a pairing`);
+    assert.equal(preview.reason, 'session_mismatch');
+    // And refused on a live write.
+    const live = tc.resolveCorrelation(rogue, { sessionId: SESSION, nowMs: now + 2, writeId: 'w-1' });
+    assert.equal(live.ok, false, `row-level ${key} must not correlate`);
+    assert.equal(live.reason, 'session_mismatch');
+  }
+});
+
+test('a log row that repeats the bound session explicitly is fine', () => {
+  reset();
+  const now = 1_000_000;
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  const ok = payloadWith({
+    correlation: { turn_id: TURN_ID },
+    log_rows: [{ exercise: 'Bench Press', weight: 225, reps: 5, set_number: 1, session_id: SESSION }],
+  });
+  assert.equal(tc.resolveCorrelation(ok, { sessionId: SESSION, nowMs: now + 1, ...PREVIEW }).ok, true);
+});
+
+test('an effort_row naming a DIFFERENT session is refused, array or object form', () => {
+  reset();
+  const now = 1_000_000;
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  // Array form: positional, and the Effort contract is date | session_id | duration | …
+  const rogueArray = payloadWith({
+    correlation: { turn_id: TURN_ID },
+    effort_row: ['2026-07-25', OTHER_SESSION, 3600, 400, 500, 130, 165, 'Gym', ''],
+  });
+  assert.equal(
+    tc.resolveCorrelation(rogueArray, { sessionId: SESSION, nowMs: now + 1, ...PREVIEW }).reason,
+    'session_mismatch',
+  );
+  const rogueObject = payloadWith({
+    correlation: { turn_id: TURN_ID },
+    effort_row: { date: '2026-07-25', session_id: OTHER_SESSION, duration: 3600 },
+  });
+  assert.equal(
+    tc.resolveCorrelation(rogueObject, { sessionId: SESSION, nowMs: now + 2, writeId: 'w-1' }).reason,
+    'session_mismatch',
   );
 });
 
@@ -664,17 +746,18 @@ test('a different date or session in the payload is also refused', () => {
   assert.equal(tc.resolveCorrelation(shiftedDate, { sessionId: SESSION, nowMs: now + 2, writeId: 'w-1' }).reason, 'payload_mismatch');
 });
 
-test('the seal RETRY still matches — write_id, effort_row and test_mode are outside the identity', () => {
+test('the seal RETRY still matches — write_id and test_mode are outside the identity', () => {
   reset();
   const now = 1_000_000;
   tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
-  // The preview carries test_mode, a write_id, and an effort row.
+  // The preview carries test_mode and a write_id (no effort row here — the effort REMOVAL
+  // transition has its own case, since it is legal only after an exact-identity write).
   const { pairing_token } = tc.resolveCorrelation(
-    payloadWith({ correlation: { turn_id: TURN_ID }, test_mode: 'true', write_id: 'w-1', effort_row: ['2026-07-25', SESSION, 3600] }),
+    payloadWith({ correlation: { turn_id: TURN_ID }, test_mode: 'true', write_id: 'w-1' }),
     { sessionId: SESSION, nowMs: now + 1, isPreview: true, previewedWriteId: 'w-1' },
   );
-  // The approve drops test_mode. The seal retry then re-mints write_id and deletes effort_row
-  // (app.js:7566-7567). All three must be irrelevant to the identity, or the retry is locked out.
+  // The approve drops test_mode; the seal retry re-mints write_id (app.js:7566). Both must be
+  // irrelevant to the identity, or the retry is locked out.
   const retry = payloadWith({ correlation: { turn_id: TURN_ID, pairing_token }, write_id: 'w-2' });
   const r = tc.resolveCorrelation(retry, { sessionId: SESSION, nowMs: now + 2, writeId: 'w-2' });
   assert.equal(r.ok, true, 'the documented seal retry must never be locked out by the payload gate');
