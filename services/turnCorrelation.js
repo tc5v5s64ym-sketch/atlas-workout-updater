@@ -667,10 +667,26 @@ function resolveCorrelation(payload, opts = {}) {
 /**
  * Build the bounded correlation record joining a turn to the write it authorized.
  *
- * The proof is COPIED VERBATIM from the write response under a closed whitelist — invariants
- * W1–W3 are owner-reserved, so nothing here renames, reshapes, derives or infers a proof
- * field. Returns null without a resolved, well-formed turn id: a record that cannot name its
- * turn is not evidence.
+ * TWO proof mechanisms with DIFFERENT contracts. Keeping them straight is the whole point:
+ *
+ *   1. TOP-LEVEL proof fields (`PROOF_KEYS`) are COPIED VERBATIM under a closed whitelist. Nothing
+ *      here renames, reshapes, derives or infers one — invariants W1–W3 are owner-reserved, so such
+ *      a field appears under its own name with its own value, or not at all.
+ *
+ *   2. The CLOSEOUT ENVELOPES (`PROOF_PROJECTIONS`) are nested objects, which the scalar-only
+ *      filter drops outright, so they are PROJECTED: flattened to `<envelope>_<field>` under a
+ *      closed per-envelope whitelist. That IS a deliberate rename, and it is safe precisely because
+ *      it is not a W1–W3 field being reshaped — `ledger_seal` and `session_plans_closeout` are
+ *      sidecar-write envelopes, the projection ADDS namespaced keys rather than replacing anything,
+ *      and the original envelope is never carried.
+ *
+ * (#1173 item 2. The earlier wording said every proof field was copied verbatim and that this
+ * function never renames one, which the projection loop contradicts — Codex r3649648867. A stale
+ * invariant is worse than none: it could lead a future proof-safety change to preserve the wrong
+ * behaviour.)
+ *
+ * Returns null without a resolved, well-formed turn id: a record that cannot name its turn is not
+ * evidence.
  */
 function buildWriteProofRecord(params) {
   const p = _isPlainObject(params) ? params : {};

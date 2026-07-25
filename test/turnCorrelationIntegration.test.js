@@ -40,7 +40,7 @@ process.env.ATLAS_WRITE_RATE_LIMIT_MAX = '1000000';
 // feature stays silent.
 process.env.ATLAS_INTERACTION_TRACE = 'shadow';
 
-const state = { appends: [], failEffortAppend: false };
+const state = { appends: [], failEffortAppend: false, logCompositeKeys: [] };
 
 const fakeSheets = {
   appendRows: async (tab, rows) => {
@@ -60,7 +60,7 @@ const fakeSheets = {
     ['Bench Press', 'Chest', 'BEN01', 'Bench Press', 'bench press|bench'],
   ]),
   getEffortSessionIds: async () => [],
-  getLogCompositeKeys: async () => [],
+  getLogCompositeKeys: async () => [...state.logCompositeKeys],
   getRecentRows: async () => [],
   getSheetRows: async () => [],
   getHeaderRow: async tab => {
@@ -403,6 +403,67 @@ test('a live write that names another session in a ROW correlates nothing (Codex
   const { pairingToken } = await previewForToken({ correlation: { turn_id: TURN_ID }, log_rows: rows });
   assert.equal(pairingToken, null, 'a rogue row session must not even establish a pairing');
   assert.equal(tc.recentWriteProofs().length, 0, 'and it must record nothing');
+});
+
+// ─── #1173 item 2 — the duplicate-closeout branch, through the real route ──────
+//
+// Codex (r3649648870) was right that unit tests calling buildWriteProofRecord directly cannot
+// prove this: the historical failure is `index.js` emitting a duplicate-closeout record from the
+// ACTUAL seal/capture envelopes, which can still break through wiring while a helper suite stays
+// green. This exercises the real branch with the envelopes the real producers return.
+
+test('the duplicate-closeout branch projects the seal and closeout envelopes it actually produced', async () => {
+  tc._resetForTesting();
+  resetIdempotencyStore();
+  state.appends.length = 0;
+  // Every intended log row is already on the sheet and there is no new Effort row — the
+  // all-rows-duplicate branch. Composite key format is `sid||exercise||set_number`, lowercased
+  // (index.js partitionLogRowsByExisting).
+  state.logCompositeKeys = [`${SESSION_ID.toLowerCase()}||bench press||1`];
+  tc.issueTurn(TURN_ID, SESSION_ID);
+
+  const closeout = { plan_version: 'pv_int_1', items: [] };
+  const { pairingToken } = await previewForToken({ correlation: { turn_id: TURN_ID }, closeout_context: closeout });
+
+  const { status, body } = await postWrite({
+    session_id: SESSION_ID,
+    date: '2026-07-25',
+    write_id: 'wid-int-dupe',
+    log_rows: logRows(),
+    closeout_context: closeout,
+    correlation: { turn_id: TURN_ID, pairing_token: pairingToken },
+  });
+  state.logCompositeKeys = [];
+
+  assert.equal(status, 200);
+  assert.equal(body.data.all_rows_duplicate, true, 'this must really be the duplicate branch');
+  assert.equal(body.data.log_rows_written, 0, 'and it appended no log rows');
+  // The branch still attempted both sidecar writes — which is exactly why it correlates.
+  assert.ok(body.data.ledger_seal, 'the branch attempted the ledger seal');
+  assert.ok(body.data.session_plans_closeout, 'and the Session_Plans closeout event');
+
+  const records = tc.recentWriteProofs();
+  const rec = records[records.length - 1];
+  // THE POINT: before the projections this record carried log_rows_written:0 and no seal evidence
+  // whatsoever, so it could not prove the sidecar write the trigger was added to capture.
+  // Asserted against the SERVED body rather than hardcoded, so the record cannot drift from it.
+  assert.equal(rec.proof.ledger_seal_sheet_written, body.data.ledger_seal.sheet_written);
+  assert.equal(rec.proof.ledger_seal_dry_run, body.data.ledger_seal.dry_run);
+  assert.equal(rec.proof.ledger_seal_reason, body.data.ledger_seal.reason);
+  assert.equal(rec.proof.session_plans_closeout_status, body.data.session_plans_closeout.status);
+  assert.equal(rec.proof.session_plans_closeout_captured, body.data.session_plans_closeout.captured);
+  assert.equal(rec.proof.session_plans_closeout_written, body.data.session_plans_closeout.written);
+  // Project, never pass through — and never the plan identity token.
+  assert.ok(!('ledger_seal' in rec.proof), 'the nested envelope must not be carried');
+  assert.ok(!('session_plans_closeout' in rec.proof));
+  assert.ok(!JSON.stringify(rec).includes('pv_int_1'), 'no plan token in the record');
+
+  // HONEST LIMIT of this harness: both lanes are OFF here, so the seal is a dry-run
+  // (`dry_run:true`, `reason:'write_disabled'`) and the capture reports `status:'disabled'`. That
+  // proves the WIRING and the projection faithfully, not a live stamp. The lanes-ON seal-fixture
+  // case — where ledger_seal_sheet_written is genuinely true — is #1173 item 3.
+  assert.equal(rec.proof.ledger_seal_dry_run, true, 'lanes off ⇒ dry-run seal, stated not implied');
+  assert.equal(rec.proof.session_plans_closeout_captured, false, 'lanes off ⇒ nothing captured');
 });
 
 test('the pairing header is exposed to CORS clients, or a browser would hide it', async () => {

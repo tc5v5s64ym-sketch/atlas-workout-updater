@@ -294,32 +294,55 @@ test('buildWriteProofRecord: is a CLOSED whitelist — no rows, prose, or unknow
 // and `diagnostics` (object), its `error` (an arbitrary exception message), and the closeout's
 // `reason` (also `e.message`). A closed projection excludes all of those by default.
 
-test('buildWriteProofRecord: projects the ledger seal envelope as bounded scalars', () => {
+// Every fixture below is an envelope shape the producing code can ACTUALLY return, copied from
+// `sealCloseout` / `sessionPlanCapture._envelope` rather than composed by hand. Codex
+// (r3649648870) caught the first draft combining a successful stamp's `sheet_written:true` +
+// `sealed:5` with the all-sealed branch's `reason:'all_sealed'` — a combination `sealCloseout`
+// cannot produce, so the test proved the projection against a state that never occurs.
+
+// The LIVE successful stamp (sessionPlanSetsStore, end of sealCloseout). Note: no `reason`.
+const SEAL_STAMPED = Object.freeze({
+  sheet_written: true, no_write_confirmed: false, sealed: 5, already_sealed: 2, sealed_ok: true, column: 'X',
+});
+// The idempotent all-already-sealed replay. Note: sheet_written FALSE and sealed 0 — this is the
+// shape that carries `reason:'all_sealed'`.
+const SEAL_ALL_SEALED = Object.freeze({
+  sheet_written: false, no_write_confirmed: true, sealed: 0, already_sealed: 7, sealed_ok: true, reason: 'all_sealed',
+});
+
+test('buildWriteProofRecord: projects a LIVE STAMPED seal as bounded scalars', () => {
   const record = tc.buildWriteProofRecord({
     turnId: TURN_ID,
     sessionId: SESSION,
     route: '/api/log-workout',
-    proof: {
-      sheet_write: 'skipped_duplicate',
-      log_rows_written: 0,
-      ledger_seal: {
-        sheet_written: true,
-        no_write_confirmed: false,
-        sealed: 5,
-        already_sealed: 2,
-        sealed_ok: true,
-        reason: 'all_sealed',
-      },
-    },
+    proof: { sheet_write: 'skipped_duplicate', log_rows_written: 0, ledger_seal: { ...SEAL_STAMPED } },
   });
-  // The seal really did write — that is the whole justification for correlating this branch.
+  // The seal really did write — that is the whole justification for correlating this branch, and
+  // before this projection the record could not show it at all.
   assert.equal(record.proof.ledger_seal_sheet_written, true);
   assert.equal(record.proof.ledger_seal_sealed, 5);
   assert.equal(record.proof.ledger_seal_already_sealed, 2);
   assert.equal(record.proof.ledger_seal_sealed_ok, true);
-  assert.equal(record.proof.ledger_seal_reason, 'all_sealed');
+  assert.equal(record.proof.ledger_seal_no_write_confirmed, false);
+  // A successful stamp carries no `reason`, so none may be invented for it.
+  assert.ok(!('ledger_seal_reason' in record.proof));
+  // `column` is a real scalar on that envelope but is not whitelisted — closed by default.
+  assert.ok(!('ledger_seal_column' in record.proof));
   // The nested envelope itself must never survive — project, never pass through.
   assert.ok(!('ledger_seal' in record.proof), 'the nested envelope must not be carried');
+});
+
+test('buildWriteProofRecord: projects the idempotent all-sealed replay distinguishably', () => {
+  const record = tc.buildWriteProofRecord({
+    turnId: TURN_ID, sessionId: SESSION, route: '/api/log-workout',
+    proof: { ledger_seal: { ...SEAL_ALL_SEALED } },
+  });
+  // Verified but wrote nothing — a reviewer must be able to tell this from a fresh stamp.
+  assert.equal(record.proof.ledger_seal_sealed_ok, true);
+  assert.equal(record.proof.ledger_seal_sheet_written, false);
+  assert.equal(record.proof.ledger_seal_sealed, 0);
+  assert.equal(record.proof.ledger_seal_already_sealed, 7);
+  assert.equal(record.proof.ledger_seal_reason, 'all_sealed');
 });
 
 test('buildWriteProofRecord: projects the closeout event envelope as bounded scalars', () => {
@@ -327,8 +350,11 @@ test('buildWriteProofRecord: projects the closeout event envelope as bounded sca
     turnId: TURN_ID,
     sessionId: SESSION,
     route: '/api/log-workout',
+    // The exact `_envelope('written', true, …)` shape, `plan_version` and null `reason` included.
     proof: {
-      session_plans_closeout: { status: 'written', captured: true, written: 1, skipped: 0 },
+      session_plans_closeout: {
+        status: 'written', captured: true, written: 1, skipped: 0, plan_version: 'pv_abc', reason: null,
+      },
     },
   });
   assert.equal(record.proof.session_plans_closeout_status, 'written');
@@ -336,6 +362,9 @@ test('buildWriteProofRecord: projects the closeout event envelope as bounded sca
   assert.equal(record.proof.session_plans_closeout_written, 1);
   assert.equal(record.proof.session_plans_closeout_skipped, 0);
   assert.ok(!('session_plans_closeout' in record.proof));
+  // plan_version is a plan identity token, not write proof — deliberately not projected.
+  assert.ok(!('session_plans_closeout_plan_version' in record.proof));
+  assert.ok(!JSON.stringify(record).includes('pv_abc'));
 });
 
 test('buildWriteProofRecord: a FAILED seal is projected honestly, never softened', () => {
