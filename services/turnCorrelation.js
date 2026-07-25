@@ -225,9 +225,18 @@ const PROOF_KEYS = Object.freeze([
 //   • the seal's `error` and the closeout's `reason` — both carry an ARBITRARY exception message
 //     (index.js wraps a seal throw as `{ reason:'seal_error', error: String(error.message) }`, and
 //     sessionPlanCapture._capture sets `reason: e.message`), which could carry a Sheet id or other
-//     internals into a telemetry line. The seal's own `reason` IS listed because every value it
-//     takes inside sessionPlanSetsStore is a fixed vocabulary literal, and the closeout's fixed
-//     vocabulary lives on `status` instead.
+//     internals into a telemetry line.
+//
+// The seal's own `reason` IS listed, and that asymmetry was VERIFIED by enumeration rather than
+// assumed, because it is the one place here where guessing would publish an arbitrary string:
+//   • every `reason` assignment in sessionPlanSetsStore is a string literal, except
+//     `reason: dryReason` — and `dryReason` is a ternary over two literals
+//     ('test_mode' | 'write_disabled'). ('unparseable_rows' sits inside `diagnostics`, which is
+//     not projected.) The index.js seal-throw wrappers use the literal 'seal_error' and isolate
+//     the arbitrary text in `error`, which is excluded above.
+//   • the CLOSEOUT's `reason`, by contrast, genuinely can be anything: sessionPlanCapture
+//     interpolates `${e.message}` into it and its writer catch falls back to `e.message` outright.
+//     So its fixed vocabulary lives on `status`, which is what gets projected instead.
 const PROOF_PROJECTIONS = Object.freeze({
   ledger_seal: Object.freeze([
     'sheet_written', 'no_write_confirmed', 'dry_run',
