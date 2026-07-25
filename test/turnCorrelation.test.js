@@ -524,6 +524,135 @@ test('a valid token on a DIFFERENT payload is refused (payload_mismatch)', () =>
   assert.equal(r.turn_id, null);
 });
 
+// Codex second-round P1 (r3649542461). The first payload gate covered only
+// session_id + date + log_rows — a default-ALLOW list. But `/api/log-workout` also APPENDS
+// `effort_row` (index.js:2930) and drives the closeout capture + ledger seal from
+// `closeout_context` (index.js:3172, 3320), so a live request could change either while keeping
+// the three covered fields and still be reported `payload_bound: true`. The identity is now
+// default-DENY — the whole payload minus a documented exclusion list — so a field added to the
+// payload in future is bound automatically instead of silently unbound.
+
+test('a CHANGED effort_row is refused — it is appended, so it is part of the write', () => {
+  reset();
+  const now = 1_000_000;
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  const { pairing_token } = tc.resolveCorrelation(
+    payloadWith({ correlation: { turn_id: TURN_ID }, effort_row: ['2026-07-25', SESSION, 3600, 400] }),
+    { sessionId: SESSION, nowMs: now + 1, ...PREVIEW },
+  );
+  const swapped = payloadWith({
+    correlation: { turn_id: TURN_ID, pairing_token },
+    effort_row: ['2026-07-25', SESSION, 7200, 900],
+  });
+  const r = tc.resolveCorrelation(swapped, { sessionId: SESSION, nowMs: now + 2, writeId: 'w-1' });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'payload_mismatch');
+});
+
+test('a CHANGED closeout_context is refused — it drives the capture and the seal', () => {
+  reset();
+  const now = 1_000_000;
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  const { pairing_token } = tc.resolveCorrelation(
+    payloadWith({ correlation: { turn_id: TURN_ID }, closeout_context: { plan_version: 'pv_1', items: [] } }),
+    { sessionId: SESSION, nowMs: now + 1, ...PREVIEW },
+  );
+  const swapped = payloadWith({
+    correlation: { turn_id: TURN_ID, pairing_token },
+    closeout_context: { plan_version: 'pv_2', items: [] },
+  });
+  assert.equal(
+    tc.resolveCorrelation(swapped, { sessionId: SESSION, nowMs: now + 2, writeId: 'w-1' }).reason,
+    'payload_mismatch',
+  );
+});
+
+test('the identity is default-DENY: a field the preview never carried is refused', () => {
+  reset();
+  const now = 1_000_000;
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  const { pairing_token } = tc.resolveCorrelation(
+    payloadWith({ correlation: { turn_id: TURN_ID } }), { sessionId: SESSION, nowMs: now + 1, ...PREVIEW },
+  );
+  // Whatever this field does, the previewed write did not include it. A default-allow list would
+  // have accepted it silently; that is the class of gap the second-round P1 found.
+  const extra = payloadWith({ correlation: { turn_id: TURN_ID, pairing_token }, plan_exercises: [{ name: 'Squat' }] });
+  assert.equal(
+    tc.resolveCorrelation(extra, { sessionId: SESSION, nowMs: now + 2, writeId: 'w-1' }).reason,
+    'payload_mismatch',
+  );
+});
+
+test('the excluded fields really are excluded: test_mode, write_id and the token itself', () => {
+  reset();
+  const now = 1_000_000;
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  const { pairing_token } = tc.resolveCorrelation(
+    payloadWith({ correlation: { turn_id: TURN_ID }, test_mode: 'true', write_id: 'w-1' }),
+    { sessionId: SESSION, nowMs: now + 1, isPreview: true, previewedWriteId: 'w-1' },
+  );
+  // The approve deletes test_mode (app.js:7507), may re-mint write_id (7566), and carries a
+  // correlation envelope that necessarily differs. None may cost the correlation.
+  const approve = payloadWith({ correlation: { turn_id: TURN_ID, pairing_token }, write_id: 'w-9' });
+  const r = tc.resolveCorrelation(approve, { sessionId: SESSION, nowMs: now + 2, writeId: 'w-9' });
+  assert.equal(r.ok, true);
+  assert.equal(r.pairing.payload_bound, true);
+});
+
+test('effort_row REMOVAL is a permitted transition, but only removal', () => {
+  reset();
+  const now = 1_000_000;
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  const preview = payloadWith({
+    correlation: { turn_id: TURN_ID },
+    test_mode: 'true',
+    write_id: 'w-1',
+    effort_row: ['2026-07-25', SESSION, 3600, 400],
+    closeout_context: { plan_version: 'pv_1', items: [] },
+  });
+  const { pairing_token } = tc.resolveCorrelation(preview, { sessionId: SESSION, nowMs: now + 1, ...PREVIEW });
+
+  // The documented seal retry: effort_row DELETED, write_id re-minted (app.js:7566-7567).
+  const retry = payloadWith({
+    correlation: { turn_id: TURN_ID, pairing_token },
+    write_id: 'w-2',
+    closeout_context: { plan_version: 'pv_1', items: [] },
+  });
+  const ok = tc.resolveCorrelation(retry, { sessionId: SESSION, nowMs: now + 2, writeId: 'w-2' });
+  assert.equal(ok.ok, true, 'the documented retry must be a permitted transition');
+  assert.equal(ok.pairing.payload_bound, true);
+
+  // But dropping effort AND altering the closeout context is not the documented transition.
+  const overreach = payloadWith({
+    correlation: { turn_id: TURN_ID, pairing_token },
+    write_id: 'w-3',
+    closeout_context: { plan_version: 'pv_2', items: [] },
+  });
+  assert.equal(
+    tc.resolveCorrelation(overreach, { sessionId: SESSION, nowMs: now + 3, writeId: 'w-3' }).reason,
+    'payload_mismatch',
+    'the permitted transition is effort REMOVAL alone, not a licence to change anything else',
+  );
+});
+
+test('a preview with NO effort_row cannot have one added by the live write', () => {
+  reset();
+  const now = 1_000_000;
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  const { pairing_token } = tc.resolveCorrelation(
+    payloadWith({ correlation: { turn_id: TURN_ID } }), { sessionId: SESSION, nowMs: now + 1, ...PREVIEW },
+  );
+  // Removal is permitted; ADDITION is an unpreviewed Effort append and must never be.
+  const added = payloadWith({
+    correlation: { turn_id: TURN_ID, pairing_token },
+    effort_row: ['2026-07-25', SESSION, 3600, 400],
+  });
+  assert.equal(
+    tc.resolveCorrelation(added, { sessionId: SESSION, nowMs: now + 2, writeId: 'w-1' }).reason,
+    'payload_mismatch',
+  );
+});
+
 test('a different date or session in the payload is also refused', () => {
   reset();
   const now = 1_000_000;

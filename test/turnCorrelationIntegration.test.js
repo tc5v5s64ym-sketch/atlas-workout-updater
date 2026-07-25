@@ -201,7 +201,11 @@ test('a PARTIAL write correlates too — committed rows must never go unjoined',
   resetIdempotencyStore();
   state.appends.length = 0;
   tc.issueTurn(TURN_ID, SESSION_ID);
-  const { pairingToken } = await previewForToken({ correlation: { turn_id: TURN_ID } });
+  // The preview must carry the effort row the approve will write — app.js:6962 sets
+  // `payload.effort_row` at preview time whenever there is one. An effort row that appeared only
+  // on the live request would be an unpreviewed Effort append, which the payload gate refuses.
+  const effortRow = ['2026-07-25', SESSION_ID, 3600, 400, 500, 130, 165, 'Gym', ''];
+  const { pairingToken } = await previewForToken({ correlation: { turn_id: TURN_ID }, effort_row: effortRow });
 
   state.failEffortAppend = true;
   const { status, body } = await postWrite({
@@ -209,7 +213,7 @@ test('a PARTIAL write correlates too — committed rows must never go unjoined',
     date: '2026-07-25',
     write_id: 'wid-int-partial',
     log_rows: logRows(),
-    effort_row: ['2026-07-25', SESSION_ID, 3600, 400, 500, 130, 165, 'Gym', ''],
+    effort_row: effortRow,
     correlation: { turn_id: TURN_ID, pairing_token: pairingToken },
   });
   state.failEffortAppend = false;

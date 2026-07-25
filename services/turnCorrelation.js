@@ -127,19 +127,45 @@ const MAX_WRITES_PER_PAIRING = 5;
 //
 // This costs nothing in claim strength. Every outstanding pairing belongs to the SAME turn and
 // each is independently payload-bound, so accepting any of them cannot mis-attribute a write.
-const MAX_OUTSTANDING_PAIRINGS = 3;
+//
+// KNOWN RESIDUAL LIMITATION, not closed here (Codex second round, r3649542463, and it is right).
+// Eviction is still by COMPLETION order, so a finite set cannot GUARANTEE it retains the pairing
+// the client kept: if more than MAX_OUTSTANDING_PAIRINGS previews overlap AND the newest-initiated
+// one completes first, its token is pushed first and evicted first, while the client discarded
+// every other response by initiation sequence. Raising the cap shrinks the window but cannot
+// remove it — only initiation identity or explicit retirement FROM the client can, and inventing
+// that field here would design slice 2's client contract from the wrong end. It is therefore
+// recorded as a REQUIREMENT ON SLICE 2 in the canonical plan's CAMPAIGN STATE — the sole
+// work-selection authority, and where the round-trip protocol is actually designed.
+//
+// The failure mode is bounded and one-directional: a LOST correlation, never a wrong one. No
+// record can overclaim because of it — the write proceeds untouched and simply goes unjoined.
+// The cap is set well above any plausible concurrent-preview count for a single-owner V1 client
+// that previews on explicit submits, so this is a mitigation with a documented gap, not a fix.
+const MAX_OUTSTANDING_PAIRINGS = 8;
 
 // Cap the fingerprint input so a pathological payload cannot turn identity computation into
 // unbounded work. Past it the identity is null — which under-claims (payload_bound:false)
 // rather than failing a legitimate write's correlation on size alone.
 const MAX_IDENTITY_INPUT_CHARS = 200_000;
 
-// The write-identity fields the preview fingerprint covers. DELIBERATELY EXCLUDED:
-//   • `test_mode`   — the one field that always differs between a preview and its approve;
-//   • `write_id`    — re-minted on the seal retry (app.js:7566);
-//   • `effort_row`  — deleted on that same retry (app.js:7567).
-// Including any of them would refuse the legitimate retry, i.e. re-create the lockout.
-const IDENTITY_FIELDS = Object.freeze(['session_id', 'date', 'log_rows']);
+// The preview fingerprint is DEFAULT-DENY: it covers the WHOLE payload except these fields.
+//
+// The first cut listed the fields to include (session_id + date + log_rows) and Codex found the
+// gap that shape guarantees (r3649542461): `/api/log-workout` also APPENDS `effort_row`
+// (index.js:2930) and drives the closeout capture and ledger seal from `closeout_context`
+// (index.js:3172, 3320), so a live request could change either while keeping the three listed
+// fields and still be reported `payload_bound:true`. Default-deny means a field added to the
+// payload in future is bound automatically rather than silently unbound.
+//
+// Each exclusion is a field that provably differs between a preview and its own approve:
+//   • `test_mode`   — deleted on approve (app.js:7507); the one field that ALWAYS differs;
+//   • `write_id`    — re-minted on the documented seal retry (app.js:7566);
+//   • `correlation` — the envelope carrying the pairing token, which differs by construction.
+// `effort_row` is NOT excluded. It is write-affecting, so its documented REMOVAL on the seal
+// retry (app.js:7567) is handled as one explicit permitted TRANSITION below — which still
+// refuses a CHANGED or newly-ADDED effort row.
+const IDENTITY_EXCLUDED_FIELDS = Object.freeze(['test_mode', 'write_id', 'correlation']);
 
 // The ONLY proof keys that may be copied into a correlation record. A closed whitelist, not
 // a denylist: a field added to a write response in future is excluded by default rather than
@@ -264,21 +290,46 @@ function _canonicalJson(v, depth = 0) {
  * UNBOUND pairing that reports `payload_bound:false`, never to an assumed match: a turn-level
  * join is still real evidence, but it must not be published as a write-level one.
  */
-function _previewIdentity(payload) {
+function _previewIdentity(payload, opts = {}) {
   const p = _isPlainObject(payload) ? payload : {};
   const sessionId = _isNonEmptyString(p.session_id) ? String(p.session_id).trim() : '';
   // No session identity, or no row set to identify: nothing to bind the write to.
   if (!sessionId || !Array.isArray(p.log_rows)) return null;
-  const projection = {
-    session_id: sessionId,
-    date: _isNonEmptyString(p.date) ? String(p.date).trim() : '',
-    log_rows: p.log_rows,
-  };
+
+  // Default-deny: every field except the documented exclusions. `session_id` and `date` are
+  // trimmed so incidental whitespace cannot refuse a legitimate approve.
+  const projection = {};
+  for (const key of Object.keys(p)) {
+    if (IDENTITY_EXCLUDED_FIELDS.includes(key)) continue;
+    if (opts.dropEffort === true && key === 'effort_row') continue;
+    if (p[key] === undefined) continue;
+    projection[key] = key === 'session_id' || key === 'date' ? String(p[key]).trim() : p[key];
+  }
+
   const serialized = _canonicalJson(projection);
   if (serialized.length > MAX_IDENTITY_INPUT_CHARS) return null;
   // A digest, so the registry never holds workout content — and it is never logged or published
   // either, exactly like the token: only the derived `payload_bound` boolean reaches the record.
   return crypto.createHash('sha256').update(serialized).digest('hex');
+}
+
+/**
+ * Does this live payload describe the write its preview fingerprinted?
+ *
+ * An exact identity match, OR the one explicit permitted transition: the documented seal retry
+ * DELETES `effort_row` and re-mints `write_id` for the same staged write (app.js:7566-7567). That
+ * is allowed only as a REMOVAL from a preview that had one — a changed effort row, or one ADDED by
+ * a live write that never previewed it, is an unpreviewed Effort append and stays refused.
+ *
+ * An unbound pairing (identity null) has nothing to check and matches trivially; it can only ever
+ * report `payload_bound:false`, so it never publishes a write-level claim it cannot support.
+ */
+function _payloadMatchesPairing(pairing, payload) {
+  if (!pairing || pairing.identity === null) return true;
+  if (_previewIdentity(payload) === pairing.identity) return true;
+  const liveHasEffort = _isPlainObject(payload) && payload.effort_row !== undefined;
+  if (liveHasEffort || pairing.identityEffortDropped === null) return false;
+  return _previewIdentity(payload, { dropEffort: true }) === pairing.identityEffortDropped;
 }
 
 // The pairing facts a record may publish. Server-owned scalars only. Neither the TOKEN nor the
@@ -390,6 +441,9 @@ function resolveCorrelation(payload, opts = {}) {
         // What makes this a WRITE-level binding rather than a turn-level one. Null ⇒ unbound,
         // reported honestly as payload_bound:false.
         identity: _previewIdentity(payload),
+        // The same identity with `effort_row` omitted, so the documented seal retry's effort
+        // REMOVAL is a permitted transition without loosening the gate for anything else.
+        identityEffortDropped: _previewIdentity(payload, { dropEffort: true }),
         // The one path whose dry-run carries the write_id it will approve with. Recorded as
         // corroboration only; four of five paths send nothing here.
         previewedWriteId: _isNonEmptyString(opts.previewedWriteId) ? String(opts.previewedWriteId).trim() : null,
@@ -420,9 +474,7 @@ function resolveCorrelation(payload, opts = {}) {
     // resolve ok and attribute the wrong write to this turn. The live payload must fingerprint to
     // the identity the server computed at preview. An unbound pairing (identity null) has nothing
     // to check, so it correlates but can only ever report payload_bound:false.
-    if (pairing.identity !== null && _previewIdentity(payload) !== pairing.identity) {
-      return miss(REASONS.PAYLOAD_MISMATCH);
-    }
+    if (!_payloadMatchesPairing(pairing, payload)) return miss(REASONS.PAYLOAD_MISMATCH);
 
     // Bound the replay, per TURN. A repeat of a write_id already recorded is the SAME attempt (an
     // idempotent retry of one logical write must not be dropped); a new write_id is the next
@@ -622,7 +674,7 @@ module.exports = {
   PAIRING_TOKEN_RE,
   MAX_WRITES_PER_PAIRING,
   MAX_OUTSTANDING_PAIRINGS,
-  IDENTITY_FIELDS,
+  IDENTITY_EXCLUDED_FIELDS,
   PROOF_KEYS,
   REASONS,
   isWellFormedTurnId,
