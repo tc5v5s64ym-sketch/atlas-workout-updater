@@ -6121,10 +6121,13 @@ function looksLikeModalityQuestion(text) {
 // fail-closed message was shown); false when the input is NOT a modality (the
 // caller then falls through to the coach). Read-only: only a test_mode dry-run runs
 // here — the actual write happens solely in the #approve-btn handler.
-async function tryPreviewModality(text, sessionId, date) {
+async function tryPreviewModality(text, sessionId, date, submitSeq) {
   if (!text || !date) return false;
   // A question about training is for the coach — never stage it as a write preview.
   if (looksLikeModalityQuestion(text)) return false;
+  // The slash parser can itself finish after a newer logger submit. Do not let that
+  // stale catch path start a modality preview that would retire the newer request.
+  if (submitSeq !== previewRequestSeq) return true;
   let result;
   const correlationPreview = beginCorrelatedPreview({ sessionId });
   activePreviewCorrelation = correlationPreview;
@@ -6140,10 +6143,16 @@ async function tryPreviewModality(text, sessionId, date) {
       } : {})
     });
   } catch (err) {
+    // A superseded modality attempt owned its original input. It must not fall
+    // through into a stale coach response after a newer submit has taken over.
+    if (submitSeq !== previewRequestSeq) return true;
     // 422 = not a recognized modality → let the caller route to the coach.
     // Any other failure → we can't trust a preview, so we never stage a write.
     return false;
   }
+  // Initiation order owns the review card. A late A response may complete its
+  // retired correlation, but it cannot replace B's pending preview or approval.
+  if (submitSeq !== previewRequestSeq) return true;
   const data = result?.data || {};
   if (!data.modality || !Array.isArray(data.modality_row_preview)) return false;
   // Fail closed: never enable approval without the dry-run no-write proof.
@@ -6586,7 +6595,7 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       // the slash parser threw above. Try the modality trust loop (dry-run preview
       // → approve → /api/log-modality) before treating it as a coach question. On a
       // 422 / non-modality this returns false and we fall through to the coach.
-      if (await tryPreviewModality(pendingChatText, sessionId, date)) {
+      if (await tryPreviewModality(pendingChatText, sessionId, date, submitSeq)) {
         activeExercise = null;
         return;
       }
@@ -7795,6 +7804,7 @@ document.getElementById('load-session-btn').addEventListener('click', async () =
 
 let pendingBwWrite = null;
 let activeBwPreviewCorrelation = null;
+let bwPreviewSeq = 0;
 
 function hasBodyweightNoWriteProof(result) {
   const data = result?.data || {};
@@ -7820,6 +7830,9 @@ function hasBodyweightWriteProof(result) {
 }
 
 function bwInvalidate() {
+  // A form edit, cancel, or newer submit retires every response issued under the
+  // previous generation. Late responses can finish, but cannot rebuild approval.
+  bwPreviewSeq++;
   if (activeBwPreviewCorrelation) {
     retireCorrelatedPreview(activeBwPreviewCorrelation);
     activeBwPreviewCorrelation = null;
@@ -7830,6 +7843,11 @@ function bwInvalidate() {
   const btn = document.getElementById('bw-approve-btn');
   btn.disabled = true;
   btn.textContent = 'Write to Google Sheets';
+  const previewBtn = document.getElementById('bw-preview-btn');
+  if (previewBtn) {
+    previewBtn.disabled = false;
+    previewBtn.textContent = 'Preview — no data saved';
+  }
   const note = document.getElementById('bw-gate-note');
   if (note) note.textContent = 'Run a preview above to enable this button.';
 }
@@ -7839,6 +7857,7 @@ document.getElementById('bw-form').addEventListener('input', bwInvalidate);
 document.getElementById('bw-form').addEventListener('submit', async e => {
   e.preventDefault();
   bwInvalidate();
+  const submitSeq = bwPreviewSeq;
   const bwStatus = document.getElementById('bw-status');
   setStatus(bwStatus, '', 'ok');
 
@@ -7869,6 +7888,9 @@ document.getElementById('bw-form').addEventListener('submit', async e => {
         responseHeaders: responseHeaders => completeCorrelatedPreview(correlationPreview, responseHeaders)
       } : {})
     });
+    // Preserve the newest initiated preview regardless of completion order. This
+    // also covers an edit/cancel that retired the request without starting another.
+    if (submitSeq !== bwPreviewSeq) return;
     const data = result.data || {};
     if (!hasBodyweightNoWriteProof(result)) {
       throw new Error('Preview did not prove no-write safety. Nothing can be written.');
@@ -7900,6 +7922,7 @@ document.getElementById('bw-form').addEventListener('submit', async e => {
     const gateNote = document.getElementById('bw-gate-note');
     if (gateNote) gateNote.textContent = 'Review above, then click to write.';
   } catch (err) {
+    if (submitSeq !== bwPreviewSeq) return;
     // Surface the server's inner cause when present (parity with the logger preview
     // catch — PR-581 review note 2), so a bodyweight 500 is diagnosable too.
     const bd = err && err.body && err.body.details;
@@ -7907,8 +7930,12 @@ document.getElementById('bw-form').addEventListener('submit', async e => {
     const bwFriendly = friendlyTransportMessage(err);
     setStatus(bwStatus, bwFriendly ? `Preview failed: ${bwFriendly}` : `Preview failed: ${err.message}${bdetail ? ` — ${bdetail}` : ''}`, 'error');
   } finally {
-    previewBtn.disabled = false;
-    previewBtn.textContent = 'Preview — no data saved';
+    // A stale request must not change the button state owned by a newer submit.
+    // Plain form invalidation already restores the button in bwInvalidate().
+    if (submitSeq === bwPreviewSeq) {
+      previewBtn.disabled = false;
+      previewBtn.textContent = 'Preview — no data saved';
+    }
   }
 });
 
