@@ -6601,6 +6601,7 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
         activeExercise = null;
         return;
       }
+      if (submitSeq !== previewRequestSeq) return;
       // An EXPLICIT REPLACE ("replace back squats with bench", "remove squats and change out
       // for bench") stages ONE gated proposal — source stays, replacement is not activated
       // until approval — BEFORE the skip/suggest/coach routes (req 4/5), so a direct
@@ -6609,6 +6610,7 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
         activeExercise = null;
         return;
       }
+      if (submitSeq !== previewRequestSeq) return;
       // P0 Sub-PR 2a: an EXPLICIT swap/skip ("skip deadlift, do squats") mutates
       // the canonical session deterministically — before the suggest/coach routes,
       // so the change lands in app state, not just chat prose.
@@ -6623,6 +6625,7 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
         activeExercise = null;
         return;
       }
+      if (submitSeq !== previewRequestSeq) return;
       // P0 PR 4: an EXPLICIT identity correction ("sorry that was squats") relabels
       // the just-logged lift deterministically — before the suggest/coach routes, so
       // it lands in app state even when the coach LLM is down.
@@ -6636,6 +6639,7 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       // correction must not silently relabel that completed lift (it asks instead).
       setCoachDiscussionSinceLog(true);
       const suggested = await checkAndSuggestSubstitute(pendingChatText);
+      if (submitSeq !== previewRequestSeq) return;
       if (!suggested) routeMessageToCoach(pendingChatText);
       // Clear the stale active-exercise context so the next bare shorthand input
       // (e.g. "15 12/2 x3" after "leg extension is taken, doing laterals first")
