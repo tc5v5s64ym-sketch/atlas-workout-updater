@@ -85,6 +85,45 @@ test('client correlation: a newer coach turn and another session cannot contamin
   assert.equal(protocol.approvalClaim(b).turn_id, TURN_B);
 });
 
+test('client correlation: only the newest initiated coach response may become the retained turn', async () => {
+  const { createTurnCorrelation } = await loadClient();
+  const protocol = createTurnCorrelation({ randomUUID: deterministicIds() });
+
+  const requestA = protocol.beginTurnResponse({ sessionId: SESSION_A });
+  const requestB = protocol.beginTurnResponse({ sessionId: SESSION_A });
+
+  assert.equal(protocol.completeTurnResponse(requestB, headers(TURN_B, null)), true);
+  assert.equal(protocol.completeTurnResponse(requestA, headers(TURN_A, null)), false,
+    'a timed-out or merely slower old request must not overwrite the selected newer response');
+
+  const preview = protocol.beginPreview({ sessionId: SESSION_A });
+  assert.equal(preview.turnId, TURN_B);
+  assert.equal(preview.correlation.turn_id, TURN_B);
+});
+
+test('client correlation: a server-resolved effort session migrates the staged preview without weakening other sessions', async () => {
+  const { createTurnCorrelation } = await loadClient();
+  const protocol = createTurnCorrelation({ randomUUID: deterministicIds() });
+  protocol.captureTurn({ sessionId: SESSION_A, turnId: TURN_A });
+
+  const preview = protocol.beginPreview({
+    sessionId: SESSION_A,
+    provisionalSessionId: SESSION_A,
+  });
+  assert.equal(preview.correlation.provisional_session_id, SESSION_A);
+  assert.equal(protocol.completePreview(preview, headers(TURN_A, TOKEN_A)), true);
+  assert.equal(protocol.resolvePreviewSession(preview, SESSION_B), true);
+
+  assert.equal(protocol.beginPreview({ sessionId: SESSION_A }), null,
+    'the provisional session must no longer retain the capability');
+  assert.deepEqual(protocol.approvalClaim(preview), {
+    turn_id: TURN_A,
+    initiation_nonce: preview.initiation_nonce,
+    pairing_token: TOKEN_A,
+  });
+  assert.equal(preview.sessionId, SESSION_B);
+});
+
 test('client correlation: malformed, missing, stale, and forged response claims never become approval claims', async () => {
   const { createTurnCorrelation } = await loadClient();
   const protocol = createTurnCorrelation({ randomUUID: deterministicIds() });
@@ -173,6 +212,12 @@ test('client correlation: the production app wires the protocol through every re
   assert.match(app, /from '\.\/turnCorrelation\.js'/);
   assert.match(api, /responseHeaders/, 'api() must expose response headers without putting them in response bodies');
   assert.match(coach, /captureTurnResponse/, 'the real coach round-trip must retain the canonical server turn id');
+  assert.match(coach, /\/api\/coach\/message[\s\S]{0,1800}session_id/,
+    'normal in-workout coach messages must carry the session that owns their turn');
+  assert.match(coach, /beginTurnResponse[\s\S]{0,2500}completeTurnResponse/,
+    'coach requests must retain headers only after that response wins its timeout/routing race');
+  assert.match(app, /resolveCorrelatedPreviewSession/,
+    'effort-only previews must migrate to the server-resolved session before approval');
 
   for (const route of ['/api/log-workout', '/api/complete-workout', '/api/log-modality', '/api/bodyweight']) {
     const routeUses = [...app.matchAll(new RegExp(route.replaceAll('/', '\\/'), 'g'))].length;

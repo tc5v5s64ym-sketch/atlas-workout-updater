@@ -128,6 +128,55 @@ test('resolveCorrelation: an id issued under another session is rejected (sessio
   assert.equal(r.turn_id, null);
 });
 
+test('resolveCorrelation: only a server-resolved blank-session preview may adopt its explicit provisional session', () => {
+  reset();
+  const now = 1_000_000;
+  const resolvedSession = '20260725-AM-02';
+  const initiation = 'init:00000001-0000-4000-8000-000000000000';
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+
+  const payload = {
+    session_id: resolvedSession,
+    date: '2026-07-25',
+    effort_metrics: { duration: 1800, activeCalories: 200 },
+    correlation: {
+      turn_id: TURN_ID,
+      initiation_nonce: initiation,
+      provisional_session_id: SESSION,
+    },
+  };
+  const preview = tc.resolveCorrelation(payload, {
+    sessionId: resolvedSession,
+    nowMs: now + 1,
+    isPreview: true,
+    allowPreviewSessionResolution: true,
+  });
+  assert.equal(preview.ok, true, preview.reason);
+
+  const live = structuredClone(payload);
+  live.correlation = {
+    turn_id: TURN_ID,
+    initiation_nonce: initiation,
+    pairing_token: preview.pairing_token,
+  };
+  assert.equal(tc.resolveCorrelation(live, {
+    sessionId: resolvedSession,
+    nowMs: now + 2,
+    writeId: 'w-resolved',
+  }).ok, true, 'the approved write must bind to the exact server-resolved session');
+
+  reset();
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  const forged = structuredClone(payload);
+  forged.correlation.provisional_session_id = OTHER_SESSION;
+  assert.equal(tc.resolveCorrelation(forged, {
+    sessionId: resolvedSession,
+    nowMs: now + 1,
+    isPreview: true,
+    allowPreviewSessionResolution: true,
+  }).reason, 'session_mismatch', 'a forged provisional binding must remain cross-session contamination');
+});
+
 test('resolveCorrelation: a write with no session identity cannot claim any correlation', () => {
   reset();
   const now = 1_000_000;
