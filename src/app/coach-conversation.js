@@ -1970,7 +1970,14 @@ import {
     if (responseTicket && detail && typeof detail === 'object') {
       setResponseTickets.set(detail, responseTicket);
     }
+    // Bound the whole set-response pipeline, including the recommendation read that
+    // precedes /api/coach/message. Otherwise a stalled recommendation could keep an
+    // immediate closeout waiting forever before the message timeout even starts.
+    const settlementTimer = responseTicket
+      ? setTimeout(() => completeTurnResponse(responseTicket, null), COACH_LLM_TIMEOUT_MS)
+      : null;
     handleSetLogged(detail).catch(() => {}).finally(() => {
+      if (settlementTimer) clearTimeout(settlementTimer);
       // A rejected request or an early deterministic fallback must still release any
       // closeout waiting on this set. A successful selected response already completed
       // the ticket; the second call is an inert fail-closed no-op.
