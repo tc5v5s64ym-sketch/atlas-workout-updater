@@ -116,6 +116,36 @@ describe('turnWriteArtifact — parsing and canonical turn join', () => {
     assert.equal(artifact.summary.reviewable_turns, 0);
   });
 
+  it('fails the whole artifact closed when a rejected marker cannot be assigned to a turn', () => {
+    const artifact = buildTurnWriteArtifact([
+      `${TURN_WRITE_PROOF_MARKER} not-json`,
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, proof()),
+    ].join('\n'));
+
+    assert.equal(artifact.summary.reviewable_turns, 1);
+    assert.equal(artifact.summary.rejected_records, 1);
+    assert.equal(artifact.status, 'partial');
+  });
+
+  it('fails reviewability closed when one canonical turn contains cross-session proofs', () => {
+    const otherSession = proof({
+      session_id: 'session-2026-07-26-b',
+      recorded_at: '2026-07-26T08:03:00.000Z',
+      pairing: { ...proof().pairing, write_attempt: 2 },
+      proof: { ...proof().proof, write_id: 'write-other-session' },
+    });
+    const artifact = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, proof()),
+      line(TURN_WRITE_PROOF_MARKER, otherSession),
+    ].join('\n'));
+
+    assert.ok(artifact.turns[0].issues.includes('conflicting_sessions'));
+    assert.equal(artifact.turns[0].reviewable, false);
+    assert.equal(artifact.status, 'partial');
+  });
+
   it('retains the legitimate seal retry as a second bounded write attempt', () => {
     const retry = proof({
       recorded_at: '2026-07-26T08:03:00.000Z',
@@ -304,6 +334,39 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
     assert.equal(artifact.status, 'partial');
   });
 
+  it('also requires the row discriminator for an idempotently skipped closeout', () => {
+    const unidentified = proof({
+      proof: {
+        sheet_write: 'skipped_duplicate',
+        sheet_written: false,
+        duplicate_write: true,
+        session_plans_closeout_status: 'skipped',
+        session_plans_closeout_captured: true,
+        session_plans_closeout_written: 0,
+        session_plans_closeout_skipped: 1,
+      },
+    });
+    const identified = proof({
+      recorded_at: '2026-07-26T08:03:00.000Z',
+      pairing: { ...proof().pairing, write_attempt: 2 },
+      proof: {
+        ...unidentified.proof,
+        write_id: 'write-closeout-replay',
+        session_plans_closeout_plan_version: 'pv_3f2504e0-4f89-41d3-9a0c-0305e82c3301',
+      },
+    });
+    const artifact = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, unidentified),
+      line(TURN_WRITE_PROOF_MARKER, identified),
+    ].join('\n'));
+
+    assert.equal(artifact.turns[0].writes[0].closeout.state, 'already_captured_unidentified');
+    assert.equal(artifact.turns[0].writes[0].reviewable, false);
+    assert.equal(artifact.turns[0].writes[1].closeout.state, 'already_captured');
+    assert.equal(artifact.status, 'partial');
+  });
+
   it('distinguishes validation-withheld evidence from genuinely absent evidence', () => {
     const withheld = proof({
       proof: {
@@ -384,6 +447,16 @@ describe('turnWriteArtifact — bounded, leakage-safe review surface', () => {
       assert.equal(artifact.summary.reviewable_turns, 0);
       assert.ok(!JSON.stringify(artifact).includes(reason));
     }
+  });
+
+  it('rejects fractional proof counts instead of treating them as positive write evidence', () => {
+    const parsed = parseTurnWriteLines(line(
+      TURN_WRITE_PROOF_MARKER,
+      proof({ proof: { sheet_written: false, rows_appended: 0.5 } }),
+    ));
+
+    assert.equal(parsed.proofs.length, 0);
+    assert.equal(parsed.rejected_count, 1);
   });
 
   it('requires positive write or explicit no-write evidence before a joined record is reviewable', () => {
@@ -481,6 +554,18 @@ describe('turnWriteArtifact — human and CLI artifact', () => {
     const output = formatTurnWriteArtifact(empty, { source: 'empty.log' });
     assert.match(output, /No joined turn\/write evidence/);
     assert.doesNotMatch(output, /complete/i);
+  });
+
+  it('never reflects a capability or fingerprint supplied as an artifact source label', () => {
+    const complete = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, proof()),
+    ].join('\n'));
+    const capability = 'pair:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const fingerprint = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+
+    assert.ok(!formatTurnWriteArtifact(complete, { source: capability }).includes(capability));
+    assert.ok(!formatTurnWriteArtifact(complete, { source: fingerprint }).includes(fingerprint));
   });
 
   it('CLI emits the machine artifact and exits non-zero on an empty false-green input', () => {
