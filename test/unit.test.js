@@ -989,6 +989,8 @@ test('PR 486 frontend: modality logging mirrors the trust loop without altering 
   assert.match(previewBlock, /test_mode:\s*true/, 'the preview must be a dry-run');
   assert.match(previewBlock, /hasLogModalityNoWriteProof\(result\)/, 'fail closed without the no-write proof');
   assert.match(previewBlock, /generateWriteId\(\)/, 'a write_id is staged for idempotency');
+  assert.match(previewBlock, /submitSeq !== previewRequestSeq/,
+    'a superseded modality response must be rejected before it can stage approval');
   // The preview never writes: no live (test_mode-less) log-modality call here.
   assert.doesNotMatch(previewBlock, /delete[^\n]*test_mode|write_id: pendingWrite\.writeId/);
 
@@ -1011,7 +1013,7 @@ test('PR 486 frontend: modality logging mirrors the trust loop without altering 
 
   // The modality hook lives ONLY in the coach-fallback branch (input the slash
   // parser rejected), so strength-set logging never routes through it.
-  assert.match(appSource, /if \(await tryPreviewModality\(pendingChatText, sessionId, date\)\)/);
+  assert.match(appSource, /if \(await tryPreviewModality\(pendingChatText, sessionId, date, submitSeq\)\)/);
   const hookIdx = appSource.indexOf('if (await tryPreviewModality(pendingChatText');
   const coachRouteIdx = appSource.indexOf('routeMessageToCoach(pendingChatText)');
   assert.ok(hookIdx > 0 && coachRouteIdx > hookIdx, 'modality is tried before falling through to the coach');
@@ -5589,6 +5591,8 @@ test('bodyweight: preview proof and write_id gate live bodyweight writes', () =>
   assert.match(app, /original_sheet_write === 'success'/, 'bodyweight duplicate acceptance must require original success');
   assert.match(app, /pendingBwWrite = \{[\s\S]*write_id: generateWriteId\(\)/, 'bodyweight live write must carry a write_id');
   assert.match(app, /if \(!pendingBodyweightHasPreviewProof\(pendingBwWrite\)\)/, 'bodyweight approve must block stale or missing proof');
+  assert.match(app, /let bwPreviewSeq = 0[\s\S]*if \(submitSeq !== bwPreviewSeq\) return/,
+    'bodyweight must reject a retired response before it can rebuild pending approval');
 });
 
 test('write_id: screenshot approve accepts a blocked duplicate from complete-workout', () => {
