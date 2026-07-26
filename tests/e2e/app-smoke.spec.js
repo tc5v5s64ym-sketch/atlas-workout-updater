@@ -3,6 +3,7 @@ const { test, expect } = require('@playwright/test');
 const TEST_KEY = 'playwright-test-key';
 const TEST_SESSION = 'PW-E2E-SESSION';
 const TEST_DATE = '2026-06-12';
+const TEST_TURN = 'turn:playwright-app-smoke-structured';
 
 const BENCH_SETS = [
   { weight: 225, reps: 5, rir: 2 },
@@ -25,10 +26,11 @@ const BENCH_ROWS = BENCH_SETS.map((set, index) => ([
   set.weight * set.reps
 ]));
 
-function json(body, status = 200) {
+function json(body, status = 200, headers = {}) {
   return {
     status,
     contentType: 'application/json; charset=utf-8',
+    headers,
     body: JSON.stringify(body)
   };
 }
@@ -439,7 +441,7 @@ test('Chat: propose_edit updates the preview row and still requires approve to w
       configured: true,
       source: 'gemini'
     }
-  })));
+  }, 200, { 'x-atlas-turn-id': TEST_TURN })));
 
   await page.locator('#workout-text').fill('change set 1 to 235');
   await page.locator('#preview-btn').click();
@@ -504,7 +506,7 @@ test('Chat: composer plan edits mutate the canonical session plan', async ({ pag
     return route.fulfill(json({
       status: 'success',
       data: { ...reply, configured: true, model: 'gemini-2.5-flash-lite', source: 'gemini' }
-    }));
+    }, 200, { 'x-atlas-turn-id': TEST_TURN }));
   });
 
   await page.locator('#workout-text').fill('Plan an upper-body workout');
