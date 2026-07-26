@@ -679,3 +679,105 @@ test('the real blank-session effort-only route adopts the server-resolved sessio
   assert.equal(record.pairing.payload_bound, true);
   assert.equal(record.proof.sheet_written, true);
 });
+
+test('the real multipart route lets newer blank-session preview B retire A before adopting a different resolved session', async () => {
+  tc._resetForTesting();
+  resetIdempotencyStore();
+  state.appends.length = 0;
+  state.existingEffortSessionIds = ['20260725-AM-01', '20260725-PM-01'];
+  tc.issueTurn(TURN_ID, SESSION_ID);
+
+  const initiationA = 'init:eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+  const initiationB = 'init:ffffffff-ffff-4fff-8fff-ffffffffffff';
+  const effortA = JSON.stringify({
+    duration: '00:30:00',
+    activeCalories: 250,
+    totalCalories: 330,
+    averageHR: 142,
+    peakHR: 165,
+    workoutType: 'Outdoor Run',
+  });
+  const effortB = JSON.stringify({
+    duration: '00:45:00',
+    activeCalories: 360,
+    totalCalories: 470,
+    averageHR: 151,
+    peakHR: 174,
+    workoutType: 'Traditional Strength Training',
+  });
+
+  try {
+    const previewAForm = new FormData();
+    previewAForm.append('date', '2026-07-25');
+    previewAForm.append('log_rows_json', JSON.stringify([]));
+    previewAForm.append('effort_json', effortA);
+    previewAForm.append('test_mode', 'true');
+    previewAForm.append('correlation', JSON.stringify({
+      turn_id: TURN_ID,
+      initiation_nonce: initiationA,
+      provisional_session_id: SESSION_ID,
+    }));
+    const previewA = await postMultipart('/api/complete-workout', previewAForm);
+    assert.equal(previewA.status, 200, JSON.stringify(previewA.body));
+    const resolvedSessionA = previewA.body?.data?.data?.session_id;
+    const pairingA = previewA.headers.get(tc.PAIRING_TOKEN_HEADER);
+    assert.match(resolvedSessionA, /^20260725-(?:AM|PM)-02$/);
+    assert.ok(tc.isWellFormedPairingToken(pairingA));
+
+    state.existingEffortSessionIds.push(resolvedSessionA);
+    const previewBForm = new FormData();
+    previewBForm.append('date', '2026-07-25');
+    previewBForm.append('log_rows_json', JSON.stringify([]));
+    previewBForm.append('effort_json', effortB);
+    previewBForm.append('test_mode', 'true');
+    previewBForm.append('correlation', JSON.stringify({
+      turn_id: TURN_ID,
+      initiation_nonce: initiationB,
+      provisional_session_id: SESSION_ID,
+      retire_initiation_nonces: [initiationA],
+    }));
+    const previewB = await postMultipart('/api/complete-workout', previewBForm);
+    assert.equal(previewB.status, 200, JSON.stringify(previewB.body));
+    const resolvedSessionB = previewB.body?.data?.data?.session_id;
+    const pairingB = previewB.headers.get(tc.PAIRING_TOKEN_HEADER);
+    assert.notEqual(resolvedSessionB, resolvedSessionA,
+      'the occupied A identity must force B to resolve a distinct session');
+    assert.ok(tc.isWellFormedPairingToken(pairingB),
+      'B must correlate after retiring A against the shared provisional session');
+
+    const staleA = tc.resolveCorrelation({
+      session_id: resolvedSessionA,
+      date: '2026-07-25',
+      effort_metrics: JSON.parse(effortA),
+      correlation: {
+        turn_id: TURN_ID,
+        initiation_nonce: initiationA,
+        pairing_token: pairingA,
+      },
+    }, {
+      sessionId: resolvedSessionA,
+      writeId: 'wid-stale-a',
+    });
+    assert.equal(staleA.reason, 'superseded');
+
+    const liveBForm = new FormData();
+    liveBForm.append('session_id', resolvedSessionB);
+    liveBForm.append('date', '2026-07-25');
+    liveBForm.append('log_rows_json', JSON.stringify([]));
+    liveBForm.append('effort_json', effortB);
+    liveBForm.append('write_id', 'wid-newer-b');
+    liveBForm.append('correlation', JSON.stringify({
+      turn_id: TURN_ID,
+      initiation_nonce: initiationB,
+      pairing_token: pairingB,
+    }));
+    const liveB = await postMultipart('/api/complete-workout', liveBForm);
+    assert.equal(liveB.status, 200, JSON.stringify(liveB.body));
+    const record = tc.recentWriteProofs().at(-1);
+    assert.equal(record.session_id, resolvedSessionB);
+    assert.equal(record.pairing.payload_bound, true);
+    assert.equal(record.proof.sheet_written, true);
+  } finally {
+    state.existingEffortSessionIds = [];
+  }
+});

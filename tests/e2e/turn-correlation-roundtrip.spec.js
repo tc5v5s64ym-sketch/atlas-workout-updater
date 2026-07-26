@@ -22,7 +22,7 @@ function json(body, status = 200, headers = {}) {
   };
 }
 
-async function openApp(page, capture) {
+async function openApp(page, capture, { startSecond = true } = {}) {
   capture.previews = [];
   capture.writes = [];
   capture.gates = [];
@@ -157,6 +157,8 @@ async function openApp(page, capture) {
   await page.locator('#preview-btn').click();
   await expect.poll(() => capture.previews.length).toBe(1);
 
+  if (!startSecond) return;
+
   await page.evaluate(() => {
     document.getElementById('workout-text').value = 'done';
     document.getElementById('logger-form').dispatchEvent(
@@ -203,6 +205,51 @@ for (const order of ['B-then-A', 'A-then-B']) {
     expect(JSON.stringify(capture.writes[0].correlation)).not.toContain(TOKEN_A);
   });
 }
+
+test('initiating B synchronously disables staged A approval and an old click emits zero writes', async ({ page }) => {
+  const capture = {};
+  await openApp(page, capture, { startSecond: false });
+  capture.gates[0]();
+
+  await expect(page.locator('.rv-save').last()).toBeEnabled();
+  await page.evaluate(() => {
+    document.getElementById('workout-text').value = 'done';
+    document.getElementById('logger-form').dispatchEvent(
+      new Event('submit', { cancelable: true, bubbles: true }),
+    );
+  });
+  await expect.poll(() => capture.previews.length).toBe(2);
+
+  await expect(page.locator('#approve-btn')).toBeDisabled();
+  await page.evaluate(() => document.querySelector('.rv-save')?.click());
+  await page.waitForTimeout(100);
+  expect(capture.writes).toHaveLength(0);
+
+  capture.gates[1]();
+});
+
+test('B can approve while A is pending and late A cannot alter B or emit another write', async ({ page }) => {
+  const capture = {};
+  await openApp(page, capture);
+  const initiationA = capture.previews[0].correlation.initiation_nonce;
+  const initiationB = capture.previews[1].correlation.initiation_nonce;
+
+  capture.gates[1]();
+  await expect(page.locator('.rv-save').last()).toBeEnabled();
+  await page.locator('.rv-save').last().click();
+  await expect.poll(() => capture.writes.length).toBe(1);
+  expect(capture.writes[0].correlation).toEqual({
+    turn_id: MESSAGE_TURN,
+    initiation_nonce: initiationB,
+    pairing_token: TOKEN_B,
+  });
+
+  capture.gates[0]();
+  await page.waitForTimeout(200);
+  expect(capture.writes).toHaveLength(1);
+  expect(capture.writes[0].correlation.initiation_nonce).not.toBe(initiationA);
+  expect(capture.writes[0].correlation.pairing_token).toBe(TOKEN_B);
+});
 
 async function openSpecializedPreviewRace(page, capture, path) {
   capture.previews = [];

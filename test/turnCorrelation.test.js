@@ -177,6 +177,80 @@ test('resolveCorrelation: only a server-resolved blank-session preview may adopt
   }).reason, 'session_mismatch', 'a forged provisional binding must remain cross-session contamination');
 });
 
+test('resolveCorrelation: a newer provisional preview retires an adopted predecessor before adopting its own resolved session', () => {
+  reset();
+  const now = 1_000_000;
+  const provisionalSession = SESSION;
+  const resolvedSessionA = '20260725-AM-02';
+  const resolvedSessionB = '20260725-AM-03';
+  const initiationA = 'init:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const initiationB = 'init:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  tc.issueTurn(TURN_ID, provisionalSession, { nowMs: now });
+
+  const payloadA = {
+    session_id: resolvedSessionA,
+    date: '2026-07-25',
+    effort_metrics: { duration: 1800, activeCalories: 200 },
+    correlation: {
+      turn_id: TURN_ID,
+      initiation_nonce: initiationA,
+      provisional_session_id: provisionalSession,
+    },
+  };
+  const previewA = tc.resolveCorrelation(payloadA, {
+    sessionId: resolvedSessionA,
+    nowMs: now + 1,
+    isPreview: true,
+    allowPreviewSessionResolution: true,
+  });
+  assert.equal(previewA.ok, true, previewA.reason);
+
+  const payloadB = {
+    session_id: resolvedSessionB,
+    date: '2026-07-25',
+    effort_metrics: { duration: 2400, activeCalories: 300 },
+    correlation: {
+      turn_id: TURN_ID,
+      initiation_nonce: initiationB,
+      provisional_session_id: provisionalSession,
+      retire_initiation_nonces: [initiationA],
+    },
+  };
+  const previewB = tc.resolveCorrelation(payloadB, {
+    sessionId: resolvedSessionB,
+    nowMs: now + 2,
+    isPreview: true,
+    allowPreviewSessionResolution: true,
+  });
+  assert.equal(previewB.ok, true,
+    'B must retire A against the shared provisional binding before adopting its distinct server-resolved session');
+  assert.ok(tc.isWellFormedPairingToken(previewB.pairing_token));
+
+  const staleA = structuredClone(payloadA);
+  staleA.correlation = {
+    turn_id: TURN_ID,
+    initiation_nonce: initiationA,
+    pairing_token: previewA.pairing_token,
+  };
+  assert.equal(tc.resolveCorrelation(staleA, {
+    sessionId: resolvedSessionA,
+    nowMs: now + 3,
+    writeId: 'w-a',
+  }).reason, 'superseded', 'A must become unusable when B initiates');
+
+  const liveB = structuredClone(payloadB);
+  liveB.correlation = {
+    turn_id: TURN_ID,
+    initiation_nonce: initiationB,
+    pairing_token: previewB.pairing_token,
+  };
+  assert.equal(tc.resolveCorrelation(liveB, {
+    sessionId: resolvedSessionB,
+    nowMs: now + 4,
+    writeId: 'w-b',
+  }).ok, true, 'B must bind to its own resolved session and exact payload');
+});
+
 test('resolveCorrelation: a rejected superseded adoption cannot mutate the turn session', () => {
   reset();
   const now = 1_000_000;
@@ -809,6 +883,207 @@ test('initiation retirement: a genuine token cannot be relabelled with another i
   );
   assert.equal(forged.ok, false);
   assert.equal(forged.reason, 'pairing_mismatch');
+});
+
+for (const completionOrder of ['A-then-B', 'B-then-A']) {
+  test(`initiation retirement payload matrix (${completionOrder}): only B+B succeeds and rejections do not consume B attempts`, () => {
+    reset();
+    const now = 1_000_000;
+    const initiationA = 'init:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const initiationB = 'init:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const payloadA = payloadWith({
+      log_rows: [{ exercise: 'Bench Press', weight: 185, reps: 8, rir: 2, set_number: 1 }],
+    });
+    const payloadB = payloadWith({
+      log_rows: [{ exercise: 'Squat', weight: 315, reps: 3, rir: 1, set_number: 1 }],
+    });
+    tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+
+    const preview = (payload, initiationNonce, retire = []) => tc.resolveCorrelation({
+      ...structuredClone(payload),
+      correlation: {
+        turn_id: TURN_ID,
+        initiation_nonce: initiationNonce,
+        ...(retire.length ? { retire_initiation_nonces: retire } : {}),
+      },
+    }, { sessionId: SESSION, nowMs: now + 1, ...PREVIEW });
+
+    let previewA;
+    let previewB;
+    if (completionOrder === 'A-then-B') {
+      previewA = preview(payloadA, initiationA);
+      assert.equal(previewA.ok, true);
+      previewB = preview(payloadB, initiationB, [initiationA]);
+      assert.equal(previewB.ok, true);
+    } else {
+      previewB = preview(payloadB, initiationB, [initiationA]);
+      assert.equal(previewB.ok, true);
+      previewA = preview(payloadA, initiationA);
+      assert.equal(previewA.reason, 'superseded');
+      assert.equal(previewA.pairing_token, undefined);
+    }
+
+    const live = (payload, initiationNonce, pairingToken, writeId) => tc.resolveCorrelation({
+      ...structuredClone(payload),
+      correlation: {
+        turn_id: TURN_ID,
+        initiation_nonce: initiationNonce,
+        pairing_token: pairingToken,
+      },
+    }, { sessionId: SESSION, nowMs: now + 2, writeId });
+
+    const aToken = previewA.pairing_token || `pair:${'a'.repeat(32)}`;
+    assert.equal(live(payloadA, initiationA, aToken, 'w-a-a').reason, 'superseded');
+    assert.equal(live(payloadB, initiationA, aToken, 'w-a-b').reason, 'superseded');
+    assert.equal(
+      live(payloadA, initiationB, previewB.pairing_token, 'w-b-a').reason,
+      'payload_mismatch',
+    );
+
+    const exactB = live(payloadB, initiationB, previewB.pairing_token, 'w-b-b');
+    assert.equal(exactB.ok, true);
+    assert.equal(exactB.pairing.write_attempt, 1,
+      'superseded and payload-mismatched claims must not consume B attempt budget');
+  });
+}
+
+test('late A around B W1/W2 remains superseded while B keeps its exact write and seal retry', () => {
+  reset();
+  const now = 1_000_000;
+  const initiationA = 'init:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const initiationB = 'init:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const effortA = ['2026-07-25', SESSION, 1800, 200];
+  const effortB = ['2026-07-25', SESSION, 3600, 450];
+  const closeoutA = { plan_version: 'pv_a', items: [{ exercise: 'Bench Press' }] };
+  const closeoutB = { plan_version: 'pv_b', items: [{ exercise: 'Squat' }] };
+  const payloadA = payloadWith({
+    effort_row: effortA,
+    closeout_context: closeoutA,
+    log_rows: [{ exercise: 'Bench Press', weight: 185, reps: 8, rir: 2, set_number: 1 }],
+  });
+  const payloadB = payloadWith({
+    effort_row: effortB,
+    closeout_context: closeoutB,
+    log_rows: [{ exercise: 'Squat', weight: 315, reps: 3, rir: 1, set_number: 1 }],
+  });
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+
+  const previewA = tc.resolveCorrelation({
+    ...structuredClone(payloadA),
+    correlation: { turn_id: TURN_ID, initiation_nonce: initiationA },
+  }, { sessionId: SESSION, nowMs: now + 1, ...PREVIEW });
+  const previewB = tc.resolveCorrelation({
+    ...structuredClone(payloadB),
+    correlation: {
+      turn_id: TURN_ID,
+      initiation_nonce: initiationB,
+      retire_initiation_nonces: [initiationA],
+    },
+  }, { sessionId: SESSION, nowMs: now + 2, ...PREVIEW });
+  assert.equal(previewB.ok, true);
+
+  const liveA = writeId => tc.resolveCorrelation({
+    ...structuredClone(payloadA),
+    correlation: {
+      turn_id: TURN_ID,
+      initiation_nonce: initiationA,
+      pairing_token: previewA.pairing_token,
+    },
+  }, { sessionId: SESSION, nowMs: now + 3, writeId });
+  assert.equal(liveA('w-a-before').reason, 'superseded', 'late A before B-W1');
+
+  const firstB = tc.resolveCorrelation({
+    ...structuredClone(payloadB),
+    correlation: {
+      turn_id: TURN_ID,
+      initiation_nonce: initiationB,
+      pairing_token: previewB.pairing_token,
+    },
+  }, { sessionId: SESSION, nowMs: now + 4, writeId: 'w-b-1' });
+  assert.equal(firstB.ok, true);
+  assert.equal(firstB.pairing.write_attempt, 1);
+  assert.equal(liveA('w-a-between').reason, 'superseded', 'late A between B-W1 and B-W2');
+
+  const retryPayloadB = structuredClone(payloadB);
+  delete retryPayloadB.effort_row;
+  retryPayloadB.correlation = {
+    turn_id: TURN_ID,
+    initiation_nonce: initiationB,
+    pairing_token: previewB.pairing_token,
+  };
+  const retryB = tc.resolveCorrelation(retryPayloadB, {
+    sessionId: SESSION,
+    nowMs: now + 5,
+    writeId: 'w-b-2',
+  });
+  assert.equal(retryB.ok, true, 'B seal retry with a new write_id and removed effort_row remains legal');
+  assert.equal(retryB.pairing.write_attempt, 2);
+  assert.equal(retryB.pairing.effort_transition, true);
+  assert.equal(liveA('w-a-after').reason, 'superseded', 'late A after B-W2');
+});
+
+test('A-W1 then B initiation prevents A-W2 without disturbing B seal state', () => {
+  reset();
+  const now = 1_000_000;
+  const initiationA = 'init:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const initiationB = 'init:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const closeout = { plan_version: 'pv_a', items: [] };
+  const effort = ['2026-07-25', SESSION, 1800, 200];
+  const payloadA = payloadWith({ effort_row: effort, closeout_context: closeout });
+  const payloadB = payloadWith({
+    effort_row: ['2026-07-25', SESSION, 2400, 300],
+    closeout_context: { plan_version: 'pv_b', items: [] },
+  });
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+
+  const previewA = tc.resolveCorrelation({
+    ...structuredClone(payloadA),
+    correlation: { turn_id: TURN_ID, initiation_nonce: initiationA },
+  }, { sessionId: SESSION, nowMs: now + 1, ...PREVIEW });
+  const aW1 = tc.resolveCorrelation({
+    ...structuredClone(payloadA),
+    correlation: {
+      turn_id: TURN_ID,
+      initiation_nonce: initiationA,
+      pairing_token: previewA.pairing_token,
+    },
+  }, { sessionId: SESSION, nowMs: now + 2, writeId: 'w-a-1' });
+  assert.equal(aW1.ok, true);
+
+  const previewB = tc.resolveCorrelation({
+    ...structuredClone(payloadB),
+    correlation: {
+      turn_id: TURN_ID,
+      initiation_nonce: initiationB,
+      retire_initiation_nonces: [initiationA],
+    },
+  }, { sessionId: SESSION, nowMs: now + 3, ...PREVIEW });
+  assert.equal(previewB.ok, true);
+
+  const aRetry = structuredClone(payloadA);
+  delete aRetry.effort_row;
+  aRetry.correlation = {
+    turn_id: TURN_ID,
+    initiation_nonce: initiationA,
+    pairing_token: previewA.pairing_token,
+  };
+  assert.equal(tc.resolveCorrelation(aRetry, {
+    sessionId: SESSION,
+    nowMs: now + 4,
+    writeId: 'w-a-2',
+  }).reason, 'superseded', 'B initiation must revoke A retry authority synchronously');
+
+  const bW1 = tc.resolveCorrelation({
+    ...structuredClone(payloadB),
+    correlation: {
+      turn_id: TURN_ID,
+      initiation_nonce: initiationB,
+      pairing_token: previewB.pairing_token,
+    },
+  }, { sessionId: SESSION, nowMs: now + 5, writeId: 'w-b-1' });
+  assert.equal(bW1.ok, true);
+  assert.equal(bW1.pairing.write_attempt, 2,
+    'the turn-level attempt history remains honest while B pairing stays usable');
 });
 
 // Codex sixth round P1 (r3649604170). A PREVIEW record reported `payload_bound: true` merely
