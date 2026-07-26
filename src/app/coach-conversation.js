@@ -25,6 +25,13 @@
 
 import * as coachVoiceTemplates from './coachVoiceTemplates.js';
 import * as sessionQuestion from './sessionQuestion.js';
+import {
+  beginTurnResponse,
+  cancelTurnResponse,
+  completeTurnResponse,
+  isTurnResponseAuthoritative,
+  mayContinueTurnResponse,
+} from './turnCorrelation.js';
 
 (function () {
   'use strict';
@@ -1021,8 +1028,8 @@ import * as sessionQuestion from './sessionQuestion.js';
   // are the deterministic, engine-backed set-effort extras the server computes
   // (PR 477 wiring) — present whether or not Gemini answered, and rendered as
   // their own short line so the engine's read is never lost to an LLM outage.
-  async function getInWorkoutNote(facts) {
-    const data = await getLlmCoachingMessage(facts).catch(() => null);
+  async function getInWorkoutNote(facts, sessionId, responseTicket) {
+    const data = await getLlmCoachingMessage(facts, sessionId, responseTicket).catch(() => null);
     // Soul Recovery (Issue #1073) + owner gate ruling (2026-07-20): a routine on-plan
     // block's voice is timed to the EXERCISE, not to every set. A COMPLETED on-plan
     // exercise (a batch of sets, or the finishing set — `facts.exercise_complete`) gets
@@ -1103,9 +1110,12 @@ import * as sessionQuestion from './sessionQuestion.js';
 
   // Returns the full /api/coach/message data object ({ message, effort_note,
   // reroute }) or null — the caller pulls the prose and the engine extras from it.
-  async function getLlmCoachingMessage(facts) {
+  async function getLlmCoachingMessage(facts, sessionId, responseTicket) {
     if (typeof api !== 'function' || (typeof isConnected === 'function' && !isConnected())) return null;
-    const timeout = new Promise(resolve => setTimeout(() => resolve(null), COACH_LLM_TIMEOUT_MS));
+    const correlationSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    let selectedHeaders = null;
+    const timeout = new Promise(resolve =>
+      setTimeout(() => resolve({ selected: false, data: null }), COACH_LLM_TIMEOUT_MS));
     const request = api('/api/coach/message', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1113,9 +1123,20 @@ import * as sessionQuestion from './sessionQuestion.js';
       // deterministic coachNoteTier gate so a routine block returns note_tier
       // ack_only (and the caller stays silent). Same wording pipeline as before
       // for non-routine blocks; the tier is never forwarded to the model.
-      body: JSON.stringify({ facts, kind: 'block' })
-    }).then(res => (res && res.data) || null);
-    return Promise.race([request, timeout]);
+      body: JSON.stringify({
+        facts,
+        kind: 'block',
+        ...(correlationSessionId ? { session_id: correlationSessionId } : {}),
+      }),
+      ...(responseTicket ? {
+        responseHeaders: responseHeaders => { selectedHeaders = responseHeaders; },
+      } : {}),
+    }).then(res => ({ selected: true, data: (res && res.data) || null }));
+    const winner = await Promise.race([request, timeout]);
+    if (responseTicket && typeof completeTurnResponse === 'function') {
+      completeTurnResponse(responseTicket, selectedHeaders);
+    }
+    return winner.data;
   }
 
   // De-templating: several phrasings per verdict level so the SAME verdict never
@@ -1357,8 +1378,28 @@ import * as sessionQuestion from './sessionQuestion.js';
     return out;
   }
 
+  const setResponseTickets = new WeakMap();
+
   async function handleSetLogged(detail) {
-    const { exercises = [], text = '', substitutions: rawSubstitutions = [], unverified = null } = detail || {};
+    const responseTicket = detail && typeof detail === 'object'
+      ? setResponseTickets.get(detail) || null
+      : null;
+    if (detail && typeof detail === 'object') setResponseTickets.delete(detail);
+    const responseMayContinue = () => !responseTicket
+      || (typeof mayContinueTurnResponse === 'function'
+        && mayContinueTurnResponse(responseTicket));
+    // Closeout is allowed to begin as soon as a valid response is selected, while its
+    // already-selected prose may still be typing. Let only that selected prose finish;
+    // every later side effect rechecks the stricter current-owner predicate above.
+    const responseMayRenderSelectedProse = () => responseMayContinue()
+      || (responseTicket && responseTicket.completed === true && responseTicket.accepted === true);
+    const {
+      exercises = [],
+      text = '',
+      sessionId = '',
+      substitutions: rawSubstitutions = [],
+      unverified = null,
+    } = detail || {};
     // F10S5: acknowledge each substitution pair once per session (see above).
     const substitutions = dedupeSubstitutions(rawSubstitutions);
     if (!exercises.length) return;
@@ -1383,6 +1424,7 @@ import * as sessionQuestion from './sessionQuestion.js';
       // without it the "Next" would reflect the previous session.
       const justLogged = primary.sets && primary.sets.length ? primary.sets[primary.sets.length - 1] : null;
       try { if (typeof fetchReaction === 'function') rec = await fetchReaction(code, justLogged); } catch { /* best effort */ }
+      if (!responseMayContinue()) return;
     }
 
     // Pass the first substitution (if any) into the facts so the main LLM call
@@ -1429,7 +1471,8 @@ import * as sessionQuestion from './sessionQuestion.js';
       intentId: (typeof getActiveIntentId === 'function' ? getActiveIntentId() : (activeSession && activeSession.intentId)) || null,
       planned_queue: Array.isArray(detail.plannedQueue) ? detail.plannedQueue : [],
       substitution: suggestMatch ? undefined : primarySub
-    });
+    }, sessionId, exercises.length === 1 ? responseTicket : null);
+    if (!responseMayRenderSelectedProse()) return;
     const note = reaction.note;
     // Soul Recovery (Issue #1073): a routine (ack_only) block returns a null note —
     // DELIBERATE SILENCE — so nothing is typed under the readback card and the logged
@@ -1437,7 +1480,10 @@ import * as sessionQuestion from './sessionQuestion.js';
     // `if (note)` guards both the routine-silence case and the genuinely-absent one.
     if (note) {
       await typeOut(body, note);
+      if (!responseMayContinue()) return;
       chatTurns.push({ role: 'atlas', text: note });
+    } else if (!responseMayContinue()) {
+      return;
     }
 
     if (suggestMatch && loggedName) {
@@ -1447,6 +1493,7 @@ import * as sessionQuestion from './sessionQuestion.js';
         ? `Good call — you went with ${loggedName}. Intent preserved.`
         : `You went with ${loggedName}.`;
       await typeOut(ack, ackText);
+      if (!responseMayContinue()) return;
       bubble.appendChild(ack);
     }
 
@@ -1459,6 +1506,7 @@ import * as sessionQuestion from './sessionQuestion.js';
       const eff = document.createElement('div');
       eff.className = 'coach-msg effort-note';
       await typeOut(eff, reaction.effort_note);
+      if (!responseMayContinue()) return;
       bubble.appendChild(eff);
     }
 
@@ -1486,6 +1534,7 @@ import * as sessionQuestion from './sessionQuestion.js';
       if (exCode) {
         const exJustLogged = ex.sets && ex.sets.length ? ex.sets[ex.sets.length - 1] : null;
         try { if (typeof fetchReaction === 'function') exRec = await fetchReaction(exCode, exJustLogged); } catch { /* best effort */ }
+        if (!responseMayContinue()) return;
       }
       const exReaction = await getInWorkoutNote({
         liftCode: exCode,
@@ -1496,14 +1545,18 @@ import * as sessionQuestion from './sessionQuestion.js';
         intentId: (typeof getActiveIntentId === 'function' ? getActiveIntentId() : (activeSession && activeSession.intentId)) || null,
         planned_queue: [],
         substitution: undefined
-      });
+      }, sessionId, ex === exercises[exercises.length - 1] ? responseTicket : null);
+      if (!responseMayRenderSelectedProse()) return;
       if (exReaction && exReaction.note) {
         const exMsg = document.createElement('div');
         exMsg.className = 'coach-msg';
         const exText = `${ex.exercise}: ${exReaction.note}`;
         await typeOut(exMsg, exText);
+        if (!responseMayContinue()) return;
         bubble.appendChild(exMsg);
         chatTurns.push({ role: 'atlas', text: exText });
+      } else if (!responseMayContinue()) {
+        return;
       }
       // G2 follow-up (owner 2026-06-28): per-lift effort-line parity. Each additional
       // lift now renders its OWN deterministic, engine-backed effort line — the same
@@ -1517,6 +1570,7 @@ import * as sessionQuestion from './sessionQuestion.js';
         const exEff = document.createElement('div');
         exEff.className = 'coach-msg effort-note';
         await typeOut(exEff, exReaction.effort_note);
+        if (!responseMayContinue()) return;
         bubble.appendChild(exEff);
       }
       if (!exReaction.ack_only && exRec && exRec.recommendation) {
@@ -1531,6 +1585,7 @@ import * as sessionQuestion from './sessionQuestion.js';
       const extra = document.createElement('div');
       extra.className = 'coach-msg';
       await typeOut(extra, coachVoiceTemplates.templatedSubstitutionLine(sub));
+      if (!responseMayContinue()) return;
       bubble.appendChild(extra);
     }
 
@@ -1568,6 +1623,7 @@ import * as sessionQuestion from './sessionQuestion.js';
 
     const hasEngagedPlan = currentPlannedOrder.length > 0;
     let nextEx = currentNextPlanned || (hasEngagedPlan ? await getNextExerciseInPlan(lastLogged.exercise) : null);
+    if (!responseMayContinue()) return;
     if (nextEx && !currentNextPlanned) {
       const done = (currentCompleted || []).some(c => String(c).toLowerCase() === String(nextEx).toLowerCase());
       if (done) nextEx = null;
@@ -1645,6 +1701,7 @@ import * as sessionQuestion from './sessionQuestion.js';
         if (!placeholder) {
           try {
             const map = (typeof getPlanTodayByName === 'function') ? await getPlanTodayByName() : null;
+            if (!responseMayContinue()) return;
             const nextRec = map ? map.get(String(nextEx).toLowerCase()) : null;
             placeholder = formatNextPlaceholder(nextRec) || nextEx;
           } catch { placeholder = nextEx; /* best effort — fall back to the name */ }
@@ -1925,7 +1982,36 @@ import * as sessionQuestion from './sessionQuestion.js';
       } catch { /* last-resort: never throw out of the listener */ }
     });
   });
-  document.addEventListener('atlas:set-logged', e => { handleSetLogged(e.detail).catch(() => {}); });
+  document.addEventListener('atlas:set-logged', e => {
+    const detail = e.detail || {};
+    const sessionId = typeof detail.sessionId === 'string' ? detail.sessionId.trim() : '';
+    // Mint at logical set initiation, before recommendation/history awaits. Only the
+    // final response for a multi-exercise batch receives this ticket because it is the
+    // last Atlas turn displayed for the event.
+    const responseTicket = sessionId
+      && Array.isArray(detail.exercises) && detail.exercises.length
+      && typeof beginTurnResponse === 'function'
+      ? beginTurnResponse({ sessionId })
+      : null;
+    if (responseTicket && detail && typeof detail === 'object') {
+      setResponseTickets.set(detail, responseTicket);
+    }
+    // Bound the whole set-response pipeline, including the recommendation read that
+    // precedes /api/coach/message. Otherwise a stalled recommendation could keep an
+    // immediate closeout waiting forever before the message timeout even starts.
+    const settlementTimer = responseTicket
+      ? setTimeout(() => cancelTurnResponse(responseTicket), COACH_LLM_TIMEOUT_MS)
+      : null;
+    handleSetLogged(detail).catch(() => {}).finally(() => {
+      if (settlementTimer) clearTimeout(settlementTimer);
+      // A rejected request or an early deterministic fallback must still release any
+      // closeout waiting on this set. A successful selected response already completed
+      // the ticket; the second call is an inert fail-closed no-op.
+      if (responseTicket && typeof completeTurnResponse === 'function') {
+        completeTurnResponse(responseTicket, null);
+      }
+    });
+  });
   document.addEventListener('atlas:substitute-suggested', e => { handleSubstituteSuggested(e.detail).catch(() => {}); });
   // F10D acceptance boundary — the boundary's DATA guarantee is intact (the app.js
   // gate still mints identity + the Session_Plans acceptance + the ledger
@@ -2095,7 +2181,7 @@ import * as sessionQuestion from './sessionQuestion.js';
   // `history` is the PRIOR turns only — the current message is sent separately as
   // `message`, so the caller must not have appended it to chatTurns yet (else the
   // backend would see the current turn twice).
-  async function getChatReply(message, history, context) {
+  async function getChatReply(message, history, context, responseTicket) {
     if (typeof api !== 'function' || (typeof isConnected === 'function' && !isConnected())) return { message: null, propose_edit: null, propose_note: null, propose_plan_edit: null };
 
     // P0 — Active Session Context Integrity: during an active workout, short
@@ -2106,6 +2192,7 @@ import * as sessionQuestion from './sessionQuestion.js';
     // coach below. Education ("what does RIR mean?") and anything ambiguous are NOT
     // session-shaped, so they keep the existing SME-first routing untouched.
     const ctx = context || {};
+    const correlationSessionId = typeof ctx.session_id === 'string' ? ctx.session_id.trim() : '';
     // An active workout is signalled by a started plan, a live preview, or a
     // started planned session (plan_completed present). But a *free-form coaching
     // conversation* — the lifter chatting with the coach mid-workout without having
@@ -2159,16 +2246,24 @@ import * as sessionQuestion from './sessionQuestion.js';
     // including data questions about the lifter's own history — falls through to the
     // Gemini coach below. READ-ONLY either way; a slow/failed SME never blocks the chat.
     if (!skipSme) try {
-      const sme = await Promise.race([
+      let smeHeaders = null;
+      const smeWinner = await Promise.race([
         api('/api/coach/ask', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message })
-        }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('sme-timeout')), 4000))
+          body: JSON.stringify({ message, ...(correlationSessionId ? { session_id: correlationSessionId } : {}) }),
+          ...(responseTicket ? {
+            responseHeaders: responseHeaders => { smeHeaders = responseHeaders; },
+          } : {}),
+        }).then(value => ({ selected: true, value })),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('sme-timeout')), 4000)),
       ]);
+      const sme = smeWinner.value;
       const data = sme && sme.data;
       if (data && data.depth && data.depth !== 'log_only' && data.answer) {
+        if (responseTicket && typeof completeTurnResponse === 'function') {
+          completeTurnResponse(responseTicket, smeHeaders);
+        }
         const cards = Array.isArray(data.cards) ? data.cards : [];
         const provenance = cards.length
           ? `\n\nBased on: ${cards.map(c => String(c).replace(/_/g, ' ')).join(', ')}`
@@ -2183,19 +2278,35 @@ import * as sessionQuestion from './sessionQuestion.js';
     // the 9s reaction budget so that fallback actually reaches the lifter instead of
     // the generic "Coach is unavailable" line firing first.
     const CHAT_REPLY_TIMEOUT_MS = 15000;
-    const timeout = new Promise(resolve => setTimeout(() => resolve({ message: null, propose_edit: null, propose_note: null, propose_plan_edit: null }), CHAT_REPLY_TIMEOUT_MS));
+    let chatHeaders = null;
+    const timeout = new Promise(resolve => setTimeout(() => resolve({
+      selected: false,
+      value: { message: null, propose_edit: null, propose_note: null, propose_plan_edit: null },
+    }), CHAT_REPLY_TIMEOUT_MS));
     const request = api('/api/coach/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, history: history.slice(-8), context: context || {} })
+      body: JSON.stringify({
+        message,
+        history: history.slice(-8),
+        context: context || {},
+        ...(correlationSessionId ? { session_id: correlationSessionId } : {}),
+      }),
+      ...(responseTicket ? {
+        responseHeaders: responseHeaders => { chatHeaders = responseHeaders; },
+      } : {}),
     }).then(res => ({
       message: (res && res.data && res.data.message) || null,
       propose_edit: (res && res.data && res.data.propose_edit) || null,
       propose_note: (res && res.data && res.data.propose_note) || null,
       propose_constraint: (res && res.data && res.data.propose_constraint) || null,
       propose_plan_edit: (res && res.data && res.data.propose_plan_edit) || null
-    }));
-    return Promise.race([request, timeout]);
+    })).then(value => ({ selected: true, value }));
+    const winner = await Promise.race([request, timeout]);
+    if (winner.selected && responseTicket && typeof completeTurnResponse === 'function') {
+      completeTurnResponse(responseTicket, chatHeaders);
+    }
+    return winner.value;
   }
 
   // Show a "Save this note?" prompt under Atlas's bubble. Calls POST /api/coaching-notes
@@ -2370,7 +2481,7 @@ import * as sessionQuestion from './sessionQuestion.js';
     return r;
   }
 
-  async function handleChatMessage(detail) {
+  async function handleChatMessage(detail, responseTicket) {
     const text = (detail && detail.text || '').trim();
     if (!text) return;
     // chat.js already painted the lifter's bubble on submit; we add Atlas's reply.
@@ -2387,7 +2498,7 @@ import * as sessionQuestion from './sessionQuestion.js';
     body.textContent = 'Thinking…';
 
     let chatResult = { message: null, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null };
-    try { chatResult = await getChatReply(text, priorTurns, detail && detail.context); } catch { /* stays null */ }
+    try { chatResult = await getChatReply(text, priorTurns, detail && detail.context, responseTicket); } catch { /* stays null */ }
     // Fail closed: a generation request that reached this lane must never materialize a
     // local active plan from the model's propose_plan_edit (see guardGenerationChatResult).
     chatResult = guardGenerationChatResult(text, chatResult);
@@ -2397,11 +2508,23 @@ import * as sessionQuestion from './sessionQuestion.js';
 
     body.textContent = '';
     await typeOut(body, reply);
-    setWorkoutPlaceholder(extractPlaceholderFromText(reply));
+
+    // A response can win its network race and then lose authority while its prose is
+    // rendering. Recheck immediately before every structured side effect so a newer
+    // preview/response cannot be cleared, mutated, or left with a stale approval prompt.
+    const mayApplyStructuredResult = () => Boolean(
+      responseTicket
+      && typeof isTurnResponseAuthoritative === 'function'
+      && isTurnResponseAuthoritative(responseTicket)
+    );
+    if (mayApplyStructuredResult()) {
+      setWorkoutPlaceholder(extractPlaceholderFromText(reply));
+    }
 
     // Apply the structured edit (if any) after prose is typed — the lifter sees
     // the explanation first, then the preview updates. The trust loop is intact:
     // invalidatePreview() forces a new dry-run before approve re-enables.
+    chatResult.propose_edit = mayApplyStructuredResult() ? chatResult.propose_edit : null;
     if (chatResult.propose_edit) {
       const applied = applyProposedEdit(chatResult.propose_edit);
       if (applied) {
@@ -2412,6 +2535,7 @@ import * as sessionQuestion from './sessionQuestion.js';
       }
     }
 
+    chatResult.propose_plan_edit = mayApplyStructuredResult() ? chatResult.propose_plan_edit : null;
     if (chatResult.propose_plan_edit) {
       const result = { applied: false, exercises: [] };
       document.dispatchEvent(new CustomEvent('atlas:plan-edit-proposed', {
@@ -2437,12 +2561,14 @@ import * as sessionQuestion from './sessionQuestion.js';
 
     // Show "Save this note?" prompt if Atlas proposed a coaching note. Requires
     // explicit lifter approval — never saves silently.
+    chatResult.propose_note = mayApplyStructuredResult() ? chatResult.propose_note : null;
     if (chatResult.propose_note && chatResult.propose_note.note) {
       showSaveNotePrompt(bubble, chatResult.propose_note.note);
     }
 
     // Show "Save this constraint?" prompt if Atlas proposed a structured constraint.
     // Same explicit-approval trust loop as notes — at most one proposal per reply.
+    chatResult.propose_constraint = mayApplyStructuredResult() ? chatResult.propose_constraint : null;
     if (chatResult.propose_constraint && chatResult.propose_constraint.target) {
       showSaveConstraintPrompt(bubble, chatResult.propose_constraint);
     }
@@ -2450,7 +2576,15 @@ import * as sessionQuestion from './sessionQuestion.js';
     chatTurns.push({ role: 'atlas', text: reply });
   }
 
-  document.addEventListener('atlas:chat-message', e => { handleChatMessage(e.detail).catch(() => {}); });
+  document.addEventListener('atlas:chat-message', e => {
+    const context = e.detail && e.detail.context;
+    const sessionId = context && typeof context.session_id === 'string' ? context.session_id.trim() : '';
+    // Mint at logical submission, before either /ask or its /chat fallthrough can await.
+    const responseTicket = sessionId && typeof beginTurnResponse === 'function'
+      ? beginTurnResponse({ sessionId })
+      : null;
+    handleChatMessage(e.detail, responseTicket).catch(() => {});
+  });
 
   // Logging directly (without tapping a tile) also leaves the empty home: the
   // first message of any kind collapses the hero + tiles.

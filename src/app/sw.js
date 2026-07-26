@@ -24,6 +24,7 @@ const SHELL_ASSETS = [
   '/app/sessionLedger.js',
   '/app/signals-core.js',
   '/app/api.js',
+  '/app/turnCorrelation.js',
   '/app/dom.js',
   '/app/bugReport.js',
   '/app/settingsHealth.js',

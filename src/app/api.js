@@ -127,6 +127,11 @@ export function friendlyTransportMessage(err) {
 }
 
 export async function api(path, options = {}) {
+  // Internal, header-only response seam used by the bounded turn-correlation protocol.
+  // Strip it before fetch so it can never become a wire option or enter response bodies,
+  // request history, bug reports, or traces. The callback receives the native Headers
+  // object only; callers extract the two closed correlation header names themselves.
+  const { responseHeaders, ...fetchOptions } = options;
   // Flight Recorder session-linkage headers (additive, and {} unless the recorder is
   // active) so server-side api_response telemetry links to this client session. Never
   // affects request/response semantics or the write path.
@@ -143,16 +148,16 @@ export async function api(path, options = {}) {
   // Send the legacy key header ONLY when a key is still stored (machine/legacy /
   // pre-migration path). Once migrated to a session cookie, getApiKey() is '' and
   // the same-origin cookie authenticates instead — no empty header is sent.
-  const headers = { 'x-atlas-request-origin': uiOrigin, ...flightHeaders, ...(options.headers || {}) };
+  const headers = { 'x-atlas-request-origin': uiOrigin, ...flightHeaders, ...(fetchOptions.headers || {}) };
   const key = getApiKey();
   if (key) headers['x-atlas-api-key'] = key;
-  const method = options.method || 'GET';
+  const method = fetchOptions.method || 'GET';
   const startedAt = Date.now();
   let res = null;
   let json = null;
   try {
     // same-origin so the HttpOnly session cookie is attached on /api calls.
-    res = await fetch(path, { credentials: 'same-origin', ...options, headers });
+    res = await fetch(path, { credentials: 'same-origin', ...fetchOptions, headers });
     json = await res.json().catch(() => null);
     if (!res.ok) {
       const message = json?.message || json?.error || `Request failed (${res.status})`;
@@ -164,6 +169,9 @@ export async function api(path, options = {}) {
     // A 2xx from a protected endpoint is the server confirming this browser is
     // authenticated (its cookie or legacy key was accepted). This is the authoritative
     // signal that keeps Settings and every read agreeing without a client-side flag.
+    if (typeof responseHeaders === 'function') {
+      try { responseHeaders(res.headers); } catch (_) { /* metadata must never affect the request */ }
+    }
     setAuthenticated();
     return json;
   } catch (err) {

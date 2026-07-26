@@ -66,6 +66,14 @@ import { buildFutureRevisions, appendRevisions, performedSetCount as ledgerPerfo
 // those detected reps on a short affirmation ("Just log it"), so clarified sets are
 // never dropped nor fabricated.
 import { setPendingClarification, resolvePendingClarification, clearPendingClarification } from './pendingClarification.js';
+import {
+  approvalCorrelation,
+  beginCorrelatedPreview,
+  completeCorrelatedPreview,
+  resolveCorrelatedPreviewSession,
+  retireCorrelatedPreview,
+  waitForTurnResponse,
+} from './turnCorrelation.js';
 
 const ATLAS_SHELL_BUILD = 'v145';
 
@@ -2301,6 +2309,7 @@ function tryResolvePendingReplacement(text) {
 // or no known substitute; the coach then handles it. Async because the recommender is
 // server-side (its quality/pattern chain is not in the browser bundle).
 async function tryApplyImplicitSubstitution(text) {
+  const submitSeq = typeof previewRequestSeq === 'number' ? previewRequestSeq : null;
   const PM = (typeof window !== 'undefined' && window.planMutationIntent) || null;
   if (!PM) return false;
   const intent = PM.classifyMutationIntent(text);
@@ -2335,6 +2344,7 @@ async function tryApplyImplicitSubstitution(text) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: text, current_exercise: targetName, intent: 'substitute', remaining_plan: remainingPlan })
     });
+    if (submitSeq !== null && submitSeq !== previewRequestSeq) return false;
     rec = res && res.data && res.data.recommendation;
   } catch { return false; }
   if (!rec || !rec.recommendation) return false; // no known substitute → fall through to the coach
@@ -3614,6 +3624,10 @@ const parsedRowsEditor = document.getElementById('parsed-rows-editor');
 // Pending approval state. Set only after a successful dry-run preview;
 // cleared whenever the form changes so stale previews can never be approved.
 let pendingWrite = null;
+// Correlation is deliberately separate from pendingWrite: it exists before the async
+// preview starts, so a newer initiation can retire an in-flight predecessor even when
+// the predecessor has not produced a pending write yet.
+let activePreviewCorrelation = null;
 
 // F07 / CLIENT-3: monotonic preview-request identity. Bumped at the start of every preview
 // submit; each async parse/dry-run response only updates preview state (the parsed rows and
@@ -3681,6 +3695,7 @@ let sessionCompiledAwaitingPreview = false;
 // after Finish is never lost (Codex #1125). Fail-closed: once staged, an ambiguous
 // re-preview never re-enters the append lane.
 let closeoutPreviewStaged = false;
+let latestSetResponseCompletion = null;
 
 // Populated after a successful manual write. Cleared only after undo or when
 // the user explicitly picks "Log as new" in the correction dialog. NOT cleared
@@ -4524,6 +4539,7 @@ document.addEventListener('atlas:session-reset', renderSessionPin);
 // when sessionLog is cleared. So the latch is true only between a staged closeout and
 // the next reset, and can never leak the append-block into a genuinely new session.
 document.addEventListener('atlas:session-reset', () => { closeoutPreviewStaged = false; });
+document.addEventListener('atlas:session-reset', () => { latestSetResponseCompletion = null; });
 
 function collectManualEffort(sessionId, date, location, notes) {
   const duration = document.getElementById('effort-duration').value.trim();
@@ -5510,6 +5526,9 @@ function emitSetLogged(logObjs, text, substitutions, enrichment) {
     }
   }
   if (byExercise.length) {
+    const loggedSessionId = ((logObjs || [])
+      .find(o => o && typeof o.session_id === 'string' && o.session_id.trim())
+      ?.session_id || '').trim();
     // ADD-5: a set was just logged — the just-logged lift is the fresh focus again,
     // so an immediate demonstrative correction re-identifies IT (fast path restored).
     setCoachDiscussionSinceLog(false);
@@ -5535,6 +5554,7 @@ function emitSetLogged(logObjs, text, substitutions, enrichment) {
         detail: {
           exercises: byExercise,
           text: text || '',
+          ...(loggedSessionId ? { sessionId: loggedSessionId } : {}),
           planIsComplete,
           nextPlanned,
           // The completed-lift names this session, so the handoff's /api/plan/today
@@ -5612,9 +5632,9 @@ async function fetchReaction(liftCode, justLoggedSet) {
 // — the coach is suppressed only when a card was actually rendered, so an
 // exercise not in the ~14-entry catalog still gets a coach reply.
 async function checkAndSuggestSubstitute(text) {
+  const submitSeq = typeof previewRequestSeq === 'number' ? previewRequestSeq : null;
   if (!text || !getActivePlannedSession() || !getActivePlannedSession().exercises.length) return false;
-  // Use canonical session to find the current exercise — exercises[index] lags after
-  // a logged set until "Next exercise →" is clicked, causing stale substitute checks.
+  // Canonical current exercise; the index can lag after a logged set.
   const currentEx = currentPlannedExercise();
   if (!currentEx || !currentEx.name || !isConnected()) return false;
   try {
@@ -5623,24 +5643,13 @@ async function checkAndSuggestSubstitute(text) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: text, current_exercise: currentEx.name })
     });
+    if (submitSeq !== null && submitSeq !== previewRequestSeq) return false;
     const rec = res && res.data && res.data.recommendation;
     if (rec) {
-      // Step 373b: the lifter declared a swap for the current step. Record the
-      // prescribed (swapped-out) lift so the NEXT logged exercise replaces this
-      // slot in the live session (applied in emitSetLogged).
-      // AC3: also store the prescription (weight/reps/sets) from the API response so
-      // applySessionSubstitution can populate the replacement slot instead of null.
+      // Step 373b / AC3: record the prescribed lift and target before moving the cursor.
       setPendingSubstitution({ prescribed: currentEx.canonicalName || currentEx.name,
         prescription: rec.next_target || null });
-      // Step 379: advance the authoritative session cursor past the taken/swapped
-      // exercise. Otherwise the cursor stays on the lift the lifter just moved off,
-      // and a subsequent conversational message would send that stale name as
-      // current_exercise to /api/suggest-substitute (and the banner would keep
-      // showing the taken exercise). The deferred swap is applied by NAME in
-      // emitSetLogged, so it is unaffected by this cursor move. We deliberately do
-      // NOT call advancePlannedSession(): that clears pendingSubstitution and
-      // restarts the logger input mid-conversation. Clamp so we never overrun the
-      // plan (no premature session-end on the last slot).
+      // Step 379: move past the taken slot without clearing the deferred swap; clamp at the end.
       if (getActivePlannedSession().index < getActivePlannedSession().exercises.length - 1) {
         getActivePlannedSession().index += 1;
         renderActiveSessionBanner();
@@ -5851,6 +5860,10 @@ function invalidatePreview() {
   // — otherwise the stale response would re-create pendingWrite and re-enable Save for the very
   // preview the edit was meant to invalidate.
   previewRequestSeq++;
+  if (activePreviewCorrelation) {
+    retireCorrelatedPreview(activePreviewCorrelation);
+    activePreviewCorrelation = null;
+  }
   pendingWrite = null;
   runEffortCardCleanups();
   lastParserStatus = null;
@@ -5900,6 +5913,13 @@ function startOverWorkout() {
 // is cleared; gated on an accepted plan → no-op for freestyle).
 document.getElementById('start-over-btn')?.addEventListener('click', () => { emitPlanCloseout('abandoned'); startOverWorkout(); });
 
+async function waitForLatestSetTurn() {
+  if (!latestSetResponseCompletion) return;
+  const pending = latestSetResponseCompletion;
+  try { await pending; } catch { /* coaching prose is optional */ }
+  if (latestSetResponseCompletion === pending) latestSetResponseCompletion = null;
+}
+
 // End-of-session compilation: take the in-memory chat history, ask the server
 // to extract the workout sets the lifter logged conversationally, then populate
 // the composer and trigger a normal parse → preview → approve flow.
@@ -5915,6 +5935,7 @@ async function handleLogIt() {
 }
 
 async function runCloseout() {
+  await waitForLatestSetTurn();
   // CANONICAL SOURCE OF TRUTH: build the closeout rows from the structured set
   // buffer (sessionLog) — the same source getCanonicalSession() derives from. No
   // Gemini, no re-parse. This is what the visible logged cards were rendered from,
@@ -6102,22 +6123,38 @@ function looksLikeModalityQuestion(text) {
 // fail-closed message was shown); false when the input is NOT a modality (the
 // caller then falls through to the coach). Read-only: only a test_mode dry-run runs
 // here — the actual write happens solely in the #approve-btn handler.
-async function tryPreviewModality(text, sessionId, date) {
+async function tryPreviewModality(text, sessionId, date, submitSeq) {
+  // Staleness outranks every early return that would permit fallthrough. In
+  // particular, a late question-shaped A must not reach coach routing after B.
+  if (submitSeq !== previewRequestSeq) return true;
   if (!text || !date) return false;
   // A question about training is for the coach — never stage it as a write preview.
   if (looksLikeModalityQuestion(text)) return false;
   let result;
+  const correlationPreview = beginCorrelatedPreview({ sessionId });
+  activePreviewCorrelation = correlationPreview;
   try {
+    const previewPayload = { text, session_id: sessionId, date, test_mode: true };
+    if (correlationPreview) previewPayload.correlation = correlationPreview.correlation;
     result = await api('/api/log-modality', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, session_id: sessionId, date, test_mode: true })
+      body: JSON.stringify(previewPayload),
+      ...(correlationPreview ? {
+        responseHeaders: responseHeaders => completeCorrelatedPreview(correlationPreview, responseHeaders)
+      } : {})
     });
   } catch (err) {
+    // A superseded modality attempt owned its original input. It must not fall
+    // through into a stale coach response after a newer submit has taken over.
+    if (submitSeq !== previewRequestSeq) return true;
     // 422 = not a recognized modality → let the caller route to the coach.
     // Any other failure → we can't trust a preview, so we never stage a write.
     return false;
   }
+  // Initiation order owns the review card. A late A response may complete its
+  // retired correlation, but it cannot replace B's pending preview or approval.
+  if (submitSeq !== previewRequestSeq) return true;
   const data = result?.data || {};
   if (!data.modality || !Array.isArray(data.modality_row_preview)) return false;
   // Fail closed: never enable approval without the dry-run no-write proof.
@@ -6131,6 +6168,7 @@ async function tryPreviewModality(text, sessionId, date) {
     sessionId,
     date,
     writeId: generateWriteId(),
+    correlationPreview,
     previewProof: previewProofFromResult(result, 'modality')
   };
   renderModalityPreview({ modality: data.modality, row: data.modality_row_preview });
@@ -6214,6 +6252,13 @@ function routeMessageToCoach(text) {
   const preview = currentPreviewRowsForChat();
   const plan = currentPlanForChat();
   const context = {};
+  // #1165 slice 2: the coach request must name the same explicit session the later
+  // preview/write uses, or the server correctly refuses the cross-route claim.
+  const correlationDate = document.getElementById('log-date')?.value?.trim() || getLocalDateString();
+  const correlationSessionId = (getActivePlannedSession()?.session_id
+    || document.getElementById('log-session-id')?.value?.trim()
+    || generateSessionId(correlationDate));
+  if (correlationSessionId) context.session_id = correlationSessionId;
   if (preview.length) context.current_preview = preview;
   if (plan.length) context.current_plan = plan;
   // Deterministic per-exercise session tally (targeted validation sweep 2026-07-09):
@@ -6308,6 +6353,15 @@ function observeComposerText(text) {
   } catch { /* nor throw into the submit path */ }
 }
 
+function bindClarifiedRowsToCurrentSession(rows) {
+  const date = document.getElementById('log-date')?.value?.trim() || getLocalDateString();
+  const sessionInput = document.getElementById('log-session-id');
+  const sessionId = sessionInput?.value?.trim() || generateSessionId(date);
+  if (sessionInput) sessionInput.value = sessionId;
+  for (const row of rows) row.session_id = sessionId;
+  return sessionId;
+}
+
 document.getElementById('logger-form').addEventListener('submit', async e => {
   e.preventDefault();
 
@@ -6376,7 +6430,12 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     if (resolvedRows) {
       const affirmText = workoutTextInput.value.trim();
       workoutTextInput.value = '';
+      // This early-return path runs before the normal submit block derives its session.
+      // Bind the clarified rows now so atlas:set-logged can mint the coach response
+      // ticket for this exact session and closeout retains that resulting canonical turn.
+      const clarificationSessionId = bindClarifiedRowsToCurrentSession(resolvedRows);
       emitSetLogged(resolvedRows, affirmText, [], null);
+      latestSetResponseCompletion = waitForTurnResponse({ sessionId: clarificationSessionId });
       return;
     }
   }
@@ -6443,8 +6502,10 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     setStatus(loggerStatus, 'Reading screenshot effort...', 'ok');
     try {
       closeoutScreenshotEffort = await parseWorkoutImage(file);
+      if (submitSeq !== previewRequestSeq) return;
       setStatus(loggerStatus, 'Effort read from screenshot — opening your preview to save.', 'ok');
     } catch {
+      if (submitSeq !== previewRequestSeq) return;
       setStatus(loggerStatus, "I couldn't read effort from the screenshot. I can still save the workout without effort data.", 'warn');
     }
     // RC2: the screenshot's own date is authoritative for this save unless the owner
@@ -6552,10 +6613,11 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       // the slash parser threw above. Try the modality trust loop (dry-run preview
       // → approve → /api/log-modality) before treating it as a coach question. On a
       // 422 / non-modality this returns false and we fall through to the coach.
-      if (await tryPreviewModality(pendingChatText, sessionId, date)) {
+      if (await tryPreviewModality(pendingChatText, sessionId, date, submitSeq)) {
         activeExercise = null;
         return;
       }
+      if (submitSeq !== previewRequestSeq) return;
       // An EXPLICIT REPLACE ("replace back squats with bench", "remove squats and change out
       // for bench") stages ONE gated proposal — source stays, replacement is not activated
       // until approval — BEFORE the skip/suggest/coach routes (req 4/5), so a direct
@@ -6564,6 +6626,7 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
         activeExercise = null;
         return;
       }
+      if (submitSeq !== previewRequestSeq) return;
       // P0 Sub-PR 2a: an EXPLICIT swap/skip ("skip deadlift, do squats") mutates
       // the canonical session deterministically — before the suggest/coach routes,
       // so the change lands in app state, not just chat prose.
@@ -6578,6 +6641,7 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
         activeExercise = null;
         return;
       }
+      if (submitSeq !== previewRequestSeq) return;
       // P0 PR 4: an EXPLICIT identity correction ("sorry that was squats") relabels
       // the just-logged lift deterministically — before the suggest/coach routes, so
       // it lands in app state even when the coach LLM is down.
@@ -6591,6 +6655,7 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       // correction must not silently relabel that completed lift (it asks instead).
       setCoachDiscussionSinceLog(true);
       const suggested = await checkAndSuggestSubstitute(pendingChatText);
+      if (submitSeq !== previewRequestSeq) return;
       if (!suggested) routeMessageToCoach(pendingChatText);
       // Clear the stale active-exercise context so the next bare shorthand input
       // (e.g. "15 12/2 x3" after "leg extension is taken, doing laterals first")
@@ -6690,7 +6755,9 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     let parsedShotEffort = null;
     try {
       parsedShotEffort = await parseWorkoutImage(file);
+      if (submitSeq !== previewRequestSeq) return;
     } catch {
+      if (submitSeq !== previewRequestSeq) return;
       setStatus(loggerStatus, "I couldn't read effort from the screenshot. I can still save the workout without effort data.", 'warn');
     }
     const resolvedShot = resolveCloseoutWorkoutDate({
@@ -6841,6 +6908,10 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     }
     lastParseSubstitution = null;
     emitSetLogged(logRows, pendingChatText, midSessionSubstitutions, midSessionEnrichment);
+    const loggedSessionId = ((logRows || [])
+      .find(row => row && typeof row.session_id === 'string' && row.session_id.trim())
+      ?.session_id || '').trim();
+    latestSetResponseCompletion = waitForTurnResponse({ sessionId: loggedSessionId });
     return;
   }
   // F10D — remember whether THIS preview is the session closeout before the
@@ -6893,7 +6964,15 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       // holds: pendingWrite.date below captures the server-RESOLVED date, which the
       // approve step re-sends, so what was previewed is exactly what is written.
       const screenshotDateField = logDateManuallyEntered ? date : '';
-      const result = await submitCompleteWorkout({ file, logRows, sessionId: completeWorkoutSessionId, date: screenshotDateField, location, notes, testMode: true });
+      const correlationPreview = beginCorrelatedPreview({
+        sessionId: completeWorkoutSessionId || sessionId,
+        ...(!completeWorkoutSessionId ? { provisionalSessionId: sessionId } : {}),
+      });
+      activePreviewCorrelation = correlationPreview;
+      const result = await submitCompleteWorkout({ file, logRows, sessionId: completeWorkoutSessionId,
+        date: screenshotDateField,
+        location, notes, testMode: true, correlationPreview
+      });
       if (!hasCompleteWorkoutNoWriteProof(result)) {
         throw new Error('Preview did not prove no-write safety. Nothing can be written.');
       }
@@ -6904,6 +6983,9 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       const resolvedData = result?.data?.data || {};
       const resolvedDate = resolvedData.date || date || getLocalDateString();
       const resolvedSessionId = resolvedData.session_id || sessionId || generateSessionId(resolvedDate);
+      if (correlationPreview && !resolveCorrelatedPreviewSession(correlationPreview, resolvedSessionId)) {
+        throw new Error('Preview session correlation could not be bound to the server-resolved session.');
+      }
       document.getElementById('log-date').value = resolvedDate;
       sessionIdInput.value = resolvedSessionId;
       pendingWrite = {
@@ -6916,6 +6998,7 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
         notes,
         effortOnly,
         writeId: generateWriteId(),
+        correlationPreview,
         // The effort metrics the owner is reviewing. On approval we write THESE,
         // not a second vision parse of the same image — so what gets saved is
         // exactly what was shown. See the approve handler's screenshot branch.
@@ -6928,7 +7011,15 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       };
       renderCompleteWorkoutPreview(result);
     } else if (effortOnly) {
-      const result = await submitCompleteWorkout({ logRows, sessionId: completeWorkoutSessionId, date, location, notes, manualEffort, testMode: true });
+      const correlationPreview = beginCorrelatedPreview({
+        sessionId: completeWorkoutSessionId || sessionId,
+        ...(!completeWorkoutSessionId ? { provisionalSessionId: sessionId } : {}),
+      });
+      activePreviewCorrelation = correlationPreview;
+      const result = await submitCompleteWorkout({ logRows, sessionId: completeWorkoutSessionId, date,
+        location, notes,
+        manualEffort, testMode: true, correlationPreview
+      });
       if (!hasCompleteWorkoutNoWriteProof(result)) {
         throw new Error('Preview did not prove no-write safety. Nothing can be written.');
       }
@@ -6940,8 +7031,11 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       // the real …-02 instead of a forced …-01. Mirrors the screenshot branch above.
       const resolvedEffortData = result?.data?.data || {};
       const resolvedEffortSessionId = resolvedEffortData.session_id || completeWorkoutSessionId || sessionId;
+      if (correlationPreview && !resolveCorrelatedPreviewSession(correlationPreview, resolvedEffortSessionId)) {
+        throw new Error('Preview session correlation could not be bound to the server-resolved session.');
+      }
       sessionIdInput.value = resolvedEffortSessionId;
-      pendingWrite = { mode: 'effort-only', logRows, sessionId: resolvedEffortSessionId, date, location, notes, manualEffort, effortOnly: true, writeId: generateWriteId(),
+      pendingWrite = { mode: 'effort-only', logRows, sessionId: resolvedEffortSessionId, date, location, notes, manualEffort, effortOnly: true, writeId: generateWriteId(), correlationPreview,
         // Mirror the screenshot path: an already-saved session disables approve so the
         // graceful "already saved" preview note doesn't lead to a live 409 on tap.
         duplicateSession: Boolean(result?.data?.data?.duplicate_check?.duplicate_session),
@@ -6995,6 +7089,9 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
             }));
       }
 
+      const correlationPreview = beginCorrelatedPreview({ sessionId: payload.session_id });
+      activePreviewCorrelation = correlationPreview;
+      if (correlationPreview) payload.correlation = correlationPreview.correlation;
       const result = await api('/api/log-workout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -7002,14 +7099,20 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
         // Cold-start resilience: this is the test_mode DRY-RUN preview (idempotent,
         // proof-field-guarded, no write) — safe to retry once on a transport failure.
         // The live write at the approve handler never sets this.
-        retryTransport: true
+        retryTransport: true,
+        ...(correlationPreview ? {
+          responseHeaders: responseHeaders => completeCorrelatedPreview(correlationPreview, responseHeaders)
+        } : {})
       });
       if (!hasLogWorkoutNoWriteProof(result)) {
         throw new Error('Preview did not prove no-write safety. Nothing can be written.');
       }
       // F07 / CLIENT-3: drop a superseded dry-run response — a newer submit's preview wins.
       if (submitSeq !== previewRequestSeq) return;
-      pendingWrite = { mode: 'manual', payload, sessionCloseout: isSessionCloseout, previewProof: previewProofFromResult(result, 'manual') };
+      pendingWrite = { mode: 'manual', payload, sessionCloseout: isSessionCloseout,
+        correlationPreview,
+        previewProof: previewProofFromResult(result, 'manual')
+      };
       renderLogWorkoutPreview(result, effortRow);
     }
     // Session-level save: the in-thread review card (atlas:preview-ready) is the
@@ -7098,7 +7201,10 @@ function effortJsonFromParsedEffort(effort) {
   };
 }
 
-async function submitCompleteWorkout({ file, logRows, sessionId, date, location, notes, manualEffort, testMode, writeId }) {
+async function submitCompleteWorkout({
+  file, logRows, sessionId, date, location, notes, manualEffort, testMode, writeId,
+  correlationPreview
+}) {
   const form = new FormData();
   if (file) form.append('image', file);
   form.append('log_rows_json', JSON.stringify(logRows || []));
@@ -7111,9 +7217,20 @@ async function submitCompleteWorkout({ file, logRows, sessionId, date, location,
   // Only the live write carries the write_id; the server uses it to refuse a
   // retried append. Dry-run previews never consume idempotency state.
   if (writeId && !testMode) form.append('write_id', writeId);
+  const correlation = testMode
+    ? correlationPreview?.correlation
+    : approvalCorrelation(correlationPreview);
+  if (correlation) form.append('correlation', JSON.stringify(correlation));
   // Cold-start resilience: DRY-RUN previews may retry once on a transport-level
   // failure (idempotent, no write). The live write never sets this.
-  return api('/api/complete-workout', { method: 'POST', body: form, ...(testMode ? { retryTransport: true } : {}) });
+  return api('/api/complete-workout', {
+    method: 'POST',
+    body: form,
+    ...(testMode ? { retryTransport: true } : {}),
+    ...(testMode && correlationPreview ? {
+      responseHeaders: responseHeaders => completeCorrelatedPreview(correlationPreview, responseHeaders)
+    } : {})
+  });
 }
 
 async function parseWorkoutImage(file) {
@@ -7483,15 +7600,18 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
       // the server performs the real append, carry the write_id from the dry-run
       // for idempotency, and require an explicit success proof before declaring it
       // saved. Writes only to Modality_Log; never touches Log_Cleaned/Effort.
+      const modalityPayload = {
+        text: pendingWrite.text,
+        session_id: pendingWrite.sessionId,
+        date: pendingWrite.date,
+        write_id: pendingWrite.writeId
+      };
+      const correlation = approvalCorrelation(pendingWrite.correlationPreview);
+      if (correlation) modalityPayload.correlation = correlation;
       const writeResult = await api('/api/log-modality', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: pendingWrite.text,
-          session_id: pendingWrite.sessionId,
-          date: pendingWrite.date,
-          write_id: pendingWrite.writeId
-        })
+        body: JSON.stringify(modalityPayload)
       });
       const writeData = writeResult?.data || {};
       // Idempotent replay: a duplicate write_id is echoed back with sheet_written
@@ -7505,6 +7625,9 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
     } else {
       const realPayload = { ...pendingWrite.payload };
       delete realPayload.test_mode;
+      const correlation = approvalCorrelation(pendingWrite.correlationPreview);
+      if (correlation) realPayload.correlation = correlation;
+      else delete realPayload.correlation;
       const writeResult = await api('/api/log-workout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -7714,6 +7837,8 @@ document.getElementById('load-session-btn').addEventListener('click', async () =
 /* ===== Body tab — Bodyweight ===== */
 
 let pendingBwWrite = null;
+let activeBwPreviewCorrelation = null;
+let bwPreviewSeq = 0;
 
 function hasBodyweightNoWriteProof(result) {
   const data = result?.data || {};
@@ -7739,12 +7864,24 @@ function hasBodyweightWriteProof(result) {
 }
 
 function bwInvalidate() {
+  // A form edit, cancel, or newer submit retires every response issued under the
+  // previous generation. Late responses can finish, but cannot rebuild approval.
+  bwPreviewSeq++;
+  if (activeBwPreviewCorrelation) {
+    retireCorrelatedPreview(activeBwPreviewCorrelation);
+    activeBwPreviewCorrelation = null;
+  }
   pendingBwWrite = null;
   document.getElementById('bw-preview-panel').hidden = true;
   document.getElementById('bw-preview-content').innerHTML = '';
   const btn = document.getElementById('bw-approve-btn');
   btn.disabled = true;
   btn.textContent = 'Write to Google Sheets';
+  const previewBtn = document.getElementById('bw-preview-btn');
+  if (previewBtn) {
+    previewBtn.disabled = false;
+    previewBtn.textContent = 'Preview — no data saved';
+  }
   const note = document.getElementById('bw-gate-note');
   if (note) note.textContent = 'Run a preview above to enable this button.';
 }
@@ -7754,6 +7891,7 @@ document.getElementById('bw-form').addEventListener('input', bwInvalidate);
 document.getElementById('bw-form').addEventListener('submit', async e => {
   e.preventDefault();
   bwInvalidate();
+  const submitSeq = bwPreviewSeq;
   const bwStatus = document.getElementById('bw-status');
   setStatus(bwStatus, '', 'ok');
 
@@ -7766,11 +7904,27 @@ document.getElementById('bw-form').addEventListener('submit', async e => {
   previewBtn.textContent = 'Previewing…';
 
   try {
+    const correlationSessionId = (getActivePlannedSession()?.session_id
+      || document.getElementById('log-session-id')?.value?.trim()
+      || generateSessionId(date));
+    const correlationPreview = beginCorrelatedPreview({ sessionId: correlationSessionId });
+    activeBwPreviewCorrelation = correlationPreview;
+    const previewPayload = { date, weight: Number(weight), notes, test_mode: 'true' };
+    if (correlationPreview) {
+      previewPayload.session_id = correlationSessionId;
+      previewPayload.correlation = correlationPreview.correlation;
+    }
     const result = await api('/api/bodyweight', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ date, weight: Number(weight), notes, test_mode: 'true' })
+      body: JSON.stringify(previewPayload),
+      ...(correlationPreview ? {
+        responseHeaders: responseHeaders => completeCorrelatedPreview(correlationPreview, responseHeaders)
+      } : {})
     });
+    // Preserve the newest initiated preview regardless of completion order. This
+    // also covers an edit/cancel that retired the request without starting another.
+    if (submitSeq !== bwPreviewSeq) return;
     const data = result.data || {};
     if (!hasBodyweightNoWriteProof(result)) {
       throw new Error('Preview did not prove no-write safety. Nothing can be written.');
@@ -7788,6 +7942,8 @@ document.getElementById('bw-form').addEventListener('submit', async e => {
       weight: Number(weight),
       notes,
       write_id: generateWriteId(),
+      correlationSessionId,
+      correlationPreview,
       previewProof: {
         test_mode: data.test_mode,
         sheet_write: data.sheet_write,
@@ -7800,6 +7956,7 @@ document.getElementById('bw-form').addEventListener('submit', async e => {
     const gateNote = document.getElementById('bw-gate-note');
     if (gateNote) gateNote.textContent = 'Review above, then click to write.';
   } catch (err) {
+    if (submitSeq !== bwPreviewSeq) return;
     // Surface the server's inner cause when present (parity with the logger preview
     // catch — PR-581 review note 2), so a bodyweight 500 is diagnosable too.
     const bd = err && err.body && err.body.details;
@@ -7807,8 +7964,12 @@ document.getElementById('bw-form').addEventListener('submit', async e => {
     const bwFriendly = friendlyTransportMessage(err);
     setStatus(bwStatus, bwFriendly ? `Preview failed: ${bwFriendly}` : `Preview failed: ${err.message}${bdetail ? ` — ${bdetail}` : ''}`, 'error');
   } finally {
-    previewBtn.disabled = false;
-    previewBtn.textContent = 'Preview — no data saved';
+    // A stale request must not change the button state owned by a newer submit.
+    // Plain form invalidation already restores the button in bwInvalidate().
+    if (submitSeq === bwPreviewSeq) {
+      previewBtn.disabled = false;
+      previewBtn.textContent = 'Preview — no data saved';
+    }
   }
 });
 
@@ -7824,15 +7985,21 @@ document.getElementById('bw-approve-btn').addEventListener('click', async () => 
   approveBtn.disabled = true;
   approveBtn.textContent = 'Writing to Sheets…';
   try {
+    const livePayload = {
+      date: pendingBwWrite.date,
+      weight: pendingBwWrite.weight,
+      notes: pendingBwWrite.notes,
+      write_id: pendingBwWrite.write_id
+    };
+    const correlation = approvalCorrelation(pendingBwWrite.correlationPreview);
+    if (correlation) {
+      livePayload.session_id = pendingBwWrite.correlationSessionId;
+      livePayload.correlation = correlation;
+    }
     const result = await api('/api/bodyweight', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        date: pendingBwWrite.date,
-        weight: pendingBwWrite.weight,
-        notes: pendingBwWrite.notes,
-        write_id: pendingBwWrite.write_id
-      })
+      body: JSON.stringify(livePayload)
     });
     if (!hasBodyweightWriteProof(result)) {
       throw new Error('Bodyweight write did not return success proof. Verify Sheets before approving again.');

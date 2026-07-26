@@ -989,6 +989,8 @@ test('PR 486 frontend: modality logging mirrors the trust loop without altering 
   assert.match(previewBlock, /test_mode:\s*true/, 'the preview must be a dry-run');
   assert.match(previewBlock, /hasLogModalityNoWriteProof\(result\)/, 'fail closed without the no-write proof');
   assert.match(previewBlock, /generateWriteId\(\)/, 'a write_id is staged for idempotency');
+  assert.match(previewBlock, /submitSeq !== previewRequestSeq/,
+    'a superseded modality response must be rejected before it can stage approval');
   // The preview never writes: no live (test_mode-less) log-modality call here.
   assert.doesNotMatch(previewBlock, /delete[^\n]*test_mode|write_id: pendingWrite\.writeId/);
 
@@ -1011,7 +1013,7 @@ test('PR 486 frontend: modality logging mirrors the trust loop without altering 
 
   // The modality hook lives ONLY in the coach-fallback branch (input the slash
   // parser rejected), so strength-set logging never routes through it.
-  assert.match(appSource, /if \(await tryPreviewModality\(pendingChatText, sessionId, date\)\)/);
+  assert.match(appSource, /if \(await tryPreviewModality\(pendingChatText, sessionId, date, submitSeq\)\)/);
   const hookIdx = appSource.indexOf('if (await tryPreviewModality(pendingChatText');
   const coachRouteIdx = appSource.indexOf('routeMessageToCoach(pendingChatText)');
   assert.ok(hookIdx > 0 && coachRouteIdx > hookIdx, 'modality is tried before falling through to the coach');
@@ -1466,8 +1468,8 @@ test('routine ack: the in-session reaction is tier-gated (kind:block); a complet
   const ccSource = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
   // The per-exercise reaction POSTs kind:'block' so the server returns note_tier
   // (routes through the deterministic coachNoteTier gate).
-  assert.match(ccSource, /body: JSON\.stringify\(\{ facts, kind: 'block' \}\)/,
-    'the in-session reaction must route through the block tier gate');
+  assert.match(ccSource, /body: JSON\.stringify\(\{[\s\S]{0,200}facts,[\s\S]{0,120}kind: 'block'/,
+    'the in-session reaction must route through the block tier gate while carrying its session');
   // Owner gate ruling (Issue #1073, 2026-07-20): on ack_only, a COMPLETED on-plan block
   // (facts.exercise_complete) renders the grounded wrap line; an intermediate single set
   // stays silent (note null). Never the retired "On plan — logged." receipt.
@@ -3286,7 +3288,7 @@ test('reaction layer: the recommend route reads ?w&reps&rir and stays read-only'
 test('in-workout note: handleSetLogged anchors the recommendation on the just-logged set', () => {
   const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
   const start = cc.indexOf('async function handleSetLogged(');
-  const fn = cc.slice(start, start + 1900);
+  const fn = cc.slice(start, cc.indexOf('// Pass the first substitution', start));
   // Passes the last just-logged set of the primary exercise into fetchReaction.
   assert.match(fn, /primary\.sets\[primary\.sets\.length - 1\]/, 'must take the just-logged set');
   assert.match(fn, /fetchReaction\(code, justLogged\)/, 'must forward it to fetchReaction');
@@ -3577,7 +3579,7 @@ test('verdict: write safety unchanged — undo button still wired after verdict 
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   const approveSection = appSource.slice(
     appSource.indexOf(anchor),
-    appSource.indexOf(anchor) + 12000
+    appSource.indexOf(anchor) + 13000
   );
   // undo button must still be appended before the verdict fetch
   const undoIdx = approveSection.indexOf('undo-write-btn');
@@ -3696,7 +3698,7 @@ test('readback: verifyWrittenRange function exists and fails quietly', () => {
 test('readback: approve handler fires verifyWrittenRange after write, before reaction fetch', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const anchor = "getElementById('approve-btn').addEventListener('click'";
-  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 12000);
+  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 13000);
   assert.match(handler, /verifyWrittenRange/, 'must call verifyWrittenRange in success path');
   assert.match(handler, /Verified in Sheet/, 'must show Verified in Sheet note');
   assert.match(handler, /readback verification unavailable/, 'must show unavailable note on failure');
@@ -5589,6 +5591,8 @@ test('bodyweight: preview proof and write_id gate live bodyweight writes', () =>
   assert.match(app, /original_sheet_write === 'success'/, 'bodyweight duplicate acceptance must require original success');
   assert.match(app, /pendingBwWrite = \{[\s\S]*write_id: generateWriteId\(\)/, 'bodyweight live write must carry a write_id');
   assert.match(app, /if \(!pendingBodyweightHasPreviewProof\(pendingBwWrite\)\)/, 'bodyweight approve must block stale or missing proof');
+  assert.match(app, /let bwPreviewSeq = 0[\s\S]*if \(submitSeq !== bwPreviewSeq\) return/,
+    'bodyweight must reject a retired response before it can rebuild pending approval');
 });
 
 test('write_id: screenshot approve accepts a blocked duplicate from complete-workout', () => {

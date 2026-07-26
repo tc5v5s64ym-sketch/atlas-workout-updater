@@ -9,6 +9,9 @@ export const BUG_REPORT_SECRET_VALUE_PATTERNS = [
   /\bsk-(?:proj-)?[A-Za-z0-9_-]{8,}\b/g,
   /\bAIza[A-Za-z0-9_-]{8,}\b/g,
   /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b/gi,
+  // #1165 pairing capability. It rides inside a JSON string request body, so key-name
+  // redaction alone cannot see it; value-pattern redaction keeps it out of bug reports.
+  /\bpair:[a-f0-9]{32}\b/gi,
   /\b([A-Z][A-Z0-9_]*(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|AUTH)[A-Z0-9_]*)\s*=\s*["']?[^"',\s]+["']?/g
 ];
 
