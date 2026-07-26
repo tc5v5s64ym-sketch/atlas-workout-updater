@@ -251,10 +251,12 @@ test('B can approve while A is pending and late A cannot alter B or emit another
   expect(capture.writes[0].correlation.pairing_token).toBe(TOKEN_B);
 });
 
-test('a set-coach response initiated before closeout cannot retire that newer preview', async ({ page }) => {
+for (const delayPoint of ['message-in-flight', 'recommendation-await']) {
+test(`an older set cannot retire a newer closeout preview when delayed at ${delayPoint}`, async ({ page }) => {
   const capture = {
     coachBodies: [],
     messageRoute: null,
+    recommendationRoute: null,
     previews: [],
     writes: [],
   };
@@ -301,6 +303,12 @@ test('a set-coach response initiated before closeout cannot retire that newer pr
           },
         },
       }));
+    }
+    if (path.startsWith('/api/recommend/next/')
+        && delayPoint === 'recommendation-await'
+        && capture.recommendationRoute === null) {
+      capture.recommendationRoute = route;
+      return;
     }
     if (path === '/api/coach/message') {
       capture.messageRoute = route;
@@ -367,7 +375,12 @@ test('a set-coach response initiated before closeout cannot retire that newer pr
   await page.locator('#workout-text').fill('bench 225 5/2');
   await page.locator('#preview-btn').click();
   await expect(page.locator('#thread-messages .readback').last()).toBeVisible();
-  await expect.poll(() => capture.messageRoute !== null).toBeTruthy();
+  if (delayPoint === 'recommendation-await') {
+    await expect.poll(() => capture.recommendationRoute !== null).toBeTruthy();
+    expect(capture.messageRoute).toBeNull();
+  } else {
+    await expect.poll(() => capture.messageRoute !== null).toBeTruthy();
+  }
 
   await page.locator('#workout-text').fill('done');
   await page.locator('#preview-btn').click();
@@ -376,6 +389,13 @@ test('a set-coach response initiated before closeout cannot retire that newer pr
   expect(previewCorrelation.turn_id).toBe(TURN);
   await expect(page.locator('.rv-save').last()).toBeEnabled();
 
+  if (capture.recommendationRoute) {
+    await capture.recommendationRoute.fulfill(json({
+      status: 'success',
+      data: { recommendation: 'Hold the load.', lift_code: 'BEN01' },
+    }));
+    await expect.poll(() => capture.messageRoute !== null).toBeTruthy();
+  }
   await capture.messageRoute.fulfill(json(
     { status: 'success', data: { message: 'Older set response completed late.' } },
     200,
@@ -391,6 +411,7 @@ test('a set-coach response initiated before closeout cannot retire that newer pr
     pairing_token: TOKEN_A,
   });
 });
+}
 
 async function openSpecializedPreviewRace(page, capture, path) {
   capture.previews = [];

@@ -234,6 +234,12 @@ test('client correlation: the production app wires the protocol through every re
     'normal in-workout coach messages must carry the session that owns their turn');
   assert.match(coach, /beginTurnResponse[\s\S]{0,2500}completeTurnResponse/,
     'coach requests must retain headers only after that response wins its timeout/routing race');
+  const setListener = coach.slice(
+    coach.indexOf("document.addEventListener('atlas:set-logged'"),
+    coach.indexOf("document.addEventListener('atlas:substitute-suggested'"),
+  );
+  assert.match(setListener, /beginTurnResponse[\s\S]*handleSetLogged/,
+    'set-response authority must be minted synchronously at logical set initiation, before recommendation awaits');
   assert.match(app, /resolveCorrelatedPreviewSession/,
     'effort-only previews must migrate to the server-resolved session before approval');
   const modalityBranch = app.slice(
