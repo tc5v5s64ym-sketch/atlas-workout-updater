@@ -29,6 +29,7 @@ import {
   beginTurnResponse,
   completeTurnResponse,
   isTurnResponseAuthoritative,
+  mayContinueTurnResponse,
 } from './turnCorrelation.js';
 
 (function () {
@@ -1383,6 +1384,14 @@ import {
       ? setResponseTickets.get(detail) || null
       : null;
     if (detail && typeof detail === 'object') setResponseTickets.delete(detail);
+    const responseMayContinue = () => !responseTicket
+      || (typeof mayContinueTurnResponse === 'function'
+        && mayContinueTurnResponse(responseTicket));
+    // Closeout is allowed to begin as soon as a valid response is selected, while its
+    // already-selected prose may still be typing. Let only that selected prose finish;
+    // every later side effect rechecks the stricter current-owner predicate above.
+    const responseMayRenderSelectedProse = () => responseMayContinue()
+      || (responseTicket && responseTicket.completed === true && responseTicket.accepted === true);
     const {
       exercises = [],
       text = '',
@@ -1414,6 +1423,7 @@ import {
       // without it the "Next" would reflect the previous session.
       const justLogged = primary.sets && primary.sets.length ? primary.sets[primary.sets.length - 1] : null;
       try { if (typeof fetchReaction === 'function') rec = await fetchReaction(code, justLogged); } catch { /* best effort */ }
+      if (!responseMayContinue()) return;
     }
 
     // Pass the first substitution (if any) into the facts so the main LLM call
@@ -1461,6 +1471,7 @@ import {
       planned_queue: Array.isArray(detail.plannedQueue) ? detail.plannedQueue : [],
       substitution: suggestMatch ? undefined : primarySub
     }, sessionId, exercises.length === 1 ? responseTicket : null);
+    if (!responseMayRenderSelectedProse()) return;
     const note = reaction.note;
     // Soul Recovery (Issue #1073): a routine (ack_only) block returns a null note —
     // DELIBERATE SILENCE — so nothing is typed under the readback card and the logged
@@ -1468,7 +1479,10 @@ import {
     // `if (note)` guards both the routine-silence case and the genuinely-absent one.
     if (note) {
       await typeOut(body, note);
+      if (!responseMayContinue()) return;
       chatTurns.push({ role: 'atlas', text: note });
+    } else if (!responseMayContinue()) {
+      return;
     }
 
     if (suggestMatch && loggedName) {
@@ -1478,6 +1492,7 @@ import {
         ? `Good call — you went with ${loggedName}. Intent preserved.`
         : `You went with ${loggedName}.`;
       await typeOut(ack, ackText);
+      if (!responseMayContinue()) return;
       bubble.appendChild(ack);
     }
 
@@ -1490,6 +1505,7 @@ import {
       const eff = document.createElement('div');
       eff.className = 'coach-msg effort-note';
       await typeOut(eff, reaction.effort_note);
+      if (!responseMayContinue()) return;
       bubble.appendChild(eff);
     }
 
@@ -1517,6 +1533,7 @@ import {
       if (exCode) {
         const exJustLogged = ex.sets && ex.sets.length ? ex.sets[ex.sets.length - 1] : null;
         try { if (typeof fetchReaction === 'function') exRec = await fetchReaction(exCode, exJustLogged); } catch { /* best effort */ }
+        if (!responseMayContinue()) return;
       }
       const exReaction = await getInWorkoutNote({
         liftCode: exCode,
@@ -1528,13 +1545,17 @@ import {
         planned_queue: [],
         substitution: undefined
       }, sessionId, ex === exercises[exercises.length - 1] ? responseTicket : null);
+      if (!responseMayRenderSelectedProse()) return;
       if (exReaction && exReaction.note) {
         const exMsg = document.createElement('div');
         exMsg.className = 'coach-msg';
         const exText = `${ex.exercise}: ${exReaction.note}`;
         await typeOut(exMsg, exText);
+        if (!responseMayContinue()) return;
         bubble.appendChild(exMsg);
         chatTurns.push({ role: 'atlas', text: exText });
+      } else if (!responseMayContinue()) {
+        return;
       }
       // G2 follow-up (owner 2026-06-28): per-lift effort-line parity. Each additional
       // lift now renders its OWN deterministic, engine-backed effort line — the same
@@ -1548,6 +1569,7 @@ import {
         const exEff = document.createElement('div');
         exEff.className = 'coach-msg effort-note';
         await typeOut(exEff, exReaction.effort_note);
+        if (!responseMayContinue()) return;
         bubble.appendChild(exEff);
       }
       if (!exReaction.ack_only && exRec && exRec.recommendation) {
@@ -1562,6 +1584,7 @@ import {
       const extra = document.createElement('div');
       extra.className = 'coach-msg';
       await typeOut(extra, coachVoiceTemplates.templatedSubstitutionLine(sub));
+      if (!responseMayContinue()) return;
       bubble.appendChild(extra);
     }
 
@@ -1599,6 +1622,7 @@ import {
 
     const hasEngagedPlan = currentPlannedOrder.length > 0;
     let nextEx = currentNextPlanned || (hasEngagedPlan ? await getNextExerciseInPlan(lastLogged.exercise) : null);
+    if (!responseMayContinue()) return;
     if (nextEx && !currentNextPlanned) {
       const done = (currentCompleted || []).some(c => String(c).toLowerCase() === String(nextEx).toLowerCase());
       if (done) nextEx = null;
@@ -1676,6 +1700,7 @@ import {
         if (!placeholder) {
           try {
             const map = (typeof getPlanTodayByName === 'function') ? await getPlanTodayByName() : null;
+            if (!responseMayContinue()) return;
             const nextRec = map ? map.get(String(nextEx).toLowerCase()) : null;
             placeholder = formatNextPlaceholder(nextRec) || nextEx;
           } catch { placeholder = nextEx; /* best effort — fall back to the name */ }

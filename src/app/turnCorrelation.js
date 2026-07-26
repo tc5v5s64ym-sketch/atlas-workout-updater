@@ -202,6 +202,16 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
     );
   }
 
+  function mayContinueTurnResponse(ticket) {
+    return Boolean(
+      ticket
+      && validSessionId(ticket.sessionId)
+      && authoritativeTurnResponse === ticket
+      && turnResponses.get(ticket.sessionId) === ticket
+      && (ticket.completed !== true || ticket.accepted === true)
+    );
+  }
+
   function beginPreview({ sessionId, provisionalSessionId } = {}) {
     // Preview initiation is newer than every response ticket already in flight, across
     // sessions, because all structured response effects target the same app surface.
@@ -318,6 +328,7 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
     completeTurnResponse,
     waitForTurnResponse,
     isTurnResponseAuthoritative,
+    mayContinueTurnResponse,
     beginPreview,
     completePreview,
     resolvePreviewSession,
@@ -337,6 +348,8 @@ export const completeTurnResponse = (ticket, responseHeaders) =>
 export const waitForTurnResponse = args => turnCorrelation.waitForTurnResponse(args);
 export const isTurnResponseAuthoritative = ticket =>
   turnCorrelation.isTurnResponseAuthoritative(ticket);
+export const mayContinueTurnResponse = ticket =>
+  turnCorrelation.mayContinueTurnResponse(ticket);
 export const beginCorrelatedPreview = args => turnCorrelation.beginPreview(args);
 export const completeCorrelatedPreview = (preview, responseHeaders) =>
   turnCorrelation.completePreview(preview, responseHeaders);
