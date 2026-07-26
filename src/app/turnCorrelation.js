@@ -112,6 +112,7 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
       sessionId,
       sequence: ++turnResponseSequence,
       completed: false,
+      accepted: false,
     };
     turnResponses.delete(sessionId);
     turnResponses.set(sessionId, ticket);
@@ -126,7 +127,18 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
     if (!ticket || ticket.completed === true || !validSessionId(ticket.sessionId)) return false;
     if (turnResponses.get(ticket.sessionId) !== ticket) return false;
     ticket.completed = true;
-    return captureTurnResponse({ sessionId: ticket.sessionId, responseHeaders });
+    ticket.accepted = captureTurnResponse({ sessionId: ticket.sessionId, responseHeaders });
+    return ticket.accepted;
+  }
+
+  function isTurnResponseAuthoritative(ticket) {
+    return Boolean(
+      ticket
+      && ticket.completed === true
+      && ticket.accepted === true
+      && validSessionId(ticket.sessionId)
+      && turnResponses.get(ticket.sessionId) === ticket
+    );
   }
 
   function beginPreview({ sessionId, provisionalSessionId } = {}) {
@@ -245,6 +257,7 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
     captureTurnResponse,
     beginTurnResponse,
     completeTurnResponse,
+    isTurnResponseAuthoritative,
     beginPreview,
     completePreview,
     resolvePreviewSession,
@@ -261,6 +274,8 @@ export const captureTurnResponse = args => turnCorrelation.captureTurnResponse(a
 export const beginTurnResponse = args => turnCorrelation.beginTurnResponse(args);
 export const completeTurnResponse = (ticket, responseHeaders) =>
   turnCorrelation.completeTurnResponse(ticket, responseHeaders);
+export const isTurnResponseAuthoritative = ticket =>
+  turnCorrelation.isTurnResponseAuthoritative(ticket);
 export const beginCorrelatedPreview = args => turnCorrelation.beginPreview(args);
 export const completeCorrelatedPreview = (preview, responseHeaders) =>
   turnCorrelation.completePreview(preview, responseHeaders);

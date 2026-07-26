@@ -252,6 +252,8 @@ test('client correlation: the production app wires the protocol through every re
   assert.match(app, /from '\.\/turnCorrelation\.js'/);
   assert.match(api, /responseHeaders/, 'api() must expose response headers without putting them in response bodies');
   assert.match(coach, /completeTurnResponse/, 'the real coach round-trip must retain only a selected canonical server turn id');
+  assert.match(coach, /isTurnResponseAuthoritative/,
+    'structured chat side effects must recheck response authority after prose rendering');
   assert.match(coach, /\/api\/coach\/message[\s\S]{0,1800}session_id/,
     'normal in-workout coach messages must carry the session that owns their turn');
   assert.match(coach, /beginTurnResponse[\s\S]{0,2500}completeTurnResponse/,

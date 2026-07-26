@@ -25,7 +25,11 @@
 
 import * as coachVoiceTemplates from './coachVoiceTemplates.js';
 import * as sessionQuestion from './sessionQuestion.js';
-import { beginTurnResponse, completeTurnResponse } from './turnCorrelation.js';
+import {
+  beginTurnResponse,
+  completeTurnResponse,
+  isTurnResponseAuthoritative,
+} from './turnCorrelation.js';
 
 (function () {
   'use strict';
@@ -2466,9 +2470,17 @@ import { beginTurnResponse, completeTurnResponse } from './turnCorrelation.js';
     await typeOut(body, reply);
     setWorkoutPlaceholder(extractPlaceholderFromText(reply));
 
+    // A response can win its network race and then lose authority while its prose is
+    // rendering. Recheck immediately before every structured side effect so a newer
+    // preview/response cannot be cleared, mutated, or left with a stale approval prompt.
+    const mayApplyStructuredResult = () => !responseTicket
+      || (typeof isTurnResponseAuthoritative === 'function'
+        && isTurnResponseAuthoritative(responseTicket));
+
     // Apply the structured edit (if any) after prose is typed — the lifter sees
     // the explanation first, then the preview updates. The trust loop is intact:
     // invalidatePreview() forces a new dry-run before approve re-enables.
+    chatResult.propose_edit = mayApplyStructuredResult() ? chatResult.propose_edit : null;
     if (chatResult.propose_edit) {
       const applied = applyProposedEdit(chatResult.propose_edit);
       if (applied) {
@@ -2479,6 +2491,7 @@ import { beginTurnResponse, completeTurnResponse } from './turnCorrelation.js';
       }
     }
 
+    chatResult.propose_plan_edit = mayApplyStructuredResult() ? chatResult.propose_plan_edit : null;
     if (chatResult.propose_plan_edit) {
       const result = { applied: false, exercises: [] };
       document.dispatchEvent(new CustomEvent('atlas:plan-edit-proposed', {
@@ -2504,12 +2517,14 @@ import { beginTurnResponse, completeTurnResponse } from './turnCorrelation.js';
 
     // Show "Save this note?" prompt if Atlas proposed a coaching note. Requires
     // explicit lifter approval — never saves silently.
+    chatResult.propose_note = mayApplyStructuredResult() ? chatResult.propose_note : null;
     if (chatResult.propose_note && chatResult.propose_note.note) {
       showSaveNotePrompt(bubble, chatResult.propose_note.note);
     }
 
     // Show "Save this constraint?" prompt if Atlas proposed a structured constraint.
     // Same explicit-approval trust loop as notes — at most one proposal per reply.
+    chatResult.propose_constraint = mayApplyStructuredResult() ? chatResult.propose_constraint : null;
     if (chatResult.propose_constraint && chatResult.propose_constraint.target) {
       showSaveConstraintPrompt(bubble, chatResult.propose_constraint);
     }
