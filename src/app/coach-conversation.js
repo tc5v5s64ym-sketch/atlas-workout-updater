@@ -847,12 +847,7 @@ import {
   }
 
   async function getLlmPlanMessage(data) {
-    if (typeof api !== 'function' || (typeof isConnected === 'function' && !isConnected())) {
-      if (responseTicket && typeof completeTurnResponse === 'function') {
-        completeTurnResponse(responseTicket, null);
-      }
-      return null;
-    }
+    if (typeof api !== 'function' || (typeof isConnected === 'function' && !isConnected())) return null;
     const facts = buildPlanFacts(data);
     if (!facts.label && !facts.why_today.length) return null; // nothing to explain (new user)
     const timeout = new Promise(resolve => setTimeout(() => resolve(null), COACH_LLM_TIMEOUT_MS));
