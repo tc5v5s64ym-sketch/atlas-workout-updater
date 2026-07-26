@@ -122,6 +122,7 @@ function recordTurnWriteProof(payload, sessionId, route, proof, opts = {}) {
       sessionId,
       writeId,
       isPreview,
+      allowPreviewSessionResolution: isPreview && opts.allowPreviewSessionResolution === true,
       // The write_id this dry-run will approve with, where the client sends one — recorded as
       // corroboration on the record, never as a gate.
       previewedWriteId: isPreview && correlationPayload ? correlationPayload.write_id : undefined,
@@ -2765,7 +2766,14 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       sessionId,
       '/api/complete-workout',
       responseBody.data,
-      { isPreview: testMode, res, correlationPayload },
+      {
+        isPreview: testMode,
+        res,
+        correlationPayload,
+        // Only a blank submitted session lets complete-workout choose the canonical target.
+        // That server-owned resolution may adopt the turn's explicit provisional session.
+        allowPreviewSessionResolution: testMode && effortOnly && !formFields.session_id,
+      },
     );
     return standardSuccess(req, res, 'complete-workout processed', responseBody, 200);
   } catch (error) {

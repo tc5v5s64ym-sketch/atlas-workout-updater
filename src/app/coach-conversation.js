@@ -25,7 +25,7 @@
 
 import * as coachVoiceTemplates from './coachVoiceTemplates.js';
 import * as sessionQuestion from './sessionQuestion.js';
-import { captureTurnResponse } from './turnCorrelation.js';
+import { beginTurnResponse, completeTurnResponse } from './turnCorrelation.js';
 
 (function () {
   'use strict';
@@ -1022,8 +1022,8 @@ import { captureTurnResponse } from './turnCorrelation.js';
   // are the deterministic, engine-backed set-effort extras the server computes
   // (PR 477 wiring) — present whether or not Gemini answered, and rendered as
   // their own short line so the engine's read is never lost to an LLM outage.
-  async function getInWorkoutNote(facts) {
-    const data = await getLlmCoachingMessage(facts).catch(() => null);
+  async function getInWorkoutNote(facts, sessionId) {
+    const data = await getLlmCoachingMessage(facts, sessionId).catch(() => null);
     // Soul Recovery (Issue #1073) + owner gate ruling (2026-07-20): a routine on-plan
     // block's voice is timed to the EXERCISE, not to every set. A COMPLETED on-plan
     // exercise (a batch of sets, or the finishing set — `facts.exercise_complete`) gets
@@ -1104,9 +1104,15 @@ import { captureTurnResponse } from './turnCorrelation.js';
 
   // Returns the full /api/coach/message data object ({ message, effort_note,
   // reroute }) or null — the caller pulls the prose and the engine extras from it.
-  async function getLlmCoachingMessage(facts) {
+  async function getLlmCoachingMessage(facts, sessionId) {
     if (typeof api !== 'function' || (typeof isConnected === 'function' && !isConnected())) return null;
-    const timeout = new Promise(resolve => setTimeout(() => resolve(null), COACH_LLM_TIMEOUT_MS));
+    const correlationSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    const responseTicket = correlationSessionId && typeof beginTurnResponse === 'function'
+      ? beginTurnResponse({ sessionId: correlationSessionId })
+      : null;
+    let selectedHeaders = null;
+    const timeout = new Promise(resolve =>
+      setTimeout(() => resolve({ selected: false, data: null }), COACH_LLM_TIMEOUT_MS));
     const request = api('/api/coach/message', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1114,9 +1120,20 @@ import { captureTurnResponse } from './turnCorrelation.js';
       // deterministic coachNoteTier gate so a routine block returns note_tier
       // ack_only (and the caller stays silent). Same wording pipeline as before
       // for non-routine blocks; the tier is never forwarded to the model.
-      body: JSON.stringify({ facts, kind: 'block' })
-    }).then(res => (res && res.data) || null);
-    return Promise.race([request, timeout]);
+      body: JSON.stringify({
+        facts,
+        kind: 'block',
+        ...(correlationSessionId ? { session_id: correlationSessionId } : {}),
+      }),
+      ...(responseTicket ? {
+        responseHeaders: responseHeaders => { selectedHeaders = responseHeaders; },
+      } : {}),
+    }).then(res => ({ selected: true, data: (res && res.data) || null }));
+    const winner = await Promise.race([request, timeout]);
+    if (winner.selected && responseTicket && typeof completeTurnResponse === 'function') {
+      completeTurnResponse(responseTicket, selectedHeaders);
+    }
+    return winner.data;
   }
 
   // De-templating: several phrasings per verdict level so the SAME verdict never
@@ -1359,7 +1376,13 @@ import { captureTurnResponse } from './turnCorrelation.js';
   }
 
   async function handleSetLogged(detail) {
-    const { exercises = [], text = '', substitutions: rawSubstitutions = [], unverified = null } = detail || {};
+    const {
+      exercises = [],
+      text = '',
+      sessionId = '',
+      substitutions: rawSubstitutions = [],
+      unverified = null,
+    } = detail || {};
     // F10S5: acknowledge each substitution pair once per session (see above).
     const substitutions = dedupeSubstitutions(rawSubstitutions);
     if (!exercises.length) return;
@@ -1430,7 +1453,7 @@ import { captureTurnResponse } from './turnCorrelation.js';
       intentId: (typeof getActiveIntentId === 'function' ? getActiveIntentId() : (activeSession && activeSession.intentId)) || null,
       planned_queue: Array.isArray(detail.plannedQueue) ? detail.plannedQueue : [],
       substitution: suggestMatch ? undefined : primarySub
-    });
+    }, sessionId);
     const note = reaction.note;
     // Soul Recovery (Issue #1073): a routine (ack_only) block returns a null note —
     // DELIBERATE SILENCE — so nothing is typed under the readback card and the logged
@@ -1497,7 +1520,7 @@ import { captureTurnResponse } from './turnCorrelation.js';
         intentId: (typeof getActiveIntentId === 'function' ? getActiveIntentId() : (activeSession && activeSession.intentId)) || null,
         planned_queue: [],
         substitution: undefined
-      });
+      }, sessionId);
       if (exReaction && exReaction.note) {
         const exMsg = document.createElement('div');
         exMsg.className = 'coach-msg';
@@ -2108,9 +2131,6 @@ import { captureTurnResponse } from './turnCorrelation.js';
     // session-shaped, so they keep the existing SME-first routing untouched.
     const ctx = context || {};
     const correlationSessionId = typeof ctx.session_id === 'string' ? ctx.session_id.trim() : '';
-    const retainTurnHeaders = correlationSessionId
-      ? responseHeaders => captureTurnResponse({ sessionId: correlationSessionId, responseHeaders })
-      : undefined;
     // An active workout is signalled by a started plan, a live preview, or a
     // started planned session (plan_completed present). But a *free-form coaching
     // conversation* — the lifter chatting with the coach mid-workout without having
@@ -2164,17 +2184,27 @@ import { captureTurnResponse } from './turnCorrelation.js';
     // including data questions about the lifter's own history — falls through to the
     // Gemini coach below. READ-ONLY either way; a slow/failed SME never blocks the chat.
     if (!skipSme) try {
-      const sme = await Promise.race([
+      const smeTicket = correlationSessionId && typeof beginTurnResponse === 'function'
+        ? beginTurnResponse({ sessionId: correlationSessionId })
+        : null;
+      let smeHeaders = null;
+      const smeWinner = await Promise.race([
         api('/api/coach/ask', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ message, ...(correlationSessionId ? { session_id: correlationSessionId } : {}) }),
-          ...(retainTurnHeaders ? { responseHeaders: retainTurnHeaders } : {})
-        }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('sme-timeout')), 4000))
+          ...(smeTicket ? {
+            responseHeaders: responseHeaders => { smeHeaders = responseHeaders; },
+          } : {}),
+        }).then(value => ({ selected: true, value })),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('sme-timeout')), 4000)),
       ]);
+      const sme = smeWinner.value;
       const data = sme && sme.data;
       if (data && data.depth && data.depth !== 'log_only' && data.answer) {
+        if (smeTicket && typeof completeTurnResponse === 'function') {
+          completeTurnResponse(smeTicket, smeHeaders);
+        }
         const cards = Array.isArray(data.cards) ? data.cards : [];
         const provenance = cards.length
           ? `\n\nBased on: ${cards.map(c => String(c).replace(/_/g, ' ')).join(', ')}`
@@ -2189,7 +2219,14 @@ import { captureTurnResponse } from './turnCorrelation.js';
     // the 9s reaction budget so that fallback actually reaches the lifter instead of
     // the generic "Coach is unavailable" line firing first.
     const CHAT_REPLY_TIMEOUT_MS = 15000;
-    const timeout = new Promise(resolve => setTimeout(() => resolve({ message: null, propose_edit: null, propose_note: null, propose_plan_edit: null }), CHAT_REPLY_TIMEOUT_MS));
+    const chatTicket = correlationSessionId && typeof beginTurnResponse === 'function'
+      ? beginTurnResponse({ sessionId: correlationSessionId })
+      : null;
+    let chatHeaders = null;
+    const timeout = new Promise(resolve => setTimeout(() => resolve({
+      selected: false,
+      value: { message: null, propose_edit: null, propose_note: null, propose_plan_edit: null },
+    }), CHAT_REPLY_TIMEOUT_MS));
     const request = api('/api/coach/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2199,15 +2236,21 @@ import { captureTurnResponse } from './turnCorrelation.js';
         context: context || {},
         ...(correlationSessionId ? { session_id: correlationSessionId } : {}),
       }),
-      ...(retainTurnHeaders ? { responseHeaders: retainTurnHeaders } : {})
+      ...(chatTicket ? {
+        responseHeaders: responseHeaders => { chatHeaders = responseHeaders; },
+      } : {}),
     }).then(res => ({
       message: (res && res.data && res.data.message) || null,
       propose_edit: (res && res.data && res.data.propose_edit) || null,
       propose_note: (res && res.data && res.data.propose_note) || null,
       propose_constraint: (res && res.data && res.data.propose_constraint) || null,
       propose_plan_edit: (res && res.data && res.data.propose_plan_edit) || null
-    }));
-    return Promise.race([request, timeout]);
+    })).then(value => ({ selected: true, value }));
+    const winner = await Promise.race([request, timeout]);
+    if (winner.selected && chatTicket && typeof completeTurnResponse === 'function') {
+      completeTurnResponse(chatTicket, chatHeaders);
+    }
+    return winner.value;
   }
 
   // Show a "Save this note?" prompt under Atlas's bubble. Calls POST /api/coaching-notes

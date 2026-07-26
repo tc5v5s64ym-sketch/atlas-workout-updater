@@ -211,13 +211,16 @@ test('client correlation: the production app wires the protocol through every re
 
   assert.match(app, /from '\.\/turnCorrelation\.js'/);
   assert.match(api, /responseHeaders/, 'api() must expose response headers without putting them in response bodies');
-  assert.match(coach, /captureTurnResponse/, 'the real coach round-trip must retain the canonical server turn id');
+  assert.match(coach, /completeTurnResponse/, 'the real coach round-trip must retain only a selected canonical server turn id');
   assert.match(coach, /\/api\/coach\/message[\s\S]{0,1800}session_id/,
     'normal in-workout coach messages must carry the session that owns their turn');
   assert.match(coach, /beginTurnResponse[\s\S]{0,2500}completeTurnResponse/,
     'coach requests must retain headers only after that response wins its timeout/routing race');
   assert.match(app, /resolveCorrelatedPreviewSession/,
     'effort-only previews must migrate to the server-resolved session before approval');
+  const effortOnlyBranch = app.slice(app.indexOf('} else if (effortOnly) {'), app.indexOf('} else {', app.indexOf('} else if (effortOnly) {')));
+  assert.match(effortOnlyBranch, /beginCorrelatedPreview\(\{[\s\S]{0,240}provisionalSessionId: sessionId/,
+    'the real effort-only preview must explicitly name its provisional client session');
 
   for (const route of ['/api/log-workout', '/api/complete-workout', '/api/log-modality', '/api/bodyweight']) {
     const routeUses = [...app.matchAll(new RegExp(route.replaceAll('/', '\\/'), 'g'))].length;

@@ -40,7 +40,12 @@ process.env.ATLAS_WRITE_RATE_LIMIT_MAX = '1000000';
 // feature stays silent.
 process.env.ATLAS_INTERACTION_TRACE = 'shadow';
 
-const state = { appends: [], failEffortAppend: false, logCompositeKeys: [] };
+const state = {
+  appends: [],
+  failEffortAppend: false,
+  logCompositeKeys: [],
+  existingEffortSessionIds: [],
+};
 
 const fakeSheets = {
   appendRows: async (tab, rows) => {
@@ -59,7 +64,7 @@ const fakeSheets = {
     ['Exercise', 'Muscle_Group', 'Lift Code', 'Canonical_Exercise', 'Original_Variants'],
     ['Bench Press', 'Chest', 'BEN01', 'Bench Press', 'bench press|bench'],
   ]),
-  getEffortSessionIds: async () => [],
+  getEffortSessionIds: async () => [...state.existingEffortSessionIds],
   getLogCompositeKeys: async () => [...state.logCompositeKeys],
   getRecentRows: async () => [],
   getSheetRows: async () => [],
@@ -616,6 +621,61 @@ test('the real multipart effort-only preview/write route binds the server-normal
 
   const record = tc.recentWriteProofs().at(-1);
   assert.equal(record.route, '/api/complete-workout');
+  assert.equal(record.pairing.payload_bound, true);
+  assert.equal(record.proof.sheet_written, true);
+});
+
+test('the real blank-session effort-only route adopts the server-resolved session before approval', async () => {
+  tc._resetForTesting();
+  resetIdempotencyStore();
+  state.appends.length = 0;
+  state.existingEffortSessionIds = ['20260725-AM-01', '20260725-PM-01'];
+  tc.issueTurn(TURN_ID, SESSION_ID);
+
+  const initiation = 'init:dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+  const effort = JSON.stringify({
+    duration: '00:30:00',
+    activeCalories: 250,
+    totalCalories: 330,
+    averageHR: 142,
+    peakHR: 165,
+    workoutType: 'Outdoor Run',
+  });
+  const previewForm = new FormData();
+  previewForm.append('date', '2026-07-25');
+  previewForm.append('log_rows_json', JSON.stringify([]));
+  previewForm.append('effort_json', effort);
+  previewForm.append('test_mode', 'true');
+  previewForm.append('correlation', JSON.stringify({
+    turn_id: TURN_ID,
+    initiation_nonce: initiation,
+    provisional_session_id: SESSION_ID,
+  }));
+  const preview = await postMultipart('/api/complete-workout', previewForm);
+  assert.equal(preview.status, 200, JSON.stringify(preview.body));
+  const resolvedSessionId = preview.body?.data?.data?.session_id;
+  assert.match(resolvedSessionId, /^20260725-(?:AM|PM)-02$/);
+  const pairingToken = preview.headers.get(tc.PAIRING_TOKEN_HEADER);
+  assert.ok(tc.isWellFormedPairingToken(pairingToken),
+    'the server-resolved preview must return a usable pairing');
+
+  const liveForm = new FormData();
+  liveForm.append('session_id', resolvedSessionId);
+  liveForm.append('date', '2026-07-25');
+  liveForm.append('log_rows_json', JSON.stringify([]));
+  liveForm.append('effort_json', effort);
+  liveForm.append('write_id', 'wid-complete-resolved-correlation');
+  liveForm.append('correlation', JSON.stringify({
+    turn_id: TURN_ID,
+    initiation_nonce: initiation,
+    pairing_token: pairingToken,
+  }));
+  const live = await postMultipart('/api/complete-workout', liveForm);
+  state.existingEffortSessionIds = [];
+  assert.equal(live.status, 200, JSON.stringify(live.body));
+
+  const record = tc.recentWriteProofs().at(-1);
+  assert.equal(record.session_id, resolvedSessionId);
   assert.equal(record.pairing.payload_bound, true);
   assert.equal(record.proof.sheet_written, true);
 });

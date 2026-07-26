@@ -629,13 +629,27 @@ function resolveCorrelation(payload, opts = {}) {
     // it verbatim (index.js:2865), so a padded value would be appended padded while the record
     // named the trimmed form.
     if (!_isNonEmptyString(opts.sessionId)) return miss(REASONS.SESSION_MISMATCH);
-    if (!_sessionValueMatches(rec.sessionId, opts.sessionId)) return miss(REASONS.SESSION_MISMATCH);
+    let resolvedSessionId = null;
+    if (!_sessionValueMatches(rec.sessionId, opts.sessionId)) {
+      // Effort-only closeout deliberately omits its top-level session so the server can choose
+      // the next free same-day identity. That one route may adopt the server result at preview,
+      // but only when the client explicitly names the turn's existing provisional binding and
+      // the call site asserts that it resolved the blank field. No live request or ordinary
+      // cross-session claim can reach this transition.
+      const mayAdoptServerResolution = opts.isPreview === true
+        && opts.allowPreviewSessionResolution === true
+        && _isNonEmptyString(claim.provisional_session_id)
+        && _sessionValueMatches(rec.sessionId, claim.provisional_session_id);
+      if (!mayAdoptServerResolution) return miss(REASONS.SESSION_MISMATCH);
+      resolvedSessionId = String(opts.sessionId);
+    }
+    const effectiveSessionId = resolvedSessionId || rec.sessionId;
 
     // ...and the same check for every session identity the payload names BELOW its top level. A
     // row-level `session_id` beats the top-level one at write time (index.js:449), so without this
     // a request could write rows under another session while the record named this one.
     for (const rowSid of _explicitRowSessionValues(payload)) {
-      if (!_sessionValueMatches(rec.sessionId, rowSid)) return miss(REASONS.SESSION_MISMATCH);
+      if (!_sessionValueMatches(effectiveSessionId, rowSid)) return miss(REASONS.SESSION_MISMATCH);
     }
 
     // Freshness. Inclusive at the boundary so a legitimately slow save is not dropped.
@@ -688,6 +702,7 @@ function resolveCorrelation(payload, opts = {}) {
         rec.pairings = rec.pairings.filter(p => p.initiationNonce !== initiationNonce);
       }
 
+      if (resolvedSessionId) rec.sessionId = resolvedSessionId;
       const pairing = {
         token: _mintPairingToken(),
         atMs: nowMs,

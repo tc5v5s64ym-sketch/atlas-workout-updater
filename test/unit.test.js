@@ -1466,8 +1466,8 @@ test('routine ack: the in-session reaction is tier-gated (kind:block); a complet
   const ccSource = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
   // The per-exercise reaction POSTs kind:'block' so the server returns note_tier
   // (routes through the deterministic coachNoteTier gate).
-  assert.match(ccSource, /body: JSON\.stringify\(\{ facts, kind: 'block' \}\)/,
-    'the in-session reaction must route through the block tier gate');
+  assert.match(ccSource, /body: JSON\.stringify\(\{[\s\S]{0,200}facts,[\s\S]{0,120}kind: 'block'/,
+    'the in-session reaction must route through the block tier gate while carrying its session');
   // Owner gate ruling (Issue #1073, 2026-07-20): on ack_only, a COMPLETED on-plan block
   // (facts.exercise_complete) renders the grounded wrap line; an intermediate single set
   // stays silent (note null). Never the retired "On plan — logged." receipt.

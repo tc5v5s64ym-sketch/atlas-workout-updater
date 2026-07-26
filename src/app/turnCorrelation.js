@@ -60,6 +60,10 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
   // session_id → { turnId, active, retired[] }. Pairing tokens exist only inside the
   // active record closure and are erased the instant a newer preview starts.
   const sessions = new Map();
+  // Commit response headers only after the caller selects the response that actually
+  // supplied visible coaching. A late timed-out request cannot overwrite a newer turn.
+  const turnResponses = new Map();
+  let turnResponseSequence = 0;
 
   function touch(sessionId, state) {
     sessions.delete(sessionId);
@@ -102,9 +106,37 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
     });
   }
 
-  function beginPreview({ sessionId } = {}) {
+  function beginTurnResponse({ sessionId } = {}) {
+    if (!validSessionId(sessionId)) return null;
+    const ticket = {
+      sessionId,
+      sequence: ++turnResponseSequence,
+      completed: false,
+    };
+    turnResponses.delete(sessionId);
+    turnResponses.set(sessionId, ticket);
+    while (turnResponses.size > MAX_TRACKED_SESSIONS) {
+      const oldest = turnResponses.keys().next().value;
+      turnResponses.delete(oldest);
+    }
+    return ticket;
+  }
+
+  function completeTurnResponse(ticket, responseHeaders) {
+    if (!ticket || ticket.completed === true || !validSessionId(ticket.sessionId)) return false;
+    if (turnResponses.get(ticket.sessionId) !== ticket) return false;
+    ticket.completed = true;
+    return captureTurnResponse({ sessionId: ticket.sessionId, responseHeaders });
+  }
+
+  function beginPreview({ sessionId, provisionalSessionId } = {}) {
     const state = stateFor(sessionId);
     if (!state || !validTurnId(state.turnId)) return null;
+    const permitsSessionResolution = provisionalSessionId !== undefined;
+    if (permitsSessionResolution
+        && (!validSessionId(provisionalSessionId) || provisionalSessionId !== sessionId)) {
+      return null;
+    }
 
     if (state.active) {
       state.active.pairingToken = null;
@@ -120,6 +152,9 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
       ...(state.retired.length
         ? { retire_initiation_nonces: [...state.retired] }
         : {}),
+      ...(permitsSessionResolution
+        ? { provisional_session_id: provisionalSessionId }
+        : {}),
     };
     const preview = {
       sessionId,
@@ -128,6 +163,7 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
       correlation,
       pairingToken: null,
       superseded: false,
+      permitsSessionResolution,
     };
     state.active = preview;
     touch(sessionId, state);
@@ -146,6 +182,22 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
       return false;
     }
     preview.pairingToken = pairingToken;
+    return true;
+  }
+
+  function resolvePreviewSession(preview, resolvedSessionId) {
+    if (!preview || preview.superseded === true || preview.permitsSessionResolution !== true
+        || !validSessionId(resolvedSessionId)) return false;
+    const oldSessionId = preview.sessionId;
+    const state = stateFor(oldSessionId);
+    if (!state || state.active !== preview || state.turnId !== preview.turnId) return false;
+    if (resolvedSessionId === oldSessionId) return true;
+    // Never overwrite another session's retained turn or pairing. This migration is legal only
+    // from the preview's explicit provisional identity to an otherwise-unclaimed server result.
+    if (sessions.has(resolvedSessionId)) return false;
+    sessions.delete(oldSessionId);
+    preview.sessionId = resolvedSessionId;
+    touch(resolvedSessionId, state);
     return true;
   }
 
@@ -186,8 +238,11 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
   return {
     captureTurn,
     captureTurnResponse,
+    beginTurnResponse,
+    completeTurnResponse,
     beginPreview,
     completePreview,
+    resolvePreviewSession,
     approvalClaim,
     retirePreview,
     diagnosticSnapshot,
@@ -198,8 +253,13 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
 export const turnCorrelation = createTurnCorrelation();
 
 export const captureTurnResponse = args => turnCorrelation.captureTurnResponse(args);
+export const beginTurnResponse = args => turnCorrelation.beginTurnResponse(args);
+export const completeTurnResponse = (ticket, responseHeaders) =>
+  turnCorrelation.completeTurnResponse(ticket, responseHeaders);
 export const beginCorrelatedPreview = args => turnCorrelation.beginPreview(args);
 export const completeCorrelatedPreview = (preview, responseHeaders) =>
   turnCorrelation.completePreview(preview, responseHeaders);
+export const resolveCorrelatedPreviewSession = (preview, resolvedSessionId) =>
+  turnCorrelation.resolvePreviewSession(preview, resolvedSessionId);
 export const approvalCorrelation = preview => turnCorrelation.approvalClaim(preview);
 export const retireCorrelatedPreview = preview => turnCorrelation.retirePreview(preview);

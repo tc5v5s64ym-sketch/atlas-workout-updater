@@ -70,6 +70,7 @@ import {
   approvalCorrelation,
   beginCorrelatedPreview,
   completeCorrelatedPreview,
+  resolveCorrelatedPreviewSession,
   retireCorrelatedPreview,
 } from './turnCorrelation.js';
 
@@ -5520,6 +5521,9 @@ function emitSetLogged(logObjs, text, substitutions, enrichment) {
     }
   }
   if (byExercise.length) {
+    const loggedSessionId = ((logObjs || [])
+      .find(o => o && typeof o.session_id === 'string' && o.session_id.trim())
+      ?.session_id || '').trim();
     // ADD-5: a set was just logged — the just-logged lift is the fresh focus again,
     // so an immediate demonstrative correction re-identifies IT (fast path restored).
     setCoachDiscussionSinceLog(false);
@@ -5545,6 +5549,7 @@ function emitSetLogged(logObjs, text, substitutions, enrichment) {
         detail: {
           exercises: byExercise,
           text: text || '',
+          ...(loggedSessionId ? { sessionId: loggedSessionId } : {}),
           planIsComplete,
           nextPlanned,
           // The completed-lift names this session, so the handoff's /api/plan/today
@@ -6963,7 +6968,10 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       };
       renderCompleteWorkoutPreview(result);
     } else if (effortOnly) {
-      const correlationPreview = beginCorrelatedPreview({ sessionId: completeWorkoutSessionId || sessionId });
+      const correlationPreview = beginCorrelatedPreview({
+        sessionId: completeWorkoutSessionId || sessionId,
+        ...(!completeWorkoutSessionId ? { provisionalSessionId: sessionId } : {}),
+      });
       activePreviewCorrelation = correlationPreview;
       const result = await submitCompleteWorkout({ logRows, sessionId: completeWorkoutSessionId, date,
         location, notes,
@@ -6980,6 +6988,9 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       // the real …-02 instead of a forced …-01. Mirrors the screenshot branch above.
       const resolvedEffortData = result?.data?.data || {};
       const resolvedEffortSessionId = resolvedEffortData.session_id || completeWorkoutSessionId || sessionId;
+      if (correlationPreview && !resolveCorrelatedPreviewSession(correlationPreview, resolvedEffortSessionId)) {
+        throw new Error('Preview session correlation could not be bound to the server-resolved session.');
+      }
       sessionIdInput.value = resolvedEffortSessionId;
       pendingWrite = { mode: 'effort-only', logRows, sessionId: resolvedEffortSessionId, date, location, notes, manualEffort, effortOnly: true, writeId: generateWriteId(), correlationPreview,
         // Mirror the screenshot path: an already-saved session disables approve so the

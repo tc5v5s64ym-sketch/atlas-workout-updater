@@ -177,6 +177,49 @@ test('resolveCorrelation: only a server-resolved blank-session preview may adopt
   }).reason, 'session_mismatch', 'a forged provisional binding must remain cross-session contamination');
 });
 
+test('resolveCorrelation: a rejected superseded adoption cannot mutate the turn session', () => {
+  reset();
+  const now = 1_000_000;
+  const resolvedSession = '20260725-AM-02';
+  const retired = 'init:00000001-0000-4000-8000-000000000000';
+  const keeper = 'init:00000002-0000-4000-8000-000000000000';
+  const later = 'init:00000003-0000-4000-8000-000000000000';
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+
+  assert.equal(tc.resolveCorrelation(payloadWith({
+    correlation: {
+      turn_id: TURN_ID,
+      initiation_nonce: keeper,
+      retire_initiation_nonces: [retired],
+    },
+  }), { sessionId: SESSION, nowMs: now + 1, isPreview: true }).ok, true);
+
+  const rejected = tc.resolveCorrelation({
+    session_id: resolvedSession,
+    date: '2026-07-25',
+    effort_metrics: { duration: 1800 },
+    correlation: {
+      turn_id: TURN_ID,
+      initiation_nonce: retired,
+      provisional_session_id: SESSION,
+    },
+  }, {
+    sessionId: resolvedSession,
+    nowMs: now + 2,
+    isPreview: true,
+    allowPreviewSessionResolution: true,
+  });
+  assert.equal(rejected.reason, 'superseded');
+
+  assert.equal(tc.resolveCorrelation(payloadWith({
+    correlation: { turn_id: TURN_ID, initiation_nonce: later },
+  }), {
+    sessionId: SESSION,
+    nowMs: now + 3,
+    isPreview: true,
+  }).ok, true, 'the rejected request must leave the original session binding intact');
+});
+
 test('resolveCorrelation: a write with no session identity cannot claim any correlation', () => {
   reset();
   const now = 1_000_000;
