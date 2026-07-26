@@ -133,6 +133,7 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
       sequence: ++turnResponseSequence,
       completed: false,
       accepted: false,
+      continuationCancelled: false,
     };
     let settled = false;
     let resolveSettlement;
@@ -202,13 +203,21 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
     );
   }
 
+  function cancelTurnResponse(ticket) {
+    if (!ticket || ticket.completed === true || !validSessionId(ticket.sessionId)) return false;
+    if (authoritativeTurnResponse !== ticket || turnResponses.get(ticket.sessionId) !== ticket) return false;
+    ticket.continuationCancelled = true;
+    completeTurnResponse(ticket, null);
+    return true;
+  }
+
   function mayContinueTurnResponse(ticket) {
     return Boolean(
       ticket
       && validSessionId(ticket.sessionId)
       && authoritativeTurnResponse === ticket
       && turnResponses.get(ticket.sessionId) === ticket
-      && (ticket.completed !== true || ticket.accepted === true)
+      && ticket.continuationCancelled !== true
     );
   }
 
@@ -328,6 +337,7 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
     completeTurnResponse,
     waitForTurnResponse,
     isTurnResponseAuthoritative,
+    cancelTurnResponse,
     mayContinueTurnResponse,
     beginPreview,
     completePreview,
@@ -348,6 +358,8 @@ export const completeTurnResponse = (ticket, responseHeaders) =>
 export const waitForTurnResponse = args => turnCorrelation.waitForTurnResponse(args);
 export const isTurnResponseAuthoritative = ticket =>
   turnCorrelation.isTurnResponseAuthoritative(ticket);
+export const cancelTurnResponse = ticket =>
+  turnCorrelation.cancelTurnResponse(ticket);
 export const mayContinueTurnResponse = ticket =>
   turnCorrelation.mayContinueTurnResponse(ticket);
 export const beginCorrelatedPreview = args => turnCorrelation.beginPreview(args);

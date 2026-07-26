@@ -27,6 +27,7 @@ import * as coachVoiceTemplates from './coachVoiceTemplates.js';
 import * as sessionQuestion from './sessionQuestion.js';
 import {
   beginTurnResponse,
+  cancelTurnResponse,
   completeTurnResponse,
   isTurnResponseAuthoritative,
   mayContinueTurnResponse,
@@ -1999,7 +2000,7 @@ import {
     // precedes /api/coach/message. Otherwise a stalled recommendation could keep an
     // immediate closeout waiting forever before the message timeout even starts.
     const settlementTimer = responseTicket
-      ? setTimeout(() => completeTurnResponse(responseTicket, null), COACH_LLM_TIMEOUT_MS)
+      ? setTimeout(() => cancelTurnResponse(responseTicket), COACH_LLM_TIMEOUT_MS)
       : null;
     handleSetLogged(detail).catch(() => {}).finally(() => {
       if (settlementTimer) clearTimeout(settlementTimer);
