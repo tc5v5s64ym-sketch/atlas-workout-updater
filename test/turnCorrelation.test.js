@@ -2045,3 +2045,33 @@ test('resolveCorrelation: a same-initiation retry with a different payload fails
     writeId: 'wid-original-after-bad-retry',
   }).ok, true, 'a malformed retry must not consume or replace the valid pairing');
 });
+
+test('resolveCorrelation: distinct oversized payloads under one initiation cannot collapse into an identical retry', () => {
+  reset();
+  const now = 1_000_000;
+  const initiation = 'init:56565656-5656-4656-8656-565656565656';
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  const firstPayload = payloadWith({
+    notes: 'A'.repeat(210_000),
+    correlation: { turn_id: TURN_ID, initiation_nonce: initiation },
+  });
+  const first = tc.resolveCorrelation(firstPayload, {
+    sessionId: SESSION,
+    nowMs: now + 1,
+    isPreview: true,
+  });
+  assert.equal(first.ok, true);
+
+  const changedPayload = payloadWith({
+    notes: 'B'.repeat(210_000),
+    correlation: { turn_id: TURN_ID, initiation_nonce: initiation },
+  });
+  const changed = tc.resolveCorrelation(changedPayload, {
+    sessionId: SESSION,
+    nowMs: now + 2,
+    isPreview: true,
+  });
+  assert.equal(changed.ok, false,
+    'when retry equality cannot be established, a changed oversized payload must fail closed');
+  assert.equal(changed.reason, 'payload_mismatch');
+});

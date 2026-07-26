@@ -1066,7 +1066,23 @@ test('newer closeout screenshot selection survives an older image parse completi
   expect(capture.previews[0]).toBe(newerPreview);
 });
 
-test('real composer A delayed in substitute routing cannot retire B modality approval', async ({ page }) => {
+for (const delayedSubstitution of [
+  {
+    label: 'implicit substitution',
+    message: "I don't want to do squats, give me something else",
+    exercise: 'Back Squat',
+    liftCode: 'BSQ01',
+    replacement: 'Leg Press',
+  },
+  {
+    label: 'constraint suggestion',
+    message: 'How is my form?',
+    exercise: 'Bench Press',
+    liftCode: 'BEN01',
+    replacement: 'Incline Bench Press',
+  },
+]) {
+test(`real composer A delayed in ${delayedSubstitution.label} cannot mutate after B modality approval`, async ({ page }) => {
   const capture = {
     chats: [],
     suggestRoute: null,
@@ -1156,7 +1172,14 @@ test('real composer A delayed in substitute routing cannot retire B modality app
     if (requestPath === '/api/catalog/exercises') {
       return route.fulfill(json({
         status: 'success',
-        data: { exercises: [{ canonical_name: 'Bench Press', lift_code: 'BEN01' }] },
+        data: {
+          exercises: [
+            { canonical_name: 'Bench Press', lift_code: 'BEN01' },
+            { canonical_name: 'Back Squat', lift_code: 'BSQ01' },
+            { canonical_name: 'Leg Press', lift_code: 'LEG01' },
+            { canonical_name: 'Incline Bench Press', lift_code: 'IBP01' },
+          ],
+        },
       }));
     }
     return route.fulfill(json({ status: 'success', data: {} }));
@@ -1166,6 +1189,13 @@ test('real composer A delayed in substitute routing cannot retire B modality app
   await page.goto('/app/');
   await page.evaluate(session => {
     document.getElementById('log-session-id').value = session;
+    window.__lateSubstitutionEvents = [];
+    document.addEventListener('atlas:plan-mutated', event => {
+      window.__lateSubstitutionEvents.push({ type: event.type, detail: event.detail });
+    });
+    document.addEventListener('atlas:substitute-suggested', event => {
+      window.__lateSubstitutionEvents.push({ type: event.type, detail: event.detail });
+    });
   }, SESSION);
 
   // Establish the canonical turn through the real composer, not a synthetic chat event.
@@ -1173,22 +1203,22 @@ test('real composer A delayed in substitute routing cannot retire B modality app
   await page.locator('#preview-btn').click();
   await expect.poll(() => capture.chats.length).toBe(1);
 
-  const started = await page.evaluate(() => window.atlasAcceptPlan({
+  const started = await page.evaluate(({ exercise, liftCode }) => window.atlasAcceptPlan({
     id: 'race_plan',
     label: 'Race plan',
     exercises: [{
-      exercise: 'Bench Press',
-      lift_code: 'BEN01',
+      exercise,
+      lift_code: liftCode,
       target_weight: 225,
       target_reps: 5,
       target_sets: 1,
       target_rir: 2,
     }],
-  }));
+  }), delayedSubstitution);
   expect(started?.started).toBeTruthy();
 
   // A passes modality routing, then stalls inside the real substitute check.
-  await page.locator('#workout-text').fill('How is my form?');
+  await page.locator('#workout-text').fill(delayedSubstitution.message);
   await page.locator('#preview-btn').click();
   await expect.poll(() => capture.suggestRoute !== null).toBeTruthy();
 
@@ -1199,12 +1229,23 @@ test('real composer A delayed in substitute routing cannot retire B modality app
   const b = capture.previews[0].correlation;
   await expect(page.locator('#approve-btn')).toBeEnabled();
 
-  // A resumes after B. It must stop at the submit-generation boundary and emit no
-  // coach request capable of superseding B's retained pairing.
-  await capture.suggestRoute.fulfill(json({ status: 'success', data: { recommendation: null } }));
+  // A resumes after B with a SUCCESSFUL substitute response. It must stop before
+  // mutating the plan, cursor, pending-substitution sidecar, or B's retained pairing.
+  await capture.suggestRoute.fulfill(json({
+    status: 'success',
+    data: {
+      recommendation: {
+        recommendation: delayedSubstitution.replacement,
+        next_target: { weight: 185, reps: 8, sets: 3, rir: 2 },
+      },
+    },
+  }));
   await page.waitForTimeout(250);
   await expect(page.locator('#approve-btn')).toBeEnabled();
   expect(capture.chats).toHaveLength(1);
+  expect(await page.evaluate(() => window.__lateSubstitutionEvents)).toEqual([]);
+  await expect(page.locator('#active-session-banner')).toContainText(delayedSubstitution.exercise);
+  await expect(page.locator('#active-session-banner')).not.toContainText(delayedSubstitution.replacement);
 
   await page.locator('#approve-btn').click();
   await expect.poll(() => capture.writes.length).toBe(1);
@@ -1214,3 +1255,4 @@ test('real composer A delayed in substitute routing cannot retire B modality app
     pairing_token: TOKEN_B,
   });
 });
+}

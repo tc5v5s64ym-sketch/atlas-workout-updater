@@ -692,6 +692,48 @@ test('the real multipart route reuses one pairing when retry completes before th
   assert.equal(record.proof.sheet_written, true);
 });
 
+test('the real multipart route rejects a changed oversized retry when exact equality cannot be established', async () => {
+  tc._resetForTesting();
+  resetIdempotencyStore();
+  state.appends.length = 0;
+  tc.issueTurn(TURN_ID, SESSION_ID);
+
+  const initiation = 'init:78787878-7878-4878-8878-787878787878';
+  const effort = JSON.stringify({
+    duration: '00:42:00',
+    activeCalories: 410,
+    totalCalories: 520,
+    averageHR: 148,
+    peakHR: 171,
+    workoutType: 'Traditional Strength Training',
+  });
+  const makePreview = notes => {
+    const form = new FormData();
+    form.append('session_id', SESSION_ID);
+    form.append('date', '2026-07-25');
+    form.append('log_rows_json', JSON.stringify([]));
+    form.append('effort_json', effort);
+    form.append('notes', notes);
+    form.append('test_mode', 'true');
+    form.append('correlation', JSON.stringify({
+      turn_id: TURN_ID,
+      initiation_nonce: initiation,
+    }));
+    return form;
+  };
+
+  const first = await postMultipart('/api/complete-workout', makePreview('A'.repeat(210_000)));
+  const changed = await postMultipart('/api/complete-workout', makePreview('B'.repeat(210_000)));
+  assert.equal(first.status, 200, JSON.stringify(first.body));
+  assert.equal(changed.status, 200, JSON.stringify(changed.body));
+  assert.ok(tc.isWellFormedPairingToken(first.headers.get(tc.PAIRING_TOKEN_HEADER)));
+  assert.equal(Boolean(changed.headers.get(tc.PAIRING_TOKEN_HEADER)), false,
+    'a distinct oversized multipart retry must not receive the established capability');
+  assert.equal(changed.body.data.test_mode, true,
+    'correlation rejection must leave the underlying preview response unchanged');
+  assert.equal(state.appends.length, 0, 'both requests are still dry-run previews');
+});
+
 test('the real multipart route records a correlated partial proof after Log rows commit and Effort append fails', async () => {
   tc._resetForTesting();
   resetIdempotencyStore();
