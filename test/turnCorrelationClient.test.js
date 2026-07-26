@@ -318,6 +318,20 @@ test('client correlation: the production app wires the protocol through every re
   assert.match(app, /form\.append\('correlation'/, 'multipart screenshot/effort paths must carry the additive envelope');
 });
 
+test('client correlation: plan-message fallback cannot touch an unscoped response ticket', () => {
+  const coach = fs.readFileSync(path.join(ROOT, 'src', 'app', 'coach-conversation.js'), 'utf8');
+  const planMessage = coach.slice(
+    coach.indexOf('async function getLlmPlanMessage('),
+    coach.indexOf('// The Gemini "why" prose lines'),
+  );
+
+  assert.doesNotMatch(
+    planMessage,
+    /\bresponseTicket\b/,
+    'the unrelated plan-message fallback has no turn-response ticket and must remain callable while disconnected',
+  );
+});
+
 test('client correlation: real composer fallthrough rechecks submit authority after substitute routing awaits', () => {
   const app = fs.readFileSync(path.join(ROOT, 'src', 'app', 'app.js'), 'utf8');
   const start = app.indexOf('const suggested = await checkAndSuggestSubstitute(pendingChatText)');
