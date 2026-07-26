@@ -168,15 +168,20 @@ test('client correlation: an asynchronous response may continue only while its t
   assert.equal(protocol.mayContinueTurnResponse(pendingB), true);
 
   assert.equal(protocol.completeTurnResponse(pendingB, null), false);
-  assert.equal(protocol.mayContinueTurnResponse(pendingB), false,
-    'a timed-out or failed selected request must not resume after its await resolves');
+  assert.equal(protocol.mayContinueTurnResponse(pendingB), true,
+    'an already-resolved ordinary correlation failure may finish its deterministic fallback');
 
-  const selectedC = protocol.beginTurnResponse({ sessionId: SESSION_A });
-  assert.equal(protocol.completeTurnResponse(selectedC, headers(TURN_A, null)), true);
-  assert.equal(protocol.mayContinueTurnResponse(selectedC), true,
+  const timedOutC = protocol.beginTurnResponse({ sessionId: SESSION_A });
+  assert.equal(protocol.cancelTurnResponse(timedOutC), true);
+  assert.equal(protocol.mayContinueTurnResponse(timedOutC), false,
+    'a watchdog-cancelled request must not resume after its await resolves');
+
+  const selectedD = protocol.beginTurnResponse({ sessionId: SESSION_A });
+  assert.equal(protocol.completeTurnResponse(selectedD, headers(TURN_A, null)), true);
+  assert.equal(protocol.mayContinueTurnResponse(selectedD), true,
     'a valid selected response may finish rendering while it retains authority');
   protocol.beginPreview({ sessionId: SESSION_A });
-  assert.equal(protocol.mayContinueTurnResponse(selectedC), false,
+  assert.equal(protocol.mayContinueTurnResponse(selectedD), false,
     'preview initiation must stop even a previously selected continuation');
 });
 
