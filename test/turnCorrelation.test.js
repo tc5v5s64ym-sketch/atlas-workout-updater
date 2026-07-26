@@ -586,6 +586,139 @@ test('a preview establishes a pairing and mints an opaque server-owned token', (
   assert.equal(r.pairing.write_attempt, 0, 'a preview is not a write attempt');
 });
 
+test('initiation retirement: B tombstones A before either response can establish completion-order authority', () => {
+  reset();
+  const now = 1_000_000;
+  const initiationA = 'init:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const initiationB = 'init:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+
+  // B completes first and explicitly retires A, even though A has not completed yet.
+  const b = tc.resolveCorrelation(
+    { correlation: {
+      turn_id: TURN_ID,
+      initiation_nonce: initiationB,
+      retire_initiation_nonces: [initiationA],
+    } },
+    { sessionId: SESSION, nowMs: now + 1, ...PREVIEW },
+  );
+  assert.equal(b.ok, true);
+
+  // A's late completion must not mint a token or revive an older preview.
+  const lateA = tc.resolveCorrelation(
+    { correlation: { turn_id: TURN_ID, initiation_nonce: initiationA } },
+    { sessionId: SESSION, nowMs: now + 2, ...PREVIEW },
+  );
+  assert.equal(lateA.ok, false);
+  assert.equal(lateA.reason, 'superseded');
+  assert.equal(lateA.pairing_token, undefined);
+
+  const liveB = tc.resolveCorrelation(
+    { correlation: {
+      turn_id: TURN_ID,
+      initiation_nonce: initiationB,
+      pairing_token: b.pairing_token,
+    } },
+    { sessionId: SESSION, nowMs: now + 3, writeId: 'w-b' },
+  );
+  assert.equal(liveB.ok, true);
+});
+
+test('initiation retirement: A completing first is removed when B explicitly supersedes it', () => {
+  reset();
+  const now = 1_000_000;
+  const initiationA = 'init:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const initiationB = 'init:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+
+  const a = tc.resolveCorrelation(
+    { correlation: { turn_id: TURN_ID, initiation_nonce: initiationA } },
+    { sessionId: SESSION, nowMs: now + 1, ...PREVIEW },
+  );
+  assert.equal(a.ok, true);
+
+  const b = tc.resolveCorrelation(
+    { correlation: {
+      turn_id: TURN_ID,
+      initiation_nonce: initiationB,
+      retire_initiation_nonces: [initiationA],
+    } },
+    { sessionId: SESSION, nowMs: now + 2, ...PREVIEW },
+  );
+  assert.equal(b.ok, true);
+
+  const staleA = tc.resolveCorrelation(
+    { correlation: {
+      turn_id: TURN_ID,
+      initiation_nonce: initiationA,
+      pairing_token: a.pairing_token,
+    } },
+    { sessionId: SESSION, nowMs: now + 3, writeId: 'w-a' },
+  );
+  assert.equal(staleA.ok, false);
+  assert.equal(staleA.reason, 'superseded');
+});
+
+test('initiation retirement: malformed or over-broad retirement fails closed without retiring a valid pairing', () => {
+  reset();
+  const now = 1_000_000;
+  const initiationA = 'init:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  const a = tc.resolveCorrelation(
+    { correlation: { turn_id: TURN_ID, initiation_nonce: initiationA } },
+    { sessionId: SESSION, nowMs: now + 1, ...PREVIEW },
+  );
+
+  for (const retire_initiation_nonces of [
+    'not-an-array',
+    ['not-a-nonce'],
+    Array.from({ length: 100 }, (_, i) => `init:${String(i).padStart(8, '0')}-0000-4000-8000-000000000000`),
+  ]) {
+    const bad = tc.resolveCorrelation(
+      { correlation: {
+        turn_id: TURN_ID,
+        initiation_nonce: 'init:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        retire_initiation_nonces,
+      } },
+      { sessionId: SESSION, nowMs: now + 2, ...PREVIEW },
+    );
+    assert.equal(bad.ok, false);
+    assert.equal(bad.reason, 'malformed');
+  }
+
+  const stillValid = tc.resolveCorrelation(
+    { correlation: {
+      turn_id: TURN_ID,
+      initiation_nonce: initiationA,
+      pairing_token: a.pairing_token,
+    } },
+    { sessionId: SESSION, nowMs: now + 3, writeId: 'w-a' },
+  );
+  assert.equal(stillValid.ok, true, 'a rejected retirement claim must not mutate registry state');
+});
+
+test('initiation retirement: a genuine token cannot be relabelled with another initiation nonce', () => {
+  reset();
+  const now = 1_000_000;
+  const initiationA = 'init:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const initiationB = 'init:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  const a = tc.resolveCorrelation(
+    { correlation: { turn_id: TURN_ID, initiation_nonce: initiationA } },
+    { sessionId: SESSION, nowMs: now + 1, ...PREVIEW },
+  );
+  const forged = tc.resolveCorrelation(
+    { correlation: {
+      turn_id: TURN_ID,
+      initiation_nonce: initiationB,
+      pairing_token: a.pairing_token,
+    } },
+    { sessionId: SESSION, nowMs: now + 2, writeId: 'w-forged' },
+  );
+  assert.equal(forged.ok, false);
+  assert.equal(forged.reason, 'pairing_mismatch');
+});
+
 // Codex sixth round P1 (r3649604170). A PREVIEW record reported `payload_bound: true` merely
 // because an identity was computable — before any live payload existed to compare. The record
 // therefore published the write-level match on a preview-only flow, contradicting the comment on
