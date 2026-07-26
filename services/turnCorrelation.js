@@ -580,6 +580,8 @@ function issueTurn(turnId, sessionId, opts = {}) {
     const atMs = _now(opts);
     registry.set(String(turnId).trim(), {
       sessionId: sid,
+      provisionalSessionId: null,
+      adoptedInitiationNonce: null,
       atMs,
       pairings: [],
       retiredInitiations: [],
@@ -623,6 +625,35 @@ function resolveCorrelation(payload, opts = {}) {
     const rec = registry.get(turnId);
     if (!rec) return miss(REASONS.UNKNOWN);
 
+    // Retirement is initiation authority, independent of whichever resolved session a newer
+    // preview adopted. Report the bounded tombstone before the old session can mismatch.
+    if (isWellFormedInitiationNonce(claim.initiation_nonce)
+        && rec.retiredInitiations.includes(String(claim.initiation_nonce))) {
+      return miss(REASONS.SUPERSEDED);
+    }
+
+    // Parse the bounded retirement intent before session adoption can rely on it, but do not
+    // mutate until every session, row-shape, and freshness gate below has passed.
+    let initiationNonce = null;
+    let retireInitiations = [];
+    if (opts.isPreview === true) {
+      const hasInitiationProtocol = claim.initiation_nonce !== undefined
+        || claim.retire_initiation_nonces !== undefined;
+      if (hasInitiationProtocol) {
+        if (!isWellFormedInitiationNonce(claim.initiation_nonce)) return miss(REASONS.MALFORMED);
+        initiationNonce = String(claim.initiation_nonce);
+        if (claim.retire_initiation_nonces !== undefined) {
+          if (!Array.isArray(claim.retire_initiation_nonces)
+              || claim.retire_initiation_nonces.length > MAX_OUTSTANDING_PAIRINGS
+              || !claim.retire_initiation_nonces.every(isWellFormedInitiationNonce)) {
+            return miss(REASONS.MALFORMED);
+          }
+          retireInitiations = [...new Set(claim.retire_initiation_nonces.map(String))];
+          if (retireInitiations.includes(initiationNonce)) return miss(REASONS.MALFORMED);
+        }
+      }
+    }
+
     // Session binding. A write with no session identity can never claim a correlation —
     // there is nothing to bind it to, so it fails as a mismatch rather than defaulting open.
     // The top-level session must equal the bound one EXACTLY — no trim. `/api/log-workout` writes
@@ -639,7 +670,15 @@ function resolveCorrelation(payload, opts = {}) {
       const mayAdoptServerResolution = opts.isPreview === true
         && opts.allowPreviewSessionResolution === true
         && _isNonEmptyString(claim.provisional_session_id)
-        && _sessionValueMatches(rec.sessionId, claim.provisional_session_id);
+        && (
+          _sessionValueMatches(rec.sessionId, claim.provisional_session_id)
+          || (
+            _isNonEmptyString(rec.provisionalSessionId)
+            && _sessionValueMatches(rec.provisionalSessionId, claim.provisional_session_id)
+            && _isNonEmptyString(rec.adoptedInitiationNonce)
+            && retireInitiations.includes(rec.adoptedInitiationNonce)
+          )
+        );
       if (!mayAdoptServerResolution) return miss(REASONS.SESSION_MISMATCH);
       resolvedSessionId = String(opts.sessionId);
     }
@@ -666,24 +705,6 @@ function resolveCorrelation(payload, opts = {}) {
     // evicted (Codex P2): the server cannot see the client's preview initiation order, so
     // last-completion-wins would discard a token the client legitimately kept.
     if (opts.isPreview === true) {
-      const hasInitiationProtocol = claim.initiation_nonce !== undefined
-        || claim.retire_initiation_nonces !== undefined;
-      let initiationNonce = null;
-      let retireInitiations = [];
-      if (hasInitiationProtocol) {
-        if (!isWellFormedInitiationNonce(claim.initiation_nonce)) return miss(REASONS.MALFORMED);
-        initiationNonce = String(claim.initiation_nonce);
-        if (claim.retire_initiation_nonces !== undefined) {
-          if (!Array.isArray(claim.retire_initiation_nonces)
-              || claim.retire_initiation_nonces.length > MAX_OUTSTANDING_PAIRINGS
-              || !claim.retire_initiation_nonces.every(isWellFormedInitiationNonce)) {
-            return miss(REASONS.MALFORMED);
-          }
-          retireInitiations = [...new Set(claim.retire_initiation_nonces.map(String))];
-          if (retireInitiations.includes(initiationNonce)) return miss(REASONS.MALFORMED);
-        }
-      }
-
       // Validate first, mutate second. The tombstone makes retirement independent of response
       // completion order: a request retired before it completes can never mint later.
       for (const retired of retireInitiations) {
@@ -702,7 +723,11 @@ function resolveCorrelation(payload, opts = {}) {
         rec.pairings = rec.pairings.filter(p => p.initiationNonce !== initiationNonce);
       }
 
-      if (resolvedSessionId) rec.sessionId = resolvedSessionId;
+      if (resolvedSessionId) {
+        if (!_isNonEmptyString(rec.provisionalSessionId)) rec.provisionalSessionId = rec.sessionId;
+        rec.sessionId = resolvedSessionId;
+        rec.adoptedInitiationNonce = initiationNonce;
+      }
       const pairing = {
         token: _mintPairingToken(),
         atMs: nowMs,
@@ -736,10 +761,6 @@ function resolveCorrelation(payload, opts = {}) {
     // Name an explicitly retired initiation before token lookup: retirement removes the token,
     // but the bounded tombstone still lets the rejection say `superseded` rather than collapse
     // into an indistinguishable generic mismatch.
-    if (isWellFormedInitiationNonce(claim.initiation_nonce)
-        && rec.retiredInitiations.includes(String(claim.initiation_nonce))) {
-      return miss(REASONS.SUPERSEDED);
-    }
     if (rec.pairings.length === 0) return miss(REASONS.UNPAIRED);
 
     // Shape gate before comparison: an unbounded or junk token is refused without ever being

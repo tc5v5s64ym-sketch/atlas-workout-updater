@@ -6486,8 +6486,10 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     setStatus(loggerStatus, 'Reading screenshot effort...', 'ok');
     try {
       closeoutScreenshotEffort = await parseWorkoutImage(file);
+      if (submitSeq !== previewRequestSeq) return;
       setStatus(loggerStatus, 'Effort read from screenshot — opening your preview to save.', 'ok');
     } catch {
+      if (submitSeq !== previewRequestSeq) return;
       setStatus(loggerStatus, "I couldn't read effort from the screenshot. I can still save the workout without effort data.", 'warn');
     }
     // RC2: the screenshot's own date is authoritative for this save unless the owner
@@ -6733,7 +6735,9 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     let parsedShotEffort = null;
     try {
       parsedShotEffort = await parseWorkoutImage(file);
+      if (submitSeq !== previewRequestSeq) return;
     } catch {
+      if (submitSeq !== previewRequestSeq) return;
       setStatus(loggerStatus, "I couldn't read effort from the screenshot. I can still save the workout without effort data.", 'warn');
     }
     const resolvedShot = resolveCloseoutWorkoutDate({

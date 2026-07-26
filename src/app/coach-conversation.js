@@ -2119,7 +2119,7 @@ import { beginTurnResponse, completeTurnResponse } from './turnCorrelation.js';
   // `history` is the PRIOR turns only — the current message is sent separately as
   // `message`, so the caller must not have appended it to chatTurns yet (else the
   // backend would see the current turn twice).
-  async function getChatReply(message, history, context) {
+  async function getChatReply(message, history, context, responseTicket) {
     if (typeof api !== 'function' || (typeof isConnected === 'function' && !isConnected())) return { message: null, propose_edit: null, propose_note: null, propose_plan_edit: null };
 
     // P0 — Active Session Context Integrity: during an active workout, short
@@ -2184,16 +2184,13 @@ import { beginTurnResponse, completeTurnResponse } from './turnCorrelation.js';
     // including data questions about the lifter's own history — falls through to the
     // Gemini coach below. READ-ONLY either way; a slow/failed SME never blocks the chat.
     if (!skipSme) try {
-      const smeTicket = correlationSessionId && typeof beginTurnResponse === 'function'
-        ? beginTurnResponse({ sessionId: correlationSessionId })
-        : null;
       let smeHeaders = null;
       const smeWinner = await Promise.race([
         api('/api/coach/ask', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ message, ...(correlationSessionId ? { session_id: correlationSessionId } : {}) }),
-          ...(smeTicket ? {
+          ...(responseTicket ? {
             responseHeaders: responseHeaders => { smeHeaders = responseHeaders; },
           } : {}),
         }).then(value => ({ selected: true, value })),
@@ -2202,8 +2199,8 @@ import { beginTurnResponse, completeTurnResponse } from './turnCorrelation.js';
       const sme = smeWinner.value;
       const data = sme && sme.data;
       if (data && data.depth && data.depth !== 'log_only' && data.answer) {
-        if (smeTicket && typeof completeTurnResponse === 'function') {
-          completeTurnResponse(smeTicket, smeHeaders);
+        if (responseTicket && typeof completeTurnResponse === 'function') {
+          completeTurnResponse(responseTicket, smeHeaders);
         }
         const cards = Array.isArray(data.cards) ? data.cards : [];
         const provenance = cards.length
@@ -2219,9 +2216,6 @@ import { beginTurnResponse, completeTurnResponse } from './turnCorrelation.js';
     // the 9s reaction budget so that fallback actually reaches the lifter instead of
     // the generic "Coach is unavailable" line firing first.
     const CHAT_REPLY_TIMEOUT_MS = 15000;
-    const chatTicket = correlationSessionId && typeof beginTurnResponse === 'function'
-      ? beginTurnResponse({ sessionId: correlationSessionId })
-      : null;
     let chatHeaders = null;
     const timeout = new Promise(resolve => setTimeout(() => resolve({
       selected: false,
@@ -2236,7 +2230,7 @@ import { beginTurnResponse, completeTurnResponse } from './turnCorrelation.js';
         context: context || {},
         ...(correlationSessionId ? { session_id: correlationSessionId } : {}),
       }),
-      ...(chatTicket ? {
+      ...(responseTicket ? {
         responseHeaders: responseHeaders => { chatHeaders = responseHeaders; },
       } : {}),
     }).then(res => ({
@@ -2247,8 +2241,8 @@ import { beginTurnResponse, completeTurnResponse } from './turnCorrelation.js';
       propose_plan_edit: (res && res.data && res.data.propose_plan_edit) || null
     })).then(value => ({ selected: true, value }));
     const winner = await Promise.race([request, timeout]);
-    if (winner.selected && chatTicket && typeof completeTurnResponse === 'function') {
-      completeTurnResponse(chatTicket, chatHeaders);
+    if (winner.selected && responseTicket && typeof completeTurnResponse === 'function') {
+      completeTurnResponse(responseTicket, chatHeaders);
     }
     return winner.value;
   }
@@ -2425,7 +2419,7 @@ import { beginTurnResponse, completeTurnResponse } from './turnCorrelation.js';
     return r;
   }
 
-  async function handleChatMessage(detail) {
+  async function handleChatMessage(detail, responseTicket) {
     const text = (detail && detail.text || '').trim();
     if (!text) return;
     // chat.js already painted the lifter's bubble on submit; we add Atlas's reply.
@@ -2442,7 +2436,7 @@ import { beginTurnResponse, completeTurnResponse } from './turnCorrelation.js';
     body.textContent = 'Thinking…';
 
     let chatResult = { message: null, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null };
-    try { chatResult = await getChatReply(text, priorTurns, detail && detail.context); } catch { /* stays null */ }
+    try { chatResult = await getChatReply(text, priorTurns, detail && detail.context, responseTicket); } catch { /* stays null */ }
     // Fail closed: a generation request that reached this lane must never materialize a
     // local active plan from the model's propose_plan_edit (see guardGenerationChatResult).
     chatResult = guardGenerationChatResult(text, chatResult);
@@ -2505,7 +2499,15 @@ import { beginTurnResponse, completeTurnResponse } from './turnCorrelation.js';
     chatTurns.push({ role: 'atlas', text: reply });
   }
 
-  document.addEventListener('atlas:chat-message', e => { handleChatMessage(e.detail).catch(() => {}); });
+  document.addEventListener('atlas:chat-message', e => {
+    const context = e.detail && e.detail.context;
+    const sessionId = context && typeof context.session_id === 'string' ? context.session_id.trim() : '';
+    // Mint at logical submission, before either /ask or its /chat fallthrough can await.
+    const responseTicket = sessionId && typeof beginTurnResponse === 'function'
+      ? beginTurnResponse({ sessionId })
+      : null;
+    handleChatMessage(e.detail, responseTicket).catch(() => {});
+  });
 
   // Logging directly (without tapping a tile) also leaves the empty home: the
   // first message of any kind collapses the hero + tiles.
