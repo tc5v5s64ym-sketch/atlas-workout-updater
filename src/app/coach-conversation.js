@@ -1022,8 +1022,8 @@ import { beginTurnResponse, completeTurnResponse } from './turnCorrelation.js';
   // are the deterministic, engine-backed set-effort extras the server computes
   // (PR 477 wiring) — present whether or not Gemini answered, and rendered as
   // their own short line so the engine's read is never lost to an LLM outage.
-  async function getInWorkoutNote(facts, sessionId) {
-    const data = await getLlmCoachingMessage(facts, sessionId).catch(() => null);
+  async function getInWorkoutNote(facts, sessionId, responseTicket) {
+    const data = await getLlmCoachingMessage(facts, sessionId, responseTicket).catch(() => null);
     // Soul Recovery (Issue #1073) + owner gate ruling (2026-07-20): a routine on-plan
     // block's voice is timed to the EXERCISE, not to every set. A COMPLETED on-plan
     // exercise (a batch of sets, or the finishing set — `facts.exercise_complete`) gets
@@ -1104,12 +1104,9 @@ import { beginTurnResponse, completeTurnResponse } from './turnCorrelation.js';
 
   // Returns the full /api/coach/message data object ({ message, effort_note,
   // reroute }) or null — the caller pulls the prose and the engine extras from it.
-  async function getLlmCoachingMessage(facts, sessionId) {
+  async function getLlmCoachingMessage(facts, sessionId, responseTicket) {
     if (typeof api !== 'function' || (typeof isConnected === 'function' && !isConnected())) return null;
     const correlationSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
-    const responseTicket = correlationSessionId && typeof beginTurnResponse === 'function'
-      ? beginTurnResponse({ sessionId: correlationSessionId })
-      : null;
     let selectedHeaders = null;
     const timeout = new Promise(resolve =>
       setTimeout(() => resolve({ selected: false, data: null }), COACH_LLM_TIMEOUT_MS));
@@ -1375,7 +1372,13 @@ import { beginTurnResponse, completeTurnResponse } from './turnCorrelation.js';
     return out;
   }
 
+  const setResponseTickets = new WeakMap();
+
   async function handleSetLogged(detail) {
+    const responseTicket = detail && typeof detail === 'object'
+      ? setResponseTickets.get(detail) || null
+      : null;
+    if (detail && typeof detail === 'object') setResponseTickets.delete(detail);
     const {
       exercises = [],
       text = '',
@@ -1453,7 +1456,7 @@ import { beginTurnResponse, completeTurnResponse } from './turnCorrelation.js';
       intentId: (typeof getActiveIntentId === 'function' ? getActiveIntentId() : (activeSession && activeSession.intentId)) || null,
       planned_queue: Array.isArray(detail.plannedQueue) ? detail.plannedQueue : [],
       substitution: suggestMatch ? undefined : primarySub
-    }, sessionId);
+    }, sessionId, exercises.length === 1 ? responseTicket : null);
     const note = reaction.note;
     // Soul Recovery (Issue #1073): a routine (ack_only) block returns a null note —
     // DELIBERATE SILENCE — so nothing is typed under the readback card and the logged
@@ -1520,7 +1523,7 @@ import { beginTurnResponse, completeTurnResponse } from './turnCorrelation.js';
         intentId: (typeof getActiveIntentId === 'function' ? getActiveIntentId() : (activeSession && activeSession.intentId)) || null,
         planned_queue: [],
         substitution: undefined
-      }, sessionId);
+      }, sessionId, ex === exercises[exercises.length - 1] ? responseTicket : null);
       if (exReaction && exReaction.note) {
         const exMsg = document.createElement('div');
         exMsg.className = 'coach-msg';
@@ -1949,7 +1952,22 @@ import { beginTurnResponse, completeTurnResponse } from './turnCorrelation.js';
       } catch { /* last-resort: never throw out of the listener */ }
     });
   });
-  document.addEventListener('atlas:set-logged', e => { handleSetLogged(e.detail).catch(() => {}); });
+  document.addEventListener('atlas:set-logged', e => {
+    const detail = e.detail || {};
+    const sessionId = typeof detail.sessionId === 'string' ? detail.sessionId.trim() : '';
+    // Mint at logical set initiation, before recommendation/history awaits. Only the
+    // final response for a multi-exercise batch receives this ticket because it is the
+    // last Atlas turn displayed for the event.
+    const responseTicket = sessionId
+      && Array.isArray(detail.exercises) && detail.exercises.length
+      && typeof beginTurnResponse === 'function'
+      ? beginTurnResponse({ sessionId })
+      : null;
+    if (responseTicket && detail && typeof detail === 'object') {
+      setResponseTickets.set(detail, responseTicket);
+    }
+    handleSetLogged(detail).catch(() => {});
+  });
   document.addEventListener('atlas:substitute-suggested', e => { handleSubstituteSuggested(e.detail).catch(() => {}); });
   // F10D acceptance boundary — the boundary's DATA guarantee is intact (the app.js
   // gate still mints identity + the Session_Plans acceptance + the ledger
