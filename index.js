@@ -2487,6 +2487,12 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       }
     }
 
+    const correlationPayload = completeWorkoutCorrelationPayload(formFields, {
+      sessionId,
+      date: dateValue,
+      logRows: formattedLogRows,
+      effortMetrics: normalizedMetrics,
+    });
     let logRowsWritten = 0;
     let effortRowsWritten = 0;
     let logAppendedRange = null;
@@ -2612,6 +2618,13 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
             data: partialData
           });
           liveWriteRecorded = true;
+          recordTurnWriteProof(
+            correlationPayload,
+            sessionId,
+            '/api/complete-workout',
+            partialData,
+            { correlationPayload },
+          );
           return standardError(req, res, 'Effort row append failed after log rows were written.', partialData, 500);
         }
         if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
@@ -2653,6 +2666,13 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
           });
           liveWriteRecorded = true;
         }
+        recordTurnWriteProof(
+          correlationPayload,
+          sessionId,
+          '/api/complete-workout',
+          unverified,
+          { correlationPayload },
+        );
         return standardError(req, res, 'Workout write could not be verified against the Sheets append proof.', unverified, 500);
       }
     }
@@ -2755,12 +2775,6 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       liveWriteRecorded = true;
     }
 
-    const correlationPayload = completeWorkoutCorrelationPayload(formFields, {
-      sessionId,
-      date: dateValue,
-      logRows: formattedLogRows,
-      effortMetrics: normalizedMetrics,
-    });
     recordTurnWriteProof(
       correlationPayload,
       sessionId,

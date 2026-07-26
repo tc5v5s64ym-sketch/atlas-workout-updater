@@ -138,6 +138,11 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
       return null;
     }
 
+    // Preview initiation is newer than every response ticket already in flight for
+    // this session. Retire those tickets synchronously so response completion order
+    // cannot let an older set/chat response clear a preview that started later.
+    turnResponses.delete(sessionId);
+
     if (state.active) {
       state.active.pairingToken = null;
       state.active.superseded = true;
