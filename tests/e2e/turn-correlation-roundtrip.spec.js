@@ -8,6 +8,8 @@ const TEST_KEY = 'playwright-test-key';
 const SESSION = 'TC-E2E-SESSION';
 const TURN = 'turn:2026-07-25T12:00:00.000Z_7_cliente2e';
 const MESSAGE_TURN = 'turn:2026-07-25T12:01:00.000Z_8_messagee2e';
+const CHAT_TURN_A = 'turn:2026-07-25T12:02:00.000Z_9_chata';
+const CHAT_TURN_B = 'turn:2026-07-25T12:03:00.000Z_10_chatb';
 const TOKEN_A = `pair:${'a'.repeat(32)}`;
 const TOKEN_B = `pair:${'b'.repeat(32)}`;
 
@@ -537,4 +539,320 @@ test('real blank-session screenshot preview adopts the server session and approv
     initiation_nonce: previewCorrelation.initiation_nonce,
     pairing_token: TOKEN_A,
   });
+});
+
+test('overlapping SME fallthroughs retain the newer chat initiation, not the later fallback start', async ({ page }) => {
+  const capture = {
+    asks: new Map(),
+    chats: new Map(),
+    previews: [],
+  };
+
+  await page.route('**/health', route => route.fulfill(json({ status: 'ok' })));
+  await page.route('**/api/**', async route => {
+    const request = route.request();
+    const requestPath = new URL(request.url()).pathname;
+    const method = request.method();
+
+    if (requestPath === '/api/coach/ask') {
+      const body = request.postDataJSON();
+      capture.asks.set(body.message, route);
+      return;
+    }
+    if (requestPath === '/api/coach/chat') {
+      const body = request.postDataJSON();
+      capture.chats.set(body.message, route);
+      return;
+    }
+    if (requestPath === '/api/complete-workout' && method === 'POST') {
+      const raw = request.postData() || '';
+      const correlationRaw = multipartField(raw, 'correlation');
+      const correlation = correlationRaw ? JSON.parse(correlationRaw) : null;
+      capture.previews.push({ raw, correlation });
+      return route.fulfill(json({
+        status: 'success',
+        data: {
+          data: {
+            test_mode: true,
+            sheet_write: 'skipped',
+            sheet_written: false,
+            no_write_confirmed: true,
+            effort_only: true,
+            session_id: SESSION,
+            date: '2026-07-25',
+            rows_to_write: [],
+            parsed_effort: null,
+            duplicate_check: { duplicate_session: false, duplicate_log_rows: 0 },
+          },
+          warnings: [],
+          pending_exercises: [],
+        },
+      }, 200, {
+        'x-atlas-turn-id': correlation?.turn_id || CHAT_TURN_B,
+        'x-atlas-turn-pairing': TOKEN_B,
+      }));
+    }
+    if (requestPath === '/api/catalog/exercises') {
+      return route.fulfill(json({ status: 'success', data: { exercises: [] } }));
+    }
+    return route.fulfill(json({ status: 'success', data: {} }));
+  });
+
+  await page.addInitScript(key => localStorage.setItem('atlas_api_key', key), TEST_KEY);
+  await page.goto('/app/');
+  await page.evaluate(session => {
+    document.getElementById('log-session-id').value = session;
+  }, SESSION);
+
+  const messageA = 'Give me one short motivation A';
+  const messageB = 'Give me one short motivation B';
+  await page.evaluate(({ session, messageA, messageB }) => {
+    document.dispatchEvent(new CustomEvent('atlas:chat-message', {
+      detail: { text: messageA, context: { session_id: session } },
+    }));
+    document.dispatchEvent(new CustomEvent('atlas:chat-message', {
+      detail: { text: messageB, context: { session_id: session } },
+    }));
+  }, { session: SESSION, messageA, messageB });
+  await expect.poll(() => capture.asks.size).toBe(2);
+
+  // B's SME check falls through first and starts B's /chat request. A's older SME
+  // check then falls through later. A must reuse its older logical-turn ticket rather
+  // than minting a fresh fallback ticket that supersedes B.
+  await capture.asks.get(messageB).fulfill(json(
+    { status: 'success', data: { depth: 'log_only', answer: null } },
+    200,
+    { 'x-atlas-turn-id': CHAT_TURN_B },
+  ));
+  await expect.poll(() => capture.chats.has(messageB)).toBeTruthy();
+  await capture.asks.get(messageA).fulfill(json(
+    { status: 'success', data: { depth: 'log_only', answer: null } },
+    200,
+    { 'x-atlas-turn-id': CHAT_TURN_A },
+  ));
+  await expect.poll(() => capture.chats.has(messageA)).toBeTruthy();
+
+  await capture.chats.get(messageB).fulfill(json(
+    { status: 'success', data: { message: 'Reply B' } },
+    200,
+    { 'x-atlas-turn-id': CHAT_TURN_B },
+  ));
+  await capture.chats.get(messageA).fulfill(json(
+    { status: 'success', data: { message: 'Reply A' } },
+    200,
+    { 'x-atlas-turn-id': CHAT_TURN_A },
+  ));
+  await expect(page.locator('#thread-messages')).toContainText('Reply B');
+  await expect(page.locator('#thread-messages')).toContainText('Reply A');
+
+  await page.evaluate(() => {
+    document.querySelector('input[name="effort-mode"][value="manual"]').checked = true;
+    document.getElementById('log-date').value = '2026-07-25';
+    document.getElementById('log-session-id').value = 'TC-E2E-SESSION';
+    const values = {
+      'effort-duration': '00:30:00',
+      'effort-active-cal': '250',
+      'effort-total-cal': '330',
+      'effort-avg-hr': '142',
+      'effort-peak-hr': '165',
+    };
+    for (const [id, value] of Object.entries(values)) {
+      const input = document.getElementById(id);
+      input.value = value;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    document.getElementById('effort-preview-btn').click();
+  });
+  await expect.poll(() => capture.previews.length).toBe(1);
+  expect(capture.previews[0].correlation.turn_id).toBe(CHAT_TURN_B);
+});
+
+test('newer closeout screenshot selection survives an older image parse completing last', async ({ page }) => {
+  const capture = {
+    coachBodies: [],
+    messageBodies: [],
+    imageGates: [],
+    imageCompletions: [],
+    imageRequests: 0,
+    previews: [],
+  };
+
+  await page.route('**/health', route => route.fulfill(json({ status: 'ok' })));
+  await page.route('**/api/**', async route => {
+    const request = route.request();
+    const requestPath = new URL(request.url()).pathname;
+    const method = request.method();
+    const body = method === 'POST' && request.postData()
+      && request.headers()['content-type']?.includes('application/json')
+      ? request.postDataJSON()
+      : null;
+
+    if (requestPath === '/api/coach/ask') {
+      capture.coachBodies.push(body);
+      return route.fulfill(json(
+        { status: 'success', data: { depth: 'log_only', answer: null } },
+        200,
+        { 'x-atlas-turn-id': TURN },
+      ));
+    }
+    if (requestPath === '/api/coach/chat') {
+      capture.coachBodies.push(body);
+      return route.fulfill(json(
+        { status: 'success', data: { message: 'Finish the planned set cleanly.' } },
+        200,
+        { 'x-atlas-turn-id': TURN },
+      ));
+    }
+    if (requestPath === '/api/parse-workout-text') {
+      return route.fulfill(json({
+        status: 'success',
+        data: {
+          test_mode: true,
+          sheet_written: false,
+          no_write_confirmed: true,
+          warnings: [],
+          parsed: {
+            intent: 'log_sets',
+            canonical_name: 'Bench Press',
+            exercise: 'Bench Press',
+            sets: [{ weight: 225, reps: 5, rir: 2 }],
+          },
+        },
+      }));
+    }
+    if (requestPath === '/api/coach/message') {
+      capture.messageBodies.push(body);
+      return route.fulfill(json(
+        { status: 'success', data: { message: 'That completes the planned work.' } },
+        200,
+        { 'x-atlas-turn-id': MESSAGE_TURN },
+      ));
+    }
+    if (requestPath === '/api/parse-workout-image') {
+      const imageIndex = capture.imageRequests++;
+      await new Promise(resolve => capture.imageGates.push(resolve));
+      const isNewer = imageIndex === 1;
+      capture.imageCompletions.push(isNewer ? 'B' : 'A');
+      return route.fulfill(json({
+        status: 'success',
+        data: {
+          parsed: {
+            duration: isNewer ? '00:22:00' : '00:11:00',
+            activeCalories: isNewer ? 222 : 111,
+            totalCalories: isNewer ? 300 : 180,
+            averageHR: isNewer ? 142 : 121,
+            peakHR: isNewer ? 168 : 145,
+            workoutType: isNewer ? 'Newer screenshot B' : 'Older screenshot A',
+            date: '2026-07-25',
+          },
+        },
+      }));
+    }
+    if (requestPath === '/api/log-workout' && method === 'POST') {
+      if (body?.test_mode === true || body?.test_mode === 'true') {
+        const isScreenshotCloseout = Boolean(body.closeout_context && body.effort_row);
+        if (isScreenshotCloseout) capture.previews.push(body);
+        const rows = (body.log_rows || []).map(r => [
+          r.date_clean, r.session_id, r.exercise, r.exercise, 'Chest', 'BEN01',
+          r.set_number, r.weight, r.reps, r.rir, r.notes, '',
+        ]);
+        return route.fulfill(json({
+          status: 'success',
+          data: {
+            test_mode: true,
+            sheet_write: 'skipped',
+            sheet_written: false,
+            no_write_confirmed: true,
+            warnings: [],
+            log_rows_preview: rows,
+            effort_row_preview: body.effort_row || null,
+          },
+        }, 200, {
+          'x-atlas-turn-id': body.correlation?.turn_id || MESSAGE_TURN,
+          'x-atlas-turn-pairing': !isScreenshotCloseout || capture.previews.length === 1 ? TOKEN_B : TOKEN_A,
+        }));
+      }
+      return route.fulfill(json({ status: 'success', data: { sheet_written: true } }));
+    }
+    if (requestPath === '/api/session-plans/accept') {
+      return route.fulfill(json({
+        status: 'success',
+        data: { session_plans: { captured: false, reason: 'disabled' } },
+      }));
+    }
+    if (requestPath === '/api/session-plan-sets/accept') {
+      return route.fulfill(json({
+        status: 'success',
+        data: { session_plan_sets: { captured: false, reason: 'disabled' } },
+      }));
+    }
+    if (requestPath === '/api/catalog/exercises') {
+      return route.fulfill(json({
+        status: 'success',
+        data: { exercises: [{ canonical_name: 'Bench Press', lift_code: 'BEN01' }] },
+      }));
+    }
+    return route.fulfill(json({ status: 'success', data: {} }));
+  });
+
+  await page.addInitScript(key => localStorage.setItem('atlas_api_key', key), TEST_KEY);
+  await page.goto('/app/');
+  await page.evaluate(({ session, text }) => {
+    document.getElementById('log-session-id').value = session;
+    document.dispatchEvent(new CustomEvent('atlas:chat-message', {
+      detail: { text, context: { session_id: session } },
+    }));
+  }, { session: SESSION, text: 'How should I finish this plan?' });
+  await expect.poll(() => capture.coachBodies.length).toBeGreaterThanOrEqual(2);
+
+  const started = await page.evaluate(() => window.atlasAcceptPlan({
+    id: 'work_day',
+    label: 'Work',
+    exercises: [{
+      exercise: 'Bench Press',
+      lift_code: 'BEN01',
+      target_weight: 225,
+      target_reps: 5,
+      target_sets: 1,
+      target_rir: 2,
+    }],
+  }));
+  expect(started?.started).toBeTruthy();
+
+  await page.locator('#workout-text').fill('bench 225 5/2');
+  await page.locator('#preview-btn').click();
+  await expect.poll(() => page.evaluate(() => window.getSessionLog().length)).toBe(1);
+  await expect.poll(() => capture.messageBodies.length).toBe(1);
+  await expect(page.locator('#thread-messages')).toContainText('That completes the planned work.');
+
+  await page.evaluate(() => {
+    const screenshot = document.querySelector('input[name="effort-mode"][value="screenshot"]');
+    screenshot.checked = true;
+    screenshot.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await page.locator('#effort-image').setInputFiles({
+    name: 'older-a.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from('older-a'),
+  });
+  await expect.poll(() => capture.imageGates.length).toBe(1);
+  await page.locator('#effort-image').setInputFiles({
+    name: 'newer-b.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from('newer-b'),
+  });
+  await expect.poll(() => capture.imageGates.length).toBe(2);
+
+  capture.imageGates[1]();
+  await expect.poll(() => capture.previews.length).toBe(1);
+  expect(capture.imageCompletions).toEqual(['B']);
+  const newerPreview = capture.previews[0];
+  expect(newerPreview.effort_row.active_calories).toBe(222);
+  expect(newerPreview.correlation.turn_id).toBe(MESSAGE_TURN);
+
+  capture.imageGates[0]();
+  await expect.poll(() => capture.imageCompletions).toEqual(['B', 'A']);
+  await page.waitForTimeout(250);
+  expect(capture.previews).toHaveLength(1);
+  expect(capture.previews[0]).toBe(newerPreview);
 });
