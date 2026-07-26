@@ -1965,3 +1965,83 @@ test('the pairing registry stays bounded — a pairing rides its turn entry and 
   }
   assert.ok(tc._sizeForTesting() <= tc.MAX_ENTRIES, `registry must stay capped, got ${tc._sizeForTesting()}`);
 });
+
+test('resolveCorrelation: retry-first and late-original previews with one initiation reuse one pairing', () => {
+  reset();
+  const now = 1_000_000;
+  const initiation = 'init:12121212-1212-4212-8212-121212121212';
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  const previewPayload = payloadWith({
+    correlation: { turn_id: TURN_ID, initiation_nonce: initiation },
+  });
+
+  // Server completion order: the client's transport retry reaches this boundary first,
+  // then the original request (whose response the client can no longer observe) finishes.
+  const retryResponse = tc.resolveCorrelation(previewPayload, {
+    sessionId: SESSION,
+    nowMs: now + 1,
+    isPreview: true,
+  });
+  const lateOriginal = tc.resolveCorrelation(structuredClone(previewPayload), {
+    sessionId: SESSION,
+    nowMs: now + 2,
+    isPreview: true,
+  });
+  assert.equal(retryResponse.ok, true);
+  assert.equal(lateOriginal.ok, true);
+  assert.equal(lateOriginal.pairing_token, retryResponse.pairing_token,
+    'a late duplicate transport attempt must not replace the token the client retained');
+
+  const live = payloadWith({
+    correlation: {
+      turn_id: TURN_ID,
+      initiation_nonce: initiation,
+      pairing_token: retryResponse.pairing_token,
+    },
+  });
+  assert.equal(tc.resolveCorrelation(live, {
+    sessionId: SESSION,
+    nowMs: now + 3,
+    writeId: 'wid-same-initiation-retry',
+  }).ok, true, 'the token returned by the retry must remain usable after late original completion');
+});
+
+test('resolveCorrelation: a same-initiation retry with a different payload fails closed without replacing the first pairing', () => {
+  reset();
+  const now = 1_000_000;
+  const initiation = 'init:34343434-3434-4434-8434-343434343434';
+  tc.issueTurn(TURN_ID, SESSION, { nowMs: now });
+  const originalPayload = payloadWith({
+    correlation: { turn_id: TURN_ID, initiation_nonce: initiation },
+  });
+  const first = tc.resolveCorrelation(originalPayload, {
+    sessionId: SESSION,
+    nowMs: now + 1,
+    isPreview: true,
+  });
+  assert.equal(first.ok, true);
+
+  const changedPayload = payloadWith({
+    date: '2026-07-26',
+    correlation: { turn_id: TURN_ID, initiation_nonce: initiation },
+  });
+  const changed = tc.resolveCorrelation(changedPayload, {
+    sessionId: SESSION,
+    nowMs: now + 2,
+    isPreview: true,
+  });
+  assert.equal(changed.ok, false);
+  assert.equal(changed.reason, 'payload_mismatch');
+
+  const live = structuredClone(originalPayload);
+  live.correlation = {
+    turn_id: TURN_ID,
+    initiation_nonce: initiation,
+    pairing_token: first.pairing_token,
+  };
+  assert.equal(tc.resolveCorrelation(live, {
+    sessionId: SESSION,
+    nowMs: now + 3,
+    writeId: 'wid-original-after-bad-retry',
+  }).ok, true, 'a malformed retry must not consume or replace the valid pairing');
+});

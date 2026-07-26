@@ -633,6 +633,65 @@ test('the real multipart effort-only preview/write route binds the server-normal
   assert.equal(record.proof.sheet_written, true);
 });
 
+test('the real multipart route reuses one pairing when retry completes before the original attempt', async () => {
+  tc._resetForTesting();
+  resetIdempotencyStore();
+  state.appends.length = 0;
+  tc.issueTurn(TURN_ID, SESSION_ID);
+
+  const initiation = 'init:56565656-5656-4656-8656-565656565656';
+  const effort = JSON.stringify({
+    duration: '00:42:00',
+    activeCalories: 410,
+    totalCalories: 520,
+    averageHR: 148,
+    peakHR: 171,
+    workoutType: 'Traditional Strength Training',
+  });
+  const makePreview = () => {
+    const form = new FormData();
+    form.append('session_id', SESSION_ID);
+    form.append('date', '2026-07-25');
+    form.append('log_rows_json', JSON.stringify([]));
+    form.append('effort_json', effort);
+    form.append('test_mode', 'true');
+    form.append('correlation', JSON.stringify({
+      turn_id: TURN_ID,
+      initiation_nonce: initiation,
+    }));
+    return form;
+  };
+
+  // Equivalent server completion order to a transport retry returning first while the
+  // original request keeps running and reaches pairing establishment afterward.
+  const retryResponse = await postMultipart('/api/complete-workout', makePreview());
+  const lateOriginal = await postMultipart('/api/complete-workout', makePreview());
+  assert.equal(retryResponse.status, 200, JSON.stringify(retryResponse.body));
+  assert.equal(lateOriginal.status, 200, JSON.stringify(lateOriginal.body));
+  const retainedToken = retryResponse.headers.get(tc.PAIRING_TOKEN_HEADER);
+  assert.ok(tc.isWellFormedPairingToken(retainedToken));
+  assert.equal(lateOriginal.headers.get(tc.PAIRING_TOKEN_HEADER), retainedToken,
+    'the real route must return the same capability for duplicate attempts of one initiation');
+
+  const liveForm = new FormData();
+  liveForm.append('session_id', SESSION_ID);
+  liveForm.append('date', '2026-07-25');
+  liveForm.append('log_rows_json', JSON.stringify([]));
+  liveForm.append('effort_json', effort);
+  liveForm.append('write_id', 'wid-multipart-preview-transport-retry');
+  liveForm.append('correlation', JSON.stringify({
+    turn_id: TURN_ID,
+    initiation_nonce: initiation,
+    pairing_token: retainedToken,
+  }));
+  const live = await postMultipart('/api/complete-workout', liveForm);
+  assert.equal(live.status, 200, JSON.stringify(live.body));
+  assert.ok(state.appends.some(a => a.tab === 'Effort'), 'the approved write still reaches the real append path');
+  const record = tc.recentWriteProofs().at(-1);
+  assert.equal(record.pairing.payload_bound, true);
+  assert.equal(record.proof.sheet_written, true);
+});
+
 test('the real multipart route records a correlated partial proof after Log rows commit and Effort append fails', async () => {
   tc._resetForTesting();
   resetIdempotencyStore();
