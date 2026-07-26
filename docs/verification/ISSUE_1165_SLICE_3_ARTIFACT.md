@@ -50,6 +50,9 @@ A turn is reviewable only when all of these hold:
 The explicit no-write tuple outranks incidental preview bookkeeping such as `effortWritten:true`.
 Conversely, `sheet_write:'unverified'`, `partial`, or `skipped_duplicate_in_progress` never counts as
 a confirmed/reviewable write even if another field is positive.
+Contradictory positive-write and explicit no-write claims fail closed. Seal evidence with a positive
+new-seal count but `sheet_written:false`, and skipped closeout evidence without a positive skip
+count, are likewise non-reviewable rather than inferred as successful replays.
 
 `complete` means every included turn is reviewable and no marker record was rejected. `partial`
 means at least one record exists but a turn is missing, ambiguous, rejected, unbound, withheld,
@@ -85,9 +88,10 @@ or exposing malformed client input.
 
 - `test/turnWriteArtifact.test.js` — ordering, cross-turn/cross-session refusal, attempt bounds,
   integer proof counts, proof sufficiency, effort-bearing preview no-write precedence,
-  unverified/partial/in-progress refusal, closeout discriminator for writes and replays, seal
-  classifications, withheld/absent distinction, leakage refusal (including client-controlled proof
-  strings and source labels), CLI output, and non-zero partial/empty behavior.
+  unverified/partial/in-progress and contradictory proof refusal, positive-evidence closeout
+  discriminators for writes and replays, impossible seal-count refusal, seal classifications,
+  withheld/absent distinction, leakage refusal (including client-controlled proof strings and
+  source labels), CLI output, and non-zero partial/empty behavior.
 - `test/turnWriteArtifactIntegration.test.js` — captures the actual interaction-trace emitter and a
   real registry preview → pairing → live resolution → write-proof emitter, then joins their log
   lines.

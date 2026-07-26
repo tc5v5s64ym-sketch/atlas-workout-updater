@@ -341,6 +341,7 @@ function _sealSummary(proof, withheldEvidence) {
   let state = 'absent';
   if (sealedOk === false && sheetWritten === true) state = 'seal_proof_mismatch';
   else if (sealedOk === false) state = 'failed';
+  else if (sealedOk === true && sheetWritten === false && sealed > 0) state = 'seal_proof_mismatch';
   else if (sealedOk === true && sheetWritten === true && sealed > 0) state = 'sealed';
   else if (sealedOk === true && sheetWritten === true) state = 'indeterminate';
   else if (sealedOk === true && sheetWritten === false && sealed === 0 && alreadySealed > 0) state = 'already_sealed';
@@ -383,7 +384,7 @@ function _closeoutSummary(proof, withheldEvidence) {
     state = planVersionWithheld || !hasPlanVersion || proof[planVersionKey] === null
       ? 'written_unidentified'
       : 'written';
-  } else if (status === 'skipped' && captured === true) {
+  } else if (status === 'skipped' && captured === true && written === 0 && skipped > 0) {
     state = planVersionWithheld || !hasPlanVersion || proof[planVersionKey] === null
       ? 'already_captured_unidentified'
       : 'already_captured';
@@ -410,21 +411,26 @@ function _proofState(proof, seal, closeout) {
   if (proof.sheet_write === 'partial') return 'partial';
   if (proof.sheet_write === 'skipped_duplicate_in_progress') return 'idempotency_in_progress';
 
+  const positiveWrite = proof.sheet_written === true
+    || proof.sheet_write === 'success'
+    || (typeof proof.rows_appended === 'number' && proof.rows_appended > 0)
+    || (typeof proof.log_rows_written === 'number' && proof.log_rows_written > 0)
+    || (typeof proof.effort_rows_written === 'number' && proof.effort_rows_written > 0)
+    || seal.new_seal_write
+    || closeout.state === 'written';
+
+  // A proof cannot simultaneously claim the explicit W1 no-write guarantee and a real append.
+  // `effortWritten` is intentionally excluded: on a preview it means an effort row was formatted,
+  // not appended, and the explicit no-write tuple remains authoritative for that real route shape.
+  if (proof.no_write_confirmed === true && positiveWrite) return 'contradictory';
+
   // The explicit W1 no-write tuple outranks incidental response bookkeeping such as
   // effortWritten:true on a preview (which means an effort row was formatted, not appended).
   if (proof.no_write_confirmed === true && proof.sheet_written === false) {
     return 'no_write_confirmed';
   }
 
-  const positiveWrite = proof.sheet_written === true
-    || proof.sheet_write === 'success'
-    || proof.effortWritten === true
-    || (typeof proof.rows_appended === 'number' && proof.rows_appended > 0)
-    || (typeof proof.log_rows_written === 'number' && proof.log_rows_written > 0)
-    || (typeof proof.effort_rows_written === 'number' && proof.effort_rows_written > 0)
-    || seal.new_seal_write
-    || closeout.state === 'written';
-  if (positiveWrite) return 'write_confirmed';
+  if (positiveWrite || proof.effortWritten === true) return 'write_confirmed';
 
   if (proof.duplicate_write === true
     || proof.sheet_write === 'skipped_duplicate'
@@ -445,12 +451,14 @@ function _writeArtifact(record) {
   else if (proofState === 'unverified') issues.push('write_proof_unverified');
   else if (proofState === 'partial') issues.push('write_proof_partial');
   else if (proofState === 'idempotency_in_progress') issues.push('write_proof_in_progress');
+  else if (proofState === 'contradictory') issues.push('write_proof_contradictory');
   if (record.withheld_evidence.length > 0) issues.push('evidence_withheld');
   if (seal.state === 'seal_proof_mismatch') issues.push('seal_proof_mismatch');
   else if (seal.state === 'failed' || seal.state === 'withheld' || seal.state === 'indeterminate') {
     issues.push('seal_not_verified');
   }
   if (closeout.state === 'failed'
+    || closeout.state === 'indeterminate'
     || closeout.state === 'written_unidentified'
     || closeout.state === 'already_captured_unidentified'
     || closeout.state === 'withheld') {
