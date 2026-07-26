@@ -2308,6 +2308,7 @@ function tryResolvePendingReplacement(text) {
 // or no known substitute; the coach then handles it. Async because the recommender is
 // server-side (its quality/pattern chain is not in the browser bundle).
 async function tryApplyImplicitSubstitution(text) {
+  const submitSeq = typeof previewRequestSeq === 'number' ? previewRequestSeq : null;
   const PM = (typeof window !== 'undefined' && window.planMutationIntent) || null;
   if (!PM) return false;
   const intent = PM.classifyMutationIntent(text);
@@ -2342,6 +2343,7 @@ async function tryApplyImplicitSubstitution(text) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: text, current_exercise: targetName, intent: 'substitute', remaining_plan: remainingPlan })
     });
+    if (submitSeq !== null && submitSeq !== previewRequestSeq) return false;
     rec = res && res.data && res.data.recommendation;
   } catch { return false; }
   if (!rec || !rec.recommendation) return false; // no known substitute → fall through to the coach
@@ -5627,9 +5629,9 @@ async function fetchReaction(liftCode, justLoggedSet) {
 // — the coach is suppressed only when a card was actually rendered, so an
 // exercise not in the ~14-entry catalog still gets a coach reply.
 async function checkAndSuggestSubstitute(text) {
+  const submitSeq = typeof previewRequestSeq === 'number' ? previewRequestSeq : null;
   if (!text || !getActivePlannedSession() || !getActivePlannedSession().exercises.length) return false;
-  // Use canonical session to find the current exercise — exercises[index] lags after
-  // a logged set until "Next exercise →" is clicked, causing stale substitute checks.
+  // Canonical current exercise; the index can lag after a logged set.
   const currentEx = currentPlannedExercise();
   if (!currentEx || !currentEx.name || !isConnected()) return false;
   try {
@@ -5638,24 +5640,13 @@ async function checkAndSuggestSubstitute(text) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: text, current_exercise: currentEx.name })
     });
+    if (submitSeq !== null && submitSeq !== previewRequestSeq) return false;
     const rec = res && res.data && res.data.recommendation;
     if (rec) {
-      // Step 373b: the lifter declared a swap for the current step. Record the
-      // prescribed (swapped-out) lift so the NEXT logged exercise replaces this
-      // slot in the live session (applied in emitSetLogged).
-      // AC3: also store the prescription (weight/reps/sets) from the API response so
-      // applySessionSubstitution can populate the replacement slot instead of null.
+      // Step 373b / AC3: record the prescribed lift and target before moving the cursor.
       setPendingSubstitution({ prescribed: currentEx.canonicalName || currentEx.name,
         prescription: rec.next_target || null });
-      // Step 379: advance the authoritative session cursor past the taken/swapped
-      // exercise. Otherwise the cursor stays on the lift the lifter just moved off,
-      // and a subsequent conversational message would send that stale name as
-      // current_exercise to /api/suggest-substitute (and the banner would keep
-      // showing the taken exercise). The deferred swap is applied by NAME in
-      // emitSetLogged, so it is unaffected by this cursor move. We deliberately do
-      // NOT call advancePlannedSession(): that clears pendingSubstitution and
-      // restarts the logger input mid-conversation. Clamp so we never overrun the
-      // plan (no premature session-end on the last slot).
+      // Step 379: move past the taken slot without clearing the deferred swap; clamp at the end.
       if (getActivePlannedSession().index < getActivePlannedSession().exercises.length - 1) {
         getActivePlannedSession().index += 1;
         renderActiveSessionBanner();

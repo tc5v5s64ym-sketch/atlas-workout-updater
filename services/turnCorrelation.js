@@ -370,20 +370,21 @@ function _canonicalJson(v, depth = 0) {
  * SERVER received — nothing the client mints — so unlike the previewed `write_id` (present at
  * preview on one of five write paths) it holds on every route.
  *
- * Returns null when the payload carries no identity to fingerprint. Null must degrade to an
- * UNBOUND pairing that reports `payload_bound:false`, never to an assumed match: a turn-level
- * join is still real evidence, but it must not be published as a write-level one.
+ * Returns an identity result so callers can distinguish genuinely unbound input from input whose
+ * exact equality could not be established within the bounded work limit. Both degrade to an
+ * UNBOUND pairing that reports `payload_bound:false`; only the latter must also refuse
+ * same-initiation retry reuse, because two distinct oversized payloads cannot be assumed equal.
  */
-function _previewIdentity(payload, opts = {}) {
+function _previewIdentityResult(payload, opts = {}) {
   const p = _isPlainObject(payload) ? payload : {};
   const sessionId = _isNonEmptyString(p.session_id) ? String(p.session_id).trim() : '';
   // No session identity, or no write-affecting field beyond it: nothing to bind. Requiring
   // `log_rows` here made the seam silently unbound on modality/bodyweight even though those
   // routes have an exact payload identity of their own.
-  if (!sessionId) return null;
+  if (!sessionId) return { identity: null, overflow: false };
   const identityKeys = Object.keys(p)
     .filter(key => !IDENTITY_EXCLUDED_FIELDS.includes(key) && key !== 'session_id' && p[key] !== undefined);
-  if (identityKeys.length === 0) return null;
+  if (identityKeys.length === 0) return { identity: null, overflow: false };
 
   // Default-deny: every field except the documented exclusions. `session_id` and `date` are
   // trimmed so incidental whitespace cannot refuse a legitimate approve.
@@ -396,10 +397,17 @@ function _previewIdentity(payload, opts = {}) {
   }
 
   const serialized = _canonicalJson(projection);
-  if (serialized.length > MAX_IDENTITY_INPUT_CHARS) return null;
+  if (serialized.length > MAX_IDENTITY_INPUT_CHARS) return { identity: null, overflow: true };
   // A digest, so the registry never holds workout content — and it is never logged or published
   // either, exactly like the token: only the derived `payload_bound` boolean reaches the record.
-  return crypto.createHash('sha256').update(serialized).digest('hex');
+  return {
+    identity: crypto.createHash('sha256').update(serialized).digest('hex'),
+    overflow: false,
+  };
+}
+
+function _previewIdentity(payload, opts = {}) {
+  return _previewIdentityResult(payload, opts).identity;
 }
 
 // Where each contract keeps its session identity, located by NAME so a schema change cannot move
@@ -717,8 +725,12 @@ function resolveCorrelation(payload, opts = {}) {
       if (initiationNonce && rec.retiredInitiations.includes(initiationNonce)) {
         return miss(REASONS.SUPERSEDED);
       }
-      const previewIdentity = _previewIdentity(payload);
-      const previewIdentityEffortDropped = _previewIdentity(payload, { dropEffort: true });
+      const previewIdentityResult = _previewIdentityResult(payload);
+      const previewIdentityEffortDroppedResult = _previewIdentityResult(payload, { dropEffort: true });
+      const previewIdentity = previewIdentityResult.identity;
+      const previewIdentityEffortDropped = previewIdentityEffortDroppedResult.identity;
+      const previewIdentityOverflow = previewIdentityResult.overflow
+        || previewIdentityEffortDroppedResult.overflow;
       const previewedWriteId = _isNonEmptyString(opts.previewedWriteId)
         ? String(opts.previewedWriteId).trim()
         : null;
@@ -732,7 +744,9 @@ function resolveCorrelation(payload, opts = {}) {
         ? rec.pairings.find(p => p.initiationNonce === initiationNonce)
         : null;
       if (existingPairing) {
-        if (existingPairing.identity !== previewIdentity
+        if (existingPairing.identityOverflow === true
+            || previewIdentityOverflow
+            || existingPairing.identity !== previewIdentity
             || existingPairing.identityEffortDropped !== previewIdentityEffortDropped
             || existingPairing.previewedWriteId !== previewedWriteId) {
           return miss(REASONS.PAYLOAD_MISMATCH);
@@ -758,6 +772,10 @@ function resolveCorrelation(payload, opts = {}) {
         // What makes this a WRITE-level binding rather than a turn-level one. Null ⇒ unbound,
         // reported honestly as payload_bound:false.
         identity: previewIdentity,
+        // Internal only. When exact equality exceeded the bounded identity budget, a later
+        // same-initiation request must fail closed instead of treating null === null as proof
+        // that it is a byte-identical transport retry.
+        identityOverflow: previewIdentityOverflow,
         // The same identity with `effort_row` omitted, so the documented seal retry's effort
         // REMOVAL is a permitted transition without loosening the gate for anything else.
         identityEffortDropped: previewIdentityEffortDropped,
