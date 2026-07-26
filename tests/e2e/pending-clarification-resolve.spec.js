@@ -348,7 +348,10 @@ test('failed set coaching settles the closeout wait and leaves the write uncorre
 });
 
 test('a stalled pre-message recommendation cannot block closeout indefinitely', async ({ page }) => {
-  const capture = { recommendationGate: new Promise(() => {}) };
+  let releaseRecommendation;
+  const capture = {
+    recommendationGate: new Promise(resolve => { releaseRecommendation = resolve; }),
+  };
   await mock(page, capture);
   await page.addInitScript(key => { localStorage.setItem('atlas_api_key', key); }, TEST_KEY);
   await page.goto('/app/');
@@ -364,5 +367,9 @@ test('a stalled pre-message recommendation cannot block closeout indefinitely', 
   await submit(page, 'done');
   await expect.poll(() => capture.previews.length, { timeout: 11_000 }).toBe(1);
   expect(capture.previews[0].correlation).toBeUndefined();
+  expect(capture.messageCalls).toHaveLength(0);
+
+  releaseRecommendation();
+  await page.waitForTimeout(500);
   expect(capture.messageCalls).toHaveLength(0);
 });
