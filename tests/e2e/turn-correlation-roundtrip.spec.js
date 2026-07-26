@@ -1065,3 +1065,152 @@ test('newer closeout screenshot selection survives an older image parse completi
   expect(capture.previews).toHaveLength(1);
   expect(capture.previews[0]).toBe(newerPreview);
 });
+
+test('real composer A delayed in substitute routing cannot retire B modality approval', async ({ page }) => {
+  const capture = {
+    chats: [],
+    suggestRoute: null,
+    previews: [],
+    writes: [],
+  };
+
+  await page.route('**/health', route => route.fulfill(json({ status: 'ok' })));
+  await page.route('**/api/**', async route => {
+    const request = route.request();
+    const requestPath = new URL(request.url()).pathname;
+    const method = request.method();
+    const body = method === 'POST' && request.postData()
+      && request.headers()['content-type']?.includes('application/json')
+      ? request.postDataJSON()
+      : null;
+
+    if (requestPath === '/api/parse-workout-text') {
+      return route.fulfill(json({ status: 'error', error: 'not a resistance log' }, 422));
+    }
+    if (requestPath === '/api/coach/ask') {
+      return route.fulfill(json(
+        { status: 'success', data: { depth: 'log_only', answer: null } },
+        200,
+        { 'x-atlas-turn-id': capture.chats.length === 0 ? TURN : CHAT_TURN_A },
+      ));
+    }
+    if (requestPath === '/api/coach/chat') {
+      capture.chats.push(body);
+      const isSeed = capture.chats.length === 1;
+      return route.fulfill(json(
+        { status: 'success', data: { message: isSeed ? 'Seed turn retained.' : 'Older A completed late.' } },
+        200,
+        { 'x-atlas-turn-id': isSeed ? TURN : CHAT_TURN_A },
+      ));
+    }
+    if (requestPath === '/api/suggest-substitute') {
+      if (capture.suggestRoute === null) {
+        capture.suggestRoute = route;
+        return;
+      }
+      return route.fulfill(json({ status: 'success', data: { recommendation: null } }));
+    }
+    if (requestPath === '/api/log-modality' && method === 'POST') {
+      const isRun = typeof body?.text === 'string' && body.text.startsWith('Ran ');
+      if (!isRun) {
+        return route.fulfill(json({ status: 'error', error: 'not a modality log' }, 422));
+      }
+      if (body?.test_mode === true || body?.test_mode === 'true') {
+        capture.previews.push(body);
+        return route.fulfill(json({
+          status: 'success',
+          data: {
+            test_mode: true,
+            sheet_write: 'skipped',
+            sheet_written: false,
+            no_write_confirmed: true,
+            modality: 'cardio_steady',
+            modality_row_preview: [
+              body.date, body.session_id, 'cardio_steady', body.text,
+              1800, 5000, '', '', '', 7, '', '',
+            ],
+          },
+        }, 200, {
+          'x-atlas-turn-id': body.correlation?.turn_id || TURN,
+          'x-atlas-turn-pairing': TOKEN_B,
+        }));
+      }
+      capture.writes.push(body);
+      return route.fulfill(json({
+        status: 'success',
+        data: { sheet_write: 'success', sheet_written: true, modality_rows_written: 1 },
+      }));
+    }
+    if (requestPath === '/api/session-plans/accept') {
+      return route.fulfill(json({
+        status: 'success',
+        data: { session_plans: { captured: false, reason: 'disabled' } },
+      }));
+    }
+    if (requestPath === '/api/session-plan-sets/accept') {
+      return route.fulfill(json({
+        status: 'success',
+        data: { session_plan_sets: { captured: false, reason: 'disabled' } },
+      }));
+    }
+    if (requestPath === '/api/catalog/exercises') {
+      return route.fulfill(json({
+        status: 'success',
+        data: { exercises: [{ canonical_name: 'Bench Press', lift_code: 'BEN01' }] },
+      }));
+    }
+    return route.fulfill(json({ status: 'success', data: {} }));
+  });
+
+  await page.addInitScript(key => localStorage.setItem('atlas_api_key', key), TEST_KEY);
+  await page.goto('/app/');
+  await page.evaluate(session => {
+    document.getElementById('log-session-id').value = session;
+  }, SESSION);
+
+  // Establish the canonical turn through the real composer, not a synthetic chat event.
+  await page.locator('#workout-text').fill('How should I finish?');
+  await page.locator('#preview-btn').click();
+  await expect.poll(() => capture.chats.length).toBe(1);
+
+  const started = await page.evaluate(() => window.atlasAcceptPlan({
+    id: 'race_plan',
+    label: 'Race plan',
+    exercises: [{
+      exercise: 'Bench Press',
+      lift_code: 'BEN01',
+      target_weight: 225,
+      target_reps: 5,
+      target_sets: 1,
+      target_rir: 2,
+    }],
+  }));
+  expect(started?.started).toBeTruthy();
+
+  // A passes modality routing, then stalls inside the real substitute check.
+  await page.locator('#workout-text').fill('How is my form?');
+  await page.locator('#preview-btn').click();
+  await expect.poll(() => capture.suggestRoute !== null).toBeTruthy();
+
+  // B is initiated later and stages a real modality preview/approval.
+  await page.locator('#workout-text').fill('Ran 5km in 30 minutes');
+  await page.locator('#preview-btn').click();
+  await expect.poll(() => capture.previews.length).toBe(1);
+  const b = capture.previews[0].correlation;
+  await expect(page.locator('#approve-btn')).toBeEnabled();
+
+  // A resumes after B. It must stop at the submit-generation boundary and emit no
+  // coach request capable of superseding B's retained pairing.
+  await capture.suggestRoute.fulfill(json({ status: 'success', data: { recommendation: null } }));
+  await page.waitForTimeout(250);
+  await expect(page.locator('#approve-btn')).toBeEnabled();
+  expect(capture.chats).toHaveLength(1);
+
+  await page.locator('#approve-btn').click();
+  await expect.poll(() => capture.writes.length).toBe(1);
+  expect(capture.writes[0].correlation).toEqual({
+    turn_id: TURN,
+    initiation_nonce: b.initiation_nonce,
+    pairing_token: TOKEN_B,
+  });
+});

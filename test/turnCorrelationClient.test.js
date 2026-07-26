@@ -273,3 +273,15 @@ test('client correlation: the production app wires the protocol through every re
   assert.match(app, /approvalCorrelation/, 'real approvals must attach only their staged preview claim');
   assert.match(app, /form\.append\('correlation'/, 'multipart screenshot/effort paths must carry the additive envelope');
 });
+
+test('client correlation: real composer fallthrough rechecks submit authority after substitute routing awaits', () => {
+  const app = fs.readFileSync(path.join(ROOT, 'src', 'app', 'app.js'), 'utf8');
+  const start = app.indexOf('const suggested = await checkAndSuggestSubstitute(pendingChatText)');
+  assert.ok(start >= 0, 'the real composer substitute fallthrough must exist');
+  const branch = app.slice(start, start + 500);
+  assert.match(
+    branch,
+    /if \(submitSeq !== previewRequestSeq\) return;[\s\S]*if \(!suggested\) routeMessageToCoach\(pendingChatText\)/,
+    'a superseded submit must stop after the await and before it can initiate a stale coach response',
+  );
+});
