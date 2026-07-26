@@ -380,11 +380,11 @@ test('localTodayIso: month and year boundaries resolve to the LOCAL day', () => 
   assert.equal(localTodayIso(new Date('2026-07-31T23:30:00Z'), 'Asia/Tokyo'), '2026-08-01');
 });
 
-test('localTodayIso: daylight-saving transitions stay correct (America/Vancouver)', () => {
+test('localTodayIso: daylight-saving transitions stay correct (America/Los_Angeles)', () => {
   // Spring-forward 2026: DST begins Mar 8. Just after (UTC-7): 06:30 UTC Mar 9 → 23:30 Mar 8.
-  assert.equal(localTodayIso(new Date('2026-03-09T06:30:00Z'), 'America/Vancouver'), '2026-03-08');
+  assert.equal(localTodayIso(new Date('2026-03-09T06:30:00Z'), 'America/Los_Angeles'), '2026-03-08');
   // Fall-back 2026: DST ends Nov 1 (back to UTC-8): 07:30 UTC Nov 2 → 23:30 Nov 1.
-  assert.equal(localTodayIso(new Date('2026-11-02T07:30:00Z'), 'America/Vancouver'), '2026-11-01');
+  assert.equal(localTodayIso(new Date('2026-11-02T07:30:00Z'), 'America/Los_Angeles'), '2026-11-01');
   // Same instant, UTC basis is the next calendar day — the exact off-by-one the fix prevents.
   assert.equal(localTodayIso(new Date('2026-11-02T07:30:00Z'), undefined), '2026-11-02');
 });
