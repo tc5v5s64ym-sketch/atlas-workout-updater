@@ -2473,9 +2473,11 @@ import {
     // A response can win its network race and then lose authority while its prose is
     // rendering. Recheck immediately before every structured side effect so a newer
     // preview/response cannot be cleared, mutated, or left with a stale approval prompt.
-    const mayApplyStructuredResult = () => !responseTicket
-      || (typeof isTurnResponseAuthoritative === 'function'
-        && isTurnResponseAuthoritative(responseTicket));
+    const mayApplyStructuredResult = () => Boolean(
+      responseTicket
+      && typeof isTurnResponseAuthoritative === 'function'
+      && isTurnResponseAuthoritative(responseTicket)
+    );
 
     // Apply the structured edit (if any) after prose is typed — the lifter sees
     // the explanation first, then the preview updates. The trust loop is intact:

@@ -64,6 +64,18 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
   // supplied visible coaching. A late timed-out request cannot overwrite a newer turn.
   const turnResponses = new Map();
   let turnResponseSequence = 0;
+  // Structured coach effects mutate one shared app surface, not a session-scoped DOM.
+  // Keep exactly one globally authoritative response ticket so work started in a new
+  // session revokes an older response before that response can apply a late side effect.
+  let authoritativeTurnResponse = null;
+
+  function revokeTurnResponseAuthority() {
+    const prior = authoritativeTurnResponse;
+    authoritativeTurnResponse = null;
+    if (prior && turnResponses.get(prior.sessionId) === prior) {
+      turnResponses.delete(prior.sessionId);
+    }
+  }
 
   function touch(sessionId, state) {
     sessions.delete(sessionId);
@@ -107,6 +119,9 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
   }
 
   function beginTurnResponse({ sessionId } = {}) {
+    // Logical submission is the ordering boundary. Even a malformed new submission
+    // cannot leave an older response authorized to mutate the shared UI.
+    revokeTurnResponseAuthority();
     if (!validSessionId(sessionId)) return null;
     const ticket = {
       sessionId,
@@ -116,6 +131,7 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
     };
     turnResponses.delete(sessionId);
     turnResponses.set(sessionId, ticket);
+    authoritativeTurnResponse = ticket;
     while (turnResponses.size > MAX_TRACKED_SESSIONS) {
       const oldest = turnResponses.keys().next().value;
       turnResponses.delete(oldest);
@@ -125,7 +141,7 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
 
   function completeTurnResponse(ticket, responseHeaders) {
     if (!ticket || ticket.completed === true || !validSessionId(ticket.sessionId)) return false;
-    if (turnResponses.get(ticket.sessionId) !== ticket) return false;
+    if (authoritativeTurnResponse !== ticket || turnResponses.get(ticket.sessionId) !== ticket) return false;
     ticket.completed = true;
     ticket.accepted = captureTurnResponse({ sessionId: ticket.sessionId, responseHeaders });
     return ticket.accepted;
@@ -137,11 +153,15 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
       && ticket.completed === true
       && ticket.accepted === true
       && validSessionId(ticket.sessionId)
+      && authoritativeTurnResponse === ticket
       && turnResponses.get(ticket.sessionId) === ticket
     );
   }
 
   function beginPreview({ sessionId, provisionalSessionId } = {}) {
+    // Preview initiation is newer than every response ticket already in flight, across
+    // sessions, because all structured response effects target the same app surface.
+    revokeTurnResponseAuthority();
     const state = stateFor(sessionId);
     if (!state || !validTurnId(state.turnId)) return null;
     const permitsSessionResolution = provisionalSessionId !== undefined;
@@ -149,11 +169,6 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
         && (!validSessionId(provisionalSessionId) || provisionalSessionId !== sessionId)) {
       return null;
     }
-
-    // Preview initiation is newer than every response ticket already in flight for
-    // this session. Retire those tickets synchronously so response completion order
-    // cannot let an older set/chat response clear a preview that started later.
-    turnResponses.delete(sessionId);
 
     if (state.active) {
       state.active.pairingToken = null;

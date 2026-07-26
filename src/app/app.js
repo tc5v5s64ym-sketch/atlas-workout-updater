@@ -6342,6 +6342,14 @@ function observeComposerText(text) {
   } catch { /* nor throw into the submit path */ }
 }
 
+function bindClarifiedRowsToCurrentSession(rows) {
+  const date = document.getElementById('log-date')?.value?.trim() || getLocalDateString();
+  const sessionInput = document.getElementById('log-session-id');
+  const sessionId = sessionInput?.value?.trim() || generateSessionId(date);
+  if (sessionInput) sessionInput.value = sessionId;
+  for (const row of rows) row.session_id = sessionId;
+}
+
 document.getElementById('logger-form').addEventListener('submit', async e => {
   e.preventDefault();
 
@@ -6410,6 +6418,10 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     if (resolvedRows) {
       const affirmText = workoutTextInput.value.trim();
       workoutTextInput.value = '';
+      // This early-return path runs before the normal submit block derives its session.
+      // Bind the clarified rows now so atlas:set-logged can mint the coach response
+      // ticket for this exact session and closeout retains that resulting canonical turn.
+      bindClarifiedRowsToCurrentSession(resolvedRows);
       emitSetLogged(resolvedRows, affirmText, [], null);
       return;
     }
