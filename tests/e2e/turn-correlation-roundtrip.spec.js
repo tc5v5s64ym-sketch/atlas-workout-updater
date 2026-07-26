@@ -251,6 +251,147 @@ test('B can approve while A is pending and late A cannot alter B or emit another
   expect(capture.writes[0].correlation.pairing_token).toBe(TOKEN_B);
 });
 
+test('a set-coach response initiated before closeout cannot retire that newer preview', async ({ page }) => {
+  const capture = {
+    coachBodies: [],
+    messageRoute: null,
+    previews: [],
+    writes: [],
+  };
+
+  await page.route('**/health', route => route.fulfill(json({ status: 'ok' })));
+  await page.route('**/api/**', async route => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    const method = request.method();
+    const body = method === 'POST' && request.postData()
+      && request.headers()['content-type']?.includes('application/json')
+      ? request.postDataJSON()
+      : null;
+
+    if (path === '/api/coach/ask') {
+      capture.coachBodies.push(body);
+      return route.fulfill(json(
+        { status: 'success', data: { depth: 'log_only', answer: null } },
+        200,
+        { 'x-atlas-turn-id': TURN },
+      ));
+    }
+    if (path === '/api/coach/chat') {
+      capture.coachBodies.push(body);
+      return route.fulfill(json(
+        { status: 'success', data: { message: 'Use the retained turn.' } },
+        200,
+        { 'x-atlas-turn-id': TURN },
+      ));
+    }
+    if (path === '/api/parse-workout-text') {
+      return route.fulfill(json({
+        status: 'success',
+        data: {
+          test_mode: true,
+          sheet_written: false,
+          no_write_confirmed: true,
+          warnings: [],
+          parsed: {
+            intent: 'log_sets',
+            canonical_name: 'Bench Press',
+            exercise: 'Bench Press',
+            sets: [{ weight: 225, reps: 5, rir: 2 }],
+          },
+        },
+      }));
+    }
+    if (path === '/api/coach/message') {
+      capture.messageRoute = route;
+      return;
+    }
+    if (path === '/api/session/compile') {
+      return route.fulfill(json({ status: 'success', data: { workout_text: 'bench 225 5/2' } }));
+    }
+    if (path === '/api/log-workout' && method === 'POST') {
+      if (body?.test_mode === true || body?.test_mode === 'true') {
+        capture.previews.push(body);
+        const rows = (body.log_rows || []).map(r => [
+          r.date_clean, r.session_id, r.exercise, r.exercise, 'Chest', 'BEN01',
+          r.set_number, r.weight, r.reps, r.rir, r.notes, '',
+        ]);
+        return route.fulfill(json({
+          status: 'success',
+          data: {
+            test_mode: true,
+            sheet_write: 'skipped',
+            sheet_written: false,
+            no_write_confirmed: true,
+            warnings: [],
+            log_rows_preview: rows,
+          },
+        }, 200, {
+          'x-atlas-turn-id': body.correlation?.turn_id || TURN,
+          'x-atlas-turn-pairing': TOKEN_A,
+        }));
+      }
+      capture.writes.push(body);
+      return route.fulfill(json({
+        status: 'success',
+        data: {
+          sheet_write: 'success',
+          sheet_written: true,
+          log_rows_written: (body.log_rows || []).length,
+          logAppendedRange: 'Log_Cleaned!A200:L200',
+        },
+      }));
+    }
+    if (path === '/api/log-workout/verify-range') {
+      return route.fulfill(json({ status: 'success', data: { verified: true } }));
+    }
+    if (path === '/api/catalog/exercises') {
+      return route.fulfill(json({
+        status: 'success',
+        data: { exercises: [{ canonical_name: 'Bench Press', lift_code: 'BEN01' }] },
+      }));
+    }
+    return route.fulfill(json({ status: 'success', data: {} }));
+  });
+
+  await page.addInitScript(key => localStorage.setItem('atlas_api_key', key), TEST_KEY);
+  await page.goto('/app/');
+  await page.evaluate(({ session, text }) => {
+    document.getElementById('log-session-id').value = session;
+    document.dispatchEvent(new CustomEvent('atlas:chat-message', {
+      detail: { text, context: { session_id: session } },
+    }));
+  }, { session: SESSION, text: 'How should I finish?' });
+  await expect.poll(() => capture.coachBodies.length).toBeGreaterThanOrEqual(2);
+
+  await page.locator('#workout-text').fill('bench 225 5/2');
+  await page.locator('#preview-btn').click();
+  await expect(page.locator('#thread-messages .readback').last()).toBeVisible();
+  await expect.poll(() => capture.messageRoute !== null).toBeTruthy();
+
+  await page.locator('#workout-text').fill('done');
+  await page.locator('#preview-btn').click();
+  await expect.poll(() => capture.previews.length).toBe(1);
+  const previewCorrelation = capture.previews[0].correlation;
+  expect(previewCorrelation.turn_id).toBe(TURN);
+  await expect(page.locator('.rv-save').last()).toBeEnabled();
+
+  await capture.messageRoute.fulfill(json(
+    { status: 'success', data: { message: 'Older set response completed late.' } },
+    200,
+    { 'x-atlas-turn-id': MESSAGE_TURN },
+  ));
+  await expect(page.locator('#thread-messages')).toContainText('Older set response completed late.');
+  await expect(page.locator('.rv-save').last()).toBeEnabled();
+  await page.locator('.rv-save').last().click();
+  await expect.poll(() => capture.writes.length).toBe(1);
+  expect(capture.writes[0].correlation).toEqual({
+    turn_id: TURN,
+    initiation_nonce: previewCorrelation.initiation_nonce,
+    pairing_token: TOKEN_A,
+  });
+});
+
 async function openSpecializedPreviewRace(page, capture, path) {
   capture.previews = [];
   capture.writes = [];

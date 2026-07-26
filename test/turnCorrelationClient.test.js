@@ -101,6 +101,24 @@ test('client correlation: only the newest initiated coach response may become th
   assert.equal(preview.correlation.turn_id, TURN_B);
 });
 
+test('client correlation: preview initiation retires an older in-flight coach response before it can clear the preview', async () => {
+  const { createTurnCorrelation } = await loadClient();
+  const protocol = createTurnCorrelation({ randomUUID: deterministicIds() });
+  protocol.captureTurn({ sessionId: SESSION_A, turnId: TURN_A });
+
+  const olderCoachResponse = protocol.beginTurnResponse({ sessionId: SESSION_A });
+  const preview = protocol.beginPreview({ sessionId: SESSION_A });
+  assert.equal(protocol.completePreview(preview, headers(TURN_A, TOKEN_A)), true);
+
+  assert.equal(protocol.completeTurnResponse(olderCoachResponse, headers(TURN_B, null)), false,
+    'a response initiated before the preview must not retire it merely by completing later');
+  assert.deepEqual(protocol.approvalClaim(preview), {
+    turn_id: TURN_A,
+    initiation_nonce: preview.initiation_nonce,
+    pairing_token: TOKEN_A,
+  });
+});
+
 test('client correlation: a server-resolved effort session migrates the staged preview without weakening other sessions', async () => {
   const { createTurnCorrelation } = await loadClient();
   const protocol = createTurnCorrelation({ randomUUID: deterministicIds() });

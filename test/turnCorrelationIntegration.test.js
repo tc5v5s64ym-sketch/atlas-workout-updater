@@ -43,6 +43,7 @@ process.env.ATLAS_INTERACTION_TRACE = 'shadow';
 const state = {
   appends: [],
   failEffortAppend: false,
+  proofMismatchTab: null,
   logCompositeKeys: [],
   existingEffortSessionIds: [],
 };
@@ -51,7 +52,14 @@ const fakeSheets = {
   appendRows: async (tab, rows) => {
     if (tab === 'Effort' && state.failEffortAppend) throw new Error('Simulated Effort append failure');
     state.appends.push({ tab, rows: rows.map(r => [...r]) });
-    return { data: { updates: { updatedRange: `${tab}!A100:L${99 + rows.length}`, updatedRows: rows.length } } };
+    return {
+      data: {
+        updates: {
+          updatedRange: `${tab}!A100:L${99 + rows.length}`,
+          updatedRows: state.proofMismatchTab === tab ? 0 : rows.length,
+        },
+      },
+    };
   },
   readRange: async (range) => {
     if (String(range).startsWith('Session_Plans!')) return [[...sessionPlansColumns]];
@@ -623,6 +631,126 @@ test('the real multipart effort-only preview/write route binds the server-normal
   assert.equal(record.route, '/api/complete-workout');
   assert.equal(record.pairing.payload_bound, true);
   assert.equal(record.proof.sheet_written, true);
+});
+
+test('the real multipart route records a correlated partial proof after Log rows commit and Effort append fails', async () => {
+  tc._resetForTesting();
+  resetIdempotencyStore();
+  state.appends.length = 0;
+  tc.issueTurn(TURN_ID, SESSION_ID);
+
+  const initiation = 'init:abababab-abab-4bab-8bab-abababababab';
+  const effort = JSON.stringify({
+    duration: '00:42:00',
+    activeCalories: 410,
+    totalCalories: 520,
+    averageHR: 148,
+    peakHR: 171,
+    workoutType: 'Traditional Strength Training',
+  });
+  const rows = JSON.stringify(logRows());
+  const previewForm = new FormData();
+  previewForm.append('session_id', SESSION_ID);
+  previewForm.append('date', '2026-07-25');
+  previewForm.append('log_rows_json', rows);
+  previewForm.append('effort_json', effort);
+  previewForm.append('test_mode', 'true');
+  previewForm.append('correlation', JSON.stringify({
+    turn_id: TURN_ID,
+    initiation_nonce: initiation,
+  }));
+  const preview = await postMultipart('/api/complete-workout', previewForm);
+  assert.equal(preview.status, 200, JSON.stringify(preview.body));
+  const pairingToken = preview.headers.get(tc.PAIRING_TOKEN_HEADER);
+  assert.ok(tc.isWellFormedPairingToken(pairingToken));
+
+  state.failEffortAppend = true;
+  try {
+    const liveForm = new FormData();
+    liveForm.append('session_id', SESSION_ID);
+    liveForm.append('date', '2026-07-25');
+    liveForm.append('log_rows_json', rows);
+    liveForm.append('effort_json', effort);
+    liveForm.append('write_id', 'wid-complete-partial-correlation');
+    liveForm.append('correlation', JSON.stringify({
+      turn_id: TURN_ID,
+      initiation_nonce: initiation,
+      pairing_token: pairingToken,
+    }));
+    const live = await postMultipart('/api/complete-workout', liveForm);
+    assert.equal(live.status, 500, JSON.stringify(live.body));
+    assert.equal(live.body?.details?.sheet_write, 'partial');
+
+    const records = tc.recentWriteProofs();
+    assert.equal(records.length, 2, 'preview and committed partial write must both be joinable');
+    const record = records[1];
+    assert.equal(record.route, '/api/complete-workout');
+    assert.equal(record.pairing.payload_bound, true);
+    assert.equal(record.proof.sheet_write, 'partial');
+    assert.equal(record.proof.sheet_written, true);
+  } finally {
+    state.failEffortAppend = false;
+  }
+});
+
+test('the real multipart route records a correlated unverified proof after append proof mismatch', async () => {
+  tc._resetForTesting();
+  resetIdempotencyStore();
+  state.appends.length = 0;
+  tc.issueTurn(TURN_ID, SESSION_ID);
+
+  const initiation = 'init:cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd';
+  const effort = JSON.stringify({
+    duration: '00:42:00',
+    activeCalories: 410,
+    totalCalories: 520,
+    averageHR: 148,
+    peakHR: 171,
+    workoutType: 'Traditional Strength Training',
+  });
+  const rows = JSON.stringify(logRows());
+  const previewForm = new FormData();
+  previewForm.append('session_id', SESSION_ID);
+  previewForm.append('date', '2026-07-25');
+  previewForm.append('log_rows_json', rows);
+  previewForm.append('effort_json', effort);
+  previewForm.append('test_mode', 'true');
+  previewForm.append('correlation', JSON.stringify({
+    turn_id: TURN_ID,
+    initiation_nonce: initiation,
+  }));
+  const preview = await postMultipart('/api/complete-workout', previewForm);
+  assert.equal(preview.status, 200, JSON.stringify(preview.body));
+  const pairingToken = preview.headers.get(tc.PAIRING_TOKEN_HEADER);
+  assert.ok(tc.isWellFormedPairingToken(pairingToken));
+
+  state.proofMismatchTab = 'Log_Cleaned';
+  try {
+    const liveForm = new FormData();
+    liveForm.append('session_id', SESSION_ID);
+    liveForm.append('date', '2026-07-25');
+    liveForm.append('log_rows_json', rows);
+    liveForm.append('effort_json', effort);
+    liveForm.append('write_id', 'wid-complete-unverified-correlation');
+    liveForm.append('correlation', JSON.stringify({
+      turn_id: TURN_ID,
+      initiation_nonce: initiation,
+      pairing_token: pairingToken,
+    }));
+    const live = await postMultipart('/api/complete-workout', liveForm);
+    assert.equal(live.status, 500, JSON.stringify(live.body));
+    assert.equal(live.body?.details?.sheet_write, 'unverified');
+
+    const records = tc.recentWriteProofs();
+    assert.equal(records.length, 2, 'preview and committed unverified write must both be joinable');
+    const record = records[1];
+    assert.equal(record.route, '/api/complete-workout');
+    assert.equal(record.pairing.payload_bound, true);
+    assert.equal(record.proof.sheet_write, 'unverified');
+    assert.equal(record.proof.sheet_written, true);
+  } finally {
+    state.proofMismatchTab = null;
+  }
 });
 
 test('the real blank-session effort-only route adopts the server-resolved session before approval', async () => {
