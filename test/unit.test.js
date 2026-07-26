@@ -3288,7 +3288,7 @@ test('reaction layer: the recommend route reads ?w&reps&rir and stays read-only'
 test('in-workout note: handleSetLogged anchors the recommendation on the just-logged set', () => {
   const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
   const start = cc.indexOf('async function handleSetLogged(');
-  const fn = cc.slice(start, start + 1900);
+  const fn = cc.slice(start, cc.indexOf('// Pass the first substitution', start));
   // Passes the last just-logged set of the primary exercise into fetchReaction.
   assert.match(fn, /primary\.sets\[primary\.sets\.length - 1\]/, 'must take the just-logged set');
   assert.match(fn, /fetchReaction\(code, justLogged\)/, 'must forward it to fetchReaction');
