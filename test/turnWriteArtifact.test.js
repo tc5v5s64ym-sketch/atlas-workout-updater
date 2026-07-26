@@ -286,6 +286,36 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
     assert.ok(artifact.turns[0].issues.includes('seal_proof_mismatch'));
   });
 
+  it('rejects contradictory positive-write and explicit no-write proof', () => {
+    const contradictions = [
+      {
+        sheet_write: 'success',
+        sheet_written: true,
+        no_write_confirmed: true,
+        rows_appended: 1,
+      },
+      {
+        sheet_write: 'skipped',
+        sheet_written: false,
+        no_write_confirmed: true,
+        rows_appended: 3,
+      },
+    ];
+
+    for (const contradictoryProof of contradictions) {
+      const artifact = buildTurnWriteArtifact([
+        line(INTERACTION_TRACE_MARKER, trace()),
+        line(TURN_WRITE_PROOF_MARKER, proof({ proof: contradictoryProof })),
+      ].join('\n'));
+      const write = artifact.turns[0].writes[0];
+
+      assert.equal(write.proof_state, 'contradictory');
+      assert.equal(write.reviewable, false);
+      assert.ok(write.issues.includes('write_proof_contradictory'));
+      assert.equal(artifact.status, 'partial');
+    }
+  });
+
   it('distinguishes a newly stamped seal from an idempotent already-sealed replay', () => {
     const stamped = proof({
       proof: {
@@ -316,6 +346,31 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
     assert.equal(artifact.turns[0].writes[0].seal.new_seal_write, true);
     assert.equal(artifact.turns[0].writes[1].seal.state, 'already_sealed');
     assert.equal(artifact.turns[0].writes[1].seal.new_seal_write, false);
+  });
+
+  it('rejects a positive new-seal count when the seal says no Sheet row was written', () => {
+    const impossible = proof({
+      proof: {
+        sheet_write: 'success',
+        sheet_written: true,
+        rows_appended: 1,
+        ledger_seal_sheet_written: false,
+        ledger_seal_sealed: 2,
+        ledger_seal_already_sealed: 0,
+        ledger_seal_sealed_ok: true,
+      },
+    });
+    const artifact = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, impossible),
+    ].join('\n'));
+    const write = artifact.turns[0].writes[0];
+
+    assert.equal(write.seal.state, 'seal_proof_mismatch');
+    assert.equal(write.seal.successfully_sealed, false);
+    assert.equal(write.reviewable, false);
+    assert.ok(write.issues.includes('seal_proof_mismatch'));
+    assert.equal(artifact.status, 'partial');
   });
 
   it('carries bounded closeout evidence and its row discriminator', () => {
@@ -392,6 +447,31 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
     assert.equal(artifact.turns[0].writes[0].closeout.state, 'already_captured_unidentified');
     assert.equal(artifact.turns[0].writes[0].reviewable, false);
     assert.equal(artifact.turns[0].writes[1].closeout.state, 'already_captured');
+    assert.equal(artifact.status, 'partial');
+  });
+
+  it('requires positive skip evidence before accepting an already-captured closeout', () => {
+    const zeroEvidence = proof({
+      proof: {
+        sheet_write: 'skipped_duplicate',
+        sheet_written: false,
+        duplicate_write: true,
+        session_plans_closeout_status: 'skipped',
+        session_plans_closeout_captured: true,
+        session_plans_closeout_written: 0,
+        session_plans_closeout_skipped: 0,
+        session_plans_closeout_plan_version: 'pv_3f2504e0-4f89-41d3-9a0c-0305e82c3301',
+      },
+    });
+    const artifact = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, zeroEvidence),
+    ].join('\n'));
+    const write = artifact.turns[0].writes[0];
+
+    assert.equal(write.closeout.state, 'indeterminate');
+    assert.equal(write.reviewable, false);
+    assert.ok(write.issues.includes('closeout_not_reviewable'));
     assert.equal(artifact.status, 'partial');
   });
 
