@@ -113,6 +113,11 @@ const TURN_ID_RE = /^turn:[A-Za-z0-9][A-Za-z0-9._:@/-]*$/;
 const PAIRING_TOKEN_BYTES = 16;
 const PAIRING_TOKEN_RE = /^pair:[a-f0-9]{32}$/;
 
+// Slice 2: one opaque, bounded identity minted by the client BEFORE a preview starts.
+// This is ordering metadata, not a second trace identity and not an authority claim.
+const INITIATION_NONCE_RE = /^init:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const MAX_RETIRED_INITIATIONS = 16;
+
 // How many DISTINCT write_ids one turn may correlate. Not one: the documented closeout seal
 // retry (app.js:7563-7568) re-mints the write_id for the same staged write, and refusing it is
 // exactly the lost-evidence lockout #1173 records. Not unlimited either — that would let one
@@ -135,20 +140,11 @@ const MAX_WRITES_PER_PAIRING = 5;
 // This costs nothing in claim strength. Every outstanding pairing belongs to the SAME turn and
 // each is independently payload-bound, so accepting any of them cannot mis-attribute a write.
 //
-// KNOWN RESIDUAL LIMITATION, not closed here (Codex second round, r3649542463, and it is right).
-// Eviction is still by COMPLETION order, so a finite set cannot GUARANTEE it retains the pairing
-// the client kept: if more than MAX_OUTSTANDING_PAIRINGS previews overlap AND the newest-initiated
-// one completes first, its token is pushed first and evicted first, while the client discarded
-// every other response by initiation sequence. Raising the cap shrinks the window but cannot
-// remove it — only initiation identity or explicit retirement FROM the client can, and inventing
-// that field here would design slice 2's client contract from the wrong end. It is therefore
-// recorded as a REQUIREMENT ON SLICE 2 in the canonical plan's CAMPAIGN STATE — the sole
-// work-selection authority, and where the round-trip protocol is actually designed.
-//
-// The failure mode is bounded and one-directional: a LOST correlation, never a wrong one. No
-// record can overclaim because of it — the write proceeds untouched and simply goes unjoined.
-// The cap is set well above any plausible concurrent-preview count for a single-owner V1 client
-// that previews on explicit submits, so this is a mitigation with a documented gap, not a fix.
+// Slice 2 closes that completion-order gap for the production client. Each new preview carries
+// its initiation nonce plus a bounded explicit list of older initiations it supersedes.
+// Retirement is tombstoned before minting: B-before-A prevents late A from minting, while
+// A-before-B removes A's already-minted pairing. This cap remains defense in depth for legacy
+// callers that carry no initiation protocol; it no longer chooses production-client authority.
 const MAX_OUTSTANDING_PAIRINGS = 8;
 
 // Cap the fingerprint input so a pathological payload cannot turn identity computation into
@@ -295,9 +291,10 @@ const REASONS = Object.freeze({
   PAIRING_MISMATCH: 'pairing_mismatch',
   PAIRING_EXHAUSTED: 'pairing_exhausted',
   PAYLOAD_MISMATCH: 'payload_mismatch',
+  SUPERSEDED: 'superseded',
 });
 
-// turnId -> { sessionId, atMs, pairings: [], writeIds: [] }
+// turnId -> { sessionId, atMs, pairings: [], retiredInitiations: [], writeIds: [] }
 //
 // `atMs` is the turn's ISSUANCE time and stays the freshness anchor — establishing a pairing
 // never refreshes it, so a client cannot keep a turn alive by previewing in a loop and then
@@ -335,6 +332,10 @@ function isWellFormedTurnId(v) {
 function isWellFormedPairingToken(v) {
   if (!_isNonEmptyString(v)) return false;
   return PAIRING_TOKEN_RE.test(v);
+}
+
+function isWellFormedInitiationNonce(v) {
+  return _isNonEmptyString(v) && INITIATION_NONCE_RE.test(v);
 }
 
 // A fresh, unguessable pairing capability. crypto, never Math.random: a predictable token
@@ -376,8 +377,13 @@ function _canonicalJson(v, depth = 0) {
 function _previewIdentity(payload, opts = {}) {
   const p = _isPlainObject(payload) ? payload : {};
   const sessionId = _isNonEmptyString(p.session_id) ? String(p.session_id).trim() : '';
-  // No session identity, or no row set to identify: nothing to bind the write to.
-  if (!sessionId || !Array.isArray(p.log_rows)) return null;
+  // No session identity, or no write-affecting field beyond it: nothing to bind. Requiring
+  // `log_rows` here made the seam silently unbound on modality/bodyweight even though those
+  // routes have an exact payload identity of their own.
+  if (!sessionId) return null;
+  const identityKeys = Object.keys(p)
+    .filter(key => !IDENTITY_EXCLUDED_FIELDS.includes(key) && key !== 'session_id' && p[key] !== undefined);
+  if (identityKeys.length === 0) return null;
 
   // Default-deny: every field except the documented exclusions. `session_id` and `date` are
   // trimmed so incidental whitespace cannot refuse a legitimate approve.
@@ -572,7 +578,13 @@ function issueTurn(turnId, sessionId, opts = {}) {
     const sid = _isNonEmptyString(sessionId) ? String(sessionId).trim() : '';
     if (!sid) return;
     const atMs = _now(opts);
-    registry.set(String(turnId).trim(), { sessionId: sid, atMs, pairings: [], writeIds: [] });
+    registry.set(String(turnId).trim(), {
+      sessionId: sid,
+      atMs,
+      pairings: [],
+      retiredInitiations: [],
+      writeIds: [],
+    });
     _evictExpired(atMs);
     _enforceCap();
   } catch (_) { /* best-effort — correlation must never surface on the write path */ }
@@ -640,9 +652,46 @@ function resolveCorrelation(payload, opts = {}) {
     // evicted (Codex P2): the server cannot see the client's preview initiation order, so
     // last-completion-wins would discard a token the client legitimately kept.
     if (opts.isPreview === true) {
+      const hasInitiationProtocol = claim.initiation_nonce !== undefined
+        || claim.retire_initiation_nonces !== undefined;
+      let initiationNonce = null;
+      let retireInitiations = [];
+      if (hasInitiationProtocol) {
+        if (!isWellFormedInitiationNonce(claim.initiation_nonce)) return miss(REASONS.MALFORMED);
+        initiationNonce = String(claim.initiation_nonce);
+        if (claim.retire_initiation_nonces !== undefined) {
+          if (!Array.isArray(claim.retire_initiation_nonces)
+              || claim.retire_initiation_nonces.length > MAX_OUTSTANDING_PAIRINGS
+              || !claim.retire_initiation_nonces.every(isWellFormedInitiationNonce)) {
+            return miss(REASONS.MALFORMED);
+          }
+          retireInitiations = [...new Set(claim.retire_initiation_nonces.map(String))];
+          if (retireInitiations.includes(initiationNonce)) return miss(REASONS.MALFORMED);
+        }
+      }
+
+      // Validate first, mutate second. The tombstone makes retirement independent of response
+      // completion order: a request retired before it completes can never mint later.
+      for (const retired of retireInitiations) {
+        if (!rec.retiredInitiations.includes(retired)) rec.retiredInitiations.push(retired);
+      }
+      while (rec.retiredInitiations.length > MAX_RETIRED_INITIATIONS) rec.retiredInitiations.shift();
+      if (retireInitiations.length) {
+        rec.pairings = rec.pairings.filter(p => !retireInitiations.includes(p.initiationNonce));
+      }
+      if (initiationNonce && rec.retiredInitiations.includes(initiationNonce)) {
+        return miss(REASONS.SUPERSEDED);
+      }
+      // A transport retry uses the same initiation. Re-mint atomically so only one token for
+      // that initiation survives and the response the client receives is the one it can use.
+      if (initiationNonce) {
+        rec.pairings = rec.pairings.filter(p => p.initiationNonce !== initiationNonce);
+      }
+
       const pairing = {
         token: _mintPairingToken(),
         atMs: nowMs,
+        initiationNonce,
         // What makes this a WRITE-level binding rather than a turn-level one. Null ⇒ unbound,
         // reported honestly as payload_bound:false.
         identity: _previewIdentity(payload),
@@ -669,6 +718,13 @@ function resolveCorrelation(payload, opts = {}) {
 
     // A LIVE WRITE MUST PRESENT A PAIRING ITS OWN PREVIEW ESTABLISHED — this is the difference
     // between "some recent turn in this session" and "this turn previewed this write".
+    // Name an explicitly retired initiation before token lookup: retirement removes the token,
+    // but the bounded tombstone still lets the rejection say `superseded` rather than collapse
+    // into an indistinguishable generic mismatch.
+    if (isWellFormedInitiationNonce(claim.initiation_nonce)
+        && rec.retiredInitiations.includes(String(claim.initiation_nonce))) {
+      return miss(REASONS.SUPERSEDED);
+    }
     if (rec.pairings.length === 0) return miss(REASONS.UNPAIRED);
 
     // Shape gate before comparison: an unbounded or junk token is refused without ever being
@@ -677,6 +733,15 @@ function resolveCorrelation(payload, opts = {}) {
     if (!isWellFormedPairingToken(claimed)) return miss(REASONS.PAIRING_MISMATCH);
     const pairing = rec.pairings.find(p => p.token === claimed);
     if (!pairing) return miss(REASONS.PAIRING_MISMATCH);
+    if (pairing.initiationNonce) {
+      if (!isWellFormedInitiationNonce(claim.initiation_nonce)
+          || String(claim.initiation_nonce) !== pairing.initiationNonce) {
+        return miss(REASONS.PAIRING_MISMATCH);
+      }
+      if (rec.retiredInitiations.includes(pairing.initiationNonce)) {
+        return miss(REASONS.SUPERSEDED);
+      }
+    }
 
     // THE PAYLOAD GATE. A genuine token on a DIFFERENT write is the hole Codex found: it used to
     // resolve ok and attribute the wrong write to this turn. The live payload must fingerprint to
@@ -889,11 +954,15 @@ function attachTurnToResponse(res, turnId, sessionId, opts = {}) {
  * Hand a preview's pairing token back to the client. Best-effort and header-only: it never
  * touches the response body, and a failure costs a correlation, never the write.
  */
-function attachPairingToResponse(res, pairingToken) {
+function attachPairingToResponse(res, pairingToken, turnId) {
   try {
     if (!isWellFormedPairingToken(pairingToken)) return null;
     if (res && typeof res.setHeader === 'function' && !res.headersSent) {
       res.setHeader(PAIRING_TOKEN_HEADER, pairingToken);
+      // Echo the canonical turn id on the preview response too. The client associates both
+      // headers with one initiation and refuses a token whose turn differs; this does NOT
+      // re-issue or refresh the turn registry.
+      if (isWellFormedTurnId(turnId)) res.setHeader(TURN_ID_HEADER, String(turnId).trim());
     }
     return pairingToken;
   } catch (_) {
@@ -918,6 +987,8 @@ module.exports = {
   TURN_ID_HEADER,
   PAIRING_TOKEN_HEADER,
   PAIRING_TOKEN_RE,
+  INITIATION_NONCE_RE,
+  MAX_RETIRED_INITIATIONS,
   MAX_WRITES_PER_PAIRING,
   MAX_OUTSTANDING_PAIRINGS,
   IDENTITY_EXCLUDED_FIELDS,
@@ -926,6 +997,7 @@ module.exports = {
   REASONS,
   isWellFormedTurnId,
   isWellFormedPairingToken,
+  isWellFormedInitiationNonce,
   sessionIdFromRequestBody,
   issueTurn,
   attachTurnToResponse,

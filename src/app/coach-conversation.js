@@ -25,6 +25,7 @@
 
 import * as coachVoiceTemplates from './coachVoiceTemplates.js';
 import * as sessionQuestion from './sessionQuestion.js';
+import { captureTurnResponse } from './turnCorrelation.js';
 
 (function () {
   'use strict';
@@ -2106,6 +2107,10 @@ import * as sessionQuestion from './sessionQuestion.js';
     // coach below. Education ("what does RIR mean?") and anything ambiguous are NOT
     // session-shaped, so they keep the existing SME-first routing untouched.
     const ctx = context || {};
+    const correlationSessionId = typeof ctx.session_id === 'string' ? ctx.session_id.trim() : '';
+    const retainTurnHeaders = correlationSessionId
+      ? responseHeaders => captureTurnResponse({ sessionId: correlationSessionId, responseHeaders })
+      : undefined;
     // An active workout is signalled by a started plan, a live preview, or a
     // started planned session (plan_completed present). But a *free-form coaching
     // conversation* — the lifter chatting with the coach mid-workout without having
@@ -2163,7 +2168,8 @@ import * as sessionQuestion from './sessionQuestion.js';
         api('/api/coach/ask', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message })
+          body: JSON.stringify({ message, ...(correlationSessionId ? { session_id: correlationSessionId } : {}) }),
+          ...(retainTurnHeaders ? { responseHeaders: retainTurnHeaders } : {})
         }),
         new Promise((_, reject) => setTimeout(() => reject(new Error('sme-timeout')), 4000))
       ]);
@@ -2187,7 +2193,13 @@ import * as sessionQuestion from './sessionQuestion.js';
     const request = api('/api/coach/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, history: history.slice(-8), context: context || {} })
+      body: JSON.stringify({
+        message,
+        history: history.slice(-8),
+        context: context || {},
+        ...(correlationSessionId ? { session_id: correlationSessionId } : {}),
+      }),
+      ...(retainTurnHeaders ? { responseHeaders: retainTurnHeaders } : {})
     }).then(res => ({
       message: (res && res.data && res.data.message) || null,
       propose_edit: (res && res.data && res.data.propose_edit) || null,

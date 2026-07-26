@@ -68,7 +68,9 @@ const fakeSheets = {
     if (tab === 'Effort') return [...effortColumns];
     return [];
   },
-  getSpreadsheetTabs: async () => ['Metadata', 'Log_Cleaned', 'Exercise_Catalog', 'Effort'],
+  getSpreadsheetTabs: async () => [
+    'Metadata', 'Log_Cleaned', 'Exercise_Catalog', 'Effort', 'Bodyweight', 'Modality_Log',
+  ],
   ensureSheetTab: async () => ({ existed: true }),
   getSafeSpreadsheetConfig: () => ({ sheetId: 'stub-sheet', configured: true }),
   isTransientAppendError: () => false,
@@ -111,6 +113,24 @@ async function postWrite(body) {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-atlas-api-key': 'test-api-key' },
     body: JSON.stringify(body),
+  });
+  return { status: res.status, body: await res.json(), headers: res.headers };
+}
+
+async function postJson(path, body) {
+  const res = await fetch(`${baseUrl}${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-atlas-api-key': 'test-api-key' },
+    body: JSON.stringify(body),
+  });
+  return { status: res.status, body: await res.json(), headers: res.headers };
+}
+
+async function postMultipart(path, form) {
+  const res = await fetch(`${baseUrl}${path}`, {
+    method: 'POST',
+    headers: { 'x-atlas-api-key': 'test-api-key' },
+    body: form,
   });
   return { status: res.status, body: await res.json(), headers: res.headers };
 }
@@ -481,4 +501,121 @@ test('the pairing header is exposed to CORS clients, or a browser would hide it'
   const exposed = String(res.headers.get('access-control-expose-headers') || '').toLowerCase();
   assert.ok(exposed.includes(tc.TURN_ID_HEADER), `turn id header must stay exposed, got "${exposed}"`);
   assert.ok(exposed.includes(tc.PAIRING_TOKEN_HEADER), `pairing header must be exposed, got "${exposed}"`);
+});
+
+test('the real modality and bodyweight preview/write routes round-trip the exact initiated claim', async () => {
+  for (const routeCase of [
+    {
+      route: '/api/log-modality',
+      preview: {
+        text: 'run 5 km in 30 minutes',
+        session_id: SESSION_ID,
+        date: '2026-07-25',
+        test_mode: true,
+      },
+      writeId: 'wid-modality-correlation',
+      appendedTab: 'Modality_Log',
+    },
+    {
+      route: '/api/bodyweight',
+      preview: {
+        session_id: SESSION_ID,
+        date: '2026-07-25',
+        weight: 180,
+        notes: 'morning',
+        test_mode: 'true',
+      },
+      writeId: 'wid-bodyweight-correlation',
+      appendedTab: 'Bodyweight',
+    },
+  ]) {
+    tc._resetForTesting();
+    resetIdempotencyStore();
+    state.appends.length = 0;
+    tc.issueTurn(TURN_ID, SESSION_ID);
+    const initiation = `init:${routeCase.appendedTab === 'Bodyweight'
+      ? 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+      : 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'}`;
+    const previewPayload = {
+      ...routeCase.preview,
+      correlation: { turn_id: TURN_ID, initiation_nonce: initiation },
+    };
+    const preview = await postJson(routeCase.route, previewPayload);
+    assert.equal(preview.status, 200, JSON.stringify(preview.body));
+    assert.equal(preview.headers.get(tc.TURN_ID_HEADER), TURN_ID);
+    const pairingToken = preview.headers.get(tc.PAIRING_TOKEN_HEADER);
+    assert.ok(tc.isWellFormedPairingToken(pairingToken));
+
+    const livePayload = {
+      ...routeCase.preview,
+      write_id: routeCase.writeId,
+      correlation: {
+        turn_id: TURN_ID,
+        initiation_nonce: initiation,
+        pairing_token: pairingToken,
+      },
+    };
+    delete livePayload.test_mode;
+    const live = await postJson(routeCase.route, livePayload);
+    assert.equal(live.status, 200, JSON.stringify(live.body));
+    assert.ok(state.appends.some(a => a.tab === routeCase.appendedTab),
+      `${routeCase.route} must execute its real append path`);
+
+    const record = tc.recentWriteProofs().at(-1);
+    assert.equal(record.route, routeCase.route);
+    assert.equal(record.pairing.payload_bound, true);
+    assert.equal(record.proof.sheet_written, true);
+  }
+});
+
+test('the real multipart effort-only preview/write route binds the server-normalized payload', async () => {
+  tc._resetForTesting();
+  resetIdempotencyStore();
+  state.appends.length = 0;
+  tc.issueTurn(TURN_ID, SESSION_ID);
+
+  const initiation = 'init:cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const effort = JSON.stringify({
+    duration: '00:42:00',
+    activeCalories: 410,
+    totalCalories: 520,
+    averageHR: 148,
+    peakHR: 171,
+    workoutType: 'Traditional Strength Training',
+  });
+  const previewForm = new FormData();
+  previewForm.append('session_id', SESSION_ID);
+  previewForm.append('date', '2026-07-25');
+  previewForm.append('log_rows_json', JSON.stringify([]));
+  previewForm.append('effort_json', effort);
+  previewForm.append('test_mode', 'true');
+  previewForm.append('correlation', JSON.stringify({
+    turn_id: TURN_ID,
+    initiation_nonce: initiation,
+  }));
+  const preview = await postMultipart('/api/complete-workout', previewForm);
+  assert.equal(preview.status, 200, JSON.stringify(preview.body));
+  assert.equal(preview.headers.get(tc.TURN_ID_HEADER), TURN_ID);
+  const pairingToken = preview.headers.get(tc.PAIRING_TOKEN_HEADER);
+  assert.ok(tc.isWellFormedPairingToken(pairingToken));
+
+  const liveForm = new FormData();
+  liveForm.append('session_id', SESSION_ID);
+  liveForm.append('date', '2026-07-25');
+  liveForm.append('log_rows_json', JSON.stringify([]));
+  liveForm.append('effort_json', effort);
+  liveForm.append('write_id', 'wid-complete-correlation');
+  liveForm.append('correlation', JSON.stringify({
+    turn_id: TURN_ID,
+    initiation_nonce: initiation,
+    pairing_token: pairingToken,
+  }));
+  const live = await postMultipart('/api/complete-workout', liveForm);
+  assert.equal(live.status, 200, JSON.stringify(live.body));
+  assert.ok(state.appends.some(a => a.tab === 'Effort'), 'the real Effort append must run');
+
+  const record = tc.recentWriteProofs().at(-1);
+  assert.equal(record.route, '/api/complete-workout');
+  assert.equal(record.pairing.payload_bound, true);
+  assert.equal(record.proof.sheet_written, true);
 });

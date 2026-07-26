@@ -126,6 +126,17 @@ test('client correlation: state and retirement diagnostics never expose pairing 
   assert.ok(!serialized.includes(TOKEN_A), 'diagnostics must not expose the pairing token');
   assert.ok(!serialized.includes('fingerprint'), 'diagnostics must not expose payload fingerprints');
   assert.deepEqual(b.correlation.retire_initiation_nonces, [a.initiation_nonce]);
+
+  const bugReport = fs.readFileSync(path.join(ROOT, 'src', 'app', 'bugReport.js'), 'utf8');
+  const pairingValueRedactor = new RegExp(
+    bugReport.match(/\/\\bpair:\[a-f0-9\]\{32\}\\b\/gi/)?.[0]?.slice(1, -3) || '(?!)',
+    'gi',
+  );
+  assert.equal(
+    JSON.stringify({ correlation: { pairing_token: TOKEN_A } }).replace(pairingValueRedactor, '[REDACTED]'),
+    '{"correlation":{"pairing_token":"[REDACTED]"}}',
+    'the real bug-report value pattern must redact a token inside a JSON-string request body',
+  );
 });
 
 test('client correlation: seal retry reuses the preview claim while write_id may change and effort_row may be removed', async () => {
@@ -173,4 +184,3 @@ test('client correlation: the production app wires the protocol through every re
   assert.match(app, /approvalCorrelation/, 'real approvals must attach only their staged preview claim');
   assert.match(app, /form\.append\('correlation'/, 'multipart screenshot/effort paths must carry the additive envelope');
 });
-

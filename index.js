@@ -117,22 +117,54 @@ function recordTurnWriteProof(payload, sessionId, route, proof, opts = {}) {
   try {
     const isPreview = opts.isPreview === true;
     const writeId = opts.writeId != null ? opts.writeId : (proof && proof.write_id);
-    const resolved = turnCorrelation.resolveCorrelation(payload, {
+    const correlationPayload = opts.correlationPayload || payload;
+    const resolved = turnCorrelation.resolveCorrelation(correlationPayload, {
       sessionId,
       writeId,
       isPreview,
       // The write_id this dry-run will approve with, where the client sends one — recorded as
       // corroboration on the record, never as a gate.
-      previewedWriteId: isPreview && payload ? payload.write_id : undefined,
+      previewedWriteId: isPreview && correlationPayload ? correlationPayload.write_id : undefined,
     });
     if (!resolved.ok) return null;
-    if (isPreview) turnCorrelation.attachPairingToResponse(opts.res, resolved.pairing_token);
+    if (isPreview) {
+      turnCorrelation.attachPairingToResponse(opts.res, resolved.pairing_token, resolved.turn_id);
+    }
     return turnCorrelation.recordWriteProof({
       turnId: resolved.turn_id, sessionId, route, proof, pairing: resolved.pairing,
     });
   } catch (_) {
     return null;
   }
+}
+
+// Multer leaves multipart fields as strings. Parse only the closed correlation field and keep
+// malformed input malformed so resolveCorrelation can fail closed; never echo or log the value.
+function multipartCorrelation(value) {
+  if (value === undefined) return undefined;
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+  if (typeof value !== 'string' || value.length > 2048) return value;
+  try { return JSON.parse(value); } catch (_) { return value; }
+}
+
+// The complete-workout preview may consume an image while approval deliberately sends the
+// server-normalized effort metrics instead. Bind the semantic write the server computed, not
+// transport-only multipart differences, so screenshot and manual-effort approvals can match
+// exactly without weakening the default-deny gate.
+function completeWorkoutCorrelationPayload(formFields, normalized) {
+  const f = formFields && typeof formFields === 'object' ? formFields : {};
+  const n = normalized && typeof normalized === 'object' ? normalized : {};
+  return {
+    session_id: n.sessionId,
+    date: n.date,
+    log_rows: n.logRows,
+    effort_metrics: n.effortMetrics,
+    location: typeof f.location === 'string' ? f.location : '',
+    notes: typeof f.notes === 'string' ? f.notes : '',
+    ...(f.test_mode !== undefined ? { test_mode: f.test_mode } : {}),
+    ...(f.write_id !== undefined ? { write_id: f.write_id } : {}),
+    ...(f.correlation !== undefined ? { correlation: multipartCorrelation(f.correlation) } : {}),
+  };
 }
 const { buildCloseoutSummary, boundCloseoutContextItems } = require('./services/closeoutSummary');
 // F10D (Codex P1, PR #1069) — the finalized Session_Plans closeout event records
@@ -1327,7 +1359,7 @@ app.post('/api/log-modality', async (req, res) => {
   }
 
   if (testMode) {
-    return standardSuccess(req, res, 'log-modality dry-run', {
+    const previewBody = {
       test_mode: true,
       sheet_write: 'skipped',
       sheet_written: false,
@@ -1335,7 +1367,12 @@ app.post('/api/log-modality', async (req, res) => {
       modality: record.modality,
       modality_record: record,
       modality_row_preview: row
-    }, 200);
+    };
+    recordTurnWriteProof(payload, session_id, '/api/log-modality', previewBody, {
+      isPreview: true,
+      res,
+    });
+    return standardSuccess(req, res, 'log-modality dry-run', previewBody, 200);
   }
 
   // Live writes carry a write_id so a lost-response retry is deduplicated instead
@@ -1382,6 +1419,7 @@ app.post('/api/log-modality', async (req, res) => {
       responseBody.idempotency_status = 'completed';
       completeWrite(idempotency.write_id, idempotency.token, responseBody);
     }
+    recordTurnWriteProof(payload, session_id, '/api/log-modality', responseBody);
     return standardSuccess(req, res, 'log-modality processed', responseBody, 200);
   } catch (err) {
     if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
@@ -1900,6 +1938,9 @@ app.get('/api/session/:sessionId', async (req, res) => {
 app.post('/api/bodyweight', async (req, res) => {
 
   const { date, weight, notes } = req.body || {};
+  const correlationSessionId = typeof req.body?.session_id === 'string'
+    ? req.body.session_id.trim()
+    : '';
   if (isAmbiguousTestMode(req.body?.test_mode)) {
     return standardError(req, res, AMBIGUOUS_TEST_MODE_MESSAGE, null, 400);
   }
@@ -1926,13 +1967,18 @@ app.post('/api/bodyweight', async (req, res) => {
     }
     const entry = { date: normalizedDate, weight: weightValue, notes: notes || '' };
     if (testMode) {
-      return standardSuccess(req, res, 'Bodyweight dry-run', {
+      const previewBody = {
         test_mode: true,
         sheet_write: 'skipped',
         sheet_written: false,
         no_write_confirmed: true,
         entry_preview: entry
+      };
+      recordTurnWriteProof(req.body, correlationSessionId, '/api/bodyweight', previewBody, {
+        isPreview: true,
+        res,
       });
+      return standardSuccess(req, res, 'Bodyweight dry-run', previewBody);
     }
 
     // Live writes must carry a write_id so a lost-response retry is deduplicated
@@ -1986,6 +2032,7 @@ app.post('/api/bodyweight', async (req, res) => {
         responseBody.idempotency_status = 'completed';
         completeWrite(idempotency.write_id, idempotency.token, responseBody);
       }
+      recordTurnWriteProof(req.body, correlationSessionId, '/api/bodyweight', responseBody);
       return standardSuccess(req, res, 'Bodyweight entry appended', responseBody);
     } catch (error) {
       if (idempotency.enabled) {
@@ -2707,6 +2754,19 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       liveWriteRecorded = true;
     }
 
+    const correlationPayload = completeWorkoutCorrelationPayload(formFields, {
+      sessionId,
+      date: dateValue,
+      logRows: formattedLogRows,
+      effortMetrics: normalizedMetrics,
+    });
+    recordTurnWriteProof(
+      correlationPayload,
+      sessionId,
+      '/api/complete-workout',
+      responseBody.data,
+      { isPreview: testMode, res, correlationPayload },
+    );
     return standardSuccess(req, res, 'complete-workout processed', responseBody, 200);
   } catch (error) {
     if (idempotency.enabled) {
