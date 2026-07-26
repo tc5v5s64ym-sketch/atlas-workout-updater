@@ -119,6 +119,28 @@ test('client correlation: preview initiation retires an older in-flight coach re
   });
 });
 
+test('client correlation: structured response authority expires when a preview begins before or during rendering', async () => {
+  const { createTurnCorrelation } = await loadClient();
+  const protocol = createTurnCorrelation({ randomUUID: deterministicIds() });
+  protocol.captureTurn({ sessionId: SESSION_A, turnId: TURN_A });
+
+  const completedBeforePreview = protocol.beginTurnResponse({ sessionId: SESSION_A });
+  assert.equal(protocol.completeTurnResponse(completedBeforePreview, headers(TURN_B, null)), true);
+  assert.equal(protocol.isTurnResponseAuthoritative(completedBeforePreview), true,
+    'a selected response may apply its structured result while it still owns the session');
+
+  const previewB = protocol.beginPreview({ sessionId: SESSION_A });
+  assert.equal(protocol.isTurnResponseAuthoritative(completedBeforePreview), false,
+    'B initiation during prose rendering must synchronously revoke A structured side effects');
+
+  protocol.retirePreview(previewB);
+  const pendingWhenPreviewBegins = protocol.beginTurnResponse({ sessionId: SESSION_A });
+  protocol.beginPreview({ sessionId: SESSION_A });
+  assert.equal(protocol.completeTurnResponse(pendingWhenPreviewBegins, headers(TURN_A, null)), false);
+  assert.equal(protocol.isTurnResponseAuthoritative(pendingWhenPreviewBegins), false,
+    'A completing after B began must never gain structured side-effect authority');
+});
+
 test('client correlation: a server-resolved effort session migrates the staged preview without weakening other sessions', async () => {
   const { createTurnCorrelation } = await loadClient();
   const protocol = createTurnCorrelation({ randomUUID: deterministicIds() });

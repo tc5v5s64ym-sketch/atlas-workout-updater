@@ -1256,3 +1256,230 @@ test(`real composer A delayed in ${delayedSubstitution.label} cannot mutate afte
   });
 });
 }
+
+async function openStructuredChatRace(page, capture) {
+  capture.chatRoutes = new Map();
+  capture.chatBodies = [];
+  capture.previews = [];
+  capture.writes = [];
+
+  await page.route('**/health', route => route.fulfill(json({ status: 'ok' })));
+  await page.route('**/api/**', async route => {
+    const request = route.request();
+    const requestPath = new URL(request.url()).pathname;
+    const method = request.method();
+    const contentType = request.headers()['content-type'] || '';
+    const body = method === 'POST' && request.postData() && contentType.includes('application/json')
+      ? request.postDataJSON()
+      : null;
+
+    if (requestPath === '/api/coach/ask') {
+      return route.fulfill(json(
+        { status: 'success', data: { depth: 'log_only', answer: null } },
+        200,
+        { 'x-atlas-turn-id': TURN },
+      ));
+    }
+    if (requestPath === '/api/coach/chat') {
+      capture.chatBodies.push(body);
+      if (body.message === 'Seed the structured-race turn') {
+        return route.fulfill(json(
+          { status: 'success', data: { message: 'Seed turn ready.' } },
+          200,
+          { 'x-atlas-turn-id': TURN },
+        ));
+      }
+      capture.chatRoutes.set(body.message, route);
+      return;
+    }
+    if (requestPath === '/api/parse-workout-text') {
+      return route.fulfill(json({
+        status: 'success',
+        data: {
+          test_mode: true,
+          sheet_written: false,
+          no_write_confirmed: true,
+          warnings: [],
+          parsed: { intent: 'needs_clarification', message: 'Could not find sets.' },
+        },
+      }));
+    }
+    if (requestPath === '/api/log-modality' && method === 'POST') {
+      const isRun = typeof body?.text === 'string' && body.text.startsWith('Ran ');
+      if (!isRun) return route.fulfill(json({ status: 'error', error: 'not modality' }, 422));
+      if (body.test_mode === true || body.test_mode === 'true') {
+        capture.previews.push(body);
+        return route.fulfill(json({
+          status: 'success',
+          data: {
+            test_mode: true,
+            sheet_write: 'skipped',
+            sheet_written: false,
+            no_write_confirmed: true,
+            modality: 'cardio_steady',
+            modality_row_preview: [
+              body.date, body.session_id, 'cardio_steady', body.text,
+              1800, 5000, '', '', '', 7, '', '',
+            ],
+          },
+        }, 200, {
+          'x-atlas-turn-id': body.correlation?.turn_id || TURN,
+          'x-atlas-turn-pairing': TOKEN_B,
+        }));
+      }
+      capture.writes.push(body);
+      return route.fulfill(json({
+        status: 'success',
+        data: { sheet_write: 'success', sheet_written: true, modality_rows_written: 1 },
+      }));
+    }
+    if (requestPath === '/api/session-plans/accept') {
+      return route.fulfill(json({
+        status: 'success',
+        data: { session_plans: { captured: false, reason: 'disabled' } },
+      }));
+    }
+    if (requestPath === '/api/session-plan-sets/accept') {
+      return route.fulfill(json({
+        status: 'success',
+        data: { session_plan_sets: { captured: false, reason: 'disabled' } },
+      }));
+    }
+    if (requestPath === '/api/catalog/exercises') {
+      return route.fulfill(json({
+        status: 'success',
+        data: {
+          exercises: [
+            { canonical_name: 'Bench Press', lift_code: 'BEN01' },
+            { canonical_name: 'Back Squat', lift_code: 'BSQ01' },
+          ],
+        },
+      }));
+    }
+    return route.fulfill(json({ status: 'success', data: {} }));
+  });
+
+  await page.addInitScript(key => localStorage.setItem('atlas_api_key', key), TEST_KEY);
+  await page.goto('/app/');
+  await page.evaluate(session => {
+    document.getElementById('log-session-id').value = session;
+    window.__structuredRaceEvents = [];
+    document.addEventListener('atlas:plan-edit-proposed', event => {
+      window.__structuredRaceEvents.push(event.detail.edit);
+    });
+  }, SESSION);
+
+  await page.locator('#workout-text').fill('Seed the structured-race turn');
+  await page.locator('#preview-btn').click();
+  await expect(page.locator('#thread-messages')).toContainText('Seed turn ready.');
+}
+
+test('chat A completing after preview B begins cannot apply a structured set edit', async ({ page }) => {
+  const capture = {};
+  await openStructuredChatRace(page, capture);
+  await page.evaluate(() => addSetRow({
+    exercise: 'Bench Press',
+    weight: 225,
+    reps: 5,
+    rir: 2,
+  }));
+
+  const messageA = 'change set 1 to 235';
+  await page.locator('#workout-text').fill(messageA);
+  await page.locator('#preview-btn').click();
+  await expect.poll(() => capture.chatRoutes.has(messageA)).toBeTruthy();
+
+  await page.locator('#workout-text').fill('Ran 5km in 30 minutes');
+  await page.locator('#preview-btn').click();
+  await expect.poll(() => capture.previews.length).toBe(1);
+  const b = capture.previews[0].correlation;
+  await expect(page.locator('#approve-btn')).toBeEnabled();
+
+  await capture.chatRoutes.get(messageA).fulfill(json({
+    status: 'success',
+    data: {
+      message: 'A finished after B.',
+      propose_edit: { action: 'update_set', index: 0, weight: 235, reps: 5, rir: 2 },
+    },
+  }, 200, { 'x-atlas-turn-id': CHAT_TURN_A }));
+  await expect(page.locator('#thread-messages')).toContainText('A finished after B.');
+
+  await expect(page.locator('.set-weight').first()).toHaveValue('225');
+  await expect(page.locator('.edit-applied-note')).toHaveCount(0);
+  await expect(page.locator('#approve-btn')).toBeEnabled();
+  expect(capture.writes).toHaveLength(0);
+
+  await page.locator('#approve-btn').click();
+  await expect.poll(() => capture.writes.length).toBe(1);
+  expect(capture.writes[0].correlation).toEqual({
+    turn_id: TURN,
+    initiation_nonce: b.initiation_nonce,
+    pairing_token: TOKEN_B,
+  });
+});
+
+test('preview B beginning during chat A rendering blocks every stale structured side effect', async ({ page }) => {
+  const capture = {};
+  await openStructuredChatRace(page, capture);
+  const started = await page.evaluate(() => window.atlasAcceptPlan({
+    id: 'structured_race_plan',
+    label: 'Structured race plan',
+    exercises: [{
+      exercise: 'Bench Press',
+      lift_code: 'BEN01',
+      target_weight: 225,
+      target_reps: 5,
+      target_sets: 1,
+      target_rir: 2,
+    }],
+  }));
+  expect(started?.started).toBeTruthy();
+
+  const messageA = 'Could we replace the active plan?';
+  await page.locator('#workout-text').fill(messageA);
+  await page.locator('#preview-btn').click();
+  await expect.poll(() => capture.chatRoutes.has(messageA)).toBeTruthy();
+
+  const longReply = `Delayed ${'structured response still typing '.repeat(25)}finished.`;
+  await capture.chatRoutes.get(messageA).fulfill(json({
+    status: 'success',
+    data: {
+      message: longReply,
+      propose_plan_edit: {
+        action: 'replace_plan',
+        exercises: [{ name: 'Back Squat', sets: 3, reps: 5, weight: 225, rir: 2 }],
+      },
+      propose_note: { note: 'stale note must not remain actionable' },
+      propose_constraint: {
+        kind: 'injury',
+        target: 'back squats',
+        rule: 'avoid',
+        note: 'stale constraint must not remain actionable',
+      },
+    },
+  }, 200, { 'x-atlas-turn-id': CHAT_TURN_A }));
+  await expect(page.locator('#thread-messages .chat-bubble-atlas').last()).toContainText('Delayed');
+
+  await page.locator('#workout-text').fill('Ran 5km in 30 minutes');
+  await page.locator('#preview-btn').click();
+  await expect.poll(() => capture.previews.length).toBe(1);
+  const b = capture.previews[0].correlation;
+  await expect(page.locator('#approve-btn')).toBeEnabled();
+  await expect(page.locator('#thread-messages .chat-bubble-atlas').last()).toContainText('finished.');
+
+  expect(await page.evaluate(() => window.__structuredRaceEvents)).toEqual([]);
+  await expect(page.locator('#active-session-banner')).toContainText('Bench Press');
+  await expect(page.locator('#active-session-banner')).not.toContainText('Back Squat');
+  await expect(page.locator('.propose-note-wrap')).toHaveCount(0);
+  await expect(page.locator('.edit-applied-note')).toHaveCount(0);
+  await expect(page.locator('#approve-btn')).toBeEnabled();
+  expect(capture.writes).toHaveLength(0);
+
+  await page.locator('#approve-btn').click();
+  await expect.poll(() => capture.writes.length).toBe(1);
+  expect(capture.writes[0].correlation).toEqual({
+    turn_id: CHAT_TURN_A,
+    initiation_nonce: b.initiation_nonce,
+    pairing_token: TOKEN_B,
+  });
+});
