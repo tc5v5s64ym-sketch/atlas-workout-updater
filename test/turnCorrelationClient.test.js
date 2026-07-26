@@ -141,6 +141,26 @@ test('client correlation: structured response authority expires when a preview b
     'A completing after B began must never gain structured side-effect authority');
 });
 
+test('client correlation: newer work revokes global structured authority across session changes', async () => {
+  const { createTurnCorrelation } = await loadClient();
+
+  const responseProtocol = createTurnCorrelation({ randomUUID: deterministicIds() });
+  const responseA = responseProtocol.beginTurnResponse({ sessionId: SESSION_A });
+  assert.equal(responseProtocol.completeTurnResponse(responseA, headers(TURN_A, null)), true);
+  responseProtocol.beginTurnResponse({ sessionId: SESSION_B });
+  assert.equal(responseProtocol.isTurnResponseAuthoritative(responseA), false,
+    'starting response B in S2 must revoke response A in S1 because UI side effects are global');
+
+  const previewProtocol = createTurnCorrelation({ randomUUID: deterministicIds() });
+  previewProtocol.captureTurn({ sessionId: SESSION_A, turnId: TURN_A });
+  previewProtocol.captureTurn({ sessionId: SESSION_B, turnId: TURN_B });
+  const renderedA = previewProtocol.beginTurnResponse({ sessionId: SESSION_A });
+  assert.equal(previewProtocol.completeTurnResponse(renderedA, headers(TURN_A, null)), true);
+  previewProtocol.beginPreview({ sessionId: SESSION_B });
+  assert.equal(previewProtocol.isTurnResponseAuthoritative(renderedA), false,
+    'starting preview B in S2 must revoke response A in S1 before A can mutate global state');
+});
+
 test('client correlation: a server-resolved effort session migrates the staged preview without weakening other sessions', async () => {
   const { createTurnCorrelation } = await loadClient();
   const protocol = createTurnCorrelation({ randomUUID: deterministicIds() });

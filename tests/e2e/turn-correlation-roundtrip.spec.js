@@ -6,6 +6,7 @@ const { test, expect } = require('@playwright/test');
 
 const TEST_KEY = 'playwright-test-key';
 const SESSION = 'TC-E2E-SESSION';
+const OTHER_SESSION = 'TC-E2E-SESSION-2';
 const TURN = 'turn:2026-07-25T12:00:00.000Z_7_cliente2e';
 const MESSAGE_TURN = 'turn:2026-07-25T12:01:00.000Z_8_messagee2e';
 const CHAT_TURN_A = 'turn:2026-07-25T12:02:00.000Z_9_chata';
@@ -1482,4 +1483,103 @@ test('preview B beginning during chat A rendering blocks every stale structured 
     initiation_nonce: b.initiation_nonce,
     pairing_token: TOKEN_B,
   });
+});
+
+test('session S2 response and preview revoke a still-rendering structured response from S1', async ({ page }) => {
+  const capture = {};
+  await openStructuredChatRace(page, capture);
+  const started = await page.evaluate(() => window.atlasAcceptPlan({
+    id: 'cross_session_race_plan',
+    label: 'Cross-session race plan',
+    exercises: [{
+      exercise: 'Bench Press',
+      lift_code: 'BEN01',
+      target_weight: 225,
+      target_reps: 5,
+      target_sets: 1,
+      target_rir: 2,
+    }],
+  }));
+  expect(started?.started).toBeTruthy();
+
+  const messageA = 'Replace the S1 plan after a long explanation';
+  await page.locator('#workout-text').fill(messageA);
+  await page.locator('#preview-btn').click();
+  await expect.poll(() => capture.chatRoutes.has(messageA)).toBeTruthy();
+  const longReply = `Cross-session A ${'is still rendering structured output '.repeat(60)}finished.`;
+  await capture.chatRoutes.get(messageA).fulfill(json({
+    status: 'success',
+    data: {
+      message: longReply,
+      propose_plan_edit: {
+        action: 'replace_plan',
+        exercises: [{ name: 'Back Squat', sets: 3, reps: 5, weight: 225, rir: 2 }],
+      },
+    },
+  }, 200, { 'x-atlas-turn-id': CHAT_TURN_A }));
+  await expect(page.locator('#thread-messages .chat-bubble-atlas').last()).toContainText('Cross-session A');
+
+  const messageB = 'S2 owns the current turn';
+  await page.evaluate(({ session, message }) => {
+    document.getElementById('log-session-id').value = session;
+    document.dispatchEvent(new CustomEvent('atlas:chat-message', {
+      detail: { text: message, context: { session_id: session } },
+    }));
+  }, { session: OTHER_SESSION, message: messageB });
+  await expect.poll(() => capture.chatRoutes.has(messageB)).toBeTruthy();
+  await capture.chatRoutes.get(messageB).fulfill(json({
+    status: 'success',
+    data: { message: 'S2 response selected.' },
+  }, 200, { 'x-atlas-turn-id': CHAT_TURN_B }));
+  await expect(page.locator('#thread-messages')).toContainText('S2 response selected.');
+
+  await page.locator('#workout-text').fill('Ran 5km in 30 minutes');
+  await page.locator('#preview-btn').click();
+  await expect.poll(() => capture.previews.length).toBe(1);
+  const b = capture.previews[0].correlation;
+  expect(capture.previews[0].session_id).toBe(OTHER_SESSION);
+  expect(b.turn_id).toBe(CHAT_TURN_B);
+  await expect(page.locator('#approve-btn')).toBeEnabled();
+  await expect(page.locator('#thread-messages .chat-bubble-atlas')
+    .filter({ hasText: 'Cross-session A' })).toContainText('finished.', { timeout: 20_000 });
+
+  expect(await page.evaluate(() => window.__structuredRaceEvents)).toEqual([]);
+  await expect(page.locator('#active-session-banner')).toContainText('Bench Press');
+  await expect(page.locator('#active-session-banner')).not.toContainText('Back Squat');
+  await expect(page.locator('#approve-btn')).toBeEnabled();
+  expect(capture.writes).toHaveLength(0);
+
+  await page.locator('#approve-btn').click();
+  await expect.poll(() => capture.writes.length).toBe(1);
+  expect(capture.writes[0].correlation).toEqual({
+    turn_id: CHAT_TURN_B,
+    initiation_nonce: b.initiation_nonce,
+    pairing_token: TOKEN_B,
+  });
+});
+
+test('a malformed session that cannot mint a ticket cannot authorize structured output', async ({ page }) => {
+  const capture = {};
+  await openStructuredChatRace(page, capture);
+  await page.evaluate(() => {
+    addSetRow({ exercise: 'Bench Press', weight: 225, reps: 5, rir: 2 });
+    document.getElementById('log-session-id').value = 'S'.repeat(129);
+  });
+
+  const messageA = 'change set 1 to 235 without a valid session ticket';
+  await page.locator('#workout-text').fill(messageA);
+  await page.locator('#preview-btn').click();
+  await expect.poll(() => capture.chatRoutes.has(messageA)).toBeTruthy();
+  await capture.chatRoutes.get(messageA).fulfill(json({
+    status: 'success',
+    data: {
+      message: 'Malformed-session response returned.',
+      propose_edit: { action: 'update_set', index: 0, weight: 235, reps: 5, rir: 2 },
+    },
+  }, 200, { 'x-atlas-turn-id': CHAT_TURN_A }));
+  await expect(page.locator('#thread-messages')).toContainText('Malformed-session response returned.');
+
+  await expect(page.locator('.set-weight').first()).toHaveValue('225');
+  await expect(page.locator('.edit-applied-note')).toHaveCount(0);
+  expect(capture.writes).toHaveLength(0);
 });
