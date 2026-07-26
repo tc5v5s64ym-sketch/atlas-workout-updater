@@ -14,6 +14,7 @@ const fs = require('node:fs');
 const {
   buildTurnWriteArtifact,
   formatTurnWriteArtifact,
+  sanitizeArtifactSource,
 } = require('../services/turnWriteArtifact');
 
 function readStdin() {
@@ -44,7 +45,7 @@ function main(argv) {
   }
 
   const artifact = buildTurnWriteArtifact(text);
-  if (json) process.stdout.write(`${JSON.stringify({ source, ...artifact }, null, 2)}\n`);
+  if (json) process.stdout.write(`${JSON.stringify({ source: sanitizeArtifactSource(source), ...artifact }, null, 2)}\n`);
   else process.stdout.write(`${formatTurnWriteArtifact(artifact, { source })}\n`);
 
   if (artifact.status === 'complete') return 0;

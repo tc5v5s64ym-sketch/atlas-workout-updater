@@ -140,7 +140,7 @@ function _sanitizeTrace(record) {
 function _validProofValue(key, value) {
   if (value === null) return true;
   if (BOOLEAN_PROOF_KEYS.has(key)) return typeof value === 'boolean';
-  if (NUMBER_PROOF_KEYS.has(key)) return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+  if (NUMBER_PROOF_KEYS.has(key)) return Number.isSafeInteger(value) && value >= 0;
   if (key === 'session_plans_closeout_plan_version') return PLAN_VERSION_RE.test(value);
   return _isBoundedString(value) && !_containsCapability(value);
 }
@@ -344,7 +344,11 @@ function _closeoutSummary(proof, withheldEvidence) {
     state = planVersionWithheld || !hasPlanVersion || proof[planVersionKey] === null
       ? 'written_unidentified'
       : 'written';
-  } else if (status === 'skipped' && captured === true) state = 'already_captured';
+  } else if (status === 'skipped' && captured === true) {
+    state = planVersionWithheld || !hasPlanVersion || proof[planVersionKey] === null
+      ? 'already_captured_unidentified'
+      : 'already_captured';
+  }
   else if (status === 'error' || status === 'tab_missing' || status === 'header_mismatch') state = 'failed';
   else if (status === 'disabled') state = 'disabled';
   else if (status === 'no_plan') state = 'no_plan';
@@ -401,7 +405,10 @@ function _writeArtifact(record) {
   else if (seal.state === 'failed' || seal.state === 'withheld' || seal.state === 'indeterminate') {
     issues.push('seal_not_verified');
   }
-  if (closeout.state === 'failed' || closeout.state === 'written_unidentified' || closeout.state === 'withheld') {
+  if (closeout.state === 'failed'
+    || closeout.state === 'written_unidentified'
+    || closeout.state === 'already_captured_unidentified'
+    || closeout.state === 'withheld') {
     issues.push('closeout_not_reviewable');
   }
 
@@ -491,6 +498,10 @@ function buildTurnWriteArtifact(input) {
       proofRecords = proofRecords.slice(0, MAX_WRITES_PER_PAIRING);
       issues.push('write_attempt_overflow');
     }
+    const sessionIds = new Set(allProofRecords
+      .map((record) => record.session_id)
+      .filter((sessionId) => sessionId !== null));
+    if (sessionIds.size > 1) issues.push('conflicting_sessions');
     const attempts = proofRecords.map((record) => record.pairing.write_attempt);
     if (new Set(attempts).size !== attempts.length) issues.push('duplicate_write_attempt');
     if (rejected.some((entry) => entry && entry.turn_id === turnId)) issues.push('rejected_write_record');
@@ -528,7 +539,7 @@ function buildTurnWriteArtifact(input) {
   const proofOnlyTurns = turns.filter((turn) => turn.join_status === 'proof_only').length;
   const status = turns.length === 0
     ? 'empty'
-    : (reviewableTurns === turns.length ? 'complete' : 'partial');
+    : (reviewableTurns === turns.length && rejectedCount === 0 ? 'complete' : 'partial');
 
   return {
     schema_version: SCHEMA_VERSION,
@@ -548,7 +559,8 @@ function buildTurnWriteArtifact(input) {
 
 function formatTurnWriteArtifact(artifact, opts = {}) {
   const a = _isPlainObject(artifact) ? artifact : buildTurnWriteArtifact('');
-  const source = _isBoundedString(opts.source, 512) ? ` (from ${opts.source})` : '';
+  const safeSource = sanitizeArtifactSource(opts.source);
+  const source = safeSource ? ` (from ${safeSource})` : '';
   const lines = [`Atlas turn/write review artifact${source}`];
   if (a.status === 'empty') {
     lines.push('No joined turn/write evidence was found. Nothing is reviewable.');
@@ -568,6 +580,11 @@ function formatTurnWriteArtifact(artifact, opts = {}) {
   return lines.join('\n');
 }
 
+function sanitizeArtifactSource(value) {
+  if (!_isBoundedString(value, 512) || _containsCapability(value) || /[\r\n\0]/.test(value)) return null;
+  return value;
+}
+
 module.exports = {
   INTERACTION_TRACE_MARKER,
   TURN_WRITE_PROOF_MARKER,
@@ -578,4 +595,5 @@ module.exports = {
   parseTurnWriteLines,
   buildTurnWriteArtifact,
   formatTurnWriteArtifact,
+  sanitizeArtifactSource,
 };

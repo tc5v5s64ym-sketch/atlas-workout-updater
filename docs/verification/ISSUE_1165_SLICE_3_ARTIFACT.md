@@ -45,9 +45,11 @@ A turn is reviewable only when all of these hold:
    idempotent no-write outcome;
 5. no relevant projection was withheld and no seal/closeout contradiction remains.
 
-`complete` means every included turn is reviewable. `partial` means at least one record exists but a
-turn is missing, ambiguous, rejected, unbound, withheld, or contradictory. `empty` means there is no
-accepted trace or proof. CLI exit codes are 0, 1, and 2 respectively.
+`complete` means every included turn is reviewable and no marker record was rejected. `partial`
+means at least one record exists but a turn is missing, ambiguous, rejected, unbound, withheld,
+cross-session, or contradictory. A rejected marker with no recoverable `turn_id` still makes the
+whole artifact partial. `empty` means there is no accepted trace or proof. CLI exit codes are 0, 1,
+and 2 respectively.
 
 ## Seal and closeout honesty
 
@@ -62,8 +64,8 @@ Seal states are deliberately non-interchangeable:
 `new_seal_write:false` keeps it distinguishable from a fresh stamp.
 
 The Session_Plans closeout projection includes validated `plan_version`, the closeout row
-discriminator. A claimed written closeout with that discriminator missing or withheld is
-`written_unidentified` and cannot substantiate which closeout row was written.
+discriminator. A claimed written or idempotently skipped closeout with that discriminator missing
+or withheld is unidentified and cannot substantiate which closeout row was written or replayed.
 
 ## Withheld versus absent
 
@@ -75,9 +77,10 @@ or exposing malformed client input.
 
 ## Evidence
 
-- `test/turnWriteArtifact.test.js` — ordering, cross-turn refusal, attempt bounds, proof sufficiency,
-  closeout discriminator, seal classifications, withheld/absent distinction, leakage refusal,
-  CLI output, and non-zero partial/empty behavior.
+- `test/turnWriteArtifact.test.js` — ordering, cross-turn/cross-session refusal, attempt bounds,
+  integer proof counts, proof sufficiency, closeout discriminator for writes and replays, seal
+  classifications, withheld/absent distinction, leakage refusal (including source labels), CLI
+  output, and non-zero partial/empty behavior.
 - `test/turnWriteArtifactIntegration.test.js` — captures the actual interaction-trace emitter and a
   real registry preview → pairing → live resolution → write-proof emitter, then joins their log
   lines.
