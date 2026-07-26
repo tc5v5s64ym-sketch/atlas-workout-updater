@@ -95,6 +95,9 @@ async function mock(page, capture) {
     }
     if (path === '/api/coach/message') {
       capture.messageCalls.push(body);
+      if (capture.messageFailure) {
+        return route.fulfill(json({ status: 'error', error: 'coach unavailable' }, 503));
+      }
       if (capture.messageGate) await capture.messageGate;
       return route.fulfill(json(
         { status: 'success', data: { message: 'Clarified sets landed.', configured: true } },
@@ -279,4 +282,62 @@ test('immediate done waits for the clarified-set turn before closeout preview', 
     initiation_nonce: previewCorrelation.initiation_nonce,
     pairing_token: PAIRING,
   });
+});
+
+test('immediate done waits for an ordinary set turn before closeout preview', async ({ page }) => {
+  let releaseMessage;
+  const capture = {
+    messageGate: new Promise(resolve => { releaseMessage = resolve; }),
+  };
+  await mock(page, capture);
+  await page.addInitScript(key => { localStorage.setItem('atlas_api_key', key); }, TEST_KEY);
+  await page.goto('/app/');
+  await page.evaluate(session => {
+    document.getElementById('log-session-id').value = session;
+    document.dispatchEvent(new CustomEvent('atlas:chat-message', {
+      detail: {
+        text: 'Seed the clarified-set turn',
+        context: { session_id: session },
+      },
+    }));
+  }, TEST_SESSION);
+  await expect(page.locator('#thread-messages')).toContainText('Seed turn retained.');
+
+  await submit(page, 'Knee raises BW 15 12 10');
+  await expect.poll(() => capture.messageCalls.length).toBe(1);
+  await expect.poll(() => page.evaluate(() => window.getSessionLog().length)).toBe(3);
+
+  await submit(page, 'done');
+  await page.waitForTimeout(150);
+  expect(capture.previews).toHaveLength(0);
+
+  releaseMessage();
+  await expect(page.locator('#thread-messages')).toContainText('Clarified sets landed.');
+  await expect.poll(() => capture.previews.length).toBe(1);
+  expect(capture.previews[0].correlation.turn_id).toBe(MESSAGE_TURN);
+});
+
+test('failed set coaching settles the closeout wait and leaves the write uncorrelated', async ({ page }) => {
+  const capture = { messageFailure: true };
+  await mock(page, capture);
+  await page.addInitScript(key => { localStorage.setItem('atlas_api_key', key); }, TEST_KEY);
+  await page.goto('/app/');
+  await page.evaluate(session => {
+    document.getElementById('log-session-id').value = session;
+  }, TEST_SESSION);
+
+  await submit(page, 'Knee raises 15 12 10');
+  await expect(page.locator('#logger-status')).toContainText('15, 12, 10');
+  await submit(page, 'Just log it');
+  await expect.poll(() => capture.messageCalls.length).toBe(1);
+  await expect.poll(() => page.evaluate(() => window.getSessionLog().length)).toBe(3);
+
+  await submit(page, 'done');
+  await expect.poll(() => capture.previews.length).toBe(1);
+  expect(capture.previews[0].correlation).toBeUndefined();
+
+  await expect(page.locator('.rv-save').last()).toBeEnabled();
+  await page.locator('.rv-save').last().click();
+  await expect.poll(() => capture.writes.length).toBe(1);
+  expect(capture.writes[0].correlation).toBeUndefined();
 });

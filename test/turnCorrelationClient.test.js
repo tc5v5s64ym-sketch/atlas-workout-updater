@@ -101,6 +101,19 @@ test('client correlation: only the newest initiated coach response may become th
   assert.equal(preview.correlation.turn_id, TURN_B);
 });
 
+test('client correlation: a selected failed response settles and cannot reuse an older turn', async () => {
+  const { createTurnCorrelation } = await loadClient();
+  const protocol = createTurnCorrelation({ randomUUID: deterministicIds() });
+  protocol.captureTurn({ sessionId: SESSION_A, turnId: TURN_A });
+
+  const failedResponse = protocol.beginTurnResponse({ sessionId: SESSION_A });
+  const settlement = protocol.waitForTurnResponse({ sessionId: SESSION_A });
+  assert.equal(protocol.completeTurnResponse(failedResponse, null), false);
+  assert.equal(await settlement, false, 'a failed selected response must settle its closeout wait');
+  assert.equal(protocol.beginPreview({ sessionId: SESSION_A }), null,
+    'a failed newer response must not let closeout claim the unrelated older turn');
+});
+
 test('client correlation: preview initiation retires an older in-flight coach response before it can clear the preview', async () => {
   const { createTurnCorrelation } = await loadClient();
   const protocol = createTurnCorrelation({ randomUUID: deterministicIds() });
