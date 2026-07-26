@@ -1506,7 +1506,7 @@ test('session S2 response and preview revoke a still-rendering structured respon
   await page.locator('#workout-text').fill(messageA);
   await page.locator('#preview-btn').click();
   await expect.poll(() => capture.chatRoutes.has(messageA)).toBeTruthy();
-  const longReply = `Cross-session A ${'is still rendering structured output '.repeat(60)}finished.`;
+  const longReply = `Cross-session A ${'is still rendering structured output '.repeat(60)}finished.\nBack Squat\n225lbs 5`;
   await capture.chatRoutes.get(messageA).fulfill(json({
     status: 'success',
     data: {
@@ -1540,10 +1540,14 @@ test('session S2 response and preview revoke a still-rendering structured respon
   expect(capture.previews[0].session_id).toBe(OTHER_SESSION);
   expect(b.turn_id).toBe(CHAT_TURN_B);
   await expect(page.locator('#approve-btn')).toBeEnabled();
+  await page.evaluate(() => {
+    document.getElementById('workout-text').placeholder = 'S2 owns this placeholder';
+  });
   await expect(page.locator('#thread-messages .chat-bubble-atlas')
     .filter({ hasText: 'Cross-session A' })).toContainText('finished.', { timeout: 20_000 });
 
   expect(await page.evaluate(() => window.__structuredRaceEvents)).toEqual([]);
+  await expect(page.locator('#workout-text')).toHaveAttribute('placeholder', 'S2 owns this placeholder');
   await expect(page.locator('#active-session-banner')).toContainText('Bench Press');
   await expect(page.locator('#active-session-banner')).not.toContainText('Back Squat');
   await expect(page.locator('#approve-btn')).toBeEnabled();
