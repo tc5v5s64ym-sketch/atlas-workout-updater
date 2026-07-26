@@ -154,6 +154,32 @@ test('client correlation: structured response authority expires when a preview b
     'A completing after B began must never gain structured side-effect authority');
 });
 
+test('client correlation: an asynchronous response may continue only while its ticket still owns the shared surface', async () => {
+  const { createTurnCorrelation } = await loadClient();
+  const protocol = createTurnCorrelation({ randomUUID: deterministicIds() });
+
+  const stalledA = protocol.beginTurnResponse({ sessionId: SESSION_A });
+  assert.equal(protocol.mayContinueTurnResponse(stalledA), true,
+    'the selected request may traverse its asynchronous pipeline while it is pending');
+
+  const pendingB = protocol.beginTurnResponse({ sessionId: SESSION_A });
+  assert.equal(protocol.mayContinueTurnResponse(stalledA), false,
+    'newer work must synchronously stop an older pending continuation');
+  assert.equal(protocol.mayContinueTurnResponse(pendingB), true);
+
+  assert.equal(protocol.completeTurnResponse(pendingB, null), false);
+  assert.equal(protocol.mayContinueTurnResponse(pendingB), false,
+    'a timed-out or failed selected request must not resume after its await resolves');
+
+  const selectedC = protocol.beginTurnResponse({ sessionId: SESSION_A });
+  assert.equal(protocol.completeTurnResponse(selectedC, headers(TURN_A, null)), true);
+  assert.equal(protocol.mayContinueTurnResponse(selectedC), true,
+    'a valid selected response may finish rendering while it retains authority');
+  protocol.beginPreview({ sessionId: SESSION_A });
+  assert.equal(protocol.mayContinueTurnResponse(selectedC), false,
+    'preview initiation must stop even a previously selected continuation');
+});
+
 test('client correlation: newer work revokes global structured authority across session changes', async () => {
   const { createTurnCorrelation } = await loadClient();
 
