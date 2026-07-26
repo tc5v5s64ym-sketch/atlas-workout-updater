@@ -207,6 +207,34 @@ describe('turnWriteArtifact — parsing and canonical turn join', () => {
     assert.equal(artifact.turns[0].reviewable, true);
   });
 
+  it('keeps an effort-bearing preview on its explicit no-write proof', () => {
+    const preview = proof({
+      pairing: {
+        established_at_preview: true,
+        write_attempt: 0,
+        previewed_write_id_match: null,
+        payload_bound: false,
+        effort_transition: false,
+      },
+      proof: {
+        test_mode: true,
+        sheet_write: 'skipped',
+        sheet_written: false,
+        no_write_confirmed: true,
+        effortWritten: true,
+      },
+    });
+    const artifact = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, preview),
+      line(TURN_WRITE_PROOF_MARKER, proof()),
+    ].join('\n'));
+
+    assert.equal(artifact.turns[0].previews[0].proof_state, 'no_write_confirmed');
+    assert.equal(artifact.turns[0].previews[0].reviewable, true);
+    assert.equal(artifact.status, 'complete');
+  });
+
   it('rejects a trace whose claimed missing list disagrees with its canonical stages', () => {
     const parsed = parseTurnWriteLines(line(
       INTERACTION_TRACE_MARKER,
@@ -484,6 +512,54 @@ describe('turnWriteArtifact — bounded, leakage-safe review surface', () => {
     ].join('\n'));
     assert.equal(noWriteArtifact.turns[0].writes[0].proof_state, 'no_write_confirmed');
     assert.equal(noWriteArtifact.turns[0].writes[0].reviewable, true);
+  });
+
+  it('never treats explicit unverified or partial append states as a confirmed write', () => {
+    for (const sheetWrite of ['unverified', 'partial']) {
+      const artifact = buildTurnWriteArtifact([
+        line(INTERACTION_TRACE_MARKER, trace()),
+        line(TURN_WRITE_PROOF_MARKER, proof({
+          proof: {
+            sheet_write: sheetWrite,
+            sheet_written: true,
+            rows_appended: 1,
+          },
+        })),
+      ].join('\n'));
+      const write = artifact.turns[0].writes[0];
+
+      assert.equal(write.proof_state, sheetWrite);
+      assert.equal(write.reviewable, false);
+      assert.equal(artifact.status, 'partial');
+    }
+  });
+
+  it('omits client-controlled proof strings that can carry arbitrary prose', () => {
+    const hostile = proof({
+      proof: {
+        sheet_write: 'success',
+        sheet_written: true,
+        rows_appended: 1,
+        write_id: 'private coach prompt',
+        reason: 'private workout note',
+        log_appended_range: 'private trace prose',
+        effortAppendedRange: 'private secret prose',
+      },
+    });
+    const parsed = parseTurnWriteLines(line(TURN_WRITE_PROOF_MARKER, hostile));
+    const artifact = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, hostile),
+    ].join('\n'));
+    const emittedProof = artifact.turns[0].writes[0].proof;
+
+    assert.equal(parsed.proofs.length, 1, 'one unsafe optional string must not erase safe proof');
+    assert.equal(emittedProof.sheet_write, 'success');
+    assert.equal(emittedProof.rows_appended, 1);
+    for (const key of ['write_id', 'reason', 'log_appended_range', 'effortAppendedRange']) {
+      assert.ok(!Object.prototype.hasOwnProperty.call(emittedProof, key));
+    }
+    assert.ok(!JSON.stringify(artifact).includes('private'));
   });
 
   it('treats sealed_ok:true plus sheet_written:true without a positive sealed count as indeterminate', () => {
