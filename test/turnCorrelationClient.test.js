@@ -218,6 +218,23 @@ test('client correlation: the production app wires the protocol through every re
     'coach requests must retain headers only after that response wins its timeout/routing race');
   assert.match(app, /resolveCorrelatedPreviewSession/,
     'effort-only previews must migrate to the server-resolved session before approval');
+  const modalityBranch = app.slice(
+    app.indexOf('async function tryPreviewModality('),
+    app.indexOf('function hasAnyEffortInput'),
+  );
+  assert.ok(
+    modalityBranch.indexOf('submitSeq !== previewRequestSeq') <
+      modalityBranch.indexOf('looksLikeModalityQuestion(text)'),
+    'stale modality work must stop before a question-shaped early return can fall through to coach',
+  );
+  const screenshotBranch = app.slice(
+    app.indexOf("if (mode === 'screenshot' && file) {"),
+    app.indexOf('} else if (effortOnly) {'),
+  );
+  assert.match(screenshotBranch, /beginCorrelatedPreview\(\{[\s\S]{0,240}provisionalSessionId: sessionId/,
+    'a blank-session screenshot preview must explicitly name its provisional client session');
+  assert.match(screenshotBranch, /resolveCorrelatedPreviewSession\(correlationPreview, resolvedSessionId\)/,
+    'the screenshot preview must migrate to the exact server-resolved session before approval');
   const effortOnlyBranch = app.slice(app.indexOf('} else if (effortOnly) {'), app.indexOf('} else {', app.indexOf('} else if (effortOnly) {')));
   assert.match(effortOnlyBranch, /beginCorrelatedPreview\(\{[\s\S]{0,240}provisionalSessionId: sessionId/,
     'the real effort-only preview must explicitly name its provisional client session');

@@ -523,9 +523,6 @@ test('real blank-session screenshot preview adopts the server session and approv
     mimeType: 'image/png',
     buffer: Buffer.from('screenshot-fixture'),
   });
-  await page.locator('#logger-form').evaluate(form => {
-    form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
-  });
 
   await expect.poll(() => capture.previews.length).toBe(1);
   const previewCorrelation = capture.previews[0].correlation;

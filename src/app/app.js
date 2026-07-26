@@ -6122,12 +6122,12 @@ function looksLikeModalityQuestion(text) {
 // caller then falls through to the coach). Read-only: only a test_mode dry-run runs
 // here — the actual write happens solely in the #approve-btn handler.
 async function tryPreviewModality(text, sessionId, date, submitSeq) {
+  // Staleness outranks every early return that would permit fallthrough. In
+  // particular, a late question-shaped A must not reach coach routing after B.
+  if (submitSeq !== previewRequestSeq) return true;
   if (!text || !date) return false;
   // A question about training is for the coach — never stage it as a write preview.
   if (looksLikeModalityQuestion(text)) return false;
-  // The slash parser can itself finish after a newer logger submit. Do not let that
-  // stale catch path start a modality preview that would retire the newer request.
-  if (submitSeq !== previewRequestSeq) return true;
   let result;
   const correlationPreview = beginCorrelatedPreview({ sessionId });
   activePreviewCorrelation = correlationPreview;
@@ -6936,7 +6936,10 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       // holds: pendingWrite.date below captures the server-RESOLVED date, which the
       // approve step re-sends, so what was previewed is exactly what is written.
       const screenshotDateField = logDateManuallyEntered ? date : '';
-      const correlationPreview = beginCorrelatedPreview({ sessionId: completeWorkoutSessionId || sessionId });
+      const correlationPreview = beginCorrelatedPreview({
+        sessionId: completeWorkoutSessionId || sessionId,
+        ...(!completeWorkoutSessionId ? { provisionalSessionId: sessionId } : {}),
+      });
       activePreviewCorrelation = correlationPreview;
       const result = await submitCompleteWorkout({ file, logRows, sessionId: completeWorkoutSessionId,
         date: screenshotDateField,
@@ -6952,6 +6955,9 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       const resolvedData = result?.data?.data || {};
       const resolvedDate = resolvedData.date || date || getLocalDateString();
       const resolvedSessionId = resolvedData.session_id || sessionId || generateSessionId(resolvedDate);
+      if (correlationPreview && !resolveCorrelatedPreviewSession(correlationPreview, resolvedSessionId)) {
+        throw new Error('Preview session correlation could not be bound to the server-resolved session.');
+      }
       document.getElementById('log-date').value = resolvedDate;
       sessionIdInput.value = resolvedSessionId;
       pendingWrite = {
