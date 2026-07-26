@@ -717,10 +717,33 @@ function resolveCorrelation(payload, opts = {}) {
       if (initiationNonce && rec.retiredInitiations.includes(initiationNonce)) {
         return miss(REASONS.SUPERSEDED);
       }
-      // A transport retry uses the same initiation. Re-mint atomically so only one token for
-      // that initiation survives and the response the client receives is the one it can use.
-      if (initiationNonce) {
-        rec.pairings = rec.pairings.filter(p => p.initiationNonce !== initiationNonce);
+      const previewIdentity = _previewIdentity(payload);
+      const previewIdentityEffortDropped = _previewIdentity(payload, { dropEffort: true });
+      const previewedWriteId = _isNonEmptyString(opts.previewedWriteId)
+        ? String(opts.previewedWriteId).trim()
+        : null;
+      // A transport retry carries the SAME initiation while the original request may still be
+      // running. The first completion establishes one immutable pairing for that initiation;
+      // every byte-identical completion reuses it. Re-minting here made a late original replace
+      // the token returned by the retry, leaving the client with an inaccessible capability.
+      // A different payload (or preview write id) under the same initiation is not a retry and
+      // fails closed without consuming or replacing the established pairing.
+      const existingPairing = initiationNonce
+        ? rec.pairings.find(p => p.initiationNonce === initiationNonce)
+        : null;
+      if (existingPairing) {
+        if (existingPairing.identity !== previewIdentity
+            || existingPairing.identityEffortDropped !== previewIdentityEffortDropped
+            || existingPairing.previewedWriteId !== previewedWriteId) {
+          return miss(REASONS.PAYLOAD_MISMATCH);
+        }
+        return {
+          ok: true,
+          turn_id: turnId,
+          reason: REASONS.OK,
+          pairing_token: existingPairing.token,
+          pairing: _pairingSummary(rec, existingPairing, '', { live: false }),
+        };
       }
 
       if (resolvedSessionId) {
@@ -734,16 +757,16 @@ function resolveCorrelation(payload, opts = {}) {
         initiationNonce,
         // What makes this a WRITE-level binding rather than a turn-level one. Null ⇒ unbound,
         // reported honestly as payload_bound:false.
-        identity: _previewIdentity(payload),
+        identity: previewIdentity,
         // The same identity with `effort_row` omitted, so the documented seal retry's effort
         // REMOVAL is a permitted transition without loosening the gate for anything else.
-        identityEffortDropped: _previewIdentity(payload, { dropEffort: true }),
+        identityEffortDropped: previewIdentityEffortDropped,
         // Set once this pairing accepts an EXACT-identity write. The effort-removal transition is
         // legal only after that, because the real retry cannot happen before it.
         exactMatched: false,
         // The one path whose dry-run carries the write_id it will approve with. Recorded as
         // corroboration only; four of five paths send nothing here.
-        previewedWriteId: _isNonEmptyString(opts.previewedWriteId) ? String(opts.previewedWriteId).trim() : null,
+        previewedWriteId,
       };
       rec.pairings.push(pairing);
       while (rec.pairings.length > MAX_OUTSTANDING_PAIRINGS) rec.pairings.shift();
