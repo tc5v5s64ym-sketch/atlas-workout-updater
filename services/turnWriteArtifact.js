@@ -41,7 +41,22 @@ const STAGE_SET = new Set(STAGES);
 const STAGE_STATUS_SET = new Set(STAGE_STATUSES);
 const PROJECTED_PROOF_KEYS = Object.freeze(Object.entries(PROOF_PROJECTIONS)
   .flatMap(([envelope, fields]) => fields.map((field) => `${envelope}_${field}`)));
-const ALLOWED_PROOF_KEYS = new Set([...PROOF_KEYS, ...PROJECTED_PROOF_KEYS]);
+// These top-level proof strings are genuine response fields, but their server contract permits
+// arbitrary client text (`write_id`) or prose (`reason`), or a future tab/range string. The
+// artifact does not need them: write_attempt is the bounded attempt identity and numeric/boolean
+// fields carry the positive proof. Exclude them rather than attempting to redact untrusted prose.
+const OMITTED_UNSAFE_STRING_KEYS = new Set([
+  'reason',
+  'write_id',
+  'log_appended_range',
+  'effort_appended_range',
+  'logAppendedRange',
+  'effortAppendedRange',
+]);
+const ALLOWED_PROOF_KEYS = new Set([
+  ...PROOF_KEYS.filter((key) => !OMITTED_UNSAFE_STRING_KEYS.has(key)),
+  ...PROJECTED_PROOF_KEYS,
+]);
 const ALLOWED_WITHHELD_KEYS = new Set(PROJECTED_PROOF_KEYS);
 
 const BOOLEAN_PROOF_KEYS = new Set([
@@ -63,6 +78,26 @@ const WRITE_ROUTES = new Set([
   '/api/log-modality',
   '/api/bodyweight',
 ]);
+const SHEET_WRITE_STATES = new Set([
+  'blocked_schema_drift',
+  'partial',
+  'skipped',
+  'skipped_duplicate',
+  'skipped_duplicate_in_progress',
+  'success',
+  'unverified',
+]);
+const IDEMPOTENCY_STATES = new Set(['completed', 'failed', 'in_progress', 'unknown']);
+const CLOSEOUT_STATES = new Set([
+  'disabled',
+  'error',
+  'header_mismatch',
+  'no_plan',
+  'skipped',
+  'tab_missing',
+  'written',
+]);
+const SAFE_STATE_TOKEN = /^[a-z][a-z0-9_]{0,63}$/;
 const ISO_8601 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/;
 const PAIRING_TOKEN_RE = /pair:[a-f0-9]{32}/;
 const FINGERPRINT_RE = /(?:sha256:)?[a-f0-9]{64}/i;
@@ -141,6 +176,10 @@ function _validProofValue(key, value) {
   if (value === null) return true;
   if (BOOLEAN_PROOF_KEYS.has(key)) return typeof value === 'boolean';
   if (NUMBER_PROOF_KEYS.has(key)) return Number.isSafeInteger(value) && value >= 0;
+  if (key === 'sheet_write') return SHEET_WRITE_STATES.has(value);
+  if (key === 'idempotency_status') return IDEMPOTENCY_STATES.has(value);
+  if (key === 'ledger_seal_reason') return typeof value === 'string' && SAFE_STATE_TOKEN.test(value);
+  if (key === 'session_plans_closeout_status') return CLOSEOUT_STATES.has(value);
   if (key === 'session_plans_closeout_plan_version') return PLAN_VERSION_RE.test(value);
   return _isBoundedString(value) && !_containsCapability(value);
 }
@@ -367,23 +406,26 @@ function _closeoutSummary(proof, withheldEvidence) {
 }
 
 function _proofState(proof, seal, closeout) {
+  if (proof.sheet_write === 'unverified') return 'unverified';
+  if (proof.sheet_write === 'partial') return 'partial';
+  if (proof.sheet_write === 'skipped_duplicate_in_progress') return 'idempotency_in_progress';
+
+  // The explicit W1 no-write tuple outranks incidental response bookkeeping such as
+  // effortWritten:true on a preview (which means an effort row was formatted, not appended).
+  if (proof.no_write_confirmed === true && proof.sheet_written === false) {
+    return 'no_write_confirmed';
+  }
+
   const positiveWrite = proof.sheet_written === true
     || proof.sheet_write === 'success'
     || proof.effortWritten === true
     || (typeof proof.rows_appended === 'number' && proof.rows_appended > 0)
     || (typeof proof.log_rows_written === 'number' && proof.log_rows_written > 0)
     || (typeof proof.effort_rows_written === 'number' && proof.effort_rows_written > 0)
-    || typeof proof.log_appended_range === 'string'
-    || typeof proof.effort_appended_range === 'string'
-    || typeof proof.logAppendedRange === 'string'
-    || typeof proof.effortAppendedRange === 'string'
     || seal.new_seal_write
     || closeout.state === 'written';
   if (positiveWrite) return 'write_confirmed';
 
-  if (proof.no_write_confirmed === true && proof.sheet_written === false) {
-    return 'no_write_confirmed';
-  }
   if (proof.duplicate_write === true
     || proof.sheet_write === 'skipped_duplicate'
     || (typeof proof.skipped_duplicates === 'number' && proof.skipped_duplicates > 0)) {
@@ -400,6 +442,9 @@ function _writeArtifact(record) {
   const issues = [];
   if (authorization !== 'preview_payload_bound') issues.push('authorization_unbound');
   if (proofState === 'insufficient') issues.push('write_proof_insufficient');
+  else if (proofState === 'unverified') issues.push('write_proof_unverified');
+  else if (proofState === 'partial') issues.push('write_proof_partial');
+  else if (proofState === 'idempotency_in_progress') issues.push('write_proof_in_progress');
   if (record.withheld_evidence.length > 0) issues.push('evidence_withheld');
   if (seal.state === 'seal_proof_mismatch') issues.push('seal_proof_mismatch');
   else if (seal.state === 'failed' || seal.state === 'withheld' || seal.state === 'indeterminate') {

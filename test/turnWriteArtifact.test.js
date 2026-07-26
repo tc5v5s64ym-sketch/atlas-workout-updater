@@ -461,7 +461,7 @@ describe('turnWriteArtifact — bounded, leakage-safe review surface', () => {
     assert.equal(artifact.turns[0].writes[0].proof.rows_appended, 1);
   });
 
-  it('rejects a capability or fingerprint embedded inside an otherwise allowed proof string', () => {
+  it('omits a capability or fingerprint embedded inside a client-controlled proof string', () => {
     const capability = 'pair:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
     const fingerprint = 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
     for (const reason of [`failed with ${capability}`, `identity ${fingerprint} mismatch`]) {
@@ -471,7 +471,8 @@ describe('turnWriteArtifact — bounded, leakage-safe review surface', () => {
       ].join('\n'));
       const artifact = buildTurnWriteArtifact(parsed);
 
-      assert.equal(parsed.proofs.length, 0);
+      assert.equal(parsed.proofs.length, 1);
+      assert.ok(!Object.prototype.hasOwnProperty.call(parsed.proofs[0].proof, 'reason'));
       assert.equal(artifact.summary.reviewable_turns, 0);
       assert.ok(!JSON.stringify(artifact).includes(reason));
     }

@@ -32,7 +32,9 @@ The log stream is untrusted input. `services/turnWriteArtifact.js` rebuilds both
 closed field whitelists, validates bounded shapes and canonical stage order, and rejects malformed,
 unknown-route, over-limit, capability-bearing, or fingerprint-bearing records. The artifact has no
 field for pairing tokens, payload fingerprints, workout rows, prompts, coach prose, credentials,
-Sheet identifiers, or arbitrary nested values.
+Sheet identifiers, or arbitrary nested values. Client-controlled string proof fields that can carry
+arbitrary prose (`write_id`, top-level `reason`, and append-range strings) are omitted; bounded
+attempt identity and numeric/boolean write evidence remain.
 
 ## Reviewability
 
@@ -44,6 +46,10 @@ A turn is reviewable only when all of these hold:
 4. the proof contains positive write evidence, explicit W1–W3 no-write evidence, or a bounded
    idempotent no-write outcome;
 5. no relevant projection was withheld and no seal/closeout contradiction remains.
+
+The explicit no-write tuple outranks incidental preview bookkeeping such as `effortWritten:true`.
+Conversely, `sheet_write:'unverified'`, `partial`, or `skipped_duplicate_in_progress` never counts as
+a confirmed/reviewable write even if another field is positive.
 
 `complete` means every included turn is reviewable and no marker record was rejected. `partial`
 means at least one record exists but a turn is missing, ambiguous, rejected, unbound, withheld,
@@ -78,9 +84,10 @@ or exposing malformed client input.
 ## Evidence
 
 - `test/turnWriteArtifact.test.js` — ordering, cross-turn/cross-session refusal, attempt bounds,
-  integer proof counts, proof sufficiency, closeout discriminator for writes and replays, seal
-  classifications, withheld/absent distinction, leakage refusal (including source labels), CLI
-  output, and non-zero partial/empty behavior.
+  integer proof counts, proof sufficiency, effort-bearing preview no-write precedence,
+  unverified/partial/in-progress refusal, closeout discriminator for writes and replays, seal
+  classifications, withheld/absent distinction, leakage refusal (including client-controlled proof
+  strings and source labels), CLI output, and non-zero partial/empty behavior.
 - `test/turnWriteArtifactIntegration.test.js` — captures the actual interaction-trace emitter and a
   real registry preview → pairing → live resolution → write-proof emitter, then joins their log
   lines.
