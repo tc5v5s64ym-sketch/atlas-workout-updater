@@ -82,6 +82,11 @@ async function mock(page, capture) {
 
     // A challenge/reassure-free coach lane — recorded so the test can prove the held
     // clarification is NOT leaked to the coach.
+    if (path.startsWith('/api/recommend/next/') && capture.recommendationGate) {
+      capture.recommendationCalls = (capture.recommendationCalls || 0) + 1;
+      await capture.recommendationGate;
+      return route.fulfill(json({ status: 'success', data: {} }));
+    }
     if (path === '/api/coach/chat') {
       if (body?.message === 'Seed the clarified-set turn') {
         return route.fulfill(json(
@@ -340,4 +345,24 @@ test('failed set coaching settles the closeout wait and leaves the write uncorre
   await page.locator('.rv-save').last().click();
   await expect.poll(() => capture.writes.length).toBe(1);
   expect(capture.writes[0].correlation).toBeUndefined();
+});
+
+test('a stalled pre-message recommendation cannot block closeout indefinitely', async ({ page }) => {
+  const capture = { recommendationGate: new Promise(() => {}) };
+  await mock(page, capture);
+  await page.addInitScript(key => { localStorage.setItem('atlas_api_key', key); }, TEST_KEY);
+  await page.goto('/app/');
+  await page.evaluate(session => {
+    document.getElementById('log-session-id').value = session;
+  }, TEST_SESSION);
+
+  await submit(page, 'Knee raises BW 15 12 10');
+  await expect.poll(() => capture.recommendationCalls || 0).toBe(1);
+  await expect.poll(() => page.evaluate(() => window.getSessionLog().length)).toBe(3);
+  expect(capture.messageCalls).toHaveLength(0);
+
+  await submit(page, 'done');
+  await expect.poll(() => capture.previews.length, { timeout: 11_000 }).toBe(1);
+  expect(capture.previews[0].correlation).toBeUndefined();
+  expect(capture.messageCalls).toHaveLength(0);
 });
