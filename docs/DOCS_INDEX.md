@@ -46,6 +46,7 @@ These govern direction and constraints. They do not independently select the nex
 - [`docs/ONE_BRAIN_PROMOTION_CRITERIA.md`](./ONE_BRAIN_PROMOTION_CRITERIA.md) — reusable evidence standard for Brain promotion; promotion is always explicit and owner-reserved.
 - [`docs/AGENT_LIVE_TESTING.md`](./AGENT_LIVE_TESTING.md) — agent-run live-test tiers and production safeguards.
 - [`docs/TESTING_INDEX.md`](./TESTING_INDEX.md) — the single catalogue of every test/CI/verification system, its exact command, and whether it can touch the real Sheet. A map, not an authority.
+- [`docs/verification/ISSUE_1165_SLICE_3_ARTIFACT.md`](./verification/ISSUE_1165_SLICE_3_ARTIFACT.md) — the bounded cross-route review-artifact contract joining interaction traces to correlated write proof on canonical `turn_id`; read-only evidence tooling, not a work-selection authority.
 - [`docs/BUG_TRIAGE_LEDGER.md`](./BUG_TRIAGE_LEDGER.md) — Bug_Reports open/done record.
 - [`BACKLOG.md`](../BACKLOG.md) — intake, deferred work, and finding detail.
 - [`BACKLOG_ARCHIVE.md`](../BACKLOG_ARCHIVE.md) — shipped/cancelled history only.

@@ -146,6 +146,46 @@ describe('turnWriteArtifact — parsing and canonical turn join', () => {
     assert.equal(artifact.turns[0].writes[1].seal.successfully_sealed, true);
   });
 
+  it('treats the expected write_attempt:0 preview record as preview evidence, not a rejected live write', () => {
+    const preview = proof({
+      recorded_at: '2026-07-26T08:01:00.000Z',
+      pairing: {
+        established_at_preview: true,
+        write_attempt: 0,
+        previewed_write_id_match: null,
+        payload_bound: false,
+        effort_transition: false,
+      },
+      proof: {
+        test_mode: true,
+        sheet_write: 'skipped',
+        sheet_written: false,
+        no_write_confirmed: true,
+      },
+    });
+    const artifact = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, preview),
+      line(TURN_WRITE_PROOF_MARKER, proof()),
+    ].join('\n'));
+
+    assert.equal(artifact.status, 'complete');
+    assert.equal(artifact.summary.rejected_records, 0);
+    assert.equal(artifact.turns[0].previews.length, 1);
+    assert.equal(artifact.turns[0].writes.length, 1);
+    assert.equal(artifact.turns[0].previews[0].proof_state, 'no_write_confirmed');
+    assert.equal(artifact.turns[0].reviewable, true);
+  });
+
+  it('rejects a trace whose claimed missing list disagrees with its canonical stages', () => {
+    const parsed = parseTurnWriteLines(line(
+      INTERACTION_TRACE_MARKER,
+      trace({ missing: [] }),
+    ));
+    assert.equal(parsed.traces.length, 0);
+    assert.equal(parsed.rejected_count, 1);
+  });
+
   it('does not turn malformed or duplicate marker lines into a false green', () => {
     const parsed = parseTurnWriteLines([
       `${INTERACTION_TRACE_MARKER} not-json`,
@@ -242,6 +282,28 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
     assert.equal(summary.plan_version, 'pv_3f2504e0-4f89-41d3-9a0c-0305e82c3301');
   });
 
+  it('refuses to call a written closeout reviewable when its row discriminator is absent', () => {
+    const unidentified = proof({
+      proof: {
+        sheet_write: 'skipped_duplicate',
+        sheet_written: false,
+        session_plans_closeout_status: 'written',
+        session_plans_closeout_captured: true,
+        session_plans_closeout_written: 1,
+        session_plans_closeout_skipped: 0,
+      },
+    });
+    const artifact = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, unidentified),
+    ].join('\n'));
+    const write = artifact.turns[0].writes[0];
+
+    assert.equal(write.closeout.state, 'written_unidentified');
+    assert.equal(write.reviewable, false);
+    assert.equal(artifact.status, 'partial');
+  });
+
   it('distinguishes validation-withheld evidence from genuinely absent evidence', () => {
     const withheld = proof({
       proof: {
@@ -306,6 +368,68 @@ describe('turnWriteArtifact — bounded, leakage-safe review surface', () => {
       assert.ok(!serialized.includes(banned), `artifact must not contain ${banned}`);
     }
     assert.equal(artifact.turns[0].writes[0].proof.rows_appended, 1);
+  });
+
+  it('rejects a capability or fingerprint embedded inside an otherwise allowed proof string', () => {
+    const capability = 'pair:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const fingerprint = 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    for (const reason of [`failed with ${capability}`, `identity ${fingerprint} mismatch`]) {
+      const parsed = parseTurnWriteLines([
+        line(INTERACTION_TRACE_MARKER, trace()),
+        line(TURN_WRITE_PROOF_MARKER, proof({ proof: { sheet_written: false, reason } })),
+      ].join('\n'));
+      const artifact = buildTurnWriteArtifact(parsed);
+
+      assert.equal(parsed.proofs.length, 0);
+      assert.equal(artifact.summary.reviewable_turns, 0);
+      assert.ok(!JSON.stringify(artifact).includes(reason));
+    }
+  });
+
+  it('requires positive write or explicit no-write evidence before a joined record is reviewable', () => {
+    const emptyProof = proof({ proof: {} });
+    const artifact = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, emptyProof),
+    ].join('\n'));
+
+    assert.equal(artifact.turns[0].writes[0].proof_state, 'insufficient');
+    assert.equal(artifact.turns[0].writes[0].reviewable, false);
+    assert.equal(artifact.status, 'partial');
+
+    const noWrite = proof({
+      proof: {
+        test_mode: true,
+        sheet_write: 'skipped',
+        sheet_written: false,
+        no_write_confirmed: true,
+      },
+    });
+    const noWriteArtifact = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, noWrite),
+    ].join('\n'));
+    assert.equal(noWriteArtifact.turns[0].writes[0].proof_state, 'no_write_confirmed');
+    assert.equal(noWriteArtifact.turns[0].writes[0].reviewable, true);
+  });
+
+  it('treats sealed_ok:true plus sheet_written:true without a positive sealed count as indeterminate', () => {
+    const inconsistent = proof({
+      proof: {
+        sheet_written: true,
+        ledger_seal_sheet_written: true,
+        ledger_seal_sealed_ok: true,
+      },
+    });
+    const artifact = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, inconsistent),
+    ].join('\n'));
+    const write = artifact.turns[0].writes[0];
+
+    assert.equal(write.seal.state, 'indeterminate');
+    assert.equal(write.seal.successfully_sealed, false);
+    assert.equal(write.reviewable, false);
   });
 
   it('fails reviewability closed when preview establishment or payload binding is absent', () => {

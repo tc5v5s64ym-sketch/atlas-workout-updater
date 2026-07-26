@@ -26,6 +26,11 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { resetIdempotencyStore } = require('../services/idempotency');
 const { logCleanedColumns, effortColumns, sessionPlanSetsColumns, sessionPlansColumns } = require('../config/columns');
+const {
+  buildTurnWriteArtifact,
+  INTERACTION_TRACE_MARKER,
+  TURN_WRITE_PROOF_MARKER,
+} = require('../services/turnWriteArtifact');
 
 process.env.ATLAS_API_KEY = 'test-api-key';
 process.env.GOOGLE_SHEETS_ID = 'stub-sheet';
@@ -44,6 +49,30 @@ process.env.ATLAS_SESSION_PLANS_WRITE = '1';
 process.env.ATLAS_INTERACTION_TRACE = 'shadow';
 
 const SEAL_IDX = sessionPlanSetsColumns.indexOf('closeout_write_id');
+
+function artifactForRecord(record) {
+  const trace = {
+    turn_id: record.turn_id,
+    started_at: '2026-07-26T09:00:00.000Z',
+    valid: true,
+    intent_type: 'closeout',
+    source: 'coach_message',
+    stages: [
+      { stage: 'intent', status: 'ok' },
+      { stage: 'session_snapshot', status: 'ok' },
+      { stage: 'engine_decision', status: 'ok' },
+      { stage: 'coaching_strategy', status: 'ok' },
+      { stage: 'model_response', status: 'ok' },
+      { stage: 'validator_result', status: 'ok' },
+      { stage: 'rendered_output', status: 'ok' },
+    ],
+    missing: ['parser', 'knowledge_retrieval', 'write_proof'],
+  };
+  return buildTurnWriteArtifact([
+    `${INTERACTION_TRACE_MARKER} ${JSON.stringify(trace)}`,
+    `${TURN_WRITE_PROOF_MARKER} ${JSON.stringify(record)}`,
+  ].join('\n'));
+}
 
 const state = {
   planSetRows: [],
@@ -283,6 +312,12 @@ test('the duplicate-closeout branch: a REAL seal + closeout event, with the proj
   assert.equal(rec.pairing.payload_bound, true);
   assert.equal(rec.proof.write_id, 'w-dupe-live-1');
 
+  const artifact = artifactForRecord(rec);
+  assert.equal(artifact.status, 'complete', 'the genuine sidecar stamp is reviewable end to end');
+  assert.equal(artifact.turns[0].writes[0].seal.state, 'sealed');
+  assert.equal(artifact.turns[0].writes[0].seal.new_seal_write, true);
+  assert.equal(artifact.turns[0].writes[0].closeout.state, 'written');
+
   // Project, never pass through: no nested envelope, no workout data, no Sheet id.
   assert.ok(!('ledger_seal' in rec.proof), 'the nested seal envelope must not be carried');
   assert.ok(!('session_plans_closeout' in rec.proof));
@@ -325,6 +360,11 @@ test('a duplicate replay that seals NOTHING new still reports honestly', async (
   assert.equal(rec.proof.ledger_seal_sheet_written, false);
   assert.equal(rec.proof.ledger_seal_sealed, 0);
   assert.ok(rec.proof.ledger_seal_already_sealed > 0, 'the already-sealed count carries the truth');
+
+  const artifact = artifactForRecord(rec);
+  assert.equal(artifact.turns[0].writes[0].seal.state, 'already_sealed');
+  assert.equal(artifact.turns[0].writes[0].seal.successfully_sealed, true);
+  assert.equal(artifact.turns[0].writes[0].seal.new_seal_write, false);
 });
 
 test('a FAILED seal never lets the record read as a verified closeout', async () => {
@@ -353,4 +393,10 @@ test('a FAILED seal never lets the record read as a verified closeout', async ()
   // names another closeout, and it arrives as an array the projection does not whitelist.
   assert.ok(!('ledger_seal_conflicting_write_ids' in rec.proof));
   assert.ok(!JSON.stringify(rec).includes('w-someone-elses'), 'no foreign write id in the record');
+
+  const artifact = artifactForRecord(rec);
+  assert.equal(artifact.status, 'partial');
+  assert.equal(artifact.turns[0].writes[0].seal.state, 'failed');
+  assert.equal(artifact.turns[0].writes[0].seal.successfully_sealed, false);
+  assert.equal(artifact.turns[0].reviewable, false);
 });
