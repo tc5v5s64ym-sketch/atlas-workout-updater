@@ -72,6 +72,7 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
   function revokeTurnResponseAuthority() {
     const prior = authoritativeTurnResponse;
     authoritativeTurnResponse = null;
+    if (prior && typeof prior.settle === 'function') prior.settle(false);
     if (prior && turnResponses.get(prior.sessionId) === prior) {
       turnResponses.delete(prior.sessionId);
     }
@@ -129,6 +130,22 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
       completed: false,
       accepted: false,
     };
+    let settled = false;
+    let resolveSettlement;
+    Object.defineProperties(ticket, {
+      settlement: {
+        value: new Promise(resolve => { resolveSettlement = resolve; }),
+        enumerable: false,
+      },
+      settle: {
+        value: accepted => {
+          if (settled) return;
+          settled = true;
+          resolveSettlement(Boolean(accepted));
+        },
+        enumerable: false,
+      },
+    });
     turnResponses.delete(sessionId);
     turnResponses.set(sessionId, ticket);
     authoritativeTurnResponse = ticket;
@@ -144,7 +161,17 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
     if (authoritativeTurnResponse !== ticket || turnResponses.get(ticket.sessionId) !== ticket) return false;
     ticket.completed = true;
     ticket.accepted = captureTurnResponse({ sessionId: ticket.sessionId, responseHeaders });
+    ticket.settle(ticket.accepted);
     return ticket.accepted;
+  }
+
+  function waitForTurnResponse({ sessionId } = {}) {
+    const ticket = authoritativeTurnResponse;
+    if (!validSessionId(sessionId) || !ticket || ticket.sessionId !== sessionId
+        || turnResponses.get(sessionId) !== ticket) {
+      return Promise.resolve(false);
+    }
+    return ticket.settlement;
   }
 
   function isTurnResponseAuthoritative(ticket) {
@@ -272,6 +299,7 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
     captureTurnResponse,
     beginTurnResponse,
     completeTurnResponse,
+    waitForTurnResponse,
     isTurnResponseAuthoritative,
     beginPreview,
     completePreview,
@@ -289,6 +317,7 @@ export const captureTurnResponse = args => turnCorrelation.captureTurnResponse(a
 export const beginTurnResponse = args => turnCorrelation.beginTurnResponse(args);
 export const completeTurnResponse = (ticket, responseHeaders) =>
   turnCorrelation.completeTurnResponse(ticket, responseHeaders);
+export const waitForTurnResponse = args => turnCorrelation.waitForTurnResponse(args);
 export const isTurnResponseAuthoritative = ticket =>
   turnCorrelation.isTurnResponseAuthoritative(ticket);
 export const beginCorrelatedPreview = args => turnCorrelation.beginPreview(args);

@@ -847,7 +847,12 @@ import {
   }
 
   async function getLlmPlanMessage(data) {
-    if (typeof api !== 'function' || (typeof isConnected === 'function' && !isConnected())) return null;
+    if (typeof api !== 'function' || (typeof isConnected === 'function' && !isConnected())) {
+      if (responseTicket && typeof completeTurnResponse === 'function') {
+        completeTurnResponse(responseTicket, null);
+      }
+      return null;
+    }
     const facts = buildPlanFacts(data);
     if (!facts.label && !facts.why_today.length) return null; // nothing to explain (new user)
     const timeout = new Promise(resolve => setTimeout(() => resolve(null), COACH_LLM_TIMEOUT_MS));
@@ -1131,7 +1136,7 @@ import {
       } : {}),
     }).then(res => ({ selected: true, data: (res && res.data) || null }));
     const winner = await Promise.race([request, timeout]);
-    if (winner.selected && responseTicket && typeof completeTurnResponse === 'function') {
+    if (responseTicket && typeof completeTurnResponse === 'function') {
       completeTurnResponse(responseTicket, selectedHeaders);
     }
     return winner.data;
@@ -2468,7 +2473,6 @@ import {
 
     body.textContent = '';
     await typeOut(body, reply);
-    setWorkoutPlaceholder(extractPlaceholderFromText(reply));
 
     // A response can win its network race and then lose authority while its prose is
     // rendering. Recheck immediately before every structured side effect so a newer
@@ -2478,6 +2482,9 @@ import {
       && typeof isTurnResponseAuthoritative === 'function'
       && isTurnResponseAuthoritative(responseTicket)
     );
+    if (mayApplyStructuredResult()) {
+      setWorkoutPlaceholder(extractPlaceholderFromText(reply));
+    }
 
     // Apply the structured edit (if any) after prose is typed — the lifter sees
     // the explanation first, then the preview updates. The trust loop is intact:

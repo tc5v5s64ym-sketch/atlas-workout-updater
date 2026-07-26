@@ -72,6 +72,7 @@ import {
   completeCorrelatedPreview,
   resolveCorrelatedPreviewSession,
   retireCorrelatedPreview,
+  waitForTurnResponse,
 } from './turnCorrelation.js';
 
 const ATLAS_SHELL_BUILD = 'v145';
@@ -3694,6 +3695,7 @@ let sessionCompiledAwaitingPreview = false;
 // after Finish is never lost (Codex #1125). Fail-closed: once staged, an ambiguous
 // re-preview never re-enters the append lane.
 let closeoutPreviewStaged = false;
+let clarifiedSetResponseCompletion = null;
 
 // Populated after a successful manual write. Cleared only after undo or when
 // the user explicitly picks "Log as new" in the correction dialog. NOT cleared
@@ -4537,6 +4539,7 @@ document.addEventListener('atlas:session-reset', renderSessionPin);
 // when sessionLog is cleared. So the latch is true only between a staged closeout and
 // the next reset, and can never leak the append-block into a genuinely new session.
 document.addEventListener('atlas:session-reset', () => { closeoutPreviewStaged = false; });
+document.addEventListener('atlas:session-reset', () => { clarifiedSetResponseCompletion = null; });
 
 function collectManualEffort(sessionId, date, location, notes) {
   const duration = document.getElementById('effort-duration').value.trim();
@@ -5910,6 +5913,13 @@ function startOverWorkout() {
 // is cleared; gated on an accepted plan → no-op for freestyle).
 document.getElementById('start-over-btn')?.addEventListener('click', () => { emitPlanCloseout('abandoned'); startOverWorkout(); });
 
+async function waitForClarifiedSetTurn() {
+  if (!clarifiedSetResponseCompletion) return;
+  const pending = clarifiedSetResponseCompletion;
+  try { await pending; } catch { /* coaching prose is optional */ }
+  if (clarifiedSetResponseCompletion === pending) clarifiedSetResponseCompletion = null;
+}
+
 // End-of-session compilation: take the in-memory chat history, ask the server
 // to extract the workout sets the lifter logged conversationally, then populate
 // the composer and trigger a normal parse → preview → approve flow.
@@ -5925,6 +5935,7 @@ async function handleLogIt() {
 }
 
 async function runCloseout() {
+  await waitForClarifiedSetTurn();
   // CANONICAL SOURCE OF TRUTH: build the closeout rows from the structured set
   // buffer (sessionLog) — the same source getCanonicalSession() derives from. No
   // Gemini, no re-parse. This is what the visible logged cards were rendered from,
@@ -6348,6 +6359,7 @@ function bindClarifiedRowsToCurrentSession(rows) {
   const sessionId = sessionInput?.value?.trim() || generateSessionId(date);
   if (sessionInput) sessionInput.value = sessionId;
   for (const row of rows) row.session_id = sessionId;
+  return sessionId;
 }
 
 document.getElementById('logger-form').addEventListener('submit', async e => {
@@ -6421,8 +6433,9 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       // This early-return path runs before the normal submit block derives its session.
       // Bind the clarified rows now so atlas:set-logged can mint the coach response
       // ticket for this exact session and closeout retains that resulting canonical turn.
-      bindClarifiedRowsToCurrentSession(resolvedRows);
+      const clarificationSessionId = bindClarifiedRowsToCurrentSession(resolvedRows);
       emitSetLogged(resolvedRows, affirmText, [], null);
+      clarifiedSetResponseCompletion = waitForTurnResponse({ sessionId: clarificationSessionId });
       return;
     }
   }
