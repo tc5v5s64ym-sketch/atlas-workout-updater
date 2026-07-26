@@ -108,7 +108,11 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
       current.active.pairingToken = null;
       current.active.superseded = true;
     }
-    touch(sessionId, { turnId, active: null, retired: [] });
+    touch(sessionId, {
+      turnId,
+      active: null,
+      retired: current && Array.isArray(current.retired) ? current.retired : [],
+    });
     return true;
   }
 
@@ -161,6 +165,19 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
     if (authoritativeTurnResponse !== ticket || turnResponses.get(ticket.sessionId) !== ticket) return false;
     ticket.completed = true;
     ticket.accepted = captureTurnResponse({ sessionId: ticket.sessionId, responseHeaders });
+    if (!ticket.accepted) {
+      const current = sessions.get(ticket.sessionId);
+      if (current) {
+        if (current.active) {
+          current.active.pairingToken = null;
+          current.active.superseded = true;
+          addRetired(current, current.active.initiation_nonce);
+        }
+        current.turnId = null;
+        current.active = null;
+        touch(ticket.sessionId, current);
+      }
+    }
     ticket.settle(ticket.accepted);
     return ticket.accepted;
   }

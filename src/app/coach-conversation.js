@@ -1970,7 +1970,14 @@ import {
     if (responseTicket && detail && typeof detail === 'object') {
       setResponseTickets.set(detail, responseTicket);
     }
-    handleSetLogged(detail).catch(() => {});
+    handleSetLogged(detail).catch(() => {}).finally(() => {
+      // A rejected request or an early deterministic fallback must still release any
+      // closeout waiting on this set. A successful selected response already completed
+      // the ticket; the second call is an inert fail-closed no-op.
+      if (responseTicket && typeof completeTurnResponse === 'function') {
+        completeTurnResponse(responseTicket, null);
+      }
+    });
   });
   document.addEventListener('atlas:substitute-suggested', e => { handleSubstituteSuggested(e.detail).catch(() => {}); });
   // F10D acceptance boundary — the boundary's DATA guarantee is intact (the app.js

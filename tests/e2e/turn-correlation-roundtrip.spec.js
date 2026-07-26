@@ -253,7 +253,7 @@ test('B can approve while A is pending and late A cannot alter B or emit another
 });
 
 for (const delayPoint of ['message-in-flight', 'recommendation-await']) {
-test(`an older set cannot retire a newer closeout preview when delayed at ${delayPoint}`, async ({ page }) => {
+test(`closeout waits for the ordinary set turn when delayed at ${delayPoint}`, async ({ page }) => {
   const capture = {
     coachBodies: [],
     messageRoute: null,
@@ -385,10 +385,8 @@ test(`an older set cannot retire a newer closeout preview when delayed at ${dela
 
   await page.locator('#workout-text').fill('done');
   await page.locator('#preview-btn').click();
-  await expect.poll(() => capture.previews.length).toBe(1);
-  const previewCorrelation = capture.previews[0].correlation;
-  expect(previewCorrelation.turn_id).toBe(TURN);
-  await expect(page.locator('.rv-save').last()).toBeEnabled();
+  await page.waitForTimeout(150);
+  expect(capture.previews).toHaveLength(0);
 
   if (capture.recommendationRoute) {
     await capture.recommendationRoute.fulfill(json({
@@ -403,11 +401,14 @@ test(`an older set cannot retire a newer closeout preview when delayed at ${dela
     { 'x-atlas-turn-id': MESSAGE_TURN },
   ));
   await expect(page.locator('#thread-messages')).toContainText('Older set response completed late.');
+  await expect.poll(() => capture.previews.length).toBe(1);
+  const previewCorrelation = capture.previews[0].correlation;
+  expect(previewCorrelation.turn_id).toBe(MESSAGE_TURN);
   await expect(page.locator('.rv-save').last()).toBeEnabled();
   await page.locator('.rv-save').last().click();
   await expect.poll(() => capture.writes.length).toBe(1);
   expect(capture.writes[0].correlation).toEqual({
-    turn_id: TURN,
+    turn_id: MESSAGE_TURN,
     initiation_nonce: previewCorrelation.initiation_nonce,
     pairing_token: TOKEN_A,
   });
