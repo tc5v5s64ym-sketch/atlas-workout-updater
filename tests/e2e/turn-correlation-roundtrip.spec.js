@@ -201,3 +201,169 @@ for (const order of ['B-then-A', 'A-then-B']) {
     expect(JSON.stringify(capture.writes[0].correlation)).not.toContain(TOKEN_A);
   });
 }
+
+async function openSpecializedPreviewRace(page, capture, path) {
+  capture.previews = [];
+  capture.writes = [];
+  capture.gates = [];
+  capture.coachBodies = [];
+
+  await page.route('**/health', route => route.fulfill(json({ status: 'ok' })));
+  await page.route('**/api/**', async route => {
+    const request = route.request();
+    const requestPath = new URL(request.url()).pathname;
+    const method = request.method();
+    const body = method === 'POST' && request.postData() ? request.postDataJSON() : null;
+
+    if (requestPath === '/api/coach/ask') {
+      capture.coachBodies.push(body);
+      return route.fulfill(json(
+        { status: 'success', data: { depth: 'log_only', answer: null } },
+        200,
+        { 'x-atlas-turn-id': TURN },
+      ));
+    }
+    if (requestPath === '/api/coach/chat') {
+      capture.coachBodies.push(body);
+      return route.fulfill(json(
+        { status: 'success', data: { message: 'Keep going.' } },
+        200,
+        { 'x-atlas-turn-id': TURN },
+      ));
+    }
+    if (requestPath === '/api/parse-workout-text') {
+      return route.fulfill(json({ status: 'error', error: 'not a resistance log' }, 422));
+    }
+    if (requestPath === path && method === 'POST') {
+      const isPreview = body?.test_mode === true || body?.test_mode === 'true';
+      if (!isPreview) {
+        capture.writes.push(body);
+        return route.fulfill(json({
+          status: 'success',
+          data: path === '/api/bodyweight'
+            ? { sheet_write: 'success', sheet_written: true }
+            : { sheet_write: 'success', sheet_written: true, modality_rows_written: 1 },
+        }));
+      }
+
+      const index = capture.previews.length;
+      capture.previews.push(body);
+      await new Promise(resolve => capture.gates.push(resolve));
+      const token = index === 0 ? TOKEN_A : TOKEN_B;
+      const responseData = path === '/api/bodyweight'
+        ? {
+            test_mode: true,
+            sheet_write: 'skipped',
+            sheet_written: false,
+            no_write_confirmed: true,
+            entry_preview: { date: body.date, weight: body.weight, notes: body.notes },
+          }
+        : {
+            test_mode: true,
+            sheet_write: 'skipped',
+            sheet_written: false,
+            no_write_confirmed: true,
+            modality: 'cardio_steady',
+            modality_row_preview: [
+              body.date, body.session_id, 'cardio_steady', body.text,
+              1800, 5000, '', '', '', 7, '', '',
+            ],
+          };
+      return route.fulfill(json(
+        { status: 'success', data: responseData },
+        200,
+        {
+          'x-atlas-turn-id': body.correlation?.turn_id || TURN,
+          'x-atlas-turn-pairing': token,
+        },
+      ));
+    }
+    if (requestPath === '/api/catalog/exercises') {
+      return route.fulfill(json({ status: 'success', data: { exercises: [] } }));
+    }
+    return route.fulfill(json({ status: 'success', data: {} }));
+  });
+
+  await page.addInitScript(key => localStorage.setItem('atlas_api_key', key), TEST_KEY);
+  await page.goto('/app/');
+  await page.evaluate(session => {
+    document.getElementById('log-session-id').value = session;
+  }, SESSION);
+  await page.evaluate(({ session, text }) => {
+    document.dispatchEvent(new CustomEvent('atlas:chat-message', {
+      detail: { text, context: { session_id: session } },
+    }));
+  }, { session: SESSION, text: 'What should I do next?' });
+  await expect.poll(() => capture.coachBodies.length).toBeGreaterThanOrEqual(2);
+}
+
+test('real modality path drops a late superseded response before staging approval', async ({ page }) => {
+  const capture = {};
+  await openSpecializedPreviewRace(page, capture, '/api/log-modality');
+
+  await page.locator('#workout-text').fill('Ran 5km in 30 minutes');
+  await page.locator('#preview-btn').click();
+  await expect.poll(() => capture.previews.length).toBe(1);
+
+  await page.evaluate(() => {
+    document.getElementById('workout-text').value = 'Ran 6km in 35 minutes';
+    document.getElementById('logger-form').dispatchEvent(
+      new Event('submit', { cancelable: true, bubbles: true }),
+    );
+  });
+  await expect.poll(() => capture.previews.length).toBe(2);
+
+  const a = capture.previews[0].correlation;
+  const b = capture.previews[1].correlation;
+  expect(b.retire_initiation_nonces).toContain(a.initiation_nonce);
+  capture.gates[1]();
+  capture.gates[0]();
+
+  await expect(page.locator('#approve-btn')).toBeEnabled();
+  await page.locator('#approve-btn').click();
+  await expect.poll(() => capture.writes.length).toBe(1);
+  expect(capture.writes[0].text).toBe('Ran 6km in 35 minutes');
+  expect(capture.writes[0].correlation).toEqual({
+    turn_id: TURN,
+    initiation_nonce: b.initiation_nonce,
+    pairing_token: TOKEN_B,
+  });
+});
+
+test('real bodyweight path drops a late retired response before staging approval', async ({ page }) => {
+  const capture = {};
+  await openSpecializedPreviewRace(page, capture, '/api/bodyweight');
+
+  await page.evaluate(() => {
+    document.getElementById('bw-date').value = '2026-07-25';
+    document.getElementById('bw-weight').value = '180';
+    document.getElementById('bw-form').dispatchEvent(
+      new Event('submit', { cancelable: true, bubbles: true }),
+    );
+  });
+  await expect.poll(() => capture.previews.length).toBe(1);
+
+  await page.evaluate(() => {
+    document.getElementById('bw-weight').value = '181';
+    document.getElementById('bw-form').dispatchEvent(
+      new Event('submit', { cancelable: true, bubbles: true }),
+    );
+  });
+  await expect.poll(() => capture.previews.length).toBe(2);
+
+  const a = capture.previews[0].correlation;
+  const b = capture.previews[1].correlation;
+  expect(b.retire_initiation_nonces).toContain(a.initiation_nonce);
+  capture.gates[1]();
+  capture.gates[0]();
+
+  await expect(page.locator('#bw-approve-btn')).toBeEnabled();
+  await page.evaluate(() => document.getElementById('bw-approve-btn').click());
+  await expect.poll(() => capture.writes.length).toBe(1);
+  expect(capture.writes[0].weight).toBe(181);
+  expect(capture.writes[0].correlation).toEqual({
+    turn_id: TURN,
+    initiation_nonce: b.initiation_nonce,
+    pairing_token: TOKEN_B,
+  });
+});
