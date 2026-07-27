@@ -497,6 +497,103 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
     }
   });
 
+  it('accepts the canonical nine-column Effort append range and rejects a wider one', () => {
+    // config/columns.js effortColumns has nine values, so a real one-row Effort append
+    // reports Effort!A<n>:I<n>. A noncanonical wider span is not that write.
+    const canonical = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, proof({
+        proof: {
+          test_mode: false,
+          sheet_write: 'success',
+          log_rows_written: 0,
+          effortAppendedRange: 'Effort!A100:I100',
+          effort_rows_written: 1,
+        },
+      })),
+    ].join('\n'));
+    const canonicalWrite = canonical.turns[0].writes[0];
+
+    assert.equal(canonicalWrite.proof_state, 'write_confirmed');
+    assert.equal(canonicalWrite.reviewable, true);
+    assert.equal(canonical.status, 'complete');
+
+    const wider = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, proof({
+        proof: {
+          test_mode: false,
+          sheet_write: 'success',
+          log_rows_written: 0,
+          effortAppendedRange: 'Effort!A100:K100',
+          effort_rows_written: 1,
+        },
+      })),
+    ].join('\n'));
+    const widerWrite = wider.turns[0].writes[0];
+
+    assert.equal(widerWrite.proof_state, 'insufficient');
+    assert.equal(widerWrite.reviewable, false);
+    assert.equal(wider.status, 'partial');
+  });
+
+  it('requires every positive tab count to carry its own matching range proof', () => {
+    // One tab being range-backed must never substantiate the other tab's positive count.
+    const mixed = [
+      {
+        logAppendedRange: 'Log_Cleaned!A2:L3',
+        log_rows_written: 2,
+        effortAppendedRange: 'Log_Cleaned!A100:I100',
+        effort_rows_written: 1,
+      },
+      {
+        logAppendedRange: 'Log_Cleaned!A2:L3',
+        log_rows_written: 2,
+        effort_rows_written: 1,
+      },
+      {
+        log_rows_written: 2,
+        effortAppendedRange: 'Effort!A100:I100',
+        effort_rows_written: 1,
+      },
+    ];
+
+    for (const partialRangeProof of mixed) {
+      const artifact = buildTurnWriteArtifact([
+        line(INTERACTION_TRACE_MARKER, trace()),
+        line(TURN_WRITE_PROOF_MARKER, proof({
+          proof: {
+            test_mode: false,
+            sheet_write: 'success',
+            ...partialRangeProof,
+          },
+        })),
+      ].join('\n'));
+      const write = artifact.turns[0].writes[0];
+
+      assert.equal(write.proof_state, 'insufficient', JSON.stringify(partialRangeProof));
+      assert.equal(write.reviewable, false, JSON.stringify(partialRangeProof));
+      assert.equal(artifact.status, 'partial', JSON.stringify(partialRangeProof));
+    }
+
+    const bothBacked = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, proof({
+        proof: {
+          test_mode: false,
+          sheet_write: 'success',
+          logAppendedRange: 'Log_Cleaned!A2:L3',
+          log_rows_written: 2,
+          effortAppendedRange: 'Effort!A100:I100',
+          effort_rows_written: 1,
+        },
+      })),
+    ].join('\n'));
+
+    assert.equal(bothBacked.turns[0].writes[0].proof_state, 'write_confirmed');
+    assert.equal(bothBacked.status, 'complete');
+  });
+
   it('distinguishes a newly stamped seal from an idempotent already-sealed replay', () => {
     const stamped = proof({
       proof: {
