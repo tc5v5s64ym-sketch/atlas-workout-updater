@@ -97,10 +97,20 @@ Append ranges are validated against the **configured** tab names (`LOG_SHEET_NAM
 tab and Google echoes it, so hard-coding would call every genuine append on an overridden
 deployment insufficient.
 
-Positive-write **classification** and **contradiction detection** are separate questions. A row
-count cannot substantiate a generic-route write — `/api/log-modality` and `/api/bodyweight` emit
-`sheet_written:true` and no count at all — but any append indicator still contradicts an explicit
-no-write claim.
+Positive-write **classification** and **contradiction detection** are separate questions, and
+tightening the first must never weaken the second. A row count cannot substantiate a generic-route
+write — `/api/log-modality` and `/api/bodyweight` emit `sheet_written:true` and no count at all —
+but any append indicator still contradicts an explicit no-write claim. Both contradiction arms
+therefore test the broad positive signal rather than the narrower classification predicates: a
+success claiming `sheet_written:false` beside real append evidence is a corrupted record whichever
+route emitted it, and stays `contradictory` even when it also fails the complete-tuple check.
+
+Both per-tab success bodies emit **both** row counts as numbers on every live write —
+`/api/complete-workout` at `index.js:2723` (an explicit `0` on an effort-only completion) and
+`:2745`, `/api/log-workout` at `index.js:3416-3417`. An absent count therefore means the projection
+lost part of the producer tuple, not that zero rows were intended, and both are required on a
+claimed success. Without that, a missing count vacuously satisfies the "every positive count carries
+its own range" clause and a truncated record reads as a confirmed write.
 
 `/api/complete-workout` is held to the same **per-tab range-backed** tuple as `/api/log-workout`,
 since it verifies those exact row counts against the ranges before returning. `sheet_written`

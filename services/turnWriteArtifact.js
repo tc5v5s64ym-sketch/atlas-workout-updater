@@ -612,15 +612,25 @@ function _proofState(proof, seal, closeout, route, rangeEvidence = {}) {
     && (!logRowsWritten || rangeEvidence.log === true)
     && (!effortRowsWritten || rangeEvidence.effort === true);
   const isPerTabAppend = PER_TAB_APPEND_ROUTES.has(route);
+  // BOTH per-tab success bodies emit BOTH counts as numbers on every live write:
+  // `/api/complete-workout` at index.js:2723 (log — an explicit 0 on an effort-only completion)
+  // and :2745 (effort); `/api/log-workout` at index.js:3416-3417. So an ABSENT count means the
+  // projection lost part of the producer tuple, NOT that zero rows were intended. Without this,
+  // a missing count vacuously satisfies the "every positive count carries its range" clauses
+  // below and a truncated record reads as a confirmed write.
+  const hasBothRowCounts = Number.isSafeInteger(proof.log_rows_written)
+    && proof.log_rows_written >= 0
+    && Number.isSafeInteger(proof.effort_rows_written)
+    && proof.effort_rows_written >= 0;
   // `/api/complete-workout` appends Effort UNCONDITIONALLY (index.js:2585) and gates success on
   // `effort_rows_written === 1` plus an Effort range (index.js:2643), so a log-only success is
   // unreachable there. `/api/log-workout` has no such requirement — an effort-less log append is
   // its ordinary shape.
-  const perTabWrite = route === '/api/complete-workout'
+  const perTabWrite = hasBothRowCounts && (route === '/api/complete-workout'
     ? (proof.effort_rows_written === 1
       && rangeEvidence.effort === true
       && (!logRowsWritten || rangeEvidence.log === true))
-    : rangeBackedLogWorkoutWrite;
+    : rangeBackedLogWorkoutWrite);
   // `/api/log-modality` and `/api/bodyweight` emit `sheet_write:'success'` with
   // `sheet_written:true` and NO row-count field (index.js:1407-1423, 2024-2036), so a count can
   // never substitute for the write flag on those routes.
@@ -640,11 +650,14 @@ function _proofState(proof, seal, closeout, route, rangeEvidence = {}) {
   // `/api/log-workout` has one live main-write success shape. A non-success state cannot use
   // generic row/sheet signals to bypass its range-backed W3 tuple, and an explicit false write
   // flag cannot coexist with a claimed range-backed success.
+  // Both arms use `anyPositiveWriteSignal`, NOT the classification predicates: tightening what
+  // COUNTS AS a write must never weaken what is DIAGNOSED as impossible. A success claiming
+  // `sheet_written:false` beside real append evidence is a corrupted record however the route
+  // classifies it, and stays `contradictory` even when it also fails the complete-tuple check —
+  // otherwise the narrower predicate silently downgrades it to the milder `insufficient`.
   if (proof.test_mode !== true
     && ((!claimsSuccess && anyPositiveWriteSignal)
-      || (claimsSuccess
-        && proof.sheet_written === false
-        && (isPerTabAppend ? perTabWrite : genericMainWrite)))) {
+      || (claimsSuccess && proof.sheet_written === false && anyPositiveWriteSignal))) {
     return 'contradictory';
   }
 
