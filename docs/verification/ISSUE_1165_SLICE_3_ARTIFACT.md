@@ -94,9 +94,11 @@ affirmative — absent means unknown throughout:
   gate**, so the record must also carry seal-or-closeout evidence, the closeout verdict, and
   `idempotency_status:'completed'`. The gate is an OR, matching the producer exactly, so a
   projection that dropped one envelope cannot turn a real duplicate into an unreviewable one.
-- the **preview** (attempt-zero) tuple — all three preview correlation producers emit
+- the **preview** (attempt-zero) tuple — all **four** preview correlation producers emit
   `sheet_write:'skipped'` beside the no-write tuple, so that discriminator is required too; a
-  preview carrying another state is a shape no producer emits.
+  preview carrying another state is a shape no producer emits. `/api/complete-workout` is one of
+  them: it passes `isPreview` as a *variable* rather than a literal, and its dry-run block sets
+  `no_write_confirmed:true` and `sheet_write:'skipped'` on the body it correlates.
 
 Append ranges are validated against the **configured** tab names (`LOG_SHEET_NAME` /
 `EFFORT_SHEET_NAME`, `sheets.js`), not hard-coded defaults: the real routes append to the configured

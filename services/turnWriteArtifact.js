@@ -357,12 +357,20 @@ function _sanitizeProof(record) {
     withheldEvidence.push(key);
   }
 
-  // All THREE preview correlation producers — `/api/log-modality` (index.js:1372),
-  // `/api/bodyweight` (:1978) and `/api/log-workout` (:3152) — emit the same body:
+  // All FOUR preview correlation producers emit the same body:
   // `test_mode:true, sheet_write:'skipped', sheet_written:false, no_write_confirmed:true`.
-  // (`/api/complete-workout` emits no preview correlation at all.) `sheet_write` is part of that
-  // tuple, so an attempt-zero record without it — or carrying another state — is a shape no
-  // producer emits, not a lost field, and is rejected like any other malformed record.
+  //   `/api/log-modality`     index.js:1372  (isPreview: true)
+  //   `/api/bodyweight`       index.js:1978  (isPreview: true)
+  //   `/api/complete-workout` index.js:2784  (isPreview: testMode — a VARIABLE, and its dry-run
+  //                                          block at :2748-2751 sets no_write_confirmed:true and
+  //                                          sheet_write:'skipped' on the correlated body)
+  //   `/api/log-workout`      index.js:3152  (isPreview: true)
+  // Grepping for the literal `isPreview: true` finds only three of them and is how this inventory
+  // was first written down wrong — the tuple below was right anyway, but the rationale was not.
+  //
+  // `sheet_write` is part of that tuple, so an attempt-zero record without it — or carrying another
+  // state — is a shape no producer emits, not a lost field, and is rejected like any other
+  // malformed record.
   if (pairing.write_attempt === 0
     && (pairing.established_at_preview !== true
       || pairing.payload_bound !== false

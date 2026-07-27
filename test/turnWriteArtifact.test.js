@@ -2710,6 +2710,28 @@ describe('turnWriteArtifact — reachable producer paths', () => {
       assert.equal(artifact.status, 'partial', String(state));
     }
 
+    // CONTROL — /api/complete-workout is the FOURTH preview producer, and the one I originally
+    // missed: index.js:2784 passes `isPreview: testMode` (a variable, not the literal `true` the
+    // other three use), and its dry-run block at :2748-2751 sets no_write_confirmed:true and
+    // sheet_write:'skipped' on the very body that is correlated. Its preview must stay accepted.
+    const completeWorkoutPreview = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, proof({
+        route: '/api/complete-workout',
+        pairing: previewPairing,
+        proof: {
+          test_mode: true,
+          sheet_write: 'skipped',
+          sheet_written: false,
+          no_write_confirmed: true,
+          log_rows_written: 0,
+        },
+      })),
+    ].join('\n'));
+    assert.equal(completeWorkoutPreview.summary.rejected_records, 0);
+    assert.equal(completeWorkoutPreview.turns[0].previews.length, 1);
+    assert.equal(completeWorkoutPreview.turns[0].previews[0].proof_state, 'no_write_confirmed');
+
     // CONTROL — the real preview body stays accepted and reviewable beside a healthy live write.
     const real = buildTurnWriteArtifact([
       line(INTERACTION_TRACE_MARKER, trace()),
