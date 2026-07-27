@@ -163,24 +163,38 @@ describe('turnWriteArtifact — parsing and canonical turn join', () => {
   });
 
   it('retains the legitimate seal retry as a second bounded write attempt', () => {
+    // The retry is the ALL-ROWS-DUPLICATE branch, not a second success. Attempt 1 appended the
+    // rows, so attempt 2 finds `rowsToWrite.length === 0` and takes index.js:3237, which emits
+    // `sheet_write:'skipped_duplicate'` with `sheet_written:false` and `duplicate_write:true` —
+    // and still stamps the seal, which is the whole point of the F10D heal.
+    //
+    // An earlier version of this fixture gave the retry a `success` body carrying `sheet_written`
+    // and `rows_appended`. `/api/log-workout` emits neither on success (index.js:3413-3421) and
+    // always emits both row counts instead — a fact this repository's own production comment
+    // states — so that shape was unreachable twice over.
     const retry = proof({
       recorded_at: '2026-07-26T08:03:00.000Z',
       pairing: { ...proof().pairing, write_attempt: 2, effort_transition: true },
       proof: {
         test_mode: false,
-        sheet_write: 'success',
-        duplicate_write: false,
+        sheet_write: 'skipped_duplicate',
+        sheet_written: false,
+        duplicate_write: true,
         idempotency_status: 'completed',
-        sheet_written: true,
-        no_write_confirmed: false,
         write_id: 'write-b-retry',
-        rows_appended: 0,
+        log_rows_written: 0,
+        skipped_duplicates: 3,
         closeout_fully_verified: true,
         ledger_seal_sheet_written: true,
         ledger_seal_no_write_confirmed: false,
         ledger_seal_sealed: 3,
         ledger_seal_already_sealed: 0,
         ledger_seal_sealed_ok: true,
+        session_plans_closeout_status: 'written',
+        session_plans_closeout_captured: true,
+        session_plans_closeout_written: 1,
+        session_plans_closeout_skipped: 0,
+        session_plans_closeout_plan_version: 'pv_11111111-2222-3333-4444-555555555555',
       },
     });
     const artifact = buildTurnWriteArtifact([
@@ -705,21 +719,40 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
 
     // Control: the real all-rows-duplicate branch has no main-write claim at all, so its sidecar
     // seal remains the legitimate evidence that makes the turn reviewable.
+    //
+    // This must be the WHOLE emitted body, not the subset the assertion happens to need. The
+    // branch at index.js:3237-3268 always sets `sheet_written:false` and `duplicate_write:true`,
+    // adds `idempotency_status:'completed'` whenever idempotency is enabled, and — inside the
+    // `closeout_context` block that produces this seal at all — always assigns a
+    // `session_plans_closeout` envelope beside `ledger_seal`, on the catch path as well as the
+    // try. An earlier version of this control omitted all four and was still asserted `complete`,
+    // which blessed a shape no producer emits.
     const sidecarOnly = buildTurnWriteArtifact([
       line(INTERACTION_TRACE_MARKER, trace()),
       line(TURN_WRITE_PROOF_MARKER, proof({
         proof: {
           test_mode: false,
           sheet_write: 'skipped_duplicate',
+          sheet_written: false,
+          duplicate_write: true,
+          idempotency_status: 'completed',
           log_rows_written: 0,
           effort_rows_written: 0,
           skipped_duplicates: 3,
           closeout_fully_verified: true,
+          // A FRESH stamp: the F10D case where a retry heals a closeout the first approval left
+          // unsealed. That is a genuine sidecar write, which is what makes the turn reviewable
+          // even though the branch appends no Log or Effort row.
           ledger_seal_sheet_written: true,
           ledger_seal_no_write_confirmed: false,
           ledger_seal_sealed: 3,
           ledger_seal_already_sealed: 0,
           ledger_seal_sealed_ok: true,
+          session_plans_closeout_status: 'written',
+          session_plans_closeout_captured: true,
+          session_plans_closeout_written: 1,
+          session_plans_closeout_skipped: 0,
+          session_plans_closeout_plan_version: 'pv_11111111-2222-3333-4444-555555555555',
         },
       })),
     ].join('\n'));

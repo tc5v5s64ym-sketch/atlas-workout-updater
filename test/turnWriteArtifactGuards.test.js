@@ -341,23 +341,34 @@ describe('turnWriteArtifact guards — withheld evidence', () => {
 });
 
 describe('turnWriteArtifact guards — seal presentation', () => {
-  it('reports an explicit seal_proof_mismatch reason as a mismatch, not merely unverified', () => {
-    // The reason must be decisive ON ITS OWN. Pairing it with a positive stamp claim would prove
-    // nothing: the "any reason contradicts a stamp" arm below already catches that shape, so the
-    // test would pass with this check deleted. The mismatch here claims no seal write at all, so
-    // only the explicit reason distinguishes it from an ordinary unverified seal.
+  it('never presents the producer&#39;s seal_proof_mismatch tuple as a successful seal', () => {
+    // The ONE shape `sealCloseout` emits for a mismatch (sessionPlanSetsStore.js:329-335): the
+    // update was attempted, so `sheet_written` is true, `sealed_ok` is false, `sealed` is 0, and
+    // the expected/updated cell counts come along.
+    //
+    // This does NOT independently prove the explicit-reason branch, and the guard-bite table says
+    // so. On this — the only reachable mismatch record — three arms agree: the explicit reason,
+    // "any reason contradicts a positive stamp", and "sealed_ok:false with sheet_written:true".
+    // Deleting the first still yields `seal_proof_mismatch`. An earlier version of this test used
+    // `sealed_ok:true, sheet_written:false` to make the first arm decisive, which made it bite —
+    // but that tuple is one no producer emits, so the bite was manufactured. A guard proven only
+    // by an impossible record is not proven.
     const artifact = build(trace(), proofRecord({}, {
-      ledger_seal_sealed_ok: true,
-      ledger_seal_sheet_written: false,
+      ledger_seal_sheet_written: true,
+      ledger_seal_sealed_ok: false,
       ledger_seal_sealed: 0,
-      ledger_seal_already_sealed: 0,
+      ledger_seal_already_sealed: 2,
       ledger_seal_reason: 'seal_proof_mismatch',
+      ledger_seal_expected_cells: 3,
+      ledger_seal_updated_cells: 1,
       closeout_fully_verified: true,
     }));
     const write = firstWrite(artifact);
     assert.equal(write.seal.state, 'seal_proof_mismatch');
     assert.equal(write.seal.successfully_sealed, false);
+    assert.equal(write.seal.new_seal_write, false);
     assert.ok(write.issues.includes('seal_proof_mismatch'));
+    assert.equal(artifact.turns[0].reviewable, false);
 
     // CONTROL — the same tuple without the mismatch reason is a genuine fresh stamp.
     const control = build(trace(), proofRecord({}, {
