@@ -1732,11 +1732,11 @@ describe('turnWriteArtifact — complete producer tuples', () => {
     assert.equal(logAndEffort.turns[0].writes[0].proof_state, 'write_confirmed');
     assert.equal(logAndEffort.status, 'complete');
 
-    // CONTROL — the real EFFORT-LESS completion. `sheet_written` on this route tracks
-    // `effortWritten` (index.js: `sheet_written: !testMode && effortWritten`), so a genuine
-    // log-only live write legitimately reports false beside a real Log append. It must stay
-    // reviewable and must NOT read as contradictory.
-    const logOnly = build({
+    // `sheet_written` stays AUTHORITATIVE on this route. The Effort append is unconditional
+    // (index.js:2585) and the success gate requires `effortRowsWritten === 1` (index.js:2643), so
+    // every genuine success has `effortWritten:true` and therefore `sheet_written:true`. A success
+    // claiming otherwise is a corrupted record, not a log-only completion.
+    const successWithoutWriteFlag = build({
       route: COMPLETE_ROUTE,
       proof: {
         test_mode: false,
@@ -1747,8 +1747,25 @@ describe('turnWriteArtifact — complete producer tuples', () => {
         effort_rows_written: 0,
       },
     });
-    assert.equal(logOnly.turns[0].writes[0].proof_state, 'write_confirmed');
-    assert.equal(logOnly.status, 'complete');
+    assert.equal(successWithoutWriteFlag.turns[0].writes[0].proof_state, 'contradictory');
+    assert.equal(successWithoutWriteFlag.status, 'partial');
+
+    // CONTROL — the real EFFORT-ONLY completion. `logProofOk` is vacuously true when there are no
+    // log rows (index.js:2640-2642), so a completion with only an Effort append is a genuine
+    // producer shape and must stay reviewable under the per-tab rule.
+    const effortOnly = build({
+      route: COMPLETE_ROUTE,
+      proof: {
+        test_mode: false,
+        sheet_write: 'success',
+        sheet_written: true,
+        log_rows_written: 0,
+        effort_rows_written: 1,
+        effortAppendedRange: 'Effort!A100:I100',
+      },
+    });
+    assert.equal(effortOnly.turns[0].writes[0].proof_state, 'write_confirmed');
+    assert.equal(effortOnly.status, 'complete');
   });
 
   it('requires the complete correlated duplicate tuple for idempotent_no_write', () => {
