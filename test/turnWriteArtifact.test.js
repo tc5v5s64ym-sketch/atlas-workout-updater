@@ -344,13 +344,13 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
         idempotency_status: 'completed',
         sheet_written: true,
         no_write_confirmed: true,
-        rows_appended: 1,
+        log_rows_written: 1,
       },
       {
         sheet_write: 'skipped',
         sheet_written: false,
         no_write_confirmed: true,
-        rows_appended: 3,
+        log_rows_written: 3,
       },
     ];
 
@@ -482,7 +482,7 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
           test_mode: false,
           sheet_write: 'blocked_schema_drift',
           sheet_written: true,
-          rows_appended: 1,
+          log_rows_written: 1,
         },
       });
       const artifact = buildTurnWriteArtifact([
@@ -1293,7 +1293,7 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
         duplicate_write: false,
         idempotency_status: 'completed',
         sheet_written: true,
-        rows_appended: 1,
+        log_rows_written: 1,
         ledger_seal_sheet_written: false,
         ledger_seal_sealed: 2,
         ledger_seal_already_sealed: 0,
@@ -1320,7 +1320,7 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
         duplicate_write: false,
         idempotency_status: 'completed',
         sheet_written: true,
-        rows_appended: 1,
+        log_rows_written: 1,
         ledger_seal_sheet_written: true,
         ledger_seal_sealed: 3,
         ledger_seal_already_sealed: 0,
@@ -1548,7 +1548,7 @@ describe('turnWriteArtifact — bounded, leakage-safe review surface', () => {
       prompt: 'private coach prompt',
       proof: {
         sheet_written: true,
-        rows_appended: 1,
+        log_rows_written: 1,
         log_rows: [['Bench Press', 225, 5]],
         notes: 'private workout note',
         token: capability,
@@ -1571,7 +1571,7 @@ describe('turnWriteArtifact — bounded, leakage-safe review surface', () => {
     ]) {
       assert.ok(!serialized.includes(banned), `artifact must not contain ${banned}`);
     }
-    assert.equal(artifact.turns[0].writes[0].proof.rows_appended, 1);
+    assert.equal(artifact.turns[0].writes[0].proof.log_rows_written, 1);
   });
 
   it('omits a capability or fingerprint embedded inside a client-controlled proof string', () => {
@@ -1609,7 +1609,7 @@ describe('turnWriteArtifact — bounded, leakage-safe review surface', () => {
   it('rejects fractional proof counts instead of treating them as positive write evidence', () => {
     const parsed = parseTurnWriteLines(line(
       TURN_WRITE_PROOF_MARKER,
-      proof({ proof: { sheet_written: false, rows_appended: 0.5 } }),
+      proof({ proof: { sheet_written: false, log_rows_written: 0.5 } }),
     ));
 
     assert.equal(parsed.proofs.length, 0);
@@ -1651,7 +1651,7 @@ describe('turnWriteArtifact — bounded, leakage-safe review surface', () => {
           proof: {
             sheet_write: sheetWrite,
             sheet_written: true,
-            rows_appended: 1,
+            log_rows_written: 1,
           },
         })),
       ].join('\n'));
@@ -1670,7 +1670,7 @@ describe('turnWriteArtifact — bounded, leakage-safe review surface', () => {
         duplicate_write: false,
         idempotency_status: 'completed',
         sheet_written: true,
-        rows_appended: 1,
+        log_rows_written: 1,
         write_id: 'private coach prompt',
         reason: 'private workout note',
         log_appended_range: 'private trace prose',
@@ -1686,7 +1686,7 @@ describe('turnWriteArtifact — bounded, leakage-safe review surface', () => {
 
     assert.equal(parsed.proofs.length, 1, 'one unsafe optional string must not erase safe proof');
     assert.equal(emittedProof.sheet_write, 'success');
-    assert.equal(emittedProof.rows_appended, 1);
+    assert.equal(emittedProof.log_rows_written, 1);
     for (const key of ['write_id', 'reason', 'log_appended_range', 'effortAppendedRange']) {
       assert.ok(!Object.prototype.hasOwnProperty.call(emittedProof, key));
     }
@@ -2249,10 +2249,13 @@ describe('turnWriteArtifact — reachable producer paths', () => {
         duplicate_write: false,
         idempotency_status: 'completed',
         sheet_written: false,
-        rows_appended: 3,
       },
     });
-    assert.equal(generic.turns[0].writes[0].proof_state, 'contradictory');
+    // `insufficient`, not `contradictory`: a generic route's ONLY positive write signal is
+    // `sheet_written`, so with it explicitly false there is no append evidence to contradict — the
+    // record simply fails to substantiate the success it claims. The earlier expectation of
+    // `contradictory` was reachable only through a `log_rows_written` this route cannot emit.
+    assert.equal(generic.turns[0].writes[0].proof_state, 'insufficient');
     assert.equal(generic.status, 'partial');
   });
 
@@ -2330,7 +2333,7 @@ describe('turnWriteArtifact — reachable producer paths', () => {
     // A dry run appends nothing (W2), so `sheet_written:true` or a positive count beside
     // test_mode:true is impossible — not merely unsubstantiated. The narrower `positiveWrite`
     // missed both, because it needs a success claim it never gets on this path.
-    for (const signal of [{ sheet_written: true }, { rows_appended: 2 }, { log_rows_written: 3 }]) {
+    for (const signal of [{ sheet_written: true }, { log_rows_written: 3 }]) {
       const artifact = build({
         proof: { test_mode: true, sheet_write: 'skipped', ...signal },
       });
@@ -2857,7 +2860,7 @@ describe('turnWriteArtifact — reachable producer paths', () => {
     // index.js:1407-1423 and 2024-2036 both emit sheet_write:'success' with sheet_written:true and
     // never a row-count field, so a count cannot substitute for the write flag.
     for (const route of ['/api/log-modality', '/api/bodyweight']) {
-      for (const fabricated of [{ rows_appended: 1 }, { log_rows_written: 2 }]) {
+      for (const fabricated of [{ log_rows_written: 2 }]) {
         const artifact = build({
           route,
           proof: {

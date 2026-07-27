@@ -356,6 +356,84 @@ describe('turnWriteArtifact guards — withheld evidence', () => {
 });
 
 describe('turnWriteArtifact guards — seal presentation', () => {
+  it('drops every proof field whose producer conjunction the record does not satisfy', () => {
+    // Gating only the two per-tab counts left the rest of the whitelist publishable. Each of these
+    // was verified against its emitters:
+    //   rows_appended      — NO production emitter anywhere in the repository. It survives only in
+    //                        the PROOF_KEYS whitelist (turnCorrelation.js:188), so any record
+    //                        carrying it is fabricated by definition.
+    //   skipped_duplicates — /api/log-workout only (index.js:3246 duplicate body, 3427 success).
+    //   effortWritten      — /api/log-workout only (index.js:3130, 3363, 3418).
+    //   sheet_written      — every body EXCEPT /api/log-workout's success (index.js:3413-3421).
+    const cases = [
+      { label: 'rows_appended on any route', route: '/api/bodyweight', over: { sheet_written: true, rows_appended: 999 }, dropped: 'rows_appended' },
+      { label: 'rows_appended on log-workout', route: '/api/log-workout', over: { rows_appended: 999 }, dropped: 'rows_appended' },
+      { label: 'skipped_duplicates on bodyweight', route: '/api/bodyweight', over: { sheet_written: true, skipped_duplicates: 888 }, dropped: 'skipped_duplicates' },
+      { label: 'effortWritten on bodyweight', route: '/api/bodyweight', over: { sheet_written: true, effortWritten: true }, dropped: 'effortWritten' },
+      { label: 'sheet_written on a log-workout success', route: '/api/log-workout', over: { sheet_written: true }, dropped: 'sheet_written' },
+    ];
+    for (const { label, route, over, dropped } of cases) {
+      const base = route === '/api/log-workout'
+        ? over
+        : { ...over, logAppendedRange: undefined, log_rows_written: undefined, effort_rows_written: undefined };
+      const artifact = build(trace(), proofRecord({ route }, base));
+      const write = firstWrite(artifact);
+      assert.ok(write.issues.includes('impossible_fields_for_route'), label);
+      assert.equal(write.proof[dropped], undefined, `${label}: ${dropped} must not be republished`);
+      assert.equal(artifact.turns[0].reviewable, false, label);
+    }
+
+    // CONTROLS — each field on the body that genuinely emits it.
+    const logSuccess = build(trace(), proofRecord({}, { effortWritten: false, skipped_duplicates: 2 }));
+    assert.deepEqual(firstWrite(logSuccess).issues, [], 'log-workout success emits both');
+    assert.equal(logSuccess.status, 'complete');
+
+    const genericSuccess = build(trace(), proofRecord({ route: '/api/bodyweight' }, {
+      sheet_written: true,
+      logAppendedRange: undefined,
+      log_rows_written: undefined,
+      effort_rows_written: undefined,
+    }));
+    assert.deepEqual(firstWrite(genericSuccess).issues, [], 'bodyweight success emits sheet_written');
+    assert.equal(genericSuccess.status, 'complete');
+  });
+
+  it('will not let a sidecar establish a confirmed write on an unsubstantiated duplicate', () => {
+    // A positive seal is a positive write, and `positiveWrite` returned `write_confirmed` before
+    // the duplicate tuple was ever checked. So a `skipped_duplicate` record that omitted
+    // test_mode, sheet_written, duplicate_write, log_rows_written, skipped_duplicates and
+    // idempotency_status still read as a complete, reviewable confirmed write on the strength of
+    // its seal alone. The real all-rows-duplicate producer (index.js:3237-3267) always emits that
+    // whole tuple.
+    const artifact = build(trace(), proofRecord({}, {
+      sheet_write: 'skipped_duplicate',
+      sheet_written: undefined,
+      test_mode: undefined,
+      duplicate_write: undefined,
+      idempotency_status: undefined,
+      logAppendedRange: undefined,
+      log_rows_written: undefined,
+      effort_rows_written: undefined,
+      ...SEAL_STAMPED_FRESH,
+      ...CLOSEOUT_WRITTEN_FRESH,
+      closeout_fully_verified: true,
+    }));
+    assert.notEqual(firstWrite(artifact).proof_state, 'write_confirmed');
+    assert.equal(artifact.turns[0].reviewable, false);
+
+    // CONTROL — the real duplicate body carrying its whole tuple beside a FRESH stamp is the F10D
+    // heal, and that genuinely is a confirmed sidecar write.
+    const healed = build(trace(), duplicateRecord({
+      ...SEAL_STAMPED_FRESH, ...CLOSEOUT_WRITTEN_FRESH,
+    }));
+    assert.equal(firstWrite(healed).proof_state, 'write_confirmed');
+    assert.deepEqual(firstWrite(healed).issues, []);
+
+    // CONTROL — the same tuple with a REPLAY seal stays the no-write duplicate classification.
+    const replay = build(trace(), duplicateRecord({ ...SEAL_REPLAY, ...CLOSEOUT_SKIPPED }));
+    assert.equal(firstWrite(replay).proof_state, 'idempotent_no_write');
+  });
+
   it('never publishes Log/Effort tab evidence from a route that does not touch those tabs', () => {
     // `/api/log-modality` appends to Modality_Log and `/api/bodyweight` to Bodyweight
     // (index.js:1405, 2022). Neither success body carries a row count of any kind
@@ -748,13 +826,21 @@ describe('turnWriteArtifact guards — write classification', () => {
     assert.deepEqual(control.turns[0].previews[0].issues, []);
     assert.equal(control.turns[0].previews[0].proof_state, 'no_write_confirmed');
 
-    // A preview whose no-write tuple does not hold must say so rather than passing quietly.
-    const broken = JSON.parse(JSON.stringify(preview));
-    broken.proof.effortWritten = true;
-    broken.proof.rows_appended = 2;
-    const artifact = build(trace(), broken, proofRecord());
-    assert.ok(artifact.turns[0].previews[0].issues.includes('preview_no_write_proof_missing'));
-    assert.equal(artifact.turns[0].previews[0].reviewable, false);
+    // The negative case is NO LONGER CONSTRUCTIBLE from producible fields, and saying so is more
+    // honest than manufacturing one. The attempt-zero gate in `_sanitizeProof` already rejects any
+    // preview record that does not carry the exact W1 tuple, and the real preview body
+    // (index.js:3125-3139) carries nothing that can raise a positive write signal: `effortWritten`
+    // is response bookkeeping and deliberately excluded from the signal, `skipped_duplicates` is
+    // not a write indicator, and `log_rows_preview` is not projected at all. So every preview that
+    // survives sanitize reaches `no_write_confirmed`, and `preview_no_write_proof_missing` is
+    // redundant with the gate rather than load-bearing.
+    //
+    // An earlier version of this case broke the tuple with `rows_appended: 2` — a field NO producer
+    // emits anywhere. It bit, and the bite was manufactured: exactly the defect this file exists to
+    // catch, in this file. The guard is now listed as unproven in the merge card instead.
+    const stillReviewable = build(trace(), preview, proofRecord());
+    assert.equal(stillReviewable.turns[0].previews[0].proof_state, 'no_write_confirmed');
+    assert.equal(stillReviewable.turns[0].previews[0].reviewable, true);
   });
 });
 

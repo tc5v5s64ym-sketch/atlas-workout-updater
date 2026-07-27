@@ -158,10 +158,36 @@ const SIDECAR_EVIDENCE_STATES = new Set(['success', 'skipped_duplicate']);
 // success body carries a row count at all (index.js:1407-1423, 2024-2036). A generic-route record
 // claiming Log rows is fabricated, and republishing the number would have the artifact report a
 // write to a tab that route never touched — so the fields are dropped, not merely ignored.
-const PER_TAB_EVIDENCE_KEYS = Object.freeze([
-  'log_rows_written',
-  'effort_rows_written',
-]);
+// A producer fact is a CONJUNCTION — route AND state AND write attempt AND branch — and enforcing
+// one conjunct looks exactly like enforcing all of them. Five consecutive review rounds were that
+// same mistake, each one dimension narrower than the last. So the gate is a per-key map derived by
+// reading every emitter, not a special case for whichever field was last flagged.
+//
+// `allowed(route, state)` answers: can THIS body have carried THIS field? A key with no entry is
+// unconstrained — deliberately, because inventing a constraint from a pattern rather than from an
+// emitter is how a false negative gets created, and on this consumer a wrongly-dropped field costs
+// real write evidence.
+const IMPOSSIBLE_FIELD_RULES = Object.freeze({
+  // Log_Cleaned / Effort row evidence can only come from a route that appends to those tabs.
+  // `/api/log-modality` writes to Modality_Log and `/api/bodyweight` to Bodyweight, and neither
+  // success body carries a row count at all (index.js:1407-1423, 2024-2036).
+  log_rows_written: (route) => PER_TAB_APPEND_ROUTES.has(route),
+  effort_rows_written: (route) => PER_TAB_APPEND_ROUTES.has(route),
+  // NO production emitter anywhere in the repository. It survives only in the PROOF_KEYS whitelist
+  // (turnCorrelation.js:188), so a record carrying it is fabricated by definition — and it was a
+  // term in `anyPositiveWriteSignal`, meaning that signal had a branch only fabricated input could
+  // ever reach.
+  rows_appended: () => false,
+  // `/api/log-workout` only: the all-rows-duplicate body (index.js:3246) and the success body
+  // (index.js:3427).
+  skipped_duplicates: (route) => route === '/api/log-workout',
+  // `/api/log-workout` only (index.js:3130 preview, 3363 partial, 3418 success). Response
+  // bookkeeping about formatting an Effort row, which no other route does.
+  effortWritten: (route) => route === '/api/log-workout',
+  // Emitted by every write body EXCEPT `/api/log-workout`'s success, which omits it entirely
+  // (index.js:3413-3421) — the same asymmetry the main-write predicate already relies on.
+  sheet_written: (route, state) => !(route === '/api/log-workout' && state === 'success'),
+});
 const NULLABLE_PROOF_KEYS = new Set([
   'ledger_seal_updated_cells',
   // `sealCloseout` returns `would_seal:null` when the ledger is unreadable while the seal lane is
@@ -395,13 +421,13 @@ function _sanitizeProof(record) {
   // there. Retained as a flag rather than a rejection: the record's own join and its genuine
   // main-write proof stay reviewable, but nothing fabricated is republished.
   const impossibleFields = [];
+  for (const [key, allowed] of Object.entries(IMPOSSIBLE_FIELD_RULES)) {
+    if (!Object.prototype.hasOwnProperty.call(proof, key)) continue;
+    if (allowed(record.route, proof.sheet_write)) continue;
+    impossibleFields.push(key);
+    delete proof[key];
+  }
   if (!PER_TAB_APPEND_ROUTES.has(record.route)) {
-    for (const key of PER_TAB_EVIDENCE_KEYS) {
-      if (Object.prototype.hasOwnProperty.call(proof, key)) {
-        impossibleFields.push(key);
-        delete proof[key];
-      }
-    }
     rangeEvidence.log = false;
     rangeEvidence.effort = false;
   }
@@ -757,6 +783,20 @@ function _proofState(proof, seal, closeout, route, rangeEvidence = {}) {
   const positiveWrite = mainWrite
     || seal.new_seal_write
     || closeout.state === 'written';
+  // The all-rows-duplicate producer (index.js:3237-3267) always emits this whole tuple, and the
+  // SIDECAR GATE is load-bearing: index.js:3276 correlates the branch only when a seal or closeout
+  // envelope exists. It is an OR, matching the producer's own condition rather than the strictest
+  // one that condition satisfies.
+  const duplicateTupleHolds = proof.test_mode === false
+    && proof.sheet_write === 'skipped_duplicate'
+    && proof.sheet_written === false
+    && proof.duplicate_write === true
+    && proof.log_rows_written === 0
+    && typeof proof.skipped_duplicates === 'number'
+    && proof.skipped_duplicates > 0
+    && proof.idempotency_status === 'completed'
+    && typeof proof.closeout_fully_verified === 'boolean'
+    && (seal.state !== 'absent' || closeout.state !== 'absent');
 
   // STATE-INDEPENDENT IMPOSSIBILITIES, diagnosed BEFORE any terminal-state classification.
   // These two tuples are impossible whatever `sheet_write` claims, so a corrupted record must not
@@ -837,6 +877,11 @@ function _proofState(proof, seal, closeout, route, rangeEvidence = {}) {
   // after formatting an Effort row while the explicit no-write tuple confirms nothing appended.
   // A live attempt must therefore satisfy the same positive tuple above; this boolean alone can
   // never substantiate a write.
+  // A duplicate-state record must substantiate ITSELF before its sidecar may confirm anything. A
+  // positive seal is a positive write, so this return fired before the duplicate tuple was ever
+  // reached: a `skipped_duplicate` record omitting the entire tuple still read as a complete,
+  // reviewable confirmed write on the strength of its seal alone.
+  if (proof.sheet_write === 'skipped_duplicate' && !duplicateTupleHolds) return 'insufficient';
   if (positiveWrite) return 'write_confirmed';
 
   // The all-rows-duplicate closeout path is the ONLY correlated duplicate producer — an ordinary
@@ -853,18 +898,7 @@ function _proofState(proof, seal, closeout, route, rangeEvidence = {}) {
   //
   // The gate is an OR, matching the producer exactly rather than requiring both envelopes: a
   // projection that dropped one of them must not turn a real duplicate into an unreviewable one.
-  if (proof.test_mode === false
-    && proof.sheet_write === 'skipped_duplicate'
-    && proof.sheet_written === false
-    && proof.duplicate_write === true
-    && proof.log_rows_written === 0
-    && typeof proof.skipped_duplicates === 'number'
-    && proof.skipped_duplicates > 0
-    && proof.idempotency_status === 'completed'
-    && typeof proof.closeout_fully_verified === 'boolean'
-    && (seal.state !== 'absent' || closeout.state !== 'absent')) {
-    return 'idempotent_no_write';
-  }
+  if (duplicateTupleHolds) return 'idempotent_no_write';
   return 'insufficient';
 }
 
