@@ -738,6 +738,66 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
     assert.ok(!JSON.stringify(foreignReason).includes('not_an_emitter_reason'));
   });
 
+  it('never borrows the main write boolean as seal-local write evidence', () => {
+    // `ledger_seal_sheet_written` is the ONLY evidence that the independent sidecar write happened.
+    // A successful main append says nothing about the seal.
+    const borrowed = proof({
+      proof: {
+        test_mode: false,
+        sheet_write: 'success',
+        logAppendedRange: 'Log_Cleaned!A2:L4',
+        log_rows_written: 3,
+        sheet_written: true,
+        ledger_seal_sealed: 3,
+        ledger_seal_already_sealed: 0,
+        ledger_seal_sealed_ok: true,
+      },
+    });
+    const artifact = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, borrowed),
+    ].join('\n'));
+    const write = artifact.turns[0].writes[0];
+
+    assert.notEqual(write.seal.state, 'sealed');
+    assert.equal(write.seal.successfully_sealed, false);
+    assert.equal(write.seal.new_seal_write, false);
+    assert.equal(write.seal.sheet_written, null, 'the main write boolean is not imported');
+    assert.equal(write.reviewable, false);
+    assert.ok(write.issues.includes('seal_not_verified'));
+    assert.equal(artifact.status, 'partial');
+  });
+
+  it('retains and classifies the route\'s real seal_error outcome', () => {
+    // index.js emits `ledger_seal.reason:'seal_error'` with `sealed_ok:false` and no
+    // `sheet_written` when sealCloseout throws. The artifact must be able to REVIEW that failure,
+    // not reject the whole record and lose the join.
+    const sealError = proof({
+      proof: {
+        test_mode: false,
+        sheet_write: 'success',
+        logAppendedRange: 'Log_Cleaned!A2:L4',
+        log_rows_written: 3,
+        ledger_seal_sealed_ok: false,
+        ledger_seal_reason: 'seal_error',
+        closeout_fully_verified: false,
+      },
+    });
+    const artifact = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, sealError),
+    ].join('\n'));
+
+    assert.equal(artifact.turns[0].writes.length, 1, 'the real record is retained, not rejected');
+    const write = artifact.turns[0].writes[0];
+    assert.equal(write.seal.state, 'failed');
+    assert.equal(write.seal.reason, 'seal_error');
+    assert.equal(write.seal.successfully_sealed, false);
+    assert.equal(write.reviewable, false);
+    assert.ok(write.issues.includes('seal_not_verified'));
+    assert.equal(artifact.status, 'partial');
+  });
+
   it('rejects a positive new-seal count when the seal says no Sheet row was written', () => {
     const impossible = proof({
       proof: {
