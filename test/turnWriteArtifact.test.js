@@ -2474,6 +2474,56 @@ describe('turnWriteArtifact — reachable producer paths', () => {
     assert.equal(sixAttempts.status, 'partial');
   });
 
+  it('requires the live-success idempotency tuple', () => {
+    // All four live write routes REFUSE a write without a write_id (index.js:1382, 1988, 2507,
+    // 3160), so beginWrite always returns enabled:true on an append and every success body sets
+    // duplicate_write:false + idempotency_status:'completed' (index.js:1417-1420, 2030-2033,
+    // 2771-2772, 3440-3443). A replay never reaches 'success' — it returns a skipped_duplicate
+    // body instead. So on a claimed success these two are absent-means-unknown like any other
+    // producer-tuple member, and a contradictory value is impossible outright.
+    const base = {
+      test_mode: false,
+      sheet_write: 'success',
+      log_rows_written: 2,
+      logAppendedRange: 'Log_Cleaned!A100:L101',
+      effort_rows_written: 0,
+    };
+    for (const broken of [
+      {},
+      { duplicate_write: false },
+      { idempotency_status: 'completed' },
+      { duplicate_write: true, idempotency_status: 'completed' },
+      { duplicate_write: false, idempotency_status: 'in_progress' },
+      { duplicate_write: false, idempotency_status: 'failed' },
+    ]) {
+      const artifact = build({ proof: { ...base, ...broken } });
+      assert.equal(
+        artifact.turns[0].writes[0].proof_state, 'insufficient', JSON.stringify(broken),
+      );
+      assert.equal(artifact.status, 'partial', JSON.stringify(broken));
+    }
+
+    // CONTROL — the real live-success tuple, on a per-tab route and a generic one.
+    const perTab = build({
+      proof: { ...base, duplicate_write: false, idempotency_status: 'completed' },
+    });
+    assert.equal(perTab.turns[0].writes[0].proof_state, 'write_confirmed');
+    assert.equal(perTab.status, 'complete');
+
+    const generic = build({
+      route: '/api/log-modality',
+      proof: {
+        test_mode: false,
+        sheet_write: 'success',
+        sheet_written: true,
+        duplicate_write: false,
+        idempotency_status: 'completed',
+      },
+    });
+    assert.equal(generic.turns[0].writes[0].proof_state, 'write_confirmed');
+    assert.equal(generic.status, 'complete');
+  });
+
   it('requires the exact success fields on the generic write routes', () => {
     // index.js:1407-1423 and 2024-2036 both emit sheet_write:'success' with sheet_written:true and
     // never a row-count field, so a count cannot substitute for the write flag.
