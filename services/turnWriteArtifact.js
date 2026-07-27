@@ -314,7 +314,15 @@ function _sanitizeProof(record) {
       || !Number.isSafeInteger(expectedRows)
       || expectedRows <= 0
       || _containsCapability(value)) return false;
-    const match = new RegExp(`^${_escapeForRegExp(expectedTab)}!A([1-9]\\d{0,6}):${expectedLastColumn}([1-9]\\d{0,6})$`).exec(value);
+    // The app SENDS an unquoted range (`${tabName}!A1`, sheets.js:123), but Google RETURNS
+    // canonical A1 in `updatedRange`, which single-quotes any sheet name that needs it — a space,
+    // a leading digit, and so on — and doubles an embedded apostrophe. Accept either form for the
+    // configured name. This cannot create a false green: the exact tab, the exact contract column
+    // span, and the exact row count are all still required; it only tolerates Google's own quoting,
+    // which otherwise strips the range evidence off a genuine append.
+    const bareTab = _escapeForRegExp(expectedTab);
+    const quotedTab = _escapeForRegExp(`'${String(expectedTab).replace(/'/g, "''")}'`);
+    const match = new RegExp(`^(?:${bareTab}|${quotedTab})!A([1-9]\\d{0,6}):${expectedLastColumn}([1-9]\\d{0,6})$`).exec(value);
     if (!match) return false;
     const firstRow = Number(match[1]);
     const lastRow = Number(match[2]);

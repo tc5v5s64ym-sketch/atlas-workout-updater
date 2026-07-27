@@ -95,7 +95,10 @@ affirmative — absent means unknown throughout:
 Append ranges are validated against the **configured** tab names (`LOG_SHEET_NAME` /
 `EFFORT_SHEET_NAME`, `sheets.js`), not hard-coded defaults: the real routes append to the configured
 tab and Google echoes it, so hard-coding would call every genuine append on an overridden
-deployment insufficient.
+deployment insufficient. Both the bare and the **single-quoted** A1 form are accepted, because the
+app sends an unquoted range while Google returns canonical A1 — which quotes any name needing it
+and doubles an embedded apostrophe. The exact tab, column span, and row count are still required,
+so tolerating the quoting cannot admit a wrong sheet.
 
 Positive-write **classification** and **contradiction detection** are separate questions, and
 tightening the first must never weaken the second. A row count cannot substantiate a generic-route
