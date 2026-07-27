@@ -62,6 +62,17 @@ cannot silently widen what counts as W3 evidence. The range itself is reduced to
 presence verdict and is never emitted. Seal mismatch-only count fields cannot coexist with a
 successful seal classification.
 
+A claimed main write must substantiate itself. The seal and the closeout event are *independent
+sidecar writes*: on the all-rows-duplicate branch — which claims no main write at all — their own
+positive evidence legitimately makes the turn reviewable, but they describe a different write and
+never stand in for a claimed main append whose own W1–W3 tuple does not hold.
+
+`ledger_seal_reason` is a closed vocabulary taken from the real emitter
+(`services/sessionPlanSetsStore.js` `sealCloseout`), and every value in it describes an outcome that
+did **not** stamp a row — a dry run, a verified no-op, a failure, or a proof mismatch. A genuine
+fresh stamp carries no reason at all, so any reason presented beside a positive stamp claim is a
+mismatch, and a reason outside the vocabulary makes the record rejected rather than reflected.
+
 `complete` means every included turn is reviewable and no marker record was rejected. `partial`
 means at least one record exists but a turn is missing, ambiguous, rejected, unbound, withheld,
 cross-session, or contradictory. A rejected marker with no recoverable `turn_id` still makes the

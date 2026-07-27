@@ -104,6 +104,22 @@ const CLOSEOUT_STATES = new Set([
   'tab_missing',
   'written',
 ]);
+// The seal emitter's closed reason vocabulary (services/sessionPlanSetsStore.js `sealCloseout`).
+// EVERY one describes a NON-stamping outcome — a dry run, a verified no-op, a failure, or a proof
+// mismatch. A genuine fresh stamp returns no `reason` field at all. So a reason presented beside a
+// positive stamp claim is an impossible tuple, not a successful seal, and a reason outside this
+// vocabulary is not something the producer can emit.
+const SEAL_REASONS = new Set([
+  'test_mode',
+  'write_disabled',
+  'ledger_read_failed',
+  'tab_missing',
+  'no_rows',
+  'conflicting_seal',
+  'malformed_chain',
+  'all_sealed',
+  'seal_proof_mismatch',
+]);
 const TRACE_INTENT_TYPES = new Set(['set', 'block', 'plan', 'coach_chat', 'coach_ask']);
 const TRACE_SOURCES = new Set(['coach_message', 'coach_chat', 'coach_ask']);
 const SAFE_STATE_TOKEN = /^[a-z][a-z0-9_]{0,63}$/;
@@ -201,7 +217,9 @@ function _validProofValue(key, value) {
   if (NUMBER_PROOF_KEYS.has(key)) return Number.isSafeInteger(value) && value >= 0;
   if (key === 'sheet_write') return SHEET_WRITE_STATES.has(value);
   if (key === 'idempotency_status') return IDEMPOTENCY_STATES.has(value);
-  if (key === 'ledger_seal_reason') return typeof value === 'string' && SAFE_STATE_TOKEN.test(value);
+  if (key === 'ledger_seal_reason') {
+    return typeof value === 'string' && SAFE_STATE_TOKEN.test(value) && SEAL_REASONS.has(value);
+  }
   if (key === 'session_plans_closeout_status') return CLOSEOUT_STATES.has(value);
   if (key === 'session_plans_closeout_plan_version') return PLAN_VERSION_RE.test(value);
   return _isBoundedString(value) && !_containsCapability(value);
@@ -400,9 +418,13 @@ function _sealSummary(proof, withheldEvidence) {
   const claimsNoSealWrite = proof.ledger_seal_no_write_confirmed === true
     || proof.ledger_seal_dry_run === true;
   const claimsPositiveSealWrite = sheetWritten === true || sealed > 0;
+  // Any reason at all describes an outcome that did NOT stamp a row, so it cannot coexist with a
+  // positive stamp claim. A genuine fresh stamp carries no reason.
+  const reasonContradictsStamp = SEAL_REASONS.has(proof.ledger_seal_reason) && claimsPositiveSealWrite;
 
   let state = 'absent';
   if (claimsMismatch) state = 'seal_proof_mismatch';
+  else if (reasonContradictsStamp) state = 'seal_proof_mismatch';
   else if (sealedOk === true && claimsNoSealWrite && claimsPositiveSealWrite) state = 'seal_proof_mismatch';
   else if (sealedOk === false && sheetWritten === true) state = 'seal_proof_mismatch';
   else if (sealedOk === false) state = 'failed';
@@ -511,6 +533,13 @@ function _proofState(proof, seal, closeout, route, rangeEvidence = {}) {
   // not appended, and the explicit no-write tuple remains authoritative for that real route shape.
   if (proof.no_write_confirmed === true && (positiveWrite || claimsSuccess)) return 'contradictory';
   if (proof.test_mode === true && (positiveWrite || claimsSuccess)) return 'contradictory';
+
+  // A CLAIMED live main write must substantiate itself. The seal and the closeout event are
+  // independent sidecar writes: on the all-rows-duplicate branch — which claims no main write at
+  // all — their own positive evidence legitimately makes the turn reviewable. But they describe a
+  // different write, so they must never stand in for a main append whose own W1–W3 tuple (for
+  // `/api/log-workout`, the per-tab range binding) does not hold.
+  if (claimsSuccess && !mainWrite) return 'insufficient';
 
   // The explicit W1 no-write tuple outranks incidental response bookkeeping such as
   // effortWritten:true on a preview (which means an effort row was formatted, not appended).
