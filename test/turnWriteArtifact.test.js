@@ -430,6 +430,73 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
     assert.equal(artifact.status, 'partial');
   });
 
+  it('requires a coherent success state on every generic live-write route', () => {
+    for (const route of ['/api/complete-workout', '/api/log-modality', '/api/bodyweight']) {
+      const blockedButPositive = proof({
+        route,
+        proof: {
+          test_mode: false,
+          sheet_write: 'blocked_schema_drift',
+          sheet_written: true,
+          rows_appended: 1,
+        },
+      });
+      const artifact = buildTurnWriteArtifact([
+        line(INTERACTION_TRACE_MARKER, trace()),
+        line(TURN_WRITE_PROOF_MARKER, blockedButPositive),
+      ].join('\n'));
+      const write = artifact.turns[0].writes[0];
+
+      assert.equal(write.proof_state, 'contradictory', route);
+      assert.equal(write.reviewable, false, route);
+      assert.ok(write.issues.includes('write_proof_contradictory'), route);
+      assert.equal(artifact.status, 'partial', route);
+    }
+  });
+
+  it('binds live Log and Effort counts to the correct tab, columns, and row span', () => {
+    const invalidRanges = [
+      {
+        logAppendedRange: 'Log_Cleaned!A2:L2',
+        log_rows_written: 3,
+        effort_rows_written: 0,
+      },
+      {
+        logAppendedRange: 'Effort!A2:L4',
+        log_rows_written: 3,
+        effort_rows_written: 0,
+      },
+      {
+        log_rows_written: 0,
+        effortAppendedRange: 'Log_Cleaned!A2:K2',
+        effort_rows_written: 1,
+      },
+      {
+        log_rows_written: 0,
+        effortAppendedRange: 'Effort!A2:K3',
+        effort_rows_written: 1,
+      },
+    ];
+
+    for (const invalidRange of invalidRanges) {
+      const artifact = buildTurnWriteArtifact([
+        line(INTERACTION_TRACE_MARKER, trace()),
+        line(TURN_WRITE_PROOF_MARKER, proof({
+          proof: {
+            test_mode: false,
+            sheet_write: 'success',
+            ...invalidRange,
+          },
+        })),
+      ].join('\n'));
+      const write = artifact.turns[0].writes[0];
+
+      assert.equal(write.proof_state, 'insufficient', JSON.stringify(invalidRange));
+      assert.equal(write.reviewable, false, JSON.stringify(invalidRange));
+      assert.equal(artifact.status, 'partial', JSON.stringify(invalidRange));
+    }
+  });
+
   it('distinguishes a newly stamped seal from an idempotent already-sealed replay', () => {
     const stamped = proof({
       proof: {
@@ -678,6 +745,39 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
 });
 
 describe('turnWriteArtifact — bounded, leakage-safe review surface', () => {
+  it('rejects noncanonical turn IDs before they can join or reach artifact output', () => {
+    const privateTurnId = 'turn:private-coach-prompt';
+    const artifact = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace({ turn_id: privateTurnId })),
+      line(TURN_WRITE_PROOF_MARKER, proof({ turn_id: privateTurnId })),
+    ].join('\n'));
+    const serialized = JSON.stringify(artifact);
+
+    assert.equal(artifact.status, 'empty');
+    assert.equal(artifact.summary.joined_turns, 0);
+    assert.equal(artifact.summary.rejected_records, 2);
+    assert.ok(!serialized.includes(privateTurnId));
+  });
+
+  it('emits trace metadata only from the fixed production vocabularies', () => {
+    const privateIntent = 'athlete said shoulder hurts';
+    const privateSource = 'Log_Cleaned!A2:L99';
+    const artifact = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace({
+        intent_type: privateIntent,
+        source: privateSource,
+      })),
+      line(TURN_WRITE_PROOF_MARKER, proof()),
+    ].join('\n'));
+    const serialized = JSON.stringify(artifact);
+
+    assert.equal(artifact.status, 'complete');
+    assert.equal(artifact.turns[0].trace.intent_type, null);
+    assert.equal(artifact.turns[0].trace.source, null);
+    assert.ok(!serialized.includes(privateIntent));
+    assert.ok(!serialized.includes(privateSource));
+  });
+
   it('re-whitelists untrusted log input and never emits pairings, fingerprints, rows, prose, or secrets', () => {
     const capability = 'pair:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
     const fingerprint = 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
