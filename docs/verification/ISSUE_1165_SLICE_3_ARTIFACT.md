@@ -126,6 +126,13 @@ already reported separately.
 A claimed main write also requires `test_mode:false`. All four success producers emit the flag, so
 an absent one is a lost tuple member rather than a live write to be assumed.
 
+It further requires the **live-success idempotency tuple** — `duplicate_write:false` with
+`idempotency_status:'completed'`. All four routes refuse an append without a `write_id`, so
+idempotency is always enabled on a live write and every success body sets both; a replay never
+reaches `success` at all, returning a skipped-duplicate body instead. `write_id` itself is *not*
+required: it is excluded from the published proof keys as client-controlled free text, so it never
+reaches this consumer and requiring it would reject every real record.
+
 `sheet_written` is required on `/api/complete-workout` and only there: that route emits it on every
 success and the projection carries it, so absence is a lost field rather than a negative, while
 `/api/log-workout` emits no such field at all and would have its ordinary live success rejected.

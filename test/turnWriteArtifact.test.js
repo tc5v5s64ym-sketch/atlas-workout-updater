@@ -58,6 +58,10 @@ function proof(overrides = {}) {
       test_mode: false,
       sheet_write: 'success',
       write_id: 'write-b',
+      // Every live success carries these: the routes refuse an append without a write_id, so
+      // beginWrite is always enabled and the success body sets both (index.js:3440-3443).
+      duplicate_write: false,
+      idempotency_status: 'completed',
       logAppendedRange: 'Log_Cleaned!A2:L4',
       log_rows_written: 3,
       effort_rows_written: 0,
@@ -165,6 +169,8 @@ describe('turnWriteArtifact — parsing and canonical turn join', () => {
       proof: {
         test_mode: false,
         sheet_write: 'success',
+        duplicate_write: false,
+        idempotency_status: 'completed',
         sheet_written: true,
         no_write_confirmed: false,
         write_id: 'write-b-retry',
@@ -279,6 +285,8 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
     const mismatched = proof({
       proof: {
         sheet_write: 'success',
+        duplicate_write: false,
+        idempotency_status: 'completed',
         sheet_written: true,
         closeout_fully_verified: false,
         ledger_seal_sheet_written: true,
@@ -303,6 +311,8 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
     const contradictions = [
       {
         sheet_write: 'success',
+        duplicate_write: false,
+        idempotency_status: 'completed',
         sheet_written: true,
         no_write_confirmed: true,
         rows_appended: 1,
@@ -354,6 +364,8 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
       proof: {
         test_mode: false,
         sheet_write: 'success',
+        duplicate_write: false,
+        idempotency_status: 'completed',
         sheet_written: false,
         log_rows_written: 0,
         effort_rows_written: 0,
@@ -376,6 +388,8 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
       proof: {
         test_mode: false,
         sheet_write: 'success',
+        duplicate_write: false,
+        idempotency_status: 'completed',
         log_rows_written: 1,
         effort_rows_written: 0,
       },
@@ -486,6 +500,8 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
           proof: {
             test_mode: false,
             sheet_write: 'success',
+            duplicate_write: false,
+            idempotency_status: 'completed',
             ...invalidRange,
           },
         })),
@@ -507,6 +523,8 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
         proof: {
           test_mode: false,
           sheet_write: 'success',
+          duplicate_write: false,
+          idempotency_status: 'completed',
           log_rows_written: 0,
           effortAppendedRange: 'Effort!A100:I100',
           effort_rows_written: 1,
@@ -525,6 +543,8 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
         proof: {
           test_mode: false,
           sheet_write: 'success',
+          duplicate_write: false,
+          idempotency_status: 'completed',
           log_rows_written: 0,
           effortAppendedRange: 'Effort!A100:K100',
           effort_rows_written: 1,
@@ -566,6 +586,8 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
           proof: {
             test_mode: false,
             sheet_write: 'success',
+            duplicate_write: false,
+            idempotency_status: 'completed',
             ...partialRangeProof,
           },
         })),
@@ -583,6 +605,8 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
         proof: {
           test_mode: false,
           sheet_write: 'success',
+          duplicate_write: false,
+          idempotency_status: 'completed',
           logAppendedRange: 'Log_Cleaned!A2:L3',
           log_rows_written: 2,
           effortAppendedRange: 'Effort!A100:I100',
@@ -639,6 +663,8 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
         proof: {
           test_mode: false,
           sheet_write: 'success',
+          duplicate_write: false,
+          idempotency_status: 'completed',
           log_rows_written: 1,
           effort_rows_written: 0,
           ledger_seal_sheet_written: true,
@@ -652,6 +678,8 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
         proof: {
           test_mode: false,
           sheet_write: 'success',
+          duplicate_write: false,
+          idempotency_status: 'completed',
           log_rows_written: 0,
           effort_rows_written: 1,
           session_plans_closeout_status: 'written',
@@ -753,6 +781,8 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
         proof: {
           test_mode: false,
           sheet_write: 'success',
+          duplicate_write: false,
+          idempotency_status: 'completed',
           logAppendedRange: 'Log_Cleaned!A2:L4',
           log_rows_written: 3,
           effort_rows_written: 0,
@@ -775,6 +805,8 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
         proof: {
           test_mode: false,
           sheet_write: 'success',
+          duplicate_write: false,
+          idempotency_status: 'completed',
           logAppendedRange: 'Log_Cleaned!A2:L4',
           log_rows_written: 3,
           effort_rows_written: 0,
@@ -797,6 +829,8 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
         proof: {
           test_mode: false,
           sheet_write: 'success',
+          duplicate_write: false,
+          idempotency_status: 'completed',
           logAppendedRange: 'Log_Cleaned!A2:L4',
           log_rows_written: 3,
           effort_rows_written: 0,
@@ -819,6 +853,8 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
         proof: {
           test_mode: false,
           sheet_write: 'success',
+          duplicate_write: false,
+          idempotency_status: 'completed',
           logAppendedRange: 'Log_Cleaned!A2:L4',
           log_rows_written: 3,
           effort_rows_written: 0,
@@ -844,6 +880,8 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
         proof: {
           test_mode: false,
           sheet_write: 'success',
+          duplicate_write: false,
+          idempotency_status: 'completed',
           logAppendedRange: 'Log_Cleaned!A2:L4',
           log_rows_written: 3,
           effort_rows_written: 0,
@@ -882,6 +920,8 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
           proof: {
             test_mode: false,
             sheet_write: 'success',
+            duplicate_write: false,
+            idempotency_status: 'completed',
             logAppendedRange: 'Log_Cleaned!A2:L4',
             log_rows_written: 3,
             effort_rows_written: 0,
@@ -930,6 +970,8 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
       proof: {
         test_mode: false,
         sheet_write: 'success',
+        duplicate_write: false,
+        idempotency_status: 'completed',
         logAppendedRange: 'Log_Cleaned!A2:L4',
         log_rows_written: 3,
         effort_rows_written: 0,
@@ -956,6 +998,8 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
         proof: {
           test_mode: false,
           sheet_write: 'success',
+          duplicate_write: false,
+          idempotency_status: 'completed',
           logAppendedRange: 'Log_Cleaned!A2:L4',
           log_rows_written: 3,
           effort_rows_written: 0,
@@ -984,6 +1028,8 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
         proof: {
           test_mode: null,
           sheet_write: 'success',
+          duplicate_write: false,
+          idempotency_status: 'completed',
           logAppendedRange: 'Log_Cleaned!A2:L4',
           log_rows_written: 3,
           effort_rows_written: 0,
@@ -1003,6 +1049,8 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
         proof: {
           test_mode: false,
           sheet_write: 'success',
+          duplicate_write: false,
+          idempotency_status: 'completed',
           logAppendedRange: 'Log_Cleaned!A2:L4',
           log_rows_written: 3,
           effort_rows_written: 0,
@@ -1035,6 +1083,8 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
       proof: {
         test_mode: false,
         sheet_write: 'success',
+        duplicate_write: false,
+        idempotency_status: 'completed',
         logAppendedRange: 'Log_Cleaned!A2:L4',
         log_rows_written: 3,
         effort_rows_written: 0,
@@ -1063,6 +1113,8 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
       proof: {
         test_mode: false,
         sheet_write: 'success',
+        duplicate_write: false,
+        idempotency_status: 'completed',
         logAppendedRange: 'Log_Cleaned!A2:L4',
         log_rows_written: 3,
         effort_rows_written: 0,
@@ -1124,6 +1176,8 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
       proof: {
         test_mode: false,
         sheet_write: 'success',
+        duplicate_write: false,
+        idempotency_status: 'completed',
         logAppendedRange: 'Log_Cleaned!A2:L4',
         log_rows_written: 3,
         effort_rows_written: 0,
@@ -1156,6 +1210,8 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
       proof: {
         test_mode: false,
         sheet_write: 'success',
+        duplicate_write: false,
+        idempotency_status: 'completed',
         logAppendedRange: 'Log_Cleaned!A2:L4',
         log_rows_written: 3,
         effort_rows_written: 0,
@@ -1183,6 +1239,8 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
     const impossible = proof({
       proof: {
         sheet_write: 'success',
+        duplicate_write: false,
+        idempotency_status: 'completed',
         sheet_written: true,
         rows_appended: 1,
         ledger_seal_sheet_written: false,
@@ -1208,6 +1266,8 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
     const contradictoryCounts = proof({
       proof: {
         sheet_write: 'success',
+        duplicate_write: false,
+        idempotency_status: 'completed',
         sheet_written: true,
         rows_appended: 1,
         ledger_seal_sheet_written: true,
@@ -1556,6 +1616,8 @@ describe('turnWriteArtifact — bounded, leakage-safe review surface', () => {
     const hostile = proof({
       proof: {
         sheet_write: 'success',
+        duplicate_write: false,
+        idempotency_status: 'completed',
         sheet_written: true,
         rows_appended: 1,
         write_id: 'private coach prompt',
@@ -1722,6 +1784,8 @@ describe('turnWriteArtifact — complete producer tuples', () => {
       proof: {
         test_mode: false,
         sheet_write: 'success',
+        duplicate_write: false,
+        idempotency_status: 'completed',
         sheet_written: true,
         log_rows_written: 2,
         logAppendedRange: 'Effort!A100:L101',
@@ -1736,6 +1800,8 @@ describe('turnWriteArtifact — complete producer tuples', () => {
       proof: {
         test_mode: false,
         sheet_write: 'success',
+        duplicate_write: false,
+        idempotency_status: 'completed',
         sheet_written: true,
         log_rows_written: 2,
         logAppendedRange: 'Log_Cleaned!A100:L101',
@@ -1757,6 +1823,8 @@ describe('turnWriteArtifact — complete producer tuples', () => {
       proof: {
         test_mode: false,
         sheet_write: 'success',
+        duplicate_write: false,
+        idempotency_status: 'completed',
         sheet_written: false,
         log_rows_written: 2,
         logAppendedRange: 'Log_Cleaned!A100:L101',
@@ -1775,6 +1843,8 @@ describe('turnWriteArtifact — complete producer tuples', () => {
       proof: {
         test_mode: false,
         sheet_write: 'success',
+        duplicate_write: false,
+        idempotency_status: 'completed',
         sheet_written: true,
         log_rows_written: 0,
         effort_rows_written: 1,
@@ -1979,6 +2049,8 @@ describe('turnWriteArtifact — reachable producer paths', () => {
       proof: {
         test_mode: false,
         sheet_write: 'success',
+        duplicate_write: false,
+        idempotency_status: 'completed',
         sheet_written: true,
         log_rows_written: 2,
         logAppendedRange: 'Log_Cleaned!A100:L101',
@@ -1995,6 +2067,8 @@ describe('turnWriteArtifact — reachable producer paths', () => {
       proof: {
         test_mode: false,
         sheet_write: 'success',
+        duplicate_write: false,
+        idempotency_status: 'completed',
         sheet_written: true,
         log_rows_written: 2,
         logAppendedRange: 'Log_Cleaned!A100:L101',
@@ -2010,6 +2084,8 @@ describe('turnWriteArtifact — reachable producer paths', () => {
       proof: {
         test_mode: false,
         sheet_write: 'success',
+        duplicate_write: false,
+        idempotency_status: 'completed',
         sheet_written: true,
         log_rows_written: 0,
         effort_rows_written: 1,
@@ -2032,6 +2108,8 @@ describe('turnWriteArtifact — reachable producer paths', () => {
       proof: {
         test_mode: false,
         sheet_write: 'success',
+        duplicate_write: false,
+        idempotency_status: 'completed',
         sheet_written: true,
         effort_rows_written: 1,
         effortAppendedRange: 'Effort!A100:I100',
@@ -2045,6 +2123,8 @@ describe('turnWriteArtifact — reachable producer paths', () => {
       proof: {
         test_mode: false,
         sheet_write: 'success',
+        duplicate_write: false,
+        idempotency_status: 'completed',
         log_rows_written: 2,
         logAppendedRange: 'Log_Cleaned!A100:L101',
       },
@@ -2058,6 +2138,8 @@ describe('turnWriteArtifact — reachable producer paths', () => {
       proof: {
         test_mode: false,
         sheet_write: 'success',
+        duplicate_write: false,
+        idempotency_status: 'completed',
         sheet_written: true,
         log_rows_written: 0,
         effort_rows_written: 1,
@@ -2072,6 +2154,8 @@ describe('turnWriteArtifact — reachable producer paths', () => {
       proof: {
         test_mode: false,
         sheet_write: 'success',
+        duplicate_write: false,
+        idempotency_status: 'completed',
         log_rows_written: 2,
         logAppendedRange: 'Log_Cleaned!A100:L101',
         effort_rows_written: 0,
@@ -2091,6 +2175,8 @@ describe('turnWriteArtifact — reachable producer paths', () => {
       proof: {
         test_mode: false,
         sheet_write: 'success',
+        duplicate_write: false,
+        idempotency_status: 'completed',
         sheet_written: false,
         log_rows_written: 2,
         logAppendedRange: 'Log_Cleaned!A100:L101',
@@ -2105,6 +2191,8 @@ describe('turnWriteArtifact — reachable producer paths', () => {
       proof: {
         test_mode: false,
         sheet_write: 'success',
+        duplicate_write: false,
+        idempotency_status: 'completed',
         sheet_written: false,
         rows_appended: 3,
       },
@@ -2213,6 +2301,8 @@ describe('turnWriteArtifact — reachable producer paths', () => {
       proof: {
         test_mode: false,
         sheet_write: 'success',
+        duplicate_write: false,
+        idempotency_status: 'completed',
         log_rows_written: 2,
         logAppendedRange: 'Log_Cleaned!A100:L101',
         effort_rows_written: 1,
@@ -2228,6 +2318,8 @@ describe('turnWriteArtifact — reachable producer paths', () => {
       proof: {
         test_mode: false,
         sheet_write: 'success',
+        duplicate_write: false,
+        idempotency_status: 'completed',
         sheet_written: true,
         log_rows_written: 2,
         logAppendedRange: 'Log_Cleaned!A100:L101',
@@ -2246,6 +2338,8 @@ describe('turnWriteArtifact — reachable producer paths', () => {
       proof: {
         test_mode: false,
         sheet_write: 'success',
+        duplicate_write: false,
+        idempotency_status: 'completed',
         log_rows_written: 2,
         logAppendedRange: 'Log_Cleaned!A100:L101',
         effort_rows_written: 0,
@@ -2314,6 +2408,8 @@ describe('turnWriteArtifact — reachable producer paths', () => {
       proof: {
         test_mode: false,
         sheet_write: 'success',
+        duplicate_write: false,
+        idempotency_status: 'completed',
         log_rows_written: 3,
         logAppendedRange: 'Log_Cleaned!A2:L4',
         effort_rows_written: 0,
@@ -2333,6 +2429,8 @@ describe('turnWriteArtifact — reachable producer paths', () => {
       proof: {
         test_mode: false,
         sheet_write: 'success',
+        duplicate_write: false,
+        idempotency_status: 'completed',
         log_rows_written: 3,
         logAppendedRange: 'Log_Cleaned!A2:L4',
         effort_rows_written: 0,
@@ -2357,6 +2455,8 @@ describe('turnWriteArtifact — reachable producer paths', () => {
       proof: {
         test_mode: false,
         sheet_write: 'success',
+        duplicate_write: false,
+        idempotency_status: 'completed',
         log_rows_written: 3,
         logAppendedRange: 'Log_Cleaned!A2:L4',
         effort_rows_written: 0,
@@ -2379,7 +2479,10 @@ describe('turnWriteArtifact — reachable producer paths', () => {
       assert.equal(truncated.status, 'partial', route);
 
       // CONTROL — the producer's real body carries the flag.
-      const real = build({ route, proof: { test_mode: false, sheet_write: 'success', ...extra } });
+      const real = build({ route, proof: {
+        test_mode: false, sheet_write: 'success',
+        duplicate_write: false, idempotency_status: 'completed', ...extra,
+      } });
       assert.equal(real.turns[0].writes[0].proof_state, 'write_confirmed', route);
       assert.equal(real.status, 'complete', route);
     }
@@ -2394,6 +2497,8 @@ describe('turnWriteArtifact — reachable producer paths', () => {
       proof: {
         test_mode: false,
         sheet_write: 'success',
+        duplicate_write: false,
+        idempotency_status: 'completed',
         log_rows_written: 3,
         logAppendedRange: 'Log_Cleaned!A2:L4',
         effort_rows_written: 0,
@@ -2481,6 +2586,7 @@ describe('turnWriteArtifact — reachable producer paths', () => {
     // 2771-2772, 3440-3443). A replay never reaches 'success' — it returns a skipped_duplicate
     // body instead. So on a claimed success these two are absent-means-unknown like any other
     // producer-tuple member, and a contradictory value is impossible outright.
+    // Deliberately WITHOUT the idempotency tuple — each case below supplies (or corrupts) it.
     const base = {
       test_mode: false,
       sheet_write: 'success',
@@ -2531,7 +2637,10 @@ describe('turnWriteArtifact — reachable producer paths', () => {
       for (const fabricated of [{ rows_appended: 1 }, { log_rows_written: 2 }]) {
         const artifact = build({
           route,
-          proof: { test_mode: false, sheet_write: 'success', ...fabricated },
+          proof: {
+            test_mode: false, sheet_write: 'success',
+            duplicate_write: false, idempotency_status: 'completed', ...fabricated,
+          },
         });
         assert.notEqual(
           artifact.turns[0].writes[0].proof_state, 'write_confirmed', `${route} ${JSON.stringify(fabricated)}`,
@@ -2542,7 +2651,10 @@ describe('turnWriteArtifact — reachable producer paths', () => {
       // CONTROL — the real success body.
       const real = build({
         route,
-        proof: { test_mode: false, sheet_write: 'success', sheet_written: true },
+        proof: {
+          test_mode: false, sheet_write: 'success', sheet_written: true,
+          duplicate_write: false, idempotency_status: 'completed',
+        },
       });
       assert.equal(real.turns[0].writes[0].proof_state, 'write_confirmed', route);
       assert.equal(real.status, 'complete', route);
@@ -2566,6 +2678,8 @@ describe('turnWriteArtifact — reachable producer paths', () => {
           proof: {
             test_mode: false,
             sheet_write: 'success',
+            duplicate_write: false,
+            idempotency_status: 'completed',
             log_rows_written: 2,
             logAppendedRange: 'Log_Cleaned_V2!A100:L101',
             effort_rows_written: 1,
@@ -2607,6 +2721,8 @@ describe('turnWriteArtifact — reachable producer paths', () => {
           proof: {
             test_mode: false,
             sheet_write: 'success',
+            duplicate_write: false,
+            idempotency_status: 'completed',
             log_rows_written: 2,
             logAppendedRange: "'Workout Log'!A100:L101",
             effort_rows_written: 1,
@@ -2625,6 +2741,8 @@ describe('turnWriteArtifact — reachable producer paths', () => {
           proof: {
             test_mode: false,
             sheet_write: 'success',
+            duplicate_write: false,
+            idempotency_status: 'completed',
             log_rows_written: 2,
             logAppendedRange: "'Other Log'!A100:L101",
             effort_rows_written: 1,
@@ -2648,6 +2766,8 @@ describe('turnWriteArtifact — reachable producer paths', () => {
       proof: {
         test_mode: false,
         sheet_write: 'success',
+        duplicate_write: false,
+        idempotency_status: 'completed',
         log_rows_written: 2,
         logAppendedRange: 'Log_Cleaned!A100:L101',
         effort_rows_written: 1,

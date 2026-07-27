@@ -118,6 +118,8 @@ test('real trace and correlation emitters produce one leakage-safe reviewable jo
         test_mode: false,
         sheet_write: 'success',
         write_id: 'write-artifact-1',
+        duplicate_write: false,
+        idempotency_status: 'completed',
         logAppendedRange: 'Log_Cleaned!A2:L2',
         log_rows_written: 1,
         effort_rows_written: 0,

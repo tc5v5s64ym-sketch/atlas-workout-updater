@@ -662,8 +662,22 @@ function _proofState(proof, seal, closeout, route, rangeEvidence = {}) {
   // literal false, and 2719 as `testMode`, which a success implies is false because :2722 sends
   // 'skipped' otherwise. So an ABSENT flag on a claimed success is a lost tuple member, not a live
   // write to be assumed: absent means unknown here as everywhere else.
+  // The live-success IDEMPOTENCY tuple. All four write routes REFUSE an append without a
+  // `write_id` (index.js:1382, 1988, 2507, 3160), so `beginWrite` always returns `enabled:true`
+  // on a live write and every success body sets `duplicate_write:false` +
+  // `idempotency_status:'completed'` (index.js:1417-1420, 2030-2033, 2771-2772, 3440-3443). A
+  // replay never reaches `'success'` — it returns a skipped_duplicate body instead. So on a
+  // claimed success these are producer-tuple members like any other: absent means unknown, and
+  // `duplicate_write:true` or a non-completed status is impossible outright.
+  //
+  // `write_id` itself is deliberately NOT required: it is excluded from the published proof keys
+  // as client-controlled free text, so it never reaches this consumer and requiring it would
+  // reject every real record.
+  const liveIdempotencyTuple = proof.duplicate_write === false
+    && proof.idempotency_status === 'completed';
   const mainWrite = claimsSuccess
     && proof.test_mode === false
+    && liveIdempotencyTuple
     && (isPerTabAppend ? perTabWrite : genericMainWrite);
   const positiveWrite = mainWrite
     || seal.new_seal_write
