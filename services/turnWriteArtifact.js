@@ -119,6 +119,11 @@ const SEAL_REASONS = new Set([
   'malformed_chain',
   'all_sealed',
   'seal_proof_mismatch',
+  // `sealCloseout` is not the only producer: when it THROWS, the route itself synthesizes
+  // `{sealed_ok:false, reason:'seal_error'}` (index.js, both the duplicate and normal branches).
+  // Omitting it would make the artifact reject that entire real record and lose the join, so a
+  // genuine seal failure could not be reviewed through this tool at all.
+  'seal_error',
 ]);
 const TRACE_INTENT_TYPES = new Set(['set', 'block', 'plan', 'coach_chat', 'coach_ask']);
 const TRACE_SOURCES = new Set(['coach_message', 'coach_chat', 'coach_ask']);
@@ -402,9 +407,12 @@ function _authorization(pairing) {
 function _sealSummary(proof, withheldEvidence) {
   const withheld = withheldEvidence.some((key) => key.startsWith('ledger_seal_'));
   const hasSeal = Object.keys(proof).some((key) => key.startsWith('ledger_seal_'));
+  // SEAL-LOCAL ONLY. `ledger_seal_sheet_written` is the sole evidence that the independent sidecar
+  // write happened; the main write's `sheet_written` describes a different write and must never be
+  // borrowed to substantiate a seal. Absent means unknown, not false.
   const sheetWritten = typeof proof.ledger_seal_sheet_written === 'boolean'
     ? proof.ledger_seal_sheet_written
-    : (typeof proof.sheet_written === 'boolean' ? proof.sheet_written : null);
+    : null;
   const sealedOk = typeof proof.ledger_seal_sealed_ok === 'boolean'
     ? proof.ledger_seal_sealed_ok
     : null;
@@ -430,6 +438,9 @@ function _sealSummary(proof, withheldEvidence) {
   else if (sealedOk === false) state = 'failed';
   else if (sealedOk === true && hasMismatchCounts) state = 'seal_proof_mismatch';
   else if (sealedOk === true && sheetWritten === false && sealed > 0) state = 'seal_proof_mismatch';
+  // A positive stamp count with no seal-local write evidence substantiates nothing: the real
+  // emitter always reports `sheet_written` on the stamping path.
+  else if (sealedOk === true && sealed > 0 && sheetWritten !== true) state = 'indeterminate';
   else if (sealedOk === true && sheetWritten === true && sealed > 0) state = 'sealed';
   else if (sealedOk === true && sheetWritten === true) state = 'indeterminate';
   else if (sealedOk === true && sheetWritten === false && sealed === 0 && alreadySealed > 0) state = 'already_sealed';

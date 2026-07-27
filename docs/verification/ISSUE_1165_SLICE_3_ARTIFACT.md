@@ -67,11 +67,19 @@ sidecar writes*: on the all-rows-duplicate branch — which claims no main write
 positive evidence legitimately makes the turn reviewable, but they describe a different write and
 never stand in for a claimed main append whose own W1–W3 tuple does not hold.
 
-`ledger_seal_reason` is a closed vocabulary taken from the real emitter
-(`services/sessionPlanSetsStore.js` `sealCloseout`), and every value in it describes an outcome that
-did **not** stamp a row — a dry run, a verified no-op, a failure, or a proof mismatch. A genuine
-fresh stamp carries no reason at all, so any reason presented beside a positive stamp claim is a
-mismatch, and a reason outside the vocabulary makes the record rejected rather than reflected.
+`ledger_seal_reason` is a closed vocabulary taken from the real producers — `sealCloseout`
+(`services/sessionPlanSetsStore.js`) plus the `seal_error` the route itself synthesizes when that
+call throws (`index.js`) — and every value in it describes an outcome that did **not** stamp a row:
+a dry run, a verified no-op, a failure, or a proof mismatch. A genuine fresh stamp carries no reason
+at all, so any reason presented beside a positive stamp claim is a mismatch, and a reason outside
+the vocabulary makes the record rejected rather than reflected. The vocabulary must stay complete:
+omitting a reason a producer really emits would reject that whole record and lose the join, so a
+genuine failure could not be reviewed at all.
+
+Seal evidence is read **seal-locally**. `ledger_seal_sheet_written` is the only evidence that the
+independent sidecar write occurred; the main write's `sheet_written` describes a different write and
+is never borrowed. Absent means unknown, not false, so a positive stamp count with no seal-local
+write evidence is indeterminate rather than a successful seal.
 
 `complete` means every included turn is reviewable and no marker record was rejected. `partial`
 means at least one record exists but a turn is missing, ambiguous, rejected, unbound, withheld,
