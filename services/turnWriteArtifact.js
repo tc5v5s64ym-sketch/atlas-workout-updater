@@ -125,6 +125,23 @@ const SEAL_REASONS = new Set([
   // genuine seal failure could not be reviewed through this tool at all.
   'seal_error',
 ]);
+// The only two `sealCloseout` outcomes that reach `verified_no_new_seal`; both also carry
+// `no_ledger:true` and `already_sealed:0`.
+const VERIFIED_EMPTY_SEAL_REASONS = new Set(['tab_missing', 'no_rows']);
+// Routes whose live success proof is a PER-TAB append: one value per contract column, a positive
+// row count per tab, and the append range Google returned for it. `/api/complete-workout` verifies
+// those exact row counts against the ranges before returning, exactly as `/api/log-workout` does,
+// so both are held to the same range-backed tuple rather than a generic positive scalar.
+const PER_TAB_APPEND_ROUTES = new Set(['/api/log-workout', '/api/complete-workout']);
+// `sheet_written` is an authoritative whole-request write flag on most routes, but NOT on
+// `/api/complete-workout`, where it is `!testMode && effortWritten` (index.js) — a genuine
+// effort-less completion reports false beside a real Log append. Treating that as a contradiction
+// would reject a legitimate live write, so the contradiction check excludes this route.
+const AUTHORITATIVE_SHEET_WRITTEN_ROUTES = new Set([
+  '/api/log-workout',
+  '/api/log-modality',
+  '/api/bodyweight',
+]);
 const NULLABLE_PROOF_KEYS = new Set([
   'ledger_seal_updated_cells',
   'session_plans_closeout_plan_version',
@@ -469,30 +486,40 @@ function _sealSummary(proof, withheldEvidence) {
   // emitter always reports `sheet_written` on the stamping path.
   else if (sealedOk === true && sealed > 0 && sheetWritten !== true) state = 'indeterminate';
   // EVERY positive seal state requires its producer's COMPLETE tuple, not just the fields that
-  // happen to look affirmative. `sealCloseout` emits `no_write_confirmed:false` on the stamping
-  // path and `true` on the all-sealed replay, so a partial tuple substantiates neither.
+  // happen to look affirmative — absent means unknown here as everywhere else. The three shapes
+  // below are exactly what `sealCloseout` returns; `column` is deliberately NOT required because
+  // the ledger_seal projection does not carry it, so it never reaches this consumer.
+  //
+  // Fresh stamp: sheet_written:true, no_write_confirmed:false, sealed>0, and the sibling
+  // already_sealed count, which the producer always emits beside `sealed`.
   else if (sealedOk === true
     && sheetWritten === true
     && sealed > 0
-    && proof.ledger_seal_no_write_confirmed === false) {
+    && proof.ledger_seal_no_write_confirmed === false
+    && Number.isSafeInteger(alreadySealed)) {
     state = 'sealed';
   }
   else if (sealedOk === true && sheetWritten === true) state = 'indeterminate';
+  // Idempotent replay: the producer always stamps this path with reason:'all_sealed'. Other
+  // non-writing outcomes share these booleans and counts, so the discriminator is what separates
+  // them — the path must never be inferred from counts alone.
   else if (sealedOk === true
     && sheetWritten === false
     && proof.ledger_seal_no_write_confirmed === true
     && sealed === 0
-    && alreadySealed > 0) {
+    && alreadySealed > 0
+    && proof.ledger_seal_reason === 'all_sealed') {
     state = 'already_sealed';
   }
-  // A verified seal that stamped nothing still carries the producer's COMPLETE tuple (the
-  // tab_missing / no_rows shapes: sheet_written:false, no_write_confirmed:true, sealed:0). A bare
-  // `sealed_ok:true` with no seal-local write flag, counts, or reason substantiates nothing —
-  // absent means unknown here too.
+  // Verified empty seal: only `tab_missing` and `no_rows` reach it, and both carry no_ledger:true,
+  // already_sealed:0, and their own reason. A shape missing those is not a producible outcome.
   else if (sealedOk === true
     && sheetWritten === false
     && proof.ledger_seal_no_write_confirmed === true
-    && sealed === 0) {
+    && sealed === 0
+    && alreadySealed === 0
+    && proof.ledger_seal_no_ledger === true
+    && VERIFIED_EMPTY_SEAL_REASONS.has(proof.ledger_seal_reason)) {
     state = 'verified_no_new_seal';
   }
   else if (sealedOk === true) state = 'indeterminate';
@@ -533,11 +560,11 @@ function _closeoutSummary(proof, withheldEvidence) {
   // `writeSessionCloseout` appends exactly ONE event and `_envelope` always emits both counts, so
   // a written result must carry `skipped:0` — the same producer invariant the skipped branch below
   // already enforces in the other direction.
-  if (status === 'written' && captured === true && written > 0 && skipped === 0) {
+  if (status === 'written' && captured === true && written === 1 && skipped === 0) {
     state = planVersionWithheld || !hasPlanVersion || proof[planVersionKey] === null
       ? 'written_unidentified'
       : 'written';
-  } else if (status === 'skipped' && captured === true && written === 0 && skipped > 0) {
+  } else if (status === 'skipped' && captured === true && written === 0 && skipped === 1) {
     state = planVersionWithheld || !hasPlanVersion || proof[planVersionKey] === null
       ? 'already_captured_unidentified'
       : 'already_captured';
@@ -572,12 +599,12 @@ function _proofState(proof, seal, closeout, route, rangeEvidence = {}) {
   const rangeBackedLogWorkoutWrite = (logRowsWritten || effortRowsWritten)
     && (!logRowsWritten || rangeEvidence.log === true)
     && (!effortRowsWritten || rangeEvidence.effort === true);
-  const isLogWorkout = route === '/api/log-workout';
+  const isPerTabAppend = PER_TAB_APPEND_ROUTES.has(route);
   const genericMainWrite = proof.sheet_written === true
     || (typeof proof.rows_appended === 'number' && proof.rows_appended > 0)
     || logRowsWritten
     || effortRowsWritten;
-  const mainWrite = claimsSuccess && (isLogWorkout ? rangeBackedLogWorkoutWrite : genericMainWrite);
+  const mainWrite = claimsSuccess && (isPerTabAppend ? rangeBackedLogWorkoutWrite : genericMainWrite);
   const positiveWrite = mainWrite
     || seal.new_seal_write
     || closeout.state === 'written';
@@ -589,7 +616,8 @@ function _proofState(proof, seal, closeout, route, rangeEvidence = {}) {
     && ((!claimsSuccess && genericMainWrite)
       || (claimsSuccess
         && proof.sheet_written === false
-        && (isLogWorkout ? rangeBackedLogWorkoutWrite : genericMainWrite)))) {
+        && AUTHORITATIVE_SHEET_WRITTEN_ROUTES.has(route)
+        && (isPerTabAppend ? rangeBackedLogWorkoutWrite : genericMainWrite)))) {
     return 'contradictory';
   }
 
@@ -620,9 +648,17 @@ function _proofState(proof, seal, closeout, route, rangeEvidence = {}) {
   // never substantiate a write.
   if (positiveWrite) return 'write_confirmed';
 
-  if (proof.duplicate_write === true
-    || proof.sheet_write === 'skipped_duplicate'
-    || (typeof proof.skipped_duplicates === 'number' && proof.skipped_duplicates > 0)) {
+  // The all-rows-duplicate closeout path is the ONLY correlated duplicate producer — an ordinary
+  // early replay is never recorded at all (index.js records this branch only when a seal or
+  // closeout envelope exists). It emits the whole tuple, so no single duplicate or replay signal
+  // may stand in for the others.
+  if (proof.test_mode === false
+    && proof.sheet_write === 'skipped_duplicate'
+    && proof.sheet_written === false
+    && proof.duplicate_write === true
+    && proof.log_rows_written === 0
+    && typeof proof.skipped_duplicates === 'number'
+    && proof.skipped_duplicates > 0) {
     return 'idempotent_no_write';
   }
   return 'insufficient';

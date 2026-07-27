@@ -77,10 +77,27 @@ omitting a reason a producer really emits would reject that whole record and los
 genuine failure could not be reviewed at all.
 
 **Every positive state requires its producer's complete tuple**, not merely the fields that look
-affirmative — absent means unknown throughout. This applies uniformly: `sealed` requires
-`no_write_confirmed:false`, `already_sealed` and `verified_no_new_seal` require `true`, and a
-`written` closeout requires `skipped:0` (`writeSessionCloseout` appends exactly one event, and
-`_envelope` always emits both counts) just as a `skipped` one requires `written:0`.
+affirmative — absent means unknown throughout:
+
+- `sealed` — `sheet_written:true`, `no_write_confirmed:false`, positive `sealed`, and the sibling
+  `already_sealed` count the producer always emits beside it. (`column` is *not* required: the
+  `ledger_seal` projection does not carry it, so it never reaches this consumer.)
+- `already_sealed` — the replay booleans and counts **plus** `reason:'all_sealed'`. Other
+  non-writing outcomes share those booleans, so the discriminator is what separates them.
+- `verified_no_new_seal` — only `tab_missing` and `no_rows` reach it, and both carry
+  `no_ledger:true`, `already_sealed:0`, and their own reason.
+- closeout counts — `writeSessionCloseout` appends exactly one event, so only `written:1,skipped:0`
+  and `written:0,skipped:1` are producible.
+- `idempotent_no_write` — the all-rows-duplicate closeout path is the only correlated duplicate
+  producer (an ordinary early replay is never recorded), so its whole tuple is required rather than
+  any single duplicate or replay signal.
+
+`/api/complete-workout` is held to the same **per-tab range-backed** tuple as `/api/log-workout`,
+since it verifies those exact row counts against the ranges before returning. One caveat is
+load-bearing in the other direction: `sheet_written` on that route is `!testMode && effortWritten`,
+so a genuine effort-less completion reports `false` beside a real Log append. That is a legitimate
+live write, not a contradiction, and the contradiction check excludes the route for exactly that
+reason.
 
 `closeout_fully_verified` is the **route's own verdict** and is honored, never recomputed. It is
 also **required** whenever seal or closeout evidence is present: both emitting branches attach it
