@@ -163,7 +163,7 @@ const SIDECAR_EVIDENCE_STATES = new Set(['success', 'skipped_duplicate']);
 // same mistake, each one dimension narrower than the last. So the gate is a per-key map derived by
 // reading every emitter, not a special case for whichever field was last flagged.
 //
-// `allowed(route, state)` answers: can THIS body have carried THIS field? A key with no entry is
+// `allowed(route, state, attempt)` answers: can THIS body have carried THIS field? A key with no entry is
 // unconstrained — deliberately, because inventing a constraint from a pattern rather than from an
 // emitter is how a false negative gets created, and on this consumer a wrongly-dropped field costs
 // real write evidence.
@@ -183,11 +183,21 @@ const IMPOSSIBLE_FIELD_RULES = Object.freeze({
   skipped_duplicates: (route) => route === '/api/log-workout',
   // `/api/log-workout` only (index.js:3130 preview, 3363 partial, 3418 success). Response
   // bookkeeping about formatting an Effort row, which no other route does.
-  effortWritten: (route) => route === '/api/log-workout',
+  effortWritten: (route, state) => route === '/api/log-workout' && EFFORT_WRITTEN_STATES.has(state),
   // Emitted by every write body EXCEPT `/api/log-workout`'s success, which omits it entirely
   // (index.js:3413-3421) — the same asymmetry the main-write predicate already relies on.
   sheet_written: (route, state) => !(route === '/api/log-workout' && state === 'success'),
+  // NO top-level emitter. The real flag is nested inside the seal envelope and reaches this
+  // consumer only as the projected `ledger_seal_dry_run`; a bare `dry_run` is a second
+  // `rows_appended` — whitelisted upstream, produced by nothing.
+  dry_run: () => false,
 });
+// State/attempt constraints for keys whose route allowance is not the whole conjunction. Kept
+// beside the map rather than folded into it so each predicate stays a single readable producer
+// fact: `effortWritten` appears on /api/log-workout's preview, partial and success bodies
+// (index.js:3130, 3363, 3418) and NOT on the correlated all-rows-duplicate body, whose fields are
+// listed exhaustively at index.js:3238-3247.
+const EFFORT_WRITTEN_STATES = new Set(['skipped', 'partial', 'success']);
 const NULLABLE_PROOF_KEYS = new Set([
   'ledger_seal_updated_cells',
   // `sealCloseout` returns `would_seal:null` when the ledger is unreadable while the seal lane is
@@ -423,7 +433,7 @@ function _sanitizeProof(record) {
   const impossibleFields = [];
   for (const [key, allowed] of Object.entries(IMPOSSIBLE_FIELD_RULES)) {
     if (!Object.prototype.hasOwnProperty.call(proof, key)) continue;
-    if (allowed(record.route, proof.sheet_write)) continue;
+    if (allowed(record.route, proof.sheet_write, pairing.write_attempt)) continue;
     impossibleFields.push(key);
     delete proof[key];
   }
@@ -463,6 +473,23 @@ function _sanitizeProof(record) {
       || proof.sheet_write !== 'skipped'
       || proof.sheet_written !== false
       || proof.no_write_confirmed !== true)) {
+    return null;
+  }
+
+  // …and the CONVERSE, which is the same producer fact read the other way. `write_attempt` is
+  // `rec.writeIds.indexOf(writeId) + 1` (turnCorrelation.js:551), so a positive attempt exists only
+  // where a LIVE write registered a write_id, while the tuple above is emitted solely through
+  // `isPreview`, which yields attempt 0. A record carrying the complete preview tuple at a positive
+  // attempt is a shape no producer can emit — and it was reaching `no_write_confirmed` with no
+  // issues and an overall `complete` status: a fabricated non-write presented as a reviewable write.
+  //
+  // Rejected rather than flagged, matching the attempt-zero gate directly above: this is one
+  // producer fact with two directions, and the two directions should fail the same way.
+  if (pairing.write_attempt > 0
+    && proof.test_mode === true
+    && proof.sheet_write === 'skipped'
+    && proof.sheet_written === false
+    && proof.no_write_confirmed === true) {
     return null;
   }
 

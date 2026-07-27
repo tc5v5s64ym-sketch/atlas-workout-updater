@@ -356,6 +356,86 @@ describe('turnWriteArtifact guards — withheld evidence', () => {
 });
 
 describe('turnWriteArtifact guards — seal presentation', () => {
+  it('rejects the preview tuple on a positive write attempt', () => {
+    // `write_attempt` is `rec.writeIds.indexOf(writeId) + 1` (turnCorrelation.js:551), so a
+    // positive attempt exists only where a LIVE write registered a write_id. The preview tuple is
+    // emitted solely through `isPreview`, which yields attempt 0. A record carrying that exact
+    // tuple at attempt > 0 is therefore impossible — and it was classified `no_write_confirmed`
+    // with no issues and an overall `complete` status, i.e. a fabricated non-write presented as a
+    // reviewable write.
+    const artifact = build(trace(), proofRecord({}, {
+      test_mode: true,
+      sheet_write: 'skipped',
+      sheet_written: false,
+      no_write_confirmed: true,
+      logAppendedRange: undefined,
+      log_rows_written: undefined,
+      effort_rows_written: undefined,
+      duplicate_write: undefined,
+      idempotency_status: undefined,
+    }));
+    assertRejected(artifact, 'the preview tuple cannot occur on a live attempt');
+
+    // CONTROL — the same tuple at attempt 0 is the genuine preview and stays reviewable.
+    const preview = build(trace(), proofRecord({
+      pairing: {
+        established_at_preview: true,
+        write_attempt: 0,
+        previewed_write_id_match: null,
+        payload_bound: false,
+        effort_transition: false,
+      },
+    }, {
+      test_mode: true,
+      sheet_write: 'skipped',
+      sheet_written: false,
+      no_write_confirmed: true,
+      logAppendedRange: undefined,
+      log_rows_written: undefined,
+      effort_rows_written: undefined,
+      duplicate_write: undefined,
+      idempotency_status: undefined,
+    }), proofRecord());
+    assert.equal(preview.summary.rejected_records, 0);
+    assert.equal(preview.turns[0].previews[0].proof_state, 'no_write_confirmed');
+  });
+
+  it('constrains fields by state and attempt, not only by route', () => {
+    // `effortWritten` is emitted on `/api/log-workout`'s preview, partial and success bodies
+    // (index.js:3130, 3363, 3418) — but NOT on the correlated all-rows-duplicate body
+    // (index.js:3238-3247), which lists its fields exhaustively and has no such key.
+    const onDuplicate = build(trace(), duplicateRecord({
+      ...SEAL_REPLAY, ...CLOSEOUT_SKIPPED, effortWritten: true,
+    }));
+    assert.ok(firstWrite(onDuplicate).issues.includes('impossible_fields_for_route'));
+    assert.equal(firstWrite(onDuplicate).proof.effortWritten, undefined);
+
+    // Top-level `dry_run` has no production emitter at all: the real field is nested inside the
+    // seal envelope and reaches the consumer as `ledger_seal_dry_run`. A second `rows_appended`.
+    const dryRun = build(trace(), proofRecord({}, { dry_run: true }));
+    assert.ok(firstWrite(dryRun).issues.includes('impossible_fields_for_route'));
+    assert.equal(firstWrite(dryRun).proof.dry_run, undefined);
+
+    // CONTROLS — `effortWritten` on the bodies that do emit it, and the projected seal dry-run flag.
+    const onSuccess = build(trace(), proofRecord({}, { effortWritten: false }));
+    assert.deepEqual(firstWrite(onSuccess).issues, []);
+
+    const sealDryRun = build(trace(), proofRecord({}, {
+      ledger_seal_sealed_ok: true,
+      ledger_seal_sheet_written: false,
+      ledger_seal_no_write_confirmed: true,
+      ledger_seal_dry_run: true,
+      ledger_seal_sealed: 0,
+      ledger_seal_already_sealed: 0,
+      ledger_seal_would_seal: 2,
+      ledger_seal_reason: 'test_mode',
+      ...CLOSEOUT_SKIPPED,
+      closeout_fully_verified: true,
+    }));
+    assert.equal(firstWrite(sealDryRun).proof.ledger_seal_dry_run, true);
+    assert.ok(!firstWrite(sealDryRun).issues.includes('impossible_fields_for_route'));
+  });
+
   it('drops every proof field whose producer conjunction the record does not satisfy', () => {
     // Gating only the two per-tab counts left the rest of the whitelist publishable. Each of these
     // was verified against its emitters:
@@ -740,8 +820,18 @@ describe('turnWriteArtifact guards — write classification', () => {
     }));
     assert.notEqual(firstWrite(artifact).proof_state, 'no_write_confirmed');
 
-    // CONTROL — the real dry-run tuple, which carries the explicit false write flag.
-    const control = build(trace(), proofRecord({}, {
+    // CONTROL — the real dry-run tuple, which carries the explicit false write flag. It lives on a
+    // PREVIEW record: emitted through `isPreview`, and write_attempt is non-zero only where a live
+    // write registered a write_id (turnCorrelation.js:551).
+    const control = build(trace(), proofRecord({
+      pairing: {
+        established_at_preview: true,
+        write_attempt: 0,
+        previewed_write_id_match: null,
+        payload_bound: false,
+        effort_transition: false,
+      },
+    }, {
       test_mode: true,
       no_write_confirmed: true,
       sheet_written: false,
@@ -752,7 +842,7 @@ describe('turnWriteArtifact guards — write classification', () => {
       duplicate_write: undefined,
       idempotency_status: undefined,
     }));
-    assert.equal(firstWrite(control).proof_state, 'no_write_confirmed');
+    assert.equal(control.turns[0].previews[0].proof_state, 'no_write_confirmed');
   });
 
   it('requires the duplicate branch scalars before reporting idempotent_no_write', () => {

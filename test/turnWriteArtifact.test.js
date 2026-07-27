@@ -1627,7 +1627,11 @@ describe('turnWriteArtifact — bounded, leakage-safe review surface', () => {
     assert.equal(artifact.turns[0].writes[0].reviewable, false);
     assert.equal(artifact.status, 'partial');
 
+    // The explicit no-write tuple lives on a PREVIEW record: it is emitted through `isPreview`, and
+    // write_attempt is non-zero only where a live write registered a write_id
+    // (turnCorrelation.js:551), so this shape at a positive attempt is not producible.
     const noWrite = proof({
+      pairing: { ...proof().pairing, write_attempt: 0, payload_bound: false },
       proof: {
         test_mode: true,
         sheet_write: 'skipped',
@@ -1639,8 +1643,8 @@ describe('turnWriteArtifact — bounded, leakage-safe review surface', () => {
       line(INTERACTION_TRACE_MARKER, trace()),
       line(TURN_WRITE_PROOF_MARKER, noWrite),
     ].join('\n'));
-    assert.equal(noWriteArtifact.turns[0].writes[0].proof_state, 'no_write_confirmed');
-    assert.equal(noWriteArtifact.turns[0].writes[0].reviewable, true);
+    assert.equal(noWriteArtifact.turns[0].previews[0].proof_state, 'no_write_confirmed');
+    assert.equal(noWriteArtifact.turns[0].previews[0].reviewable, true);
   });
 
   it('never treats explicit unverified or partial append states as a confirmed write', () => {
@@ -2344,7 +2348,11 @@ describe('turnWriteArtifact — reachable producer paths', () => {
     }
 
     // CONTROL — the real dry-run tuple appends nothing and stays reviewable.
+    // The W1 no-write tuple only ever occurs at write_attempt 0: it is emitted through `isPreview`,
+    // and `write_attempt` is non-zero only where a live write registered a write_id
+    // (turnCorrelation.js:551). So the control is a PREVIEW record, which is where this tuple lives.
     const dryRun = build({
+      pairing: { ...proof().pairing, write_attempt: 0, payload_bound: false },
       proof: {
         test_mode: true,
         sheet_write: 'skipped',
@@ -2352,8 +2360,8 @@ describe('turnWriteArtifact — reachable producer paths', () => {
         no_write_confirmed: true,
       },
     });
-    assert.equal(dryRun.turns[0].writes[0].proof_state, 'no_write_confirmed');
-    assert.equal(dryRun.status, 'complete');
+    assert.equal(dryRun.turns[0].previews[0].proof_state, 'no_write_confirmed');
+    assert.equal(dryRun.turns[0].previews[0].reviewable, true);
   });
 
   it('requires complete-workout’s authoritative write flag, and only there', () => {
