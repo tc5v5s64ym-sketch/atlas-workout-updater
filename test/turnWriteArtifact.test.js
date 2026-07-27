@@ -1935,3 +1935,201 @@ describe('turnWriteArtifact — complete producer tuples', () => {
     assert.equal(skipped.status, 'complete');
   });
 });
+
+// Round 12 — five further complete-producer-tuple gaps, each verified against the reachable
+// emitting path before being asserted. Four close false greens; the tab-name one closes a false
+// NEGATIVE that would break any deployment using the documented sheet-name overrides.
+describe('turnWriteArtifact — reachable producer paths', () => {
+  const build = (overrides) => buildTurnWriteArtifact([
+    line(INTERACTION_TRACE_MARKER, trace()),
+    line(TURN_WRITE_PROOF_MARKER, proof(overrides)),
+  ].join('\n'));
+
+  it('requires the Effort tuple on every /api/complete-workout success', () => {
+    // The Effort append is unconditional (index.js:2585) and the success gate requires
+    // effort_rows_written === 1 plus an Effort range (index.js:2643), so a log-only success is
+    // unreachable regardless of sheet_written and must fail closed on the per-tab predicate too.
+    const logOnly = build({
+      route: '/api/complete-workout',
+      proof: {
+        test_mode: false,
+        sheet_write: 'success',
+        sheet_written: true,
+        log_rows_written: 2,
+        logAppendedRange: 'Log_Cleaned!A100:L101',
+        effort_rows_written: 0,
+      },
+    });
+    assert.equal(logOnly.turns[0].writes[0].proof_state, 'insufficient');
+    assert.equal(logOnly.status, 'partial');
+
+    // CONTROLS — both reachable shapes: log+effort, and effort-only (logProofOk is vacuously
+    // true with no log rows).
+    const logAndEffort = build({
+      route: '/api/complete-workout',
+      proof: {
+        test_mode: false,
+        sheet_write: 'success',
+        sheet_written: true,
+        log_rows_written: 2,
+        logAppendedRange: 'Log_Cleaned!A100:L101',
+        effort_rows_written: 1,
+        effortAppendedRange: 'Effort!A100:I100',
+      },
+    });
+    assert.equal(logAndEffort.turns[0].writes[0].proof_state, 'write_confirmed');
+    assert.equal(logAndEffort.status, 'complete');
+
+    const effortOnly = build({
+      route: '/api/complete-workout',
+      proof: {
+        test_mode: false,
+        sheet_write: 'success',
+        sheet_written: true,
+        log_rows_written: 0,
+        effort_rows_written: 1,
+        effortAppendedRange: 'Effort!A100:I100',
+      },
+    });
+    assert.equal(effortOnly.turns[0].writes[0].proof_state, 'write_confirmed');
+    assert.equal(effortOnly.status, 'complete');
+  });
+
+  it('requires the exact success fields on the generic write routes', () => {
+    // index.js:1407-1423 and 2024-2036 both emit sheet_write:'success' with sheet_written:true and
+    // never a row-count field, so a count cannot substitute for the write flag.
+    for (const route of ['/api/log-modality', '/api/bodyweight']) {
+      for (const fabricated of [{ rows_appended: 1 }, { log_rows_written: 2 }]) {
+        const artifact = build({
+          route,
+          proof: { test_mode: false, sheet_write: 'success', ...fabricated },
+        });
+        assert.notEqual(
+          artifact.turns[0].writes[0].proof_state, 'write_confirmed', `${route} ${JSON.stringify(fabricated)}`,
+        );
+        assert.equal(artifact.status, 'partial', `${route} ${JSON.stringify(fabricated)}`);
+      }
+
+      // CONTROL — the real success body.
+      const real = build({
+        route,
+        proof: { test_mode: false, sheet_write: 'success', sheet_written: true },
+      });
+      assert.equal(real.turns[0].writes[0].proof_state, 'write_confirmed', route);
+      assert.equal(real.status, 'complete', route);
+    }
+  });
+
+  it('validates append ranges against the CONFIGURED tab names', () => {
+    // sheets.js:6-7 — LOG_SHEET_NAME / EFFORT_SHEET_NAME are supported overrides used by the real
+    // append routes, so Google returns the configured tab in updatedRange. Hard-coding the
+    // defaults would call every genuine append on such a deployment insufficient.
+    const originalLog = process.env.LOG_SHEET_NAME;
+    const originalEffort = process.env.EFFORT_SHEET_NAME;
+    process.env.LOG_SHEET_NAME = 'Log_Cleaned_V2';
+    process.env.EFFORT_SHEET_NAME = 'Effort_V2';
+    delete require.cache[require.resolve('../services/turnWriteArtifact')];
+    try {
+      const reloaded = require('../services/turnWriteArtifact');
+      const artifact = reloaded.buildTurnWriteArtifact([
+        line(INTERACTION_TRACE_MARKER, trace()),
+        line(TURN_WRITE_PROOF_MARKER, proof({
+          proof: {
+            test_mode: false,
+            sheet_write: 'success',
+            log_rows_written: 2,
+            logAppendedRange: 'Log_Cleaned_V2!A100:L101',
+            effort_rows_written: 1,
+            effortAppendedRange: 'Effort_V2!A100:I100',
+          },
+        })),
+      ].join('\n'));
+
+      assert.equal(artifact.turns[0].writes[0].proof_state, 'write_confirmed');
+      assert.equal(artifact.status, 'complete');
+    } finally {
+      if (originalLog === undefined) delete process.env.LOG_SHEET_NAME;
+      else process.env.LOG_SHEET_NAME = originalLog;
+      if (originalEffort === undefined) delete process.env.EFFORT_SHEET_NAME;
+      else process.env.EFFORT_SHEET_NAME = originalEffort;
+      delete require.cache[require.resolve('../services/turnWriteArtifact')];
+    }
+  });
+
+  it('rejects non-stamping seal flags on a positive seal state', () => {
+    // sealCloseout sets no_ledger / read_failed only on non-stamping outcomes; its successful
+    // stamp never does.
+    for (const impossible of [{ ledger_seal_no_ledger: true }, { ledger_seal_read_failed: true }]) {
+      const stamped = build({
+        proof: {
+          ...proof().proof,
+          closeout_fully_verified: true,
+          ledger_seal_sheet_written: true,
+          ledger_seal_no_write_confirmed: false,
+          ledger_seal_sealed: 4,
+          ledger_seal_already_sealed: 0,
+          ledger_seal_sealed_ok: true,
+          ...impossible,
+        },
+      });
+      assert.notEqual(stamped.turns[0].writes[0].seal.state, 'sealed', JSON.stringify(impossible));
+      assert.equal(stamped.status, 'partial', JSON.stringify(impossible));
+
+      const replayed = build({
+        proof: {
+          ...proof().proof,
+          closeout_fully_verified: true,
+          ledger_seal_sheet_written: false,
+          ledger_seal_no_write_confirmed: true,
+          ledger_seal_sealed: 0,
+          ledger_seal_already_sealed: 4,
+          ledger_seal_sealed_ok: true,
+          ledger_seal_reason: 'all_sealed',
+          ...impossible,
+        },
+      });
+      assert.notEqual(replayed.turns[0].writes[0].seal.state, 'already_sealed', JSON.stringify(impossible));
+      assert.equal(replayed.status, 'partial', JSON.stringify(impossible));
+    }
+  });
+
+  it('enforces the disabled and no_plan closeout envelopes', () => {
+    // _capture emits disabled as captured:false with zero counts (sessionPlanCapture.js:51-59,88);
+    // recordCloseoutEvent emits no_plan as {status:'no_plan', captured:false} with no counts at all.
+    for (const impossible of [
+      { session_plans_closeout_status: 'disabled', session_plans_closeout_captured: true, session_plans_closeout_written: 99 },
+      { session_plans_closeout_status: 'no_plan', session_plans_closeout_captured: true },
+    ]) {
+      const artifact = build({
+        proof: { ...proof().proof, closeout_fully_verified: true, ...impossible },
+      });
+      assert.equal(artifact.turns[0].writes[0].closeout.state, 'indeterminate', JSON.stringify(impossible));
+      assert.equal(artifact.status, 'partial', JSON.stringify(impossible));
+    }
+
+    // CONTROLS — the real envelopes.
+    const disabled = build({
+      proof: {
+        ...proof().proof,
+        closeout_fully_verified: true,
+        session_plans_closeout_status: 'disabled',
+        session_plans_closeout_captured: false,
+        session_plans_closeout_written: 0,
+        session_plans_closeout_skipped: 0,
+      },
+    });
+    assert.equal(disabled.turns[0].writes[0].closeout.state, 'disabled');
+    assert.equal(disabled.status, 'complete');
+
+    const noPlan = build({
+      proof: {
+        ...proof().proof,
+        closeout_fully_verified: true,
+        session_plans_closeout_status: 'no_plan',
+        session_plans_closeout_captured: false,
+      },
+    });
+    assert.equal(noPlan.turns[0].writes[0].closeout.state, 'no_plan');
+    assert.equal(noPlan.status, 'complete');
+  });
+});
