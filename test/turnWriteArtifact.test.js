@@ -147,6 +147,17 @@ describe('turnWriteArtifact — parsing and canonical turn join', () => {
     assert.equal(artifact.status, 'partial');
   });
 
+  it('fails reviewability closed when the joined proof has no session identity', () => {
+    const artifact = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, proof({ session_id: null })),
+    ].join('\n'));
+
+    assert.ok(artifact.turns[0].issues.includes('session_missing'));
+    assert.equal(artifact.turns[0].reviewable, false);
+    assert.equal(artifact.status, 'partial');
+  });
+
   it('retains the legitimate seal retry as a second bounded write attempt', () => {
     const retry = proof({
       recorded_at: '2026-07-26T08:03:00.000Z',
@@ -399,6 +410,26 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
     assert.equal(artifact.status, 'partial');
   });
 
+  it('does not let a non-success live log state bypass the W3 proof tuple', () => {
+    const incoherentSkip = proof({
+      proof: {
+        test_mode: false,
+        sheet_write: 'skipped',
+        sheet_written: true,
+      },
+    });
+    const artifact = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, incoherentSkip),
+    ].join('\n'));
+    const write = artifact.turns[0].writes[0];
+
+    assert.equal(write.proof_state, 'contradictory');
+    assert.equal(write.reviewable, false);
+    assert.ok(write.issues.includes('write_proof_contradictory'));
+    assert.equal(artifact.status, 'partial');
+  });
+
   it('distinguishes a newly stamped seal from an idempotent already-sealed replay', () => {
     const stamped = proof({
       proof: {
@@ -481,6 +512,37 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
     assert.equal(write.reviewable, false);
     assert.ok(write.issues.includes('seal_proof_mismatch'));
     assert.equal(artifact.status, 'partial');
+  });
+
+  it('rejects contradictory mismatch/no-write/dry-run metadata on a claimed successful seal', () => {
+    for (const contradictory of [
+      { ledger_seal_reason: 'seal_proof_mismatch' },
+      { ledger_seal_no_write_confirmed: true },
+      { ledger_seal_dry_run: true },
+    ]) {
+      const claimedSuccess = proof({
+        proof: {
+          test_mode: false,
+          sheet_write: 'skipped_duplicate',
+          duplicate_write: true,
+          ledger_seal_sheet_written: true,
+          ledger_seal_sealed: 3,
+          ledger_seal_already_sealed: 0,
+          ledger_seal_sealed_ok: true,
+          ...contradictory,
+        },
+      });
+      const artifact = buildTurnWriteArtifact([
+        line(INTERACTION_TRACE_MARKER, trace()),
+        line(TURN_WRITE_PROOF_MARKER, claimedSuccess),
+      ].join('\n'));
+      const write = artifact.turns[0].writes[0];
+
+      assert.equal(write.seal.state, 'seal_proof_mismatch');
+      assert.equal(write.seal.successfully_sealed, false);
+      assert.equal(write.reviewable, false);
+      assert.equal(artifact.status, 'partial');
+    }
   });
 
   it('carries bounded closeout evidence and its row discriminator', () => {
@@ -666,6 +728,21 @@ describe('turnWriteArtifact — bounded, leakage-safe review surface', () => {
       assert.equal(artifact.summary.reviewable_turns, 0);
       assert.ok(!JSON.stringify(artifact).includes(reason));
     }
+  });
+
+  it('rejects a capability-shaped turn id instead of reflecting it through the artifact', () => {
+    const capability = `pair:${'a'.repeat(32)}`;
+    const poisonedTurnId = `turn:${capability}`;
+    const artifact = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace({ turn_id: poisonedTurnId })),
+      line(TURN_WRITE_PROOF_MARKER, proof({ turn_id: poisonedTurnId })),
+    ].join('\n'));
+    const json = JSON.stringify(artifact);
+
+    assert.equal(artifact.summary.rejected_records, 2);
+    assert.equal(artifact.summary.reviewable_turns, 0);
+    assert.ok(!json.includes(capability));
+    assert.equal(artifact.status, 'partial');
   });
 
   it('rejects fractional proof counts instead of treating them as positive write evidence', () => {
