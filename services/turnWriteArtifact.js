@@ -20,7 +20,6 @@
 // file/stdin reads and rendering.
 
 const {
-  MAX_OUTSTANDING_PAIRINGS,
   MAX_WRITES_PER_PAIRING,
   PROOF_KEYS,
   PROOF_PROJECTIONS,
@@ -870,16 +869,22 @@ function buildTurnWriteArtifact(input) {
       || a.recorded_at.localeCompare(b.recorded_at)
       || String(a.proof.write_id || '').localeCompare(String(b.proof.write_id || ''))
     ));
-    let previewRecords = allProofRecords.filter((record) => record.pairing.write_attempt === 0);
+    const previewRecords = allProofRecords.filter((record) => record.pairing.write_attempt === 0);
     let proofRecords = allProofRecords.filter((record) => record.pairing.write_attempt > 0);
     const issues = [];
 
     if (traceRecords.length > 1) issues.push('conflicting_traces');
-    if (previewRecords.length > MAX_OUTSTANDING_PAIRINGS) {
-      rejectedCount += previewRecords.length - MAX_OUTSTANDING_PAIRINGS;
-      previewRecords = previewRecords.slice(0, MAX_OUTSTANDING_PAIRINGS);
-      issues.push('preview_record_overflow');
-    }
+    // NO cap on accumulated preview history. The two registry limits look alike but are not the
+    // same kind of bound, and only one of them bounds what can be EMITTED:
+    //   * `writeIds` REFUSES — `if (rec.writeIds.length >= MAX_WRITES_PER_PAIRING) return miss(...)`
+    //     (turnCorrelation.js:836). A sixth correlated write attempt never happens, so a sixth
+    //     write-proof record cannot exist and the cap below is a genuine impossibility check.
+    //   * `pairings` EVICT — `while (rec.pairings.length > MAX_OUTSTANDING_PAIRINGS) shift()`
+    //     (:790). A ninth preview IS accepted; only the oldest entry leaves memory, and its log
+    //     line was emitted long before. MAX_OUTSTANDING_PAIRINGS is a concurrency/memory bound on
+    //     the live registry, not a limit on a turn's emitted history.
+    // Applying the concurrency cap here truncated genuine records and made a valid turn
+    // permanently partial. Input volume is already bounded by MAX_INPUT_LINES and MAX_RECORDS.
     if (proofRecords.length > MAX_WRITES_PER_PAIRING) {
       rejectedCount += proofRecords.length - MAX_WRITES_PER_PAIRING;
       proofRecords = proofRecords.slice(0, MAX_WRITES_PER_PAIRING);

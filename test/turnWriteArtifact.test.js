@@ -2454,15 +2454,16 @@ describe('turnWriteArtifact — reachable producer paths', () => {
     assert.equal(nine.summary.rejected_records, 0);
     assert.equal(nine.status, 'complete');
 
-    // CONTROL — the write-attempt cap is a REFUSAL and still bounds emitted records, so a sixth
-    // correlated attempt is impossible and must stay flagged.
+    // CONTROL — the write-attempt cap is a REFUSAL, so more correlated attempts than the registry
+    // can issue is genuinely impossible and must stay flagged. (An attempt NUMBER above the cap is
+    // already rejected at sanitize time, so this exercises the count: six in-range records.)
     const sixAttempts = buildTurnWriteArtifact([
       line(INTERACTION_TRACE_MARKER, trace()),
-      ...Array.from({ length: 6 }, (_, i) => line(TURN_WRITE_PROOF_MARKER, proof({
+      ...[1, 2, 3, 4, 5, 5].map((attempt, i) => line(TURN_WRITE_PROOF_MARKER, proof({
         recorded_at: `2026-07-26T08:1${i}:00.000Z`,
         pairing: {
           established_at_preview: true,
-          write_attempt: i + 1,
+          write_attempt: attempt,
           previewed_write_id_match: null,
           payload_bound: true,
           effort_transition: false,
@@ -2590,7 +2591,7 @@ describe('turnWriteArtifact — reachable producer paths', () => {
       proof: {
         ...proof().proof,
         closeout_fully_verified: true,
-        ledger_seal_sealed_ok: true, ledger_seal_sheet_written: true, ledger_seal_no_write_confirmed: false, ledger_seal_sealed: 4, ledger_seal_already_sealed: 0, 
+        ledger_seal_sealed_ok: true, ledger_seal_sheet_written: true, ledger_seal_no_write_confirmed: false, ledger_seal_sealed: 4, ledger_seal_already_sealed: 0,
         session_plans_closeout_status: 'disabled',
         session_plans_closeout_captured: false,
         session_plans_closeout_written: 0,
@@ -2604,7 +2605,7 @@ describe('turnWriteArtifact — reachable producer paths', () => {
       proof: {
         ...proof().proof,
         closeout_fully_verified: true,
-        ledger_seal_sealed_ok: true, ledger_seal_sheet_written: true, ledger_seal_no_write_confirmed: false, ledger_seal_sealed: 4, ledger_seal_already_sealed: 0, 
+        ledger_seal_sealed_ok: true, ledger_seal_sheet_written: true, ledger_seal_no_write_confirmed: false, ledger_seal_sealed: 4, ledger_seal_already_sealed: 0,
         session_plans_closeout_status: 'no_plan',
         session_plans_closeout_captured: false,
       },
