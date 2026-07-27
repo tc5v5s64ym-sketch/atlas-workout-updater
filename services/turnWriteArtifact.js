@@ -357,10 +357,17 @@ function _sanitizeProof(record) {
     withheldEvidence.push(key);
   }
 
+  // All THREE preview correlation producers — `/api/log-modality` (index.js:1372),
+  // `/api/bodyweight` (:1978) and `/api/log-workout` (:3152) — emit the same body:
+  // `test_mode:true, sheet_write:'skipped', sheet_written:false, no_write_confirmed:true`.
+  // (`/api/complete-workout` emits no preview correlation at all.) `sheet_write` is part of that
+  // tuple, so an attempt-zero record without it — or carrying another state — is a shape no
+  // producer emits, not a lost field, and is rejected like any other malformed record.
   if (pairing.write_attempt === 0
     && (pairing.established_at_preview !== true
       || pairing.payload_bound !== false
       || proof.test_mode !== true
+      || proof.sheet_write !== 'skipped'
       || proof.sheet_written !== false
       || proof.no_write_confirmed !== true)) {
     return null;
@@ -763,13 +770,26 @@ function _proofState(proof, seal, closeout, route, rangeEvidence = {}) {
   // early replay is never recorded at all (index.js records this branch only when a seal or
   // closeout envelope exists). It emits the whole tuple, so no single duplicate or replay signal
   // may stand in for the others.
+  // The SIDECAR GATE is load-bearing: index.js:3276 correlates this branch only when
+  // `duplicateBody.ledger_seal || duplicateBody.session_plans_closeout` exists. Both are set
+  // together inside the closeout_context block (:3253-3263, including its catch), which also sets
+  // `closeout_fully_verified`, and :3265-3267 adds `idempotency_status:'completed'`. A bare
+  // duplicate that wrote nothing is never recorded at all — so the minimal scalar tuple with no
+  // sidecar evidence is producer-impossible, and it reached `idempotent_no_write` unchallenged
+  // because ABSENT seal/closeout evidence raises no downstream issue of its own.
+  //
+  // The gate is an OR, matching the producer exactly rather than requiring both envelopes: a
+  // projection that dropped one of them must not turn a real duplicate into an unreviewable one.
   if (proof.test_mode === false
     && proof.sheet_write === 'skipped_duplicate'
     && proof.sheet_written === false
     && proof.duplicate_write === true
     && proof.log_rows_written === 0
     && typeof proof.skipped_duplicates === 'number'
-    && proof.skipped_duplicates > 0) {
+    && proof.skipped_duplicates > 0
+    && proof.idempotency_status === 'completed'
+    && typeof proof.closeout_fully_verified === 'boolean'
+    && (seal.state !== 'absent' || closeout.state !== 'absent')) {
     return 'idempotent_no_write';
   }
   return 'insufficient';

@@ -1881,6 +1881,7 @@ describe('turnWriteArtifact — complete producer tuples', () => {
         log_rows_written: 0,
         effort_rows_written: 0,
         skipped_duplicates: 3,
+        idempotency_status: 'completed',
         closeout_fully_verified: true,
         ledger_seal_sheet_written: false,
         ledger_seal_no_write_confirmed: true,
@@ -2646,18 +2647,22 @@ describe('turnWriteArtifact — reachable producer paths', () => {
       log_rows_written: 0,
       skipped_duplicates: 3,
     };
+    // A seal REPLAY and an already-captured closeout: real sidecar evidence that is not itself a
+    // positive write, so the duplicate classification is what is under test. (A FRESH stamp is a
+    // genuine sidecar write and legitimately classifies write_confirmed instead.)
     const sidecar = {
       idempotency_status: 'completed',
       closeout_fully_verified: true,
       ledger_seal_sealed_ok: true,
-      ledger_seal_sheet_written: true,
-      ledger_seal_no_write_confirmed: false,
-      ledger_seal_sealed: 4,
-      ledger_seal_already_sealed: 0,
-      session_plans_closeout_status: 'written',
+      ledger_seal_sheet_written: false,
+      ledger_seal_no_write_confirmed: true,
+      ledger_seal_sealed: 0,
+      ledger_seal_already_sealed: 4,
+      ledger_seal_reason: 'all_sealed',
+      session_plans_closeout_status: 'skipped',
       session_plans_closeout_captured: true,
-      session_plans_closeout_written: 1,
-      session_plans_closeout_skipped: 0,
+      session_plans_closeout_written: 0,
+      session_plans_closeout_skipped: 1,
       session_plans_closeout_plan_version: 'pv_11111111-2222-3333-4444-555555555555',
     };
 
