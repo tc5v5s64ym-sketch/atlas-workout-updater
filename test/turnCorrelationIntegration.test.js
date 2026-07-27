@@ -95,6 +95,7 @@ const sheetsPath = require.resolve('../sheets');
 require.cache[sheetsPath] = { id: sheetsPath, filename: sheetsPath, loaded: true, exports: fakeSheets };
 
 const tc = require('../services/turnCorrelation');
+const { buildTurnWriteArtifact } = require('../services/turnWriteArtifact');
 const { app } = require('../index');
 
 const SESSION_ID = 'TC-INT-1';
@@ -1009,4 +1010,69 @@ test('the real multipart route lets newer blank-session preview B retire A befor
   } finally {
     state.existingEffortSessionIds = [];
   }
+});
+
+// #1165 slice 3 — the REAL /api/complete-workout PREVIEW emitter, end to end into the artifact.
+//
+// This exists because of a specific miss: that route passes `isPreview: testMode` (index.js:2784)
+// — a VARIABLE, not the literal `true` the other three preview producers use — so a grep for the
+// literal reported only three producers and the artifact's preview inventory was written down
+// wrong. A hand-built fixture labelled `/api/complete-workout` could not have caught that, and
+// would stay green if the route stopped passing `isPreview` at all. This drives the route.
+test('the real complete-workout dry-run emits a preview proof the artifact accepts', async () => {
+  tc._resetForTesting();
+  resetIdempotencyStore();
+  state.appends.length = 0;
+  tc.issueTurn(TURN_ID, SESSION_ID);
+
+  const form = new FormData();
+  form.append('session_id', SESSION_ID);
+  form.append('date', '2026-07-25');
+  form.append('log_rows_json', JSON.stringify([]));
+  form.append('effort_json', JSON.stringify({
+    duration: '00:31:00',
+    activeCalories: 300,
+    totalCalories: 400,
+    averageHR: 130,
+    peakHR: 160,
+    workoutType: 'Traditional Strength Training',
+  }));
+  form.append('test_mode', 'true');
+  form.append('correlation', JSON.stringify({
+    turn_id: TURN_ID,
+    initiation_nonce: 'init:dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+  }));
+
+  const emitted = [];
+  const originalLog = console.log;
+  console.log = (...args) => { emitted.push(args.join(' ')); };
+  let preview;
+  try {
+    preview = await postMultipart('/api/complete-workout', form);
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.equal(preview.status, 200, JSON.stringify(preview.body));
+  assert.equal(state.appends.length, 0, 'a dry run must append nothing');
+
+  // The route really did emit an attempt-zero record — the thing the grep missed.
+  const proofLines = emitted.filter((line) => line.includes('[turn-write-proof]'));
+  assert.equal(proofLines.length, 1, 'the complete-workout dry run must emit exactly one proof');
+  const record = tc.recentWriteProofs().at(-1);
+  assert.equal(record.route, '/api/complete-workout');
+  assert.equal(record.pairing.write_attempt, 0, 'a dry run is attempt zero');
+  assert.equal(record.pairing.established_at_preview, true);
+  // …carrying the exact tuple the artifact's attempt-zero gate requires.
+  assert.equal(record.proof.test_mode, true);
+  assert.equal(record.proof.sheet_write, 'skipped');
+  assert.equal(record.proof.sheet_written, false);
+  assert.equal(record.proof.no_write_confirmed, true);
+
+  // And the artifact accepts that emitted line rather than rejecting it as malformed.
+  const artifact = buildTurnWriteArtifact(proofLines.join('\n'));
+  assert.equal(artifact.summary.rejected_records, 0, 'the real preview record must not be rejected');
+  assert.equal(artifact.turns.length, 1);
+  assert.equal(artifact.turns[0].previews.length, 1);
+  assert.equal(artifact.turns[0].previews[0].proof_state, 'no_write_confirmed');
 });

@@ -2686,11 +2686,15 @@ describe('turnWriteArtifact — reachable producer paths', () => {
   });
 
   it('requires the emitted preview state on an attempt-zero record', () => {
-    // All THREE preview correlation producers — /api/log-modality (index.js:1372),
-    // /api/bodyweight (:1978) and /api/log-workout (:3152) — emit sheet_write:'skipped' beside
-    // the no-write tuple. (/api/complete-workout emits no preview correlation at all.) So a
-    // preview record with that field absent, or set to another state, is a shape no producer
-    // emits and must be rejected like any other malformed record.
+    // All FOUR preview correlation producers emit sheet_write:'skipped' beside the no-write
+    // tuple: /api/log-modality (index.js:1372), /api/bodyweight (:1978), /api/complete-workout
+    // (:2784 — `isPreview: testMode`, a VARIABLE, which is why a grep for the literal missed it)
+    // and /api/log-workout (:3152). So a preview record with that field absent, or set to another
+    // state, is a shape no producer emits and must be rejected like any other malformed record.
+    //
+    // The REAL complete-workout preview emitter is driven end-to-end in
+    // test/turnCorrelationIntegration.test.js; the controls below are shape checks, not proof
+    // that the route still emits.
     const previewPairing = {
       established_at_preview: true,
       write_attempt: 0,
