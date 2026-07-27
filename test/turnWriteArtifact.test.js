@@ -2298,6 +2298,117 @@ describe('turnWriteArtifact — reachable producer paths', () => {
     assert.equal(inProgress.turns[0].writes[0].proof_state, 'idempotency_in_progress');
   });
 
+  it('requires seal evidence wherever closeout evidence is present', () => {
+    // Both correlated closeout branches attach `ledger_seal` whenever they attach
+    // `session_plans_closeout` (index.js:3253-3263 and 3399-3407; the normal branch only attaches
+    // the closeout INSIDE `if (ledgerSeal)`), so closeout evidence with no seal at all is lost
+    // producer evidence — and it is exactly the shape that would conceal a failed seal.
+    const sealless = build({
+      proof: {
+        test_mode: false,
+        sheet_write: 'success',
+        log_rows_written: 3,
+        logAppendedRange: 'Log_Cleaned!A2:L4',
+        effort_rows_written: 0,
+        closeout_fully_verified: true,
+        session_plans_closeout_status: 'written',
+        session_plans_closeout_captured: true,
+        session_plans_closeout_written: 1,
+        session_plans_closeout_skipped: 0,
+        session_plans_closeout_plan_version: 'pv_11111111-2222-3333-4444-555555555555',
+      },
+    });
+    assert.ok(sealless.turns[0].issues.includes('seal_evidence_missing'));
+    assert.equal(sealless.status, 'partial');
+
+    // CONTROL — the same record with the seal the producer really attaches beside it.
+    const withSeal = build({
+      proof: {
+        test_mode: false,
+        sheet_write: 'success',
+        log_rows_written: 3,
+        logAppendedRange: 'Log_Cleaned!A2:L4',
+        effort_rows_written: 0,
+        closeout_fully_verified: true,
+        ledger_seal_sealed_ok: true,
+        ledger_seal_sheet_written: true,
+        ledger_seal_no_write_confirmed: false,
+        ledger_seal_sealed: 4,
+        ledger_seal_already_sealed: 0,
+        session_plans_closeout_status: 'written',
+        session_plans_closeout_captured: true,
+        session_plans_closeout_written: 1,
+        session_plans_closeout_skipped: 0,
+        session_plans_closeout_plan_version: 'pv_11111111-2222-3333-4444-555555555555',
+      },
+    });
+    assert.ok(!withSeal.turns[0].issues.includes('seal_evidence_missing'));
+    assert.equal(withSeal.status, 'complete');
+
+    // CONTROL — a plain main write carries no closeout evidence and needs no seal.
+    const plain = build({
+      proof: {
+        test_mode: false,
+        sheet_write: 'success',
+        log_rows_written: 3,
+        logAppendedRange: 'Log_Cleaned!A2:L4',
+        effort_rows_written: 0,
+      },
+    });
+    assert.ok(!plain.turns[0].issues.includes('seal_evidence_missing'));
+    assert.equal(plain.status, 'complete');
+  });
+
+  it('requires the emitted live-mode flag on a claimed main write', () => {
+    // All four success producers emit test_mode explicitly — index.js:1409, 2026, and 3419 as a
+    // literal false, and 2719 as `testMode`, which a success implies is false because :2722 sends
+    // 'skipped' otherwise. So an absent flag on a claimed success is a lost tuple member.
+    for (const [route, extra] of [
+      ['/api/log-workout', { log_rows_written: 2, logAppendedRange: 'Log_Cleaned!A2:L3', effort_rows_written: 0 }],
+      ['/api/log-modality', { sheet_written: true }],
+    ]) {
+      const truncated = build({ route, proof: { sheet_write: 'success', ...extra } });
+      assert.equal(truncated.turns[0].writes[0].proof_state, 'insufficient', route);
+      assert.equal(truncated.status, 'partial', route);
+
+      // CONTROL — the producer's real body carries the flag.
+      const real = build({ route, proof: { test_mode: false, sheet_write: 'success', ...extra } });
+      assert.equal(real.turns[0].writes[0].proof_state, 'write_confirmed', route);
+      assert.equal(real.status, 'complete', route);
+    }
+  });
+
+  it('accepts the producer’s nullable would-seal evidence', () => {
+    // `sealCloseout` genuinely returns `would_seal:null` when the ledger is unreadable while the
+    // seal lane is in dry-run posture (sessionPlanSetsStore.js:256-258 and 271-273), and the
+    // projection carries that scalar. Rejecting it discarded the WHOLE record — including a
+    // committed main Log/Effort proof — so this is a false negative, not a false green.
+    const artifact = build({
+      proof: {
+        test_mode: false,
+        sheet_write: 'success',
+        log_rows_written: 3,
+        logAppendedRange: 'Log_Cleaned!A2:L4',
+        effort_rows_written: 0,
+        closeout_fully_verified: false,
+        ledger_seal_sealed_ok: false,
+        ledger_seal_dry_run: true,
+        ledger_seal_would_seal: null,
+        ledger_seal_read_failed: true,
+        ledger_seal_sealed: 0,
+        ledger_seal_already_sealed: 0,
+        ledger_seal_reason: 'ledger_read_failed',
+      },
+    });
+    // The record must survive the join and be REPORTED, not silently dropped.
+    assert.equal(artifact.turns.length, 1);
+    assert.equal(artifact.turns[0].writes.length, 1);
+    assert.equal(artifact.rejected_count, 0);
+    // It is still not a verified seal — a read failure fails closed.
+    assert.equal(artifact.turns[0].writes[0].seal.state, 'failed');
+    assert.ok(artifact.turns[0].issues.includes('seal_not_verified'));
+  });
+
   it('requires the exact success fields on the generic write routes', () => {
     // index.js:1407-1423 and 2024-2036 both emit sheet_write:'success' with sheet_written:true and
     // never a row-count field, so a count cannot substitute for the write flag.
