@@ -89,7 +89,15 @@ const exerciseCatalogRows = [
 const fakeSheets = {
   appendRows: async (tab, rows) => {
     state.appends.push({ tab, rows: rows.map(r => [...r]) });
-    return { data: { updates: { updatedRange: `${tab}!A100:L${99 + rows.length}`, updatedRows: rows.length } } };
+    // Google reports the range it actually wrote, so the last column follows the appended value
+    // count — Log_Cleaned's 12 columns end at L, Effort's 9 end at I. A stub that hardcoded one
+    // letter for every tab would let a wrong per-tab column width pass unnoticed here.
+    const lastColumn = String.fromCharCode('A'.charCodeAt(0) + (rows[0]?.length || 1) - 1);
+    return {
+      data: {
+        updates: { updatedRange: `${tab}!A100:${lastColumn}${99 + rows.length}`, updatedRows: rows.length },
+      },
+    };
   },
   readRange: async (range) => {
     if (String(range).startsWith('Session_Plans!')) return [[...sessionPlansColumns]];
@@ -246,11 +254,13 @@ function closeoutPayload(extra = {}) {
 // The preview establishes the turn↔write pairing (#1173 item 1) and hands back its token, exactly
 // as the client will in slice 2. Its payload identity must match the live write's, which it does:
 // `test_mode` and `write_id` are both outside the fingerprint by design.
-async function previewForToken() {
+// `extra` carries any payload field that IS inside the fingerprint (an `effort_row`, say), so the
+// preview and the live write it authorizes describe the same semantic write.
+async function previewForToken(extra = {}) {
   // The dry-run must carry the claim: a preview with no `correlation` has nothing to pair, so no
   // token is minted. `correlation` is outside the payload fingerprint, so carrying a different
   // envelope here than on the live write does not disturb the identity match.
-  const { headers } = await post(closeoutPayload({ test_mode: true, correlation: { turn_id: TURN_ID } }));
+  const { headers } = await post(closeoutPayload({ test_mode: true, correlation: { turn_id: TURN_ID }, ...extra }));
   return headers.get(tc.PAIRING_TOKEN_HEADER);
 }
 
@@ -324,6 +334,70 @@ test('the duplicate-closeout branch: a REAL seal + closeout event, with the proj
   const serialized = JSON.stringify(rec);
   assert.ok(!serialized.includes('Weighted Dip'), 'no workout data in the record');
   assert.ok(!serialized.includes('stub-sheet'), 'no Sheet id in the record');
+});
+
+// A genuine Effort append is the case the artifact's W3 range binding must not reject. `appendRows`
+// sends exactly `effortColumns.length` values, so the real response range ends at Effort's ninth
+// column — not Log_Cleaned's twelfth. Driving the real route proves the accepted column width comes
+// from the live append rather than a hand-written fixture.
+test('a real Effort append is reviewable through its own canonical nine-column range', async () => {
+  reset();
+  tc.issueTurn(TURN_ID, SESSION_ID);
+  const effortRow = {
+    date: SESSION_DATE,
+    session_id: SESSION_ID,
+    duration: '00:41:00',
+    active_calories: 402,
+    total_calories: 511,
+    average_hr: 146,
+    peak_hr: 168,
+    location: '',
+    notes: '',
+  };
+  // No `closeout_context`: a seal or closeout event is independent positive evidence, and this case
+  // must stand or fall on the Effort append alone.
+  const effortOnly = extra => ({
+    session_id: SESSION_ID,
+    date: SESSION_DATE,
+    log_rows: DIP_ACTUALS,
+    effort_row: effortRow,
+    ...extra,
+  });
+  // The Effort row is inside the payload fingerprint, so the preview must describe the same write.
+  const { headers } = await post(effortOnly({ test_mode: true, correlation: { turn_id: TURN_ID } }));
+  const pairingToken = headers.get(tc.PAIRING_TOKEN_HEADER);
+  assert.ok(pairingToken, 'the dry-run must hand back a pairing token');
+  state.logCompositeKeys = everyLogRowAlreadyLogged();
+
+  const { response, body } = await post(effortOnly({
+    write_id: 'w-effort-live-1',
+    correlation: { turn_id: TURN_ID, pairing_token: pairingToken },
+  }));
+
+  assert.equal(response.status, 200);
+  const d = body.data;
+  assert.equal(d.sheet_write, 'success');
+  assert.equal(d.log_rows_written, 0, 'every log row is a duplicate; the Effort row is the only append');
+  assert.equal(d.effort_rows_written, 1);
+  assert.ok(!('ledger_seal' in d), 'no seal evidence may stand in for the Effort append');
+  assert.ok(!('session_plans_closeout' in d), 'no closeout evidence may stand in for the Effort append');
+
+  const effortAppend = state.appends.find(a => a.tab === 'Effort');
+  assert.ok(effortAppend, 'a real Effort append happened');
+  assert.equal(effortAppend.rows[0].length, effortColumns.length, 'the route sends one value per Effort column');
+  // Asserted against the SERVED range, not a literal, so the artifact is bound to what the append
+  // actually reported.
+  assert.equal(d.effortAppendedRange, `Effort!A100:${String.fromCharCode(64 + effortColumns.length)}100`);
+
+  const rec = tc.recentWriteProofs().slice(-1)[0];
+  assert.equal(rec.proof.effort_rows_written, 1);
+  assert.equal(rec.proof.effortAppendedRange, d.effortAppendedRange);
+
+  const artifact = artifactForRecord(rec);
+  assert.equal(artifact.turns[0].writes[0].proof_state, 'write_confirmed', 'a genuine Effort append is not insufficient');
+  assert.equal(artifact.status, 'complete');
+  // The range substantiates the count without ever being republished.
+  assert.ok(!JSON.stringify(artifact).includes(d.effortAppendedRange), 'the range value never reaches the artifact');
 });
 
 test('a duplicate replay that seals NOTHING new still reports honestly', async () => {

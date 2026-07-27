@@ -26,6 +26,7 @@ const {
   PROOF_PROJECTIONS,
 } = require('./turnCorrelation');
 const { STAGES, STAGE_STATUSES } = require('./interactionTrace');
+const { logCleanedColumns, effortColumns } = require('../config/columns');
 
 const INTERACTION_TRACE_MARKER = '[interaction-trace]';
 const TURN_WRITE_PROOF_MARKER = '[turn-write-proof]';
@@ -57,6 +58,13 @@ const ALLOWED_PROOF_KEYS = new Set([
   ...PROJECTED_PROOF_KEYS,
 ]);
 const ALLOWED_WITHHELD_KEYS = new Set(PROJECTED_PROOF_KEYS);
+// `appendRows` sends exactly one value per contract column, so Google reports an updatedRange
+// ending at that many columns. Derive the expected last column from the column contract itself
+// rather than hard-coding a letter, so a schema migration cannot silently widen what counts as
+// W3 proof (Log_Cleaned = 12 columns -> L; Effort = 9 columns -> I).
+const _lastColumnLetter = (columnCount) => String.fromCharCode('A'.charCodeAt(0) + columnCount - 1);
+const LOG_LAST_COLUMN = _lastColumnLetter(logCleanedColumns.length);
+const EFFORT_LAST_COLUMN = _lastColumnLetter(effortColumns.length);
 
 const BOOLEAN_PROOF_KEYS = new Set([
   'test_mode', 'sheet_written', 'no_write_confirmed', 'dry_run', 'duplicate_write',
@@ -249,13 +257,13 @@ function _sanitizeProof(record) {
     log: hasBoundAppendRange(
       ['logAppendedRange', 'log_appended_range'],
       'Log_Cleaned',
-      'L',
+      LOG_LAST_COLUMN,
       proof.log_rows_written,
     ),
     effort: hasBoundAppendRange(
       ['effortAppendedRange', 'effort_appended_range'],
       'Effort',
-      'K',
+      EFFORT_LAST_COLUMN,
       proof.effort_rows_written,
     ),
   };
@@ -472,8 +480,11 @@ function _proofState(proof, seal, closeout, route, rangeEvidence = {}) {
   const claimsSuccess = proof.sheet_write === 'success';
   const logRowsWritten = typeof proof.log_rows_written === 'number' && proof.log_rows_written > 0;
   const effortRowsWritten = typeof proof.effort_rows_written === 'number' && proof.effort_rows_written > 0;
-  const rangeBackedLogWorkoutWrite = (logRowsWritten && rangeEvidence.log === true)
-    || (effortRowsWritten && rangeEvidence.effort === true);
+  // Every positive tab count must carry its OWN matching range. One range-backed tab must never
+  // substantiate the other tab's unbacked count on the same response.
+  const rangeBackedLogWorkoutWrite = (logRowsWritten || effortRowsWritten)
+    && (!logRowsWritten || rangeEvidence.log === true)
+    && (!effortRowsWritten || rangeEvidence.effort === true);
   const isLogWorkout = route === '/api/log-workout';
   const genericMainWrite = proof.sheet_written === true
     || (typeof proof.rows_appended === 'number' && proof.rows_appended > 0)
