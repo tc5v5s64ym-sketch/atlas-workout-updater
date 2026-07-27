@@ -468,9 +468,23 @@ function _sealSummary(proof, withheldEvidence) {
   // A positive stamp count with no seal-local write evidence substantiates nothing: the real
   // emitter always reports `sheet_written` on the stamping path.
   else if (sealedOk === true && sealed > 0 && sheetWritten !== true) state = 'indeterminate';
-  else if (sealedOk === true && sheetWritten === true && sealed > 0) state = 'sealed';
+  // EVERY positive seal state requires its producer's COMPLETE tuple, not just the fields that
+  // happen to look affirmative. `sealCloseout` emits `no_write_confirmed:false` on the stamping
+  // path and `true` on the all-sealed replay, so a partial tuple substantiates neither.
+  else if (sealedOk === true
+    && sheetWritten === true
+    && sealed > 0
+    && proof.ledger_seal_no_write_confirmed === false) {
+    state = 'sealed';
+  }
   else if (sealedOk === true && sheetWritten === true) state = 'indeterminate';
-  else if (sealedOk === true && sheetWritten === false && sealed === 0 && alreadySealed > 0) state = 'already_sealed';
+  else if (sealedOk === true
+    && sheetWritten === false
+    && proof.ledger_seal_no_write_confirmed === true
+    && sealed === 0
+    && alreadySealed > 0) {
+    state = 'already_sealed';
+  }
   // A verified seal that stamped nothing still carries the producer's COMPLETE tuple (the
   // tab_missing / no_rows shapes: sheet_written:false, no_write_confirmed:true, sealed:0). A bare
   // `sealed_ok:true` with no seal-local write flag, counts, or reason substantiates nothing —
@@ -516,7 +530,10 @@ function _closeoutSummary(proof, withheldEvidence) {
     : null;
 
   let state = 'absent';
-  if (status === 'written' && captured === true && written > 0) {
+  // `writeSessionCloseout` appends exactly ONE event and `_envelope` always emits both counts, so
+  // a written result must carry `skipped:0` — the same producer invariant the skipped branch below
+  // already enforces in the other direction.
+  if (status === 'written' && captured === true && written > 0 && skipped === 0) {
     state = planVersionWithheld || !hasPlanVersion || proof[planVersionKey] === null
       ? 'written_unidentified'
       : 'written';
@@ -640,6 +657,14 @@ function _writeArtifact(record) {
   // sealed_ok:true and the Session_Plans event was written. That is the route explicitly flagging
   // an unverified closeout; the artifact must never reclassify it as verified.
   if (record.proof.closeout_fully_verified === false) issues.push('closeout_not_verified');
+  // …and REQUIRED, not merely honored when present. Both emitting branches attach the verdict
+  // whenever they attach `ledger_seal`, so its absence beside seal or closeout evidence is unknown
+  // evidence rather than an implicit positive verdict. A plain main write carries no such evidence
+  // and needs no verdict.
+  else if ((seal.state !== 'absent' || closeout.state !== 'absent')
+    && record.proof.closeout_fully_verified !== true) {
+    issues.push('closeout_verdict_missing');
+  }
 
   return {
     session_id: record.session_id,
@@ -815,9 +840,16 @@ function formatTurnWriteArtifact(artifact, opts = {}) {
   return lines.join('\n');
 }
 
+// The CLI's source label is a filename the operator chose, so it is free text on the same footing
+// as `session_id` and the trace metadata: it can carry workout prose, a Sheet range, or a private
+// path. Publish only a bare, opaque basename — directory components are dropped rather than
+// reflected — and omit the label entirely when it is not one.
+const OPAQUE_SOURCE_LABEL = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
 function sanitizeArtifactSource(value) {
   if (!_isBoundedString(value, 512) || _containsCapability(value) || /[\r\n\0]/.test(value)) return null;
-  return value;
+  const basename = value.split(/[/\\]/).pop();
+  return OPAQUE_SOURCE_LABEL.test(basename) ? basename : null;
 }
 
 module.exports = {

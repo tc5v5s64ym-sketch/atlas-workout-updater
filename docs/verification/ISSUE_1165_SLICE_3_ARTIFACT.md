@@ -76,7 +76,20 @@ the vocabulary makes the record rejected rather than reflected. The vocabulary m
 omitting a reason a producer really emits would reject that whole record and lose the join, so a
 genuine failure could not be reviewed at all.
 
-`closeout_fully_verified` is the **route's own verdict** and is honored, never recomputed.
+**Every positive state requires its producer's complete tuple**, not merely the fields that look
+affirmative — absent means unknown throughout. This applies uniformly: `sealed` requires
+`no_write_confirmed:false`, `already_sealed` and `verified_no_new_seal` require `true`, and a
+`written` closeout requires `skipped:0` (`writeSessionCloseout` appends exactly one event, and
+`_envelope` always emits both counts) just as a `skipped` one requires `written:0`.
+
+`closeout_fully_verified` is the **route's own verdict** and is honored, never recomputed. It is
+also **required** whenever seal or closeout evidence is present: both emitting branches attach it
+whenever they attach `ledger_seal`, so its absence there is unknown evidence, not an implicit
+positive verdict. A plain main write carries no such evidence and needs no verdict.
+
+The CLI's `source` label is a filename the operator chose, so it is free text on the same footing as
+`session_id`: only a bare opaque basename is published, directory components are dropped, and
+anything else is omitted.
 `closeoutVerification` (`index.js`) returns false for a failed event capture and for a planned
 closeout whose ledger is missing, even when the seal reports `sealed_ok:true` and the Session_Plans
 event was written; a present `false` therefore makes the write non-reviewable.
