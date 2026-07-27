@@ -93,11 +93,13 @@ affirmative — absent means unknown throughout:
   any single duplicate or replay signal.
 
 `/api/complete-workout` is held to the same **per-tab range-backed** tuple as `/api/log-workout`,
-since it verifies those exact row counts against the ranges before returning. One caveat is
-load-bearing in the other direction: `sheet_written` on that route is `!testMode && effortWritten`,
-so a genuine effort-less completion reports `false` beside a real Log append. That is a legitimate
-live write, not a contradiction, and the contradiction check excludes the route for exactly that
-reason.
+since it verifies those exact row counts against the ranges before returning. `sheet_written`
+remains authoritative there: the Effort append is unconditional and the success gate requires
+`effortRowsWritten === 1` regardless of log rows, so every genuine success carries
+`effortWritten:true` and therefore `sheet_written:true`. An "effort-less completion" is not an
+emitter shape, and a success claiming `sheet_written:false` is a corrupted record. The genuinely
+variable case is the reverse — an **effort-only** completion, where `logProofOk` is vacuously true
+with no log rows; the per-tab rule already accepts that because a zero count needs no range.
 
 `closeout_fully_verified` is the **route's own verdict** and is honored, never recomputed. It is
 also **required** whenever seal or closeout evidence is present: both emitting branches attach it

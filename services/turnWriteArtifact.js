@@ -133,15 +133,6 @@ const VERIFIED_EMPTY_SEAL_REASONS = new Set(['tab_missing', 'no_rows']);
 // those exact row counts against the ranges before returning, exactly as `/api/log-workout` does,
 // so both are held to the same range-backed tuple rather than a generic positive scalar.
 const PER_TAB_APPEND_ROUTES = new Set(['/api/log-workout', '/api/complete-workout']);
-// `sheet_written` is an authoritative whole-request write flag on most routes, but NOT on
-// `/api/complete-workout`, where it is `!testMode && effortWritten` (index.js) — a genuine
-// effort-less completion reports false beside a real Log append. Treating that as a contradiction
-// would reject a legitimate live write, so the contradiction check excludes this route.
-const AUTHORITATIVE_SHEET_WRITTEN_ROUTES = new Set([
-  '/api/log-workout',
-  '/api/log-modality',
-  '/api/bodyweight',
-]);
 const NULLABLE_PROOF_KEYS = new Set([
   'ledger_seal_updated_cells',
   'session_plans_closeout_plan_version',
@@ -616,7 +607,6 @@ function _proofState(proof, seal, closeout, route, rangeEvidence = {}) {
     && ((!claimsSuccess && genericMainWrite)
       || (claimsSuccess
         && proof.sheet_written === false
-        && AUTHORITATIVE_SHEET_WRITTEN_ROUTES.has(route)
         && (isPerTabAppend ? rangeBackedLogWorkoutWrite : genericMainWrite)))) {
     return 'contradictory';
   }
