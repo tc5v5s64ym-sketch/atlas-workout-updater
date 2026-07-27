@@ -125,6 +125,10 @@ const SEAL_REASONS = new Set([
   // genuine seal failure could not be reviewed through this tool at all.
   'seal_error',
 ]);
+const NULLABLE_PROOF_KEYS = new Set([
+  'ledger_seal_updated_cells',
+  'session_plans_closeout_plan_version',
+]);
 const TRACE_INTENT_TYPES = new Set(['set', 'block', 'plan', 'coach_chat', 'coach_ask']);
 const TRACE_SOURCES = new Set(['coach_message', 'coach_chat', 'coach_ask']);
 const SAFE_STATE_TOKEN = /^[a-z][a-z0-9_]{0,63}$/;
@@ -224,7 +228,13 @@ function _sanitizeTrace(record) {
 }
 
 function _validProofValue(key, value) {
-  if (value === null) return true;
+  // Nullability is PER KEY, not global. A blanket `null` allowance would bypass every shape check
+  // below and admit producer shapes no route can emit (a present-but-null `test_mode` is malformed,
+  // not the absent field that W2 reads as a live write). Only these two are genuinely emitted as
+  // null: `sealCloseout` reports `updated_cells:null` when the response count is unreadable, and
+  // the closeout projection's own validator explicitly permits a null `plan_version`. Rejecting
+  // either would discard a real record.
+  if (value === null) return NULLABLE_PROOF_KEYS.has(key);
   if (BOOLEAN_PROOF_KEYS.has(key)) return typeof value === 'boolean';
   if (NUMBER_PROOF_KEYS.has(key)) return Number.isSafeInteger(value) && value >= 0;
   if (key === 'sheet_write') return SHEET_WRITE_STATES.has(value);
@@ -461,7 +471,17 @@ function _sealSummary(proof, withheldEvidence) {
   else if (sealedOk === true && sheetWritten === true && sealed > 0) state = 'sealed';
   else if (sealedOk === true && sheetWritten === true) state = 'indeterminate';
   else if (sealedOk === true && sheetWritten === false && sealed === 0 && alreadySealed > 0) state = 'already_sealed';
-  else if (sealedOk === true) state = 'verified_no_new_seal';
+  // A verified seal that stamped nothing still carries the producer's COMPLETE tuple (the
+  // tab_missing / no_rows shapes: sheet_written:false, no_write_confirmed:true, sealed:0). A bare
+  // `sealed_ok:true` with no seal-local write flag, counts, or reason substantiates nothing —
+  // absent means unknown here too.
+  else if (sealedOk === true
+    && sheetWritten === false
+    && proof.ledger_seal_no_write_confirmed === true
+    && sealed === 0) {
+    state = 'verified_no_new_seal';
+  }
+  else if (sealedOk === true) state = 'indeterminate';
   else if (withheld) state = 'withheld';
   else if (hasSeal) state = 'indeterminate';
 
