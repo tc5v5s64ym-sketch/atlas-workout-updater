@@ -2106,6 +2106,96 @@ describe('turnWriteArtifact — reachable producer paths', () => {
     assert.equal(generic.status, 'partial');
   });
 
+  it('diagnoses state-independent impossibilities before the terminal-state returns', () => {
+    // `no_write_confirmed:true` beside real append evidence, and a dry run beside any of it, are
+    // impossible WHATEVER `sheet_write` claims — so they must be caught before a terminal-state
+    // classification lets a corrupted record hide behind its own claimed state.
+    for (const state of ['partial', 'unverified', 'skipped_duplicate_in_progress']) {
+      const denied = build({
+        proof: {
+          test_mode: false,
+          sheet_write: state,
+          no_write_confirmed: true,
+          log_rows_written: 3,
+          logAppendedRange: 'Log_Cleaned!A2:L4',
+          effort_rows_written: 0,
+        },
+      });
+      assert.equal(denied.turns[0].writes[0].proof_state, 'contradictory', state);
+      assert.equal(denied.status, 'partial', state);
+    }
+
+    // CONTROLS — the genuine bodies really DO pair a non-success state with positive append
+    // evidence, and must keep their own classification. `partial` (index.js:3356-3367) and
+    // `unverified` (index.js:2645-2659) both carry sheet_written:true with a positive log count;
+    // the in-progress duplicate spreads the original's counts (index.js:3170-3182). Calling any of
+    // them contradictory would discard the records that most need reviewing.
+    const realPartial = build({
+      proof: {
+        test_mode: false,
+        sheet_write: 'partial',
+        sheet_written: true,
+        log_rows_written: 3,
+        logAppendedRange: 'Log_Cleaned!A2:L4',
+        effort_rows_written: 0,
+      },
+    });
+    assert.equal(realPartial.turns[0].writes[0].proof_state, 'partial');
+
+    const realUnverified = build({
+      route: '/api/complete-workout',
+      proof: {
+        test_mode: false,
+        sheet_write: 'unverified',
+        sheet_written: true,
+        log_rows_written: 3,
+        logAppendedRange: 'Log_Cleaned!A2:L4',
+        effort_rows_written: 1,
+        effortAppendedRange: 'Effort!A9:I9',
+      },
+    });
+    assert.equal(realUnverified.turns[0].writes[0].proof_state, 'unverified');
+
+    const realInProgress = build({
+      proof: {
+        test_mode: false,
+        sheet_write: 'skipped_duplicate_in_progress',
+        sheet_written: false,
+        duplicate_write: true,
+        idempotency_status: 'in_progress',
+        log_rows_written: 3,
+      },
+    });
+    assert.equal(realInProgress.turns[0].writes[0].proof_state, 'idempotency_in_progress');
+  });
+
+  it('treats any positive append signal in a dry run as contradictory', () => {
+    // A dry run appends nothing (W2), so `sheet_written:true` or a positive count beside
+    // test_mode:true is impossible — not merely unsubstantiated. The narrower `positiveWrite`
+    // missed both, because it needs a success claim it never gets on this path.
+    for (const signal of [{ sheet_written: true }, { rows_appended: 2 }, { log_rows_written: 3 }]) {
+      const artifact = build({
+        proof: { test_mode: true, sheet_write: 'skipped', ...signal },
+      });
+      assert.equal(
+        artifact.turns[0].writes[0].proof_state, 'contradictory', JSON.stringify(signal),
+      );
+      assert.equal(artifact.status, 'partial', JSON.stringify(signal));
+    }
+
+    // CONTROL — the real dry-run tuple appends nothing and stays reviewable.
+    const dryRun = build({
+      proof: {
+        test_mode: true,
+        sheet_write: 'skipped',
+        sheet_written: false,
+        no_write_confirmed: true,
+      },
+    });
+    assert.equal(dryRun.turns[0].writes[0].proof_state, 'no_write_confirmed');
+    assert.equal(dryRun.status, 'complete');
+  });
+
   it('requires the exact success fields on the generic write routes', () => {
     // index.js:1407-1423 and 2024-2036 both emit sheet_write:'success' with sheet_written:true and
     // never a row-count field, so a count cannot substitute for the write flag.
