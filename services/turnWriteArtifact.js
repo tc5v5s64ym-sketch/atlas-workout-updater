@@ -250,10 +250,12 @@ function _sanitizeTrace(record) {
 function _validProofValue(key, value) {
   // Nullability is PER KEY, not global. A blanket `null` allowance would bypass every shape check
   // below and admit producer shapes no route can emit (a present-but-null `test_mode` is malformed,
-  // not the absent field that W2 reads as a live write). Only these two are genuinely emitted as
-  // null: `sealCloseout` reports `updated_cells:null` when the response count is unreadable, and
-  // the closeout projection's own validator explicitly permits a null `plan_version`. Rejecting
-  // either would discard a real record.
+  // not the absent field that W2 reads as a live write). The genuinely nullable keys are listed in
+  // NULLABLE_PROOF_KEYS, each justified against its emitter there; rejecting any of them discards a
+  // real record. Keep that set and the published contract in
+  // docs/verification/ISSUE_1165_SLICE_3_ARTIFACT.md in step — this comment previously named only
+  // two keys after a third was added, and a stale count here is what invites a later "tightening"
+  // to reintroduce a whole-record false negative.
   if (value === null) return NULLABLE_PROOF_KEYS.has(key);
   if (BOOLEAN_PROOF_KEYS.has(key)) return typeof value === 'boolean';
   if (NUMBER_PROOF_KEYS.has(key)) return Number.isSafeInteger(value) && value >= 0;

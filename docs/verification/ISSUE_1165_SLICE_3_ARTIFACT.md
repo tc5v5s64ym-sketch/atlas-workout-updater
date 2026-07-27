@@ -181,9 +181,18 @@ shown is not one that was never recorded.
 
 Nullability is defined **per proof key**, never globally: a blanket allowance would bypass every
 field-specific shape check and admit values no producer emits (a present-but-null `test_mode` is
-malformed, not the absent field W2 reads as a live write). Only `ledger_seal_updated_cells` and
-`session_plans_closeout_plan_version` are genuinely emitted as null, and rejecting either would
-discard a real record.
+malformed, not the absent field W2 reads as a live write). Exactly three keys are genuinely emitted
+as null, and rejecting any of them discards a real record:
+
+- `ledger_seal_updated_cells` — `sealCloseout` reports it when the response count is unreadable.
+- `ledger_seal_would_seal` — `sealCloseout` returns it on both dry-run ledger-read-failure paths
+  (`services/sessionPlanSetsStore.js:256-258` and `271-273`), and the `ledger_seal` projection
+  carries the scalar. Rejecting it discarded the **whole** record, including any committed main
+  Log/Effort proof and the join with its trace; the seal itself still fails closed as `failed`.
+- `session_plans_closeout_plan_version` — the closeout projection's own validator permits null.
+
+This list is part of the contract precisely so a later hardening pass cannot "tighten" it back into
+the whole-record false negative it once was.
 
 Seal evidence is read **seal-locally**. `ledger_seal_sheet_written` is the only evidence that the
 independent sidecar write occurred; the main write's `sheet_written` describes a different write and
