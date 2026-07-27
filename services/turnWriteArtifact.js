@@ -174,7 +174,29 @@ function _isBoundedString(value, max = MAX_ARTIFACT_STRING_LENGTH) {
 }
 
 function _isIso8601(value) {
-  return _isBoundedString(value, 40) && ISO_8601.test(value) && !Number.isNaN(Date.parse(value));
+  if (!_isBoundedString(value, 40) || !ISO_8601.test(value) || Number.isNaN(Date.parse(value))) return false;
+  // The regex and `Date.parse` together are NOT enough. `Date.parse` NORMALIZES an out-of-range day
+  // inside an in-range month rather than refusing it — `2026-02-30T09:00:00.000Z` parses cleanly and
+  // becomes March 2 — so without this the consumer accepts a timestamp naming a day no calendar has
+  // and then reports a different day than the record states. Month 13 and hour 25 are already NaN;
+  // the day of month was the one field that normalized silently.
+  //
+  // Deliberately NOT a `toISOString()` round-trip, which would be the obvious tightening and a false
+  // negative: the trace contract accepts the no-millisecond form (services/interactionTrace.js:97)
+  // and `recorded_at` passes a caller-supplied string straight through (turnCorrelation.js:944), so
+  // a round-trip would discard records the producers really emit — and on this consumer a discarded
+  // record takes its committed write proof with it (rule 5). Validate the calendar day only, which
+  // is format- and offset-independent.
+  //
+  // `Date.UTC` is avoided for the month length because it maps years 0-99 to 1900-1999, which would
+  // apply the wrong leap rule to a four-digit year like 0050.
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (month < 1 || month > 12 || day < 1) return false;
+  const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+  return day <= [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
 }
 
 function _isCanonicalTurnId(value) {

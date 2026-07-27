@@ -115,8 +115,8 @@ const DUPLICATE_SCALARS = {
   effort_rows_written: undefined,
 };
 
-function duplicateRecord(proofOverrides = {}) {
-  return proofRecord({}, { ...DUPLICATE_SCALARS, ...proofOverrides });
+function duplicateRecord(proofOverrides = {}, overrides = {}) {
+  return proofRecord(overrides, { ...DUPLICATE_SCALARS, ...proofOverrides });
 }
 
 function lines(...records) {
@@ -154,6 +154,33 @@ describe('turnWriteArtifact guards — interaction trace validation', () => {
     assert.notEqual(artifact.status, 'complete');
 
     assertControlAccepted(build(trace(), proofRecord()));
+  });
+
+  it('rejects a timestamp naming a calendar day that does not exist', () => {
+    // Date.parse NORMALIZES an out-of-range day inside a valid month rather than refusing it:
+    // 2026-02-30 silently becomes 2026-03-02. A regex-plus-parse pair therefore accepts a record
+    // whose timestamp names a day no calendar has, and then reports a different day than the one
+    // written. Month 13 and hour 25 already parse to NaN; the day of month was the gap.
+    for (const stamp of ['2026-02-30T09:00:00.000Z', '2026-04-31T09:00:00.000Z', '2026-02-29T09:00:00.000Z']) {
+      const onTrace = build(trace({ started_at: stamp }), proofRecord());
+      assert.equal(onTrace.turns[0].join_status, 'proof_only', `trace started_at ${stamp}`);
+      assertRejected(build(trace(), proofRecord({ recorded_at: stamp })), `proof recorded_at ${stamp}`);
+    }
+
+    // CONTROL — a real leap day, and the no-millisecond form the trace contract accepts, must both
+    // survive. Rejecting either would be a false negative, which on this consumer discards the
+    // record together with any committed write proof it carried.
+    const leapDay = build(trace({ started_at: '2024-02-29T09:00:00.000Z' }), proofRecord());
+    assert.equal(leapDay.turns[0].join_status, 'joined');
+    assert.equal(leapDay.status, 'complete');
+
+    const noMillis = build(trace({ started_at: '2026-07-27T09:00:00Z' }), proofRecord({ recorded_at: '2026-07-27T09:00:02Z' }));
+    assert.equal(noMillis.turns[0].join_status, 'joined');
+    assert.equal(noMillis.status, 'complete');
+
+    // CONTROL — a century non-leap year is genuinely invalid, a 400-year leap year is not.
+    assert.equal(build(trace({ started_at: '2100-02-29T09:00:00.000Z' }), proofRecord()).turns[0].join_status, 'proof_only');
+    assert.equal(build(trace({ started_at: '2000-02-29T09:00:00.000Z' }), proofRecord()).turns[0].join_status, 'joined');
   });
 
   it('rejects a trace whose valid flag is not a boolean', () => {
@@ -458,7 +485,7 @@ describe('turnWriteArtifact guards — write classification', () => {
     assert.equal(firstWrite(control).proof_state, 'idempotent_no_write');
   });
 
-  it('requires sidecar evidence before reporting idempotent_no_write, and accepts EITHER envelope', () => {
+  it('requires sidecar evidence before reporting idempotent_no_write', () => {
     // This is the case the previously-published test claimed to cover and did not: its negative
     // record was missing the idempotency status and the verdict as well, so it failed on those and
     // never reached the sidecar gate at all. With the whole scalar tuple present and only the
@@ -468,14 +495,23 @@ describe('turnWriteArtifact guards — write classification', () => {
     assert.equal(firstWrite(noSidecar).proof_state, 'insufficient');
     assert.equal(noSidecar.turns[0].reviewable, false);
 
-    // CONTROL — index.js:3276 gates on `ledger_seal || session_plans_closeout`, so EITHER envelope
-    // alone is a genuine correlated duplicate. Requiring both would discard a real record whose
-    // projection carried only one.
-    const sealOnly = build(trace(), duplicateRecord(SEAL_REPLAY));
-    assert.equal(firstWrite(sealOnly).proof_state, 'idempotent_no_write');
-
-    const closeoutOnly = build(trace(), duplicateRecord(CLOSEOUT_SKIPPED));
-    assert.equal(firstWrite(closeoutOnly).proof_state, 'idempotent_no_write');
+    // CONTROL — the real correlated duplicate carries BOTH envelopes, because the producer always
+    // emits them together: index.js:3251-3264 assigns `session_plans_closeout` from
+    // recordCloseoutEvent (which always returns an object carrying `status` and `captured`) and
+    // then assigns `ledger_seal` on BOTH the try and the catch path (the catch emitting
+    // `{sealed_ok:false, reason:'seal_error'}`), and the projection withholds invalid fields
+    // INDIVIDUALLY rather than dropping a whole envelope. So neither a seal-only nor a
+    // closeout-only duplicate record is a shape any producer emits.
+    //
+    // An earlier version of this test asserted that each envelope ALONE was accepted, to pin the
+    // gate as an OR. That pinned two unreachable shapes — the exact defect this file exists to
+    // catch. The gate stays an OR because it mirrors the producer's own condition at index.js:3276
+    // rather than the strictest one that condition happens to satisfy (rule 9), but OR-versus-AND
+    // is not distinguishable by any record the producer can emit, so nothing here asserts it.
+    const control = build(trace(), duplicateRecord({ ...SEAL_REPLAY, ...CLOSEOUT_SKIPPED }));
+    assert.equal(firstWrite(control).proof_state, 'idempotent_no_write');
+    assert.deepEqual(firstWrite(control).issues, []);
+    assert.equal(control.status, 'complete');
   });
 
   it('flags a preview record that does not reach the no-write proof', () => {
@@ -557,16 +593,26 @@ describe('turnWriteArtifact guards — turn assembly and parsing', () => {
     assert.ok(artifact.turns[0].issues.includes('duplicate_write_attempt'));
     assert.equal(artifact.turns[0].reviewable, false);
 
-    // CONTROL — distinct attempts on the same turn are an ordinary retry, not a duplicate.
+    // CONTROL — distinct attempts on the same turn are an ordinary retry.
+    //
+    // The second attempt is NOT a second success. Two payload-bound attempts on one preview cannot
+    // both append: attempt 1 writes the rows, so attempt 2 finds `rowsToWrite.length === 0` and
+    // takes the all-rows-duplicate branch (index.js:3236), which emits `skipped_duplicate` — and
+    // that branch is correlated only when it carried a closeout, which is exactly the F10D case
+    // where a retry HEALS an unsealed closeout (index.js:3249-3264). An earlier version of this
+    // control gave both attempts the same live-success body and the same append range, which is
+    // doubly impossible: the second append could not land on the rows the first one already wrote.
     const retry = build(
       trace(),
       proofRecord(),
-      proofRecord({
-        recorded_at: '2026-07-27T09:00:09.000Z',
-        pairing: { ...proofRecord().pairing, write_attempt: 2 },
-      }),
+      duplicateRecord(
+        { ...SEAL_REPLAY, ...CLOSEOUT_SKIPPED },
+        { recorded_at: '2026-07-27T09:00:09.000Z', pairing: { ...proofRecord().pairing, write_attempt: 2 } },
+      ),
     );
     assert.ok(!retry.turns[0].issues.includes('duplicate_write_attempt'));
+    assert.equal(retry.turns[0].writes[0].proof_state, 'write_confirmed');
+    assert.equal(retry.turns[0].writes[1].proof_state, 'idempotent_no_write');
     assert.equal(retry.status, 'complete');
   });
 
