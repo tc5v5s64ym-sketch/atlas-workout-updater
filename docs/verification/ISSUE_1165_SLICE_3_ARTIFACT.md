@@ -121,11 +121,22 @@ explicit W1 no-write tuple beside real append evidence, and a dry run beside any
 signal. The third is **producer-specific**: `partial` and `unverified` both report
 `sheet_written:true` beside their committed append evidence — the rows really are on the sheet,
 which is what makes those states worth reviewing — so `sheet_written:false` beside a positive count
-cannot be either of them. It is scoped to those two states because the in-progress duplicate sets
-`sheet_written:false` deliberately while spreading the original's counts, making that same
-combination its genuine shape.
+cannot be either of them. It is scoped to those two states because they are the only producible
+ones with that shape. The scope was originally justified by the in-progress duplicate, on the
+grounds that it sets `sheet_written:false` while spreading the original's counts — that was wrong:
+every `skipped_duplicate_in_progress` emitter (index.js:2005, 2527, 3179, 3538) returns from the
+early idempotency branch before any `recordTurnWriteProof` call, so the state never reaches this
+consumer.
 
-Seal evidence is **required wherever closeout evidence exists**: both correlated closeout branches
+Sidecar evidence is confined to the route that emits it. `/api/log-workout` is the **only** route
+that attaches either envelope (`ledger_seal` at index.js:3258, 3261, 3423; `session_plans_closeout`
+at 3255, 3424), so seal or closeout evidence arriving on `/api/complete-workout`,
+`/api/log-modality` or `/api/bodyweight` did not come from a producer. Requiring the two envelopes
+together makes a fabricated record internally consistent; it does not make it producible, and a
+well-formed pair on `/api/bodyweight` previously reported a turn complete with a `sealed` seal.
+
+Seal evidence is **required wherever closeout evidence exists**, and closeout evidence wherever seal
+evidence exists — the implication runs both ways because the producer does: both correlated closeout branches
 attach `ledger_seal` whenever they attach `session_plans_closeout`, so a closeout with no seal
 projection at all is lost producer evidence — the shape that would conceal a failed seal behind a
 healthy-looking closeout. `withheld` is not `absent`; a seal whose projection failed validation is
@@ -147,9 +158,9 @@ success and the projection carries it, so absence is a lost field rather than a 
 
 The `!claimsSuccess` contradiction arm deliberately stays *below* the terminal returns, unlike the
 three impossibility checks above it: the genuine `partial` and `unverified` bodies really do carry
-`sheet_written:true` with a positive log count, and the in-progress duplicate spreads the original's
-counts, so hoisting it would call every real one of those contradictory and discard the records that
-most need review.
+`sheet_written:true` with a positive log count, so hoisting it would call every real one of those
+contradictory and discard the records that most need review. (This rationale previously also cited
+the in-progress duplicate, which cannot reach the consumer — see above.)
 
 Both per-tab success bodies emit **both** row counts as numbers on every live write —
 `/api/complete-workout` at `index.js:2723` (an explicit `0` on an effort-only completion) and

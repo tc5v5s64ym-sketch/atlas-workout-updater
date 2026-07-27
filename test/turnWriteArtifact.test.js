@@ -2278,8 +2278,9 @@ describe('turnWriteArtifact — reachable producer paths', () => {
     // CONTROLS — the genuine bodies really DO pair a non-success state with positive append
     // evidence, and must keep their own classification. `partial` (index.js:3356-3367) and
     // `unverified` (index.js:2645-2659) both carry sheet_written:true with a positive log count;
-    // the in-progress duplicate spreads the original's counts (index.js:3170-3182). Calling any of
-    // them contradictory would discard the records that most need reviewing.
+    // Calling either of them contradictory would discard the records that most need reviewing.
+    // (This comment previously also named the in-progress duplicate as a third such producer. It is
+    // not one: every emitter of that state returns before any `recordTurnWriteProof` call.)
     const realPartial = build({
       proof: {
         test_mode: false,
@@ -2470,9 +2471,16 @@ describe('turnWriteArtifact — reachable producer paths', () => {
       assert.equal(genuine.turns[0].writes[0].proof_state, state, state);
     }
 
-    // ANTI-GENERALIZATION CONTROL — the in-progress duplicate (index.js:3170-3182) sets
-    // sheet_written:FALSE deliberately while spreading the original's counts, so that exact
-    // combination is its real shape and must never be called contradictory.
+    // NOT a producer control — `skipped_duplicate_in_progress` cannot reach this consumer at all.
+    // All four emitters (index.js:2005, 2527, 3179, 3538) sit in the early idempotency-duplicate
+    // branch, which returns before any `recordTurnWriteProof` call. This case previously claimed
+    // the state was a real shape and used it to justify the scope of the impossibility check above,
+    // which was wrong on both counts.
+    //
+    // It is kept, narrowed to the one property that matters for an input the consumer can be FED
+    // but never PRODUCED: whatever it is classified as, it must never count as a positive write.
+    // Asserting the exact classification would pin behaviour to an unreachable record and block a
+    // later tightening that refuses non-emittable states outright.
     const inProgress = build({
       proof: {
         test_mode: false,
@@ -2483,7 +2491,12 @@ describe('turnWriteArtifact — reachable producer paths', () => {
         log_rows_written: 3,
       },
     });
-    assert.equal(inProgress.turns[0].writes[0].proof_state, 'idempotency_in_progress');
+    const inProgressState = inProgress.turns[0].writes[0].proof_state;
+    assert.ok(
+      !['write_confirmed', 'no_write_confirmed', 'idempotent_no_write'].includes(inProgressState),
+      `a non-producible state must never read as a settled write: ${inProgressState}`,
+    );
+    assert.equal(inProgress.turns[0].reviewable, false);
   });
 
   it('requires seal evidence wherever closeout evidence is present', () => {

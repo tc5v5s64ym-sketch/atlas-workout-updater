@@ -341,6 +341,48 @@ describe('turnWriteArtifact guards — withheld evidence', () => {
 });
 
 describe('turnWriteArtifact guards — seal presentation', () => {
+  it('refuses sidecar evidence on the routes that cannot emit it', () => {
+    // Requiring the two envelopes TOGETHER is not enough on its own. Both are emitted only by
+    // `/api/log-workout` — `ledger_seal` at index.js:3258, 3261 and 3423, `session_plans_closeout`
+    // at 3255 and 3424, and nowhere else. So a record from any other write route carrying a
+    // well-formed seal and closeout pair satisfies the pairing rule while still being a shape no
+    // producer emits, and it was reaching a complete artifact reporting `seal.state === 'sealed'`.
+    const sidecar = {
+      ...SEAL_REPLAY,
+      ...CLOSEOUT_SKIPPED,
+      closeout_fully_verified: true,
+    };
+    for (const route of ['/api/complete-workout', '/api/log-modality', '/api/bodyweight']) {
+      const artifact = build(trace(), proofRecord({ route }, {
+        ...sidecar,
+        sheet_written: true,
+        effort_rows_written: route === '/api/complete-workout' ? 1 : undefined,
+        effortAppendedRange: route === '/api/complete-workout' ? 'Effort!A2:I2' : undefined,
+      }));
+      const write = firstWrite(artifact);
+      assert.ok(write.issues.includes('sidecar_evidence_impossible_for_route'), route);
+      assert.equal(artifact.turns[0].reviewable, false, route);
+      assert.notEqual(artifact.status, 'complete', route);
+    }
+
+    // CONTROL — the same sidecar pair on the one route that does emit it stays reviewable.
+    const real = build(trace(), proofRecord({}, sidecar));
+    assert.deepEqual(firstWrite(real).issues, []);
+    assert.equal(real.status, 'complete');
+
+    // CONTROL — the other routes' ordinary bodies, with no sidecar evidence at all, are untouched.
+    for (const route of ['/api/log-modality', '/api/bodyweight']) {
+      const plain = build(trace(), proofRecord({ route }, {
+        sheet_written: true,
+        logAppendedRange: undefined,
+        log_rows_written: undefined,
+        effort_rows_written: undefined,
+      }));
+      assert.deepEqual(firstWrite(plain).issues, [], route);
+      assert.equal(plain.status, 'complete', route);
+    }
+  });
+
   it('requires closeout evidence wherever seal evidence exists, and the reverse', () => {
     // The implication runs BOTH ways, because the producer runs both ways. `/api/log-workout` is
     // the only route that emits `ledger_seal` at all (index.js:3258, 3261, 3423), and at every one

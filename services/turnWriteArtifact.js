@@ -140,6 +140,12 @@ const VERIFIED_EMPTY_SEAL_REASONS = new Set(['tab_missing', 'no_rows']);
 // those exact row counts against the ranges before returning, exactly as `/api/log-workout` does,
 // so both are held to the same range-backed tuple rather than a generic positive scalar.
 const PER_TAB_APPEND_ROUTES = new Set(['/api/log-workout', '/api/complete-workout']);
+// The ONLY route that emits either sidecar envelope. `ledger_seal` is attached at index.js:3258,
+// 3261 and 3423; `session_plans_closeout` at 3255 and 3424. `/api/complete-workout`,
+// `/api/log-modality` and `/api/bodyweight` never attach either one, so seal or closeout evidence
+// arriving on those routes did not come from a producer — pairing the two envelopes does not make
+// such a record real, it only makes it internally consistent.
+const SIDECAR_EVIDENCE_ROUTES = new Set(['/api/log-workout']);
 const NULLABLE_PROOF_KEYS = new Set([
   'ledger_seal_updated_cells',
   // `sealCloseout` returns `would_seal:null` when the ledger is unreadable while the seal lane is
@@ -740,9 +746,13 @@ function _proofState(proof, seal, closeout, route, rangeEvidence = {}) {
   // which is exactly what makes those states worth reviewing. So `sheet_written:false` beside a
   // positive count cannot be either of them.
   //
-  // Scoped to those two states ON PURPOSE. The in-progress duplicate (index.js:3170-3182) sets
-  // `sheet_written:false` deliberately while spreading the original's counts, so that same
-  // combination is its genuine shape; including it would discard a real record.
+  // Scoped to those two states ON PURPOSE, and they are the only producible ones with this shape.
+  // The scoping was originally justified by the in-progress duplicate, on the grounds that it sets
+  // `sheet_written:false` while spreading the original's counts. That justification was wrong: all
+  // four `skipped_duplicate_in_progress` emitters (index.js:2005, 2527, 3179, 3538) return from the
+  // early idempotency branch BEFORE any `recordTurnWriteProof` call, so the state never reaches
+  // this consumer at all. The scope stands on `partial` and `unverified` alone, which genuinely do
+  // arrive carrying `sheet_written:true` and committed counts.
   if ((proof.sheet_write === 'partial' || proof.sheet_write === 'unverified')
     && proof.sheet_written === false
     && (logRowsWritten || effortRowsWritten
@@ -764,11 +774,12 @@ function _proofState(proof, seal, closeout, route, rangeEvidence = {}) {
   // classifies it, and stays `contradictory` even when it also fails the complete-tuple check —
   // otherwise the narrower predicate silently downgrades it to the milder `insufficient`.
   //
-  // This arm stays BELOW the terminal returns on purpose. The genuine `partial` (index.js:3356-3367)
+  // This arm stays BELOW the terminal returns on purpose: the genuine `partial` (index.js:3356-3367)
   // and `unverified` (index.js:2645-2659) bodies really do carry `sheet_written:true` with a
-  // positive log count, and the in-progress duplicate spreads the original's counts
-  // (index.js:3170-3182) — hoisting it would call every real one of those contradictory and
-  // discard exactly the records that most need reviewing.
+  // positive log count, so hoisting it would call every real one of those contradictory and discard
+  // exactly the records that most need reviewing. (This rationale previously also cited the
+  // in-progress duplicate, which cannot reach the consumer — see the note above. The two remaining
+  // states carry it on their own.)
   if (proof.test_mode !== true
     && ((!claimsSuccess && anyPositiveWriteSignal)
       || (claimsSuccess && proof.sheet_written === false && anyPositiveWriteSignal))) {
@@ -869,6 +880,14 @@ function _writeArtifact(record) {
   // it. The bidirectional fact was established while auditing fixtures and applied only to the
   // tests; this is the same rule reaching the consumer it was derived for.
   if (seal.state !== 'absent' && closeout.state === 'absent') issues.push('closeout_evidence_missing');
+  // …and neither envelope belongs on a route that cannot produce one at all. Requiring the pair
+  // together makes a fabricated record internally consistent; it does not make it producible. A
+  // well-formed seal + closeout pair on `/api/bodyweight` satisfied every check above and reported
+  // a turn complete with `seal.state === 'sealed'`.
+  if (!SIDECAR_EVIDENCE_ROUTES.has(record.route)
+    && (seal.state !== 'absent' || closeout.state !== 'absent')) {
+    issues.push('sidecar_evidence_impossible_for_route');
+  }
   // The route's OWN verdict. `closeoutVerification` (index.js) returns false for a failed event
   // capture, and for a planned closeout whose ledger is missing, even when the seal reports
   // sealed_ok:true and the Session_Plans event was written. That is the route explicitly flagging
