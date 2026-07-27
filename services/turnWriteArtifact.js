@@ -458,7 +458,11 @@ function _proofState(proof, seal, closeout, route, rangeEvidence = {}) {
     return 'no_write_confirmed';
   }
 
-  if (positiveWrite || proof.effortWritten === true) return 'write_confirmed';
+  // `effortWritten` is response bookkeeping, not W3 append proof: the preview path can set it
+  // after formatting an Effort row while the explicit no-write tuple confirms nothing appended.
+  // A live attempt must therefore satisfy the same positive tuple above; this boolean alone can
+  // never substantiate a write.
+  if (positiveWrite) return 'write_confirmed';
 
   if (proof.duplicate_write === true
     || proof.sheet_write === 'skipped_duplicate'
