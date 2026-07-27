@@ -1117,6 +1117,29 @@ describe('turnWriteArtifact guards — turn assembly and parsing', () => {
     assert.equal(under.summary.proofs_seen, MAX_RECORDS);
   });
 
+  it('bounds the input by size before splitting it, and says when it truncated', () => {
+    // A LINE cap does not bound memory: `text.split()` materializes every line before
+    // MAX_INPUT_LINES is applied, so an oversized capture could exhaust memory or kill the process
+    // before the advertised limit took effect — producing no artifact rather than the intended
+    // partial one. The character bound runs BEFORE the split.
+    const { MAX_INPUT_CHARS } = require('../services/turnWriteArtifact');
+    const filler = 'x'.repeat(MAX_INPUT_CHARS + 1024);
+    const artifact = buildTurnWriteArtifact(filler);
+    assert.ok(artifact.summary.rejected_records > 0, 'truncation is reported, never silent');
+
+    // Records BEFORE the cut are still parsed, and the truncation is still reported — a partial
+    // artifact presented as partial.
+    const head = lines(trace(), proofRecord());
+    const padded = `${head}\n${'y'.repeat(MAX_INPUT_CHARS)}`;
+    const partial = buildTurnWriteArtifact(padded);
+    assert.equal(partial.turns[0].join_status, 'joined');
+    assert.ok(partial.summary.rejected_records > 0);
+    assert.notEqual(partial.status, 'complete');
+
+    // CONTROL — an ordinary input is untouched by the bound.
+    assertControlAccepted(build(trace(), proofRecord()));
+  });
+
   it('stops reading at the bounded input line limit', () => {
     const { MAX_INPUT_LINES } = require('../services/turnWriteArtifact');
     const filler = new Array(MAX_INPUT_LINES).fill('unrelated deployment log line').join('\n');

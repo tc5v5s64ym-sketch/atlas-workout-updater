@@ -31,6 +31,14 @@ const INTERACTION_TRACE_MARKER = '[interaction-trace]';
 const TURN_WRITE_PROOF_MARKER = '[turn-write-proof]';
 const SCHEMA_VERSION = 1;
 const MAX_INPUT_LINES = 10_000;
+// A LINE cap does not bound memory, and this consumer advertised one as though it did.
+// `text.split()` materializes every line of the input before MAX_INPUT_LINES is applied, so a
+// multi-million-line capture — or a single pathological line — could exhaust memory or kill the
+// process before the advertised limit ever took effect, producing no artifact at all rather than
+// the intended partial one. The character bound is applied BEFORE the split, and generously: at
+// ~512 bytes per record it admits far more than MAX_INPUT_LINES worth of real records, so it
+// truncates only inputs the line cap was already going to refuse.
+const MAX_INPUT_CHARS = 8_000_000;
 const MAX_RECORDS = 500;
 const MAX_REJECTIONS = 200;
 const MAX_ARTIFACT_STRING_LENGTH = 256;
@@ -544,7 +552,16 @@ function parseTurnWriteLines(text) {
     }
   };
 
-  const lines = text.split(/\r?\n/);
+  // Truncate at a line boundary before splitting, and REPORT it: a silent cut would be a partial
+  // artifact presented as a whole one, which is the failure this module exists to prevent.
+  let bounded = text;
+  if (text.length > MAX_INPUT_CHARS) {
+    const cut = text.lastIndexOf('\n', MAX_INPUT_CHARS);
+    bounded = text.slice(0, cut > 0 ? cut : MAX_INPUT_CHARS);
+    reject('input_size_limit', null, 0);
+  }
+
+  const lines = bounded.split(/\r?\n/);
   const acceptedLimit = Math.min(lines.length, MAX_INPUT_LINES);
   if (lines.length > MAX_INPUT_LINES) {
     reject('input_line_limit', null, MAX_INPUT_LINES + 1);
@@ -1226,6 +1243,7 @@ module.exports = {
   TURN_WRITE_PROOF_MARKER,
   SCHEMA_VERSION,
   MAX_INPUT_LINES,
+  MAX_INPUT_CHARS,
   MAX_RECORDS,
   MAX_WRITES_PER_TURN: MAX_WRITES_PER_PAIRING,
   parseTurnWriteLines,
