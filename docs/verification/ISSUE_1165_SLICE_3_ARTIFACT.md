@@ -114,6 +114,15 @@ cannot be either of them. It is scoped to those two states because the in-progre
 `sheet_written:false` deliberately while spreading the original's counts, making that same
 combination its genuine shape.
 
+Seal evidence is **required wherever closeout evidence exists**: both correlated closeout branches
+attach `ledger_seal` whenever they attach `session_plans_closeout`, so a closeout with no seal
+projection at all is lost producer evidence — the shape that would conceal a failed seal behind a
+healthy-looking closeout. `withheld` is not `absent`; a seal whose projection failed validation is
+already reported separately.
+
+A claimed main write also requires `test_mode:false`. All four success producers emit the flag, so
+an absent one is a lost tuple member rather than a live write to be assumed.
+
 `sheet_written` is required on `/api/complete-workout` and only there: that route emits it on every
 success and the projection carries it, so absence is a lost field rather than a negative, while
 `/api/log-workout` emits no such field at all and would have its ordinary live success rejected. Neither can be true whatever `sheet_write` claims, so a corrupted record

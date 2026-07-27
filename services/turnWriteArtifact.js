@@ -143,6 +143,11 @@ const VERIFIED_EMPTY_SEAL_REASONS = new Set(['tab_missing', 'no_rows']);
 const PER_TAB_APPEND_ROUTES = new Set(['/api/log-workout', '/api/complete-workout']);
 const NULLABLE_PROOF_KEYS = new Set([
   'ledger_seal_updated_cells',
+  // `sealCloseout` returns `would_seal:null` when the ledger is unreadable while the seal lane is
+  // in dry-run posture (sessionPlanSetsStore.js:256-258, 271-273), and the projection carries the
+  // scalar. Rejecting it discarded the WHOLE record — including a committed main Log/Effort proof —
+  // so this is a false negative, not a false green: the seal itself still fails closed below.
+  'ledger_seal_would_seal',
   'session_plans_closeout_plan_version',
 ]);
 const TRACE_INTENT_TYPES = new Set(['set', 'block', 'plan', 'coach_chat', 'coach_ask']);
@@ -644,7 +649,13 @@ function _proofState(proof, seal, closeout, route, rangeEvidence = {}) {
     || (typeof proof.rows_appended === 'number' && proof.rows_appended > 0)
     || logRowsWritten
     || effortRowsWritten;
-  const mainWrite = claimsSuccess && (isPerTabAppend ? perTabWrite : genericMainWrite);
+  // All four success producers emit `test_mode` explicitly — index.js:1409, 2026 and 3419 as a
+  // literal false, and 2719 as `testMode`, which a success implies is false because :2722 sends
+  // 'skipped' otherwise. So an ABSENT flag on a claimed success is a lost tuple member, not a live
+  // write to be assumed: absent means unknown here as everywhere else.
+  const mainWrite = claimsSuccess
+    && proof.test_mode === false
+    && (isPerTabAppend ? perTabWrite : genericMainWrite);
   const positiveWrite = mainWrite
     || seal.new_seal_write
     || closeout.state === 'written';
@@ -765,6 +776,13 @@ function _writeArtifact(record) {
     || closeout.state === 'withheld') {
     issues.push('closeout_not_reviewable');
   }
+  // Seal evidence is REQUIRED wherever closeout evidence exists. Both correlated closeout branches
+  // attach `ledger_seal` whenever they attach `session_plans_closeout` (index.js:3253-3263, and
+  // 3399-3407 where the closeout is attached only inside `if (ledgerSeal)`), so a closeout with no
+  // seal projection at all is lost producer evidence — and it is precisely the shape that would
+  // conceal a failed or indeterminate seal behind a healthy-looking closeout. `withheld` is not
+  // `absent`: a seal whose projection failed validation is already reported by `seal_not_verified`.
+  if (closeout.state !== 'absent' && seal.state === 'absent') issues.push('seal_evidence_missing');
   // The route's OWN verdict. `closeoutVerification` (index.js) returns false for a failed event
   // capture, and for a planned closeout whose ledger is missing, even when the seal reports
   // sealed_ok:true and the Session_Plans event was written. That is the route explicitly flagging

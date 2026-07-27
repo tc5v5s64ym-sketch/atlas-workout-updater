@@ -1915,6 +1915,13 @@ describe('turnWriteArtifact — complete producer tuples', () => {
     const closeoutBase = {
       ...proof().proof,
       closeout_fully_verified: true,
+      // The correlated closeout branches always attach ledger_seal beside the closeout
+      // (index.js:3253-3263, 3399-3407), so a faithful fixture carries the seal tuple too.
+      ledger_seal_sealed_ok: true,
+      ledger_seal_sheet_written: true,
+      ledger_seal_no_write_confirmed: false,
+      ledger_seal_sealed: 4,
+      ledger_seal_already_sealed: 0,
       session_plans_closeout_captured: true,
       session_plans_closeout_plan_version: 'pv_7c9e6679-7425-40de-944b-e07fc1f90ae7',
     };
@@ -2403,7 +2410,7 @@ describe('turnWriteArtifact — reachable producer paths', () => {
     // The record must survive the join and be REPORTED, not silently dropped.
     assert.equal(artifact.turns.length, 1);
     assert.equal(artifact.turns[0].writes.length, 1);
-    assert.equal(artifact.rejected_count, 0);
+    assert.equal(artifact.summary.rejected_records, 0);
     // It is still not a verified seal — a read failure fails closed.
     assert.equal(artifact.turns[0].writes[0].seal.state, 'failed');
     assert.ok(artifact.turns[0].issues.includes('seal_not_verified'));
@@ -2515,7 +2522,7 @@ describe('turnWriteArtifact — reachable producer paths', () => {
       { session_plans_closeout_status: 'no_plan', session_plans_closeout_captured: true },
     ]) {
       const artifact = build({
-        proof: { ...proof().proof, closeout_fully_verified: true, ...impossible },
+        proof: { ...proof().proof, closeout_fully_verified: true, ledger_seal_sealed_ok: true, ledger_seal_sheet_written: true, ledger_seal_no_write_confirmed: false, ledger_seal_sealed: 4, ledger_seal_already_sealed: 0, ...impossible },
       });
       assert.equal(artifact.turns[0].writes[0].closeout.state, 'indeterminate', JSON.stringify(impossible));
       assert.equal(artifact.status, 'partial', JSON.stringify(impossible));
@@ -2526,6 +2533,7 @@ describe('turnWriteArtifact — reachable producer paths', () => {
       proof: {
         ...proof().proof,
         closeout_fully_verified: true,
+        ledger_seal_sealed_ok: true, ledger_seal_sheet_written: true, ledger_seal_no_write_confirmed: false, ledger_seal_sealed: 4, ledger_seal_already_sealed: 0, 
         session_plans_closeout_status: 'disabled',
         session_plans_closeout_captured: false,
         session_plans_closeout_written: 0,
@@ -2539,6 +2547,7 @@ describe('turnWriteArtifact — reachable producer paths', () => {
       proof: {
         ...proof().proof,
         closeout_fully_verified: true,
+        ledger_seal_sealed_ok: true, ledger_seal_sheet_written: true, ledger_seal_no_write_confirmed: false, ledger_seal_sealed: 4, ledger_seal_already_sealed: 0, 
         session_plans_closeout_status: 'no_plan',
         session_plans_closeout_captured: false,
       },
