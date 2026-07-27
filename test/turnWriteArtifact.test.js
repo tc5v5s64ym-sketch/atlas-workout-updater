@@ -338,10 +338,12 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
 
   it('rejects contradictory positive-write and explicit no-write proof', () => {
     const contradictions = [
+      // `no_write_confirmed` is emitted only beside `skipped` and `blocked_schema_drift`
+      // (index.js:457-458, 1367, 1975, 3129, 2750), so the contradiction has to be built on a
+      // state that carries the flag. The drift body sets sheet_written:false — a positive write
+      // beside its explicit no-write claim is the impossible part.
       {
-        sheet_write: 'success',
-        duplicate_write: false,
-        idempotency_status: 'completed',
+        sheet_write: 'blocked_schema_drift',
         sheet_written: true,
         no_write_confirmed: true,
         log_rows_written: 1,
@@ -1210,13 +1212,18 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
       assert.equal(artifact.status, 'partial', unsafeSession);
     }
 
-    // A normal opaque session id is still published verbatim and stays reviewable.
+    // A well-formed session id is no longer published either — see the note in `_writeArtifact`.
+    // The character class proved only the absence of whitespace, `!` and `:`; it could not prove
+    // the value was an identifier, because the producer imposes no shape at all. The record stays
+    // reviewable and the identity state is still reported.
     const safe = buildTurnWriteArtifact([
       line(INTERACTION_TRACE_MARKER, trace()),
       line(TURN_WRITE_PROOF_MARKER, proof()),
     ].join('\n'));
 
-    assert.equal(safe.turns[0].writes[0].session_id, SESSION);
+    assert.equal(safe.turns[0].writes[0].session_id, undefined);
+    assert.equal(safe.turns[0].writes[0].session_identity, 'present');
+    assert.ok(!JSON.stringify(safe).includes(SESSION), 'no session id is published, opaque or not');
     assert.equal(safe.status, 'complete');
   });
 
@@ -2267,7 +2274,11 @@ describe('turnWriteArtifact — reachable producer paths', () => {
     // `no_write_confirmed:true` beside real append evidence, and a dry run beside any of it, are
     // impossible WHATEVER `sheet_write` claims — so they must be caught before a terminal-state
     // classification lets a corrupted record hide behind its own claimed state.
-    for (const state of ['partial', 'unverified', 'skipped_duplicate_in_progress']) {
+    // Restricted to the states that EMIT `no_write_confirmed`. `partial` and `unverified` never
+    // carry it, so pairing it with them was testing a shape no producer can make — the flag is now
+    // dropped from those bodies before classification, which is a stronger refusal than the
+    // contradiction this case was asserting.
+    for (const state of ['skipped', 'blocked_schema_drift']) {
       const denied = build({
         proof: {
           test_mode: false,

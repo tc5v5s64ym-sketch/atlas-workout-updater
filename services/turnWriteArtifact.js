@@ -191,6 +191,14 @@ const IMPOSSIBLE_FIELD_RULES = Object.freeze({
   // consumer only as the projected `ledger_seal_dry_run`; a bare `dry_run` is a second
   // `rows_appended` — whitelisted upstream, produced by nothing.
   dry_run: () => false,
+  // Emitted only beside `sheet_write:'skipped'` — the four preview/dry-run bodies (index.js:1367,
+  // 1975, 3129, 2750) — and beside `blocked_schema_drift` (index.js:457-458). A live success,
+  // partial, unverified or duplicate body never carries it.
+  no_write_confirmed: (route, state) => state === 'skipped' || state === 'blocked_schema_drift',
+  // Set inside `if (idempotency.enabled)` on live bodies only. A preview registers no write, so it
+  // carries neither.
+  duplicate_write: (route, state, attempt) => attempt > 0,
+  idempotency_status: (route, state, attempt) => attempt > 0,
 });
 // State/attempt constraints for keys whose route allowance is not the whole conjunction. Kept
 // beside the map rather than folded into it so each predicate stays a single readable producer
@@ -1022,7 +1030,14 @@ function _writeArtifact(record) {
   }
 
   return {
-    session_id: record.session_id,
+    // The session id is NEVER published. `OPAQUE_SESSION_ID` proves only that a value has no
+    // whitespace, `!` or `:` — it cannot prove the value is an identifier, because the producer
+    // imposes no shape at all: the routes and the client require a bounded trimmed string and
+    // nothing more. Compact workout text (`BenchPress225x5RIR2`) or a bare tab name passes that
+    // character class, and publishing it put exactly the prose this consumer claims to withhold
+    // into a deployment-log artifact. `session_identity` reports whether an id was recorded, the
+    // canonical `turn_id` locates the turn, and cross-session contamination is still detected —
+    // that comparison runs on the retained record, not on anything emitted.
     session_identity: record.session_identity,
     route: record.route,
     recorded_at: record.recorded_at,
@@ -1047,7 +1062,7 @@ function _previewArtifact(record) {
   if (record.withheld_evidence.length > 0) issues.push('evidence_withheld');
   for (const issue of _producerShapeIssues(record, seal, closeout)) issues.push(issue);
   return {
-    session_id: record.session_id,
+    // Never published — see the note in `_writeArtifact`.
     session_identity: record.session_identity,
     route: record.route,
     recorded_at: record.recorded_at,

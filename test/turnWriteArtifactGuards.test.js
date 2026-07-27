@@ -144,6 +144,7 @@ function lines(...records) {
 
 const build = (...records) => buildTurnWriteArtifact(lines(...records));
 const firstWrite = (artifact) => artifact.turns[0].writes[0];
+const previewArtifactOf = (artifact) => artifact.turns[0].previews[0];
 
 // A record the consumer rejected outright never becomes a write, and the turn reports the loss.
 function assertRejected(artifact, why) {
@@ -356,6 +357,86 @@ describe('turnWriteArtifact guards — withheld evidence', () => {
 });
 
 describe('turnWriteArtifact guards — seal presentation', () => {
+  it('never publishes the session id, which no contract constrains', () => {
+    // `OPAQUE_SESSION_ID` proves the value has no whitespace, `!` or `:` — it does NOT prove the
+    // value is an identifier. The routes and client require only a bounded trimmed string
+    // (index.js; src/app/turnCorrelation.js validSessionId), so compact workout text or a Sheet
+    // identifier passes the character class and was emitted verbatim in a `complete` artifact —
+    // exactly the prose this consumer claims has no output path.
+    //
+    // There is no shape that could prove opacity, because the producer imposes none. So the id is
+    // never published at all: `session_identity` reports whether one was recorded, and the
+    // canonical `turn_id` — which IS a validated bounded shape — is what locates the turn.
+    for (const sessionId of ['BenchPress225x5RIR2', 'Log_Cleaned', SESSION]) {
+      const artifact = build(trace(), proofRecord({ session_id: sessionId }));
+      const serialized = JSON.stringify(artifact);
+      assert.ok(!serialized.includes(sessionId), `session id must not appear: ${sessionId}`);
+      assert.equal(firstWrite(artifact).session_id, undefined);
+      assert.equal(firstWrite(artifact).session_identity, 'present');
+    }
+
+    // CONTROL — cross-session contamination is still detected, because the comparison happens on
+    // the retained record rather than on anything published.
+    const other = proofRecord({
+      session_id: 'session-b',
+      recorded_at: '2026-07-27T09:00:09.000Z',
+      pairing: { ...proofRecord().pairing, write_attempt: 2 },
+    });
+    const mixed = build(trace(), proofRecord(), other);
+    assert.ok(mixed.turns[0].issues.includes('conflicting_sessions'));
+    assert.ok(!JSON.stringify(mixed).includes('session-b'));
+  });
+
+  it('constrains the idempotency and no-write fields to the bodies that emit them', () => {
+    // `no_write_confirmed` is emitted only beside `sheet_write:'skipped'` (the four preview and
+    // dry-run bodies: index.js:1367, 1975, 3129, 2750) and `'blocked_schema_drift'`
+    // (index.js:457-458). A live success body never carries it.
+    const onSuccess = build(trace(), proofRecord({}, { no_write_confirmed: false }));
+    assert.ok(firstWrite(onSuccess).issues.includes('impossible_fields_for_route'));
+    assert.equal(firstWrite(onSuccess).proof.no_write_confirmed, undefined);
+
+    // `duplicate_write` and `idempotency_status` are set inside `if (idempotency.enabled)` on live
+    // bodies only; a preview registers no write and carries neither.
+    const preview = build(trace(), proofRecord({
+      pairing: {
+        established_at_preview: true,
+        write_attempt: 0,
+        previewed_write_id_match: null,
+        payload_bound: false,
+        effort_transition: false,
+      },
+    }, {
+      test_mode: true,
+      sheet_write: 'skipped',
+      sheet_written: false,
+      no_write_confirmed: true,
+      duplicate_write: false,
+      idempotency_status: 'completed',
+      logAppendedRange: undefined,
+      log_rows_written: undefined,
+      effort_rows_written: undefined,
+    }), proofRecord());
+    const previewArtifact = previewArtifactOf(preview);
+    assert.ok(previewArtifact.issues.includes('impossible_fields_for_route'));
+    assert.equal(previewArtifact.proof.duplicate_write, undefined);
+    assert.equal(previewArtifact.proof.idempotency_status, undefined);
+
+    // CONTROLS — each field on a body that genuinely emits it.
+    assertControlAccepted(build(trace(), proofRecord()));
+    const drift = build(trace(), proofRecord({}, {
+      sheet_write: 'blocked_schema_drift',
+      sheet_written: false,
+      no_write_confirmed: true,
+      logAppendedRange: undefined,
+      log_rows_written: undefined,
+      effort_rows_written: undefined,
+      duplicate_write: undefined,
+      idempotency_status: undefined,
+    }));
+    assert.ok(!firstWrite(drift).issues.includes('impossible_fields_for_route'));
+    assert.equal(firstWrite(drift).proof.no_write_confirmed, true);
+  });
+
   it('rejects the preview tuple on a positive write attempt', () => {
     // `write_attempt` is `rec.writeIds.indexOf(writeId) + 1` (turnCorrelation.js:551), so a
     // positive attempt exists only where a LIVE write registered a write_id. The preview tuple is
