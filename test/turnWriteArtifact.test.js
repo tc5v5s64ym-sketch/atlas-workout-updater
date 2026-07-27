@@ -2196,6 +2196,108 @@ describe('turnWriteArtifact — reachable producer paths', () => {
     assert.equal(dryRun.status, 'complete');
   });
 
+  it('requires complete-workout’s authoritative write flag, and only there', () => {
+    // `/api/complete-workout` emits `sheet_written: !testMode && effortWritten` (index.js:2721) on
+    // every success, and the field is in PROOF_KEYS, so absence is a lost projection field rather
+    // than a negative. Without requiring it, a truncated record keeps both counts and both ranges
+    // and reads as a confirmed write.
+    const truncated = build({
+      route: '/api/complete-workout',
+      proof: {
+        test_mode: false,
+        sheet_write: 'success',
+        log_rows_written: 2,
+        logAppendedRange: 'Log_Cleaned!A100:L101',
+        effort_rows_written: 1,
+        effortAppendedRange: 'Effort!A100:I100',
+      },
+    });
+    assert.equal(truncated.turns[0].writes[0].proof_state, 'insufficient');
+    assert.equal(truncated.status, 'partial');
+
+    // CONTROL — the same record with the flag the producer really emits.
+    const real = build({
+      route: '/api/complete-workout',
+      proof: {
+        test_mode: false,
+        sheet_write: 'success',
+        sheet_written: true,
+        log_rows_written: 2,
+        logAppendedRange: 'Log_Cleaned!A100:L101',
+        effort_rows_written: 1,
+        effortAppendedRange: 'Effort!A100:I100',
+      },
+    });
+    assert.equal(real.turns[0].writes[0].proof_state, 'write_confirmed');
+    assert.equal(real.status, 'complete');
+
+    // ANTI-GENERALIZATION CONTROL — `/api/log-workout`'s success body (index.js:3413-3421) emits
+    // NO `sheet_written` field at all. Requiring it there would reject that route's ordinary live
+    // success, so this tightening is deliberately scoped to complete-workout alone.
+    const logWorkout = build({
+      route: '/api/log-workout',
+      proof: {
+        test_mode: false,
+        sheet_write: 'success',
+        log_rows_written: 2,
+        logAppendedRange: 'Log_Cleaned!A100:L101',
+        effort_rows_written: 0,
+      },
+    });
+    assert.equal(logWorkout.turns[0].writes[0].proof_state, 'write_confirmed');
+    assert.equal(logWorkout.status, 'complete');
+  });
+
+  it('rejects an impossible write flag on the committed terminal states', () => {
+    // `partial` (index.js:2605-2606, 3356-3366) and `unverified` (:2645-2658) both report
+    // sheet_written:true beside their committed append evidence — the rows ARE on the sheet, which
+    // is what makes those states worth reviewing. So sheet_written:false beside a positive count is
+    // impossible there, and must be caught before the terminal return classifies it as ordinary.
+    for (const state of ['partial', 'unverified']) {
+      const corrupted = build({
+        proof: {
+          test_mode: false,
+          sheet_write: state,
+          sheet_written: false,
+          log_rows_written: 3,
+          logAppendedRange: 'Log_Cleaned!A2:L4',
+        },
+      });
+      assert.equal(corrupted.turns[0].writes[0].proof_state, 'contradictory', state);
+      assert.equal(corrupted.status, 'partial', state);
+    }
+
+    // CONTROLS — the genuine bodies keep their own classification.
+    for (const state of ['partial', 'unverified']) {
+      const genuine = build({
+        proof: {
+          test_mode: false,
+          sheet_write: state,
+          sheet_written: true,
+          log_rows_written: 3,
+          logAppendedRange: 'Log_Cleaned!A2:L4',
+        },
+      });
+      const expected = state === 'partial' ? 'partial' : 'unverified';
+      assert.equal(genuine.turns[0].writes[0].proof_state, expected, state);
+    }
+
+    // ANTI-GENERALIZATION CONTROL — the in-progress duplicate (index.js:3170-3182) sets
+    // sheet_written:FALSE deliberately while spreading the original's counts, so that exact
+    // combination is its real shape and must never be called contradictory.
+    const inProgress = build({
+      proof: {
+        test_mode: false,
+        sheet_write: 'skipped_duplicate_in_progress',
+        sheet_written: false,
+        duplicate_write: true,
+        idempotency_status: 'in_progress',
+        log_rows_written: 3,
+      },
+    });
+    assert.equal(inProgress.turns[0].writes[0].proof_state, 'idempotency_in_progress');
+  });
+
   it('requires the exact success fields on the generic write routes', () => {
     // index.js:1407-1423 and 2024-2036 both emit sheet_write:'success' with sheet_written:true and
     // never a row-count field, so a count cannot substitute for the write flag.
