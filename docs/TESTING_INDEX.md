@@ -27,6 +27,7 @@
 | `atlas:status` | `scripts/atlas-status.js` | `npm run atlas:status [-- --json]` | Deployed read-only → offline | No | Current |
 | `atlas:review-live` | `scripts/atlas-review-live.js` | `npm run atlas:review-live [-- --json]` | Deployed read-only (Sheets) | No | Current |
 | `atlas:divergence` | `scripts/atlas-divergence.js` | `npm run atlas:divergence -- <logfile>` | Offline | No | Current |
+| `atlas:turn-write-artifact` | `scripts/atlas-turn-write-artifact.js` | `npm run atlas:turn-write-artifact -- <logfile> [--json]` | Offline | No | Current |
 | `flight-review` / `gate-a-scorecard` | `scripts/flight-review.js`, `scripts/gate-a-scorecard.js` | `node scripts/flight-review.js` · `node scripts/gate-a-scorecard.js --env=production` | Deployed read-only (Sheets) | No | Current |
 | Drift guards (1–4, 6) | `scripts/check-*.js` | `npm run check:wiring\|authority\|banned\|allowlist\|paper-weight\|ladder` | Offline | No | Current |
 | Secret scan | `scripts/check-changed-files-for-secrets.js` | `npm run scan:secrets` | Offline | No | Current |
@@ -70,6 +71,7 @@ A single-user HTTP client that drives a **local** Atlas server through 7 read-on
 - **`atlas:status`** — `npm run atlas:status [-- --json]`. Health/campaign status from public `/.well-known/atlas-status.json` (offline local view if no `ATLAS_BASE_URL`). No creds. Never writes.
 - **`atlas:review-live`** — `npm run atlas:review-live [-- --json | --session=<id> | --from-dir=<backup>]`. Reviews the newest real owner session (joins Flight_Recorder/Brain_Shadow/Intent_Shadow/Log/Effort/Session_Plans); PASS/FAIL/UNKNOWN per trust criterion. Reads Sheets read-only (`GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_PRIVATE_KEY`, a sheet id). May write a local `outputs/` report only.
 - **`atlas:divergence`** — `npm run atlas:divergence -- <logfile>` (or pipe logs on stdin; `--json`). Offline parser of `[coach-turn-shadow]` records → the Phase-4 TODO list. No creds. Never writes.
+- **`atlas:turn-write-artifact`** — `npm run atlas:turn-write-artifact -- <logfile> [--json]` (or pipe logs on stdin). Offline, closed-whitelist join of `[interaction-trace]` and `[turn-write-proof]` on canonical `turn_id`; complete exits 0, partial exits 1, and empty exits 2 so missing evidence is never a false green. No creds, network, or Sheet access. Contract: [`verification/ISSUE_1165_SLICE_3_ARTIFACT.md`](./verification/ISSUE_1165_SLICE_3_ARTIFACT.md).
 - **`flight-review.js`** / **`gate-a-scorecard.js`** — read-only Sheets evidence extraction / GATE-A scorecard (`--env=production|sandbox`). Read-only; may emit local report files.
 
 ### 6. CI governance guards + secret scan (offline; none can write)

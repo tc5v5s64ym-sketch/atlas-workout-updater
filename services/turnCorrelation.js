@@ -878,6 +878,7 @@ function buildWriteProofRecord(params) {
 
   const src = _isPlainObject(p.proof) ? p.proof : {};
   const proof = {};
+  const withheldEvidence = [];
   // Scalars only. A nested object or array on a proof key could smuggle rows or a body into the
   // record, so it is dropped rather than serialized.
   const isScalar = v => v === null || typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean';
@@ -897,13 +898,24 @@ function buildWriteProofRecord(params) {
     for (const field of fields) {
       if (!Object.prototype.hasOwnProperty.call(nested, field)) continue;
       const v = nested[field];
-      if (v === undefined || !isScalar(v)) continue;
+      const projectedKey = `${envelope}_${field}`;
+      if (v === undefined) continue;
+      if (!isScalar(v)) {
+        withheldEvidence.push(projectedKey);
+        continue;
+      }
       // No projected string may be unbounded, whatever the field.
-      if (typeof v === 'string' && v.length > MAX_PROJECTED_STRING_LENGTH) continue;
+      if (typeof v === 'string' && v.length > MAX_PROJECTED_STRING_LENGTH) {
+        withheldEvidence.push(projectedKey);
+        continue;
+      }
       // Client-influenced fields must also satisfy their own shape.
       const validate = PROJECTION_VALIDATORS[`${envelope}.${field}`];
-      if (validate && !validate(v)) continue;
-      proof[`${envelope}_${field}`] = v;
+      if (validate && !validate(v)) {
+        withheldEvidence.push(projectedKey);
+        continue;
+      }
+      proof[projectedKey] = v;
     }
   }
 
@@ -932,6 +944,10 @@ function buildWriteProofRecord(params) {
     recorded_at: _isNonEmptyString(p.recordedAt) ? p.recordedAt : new Date().toISOString(),
     pairing,
     proof,
+    // Fixed field names only — never the rejected value. This is the slice-3 distinction between
+    // evidence that was genuinely absent and evidence that was present but could not be published
+    // because its intended projection failed shape, length, or field validation.
+    withheld_evidence: withheldEvidence,
   };
 }
 
@@ -964,7 +980,12 @@ function recordWriteProof(params) {
 
 // Read the ring buffer (newest last) for the reviewable artifact / debugging.
 function recentWriteProofs() {
-  return _log.map(r => ({ ...r, pairing: { ...r.pairing }, proof: { ...r.proof } }));
+  return _log.map(r => ({
+    ...r,
+    pairing: { ...r.pairing },
+    proof: { ...r.proof },
+    withheld_evidence: [...r.withheld_evidence],
+  }));
 }
 
 /**

@@ -15,6 +15,7 @@
     "atlas:status": "node scripts/atlas-status.js",
     "atlas:review-live": "node scripts/atlas-review-live.js",
     "atlas:divergence": "node scripts/atlas-divergence.js",
+    "atlas:turn-write-artifact": "node scripts/atlas-turn-write-artifact.js",
     "atlas:corpus-baseline": "node scripts/corpus-baseline-runner.js",
     "check:wiring": "node scripts/check-wired-modules.js",
     "check:authority": "node scripts/check-authority-consistency.js",

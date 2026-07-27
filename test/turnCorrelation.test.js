@@ -586,6 +586,38 @@ test('buildWriteProofRecord: a malformed plan_version is NOT projected, and neve
   assert.ok(!JSON.stringify(record).includes('PRIVATE-NOTE'), 'no smuggled text in the record');
 });
 
+test('buildWriteProofRecord: marks a rejected projected field as withheld without publishing its value', () => {
+  const smuggled = `pv_${'PRIVATE-NOTE-'.repeat(200)}`;
+  const record = tc.buildWriteProofRecord({
+    turnId: TURN_ID,
+    sessionId: SESSION,
+    route: '/api/log-workout',
+    proof: {
+      session_plans_closeout: {
+        status: 'written',
+        captured: true,
+        written: 1,
+        plan_version: smuggled,
+      },
+    },
+  });
+
+  assert.deepEqual(
+    record.withheld_evidence,
+    ['session_plans_closeout_plan_version'],
+    'the artifact consumer must be able to distinguish invalid-and-withheld from genuinely absent',
+  );
+  assert.ok(!JSON.stringify(record).includes('PRIVATE-NOTE'), 'the fixed marker must never publish the rejected value');
+
+  const absent = tc.buildWriteProofRecord({
+    turnId: TURN_ID,
+    sessionId: SESSION,
+    route: '/api/log-workout',
+    proof: { session_plans_closeout: { status: 'written', captured: true, written: 1 } },
+  });
+  assert.deepEqual(absent.withheld_evidence, [], 'a genuinely absent projection is not described as withheld');
+});
+
 test('buildWriteProofRecord: every projected string is length-bounded, whatever the field', () => {
   // The structural backstop for the root cause Codex named: the scalar filter bounds no string
   // length. `ledger_seal.reason` is fixed-vocabulary TODAY (verified by enumeration), but that is a
