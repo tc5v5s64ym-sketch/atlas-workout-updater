@@ -117,10 +117,11 @@ test('real trace and correlation emitters produce one leakage-safe reviewable jo
       proof: {
         test_mode: false,
         sheet_write: 'success',
-        sheet_written: true,
-        no_write_confirmed: false,
         write_id: 'write-artifact-1',
-        rows_appended: 1,
+        logAppendedRange: 'Log_Cleaned!A2:L2',
+        log_rows_written: 1,
+        effort_rows_written: 0,
+        effortWritten: false,
       },
     });
   } finally {

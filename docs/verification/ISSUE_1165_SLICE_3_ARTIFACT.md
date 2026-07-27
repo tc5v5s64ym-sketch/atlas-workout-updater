@@ -53,6 +53,10 @@ a confirmed/reviewable write even if another field is positive.
 Contradictory positive-write and explicit no-write claims fail closed. Seal evidence with a positive
 new-seal count but `sheet_written:false`, and skipped closeout evidence without a positive skip
 count, are likewise non-reviewable rather than inferred as successful replays.
+Explicit no-write proof additionally requires `test_mode:true`. A live `/api/log-workout` success
+requires a positive Log or Effort row count paired with a structurally valid append range; the
+range is reduced to an internal presence verdict and is never emitted. Seal mismatch-only count
+fields cannot coexist with a successful seal classification.
 
 `complete` means every included turn is reviewable and no marker record was rejected. `partial`
 means at least one record exists but a turn is missing, ambiguous, rejected, unbound, withheld,
@@ -88,10 +92,11 @@ or exposing malformed client input.
 
 - `test/turnWriteArtifact.test.js` — ordering, cross-turn/cross-session refusal, attempt bounds,
   integer proof counts, proof sufficiency, effort-bearing preview no-write precedence,
-  unverified/partial/in-progress and contradictory proof refusal, positive-evidence closeout
-  discriminators for writes and replays, impossible seal-count refusal, seal classifications,
-  withheld/absent distinction, leakage refusal (including client-controlled proof strings and
-  source labels), CLI output, and non-zero partial/empty behavior.
+  unverified/partial/in-progress and contradictory proof refusal, explicit test-mode no-write
+  proof, range-backed live Log/Effort success, positive-evidence closeout discriminators for writes
+  and replays, impossible seal-count refusal, seal classifications, withheld/absent distinction,
+  leakage refusal (including client-controlled proof strings and source labels), CLI output, and
+  non-zero partial/empty behavior.
 - `test/turnWriteArtifactIntegration.test.js` — captures the actual interaction-trace emitter and a
   real registry preview → pairing → live resolution → write-proof emitter, then joins their log
   lines.

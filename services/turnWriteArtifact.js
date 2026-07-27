@@ -98,6 +98,7 @@ const CLOSEOUT_STATES = new Set([
   'written',
 ]);
 const SAFE_STATE_TOKEN = /^[a-z][a-z0-9_]{0,63}$/;
+const A1_RANGE_RE = /^(?:'[^'\r\n]{1,64}'|[A-Za-z0-9_ -]{1,64})![A-Z]{1,3}[1-9]\d{0,6}:[A-Z]{1,3}[1-9]\d{0,6}$/;
 const ISO_8601 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/;
 const PAIRING_TOKEN_RE = /pair:[a-f0-9]{32}/;
 const FINGERPRINT_RE = /(?:sha256:)?[a-f0-9]{64}/i;
@@ -211,6 +212,20 @@ function _sanitizeProof(record) {
     if (!_validProofValue(key, value)) return null;
     proof[key] = value;
   }
+  const hasSafeRange = (...keys) => keys.some((key) => {
+    if (!Object.prototype.hasOwnProperty.call(record.proof, key)) return false;
+    const value = record.proof[key];
+    return typeof value === 'string'
+      && value.length <= MAX_ARTIFACT_STRING_LENGTH
+      && A1_RANGE_RE.test(value)
+      && !_containsCapability(value);
+  });
+  // Range values are intentionally never emitted. These fixed booleans let the consumer enforce
+  // W3's proof tuple without reflecting a tab/range string from the untrusted log stream.
+  const rangeEvidence = {
+    log: hasSafeRange('logAppendedRange', 'log_appended_range'),
+    effort: hasSafeRange('effortAppendedRange', 'effort_appended_range'),
+  };
 
   if (!Array.isArray(record.withheld_evidence)) return null;
   const withheldEvidence = [];
@@ -245,6 +260,7 @@ function _sanitizeProof(record) {
       effort_transition: pairing.effort_transition,
     },
     proof,
+    range_evidence: rangeEvidence,
     withheld_evidence: withheldEvidence,
   };
 }
@@ -337,10 +353,13 @@ function _sealSummary(proof, withheldEvidence) {
   const alreadySealed = typeof proof.ledger_seal_already_sealed === 'number'
     ? proof.ledger_seal_already_sealed
     : null;
+  const hasMismatchCounts = Object.prototype.hasOwnProperty.call(proof, 'ledger_seal_expected_cells')
+    || Object.prototype.hasOwnProperty.call(proof, 'ledger_seal_updated_cells');
 
   let state = 'absent';
   if (sealedOk === false && sheetWritten === true) state = 'seal_proof_mismatch';
   else if (sealedOk === false) state = 'failed';
+  else if (sealedOk === true && hasMismatchCounts) state = 'seal_proof_mismatch';
   else if (sealedOk === true && sheetWritten === false && sealed > 0) state = 'seal_proof_mismatch';
   else if (sealedOk === true && sheetWritten === true && sealed > 0) state = 'sealed';
   else if (sealedOk === true && sheetWritten === true) state = 'indeterminate';
@@ -406,27 +425,36 @@ function _closeoutSummary(proof, withheldEvidence) {
   };
 }
 
-function _proofState(proof, seal, closeout) {
+function _proofState(proof, seal, closeout, route, rangeEvidence = {}) {
   if (proof.sheet_write === 'unverified') return 'unverified';
   if (proof.sheet_write === 'partial') return 'partial';
   if (proof.sheet_write === 'skipped_duplicate_in_progress') return 'idempotency_in_progress';
 
-  const positiveWrite = proof.sheet_written === true
-    || proof.sheet_write === 'success'
-    || (typeof proof.rows_appended === 'number' && proof.rows_appended > 0)
-    || (typeof proof.log_rows_written === 'number' && proof.log_rows_written > 0)
-    || (typeof proof.effort_rows_written === 'number' && proof.effort_rows_written > 0)
+  const claimsSuccess = proof.sheet_write === 'success';
+  const logRowsWritten = typeof proof.log_rows_written === 'number' && proof.log_rows_written > 0;
+  const effortRowsWritten = typeof proof.effort_rows_written === 'number' && proof.effort_rows_written > 0;
+  const rangeBackedLogWorkoutWrite = (logRowsWritten && rangeEvidence.log === true)
+    || (effortRowsWritten && rangeEvidence.effort === true);
+  const isLogWorkoutSuccess = route === '/api/log-workout' && claimsSuccess;
+  const positiveWrite = (!isLogWorkoutSuccess && proof.sheet_written === true)
+    || (!isLogWorkoutSuccess && typeof proof.rows_appended === 'number' && proof.rows_appended > 0)
+    || (!isLogWorkoutSuccess && logRowsWritten)
+    || (!isLogWorkoutSuccess && effortRowsWritten)
+    || (isLogWorkoutSuccess && rangeBackedLogWorkoutWrite)
     || seal.new_seal_write
     || closeout.state === 'written';
 
   // A proof cannot simultaneously claim the explicit W1 no-write guarantee and a real append.
   // `effortWritten` is intentionally excluded: on a preview it means an effort row was formatted,
   // not appended, and the explicit no-write tuple remains authoritative for that real route shape.
-  if (proof.no_write_confirmed === true && positiveWrite) return 'contradictory';
+  if (proof.no_write_confirmed === true && (positiveWrite || claimsSuccess)) return 'contradictory';
+  if (proof.test_mode === true && (positiveWrite || claimsSuccess)) return 'contradictory';
 
   // The explicit W1 no-write tuple outranks incidental response bookkeeping such as
   // effortWritten:true on a preview (which means an effort row was formatted, not appended).
-  if (proof.no_write_confirmed === true && proof.sheet_written === false) {
+  if (proof.test_mode === true
+    && proof.no_write_confirmed === true
+    && proof.sheet_written === false) {
     return 'no_write_confirmed';
   }
 
@@ -444,7 +472,7 @@ function _writeArtifact(record) {
   const authorization = _authorization(record.pairing);
   const seal = _sealSummary(record.proof, record.withheld_evidence);
   const closeout = _closeoutSummary(record.proof, record.withheld_evidence);
-  const proofState = _proofState(record.proof, seal, closeout);
+  const proofState = _proofState(record.proof, seal, closeout, record.route, record.range_evidence);
   const issues = [];
   if (authorization !== 'preview_payload_bound') issues.push('authorization_unbound');
   if (proofState === 'insufficient') issues.push('write_proof_insufficient');
@@ -484,7 +512,7 @@ function _writeArtifact(record) {
 function _previewArtifact(record) {
   const seal = _sealSummary(record.proof, record.withheld_evidence);
   const closeout = _closeoutSummary(record.proof, record.withheld_evidence);
-  const proofState = _proofState(record.proof, seal, closeout);
+  const proofState = _proofState(record.proof, seal, closeout, record.route, record.range_evidence);
   const issues = [];
   if (proofState !== 'no_write_confirmed') issues.push('preview_no_write_proof_missing');
   if (record.withheld_evidence.length > 0) issues.push('evidence_withheld');
