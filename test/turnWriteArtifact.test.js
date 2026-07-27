@@ -738,6 +738,93 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
     assert.ok(!JSON.stringify(foreignReason).includes('not_an_emitter_reason'));
   });
 
+  it('honors the route\'s negative closeout_fully_verified verdict', () => {
+    // closeoutVerification in index.js returns false for a planned closeout with no ledger rows
+    // even when the seal reports sealed_ok:true and the Session_Plans event was written. That
+    // verdict is the route's own authoritative judgment and cannot be ignored.
+    const routeSaysUnverified = proof({
+      proof: {
+        test_mode: false,
+        sheet_write: 'success',
+        logAppendedRange: 'Log_Cleaned!A2:L4',
+        log_rows_written: 3,
+        ledger_seal_sealed_ok: true,
+        ledger_seal_no_ledger: true,
+        session_plans_closeout_status: 'written',
+        session_plans_closeout_captured: true,
+        session_plans_closeout_written: 1,
+        session_plans_closeout_skipped: 0,
+        session_plans_closeout_plan_version: 'pv_7c9e6679-7425-40de-944b-e07fc1f90ae7',
+        closeout_fully_verified: false,
+      },
+    });
+    const artifact = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, routeSaysUnverified),
+    ].join('\n'));
+    const write = artifact.turns[0].writes[0];
+
+    assert.equal(write.reviewable, false);
+    assert.ok(write.issues.includes('closeout_not_verified'));
+    assert.equal(artifact.status, 'partial');
+
+    // The same shape with the route's POSITIVE verdict stays reviewable.
+    const routeSaysVerified = proof({
+      proof: {
+        test_mode: false,
+        sheet_write: 'success',
+        logAppendedRange: 'Log_Cleaned!A2:L4',
+        log_rows_written: 3,
+        ledger_seal_sheet_written: true,
+        ledger_seal_sealed: 2,
+        ledger_seal_already_sealed: 0,
+        ledger_seal_sealed_ok: true,
+        session_plans_closeout_status: 'written',
+        session_plans_closeout_captured: true,
+        session_plans_closeout_written: 1,
+        session_plans_closeout_skipped: 0,
+        session_plans_closeout_plan_version: 'pv_7c9e6679-7425-40de-944b-e07fc1f90ae7',
+        closeout_fully_verified: true,
+      },
+    });
+    const verified = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, routeSaysVerified),
+    ].join('\n'));
+
+    assert.equal(verified.turns[0].writes[0].reviewable, true);
+    assert.equal(verified.status, 'complete');
+  });
+
+  it('never publishes a session id that is not an opaque identifier', () => {
+    // Neither the server nor the client constrains session_id beyond "nonempty, bounded, trimmed",
+    // so it can carry workout prose or a Sheet range. The join must survive without republishing it.
+    for (const unsafeSession of ['Bench Press 225 lb x 5 @ RIR 2', 'Log_Cleaned!A2:L4']) {
+      const artifact = buildTurnWriteArtifact([
+        line(INTERACTION_TRACE_MARKER, trace()),
+        line(TURN_WRITE_PROOF_MARKER, proof({ session_id: unsafeSession })),
+      ].join('\n'));
+
+      const serialized = JSON.stringify(artifact);
+      assert.ok(!serialized.includes(unsafeSession), `raw session id leaked: ${unsafeSession}`);
+      assert.ok(!formatTurnWriteArtifact(artifact).includes(unsafeSession), 'leaked in human output');
+      // The record is RETAINED — losing the join would be its own failure — but the unusable
+      // identity makes it non-reviewable.
+      assert.equal(artifact.turns[0].writes.length, 1, unsafeSession);
+      assert.equal(artifact.turns[0].reviewable, false, unsafeSession);
+      assert.equal(artifact.status, 'partial', unsafeSession);
+    }
+
+    // A normal opaque session id is still published verbatim and stays reviewable.
+    const safe = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, proof()),
+    ].join('\n'));
+
+    assert.equal(safe.turns[0].writes[0].session_id, SESSION);
+    assert.equal(safe.status, 'complete');
+  });
+
   it('never borrows the main write boolean as seal-local write evidence', () => {
     // `ledger_seal_sheet_written` is the ONLY evidence that the independent sidecar write happened.
     // A successful main append says nothing about the seal.
