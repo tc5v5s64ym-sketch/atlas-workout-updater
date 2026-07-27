@@ -105,9 +105,18 @@ therefore test the broad positive signal rather than the narrower classification
 success claiming `sheet_written:false` beside real append evidence is a corrupted record whichever
 route emitted it, and stays `contradictory` even when it also fails the complete-tuple check.
 
-Two impossibilities are **state-independent** and are diagnosed before any terminal-state
-classification: the explicit W1 no-write tuple beside real append evidence, and a dry run beside any
-positive append signal. Neither can be true whatever `sheet_write` claims, so a corrupted record
+Three impossibilities are diagnosed before any terminal-state classification. Two are broad: the
+explicit W1 no-write tuple beside real append evidence, and a dry run beside any positive append
+signal. The third is **producer-specific**: `partial` and `unverified` both report
+`sheet_written:true` beside their committed append evidence — the rows really are on the sheet,
+which is what makes those states worth reviewing — so `sheet_written:false` beside a positive count
+cannot be either of them. It is scoped to those two states because the in-progress duplicate sets
+`sheet_written:false` deliberately while spreading the original's counts, making that same
+combination its genuine shape.
+
+`sheet_written` is required on `/api/complete-workout` and only there: that route emits it on every
+success and the projection carries it, so absence is a lost field rather than a negative, while
+`/api/log-workout` emits no such field at all and would have its ordinary live success rejected. Neither can be true whatever `sheet_write` claims, so a corrupted record
 must not hide behind its own claimed state. The `!claimsSuccess` arm deliberately stays *below* the
 terminal returns: the genuine `partial` and `unverified` bodies really do carry `sheet_written:true`
 with a positive log count, and the in-progress duplicate spreads the original's counts, so hoisting

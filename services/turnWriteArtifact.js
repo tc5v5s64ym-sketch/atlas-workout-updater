@@ -622,8 +622,14 @@ function _proofState(proof, seal, closeout, route, rangeEvidence = {}) {
   // `effort_rows_written === 1` plus an Effort range (index.js:2643), so a log-only success is
   // unreachable there. `/api/log-workout` has no such requirement — an effort-less log append is
   // its ordinary shape.
+  // `sheet_written` is required on complete-workout and ONLY there: that route emits
+  // `sheet_written: !testMode && effortWritten` on every success (index.js:2721) and the field is
+  // in PROOF_KEYS, so absence is a lost projection field rather than a negative. `/api/log-workout`
+  // emits no `sheet_written` at all on its success body (index.js:3413-3421), so requiring it there
+  // would reject that route's ordinary live success — this tightening must not be generalized.
   const perTabWrite = hasBothRowCounts && (route === '/api/complete-workout'
-    ? (proof.effort_rows_written === 1
+    ? (proof.sheet_written === true
+      && proof.effort_rows_written === 1
       && rangeEvidence.effort === true
       && (!logRowsWritten || rangeEvidence.log === true))
     : rangeBackedLogWorkoutWrite);
@@ -656,6 +662,22 @@ function _proofState(proof, seal, closeout, route, rangeEvidence = {}) {
   // counts on a non-success dry run, because it needs a success claim this path never makes.
   if (proof.test_mode === true
     && (positiveWrite || claimsSuccess || anyPositiveWriteSignal)) return 'contradictory';
+
+  // A third state-independent impossibility, this one PRODUCER-SPECIFIC rather than broad.
+  // `partial` (index.js:2605-2606, 3356-3366) and `unverified` (:2645-2658) both report
+  // `sheet_written:true` beside their committed append evidence — the rows really are on the sheet,
+  // which is exactly what makes those states worth reviewing. So `sheet_written:false` beside a
+  // positive count cannot be either of them.
+  //
+  // Scoped to those two states ON PURPOSE. The in-progress duplicate (index.js:3170-3182) sets
+  // `sheet_written:false` deliberately while spreading the original's counts, so that same
+  // combination is its genuine shape; including it would discard a real record.
+  if ((proof.sheet_write === 'partial' || proof.sheet_write === 'unverified')
+    && proof.sheet_written === false
+    && (logRowsWritten || effortRowsWritten
+      || (typeof proof.rows_appended === 'number' && proof.rows_appended > 0))) {
+    return 'contradictory';
+  }
 
   // Terminal states are classified only AFTER the impossibility checks above.
   if (proof.sheet_write === 'unverified') return 'unverified';
