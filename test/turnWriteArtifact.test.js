@@ -380,6 +380,25 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
     assert.equal(artifact.status, 'partial');
   });
 
+  it('does not treat effort formatting bookkeeping as live append proof', () => {
+    const bookkeepingOnly = proof({
+      proof: {
+        test_mode: false,
+        effortWritten: true,
+      },
+    });
+    const artifact = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, bookkeepingOnly),
+    ].join('\n'));
+    const write = artifact.turns[0].writes[0];
+
+    assert.equal(write.proof_state, 'insufficient');
+    assert.equal(write.reviewable, false);
+    assert.ok(write.issues.includes('write_proof_insufficient'));
+    assert.equal(artifact.status, 'partial');
+  });
+
   it('distinguishes a newly stamped seal from an idempotent already-sealed replay', () => {
     const stamped = proof({
       proof: {
