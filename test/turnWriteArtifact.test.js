@@ -1672,3 +1672,249 @@ describe('turnWriteArtifact — human and CLI artifact', () => {
     }
   });
 });
+
+// #1165 slice 3 — the complete-producer-tuple rule, applied to the six branches that still
+// accepted a partial or impossible shape. Every case pairs the rejected shape with a POSITIVE
+// CONTROL built from what the real producer actually emits, so the tightening cannot silently
+// start discarding genuine records.
+describe('turnWriteArtifact — complete producer tuples', () => {
+  const COMPLETE_ROUTE = '/api/complete-workout';
+  const STAMP = {
+    ledger_seal_sheet_written: true,
+    ledger_seal_no_write_confirmed: false,
+    ledger_seal_sealed: 4,
+    ledger_seal_already_sealed: 0,
+    ledger_seal_sealed_ok: true,
+  };
+
+  const build = (overrides) => buildTurnWriteArtifact([
+    line(INTERACTION_TRACE_MARKER, trace()),
+    line(TURN_WRITE_PROOF_MARKER, proof(overrides)),
+  ].join('\n'));
+
+  it('requires the per-tab range-backed tuple on /api/complete-workout', () => {
+    // A bare positive scalar is not the route's proof: the live route emits per-tab counts and
+    // the append ranges whose exact row counts it verifies before returning.
+    const bare = build({
+      route: COMPLETE_ROUTE,
+      proof: { sheet_write: 'success', sheet_written: true },
+    });
+    assert.equal(bare.turns[0].writes[0].proof_state, 'insufficient');
+    assert.equal(bare.status, 'partial');
+
+    // A positive count whose range names the wrong tab is equally unproved.
+    const wrongTab = build({
+      route: COMPLETE_ROUTE,
+      proof: {
+        test_mode: false,
+        sheet_write: 'success',
+        sheet_written: true,
+        log_rows_written: 2,
+        logAppendedRange: 'Effort!A100:L101',
+        effort_rows_written: 0,
+      },
+    });
+    assert.equal(wrongTab.turns[0].writes[0].proof_state, 'insufficient');
+
+    // CONTROL — the real live log+effort completion.
+    const logAndEffort = build({
+      route: COMPLETE_ROUTE,
+      proof: {
+        test_mode: false,
+        sheet_write: 'success',
+        sheet_written: true,
+        log_rows_written: 2,
+        logAppendedRange: 'Log_Cleaned!A100:L101',
+        effort_rows_written: 1,
+        effortAppendedRange: 'Effort!A100:I100',
+      },
+    });
+    assert.equal(logAndEffort.turns[0].writes[0].proof_state, 'write_confirmed');
+    assert.equal(logAndEffort.status, 'complete');
+
+    // CONTROL — the real EFFORT-LESS completion. `sheet_written` on this route tracks
+    // `effortWritten` (index.js: `sheet_written: !testMode && effortWritten`), so a genuine
+    // log-only live write legitimately reports false beside a real Log append. It must stay
+    // reviewable and must NOT read as contradictory.
+    const logOnly = build({
+      route: COMPLETE_ROUTE,
+      proof: {
+        test_mode: false,
+        sheet_write: 'success',
+        sheet_written: false,
+        log_rows_written: 2,
+        logAppendedRange: 'Log_Cleaned!A100:L101',
+        effort_rows_written: 0,
+      },
+    });
+    assert.equal(logOnly.turns[0].writes[0].proof_state, 'write_confirmed');
+    assert.equal(logOnly.status, 'complete');
+  });
+
+  it('requires the complete correlated duplicate tuple for idempotent_no_write', () => {
+    // Ordinary early duplicate replays are never recorded; the only correlated producer is the
+    // all-rows-duplicate closeout path, which emits the whole tuple.
+    for (const partial of [
+      { sheet_write: 'skipped_duplicate' },
+      { duplicate_write: true },
+      { skipped_duplicates: 3 },
+    ]) {
+      const artifact = build({ proof: { test_mode: false, ...partial } });
+      assert.notEqual(
+        artifact.turns[0].writes[0].proof_state, 'idempotent_no_write', JSON.stringify(partial),
+      );
+      assert.equal(artifact.status, 'partial', JSON.stringify(partial));
+    }
+
+    // CONTROL — the real duplicate body, with a seal replay and an already-captured closeout so
+    // no sidecar write stands in for the duplicate classification itself.
+    const real = build({
+      proof: {
+        test_mode: false,
+        sheet_write: 'skipped_duplicate',
+        sheet_written: false,
+        duplicate_write: true,
+        log_rows_written: 0,
+        skipped_duplicates: 3,
+        closeout_fully_verified: true,
+        ledger_seal_sheet_written: false,
+        ledger_seal_no_write_confirmed: true,
+        ledger_seal_sealed: 0,
+        ledger_seal_already_sealed: 4,
+        ledger_seal_sealed_ok: true,
+        ledger_seal_reason: 'all_sealed',
+        session_plans_closeout_status: 'skipped',
+        session_plans_closeout_captured: true,
+        session_plans_closeout_written: 0,
+        session_plans_closeout_skipped: 1,
+        session_plans_closeout_plan_version: 'pv_7c9e6679-7425-40de-944b-e07fc1f90ae7',
+      },
+    });
+    assert.equal(real.turns[0].writes[0].proof_state, 'idempotent_no_write');
+    assert.equal(real.status, 'complete');
+  });
+
+  it('requires the sibling already_sealed count on a fresh stamp', () => {
+    const { ledger_seal_already_sealed: _omitted, ...withoutCount } = STAMP;
+    const partial = build({ proof: { ...proof().proof, closeout_fully_verified: true, ...withoutCount } });
+    assert.notEqual(partial.turns[0].writes[0].seal.state, 'sealed');
+    assert.equal(partial.turns[0].writes[0].seal.new_seal_write, false);
+    assert.equal(partial.status, 'partial');
+
+    // CONTROL — the real stamp, including a nonzero already_sealed (rows pre-stamped by a retry).
+    const complete = build({
+      proof: {
+        ...proof().proof,
+        closeout_fully_verified: true,
+        ...STAMP,
+        ledger_seal_already_sealed: 2,
+      },
+    });
+    assert.equal(complete.turns[0].writes[0].seal.state, 'sealed');
+    assert.equal(complete.turns[0].writes[0].seal.new_seal_write, true);
+    assert.equal(complete.status, 'complete');
+  });
+
+  it('requires the all_sealed discriminator on an idempotent replay', () => {
+    const replayFields = {
+      ledger_seal_sheet_written: false,
+      ledger_seal_no_write_confirmed: true,
+      ledger_seal_sealed: 0,
+      ledger_seal_already_sealed: 4,
+      ledger_seal_sealed_ok: true,
+    };
+    const noReason = build({ proof: { ...proof().proof, closeout_fully_verified: true, ...replayFields } });
+    assert.notEqual(noReason.turns[0].writes[0].seal.state, 'already_sealed');
+    assert.equal(noReason.turns[0].writes[0].seal.successfully_sealed, false);
+    assert.equal(noReason.status, 'partial');
+
+    // CONTROL — the real replay carries its discriminator.
+    const withReason = build({
+      proof: {
+        ...proof().proof,
+        closeout_fully_verified: true,
+        ...replayFields,
+        ledger_seal_reason: 'all_sealed',
+      },
+    });
+    assert.equal(withReason.turns[0].writes[0].seal.state, 'already_sealed');
+    assert.equal(withReason.turns[0].writes[0].seal.successfully_sealed, true);
+    assert.equal(withReason.status, 'complete');
+  });
+
+  it('accepts only the reachable verified-no-new-seal outcomes', () => {
+    const partial = build({
+      proof: {
+        ...proof().proof,
+        closeout_fully_verified: true,
+        ledger_seal_sheet_written: false,
+        ledger_seal_no_write_confirmed: true,
+        ledger_seal_sealed: 0,
+        ledger_seal_sealed_ok: true,
+      },
+    });
+    assert.notEqual(partial.turns[0].writes[0].seal.state, 'verified_no_new_seal');
+    assert.equal(partial.status, 'partial');
+
+    // CONTROLS — the two producer forms that genuinely reach this state.
+    for (const reason of ['tab_missing', 'no_rows']) {
+      const real = build({
+        proof: {
+          ...proof().proof,
+          closeout_fully_verified: true,
+          ledger_seal_sheet_written: false,
+          ledger_seal_no_write_confirmed: true,
+          ledger_seal_sealed: 0,
+          ledger_seal_already_sealed: 0,
+          ledger_seal_sealed_ok: true,
+          ledger_seal_no_ledger: true,
+          ledger_seal_reason: reason,
+        },
+      });
+      assert.equal(real.turns[0].writes[0].seal.state, 'verified_no_new_seal', reason);
+      assert.equal(real.status, 'complete', reason);
+    }
+  });
+
+  it('pins closeout counts to the single-event producer shapes', () => {
+    const closeoutBase = {
+      ...proof().proof,
+      closeout_fully_verified: true,
+      session_plans_closeout_captured: true,
+      session_plans_closeout_plan_version: 'pv_7c9e6679-7425-40de-944b-e07fc1f90ae7',
+    };
+    // writeSessionCloseout appends exactly one event, so only 1/0 and 0/1 are producible.
+    for (const counts of [
+      { session_plans_closeout_status: 'written', session_plans_closeout_written: 2, session_plans_closeout_skipped: 0 },
+      { session_plans_closeout_status: 'skipped', session_plans_closeout_written: 0, session_plans_closeout_skipped: 2 },
+    ]) {
+      const artifact = build({ proof: { ...closeoutBase, ...counts } });
+      const state = artifact.turns[0].writes[0].closeout.state;
+      assert.ok(state !== 'written' && state !== 'already_captured', JSON.stringify(counts));
+      assert.equal(artifact.status, 'partial', JSON.stringify(counts));
+    }
+
+    // CONTROLS — both real single-event outcomes.
+    const written = build({
+      proof: {
+        ...closeoutBase,
+        session_plans_closeout_status: 'written',
+        session_plans_closeout_written: 1,
+        session_plans_closeout_skipped: 0,
+      },
+    });
+    assert.equal(written.turns[0].writes[0].closeout.state, 'written');
+    assert.equal(written.status, 'complete');
+
+    const skipped = build({
+      proof: {
+        ...closeoutBase,
+        session_plans_closeout_status: 'skipped',
+        session_plans_closeout_written: 0,
+        session_plans_closeout_skipped: 1,
+      },
+    });
+    assert.equal(skipped.turns[0].writes[0].closeout.state, 'already_captured');
+    assert.equal(skipped.status, 'complete');
+  });
+});
