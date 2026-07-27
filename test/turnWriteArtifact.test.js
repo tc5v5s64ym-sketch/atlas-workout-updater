@@ -143,7 +143,14 @@ describe('turnWriteArtifact — parsing and canonical turn join', () => {
       line(TURN_WRITE_PROOF_MARKER, proof()),
     ].join('\n'));
 
-    assert.equal(artifact.summary.reviewable_turns, 1);
+    // The turn must fail closed too, not just the artifact. A loss that cannot name its turn might
+    // have belonged to ANY turn present, so leaving this one `reviewable:true` reported a turn as
+    // reviewable while some of its own evidence may have been discarded. The old expectation of
+    // `reviewable_turns: 1` encoded that overstatement, under a test name that already claimed the
+    // opposite.
+    assert.equal(artifact.summary.reviewable_turns, 0);
+    assert.equal(artifact.turns[0].reviewable, false);
+    assert.ok(artifact.turns[0].issues.includes('evidence_loss_unattributed'));
     assert.equal(artifact.summary.rejected_records, 1);
     assert.equal(artifact.status, 'partial');
   });

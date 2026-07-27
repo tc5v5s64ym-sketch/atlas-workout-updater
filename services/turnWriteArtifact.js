@@ -539,6 +539,7 @@ function _emptyParsed() {
     rejected: [],
     rejected_count: 0,
     rejected_turn_ids: new Set(),
+    unattributed_rejections: 0,
   };
 }
 
@@ -548,6 +549,13 @@ function parseTurnWriteLines(text, opts = {}) {
 
   const reject = (reason, marker, lineNumber, turnId = null) => {
     parsed.rejected_count += 1;
+    // A loss that cannot name its turn must not be filed only against the whole run. Truncation,
+    // the record cap and a malformed line all discard evidence that MIGHT have belonged to any
+    // turn present, so every included turn has to fail closed — otherwise a turn keeps
+    // `reviewable:true` while some of its own evidence is missing, which is the overstatement this
+    // module exists to prevent. (Fixing attribution for rejections that DO carry a turn_id and
+    // stopping there was the same blast-radius miss one round earlier.)
+    if (turnId === null) parsed.unattributed_rejections += 1;
     if (parsed.rejected.length < MAX_REJECTIONS) {
       parsed.rejected.push({ reason, marker, line: lineNumber, turn_id: turnId });
     } else if (turnId !== null) {
@@ -1116,6 +1124,9 @@ function buildTurnWriteArtifact(input, opts = {}) {
   const rejectedTurnIds = safeParsed.rejected_turn_ids instanceof Set
     ? safeParsed.rejected_turn_ids
     : new Set();
+  const unattributedRejections = Number.isInteger(safeParsed.unattributed_rejections)
+    ? safeParsed.unattributed_rejections
+    : 0;
   let rejectedCount = Number.isInteger(safeParsed.rejected_count)
     ? safeParsed.rejected_count
     : rejected.length;
@@ -1175,6 +1186,7 @@ function buildTurnWriteArtifact(input, opts = {}) {
     if (new Set(attempts).size !== attempts.length) issues.push('duplicate_write_attempt');
     if (rejected.some((entry) => entry && entry.turn_id === turnId)
       || rejectedTurnIds.has(turnId)) issues.push('rejected_write_record');
+    if (unattributedRejections > 0) issues.push('evidence_loss_unattributed');
 
     const trace = traceRecords.length === 1 ? { ...traceRecords[0] } : null;
     const previews = previewRecords.map(_previewArtifact);
