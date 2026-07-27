@@ -128,11 +128,13 @@ an absent one is a lost tuple member rather than a live write to be assumed.
 
 `sheet_written` is required on `/api/complete-workout` and only there: that route emits it on every
 success and the projection carries it, so absence is a lost field rather than a negative, while
-`/api/log-workout` emits no such field at all and would have its ordinary live success rejected. Neither can be true whatever `sheet_write` claims, so a corrupted record
-must not hide behind its own claimed state. The `!claimsSuccess` arm deliberately stays *below* the
-terminal returns: the genuine `partial` and `unverified` bodies really do carry `sheet_written:true`
-with a positive log count, and the in-progress duplicate spreads the original's counts, so hoisting
-it would call every real one of those contradictory and discard the records that most need review.
+`/api/log-workout` emits no such field at all and would have its ordinary live success rejected.
+
+The `!claimsSuccess` contradiction arm deliberately stays *below* the terminal returns, unlike the
+three impossibility checks above it: the genuine `partial` and `unverified` bodies really do carry
+`sheet_written:true` with a positive log count, and the in-progress duplicate spreads the original's
+counts, so hoisting it would call every real one of those contradictory and discard the records that
+most need review.
 
 Both per-tab success bodies emit **both** row counts as numbers on every live write —
 `/api/complete-workout` at `index.js:2723` (an explicit `0` on an effort-only completion) and
