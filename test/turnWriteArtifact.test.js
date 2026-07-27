@@ -2535,6 +2535,79 @@ describe('turnWriteArtifact — reachable producer paths', () => {
     }
   });
 
+  it('accepts the quoted A1 form Google returns for tab names needing quotes', () => {
+    // The app builds its append range unquoted (`${tabName}!A1`, sheets.js:123), but Google echoes
+    // CANONICAL A1 in updatedRange, which single-quotes any sheet name containing a space — and
+    // doubles an embedded apostrophe. So a deployment overriding the tab name to `Workout Log`
+    // gets back `'Workout Log'!A100:L101` and its genuine append loses its range evidence.
+    //
+    // Accepting the quoted form cannot create a false green: the exact configured name, the exact
+    // contract column span, and the exact row count are all still required. It only tolerates the
+    // quoting Google itself applies.
+    const originalLog = process.env.LOG_SHEET_NAME;
+    const originalEffort = process.env.EFFORT_SHEET_NAME;
+    process.env.LOG_SHEET_NAME = 'Workout Log';
+    process.env.EFFORT_SHEET_NAME = "Dale's Effort";
+    delete require.cache[require.resolve('../services/turnWriteArtifact')];
+    try {
+      const reloaded = require('../services/turnWriteArtifact');
+      const quoted = reloaded.buildTurnWriteArtifact([
+        line(INTERACTION_TRACE_MARKER, trace()),
+        line(TURN_WRITE_PROOF_MARKER, proof({
+          proof: {
+            test_mode: false,
+            sheet_write: 'success',
+            log_rows_written: 2,
+            logAppendedRange: "'Workout Log'!A100:L101",
+            effort_rows_written: 1,
+            effortAppendedRange: "'Dale''s Effort'!A100:I100",
+          },
+        })),
+      ].join('\n'));
+      assert.equal(quoted.turns[0].writes[0].proof_state, 'write_confirmed');
+      assert.equal(quoted.status, 'complete');
+
+      // NEGATIVE CONTROL — a DIFFERENT tab, quoted, must still fail. Tolerating the quoting must
+      // not tolerate the wrong sheet.
+      const wrongTab = reloaded.buildTurnWriteArtifact([
+        line(INTERACTION_TRACE_MARKER, trace()),
+        line(TURN_WRITE_PROOF_MARKER, proof({
+          proof: {
+            test_mode: false,
+            sheet_write: 'success',
+            log_rows_written: 2,
+            logAppendedRange: "'Other Log'!A100:L101",
+            effort_rows_written: 1,
+            effortAppendedRange: "'Dale''s Effort'!A100:I100",
+          },
+        })),
+      ].join('\n'));
+      assert.equal(wrongTab.turns[0].writes[0].proof_state, 'insufficient');
+    } finally {
+      if (originalLog === undefined) delete process.env.LOG_SHEET_NAME;
+      else process.env.LOG_SHEET_NAME = originalLog;
+      if (originalEffort === undefined) delete process.env.EFFORT_SHEET_NAME;
+      else process.env.EFFORT_SHEET_NAME = originalEffort;
+      delete require.cache[require.resolve('../services/turnWriteArtifact')];
+    }
+  });
+
+  it('still accepts the unquoted form for tab names that need no quoting', () => {
+    // The default deployment must be completely unchanged by the quoting tolerance.
+    const artifact = build({
+      proof: {
+        test_mode: false,
+        sheet_write: 'success',
+        log_rows_written: 2,
+        logAppendedRange: 'Log_Cleaned!A100:L101',
+        effort_rows_written: 1,
+        effortAppendedRange: 'Effort!A100:I100',
+      },
+    });
+    assert.equal(artifact.turns[0].writes[0].proof_state, 'write_confirmed');
+    assert.equal(artifact.status, 'complete');
+  });
+
   it('rejects non-stamping seal flags on a positive seal state', () => {
     // sealCloseout sets no_ledger / read_failed only on non-stamping outcomes; its successful
     // stamp never does.
