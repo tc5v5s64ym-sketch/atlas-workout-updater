@@ -341,6 +341,36 @@ describe('turnWriteArtifact guards — withheld evidence', () => {
 });
 
 describe('turnWriteArtifact guards — seal presentation', () => {
+  it('requires closeout evidence wherever seal evidence exists, and the reverse', () => {
+    // The implication runs BOTH ways, because the producer runs both ways. `/api/log-workout` is
+    // the only route that emits `ledger_seal` at all (index.js:3258, 3261, 3423), and at every one
+    // of those sites `session_plans_closeout` was already assigned from `recordCloseoutEvent`,
+    // which always returns an object — on the duplicate branch unconditionally before the try, and
+    // on the success path inside the same `closeout_context` block. So a seal with no closeout
+    // projection is lost producer evidence exactly as a closeout with no seal is.
+    //
+    // Only the closeout-implies-seal direction was enforced. That let a seal-only record — the
+    // shape several older fixtures used — reach a complete, fully reviewable artifact.
+    const sealOnly = build(trace(), proofRecord({}, { ...SEAL_REPLAY, closeout_fully_verified: true }));
+    assert.ok(firstWrite(sealOnly).issues.includes('closeout_evidence_missing'));
+    assert.equal(sealOnly.turns[0].reviewable, false);
+    assert.notEqual(sealOnly.status, 'complete');
+
+    const closeoutOnly = build(trace(), proofRecord({}, { ...CLOSEOUT_SKIPPED, closeout_fully_verified: true }));
+    assert.ok(firstWrite(closeoutOnly).issues.includes('seal_evidence_missing'));
+    assert.equal(closeoutOnly.turns[0].reviewable, false);
+
+    // CONTROL — the shape the producer really emits carries both envelopes and is reviewable.
+    const both = build(trace(), proofRecord({}, {
+      ...SEAL_REPLAY, ...CLOSEOUT_SKIPPED, closeout_fully_verified: true,
+    }));
+    assert.deepEqual(firstWrite(both).issues, []);
+    assert.equal(both.status, 'complete');
+
+    // CONTROL — a plain main write carries neither envelope and needs neither.
+    assertControlAccepted(build(trace(), proofRecord()));
+  });
+
   it('never presents the producer&#39;s seal_proof_mismatch tuple as a successful seal', () => {
     // The ONE shape `sealCloseout` emits for a mismatch (sessionPlanSetsStore.js:329-335): the
     // update was attempted, so `sheet_written` is true, `sealed_ok` is false, `sealed` is 0, and

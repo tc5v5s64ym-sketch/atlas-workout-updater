@@ -76,6 +76,21 @@ function line(marker, record) {
   return `2026-07-26T08:05:00Z ${marker} ${JSON.stringify(record)}`;
 }
 
+// No producer emits a seal without a closeout beside it. `/api/log-workout` is the only route that
+// emits `ledger_seal` at all (index.js:3258, 3261, 3423), and at every one of those sites
+// `session_plans_closeout` had already been assigned from `recordCloseoutEvent` — which always
+// returns an object, so it is never falsy. Any POSITIVE seal control must therefore carry this
+// envelope; without it the record is a shape the producer cannot emit, and the consumer now says so
+// (`closeout_evidence_missing`). Negative cases are unaffected: they are already flagged, and
+// asserting that an impossible tuple is refused is exactly what they are for.
+const CLOSEOUT_BESIDE_SEAL = {
+  session_plans_closeout_status: 'written',
+  session_plans_closeout_captured: true,
+  session_plans_closeout_written: 1,
+  session_plans_closeout_skipped: 0,
+  session_plans_closeout_plan_version: 'pv_11111111-2222-3333-4444-555555555555',
+};
+
 describe('turnWriteArtifact — parsing and canonical turn join', () => {
   it('joins interaction trace and write proof on the existing canonical turn_id', () => {
     const input = [
@@ -874,6 +889,7 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
           ledger_seal_already_sealed: 4,
           ledger_seal_sealed_ok: true,
           ledger_seal_reason: 'all_sealed',
+          ...CLOSEOUT_BESIDE_SEAL,
         },
       })),
     ].join('\n'));
@@ -897,6 +913,7 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
           ledger_seal_sealed: 4,
           ledger_seal_already_sealed: 0,
           ledger_seal_sealed_ok: true,
+          ...CLOSEOUT_BESIDE_SEAL,
         },
       })),
     ].join('\n'));
@@ -1044,6 +1061,7 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
           ledger_seal_sealed_ok: true,
           ledger_seal_no_ledger: true,
           ledger_seal_reason: 'no_rows',
+          ...CLOSEOUT_BESIDE_SEAL,
         },
       })),
     ].join('\n'));
@@ -1947,6 +1965,7 @@ describe('turnWriteArtifact — complete producer tuples', () => {
         closeout_fully_verified: true,
         ...STAMP,
         ledger_seal_already_sealed: 2,
+        ...CLOSEOUT_BESIDE_SEAL,
       },
     });
     assert.equal(complete.turns[0].writes[0].seal.state, 'sealed');
@@ -1974,6 +1993,7 @@ describe('turnWriteArtifact — complete producer tuples', () => {
         closeout_fully_verified: true,
         ...replayFields,
         ledger_seal_reason: 'all_sealed',
+        ...CLOSEOUT_BESIDE_SEAL,
       },
     });
     assert.equal(withReason.turns[0].writes[0].seal.state, 'already_sealed');
@@ -2008,6 +2028,7 @@ describe('turnWriteArtifact — complete producer tuples', () => {
           ledger_seal_sealed_ok: true,
           ledger_seal_no_ledger: true,
           ledger_seal_reason: reason,
+          ...CLOSEOUT_BESIDE_SEAL,
         },
       });
       assert.equal(real.turns[0].writes[0].seal.state, 'verified_no_new_seal', reason);
@@ -2271,16 +2292,22 @@ describe('turnWriteArtifact — reachable producer paths', () => {
     });
     assert.equal(realPartial.turns[0].writes[0].proof_state, 'partial');
 
+    // `unverified` is emitted ONLY by /api/complete-workout, and only when `logProofOk` or
+    // `effortProofOk` FAILS (index.js:2640-2659). An earlier version of this control supplied a
+    // matching three-row Log range and a matching one-row Effort range — on which the route emits
+    // `success`, not `unverified`. The real body is a MISMATCH: here the Effort append produced no
+    // range and no row, which is exactly what `effortProofOk` refuses. It also carries the
+    // idempotency tuple and carries no `test_mode` at all, because that body does not include one.
     const realUnverified = build({
       route: '/api/complete-workout',
       proof: {
-        test_mode: false,
+        duplicate_write: false,
+        idempotency_status: 'completed',
         sheet_write: 'unverified',
         sheet_written: true,
         log_rows_written: 3,
         logAppendedRange: 'Log_Cleaned!A2:L4',
-        effort_rows_written: 1,
-        effortAppendedRange: 'Effort!A9:I9',
+        effort_rows_written: 0,
       },
     });
     assert.equal(realUnverified.turns[0].writes[0].proof_state, 'unverified');
@@ -2402,19 +2429,45 @@ describe('turnWriteArtifact — reachable producer paths', () => {
       assert.equal(corrupted.status, 'partial', state);
     }
 
-    // CONTROLS — the genuine bodies keep their own classification.
-    for (const state of ['partial', 'unverified']) {
-      const genuine = build({
-        proof: {
-          test_mode: false,
-          sheet_write: state,
-          sheet_written: true,
-          log_rows_written: 3,
-          logAppendedRange: 'Log_Cleaned!A2:L4',
+    // CONTROLS — the genuine bodies keep their own classification, each on the route that actually
+    // emits it. `/api/log-workout` emits `partial` (index.js:3365) and NEVER `unverified`;
+    // `unverified` comes only from `/api/complete-workout` (index.js:2651), and only on a proof
+    // mismatch — so its control carries the failing Effort tuple and the idempotency pair, and no
+    // `test_mode`, matching that body exactly. Running both states through the default route was
+    // asserting `unverified` against a producer that cannot emit it.
+    const genuineTerminals = [
+      {
+        state: 'partial',
+        record: {
+          route: '/api/log-workout',
+          proof: {
+            test_mode: false,
+            sheet_write: 'partial',
+            sheet_written: true,
+            log_rows_written: 3,
+            logAppendedRange: 'Log_Cleaned!A2:L4',
+          },
         },
-      });
-      const expected = state === 'partial' ? 'partial' : 'unverified';
-      assert.equal(genuine.turns[0].writes[0].proof_state, expected, state);
+      },
+      {
+        state: 'unverified',
+        record: {
+          route: '/api/complete-workout',
+          proof: {
+            duplicate_write: false,
+            idempotency_status: 'completed',
+            sheet_write: 'unverified',
+            sheet_written: true,
+            log_rows_written: 3,
+            logAppendedRange: 'Log_Cleaned!A2:L4',
+            effort_rows_written: 0,
+          },
+        },
+      },
+    ];
+    for (const { state, record } of genuineTerminals) {
+      const genuine = build(record);
+      assert.equal(genuine.turns[0].writes[0].proof_state, state, state);
     }
 
     // ANTI-GENERALIZATION CONTROL — the in-progress duplicate (index.js:3170-3182) sets

@@ -856,6 +856,19 @@ function _writeArtifact(record) {
   // conceal a failed or indeterminate seal behind a healthy-looking closeout. `withheld` is not
   // `absent`: a seal whose projection failed validation is already reported by `seal_not_verified`.
   if (closeout.state !== 'absent' && seal.state === 'absent') issues.push('seal_evidence_missing');
+  // …and the CONVERSE, which the producer guarantees just as strongly. `/api/log-workout` is the
+  // only route that emits `ledger_seal` at all (index.js:3258, 3261, 3423), and at every one of
+  // those sites `session_plans_closeout` was ALREADY assigned from `recordCloseoutEvent` — which
+  // always returns an object, so it is never falsy — before the seal was attempted: on the
+  // duplicate branch unconditionally ahead of the try (:3252), and on the success path inside the
+  // same `closeout_context` block (:3401). A seal with no closeout projection is therefore lost
+  // producer evidence in exactly the way a closeout with no seal is, and it is the shape that
+  // would let a truncated or fabricated seal-only record read as fully reviewable.
+  //
+  // Enforcing only the closeout-implies-seal direction was an asymmetry with no producer behind
+  // it. The bidirectional fact was established while auditing fixtures and applied only to the
+  // tests; this is the same rule reaching the consumer it was derived for.
+  if (seal.state !== 'absent' && closeout.state === 'absent') issues.push('closeout_evidence_missing');
   // The route's OWN verdict. `closeoutVerification` (index.js) returns false for a failed event
   // capture, and for a planned closeout whose ledger is missing, even when the seal reports
   // sealed_ok:true and the Session_Plans event was written. That is the route explicitly flagging
