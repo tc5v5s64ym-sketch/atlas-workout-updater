@@ -14,11 +14,44 @@ const fs = require('node:fs');
 const {
   buildTurnWriteArtifact,
   formatTurnWriteArtifact,
+  MAX_INPUT_CHARS,
 } = require('../services/turnWriteArtifact');
+
+// The parser's size cap only limits what the parser allocates. It cannot help if the CALLER has
+// already materialized the whole input, and this CLI is the only production caller — so an
+// oversized capture could exhaust memory during the read and emit no artifact at all, which is
+// exactly the outcome the bound exists to prevent. The cap is therefore applied WHILE READING:
+// a bounded descriptor read that stops once it has enough, for a file and for stdin alike.
+//
+// One extra chunk beyond the cap is read on purpose, so the parser can still see that the input
+// overflowed and report the truncation instead of silently presenting a partial artifact as whole.
+const READ_CHUNK = 1 << 16;
+const READ_CEILING = MAX_INPUT_CHARS + READ_CHUNK;
+
+function readBounded(fd) {
+  const chunks = [];
+  const buffer = Buffer.allocUnsafe(READ_CHUNK);
+  let total = 0;
+  for (;;) {
+    let read = 0;
+    try {
+      read = fs.readSync(fd, buffer, 0, READ_CHUNK, null);
+    } catch (error) {
+      // EAGAIN on a non-blocking pipe means "nothing yet", not "end of input".
+      if (error && error.code === 'EAGAIN') continue;
+      throw error;
+    }
+    if (read === 0) break;
+    chunks.push(Buffer.from(buffer.subarray(0, read)));
+    total += read;
+    if (total >= READ_CEILING) break;
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
 
 function readStdin() {
   try {
-    return fs.readFileSync(0, 'utf8');
+    return readBounded(0);
   } catch (_) {
     return '';
   }
@@ -32,7 +65,12 @@ function main(argv) {
 
   if (fileArg) {
     try {
-      text = fs.readFileSync(fileArg, 'utf8');
+      const fd = fs.openSync(fileArg, 'r');
+      try {
+        text = readBounded(fd);
+      } finally {
+        fs.closeSync(fd);
+      }
     } catch (error) {
       // Neither the operator-supplied path nor Node's message is echoed: `error.message` repeats
       // the path verbatim, so printing it would reinstate on the error path exactly the unvalidated
