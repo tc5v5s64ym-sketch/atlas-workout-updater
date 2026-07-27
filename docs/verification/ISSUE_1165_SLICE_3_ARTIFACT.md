@@ -92,6 +92,16 @@ affirmative — absent means unknown throughout:
   producer (an ordinary early replay is never recorded), so its whole tuple is required rather than
   any single duplicate or replay signal.
 
+Append ranges are validated against the **configured** tab names (`LOG_SHEET_NAME` /
+`EFFORT_SHEET_NAME`, `sheets.js`), not hard-coded defaults: the real routes append to the configured
+tab and Google echoes it, so hard-coding would call every genuine append on an overridden
+deployment insufficient.
+
+Positive-write **classification** and **contradiction detection** are separate questions. A row
+count cannot substantiate a generic-route write — `/api/log-modality` and `/api/bodyweight` emit
+`sheet_written:true` and no count at all — but any append indicator still contradicts an explicit
+no-write claim.
+
 `/api/complete-workout` is held to the same **per-tab range-backed** tuple as `/api/log-workout`,
 since it verifies those exact row counts against the ranges before returning. `sheet_written`
 remains authoritative there: the Effort append is unconditional and the success gate requires
@@ -100,6 +110,15 @@ remains authoritative there: the Effort append is unconditional and the success 
 emitter shape, and a success claiming `sheet_written:false` is a corrupted record. The genuinely
 variable case is the reverse — an **effort-only** completion, where `logProofOk` is vacuously true
 with no log rows; the per-tab rule already accepts that because a zero count needs no range.
+
+That route additionally requires the **Effort** tuple on every success (`effort_rows_written === 1`
+with its range), because the Effort append is unconditional and the success gate demands it
+regardless of log rows — so a log-only success is unreachable there, unlike `/api/log-workout`,
+whose ordinary shape is an effort-less log append.
+
+`no_ledger` and `read_failed` are emitted only on non-stamping seal outcomes, so no positive seal
+state accepts them. The `disabled` and `no_plan` closeout envelopes require `captured:false` with
+zero-or-absent counts, matching their producers.
 
 `closeout_fully_verified` is the **route's own verdict** and is honored, never recomputed. It is
 also **required** whenever seal or closeout evidence is present: both emitting branches attach it

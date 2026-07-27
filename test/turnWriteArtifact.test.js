@@ -1736,6 +1736,8 @@ describe('turnWriteArtifact — complete producer tuples', () => {
     // (index.js:2585) and the success gate requires `effortRowsWritten === 1` (index.js:2643), so
     // every genuine success has `effortWritten:true` and therefore `sheet_written:true`. A success
     // claiming otherwise is a corrupted record, not a log-only completion.
+    // Carries the COMPLETE Effort tuple, so the per-tab predicate is satisfied and `sheet_written`
+    // is the only thing wrong — isolating that flag's authority rather than the Effort requirement.
     const successWithoutWriteFlag = build({
       route: COMPLETE_ROUTE,
       proof: {
@@ -1744,7 +1746,8 @@ describe('turnWriteArtifact — complete producer tuples', () => {
         sheet_written: false,
         log_rows_written: 2,
         logAppendedRange: 'Log_Cleaned!A100:L101',
-        effort_rows_written: 0,
+        effort_rows_written: 1,
+        effortAppendedRange: 'Effort!A100:I100',
       },
     });
     assert.equal(successWithoutWriteFlag.turns[0].writes[0].proof_state, 'contradictory');

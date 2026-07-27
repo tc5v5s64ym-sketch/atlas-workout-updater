@@ -65,6 +65,14 @@ const ALLOWED_WITHHELD_KEYS = new Set(PROJECTED_PROOF_KEYS);
 const _lastColumnLetter = (columnCount) => String.fromCharCode('A'.charCodeAt(0) + columnCount - 1);
 const LOG_LAST_COLUMN = _lastColumnLetter(logCleanedColumns.length);
 const EFFORT_LAST_COLUMN = _lastColumnLetter(effortColumns.length);
+// The tab NAME is configurable (`sheets.js`: LOG_SHEET_NAME / EFFORT_SHEET_NAME), and the real
+// append routes use the configured name, so Google returns that name in `updatedRange`. Reading
+// the same env with the same defaults keeps a default deployment identical while not calling
+// every genuine append on an overridden deployment insufficient. Resolved once at module load —
+// this stays a pure, deterministic consumer.
+const LOG_TAB_NAME = process.env.LOG_SHEET_NAME || 'Log_Cleaned';
+const EFFORT_TAB_NAME = process.env.EFFORT_SHEET_NAME || 'Effort';
+const _escapeForRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const BOOLEAN_PROOF_KEYS = new Set([
   'test_mode', 'sheet_written', 'no_write_confirmed', 'dry_run', 'duplicate_write',
@@ -302,7 +310,7 @@ function _sanitizeProof(record) {
       || !Number.isSafeInteger(expectedRows)
       || expectedRows <= 0
       || _containsCapability(value)) return false;
-    const match = new RegExp(`^${expectedTab}!A([1-9]\\d{0,6}):${expectedLastColumn}([1-9]\\d{0,6})$`).exec(value);
+    const match = new RegExp(`^${_escapeForRegExp(expectedTab)}!A([1-9]\\d{0,6}):${expectedLastColumn}([1-9]\\d{0,6})$`).exec(value);
     if (!match) return false;
     const firstRow = Number(match[1]);
     const lastRow = Number(match[2]);
@@ -313,13 +321,13 @@ function _sanitizeProof(record) {
   const rangeEvidence = {
     log: hasBoundAppendRange(
       ['logAppendedRange', 'log_appended_range'],
-      'Log_Cleaned',
+      LOG_TAB_NAME,
       LOG_LAST_COLUMN,
       proof.log_rows_written,
     ),
     effort: hasBoundAppendRange(
       ['effortAppendedRange', 'effort_appended_range'],
-      'Effort',
+      EFFORT_TAB_NAME,
       EFFORT_LAST_COLUMN,
       proof.effort_rows_written,
     ),
@@ -464,6 +472,10 @@ function _sealSummary(proof, withheldEvidence) {
   // Any reason at all describes an outcome that did NOT stamp a row, so it cannot coexist with a
   // positive stamp claim. A genuine fresh stamp carries no reason.
   const reasonContradictsStamp = SEAL_REASONS.has(proof.ledger_seal_reason) && claimsPositiveSealWrite;
+  // `no_ledger` and `read_failed` are emitted ONLY on non-stamping outcomes; neither the fresh
+  // stamp nor the all-sealed replay ever carries them, so their presence rules both out.
+  const hasNonStampingFlag = proof.ledger_seal_no_ledger === true
+    || proof.ledger_seal_read_failed === true;
 
   let state = 'absent';
   if (claimsMismatch) state = 'seal_proof_mismatch';
@@ -487,7 +499,8 @@ function _sealSummary(proof, withheldEvidence) {
     && sheetWritten === true
     && sealed > 0
     && proof.ledger_seal_no_write_confirmed === false
-    && Number.isSafeInteger(alreadySealed)) {
+    && Number.isSafeInteger(alreadySealed)
+    && !hasNonStampingFlag) {
     state = 'sealed';
   }
   else if (sealedOk === true && sheetWritten === true) state = 'indeterminate';
@@ -499,7 +512,8 @@ function _sealSummary(proof, withheldEvidence) {
     && proof.ledger_seal_no_write_confirmed === true
     && sealed === 0
     && alreadySealed > 0
-    && proof.ledger_seal_reason === 'all_sealed') {
+    && proof.ledger_seal_reason === 'all_sealed'
+    && !hasNonStampingFlag) {
     state = 'already_sealed';
   }
   // Verified empty seal: only `tab_missing` and `no_rows` reach it, and both carry no_ledger:true,
@@ -561,8 +575,15 @@ function _closeoutSummary(proof, withheldEvidence) {
       : 'already_captured';
   }
   else if (status === 'error' || status === 'tab_missing' || status === 'header_mismatch') state = 'failed';
-  else if (status === 'disabled') state = 'disabled';
-  else if (status === 'no_plan') state = 'no_plan';
+  // `disabled` and `no_plan` are non-capture outcomes: their producers emit captured:false with
+  // zero-or-absent counts (sessionPlanCapture.js `_envelope`; index.js `recordCloseoutEvent`).
+  // A contradictory sibling field means the envelope is not one of those outcomes.
+  else if ((status === 'disabled' || status === 'no_plan')
+    && captured === false
+    && (written === null || written === 0)
+    && (skipped === null || skipped === 0)) {
+    state = status;
+  }
   else if (planVersionWithheld) state = 'withheld';
   else if (hasCloseout) state = 'indeterminate';
 
@@ -591,11 +612,27 @@ function _proofState(proof, seal, closeout, route, rangeEvidence = {}) {
     && (!logRowsWritten || rangeEvidence.log === true)
     && (!effortRowsWritten || rangeEvidence.effort === true);
   const isPerTabAppend = PER_TAB_APPEND_ROUTES.has(route);
-  const genericMainWrite = proof.sheet_written === true
+  // `/api/complete-workout` appends Effort UNCONDITIONALLY (index.js:2585) and gates success on
+  // `effort_rows_written === 1` plus an Effort range (index.js:2643), so a log-only success is
+  // unreachable there. `/api/log-workout` has no such requirement — an effort-less log append is
+  // its ordinary shape.
+  const perTabWrite = route === '/api/complete-workout'
+    ? (proof.effort_rows_written === 1
+      && rangeEvidence.effort === true
+      && (!logRowsWritten || rangeEvidence.log === true))
+    : rangeBackedLogWorkoutWrite;
+  // `/api/log-modality` and `/api/bodyweight` emit `sheet_write:'success'` with
+  // `sheet_written:true` and NO row-count field (index.js:1407-1423, 2024-2036), so a count can
+  // never substitute for the write flag on those routes.
+  const genericMainWrite = proof.sheet_written === true;
+  // CLASSIFICATION and CONTRADICTION are different questions. A row count cannot *substantiate* a
+  // generic-route write, but any append indicator still CONTRADICTS an explicit no-write claim —
+  // `no_write_confirmed:true` beside `rows_appended:3` is impossible however the route classifies.
+  const anyPositiveWriteSignal = proof.sheet_written === true
     || (typeof proof.rows_appended === 'number' && proof.rows_appended > 0)
     || logRowsWritten
     || effortRowsWritten;
-  const mainWrite = claimsSuccess && (isPerTabAppend ? rangeBackedLogWorkoutWrite : genericMainWrite);
+  const mainWrite = claimsSuccess && (isPerTabAppend ? perTabWrite : genericMainWrite);
   const positiveWrite = mainWrite
     || seal.new_seal_write
     || closeout.state === 'written';
@@ -604,17 +641,17 @@ function _proofState(proof, seal, closeout, route, rangeEvidence = {}) {
   // generic row/sheet signals to bypass its range-backed W3 tuple, and an explicit false write
   // flag cannot coexist with a claimed range-backed success.
   if (proof.test_mode !== true
-    && ((!claimsSuccess && genericMainWrite)
+    && ((!claimsSuccess && anyPositiveWriteSignal)
       || (claimsSuccess
         && proof.sheet_written === false
-        && (isPerTabAppend ? rangeBackedLogWorkoutWrite : genericMainWrite)))) {
+        && (isPerTabAppend ? perTabWrite : genericMainWrite)))) {
     return 'contradictory';
   }
 
   // A proof cannot simultaneously claim the explicit W1 no-write guarantee and a real append.
   // `effortWritten` is intentionally excluded: on a preview it means an effort row was formatted,
   // not appended, and the explicit no-write tuple remains authoritative for that real route shape.
-  if (proof.no_write_confirmed === true && (positiveWrite || claimsSuccess)) return 'contradictory';
+  if (proof.no_write_confirmed === true && (positiveWrite || claimsSuccess || anyPositiveWriteSignal)) return 'contradictory';
   if (proof.test_mode === true && (positiveWrite || claimsSuccess)) return 'contradictory';
 
   // A CLAIMED live main write must substantiate itself. The seal and the closeout event are
