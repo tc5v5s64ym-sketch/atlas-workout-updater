@@ -626,6 +626,118 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
     assert.equal(artifact.turns[0].writes[1].seal.new_seal_write, false);
   });
 
+  it('never lets a sidecar seal or closeout substantiate an unbacked main append', () => {
+    // A seal/closeout is an independent sidecar write. It can make a duplicate-branch turn
+    // reviewable on its own, but a CLAIMED live main append that fails its own per-tab W3 tuple
+    // must stay unproved.
+    const unbackedMainWrites = [
+      {
+        // Positive Log count, no Log range — rescued by a genuine fresh seal stamp.
+        proof: {
+          test_mode: false,
+          sheet_write: 'success',
+          log_rows_written: 1,
+          effort_rows_written: 0,
+          ledger_seal_sheet_written: true,
+          ledger_seal_sealed: 3,
+          ledger_seal_already_sealed: 0,
+          ledger_seal_sealed_ok: true,
+        },
+      },
+      {
+        // Positive Effort count, no Effort range — rescued by a written closeout row.
+        proof: {
+          test_mode: false,
+          sheet_write: 'success',
+          log_rows_written: 0,
+          effort_rows_written: 1,
+          session_plans_closeout_status: 'written',
+          session_plans_closeout_captured: true,
+          session_plans_closeout_written: 1,
+          session_plans_closeout_skipped: 0,
+          session_plans_closeout_plan_version: 'pv_7c9e6679-7425-40de-944b-e07fc1f90ae7',
+        },
+      },
+    ];
+
+    for (const unbacked of unbackedMainWrites) {
+      const artifact = buildTurnWriteArtifact([
+        line(INTERACTION_TRACE_MARKER, trace()),
+        line(TURN_WRITE_PROOF_MARKER, proof(unbacked)),
+      ].join('\n'));
+      const write = artifact.turns[0].writes[0];
+
+      assert.equal(write.proof_state, 'insufficient', JSON.stringify(unbacked.proof));
+      assert.equal(write.reviewable, false, JSON.stringify(unbacked.proof));
+      assert.equal(artifact.status, 'partial', JSON.stringify(unbacked.proof));
+    }
+
+    // Control: the real all-rows-duplicate branch has no main-write claim at all, so its sidecar
+    // seal remains the legitimate evidence that makes the turn reviewable.
+    const sidecarOnly = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, proof({
+        proof: {
+          test_mode: false,
+          sheet_write: 'skipped_duplicate',
+          log_rows_written: 0,
+          effort_rows_written: 0,
+          skipped_duplicates: 3,
+          ledger_seal_sheet_written: true,
+          ledger_seal_sealed: 3,
+          ledger_seal_already_sealed: 0,
+          ledger_seal_sealed_ok: true,
+        },
+      })),
+    ].join('\n'));
+
+    assert.equal(sidecarOnly.turns[0].writes[0].proof_state, 'write_confirmed');
+    assert.equal(sidecarOnly.status, 'complete');
+  });
+
+  it('rejects a seal reason that contradicts the rest of the seal tuple', () => {
+    // Every reason the real emitter produces describes a NON-stamping outcome; a genuine fresh
+    // stamp carries no reason at all (services/sessionPlanSetsStore.js).
+    for (const reason of ['all_sealed', 'no_rows', 'tab_missing', 'ledger_read_failed', 'conflicting_seal']) {
+      const artifact = buildTurnWriteArtifact([
+        line(INTERACTION_TRACE_MARKER, trace()),
+        line(TURN_WRITE_PROOF_MARKER, proof({
+          proof: {
+            ledger_seal_sheet_written: true,
+            ledger_seal_sealed: 3,
+            ledger_seal_already_sealed: 0,
+            ledger_seal_sealed_ok: true,
+            ledger_seal_reason: reason,
+          },
+        })),
+      ].join('\n'));
+      const write = artifact.turns[0].writes[0];
+
+      assert.equal(write.seal.state, 'seal_proof_mismatch', reason);
+      assert.equal(write.seal.successfully_sealed, false, reason);
+      assert.equal(write.reviewable, false, reason);
+      assert.equal(artifact.status, 'partial', reason);
+    }
+
+    // A reason outside the emitter's fixed vocabulary cannot reach the artifact at all.
+    const foreignReason = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, proof({
+        proof: {
+          ledger_seal_sheet_written: true,
+          ledger_seal_sealed: 3,
+          ledger_seal_already_sealed: 0,
+          ledger_seal_sealed_ok: true,
+          ledger_seal_reason: 'not_an_emitter_reason',
+        },
+      })),
+    ].join('\n'));
+
+    assert.equal(foreignReason.turns[0].writes.length, 0, 'the record is rejected, not reflected');
+    assert.equal(foreignReason.status, 'partial');
+    assert.ok(!JSON.stringify(foreignReason).includes('not_an_emitter_reason'));
+  });
+
   it('rejects a positive new-seal count when the seal says no Sheet row was written', () => {
     const impossible = proof({
       proof: {
