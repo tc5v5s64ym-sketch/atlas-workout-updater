@@ -738,6 +738,105 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
     assert.ok(!JSON.stringify(foreignReason).includes('not_an_emitter_reason'));
   });
 
+  it('treats an incomplete successful-seal tuple as indeterminate', () => {
+    // Every real no-new-seal shape carries the complete tuple: sheet_written:false,
+    // no_write_confirmed:true, sealed:0. A lone sealed_ok:true substantiates nothing.
+    const bareSealedOk = proof({
+      proof: {
+        test_mode: false,
+        sheet_write: 'success',
+        logAppendedRange: 'Log_Cleaned!A2:L4',
+        log_rows_written: 3,
+        ledger_seal_sealed_ok: true,
+      },
+    });
+    const artifact = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, bareSealedOk),
+    ].join('\n'));
+    const write = artifact.turns[0].writes[0];
+
+    assert.equal(write.seal.state, 'indeterminate');
+    assert.equal(write.seal.successfully_sealed, false);
+    assert.equal(write.reviewable, false);
+    assert.ok(write.issues.includes('seal_not_verified'));
+    assert.equal(artifact.status, 'partial');
+
+    // The producer's REAL verified-empty-seal shape (tab_missing / no_rows) is complete and
+    // must stay a non-issue.
+    const verifiedEmpty = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, proof({
+        proof: {
+          test_mode: false,
+          sheet_write: 'success',
+          logAppendedRange: 'Log_Cleaned!A2:L4',
+          log_rows_written: 3,
+          ledger_seal_sheet_written: false,
+          ledger_seal_no_write_confirmed: true,
+          ledger_seal_sealed: 0,
+          ledger_seal_already_sealed: 0,
+          ledger_seal_sealed_ok: true,
+          ledger_seal_no_ledger: true,
+          ledger_seal_reason: 'no_rows',
+        },
+      })),
+    ].join('\n'));
+
+    assert.equal(verifiedEmpty.turns[0].writes[0].seal.state, 'verified_no_new_seal');
+    assert.equal(verifiedEmpty.status, 'complete');
+  });
+
+  it('rejects null for proof fields whose producers never emit null', () => {
+    // The blanket null acceptance bypassed every field-specific shape check. Real routes normalize
+    // test_mode to a boolean, so a present null is a malformed producer shape, not an absent field.
+    const nulledTestMode = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, proof({
+        proof: {
+          test_mode: null,
+          sheet_write: 'success',
+          logAppendedRange: 'Log_Cleaned!A2:L4',
+          log_rows_written: 3,
+        },
+      })),
+    ].join('\n'));
+
+    assert.equal(nulledTestMode.turns[0].writes.length, 0, 'the malformed record is rejected');
+    assert.equal(nulledTestMode.status, 'partial');
+
+    // The two fields their producers DO emit as null must still be accepted, or a real record
+    // would be discarded: sessionPlanSetsStore emits updated_cells:null on an unreadable count,
+    // and the closeout projection's own validator explicitly permits a null plan_version.
+    const legitimateNulls = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, proof({
+        proof: {
+          test_mode: false,
+          sheet_write: 'success',
+          logAppendedRange: 'Log_Cleaned!A2:L4',
+          log_rows_written: 3,
+          ledger_seal_sheet_written: true,
+          ledger_seal_sealed: 0,
+          ledger_seal_sealed_ok: false,
+          ledger_seal_reason: 'seal_proof_mismatch',
+          ledger_seal_expected_cells: 2,
+          ledger_seal_updated_cells: null,
+          session_plans_closeout_status: 'written',
+          session_plans_closeout_captured: true,
+          session_plans_closeout_written: 1,
+          session_plans_closeout_skipped: 0,
+          session_plans_closeout_plan_version: null,
+        },
+      })),
+    ].join('\n'));
+
+    assert.equal(legitimateNulls.turns[0].writes.length, 1, 'a real record is retained, not rejected');
+    const retained = legitimateNulls.turns[0].writes[0];
+    assert.equal(retained.seal.state, 'seal_proof_mismatch');
+    assert.equal(retained.closeout.state, 'written_unidentified');
+  });
+
   it('honors the route\'s negative closeout_fully_verified verdict', () => {
     // closeoutVerification in index.js returns false for a planned closeout with no ledger rows
     // even when the seal reports sealed_ok:true and the Session_Plans event was written. That
