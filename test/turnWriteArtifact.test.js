@@ -1998,6 +1998,99 @@ describe('turnWriteArtifact — reachable producer paths', () => {
     assert.equal(effortOnly.status, 'complete');
   });
 
+  it('requires both emitted row counts on every per-tab append success', () => {
+    // BOTH per-tab success bodies always emit BOTH counts as numbers on a live write:
+    // /api/complete-workout at index.js:2723 (log, explicit 0 for effort-only) and :2745 (effort),
+    // /api/log-workout at index.js:3416-3417. An ABSENT count therefore means the projection lost
+    // part of the producer tuple, NOT that zero rows were intended — and absent must never read as
+    // affirmative. Without this, a missing count vacuously satisfies the "positive counts carry
+    // their range" clause and a truncated record is reviewable.
+    const missingLogCount = build({
+      route: '/api/complete-workout',
+      proof: {
+        test_mode: false,
+        sheet_write: 'success',
+        sheet_written: true,
+        effort_rows_written: 1,
+        effortAppendedRange: 'Effort!A100:I100',
+      },
+    });
+    assert.equal(missingLogCount.turns[0].writes[0].proof_state, 'insufficient');
+    assert.equal(missingLogCount.status, 'partial');
+
+    const missingEffortCount = build({
+      route: '/api/log-workout',
+      proof: {
+        test_mode: false,
+        sheet_write: 'success',
+        log_rows_written: 2,
+        logAppendedRange: 'Log_Cleaned!A100:L101',
+      },
+    });
+    assert.equal(missingEffortCount.turns[0].writes[0].proof_state, 'insufficient');
+    assert.equal(missingEffortCount.status, 'partial');
+
+    // CONTROLS — the complete producer tuples, including the explicit zero each route really emits.
+    const completeEffortOnly = build({
+      route: '/api/complete-workout',
+      proof: {
+        test_mode: false,
+        sheet_write: 'success',
+        sheet_written: true,
+        log_rows_written: 0,
+        effort_rows_written: 1,
+        effortAppendedRange: 'Effort!A100:I100',
+      },
+    });
+    assert.equal(completeEffortOnly.turns[0].writes[0].proof_state, 'write_confirmed');
+    assert.equal(completeEffortOnly.status, 'complete');
+
+    const logWorkoutEffortless = build({
+      route: '/api/log-workout',
+      proof: {
+        test_mode: false,
+        sheet_write: 'success',
+        log_rows_written: 2,
+        logAppendedRange: 'Log_Cleaned!A100:L101',
+        effort_rows_written: 0,
+      },
+    });
+    assert.equal(logWorkoutEffortless.turns[0].writes[0].proof_state, 'write_confirmed');
+    assert.equal(logWorkoutEffortless.status, 'complete');
+  });
+
+  it('keeps an explicit no-write flag beside positive append evidence contradictory', () => {
+    // Tightening CLASSIFICATION must not weaken DIAGNOSIS. A success claiming sheet_written:false
+    // beside real append evidence is a corrupted record whichever route emitted it, and stays
+    // `contradictory` even when it also fails the newly required complete tuple — otherwise the
+    // narrower per-tab predicate silently downgrades it to the milder `insufficient`.
+    const completeWorkout = build({
+      route: '/api/complete-workout',
+      proof: {
+        test_mode: false,
+        sheet_write: 'success',
+        sheet_written: false,
+        log_rows_written: 2,
+        logAppendedRange: 'Log_Cleaned!A100:L101',
+        effort_rows_written: 0,
+      },
+    });
+    assert.equal(completeWorkout.turns[0].writes[0].proof_state, 'contradictory');
+    assert.equal(completeWorkout.status, 'partial');
+
+    const generic = build({
+      route: '/api/log-modality',
+      proof: {
+        test_mode: false,
+        sheet_write: 'success',
+        sheet_written: false,
+        rows_appended: 3,
+      },
+    });
+    assert.equal(generic.turns[0].writes[0].proof_state, 'contradictory');
+    assert.equal(generic.status, 'partial');
+  });
+
   it('requires the exact success fields on the generic write routes', () => {
     // index.js:1407-1423 and 2024-2036 both emit sheet_write:'success' with sheet_written:true and
     // never a row-count field, so a count cannot substitute for the write flag.
