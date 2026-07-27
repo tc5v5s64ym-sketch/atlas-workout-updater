@@ -599,10 +599,6 @@ function _closeoutSummary(proof, withheldEvidence) {
 }
 
 function _proofState(proof, seal, closeout, route, rangeEvidence = {}) {
-  if (proof.sheet_write === 'unverified') return 'unverified';
-  if (proof.sheet_write === 'partial') return 'partial';
-  if (proof.sheet_write === 'skipped_duplicate_in_progress') return 'idempotency_in_progress';
-
   const claimsSuccess = proof.sheet_write === 'success';
   const logRowsWritten = typeof proof.log_rows_written === 'number' && proof.log_rows_written > 0;
   const effortRowsWritten = typeof proof.effort_rows_written === 'number' && proof.effort_rows_written > 0;
@@ -647,6 +643,25 @@ function _proofState(proof, seal, closeout, route, rangeEvidence = {}) {
     || seal.new_seal_write
     || closeout.state === 'written';
 
+  // STATE-INDEPENDENT IMPOSSIBILITIES, diagnosed BEFORE any terminal-state classification.
+  // These two tuples are impossible whatever `sheet_write` claims, so a corrupted record must not
+  // be allowed to hide behind its own claimed state.
+  //
+  // `effortWritten` is intentionally excluded from the signal: on a preview it means an effort row
+  // was formatted, not appended, and the explicit no-write tuple stays authoritative there.
+  if (proof.no_write_confirmed === true
+    && (positiveWrite || claimsSuccess || anyPositiveWriteSignal)) return 'contradictory';
+  // A dry run appends nothing (W2), so ANY positive append signal beside it is impossible — not
+  // merely unsubstantiated. The narrower `positiveWrite` missed `sheet_written:true` and bare
+  // counts on a non-success dry run, because it needs a success claim this path never makes.
+  if (proof.test_mode === true
+    && (positiveWrite || claimsSuccess || anyPositiveWriteSignal)) return 'contradictory';
+
+  // Terminal states are classified only AFTER the impossibility checks above.
+  if (proof.sheet_write === 'unverified') return 'unverified';
+  if (proof.sheet_write === 'partial') return 'partial';
+  if (proof.sheet_write === 'skipped_duplicate_in_progress') return 'idempotency_in_progress';
+
   // `/api/log-workout` has one live main-write success shape. A non-success state cannot use
   // generic row/sheet signals to bypass its range-backed W3 tuple, and an explicit false write
   // flag cannot coexist with a claimed range-backed success.
@@ -655,17 +670,17 @@ function _proofState(proof, seal, closeout, route, rangeEvidence = {}) {
   // `sheet_written:false` beside real append evidence is a corrupted record however the route
   // classifies it, and stays `contradictory` even when it also fails the complete-tuple check —
   // otherwise the narrower predicate silently downgrades it to the milder `insufficient`.
+  //
+  // This arm stays BELOW the terminal returns on purpose. The genuine `partial` (index.js:3356-3367)
+  // and `unverified` (index.js:2645-2659) bodies really do carry `sheet_written:true` with a
+  // positive log count, and the in-progress duplicate spreads the original's counts
+  // (index.js:3170-3182) — hoisting it would call every real one of those contradictory and
+  // discard exactly the records that most need reviewing.
   if (proof.test_mode !== true
     && ((!claimsSuccess && anyPositiveWriteSignal)
       || (claimsSuccess && proof.sheet_written === false && anyPositiveWriteSignal))) {
     return 'contradictory';
   }
-
-  // A proof cannot simultaneously claim the explicit W1 no-write guarantee and a real append.
-  // `effortWritten` is intentionally excluded: on a preview it means an effort row was formatted,
-  // not appended, and the explicit no-write tuple remains authoritative for that real route shape.
-  if (proof.no_write_confirmed === true && (positiveWrite || claimsSuccess || anyPositiveWriteSignal)) return 'contradictory';
-  if (proof.test_mode === true && (positiveWrite || claimsSuccess)) return 'contradictory';
 
   // A CLAIMED live main write must substantiate itself. The seal and the closeout event are
   // independent sidecar writes: on the all-rows-duplicate branch — which claims no main write at

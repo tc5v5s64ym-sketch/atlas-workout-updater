@@ -105,6 +105,14 @@ therefore test the broad positive signal rather than the narrower classification
 success claiming `sheet_written:false` beside real append evidence is a corrupted record whichever
 route emitted it, and stays `contradictory` even when it also fails the complete-tuple check.
 
+Two impossibilities are **state-independent** and are diagnosed before any terminal-state
+classification: the explicit W1 no-write tuple beside real append evidence, and a dry run beside any
+positive append signal. Neither can be true whatever `sheet_write` claims, so a corrupted record
+must not hide behind its own claimed state. The `!claimsSuccess` arm deliberately stays *below* the
+terminal returns: the genuine `partial` and `unverified` bodies really do carry `sheet_written:true`
+with a positive log count, and the in-progress duplicate spreads the original's counts, so hoisting
+it would call every real one of those contradictory and discard the records that most need review.
+
 Both per-tab success bodies emit **both** row counts as numbers on every live write —
 `/api/complete-workout` at `index.js:2723` (an explicit `0` on an effort-only completion) and
 `:2745`, `/api/log-workout` at `index.js:3416-3417`. An absent count therefore means the projection
