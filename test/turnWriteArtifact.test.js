@@ -316,6 +316,69 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
     }
   });
 
+  it('requires test_mode:true before accepting explicit no-write proof', () => {
+    for (const testMode of [false, undefined]) {
+      const claimedNoWrite = {
+        sheet_write: 'skipped',
+        sheet_written: false,
+        no_write_confirmed: true,
+      };
+      if (testMode !== undefined) claimedNoWrite.test_mode = testMode;
+      const artifact = buildTurnWriteArtifact([
+        line(INTERACTION_TRACE_MARKER, trace()),
+        line(TURN_WRITE_PROOF_MARKER, proof({ proof: claimedNoWrite })),
+      ].join('\n'));
+      const write = artifact.turns[0].writes[0];
+
+      assert.notEqual(write.proof_state, 'no_write_confirmed');
+      assert.equal(write.reviewable, false);
+      assert.equal(artifact.status, 'partial');
+    }
+  });
+
+  it('requires positive row evidence instead of trusting a bare live success token', () => {
+    const bareSuccess = proof({
+      proof: {
+        test_mode: false,
+        sheet_write: 'success',
+        sheet_written: false,
+        log_rows_written: 0,
+        effort_rows_written: 0,
+      },
+    });
+    const artifact = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, bareSuccess),
+    ].join('\n'));
+    const write = artifact.turns[0].writes[0];
+
+    assert.equal(write.proof_state, 'insufficient');
+    assert.equal(write.reviewable, false);
+    assert.ok(write.issues.includes('write_proof_insufficient'));
+    assert.equal(artifact.status, 'partial');
+  });
+
+  it('requires append-range evidence for a successful live log-workout row count', () => {
+    const countWithoutRange = proof({
+      proof: {
+        test_mode: false,
+        sheet_write: 'success',
+        log_rows_written: 1,
+        effort_rows_written: 0,
+      },
+    });
+    const artifact = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, countWithoutRange),
+    ].join('\n'));
+    const write = artifact.turns[0].writes[0];
+
+    assert.equal(write.proof_state, 'insufficient');
+    assert.equal(write.reviewable, false);
+    assert.ok(write.issues.includes('write_proof_insufficient'));
+    assert.equal(artifact.status, 'partial');
+  });
+
   it('distinguishes a newly stamped seal from an idempotent already-sealed replay', () => {
     const stamped = proof({
       proof: {
@@ -363,6 +426,33 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
     const artifact = buildTurnWriteArtifact([
       line(INTERACTION_TRACE_MARKER, trace()),
       line(TURN_WRITE_PROOF_MARKER, impossible),
+    ].join('\n'));
+    const write = artifact.turns[0].writes[0];
+
+    assert.equal(write.seal.state, 'seal_proof_mismatch');
+    assert.equal(write.seal.successfully_sealed, false);
+    assert.equal(write.reviewable, false);
+    assert.ok(write.issues.includes('seal_proof_mismatch'));
+    assert.equal(artifact.status, 'partial');
+  });
+
+  it('rejects mismatch-only seal count fields on an otherwise successful seal', () => {
+    const contradictoryCounts = proof({
+      proof: {
+        sheet_write: 'success',
+        sheet_written: true,
+        rows_appended: 1,
+        ledger_seal_sheet_written: true,
+        ledger_seal_sealed: 3,
+        ledger_seal_already_sealed: 0,
+        ledger_seal_sealed_ok: true,
+        ledger_seal_expected_cells: 2,
+        ledger_seal_updated_cells: 2,
+      },
+    });
+    const artifact = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, contradictoryCounts),
     ].join('\n'));
     const write = artifact.turns[0].writes[0];
 
