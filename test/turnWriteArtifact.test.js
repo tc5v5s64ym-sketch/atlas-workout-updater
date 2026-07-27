@@ -2630,6 +2630,99 @@ describe('turnWriteArtifact — reachable producer paths', () => {
     assert.equal(generic.status, 'complete');
   });
 
+  it('requires the gated sidecar tuple on a correlated duplicate', () => {
+    // The all-rows-duplicate branch is correlated ONLY through the sidecar gate at
+    // index.js:3276 — `if (duplicateBody.ledger_seal || duplicateBody.session_plans_closeout)`.
+    // Both are set together inside the closeout_context block (:3253-3263, including its catch),
+    // which also sets closeout_fully_verified, and :3265-3267 adds idempotency_status:'completed'.
+    // So a bare duplicate that wrote nothing is never recorded at all: the minimal scalar tuple
+    // with no sidecar evidence is a producer-impossible record, and it was reading as reviewable
+    // because absent seal/closeout evidence raises no downstream issue.
+    const duplicateBase = {
+      test_mode: false,
+      sheet_write: 'skipped_duplicate',
+      sheet_written: false,
+      duplicate_write: true,
+      log_rows_written: 0,
+      skipped_duplicates: 3,
+    };
+    const sidecar = {
+      idempotency_status: 'completed',
+      closeout_fully_verified: true,
+      ledger_seal_sealed_ok: true,
+      ledger_seal_sheet_written: true,
+      ledger_seal_no_write_confirmed: false,
+      ledger_seal_sealed: 4,
+      ledger_seal_already_sealed: 0,
+      session_plans_closeout_status: 'written',
+      session_plans_closeout_captured: true,
+      session_plans_closeout_written: 1,
+      session_plans_closeout_skipped: 0,
+      session_plans_closeout_plan_version: 'pv_11111111-2222-3333-4444-555555555555',
+    };
+
+    const bare = build({ proof: { ...duplicateBase } });
+    assert.notEqual(bare.turns[0].writes[0].proof_state, 'idempotent_no_write');
+    assert.equal(bare.status, 'partial');
+
+    // Missing only the completed idempotency status, and missing only the verdict.
+    const { idempotency_status: _s, ...noStatus } = sidecar;
+    const noStatusArtifact = build({ proof: { ...duplicateBase, ...noStatus } });
+    assert.notEqual(noStatusArtifact.turns[0].writes[0].proof_state, 'idempotent_no_write');
+
+    const { closeout_fully_verified: _v, ...noVerdict } = sidecar;
+    const noVerdictArtifact = build({ proof: { ...duplicateBase, ...noVerdict } });
+    assert.notEqual(noVerdictArtifact.turns[0].writes[0].proof_state, 'idempotent_no_write');
+
+    // CONTROL — the real correlated duplicate, which always carries the whole sidecar tuple.
+    const real = build({ proof: { ...duplicateBase, ...sidecar } });
+    assert.equal(real.turns[0].writes[0].proof_state, 'idempotent_no_write');
+    assert.equal(real.status, 'complete');
+  });
+
+  it('requires the emitted preview state on an attempt-zero record', () => {
+    // All THREE preview correlation producers — /api/log-modality (index.js:1372),
+    // /api/bodyweight (:1978) and /api/log-workout (:3152) — emit sheet_write:'skipped' beside
+    // the no-write tuple. (/api/complete-workout emits no preview correlation at all.) So a
+    // preview record with that field absent, or set to another state, is a shape no producer
+    // emits and must be rejected like any other malformed record.
+    const previewPairing = {
+      established_at_preview: true,
+      write_attempt: 0,
+      previewed_write_id_match: null,
+      payload_bound: false,
+      effort_transition: false,
+    };
+    for (const state of [undefined, 'skipped_duplicate', 'success']) {
+      const malformed = { test_mode: true, sheet_written: false, no_write_confirmed: true };
+      if (state !== undefined) malformed.sheet_write = state;
+      const artifact = buildTurnWriteArtifact([
+        line(INTERACTION_TRACE_MARKER, trace()),
+        line(TURN_WRITE_PROOF_MARKER, proof({ pairing: previewPairing, proof: malformed })),
+        line(TURN_WRITE_PROOF_MARKER, proof()),
+      ].join('\n'));
+      assert.equal(artifact.summary.rejected_records, 1, String(state));
+      assert.equal(artifact.status, 'partial', String(state));
+    }
+
+    // CONTROL — the real preview body stays accepted and reviewable beside a healthy live write.
+    const real = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, proof({
+        pairing: previewPairing,
+        proof: {
+          test_mode: true,
+          sheet_write: 'skipped',
+          sheet_written: false,
+          no_write_confirmed: true,
+        },
+      })),
+      line(TURN_WRITE_PROOF_MARKER, proof()),
+    ].join('\n'));
+    assert.equal(real.summary.rejected_records, 0);
+    assert.equal(real.status, 'complete');
+  });
+
   it('requires the exact success fields on the generic write routes', () => {
     // index.js:1407-1423 and 2024-2036 both emit sheet_write:'success' with sheet_written:true and
     // never a row-count field, so a count cannot substitute for the write flag.
