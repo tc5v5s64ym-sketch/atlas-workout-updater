@@ -104,6 +104,8 @@ Structured chat proposals use the same initiation authority: after prose renderi
 
 > Update this exact block in every campaign PR. Format: `CAMPAIGN STATE: Phase <n> — <name>. Next step: <step>. Gates passed: <list>. Streak: <k>/5.` (Phase 0 completed with the install PR.)
 
+**Slice-3 adversarial closure.** A live `/api/log-workout` non-success state cannot bypass W3 using generic sheet/row signals, and a joined proof with a missing session identity is non-reviewable rather than silently removed from the same-session check. Capability- or fingerprint-shaped values are rejected even when smuggled through `turn_id`. A seal cannot be called successful when its fixed reason says `seal_proof_mismatch`, or when positive seal-write evidence coexists with the seal's own dry-run/no-write claim. These are artifact-consumer checks only: server/client correlation, W1–W3 emitter fields, Render flags, and the underlying write path remain unchanged.
+
 ### The five rules
 
 1. Green checks merge themselves. No owner merge approvals, ever. Owner involvement is gates only.

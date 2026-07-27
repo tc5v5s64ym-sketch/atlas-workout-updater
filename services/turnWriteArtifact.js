@@ -121,7 +121,9 @@ function _containsCapability(value) {
 }
 
 function _sanitizeTrace(record) {
-  if (!_isPlainObject(record) || !isWellFormedTurnId(record.turn_id)) return null;
+  if (!_isPlainObject(record)
+    || !isWellFormedTurnId(record.turn_id)
+    || _containsCapability(record.turn_id)) return null;
   if (!_isIso8601(record.started_at) || typeof record.valid !== 'boolean') return null;
   if (!Array.isArray(record.stages) || record.stages.length > STAGES.length) return null;
   if (!Array.isArray(record.missing) || record.missing.length > STAGES.length) return null;
@@ -186,7 +188,10 @@ function _validProofValue(key, value) {
 }
 
 function _sanitizeProof(record) {
-  if (!_isPlainObject(record) || record.schema_version !== 1 || !isWellFormedTurnId(record.turn_id)) return null;
+  if (!_isPlainObject(record)
+    || record.schema_version !== 1
+    || !isWellFormedTurnId(record.turn_id)
+    || _containsCapability(record.turn_id)) return null;
   if (record.session_id !== null
     && (!_isBoundedString(record.session_id, MAX_SESSION_ID_LENGTH) || _containsCapability(record.session_id))) {
     return null;
@@ -355,9 +360,15 @@ function _sealSummary(proof, withheldEvidence) {
     : null;
   const hasMismatchCounts = Object.prototype.hasOwnProperty.call(proof, 'ledger_seal_expected_cells')
     || Object.prototype.hasOwnProperty.call(proof, 'ledger_seal_updated_cells');
+  const claimsMismatch = proof.ledger_seal_reason === 'seal_proof_mismatch';
+  const claimsNoSealWrite = proof.ledger_seal_no_write_confirmed === true
+    || proof.ledger_seal_dry_run === true;
+  const claimsPositiveSealWrite = sheetWritten === true || sealed > 0;
 
   let state = 'absent';
-  if (sealedOk === false && sheetWritten === true) state = 'seal_proof_mismatch';
+  if (claimsMismatch) state = 'seal_proof_mismatch';
+  else if (sealedOk === true && claimsNoSealWrite && claimsPositiveSealWrite) state = 'seal_proof_mismatch';
+  else if (sealedOk === false && sheetWritten === true) state = 'seal_proof_mismatch';
   else if (sealedOk === false) state = 'failed';
   else if (sealedOk === true && hasMismatchCounts) state = 'seal_proof_mismatch';
   else if (sealedOk === true && sheetWritten === false && sealed > 0) state = 'seal_proof_mismatch';
@@ -435,14 +446,25 @@ function _proofState(proof, seal, closeout, route, rangeEvidence = {}) {
   const effortRowsWritten = typeof proof.effort_rows_written === 'number' && proof.effort_rows_written > 0;
   const rangeBackedLogWorkoutWrite = (logRowsWritten && rangeEvidence.log === true)
     || (effortRowsWritten && rangeEvidence.effort === true);
-  const isLogWorkoutSuccess = route === '/api/log-workout' && claimsSuccess;
-  const positiveWrite = (!isLogWorkoutSuccess && proof.sheet_written === true)
-    || (!isLogWorkoutSuccess && typeof proof.rows_appended === 'number' && proof.rows_appended > 0)
-    || (!isLogWorkoutSuccess && logRowsWritten)
-    || (!isLogWorkoutSuccess && effortRowsWritten)
-    || (isLogWorkoutSuccess && rangeBackedLogWorkoutWrite)
+  const isLogWorkout = route === '/api/log-workout';
+  const genericMainWrite = proof.sheet_written === true
+    || (typeof proof.rows_appended === 'number' && proof.rows_appended > 0)
+    || logRowsWritten
+    || effortRowsWritten;
+  const logWorkoutMainWrite = claimsSuccess && rangeBackedLogWorkoutWrite;
+  const positiveWrite = (isLogWorkout ? logWorkoutMainWrite : genericMainWrite)
     || seal.new_seal_write
     || closeout.state === 'written';
+
+  // `/api/log-workout` has one live main-write success shape. A non-success state cannot use
+  // generic row/sheet signals to bypass its range-backed W3 tuple, and an explicit false write
+  // flag cannot coexist with a claimed range-backed success.
+  if (isLogWorkout
+    && proof.test_mode !== true
+    && ((!claimsSuccess && genericMainWrite)
+      || (claimsSuccess && proof.sheet_written === false && rangeBackedLogWorkoutWrite))) {
+    return 'contradictory';
+  }
 
   // A proof cannot simultaneously claim the explicit W1 no-write guarantee and a real append.
   // `effortWritten` is intentionally excluded: on a preview it means an effort row was formatted,
@@ -586,6 +608,7 @@ function buildTurnWriteArtifact(input) {
     const sessionIds = new Set(allProofRecords
       .map((record) => record.session_id)
       .filter((sessionId) => sessionId !== null));
+    if (allProofRecords.some((record) => record.session_id === null)) issues.push('session_missing');
     if (sessionIds.size > 1) issues.push('conflicting_sessions');
     const attempts = proofRecords.map((record) => record.pairing.write_attempt);
     if (new Set(attempts).size !== attempts.length) issues.push('duplicate_write_attempt');

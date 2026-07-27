@@ -742,7 +742,7 @@ describe('turnWriteArtifact — bounded, leakage-safe review surface', () => {
     assert.equal(artifact.summary.rejected_records, 2);
     assert.equal(artifact.summary.reviewable_turns, 0);
     assert.ok(!json.includes(capability));
-    assert.equal(artifact.status, 'partial');
+    assert.equal(artifact.status, 'empty');
   });
 
   it('rejects fractional proof counts instead of treating them as positive write evidence', () => {
