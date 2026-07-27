@@ -128,6 +128,13 @@ const SEAL_REASONS = new Set([
 const TRACE_INTENT_TYPES = new Set(['set', 'block', 'plan', 'coach_chat', 'coach_ask']);
 const TRACE_SOURCES = new Set(['coach_message', 'coach_chat', 'coach_ask']);
 const SAFE_STATE_TOKEN = /^[a-z][a-z0-9_]{0,63}$/;
+// Neither the server nor the client constrains `session_id` beyond "nonempty, bounded, trimmed"
+// (index.js; src/app/turnCorrelation.js validSessionId), so it is free text as far as any contract
+// goes and can carry workout prose or a Sheet range. There is no producer shape to validate
+// against, so the artifact publishes only ids that ARE opaque identifiers — no whitespace, no `!`
+// or `:` — and treats anything else as unpublishable rather than reflecting it. The record is
+// still retained: dropping a real join would be its own failure (cf. the `seal_error` lesson).
+const OPAQUE_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const ISO_8601 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/;
 const CANONICAL_TURN_ID_RE = /^turn:(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)_([0-9]{1,6})_([a-z0-9]{1,6})$/;
 const PAIRING_TOKEN_RE = /pair:[a-f0-9]{32}/;
@@ -235,9 +242,18 @@ function _sanitizeProof(record) {
     || record.schema_version !== 1
     || !_isCanonicalTurnId(record.turn_id)
     || _containsCapability(record.turn_id)) return null;
-  if (record.session_id !== null
-    && (!_isBoundedString(record.session_id, MAX_SESSION_ID_LENGTH) || _containsCapability(record.session_id))) {
-    return null;
+  let sessionId = record.session_id;
+  let sessionIdentity = 'absent';
+  if (sessionId !== null) {
+    if (!_isBoundedString(sessionId, MAX_SESSION_ID_LENGTH) || _containsCapability(sessionId)) return null;
+    if (OPAQUE_SESSION_ID.test(sessionId)) {
+      sessionIdentity = 'present';
+    } else {
+      // Keep the join, publish nothing. `unpublishable` is deliberately distinct from `absent`:
+      // an identity that exists but cannot be shown is not the same as one that was never recorded.
+      sessionIdentity = 'unpublishable';
+      sessionId = null;
+    }
   }
   if (!_isBoundedString(record.route, 64) || !WRITE_ROUTES.has(record.route)) return null;
   if (!_isIso8601(record.recorded_at) || !_isPlainObject(record.pairing) || !_isPlainObject(record.proof)) return null;
@@ -313,7 +329,8 @@ function _sanitizeProof(record) {
   return {
     schema_version: 1,
     turn_id: String(record.turn_id).trim(),
-    session_id: record.session_id,
+    session_id: sessionId,
+    session_identity: sessionIdentity,
     route: record.route,
     recorded_at: record.recorded_at,
     pairing: {
@@ -598,9 +615,15 @@ function _writeArtifact(record) {
     || closeout.state === 'withheld') {
     issues.push('closeout_not_reviewable');
   }
+  // The route's OWN verdict. `closeoutVerification` (index.js) returns false for a failed event
+  // capture, and for a planned closeout whose ledger is missing, even when the seal reports
+  // sealed_ok:true and the Session_Plans event was written. That is the route explicitly flagging
+  // an unverified closeout; the artifact must never reclassify it as verified.
+  if (record.proof.closeout_fully_verified === false) issues.push('closeout_not_verified');
 
   return {
     session_id: record.session_id,
+    session_identity: record.session_identity,
     route: record.route,
     recorded_at: record.recorded_at,
     pairing: { ...record.pairing },
@@ -624,6 +647,7 @@ function _previewArtifact(record) {
   if (record.withheld_evidence.length > 0) issues.push('evidence_withheld');
   return {
     session_id: record.session_id,
+    session_identity: record.session_identity,
     route: record.route,
     recorded_at: record.recorded_at,
     pairing: { ...record.pairing },
@@ -688,7 +712,10 @@ function buildTurnWriteArtifact(input) {
     const sessionIds = new Set(allProofRecords
       .map((record) => record.session_id)
       .filter((sessionId) => sessionId !== null));
-    if (allProofRecords.some((record) => record.session_id === null)) issues.push('session_missing');
+    if (allProofRecords.some((record) => record.session_identity === 'absent')) issues.push('session_missing');
+    if (allProofRecords.some((record) => record.session_identity === 'unpublishable')) {
+      issues.push('session_identity_unpublishable');
+    }
     if (sessionIds.size > 1) issues.push('conflicting_sessions');
     const attempts = proofRecords.map((record) => record.pairing.write_attempt);
     if (new Set(attempts).size !== attempts.length) issues.push('duplicate_write_attempt');

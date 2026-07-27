@@ -76,6 +76,19 @@ the vocabulary makes the record rejected rather than reflected. The vocabulary m
 omitting a reason a producer really emits would reject that whole record and lose the join, so a
 genuine failure could not be reviewed at all.
 
+`closeout_fully_verified` is the **route's own verdict** and is honored, never recomputed.
+`closeoutVerification` (`index.js`) returns false for a failed event capture and for a planned
+closeout whose ledger is missing, even when the seal reports `sealed_ok:true` and the Session_Plans
+event was written; a present `false` therefore makes the write non-reviewable.
+
+`session_id` is free text as far as any contract goes — neither the server nor the client
+constrains it beyond "nonempty, bounded, trimmed" — so it can carry workout prose or a Sheet range.
+There is no producer shape to validate against, so the artifact publishes only ids that are already
+opaque identifiers and marks anything else `unpublishable`: the record and its join are retained,
+the raw value never reaches machine or human output, and the unusable identity makes the turn
+non-reviewable. `unpublishable` stays distinct from `absent` — an identity that exists but cannot be
+shown is not one that was never recorded.
+
 Seal evidence is read **seal-locally**. `ledger_seal_sheet_written` is the only evidence that the
 independent sidecar write occurred; the main write's `sheet_written` describes a different write and
 is never borrowed. Absent means unknown, not false, so a positive stamp count with no seal-local
