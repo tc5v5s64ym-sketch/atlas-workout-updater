@@ -998,21 +998,23 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
       line(INTERACTION_TRACE_MARKER, trace()),
       line(TURN_WRITE_PROOF_MARKER, proof()),
     ].join('\n'));
-    const unsafeSource = 'Bench Press 225 x 5 @ RIR 2.log';
-
-    assert.ok(
-      !formatTurnWriteArtifact(artifact, { source: unsafeSource }).includes('Bench Press'),
-      'workout prose in a filename must not be echoed',
-    );
-    assert.ok(
-      !formatTurnWriteArtifact(artifact, { source: 'Log_Cleaned!A2:L4.log' }).includes('Log_Cleaned!A2:L4'),
-      'a Sheet range in a filename must not be echoed',
-    );
-    // An opaque source label is still shown, and directory components are not published.
-    assert.ok(formatTurnWriteArtifact(artifact, { source: 'stdin' }).includes('stdin'));
-    const fromPath = formatTurnWriteArtifact(artifact, { source: '/srv/private-deploy/atlas.log' });
-    assert.ok(fromPath.includes('atlas.log'));
-    assert.ok(!fromPath.includes('private-deploy'), 'directory components are not published');
+    // The source label is gone entirely. A filename has no identifier contract, so a character
+    // class over it proved only the absence of certain punctuation — never that the value was safe.
+    // A COMPACT basename (`BenchPress225x5RIR2.jsonl`) passed the old predicate and was echoed into
+    // both outputs, recreating the same prose disclosure that had just cost `session_id` its place
+    // in the artifact. The label is not validated better; it is not emitted.
+    for (const unsafeSource of [
+      'Bench Press 225 x 5 @ RIR 2.log',
+      'Log_Cleaned!A2:L4.log',
+      'BenchPress225x5RIR2.jsonl',
+      '/srv/private-deploy/atlas.log',
+      'stdin',
+    ]) {
+      const rendered = formatTurnWriteArtifact(artifact, { source: unsafeSource });
+      const basename = unsafeSource.split('/').pop();
+      assert.ok(!rendered.includes(basename), `source label must not be echoed: ${unsafeSource}`);
+    }
+    assert.ok(formatTurnWriteArtifact(artifact).startsWith('Atlas turn/write review artifact'));
   });
 
   it('treats an incomplete successful-seal tuple as indeterminate', () => {
@@ -1193,24 +1195,40 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
     assert.equal(verified.status, 'complete');
   });
 
-  it('never publishes a session id that is not an opaque identifier', () => {
-    // Neither the server nor the client constrains session_id beyond "nonempty, bounded, trimmed",
-    // so it can carry workout prose or a Sheet range. The join must survive without republishing it.
-    for (const unsafeSession of ['Bench Press 225 lb x 5 @ RIR 2', 'Log_Cleaned!A2:L4']) {
+  it('never publishes a session id, and keeps every producer-valid one for the join', () => {
+    // No session id is published at all, so free-form ones are RETAINED rather than nulled. An
+    // earlier version gated them on an "opaque identifier" class and discarded the rest — a false
+    // negative: the contract permits a bounded trimmed string, so `Bench Press 225` is a producer
+    // -valid id, and nulling it both marked a genuine turn non-reviewable and destroyed the one
+    // thing the value is kept for, the cross-session comparison.
+    for (const freeFormSession of ['Bench Press 225 lb x 5 @ RIR 2', 'Log_Cleaned!A2:L4']) {
       const artifact = buildTurnWriteArtifact([
         line(INTERACTION_TRACE_MARKER, trace()),
-        line(TURN_WRITE_PROOF_MARKER, proof({ session_id: unsafeSession })),
+        line(TURN_WRITE_PROOF_MARKER, proof({ session_id: freeFormSession })),
       ].join('\n'));
 
       const serialized = JSON.stringify(artifact);
-      assert.ok(!serialized.includes(unsafeSession), `raw session id leaked: ${unsafeSession}`);
-      assert.ok(!formatTurnWriteArtifact(artifact).includes(unsafeSession), 'leaked in human output');
-      // The record is RETAINED — losing the join would be its own failure — but the unusable
-      // identity makes it non-reviewable.
-      assert.equal(artifact.turns[0].writes.length, 1, unsafeSession);
-      assert.equal(artifact.turns[0].reviewable, false, unsafeSession);
-      assert.equal(artifact.status, 'partial', unsafeSession);
+      assert.ok(!serialized.includes(freeFormSession), `raw session id leaked: ${freeFormSession}`);
+      assert.ok(!formatTurnWriteArtifact(artifact).includes(freeFormSession), 'leaked in human output');
+      assert.equal(artifact.turns[0].writes.length, 1, freeFormSession);
+      assert.equal(artifact.turns[0].writes[0].session_identity, 'present', freeFormSession);
+      assert.equal(artifact.turns[0].reviewable, true, freeFormSession);
+      assert.equal(artifact.status, 'complete', freeFormSession);
     }
+
+    // Two DIFFERENT free-form ids on one turn still raise the contamination issue, which the old
+    // gating had silently disabled for exactly this shape.
+    const mixed = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, proof({ session_id: 'Bench Press 225' })),
+      line(TURN_WRITE_PROOF_MARKER, proof({
+        session_id: 'Squat 315',
+        recorded_at: '2026-07-26T08:09:00.000Z',
+        pairing: { ...proof().pairing, write_attempt: 2 },
+      })),
+    ].join('\n'));
+    assert.ok(mixed.turns[0].issues.includes('conflicting_sessions'));
+    assert.ok(!JSON.stringify(mixed).includes('Squat 315'));
 
     // A well-formed session id is no longer published either — see the note in `_writeArtifact`.
     // The character class proved only the absence of whitespace, `!` and `:`; it could not prove

@@ -218,13 +218,13 @@ const NULLABLE_PROOF_KEYS = new Set([
 const TRACE_INTENT_TYPES = new Set(['set', 'block', 'plan', 'coach_chat', 'coach_ask']);
 const TRACE_SOURCES = new Set(['coach_message', 'coach_chat', 'coach_ask']);
 const SAFE_STATE_TOKEN = /^[a-z][a-z0-9_]{0,63}$/;
-// Neither the server nor the client constrains `session_id` beyond "nonempty, bounded, trimmed"
-// (index.js; src/app/turnCorrelation.js validSessionId), so it is free text as far as any contract
-// goes and can carry workout prose or a Sheet range. There is no producer shape to validate
-// against, so the artifact publishes only ids that ARE opaque identifiers — no whitespace, no `!`
-// or `:` — and treats anything else as unpublishable rather than reflecting it. The record is
-// still retained: dropping a real join would be its own failure (cf. the `seal_error` lesson).
-const OPAQUE_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+// `session_id` is never published (see `_writeArtifact`), so it needs no shape at all — it is
+// retained ONLY for the internal cross-session comparison. An earlier version gated it on an
+// "opaque identifier" character class and nulled anything else as `unpublishable`. That was a false
+// negative of my own making: a producer-valid id containing a space — which the contract permits,
+// since it requires only a bounded trimmed string — was discarded, its turn marked non-reviewable,
+// and two DIFFERENT such ids could no longer raise `conflicting_sessions`, which is the one thing
+// the value is kept for. Bounded and capability-free is the whole requirement.
 const ISO_8601 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/;
 const CANONICAL_TURN_ID_RE = /^turn:(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)_([0-9]{1,6})_([a-z0-9]{1,6})$/;
 const PAIRING_TOKEN_RE = /pair:[a-f0-9]{32}/;
@@ -366,14 +366,7 @@ function _sanitizeProof(record) {
   let sessionIdentity = 'absent';
   if (sessionId !== null) {
     if (!_isBoundedString(sessionId, MAX_SESSION_ID_LENGTH) || _containsCapability(sessionId)) return null;
-    if (OPAQUE_SESSION_ID.test(sessionId)) {
-      sessionIdentity = 'present';
-    } else {
-      // Keep the join, publish nothing. `unpublishable` is deliberately distinct from `absent`:
-      // an identity that exists but cannot be shown is not the same as one that was never recorded.
-      sessionIdentity = 'unpublishable';
-      sessionId = null;
-    }
+    sessionIdentity = 'present';
   }
   if (!_isBoundedString(record.route, 64) || !WRITE_ROUTES.has(record.route)) return null;
   if (!_isIso8601(record.recorded_at) || !_isPlainObject(record.pairing) || !_isPlainObject(record.proof)) return null;
@@ -1135,9 +1128,6 @@ function buildTurnWriteArtifact(input) {
       .map((record) => record.session_id)
       .filter((sessionId) => sessionId !== null));
     if (allProofRecords.some((record) => record.session_identity === 'absent')) issues.push('session_missing');
-    if (allProofRecords.some((record) => record.session_identity === 'unpublishable')) {
-      issues.push('session_identity_unpublishable');
-    }
     if (sessionIds.size > 1) issues.push('conflicting_sessions');
     const attempts = proofRecords.map((record) => record.pairing.write_attempt);
     if (new Set(attempts).size !== attempts.length) issues.push('duplicate_write_attempt');
@@ -1194,11 +1184,9 @@ function buildTurnWriteArtifact(input) {
   };
 }
 
-function formatTurnWriteArtifact(artifact, opts = {}) {
+function formatTurnWriteArtifact(artifact) {
   const a = _isPlainObject(artifact) ? artifact : buildTurnWriteArtifact('');
-  const safeSource = sanitizeArtifactSource(opts.source);
-  const source = safeSource ? ` (from ${safeSource})` : '';
-  const lines = [`Atlas turn/write review artifact${source}`];
+  const lines = ['Atlas turn/write review artifact'];
   if (a.status === 'empty') {
     lines.push('No joined turn/write evidence was found. Nothing is reviewable.');
     return lines.join('\n');
@@ -1217,17 +1205,12 @@ function formatTurnWriteArtifact(artifact, opts = {}) {
   return lines.join('\n');
 }
 
-// The CLI's source label is a filename the operator chose, so it is free text on the same footing
-// as `session_id` and the trace metadata: it can carry workout prose, a Sheet range, or a private
-// path. Publish only a bare, opaque basename — directory components are dropped rather than
-// reflected — and omit the label entirely when it is not one.
-const OPAQUE_SOURCE_LABEL = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
-
-function sanitizeArtifactSource(value) {
-  if (!_isBoundedString(value, 512) || _containsCapability(value) || /[\r\n\0]/.test(value)) return null;
-  const basename = value.split(/[/\\]/).pop();
-  return OPAQUE_SOURCE_LABEL.test(basename) ? basename : null;
-}
+// The CLI's source label is GONE, for the same reason the session id is. A filename has no
+// identifier contract either, so a character class over it proves only the absence of certain
+// punctuation — never that the value is safe to publish. `BenchPress225x5RIR2.jsonl` passed the old
+// predicate and was echoed into both the JSON and the human output, recreating exactly the
+// prose-disclosure this consumer had just removed one field earlier. There is nothing to validate
+// against, so nothing is emitted.
 
 module.exports = {
   INTERACTION_TRACE_MARKER,
@@ -1239,5 +1222,4 @@ module.exports = {
   parseTurnWriteLines,
   buildTurnWriteArtifact,
   formatTurnWriteArtifact,
-  sanitizeArtifactSource,
 };
