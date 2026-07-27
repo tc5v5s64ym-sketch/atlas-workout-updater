@@ -2416,6 +2416,63 @@ describe('turnWriteArtifact — reachable producer paths', () => {
     assert.ok(artifact.turns[0].issues.includes('seal_not_verified'));
   });
 
+  it('does not cap accumulated preview history by the live-pairing concurrency bound', () => {
+    // The two registry caps are NOT the same kind of limit, and only one of them bounds emitted
+    // history:
+    //   * writeIds REFUSES — `if (rec.writeIds.length >= MAX_WRITES_PER_PAIRING) return miss(...)`
+    //     (turnCorrelation.js:836), so a 6th write attempt is never correlated and never logged.
+    //   * pairings EVICT — `while (rec.pairings.length > MAX_OUTSTANDING_PAIRINGS) shift()`
+    //     (:790), so a 9th preview IS accepted; only the oldest entry leaves memory. Its log line
+    //     was already emitted. The registry's own comment says as much: "one per preview, oldest
+    //     evicted", and writeIds bounds the turn "however many overlapping previews it accumulated".
+    // Applying the concurrency cap to log history truncated real records and made a valid turn
+    // permanently partial.
+    const preview = (index) => proof({
+      recorded_at: `2026-07-26T08:0${index}:00.000Z`,
+      pairing: {
+        established_at_preview: true,
+        write_attempt: 0,
+        previewed_write_id_match: null,
+        payload_bound: false,
+        effort_transition: false,
+      },
+      proof: {
+        test_mode: true,
+        sheet_write: 'skipped',
+        sheet_written: false,
+        no_write_confirmed: true,
+      },
+    });
+    const nine = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      ...Array.from({ length: 9 }, (_, i) => line(TURN_WRITE_PROOF_MARKER, preview(i))),
+      line(TURN_WRITE_PROOF_MARKER, proof()),
+    ].join('\n'));
+
+    assert.ok(!nine.turns[0].issues.includes('preview_record_overflow'));
+    assert.equal(nine.turns[0].previews.length, 9);
+    assert.equal(nine.summary.rejected_records, 0);
+    assert.equal(nine.status, 'complete');
+
+    // CONTROL — the write-attempt cap is a REFUSAL and still bounds emitted records, so a sixth
+    // correlated attempt is impossible and must stay flagged.
+    const sixAttempts = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      ...Array.from({ length: 6 }, (_, i) => line(TURN_WRITE_PROOF_MARKER, proof({
+        recorded_at: `2026-07-26T08:1${i}:00.000Z`,
+        pairing: {
+          established_at_preview: true,
+          write_attempt: i + 1,
+          previewed_write_id_match: null,
+          payload_bound: true,
+          effort_transition: false,
+        },
+      }))),
+    ].join('\n'));
+    assert.ok(sixAttempts.turns[0].issues.includes('write_attempt_overflow'));
+    assert.equal(sixAttempts.status, 'partial');
+  });
+
   it('requires the exact success fields on the generic write routes', () => {
     // index.js:1407-1423 and 2024-2036 both emit sheet_write:'success' with sheet_written:true and
     // never a row-count field, so a count cannot substitute for the write flag.
