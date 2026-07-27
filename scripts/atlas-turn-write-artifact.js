@@ -28,10 +28,16 @@ const {
 const READ_CHUNK = 1 << 16;
 const READ_CEILING = MAX_INPUT_CHARS + READ_CHUNK;
 
+// Returns the decoded text AND whether the read stopped before EOF. The flag is not inferable from
+// the decoded length: this ceiling counts BYTES, and a multibyte capture decodes to fewer
+// characters than it occupies — five million `é` fill ~10 MB yet decode to ~5M characters, well
+// under the parser's character cap. Relying on length alone let a truncated read report `complete`
+// with zero rejected records.
 function readBounded(fd) {
   const chunks = [];
   const buffer = Buffer.allocUnsafe(READ_CHUNK);
   let total = 0;
+  let truncated = false;
   for (;;) {
     let read = 0;
     try {
@@ -44,16 +50,26 @@ function readBounded(fd) {
     if (read === 0) break;
     chunks.push(Buffer.from(buffer.subarray(0, read)));
     total += read;
-    if (total >= READ_CEILING) break;
+    if (total >= READ_CEILING) {
+      // Stopped on the ceiling rather than on EOF — unless the next read would have returned 0.
+      let probe = 0;
+      try {
+        probe = fs.readSync(fd, buffer, 0, 1, null);
+      } catch (error) {
+        if (!error || error.code !== 'EAGAIN') throw error;
+      }
+      truncated = probe > 0;
+      break;
+    }
   }
-  return Buffer.concat(chunks).toString('utf8');
+  return { text: Buffer.concat(chunks).toString('utf8'), truncated };
 }
 
 function readStdin() {
   try {
     return readBounded(0);
   } catch (_) {
-    return '';
+    return { text: '', truncated: false };
   }
 }
 
@@ -62,12 +78,13 @@ function main(argv) {
   const json = args.includes('--json');
   const fileArg = args.find((arg) => arg !== '--json' && arg !== '-');
   let text = '';
+  let truncated = false;
 
   if (fileArg) {
     try {
       const fd = fs.openSync(fileArg, 'r');
       try {
-        text = readBounded(fd);
+        ({ text, truncated } = readBounded(fd));
       } finally {
         fs.closeSync(fd);
       }
@@ -80,10 +97,10 @@ function main(argv) {
       return 2;
     }
   } else {
-    text = readStdin();
+    ({ text, truncated } = readStdin());
   }
 
-  const artifact = buildTurnWriteArtifact(text);
+  const artifact = buildTurnWriteArtifact(text, { truncated });
   if (json) process.stdout.write(`${JSON.stringify(artifact, null, 2)}\n`);
   else process.stdout.write(`${formatTurnWriteArtifact(artifact)}\n`);
 

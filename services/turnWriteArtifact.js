@@ -538,10 +538,11 @@ function _emptyParsed() {
     proofs: [],
     rejected: [],
     rejected_count: 0,
+    rejected_turn_ids: new Set(),
   };
 }
 
-function parseTurnWriteLines(text) {
+function parseTurnWriteLines(text, opts = {}) {
   const parsed = _emptyParsed();
   if (typeof text !== 'string' || text.length === 0) return parsed;
 
@@ -549,11 +550,23 @@ function parseTurnWriteLines(text) {
     parsed.rejected_count += 1;
     if (parsed.rejected.length < MAX_REJECTIONS) {
       parsed.rejected.push({ reason, marker, line: lineNumber, turn_id: turnId });
+    } else if (turnId !== null) {
+      // The DETAIL list is capped; the attribution must not be. Past the cap a rejected record
+      // used to lose its turn_id, so `rejected.some(...)` could no longer fail that turn closed and
+      // it reported `reviewable:true` with no issues while the global status said `partial`.
+      parsed.rejected_turn_ids.add(turnId);
     }
   };
 
   // Truncate at a line boundary before splitting, and REPORT it: a silent cut would be a partial
   // artifact presented as a whole one, which is the failure this module exists to prevent.
+  // A caller that bounded its own READ must say so. Character length cannot detect it: a byte
+  // ceiling on a multibyte capture stops short of EOF while decoding to FEWER than MAX_INPUT_CHARS
+  // characters, so the check below never fires and a truncated input reports `complete` with zero
+  // rejections — a partial artifact presented as a whole one, which is the one thing this module
+  // exists to prevent.
+  if (opts.truncated === true) reject('input_size_limit', null, 0);
+
   let bounded = text;
   if (text.length > MAX_INPUT_CHARS) {
     const cut = text.lastIndexOf('\n', MAX_INPUT_CHARS);
@@ -1094,12 +1107,15 @@ function _previewArtifact(record) {
   };
 }
 
-function buildTurnWriteArtifact(input) {
-  const parsed = typeof input === 'string' ? parseTurnWriteLines(input) : input;
+function buildTurnWriteArtifact(input, opts = {}) {
+  const parsed = typeof input === 'string' ? parseTurnWriteLines(input, opts) : input;
   const safeParsed = _isPlainObject(parsed) ? parsed : _emptyParsed();
   const traces = Array.isArray(safeParsed.traces) ? safeParsed.traces : [];
   const proofs = Array.isArray(safeParsed.proofs) ? safeParsed.proofs : [];
   const rejected = Array.isArray(safeParsed.rejected) ? safeParsed.rejected : [];
+  const rejectedTurnIds = safeParsed.rejected_turn_ids instanceof Set
+    ? safeParsed.rejected_turn_ids
+    : new Set();
   let rejectedCount = Number.isInteger(safeParsed.rejected_count)
     ? safeParsed.rejected_count
     : rejected.length;
@@ -1157,7 +1173,8 @@ function buildTurnWriteArtifact(input) {
     if (sessionIds.size > 1) issues.push('conflicting_sessions');
     const attempts = proofRecords.map((record) => record.pairing.write_attempt);
     if (new Set(attempts).size !== attempts.length) issues.push('duplicate_write_attempt');
-    if (rejected.some((entry) => entry && entry.turn_id === turnId)) issues.push('rejected_write_record');
+    if (rejected.some((entry) => entry && entry.turn_id === turnId)
+      || rejectedTurnIds.has(turnId)) issues.push('rejected_write_record');
 
     const trace = traceRecords.length === 1 ? { ...traceRecords[0] } : null;
     const previews = previewRecords.map(_previewArtifact);
