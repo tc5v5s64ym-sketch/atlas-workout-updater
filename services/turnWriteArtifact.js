@@ -146,6 +146,22 @@ const PER_TAB_APPEND_ROUTES = new Set(['/api/log-workout', '/api/complete-workou
 // arriving on those routes did not come from a producer — pairing the two envelopes does not make
 // such a record real, it only makes it internally consistent.
 const SIDECAR_EVIDENCE_ROUTES = new Set(['/api/log-workout']);
+// …and only on the two BODIES that attach them. `/api/log-workout` attaches a sidecar pair on the
+// normal success (index.js:3413-3426) and on the correlated all-rows-duplicate branch
+// (index.js:3238-3264) — nowhere else. Never on a preview, and never on `blocked_schema_drift`,
+// which the shared header-drift guard raises at index.js:456 long before a seal is attempted. The
+// route alone is not the producer's condition: a `blocked_schema_drift` record carrying a fresh
+// seal reached `write_confirmed` with no issues, because a positive seal is a positive write.
+const SIDECAR_EVIDENCE_STATES = new Set(['success', 'skipped_duplicate']);
+// Log_Cleaned / Effort row evidence can only come from a route that appends to those tabs.
+// `/api/log-modality` writes to Modality_Log and `/api/bodyweight` to Bodyweight, and neither
+// success body carries a row count at all (index.js:1407-1423, 2024-2036). A generic-route record
+// claiming Log rows is fabricated, and republishing the number would have the artifact report a
+// write to a tab that route never touched — so the fields are dropped, not merely ignored.
+const PER_TAB_EVIDENCE_KEYS = Object.freeze([
+  'log_rows_written',
+  'effort_rows_written',
+]);
 const NULLABLE_PROOF_KEYS = new Set([
   'ledger_seal_updated_cells',
   // `sealCloseout` returns `would_seal:null` when the ledger is unreadable while the seal lane is
@@ -375,6 +391,21 @@ function _sanitizeProof(record) {
     ),
   };
 
+  // Drop Log/Effort tab evidence a generic route cannot have produced, and remember that it was
+  // there. Retained as a flag rather than a rejection: the record's own join and its genuine
+  // main-write proof stay reviewable, but nothing fabricated is republished.
+  const impossibleFields = [];
+  if (!PER_TAB_APPEND_ROUTES.has(record.route)) {
+    for (const key of PER_TAB_EVIDENCE_KEYS) {
+      if (Object.prototype.hasOwnProperty.call(proof, key)) {
+        impossibleFields.push(key);
+        delete proof[key];
+      }
+    }
+    rangeEvidence.log = false;
+    rangeEvidence.effort = false;
+  }
+
   if (!Array.isArray(record.withheld_evidence)) return null;
   const withheldEvidence = [];
   const seenWithheld = new Set();
@@ -426,6 +457,7 @@ function _sanitizeProof(record) {
     proof,
     range_evidence: rangeEvidence,
     withheld_evidence: withheldEvidence,
+    impossible_fields: impossibleFields,
   };
 }
 
@@ -836,6 +868,35 @@ function _proofState(proof, seal, closeout, route, rangeEvidence = {}) {
   return 'insufficient';
 }
 
+// Producer-shape issues that apply to EVERY correlated record, preview or write. Shared rather
+// than duplicated: the two builders drifting apart is exactly how a rule ends up enforced on one
+// path and not its sibling.
+function _producerShapeIssues(record, seal, closeout) {
+  const issues = [];
+  // Log/Effort tab evidence a generic route cannot have produced was dropped during sanitize;
+  // report that it was there rather than letting the record read as an ordinary clean write.
+  if (record.impossible_fields.length > 0) issues.push('impossible_fields_for_route');
+  const hasSidecarEvidence = seal.state !== 'absent' || closeout.state !== 'absent';
+  if (!SIDECAR_EVIDENCE_ROUTES.has(record.route) && hasSidecarEvidence) {
+    issues.push('sidecar_evidence_impossible_for_route');
+  } else if (hasSidecarEvidence
+    && (record.pairing.write_attempt === 0
+      || !SIDECAR_EVIDENCE_STATES.has(record.proof.sheet_write))) {
+    // The route is necessary but not sufficient. Only the success body and the correlated
+    // all-rows-duplicate body attach a sidecar pair, and neither is a preview. A record claiming a
+    // fresh seal beside `blocked_schema_drift` reached `write_confirmed` with no issues at all,
+    // because a positive seal counts as a positive write.
+    issues.push('sidecar_evidence_impossible_for_state');
+  }
+  // The verdict cannot stand alone either: it is attached only INSIDE those sidecar blocks
+  // (index.js:3259, 3262, 3425), so a record carrying it with neither envelope claims a closeout
+  // was verified while naming nothing that was verified.
+  if (record.proof.closeout_fully_verified !== undefined && !hasSidecarEvidence) {
+    issues.push('closeout_verdict_unsupported');
+  }
+  return issues;
+}
+
 function _writeArtifact(record) {
   const authorization = _authorization(record.pairing);
   const seal = _sealSummary(record.proof, record.withheld_evidence);
@@ -884,10 +945,7 @@ function _writeArtifact(record) {
   // together makes a fabricated record internally consistent; it does not make it producible. A
   // well-formed seal + closeout pair on `/api/bodyweight` satisfied every check above and reported
   // a turn complete with `seal.state === 'sealed'`.
-  if (!SIDECAR_EVIDENCE_ROUTES.has(record.route)
-    && (seal.state !== 'absent' || closeout.state !== 'absent')) {
-    issues.push('sidecar_evidence_impossible_for_route');
-  }
+  for (const issue of _producerShapeIssues(record, seal, closeout)) issues.push(issue);
   // The route's OWN verdict. `closeoutVerification` (index.js) returns false for a failed event
   // capture, and for a planned closeout whose ledger is missing, even when the seal reports
   // sealed_ok:true and the Session_Plans event was written. That is the route explicitly flagging
@@ -926,6 +984,7 @@ function _previewArtifact(record) {
   const issues = [];
   if (proofState !== 'no_write_confirmed') issues.push('preview_no_write_proof_missing');
   if (record.withheld_evidence.length > 0) issues.push('evidence_withheld');
+  for (const issue of _producerShapeIssues(record, seal, closeout)) issues.push(issue);
   return {
     session_id: record.session_id,
     session_identity: record.session_identity,

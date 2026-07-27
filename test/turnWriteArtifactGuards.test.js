@@ -102,6 +102,21 @@ const CLOSEOUT_SKIPPED = {
   session_plans_closeout_skipped: 1,
   session_plans_closeout_plan_version: 'pv_11111111-2222-3333-4444-555555555555',
 };
+// A genuine fresh stamp and the finalized closeout capture that always accompanies it.
+const SEAL_STAMPED_FRESH = {
+  ledger_seal_sealed_ok: true,
+  ledger_seal_sheet_written: true,
+  ledger_seal_no_write_confirmed: false,
+  ledger_seal_sealed: 3,
+  ledger_seal_already_sealed: 0,
+};
+const CLOSEOUT_WRITTEN_FRESH = {
+  session_plans_closeout_status: 'written',
+  session_plans_closeout_captured: true,
+  session_plans_closeout_written: 1,
+  session_plans_closeout_skipped: 0,
+  session_plans_closeout_plan_version: 'pv_11111111-2222-3333-4444-555555555555',
+};
 const DUPLICATE_SCALARS = {
   test_mode: false,
   sheet_write: 'skipped_duplicate',
@@ -341,6 +356,116 @@ describe('turnWriteArtifact guards — withheld evidence', () => {
 });
 
 describe('turnWriteArtifact guards — seal presentation', () => {
+  it('never publishes Log/Effort tab evidence from a route that does not touch those tabs', () => {
+    // `/api/log-modality` appends to Modality_Log and `/api/bodyweight` to Bodyweight
+    // (index.js:1405, 2022). Neither success body carries a row count of any kind
+    // (index.js:1407-1423, 2024-2036). So a bodyweight proof claiming 999 Log rows is not a
+    // producer shape at all — and it was being classified `write_confirmed` AND republished, so
+    // the artifact reported writes to tabs that route never touched.
+    for (const route of ['/api/log-modality', '/api/bodyweight']) {
+      const artifact = build(trace(), proofRecord({ route }, {
+        sheet_written: true,
+        log_rows_written: 999,
+        effort_rows_written: 7,
+        logAppendedRange: 'Log_Cleaned!A2:L1000',
+      }));
+      const write = firstWrite(artifact);
+      assert.ok(write.issues.includes('impossible_fields_for_route'), route);
+      assert.equal(artifact.turns[0].reviewable, false, route);
+      // The fabricated numbers must not be republished at all.
+      assert.equal(write.proof.log_rows_written, undefined, route);
+      assert.equal(write.proof.effort_rows_written, undefined, route);
+    }
+
+    // CONTROL — the real generic success body, which carries no counts, is untouched.
+    for (const route of ['/api/log-modality', '/api/bodyweight']) {
+      const plain = build(trace(), proofRecord({ route }, {
+        sheet_written: true,
+        logAppendedRange: undefined,
+        log_rows_written: undefined,
+        effort_rows_written: undefined,
+      }));
+      assert.deepEqual(firstWrite(plain).issues, [], route);
+      assert.equal(plain.status, 'complete', route);
+    }
+
+    // CONTROL — the per-tab routes keep their counts, which are their whole W3 proof.
+    assertControlAccepted(build(trace(), proofRecord()));
+  });
+
+  it('refuses sidecar evidence on states and attempts that cannot carry it', () => {
+    // Route alone is not the whole producer condition. `/api/log-workout` attaches sidecars on
+    // exactly two bodies: the normal success (index.js:3413-3426, `sheet_write:'success'`) and the
+    // correlated all-rows-duplicate branch (index.js:3238-3264, `sheet_write:'skipped_duplicate'`).
+    // Never on a preview, and never on `blocked_schema_drift`, which is raised by the shared
+    // header-drift guard at index.js:456 long before any seal is attempted.
+    const sidecar = { ...SEAL_STAMPED_FRESH, ...CLOSEOUT_WRITTEN_FRESH, closeout_fully_verified: true };
+
+    const drift = build(trace(), proofRecord({}, {
+      ...sidecar,
+      sheet_write: 'blocked_schema_drift',
+      sheet_written: false,
+      logAppendedRange: undefined,
+      log_rows_written: undefined,
+      effort_rows_written: undefined,
+    }));
+    assert.ok(firstWrite(drift).issues.includes('sidecar_evidence_impossible_for_state'));
+    assert.equal(drift.turns[0].reviewable, false);
+    assert.notEqual(drift.status, 'complete');
+    // Deliberately NOT asserting the proof_state here. Classification and diagnosis are separate
+    // (rule 4): `proof_state` reports what the evidence claims — and a fresh seal genuinely is a
+    // positive write — while the ISSUE is what says the shape is impossible. An earlier version of
+    // this control demanded the classification change too, which would have meant teaching the
+    // classifier to second-guess its own inputs rather than reporting them and flagging the record.
+
+    const preview = build(trace(), proofRecord({
+      pairing: {
+        established_at_preview: true,
+        write_attempt: 0,
+        previewed_write_id_match: null,
+        payload_bound: false,
+        effort_transition: false,
+      },
+    }, {
+      ...sidecar,
+      test_mode: true,
+      sheet_write: 'skipped',
+      sheet_written: false,
+      no_write_confirmed: true,
+      logAppendedRange: undefined,
+      log_rows_written: undefined,
+      effort_rows_written: undefined,
+      duplicate_write: undefined,
+      idempotency_status: undefined,
+    }), proofRecord());
+    assert.ok(preview.turns[0].previews[0].issues.includes('sidecar_evidence_impossible_for_state'));
+
+    // CONTROLS — the two bodies that genuinely carry sidecars.
+    const onSuccess = build(trace(), proofRecord({}, sidecar));
+    assert.deepEqual(firstWrite(onSuccess).issues, []);
+
+    const onDuplicate = build(trace(), duplicateRecord({ ...SEAL_REPLAY, ...CLOSEOUT_SKIPPED }));
+    assert.deepEqual(firstWrite(onDuplicate).issues, []);
+  });
+
+  it('refuses a closeout verdict with no sidecar evidence to identify what was verified', () => {
+    // `closeout_fully_verified` is attached only inside the sidecar blocks (index.js:3259, 3262,
+    // 3425), so a plain success carrying the verdict alone is unreachable — and it claims closeout
+    // verification while naming nothing that was verified.
+    const verdictOnly = build(trace(), proofRecord({}, { closeout_fully_verified: true }));
+    assert.ok(firstWrite(verdictOnly).issues.includes('closeout_verdict_unsupported'));
+    assert.equal(verdictOnly.turns[0].reviewable, false);
+
+    // CONTROL — the verdict beside the evidence it describes.
+    const supported = build(trace(), proofRecord({}, {
+      ...SEAL_REPLAY, ...CLOSEOUT_SKIPPED, closeout_fully_verified: true,
+    }));
+    assert.deepEqual(firstWrite(supported).issues, []);
+
+    // CONTROL — a plain main write carries no verdict and needs none.
+    assertControlAccepted(build(trace(), proofRecord()));
+  });
+
   it('refuses sidecar evidence on the routes that cannot emit it', () => {
     // Requiring the two envelopes TOGETHER is not enough on its own. Both are emitted only by
     // `/api/log-workout` — `ledger_seal` at index.js:3258, 3261 and 3423, `session_plans_closeout`
