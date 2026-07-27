@@ -54,9 +54,13 @@ Contradictory positive-write and explicit no-write claims fail closed. Seal evid
 new-seal count but `sheet_written:false`, and skipped closeout evidence without a positive skip
 count, are likewise non-reviewable rather than inferred as successful replays.
 Explicit no-write proof additionally requires `test_mode:true`. A live `/api/log-workout` success
-requires a positive Log or Effort row count paired with a structurally valid append range; the
-range is reduced to an internal presence verdict and is never emitted. Seal mismatch-only count
-fields cannot coexist with a successful seal classification.
+requires at least one positive Log or Effort row count, and **every** positive count must carry its
+own append range naming that tab, spanning exactly that tab's contract columns, and covering exactly
+that many rows — one range-backed tab never substantiates the other's count. The expected column
+width is derived from `config/columns.js` (`Log_Cleaned` A:L, `Effort` A:I), so a schema migration
+cannot silently widen what counts as W3 evidence. The range itself is reduced to an internal
+presence verdict and is never emitted. Seal mismatch-only count fields cannot coexist with a
+successful seal classification.
 
 `complete` means every included turn is reviewable and no marker record was rejected. `partial`
 means at least one record exists but a turn is missing, ambiguous, rejected, unbound, withheld,
