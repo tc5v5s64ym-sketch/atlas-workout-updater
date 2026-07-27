@@ -24,7 +24,6 @@ const {
   MAX_WRITES_PER_PAIRING,
   PROOF_KEYS,
   PROOF_PROJECTIONS,
-  isWellFormedTurnId,
 } = require('./turnCorrelation');
 const { STAGES, STAGE_STATUSES } = require('./interactionTrace');
 
@@ -97,9 +96,11 @@ const CLOSEOUT_STATES = new Set([
   'tab_missing',
   'written',
 ]);
+const TRACE_INTENT_TYPES = new Set(['set', 'block', 'plan', 'coach_chat', 'coach_ask']);
+const TRACE_SOURCES = new Set(['coach_message', 'coach_chat', 'coach_ask']);
 const SAFE_STATE_TOKEN = /^[a-z][a-z0-9_]{0,63}$/;
-const A1_RANGE_RE = /^(?:'[^'\r\n]{1,64}'|[A-Za-z0-9_ -]{1,64})![A-Z]{1,3}[1-9]\d{0,6}:[A-Z]{1,3}[1-9]\d{0,6}$/;
 const ISO_8601 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/;
+const CANONICAL_TURN_ID_RE = /^turn:(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)_([0-9]{1,6})_([a-z0-9]{1,6})$/;
 const PAIRING_TOKEN_RE = /pair:[a-f0-9]{32}/;
 const FINGERPRINT_RE = /(?:sha256:)?[a-f0-9]{64}/i;
 const PLAN_VERSION_RE = /^pv_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -116,13 +117,24 @@ function _isIso8601(value) {
   return _isBoundedString(value, 40) && ISO_8601.test(value) && !Number.isNaN(Date.parse(value));
 }
 
+function _isCanonicalTurnId(value) {
+  if (typeof value !== 'string' || value.length > 128) return false;
+  const match = CANONICAL_TURN_ID_RE.exec(value);
+  if (!match) return false;
+  const sequence = Number(match[2]);
+  return sequence >= 0
+    && sequence < 1_000_000
+    && !Number.isNaN(Date.parse(match[1]))
+    && new Date(match[1]).toISOString() === match[1];
+}
+
 function _containsCapability(value) {
   return typeof value === 'string' && (PAIRING_TOKEN_RE.test(value) || FINGERPRINT_RE.test(value));
 }
 
 function _sanitizeTrace(record) {
   if (!_isPlainObject(record)
-    || !isWellFormedTurnId(record.turn_id)
+    || !_isCanonicalTurnId(record.turn_id)
     || _containsCapability(record.turn_id)) return null;
   if (!_isIso8601(record.started_at) || typeof record.valid !== 'boolean') return null;
   if (!Array.isArray(record.stages) || record.stages.length > STAGES.length) return null;
@@ -155,12 +167,12 @@ function _sanitizeTrace(record) {
 
   const intentType = record.intent_type === null || record.intent_type === undefined
     ? null
-    : (_isBoundedString(record.intent_type, 64) && !_containsCapability(record.intent_type)
+    : (TRACE_INTENT_TYPES.has(record.intent_type)
       ? record.intent_type
       : null);
   const source = record.source === null || record.source === undefined
     ? null
-    : (_isBoundedString(record.source, 64) && !_containsCapability(record.source)
+    : (TRACE_SOURCES.has(record.source)
       ? record.source
       : null);
 
@@ -190,7 +202,7 @@ function _validProofValue(key, value) {
 function _sanitizeProof(record) {
   if (!_isPlainObject(record)
     || record.schema_version !== 1
-    || !isWellFormedTurnId(record.turn_id)
+    || !_isCanonicalTurnId(record.turn_id)
     || _containsCapability(record.turn_id)) return null;
   if (record.session_id !== null
     && (!_isBoundedString(record.session_id, MAX_SESSION_ID_LENGTH) || _containsCapability(record.session_id))) {
@@ -217,19 +229,35 @@ function _sanitizeProof(record) {
     if (!_validProofValue(key, value)) return null;
     proof[key] = value;
   }
-  const hasSafeRange = (...keys) => keys.some((key) => {
+  const hasBoundAppendRange = (keys, expectedTab, expectedLastColumn, expectedRows) => keys.some((key) => {
     if (!Object.prototype.hasOwnProperty.call(record.proof, key)) return false;
     const value = record.proof[key];
-    return typeof value === 'string'
-      && value.length <= MAX_ARTIFACT_STRING_LENGTH
-      && A1_RANGE_RE.test(value)
-      && !_containsCapability(value);
+    if (typeof value !== 'string'
+      || value.length > MAX_ARTIFACT_STRING_LENGTH
+      || !Number.isSafeInteger(expectedRows)
+      || expectedRows <= 0
+      || _containsCapability(value)) return false;
+    const match = new RegExp(`^${expectedTab}!A([1-9]\\d{0,6}):${expectedLastColumn}([1-9]\\d{0,6})$`).exec(value);
+    if (!match) return false;
+    const firstRow = Number(match[1]);
+    const lastRow = Number(match[2]);
+    return lastRow >= firstRow && (lastRow - firstRow + 1) === expectedRows;
   });
   // Range values are intentionally never emitted. These fixed booleans let the consumer enforce
   // W3's proof tuple without reflecting a tab/range string from the untrusted log stream.
   const rangeEvidence = {
-    log: hasSafeRange('logAppendedRange', 'log_appended_range'),
-    effort: hasSafeRange('effortAppendedRange', 'effort_appended_range'),
+    log: hasBoundAppendRange(
+      ['logAppendedRange', 'log_appended_range'],
+      'Log_Cleaned',
+      'L',
+      proof.log_rows_written,
+    ),
+    effort: hasBoundAppendRange(
+      ['effortAppendedRange', 'effort_appended_range'],
+      'Effort',
+      'K',
+      proof.effort_rows_written,
+    ),
   };
 
   if (!Array.isArray(record.withheld_evidence)) return null;
@@ -317,8 +345,8 @@ function parseTurnWriteLines(text) {
       continue;
     }
 
-    const turnId = _isPlainObject(source) && isWellFormedTurnId(source.turn_id)
-      ? String(source.turn_id).trim()
+    const turnId = _isPlainObject(source) && _isCanonicalTurnId(source.turn_id)
+      ? source.turn_id
       : null;
     const sanitized = marker === INTERACTION_TRACE_MARKER
       ? _sanitizeTrace(source)
@@ -451,18 +479,19 @@ function _proofState(proof, seal, closeout, route, rangeEvidence = {}) {
     || (typeof proof.rows_appended === 'number' && proof.rows_appended > 0)
     || logRowsWritten
     || effortRowsWritten;
-  const logWorkoutMainWrite = claimsSuccess && rangeBackedLogWorkoutWrite;
-  const positiveWrite = (isLogWorkout ? logWorkoutMainWrite : genericMainWrite)
+  const mainWrite = claimsSuccess && (isLogWorkout ? rangeBackedLogWorkoutWrite : genericMainWrite);
+  const positiveWrite = mainWrite
     || seal.new_seal_write
     || closeout.state === 'written';
 
   // `/api/log-workout` has one live main-write success shape. A non-success state cannot use
   // generic row/sheet signals to bypass its range-backed W3 tuple, and an explicit false write
   // flag cannot coexist with a claimed range-backed success.
-  if (isLogWorkout
-    && proof.test_mode !== true
+  if (proof.test_mode !== true
     && ((!claimsSuccess && genericMainWrite)
-      || (claimsSuccess && proof.sheet_written === false && rangeBackedLogWorkoutWrite))) {
+      || (claimsSuccess
+        && proof.sheet_written === false
+        && (isLogWorkout ? rangeBackedLogWorkoutWrite : genericMainWrite)))) {
     return 'contradictory';
   }
 

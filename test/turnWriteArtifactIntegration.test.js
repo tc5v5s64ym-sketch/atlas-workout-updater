@@ -11,7 +11,6 @@ const {
   TURN_WRITE_PROOF_MARKER,
 } = require('../services/turnWriteArtifact');
 
-const TURN_ID = 'turn:2026-07-26T09:00:00.000Z_1_abcdef';
 const SESSION_ID = 'session-artifact-integration';
 const INITIATION = 'init:11111111-1111-4111-8111-111111111111';
 const ORIGINAL_ENV = process.env.ATLAS_INTERACTION_TRACE;
@@ -27,6 +26,7 @@ test('real trace and correlation emitters produce one leakage-safe reviewable jo
   process.env.ATLAS_INTERACTION_TRACE = 'shadow';
   traceShadow._resetForTesting();
   correlation._resetForTesting();
+  const turnId = traceShadow.mintTurnId(new Date('2026-07-26T09:00:00.000Z'));
 
   const emitted = [];
   const originalLog = console.log;
@@ -40,7 +40,7 @@ test('real trace and correlation emitters produce one leakage-safe reviewable jo
   let pairingToken;
   try {
     const turn = traceShadow.beginTurn({
-      turnId: TURN_ID,
+      turnId,
       asOf: '2026-07-26T09:00:00.000Z',
       intentType: 'set',
       source: 'coach_message',
@@ -54,7 +54,7 @@ test('real trace and correlation emitters produce one leakage-safe reviewable jo
     turn.stage('rendered_output', 'ok');
     assert.equal(turn.finish().valid, true);
 
-    correlation.issueTurn(TURN_ID, SESSION_ID, { nowMs: 1_000 });
+    correlation.issueTurn(turnId, SESSION_ID, { nowMs: 1_000 });
     const previewPayload = {
       session_id: SESSION_ID,
       date: '2026-07-26',
@@ -62,7 +62,7 @@ test('real trace and correlation emitters produce one leakage-safe reviewable jo
       write_id: 'write-artifact-1',
       log_rows: [['2026-07-26', SESSION_ID, 'Bench Press', 225, 5, 2]],
       correlation: {
-        turn_id: TURN_ID,
+        turn_id: turnId,
         initiation_nonce: INITIATION,
         retire_initiation_nonces: [],
       },
@@ -95,7 +95,7 @@ test('real trace and correlation emitters produce one leakage-safe reviewable jo
       write_id: 'write-artifact-1',
       log_rows: [['2026-07-26', SESSION_ID, 'Bench Press', 225, 5, 2]],
       correlation: {
-        turn_id: TURN_ID,
+        turn_id: turnId,
         pairing_token: pairingToken,
         initiation_nonce: INITIATION,
       },
@@ -134,7 +134,7 @@ test('real trace and correlation emitters produce one leakage-safe reviewable jo
   const artifact = buildTurnWriteArtifact(emitted.join('\n'));
   assert.equal(artifact.status, 'complete');
   assert.equal(artifact.summary.reviewable_turns, 1);
-  assert.equal(artifact.turns[0].turn_id, TURN_ID);
+  assert.equal(artifact.turns[0].turn_id, turnId);
   assert.equal(artifact.turns[0].previews.length, 1);
   assert.equal(artifact.turns[0].writes.length, 1);
   assert.equal(artifact.turns[0].writes[0].authorization, 'preview_payload_bound');
