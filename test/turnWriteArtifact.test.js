@@ -738,6 +738,180 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
     assert.ok(!JSON.stringify(foreignReason).includes('not_an_emitter_reason'));
   });
 
+  it('requires the complete producer tuple for every positive seal state', () => {
+    // Same absent-means-unknown rule as verified_no_new_seal, applied to its siblings. The real
+    // all_sealed replay carries no_write_confirmed:true; the real fresh stamp carries
+    // no_write_confirmed:false. A partial tuple substantiates neither.
+    const partialReplay = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, proof({
+        proof: {
+          test_mode: false,
+          sheet_write: 'success',
+          logAppendedRange: 'Log_Cleaned!A2:L4',
+          log_rows_written: 3,
+          closeout_fully_verified: true,
+          ledger_seal_sheet_written: false,
+          ledger_seal_sealed: 0,
+          ledger_seal_already_sealed: 4,
+          ledger_seal_sealed_ok: true,
+        },
+      })),
+    ].join('\n'));
+
+    assert.notEqual(partialReplay.turns[0].writes[0].seal.state, 'already_sealed');
+    assert.equal(partialReplay.turns[0].writes[0].seal.successfully_sealed, false);
+    assert.equal(partialReplay.status, 'partial');
+
+    const partialStamp = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, proof({
+        proof: {
+          test_mode: false,
+          sheet_write: 'success',
+          logAppendedRange: 'Log_Cleaned!A2:L4',
+          log_rows_written: 3,
+          closeout_fully_verified: true,
+          ledger_seal_sheet_written: true,
+          ledger_seal_sealed: 4,
+          ledger_seal_already_sealed: 0,
+          ledger_seal_sealed_ok: true,
+        },
+      })),
+    ].join('\n'));
+
+    assert.notEqual(partialStamp.turns[0].writes[0].seal.state, 'sealed');
+    assert.equal(partialStamp.status, 'partial');
+
+    // Both complete producer shapes stay exactly as classified.
+    const completeReplay = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, proof({
+        proof: {
+          test_mode: false,
+          sheet_write: 'success',
+          logAppendedRange: 'Log_Cleaned!A2:L4',
+          log_rows_written: 3,
+          closeout_fully_verified: true,
+          ledger_seal_sheet_written: false,
+          ledger_seal_no_write_confirmed: true,
+          ledger_seal_sealed: 0,
+          ledger_seal_already_sealed: 4,
+          ledger_seal_sealed_ok: true,
+          ledger_seal_reason: 'all_sealed',
+        },
+      })),
+    ].join('\n'));
+    assert.equal(completeReplay.turns[0].writes[0].seal.state, 'already_sealed');
+    assert.equal(completeReplay.status, 'complete');
+
+    const completeStamp = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, proof({
+        proof: {
+          test_mode: false,
+          sheet_write: 'success',
+          logAppendedRange: 'Log_Cleaned!A2:L4',
+          log_rows_written: 3,
+          closeout_fully_verified: true,
+          ledger_seal_sheet_written: true,
+          ledger_seal_no_write_confirmed: false,
+          ledger_seal_sealed: 4,
+          ledger_seal_already_sealed: 0,
+          ledger_seal_sealed_ok: true,
+        },
+      })),
+    ].join('\n'));
+    assert.equal(completeStamp.turns[0].writes[0].seal.state, 'sealed');
+    assert.equal(completeStamp.status, 'complete');
+  });
+
+  it('requires the route verdict whenever seal or closeout evidence is present', () => {
+    // Both emitting branches attach closeout_fully_verified whenever they attach ledger_seal, so
+    // its absence beside seal/closeout evidence is unknown, not an implicit positive verdict.
+    const noVerdict = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, proof({
+        proof: {
+          test_mode: false,
+          sheet_write: 'success',
+          logAppendedRange: 'Log_Cleaned!A2:L4',
+          log_rows_written: 3,
+          ledger_seal_sheet_written: true,
+          ledger_seal_no_write_confirmed: false,
+          ledger_seal_sealed: 4,
+          ledger_seal_already_sealed: 0,
+          ledger_seal_sealed_ok: true,
+        },
+      })),
+    ].join('\n'));
+    const write = noVerdict.turns[0].writes[0];
+
+    assert.equal(write.reviewable, false);
+    assert.ok(write.issues.includes('closeout_verdict_missing'));
+    assert.equal(noVerdict.status, 'partial');
+
+    // A plain main write with NO seal/closeout evidence does not need the verdict at all.
+    const plain = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, proof()),
+    ].join('\n'));
+    assert.equal(plain.status, 'complete');
+  });
+
+  it('rejects a written closeout whose counts contradict the producer invariant', () => {
+    // writeSessionCloseout appends exactly one event and _envelope always emits both counts, so a
+    // written result must carry skipped:0. The skipped branch already enforces the converse.
+    for (const counts of [
+      { session_plans_closeout_written: 1, session_plans_closeout_skipped: 1 },
+      { session_plans_closeout_written: 1 },
+    ]) {
+      const artifact = buildTurnWriteArtifact([
+        line(INTERACTION_TRACE_MARKER, trace()),
+        line(TURN_WRITE_PROOF_MARKER, proof({
+          proof: {
+            test_mode: false,
+            sheet_write: 'success',
+            logAppendedRange: 'Log_Cleaned!A2:L4',
+            log_rows_written: 3,
+            closeout_fully_verified: true,
+            session_plans_closeout_status: 'written',
+            session_plans_closeout_captured: true,
+            session_plans_closeout_plan_version: 'pv_7c9e6679-7425-40de-944b-e07fc1f90ae7',
+            ...counts,
+          },
+        })),
+      ].join('\n'));
+      const write = artifact.turns[0].writes[0];
+
+      assert.notEqual(write.closeout.state, 'written', JSON.stringify(counts));
+      assert.ok(write.issues.includes('closeout_not_reviewable'), JSON.stringify(counts));
+      assert.equal(artifact.status, 'partial', JSON.stringify(counts));
+    }
+  });
+
+  it('never reflects an arbitrary CLI source label', () => {
+    const artifact = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, proof()),
+    ].join('\n'));
+    const unsafeSource = 'Bench Press 225 x 5 @ RIR 2.log';
+
+    assert.ok(
+      !formatTurnWriteArtifact(artifact, { source: unsafeSource }).includes('Bench Press'),
+      'workout prose in a filename must not be echoed',
+    );
+    assert.ok(
+      !formatTurnWriteArtifact(artifact, { source: 'Log_Cleaned!A2:L4.log' }).includes('Log_Cleaned!A2:L4'),
+      'a Sheet range in a filename must not be echoed',
+    );
+    // An opaque source label is still shown, and directory components are not published.
+    assert.ok(formatTurnWriteArtifact(artifact, { source: 'stdin' }).includes('stdin'));
+    const fromPath = formatTurnWriteArtifact(artifact, { source: '/srv/private-deploy/atlas.log' });
+    assert.ok(fromPath.includes('atlas.log'));
+    assert.ok(!fromPath.includes('private-deploy'), 'directory components are not published');
+  });
+
   it('treats an incomplete successful-seal tuple as indeterminate', () => {
     // Every real no-new-seal shape carries the complete tuple: sheet_written:false,
     // no_write_confirmed:true, sealed:0. A lone sealed_ok:true substantiates nothing.
