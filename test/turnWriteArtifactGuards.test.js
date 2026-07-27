@@ -357,6 +357,25 @@ describe('turnWriteArtifact guards — withheld evidence', () => {
 });
 
 describe('turnWriteArtifact guards — seal presentation', () => {
+  it('rejects a session id the producer could never have stored', () => {
+    // `buildWriteProofRecord` stores the TRIMMED id and turns a whitespace-only value into `null`
+    // (turnCorrelation.js:942), which this consumer reads as `absent` and reports via
+    // `session_missing`. So a padded or blank id is producer-impossible — and a length-only check
+    // accepted `'   '`, reported it as `present`, and produced a complete artifact with no issues,
+    // bypassing the very issue the null case exists to raise.
+    for (const bad of ['   ', ' session-a', 'session-a ', '\t']) {
+      assertRejected(build(trace(), proofRecord({ session_id: bad })), `untrimmed id: ${JSON.stringify(bad)}`);
+    }
+
+    // CONTROL — a null id is genuinely producible and must be reported, not rejected.
+    const missing = build(trace(), proofRecord({ session_id: null }));
+    assert.equal(missing.summary.rejected_records, 0);
+    assert.ok(missing.turns[0].issues.includes('session_missing'));
+
+    // CONTROL — an ordinary trimmed id is accepted.
+    assertControlAccepted(build(trace(), proofRecord()));
+  });
+
   it('never publishes the session id, which no contract constrains', () => {
     // `OPAQUE_SESSION_ID` proves the value has no whitespace, `!` or `:` — it does NOT prove the
     // value is an identifier. The routes and client require only a bounded trimmed string

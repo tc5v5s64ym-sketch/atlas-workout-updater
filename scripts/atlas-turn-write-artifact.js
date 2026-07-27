@@ -34,7 +34,11 @@ function main(argv) {
     try {
       text = fs.readFileSync(fileArg, 'utf8');
     } catch (error) {
-      process.stderr.write(`atlas:turn-write-artifact — cannot read ${fileArg}: ${error.message}\n`);
+      // Neither the operator-supplied path nor Node's message is echoed: `error.message` repeats
+      // the path verbatim, so printing it would reinstate on the error path exactly the unvalidated
+      // label that was just removed from the success path. A filename can carry private directory
+      // names or compact workout prose, and there is no contract to validate it against.
+      process.stderr.write(`atlas:turn-write-artifact — cannot read the supplied artifact file (${error.code || 'read failure'})\n`);
       return 2;
     }
   } else {

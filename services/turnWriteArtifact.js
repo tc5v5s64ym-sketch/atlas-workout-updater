@@ -365,7 +365,16 @@ function _sanitizeProof(record) {
   let sessionId = record.session_id;
   let sessionIdentity = 'absent';
   if (sessionId !== null) {
-    if (!_isBoundedString(sessionId, MAX_SESSION_ID_LENGTH) || _containsCapability(sessionId)) return null;
+    // Bounded and capability-free, AND already trimmed. The producer stores
+    // `_isNonEmptyString(p.sessionId) ? String(p.sessionId).trim() : null` (turnCorrelation.js:942),
+    // so it never emits a padded id and never emits a whitespace-only one — that becomes `null`,
+    // which this consumer reads as `absent` and reports via `session_missing`. Accepting `'   '`
+    // here let malformed log input present a producer-impossible id as `present` and sail through
+    // as a complete artifact, bypassing the very issue the null case exists to raise.
+    if (!_isBoundedString(sessionId, MAX_SESSION_ID_LENGTH)
+      || _containsCapability(sessionId)
+      || sessionId !== sessionId.trim()
+      || sessionId.trim().length === 0) return null;
     sessionIdentity = 'present';
   }
   if (!_isBoundedString(record.route, 64) || !WRITE_ROUTES.has(record.route)) return null;

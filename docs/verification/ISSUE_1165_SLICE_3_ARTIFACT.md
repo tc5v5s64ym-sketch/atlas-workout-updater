@@ -192,20 +192,29 @@ also **required** whenever seal or closeout evidence is present: both emitting b
 whenever they attach `ledger_seal`, so its absence there is unknown evidence, not an implicit
 positive verdict. A plain main write carries no such evidence and needs no verdict.
 
-The CLI's `source` label is a filename the operator chose, so it is free text on the same footing as
-`session_id`: only a bare opaque basename is published, directory components are dropped, and
-anything else is omitted.
+The CLI emits **no `source` label at all**. A filename the operator chose has no identifier
+contract, so a character class over it proves only the absence of certain punctuation — never that
+the value is safe: a compact basename such as `BenchPress225x5RIR2.jsonl` passed the old predicate
+and was echoed into both the JSON and the human output. The read-failure path is silent about it
+too, printing only an error code, because Node's `error.message` repeats the path verbatim.
 `closeoutVerification` (`index.js`) returns false for a failed event capture and for a planned
 closeout whose ledger is missing, even when the seal reports `sealed_ok:true` and the Session_Plans
 event was written; a present `false` therefore makes the write non-reviewable.
 
-`session_id` is free text as far as any contract goes — neither the server nor the client
-constrains it beyond "nonempty, bounded, trimmed" — so it can carry workout prose or a Sheet range.
-There is no producer shape to validate against, so the artifact publishes only ids that are already
-opaque identifiers and marks anything else `unpublishable`: the record and its join are retained,
-the raw value never reaches machine or human output, and the unusable identity makes the turn
-non-reviewable. `unpublishable` stays distinct from `absent` — an identity that exists but cannot be
-shown is not one that was never recorded.
+`session_id` is **never published**. It is free text as far as any contract goes — neither the
+server nor the client constrains it beyond "nonempty, bounded, trimmed" — so it can carry workout
+prose or a Sheet range, and no validator can establish an opacity the producer never imposed. An
+earlier version published ids matching an "opaque identifier" class and marked the rest
+`unpublishable`; that state is gone, because gating a value nobody publishes was pure loss — it
+discarded producer-valid ids such as `Bench Press 225`, marked genuine turns non-reviewable, and
+disabled the cross-session comparison the value is still kept for.
+
+Every bounded, capability-free, **already-trimmed** id is now retained internally and reported as
+`session_identity: 'present'`; `turn_id`, which is a genuinely validated bounded shape, is what
+locates the turn. The trim requirement is itself a producer fact: `buildWriteProofRecord` stores the
+trimmed id and turns a whitespace-only value into `null` (turnCorrelation.js:942), so a padded or
+blank id is producer-impossible and must not be able to present itself as `present` and bypass
+`session_missing`.
 
 Nullability is defined **per proof key**, never globally: a blanket allowance would bypass every
 field-specific shape check and admit values no producer emits (a present-but-null `test_mode` is
