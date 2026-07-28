@@ -1894,10 +1894,21 @@ function startPlannedSession(intent) {
 // starts the workout, and fires the non-blocking /accept sidecar POST. The workout
 // starts regardless of the flag/sidecar; memory language is shown only on
 // captured===true. `_acceptInFlight` guards a double-tap from minting a 2nd revision.
+//
+// #1165 — BOUNDED sidecar wait. runAcceptance awaits postAccept before it resolves, and
+// the mid-session gate's held-set resume runs only on that resolution, so a sidecar that
+// never settles stranded the athlete's set forever behind a blank UI (reproduced in
+// tests/e2e/gate/acceptance-sidecar-stall.spec.js). api() sets no timeout by design, so
+// the bound lives HERE, on this one call — not as a global api() timeout.
+const ACCEPT_SIDECAR_TIMEOUT_MS = 10000;
 let _acceptInFlight = false;
 async function acceptDisplayedPlan(rec) {
   if (_acceptInFlight) return { started: false, ignored: true, message: null };
   _acceptInFlight = true;
+  // Set when the bound below fires, so the caller can say the plan record is UNCONFIRMED
+  // instead of showing nothing. It never upgrades a claim: runAcceptance treats the abort
+  // as any other sidecar failure, so captured stays false and no persistence is asserted.
+  let sidecarTimedOut = false;
   try {
     const exercises = ((rec && rec.exercises) || []).map(normalizePlanExercise).filter(ex => ex.name);
     const sessionDate = getLocalDateString();
@@ -1906,7 +1917,7 @@ async function acceptDisplayedPlan(rec) {
     const sessionId = existingId || generateSessionId(sessionDate);
     const cryptoObj = (typeof window !== 'undefined' && window.crypto) ? window.crypto
       : (typeof crypto !== 'undefined' ? crypto : null);
-    return await runAcceptance({ label: rec && rec.label, id: rec && rec.id, exercises }, {
+    const accepted = await runAcceptance({ label: rec && rec.label, id: rec && rec.id, exercises }, {
       crypto: cryptoObj,
       guard: {},
       sessionId,
@@ -1926,9 +1937,22 @@ async function acceptDisplayedPlan(rec) {
         const first = plan.exercises[0];
         if (first) startLift(first.name, first.liftCode, first.weight, first.reps, first.sets || 3);
       },
-      postAccept: (payload) => api('/api/session-plans/accept', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
-      }),
+      // #1165 — the ONE awaited sidecar call, bounded so acceptance always settles.
+      // On timeout the request is aborted: api() never retries an AbortError, and
+      // runAcceptance's catch keeps the accepted snapshot with captured=false — so a
+      // stall degrades to "started, unconfirmed", never a stranded set and never a
+      // persistence claim. No write path is reachable from here.
+      postAccept: (payload) => {
+        const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        const timer = controller
+          ? setTimeout(() => { sidecarTimedOut = true; controller.abort(); }, ACCEPT_SIDECAR_TIMEOUT_MS)
+          : null;
+        const request = api('/api/session-plans/accept', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+          ...(controller ? { signal: controller.signal } : {}),
+        });
+        return timer ? request.finally(() => clearTimeout(timer)) : request;
+      },
       // F10B — durably checkpoint the accepted plan as the set-level ledger v1 (design
       // amendment A2). Non-blocking sidecar; dry-run until F10D. Same additive shape as
       // postAccept — never the preview→approve→write path.
@@ -1936,6 +1960,7 @@ async function acceptDisplayedPlan(rec) {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
       }),
     });
+    return sidecarTimedOut ? { ...accepted, sidecarTimedOut: true } : accepted;
   } finally {
     _acceptInFlight = false;
   }
@@ -6828,6 +6853,13 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
           // Accepted: release the held set back through the one submit path, where
           // the now-accepted session passes the gate and logs normally.
           if (typeof window.atlasResumeBlockedLog === 'function') window.atlasResumeBlockedLog();
+          // #1165 — a sidecar that hit its bound leaves the plan record UNCONFIRMED. Say
+          // so, quietly and without claiming persistence: the set itself is logging
+          // normally (the resume above), and nothing here writes. Set AFTER the resume
+          // because the resumed submit clears the status line on its way in.
+          if (result.sidecarTimedOut) {
+            setStatus(loggerStatus, "Atlas couldn't confirm the plan record just now — your set is still being logged.", 'warn');
+          }
         } else if (result && result.ignored) {
           // A concurrent acceptance is already in flight; its resume replays the
           // newest stash (newest message wins — never a duplicate). Leave it be.
