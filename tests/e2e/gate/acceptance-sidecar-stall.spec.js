@@ -180,3 +180,51 @@ test('SS-4: the sidecar NEVER settles — the bound fires, the held set is never
     expect(acceptedEvents(await srv.state())).toHaveLength(0);
   } finally { srv.stop(); }
 });
+
+// =================================================================================
+// Advisory P1 (PR #1179): a newer submit during the sidecar wait advances
+// previewRequestSeq, so atlasResumeBlockedLog DELIBERATELY drops the stale stash —
+// the newest message wins and commits itself. The timeout line must not then vouch
+// for the dropped set: an athlete who reads "your set is still being logged" would
+// trust a set that was never logged and never retype it.
+test('SS-5: a superseded stash is dropped — the timeout line never vouches for a set that was not resumed', async ({ page }) => {
+  test.setTimeout(180000);
+  const srv = await bootSandbox();
+  try {
+    const calls = [];
+    page.on('request', r => {
+      if (r.url().includes('/api/')) calls.push(`${r.method()} ${new URL(r.url()).pathname}`);
+    });
+    await page.addInitScript(key => { localStorage.setItem('atlas_api_key', key); }, GATE_KEY);
+    await page.goto(`${srv.base}/app/`);
+    await page.waitForLoadState('networkidle');
+
+    await page.locator('#workout-text').fill('What should I do today?');
+    await page.locator('#preview-btn').click();
+    await expect(page.locator('#thread-messages .chat-bubble-atlas').first())
+      .toContainText("Today's read", { timeout: 30000 });
+
+    await page.route('**/api/session-plans/accept', () => {});   // never settles
+    calls.length = 0;
+    await page.locator('#workout-text').fill(HELD_SET);
+    await page.locator('#preview-btn').click();
+
+    // While the bound is still running, the athlete sends a SECOND set. It passes the
+    // now-accepted gate and commits itself, advancing previewRequestSeq past the stash.
+    await expect.poll(() => calls.filter(c => c === 'POST /api/session-plans/accept').length,
+      { timeout: 20000 }).toBe(1);
+    await page.locator('#workout-text').fill('Overhead Press 115 x 6 @2');
+    await page.locator('#preview-btn').click();
+    await expect.poll(() => page.evaluate(() => window.getSessionLog().length), { timeout: 30000 }).toBe(1);
+
+    // Let the bound fire and settle.
+    await page.waitForTimeout(APP_BOUND_MS + 5000);
+
+    // The newer set committed; the superseded stash was dropped by design (never a
+    // duplicate) — and exactly one set is in the buffer, not two.
+    expect(await page.evaluate(() => window.getSessionLog().length)).toBe(1);
+    // The critical assertion: no line claims the dropped set is still being logged.
+    const status = await page.locator('#logger-status').innerText().catch(() => '');
+    expect(status).not.toMatch(/still being logged/i);
+  } finally { srv.stop(); }
+});

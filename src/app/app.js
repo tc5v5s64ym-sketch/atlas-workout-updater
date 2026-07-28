@@ -4717,24 +4717,30 @@ function unacceptedPlanGateRec(logRows) {
 // (or honestly degrades — the sidecar is non-blocking): releases the held
 // message back through the ONE submit path, where the now-accepted session
 // passes the gate and the set logs into the plan normally.
+//
+// Returns TRUE only when the stash was actually replayed into the submit path. The
+// caller must never narrate the held set's fate on a false return (advisory P1,
+// PR #1179): every early exit below means this text was deliberately NOT resumed,
+// and a "still being logged" line would then vouch for a set that was dropped.
 window.atlasResumeBlockedLog = () => {
   const text = blockedLogText;
   blockedLogText = null;
-  if (!text || !workoutTextInput) return;
+  if (!text || !workoutTextInput) return false;
   // CLIENT-3 discipline: if ANY newer submit began after this stash was written
   // (e.g. the athlete's next message was still in flight when they tapped Start —
   // it passes the now-accepted gate and commits ITSELF), the stash is stale and
   // replaying it would DUPLICATE a set. The newest message always wins; a
   // dropped stale stash costs at most a retype, never a duplicate row.
-  if (previewRequestSeq !== blockedLogSeq) return;
+  if (previewRequestSeq !== blockedLogSeq) return false;
   workoutTextInput.value = text;
   // The REAL submit gesture (a bare synthetic 'submit' event does not run the
   // form's submission machinery): click the submit button, exactly as the
   // athlete would, so the held message re-enters the one submit path.
   const previewBtn = document.getElementById('preview-btn');
   const form = document.getElementById('logger-form');
-  if (previewBtn) previewBtn.click();
-  else if (form && typeof form.requestSubmit === 'function') form.requestSubmit();
+  if (previewBtn) { previewBtn.click(); return true; }
+  if (form && typeof form.requestSubmit === 'function') { form.requestSubmit(); return true; }
+  return false;
 };
 
 // Hand the just-previewed sets to the conversation layer (coach-conversation.js)
@@ -6852,12 +6858,16 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
         if (result && result.started) {
           // Accepted: release the held set back through the one submit path, where
           // the now-accepted session passes the gate and logs normally.
-          if (typeof window.atlasResumeBlockedLog === 'function') window.atlasResumeBlockedLog();
+          const resumed = typeof window.atlasResumeBlockedLog === 'function'
+            && window.atlasResumeBlockedLog() === true;
           // #1165 — a sidecar that hit its bound leaves the plan record UNCONFIRMED. Say
           // so, quietly and without claiming persistence: the set itself is logging
           // normally (the resume above), and nothing here writes. Set AFTER the resume
           // because the resumed submit clears the status line on its way in.
-          if (result.sidecarTimedOut) {
+          // Gated on `resumed` (advisory P1): a superseded stash was deliberately NOT
+          // replayed, and this line must never vouch for a set that was dropped — the
+          // newer submit that superseded it drives its own status.
+          if (resumed && result.sidecarTimedOut) {
             setStatus(loggerStatus, "Atlas couldn't confirm the plan record just now — your set is still being logged.", 'warn');
           }
         } else if (result && result.ignored) {
