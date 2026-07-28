@@ -88,6 +88,8 @@ The bad version hides the boundary behind "somewhere", states no evidence, and p
 
 Reuse this template for a failure report, an investigation note, or a handoff. Delete a field only when it does not apply, and say why.
 
+The template lists the fields to fill. It does not set the order you present them in. When you report a failure, order the five failure fields as rule 11 requires: expected behaviour, observed behaviour, evidence, exact failure boundary, next permitted action. Keep each field name exactly as written below.
+
 ```text
 Observed fact:
 Supported conclusion:
