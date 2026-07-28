@@ -49,8 +49,27 @@ test('boundary wiring: the resume uses the REAL submit gesture (a bare synthetic
   assert.match(resume, /blockedLogText = null;/, 'the stash is one-shot');
   // A newer in-flight submit self-commits after acceptance — replaying a stale
   // stash would DUPLICATE a set. The newest message always wins.
-  assert.match(resume, /if \(previewRequestSeq !== blockedLogSeq\) return;/,
+  assert.match(resume, /if \(previewRequestSeq !== blockedLogSeq\) return false;/,
     'a superseded stash is dropped, never replayed into a duplicate');
+  // #1165 / advisory P1 (PR #1179): the resume REPORTS whether it replayed, and every
+  // early exit returns false — so a caller can never narrate the held set's fate on a
+  // drop ("your set is still being logged" for a set that was deliberately not resumed).
+  assert.match(resume, /if \(!text \|\| !workoutTextInput\) return false;/,
+    'an empty/unavailable stash reports "not resumed"');
+  assert.match(resume, /previewBtn\.click\(\); return true;/,
+    'an actual replay reports "resumed"');
+});
+
+test('boundary wiring: the sidecar-timeout notice is gated on an ACTUAL resume', () => {
+  const gateStart = appSrc.indexOf('const gateRec = unacceptedPlanGateRec(logRows);');
+  const branch = appSrc.slice(gateStart, appSrc.indexOf('Substitution classification:', gateStart));
+  // The bounded sidecar (app.js ACCEPT_SIDECAR_TIMEOUT_MS) can degrade acceptance to
+  // "started, unconfirmed". The notice for that MUST NOT fire when the stash was
+  // dropped — it would vouch for a set that never logged.
+  assert.match(branch, /window\.atlasResumeBlockedLog\(\) === true/,
+    'the caller reads the resume verdict rather than assuming it replayed');
+  assert.match(branch, /if \(resumed && result\.sidecarTimedOut\)/,
+    'the timeout notice is shown only when the held set actually resumed');
 });
 
 // ── unacceptedPlanGateRec — behavioral over the real slice ──────────────────────
