@@ -25,10 +25,17 @@ For routine implementation:
 1. `CLAUDE.md`
 2. `docs/ATLAS_V1_EXECUTION_PLAN.md`
 3. `docs/DECISION_KERNEL.md`
-4. `BACKLOG.md` for awareness and deferred discoveries
-5. relevant specs, invariants, tests, and evidence ledgers
+4. `docs/CONTROLLED_TECHNICAL_WRITING.md`
+5. `BACKLOG.md` for awareness and deferred discoveries
+6. relevant specs, invariants, tests, and evidence ledgers
 
 Read `docs/DOCS_INDEX.md` when classifying a document. Read the full Vision/Architecture only when the active card reaches product direction, architecture, or a genuine conflict.
+
+## Writing standard
+
+Every implementation agent reads [`docs/CONTROLLED_TECHNICAL_WRITING.md`](docs/CONTROLLED_TECHNICAL_WRITING.md) and follows it when writing plans, reviews, failure reports, handoffs, implementation summaries, PR bodies, commit messages, and documentation. It is **controlled technical writing inspired by ASD-STE100**; Atlas claims no formal ASD-STE100 compliance.
+
+That document holds the rules. Do not restate them here or in any other file, and do not apply them to Atlas's user-facing coaching voice, which `docs/COACHING_NOTE_VOICE.md` governs. It is a writing standard only: it selects no work and changes no safety, branch, merge, or owner gate.
 
 ## Roles and authority
 

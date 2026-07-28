@@ -82,4 +82,6 @@ Avoid switching mid-PR. When unavoidable, the outgoing builder must leave these 
 6. owner authorization or live evidence still required; and
 7. any real advisory findings still open.
 
+Write those seven items under [`docs/CONTROLLED_TECHNICAL_WRITING.md`](./CONTROLLED_TECHNICAL_WRITING.md), the shared writing standard for both builders. That file holds the rules; this document does not repeat them.
+
 The incoming builder re-verifies all seven items. It never trusts a prose handoff over the diff, tests, and current repository state.

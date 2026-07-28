@@ -7,7 +7,8 @@ Read in this order:
 1. [`CLAUDE.md`](CLAUDE.md) — canonical Atlas operating and safety brief.
 2. [`docs/BUILDER_PORTABILITY.md`](docs/BUILDER_PORTABILITY.md) — compatibility mapping for switching between Claude Code and Codex.
 3. [`docs/ATLAS_V1_EXECUTION_PLAN.md`](docs/ATLAS_V1_EXECUTION_PLAN.md) — sole active work-selection authority.
-4. Relevant specs, invariants, tests, and evidence ledgers.
+4. [`docs/CONTROLLED_TECHNICAL_WRITING.md`](docs/CONTROLLED_TECHNICAL_WRITING.md) — the one writing standard for plans, reviews, failure reports, handoffs, and implementation summaries. Controlled technical writing inspired by ASD-STE100; no formal ASD-STE100 compliance is claimed. The rules live only in that file.
+5. Relevant specs, invariants, tests, and evidence ledgers.
 
 Compatibility rule: wherever `CLAUDE.md` or another active governance document says **Claude** as the implementation or merge operator, read it as **the active implementation agent (Claude Code or Codex)**. Wherever it says **Codex review/comments are advisory**, read that as **independent agent review is advisory**; Codex is not reduced to reviewer status when Codex is the active builder.
 
