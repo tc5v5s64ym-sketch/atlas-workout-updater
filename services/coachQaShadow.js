@@ -136,14 +136,16 @@ function observeQaTurn(req, res, opts) {
       const canonicalBase = (res.locals && Object.prototype.hasOwnProperty.call(res.locals, 'coachCanonicalSession'))
         ? res.locals.coachCanonicalSession
         : null;
-      // D10 (criterion 4) is the ONE permitted post-response overlay: the referent is resolved at
-      // ANSWER time, after the shared base was built, so attaching it needs an enriched COPY.
-      // Only `discussion_referent` may differ from the base — every other field is the base's.
-      // This is a copy, not a rebuild: no workout state is recomputed.
-      const referent = routeReferent && routeReferent.route != null ? routeReferent.route : null;
-      const canonicalSession = (canonicalBase && referent)
-        ? { ...canonicalBase, discussion_referent: referent }
-        : canonicalBase;
+      // Criterion 4 step (a): the referent is now resolved with the FULL context BEFORE the
+      // configured live answer, and the route enriches the shared canonical session with it
+      // there. So there is nothing left to overlay here — the packet embeds exactly the object
+      // the live response used, referent included, and this hook neither attaches nor recomputes
+      // a referent of its own.
+      //
+      // A deliberately read-free path (the model-unavailable early return) never gathers the
+      // Sheet-derived evidence the resolver needs, so its session honestly carries
+      // `discussion_referent: null`. That null is caused by absent evidence, not by ordering.
+      const canonicalSession = canonicalBase;
       // Recommendation-explanation grounding — the route stashes the trusted recommendation
       // snapshot on res.locals for a "why did the recommendation choose X" turn. When present
       // the route GENUINELY assembled a session/recommendation snapshot, consumed the engine's
