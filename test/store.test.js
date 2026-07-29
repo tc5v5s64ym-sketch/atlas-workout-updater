@@ -139,7 +139,7 @@ test('start → substitution pending → applied clears the pending swap', () =>
   assert.equal(store.getActivePlannedSession().exercises[0].name, 'Hack Squat');
 });
 
-test('persist writes a v5 snapshot carrying pendingSubstitution (SESS-2), sessionRevisions (F10B), sessionImplicitRecs (F10C), pendingReplacement + sessionId', () => {
+test('persist writes a v6 snapshot carrying pendingSubstitution (SESS-2), sessionRevisions (F10B), sessionImplicitRecs (F10C), pendingReplacement, pendingSetRevision (#1189) + sessionId', () => {
   store.setActivePlannedSession({ label: 'p', exercises: [{ name: 'Leg Press' }], index: 0 });
   store.getSessionLog().push({ exercise: 'Bench Press', weight: 225, reps: 5, rir: 2 });
   store.setSessionCompleted(['Bench Press']);
@@ -147,9 +147,17 @@ test('persist writes a v5 snapshot carrying pendingSubstitution (SESS-2), sessio
   store.setSessionRevisions([{ plan_item_id: 'pi_1', set_index: 2, plan_version: 2, target_weight: 60, target_reps: 8, target_rir: 2, recommendation_source: 'live_revision' }]);
   store.setSessionImplicitRecs([{ plan_item_id: 'pi_impl_S1_HCURL', planned_lift_code: 'HCURL', target_weight: 30, target_reps: 12, target_rir: 1, target_set_count: 1 }]);
   store.setPendingReplacement({ proposal_id: 'repl:LEGPRESS->BENCHPRESS@x', source: { name: 'Leg Press' }, replacement: { name: 'Bench Press' }, status: 'pending' });
+  // #1189 — the v5 -> v6 bump. setPendingSetRevision clears pendingReplacement (one decision at a
+  // time), so assert the replacement half BEFORE introducing the revision proposal.
+  const snapV5 = (store.persistSessionSnapshot('SESSION-42'),
+    JSON.parse(globalThis.localStorage.getItem('atlas_session_snapshot_v1')));
+  assert.deepEqual(snapV5.pendingReplacement.proposal_id, 'repl:LEGPRESS->BENCHPRESS@x');
+  store.setPendingSetRevision({ kind: 'set_revision', proposal_id: 'setrev:pi_1@abc', plan_item_id: 'pi_1' });
   store.persistSessionSnapshot('SESSION-42');
   const snap = JSON.parse(globalThis.localStorage.getItem('atlas_session_snapshot_v1'));
-  assert.equal(snap.v, 5);
+  assert.equal(snap.pendingSetRevision.proposal_id, 'setrev:pi_1@abc', 'v6 carries the proposal');
+  assert.equal(snap.pendingReplacement, undefined, 'and the two proposal lanes are exclusive');
+  assert.equal(snap.v, 6);
   assert.equal(typeof snap.ts, 'number');
   assert.equal(snap.sessionId, 'SESSION-42');
   assert.deepEqual(snap.pendingSubstitution, { prescribed: 'Leg Press' });
@@ -158,7 +166,7 @@ test('persist writes a v5 snapshot carrying pendingSubstitution (SESS-2), sessio
   assert.equal(snap.sessionRevisions[0].plan_version, 2);
   assert.equal(snap.sessionImplicitRecs.length, 1);
   assert.equal(snap.sessionImplicitRecs[0].planned_lift_code, 'HCURL');
-  assert.equal(snap.pendingReplacement.proposal_id, 'repl:LEGPRESS->BENCHPRESS@x');
+  // (pendingReplacement was asserted on snapV5 above — it is cleared here on purpose.)
 });
 
 test('F10C: implicit recommendations round-trip through the snapshot (reconstructed after reload)', () => {
