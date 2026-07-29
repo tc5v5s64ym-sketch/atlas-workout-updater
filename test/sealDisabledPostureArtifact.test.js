@@ -252,6 +252,24 @@ test('#1165 consumer: a seal with no sealed_ok at all stays unverified', () => {
   assert.equal(write.reviewable, false);
 });
 
+test('#1165 consumer: a live write whose seal claims `test_mode` is not producible, so it stays unverified', () => {
+  // Codex P2 on this PR. `sealCloseout` can emit `reason:'test_mode'`, but nothing can carry it
+  // HERE: the two calls whose result becomes `ledger_seal` pass `{}` (index.js:3257, :3404), and
+  // the one that passes `{test_mode:true}` (:3093) lands in `ledger_seal_preview`, which this
+  // consumer never projects. A live write (`test_mode:false`) whose seal says it was skipped for a
+  // dry run is internally consistent and still impossible — exactly the fabricated shape that must
+  // not reach `verified_empty_dry_run`.
+  const artifact = build(traceRecord(), writeRecord({
+    ledger_seal_sealed_ok: true,
+    ledger_seal_reason: 'test_mode',
+  }));
+  const write = artifact.turns[0].writes[0];
+  assert.notEqual(write.seal.state, 'verified_empty_dry_run');
+  assert.ok(write.issues.includes('seal_not_verified'));
+  assert.equal(write.reviewable, false);
+  assert.notEqual(artifact.status, 'complete');
+});
+
 test('#1165 consumer: a dry run with rows PENDING a stamp stays unverified', () => {
   const artifact = build(traceRecord(), writeRecord({
     ledger_seal_sealed_ok: true,

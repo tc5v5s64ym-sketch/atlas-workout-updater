@@ -144,12 +144,21 @@ const SEAL_REASONS = new Set([
 // `no_ledger:true` and `already_sealed:0`. `write_disabled` is deliberately NOT a member: it names
 // why a run was DRY, not what the ledger read found, so it can never substantiate a live seal.
 const VERIFIED_EMPTY_SEAL_REASONS = new Set(['tab_missing', 'no_rows']);
-// …and the two that name a DRY run. `sealCloseout` emits `write_disabled` when the owner-gated
-// `SESSION_PLAN_SETS_WRITE_ENABLED` is 0 and `test_mode` when the caller asked for a dry run. On
-// its confirmed-empty branches the tab probe and the row read both SUCCEEDED and found nothing to
-// stamp, so the outcome is verified even though the lane never wrote — a distinct state from
+// …and the dry reason a PROJECTED `ledger_seal` can actually carry. On its confirmed-empty
+// branches the tab probe and the row read both SUCCEEDED and found nothing to stamp, so the
+// outcome is verified even though the lane never wrote — a distinct state from
 // `verified_no_new_seal`, which is the same finding proven against a lane that COULD have written.
-const DRY_RUN_SEAL_REASONS = new Set(['write_disabled', 'test_mode']);
+//
+// `test_mode` is deliberately EXCLUDED even though `sealCloseout` can emit it, because no producer
+// can put it here. `sealCloseout` takes `test_mode` from its opts, and the only two calls whose
+// result becomes `ledger_seal` pass `{}` (index.js:3257 duplicate branch, :3404 success path), so
+// their dry reason is always `write_disabled`. The one call that does pass `{test_mode:true}`
+// (:3093) is assigned to `ledger_seal_preview`, which stays on the preview HTTP body and is not in
+// this consumer's projected key set at all. Admitting `test_mode` would therefore accept a tuple
+// that is internally consistent but IMPOSSIBLE — a live write (`test_mode:false`) whose seal claims
+// it was skipped for a dry run — and let it reach `verified_empty_dry_run` and `complete`. That is
+// the fabricated-record class this consumer exists to reject (Codex P2, this PR).
+const DRY_RUN_SEAL_REASONS = new Set(['write_disabled']);
 // Routes whose live success proof is a PER-TAB append: one value per contract column, a positive
 // row count per tab, and the append range Google returned for it. `/api/complete-workout` verifies
 // those exact row counts against the ranges before returning, exactly as `/api/log-workout` does,
