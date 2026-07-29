@@ -141,8 +141,15 @@ const SEAL_REASONS = new Set([
   'seal_error',
 ]);
 // The only two `sealCloseout` outcomes that reach `verified_no_new_seal`; both also carry
-// `no_ledger:true` and `already_sealed:0`.
+// `no_ledger:true` and `already_sealed:0`. `write_disabled` is deliberately NOT a member: it names
+// why a run was DRY, not what the ledger read found, so it can never substantiate a live seal.
 const VERIFIED_EMPTY_SEAL_REASONS = new Set(['tab_missing', 'no_rows']);
+// …and the two that name a DRY run. `sealCloseout` emits `write_disabled` when the owner-gated
+// `SESSION_PLAN_SETS_WRITE_ENABLED` is 0 and `test_mode` when the caller asked for a dry run. On
+// its confirmed-empty branches the tab probe and the row read both SUCCEEDED and found nothing to
+// stamp, so the outcome is verified even though the lane never wrote — a distinct state from
+// `verified_no_new_seal`, which is the same finding proven against a lane that COULD have written.
+const DRY_RUN_SEAL_REASONS = new Set(['write_disabled', 'test_mode']);
 // Routes whose live success proof is a PER-TAB append: one value per contract column, a positive
 // row count per tab, and the append range Google returned for it. `/api/complete-workout` verifies
 // those exact row counts against the ranges before returning, exactly as `/api/log-workout` does,
@@ -716,6 +723,27 @@ function _sealSummary(proof, withheldEvidence) {
     && proof.ledger_seal_no_ledger === true
     && VERIFIED_EMPTY_SEAL_REASONS.has(proof.ledger_seal_reason)) {
     state = 'verified_no_new_seal';
+  }
+  // Verified empty DRY run: the seal lane was owner-disabled (or the caller asked for a dry run)
+  // AND the ledger read succeeded and confirmed nothing to stamp. The producer's COMPLETE dry
+  // tuple is required, exactly as every positive state above requires its own — absent still means
+  // unknown here, so a seal that merely omits `sealed_ok` never reaches this branch.
+  //
+  // `would_seal === 0` is the load-bearing discriminator, and the only field that separates this
+  // from the dry run that found rows genuinely PENDING a stamp
+  // (services/sessionPlanSetsStore.js:321). That one is NOT verified: the rows are unsealed and the
+  // lane declined to seal them. `sealed === null` is required for the same reason — the dry path
+  // never emits a stamp count, so a present one is not this outcome.
+  else if (sealedOk === true
+    && sheetWritten === false
+    && proof.ledger_seal_no_write_confirmed === true
+    && proof.ledger_seal_dry_run === true
+    && proof.ledger_seal_would_seal === 0
+    && sealed === null
+    && alreadySealed === 0
+    && proof.ledger_seal_no_ledger === true
+    && DRY_RUN_SEAL_REASONS.has(proof.ledger_seal_reason)) {
+    state = 'verified_empty_dry_run';
   }
   else if (sealedOk === true) state = 'indeterminate';
   else if (withheld) state = 'withheld';
