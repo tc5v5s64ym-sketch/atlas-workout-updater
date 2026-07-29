@@ -2079,6 +2079,83 @@ import {
   }
   document.addEventListener('atlas:replacement-proposed', e => renderReplacementProposalCard((e && e.detail) || {}));
 
+  // #1189 — the prescription-only SET-REVISION card. Atlas has proposed a load/rep change for a
+  // movement that STAYS in the plan; the athlete decides explicitly.
+  //
+  // The card is a pure affordance: it renders the STORED proposal and dispatches a decision that
+  // names it by `proposal_id`. It never applies a revision itself, never re-derives the numbers,
+  // and never reads them out of Atlas's prose — so a stale or superseded card cannot act, because
+  // the shell's lane refuses an id that is not the active proposal.
+  //
+  // Three affordances, because two would force a false choice:
+  //   Approve       — an unambiguous yes; the tap IS the consent.
+  //   Keep Original — decline; the plan is left exactly as it is.
+  //   Ask Why       — neither. It asks Atlas to explain and deliberately KEEPS the proposal
+  //                   active, so the athlete can still decide afterwards.
+  function setRevisionLine(p) {
+    const rx = (t) => {
+      if (!t || typeof t !== 'object') return null;
+      const parts = [];
+      if (t.weight != null) parts.push(`${t.weight} lb`);
+      if (t.reps != null) parts.push(`${t.reps} reps`);
+      if (t.rir != null) parts.push(`@ ${t.rir} RIR`);
+      return parts.length ? parts.join(' ') : null;
+    };
+    const name = (p && p.prescribed_name) || 'that lift';
+    const to = rx(p && p.prescription);
+    if (!to) return `Keep ${name} — I don't have an authoritative target for the rest of the sets.`;
+    const from = rx(p && p.from);
+    return from
+      ? `Keep ${name} and take the rest of the sets to ${to} (from ${from}).`
+      : `Keep ${name} and take the rest of the sets to ${to}.`;
+  }
+
+  function renderSetRevisionProposalCard(d) {
+    const proposal = d && d.proposal;
+    if (!proposal || !proposal.proposal_id) return;
+    const node = appendAtlasBubble();
+    if (!node || !node.body) return;
+    node.body.appendChild(elc('div', 'set-revision-proposal-line', d.line || setRevisionLine(proposal)));
+    const actions = elc('div', 'set-revision-proposal-actions');
+    const approve = elc('button', 'set-revision-approve-btn', 'Approve');
+    const keep = elc('button', 'set-revision-keep-btn', 'Keep Original');
+    const why = elc('button', 'set-revision-why-btn', 'Ask Why');
+    for (const b of [approve, keep, why]) b.type = 'button';
+    approve.setAttribute('data-proposal-id', proposal.proposal_id);
+    let resolved = false;
+    const decide = (decision, endorsement) => {
+      // Approve / Keep Original are terminal — one decision per card, so a double tap is inert.
+      // Ask Why is NOT terminal: it leaves the card live because the proposal is still live.
+      if (resolved) return;
+      if (decision !== 'ask_why') {
+        resolved = true;
+        approve.disabled = true; keep.disabled = true;
+      }
+      document.dispatchEvent(new CustomEvent('atlas:set-revision-decision', {
+        detail: { decision, proposal_id: proposal.proposal_id, ...(endorsement ? { endorsement } : {}) }
+      }));
+    };
+    // The tap is the consent, so it carries an unambiguous affirmative rather than asking the
+    // shell to infer one. The shell still validates it through the same endorsement test a typed
+    // reply goes through — one consent rule, no card-only bypass.
+    approve.addEventListener('click', () => decide('approve', 'yes'));
+    keep.addEventListener('click', () => decide('reject'));
+    why.addEventListener('click', () => decide('ask_why'));
+    for (const b of [approve, keep, why]) actions.appendChild(b);
+    node.body.appendChild(actions);
+  }
+  document.addEventListener('atlas:set-revision-proposed', e => renderSetRevisionProposalCard((e && e.detail) || {}));
+
+  // The Ask Why answer, composed by the shell from the STORED proposal and narrated here. The
+  // proposal is still active — this is an explanation, not a decision — so the card above keeps
+  // its Approve / Keep Original buttons live.
+  document.addEventListener('atlas:set-revision-explained', e => {
+    const d = (e && e.detail) || {};
+    if (!d.line) return;
+    const node = appendAtlasBubble();
+    if (node && node.body) node.body.textContent = d.line;
+  });
+
   // P0 PR 4: a deterministic identity correction ("sorry that was squats") — app.js
   // already relabeled the logged lift in the session buffers; confirm it in the
   // thread. Read-only narration; the engine OWNS the relabel.

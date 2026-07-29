@@ -133,13 +133,17 @@ const _exports = (function () {
     return base;
   }
 
-  return { normName, performedSetCount, nextRevisionVersion, buildFutureRevisions, appendRevisions };
+  return { normName, performedSetCount, nextRevisionVersion, currentRevision, buildFutureRevisions, appendRevisions };
 })();
 
 export const {
   normName,
   performedSetCount,
   nextRevisionVersion,
+  // The EFFECTIVE target for one (item, set) — the highest-version revision recorded for it, or
+  // null when the accepted (v1) prescription still stands. Exported so effectivePrescription.js
+  // reads THIS selector rather than reimplementing the version comparison and drifting from it.
+  currentRevision,
   buildFutureRevisions,
   appendRevisions,
 } = _exports;
