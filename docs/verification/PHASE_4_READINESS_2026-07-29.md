@@ -84,6 +84,11 @@ single source**, not introducing session consumption from zero.
 
 ### 4a. Criterion 3 — OWNER AMENDMENT (2026-07-29)
 
+> **Where this governs from.** The amendment is recorded in the canonical execution plan —
+> [`docs/ATLAS_V1_EXECUTION_PLAN.md`](../ATLAS_V1_EXECUTION_PLAN.md), Phase 4 card, "OWNER AMENDMENT —
+> criterion 3". An owner instruction governs only once it is in that plan; this section is the
+> evidence and rationale behind it, not the authority for it.
+
 Investigation for that work established a fact that makes the criterion's original wording
 **unachievable as literally stated**: `packet.session` does not exist at answer time. The packet is
 assembled inside the response-finished hook — `services/coachQaShadow.js` registers `res.on('finish', …)`
