@@ -577,6 +577,118 @@ test('4b.26 normal unmatched coach chat falls through unchanged', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// Codex review round 1 — three real findings, pinned
+// ═══════════════════════════════════════════════════════════════════════════════
+
+test('4b.X1 (Codex P1) consent must account for the WHOLE turn, never just its opening', () => {
+  // "yes my knee hurts" opens with an affirmative and carries a safety report. Approving it would
+  // rewrite the remaining sets AND swallow the safety turn, because the lane claims the message.
+  for (const words of [
+    'yes my knee hurts', 'sounds good but my knee hurts', 'yeah my shoulder is killing me',
+    'do it my back feels off', 'yes lets also skip the last exercise', 'yep log bench 225',
+    'go ahead and switch to leg press',
+  ]) {
+    assert.equal(endorse.isExplicitEndorsement(words), false,
+      `"${words}" says more than yes, so it is not a yes`);
+    const h = withProposal();
+    assert.equal(h.api.trySetRevisionFollowup(words), false, `"${words}" must fall through`);
+    assert.equal(h.state.revisions.length, 0, `"${words}" mutates nothing`);
+    assert.ok(h.state.pendingSetRevision, `"${words}" leaves the proposal outstanding`);
+    assert.equal(replies(h.state).length, 0, 'and the safety/command turn is not swallowed');
+  }
+
+  // The ordinary spoken forms still endorse — the tightening must not break them.
+  for (const words of ['yes', 'yeah do it', "let's do it", 'ok yeah do it', 'alright yes',
+    'well go ahead', 'okay do it', 'do it please', 'yes, do that', 'yes, make that adjustment',
+    'apply that change', 'go with that', "accept Atlas's change", 'accept', 'approve']) {
+    assert.equal(endorse.isExplicitEndorsement(words), true, `"${words}" is a standalone endorsement`);
+  }
+});
+
+test('4b.X2 (Codex P1) a superseded submit decides nothing', () => {
+  // The lane is reached after an await, so an older reply's late parse rejection must not approve
+  // against a proposal the athlete has since asked a clarifying question about. The composer checks
+  // submit authority BEFORE the lane, not only before the async branches after it.
+  const catchBlock = appSrc.slice(
+    appSrc.indexOf('if (pendingChatText && !hasAnyEffortInput()) {'),
+    appSrc.indexOf('tryResolvePendingReplacement(pendingChatText)')
+  );
+  const guardIdx = catchBlock.lastIndexOf('if (submitSeq !== previewRequestSeq) return;');
+  const laneIdx = catchBlock.indexOf('trySetRevisionFollowup(pendingChatText)');
+  assert.notEqual(guardIdx, -1, 'the lane must be preceded by a submit-authority check');
+  assert.notEqual(laneIdx, -1, 'the lane must be wired in the catch block');
+  assert.ok(guardIdx < laneIdx, 'submit authority is checked BEFORE the state-changing lane');
+
+  // And a clarification really does keep the proposal alive, which is what made the race reachable.
+  const h = withProposal();
+  assert.equal(h.api.trySetRevisionFollowup('keep it'), true);
+  assert.ok(h.state.pendingSetRevision, 'the clarification preserved the proposal');
+  assert.equal(h.state.revisions.length, 0);
+});
+
+test('4b.X3 (Codex P2) a FIRST-anchored scope is never answered as if it named the last sets', () => {
+  const C = classifier();
+  const first = C.classifySetRevisionFollowup('the first two sets');
+  assert.equal(first.action, 'clarify_set_scope');
+  assert.equal(first.setScope.position, 'first', 'the requested position is preserved');
+  assert.equal(first.setScope.count, 2);
+
+  // One set already logged: "the first two sets" names set 1 (done) and set 2. Completed sets are
+  // not editable, so Atlas must say so rather than quietly answer about sets 2 and 3.
+  const h = withProposal({ log: [{ exercise: SLOT_NAME }] });
+  assert.equal(h.api.trySetRevisionFollowup('the first two sets'), true);
+  const line = lastReply(h.state);
+  assert.match(line, /first 2 sets/, 'the requested scope is named');
+  assert.match(line, /already logged/i, 'and the overlap with completed work is stated');
+  assert.match(line, /2 sets/, 'the actual editable scope is stated');
+  assert.equal(h.state.revisions.length, 0, 'and nothing is mutated');
+
+  // With nothing logged yet the first N ARE the future sets — the question echoes the athlete's own
+  // position word rather than silently rewriting it to "last".
+  const clean = withProposal();
+  assert.equal(clean.api.trySetRevisionFollowup('the first two sets'), true);
+  assert.equal(lastReply(clean.state),
+    'What do you want to change about the first two sets — the weight, the reps, or remove them?');
+
+  // The next-anchored form is echoed too.
+  const next = withProposal();
+  assert.equal(next.api.trySetRevisionFollowup('the next two sets'), true);
+  assert.match(lastReply(next.state), /about the next two sets/);
+});
+
+test('4b.X4 a hedged utterance never rejects or approves', () => {
+  for (const words of ['maybe keep the original', 'i think keep the original', 'i guess keep it',
+    'maybe do that']) {
+    const h = withProposal();
+    assert.equal(h.api.trySetRevisionFollowup(words), false, `"${words}" is undecided`);
+    assert.ok(h.state.pendingSetRevision, `"${words}" must not discard the decision`);
+    assert.equal(h.state.revisions.length, 0);
+  }
+});
+
+test('4b.X5 the two-choice question\'s own answers route to the two existing handlers', () => {
+  // The lane asks "Keep the original plan, or accept Atlas's change?" — both direct answers must
+  // work, and the asymmetry is deliberate: the ORIGINAL side is admitted as a bare noun phrase
+  // because refusing is safe, while the acceptance side still needs an explicit endorsement.
+  for (const words of ['the original', 'original', 'the original plan', 'as planned']) {
+    const h = withProposal();
+    assert.equal(h.api.trySetRevisionFollowup(words), true, `"${words}" answers the question`);
+    assert.equal(h.state.pendingSetRevision, null, `"${words}" rejects through the existing handler`);
+    assert.equal(h.state.revisions.length, 0, `"${words}" captures nothing`);
+  }
+  for (const words of ['accept', 'approve', 'accept the change']) {
+    const h = withProposal();
+    assert.equal(h.api.trySetRevisionFollowup(words), true, `"${words}" answers the question`);
+    assert.equal(h.state.revisions.length, 3, `"${words}" approves through the existing handler`);
+  }
+  // The bare noun phrase on the acceptance side is NOT consent — it falls through, fail-closed.
+  const thin = withProposal();
+  assert.equal(thin.api.trySetRevisionFollowup('the change'), false,
+    'a bare noun phrase never rewrites the remaining sets');
+  assert.equal(thin.state.revisions.length, 0);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // The card path is unchanged, and both paths share ONE state machine
 // ═══════════════════════════════════════════════════════════════════════════════
 

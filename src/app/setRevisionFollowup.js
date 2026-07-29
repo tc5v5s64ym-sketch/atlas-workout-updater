@@ -51,10 +51,13 @@ function normalize(text) {
 // reaches the same tier as "keep it". Affirmative lead-ins are included deliberately: "yes, keep
 // the original" is a REJECTION, and reading its "yes" as consent would apply the very change the
 // athlete just declined.
+// HEDGES ARE DELIBERATELY ABSENT ("maybe", "i think", "i guess"). Stripping them would let
+// "maybe keep the original" reach the rejection tier and discard a decision the athlete is still
+// making. A hedged utterance falls through instead, which is the honest outcome.
 const LEAD_INS = [
   'ok', 'okay', 'k', 'alright', 'right', 'well', 'so', 'um', 'uh', 'hey', 'actually',
   'yes', 'yeah', 'yep', 'yup', 'ya', 'yea', 'sure', 'and', 'but', 'then',
-  'just', 'please', 'lets', 'let us', 'i think', 'i guess', 'maybe',
+  'just', 'please', 'lets', 'let us',
 ];
 
 function stripLeadIns(s) {
@@ -80,6 +83,12 @@ const WHY_SUBJECT_RE = /\b(?:weight|weights|load|number|numbers|rep|reps|rir|cha
 // ── phrase 3: "keep it" vs "keep the original" ────────────────────────────────
 // An ORIGINAL marker turns an ambiguous "keep" into an unambiguous rejection.
 const ORIGINAL_MARKER_RE = /\b(?:original|as\s+planned|as\s+is|as\s+it\s+is|as\s+it\s+was|unchanged|the\s+same|alone|the\s+plan|planned)\b/;
+// The bare ANSWER to the two-choice question this lane asks for phrase class 3 ("Keep the original
+// plan, or accept Atlas's change?"). Only the ORIGINAL side is admitted as a bare noun phrase,
+// because refusing a change is the safe outcome; the acceptance side must still be an explicit
+// endorsement, so "the change" alone falls through rather than rewriting the remaining sets. That
+// asymmetry is the point — it is fail-closed, not an oversight.
+const ORIGINAL_ANSWER_RE = /^(?:the\s+)?original(?:\s+plan|\s+weight|\s+prescription|\s+numbers?)?$|^as\s+planned$/;
 // Unambiguous rejections that need no "keep": a cancel is a cancel.
 const CANCEL_RE = /^(?:dont\s+change\s+(?:it|that|this|them|those|anything)|do\s+not\s+change\s+(?:it|that|this|them|those|anything)|no\s+change(?:s)?|forget\s+it|cancel\s+(?:it|that)?|nevermind|never\s+mind)\b/;
 // The ambiguous keep: a keep/leave verb whose object is a bare pronoun. Atlas's own proposal reads
@@ -150,7 +159,9 @@ function classifySetRevisionFollowup(text) {
   const isQuestion = s.includes('?');
 
   // 2. Unambiguous rejection.
-  if (!isQuestion && (CANCEL_RE.test(body) || (/^(?:keep|leave|stick|stay|go)\b/.test(body) && ORIGINAL_MARKER_RE.test(body)))) {
+  if (!isQuestion && (CANCEL_RE.test(body)
+    || ORIGINAL_ANSWER_RE.test(body)
+    || (/^(?:keep|leave|stick|stay|go)\b/.test(body) && ORIGINAL_MARKER_RE.test(body)))) {
     return { action: 'reject_active_proposal' };
   }
 

@@ -3377,18 +3377,30 @@ function trySetRevisionFollowup(text) {
   }
 
   if (action === 'clarify_set_scope') {
-    // A scope fragment names sets and no action. The count is the athlete's own word; the sets it
-    // could refer to come from structured state, so an over-reach is stated honestly rather than
-    // played along with.
-    const asked = (verdict.setScope && verdict.setScope.count) || null;
+    // A scope fragment names sets and no action. The count and the position are the athlete's own
+    // words; which sets they could refer to comes from structured state, so an over-reach is stated
+    // honestly rather than played along with.
+    const scopeInfo = verdict.setScope || {};
+    const asked = scopeInfo.count || null;
+    const position = scopeInfo.position || null;
+    const done = Math.max(0, Number(active.accepted_set_count) - future);
+    const ahead = future === 1 ? '1 set' : `${future} sets`;
+
+    // A FIRST-anchored scope counts from set 1, so it can name sets that are already performed —
+    // and a completed set is not editable. Answering it as if it meant the LAST sets would silently
+    // change different sets from the ones the athlete named (Codex P2, this PR).
+    if (position === 'first' && asked != null && done > 0) {
+      announceSetRevisionReply(active, `The first ${asked === 1 ? 'set' : `${asked} sets`} of ${name} ${done >= asked ? 'are' : 'include sets that are'} already logged, and a completed set doesn't change. What's still ahead is ${ahead} — do you mean ${future === 1 ? 'that one' : 'those'}?`);
+      return true;
+    }
     if (asked != null && asked > future) {
-      const done = Math.max(0, Number(active.accepted_set_count) - future);
       announceSetRevisionReply(active, `Only ${future} ${future === 1 ? 'set' : 'sets'} of ${name} ${future === 1 ? 'is' : 'are'} still ahead — the other ${done} ${done === 1 ? 'is' : 'are'} already logged. Do you mean ${future === 1 ? 'that one' : 'those'}, or something else?`);
       return true;
     }
     const n = asked != null ? asked : future;
     const scope = n === 1 ? 'set' : `${setCountWord(n)} sets`;
-    announceSetRevisionReply(active, `What do you want to change about the last ${scope} — the weight, the reps, or remove them?`);
+    // Echo the position the athlete actually used, so the question is about the sets they named.
+    announceSetRevisionReply(active, `What do you want to change about the ${position || 'last'} ${scope} — the weight, the reps, or remove them?`);
     return true;
   }
 
@@ -7115,6 +7127,14 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       // replacement follow-up) falls straight through to the lanes below, unchanged. Higher-priority
       // commands still outrank it: bug capture, the plan request, a held bodyweight clarification
       // and finish/closeout all ran above, and a loggable set parsed and logged before this catch.
+      //
+      // SUBMIT AUTHORITY FIRST (F07/CLIENT-3, Codex P1 this PR). This lane can APPROVE a plan
+      // revision, and it is reached after an `await`. If an older reply's parse rejects late, after
+      // a newer submit has already been handled, a delayed "do that" would approve against a
+      // proposal the athlete has since asked a clarifying question about — the clarification
+      // deliberately KEEPS the proposal, so nothing else would stop it. A superseded submit decides
+      // nothing.
+      if (submitSeq !== previewRequestSeq) return;
       if (trySetRevisionFollowup(pendingChatText)) {
         activeExercise = null;
         return;

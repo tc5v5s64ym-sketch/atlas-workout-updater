@@ -40,16 +40,24 @@ const VETOES = [
 // Deliberately narrow: the object must be a demonstrative pronoun or a named change-noun, so a
 // prescription statement ("make that 185") and a movement command ("do squats") can never read as
 // consent. `Atlas's` normalizes to `atlass`, hence the optional trailing s.
+// A bare `accept` / `approve` is admitted too: both verbs mean exactly one thing in reply to a
+// proposal, and they are the direct answer to the two-choice question the follow-up lane asks.
 const ACTION_ENDORSEMENT_RE = new RegExp(
-  '^(?:do|apply|accept|approve|make|use|go\\s+with)\\s+'
+  '^(?:'
+  + '(?:accept|approve)'
+  + '|(?:do|apply|accept|approve|make|use|go\\s+with)\\s+'
   + '(?:(?:it|that|this)'
   + '|(?:(?:that|the|this|your|atlass?|his|its)\\s+)?'
-  + '(?:change|adjustment|revision|update|proposal|recommendation))$'
+  + '(?:change|adjustment|revision|update|proposal|recommendation))'
+  + ')$'
 );
 
 // Bounded conversational lead-ins that may precede an affirmative without weakening it
 // ("ok yeah do it"). They are not endorsements on their own — see the fail-closed note above.
-const LEAD_INS = ['ok', 'okay', 'k', 'alright', 'right', 'well', 'so', 'um', 'uh', 'yea'];
+// `please` / `then` / `now` are here so a trailing politeness ("do it please") is filler rather than
+// unconsumed content once the standalone-endorsement rule below applies.
+const LEAD_INS = ['ok', 'okay', 'k', 'alright', 'right', 'well', 'so', 'um', 'uh', 'yea',
+  'please', 'then', 'now'];
 
 function normalize(text) {
   return String(text == null ? '' : text)
@@ -77,14 +85,39 @@ function stripLeadIns(s) {
   return out.trim();
 }
 
-// Returns true ONLY for an unambiguous endorsement. Everything else — decline, question,
-// hedge, bare acknowledgement, empty — returns false.
+// Is the WHOLE utterance nothing but affirmative phrases and conversational filler?
 //
-// The affirmative must OPEN the utterance (after at most a few lead-ins). An affirmative token
-// anywhere in the sentence is not consent: "I can't say yes yet" contains `yes` while explicitly
-// withholding it, and an anywhere-match would have rewritten every remaining set on it
-// (Codex P2, this PR). Requiring the utterance to BEGIN with the affirmative is what separates
-// "yeah, do it" from a sentence that merely mentions agreeing.
+// A prefix match is not enough. "yes my knee hurts" and "sounds good but my knee hurts" both OPEN
+// with an endorsement while carrying a safety report the athlete needs answered — approving on
+// either would rewrite the remaining sets AND swallow the safety turn (Codex P1, this PR). So the
+// endorsement must ACCOUNT FOR THE ENTIRE TURN: every token is consumed by an affirmative phrase or
+// a lead-in, or there is no consent. Anything left over means the athlete said something more than
+// yes, and something more than yes is not a yes.
+function isEndorsementOnly(body) {
+  let rest = body;
+  let matched = false;
+  for (let guard = 0; guard < 6; guard += 1) {
+    rest = stripLeadIns(rest);
+    if (!rest) break;
+    // The action tier is end-anchored, so it can only match the whole remainder.
+    if (ACTION_ENDORSEMENT_RE.test(rest)) { rest = ''; matched = true; break; }
+    const hit = ENDORSEMENTS.find((e) => rest === e || rest.startsWith(`${e} `));
+    if (!hit) return false;                                           // unconsumed content
+    rest = rest.slice(hit.length).trim();
+    matched = true;
+  }
+  return matched && !rest;
+}
+
+// Returns true ONLY for an unambiguous endorsement. Everything else — decline, question,
+// hedge, bare acknowledgement, an endorsement carrying extra content, empty — returns false.
+//
+// The affirmative must OPEN the utterance (after at most a few lead-ins) AND account for all of it.
+// An affirmative token anywhere in the sentence is not consent: "I can't say yes yet" contains `yes`
+// while explicitly withholding it, and an anywhere-match would have rewritten every remaining set on
+// it (Codex P2, #1188). Requiring the utterance to BEGIN with the affirmative is what separates
+// "yeah, do it" from a sentence that merely mentions agreeing; requiring it to END there is what
+// separates "yes" from "yes, my knee hurts".
 function isExplicitEndorsement(text) {
   const s = normalize(text);
   if (!s) return false;
@@ -92,8 +125,7 @@ function isExplicitEndorsement(text) {
   if (VETOES.some((v) => hasWholePhrase(s, v))) return false;
   const body = stripLeadIns(s);
   if (!body) return false;                                            // lead-ins alone are not consent
-  if (ENDORSEMENTS.some((e) => body === e || body.startsWith(`${e} `))) return true;
-  return ACTION_ENDORSEMENT_RE.test(body);
+  return isEndorsementOnly(body);
 }
 
 export { isExplicitEndorsement };
