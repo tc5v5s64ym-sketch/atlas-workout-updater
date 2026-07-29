@@ -2146,6 +2146,16 @@ import {
   }
   document.addEventListener('atlas:set-revision-proposed', e => renderSetRevisionProposalCard((e && e.detail) || {}));
 
+  // The Ask Why answer, composed by the shell from the STORED proposal and narrated here. The
+  // proposal is still active — this is an explanation, not a decision — so the card above keeps
+  // its Approve / Keep Original buttons live.
+  document.addEventListener('atlas:set-revision-explained', e => {
+    const d = (e && e.detail) || {};
+    if (!d.line) return;
+    const node = appendAtlasBubble();
+    if (node && node.body) node.body.textContent = d.line;
+  });
+
   // P0 PR 4: a deterministic identity correction ("sorry that was squats") — app.js
   // already relabeled the logged lift in the session buffers; confirm it in the
   // thread. Read-only narration; the engine OWNS the relabel.

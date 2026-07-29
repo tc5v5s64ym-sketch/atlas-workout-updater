@@ -465,6 +465,82 @@ test('#1189 the lane is no longer reachable ONLY through a window global', () =>
     'and at least one of them is not a window.* entry point');
 });
 
+// ── Codex findings on this PR ─────────────────────────────────────────────────
+
+test('#1189 P1 — a reaction that settles AFTER a newer set was logged is discarded', async () => {
+  // Logging does not wait for the recommendation, so two requests can be in flight and settle out
+  // of order. Without re-deriving after the await, the older response stages a proposal computed
+  // for the previous set — and the athlete gets an Approve button that applies the wrong target.
+  const h = harness();
+  const first = loggedSet();
+  h.state.log = [first];
+
+  let release;
+  const gate = new Promise(r => { release = r; });
+  const realReaction = h.state.reaction;
+  // Hold the FIRST request open, then log another set of the same slot before it settles.
+  const pending = (async () => {
+    const inflight = h.api.maybeProposeSetRevisionAfterLog(first);
+    await gate;
+    return inflight;
+  })();
+  h.state.log = h.state.log.concat([loggedSet({ weight: 230 })]);   // a second set lands
+  release();
+  const proposed = await pending;
+
+  assert.equal(proposed, null, 'the stale response must not stage a proposal');
+  assert.equal(h.state.pendingSetRevision, null, 'and nothing is put in front of the athlete');
+  assert.equal(realReaction, h.state.reaction, 'sanity: the engine reply itself was unchanged');
+});
+
+test('#1189 P1 — a reaction that settles after the plan was re-accepted is discarded', async () => {
+  const h = harness();
+  const set = loggedSet();
+  h.state.log = [set];
+  const pending = h.api.maybeProposeSetRevisionAfterLog(set);
+  h.state.plan = plan({ plan_version: 'pv_y' });    // re-accepted while the request was in flight
+
+  assert.equal(await pending, null, 'a proposal is never staged against a plan version it did not read');
+  assert.equal(h.state.pendingSetRevision, null);
+});
+
+test('#1189 P1 — a revision landing during the await is respected by the no-op check', async () => {
+  // The engine target equals what a revision (applied mid-flight) already set the future sets to.
+  // Re-deriving the baseline after the await is what stops this becoming a phantom revision.
+  const h = harness();
+  const set = loggedSet();
+  h.state.log = [set];
+  h.state.reaction = { next_target: { weight: 185, reps: 5 }, target_rir: 2 };
+  const pending = h.api.maybeProposeSetRevisionAfterLog(set);
+  h.state.revisions = [2, 3].map(set_index => ({
+    plan_item_id: SLOT_ITEM, set_index, plan_version: 2,
+    target_weight: 185, target_reps: 5, target_rir: 2, recommendation_source: 'live_revision',
+  }));
+
+  assert.equal(await pending, null, 'the target now changes nothing, so nothing is proposed');
+  assert.equal(h.state.pendingSetRevision, null);
+});
+
+test('#1189 P2 — Ask Why produces a grounded explanation and keeps the proposal active', () => {
+  // The card promises an explanation; a button that dispatches into nothing is a broken promise.
+  assert.match(appSrc, /function explainPendingSetRevision\(/,
+    'the shell must answer Ask Why');
+  const at = appSrc.indexOf("addEventListener('atlas:set-revision-decision'");
+  const listener = appSrc.slice(at, at + 700);
+  assert.match(listener, /ask_why/, 'the decision listener routes the Ask Why branch');
+  assert.match(listener, /explainPendingSetRevision\(/, 'to the explanation handler');
+
+  const fn = appSrc.slice(
+    appSrc.indexOf('function explainPendingSetRevision('),
+    appSrc.indexOf('function explainPendingSetRevision(') + 2200
+  );
+  assert.match(fn, /getPendingSetRevision\(\)/, 'it answers from the STORED proposal');
+  assert.doesNotMatch(fn, /setPendingSetRevision\(null\)/,
+    'asking why must never consume the decision it is about');
+  assert.match(fn, /atlas:set-revision-explained/, 'and the answer reaches the thread');
+  assert.match(coachSrc, /atlas:set-revision-explained/, 'which renders it');
+});
+
 // ── no shortcut around the real seam ──────────────────────────────────────────
 
 test('#1189 this test never calls emitEndorsedSetRevision directly', () => {

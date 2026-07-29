@@ -1926,9 +1926,35 @@ async function maybeProposeSetRevisionAfterLog(loggedSet) {
   });
   // No future set left ⇒ nothing is revisable, so no card and no success-shaped claim.
   if (!eff || !eff.futureSetsRemain) return null;
+  const performedAtRequest = eff.performed;
+  const planVersionAtRequest = plan.plan_version;
   const rec = await fetchReaction(code, set);
   const t = (rec && rec.next_target) || null;
   if (!t) return null;                                // engine resolved nothing → never a guess
+
+  // RE-DERIVE EVERYTHING AFTER THE AWAIT (Codex P1). Logging a second set does not wait for the
+  // first set's recommendation, so two of these can be in flight at once and can settle out of
+  // order. Every value read before the await — the plan, the slot, and the effective prescription
+  // — may describe a session that has already moved on, and staging a proposal from it would let
+  // an older response supersede a newer one and hand the athlete an Approve button that applies a
+  // target computed for the previous set.
+  const planNow = getActivePlannedSession();
+  if (!planNow || planNow.accepted !== true) return null;
+  if (planNow.plan_version !== planVersionAtRequest) return null;   // re-accepted under it
+  const slotNow = (Array.isArray(planNow.exercises) ? planNow.exercises : [])
+    .find(e => e && (e.liftCode || e.lift_code || '') === code) || null;
+  if (!slotNow || slotNow.plan_item_id !== slot.plan_item_id) return null;
+  const effNow = effectivePrescription({
+    slot: slotNow,
+    sessionLog: getSessionLog(),
+    sessionRevisions: getSessionRevisions(),
+  });
+  if (!effNow || !effNow.futureSetsRemain) return null;
+  // The generation check: another set of this slot was logged while this request was in flight, so
+  // this response is stale by construction. The newer log has its own request running — let that
+  // one win rather than racing it.
+  if (effNow.performed !== performedAtRequest) return null;
+
   const target = {
     weight: t.weight ?? null,
     reps: t.reps ?? null,
@@ -1937,14 +1963,15 @@ async function maybeProposeSetRevisionAfterLog(loggedSet) {
   if (target.weight == null && target.reps == null) return null;
   // The whole point of the effective baseline: a target that merely repeats what the future sets
   // already carry is not a change, and proposing it would produce a revision that never happened.
-  if (!changesEffectivePrescription(target, eff.prescription)) return null;
+  // Compared against the RE-DERIVED baseline, so a revision that landed during the await counts.
+  if (!changesEffectivePrescription(target, effNow.prescription)) return null;
   return proposeSetRevision({
-    plan_item_id: slot.plan_item_id,
-    planned_lift_code: slot.liftCode || slot.lift_code,   // UNCHANGED — the movement does not move
-    prescribed_name: slot.canonicalName || slot.name,
+    plan_item_id: slotNow.plan_item_id,
+    planned_lift_code: slotNow.liftCode || slotNow.lift_code,  // UNCHANGED — the movement stays
+    prescribed_name: slotNow.canonicalName || slotNow.name,
     prescription: target,
-    accepted_set_count: eff.acceptedSetCount,             // the v1 grain, never the engine's sets
-    from: eff.prescription,
+    accepted_set_count: effNow.acceptedSetCount,          // the v1 grain, never the engine's sets
+    from: effNow.prescription,
     proposed_at: new Date().toISOString(),
   });
 }
@@ -3160,7 +3187,43 @@ document.addEventListener('atlas:set-revision-decision', e => {
   const d = (e && e.detail) || {};
   if (d.decision === 'approve') approvePendingSetRevision({ proposal_id: d.proposal_id, endorsement: d.endorsement });
   else if (d.decision === 'reject') rejectPendingSetRevision({ proposal_id: d.proposal_id });
+  else if (d.decision === 'ask_why') explainPendingSetRevision(d.proposal_id);
 });
+
+// Answer "Ask Why" from the STORED proposal. Deterministic and grounded: every number in the
+// answer is one the engine already resolved and the proposal already holds, so this states facts
+// rather than generating a rationale — no model call, and nothing invented.
+//
+// It deliberately leaves the proposal ACTIVE. Asking why is not deciding, and a question that
+// silently consumed the decision would be the worst of both: the athlete gets an explanation and
+// loses the thing it was about. A stale or superseded id is refused rather than answered against
+// whatever happens to be current.
+function explainPendingSetRevision(proposalId) {
+  const active = getPendingSetRevision();
+  if (!active) return false;
+  const id = String(proposalId || '').trim();
+  if (id && id !== active.proposal_id) return false;
+  const fmt = (p) => {
+    if (!p || typeof p !== 'object') return null;
+    const parts = [];
+    if (p.weight != null) parts.push(`${p.weight} lb`);
+    if (p.reps != null) parts.push(`${p.reps} reps`);
+    if (p.rir != null) parts.push(`@ ${p.rir} RIR`);
+    return parts.length ? parts.join(' ') : null;
+  };
+  const to = fmt(active.prescription);
+  const from = fmt(active.from);
+  const name = active.prescribed_name || 'that lift';
+  const line = to
+    ? (from
+      ? `${to} is the engine's target for ${name} off your last set — the remaining sets are at ${from} now. ${name} stays in the plan either way; approve and I'll set the rest, or keep the original.`
+      : `${to} is the engine's target for ${name} off your last set. ${name} stays in the plan either way; approve and I'll set the rest, or keep the original.`)
+    : `I don't have an authoritative target for the rest of ${name}, so there's nothing to apply yet.`;
+  document.dispatchEvent(new CustomEvent('atlas:set-revision-explained', {
+    detail: { proposal_id: active.proposal_id, line }
+  }));
+  return true;
+}
 
 // Open the recommended workout — Composer-first Phase B: routes to the ONE
 // canonical in-thread Coach's Pick (which does its own read-only fetch and
