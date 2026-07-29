@@ -34,20 +34,26 @@ const path = require('node:path');
 const repoRoot = path.join(__dirname, '..');
 const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
 const ledger = require('../src/app/sessionLedger.js');
+const endorse = require('../src/app/endorsedSetRevision.js');
 
 const ACCEPTED = { accepted: true, session_id: 'S1', session_date: '2026-07-29', plan_version: 'pv_x' };
 const PLANNED_NAME = 'Back Squat';
 const PLANNED_CODE = 'SQ01';
 
-// Slice one top-level function out of the built bundle and drive it against the real ledger.
-function harnessFor(fnName, endMarker) {
-  const start = appSrc.indexOf(`function ${fnName}(`);
-  if (start === -1) return null;
-  const end = appSrc.indexOf(endMarker, start);
+// Slice the revision emitters out of the built bundle and drive them against the real ledger.
+// BOTH are taken in one slice: emitEndorsedSetRevision delegates to emitFutureSetRevision, so
+// slicing them apart would leave the delegate undefined.
+const SLICE_START = 'function emitFutureSetRevision(';
+const SLICE_END = 'function implicitPlanItemId(';
+
+function harness() {
+  const start = appSrc.indexOf(SLICE_START);
+  assert.notEqual(start, -1, 'emitFutureSetRevision must exist in the built bundle');
+  const end = appSrc.indexOf(SLICE_END, start);
   const slice = appSrc.slice(start, end === -1 ? undefined : end);
   const state = { plan: null, log: [], revisions: [], posts: [], snapshots: 0, outcomes: [] };
   const factory = new Function(
-    'buildFutureRevisions', 'appendRevisions', 'ledgerPerformedSetCount', 'state', `
+    'buildFutureRevisions', 'appendRevisions', 'ledgerPerformedSetCount', 'isExplicitEndorsement', 'state', `
     function getActivePlannedSession(){ return state.plan; }
     function getSessionLog(){ return state.log; }
     function getSessionRevisions(){ return state.revisions; }
@@ -57,22 +63,44 @@ function harnessFor(fnName, endMarker) {
     function renderActiveSessionBanner(){}
     function api(url, opts){ state.posts.push({ url, body: JSON.parse(opts.body) }); return Promise.resolve({}); }
     ${slice}
-    return { fn: ${fnName}, state };
+    return {
+      emitFutureSetRevision,
+      emitEndorsedSetRevision: typeof emitEndorsedSetRevision === 'function' ? emitEndorsedSetRevision : null,
+      state,
+    };
   `);
-  return factory(ledger.buildFutureRevisions, ledger.appendRevisions, ledger.performedSetCount, state);
+  return factory(
+    ledger.buildFutureRevisions, ledger.appendRevisions, ledger.performedSetCount,
+    endorse.isExplicitEndorsement, state,
+  );
 }
+
+function endorsedHarness() {
+  const h = harness();
+  assert.ok(h.emitEndorsedSetRevision,
+    'an endorsed set-level revision needs an entry point that does not require a substitute movement');
+  h.state.plan = { ...ACCEPTED };
+  return h;
+}
+
+const ENDORSED = {
+  plan_item_id: 'pi-1',
+  planned_lift_code: PLANNED_CODE,
+  prescribed_name: PLANNED_NAME,
+  prescription: { weight: 185, reps: 5, rir: 2 },
+  accepted_set_count: 3,
+};
 
 // ── CONTROL: the machinery already handles a same-movement revision ────────────
 
 test('#1163 the emitter already builds a revision when the movement is UNCHANGED', () => {
   // Passes today. `emitFutureSetRevision` never compares the new lift code to the planned one, so
   // the revision lane is already correct for a load/rep-only change. Only the caller is missing.
-  const h = harnessFor('emitFutureSetRevision', 'function implicitPlanItemId(');
-  assert.ok(h, 'emitFutureSetRevision must exist in the built bundle');
+  const h = harness();
   h.state.plan = { ...ACCEPTED };
   h.state.log = [];
 
-  h.fn('pi-1', PLANNED_CODE, { weight: 185, reps: 5, rir: 2 }, PLANNED_NAME, 3);
+  h.emitFutureSetRevision('pi-1', PLANNED_CODE, { weight: 185, reps: 5, rir: 2 }, PLANNED_NAME, 3);
 
   assert.equal(h.state.revisions.length, 3, 'one revision per future set');
   assert.equal(h.state.posts.length, 3, 'each revision is posted to the checkpoint route');
@@ -90,20 +118,11 @@ test('#1163 an endorsed set-level revision with NO movement change is captured',
   // so an endorsement that keeps the movement and changes only the prescription reaches no
   // capture. A dedicated entry point must exist that emits the revision WITHOUT claiming a
   // movement substitution.
-  const h = harnessFor('emitEndorsedSetRevision', 'function implicitPlanItemId(');
-  assert.ok(h, 'an endorsed set-level revision needs an entry point that does not require a substitute movement');
-
-  h.state.plan = { ...ACCEPTED };
+  const h = endorsedHarness();
   h.state.log = [];
 
   // "Keep back squat, but drop the rest of the sets to 185x5."
-  h.fn({
-    plan_item_id: 'pi-1',
-    planned_lift_code: PLANNED_CODE,
-    prescribed_name: PLANNED_NAME,
-    prescription: { weight: 185, reps: 5, rir: 2 },
-    accepted_set_count: 3,
-  });
+  h.emitEndorsedSetRevision({ ...ENDORSED });
 
   assert.equal(h.state.revisions.length, 3, 'one revision per remaining set');
   assert.equal(h.state.posts.length, 3, 'each revision reaches the checkpoint route');
@@ -114,4 +133,130 @@ test('#1163 an endorsed set-level revision with NO movement change is captured',
   // `substituted` item_outcome for a movement that was never swapped, corrupting the
   // movement-level planned-vs-completed record that #952 closed on.
   assert.equal(h.state.outcomes.length, 0, 'a load change must never emit a substituted outcome');
+});
+
+// ── the rest of the contract ──────────────────────────────────────────────────
+
+test('#1163 completed sets are preserved — only FUTURE sets are revised', () => {
+  const h = endorsedHarness();
+  // Two of the three sets are already logged, so only the third is revisable.
+  h.state.log = [{ exercise: PLANNED_NAME }, { exercise: PLANNED_NAME }];
+
+  h.emitEndorsedSetRevision({ ...ENDORSED });
+
+  assert.equal(h.state.revisions.length, 1, 'only the one remaining set is revised');
+  assert.equal(h.state.revisions[0].set_index, 3, 'and it is the THIRD set, not a performed one');
+  for (const r of h.state.revisions) {
+    assert.ok(r.set_index > 2, 'no performed set index is ever revised');
+  }
+});
+
+test('#1163 future sets carry the new prescription', () => {
+  const h = endorsedHarness();
+  h.state.log = [];
+
+  h.emitEndorsedSetRevision({ ...ENDORSED });
+
+  for (const r of h.state.revisions) {
+    assert.equal(r.target_weight, 185);
+    assert.equal(r.target_reps, 5);
+    assert.equal(r.target_rir, 2);
+    assert.equal(r.planned_lift_code, PLANNED_CODE, 'the movement never changes');
+  }
+});
+
+test('#1163 the revision survives reload (it is persisted, not just posted)', () => {
+  const h = endorsedHarness();
+  h.state.log = [];
+
+  h.emitEndorsedSetRevision({ ...ENDORSED });
+
+  assert.ok(h.state.snapshots > 0, 'a snapshot is written so the revision survives a reload');
+  // Simulate the reload: the restored revisions are the client-side durable record, and they
+  // still describe the endorsed prescription. This is the implementation proof for #1163 while
+  // SESSION_PLAN_SETS_WRITE_ENABLED is 0 — the server row is the separate final proof.
+  const restored = h.state.revisions.map((r) => ({ ...r }));
+  assert.equal(restored.length, 3);
+  assert.equal(restored[0].target_weight, 185);
+  assert.equal(restored[0].planned_lift_code, PLANNED_CODE);
+});
+
+test('#1163 repeated processing of one endorsement does not duplicate the revision chain', () => {
+  const h = endorsedHarness();
+  h.state.log = [];
+
+  h.emitEndorsedSetRevision({ ...ENDORSED });
+  const afterFirst = h.state.revisions.length;
+  h.emitEndorsedSetRevision({ ...ENDORSED });   // same endorsement processed twice
+
+  assert.equal(afterFirst, 3);
+  assert.equal(h.state.revisions.length, 3, 'the append-only chain dedupes an identical revision');
+});
+
+test('#1163 a decline, a question, or a bare acknowledgement captures nothing', () => {
+  for (const words of [
+    'no', 'nah', 'not yet', "don't", 'skip it', 'leave it',      // decline
+    'what would that do?', 'should I?', 'how much?',              // question
+    'ok', 'alright', 'sure', 'hmm', 'maybe', 'i guess', '',       // ambiguous / bare
+    'no, do it',                                                  // contradictory → refuse
+  ]) {
+    const h = endorsedHarness();
+    h.state.log = [];
+
+    const captured = h.emitEndorsedSetRevision({ ...ENDORSED, endorsement: words });
+
+    assert.equal(captured, false, `"${words}" must not endorse a plan revision`);
+    assert.equal(h.state.revisions.length, 0, `"${words}" must capture no revision`);
+    assert.equal(h.state.posts.length, 0, `"${words}" must post nothing`);
+  }
+});
+
+test('#1163 an unambiguous endorsement in the athlete\'s words does capture', () => {
+  for (const words of ['yes', 'yeah do it', 'yep', 'do it', "let's do it", 'go ahead', 'sounds good']) {
+    const h = endorsedHarness();
+    h.state.log = [];
+
+    const captured = h.emitEndorsedSetRevision({ ...ENDORSED, endorsement: words });
+
+    assert.equal(captured, true, `"${words}" is an explicit endorsement`);
+    assert.equal(h.state.revisions.length, 3, `"${words}" captures the revision`);
+    assert.equal(h.state.outcomes.length, 0, 'still never a substituted outcome');
+  }
+});
+
+test('#1163 an incomplete request captures nothing', () => {
+  const h = endorsedHarness();
+  h.state.log = [];
+  assert.equal(h.emitEndorsedSetRevision({ ...ENDORSED, plan_item_id: '' }), false, 'no plan identity');
+  assert.equal(h.emitEndorsedSetRevision({ ...ENDORSED, planned_lift_code: '' }), false, 'no lift code');
+  assert.equal(h.emitEndorsedSetRevision({ ...ENDORSED, prescribed_name: '' }), false, 'no movement name');
+  assert.equal(h.emitEndorsedSetRevision(null), false, 'no request at all');
+  assert.equal(h.state.revisions.length, 0);
+  assert.equal(h.state.posts.length, 0);
+});
+
+test('#1163 the existing substitution path is unchanged', () => {
+  // The substitution lane still reaches the SAME emitter and still produces its revisions with
+  // the SUBSTITUTE's lift code. This pins that the new entry point did not alter the old one.
+  const h = harness();
+  h.state.plan = { ...ACCEPTED };
+  h.state.log = [];
+
+  h.emitFutureSetRevision('pi-1', 'FSQ01', { weight: 135, reps: 8, rir: 2 }, PLANNED_NAME, 3);
+
+  assert.equal(h.state.revisions.length, 3);
+  assert.equal(h.state.posts[0].body.revision.planned_lift_code, 'FSQ01',
+    'a real substitution still records the SUBSTITUTE code');
+  assert.equal(h.state.posts[0].body.revision.target_weight, 135);
+});
+
+test('#1163 no revision is captured without an accepted plan', () => {
+  const h = endorsedHarness();
+  h.state.plan = { ...ACCEPTED, accepted: false };
+  h.state.log = [];
+
+  h.emitEndorsedSetRevision({ ...ENDORSED });
+
+  assert.equal(h.state.revisions.length, 0, 'an unaccepted plan carries no ledger identity');
+  assert.equal(h.state.posts.length, 0);
 });

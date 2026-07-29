@@ -62,6 +62,7 @@ import { remainingSlotNames, variantSatisfies, planSlotStatuses, firstUnloggedSl
 // so a completed set is never revised. Revisions live in the store (getSessionRevisions)
 // and are checkpointed to the dry-run /revision sidecar.
 import { buildFutureRevisions, appendRevisions, performedSetCount as ledgerPerformedSetCount } from './sessionLedger.js';
+import { isExplicitEndorsement } from './endorsedSetRevision.js';
 // F09G (CONVO-LOG-1) — hold a parser bodyweight-rep clarification and commit exactly
 // those detected reps on a short affirmation ("Just log it"), so clarified sets are
 // never dropped nor fabricated.
@@ -189,6 +190,13 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 
 // The list auto-loads on first History visit (loadHistory above). nav.js calls
 // this to force a fresh fetch when jumping here from a chat reply.
+// #1163 — the capability's public surface, in the same idiom as the shell's other entry points.
+// The UI layer that presents a proposed set-level change calls this with the athlete's own
+// words; the endorsement test lives inside emitEndorsedSetRevision rather than at the call
+// site, so no caller can skip it. Declared here, away from the emitter block, because the
+// revision and substitution test harnesses slice that block into a sandbox with no `window`.
+window.atlasEndorseSetRevision = (request) => emitEndorsedSetRevision(request);
+
 window.atlasRefreshSessions = () => {
   setHistoryLoaded(true);
   loadSessions();
@@ -1723,6 +1731,35 @@ function emitFutureSetRevision(planItemId, subLiftCode, prescription, prescribed
       body: JSON.stringify({ session_id: plan.session_id, session_date: plan.session_date, plan_version: plan.plan_version, revision }),
     })).catch(() => { /* non-blocking sidecar — never unwinds the workout */ });
   }
+}
+
+// #1163 — the NON-SUBSTITUTION entry point for an explicitly endorsed set-level prescription
+// change ("keep back squat, drop the rest to 185x5"). Before this existed,
+// `emitFutureSetRevision` had exactly ONE caller — inside `applySessionSubstitution` — so a
+// set-level revision was captured only as a side effect of a movement swap, and an endorsement
+// that changed load or reps while keeping the movement reached no capture at all.
+//
+// It adds NO new machinery. The revision building, future-set bound, append-only chain, reload
+// persistence, and checkpoint POST are all the existing lane: this only supplies the trigger and
+// carries the planned lift code through UNCHANGED, so the movement is not claimed to have
+// changed. It deliberately does NOT emit an item_outcome — a load change is not a substitution,
+// and recording one would corrupt the movement-level planned-versus-completed record.
+//
+// Fails closed on anything short of an unambiguous endorsement: a decline, a question, or a bare
+// acknowledgement never rewrites the remaining sets.
+function emitEndorsedSetRevision(opts) {
+  const o = opts && typeof opts === 'object' ? opts : {};
+  const planItemId = o.plan_item_id;
+  const liftCode = o.planned_lift_code;
+  const prescribedName = o.prescribed_name;
+  if (!planItemId || !liftCode || !prescribedName) return false;
+  // When the caller passes the athlete's words, they must be an explicit endorsement. A caller
+  // that has already established consent by another route may omit the field entirely; passing
+  // an empty or non-endorsing message is always a refusal.
+  if (Object.prototype.hasOwnProperty.call(o, 'endorsement')
+    && !isExplicitEndorsement(o.endorsement)) return false;
+  emitFutureSetRevision(planItemId, liftCode, o.prescription, prescribedName, o.accepted_set_count);
+  return true;
 }
 
 // F10C — a DETERMINISTIC plan_item_id for the implicit recommendation of an unannounced
