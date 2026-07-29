@@ -248,5 +248,16 @@ Phase 5 begins only when every line is checked.
 - No Sheet write, no manual Sheet edit, no schema change, no migration, no proof-field change.
 - No preview → approve → write change.
 - No raw production logs, secrets, Sheet IDs, or workout data are committed here.
-- `npm run audit:finalized-orphans` has still **never been run against production** — it needs credentials,
-  and its unrun state is `UNKNOWN`, not "none found".
+- **Correction (owner, 2026-07-29).** An earlier draft of this report said `npm run
+  audit:finalized-orphans` had **never been run against production**. That was wrong. A read-only
+  production audit was completed directly against the live workbook, and its sanitized result was
+  posted to **#1164**, which is now **closed**; historical remediation was opened as **#1187**.
+  Result: **3 finalized sessions checked, 1 orphan found** — the finalized session of
+  **`2026-07-24`**, plan version `pv_102a9927-3306-4ad3-af88-e637c2a010ee`, has **0** matching
+  `Log_Cleaned` rows; the other two finalized sessions have 15 and 4. The audit is therefore
+  `RUN`, and its finding is **one real orphan**, not `UNKNOWN` and not "none found".
+  Session identifiers are deliberately omitted here, exactly as
+  `scripts/atlas-audit-finalized-orphans.js` omits them from its own output: *"the date and
+  plan_version locate a row for the owner without putting a session id into a shared report."*
+  No spreadsheet row was altered, repaired, recreated, or deleted — the audit is read-only and
+  remediation (#1187) is separate.
