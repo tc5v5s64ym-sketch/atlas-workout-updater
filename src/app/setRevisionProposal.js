@@ -56,6 +56,20 @@ function buildSetRevisionProposal(params) {
   // coaching note, not a prescription change the ledger can carry.
   if (weight === null && reps === null) return null;
 
+  // …and when the CURRENT target is known, it must actually differ. Testing presence rather than
+  // change accepted a no-op — proposing the same 225x5 already prescribed — and approval then
+  // appended `live_revision` rows for every future set, so the ledger and the closeout history
+  // would report a revised plan that was never revised (Codex P2, this PR). An RIR-only change is
+  // rejected here for the same reason the rule above gives.
+  const cur = p.from && typeof p.from === 'object' ? p.from : null;
+  if (cur) {
+    const curWeight = _num(cur.weight);
+    const curReps = _num(cur.reps);
+    const weightChanged = weight !== null && weight !== curWeight;
+    const repsChanged = reps !== null && reps !== curReps;
+    if (!weightChanged && !repsChanged) return null;
+  }
+
   const accepted_set_count = _num(p.accepted_set_count);
   if (accepted_set_count === null || accepted_set_count <= 0) return null;
 
@@ -86,9 +100,21 @@ function isProposalCurrent(proposal, plan) {
   // The plan moved on — a proposal anchored to an older version describes a plan that no longer
   // exists, and applying it would revise sets the athlete never agreed to in their current form.
   if (proposal.plan_version && _str(s.plan_version) !== _str(proposal.plan_version)) return false;
-  // The slot it targets must still be in the plan.
+  // The slot it targets must still be in the plan…
   const items = Array.isArray(s.exercises) ? s.exercises : [];
-  return items.some((e) => e && _str(e.plan_item_id) === _str(proposal.plan_item_id));
+  const slot = items.find((e) => e && _str(e.plan_item_id) === _str(proposal.plan_item_id));
+  if (!slot) return false;
+
+  // …AND it must still be the same MOVEMENT. `applySessionSubstitution` swaps a slot in place and
+  // deliberately PRESERVES its plan_item_id and plan_version (app.js: `plan_item_id:
+  // originalItemId`), so an id-and-version check alone treats a proposal as current after the
+  // movement changed underneath it. Approving that stale card would append a revision carrying the
+  // OLD planned_lift_code to a slot that now holds a different lift, corrupting the effective
+  // recommendation chain (Codex P1, this PR). A proposal is about one movement; if the movement
+  // moved, the proposal is stale.
+  const slotCode = _str(slot.lift_code || slot.liftCode);
+  if (!slotCode) return false;                       // an unidentifiable slot cannot be proven current
+  return slotCode === _str(proposal.planned_lift_code);
 }
 
 // Does `candidate` supersede `existing`? A newer proposal for the SAME plan item replaces the

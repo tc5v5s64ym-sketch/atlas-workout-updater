@@ -359,3 +359,44 @@ test('#1189 a replacement proposal and a set-revision proposal cannot both be ac
   const bothActive = !!s.getPendingReplacement() && !!s.getPendingSetRevision();
   assert.equal(bothActive, false, 'the two proposal lanes are mutually exclusive — no ambiguous state');
 });
+
+// ── Codex findings on this PR ─────────────────────────────────────────────────
+
+test('#1189 a proposal is INVALIDATED when the slot movement is substituted (Codex P1)', () => {
+  const h = fresh();
+  h.proposeSetRevision({ ...PROPOSAL_INPUT });
+  const id = h.state.pending.proposal_id;
+
+  // A declared or implicit substitution swaps the slot IN PLACE and preserves plan_item_id and
+  // plan_version (app.js: `plan_item_id: originalItemId`). Only the movement changed.
+  h.state.plan.exercises[0].lift_code = 'FSQ01';
+  h.state.plan.exercises[0].name = 'Front Squat';
+
+  const applied = h.approvePendingSetRevision({ proposal_id: id, endorsement: 'yes' });
+
+  assert.equal(applied, false, 'the proposal is about Back Squat; the slot now holds Front Squat');
+  assert.equal(h.state.revisions.length, 0, 'no revision carrying the OLD lift code is appended');
+  assert.equal(h.state.posts.length, 0);
+  assert.equal(h.state.pending, null, 'and the stale proposal is cleared');
+});
+
+test('#1189 a no-op or RIR-only proposal is never created (Codex P2)', () => {
+  const { buildSetRevisionProposal } = requireLane();
+  const from = { weight: 225, reps: 5, rir: 2 };
+
+  assert.equal(
+    buildSetRevisionProposal({ ...PROPOSAL_INPUT, from, prescription: { weight: 225, reps: 5, rir: 2 } }),
+    null, 'identical to the current target — nothing to revise');
+  assert.equal(
+    buildSetRevisionProposal({ ...PROPOSAL_INPUT, from, prescription: { weight: 225, reps: 5, rir: 4 } }),
+    null, 'RIR-only is a coaching note, not a prescription change the ledger carries');
+
+  // CONTROL — a real change still builds.
+  assert.ok(buildSetRevisionProposal({ ...PROPOSAL_INPUT, from, prescription: { weight: 185, reps: 5, rir: 2 } }),
+    'a genuine load change is a revision');
+  assert.ok(buildSetRevisionProposal({ ...PROPOSAL_INPUT, from, prescription: { weight: 225, reps: 8, rir: 2 } }),
+    'a genuine rep change is a revision');
+  // …and with no known current target, presence is still the bar (nothing to compare against).
+  assert.ok(buildSetRevisionProposal({ ...PROPOSAL_INPUT, from: null, prescription: { weight: 225, reps: 5, rir: 2 } }),
+    'no `from` means no comparison is possible — the proposal stands on its own');
+});
