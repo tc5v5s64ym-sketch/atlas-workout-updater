@@ -252,9 +252,12 @@ Phase 5 begins only when every line is checked.
   audit:finalized-orphans` had **never been run against production**. That was wrong. A read-only
   production audit was completed directly against the live workbook, and its sanitized result was
   posted to **#1164**, which is now **closed**; historical remediation was opened as **#1187**.
-  Result: **3 finalized sessions checked, 1 orphan found** — session `20260724-PM-01`
-  (`2026-07-24`, plan version `pv_102a9927-3306-4ad3-af88-e637c2a010ee`) has **0** matching
-  `Log_Cleaned` rows, against `20260721-PM-01` with 15 and `20260728-PM-01` with 4. The audit is
-  therefore `RUN`, and its finding is **one real orphan**, not `UNKNOWN` and not "none found".
+  Result: **3 finalized sessions checked, 1 orphan found** — the finalized session of
+  **`2026-07-24`**, plan version `pv_102a9927-3306-4ad3-af88-e637c2a010ee`, has **0** matching
+  `Log_Cleaned` rows; the other two finalized sessions have 15 and 4. The audit is therefore
+  `RUN`, and its finding is **one real orphan**, not `UNKNOWN` and not "none found".
+  Session identifiers are deliberately omitted here, exactly as
+  `scripts/atlas-audit-finalized-orphans.js` omits them from its own output: *"the date and
+  plan_version locate a row for the owner without putting a session id into a shared report."*
   No spreadsheet row was altered, repaired, recreated, or deleted — the audit is read-only and
   remediation (#1187) is separate.
