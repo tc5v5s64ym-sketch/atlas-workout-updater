@@ -80,9 +80,42 @@ on the strength of a grep against `index.js`. That grep was against the wrong fi
 
 So gate run 1's wording — `packet.session` is observed and schema-valid but unconsumed — is correct and
 remains correct. The remaining work is **retiring the duplicate route-local build so the packet is the
-single source**, not introducing session consumption from zero. That is the Phase 4 headline work
-("make the live coach route consume the CoachTurnPacket, retiring route-local recomputation"). It is not
-a small change and was not attempted here.
+single source**, not introducing session consumption from zero.
+
+### 4a. Criterion 3 — OWNER AMENDMENT (2026-07-29)
+
+Investigation for that work established a fact that makes the criterion's original wording
+**unachievable as literally stated**: `packet.session` does not exist at answer time. The packet is
+assembled inside the response-finished hook — `services/coachQaShadow.js` registers `res.on('finish', …)`
+and calls `assembleShadowPacket` from inside it — so it is assembled **after the HTTP response is sent**.
+The live answer therefore cannot read it. Nothing is miswired: the packet is, by construction, a
+*completed-turn observation*, which is the Phase-3 boundary.
+
+The owner ruled **Option B** (2026-07-29): do not move packet assembly ahead of the response, do not
+assemble it twice, and do not reopen the Phase-3 observation boundary. The criterion is amended to:
+
+| Original (impossible) | Amended |
+|---|---|
+| "what's next?" consumes `packet.session` | "what's next?" consumes the **request-scoped canonical `WorkoutSession` that is later embedded in `packet.session`** |
+| "are we done?" consumes `packet.session` | "are we done?" consumes the **request-scoped canonical `WorkoutSession` that is later embedded in `packet.session`** |
+
+Acceptance is shared provenance, proven by object identity:
+
+1. the canonical `WorkoutSession` is built **once per request** when `ATLAS_TURN_PRECEDENCE` is enabled;
+2. the live visible answers consume that exact request-scoped truth;
+3. the post-response shadow embeds that **same** truth into `packet.session`;
+4. the shadow never independently rebuilds workout state;
+5. the packet remains a completed-turn observation (visible output, model state, trace stages);
+6. flag-off behaviour is unchanged.
+
+`packet.session` therefore remains **observational** — it is not read by the live response and does not
+become a live dependency — while the *workout truth inside it* is now shared with the live response
+rather than independently recomputed.
+
+**Scope boundary.** Criterion 3 owns canonical workout-state provenance; criterion 4 owns
+discussion-referent alignment. The referent is resolved at answer time, after the shared base is built,
+so the packet attaches it as an **enriched copy** of the shared base. `discussion_referent` is the only
+field permitted to differ from the base — pinned by test.
 
 ## 5. Criterion 4 — why no bounded slice was taken
 

@@ -23,7 +23,8 @@
 //
 // PHASE 4 H-08A — the canonical session crosses the /api/coach/chat boundary here. When the
 // request forwards the live client active-session snapshot (context.active_session), this
-// boundary builds + validates the canonical WorkoutSession once (buildCanonicalSessionSnapshot)
+// boundary builds + validates the canonical WorkoutSession once, in routes/coachOps.js, and the
+// shadow READS it from res.locals (Phase 4 criterion 3 — one builder per request)
 // and embeds it in the shadow packet as packet.session, recording session_snapshot as a
 // genuinely-present stage. This is gated by the Phase-4 ATLAS_TURN_PRECEDENCE flag (default
 // inert): flag off ⇒ packet.session stays null and the trace is byte-identical to before.
@@ -35,7 +36,6 @@ const interactionTraceShadow = require('./interactionTraceShadow');
 const coachTurnPacketShadow = require('./coachTurnPacketShadow');
 const coachResponseSheet = require('./coachResponseSheet');
 const { getProfileGoal } = require('./profileGoal');
-const { buildCanonicalSessionSnapshot } = require('./coachSessionSnapshot');
 const { buildCoachingDecisionFromExplanation, buildRecoveryDecision } = require('./coachDecisionSnapshot');
 const { isTurnPrecedenceEnabled } = require('./turnPrecedence');
 const turnCorrelation = require('./turnCorrelation');
@@ -126,9 +126,24 @@ function observeQaTurn(req, res, opts) {
       // route's answer-time referent is set on the session (packet.session.discussion_referent),
       // so the divergence report's "route-local referent" signal clears as clients forward the
       // active session.
-      const canonicalSession = isTurnPrecedenceEnabled()
-        ? buildCanonicalSessionSnapshot(ctx, { discussion_referent: routeReferent ? routeReferent.route : null })
+      // Phase 4 criterion 3 — READ the request-scoped canonical session the live turn already
+      // used; never rebuild it here. The route builds it once (behind the same
+      // ATLAS_TURN_PRECEDENCE flag) and stores it on res.locals, so `packet.session` and the
+      // visible answer are the same workout truth by construction rather than by coincidence.
+      //
+      // Absent field ⇒ null: a route that never evaluated a canonical session has none to share,
+      // and manufacturing one here would recreate exactly the second source this removes.
+      const canonicalBase = (res.locals && Object.prototype.hasOwnProperty.call(res.locals, 'coachCanonicalSession'))
+        ? res.locals.coachCanonicalSession
         : null;
+      // D10 (criterion 4) is the ONE permitted post-response overlay: the referent is resolved at
+      // ANSWER time, after the shared base was built, so attaching it needs an enriched COPY.
+      // Only `discussion_referent` may differ from the base — every other field is the base's.
+      // This is a copy, not a rebuild: no workout state is recomputed.
+      const referent = routeReferent && routeReferent.route != null ? routeReferent.route : null;
+      const canonicalSession = (canonicalBase && referent)
+        ? { ...canonicalBase, discussion_referent: referent }
+        : canonicalBase;
       // Recommendation-explanation grounding — the route stashes the trusted recommendation
       // snapshot on res.locals for a "why did the recommendation choose X" turn. When present
       // the route GENUINELY assembled a session/recommendation snapshot, consumed the engine's

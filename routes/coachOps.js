@@ -1208,6 +1208,21 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     // id. Read-only, flag-gated, off-path — never alters or blocks the reply below.
     coachQaShadow.observeQaTurn(req, res, { route: '/api/coach/chat', source: 'coach_chat', intentType: 'coach_chat' });
     const clientCtx = req.body && req.body.context;
+    // Phase 4 criterion 3 — THE request-scoped canonical WorkoutSession, built exactly ONCE here
+    // and shared for the rest of the turn. Before this, the route built one inside
+    // `deterministicAnswer` and the post-response shadow built a second, independent one; the two
+    // could not disagree on content (the builder is pure over the same `context.active_session`)
+    // but the live answer and `packet.session` had no shared provenance.
+    //
+    // Built BEFORE any athlete-facing early return, so a turn that exits early still leaves the
+    // shadow the same canonical base rather than tempting it to rebuild.
+    //
+    // The field is set even when the value is null, so "evaluated, and there is honestly no
+    // canonical session" is distinguishable from "never evaluated". Flag off ⇒ null without
+    // calling the builder at all, so the legacy path stays byte-identical.
+    res.locals.coachCanonicalSession = isTurnPrecedenceEnabled()
+      ? buildCanonicalSessionSnapshot(clientCtx)
+      : null;
     const history = Array.isArray(req.body && req.body.history) ? req.body.history : [];
 
     // Message-scoped mode signals, computed up front (both are pure, message-only).
@@ -1369,7 +1384,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // duplicate-aware slot identity — instead of the lossy route-local plan_state name array.
       // null when the flag is off OR the client omits the authoritative active-session snapshot;
       // those turns fall back to the plan_state path UNCHANGED (old clients / flag off byte-identical).
-      const canonicalSession = isTurnPrecedenceEnabled() ? buildCanonicalSessionSnapshot(clientCtx) : null;
+      const canonicalSession = res.locals.coachCanonicalSession || null;
       // "Are we done?" — answer from the canonical session's own slots (isComplete/remainingSlots)
       // when present, else the plan_state path exactly as before.
       const close = (canonicalSession && buildSessionCloseAnswerFromSession(message, canonicalSession))
