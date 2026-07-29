@@ -398,3 +398,80 @@ test('#1164 the 503 explains itself without blaming the athlete', async () => {
   assert.match(message, /nothing was changed/i);
   assert.ok(!/sheet|spreadsheet/i.test(message), 'never tells the athlete to edit the Sheet');
 });
+
+test('#1164 a case-differing session_id cannot bypass the guard (Codex P1)', async () => {
+  // The route's ownership read-back compares ids case-INSENSITIVELY (index.js:3582, :3596). A
+  // case-SENSITIVE finality check would miss the finalized record, report not-final, then sail
+  // through that read-back and delete the finalized workout — the whole contract bypassed by
+  // changing one letter's case.
+  const { response, body } = await undo({
+    log_appended_range: FINAL_RANGE,
+    session_id: FINAL_SESSION.toUpperCase(),
+    rows_to_delete: 1,
+    confirm_delete: true,
+    write_id: 'w-undo-case',
+  });
+
+  assert.equal(response.status, 409);
+  assert.equal(body.details && body.details.error_code, 'finalized_workout_undo_not_supported');
+  assertNothingTouched('case-differing session_id');
+});
+
+test('#1164 a matching row with a blank plan_version fails closed (Codex P1)', async () => {
+  // `foldSessionPlans` attributes a malformed row to errorSessions only when BOTH session_id and
+  // plan_version parse (sessionPlanReader.js:99). A row for this session with a blank plan_version
+  // is dropped silently, so the fold alone cannot see it.
+  const orphanRow = planRow({
+    key: 'k-blank-ver', session_id: OPEN_SESSION,
+    event_type: 'session_closeout', closeout_status: 'finalized',
+  });
+  orphanRow[P.plan_version] = '';
+  state.planRows.push(orphanRow);
+
+  const { response, body } = await undo({
+    log_appended_range: OPEN_RANGE, session_id: OPEN_SESSION,
+    rows_to_delete: 1, confirm_delete: true, write_id: 'w-undo-blankver',
+  });
+
+  assert.equal(response.status, 503);
+  assert.equal(body.details && body.details.error_code, 'finalized_undo_check_unavailable');
+  assertNothingTouched('blank plan_version on a matching row');
+});
+
+test('#1164 a row truncated before plan_version fails closed (Codex P1)', async () => {
+  // The same hole reached by a short row rather than a blank cell.
+  const truncated = [];
+  truncated[P.idempotency_key] = 'k-truncated';
+  truncated[P.session_id] = OPEN_SESSION;
+  state.planRows.push(truncated);
+
+  const { response, body } = await undo({
+    log_appended_range: OPEN_RANGE, session_id: OPEN_SESSION,
+    rows_to_delete: 1, confirm_delete: true, write_id: 'w-undo-truncated',
+  });
+
+  assert.equal(response.status, 503);
+  assert.equal(body.details && body.details.error_code, 'finalized_undo_check_unavailable');
+  assertNothingTouched('row truncated before plan_version');
+});
+
+test('#1164 matching rows that all drop out of the fold fail closed', async () => {
+  // Rows for this session exist and carry a plan_version, but every one is malformed for another
+  // reason, so none survives into the fold. An empty `mine` beside a positive raw count is not
+  // proof of not-final.
+  const junk = planRow({
+    key: 'k-junk', session_id: OPEN_SESSION,
+    event_type: 'session_closeout', closeout_status: 'finalized',
+  });
+  junk[P.event_type] = 'not_a_real_event_type';
+  state.planRows = [junk];
+
+  const { response, body } = await undo({
+    log_appended_range: OPEN_RANGE, session_id: OPEN_SESSION,
+    rows_to_delete: 1, confirm_delete: true, write_id: 'w-undo-alldropped',
+  });
+
+  assert.equal(response.status, 503);
+  assert.equal(body.details && body.details.error_code, 'finalized_undo_check_unavailable');
+  assertNothingTouched('all matching rows dropped from the fold');
+});
