@@ -34,6 +34,7 @@ import {
   getSessionImplicitRecs, setSessionImplicitRecs,
   getCoachDiscussionSinceLog, setCoachDiscussionSinceLog,
   getPendingReplacement, setPendingReplacement,
+  getPendingSetRevision, setPendingSetRevision,
   getAtlasLastError, setHistoryLoaded,
   persistSessionSnapshot, hydrateSessionSnapshot, clearPersistedSnapshot,
 } from './store.js';
@@ -63,6 +64,7 @@ import { remainingSlotNames, variantSatisfies, planSlotStatuses, firstUnloggedSl
 // and are checkpointed to the dry-run /revision sidecar.
 import { buildFutureRevisions, appendRevisions, performedSetCount as ledgerPerformedSetCount } from './sessionLedger.js';
 import { isExplicitEndorsement } from './endorsedSetRevision.js';
+import { buildSetRevisionProposal, decideApproval } from './setRevisionProposal.js';
 // F09G (CONVO-LOG-1) — hold a parser bodyweight-rep clarification and commit exactly
 // those detected reps on a short affirmation ("Just log it"), so clarified sets are
 // never dropped nor fabricated.
@@ -190,26 +192,19 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 
 // The list auto-loads on first History visit (loadHistory above). nav.js calls
 // this to force a fresh fetch when jumping here from a chat reply.
-// #1163 — the ONLY public surface of the revision-capture entry point, and deliberately the
-// narrowest one that still lets this slice ship.
+// #1189 — the prescription-only proposal lane's three EXPLICIT actions, in the same idiom as the
+// shell's other entry points. The proposal card calls these; nothing else may apply a revision.
 //
-// WHY A GLOBAL AT ALL. app.js is a bundled shell, not a module others import; every other shell
-// entry point is a `window.atlas*` (atlasAcceptPlan, atlasResumeBlockedLog). Converting this one
-// to a module export would mean restructuring the shell, which is far larger than this slice.
+// Boundary note: state transition + persistence live in `setRevisionProposal.js` and `store.js`,
+// the side effect lives in `approvePendingSetRevision`, and RENDERING the Approve / Reject / Ask
+// Why affordance is the remaining layer — the card that calls these is not built here. Until it
+// is, the lane is reachable by the UI layer but not yet exercised by an ordinary session.
 //
-// WHY IT IS SAFE. It mutates plan state, so this wrapper is STRICTER than the internal function:
-// it REQUIRES the athlete's own words and refuses anything short of an unambiguous endorsement.
-// An untrusted caller therefore cannot revise a plan without consent it did not have. The
-// internal `emitEndorsedSetRevision` keeps the optional-endorsement contract for the successor's
-// Approve affordance, where consent is established by the tap rather than by parsing prose.
-//
-// TEMPORARY. Once the prescription-proposal lane lands and `approvePendingSetRevision` calls the
-// internal function directly, this global has no remaining caller and should be deleted.
-window.atlasEndorseSetRevision = (request) => {
-  const r = request && typeof request === 'object' ? request : {};
-  if (!Object.prototype.hasOwnProperty.call(r, 'endorsement')) return false;
-  return emitEndorsedSetRevision(r);
-};
+// Ask Why needs no action of its own: `approvePendingSetRevision` returns false for a question and
+// deliberately KEEPS the proposal active, so Atlas can answer and the athlete can still decide.
+window.atlasProposeSetRevision = (params) => proposeSetRevision(params);
+window.atlasApproveSetRevision = (request) => approvePendingSetRevision(request);
+window.atlasRejectSetRevision = (request) => rejectPendingSetRevision(request);
 
 window.atlasRefreshSessions = () => {
   setHistoryLoaded(true);
@@ -1789,6 +1784,78 @@ function implicitPlanItemId(sessionId, liftCode) {
   const s = String(sessionId || '').replace(/[^a-zA-Z0-9]/g, '');
   const c = String(liftCode || '').replace(/[^a-zA-Z0-9]/g, '');
   return `pi_impl_${s}_${c}`;
+}
+
+// ── #1189: the prescription-only proposal lane ────────────────────────────────
+// Atlas proposes a set-level change on a movement that STAYS in the plan; the athlete explicitly
+// Approves, Rejects, or asks why. Nothing is applied until an approval, and the applied values
+// come from the STORED proposal — never reconstructed from the athlete's prose.
+//
+// The three boundaries are deliberately separate: `setRevisionProposal.js` decides, `store.js`
+// persists, and these two functions perform the side effect. No model call is involved.
+
+// Create and surface a proposal. It mutates nothing about the plan — it only records what Atlas
+// is asking for. Returns the proposal, or null when there is nothing legitimate to propose.
+function proposeSetRevision(params) {
+  const plan = getActivePlannedSession();
+  if (!plan || plan.accepted !== true) return null;  // no accepted plan carries ledger identity
+  const proposal = buildSetRevisionProposal({
+    ...(params && typeof params === 'object' ? params : {}),
+    plan_version: (params && params.plan_version) || plan.plan_version,
+    proposed_at: (params && params.proposed_at) || undefined,
+  });
+  if (!proposal) return null;
+  setPendingSetRevision(proposal);   // also clears any pending replacement — one decision at a time
+  persistSessionSnapshot(document.getElementById('log-session-id')?.value || null);
+  renderSetRevisionProposal(proposal);
+  return proposal;
+}
+
+// Approve the ACTIVE proposal. Every refusal path is named by `decideApproval`, so this function
+// only routes the verdict — it never re-derives consent or identity.
+function approvePendingSetRevision(request) {
+  const active = getPendingSetRevision();
+  const plan = getActivePlannedSession();
+  const verdict = decideApproval(request, active, plan, isExplicitEndorsement);
+
+  // A question or a bare acknowledgement KEEPS the proposal: the athlete has not decided yet, and
+  // discarding it would silently drop a decision Atlas is still waiting on.
+  if (verdict === 'not_consent' || verdict === 'malformed' || verdict === 'mismatch') return false;
+  if (verdict === 'stale') {                 // the plan moved on — the proposal describes a plan
+    setPendingSetRevision(null);             // that no longer exists, so clear rather than keep it
+    persistSessionSnapshot(document.getElementById('log-session-id')?.value || null);
+    return false;
+  }
+
+  // Consume the proposal BEFORE emitting, so a double tap finds nothing active and cannot produce
+  // a second chain. `appendRevisions` dedupes underneath as a second line of defence.
+  setPendingSetRevision(null);
+  const emitted = emitEndorsedSetRevision({
+    plan_item_id: active.plan_item_id,
+    planned_lift_code: active.planned_lift_code,
+    prescribed_name: active.prescribed_name,
+    prescription: active.prescription,
+    accepted_set_count: active.accepted_set_count,
+  });
+  persistSessionSnapshot(document.getElementById('log-session-id')?.value || null);
+  return emitted === true;
+}
+
+// Reject the active proposal. Clears it; captures nothing.
+function rejectPendingSetRevision(request) {
+  const active = getPendingSetRevision();
+  if (!active) return false;
+  const id = request && typeof request === 'object' ? String(request.proposal_id || '').trim() : '';
+  if (id && id !== active.proposal_id) return false;   // a stale card cannot discard a newer proposal
+  setPendingSetRevision(null);
+  persistSessionSnapshot(document.getElementById('log-session-id')?.value || null);
+  return true;
+}
+
+// Surface the proposal to the coach thread. The composer owns thread rendering, so this only
+// announces — mirroring how the replacement proposal is surfaced.
+function renderSetRevisionProposal(proposal) {
+  document.dispatchEvent(new CustomEvent('atlas:set-revision-proposed', { detail: { proposal } }));
 }
 
 // F10C — is a just-logged exercise OFF the accepted plan (unannounced)? Reuses the F10

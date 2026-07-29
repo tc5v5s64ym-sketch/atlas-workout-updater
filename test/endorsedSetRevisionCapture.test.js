@@ -330,16 +330,15 @@ test('#1163 the substitution path still reports its own emit outcome', () => {
   assert.equal(h.emitFutureSetRevision('pi-1', 'FSQ01', { weight: 135, reps: 8, rir: 2 }, PLANNED_NAME, 3), false);
 });
 
-// ── the public surface is stricter than the internal function ─────────────────
+// ── the temporary public surface is GONE ──────────────────────────────────────
 
-test('#1163 the public global refuses a request that carries no endorsement at all', () => {
-  // The global is reachable by any script on the page and mutates plan state, so it demands the
-  // athlete's own words. The internal function keeps the optional-endorsement contract for the
-  // successor's Approve affordance, where consent comes from the tap.
-  const at = appSrc.indexOf('window.atlasEndorseSetRevision');
-  assert.notEqual(at, -1, 'the global entry point must exist in the built bundle');
-  const decl = appSrc.slice(at, at + 400);
-  assert.match(decl, /hasOwnProperty\.call\(r, 'endorsement'\)/,
-    'the global must require an endorsement field before it will act');
-  assert.match(decl, /return false/, 'and refuse without one');
+test('#1163 the temporary window global is removed now that approval reaches the entry point', () => {
+  // #1188 shipped `window.atlasEndorseSetRevision` as a documented TEMPORARY seam, because nothing
+  // called the entry point yet. #1189's `approvePendingSetRevision` now calls it directly, so the
+  // global has no remaining caller and was deleted. A plan-mutating function must not stay
+  // reachable from any script on the page one release longer than it needs to be.
+  assert.equal(appSrc.includes('window.atlasEndorseSetRevision'), false,
+    'the temporary global must not survive the arrival of its real caller');
+  assert.ok(appSrc.includes('function approvePendingSetRevision('),
+    'and its replacement — the approval seam — must exist');
 });
