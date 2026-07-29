@@ -330,16 +330,24 @@ test('#1163 the substitution path still reports its own emit outcome', () => {
   assert.equal(h.emitFutureSetRevision('pi-1', 'FSQ01', { weight: 135, reps: 8, rir: 2 }, PLANNED_NAME, 3), false);
 });
 
-// ── the public surface is stricter than the internal function ─────────────────
+// ── the entry point has a real in-app caller, and no public global ────────────
 
-test('#1163 the public global refuses a request that carries no endorsement at all', () => {
-  // The global is reachable by any script on the page and mutates plan state, so it demands the
-  // athlete's own words. The internal function keeps the optional-endorsement contract for the
-  // successor's Approve affordance, where consent comes from the tap.
-  const at = appSrc.indexOf('window.atlasEndorseSetRevision');
-  assert.notEqual(at, -1, 'the global entry point must exist in the built bundle');
-  const decl = appSrc.slice(at, at + 400);
-  assert.match(decl, /hasOwnProperty\.call\(r, 'endorsement'\)/,
-    'the global must require an endorsement field before it will act');
-  assert.match(decl, /return false/, 'and refuse without one');
+test('#1163 the capture entry point is reached from the in-app proposal lane, not a global', () => {
+  // #1188 shipped `window.atlasEndorseSetRevision` as the narrowest public surface that let that
+  // slice ship, and documented it as TEMPORARY — it had no in-app caller, and any script on the
+  // page could reach a function that rewrites every remaining set. #1189's proposal lane now
+  // calls the internal function directly from the approve handler, so the global is gone.
+  assert.doesNotMatch(appSrc, /window\.atlasEndorseSetRevision\s*=/,
+    'the temporary public global must not survive its replacement');
+  const approve = appSrc.slice(
+    appSrc.indexOf('function approvePendingSetRevision('),
+    appSrc.indexOf('function rejectPendingSetRevision(')
+  );
+  assert.ok(approve, 'the proposal lane must expose an approve handler');
+  assert.match(approve, /emitEndorsedSetRevision\(/,
+    'and it must drive the capture entry point directly');
+  // Consent still comes from somewhere real: the approve handler establishes it by the tap /
+  // the already-validated endorsement, so it deliberately passes NO `endorsement` field.
+  assert.doesNotMatch(approve, /endorsement:/,
+    'the approve handler must not re-parse prose to manufacture consent');
 });

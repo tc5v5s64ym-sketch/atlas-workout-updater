@@ -2079,6 +2079,36 @@ import {
   }
   document.addEventListener('atlas:replacement-proposed', e => renderReplacementProposalCard((e && e.detail) || {}));
 
+  // #1189 — the PRESCRIPTION-ONLY set-revision proposal card. Same contract as the replacement
+  // card above: the card only dispatches the decision and disables itself, so repeated taps are
+  // idempotent; app.js's approve/reject are what apply (or clear) the proposal, and they are
+  // also no-ops once it is resolved. Nothing is revised by rendering.
+  function renderSetRevisionProposalCard(d) {
+    const proposal = d && d.proposal;
+    if (!proposal) return;
+    const node = appendAtlasBubble();
+    if (!node || !node.body) return;
+    node.body.appendChild(elc('div', 'set-revision-proposal-line', d.line || 'Revise the remaining sets?'));
+    const actions = elc('div', 'set-revision-proposal-actions');
+    const approve = elc('button', 'set-revision-approve-btn', 'Approve');
+    const reject = elc('button', 'set-revision-reject-btn', 'Keep it');
+    approve.type = 'button'; reject.type = 'button';
+    approve.setAttribute('data-proposal-id', proposal.proposal_id || '');
+    let resolved = false;
+    const decide = (decision) => {
+      if (resolved) return;                 // idempotent — one decision per card
+      resolved = true;
+      approve.disabled = true; reject.disabled = true;
+      document.dispatchEvent(new CustomEvent('atlas:set-revision-decision', { detail: { decision, proposal } }));
+    };
+    approve.addEventListener('click', () => decide('approve'));
+    reject.addEventListener('click', () => decide('reject'));
+    actions.appendChild(approve);
+    actions.appendChild(reject);
+    node.body.appendChild(actions);
+  }
+  document.addEventListener('atlas:set-revision-proposed', e => renderSetRevisionProposalCard((e && e.detail) || {}));
+
   // P0 PR 4: a deterministic identity correction ("sorry that was squats") — app.js
   // already relabeled the logged lift in the session buffers; confirm it in the
   // thread. Read-only narration; the engine OWNS the relabel.

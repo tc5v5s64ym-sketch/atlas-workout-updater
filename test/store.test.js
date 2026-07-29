@@ -139,7 +139,7 @@ test('start → substitution pending → applied clears the pending swap', () =>
   assert.equal(store.getActivePlannedSession().exercises[0].name, 'Hack Squat');
 });
 
-test('persist writes a v5 snapshot carrying pendingSubstitution (SESS-2), sessionRevisions (F10B), sessionImplicitRecs (F10C), pendingReplacement + sessionId', () => {
+test('persist writes a v6 snapshot carrying pendingSubstitution (SESS-2), sessionRevisions (F10B), sessionImplicitRecs (F10C), pendingReplacement, pendingSetRevision (#1189) + sessionId', () => {
   store.setActivePlannedSession({ label: 'p', exercises: [{ name: 'Leg Press' }], index: 0 });
   store.getSessionLog().push({ exercise: 'Bench Press', weight: 225, reps: 5, rir: 2 });
   store.setSessionCompleted(['Bench Press']);
@@ -147,9 +147,10 @@ test('persist writes a v5 snapshot carrying pendingSubstitution (SESS-2), sessio
   store.setSessionRevisions([{ plan_item_id: 'pi_1', set_index: 2, plan_version: 2, target_weight: 60, target_reps: 8, target_rir: 2, recommendation_source: 'live_revision' }]);
   store.setSessionImplicitRecs([{ plan_item_id: 'pi_impl_S1_HCURL', planned_lift_code: 'HCURL', target_weight: 30, target_reps: 12, target_rir: 1, target_set_count: 1 }]);
   store.setPendingReplacement({ proposal_id: 'repl:LEGPRESS->BENCHPRESS@x', source: { name: 'Leg Press' }, replacement: { name: 'Bench Press' }, status: 'pending' });
+  store.setPendingSetRevision({ kind: 'set_revision', proposal_id: 'setrev:PI1@x', plan_item_id: 'pi_1', planned_lift_code: 'SQ01', status: 'pending' });
   store.persistSessionSnapshot('SESSION-42');
   const snap = JSON.parse(globalThis.localStorage.getItem('atlas_session_snapshot_v1'));
-  assert.equal(snap.v, 5);
+  assert.equal(snap.v, 6);
   assert.equal(typeof snap.ts, 'number');
   assert.equal(snap.sessionId, 'SESSION-42');
   assert.deepEqual(snap.pendingSubstitution, { prescribed: 'Leg Press' });
@@ -159,6 +160,47 @@ test('persist writes a v5 snapshot carrying pendingSubstitution (SESS-2), sessio
   assert.equal(snap.sessionImplicitRecs.length, 1);
   assert.equal(snap.sessionImplicitRecs[0].planned_lift_code, 'HCURL');
   assert.equal(snap.pendingReplacement.proposal_id, 'repl:LEGPRESS->BENCHPRESS@x');
+  assert.equal(snap.pendingSetRevision.proposal_id, 'setrev:PI1@x');
+});
+
+test('#1189: a pending set-revision proposal round-trips through the snapshot (reload re-surfaces the SAME proposal)', () => {
+  const proposal = {
+    kind: 'set_revision', proposal_id: 'setrev:PIBSQ@pi_bsq|SQ01|185|5|2|3',
+    plan_item_id: 'pi_bsq', planned_lift_code: 'SQ01', prescribed_name: 'Back Squat',
+    prescription: { weight: 185, reps: 5, rir: 2 }, accepted_set_count: 3,
+    from: { weight: 225, reps: 5, rir: 2 }, plan_version: 'pv_x', status: 'pending',
+  };
+  store.setActivePlannedSession({ accepted: true, session_id: 'S1', plan_version: 'pv_x', label: 'p', exercises: [{ name: 'Back Squat', plan_item_id: 'pi_bsq' }], index: 0 });
+  store.getSessionLog().push({ exercise: 'Back Squat', weight: 225, reps: 5, rir: 2 });
+  store.setPendingSetRevision(proposal);
+  store.persistSessionSnapshot('S1');
+  store.resetSessionStore();
+  assert.equal(store.getPendingSetRevision(), null, 'reset clears the pending proposal');
+
+  assert.equal(store.hydrateSessionSnapshot().resumed, true);
+  assert.deepEqual(store.getPendingSetRevision(), proposal, 'the SAME proposal is restored intact');
+});
+
+test('#1189: a v5 snapshot (no pendingSetRevision) still restores, with no proposal', () => {
+  // Backward compatibility is additive, exactly as every prior bump: an older snapshot simply
+  // lacks the newer field and restores it as its empty value. Nothing is dropped or rewritten.
+  globalThis.localStorage.setItem('atlas_session_snapshot_v1', JSON.stringify({
+    v: 5,
+    ts: Date.now(),
+    sessionLog: [{ exercise: 'Bench Press', weight: 225, reps: 5, rir: 2 }],
+    sessionCompleted: ['Bench Press'],
+    activePlannedSession: { accepted: true, label: 'p', exercises: [{ name: 'Bench Press' }], index: 0 },
+    pendingReplacement: { proposal_id: 'repl:A->B@x', status: 'pending' },
+    sessionId: 'S-OLD',
+  }));
+
+  const res = store.hydrateSessionSnapshot();
+
+  assert.equal(res.resumed, true, 'a v5 snapshot is never rejected on deploy');
+  assert.equal(res.sessionId, 'S-OLD');
+  assert.equal(store.getPendingSetRevision(), null, 'the missing field restores as no proposal');
+  assert.equal(store.getPendingReplacement().proposal_id, 'repl:A->B@x', 'and v5 fields are untouched');
+  assert.equal(store.getSessionLog().length, 1);
 });
 
 test('F10C: implicit recommendations round-trip through the snapshot (reconstructed after reload)', () => {

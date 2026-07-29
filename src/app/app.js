@@ -34,6 +34,7 @@ import {
   getSessionImplicitRecs, setSessionImplicitRecs,
   getCoachDiscussionSinceLog, setCoachDiscussionSinceLog,
   getPendingReplacement, setPendingReplacement,
+  getPendingSetRevision, setPendingSetRevision,
   getAtlasLastError, setHistoryLoaded,
   persistSessionSnapshot, hydrateSessionSnapshot, clearPersistedSnapshot,
 } from './store.js';
@@ -63,6 +64,13 @@ import { remainingSlotNames, variantSatisfies, planSlotStatuses, firstUnloggedSl
 // and are checkpointed to the dry-run /revision sidecar.
 import { buildFutureRevisions, appendRevisions, performedSetCount as ledgerPerformedSetCount } from './sessionLedger.js';
 import { isExplicitEndorsement } from './endorsedSetRevision.js';
+// #1189 — the prescription-only set-revision proposal lane (propose → approve → revise). Pure
+// logic only: construction, the deterministic id, the staleness test, the proposal line, and
+// follow-up classification. No new machinery — approval drives emitEndorsedSetRevision below.
+import {
+  buildSetRevisionProposal, isSetRevisionProposalFresh,
+  formatSetRevisionProposalLine, formatSetRevisionPrescription, classifySetRevisionFollowup,
+} from './pendingSetRevision.js';
 // F09G (CONVO-LOG-1) — hold a parser bodyweight-rep clarification and commit exactly
 // those detected reps on a short affirmation ("Just log it"), so clarified sets are
 // never dropped nor fabricated.
@@ -190,27 +198,12 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 
 // The list auto-loads on first History visit (loadHistory above). nav.js calls
 // this to force a fresh fetch when jumping here from a chat reply.
-// #1163 — the ONLY public surface of the revision-capture entry point, and deliberately the
-// narrowest one that still lets this slice ship.
 //
-// WHY A GLOBAL AT ALL. app.js is a bundled shell, not a module others import; every other shell
-// entry point is a `window.atlas*` (atlasAcceptPlan, atlasResumeBlockedLog). Converting this one
-// to a module export would mean restructuring the shell, which is far larger than this slice.
-//
-// WHY IT IS SAFE. It mutates plan state, so this wrapper is STRICTER than the internal function:
-// it REQUIRES the athlete's own words and refuses anything short of an unambiguous endorsement.
-// An untrusted caller therefore cannot revise a plan without consent it did not have. The
-// internal `emitEndorsedSetRevision` keeps the optional-endorsement contract for the successor's
-// Approve affordance, where consent is established by the tap rather than by parsing prose.
-//
-// TEMPORARY. Once the prescription-proposal lane lands and `approvePendingSetRevision` calls the
-// internal function directly, this global has no remaining caller and should be deleted.
-window.atlasEndorseSetRevision = (request) => {
-  const r = request && typeof request === 'object' ? request : {};
-  if (!Object.prototype.hasOwnProperty.call(r, 'endorsement')) return false;
-  return emitEndorsedSetRevision(r);
-};
-
+// #1163's temporary `window.atlasEndorseSetRevision` global lived here. #1188 shipped it as the
+// narrowest public surface that let that slice ship, and documented it as TEMPORARY: it had no
+// in-app caller, and any script on the page could reach a function that rewrites the remaining
+// sets. #1189's proposal lane now calls the internal `emitEndorsedSetRevision` directly from
+// `approvePendingSetRevision`, so the global has no remaining caller and is deleted.
 window.atlasRefreshSessions = () => {
   setHistoryLoaded(true);
   loadSessions();
@@ -2244,8 +2237,14 @@ async function tryProposeReplacement(text) {
   const resolved = resolveCatalogExercise(intent.substitute);
   if (intent.positional && !resolved.matched) return false;
   if (!resolved.name) return false;
-  // A no-op (replacement collapses to the source) is not a replacement — fall through.
-  if (String(resolved.name).toLowerCase() === String(sourceName).toLowerCase()) return false;
+  // A "replacement" that collapses to the SOURCE is not a swap — the movement is staying. It is
+  // a PRESCRIPTION-ONLY change, which this lane structurally cannot carry (its proposal id,
+  // position and approve executor are all built around source → replacement, and approval would
+  // record a `substituted` outcome for a movement that never moved). Hand it to the sibling
+  // set-revision lane rather than dropping the turn (#1189).
+  if (String(resolved.name).toLowerCase() === String(sourceName).toLowerCase()) {
+    return tryProposeSetRevision(sourceName);
+  }
   // Resolve the replacement's AUTHORITATIVE prescription from the read-only engine route.
   // Never invents a load: an unresolved load is carried as an explicit unresolved state.
   let prescription = null;
@@ -2375,6 +2374,153 @@ function tryResolvePendingReplacement(text) {
       ? `${r.name} is the proposed replacement for ${proposal.source.name} — not active yet. Proposed target: ${rx}. Approve the swap and I'll set it.`
       : `${r.name} is the proposed replacement for ${proposal.source.name} — not active yet, and I don't have an authoritative load for it. Tell me the weight and approve, and I'll set it.`;
     announcePlanMutation(msg, firstUnloggedPlannedLift());
+    return true;
+  }
+  return false; // unrelated turn — keep the proposal pending, route normally
+}
+
+// ── Prescription-only SET REVISION via a gated proposal (#1189) ───────────────
+// The sibling of the replacement lane above, for the case it structurally cannot carry: the
+// movement STAYS in the plan and only its remaining prescription changes. #1188 shipped the
+// capture entry point (emitEndorsedSetRevision) but nothing in the real conversation reached
+// it, so a set-level revision was still only ever a side effect of a movement swap.
+//
+// Read-only planning: the target is resolved from the read-only /api/recommend/next engine
+// route and NEVER invented; nothing is revised until the athlete approves; no Sheet write
+// occurs (the revision checkpoint POST underneath remains a dry-run sidecar while
+// SESSION_PLAN_SETS_WRITE_ENABLED is 0). Returns true when it staged a proposal.
+async function tryProposeSetRevision(slotName) {
+  const plan = getActivePlannedSession();
+  if (!plan || plan.accepted !== true) return false;   // only an accepted plan carries ledger identity
+  const exercises = Array.isArray(plan.exercises) ? plan.exercises : [];
+  const AR = (typeof window !== 'undefined' && window.activeReplacement) || null;
+  if (!AR) return false;
+  // Resolve the slot with the SAME resolver the replacement lane uses, so the two lanes can
+  // never disagree about which slot a phrase named.
+  const idx = AR.findSlotIndex(exercises, slotName);
+  if (idx === -1) return false;
+  const slot = exercises[idx] || {};
+  const liftCode = slot.liftCode || slot.lift_code || '';
+  if (!slot.plan_item_id || !liftCode) return false;   // no ledger identity → nothing to revise
+  // Resolve the AUTHORITATIVE target from the read-only engine. An unresolved target stages NO
+  // proposal — an invented number would be a coaching claim the engine never made.
+  let prescription = null;
+  try {
+    const rec = await api(`/api/recommend/next/${encodeURIComponent(liftCode)}`);
+    // next_target / target_rir live INSIDE the standard { status, data } envelope — the same
+    // read the replacement lane and the other recommend/next consumers do.
+    const data = (rec && rec.data) || null;
+    const t = (data && data.next_target) || null;
+    if (t) prescription = { weight: t.weight ?? null, reps: t.reps ?? null, rir: (data.target_rir ?? t.rir ?? null) };
+  } catch (_) { prescription = null; }  // engine unavailable → no proposal, never a guess
+  const proposal = buildSetRevisionProposal({
+    plan_item_id: slot.plan_item_id,
+    planned_lift_code: liftCode,                       // UNCHANGED — the movement does not move
+    prescribed_name: slot.canonicalName || slot.name,
+    prescription,
+    accepted_set_count: slot.sets,                     // the v1 grain the revision is bounded by
+    from: { weight: slot.weight, reps: slot.reps, rir: slot.rir },
+    plan_version: plan.plan_version,
+    proposed_at: new Date().toISOString(),
+  });
+  if (!proposal) return false;   // nothing usable to propose (no target, or it changes nothing)
+  // Staging supersedes any older proposal; the older card is then inert via the proposal-id
+  // guard on approve/reject below.
+  setPendingSetRevision(proposal);
+  persistSessionSnapshot(document.getElementById('log-session-id')?.value || null);
+  renderSetRevisionProposal(proposal);
+  return true;
+}
+
+// Render the pending set-revision PROPOSAL to the coach thread with an Approve / Keep it
+// affordance. Nothing is revised here; approval is what applies it.
+function renderSetRevisionProposal(proposal) {
+  document.dispatchEvent(new CustomEvent('atlas:set-revision-proposed', {
+    detail: { proposal, line: formatSetRevisionProposalLine(proposal) }
+  }));
+}
+
+// APPROVE the pending set revision: emit the endorsed revision for this slot's FUTURE sets
+// exactly ONCE, through #1188's capture entry point. The planned lift code is carried through
+// UNCHANGED and NO `substituted` item_outcome is emitted — a load change is not a substitution,
+// and recording one would corrupt the movement-level planned-versus-completed record. Completed
+// sets are untouched (the revision builder bounds itself to unperformed sets). Idempotent: the
+// proposal is cleared here, so a re-tap finds nothing, and appendRevisions dedupes underneath.
+// No Sheet write occurs. Returns true when an approval was handled.
+function approvePendingSetRevision(fromCard) {
+  const proposal = getPendingSetRevision();
+  if (!proposal || proposal.status !== 'pending') return false;
+  // A tap on a stale card (its proposal was superseded by a newer pending one) must never apply
+  // the newer revision — the same guard the replacement lane carries. The conversational path
+  // passes no card, so it always targets the current proposal.
+  if (fromCard && fromCard.proposal_id && fromCard.proposal_id !== proposal.proposal_id) return false;
+  const plan = getActivePlannedSession();
+  const exercises = (plan && plan.exercises) || [];
+  // Fail closed on a stale proposal (the plan version moved, the slot is gone, or the movement
+  // changed under it) — never revise whatever the plan became.
+  if (!isSetRevisionProposalFresh(proposal, exercises, plan && plan.plan_version)) {
+    setPendingSetRevision(null);
+    persistSessionSnapshot(document.getElementById('log-session-id')?.value || null);
+    announcePlanMutation('That plan changed, so I didn\'t revise those sets. Tell me again what to change.', firstUnloggedPlannedLift());
+    return true;
+  }
+  const captured = emitEndorsedSetRevision({
+    plan_item_id: proposal.plan_item_id,
+    planned_lift_code: proposal.planned_lift_code,
+    prescribed_name: proposal.prescribed_name,
+    prescription: proposal.prescription,
+    accepted_set_count: proposal.accepted_set_count,
+    // No `endorsement` field: consent was established by the tap or by the explicit
+    // endorsement the follow-up router already validated, not by re-parsing prose here.
+  });
+  setPendingSetRevision(null);
+  persistSessionSnapshot(document.getElementById('log-session-id')?.value || null);
+  // Report only what actually happened. When every set is already performed there is no future
+  // set to revise, and claiming a revision would tell the athlete their plan changed when
+  // session truth never moved.
+  const rx = formatSetRevisionPrescription(proposal.prescription);
+  announcePlanMutation(
+    captured
+      ? `Kept ${proposal.prescribed_name} — the rest of the sets are ${rx}.`
+      : `${proposal.prescribed_name} has no sets left to revise, so I left it as logged.`,
+    firstUnloggedPlannedLift(),
+  );
+  return true;
+}
+
+// REJECT the pending set revision — the plan is left exactly as it was, and a later bare "yes"
+// finds nothing (identity is never reconstructed from prose).
+function rejectPendingSetRevision(fromCard) {
+  const proposal = getPendingSetRevision();
+  if (!proposal) return false;
+  if (fromCard && fromCard.proposal_id && fromCard.proposal_id !== proposal.proposal_id) return false;
+  setPendingSetRevision(null);
+  persistSessionSnapshot(document.getElementById('log-session-id')?.value || null);
+  announcePlanMutation(`Left ${proposal.prescribed_name || 'the plan'} as-is.`, firstUnloggedPlannedLift());
+  return true;
+}
+
+// Resolve a follow-up turn against a PENDING set-revision proposal. Returns true when the turn
+// was a decision (approve / reject) or a question the proposal answers; false to fall through
+// with the proposal still pending. Deterministic + read-only; never calls the coach.
+function tryResolvePendingSetRevision(text) {
+  const proposal = getPendingSetRevision();
+  if (!proposal || proposal.status !== 'pending') return false;
+  const kind = classifySetRevisionFollowup(text, proposal);
+  if (kind === 'approve') return approvePendingSetRevision();
+  if (kind === 'reject') return rejectPendingSetRevision();
+  if (kind === 'query') {
+    // Ask Why. A question is neither approval nor rejection, so the proposal stays ACTIVE and
+    // UNAPPLIED — Atlas answers from the stored proposal (never an invented number) and the
+    // athlete can still decide.
+    const rx = formatSetRevisionPrescription(proposal.prescription);
+    const from = formatSetRevisionPrescription(proposal.from);
+    announcePlanMutation(
+      from
+        ? `That's the engine's next target for ${proposal.prescribed_name}: ${rx}, in place of ${from}. ${proposal.prescribed_name} stays in the plan either way — approve and I'll set the rest of the sets.`
+        : `That's the engine's next target for ${proposal.prescribed_name}: ${rx}. ${proposal.prescribed_name} stays in the plan either way — approve and I'll set the rest of the sets.`,
+      firstUnloggedPlannedLift(),
+    );
     return true;
   }
   return false; // unrelated turn — keep the proposal pending, route normally
@@ -2991,6 +3137,17 @@ document.addEventListener('atlas:replacement-decision', e => {
   const fromCard = e && e.detail && e.detail.proposal;
   if (decision === 'approve') approvePendingReplacement(fromCard);
   else if (decision === 'reject') rejectPendingReplacement(fromCard);
+});
+
+// A tap on the pending SET-REVISION proposal card (Approve / Keep it) — apply or clear the
+// staged prescription change through the SAME idempotent handlers the conversational
+// "yes"/"no" path uses. The decision is bound to the proposal that RENDERED the card, so a tap
+// on an older, still-visible card can never apply a newer revision. No Sheet write occurs.
+document.addEventListener('atlas:set-revision-decision', e => {
+  const decision = e && e.detail && e.detail.decision;
+  const fromCard = e && e.detail && e.detail.proposal;
+  if (decision === 'approve') approvePendingSetRevision(fromCard);
+  else if (decision === 'reject') rejectPendingSetRevision(fromCard);
 });
 
 // Open the recommended workout — Composer-first Phase B: routes to the ONE
@@ -5063,6 +5220,19 @@ function restoreSessionSnapshot() {
       persistSessionSnapshot(res.sessionId || null);
     }
   }
+  // Re-surface a restored SET-REVISION proposal the same way (#1189) — nothing was revised
+  // before approval, so a reload simply re-presents the SAME proposal against the intact plan.
+  // Discard it (never apply) if the plan version moved or the slot changed under it.
+  const pendingRevision = getPendingSetRevision();
+  if (pendingRevision) {
+    const plan = getActivePlannedSession();
+    if (isSetRevisionProposalFresh(pendingRevision, (plan && plan.exercises) || [], plan && plan.plan_version)) {
+      renderSetRevisionProposal(pendingRevision);
+    } else {
+      setPendingSetRevision(null);
+      persistSessionSnapshot(res.sessionId || null);
+    }
+  }
   return true;
 }
 
@@ -6693,6 +6863,14 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       // one-sided skip, the SME, or a broad Bench Press benchmark challenge. A loggable set
       // parsed+logged above, so it never reaches here; only a conversational follow-up does.
       if (tryResolvePendingReplacement(pendingChatText)) {
+        activeExercise = null;
+        return;
+      }
+      // A PENDING SET-REVISION proposal owns the follow-up turn the same way (#1189): an
+      // explicit endorsement approves it, a decline clears it, and a question is answered from
+      // the stored proposal while it stays pending. An ambiguous acknowledgement falls through
+      // untouched — it is not consent to rewrite the remaining sets.
+      if (tryResolvePendingSetRevision(pendingChatText)) {
         activeExercise = null;
         return;
       }
