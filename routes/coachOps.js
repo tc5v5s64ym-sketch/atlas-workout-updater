@@ -1479,6 +1479,53 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // stays the recovery read below, which short-circuits before the LLM, so recovery
       // outranks reassure (Owner Decision 1: safety and recovery stay above reassure).
       const context = buildChatContext(allLog, allEffort, clientCtx, coachingNotes, constraints, { discouraged, constraintRows });
+      // ── Discussion-referent (server-side tier-2 backing for the dispute resolver) ──
+      // The lift the coach last grounded an answer about — recorded server-side, keyed by
+      // session, freshness-bounded — so a later BARE correction ("that isn't what you
+      // planned") resolves to it even when ATLAS named the lift and the athlete did not
+      // (e.g. "what's next?" → "Bench Press…" → the dispute). READ the prior turn's
+      // referent (used to resolve a dispute below), then RECORD this turn's referent for
+      // the next turn. NEVER a client-sent field: the value is a lift the SERVER resolved
+      // from the current plan. Ephemeral; the permanent form is a CoachTurnPacket/
+      // WorkoutSession field set at answer time (Phase 4 punch list).
+      const referentSessionKey = coachChatSessionKey(clientCtx);
+      const referentNowMs = Date.now();
+      const lastDiscussedLift = coachDiscussionReferent.readFreshDiscussedLift(referentSessionKey, { nowMs: referentNowMs });
+      const isDisputeTurn = coachResponseGrounding.isFactualPlanDispute(message, context);
+      // This turn's referent: a dispute resolves to its disputed entry (using the prior
+      // referent just read); any other turn to the lift its answer is about (a named-lift
+      // explanation/value question, or the next-up lift for "what's next?").
+      const disputeEntryForReferent = isDisputeTurn
+        ? coachResponseGrounding.resolveDisputedLiftEntry(message, context, history, { lastDiscussedLift })
+        : null;
+      const turnReferentKey = disputeEntryForReferent
+        ? coachResponseGrounding.canonicalKey(disputeEntryForReferent.name || disputeEntryForReferent.exercise)
+        : (isDisputeTurn ? null : coachResponseGrounding.resolveDiscussedLift(message, context));
+      if (turnReferentKey) {
+        coachDiscussionReferent.recordDiscussedLift(referentSessionKey, turnReferentKey, { nowMs: referentNowMs });
+      }
+      // Off-path shadow signal: expose the route's chosen referent so the coach-turn shadow
+      // can compare it to the packet's referent (null until Phase 4 adds the field). It is
+      // the divergence report's Phase-4 TODO marker — this pick is computed route-locally.
+      // res.locals is read only by the shadow's res.on('finish') hook; the reply is untouched.
+      res.locals = res.locals || {};
+      res.locals.coachTurnReferent = { route: turnReferentKey || null, is_dispute: isDisputeTurn };
+
+      // Phase 4 criterion 4 step (a) — the referent is now resolved with the FULL context, and
+      // the single request-scoped canonical session is ENRICHED with it here, before any
+      // configured-path answer or early return consumes it. One enriched copy, no rebuild:
+      // buildCanonicalSessionSnapshot is still called exactly once per enabled request.
+      //
+      // Why a copy rather than an in-place write: the base is a validated contract object shared
+      // with the shadow, and mutating it after validation would make "what was validated" and
+      // "what was embedded" different questions. The copy is stored back on res.locals so the
+      // configured live path and the post-response packet keep OBJECT IDENTITY with each other.
+      if (res.locals.coachCanonicalSession && turnReferentKey) {
+        res.locals.coachCanonicalSession = {
+          ...res.locals.coachCanonicalSession,
+          discussion_referent: turnReferentKey,
+        };
+      }
       // ── Soul Plan PR-B5a Part 2a — DARK drift shadow (ATLAS_DRIFT_SHADOW, default
       // OFF). Fire-and-forget: reads FINALIZED-ONLY Session_Plans history (TTL-cached,
       // so never an uncached per-message read) + runs the pure detectDrift, and emits a
@@ -1514,37 +1561,6 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
           message: recoveryReply, configured: true, model: coach.coachModel(), source: 'engine'
         });
       }
-      // ── Discussion-referent (server-side tier-2 backing for the dispute resolver) ──
-      // The lift the coach last grounded an answer about — recorded server-side, keyed by
-      // session, freshness-bounded — so a later BARE correction ("that isn't what you
-      // planned") resolves to it even when ATLAS named the lift and the athlete did not
-      // (e.g. "what's next?" → "Bench Press…" → the dispute). READ the prior turn's
-      // referent (used to resolve a dispute below), then RECORD this turn's referent for
-      // the next turn. NEVER a client-sent field: the value is a lift the SERVER resolved
-      // from the current plan. Ephemeral; the permanent form is a CoachTurnPacket/
-      // WorkoutSession field set at answer time (Phase 4 punch list).
-      const referentSessionKey = coachChatSessionKey(clientCtx);
-      const referentNowMs = Date.now();
-      const lastDiscussedLift = coachDiscussionReferent.readFreshDiscussedLift(referentSessionKey, { nowMs: referentNowMs });
-      const isDisputeTurn = coachResponseGrounding.isFactualPlanDispute(message, context);
-      // This turn's referent: a dispute resolves to its disputed entry (using the prior
-      // referent just read); any other turn to the lift its answer is about (a named-lift
-      // explanation/value question, or the next-up lift for "what's next?").
-      const disputeEntryForReferent = isDisputeTurn
-        ? coachResponseGrounding.resolveDisputedLiftEntry(message, context, history, { lastDiscussedLift })
-        : null;
-      const turnReferentKey = disputeEntryForReferent
-        ? coachResponseGrounding.canonicalKey(disputeEntryForReferent.name || disputeEntryForReferent.exercise)
-        : (isDisputeTurn ? null : coachResponseGrounding.resolveDiscussedLift(message, context));
-      if (turnReferentKey) {
-        coachDiscussionReferent.recordDiscussedLift(referentSessionKey, turnReferentKey, { nowMs: referentNowMs });
-      }
-      // Off-path shadow signal: expose the route's chosen referent so the coach-turn shadow
-      // can compare it to the packet's referent (null until Phase 4 adds the field). It is
-      // the divergence report's Phase-4 TODO marker — this pick is computed route-locally.
-      // res.locals is read only by the shadow's res.on('finish') hook; the reply is untouched.
-      res.locals = res.locals || {};
-      res.locals.coachTurnReferent = { route: turnReferentKey || null, is_dispute: isDisputeTurn };
 
       // FAIL-CLOSED active-plan dispute (2026-07-22). A FACTUAL plan dispute/correction
       // ("that isn't what you planned", "you said 195") is answered DETERMINISTICALLY from
