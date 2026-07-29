@@ -259,8 +259,14 @@ async function sealCloseout(session, closeoutWriteId, opts = {}) {
       : { sheet_written: false, no_write_confirmed: true, ...failed };
   }
   if (!probe.present) {
+    // `sealed_ok:true` on BOTH paths: the probe SUCCEEDED and confirmed there is nothing to
+    // stamp, which is a verified outcome regardless of whether the lane may write. Omitting it
+    // on the dry path did not make the dry run safer — the artifact consumer reads an absent
+    // field as UNKNOWN, so the omission reported a verified empty seal as `indeterminate` and
+    // made reviewability unreachable while `SESSION_PLAN_SETS_WRITE_ENABLED` is 0 (#1165). The
+    // W1–W3 dry-run tuple is untouched; `reason` still names why the run was dry.
     return dryRun
-      ? { ...dryProof, would_seal: 0, already_sealed: 0, no_ledger: true }
+      ? { ...dryProof, would_seal: 0, already_sealed: 0, sealed_ok: true, no_ledger: true }
       : { sheet_written: false, no_write_confirmed: true, sealed: 0, already_sealed: 0, sealed_ok: true, no_ledger: true, reason: 'tab_missing' };
   }
   let allRows;
@@ -279,8 +285,10 @@ async function sealCloseout(session, closeoutWriteId, opts = {}) {
     if (String(arr[SID_IDX] == null ? '' : arr[SID_IDX]).trim() === session_id) mine.push({ i, row: arr });
   });
   if (!mine.length) {
+    // Same verified-empty outcome as the confirmed-absent tab above, reached one read later: the
+    // rows came back and this session owns none of them.
     return dryRun
-      ? { ...dryProof, would_seal: 0, already_sealed: 0, no_ledger: true }
+      ? { ...dryProof, would_seal: 0, already_sealed: 0, sealed_ok: true, no_ledger: true }
       : { sheet_written: false, no_write_confirmed: true, sealed: 0, already_sealed: 0, sealed_ok: true, no_ledger: true, reason: 'no_rows' };
   }
 
