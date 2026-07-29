@@ -24,6 +24,7 @@ const SHELL_ASSETS = [
   '/app/sessionLedger.js',
   '/app/endorsedSetRevision.js',
   '/app/setRevisionProposal.js',
+  '/app/effectivePrescription.js',
   '/app/signals-core.js',
   '/app/api.js',
   '/app/turnCorrelation.js',

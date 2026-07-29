@@ -64,7 +64,12 @@ import { remainingSlotNames, variantSatisfies, planSlotStatuses, firstUnloggedSl
 // and are checkpointed to the dry-run /revision sidecar.
 import { buildFutureRevisions, appendRevisions, performedSetCount as ledgerPerformedSetCount } from './sessionLedger.js';
 import { isExplicitEndorsement } from './endorsedSetRevision.js';
-import { buildSetRevisionProposal, decideApproval } from './setRevisionProposal.js';
+import { buildSetRevisionProposal, decideApproval, isProposalCurrent } from './setRevisionProposal.js';
+// The EFFECTIVE current prescription for a slot — the accepted (v1) prescription folded with any
+// prior set-level revisions and the frozen performed-set floor. A revision never rewrites the
+// slot, so the slot's own numbers go stale; every "would this change anything?" question must be
+// asked against this instead.
+import { effectivePrescription, changesEffectivePrescription } from './effectivePrescription.js';
 // F09G (CONVO-LOG-1) — hold a parser bodyweight-rep clarification and commit exactly
 // those detected reps on a short affirmation ("Just log it"), so clarified sets are
 // never dropped nor fabricated.
@@ -1858,6 +1863,92 @@ function renderSetRevisionProposal(proposal) {
   document.dispatchEvent(new CustomEvent('atlas:set-revision-proposed', { detail: { proposal } }));
 }
 
+// The REAL conversational trigger for the lane above (#1163 proof 2). Until this existed the
+// merged lane had no in-conversation caller, so an ordinary session never exercised it.
+//
+// The producer is the one Atlas already uses after every logged set, and it is deterministic end
+// to end — no model call anywhere in it:
+//
+//   logged set → fetchReaction(liftCode, justLoggedSet) → GET /api/recommend/next/<code>?w&reps&rir
+//              → services/justLoggedAnchor.recommendFromJustLoggedSet
+//              → { recommendation, next_target: { weight, reps }, target_rir, effort_verdict }
+//
+// Atlas already SAYS that recommendation ("Room to progress — move to 230 × 5 next set"), but
+// until now it was prose only: the accepted plan's remaining sets kept the old prescription and
+// nothing recorded the change. This turns that same recommendation into a proposal the athlete
+// can Approve / Keep Original / Ask Why.
+//
+// Identity and numbers are STRUCTURAL. The slot is resolved by its canonical lift code and
+// carries its own plan_item_id; the prescription is the engine's structured `next_target`. Atlas's
+// recommendation SENTENCE is never parsed — the athlete's prose and the coach's prose are both
+// incapable of naming what gets revised.
+//
+// The per-log fan-out, kept OUT of emitSetLogged so the logged-set path grows by one line.
+// Mirrors the F10C off-plan implicit-recommendation block exactly, but for slots that ARE on the
+// accepted plan. Fire-and-forget: a proposal is an offer, so a failed lookup must never unwind
+// the workout or delay the logged set.
+function proposeSetRevisionsForLoggedSlots(byExercise, enrichMap) {
+  const plan = getActivePlannedSession();
+  if (!plan || plan.accepted !== true) return;
+  for (const g of (Array.isArray(byExercise) ? byExercise : [])) {
+    const enr = (enrichMap && enrichMap.get(g.exercise)) || {};
+    const canonical = enr.canonical_exercise || g.exercise;
+    const code = enr.lift_code || '';
+    if (!code || isOffPlanLoggedExercise(plan, canonical, code)) continue;
+    const last = (g.sets && g.sets[g.sets.length - 1]) || {};
+    Promise.resolve(maybeProposeSetRevisionAfterLog({
+      exercise: g.exercise, canonical, liftCode: code,
+      weight: last.weight, reps: last.reps, rir: last.rir,
+    })).catch(() => { /* a proposal is an offer, never a blocker */ });
+  }
+}
+
+// Returns the staged proposal, or null when there is nothing legitimate to propose.
+async function maybeProposeSetRevisionAfterLog(loggedSet) {
+  const plan = getActivePlannedSession();
+  if (!plan || plan.accepted !== true) return null;   // only an accepted plan carries ledger identity
+  const set = loggedSet && typeof loggedSet === 'object' ? loggedSet : null;
+  if (!set) return null;
+  const code = set.liftCode || set.lift_code || '';
+  if (!code) return null;                             // no canonical identity → nothing to bind to
+  const exercises = Array.isArray(plan.exercises) ? plan.exercises : [];
+  // The slot this log belongs to, by CODE — an off-plan lift matches none and is left to the
+  // F10C implicit-recommendation lane instead. (A plan carrying the same movement in two slots
+  // resolves to the first; that shared limitation is #1190 and is not widened here.)
+  const slot = exercises.find(e => e && (e.liftCode || e.lift_code || '') === code) || null;
+  if (!slot || !slot.plan_item_id) return null;
+  // What the remaining sets are ACTUALLY prescribed at right now — not what the accepted plan
+  // says, which a prior revision has already superseded without rewriting it.
+  const eff = effectivePrescription({
+    slot,
+    sessionLog: getSessionLog(),
+    sessionRevisions: getSessionRevisions(),
+  });
+  // No future set left ⇒ nothing is revisable, so no card and no success-shaped claim.
+  if (!eff || !eff.futureSetsRemain) return null;
+  const rec = await fetchReaction(code, set);
+  const t = (rec && rec.next_target) || null;
+  if (!t) return null;                                // engine resolved nothing → never a guess
+  const target = {
+    weight: t.weight ?? null,
+    reps: t.reps ?? null,
+    rir: (rec.target_rir ?? t.rir ?? null),
+  };
+  if (target.weight == null && target.reps == null) return null;
+  // The whole point of the effective baseline: a target that merely repeats what the future sets
+  // already carry is not a change, and proposing it would produce a revision that never happened.
+  if (!changesEffectivePrescription(target, eff.prescription)) return null;
+  return proposeSetRevision({
+    plan_item_id: slot.plan_item_id,
+    planned_lift_code: slot.liftCode || slot.lift_code,   // UNCHANGED — the movement does not move
+    prescribed_name: slot.canonicalName || slot.name,
+    prescription: target,
+    accepted_set_count: eff.acceptedSetCount,             // the v1 grain, never the engine's sets
+    from: eff.prescription,
+    proposed_at: new Date().toISOString(),
+  });
+}
+
 // F10C — is a just-logged exercise OFF the accepted plan (unannounced)? Reuses the F10
 // slot selector in ISOLATION (one completion vs the plan's slots, no explicit outcomes)
 // so this can never diverge from how a log is attributed to a slot. Off-plan ⟺ the
@@ -3058,6 +3149,17 @@ document.addEventListener('atlas:replacement-decision', e => {
   const fromCard = e && e.detail && e.detail.proposal;
   if (decision === 'approve') approvePendingReplacement(fromCard);
   else if (decision === 'reject') rejectPendingReplacement(fromCard);
+});
+
+// A decision on the pending SET-REVISION card (Approve / Keep Original). The card only dispatches
+// — it never applies anything itself — and it names the proposal by id, so a tap on a stale or
+// superseded card is refused by the merged lane rather than applying whatever is current.
+// Ask Why needs no branch here: it is a question, not a decision, so the card leaves the proposal
+// active and Atlas answers it. No Sheet write occurs.
+document.addEventListener('atlas:set-revision-decision', e => {
+  const d = (e && e.detail) || {};
+  if (d.decision === 'approve') approvePendingSetRevision({ proposal_id: d.proposal_id, endorsement: d.endorsement });
+  else if (d.decision === 'reject') rejectPendingSetRevision({ proposal_id: d.proposal_id });
 });
 
 // Open the recommended workout — Composer-first Phase B: routes to the ONE
@@ -5130,6 +5232,20 @@ function restoreSessionSnapshot() {
       persistSessionSnapshot(res.sessionId || null);
     }
   }
+  // Re-surface a restored SET-REVISION proposal the same way. Nothing was revised before the
+  // approval, so a reload simply re-presents the SAME proposal against the intact plan — the
+  // athlete comes back to the decision they were still making. Discard it (never apply) when the
+  // plan moved under it; `isProposalCurrent` is the merged lane's own staleness test, so the
+  // restore and the approval can never disagree about what counts as stale.
+  const pendingRevision = getPendingSetRevision();
+  if (pendingRevision) {
+    if (isProposalCurrent(pendingRevision, getActivePlannedSession())) {
+      renderSetRevisionProposal(pendingRevision);
+    } else {
+      setPendingSetRevision(null);
+      persistSessionSnapshot(res.sessionId || null);
+    }
+  }
   return true;
 }
 
@@ -5749,6 +5865,11 @@ function emitSetLogged(logObjs, text, substitutions, enrichment) {
   if (typeof renderActiveSessionBanner === 'function') renderActiveSessionBanner();
   // persist the just-logged set for resume safety (guarded for the emit test harness)
   if (typeof saveSessionSnapshot === 'function') saveSessionSnapshot();
+  // #1189/#1163 proof 2 — the ON-PLAN counterpart of the F10C implicit-recommendation block
+  // above: offer the engine's just-logged recommendation as a proposal the athlete can decide
+  // on. LAST, so session truth (buffers, pin, banner, snapshot) is already settled before the
+  // proposal reads it. Fire-and-forget; guarded for the emit test harness.
+  if (typeof proposeSetRevisionsForLoggedSlots === 'function') proposeSetRevisionsForLoggedSlots(byExercise, enrichMap);
 }
 
 // `justLoggedSet` (optional) anchors the recommendation on the set the lifter
