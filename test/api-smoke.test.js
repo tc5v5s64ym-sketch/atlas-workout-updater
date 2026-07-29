@@ -191,7 +191,11 @@ const fakeSheets = {
     return [];
   },
   getSpreadsheetTabs: async () => {
-    const base = ['Metadata', 'Log_Cleaned', 'Exercise_Catalog', 'Effort', 'Logic', 'Session_Summary', 'Bodyweight', 'Coaching_Notes'];
+    // Session_Plans is a LIVE production tab (the closeout-event lane). The #1164 undo guard
+    // reads it to establish closeout finality and fails closed when it is absent, so the stub
+    // must mirror production and present it. `getSheetRows('Session_Plans')` returns [] below,
+    // i.e. no closeout events, which is the not-finalized posture these undo tests exercise.
+    const base = ['Metadata', 'Log_Cleaned', 'Exercise_Catalog', 'Effort', 'Logic', 'Session_Summary', 'Bodyweight', 'Coaching_Notes', 'Session_Plans'];
     // Constraints / Deload_State / Modality_Log are present unless a test hides
     // them to exercise their respective 503 paths.
     if (!fakeSheetsState.hideConstraintsTab) base.push('Constraints');
