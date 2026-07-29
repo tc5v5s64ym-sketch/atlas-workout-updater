@@ -138,3 +138,32 @@ test('criterion 4a — the model-unavailable path takes no Sheet read and runs n
   assert.doesNotMatch(offlineSpan, /readFreshDiscussedLift\(/,
     'nor lean on a stale server referent without the fail-closed context');
 });
+
+// ── 5 · the flag-off path keeps its legacy referent ordering (Codex P2) ───────
+
+test('criterion 4a — flag OFF keeps the legacy referent ordering, recovery turns included', () => {
+  // recordDiscussedLift is a PERSISTENT side effect on the server referent store. Hoisting it
+  // above the recovery early return changes what a LATER bare correction resolves to — so with
+  // ATLAS_TURN_PRECEDENCE off it would be a flag-off behaviour change, which the invariant
+  // forbids. A tired turn previously returned without ever recording a referent.
+  const iEarly = routeSrc.indexOf('const turnReferentKey = resolveAndRecordTurnReferent();');
+  const iRecovery = routeSrc.indexOf('if (tired) {', iEarly);
+  const iLegacy = routeSrc.indexOf('if (!isTurnPrecedenceEnabled()) resolveAndRecordTurnReferent();');
+
+  assert.ok(iEarly !== -1 && iRecovery !== -1 && iLegacy !== -1, 'both invocation sites exist');
+  assert.ok(iEarly < iRecovery, 'flag ON resolves before the recovery early return');
+  assert.ok(iLegacy > iRecovery, 'flag OFF resolves at the legacy position, after it');
+
+  // The early site must be gated, or the side effect leaks into the flag-off path.
+  const gate = routeSrc.slice(routeSrc.lastIndexOf('if (isTurnPrecedenceEnabled()) {', iEarly), iEarly);
+  assert.match(gate, /if \(isTurnPrecedenceEnabled\(\)\) \{/,
+    'the early resolve+record runs only when the Phase 4 flag is enabled');
+});
+
+test('criterion 4a — the resolver body is defined ONCE and shared by both invocation sites', () => {
+  const defs = routeSrc.split('\n').filter((l) => /const resolveAndRecordTurnReferent = /.test(l));
+  assert.equal(defs.length, 1, 'one definition — the two paths cannot drift apart');
+  const calls = routeSrc.split('\n').filter((l) =>
+    /resolveAndRecordTurnReferent\(\)/.test(l) && !/const resolveAndRecordTurnReferent/.test(l));
+  assert.equal(calls.length, 2, 'exactly two mutually exclusive invocation sites');
+});
