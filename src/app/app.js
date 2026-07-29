@@ -62,6 +62,7 @@ import { remainingSlotNames, variantSatisfies, planSlotStatuses, firstUnloggedSl
 // so a completed set is never revised. Revisions live in the store (getSessionRevisions)
 // and are checkpointed to the dry-run /revision sidecar.
 import { buildFutureRevisions, appendRevisions, performedSetCount as ledgerPerformedSetCount } from './sessionLedger.js';
+import { isExplicitEndorsement } from './endorsedSetRevision.js';
 // F09G (CONVO-LOG-1) — hold a parser bodyweight-rep clarification and commit exactly
 // those detected reps on a short affirmation ("Just log it"), so clarified sets are
 // never dropped nor fabricated.
@@ -189,6 +190,27 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 
 // The list auto-loads on first History visit (loadHistory above). nav.js calls
 // this to force a fresh fetch when jumping here from a chat reply.
+// #1163 — the ONLY public surface of the revision-capture entry point, and deliberately the
+// narrowest one that still lets this slice ship.
+//
+// WHY A GLOBAL AT ALL. app.js is a bundled shell, not a module others import; every other shell
+// entry point is a `window.atlas*` (atlasAcceptPlan, atlasResumeBlockedLog). Converting this one
+// to a module export would mean restructuring the shell, which is far larger than this slice.
+//
+// WHY IT IS SAFE. It mutates plan state, so this wrapper is STRICTER than the internal function:
+// it REQUIRES the athlete's own words and refuses anything short of an unambiguous endorsement.
+// An untrusted caller therefore cannot revise a plan without consent it did not have. The
+// internal `emitEndorsedSetRevision` keeps the optional-endorsement contract for the successor's
+// Approve affordance, where consent is established by the tap rather than by parsing prose.
+//
+// TEMPORARY. Once the prescription-proposal lane lands and `approvePendingSetRevision` calls the
+// internal function directly, this global has no remaining caller and should be deleted.
+window.atlasEndorseSetRevision = (request) => {
+  const r = request && typeof request === 'object' ? request : {};
+  if (!Object.prototype.hasOwnProperty.call(r, 'endorsement')) return false;
+  return emitEndorsedSetRevision(r);
+};
+
 window.atlasRefreshSessions = () => {
   setHistoryLoaded(true);
   loadSessions();
@@ -1702,7 +1724,10 @@ function applySessionSubstitution(prescribedName, subName, subLiftCode, prescrip
 // used for the bound.
 function emitFutureSetRevision(planItemId, subLiftCode, prescription, prescribedName, acceptedSetCount) {
   const plan = getActivePlannedSession();
-  if (!plan || plan.accepted !== true || !planItemId) return; // only an accepted plan carries ledger identity
+  // Returns TRUE only when revisions were actually built, persisted and posted. A caller that
+  // reports success on a no-op would tell the athlete their plan changed when session truth did
+  // not move (Codex P2, #1163).
+  if (!plan || plan.accepted !== true || !planItemId) return false; // only an accepted plan carries ledger identity
   const p = prescription && typeof prescription === 'object' ? prescription : {};
   const revisions = buildFutureRevisions({
     plan_item_id: planItemId,
@@ -1714,7 +1739,7 @@ function emitFutureSetRevision(planItemId, subLiftCode, prescription, prescribed
     performedCount: ledgerPerformedSetCount(getSessionLog(), prescribedName),
     sessionRevisions: getSessionRevisions(),
   });
-  if (!revisions.length) return;
+  if (!revisions.length) return false;
   setSessionRevisions(appendRevisions(getSessionRevisions(), revisions));
   if (typeof saveSessionSnapshot === 'function') saveSessionSnapshot(); // durable across reload
   for (const revision of revisions) {
@@ -1723,6 +1748,37 @@ function emitFutureSetRevision(planItemId, subLiftCode, prescription, prescribed
       body: JSON.stringify({ session_id: plan.session_id, session_date: plan.session_date, plan_version: plan.plan_version, revision }),
     })).catch(() => { /* non-blocking sidecar — never unwinds the workout */ });
   }
+  return true;
+}
+
+// #1163 — the NON-SUBSTITUTION entry point for an explicitly endorsed set-level prescription
+// change ("keep back squat, drop the rest to 185x5"). Before this existed,
+// `emitFutureSetRevision` had exactly ONE caller — inside `applySessionSubstitution` — so a
+// set-level revision was captured only as a side effect of a movement swap, and an endorsement
+// that changed load or reps while keeping the movement reached no capture at all.
+//
+// It adds NO new machinery. The revision building, future-set bound, append-only chain, reload
+// persistence, and checkpoint POST are all the existing lane: this only supplies the trigger and
+// carries the planned lift code through UNCHANGED, so the movement is not claimed to have
+// changed. It deliberately does NOT emit an item_outcome — a load change is not a substitution,
+// and recording one would corrupt the movement-level planned-versus-completed record.
+//
+// Fails closed on anything short of an unambiguous endorsement: a decline, a question, or a bare
+// acknowledgement never rewrites the remaining sets.
+function emitEndorsedSetRevision(opts) {
+  const o = opts && typeof opts === 'object' ? opts : {};
+  const planItemId = o.plan_item_id;
+  const liftCode = o.planned_lift_code;
+  const prescribedName = o.prescribed_name;
+  if (!planItemId || !liftCode || !prescribedName) return false;
+  // When the caller passes the athlete's words, they must be an explicit endorsement. A caller
+  // that has already established consent by another route may omit the field entirely; passing
+  // an empty or non-endorsing message is always a refusal.
+  if (Object.prototype.hasOwnProperty.call(o, 'endorsement')
+    && !isExplicitEndorsement(o.endorsement)) return false;
+  // Propagate the REAL outcome. An unaccepted plan, an incomplete prescription, or a movement
+  // whose sets are all already performed emits nothing — and must not be reported as captured.
+  return emitFutureSetRevision(planItemId, liftCode, o.prescription, prescribedName, o.accepted_set_count) === true;
 }
 
 // F10C — a DETERMINISTIC plan_item_id for the implicit recommendation of an unannounced

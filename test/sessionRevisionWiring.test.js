@@ -96,9 +96,19 @@ test('performed values never create revisions: the log path never touches sessio
   const emit = appSrc.slice(appSrc.indexOf('function emitSetLogged('), appSrc.indexOf('// The session lives in the buffer'));
   assert.doesNotMatch(emit, /setSessionRevisions|buildFutureRevisions|emitFutureSetRevision/,
     'emitSetLogged (logging a set) must never create a revision — only an explicit recommendation does');
-  // The ONLY caller of emitFutureSetRevision is the explicit substitution path.
+  // The callers of emitFutureSetRevision are EXACTLY the two EXPLICIT triggers, plus its own
+  // definition. #1163 added the second one — an endorsed set-level prescription change on a
+  // movement that stays — because a revision used to be reachable only as a side effect of a
+  // movement swap. The safety property this test exists for is unchanged and still asserted
+  // above: a PERFORMED value never creates a revision. Only the count of deliberate triggers
+  // moved, and it may only move again with an equally deliberate change.
   const callers = (appSrc.match(/emitFutureSetRevision\(/g) || []).length;
-  assert.equal(callers, 2, 'exactly the definition + the one explicit-substitution call site');
+  assert.equal(callers, 3, 'the definition + the explicit-substitution call site + the endorsed-revision call site');
   const sub = appSrc.slice(appSrc.indexOf('function applySessionSubstitution('), appSrc.indexOf('function emitFutureSetRevision('));
-  assert.match(sub, /emitFutureSetRevision\(originalItemId/, 'the explicit substitution is the revision trigger');
+  assert.match(sub, /emitFutureSetRevision\(originalItemId/, 'the explicit substitution is a revision trigger');
+  const endorsed = appSrc.slice(appSrc.indexOf('function emitEndorsedSetRevision('), appSrc.indexOf('function implicitPlanItemId('));
+  assert.match(endorsed, /emitFutureSetRevision\(planItemId/, 'the endorsed set revision is the other trigger');
+  // …and the endorsed trigger is itself explicit — the logging path must never reach it either.
+  assert.doesNotMatch(emit, /emitEndorsedSetRevision/,
+    'logging a set must never reach the endorsed-revision trigger');
 });
