@@ -25,7 +25,12 @@ const ENDORSEMENTS = [
 const VETOES = [
   'no', 'nope', 'nah', 'not', 'dont', 'do not', 'never', 'skip', 'leave it', 'keep it',
   'maybe', 'might', 'guess', 'probably', 'idk', 'unsure', 'not sure', 'hold off', 'wait',
+  'cant', 'can not', 'wont', 'will not', 'shouldnt', 'rather', 'instead', 'later', 'yet',
 ];
+
+// Bounded conversational lead-ins that may precede an affirmative without weakening it
+// ("ok yeah do it"). They are not endorsements on their own — see the fail-closed note above.
+const LEAD_INS = ['ok', 'okay', 'k', 'alright', 'right', 'well', 'so', 'um', 'uh', 'yea'];
 
 function normalize(text) {
   return String(text == null ? '' : text)
@@ -40,14 +45,35 @@ function hasWholePhrase(haystack, phrase) {
   return new RegExp(`(^|\\s)${phrase.replace(/\s+/g, '\\s+')}($|\\s)`).test(haystack);
 }
 
+// Strip a bounded run of conversational lead-ins from the FRONT only.
+function stripLeadIns(s) {
+  let out = s;
+  for (let i = 0; i < 3; i += 1) {
+    const before = out;
+    for (const lead of LEAD_INS) {
+      out = out.replace(new RegExp(`^${lead}(\\s+|$)`), '');
+    }
+    if (out === before) break;
+  }
+  return out.trim();
+}
+
 // Returns true ONLY for an unambiguous endorsement. Everything else — decline, question,
 // hedge, bare acknowledgement, empty — returns false.
+//
+// The affirmative must OPEN the utterance (after at most a few lead-ins). An affirmative token
+// anywhere in the sentence is not consent: "I can't say yes yet" contains `yes` while explicitly
+// withholding it, and an anywhere-match would have rewritten every remaining set on it
+// (Codex P2, this PR). Requiring the utterance to BEGIN with the affirmative is what separates
+// "yeah, do it" from a sentence that merely mentions agreeing.
 function isExplicitEndorsement(text) {
   const s = normalize(text);
   if (!s) return false;
   if (s.includes('?')) return false;                                  // a question is not consent
   if (VETOES.some((v) => hasWholePhrase(s, v))) return false;
-  return ENDORSEMENTS.some((e) => hasWholePhrase(s, e));
+  const body = stripLeadIns(s);
+  if (!body) return false;                                            // lead-ins alone are not consent
+  return ENDORSEMENTS.some((e) => body === e || body.startsWith(`${e} `));
 }
 
 export { isExplicitEndorsement };

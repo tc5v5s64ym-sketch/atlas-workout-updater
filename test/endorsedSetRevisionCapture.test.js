@@ -260,3 +260,72 @@ test('#1163 no revision is captured without an accepted plan', () => {
   assert.equal(h.state.revisions.length, 0, 'an unaccepted plan carries no ledger identity');
   assert.equal(h.state.posts.length, 0);
 });
+
+// ── Codex P2 regressions (this PR) ────────────────────────────────────────────
+
+test('#1163 an affirmative token inside a NON-consent sentence is not an endorsement', () => {
+  // "I can't say yes yet" contains `yes` while explicitly withholding it. An anywhere-in-message
+  // match returned true and would have rewritten every remaining set on a refusal.
+  for (const words of [
+    'i cant say yes yet',
+    "i can't say yes yet",
+    'maybe yes later',
+    'i said yes to the last one but not this',
+    'not sure i can do it',
+    'id rather do it next week',
+  ]) {
+    const h = endorsedHarness();
+    h.state.log = [];
+    const captured = h.emitEndorsedSetRevision({ ...ENDORSED, endorsement: words });
+    assert.equal(captured, false, `"${words}" withholds consent`);
+    assert.equal(h.state.revisions.length, 0, `"${words}" must capture nothing`);
+    assert.equal(h.state.posts.length, 0);
+  }
+});
+
+test('#1163 a lead-in before a real affirmative still endorses', () => {
+  // The tightening must not break the ordinary spoken forms.
+  for (const words of ['ok yeah do it', 'alright yes', 'well go ahead', 'okay do it']) {
+    const h = endorsedHarness();
+    h.state.log = [];
+    assert.equal(h.emitEndorsedSetRevision({ ...ENDORSED, endorsement: words }), true, `"${words}"`);
+    assert.equal(h.state.revisions.length, 3, `"${words}" captures the revision`);
+  }
+});
+
+test('#1163 the entry point reports success ONLY when a revision was emitted', () => {
+  // An unaccepted plan emits nothing. Reporting `true` would tell the athlete their plan changed
+  // when session truth never moved.
+  const unaccepted = endorsedHarness();
+  unaccepted.state.plan = { ...ACCEPTED, accepted: false };
+  unaccepted.state.log = [];
+  assert.equal(unaccepted.emitEndorsedSetRevision({ ...ENDORSED }), false, 'no accepted plan → not captured');
+  assert.equal(unaccepted.state.revisions.length, 0);
+
+  // Every set already performed → no future set to revise → nothing emitted.
+  const done = endorsedHarness();
+  done.state.log = [{ exercise: PLANNED_NAME }, { exercise: PLANNED_NAME }, { exercise: PLANNED_NAME }];
+  assert.equal(done.emitEndorsedSetRevision({ ...ENDORSED }), false, 'no remaining sets → not captured');
+  assert.equal(done.state.revisions.length, 0);
+
+  // An incomplete prescription can build no revision.
+  const bare = endorsedHarness();
+  bare.state.log = [];
+  assert.equal(bare.emitEndorsedSetRevision({ ...ENDORSED, prescription: {} }), false, 'no target → not captured');
+  assert.equal(bare.state.revisions.length, 0);
+
+  // …and the positive control: a genuine capture still reports true.
+  const good = endorsedHarness();
+  good.state.log = [];
+  assert.equal(good.emitEndorsedSetRevision({ ...ENDORSED }), true);
+  assert.equal(good.state.revisions.length, 3);
+});
+
+test('#1163 the substitution path still reports its own emit outcome', () => {
+  const h = harness();
+  h.state.plan = { ...ACCEPTED };
+  h.state.log = [];
+  assert.equal(h.emitFutureSetRevision('pi-1', 'FSQ01', { weight: 135, reps: 8, rir: 2 }, PLANNED_NAME, 3), true);
+  h.state.plan = { ...ACCEPTED, accepted: false };
+  assert.equal(h.emitFutureSetRevision('pi-1', 'FSQ01', { weight: 135, reps: 8, rir: 2 }, PLANNED_NAME, 3), false);
+});

@@ -1710,7 +1710,10 @@ function applySessionSubstitution(prescribedName, subName, subLiftCode, prescrip
 // used for the bound.
 function emitFutureSetRevision(planItemId, subLiftCode, prescription, prescribedName, acceptedSetCount) {
   const plan = getActivePlannedSession();
-  if (!plan || plan.accepted !== true || !planItemId) return; // only an accepted plan carries ledger identity
+  // Returns TRUE only when revisions were actually built, persisted and posted. A caller that
+  // reports success on a no-op would tell the athlete their plan changed when session truth did
+  // not move (Codex P2, #1163).
+  if (!plan || plan.accepted !== true || !planItemId) return false; // only an accepted plan carries ledger identity
   const p = prescription && typeof prescription === 'object' ? prescription : {};
   const revisions = buildFutureRevisions({
     plan_item_id: planItemId,
@@ -1722,7 +1725,7 @@ function emitFutureSetRevision(planItemId, subLiftCode, prescription, prescribed
     performedCount: ledgerPerformedSetCount(getSessionLog(), prescribedName),
     sessionRevisions: getSessionRevisions(),
   });
-  if (!revisions.length) return;
+  if (!revisions.length) return false;
   setSessionRevisions(appendRevisions(getSessionRevisions(), revisions));
   if (typeof saveSessionSnapshot === 'function') saveSessionSnapshot(); // durable across reload
   for (const revision of revisions) {
@@ -1731,6 +1734,7 @@ function emitFutureSetRevision(planItemId, subLiftCode, prescription, prescribed
       body: JSON.stringify({ session_id: plan.session_id, session_date: plan.session_date, plan_version: plan.plan_version, revision }),
     })).catch(() => { /* non-blocking sidecar — never unwinds the workout */ });
   }
+  return true;
 }
 
 // #1163 — the NON-SUBSTITUTION entry point for an explicitly endorsed set-level prescription
@@ -1758,8 +1762,9 @@ function emitEndorsedSetRevision(opts) {
   // an empty or non-endorsing message is always a refusal.
   if (Object.prototype.hasOwnProperty.call(o, 'endorsement')
     && !isExplicitEndorsement(o.endorsement)) return false;
-  emitFutureSetRevision(planItemId, liftCode, o.prescription, prescribedName, o.accepted_set_count);
-  return true;
+  // Propagate the REAL outcome. An unaccepted plan, an incomplete prescription, or a movement
+  // whose sets are all already performed emits nothing — and must not be reported as captured.
+  return emitFutureSetRevision(planItemId, liftCode, o.prescription, prescribedName, o.accepted_set_count) === true;
 }
 
 // F10C — a DETERMINISTIC plan_item_id for the implicit recommendation of an unannounced
