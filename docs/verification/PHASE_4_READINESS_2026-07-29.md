@@ -164,13 +164,29 @@ a movement swap.
 | `Session_Plan_Sets` | planned-set checkpoints for the accepted plan, and — if the set-level endorsement is exercised — **one revision row** carrying the new prescription with `planned_lift_code` **unchanged**. This row is criterion 5's third proof and cannot exist while the flag is `0`. |
 | `Log_Cleaned` | one row per logged set, 12 columns, `volume_calc` populated. |
 | `Coach_Shadow` | one `[coach-turn-shadow]`-derived record per coach turn, carrying the packet, its embedded-presence flags, and the route's referent pick. |
-| `Flight_Recorder` | one session record spanning first word → sealed write, sharing one `turn_id` with the packet and the trace. This is criterion 7. |
+| `Flight_Recorder` | the session transcript — one row per event, keyed by `flight_session_id`. **It carries no `turn_id`** (`docs/FLIGHT_RECORDER_SPEC.md` §1, `config/columns.js`), so it is not where criterion 7 is verified. |
+
+**Criterion 7 is verified off-tab, not on `Flight_Recorder`.** Run `npm run atlas:turn-write-artifact` over
+the captured deployment log: it joins the `[interaction-trace]` and `[turn-write-proof]` records under one
+canonical `turn_id`, which is the seam #1165 closed on. `Flight_Recorder` is the transcript alongside it.
 
 ### Expected visible responses
 
-- "what's next?" and "are we done?" answer from session truth, deterministically, with no model prose.
-- A factual plan dispute is answered from the current plan with the model bypassed, and states plainly
-  that nothing was changed.
+A live gate session runs **model-up**, so state the two cases separately. Expecting a deterministic
+"what's next?" from a configured model would fail the gate on behaviour the route is designed to have.
+
+- **Model-up (the normal gate session).** "what's next?" and "are we done?" reach the coach and return
+  `source:'gemini'` — the model's richer answer is deliberately not overridden
+  (`test/api-smoke.test.js`: *"turn precedence ON, model UP: 'what's next?' still reaches the coach — no
+  model-up regression"*). What to check here is that the model's answer **agrees with session truth**,
+  not that it is deterministic.
+- **Model-down (the fallback path, where H-08B/H-08C live).** "what's next?" answers `Next up: <slot>.`
+  and "are we done?" answers from the canonical session's own slots, both `source:'engine'` — instead of
+  the pre-flag dead-end to "coach unavailable". `deterministicAnswer` is reached only on the
+  unconfigured path (`configured:false`) and the model-threw/empty-reply fallback.
+- A factual plan dispute is answered from the current plan with the model bypassed **in both cases** —
+  that lane is fail-closed by design, independent of model availability — and states plainly that
+  nothing was changed.
 - A redline top set surfaces the safety decision ahead of stylistic voice.
 - An undo attempted **after** the closeout is finalized is refused: *"This workout has already been
   completed and saved, so Atlas cannot undo it. Nothing was changed."* If finality cannot be verified,
@@ -184,8 +200,24 @@ Both flags are pure environment toggles. No deploy, no revert, no code change.
   proving `sheet_written:false` / `no_write_confirmed:true`.
 - `ATLAS_TURN_PRECEDENCE` → unset: the live route reverts to the signals/snapshot path.
 
-Any `Log_Cleaned` rows written by a gate session are removed through the verified undo, as at gate run 1 —
-before the closeout is finalized, since the #1185 guard now refuses an undo afterwards.
+### Cleanup after the run — decide this *before* starting, not after
+
+Gate run 1 was a **mock**, and its temporary `Log_Cleaned` rows were removed through the verified undo.
+That option no longer exists at the end of a completed run, and the change is this report's own doing:
+the Golden Session ends `close out once → seal`, and the #1185 guard refuses an undo once a closeout is
+finalized. After the final beat there is **no undo path**, by design.
+
+So the two runs are now genuinely different procedures, and the choice is the owner's:
+
+- **A real gate workout** — the intended run. The rows are real training data and **stay**. Nothing to
+  clean up; the finalized closeout is the correct end state.
+- **A mock or rehearsal** — undo **before** the closeout is finalized, which means deliberately stopping
+  short of the `close out once → seal` beats and accepting that criterion 6's forward seal and criterion
+  7's sealed-write trace are **not** exercised. A mock that runs to completion leaves its rows in
+  `Log_Cleaned` permanently.
+
+There is no third option. Removing rows after a finalized closeout would require a manual Sheet edit,
+which agents never make and which is owner-reserved in any case.
 
 ### Stop conditions during the gate
 
