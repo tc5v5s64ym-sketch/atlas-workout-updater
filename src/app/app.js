@@ -83,7 +83,7 @@ import {
   waitForTurnResponse,
 } from './turnCorrelation.js';
 
-const ATLAS_SHELL_BUILD = 'v145';
+const ATLAS_SHELL_BUILD = 'v146';
 
 
 
@@ -3203,16 +3203,8 @@ function explainPendingSetRevision(proposalId) {
   if (!active) return false;
   const id = String(proposalId || '').trim();
   if (id && id !== active.proposal_id) return false;
-  const fmt = (p) => {
-    if (!p || typeof p !== 'object') return null;
-    const parts = [];
-    if (p.weight != null) parts.push(`${p.weight} lb`);
-    if (p.reps != null) parts.push(`${p.reps} reps`);
-    if (p.rir != null) parts.push(`@ ${p.rir} RIR`);
-    return parts.length ? parts.join(' ') : null;
-  };
-  const to = fmt(active.prescription);
-  const from = fmt(active.from);
+  const to = formatSetRevisionTarget(active.prescription);
+  const from = formatSetRevisionTarget(active.from);
   const name = active.prescribed_name || 'that lift';
   const line = to
     ? (from
@@ -3223,6 +3215,184 @@ function explainPendingSetRevision(proposalId) {
     detail: { proposal_id: active.proposal_id, line }
   }));
   return true;
+}
+
+// ── Phase 4 criterion 4 step (b): the natural-language follow-up lane ─────────
+// Natural conversation and the proposal card now share ONE trusted set-revision state machine.
+// Before this, only the card could decide a proposal: a typed "do that" against a live proposal
+// fell through to /api/coach/chat, so the athlete's own words could not act on a change Atlas had
+// just offered. Five owner-approved phrase classes reach this lane; one of them executes.
+//
+// EXECUTE      — "do that" / "apply that change" / "accept Atlas's change"  → approve
+// EXPLAIN      — "why that weight?"                                        → explain, preserve
+// REJECT       — "keep the original" / "leave it as planned"               → reject
+// CLARIFY      — bare "keep it", "the last two sets", "drop those"         → ask, mutate nothing
+//
+// The structural rule, enforced below: a natural-language turn may mutate plan state ONLY when
+// exactly one active proposal exists, it is still current against the accepted plan, its stored
+// identity is available, the athlete's words are an unambiguous endorsement, and the EXISTING
+// approval path accepts it. Nothing — proposal id, plan item, lift code, prescription, affected
+// sets, accepted set count — is ever derived from the athlete's prose, from Atlas's own generated
+// prose, from conversation history, or from numeric similarity. The stored structured proposal is
+// the authority, and this lane is a router over the same handlers the card calls.
+//
+// AMBIGUITY NEVER MUTATES. Three of the five classes have no single defensible action, so they ask
+// and leave the proposal as the structured anchor of the conversation. No persisted clarification
+// state is introduced: the live proposal already IS the state a follow-up needs.
+
+// The one prescription formatter for this lane — shared with `explainPendingSetRevision` above so
+// the card's answer and a typed answer can never state the same proposal two different ways.
+function formatSetRevisionTarget(p) {
+  if (!p || typeof p !== 'object') return null;
+  const parts = [];
+  if (p.weight != null) parts.push(`${p.weight} lb`);
+  if (p.reps != null) parts.push(`${p.reps} reps`);
+  if (p.rir != null) parts.push(`@ ${p.rir} RIR`);
+  return parts.length ? parts.join(' ') : null;
+}
+
+// Narrate one deterministic line for the typed lane. Same channel and same rendering as the card's
+// Ask Why answer (coach-conversation.js) — one voice, no second renderer, and no model call.
+function announceSetRevisionReply(proposal, line) {
+  if (!line) return false;
+  document.dispatchEvent(new CustomEvent('atlas:set-revision-reply', {
+    detail: { proposal_id: (proposal && proposal.proposal_id) || null, line }
+  }));
+  return true;
+}
+
+// How many sets of this proposal's movement are still AHEAD. Structured end to end: the accepted
+// set count comes from the stored proposal and the performed count from the session buffer through
+// the ledger's own selector — the same one `emitFutureSetRevision` bounds its revisions by. So the
+// scope Atlas talks about and the scope it would revise can never disagree, and a completed set is
+// never reported as editable.
+function setRevisionFutureSetCount(proposal) {
+  const accepted = Number(proposal && proposal.accepted_set_count);
+  if (!Number.isFinite(accepted) || accepted <= 0) return 0;
+  const performed = ledgerPerformedSetCount(getSessionLog(), proposal && proposal.prescribed_name);
+  const done = Number.isFinite(performed) ? performed : 0;
+  return Math.max(0, accepted - done);
+}
+
+const SET_COUNT_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six'];
+function setCountWord(n) {
+  return SET_COUNT_WORDS[n] || String(n);
+}
+
+// Resolve a follow-up turn against the ACTIVE set-revision proposal. Returns true when the lane
+// owned the turn (it either decided the proposal or answered it), false to fall through to the
+// existing routing with the proposal untouched.
+function trySetRevisionFollowup(text) {
+  const SR = (typeof window !== 'undefined' && window.setRevisionFollowup) || null;
+  if (!SR || typeof SR.classifySetRevisionFollowup !== 'function') return false;
+  // The lane exists only while a stored proposal does. Without one there is no referent to act on,
+  // and manufacturing one from prose is exactly what this design forbids — so an ordinary turn
+  // reaches the coach unchanged, grounded by the discussion referent (criterion 4 step (a)).
+  const active = getPendingSetRevision();
+  if (!active || active.kind !== 'set_revision' || !active.proposal_id) return false;
+
+  const verdict = SR.classifySetRevisionFollowup(text) || null;
+  const action = (verdict && verdict.action) || 'no_match';
+  if (action === 'no_match') return false;
+
+  const name = active.prescribed_name || 'that lift';
+  const persist = () => persistSessionSnapshot(document.getElementById('log-session-id')?.value || null);
+
+  // COMPETING STATE. The store keeps exactly one proposal outstanding (`setPendingSetRevision`
+  // clears `pendingReplacement` and vice versa). If malformed state somehow presents both, "do
+  // that" has two possible referents — a movement swap and a set change — and guessing could
+  // trigger a substitution from a set-revision card. Fail closed and ask.
+  if (getPendingReplacement()) {
+    announceSetRevisionReply(active, 'I have two changes waiting — a movement swap and a set change. Which one do you mean?');
+    return true;
+  }
+
+  // FRESHNESS, through the shared test. `isProposalCurrent` is what the card's approval and the
+  // reload restore already use, so the typed lane cannot have its own idea of stale.
+  if (!isProposalCurrent(active, getActivePlannedSession())) {
+    setPendingSetRevision(null);
+    persist();
+    // A question still deserves an honest answer — but never one read out of a proposal that is
+    // provably no longer current, and never against a stale referent picked for the athlete.
+    if (action === 'explain_active_proposal') {
+      announceSetRevisionReply(active, 'That recommendation isn\'t current any more — the plan moved under it. Which recommendation or exercise do you mean?');
+      return true;
+    }
+    return false;
+  }
+
+  const future = setRevisionFutureSetCount(active);
+  const noFutureSets = `Every set of ${name} is already logged, so there are no future sets left to change.`;
+
+  if (action === 'approve_active_proposal') {
+    // The EXISTING handler, with the athlete's actual words as the endorsement. It runs
+    // `decideApproval` + `isExplicitEndorsement`, consumes the proposal before emitting so a double
+    // submission finds nothing active, preserves `planned_lift_code`, bounds the revision to future
+    // sets, and emits no substituted outcome. This lane adds none of that — it only calls it.
+    const applied = approvePendingSetRevision({ proposal_id: active.proposal_id, endorsement: text });
+    if (applied) {
+      const to = formatSetRevisionTarget(active.prescription);
+      announceSetRevisionReply(active, to
+        ? `Done — the remaining sets of ${name} are at ${to}.`
+        : `Done — ${name} is updated.`);
+      return true;
+    }
+    // Nothing was emitted, so nothing may be claimed. When the reason is provable, state it.
+    if (future <= 0) { announceSetRevisionReply(active, noFutureSets); return true; }
+    return false;
+  }
+
+  if (action === 'reject_active_proposal') {
+    const rejected = rejectPendingSetRevision({ proposal_id: active.proposal_id });
+    if (!rejected) return false;
+    const from = formatSetRevisionTarget(active.from);
+    announceSetRevisionReply(active, from
+      ? `Keeping ${name} as planned — the rest of the sets stay at ${from}.`
+      : `Keeping ${name} as planned.`);
+    return true;
+  }
+
+  if (action === 'explain_active_proposal') {
+    // The card's Ask Why handler, unchanged: it answers from the stored proposal and its structured
+    // reason, and deliberately leaves the proposal active.
+    return explainPendingSetRevision(active.proposal_id) === true;
+  }
+
+  // ── the three clarification classes: ask, and mutate nothing ────────────────
+  if (future <= 0) { announceSetRevisionReply(active, noFutureSets); return true; }
+
+  if (action === 'clarify_keep') {
+    // Four readings, three of which contradict each other: keep the original plan, keep Atlas's
+    // change, keep the current weight, keep the exercise. The proposal stays active — neither
+    // approved nor rejected — so the athlete's next word still decides it.
+    announceSetRevisionReply(active, 'Keep the original plan, or accept Atlas’s change?');
+    return true;
+  }
+
+  if (action === 'clarify_drop_dimension') {
+    // "Drop" can mean lower the weight, lower the reps, remove the sets, or refuse the change.
+    // It is never read as a rejection and never invents a new prescription.
+    announceSetRevisionReply(active, 'Drop the weight, the reps, or the sets themselves?');
+    return true;
+  }
+
+  if (action === 'clarify_set_scope') {
+    // A scope fragment names sets and no action. The count is the athlete's own word; the sets it
+    // could refer to come from structured state, so an over-reach is stated honestly rather than
+    // played along with.
+    const asked = (verdict.setScope && verdict.setScope.count) || null;
+    if (asked != null && asked > future) {
+      const done = Math.max(0, Number(active.accepted_set_count) - future);
+      announceSetRevisionReply(active, `Only ${future} ${future === 1 ? 'set' : 'sets'} of ${name} ${future === 1 ? 'is' : 'are'} still ahead — the other ${done} ${done === 1 ? 'is' : 'are'} already logged. Do you mean ${future === 1 ? 'that one' : 'those'}, or something else?`);
+      return true;
+    }
+    const n = asked != null ? asked : future;
+    const scope = n === 1 ? 'set' : `${setCountWord(n)} sets`;
+    announceSetRevisionReply(active, `What do you want to change about the last ${scope} — the weight, the reps, or remove them?`);
+    return true;
+  }
+
+  return false;
 }
 
 // Open the recommended workout — Composer-first Phase B: routes to the ONE
@@ -6935,6 +7105,17 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       // returns truthy only when there are usable detected sets to hold.
       if (err.parsedIntent === 'needs_clarification' && setPendingClarification(err)) {
         setStatus(loggerStatus, err.displayMessage, 'warn');
+        activeExercise = null;
+        return;
+      }
+      // Phase 4 criterion 4 step (b): a PENDING SET-REVISION proposal owns the follow-up turn
+      // first among the proposal lanes — it is the only lane that can see BOTH pending decisions
+      // and refuse to guess between them. It engages only when a stored proposal exists AND the
+      // turn is one of the five approved phrase classes, so every other message (including every
+      // replacement follow-up) falls straight through to the lanes below, unchanged. Higher-priority
+      // commands still outrank it: bug capture, the plan request, a held bodyweight clarification
+      // and finish/closeout all ran above, and a loggable set parsed and logged before this catch.
+      if (trySetRevisionFollowup(pendingChatText)) {
         activeExercise = null;
         return;
       }

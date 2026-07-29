@@ -100,5 +100,5 @@ test('a deload pick still keeps its own owner-gated flow — never auto-accepted
 
 test('the new module is precached and the shell cache is bumped', () => {
   assert.match(sw, /\/app\/planAcceptance\.js/, 'planAcceptance.js is in SHELL_ASSETS (offline-safe)');
-  assert.match(sw, /atlas-shell-v145/, 'the SW cache version is bumped for the new asset');
+  assert.match(sw, /atlas-shell-v146/, 'the SW cache version is bumped for the new asset');
 });

@@ -22,11 +22,30 @@ const ENDORSEMENTS = [
 
 // Any of these anywhere in the message vetoes an endorsement, even beside an affirmative token
 // ("no, let's do it" is contradictory — refuse rather than pick a side).
+//
+// `keep` / `leave` / `stick` / `stay` and the ORIGINAL-plan markers are vetoed as whole words
+// (Phase 4 criterion 4 step (b)): "yes, keep the original" opens with an affirmative while
+// declining the change, and the head-anchored rule below would otherwise have read it as consent
+// and applied the very revision the athlete just refused. Vetoing here keeps ONE consent authority
+// fail-closed for every caller — the card, the typed lane, and any future one.
 const VETOES = [
-  'no', 'nope', 'nah', 'not', 'dont', 'do not', 'never', 'skip', 'leave it', 'keep it',
+  'no', 'nope', 'nah', 'not', 'dont', 'do not', 'never', 'skip',
+  'keep', 'leave', 'stick', 'stay', 'original', 'as planned', 'as is', 'unchanged',
   'maybe', 'might', 'guess', 'probably', 'idk', 'unsure', 'not sure', 'hold off', 'wait',
   'cant', 'can not', 'wont', 'will not', 'shouldnt', 'rather', 'instead', 'later', 'yet',
 ];
+
+// An accept/apply verb plus an unambiguous reference to the PROPOSAL (Phase 4 criterion 4 step (b),
+// owner-approved phrase class 1: "apply that change", "go with that", "accept Atlas's change").
+// Deliberately narrow: the object must be a demonstrative pronoun or a named change-noun, so a
+// prescription statement ("make that 185") and a movement command ("do squats") can never read as
+// consent. `Atlas's` normalizes to `atlass`, hence the optional trailing s.
+const ACTION_ENDORSEMENT_RE = new RegExp(
+  '^(?:do|apply|accept|approve|make|use|go\\s+with)\\s+'
+  + '(?:(?:it|that|this)'
+  + '|(?:(?:that|the|this|your|atlass?|his|its)\\s+)?'
+  + '(?:change|adjustment|revision|update|proposal|recommendation))$'
+);
 
 // Bounded conversational lead-ins that may precede an affirmative without weakening it
 // ("ok yeah do it"). They are not endorsements on their own — see the fail-closed note above.
@@ -73,7 +92,8 @@ function isExplicitEndorsement(text) {
   if (VETOES.some((v) => hasWholePhrase(s, v))) return false;
   const body = stripLeadIns(s);
   if (!body) return false;                                            // lead-ins alone are not consent
-  return ENDORSEMENTS.some((e) => body === e || body.startsWith(`${e} `));
+  if (ENDORSEMENTS.some((e) => body === e || body.startsWith(`${e} `))) return true;
+  return ACTION_ENDORSEMENT_RE.test(body);
 }
 
 export { isExplicitEndorsement };
