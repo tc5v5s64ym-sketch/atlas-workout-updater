@@ -190,12 +190,26 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 
 // The list auto-loads on first History visit (loadHistory above). nav.js calls
 // this to force a fresh fetch when jumping here from a chat reply.
-// #1163 — the capability's public surface, in the same idiom as the shell's other entry points.
-// The UI layer that presents a proposed set-level change calls this with the athlete's own
-// words; the endorsement test lives inside emitEndorsedSetRevision rather than at the call
-// site, so no caller can skip it. Declared here, away from the emitter block, because the
-// revision and substitution test harnesses slice that block into a sandbox with no `window`.
-window.atlasEndorseSetRevision = (request) => emitEndorsedSetRevision(request);
+// #1163 — the ONLY public surface of the revision-capture entry point, and deliberately the
+// narrowest one that still lets this slice ship.
+//
+// WHY A GLOBAL AT ALL. app.js is a bundled shell, not a module others import; every other shell
+// entry point is a `window.atlas*` (atlasAcceptPlan, atlasResumeBlockedLog). Converting this one
+// to a module export would mean restructuring the shell, which is far larger than this slice.
+//
+// WHY IT IS SAFE. It mutates plan state, so this wrapper is STRICTER than the internal function:
+// it REQUIRES the athlete's own words and refuses anything short of an unambiguous endorsement.
+// An untrusted caller therefore cannot revise a plan without consent it did not have. The
+// internal `emitEndorsedSetRevision` keeps the optional-endorsement contract for the successor's
+// Approve affordance, where consent is established by the tap rather than by parsing prose.
+//
+// TEMPORARY. Once the prescription-proposal lane lands and `approvePendingSetRevision` calls the
+// internal function directly, this global has no remaining caller and should be deleted.
+window.atlasEndorseSetRevision = (request) => {
+  const r = request && typeof request === 'object' ? request : {};
+  if (!Object.prototype.hasOwnProperty.call(r, 'endorsement')) return false;
+  return emitEndorsedSetRevision(r);
+};
 
 window.atlasRefreshSessions = () => {
   setHistoryLoaded(true);
