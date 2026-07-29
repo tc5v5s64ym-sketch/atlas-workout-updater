@@ -122,7 +122,8 @@ function harness(options) {
 
   const factory = new Function(
     'document', 'CustomEvent', 'window', 'state',
-    'buildFutureRevisions', 'appendRevisions', 'ledgerPerformedSetCount', 'isExplicitEndorsement',
+    'buildFutureRevisions', 'appendRevisions', 'ledgerPerformedSetCount', 'ledgerCurrentRevision',
+    'isExplicitEndorsement',
     'buildSetRevisionProposal', 'isSetRevisionProposalFresh',
     'formatSetRevisionProposalLine', 'formatSetRevisionPrescription', 'classifySetRevisionFollowup',
     `
@@ -175,7 +176,8 @@ function harness(options) {
   const fakeWindow = { activeReplacement, planMutationIntent };
   const api = factory(
     fakeDoc, FakeCustomEvent, fakeWindow, state,
-    ledger.buildFutureRevisions, ledger.appendRevisions, ledger.performedSetCount, endorse.isExplicitEndorsement,
+    ledger.buildFutureRevisions, ledger.appendRevisions, ledger.performedSetCount, ledger.currentRevision,
+    endorse.isExplicitEndorsement,
     setRevision.buildSetRevisionProposal, setRevision.isSetRevisionProposalFresh,
     setRevision.formatSetRevisionProposalLine, setRevision.formatSetRevisionPrescription,
     setRevision.classifySetRevisionFollowup,
@@ -463,6 +465,79 @@ test('#1189 a set-revision proposal is never applied to a movement that was sinc
   assert.equal(state.revisions.length, 0, 'the revision is REFUSED — the movement moved under it');
   assert.equal(state.posts.length, 0);
   assert.equal(state.pendingSetRevision, null, 'and the stale proposal is cleared');
+});
+
+// ── Codex findings (this PR) ──────────────────────────────────────────────────
+
+test('#1189 staging a set revision retires a pending replacement, so a typed "yes" cannot swap a movement (P1)', async () => {
+  // Both lanes answer a plain "yes", and the submit router consults the REPLACEMENT lane first.
+  // With both proposals live, the athlete would approve a set-revision card and get a movement
+  // swap instead — the exact confusion the gated-proposal design exists to prevent.
+  const { api, state } = harness();
+
+  await api.tryProposeReplacement('replace back squat with bench press');
+  assert.ok(state.pendingReplacement, 'a replacement proposal is pending');
+
+  // The athlete changes their mind and asks for a same-movement change instead.
+  await api.tryProposeReplacement(SAME_MOVEMENT_MESSAGE);
+
+  assert.ok(state.pendingSetRevision, 'the set-revision proposal is staged');
+  assert.equal(state.pendingReplacement, null, 'and the older replacement proposal is retired');
+
+  // A typed "yes" now reaches the set-revision lane, because the replacement lane has nothing.
+  assert.equal(api.tryResolvePendingReplacement('yes'), false, 'the replacement lane is inert');
+  assert.equal(api.tryResolvePendingSetRevision('yes'), true);
+  assert.equal(state.substitutions.length, 0, 'NO movement was swapped');
+  assert.equal(state.revisions.length, 3, 'the set revision the athlete actually saw is applied');
+});
+
+test('#1189 staging a replacement retires a pending set revision (P1, the mirror case)', async () => {
+  const { api, state } = await proposed();
+  assert.ok(state.pendingSetRevision);
+
+  await api.tryProposeReplacement('replace back squat with bench press');
+
+  assert.ok(state.pendingReplacement, 'the replacement proposal is staged');
+  assert.equal(state.pendingSetRevision, null, 'and the older set-revision proposal is retired');
+  assert.equal(api.tryResolvePendingSetRevision('yes'), false, 'the set-revision lane is inert');
+});
+
+test('#1189 a later proposal baselines on the EFFECTIVE target, not the accepted v1 one (P2)', async () => {
+  const { api, state } = await proposed();
+  api.approvePendingSetRevision();                      // future sets are now 185 x5 @2
+  assert.equal(state.revisions.length, 3);
+
+  // The slot object still carries the ACCEPTED v1 numbers — a revision does not rewrite it.
+  assert.equal(state.plan.exercises[0].weight, 225, 'the slot is deliberately unchanged');
+
+  state.engineTarget = { weight: 195, reps: 5, sets: 3, rir: null };
+  await api.tryProposeSetRevision(SLOT_NAME);
+
+  assert.ok(state.pendingSetRevision, 'a second proposal is staged');
+  assert.deepEqual(state.pendingSetRevision.from, { weight: 185, reps: 5, rir: 2 },
+    'the proposal line states what the athlete is ACTUALLY training against, not the v1 load');
+});
+
+test('#1189 a proposal that merely repeats the current EFFECTIVE target is not staged (P2)', async () => {
+  const { api, state } = await proposed();
+  api.approvePendingSetRevision();                      // future sets are now 185 x5 @2
+  assert.equal(state.revisions.length, 3);
+
+  // The engine repeats the target the future sets already carry. Baselining on the v1 load
+  // would make this look like a change: a card would be staged, approval would dedupe it away,
+  // and Atlas would report "no sets left to revise" while three future sets plainly remain.
+  const handled = await api.tryProposeSetRevision(SLOT_NAME);
+
+  assert.equal(handled, false, 'nothing would change, so nothing is proposed');
+  assert.equal(state.pendingSetRevision, null);
+});
+
+test('#1189 no proposal is staged when every set is already performed', async () => {
+  const { state, handled } = await proposed({
+    log: [{ exercise: SLOT_NAME }, { exercise: SLOT_NAME }, { exercise: SLOT_NAME }],
+  });
+  assert.equal(handled, false, 'there is no future set to revise');
+  assert.equal(state.pendingSetRevision, null, 'so no card is put on the thread');
 });
 
 // ── the temporary #1188 global is gone ────────────────────────────────────────

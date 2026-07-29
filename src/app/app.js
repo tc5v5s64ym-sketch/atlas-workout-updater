@@ -62,7 +62,7 @@ import { remainingSlotNames, variantSatisfies, planSlotStatuses, firstUnloggedSl
 // mid-session recommendation (a substitution), append-only, and count performed sets
 // so a completed set is never revised. Revisions live in the store (getSessionRevisions)
 // and are checkpointed to the dry-run /revision sidecar.
-import { buildFutureRevisions, appendRevisions, performedSetCount as ledgerPerformedSetCount } from './sessionLedger.js';
+import { buildFutureRevisions, appendRevisions, performedSetCount as ledgerPerformedSetCount, currentRevision as ledgerCurrentRevision } from './sessionLedger.js';
 import { isExplicitEndorsement } from './endorsedSetRevision.js';
 // #1189 — the prescription-only set-revision proposal lane (propose → approve → revise). Pure
 // logic only: construction, the deterministic id, the staleness test, the proposal line, and
@@ -2267,6 +2267,11 @@ async function tryProposeReplacement(text) {
     planExercises,
   });
   setPendingReplacement(proposal);
+  // Retire any pending SET-REVISION proposal (#1189, Codex P1). The two lanes both answer a
+  // plain "yes", and the follow-up router consults the replacement lane first, so leaving both
+  // live would let one card's approval be captured by the other lane's proposal. Exactly one
+  // plan-change proposal is ever pending: the newest.
+  setPendingSetRevision(null);
   persistSessionSnapshot(document.getElementById('log-session-id')?.value || null);
   renderReplacementProposal(proposal);
   return true;
@@ -2402,6 +2407,23 @@ async function tryProposeSetRevision(slotName) {
   const slot = exercises[idx] || {};
   const liftCode = slot.liftCode || slot.lift_code || '';
   if (!slot.plan_item_id || !liftCode) return false;   // no ledger identity → nothing to revise
+  const prescribedName = slot.canonicalName || slot.name;
+  // The EFFECTIVE baseline, not the accepted (v1) one (Codex P2). A revision is recorded in the
+  // session ledger; it does NOT rewrite the slot, so `slot.weight/reps/rir` still hold the v1
+  // prescription after an earlier revision. Reading them as the baseline would show the athlete
+  // a `from` that is no longer what they are training against, and — worse — would let a
+  // proposal that merely repeats the CURRENT effective target look like a change, which then
+  // dedupes away on approval and reports "nothing left to revise" while future sets plainly
+  // remain. Take the baseline from the next future set's current revision instead.
+  const performed = ledgerPerformedSetCount(getSessionLog(), prescribedName);
+  const acceptedSetCount = slot.sets;
+  // Every set already performed → there is no future set to revise, so there is nothing to
+  // propose. Refusing here keeps a pointless card off the thread.
+  if (!(Number(acceptedSetCount) > performed)) return false;
+  const effective = ledgerCurrentRevision(getSessionRevisions(), slot.plan_item_id, performed + 1);
+  const from = effective
+    ? { weight: effective.target_weight, reps: effective.target_reps, rir: effective.target_rir }
+    : { weight: slot.weight, reps: slot.reps, rir: slot.rir };
   // Resolve the AUTHORITATIVE target from the read-only engine. An unresolved target stages NO
   // proposal — an invented number would be a coaching claim the engine never made.
   let prescription = null;
@@ -2416,10 +2438,10 @@ async function tryProposeSetRevision(slotName) {
   const proposal = buildSetRevisionProposal({
     plan_item_id: slot.plan_item_id,
     planned_lift_code: liftCode,                       // UNCHANGED — the movement does not move
-    prescribed_name: slot.canonicalName || slot.name,
+    prescribed_name: prescribedName,
     prescription,
-    accepted_set_count: slot.sets,                     // the v1 grain the revision is bounded by
-    from: { weight: slot.weight, reps: slot.reps, rir: slot.rir },
+    accepted_set_count: acceptedSetCount,              // the v1 grain the revision is bounded by
+    from,                                              // the EFFECTIVE current target
     plan_version: plan.plan_version,
     proposed_at: new Date().toISOString(),
   });
@@ -2427,6 +2449,10 @@ async function tryProposeSetRevision(slotName) {
   // Staging supersedes any older proposal; the older card is then inert via the proposal-id
   // guard on approve/reject below.
   setPendingSetRevision(proposal);
+  // Retire any pending REPLACEMENT proposal for the same reason (#1189, Codex P1): a typed
+  // "yes" reaches the replacement lane first, so a still-live older swap proposal would swallow
+  // the approval meant for this set revision and swap a movement the athlete never re-endorsed.
+  setPendingReplacement(null);
   persistSessionSnapshot(document.getElementById('log-session-id')?.value || null);
   renderSetRevisionProposal(proposal);
   return true;
