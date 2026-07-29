@@ -42,6 +42,9 @@ const PLAN_VERSION = 'pv_11111111-2222-3333-4444-555555555555';
 
 const P = Object.fromEntries(sessionPlansColumns.map((c, i) => [c, i]));
 
+// `_parseRow` validates per event_type: a plan_accepted row REQUIRES outcome 'planned' and a
+// planned_lift_code, or the reader folds the whole session as `error`. Build real rows so the
+// fixture can never diverge from what the reader accepts.
 function planRow({ key, session_id, event_type, closeout_status = '', plan_item_id = '' }) {
   const row = new Array(sessionPlansColumns.length).fill('');
   row[P.idempotency_key] = key;
@@ -50,6 +53,11 @@ function planRow({ key, session_id, event_type, closeout_status = '', plan_item_
   row[P.plan_version] = PLAN_VERSION;
   row[P.event_type] = event_type;
   row[P.plan_item_id] = plan_item_id;
+  if (event_type === 'plan_accepted') {
+    row[P.outcome] = 'planned';
+    row[P.planned_lift_code] = 'BN01';
+    row[P.planned_order] = '1';
+  }
   row[P.closeout_status] = closeout_status;
   row[P.recorded_at] = '2026-07-29T01:00:00.000Z';
   return row;
@@ -75,6 +83,8 @@ const state = {
   appends: [],
   updates: [],
   failPlanRead: false,
+  hidePlansTab: false,
+  failTabList: false,
 };
 
 function resetState() {
@@ -88,6 +98,8 @@ function resetState() {
   state.appends = [];
   state.updates = [];
   state.failPlanRead = false;
+  state.hidePlansTab = false;
+  state.failTabList = false;
 }
 resetState();
 
@@ -102,7 +114,12 @@ const fakeSheets = {
   },
   getRecentRows: async (tabName) => (tabName === 'Log_Cleaned' ? state.logRows.map((r) => [...r]) : []),
   getHeaderRow: async (tabName) => (tabName === 'Log_Cleaned' ? [...logCleanedColumns] : []),
-  getSpreadsheetTabs: async () => ['Log_Cleaned', 'Effort', 'Session_Plans'],
+  getSpreadsheetTabs: async () => {
+    if (state.failTabList) throw new Error('Simulated tab-list read failure');
+    const tabs = ['Log_Cleaned', 'Effort'];
+    if (!state.hidePlansTab) tabs.push('Session_Plans');
+    return tabs;
+  },
   deleteRowsByRange: async (tab, startIndex, endIndex) => {
     state.deletes.push({ tab, startIndex, endIndex });
     return { data: {} };
@@ -228,7 +245,9 @@ test('#1164 the rejection explains itself to the athlete', async () => {
   });
   const message = String(body.message || '');
   assert.ok(message.length > 0, 'a message is present');
-  assert.match(message, /closed out|finalized|completed/i, 'names the closed-out state');
+  assert.match(message, /already been completed and saved/i, 'names the closed-out state');
+  assert.match(message, /nothing was changed/i, 'reassures that no data moved');
+  assert.ok(!/sheet|spreadsheet/i.test(message), 'never tells the athlete to edit the Sheet');
   assert.ok(!/undefined|\[object/.test(message), 'no placeholder leakage');
 });
 
@@ -282,8 +301,8 @@ test('#1164 ordinary pre-finalization undo still works', async () => {
 });
 
 test('#1164 a session with no Session_Plans history at all is still undoable', async () => {
-  // Branch C of the earlier design: no durable closeout record. Absence of a `finalized` event is
-  // not ambiguity — the read SUCCEEDED and found none — so ordinary undo proceeds.
+  // The tab EXISTS and reads cleanly; it simply holds no closeout for this session. That is a
+  // POSITIVE proof of not-final — distinct from the missing-tab case below, which is unknown.
   state.planRows = [];
 
   const { response } = await undo({
@@ -321,4 +340,61 @@ test('#1164 one session being finalized does not block undo for a different sess
   assert.equal(response.status, 200, 'the open session is unaffected by the finalized one');
   assert.equal(state.deletes.length, 1);
   assert.equal(state.deletes[0].startIndex, 1, 'deleted the OPEN session row (sheet row 2), not the finalized one');
+});
+
+test('#1164 a MISSING Session_Plans tab fails closed — absence is not proof of not-final', async () => {
+  // Session_Plans is an expected live production dependency. Its unexpected absence is an anomaly,
+  // not evidence that the session was never finalized, so it must never be read as finalized:false.
+  state.hidePlansTab = true;
+
+  const { response, body } = await undo({
+    log_appended_range: OPEN_RANGE, session_id: OPEN_SESSION,
+    rows_to_delete: 1, confirm_delete: true, write_id: 'w-undo-notab',
+  });
+
+  assert.equal(response.status, 503);
+  assert.equal(body.details && body.details.error_code, 'finalized_undo_check_unavailable');
+  assertNothingTouched('Session_Plans tab missing');
+});
+
+test('#1164 an unreadable tab LIST fails closed', async () => {
+  state.failTabList = true;
+
+  const { response, body } = await undo({
+    log_appended_range: OPEN_RANGE, session_id: OPEN_SESSION,
+    rows_to_delete: 1, confirm_delete: true, write_id: 'w-undo-tablist',
+  });
+
+  assert.equal(response.status, 503);
+  assert.equal(body.details && body.details.error_code, 'finalized_undo_check_unavailable');
+  assertNothingTouched('tab list unreadable');
+});
+
+test('#1164 a malformed fold for this session fails closed', async () => {
+  // The reader marks an uninterpretable session `error`. An unreadable durable record is exactly
+  // `unknown` — refusing is safe, deleting on it is not.
+  const bad = planRow({ key: 'k-bad', session_id: OPEN_SESSION, event_type: 'session_closeout' });
+  bad[P.closeout_status] = 'not_a_frozen_status';   // outside the #952 frozen vocabulary
+  state.planRows.push(bad);
+
+  const { response, body } = await undo({
+    log_appended_range: OPEN_RANGE, session_id: OPEN_SESSION,
+    rows_to_delete: 1, confirm_delete: true, write_id: 'w-undo-malformed',
+  });
+
+  assert.equal(response.status, 503);
+  assert.equal(body.details && body.details.error_code, 'finalized_undo_check_unavailable');
+  assertNothingTouched('malformed fold');
+});
+
+test('#1164 the 503 explains itself without blaming the athlete', async () => {
+  state.hidePlansTab = true;
+  const { body } = await undo({
+    log_appended_range: OPEN_RANGE, session_id: OPEN_SESSION,
+    rows_to_delete: 1, confirm_delete: true, write_id: 'w-undo-503msg',
+  });
+  const message = String(body.message || '');
+  assert.match(message, /could not verify/i);
+  assert.match(message, /nothing was changed/i);
+  assert.ok(!/sheet|spreadsheet/i.test(message), 'never tells the athlete to edit the Sheet');
 });

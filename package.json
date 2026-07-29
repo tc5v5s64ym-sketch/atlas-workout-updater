@@ -33,7 +33,8 @@
     "test:e2e:headed": "playwright test --headed",
     "scan:secrets": "node scripts/check-changed-files-for-secrets.js",
     "smoke:render": "node scripts/smoke-test-render.js",
-    "backup:sheets": "node scripts/export-sheets-backup.js"
+    "backup:sheets": "node scripts/export-sheets-backup.js",
+    "audit:finalized-orphans": "node scripts/atlas-audit-finalized-orphans.js"
   },
   "engines": {
     "node": ">=18"

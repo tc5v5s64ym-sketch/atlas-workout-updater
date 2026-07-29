@@ -171,6 +171,7 @@ const { buildCloseoutSummary, boundCloseoutContextItems } = require('./services/
 // F10D (Codex P1, PR #1069) — the finalized Session_Plans closeout event records
 // INSIDE the one approved write, with proof, instead of a client fire-and-forget.
 const { captureCloseout } = require('./services/sessionPlanCapture');
+const { isSessionFinalized } = require('./services/closeoutFinality');
 const { validateLogRowsBounds } = require('./rules/validationRules');
 const { evaluateSessionSafety } = require('./rules/safetyRules');
 const { holdUntilClean } = require('./rules/progressionRules');
@@ -3519,6 +3520,26 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
   }
   if (Number(rows_to_delete) !== rowSpan) {
     return standardError(req, res, `rows_to_delete (${rows_to_delete}) does not match range row span (${rowSpan}).`, null, 400);
+  }
+
+  // #1164 V1 safety contract — a workout that reached a durable `finalized` closeout can no longer
+  // be undone. Checked BEFORE beginWrite on purpose: a rejection never enters the idempotency
+  // store, so a repeated attempt is judged fresh and refused identically rather than returning a
+  // success-shaped duplicate body. Nothing is read back, deleted, appended, or stamped past here.
+  const finality = await isSessionFinalized(session_id);
+  if (finality.unknown) {
+    return standardError(
+      req, res,
+      'Atlas could not verify whether this workout was already completed. Undo was not attempted and nothing was changed.',
+      { error_code: 'finalized_undo_check_unavailable' }, 503
+    );
+  }
+  if (finality.finalized) {
+    return standardError(
+      req, res,
+      'This workout has already been completed and saved, so Atlas cannot undo it. Nothing was changed.',
+      { error_code: 'finalized_workout_undo_not_supported' }, 409
+    );
   }
 
   const idempotency = beginWrite(write_id, {
