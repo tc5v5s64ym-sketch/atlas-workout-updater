@@ -104,22 +104,31 @@ const SCENARIOS = {
     // the scenario is MANUAL (assertion: null) since the thread isn\'t driven here.
     assertion: null
   },
-  // A HEALTHY-PRODUCTION settlement scenario (companion to the outage-specific
-  // bug-20260629-153258, which is unchanged). It exists to reach a genuine
-  // PASS/FAIL against a live, healthy Gemini via the real navigateScenario
-  // settlement path — WITHOUT asserting on nondeterministic reply wording. It
-  // uses verdict mode 'settled_no_forbidden' (assertion shape (a)): a genuinely
-  // SETTLED coach reply that never reveals an outage is a PASS; an outage wording
-  // is a FAIL; anything that never produced an observable settled reply is
-  // INCONCLUSIVE. It deliberately carries NO `expected` regex and does NOT use the
-  // generic "no expected = PASS" path — the mode is explicit.
-  'coach-reply-healthy-settlement': {
-    bugId: 'HEALTHY-COACH-REPLY-SETTLEMENT',
-    purpose: 'Healthy-production settlement: a conversational message must produce a genuine, settled coach reply that never reveals an LLM outage — end-to-end proof of the settlement path against a live Gemini, with no assertion on nondeterministic wording.',
+  // A PRODUCTION COACH-RESPONSE SETTLEMENT scenario (companion to the
+  // outage-specific bug-20260629-153258, which is unchanged). It exercises the
+  // real navigateScenario settlement path against production and reaches a
+  // genuine PASS/FAIL, WITHOUT asserting on nondeterministic reply wording. It
+  // uses verdict mode 'settled_no_forbidden' (assertion shape (a)): a settled
+  // coach reply that never reveals an outage is a PASS; an outage wording is a
+  // FAIL; anything that never produced an observable settled reply is
+  // INCONCLUSIVE. It carries NO `expected` regex and does NOT use the generic
+  // "no expected = PASS" path — the mode is explicit.
+  //
+  // SCOPE OF WHAT A PASS PROVES: exactly three things — (1) a NEW atlas reply
+  // bubble appeared, (2) it finished rendering and settled, (3) it contained no
+  // known outage/unavailable wording. The settled reply MAY come from Gemini OR
+  // from the deterministic engine fallback (which also settles cleanly and does
+  // not reveal an outage). This scenario therefore does NOT establish model
+  // provenance or Gemini health — proving those would need a separate
+  // provenance/evidence concern (a `source:'gemini'` gate), deliberately out of
+  // scope here.
+  'coach-response-settlement': {
+    bugId: 'COACH-RESPONSE-SETTLEMENT',
+    purpose: 'Production coach-response settlement: a conversational message must produce a settled coach reply that never reveals an LLM outage — end-to-end proof of the settlement path. The reply may come from Gemini OR the deterministic engine fallback; this does NOT establish model provenance or Gemini health.',
     input: 'Type the conversational message "you missed a set" and wait for a settled coach reply.',
-    expected: 'A NEW coach bubble appears beyond the pre-submit baseline, stops showing "Thinking…", settles with non-empty content, and shows none of the four "coach unavailable" outage wordings. (No specific reply word/number/lift is required — that would test nondeterministic phrasing.)',
+    expected: 'A NEW coach bubble appears beyond the pre-submit baseline, stops showing "Thinking…", settles with non-empty content, and shows none of the four "coach unavailable" outage wordings. (No specific reply word/number/lift is required — that would test nondeterministic phrasing. Provenance is not asserted — the reply may be from Gemini or the engine fallback.)',
     forbidden: 'Any "couldn\'t reach the coach" / "coach isn\'t available" / "ask again" outage wording in the settled reply.',
-    reference: 'Companion to bug-20260629-153258 (outage-specific); that scenario and its #719 anti-false-PASS assertion remain unchanged. Verdict mode: settled_no_forbidden.',
+    reference: 'Companion to bug-20260629-153258 (outage-specific); that scenario and its #719 anti-false-PASS assertion remain unchanged. Verdict mode: settled_no_forbidden. Model provenance / Gemini health is explicitly out of scope.',
     navigation: { type: 'composer', text: 'you missed a set' },
     // Verdict mode (assertion shape (a)). No `expected` regex by design.
     assertion: {
