@@ -163,3 +163,11 @@ A list-item block moved only when its own first line carried a strong completion
 - Runtime/code behavior changed: **no**
 
 The second pass did not delete the old prose. It archived the entire historical remainder verbatim, then rebuilt the active file from action-shaped unchecked/deferred/owner-gated bullets. Any ambiguous item was retained rather than guessed complete.
+
+## Final pass — nested completion and stale-container prune
+
+- Completed/superseded blocks archived: **8**
+- Live child blocks promoted: **12**
+- `BACKLOG.md` lines: **826 → 813**
+- Historical text discarded: **no**
+- Runtime/code behavior changed: **no**
