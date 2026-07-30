@@ -135,6 +135,139 @@ function toBool(value, fallback) {
   return String(value).trim().toLowerCase() === 'true';
 }
 
+// --- Synthetic provenance ---------------------------------------------------
+// docs/AGENT_LIVE_TESTING.md ("Mark every agent request synthetic") requires
+// every agent request to carry a recognized synthetic token from
+// services/evidenceProvenance.js. `playwright` is the token for browser runs.
+// Applied to the whole browser context, so EVERY request the run makes (the
+// navigation, the app's XHRs, the preview call) is marked — synthetic traffic
+// can never be mistaken for genuine owner activity, and never counts toward
+// GATE A / LT owner evidence.
+const SYNTHETIC_ORIGIN = 'playwright';
+const SYNTHETIC_HEADERS = Object.freeze({ 'x-atlas-request-origin': SYNTHETIC_ORIGIN });
+
+// --- Optional production authentication ------------------------------------
+// The login contract (verified against index.js `POST /api/session/login` and
+// services/session.js):
+//   • request  — JSON body `{ api_key: <credential> }` (the route also accepts an
+//                `x-atlas-api-key` header); the server compares it timing-safe
+//                against its own configured key.
+//   • 503      — durable sessions are not enabled on that server.
+//   • 401      — the credential was rejected.
+//   • 200      — `Set-Cookie: atlas_session=<token>; Path=/; HttpOnly;
+//                SameSite=Lax; Max-Age=<seconds>[; Secure]`.
+//
+// NOTE ON THE CREDENTIAL NAME: the wire FIELD is `api_key`, but the VALUE comes
+// from `ATLAS_ACCESS_CODE` — a dedicated secret. Do not substitute a local
+// `ATLAS_API_KEY`: that value has been observed to return 401 against
+// production, because it is a different key from the deployment's own. The
+// credential is read from the environment ONLY (never a CLI flag, which would
+// land in shell history and CI logs).
+const ACCESS_CODE_ENV = 'ATLAS_ACCESS_CODE';
+const SESSION_COOKIE_NAME = 'atlas_session';
+
+// Defensive redaction. Nothing in this harness intentionally prints the
+// credential, but a server error body or a thrown transport error could echo it
+// back. Every string that reaches a log, a report, or an artifact passes through
+// here first, so the credential cannot leak even by accident.
+function redactCredential(text, credential) {
+  const s = text === undefined || text === null ? '' : String(text);
+  if (!credential) return s;
+  return s.split(String(credential)).join('[REDACTED]');
+}
+
+// Parse the login response's Set-Cookie into a Playwright cookie object bound to
+// the target origin. Pure and value-blind: it never logs the token.
+function parseSessionCookie(setCookieHeader, { url, now = Date.now() } = {}) {
+  const raw = String(setCookieHeader || '');
+  const match = raw.match(new RegExp(`(?:^|,\\s*)${SESSION_COOKIE_NAME}=([^;,]*)`));
+  if (!match || !match[1]) return null;
+  const attrs = raw.slice(match.index).split(';').map(s => s.trim());
+  const maxAge = attrs.map(a => a.match(/^Max-Age=(\d+)$/i)).find(Boolean);
+  const cookie = {
+    name: SESSION_COOKIE_NAME,
+    value: match[1],
+    url,
+    httpOnly: /;\s*HttpOnly/i.test(raw),
+    secure: /;\s*Secure/i.test(raw),
+    sameSite: 'Lax'
+  };
+  if (maxAge) cookie.expires = Math.floor(now / 1000) + Number(maxAge[1]);
+  return cookie;
+}
+
+// Exchange the access code for a session cookie and seed it into the Playwright
+// context. Read-only: login establishes a session, it writes no Sheet data.
+//
+// Returns a booleans-and-status summary safe to serialize into any artifact:
+//   { attempted, authenticated, status, reason }
+// It never returns, logs, or embeds the credential or the session token.
+async function authenticateContext({
+  baseUrl,
+  accessCode,
+  context,
+  fetchImpl = globalThis.fetch,
+  logger = console
+} = {}) {
+  if (!accessCode) {
+    // No credential configured — preserve the existing unauthenticated run.
+    return { attempted: false, authenticated: false, status: null, reason: 'no_credential' };
+  }
+
+  const loginUrl = `${String(baseUrl).replace(/\/+$/, '')}/api/session/login`;
+  logger.log('[auth] exchanging the access code for a session cookie (credential never logged)');
+
+  let res;
+  try {
+    res = await fetchImpl(loginUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...SYNTHETIC_HEADERS },
+      body: JSON.stringify({ api_key: accessCode })
+    });
+  } catch (err) {
+    const message = redactCredential(err && err.message ? err.message : err, accessCode);
+    logger.error(`[auth] login transport failure: ${message}`);
+    return { attempted: true, authenticated: false, status: 0, reason: 'transport_error' };
+  }
+
+  const status = res && typeof res.status === 'number' ? res.status : 0;
+  if (status !== 200) {
+    // Deliberately does NOT include the response body: a server echo could
+    // contain the credential. Status alone is enough to diagnose.
+    const reason = status === 401 ? 'rejected'
+      : status === 503 ? 'sessions_disabled'
+        : 'login_failed';
+    logger.error(`[auth] login did not establish a session (HTTP ${status}, ${reason})`);
+    return { attempted: true, authenticated: false, status, reason };
+  }
+
+  const setCookie = res.headers && typeof res.headers.get === 'function'
+    ? res.headers.get('set-cookie')
+    : null;
+  const cookie = parseSessionCookie(setCookie, { url: baseUrl });
+  if (!cookie) {
+    logger.error('[auth] login returned 200 but no session cookie was present');
+    return { attempted: true, authenticated: false, status, reason: 'no_cookie' };
+  }
+
+  await context.addCookies([cookie]);
+  logger.log(`[auth] session established and seeded into the browser context (cookie ${SESSION_COOKIE_NAME}, httpOnly=${cookie.httpOnly})`);
+  return { attempted: true, authenticated: true, status, reason: 'ok' };
+}
+
+// Fail-closed navigation decision. When a credential WAS supplied but the
+// session could not be established, the run must not quietly continue as an
+// anonymous visitor — that would invite a misread of the resulting verdict. It
+// stops instead. When no credential was supplied at all, the existing
+// unauthenticated run proceeds unchanged and its assertions keep their
+// INCONCLUSIVE semantics (an unauthenticated run never manufactures a PASS).
+function shouldProceedToNavigation(auth) {
+  if (auth && auth.attempted && !auth.authenticated) {
+    return { proceed: false, reason: `authentication failed (${auth.reason}) — refusing to continue unauthenticated` };
+  }
+  return { proceed: true, reason: auth && auth.authenticated ? 'authenticated' : 'unauthenticated (no credential configured)' };
+}
+
 function printScenario(scenarioKey, scenario, { targetBaseUrl, dryRunOnly }) {
   const line = '─'.repeat(72);
   console.log(line);
@@ -278,7 +411,7 @@ function writeResult(outputDir, scenarioKey, scenario, fields) {
 // flow. It loads/observes, types into the composer, and submits the PREVIEW
 // (dry-run) only — it NEVER presses Save (#approve-btn) and never calls a write
 // endpoint or writes to Google Sheets.
-async function bootstrapBrowser({ baseUrl, scenarioKey, outputDir, scenario }) {
+async function bootstrapBrowser({ baseUrl, scenarioKey, outputDir, scenario, accessCode = null }) {
   // Lazy require so dry-run mode never needs Playwright installed.
   const { chromium } = require('@playwright/test');
 
@@ -299,10 +432,27 @@ async function bootstrapBrowser({ baseUrl, scenarioKey, outputDir, scenario }) {
 
   let exitCode = 0;
   let verdict = 'UNKNOWN';
+  let auth = { attempted: false, authenticated: false, status: null, reason: 'no_credential' };
   let page;
   try {
     // Block service workers so a cached shell can't mask a load failure.
     const context = await browser.newContext({ serviceWorkers: 'block' });
+
+    // Every request from this context is marked synthetic (see SYNTHETIC_HEADERS).
+    await context.setExtraHTTPHeaders({ ...SYNTHETIC_HEADERS });
+    console.log(`[bootstrap] synthetic provenance set on every request: x-atlas-request-origin: ${SYNTHETIC_ORIGIN}`);
+
+    // Authenticate BEFORE the first navigation so the app shell loads as the
+    // owner rather than rendering its unauthenticated state first.
+    auth = await authenticateContext({ baseUrl, accessCode, context });
+    const gate = shouldProceedToNavigation(auth);
+    if (!gate.proceed) {
+      // `finally` closes the browser; return without navigating.
+      console.error(`[bootstrap] ${gate.reason}`);
+      return { exitCode: 1, verdict: 'ERROR', auth };
+    }
+    console.log(`[bootstrap] proceeding — ${gate.reason}`);
+
     page = await context.newPage();
 
     console.log(`[bootstrap] opening ${appUrl}`);
@@ -343,7 +493,8 @@ async function bootstrapBrowser({ baseUrl, scenarioKey, outputDir, scenario }) {
   } catch (err) {
     exitCode = 1;
     verdict = 'ERROR';
-    console.error(`[bootstrap] FAILED: ${err.message}`);
+    // Redacted: a thrown transport/URL error can carry whatever was in flight.
+    console.error(`[bootstrap] FAILED: ${redactCredential(err.message, accessCode)}`);
     // Best-effort failure screenshot for the artifact, if a page exists.
     if (page) {
       try {
@@ -355,7 +506,7 @@ async function bootstrapBrowser({ baseUrl, scenarioKey, outputDir, scenario }) {
   } finally {
     await browser.close().catch(() => {});
   }
-  return { exitCode, verdict };
+  return { exitCode, verdict, auth };
 }
 
 async function run(argv, env = process.env) {
@@ -396,10 +547,18 @@ async function run(argv, env = process.env) {
   }
 
   console.log('BROWSER BOOTSTRAP + NAVIGATION + ASSERT: read-only load, populate composer, preview, compare. Never presses Save.');
+
+  // Credential from the environment only — never a CLI flag (shell history / CI
+  // logs). Absent is the normal case and keeps the unauthenticated run.
+  const accessCode = (env[ACCESS_CODE_ENV] || '').trim() || null;
+  console.log(accessCode
+    ? `Auth              : ${ACCESS_CODE_ENV} present — will establish a session before loading the app`
+    : `Auth              : ${ACCESS_CODE_ENV} absent — unauthenticated run (assertions keep INCONCLUSIVE semantics)`);
+
   const results = [];
   for (const k of keys) {
-    const { exitCode, verdict } = await bootstrapBrowser({ baseUrl: targetBaseUrl, scenarioKey: k, outputDir, scenario: SCENARIOS[k] });
-    results.push({ scenario: k, bugId: SCENARIOS[k].bugId, verdict, exitCode });
+    const { exitCode, verdict, auth } = await bootstrapBrowser({ baseUrl: targetBaseUrl, scenarioKey: k, outputDir, scenario: SCENARIOS[k], accessCode });
+    results.push({ scenario: k, bugId: SCENARIOS[k].bugId, verdict, exitCode, auth });
   }
 
   writeSummary(results, outputDir);
@@ -466,6 +625,15 @@ function buildMarkdownReport(results, ctx = {}) {
   lines.push('');
   lines.push(`**Totals:** ${Object.entries(tally).map(([k, v]) => `${VERDICT_ICON[k] || ''} ${k}=${v}`).join(' · ') || '(none)'}`);
   lines.push('');
+  // Auth posture — booleans only; no credential and no session token.
+  const authed = results.some(r => r.auth && r.auth.authenticated);
+  const attempted = results.some(r => r.auth && r.auth.attempted);
+  lines.push(attempted
+    ? `**Session:** ${authed ? 'authenticated' : 'authentication FAILED — the run stopped instead of continuing unauthenticated'}.`
+    : `**Session:** unauthenticated (no \`${ACCESS_CODE_ENV}\` configured) — an expected reply that needs a session reads ⚠️ INCONCLUSIVE, never ✅ PASS.`);
+  lines.push('');
+  lines.push(`All traffic is marked synthetic (\`x-atlas-request-origin: ${SYNTHETIC_ORIGIN}\`) and never counts as genuine owner/gym evidence.`);
+  lines.push('');
   lines.push('Screenshots and result JSON for each step are attached as the `live-retest-artifacts-*` workflow artifact.');
   lines.push('');
   lines.push('**Verdicts:** ✅ PASS — expected behaviour seen · ⚠️ INCONCLUSIVE — no bug signal but the expected reply didn\'t render (likely an unauthenticated run; retest in an authed context) · ❌ FAIL — a forbidden/bug pattern reappeared · ◻️ MANUAL — needs a hands-on retest (no automatable assertion yet).');
@@ -482,4 +650,10 @@ if (require.main === module) {
   });
 }
 
-module.exports = { SCENARIOS, parseArgs, toBool, run, bootstrapBrowser, navigateScenario, assertScenario, writeSummary, buildMarkdownReport };
+module.exports = {
+  SCENARIOS, parseArgs, toBool, run, bootstrapBrowser, navigateScenario, assertScenario,
+  writeSummary, buildMarkdownReport,
+  // Synthetic provenance + optional authentication (PR A).
+  SYNTHETIC_ORIGIN, SYNTHETIC_HEADERS, ACCESS_CODE_ENV, SESSION_COOKIE_NAME,
+  redactCredential, parseSessionCookie, authenticateContext, shouldProceedToNavigation
+};

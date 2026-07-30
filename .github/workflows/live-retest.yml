@@ -58,6 +58,18 @@ jobs:
           # target_base_url wins when provided; otherwise the script falls back
           # to ATLAS_BASE_URL. The secret is only a base URL, not a credential.
           ATLAS_BASE_URL: ${{ secrets.ATLAS_BASE_URL }}
+          # OPTIONAL owner credential. When this secret is not configured the run
+          # stays unauthenticated and behaves exactly as before (an expected reply
+          # that needs a session reads INCONCLUSIVE, never a false PASS). When it
+          # IS configured the harness exchanges it for a session cookie before
+          # loading the app.
+          #
+          # It is passed through the environment only — never as a CLI argument,
+          # never echoed, and never written to an artifact. Actions masks the
+          # value in logs, and the harness additionally redacts it from every
+          # message it prints. A dedicated secret (NOT ATLAS_API_KEY) so the
+          # browser credential can be rotated on its own.
+          ATLAS_ACCESS_CODE: ${{ secrets.ATLAS_ACCESS_CODE }}
         run: |
           node scripts/live-retest.js \
             --scenario "${{ inputs.scenario }}" \
