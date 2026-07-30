@@ -63,6 +63,23 @@ const LEAD_INS = ['ok', 'okay', 'k', 'alright', 'right', 'well', 'so', 'um', 'uh
 // instead lets "do it please" pass without touching "please do".
 const TRAILING_FILLER = ['please', 'then', 'now', 'thanks', 'thank you'];
 
+// Connective / politeness filler that may sit BETWEEN two affirmative phrases ("yes AND do it",
+// "yes PLEASE do it", "go ahead AND do it"). It is stripped only after an endorsement has already
+// been consumed — never at the head of the utterance, or it would eat the `please` of `please do`.
+// Without it the standalone-endorsement rule refused three phrases this module used to accept
+// (Codex P2, round 6).
+const INTER_FILLER = /^(?:and|then|please|now|just|also|so)\s+/;
+
+function stripInterFiller(s) {
+  let out = s;
+  for (let i = 0; i < 3; i += 1) {
+    const before = out;
+    out = out.replace(INTER_FILLER, '').trim();
+    if (out === before) break;
+  }
+  return out;
+}
+
 function normalize(text) {
   return String(text == null ? '' : text)
     .toLowerCase()
@@ -114,8 +131,10 @@ function stripTrailingFiller(s) {
 function isEndorsementOnly(body) {
   let rest = body;
   let matched = false;
-  for (let guard = 0; guard < 6; guard += 1) {
+  for (let guard = 0; guard < 8; guard += 1) {
     rest = stripTrailingFiller(stripLeadIns(rest));
+    // Only BETWEEN phrases, never at the head — see INTER_FILLER.
+    if (matched) rest = stripInterFiller(rest);
     if (!rest) break;
     // The action tier is end-anchored, so it can only match the whole remainder.
     if (ACTION_ENDORSEMENT_RE.test(rest)) { rest = ''; matched = true; break; }

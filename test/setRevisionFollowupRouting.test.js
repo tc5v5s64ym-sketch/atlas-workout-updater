@@ -843,6 +843,47 @@ test('4b.Y8 (Codex P2) a named range that exceeds the plan is never answered wit
     'What do you want to change about the last two sets — the weight, the reps, or remove them?');
 });
 
+test('4b.Y9 (Codex P2) a general plan question is not answered with the set target', () => {
+  const C = classifier();
+  // `do` / `pick` / `choose` / `take` / `go with` are not revision verbs. With them in the set, an
+  // exercise-level question about the PLAN was answered with the stored set prescription.
+  for (const words of ['why are we doing it?', 'why should we do it?', 'why did you pick it?',
+    'why are we doing this?', 'why did you choose that?', 'why are we taking it?',
+    'why are we going with that?', 'why did you set it?']) {
+    assert.equal(C.classifySetRevisionFollowup(words).action, 'no_match',
+      `"${words}" is about the plan, not the prescription — it belongs to the coach`);
+    const h = withProposal();
+    assert.equal(h.api.trySetRevisionFollowup(words), false, `"${words}" must fall through`);
+    assert.equal(replies(h.state).length, 0, `"${words}" must not be answered from the proposal`);
+    assert.ok(h.state.pendingSetRevision, `"${words}" leaves the proposal outstanding`);
+  }
+  // Genuine revision verbs still explain.
+  for (const words of ['why are we dropping it?', 'why did you change that?', 'why is it lower?',
+    'why we dropped it', 'why are we reducing it?', 'why did you adjust that?']) {
+    assert.equal(C.classifySetRevisionFollowup(words).action, 'explain_active_proposal', `"${words}"`);
+  }
+});
+
+test('4b.Y10 (Codex P2) filler BETWEEN affirmative phrases still endorses', () => {
+  // The standalone-endorsement rule consumed one phrase at a time, so a connective between two
+  // affirmatives ("yes AND do it") left unmatched content and refused consent — three phrases this
+  // module used to accept.
+  for (const words of ['yes and do it', 'yes please do it', 'go ahead and do it',
+    'yes then do it', 'yeah just do it', 'yes and go ahead']) {
+    assert.equal(endorse.isExplicitEndorsement(words), true, `"${words}" is entirely affirmative`);
+  }
+  // Filler must never let NON-filler content through, and must never eat the head of "please do".
+  for (const words of ['yes and my knee hurts', 'yes and lower the weight',
+    'yes and skip the last exercise', 'and', 'yes and', 'please', 'please my knee hurts']) {
+    assert.equal(endorse.isExplicitEndorsement(words), false, `"${words}" is not consent`);
+  }
+  assert.equal(endorse.isExplicitEndorsement('please do'), true, 'the head is still untouched');
+
+  const h = withProposal();
+  assert.equal(h.api.trySetRevisionFollowup('yes and do it'), true);
+  assert.equal(h.state.revisions.length, 3, 'and it reaches the one approval handler');
+});
+
 test('4b.Y4 (Codex P1) a newer submit revokes an older one BEFORE any early return', () => {
   // `previewRequestSeq` advances on a form edit and inside invalidatePreview, and several newer
   // turns return before reaching either — a bug command, a plan request, an artifact ask, a held

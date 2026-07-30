@@ -86,10 +86,19 @@ function stripLeadIns(s) {
 // arbitrary word is exactly what must not be allowed here.
 const PROPOSAL_ATTRIBUTE = '(?:much|many|weight|weights|load|number|numbers|rep|reps|rir|set|sets'
   + '|change|adjustment|revision|target|prescription|light|lighter|low|lower|heavy|heavier|high|higher)';
+// REVISION verbs only — verbs that change a prescription. General action verbs are deliberately
+// absent: with `do` / `pick` / `choose` / `take` / `go with` in the set, "why are we doing it?",
+// "why should we do it?" and "why did you pick it?" all matched, and those are exercise-level
+// questions about the PLAN that belong to the coach — answering them with a set target is the wrong
+// answer to the question asked (Codex P2, round 6).
+// Only the attribute words that CANNOT also be read as a general verb. `set` is a proposal
+// attribute in "why that set?" but a general action in "why did you set it?", and allowing the full
+// attribute list in the verb slot let that second shape be answered from the proposal — an
+// over-call this PR's own test caught. Comparatives only, so the verb slot stays a verb slot.
+const ATTRIBUTE_ADJECTIVE = '(?:light|lighter|low|heavy|heavier|high|higher|less|more|much|many)';
 const CHANGE_VERB = '(?:drop(?:ped|ping)?|lower(?:ed|ing)?|reduc(?:e|ed|ing)|cut(?:ting)?'
   + '|chang(?:e|ed|ing)|adjust(?:ed|ing)?|revis(?:e|ed|ing)|back(?:ing)?\\s+off'
-  + '|increas(?:e|ed|ing)|rais(?:e|ed|ing)|bump(?:ed|ing)?|mov(?:e|ed|ing)|set(?:ting)?'
-  + '|tak(?:e|ing)|go(?:ing)?\\s+(?:with|to|up|down)|do(?:ing)?|pick(?:ed|ing)?|choos(?:e|ing)|chose)';
+  + '|increas(?:e|ed|ing)|rais(?:e|ed|ing)|bump(?:ed|ing)?)';
 
 const WHY_WHOLE_RE = new RegExp(
   '^(?:why|how\\s+come)\\s+'
@@ -98,7 +107,7 @@ const WHY_WHOLE_RE = new RegExp(
   + `(?:only\\s+)?(?:that|those|this|these)\\s+${PROPOSAL_ATTRIBUTE}`
   // "why are we dropping it?" / "why did you change that?" / "why is it lower?"
   + `|(?:are|is|was|were|did|do|does|would|should|will)\\s+(?:we|you|i|it)\\s+(?:not\\s+)?`
-  + `(?:${CHANGE_VERB}|${PROPOSAL_ATTRIBUTE})`
+  + `(?:${CHANGE_VERB}|${ATTRIBUTE_ADJECTIVE})`
   + `(?:\\s+(?:it|that|this|these|those))?(?:\\s+(?:down|up|to|so\\s+${PROPOSAL_ATTRIBUTE}))?`
   // "why we dropped it" / "why you changed that"
   + `|(?:we|you|i)\\s+${CHANGE_VERB}(?:\\s+(?:it|that|this|these|those))?`
