@@ -1,0 +1,38 @@
+name: Backlog editorial cleanup (one-time)
+
+on:
+  push:
+    branches:
+      - agent/backlog-hygiene-20260730
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: agent/backlog-hygiene-20260730
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Run conservative editorial cleanup
+        run: node scripts/backlog-editorial-cleanup-once.js
+
+      - name: Verify paper-weight guard
+        run: node scripts/check-paper-weight.js
+
+      - name: Commit governed cleanup only
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add BACKLOG.md BACKLOG_ARCHIVE.md config/paper-weight.json docs/verification/BACKLOG_EDITORIAL_CLEANUP_2026-07-30.md scripts/backlog-editorial-cleanup-once.js .github/workflows/backlog-editorial-cleanup-once.yml
+          git commit -m "docs: archive completed backlog records"
+          git push origin HEAD:agent/backlog-hygiene-20260730
