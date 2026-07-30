@@ -23,7 +23,7 @@
 | Voice corpus + Golden Session | `test/fixtures/voiceCorpusSetC.js`, `test/fixtures/goldenSession.js`, `test/helpers/voiceViolationDetectors.js` | `npm test` | Offline | No | Current |
 | Live voice sampler (advisory) | `scripts/voice-validation-live.js` | `node scripts/voice-validation-live.js [--live]` | Offline (model-call w/ `--live`) | No | Current |
 | Deployed smoke test | `scripts/smoke-test-render.js` | `npm run smoke:render` | Deployed read-only + dry-run | No | Current |
-| Live-retest harness | `scripts/live-retest.js` | `node scripts/live-retest.js --scenario all` | Dry-run / deployed read-only | No | Partial (some scenarios MANUAL; not a gate) |
+| Live-retest harness | `scripts/live-retest.js` | `node scripts/live-retest.js --scenario all` | Dry-run / deployed read-only (optional auth via `ATLAS_ACCESS_CODE`) | No | Partial (some scenarios MANUAL; not a gate) |
 | `atlas:status` | `scripts/atlas-status.js` | `npm run atlas:status [-- --json]` | Deployed read-only → offline | No | Current |
 | `atlas:review-live` | `scripts/atlas-review-live.js` | `npm run atlas:review-live [-- --json]` | Deployed read-only (Sheets) | No | Current |
 | `atlas:divergence` | `scripts/atlas-divergence.js` | `npm run atlas:divergence -- <logfile>` | Offline | No | Current |
@@ -64,7 +64,7 @@ A single-user HTTP client that drives a **local** Atlas server through 7 read-on
 ### 4. Deployed / live checks (read-only or dry-run)
 
 - **`smoke-test-render.js`** — `npm run smoke:render`. Deployed read-only; its only write-shaped call is a `test_mode:'true'` dry-run that *asserts* `no_write_confirmed:true, sheet_written:false`. Env: `ATLAS_BASE_URL`, `ATLAS_API_KEY`, `ATLAS_SMOKE_MODE` (default `full`; `basic` skips the dry-run). Marks itself `x-atlas-request-origin: smoke`. **Cannot write.**
-- **`live-retest.js`** — `node scripts/live-retest.js --scenario all [--dry-run-only false]`. Describe-only by default; with `--dry-run-only false` launches Chromium against the deployed app and only ever previews (asserts Save stays disabled). Artifacts in `live-retest-artifacts/`. **Cannot write.** Partially built (some scenarios `MANUAL`); explicitly not a merge gate.
+- **`live-retest.js`** — `node scripts/live-retest.js --scenario all [--dry-run-only false]`. Describe-only by default; with `--dry-run-only false` launches Chromium against the deployed app and only ever previews (asserts Save stays disabled). Artifacts in `live-retest-artifacts/`. **Cannot write.** Partially built (some scenarios `MANUAL`); explicitly not a merge gate. Every browser request carries `x-atlas-request-origin: playwright`, so a run is always synthetic traffic and never genuine owner/gym evidence. **Optional authentication:** set `ATLAS_ACCESS_CODE` (environment only — never a CLI flag) and the harness exchanges it for a session cookie through the real `POST /api/session/login` route before loading the app. The credential is never printed, serialized, screenshotted, or written to an artifact, and every logged message is redacted. Absent that variable the run stays unauthenticated and unchanged — an expected reply that needs a session reads `INCONCLUSIVE`, never a false `PASS`. If the credential is supplied but rejected the run **stops** rather than continuing anonymously (exit 1, verdict `ERROR`): it never fails open. **Authenticated-content privacy (the repository is public):** whenever a credential is supplied, the run takes no screenshots, logs no thread/DOM text (lengths and booleans only), persists no `threadExcerpt`, classifies thrown errors without echoing them, and drops an `AUTHENTICATED_RUN` marker that makes the workflow skip artifact upload (fail closed); reports carry an explicit `authenticated_run: true|false` field. Unauthenticated runs keep screenshots/excerpts/artifacts unchanged. Tests: `test/live-retest-auth.test.js`, `test/live-retest-privacy.test.js`.
 
 ### 5. Read-only operational review tools
 
@@ -88,7 +88,7 @@ A single-user HTTP client that drives a **local** Atlas server through 7 read-on
 | Workflow | Trigger | Runs | Sheet write? |
 |---|---|---|---|
 | `ci.yml` | PR, push→main, dispatch | build + lint + 6 guards + `npm test`; coverage (non-blocking); secret-scan; Playwright e2e; render-smoke (dispatch/main) | No (smoke dry-run only) |
-| `live-retest.yml` | manual dispatch | `live-retest.js`, dry-run default | No |
+| `live-retest.yml` | manual dispatch | `live-retest.js`, dry-run default; optional `ATLAS_ACCESS_CODE` secret for an authenticated read-only run | No |
 | `monitoring.yml` (Daily Mission Control) | daily cron + dispatch | `smoke-test-render.js` pinned `read-only`; opens alert issue on failure | No |
 | `merge-card-check.yml` | PR | fails a PR missing the Atlas Merge Card | No |
 | `risk-label-gate.yml` | `pull_request_target` | publishes `risk-label/primary` status from trusted default-branch code | No |

@@ -135,6 +135,174 @@ function toBool(value, fallback) {
   return String(value).trim().toLowerCase() === 'true';
 }
 
+// --- Synthetic provenance ---------------------------------------------------
+// docs/AGENT_LIVE_TESTING.md ("Mark every agent request synthetic") requires
+// every agent request to carry a recognized synthetic token from
+// services/evidenceProvenance.js. `playwright` is the token for browser runs.
+// Applied to the whole browser context, so EVERY request the run makes (the
+// navigation, the app's XHRs, the preview call) is marked — synthetic traffic
+// can never be mistaken for genuine owner activity, and never counts toward
+// GATE A / LT owner evidence.
+const SYNTHETIC_ORIGIN = 'playwright';
+const SYNTHETIC_HEADERS = Object.freeze({ 'x-atlas-request-origin': SYNTHETIC_ORIGIN });
+
+// --- Optional production authentication ------------------------------------
+// The login contract (verified against index.js `POST /api/session/login` and
+// services/session.js):
+//   • request  — JSON body `{ api_key: <credential> }` (the route also accepts an
+//                `x-atlas-api-key` header); the server compares it timing-safe
+//                against its own configured key.
+//   • 503      — durable sessions are not enabled on that server.
+//   • 401      — the credential was rejected.
+//   • 200      — `Set-Cookie: atlas_session=<token>; Path=/; HttpOnly;
+//                SameSite=Lax; Max-Age=<seconds>[; Secure]`.
+//
+// NOTE ON THE CREDENTIAL NAME: the wire FIELD is `api_key`, but the VALUE comes
+// from `ATLAS_ACCESS_CODE` — a dedicated secret. Do not substitute a local
+// `ATLAS_API_KEY`: that value has been observed to return 401 against
+// production, because it is a different key from the deployment's own. The
+// credential is read from the environment ONLY (never a CLI flag, which would
+// land in shell history and CI logs).
+const ACCESS_CODE_ENV = 'ATLAS_ACCESS_CODE';
+const SESSION_COOKIE_NAME = 'atlas_session';
+
+// Defensive redaction. Nothing in this harness intentionally prints the
+// credential, but a server error body or a thrown transport error could echo it
+// back. Every string that reaches a log, a report, or an artifact passes through
+// here first, so the credential cannot leak even by accident.
+function redactCredential(text, credential) {
+  const s = text === undefined || text === null ? '' : String(text);
+  if (!credential) return s;
+  return s.split(String(credential)).join('[REDACTED]');
+}
+
+// Parse the login response's Set-Cookie into a Playwright cookie object bound to
+// the target origin. Pure and value-blind: it never logs the token.
+function parseSessionCookie(setCookieHeader, { url, now = Date.now() } = {}) {
+  const raw = String(setCookieHeader || '');
+  const match = raw.match(new RegExp(`(?:^|,\\s*)${SESSION_COOKIE_NAME}=([^;,]*)`));
+  if (!match || !match[1]) return null;
+  const attrs = raw.slice(match.index).split(';').map(s => s.trim());
+  const maxAge = attrs.map(a => a.match(/^Max-Age=(\d+)$/i)).find(Boolean);
+  const cookie = {
+    name: SESSION_COOKIE_NAME,
+    value: match[1],
+    url,
+    httpOnly: /;\s*HttpOnly/i.test(raw),
+    secure: /;\s*Secure/i.test(raw),
+    sameSite: 'Lax'
+  };
+  if (maxAge) cookie.expires = Math.floor(now / 1000) + Number(maxAge[1]);
+  return cookie;
+}
+
+// Exchange the access code for a session cookie and seed it into the Playwright
+// context. Read-only: login establishes a session, it writes no Sheet data.
+//
+// Returns a booleans-and-status summary safe to serialize into any artifact:
+//   { attempted, authenticated, status, reason }
+// It never returns, logs, or embeds the credential or the session token.
+async function authenticateContext({
+  baseUrl,
+  accessCode,
+  context,
+  fetchImpl = globalThis.fetch,
+  logger = console
+} = {}) {
+  if (!accessCode) {
+    // No credential configured — preserve the existing unauthenticated run.
+    return { attempted: false, authenticated: false, status: null, reason: 'no_credential' };
+  }
+
+  const loginUrl = `${String(baseUrl).replace(/\/+$/, '')}/api/session/login`;
+  logger.log('[auth] exchanging the access code for a session cookie (credential never logged)');
+
+  let res;
+  try {
+    res = await fetchImpl(loginUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...SYNTHETIC_HEADERS },
+      body: JSON.stringify({ api_key: accessCode })
+    });
+  } catch (err) {
+    const message = redactCredential(err && err.message ? err.message : err, accessCode);
+    logger.error(`[auth] login transport failure: ${message}`);
+    return { attempted: true, authenticated: false, status: 0, reason: 'transport_error' };
+  }
+
+  const status = res && typeof res.status === 'number' ? res.status : 0;
+  if (status !== 200) {
+    // Deliberately does NOT include the response body: a server echo could
+    // contain the credential. Status alone is enough to diagnose.
+    const reason = status === 401 ? 'rejected'
+      : status === 503 ? 'sessions_disabled'
+        : 'login_failed';
+    logger.error(`[auth] login did not establish a session (HTTP ${status}, ${reason})`);
+    return { attempted: true, authenticated: false, status, reason };
+  }
+
+  const setCookie = res.headers && typeof res.headers.get === 'function'
+    ? res.headers.get('set-cookie')
+    : null;
+  const cookie = parseSessionCookie(setCookie, { url: baseUrl });
+  if (!cookie) {
+    logger.error('[auth] login returned 200 but no session cookie was present');
+    return { attempted: true, authenticated: false, status, reason: 'no_cookie' };
+  }
+
+  await context.addCookies([cookie]);
+  logger.log(`[auth] session established and seeded into the browser context (cookie ${SESSION_COOKIE_NAME}, httpOnly=${cookie.httpOnly})`);
+  return { attempted: true, authenticated: true, status, reason: 'ok' };
+}
+
+// Fail-closed navigation decision. When a credential WAS supplied but the
+// session could not be established, the run must not quietly continue as an
+// anonymous visitor — that would invite a misread of the resulting verdict. It
+// stops instead. When no credential was supplied at all, the existing
+// unauthenticated run proceeds unchanged and its assertions keep their
+// INCONCLUSIVE semantics (an unauthenticated run never manufactures a PASS).
+function shouldProceedToNavigation(auth) {
+  if (auth && auth.attempted && !auth.authenticated) {
+    return { proceed: false, reason: `authentication failed (${auth.reason}) — refusing to continue unauthenticated` };
+  }
+  return { proceed: true, reason: auth && auth.authenticated ? 'authenticated' : 'unauthenticated (no credential configured)' };
+}
+
+// --- Authenticated-content privacy (the repository is PUBLIC) ----------------
+// Workflow logs, the step summary, and uploaded artifacts on a public repository
+// are world-readable. An AUTHENTICATED run renders the owner's private coaching
+// surface, so nothing that surface shows — screenshots, thread text, DOM values,
+// response bodies, error echoes — may reach any of those sinks. Only safe
+// operational metadata may be emitted: HTTP status, auth success/failure,
+// selector presence booleans, verdict, timing, and lengths.
+//
+// Privacy engages whenever a credential is SUPPLIED, not merely when login
+// succeeds, so every path fails closed (a crash mid-run still leaves the marker
+// below, and the workflow refuses to upload artifacts unless it can prove the
+// marker is absent). Unauthenticated runs are unchanged.
+const PRIVACY_MARKER = 'AUTHENTICATED_RUN';
+
+// Drop the marker file the workflow's upload gate reads. Written BEFORE any
+// browser work so no failure mode can skip it.
+function writePrivacyMarker(outputDir, on) {
+  fs.mkdirSync(outputDir, { recursive: true });
+  if (on) fs.writeFileSync(path.join(outputDir, PRIVACY_MARKER), 'true\n');
+  return Boolean(on);
+}
+
+// Classify an error WITHOUT echoing its message: a thrown Playwright error can
+// embed page content (and the login path could embed a credential), so on an
+// authenticated run only the error's name and a coarse class are reported.
+function safeErrorSummary(err) {
+  const msg = String((err && err.message) || '');
+  const kind = /timeout/i.test(msg) ? 'timeout'
+    : /net::|ERR_|ECONN|EAI_|fetch failed/i.test(msg) ? 'network'
+      : /locator|selector|element|waiting for/i.test(msg) ? 'selector'
+        : /closed/i.test(msg) ? 'closed'
+          : 'error';
+  return `${(err && err.name) || 'Error'}/${kind} — details withheld (authenticated run on a public repository)`;
+}
+
 function printScenario(scenarioKey, scenario, { targetBaseUrl, dryRunOnly }) {
   const line = '─'.repeat(72);
   console.log(line);
@@ -158,7 +326,7 @@ function printScenario(scenarioKey, scenario, { targetBaseUrl, dryRunOnly }) {
 // approve/"Write to Google Sheets" button (#approve-btn) and never enables it.
 // Assertions (pass/fail) are a later slice (#718); this just navigates and
 // captures what the UI shows.
-async function navigateScenario({ page, scenarioKey, scenario, outputDir }) {
+async function navigateScenario({ page, scenarioKey, scenario, outputDir, privacy = false }) {
   const nav = scenario.navigation || { type: 'manual' };
 
   if (nav.type !== 'composer') {
@@ -175,8 +343,12 @@ async function navigateScenario({ page, scenarioKey, scenario, outputDir }) {
   if (typed !== nav.text) {
     throw new Error(`composer did not accept the input (got ${JSON.stringify(typed)})`);
   }
-  await page.screenshot({ path: path.join(outputDir, `${scenarioKey}-02-composer.png`), fullPage: true });
-  console.log(`[navigate] composer populated; screenshot saved`);
+  if (privacy) {
+    console.log(`[navigate] composer populated (screenshot withheld — authenticated run)`);
+  } else {
+    await page.screenshot({ path: path.join(outputDir, `${scenarioKey}-02-composer.png`), fullPage: true });
+    console.log(`[navigate] composer populated; screenshot saved`);
+  }
 
   // Submit the preview flow (test_mode dry-run). Tolerant: a readback may or may
   // not render depending on the authenticated context — capturing the result is
@@ -191,11 +363,17 @@ async function navigateScenario({ page, scenarioKey, scenario, outputDir }) {
   console.log(`[navigate] post-preview: #approve-btn disabled=${approveDisabled} (never clicked — no write)`);
 
   const threadText = await page.locator('#thread-messages').innerText().catch(() => '');
-  const preview = threadText.replace(/\s+/g, ' ').trim().slice(0, 240);
-  console.log(`[navigate] thread after preview: ${preview ? `"${preview}"` : '(no visible change)'}`);
-
-  await page.screenshot({ path: path.join(outputDir, `${scenarioKey}-03-preview.png`), fullPage: true });
-  console.log(`[navigate] preview-flow screenshot saved`);
+  if (privacy) {
+    // The thread is the owner's private coaching surface: log only its length.
+    // The text itself stays in memory for the assertion and goes nowhere else.
+    console.log(`[navigate] thread after preview: (content withheld — authenticated run; length=${threadText.length})`);
+    console.log(`[navigate] preview-flow screenshot withheld — authenticated run`);
+  } else {
+    const preview = threadText.replace(/\s+/g, ' ').trim().slice(0, 240);
+    console.log(`[navigate] thread after preview: ${preview ? `"${preview}"` : '(no visible change)'}`);
+    await page.screenshot({ path: path.join(outputDir, `${scenarioKey}-03-preview.png`), fullPage: true });
+    console.log(`[navigate] preview-flow screenshot saved`);
+  }
 
   return { navigated: true, threadText };
 }
@@ -215,14 +393,19 @@ async function navigateScenario({ page, scenarioKey, scenario, outputDir }) {
 //                   rendered) — the owner should retest in an authed context.
 //   MANUAL        — the scenario has no automatable assertion (e.g. the
 //                   restore-banner UI action).
-function assertScenario({ scenarioKey, scenario, navResult, outputDir }) {
+function assertScenario({ scenarioKey, scenario, navResult, outputDir, auth = null, privacy = false }) {
   const a = scenario.assertion;
   const threadText = (navResult && navResult.threadText) || '';
   const haystack = threadText.replace(/\s+/g, ' ').trim();
+  // On an authenticated run the thread is private surface content: the result
+  // JSON gets NO excerpt, only the explicit authenticated_run flag. The text is
+  // still asserted against in memory — the verdict is unaffected.
+  const authenticated_run = Boolean(auth && auth.authenticated);
+  const excerptOf = (n) => (privacy ? null : haystack.slice(0, n));
 
   if (!a) {
     const verdict = 'MANUAL';
-    writeResult(outputDir, scenarioKey, scenario, { verdict, forbidden: [], expected: [], threadExcerpt: haystack.slice(0, 240) });
+    writeResult(outputDir, scenarioKey, scenario, { verdict, authenticated_run, forbidden: [], expected: [], threadExcerpt: excerptOf(240) });
     console.log(`[assert] ${scenarioKey}: ${verdict} — no automatable assertion (${scenario.navigation && scenario.navigation.note ? scenario.navigation.note : 'manual scenario'}).`);
     return verdict;
   }
@@ -240,13 +423,17 @@ function assertScenario({ scenarioKey, scenario, navResult, outputDir }) {
     verdict = haystack ? 'PASS' : 'INCONCLUSIVE';
   }
 
-  writeResult(outputDir, scenarioKey, scenario, { verdict, forbidden, expected, threadExcerpt: haystack.slice(0, 400) });
+  writeResult(outputDir, scenarioKey, scenario, { verdict, authenticated_run, forbidden, expected, threadExcerpt: excerptOf(400) });
 
   console.log(`[assert] ${scenarioKey}: ${verdict}`);
   for (const f of forbidden) console.log(`[assert]   forbidden ${f.matched ? 'PRESENT ✗' : 'absent ✓'}: ${f.pattern}`);
   for (const e of expected) console.log(`[assert]   expected  ${e.matched ? 'present ✓' : 'MISSING …'}: ${e.pattern}`);
   if (verdict === 'INCONCLUSIVE') {
-    console.log('[assert]   (inconclusive — likely an unauthenticated run; retest in an authed context for a real PASS/FAIL.)');
+    // The hint must not send the owner to re-run something they already did. An
+    // authenticated run's INCONCLUSIVE is NOT a credential problem, so say so.
+    console.log(auth && auth.authenticated
+      ? '[assert]   (inconclusive — the session WAS authenticated, so this is not a credential problem; the expected reply did not render inside the observed window.)'
+      : '[assert]   (inconclusive — likely an unauthenticated run; retest in an authed context for a real PASS/FAIL.)');
   }
   return verdict;
 }
@@ -278,7 +465,7 @@ function writeResult(outputDir, scenarioKey, scenario, fields) {
 // flow. It loads/observes, types into the composer, and submits the PREVIEW
 // (dry-run) only — it NEVER presses Save (#approve-btn) and never calls a write
 // endpoint or writes to Google Sheets.
-async function bootstrapBrowser({ baseUrl, scenarioKey, outputDir, scenario }) {
+async function bootstrapBrowser({ baseUrl, scenarioKey, outputDir, scenario, accessCode = null }) {
   // Lazy require so dry-run mode never needs Playwright installed.
   const { chromium } = require('@playwright/test');
 
@@ -299,10 +486,29 @@ async function bootstrapBrowser({ baseUrl, scenarioKey, outputDir, scenario }) {
 
   let exitCode = 0;
   let verdict = 'UNKNOWN';
+  let auth = { attempted: false, authenticated: false, status: null, reason: 'no_credential' };
+  // Privacy engages on credential PRESENCE (fail closed), not login success.
+  const privacy = Boolean(accessCode);
   let page;
   try {
     // Block service workers so a cached shell can't mask a load failure.
     const context = await browser.newContext({ serviceWorkers: 'block' });
+
+    // Every request from this context is marked synthetic (see SYNTHETIC_HEADERS).
+    await context.setExtraHTTPHeaders({ ...SYNTHETIC_HEADERS });
+    console.log(`[bootstrap] synthetic provenance set on every request: x-atlas-request-origin: ${SYNTHETIC_ORIGIN}`);
+
+    // Authenticate BEFORE the first navigation so the app shell loads as the
+    // owner rather than rendering its unauthenticated state first.
+    auth = await authenticateContext({ baseUrl, accessCode, context });
+    const gate = shouldProceedToNavigation(auth);
+    if (!gate.proceed) {
+      // `finally` closes the browser; return without navigating.
+      console.error(`[bootstrap] ${gate.reason}`);
+      return { exitCode: 1, verdict: 'ERROR', auth };
+    }
+    console.log(`[bootstrap] proceeding — ${gate.reason}`);
+
     page = await context.newPage();
 
     console.log(`[bootstrap] opening ${appUrl}`);
@@ -316,8 +522,15 @@ async function bootstrapBrowser({ baseUrl, scenarioKey, outputDir, scenario }) {
 
     const surface = await page.locator('body').getAttribute('data-surface').catch(() => null);
     const placeholder = await composer.getAttribute('placeholder').catch(() => null);
-    console.log(`[bootstrap] app loaded — body data-surface="${surface}"`);
-    console.log(`[bootstrap] composer located (#workout-text), placeholder="${placeholder}"`);
+    if (privacy) {
+      // DOM values are private-surface content on an authenticated run: log
+      // presence booleans only.
+      console.log(`[bootstrap] app loaded — data-surface present=${surface !== null}`);
+      console.log(`[bootstrap] composer located (#workout-text), placeholder present=${placeholder !== null}`);
+    } else {
+      console.log(`[bootstrap] app loaded — body data-surface="${surface}"`);
+      console.log(`[bootstrap] composer located (#workout-text), placeholder="${placeholder}"`);
+    }
 
     // Read-only confirmation: the write trigger should exist and be disabled.
     // We observe it; we never enable or click it.
@@ -325,27 +538,35 @@ async function bootstrapBrowser({ baseUrl, scenarioKey, outputDir, scenario }) {
     const approveDisabled = await approve.isDisabled().catch(() => null);
     console.log(`[bootstrap] write button (#approve-btn) present, disabled=${approveDisabled} (never clicked)`);
 
-    const shot = path.join(outputDir, `${scenarioKey}-01-loaded.png`);
-    await page.screenshot({ path: shot, fullPage: true });
-    console.log(`[bootstrap] screenshot saved: ${shot}`);
+    if (privacy) {
+      console.log('[bootstrap] screenshot withheld — authenticated run on a public repository');
+    } else {
+      const shot = path.join(outputDir, `${scenarioKey}-01-loaded.png`);
+      await page.screenshot({ path: shot, fullPage: true });
+      console.log(`[bootstrap] screenshot saved: ${shot}`);
+    }
     console.log('[bootstrap] OK — app loaded and composer located.');
 
     // PR #717: drive the scenario through the composer/preview flow (no Save).
-    const navResult = await navigateScenario({ page, scenarioKey, scenario, outputDir });
+    const navResult = await navigateScenario({ page, scenarioKey, scenario, outputDir, privacy });
 
     // PR #718: assert the observed thread against the scenario's expected /
     // forbidden patterns. A FAIL (the bug behaviour reappeared) surfaces as a
     // non-zero exit; PASS / INCONCLUSIVE / MANUAL exit 0.
-    verdict = assertScenario({ scenarioKey, scenario, navResult, outputDir });
+    verdict = assertScenario({ scenarioKey, scenario, navResult, outputDir, auth, privacy });
     if (verdict === 'FAIL') exitCode = 2;
 
     console.log(`[bootstrap] DONE — read-only retest complete (verdict: ${verdict}). Never pressed Save, no writes.`);
   } catch (err) {
     exitCode = 1;
     verdict = 'ERROR';
-    console.error(`[bootstrap] FAILED: ${err.message}`);
-    // Best-effort failure screenshot for the artifact, if a page exists.
-    if (page) {
+    // Authenticated run: a thrown Playwright error can embed page content, so
+    // only its name and a coarse class are reported. Unauthenticated: redacted
+    // as before (a transport/URL error can carry whatever was in flight).
+    console.error(`[bootstrap] FAILED: ${privacy ? safeErrorSummary(err) : redactCredential(err.message, accessCode)}`);
+    // Best-effort failure screenshot for the artifact, if a page exists —
+    // NEVER on an authenticated run (it would capture the private surface).
+    if (page && !privacy) {
       try {
         const failShot = path.join(outputDir, `${scenarioKey}-FAILED.png`);
         await page.screenshot({ path: failShot, fullPage: true });
@@ -355,7 +576,7 @@ async function bootstrapBrowser({ baseUrl, scenarioKey, outputDir, scenario }) {
   } finally {
     await browser.close().catch(() => {});
   }
-  return { exitCode, verdict };
+  return { exitCode, verdict, auth };
 }
 
 async function run(argv, env = process.env) {
@@ -396,10 +617,26 @@ async function run(argv, env = process.env) {
   }
 
   console.log('BROWSER BOOTSTRAP + NAVIGATION + ASSERT: read-only load, populate composer, preview, compare. Never presses Save.');
+
+  // Credential from the environment only — never a CLI flag (shell history / CI
+  // logs). Absent is the normal case and keeps the unauthenticated run.
+  const accessCode = (env[ACCESS_CODE_ENV] || '').trim() || null;
+  console.log(accessCode
+    ? `Auth              : ${ACCESS_CODE_ENV} present — will establish a session before loading the app`
+    : `Auth              : ${ACCESS_CODE_ENV} absent — unauthenticated run (assertions keep INCONCLUSIVE semantics)`);
+
+  // Fail-closed privacy marker: written BEFORE any browser work whenever a
+  // credential is supplied, so a crash mid-run still blocks the workflow's
+  // artifact upload. Unauthenticated runs write nothing and are unchanged.
+  writePrivacyMarker(outputDir, Boolean(accessCode));
+  if (accessCode) {
+    console.log('Privacy           : authenticated-content privacy ON — screenshots, thread text, DOM values, and excerpts are withheld; artifact upload is blocked');
+  }
+
   const results = [];
   for (const k of keys) {
-    const { exitCode, verdict } = await bootstrapBrowser({ baseUrl: targetBaseUrl, scenarioKey: k, outputDir, scenario: SCENARIOS[k] });
-    results.push({ scenario: k, bugId: SCENARIOS[k].bugId, verdict, exitCode });
+    const { exitCode, verdict, auth } = await bootstrapBrowser({ baseUrl: targetBaseUrl, scenarioKey: k, outputDir, scenario: SCENARIOS[k], accessCode });
+    results.push({ scenario: k, bugId: SCENARIOS[k].bugId, verdict, exitCode, auth });
   }
 
   writeSummary(results, outputDir);
@@ -426,7 +663,8 @@ function writeSummary(results, outputDir) {
   console.log(line);
   try {
     fs.mkdirSync(outputDir, { recursive: true });
-    fs.writeFileSync(path.join(outputDir, 'summary.json'), JSON.stringify({ results, tally }, null, 2));
+    const authenticated_run = results.some(r => r.auth && r.auth.authenticated);
+    fs.writeFileSync(path.join(outputDir, 'summary.json'), JSON.stringify({ authenticated_run, results, tally }, null, 2));
     // PR #720: owner-facing markdown report (rendered into the GitHub Actions
     // run summary by the workflow).
     fs.writeFileSync(path.join(outputDir, 'summary.md'),
@@ -466,6 +704,21 @@ function buildMarkdownReport(results, ctx = {}) {
   lines.push('');
   lines.push(`**Totals:** ${Object.entries(tally).map(([k, v]) => `${VERDICT_ICON[k] || ''} ${k}=${v}`).join(' · ') || '(none)'}`);
   lines.push('');
+  // Auth posture — booleans only; no credential and no session token.
+  const authed = results.some(r => r.auth && r.auth.authenticated);
+  const attempted = results.some(r => r.auth && r.auth.attempted);
+  lines.push(`**Authenticated run:** ${authed}`);
+  lines.push('');
+  lines.push(attempted
+    ? `**Session:** ${authed ? 'authenticated' : 'authentication FAILED — the run stopped instead of continuing unauthenticated'}.`
+    : `**Session:** unauthenticated (no \`${ACCESS_CODE_ENV}\` configured) — an expected reply that needs a session reads ⚠️ INCONCLUSIVE, never ✅ PASS.`);
+  if (attempted) {
+    lines.push('');
+    lines.push('Screenshots, thread text, DOM values, and result excerpts are **withheld** on an authenticated run, and no workflow artifact is uploaded — the repository is public and the authenticated surface is private.');
+  }
+  lines.push('');
+  lines.push(`All traffic is marked synthetic (\`x-atlas-request-origin: ${SYNTHETIC_ORIGIN}\`) and never counts as genuine owner/gym evidence.`);
+  lines.push('');
   lines.push('Screenshots and result JSON for each step are attached as the `live-retest-artifacts-*` workflow artifact.');
   lines.push('');
   lines.push('**Verdicts:** ✅ PASS — expected behaviour seen · ⚠️ INCONCLUSIVE — no bug signal but the expected reply didn\'t render (likely an unauthenticated run; retest in an authed context) · ❌ FAIL — a forbidden/bug pattern reappeared · ◻️ MANUAL — needs a hands-on retest (no automatable assertion yet).');
@@ -482,4 +735,12 @@ if (require.main === module) {
   });
 }
 
-module.exports = { SCENARIOS, parseArgs, toBool, run, bootstrapBrowser, navigateScenario, assertScenario, writeSummary, buildMarkdownReport };
+module.exports = {
+  SCENARIOS, parseArgs, toBool, run, bootstrapBrowser, navigateScenario, assertScenario,
+  writeSummary, buildMarkdownReport,
+  // Synthetic provenance + optional authentication (PR A).
+  SYNTHETIC_ORIGIN, SYNTHETIC_HEADERS, ACCESS_CODE_ENV, SESSION_COOKIE_NAME,
+  redactCredential, parseSessionCookie, authenticateContext, shouldProceedToNavigation,
+  // Authenticated-content privacy (public repository).
+  PRIVACY_MARKER, writePrivacyMarker, safeErrorSummary
+};
