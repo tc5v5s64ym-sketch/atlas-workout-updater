@@ -93,9 +93,28 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      # Surface the read-only screenshots + result JSON from a browser bootstrap.
-      - name: Upload artifacts
+      # Privacy gate: this repository is PUBLIC, so artifacts are downloadable
+      # by any logged-in GitHub user. The harness drops an AUTHENTICATED_RUN
+      # marker into the artifact dir whenever a credential was supplied (before
+      # any browser work, so a crash cannot skip it). Upload happens ONLY when
+      # this step ran and proved the marker absent — if the step errors or is
+      # skipped, its output is empty, the equality below is false, and nothing
+      # uploads. Fail closed.
+      - name: Check authenticated-run privacy marker
+        id: privacy
         if: ${{ !inputs.dry_run_only && always() }}
+        run: |
+          if [ -f live-retest-artifacts/AUTHENTICATED_RUN ]; then
+            echo "authenticated=true" >> "$GITHUB_OUTPUT"
+            echo "Authenticated run — artifact upload will be skipped (public repository)."
+          else
+            echo "authenticated=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Surface the read-only screenshots + result JSON from a browser bootstrap.
+      # UNAUTHENTICATED runs only — see the privacy gate above.
+      - name: Upload artifacts
+        if: ${{ !inputs.dry_run_only && always() && steps.privacy.outputs.authenticated == 'false' }}
         uses: actions/upload-artifact@v4
         with:
           name: live-retest-artifacts-${{ inputs.scenario }}

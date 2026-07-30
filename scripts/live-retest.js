@@ -268,6 +268,41 @@ function shouldProceedToNavigation(auth) {
   return { proceed: true, reason: auth && auth.authenticated ? 'authenticated' : 'unauthenticated (no credential configured)' };
 }
 
+// --- Authenticated-content privacy (the repository is PUBLIC) ----------------
+// Workflow logs, the step summary, and uploaded artifacts on a public repository
+// are world-readable. An AUTHENTICATED run renders the owner's private coaching
+// surface, so nothing that surface shows — screenshots, thread text, DOM values,
+// response bodies, error echoes — may reach any of those sinks. Only safe
+// operational metadata may be emitted: HTTP status, auth success/failure,
+// selector presence booleans, verdict, timing, and lengths.
+//
+// Privacy engages whenever a credential is SUPPLIED, not merely when login
+// succeeds, so every path fails closed (a crash mid-run still leaves the marker
+// below, and the workflow refuses to upload artifacts unless it can prove the
+// marker is absent). Unauthenticated runs are unchanged.
+const PRIVACY_MARKER = 'AUTHENTICATED_RUN';
+
+// Drop the marker file the workflow's upload gate reads. Written BEFORE any
+// browser work so no failure mode can skip it.
+function writePrivacyMarker(outputDir, on) {
+  fs.mkdirSync(outputDir, { recursive: true });
+  if (on) fs.writeFileSync(path.join(outputDir, PRIVACY_MARKER), 'true\n');
+  return Boolean(on);
+}
+
+// Classify an error WITHOUT echoing its message: a thrown Playwright error can
+// embed page content (and the login path could embed a credential), so on an
+// authenticated run only the error's name and a coarse class are reported.
+function safeErrorSummary(err) {
+  const msg = String((err && err.message) || '');
+  const kind = /timeout/i.test(msg) ? 'timeout'
+    : /net::|ERR_|ECONN|EAI_|fetch failed/i.test(msg) ? 'network'
+      : /locator|selector|element|waiting for/i.test(msg) ? 'selector'
+        : /closed/i.test(msg) ? 'closed'
+          : 'error';
+  return `${(err && err.name) || 'Error'}/${kind} — details withheld (authenticated run on a public repository)`;
+}
+
 function printScenario(scenarioKey, scenario, { targetBaseUrl, dryRunOnly }) {
   const line = '─'.repeat(72);
   console.log(line);
@@ -291,7 +326,7 @@ function printScenario(scenarioKey, scenario, { targetBaseUrl, dryRunOnly }) {
 // approve/"Write to Google Sheets" button (#approve-btn) and never enables it.
 // Assertions (pass/fail) are a later slice (#718); this just navigates and
 // captures what the UI shows.
-async function navigateScenario({ page, scenarioKey, scenario, outputDir }) {
+async function navigateScenario({ page, scenarioKey, scenario, outputDir, privacy = false }) {
   const nav = scenario.navigation || { type: 'manual' };
 
   if (nav.type !== 'composer') {
@@ -308,8 +343,12 @@ async function navigateScenario({ page, scenarioKey, scenario, outputDir }) {
   if (typed !== nav.text) {
     throw new Error(`composer did not accept the input (got ${JSON.stringify(typed)})`);
   }
-  await page.screenshot({ path: path.join(outputDir, `${scenarioKey}-02-composer.png`), fullPage: true });
-  console.log(`[navigate] composer populated; screenshot saved`);
+  if (privacy) {
+    console.log(`[navigate] composer populated (screenshot withheld — authenticated run)`);
+  } else {
+    await page.screenshot({ path: path.join(outputDir, `${scenarioKey}-02-composer.png`), fullPage: true });
+    console.log(`[navigate] composer populated; screenshot saved`);
+  }
 
   // Submit the preview flow (test_mode dry-run). Tolerant: a readback may or may
   // not render depending on the authenticated context — capturing the result is
@@ -324,11 +363,17 @@ async function navigateScenario({ page, scenarioKey, scenario, outputDir }) {
   console.log(`[navigate] post-preview: #approve-btn disabled=${approveDisabled} (never clicked — no write)`);
 
   const threadText = await page.locator('#thread-messages').innerText().catch(() => '');
-  const preview = threadText.replace(/\s+/g, ' ').trim().slice(0, 240);
-  console.log(`[navigate] thread after preview: ${preview ? `"${preview}"` : '(no visible change)'}`);
-
-  await page.screenshot({ path: path.join(outputDir, `${scenarioKey}-03-preview.png`), fullPage: true });
-  console.log(`[navigate] preview-flow screenshot saved`);
+  if (privacy) {
+    // The thread is the owner's private coaching surface: log only its length.
+    // The text itself stays in memory for the assertion and goes nowhere else.
+    console.log(`[navigate] thread after preview: (content withheld — authenticated run; length=${threadText.length})`);
+    console.log(`[navigate] preview-flow screenshot withheld — authenticated run`);
+  } else {
+    const preview = threadText.replace(/\s+/g, ' ').trim().slice(0, 240);
+    console.log(`[navigate] thread after preview: ${preview ? `"${preview}"` : '(no visible change)'}`);
+    await page.screenshot({ path: path.join(outputDir, `${scenarioKey}-03-preview.png`), fullPage: true });
+    console.log(`[navigate] preview-flow screenshot saved`);
+  }
 
   return { navigated: true, threadText };
 }
@@ -348,14 +393,19 @@ async function navigateScenario({ page, scenarioKey, scenario, outputDir }) {
 //                   rendered) — the owner should retest in an authed context.
 //   MANUAL        — the scenario has no automatable assertion (e.g. the
 //                   restore-banner UI action).
-function assertScenario({ scenarioKey, scenario, navResult, outputDir, auth = null }) {
+function assertScenario({ scenarioKey, scenario, navResult, outputDir, auth = null, privacy = false }) {
   const a = scenario.assertion;
   const threadText = (navResult && navResult.threadText) || '';
   const haystack = threadText.replace(/\s+/g, ' ').trim();
+  // On an authenticated run the thread is private surface content: the result
+  // JSON gets NO excerpt, only the explicit authenticated_run flag. The text is
+  // still asserted against in memory — the verdict is unaffected.
+  const authenticated_run = Boolean(auth && auth.authenticated);
+  const excerptOf = (n) => (privacy ? null : haystack.slice(0, n));
 
   if (!a) {
     const verdict = 'MANUAL';
-    writeResult(outputDir, scenarioKey, scenario, { verdict, forbidden: [], expected: [], threadExcerpt: haystack.slice(0, 240) });
+    writeResult(outputDir, scenarioKey, scenario, { verdict, authenticated_run, forbidden: [], expected: [], threadExcerpt: excerptOf(240) });
     console.log(`[assert] ${scenarioKey}: ${verdict} — no automatable assertion (${scenario.navigation && scenario.navigation.note ? scenario.navigation.note : 'manual scenario'}).`);
     return verdict;
   }
@@ -373,7 +423,7 @@ function assertScenario({ scenarioKey, scenario, navResult, outputDir, auth = nu
     verdict = haystack ? 'PASS' : 'INCONCLUSIVE';
   }
 
-  writeResult(outputDir, scenarioKey, scenario, { verdict, forbidden, expected, threadExcerpt: haystack.slice(0, 400) });
+  writeResult(outputDir, scenarioKey, scenario, { verdict, authenticated_run, forbidden, expected, threadExcerpt: excerptOf(400) });
 
   console.log(`[assert] ${scenarioKey}: ${verdict}`);
   for (const f of forbidden) console.log(`[assert]   forbidden ${f.matched ? 'PRESENT ✗' : 'absent ✓'}: ${f.pattern}`);
@@ -437,6 +487,8 @@ async function bootstrapBrowser({ baseUrl, scenarioKey, outputDir, scenario, acc
   let exitCode = 0;
   let verdict = 'UNKNOWN';
   let auth = { attempted: false, authenticated: false, status: null, reason: 'no_credential' };
+  // Privacy engages on credential PRESENCE (fail closed), not login success.
+  const privacy = Boolean(accessCode);
   let page;
   try {
     // Block service workers so a cached shell can't mask a load failure.
@@ -470,8 +522,15 @@ async function bootstrapBrowser({ baseUrl, scenarioKey, outputDir, scenario, acc
 
     const surface = await page.locator('body').getAttribute('data-surface').catch(() => null);
     const placeholder = await composer.getAttribute('placeholder').catch(() => null);
-    console.log(`[bootstrap] app loaded — body data-surface="${surface}"`);
-    console.log(`[bootstrap] composer located (#workout-text), placeholder="${placeholder}"`);
+    if (privacy) {
+      // DOM values are private-surface content on an authenticated run: log
+      // presence booleans only.
+      console.log(`[bootstrap] app loaded — data-surface present=${surface !== null}`);
+      console.log(`[bootstrap] composer located (#workout-text), placeholder present=${placeholder !== null}`);
+    } else {
+      console.log(`[bootstrap] app loaded — body data-surface="${surface}"`);
+      console.log(`[bootstrap] composer located (#workout-text), placeholder="${placeholder}"`);
+    }
 
     // Read-only confirmation: the write trigger should exist and be disabled.
     // We observe it; we never enable or click it.
@@ -479,28 +538,35 @@ async function bootstrapBrowser({ baseUrl, scenarioKey, outputDir, scenario, acc
     const approveDisabled = await approve.isDisabled().catch(() => null);
     console.log(`[bootstrap] write button (#approve-btn) present, disabled=${approveDisabled} (never clicked)`);
 
-    const shot = path.join(outputDir, `${scenarioKey}-01-loaded.png`);
-    await page.screenshot({ path: shot, fullPage: true });
-    console.log(`[bootstrap] screenshot saved: ${shot}`);
+    if (privacy) {
+      console.log('[bootstrap] screenshot withheld — authenticated run on a public repository');
+    } else {
+      const shot = path.join(outputDir, `${scenarioKey}-01-loaded.png`);
+      await page.screenshot({ path: shot, fullPage: true });
+      console.log(`[bootstrap] screenshot saved: ${shot}`);
+    }
     console.log('[bootstrap] OK — app loaded and composer located.');
 
     // PR #717: drive the scenario through the composer/preview flow (no Save).
-    const navResult = await navigateScenario({ page, scenarioKey, scenario, outputDir });
+    const navResult = await navigateScenario({ page, scenarioKey, scenario, outputDir, privacy });
 
     // PR #718: assert the observed thread against the scenario's expected /
     // forbidden patterns. A FAIL (the bug behaviour reappeared) surfaces as a
     // non-zero exit; PASS / INCONCLUSIVE / MANUAL exit 0.
-    verdict = assertScenario({ scenarioKey, scenario, navResult, outputDir, auth });
+    verdict = assertScenario({ scenarioKey, scenario, navResult, outputDir, auth, privacy });
     if (verdict === 'FAIL') exitCode = 2;
 
     console.log(`[bootstrap] DONE — read-only retest complete (verdict: ${verdict}). Never pressed Save, no writes.`);
   } catch (err) {
     exitCode = 1;
     verdict = 'ERROR';
-    // Redacted: a thrown transport/URL error can carry whatever was in flight.
-    console.error(`[bootstrap] FAILED: ${redactCredential(err.message, accessCode)}`);
-    // Best-effort failure screenshot for the artifact, if a page exists.
-    if (page) {
+    // Authenticated run: a thrown Playwright error can embed page content, so
+    // only its name and a coarse class are reported. Unauthenticated: redacted
+    // as before (a transport/URL error can carry whatever was in flight).
+    console.error(`[bootstrap] FAILED: ${privacy ? safeErrorSummary(err) : redactCredential(err.message, accessCode)}`);
+    // Best-effort failure screenshot for the artifact, if a page exists —
+    // NEVER on an authenticated run (it would capture the private surface).
+    if (page && !privacy) {
       try {
         const failShot = path.join(outputDir, `${scenarioKey}-FAILED.png`);
         await page.screenshot({ path: failShot, fullPage: true });
@@ -559,6 +625,14 @@ async function run(argv, env = process.env) {
     ? `Auth              : ${ACCESS_CODE_ENV} present — will establish a session before loading the app`
     : `Auth              : ${ACCESS_CODE_ENV} absent — unauthenticated run (assertions keep INCONCLUSIVE semantics)`);
 
+  // Fail-closed privacy marker: written BEFORE any browser work whenever a
+  // credential is supplied, so a crash mid-run still blocks the workflow's
+  // artifact upload. Unauthenticated runs write nothing and are unchanged.
+  writePrivacyMarker(outputDir, Boolean(accessCode));
+  if (accessCode) {
+    console.log('Privacy           : authenticated-content privacy ON — screenshots, thread text, DOM values, and excerpts are withheld; artifact upload is blocked');
+  }
+
   const results = [];
   for (const k of keys) {
     const { exitCode, verdict, auth } = await bootstrapBrowser({ baseUrl: targetBaseUrl, scenarioKey: k, outputDir, scenario: SCENARIOS[k], accessCode });
@@ -589,7 +663,8 @@ function writeSummary(results, outputDir) {
   console.log(line);
   try {
     fs.mkdirSync(outputDir, { recursive: true });
-    fs.writeFileSync(path.join(outputDir, 'summary.json'), JSON.stringify({ results, tally }, null, 2));
+    const authenticated_run = results.some(r => r.auth && r.auth.authenticated);
+    fs.writeFileSync(path.join(outputDir, 'summary.json'), JSON.stringify({ authenticated_run, results, tally }, null, 2));
     // PR #720: owner-facing markdown report (rendered into the GitHub Actions
     // run summary by the workflow).
     fs.writeFileSync(path.join(outputDir, 'summary.md'),
@@ -632,9 +707,15 @@ function buildMarkdownReport(results, ctx = {}) {
   // Auth posture — booleans only; no credential and no session token.
   const authed = results.some(r => r.auth && r.auth.authenticated);
   const attempted = results.some(r => r.auth && r.auth.attempted);
+  lines.push(`**Authenticated run:** ${authed}`);
+  lines.push('');
   lines.push(attempted
     ? `**Session:** ${authed ? 'authenticated' : 'authentication FAILED — the run stopped instead of continuing unauthenticated'}.`
     : `**Session:** unauthenticated (no \`${ACCESS_CODE_ENV}\` configured) — an expected reply that needs a session reads ⚠️ INCONCLUSIVE, never ✅ PASS.`);
+  if (attempted) {
+    lines.push('');
+    lines.push('Screenshots, thread text, DOM values, and result excerpts are **withheld** on an authenticated run, and no workflow artifact is uploaded — the repository is public and the authenticated surface is private.');
+  }
   lines.push('');
   lines.push(`All traffic is marked synthetic (\`x-atlas-request-origin: ${SYNTHETIC_ORIGIN}\`) and never counts as genuine owner/gym evidence.`);
   lines.push('');
@@ -659,5 +740,7 @@ module.exports = {
   writeSummary, buildMarkdownReport,
   // Synthetic provenance + optional authentication (PR A).
   SYNTHETIC_ORIGIN, SYNTHETIC_HEADERS, ACCESS_CODE_ENV, SESSION_COOKIE_NAME,
-  redactCredential, parseSessionCookie, authenticateContext, shouldProceedToNavigation
+  redactCredential, parseSessionCookie, authenticateContext, shouldProceedToNavigation,
+  // Authenticated-content privacy (public repository).
+  PRIVACY_MARKER, writePrivacyMarker, safeErrorSummary
 };
