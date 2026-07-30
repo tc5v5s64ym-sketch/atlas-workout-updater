@@ -3317,7 +3317,21 @@ function trySetRevisionFollowup(text) {
   }
 
   const future = setRevisionFutureSetCount(active, getSessionLog());
-  const noFutureSets = `Every set of ${name} is already logged, so there are no future sets left to change.`;
+
+  // NO FUTURE SETS = A DEAD PROPOSAL, for every class (Codex P2, round 7). When the athlete logs the
+  // last remaining set while a proposal is still open, the plan has NOT moved — same version, same
+  // slot, same lift — so `isProposalCurrent` still passes, yet `emitFutureSetRevision` would emit
+  // nothing. There is nothing to approve, nothing to reject, and nothing to explain. Handled here,
+  // ABOVE every branch, because the reject copy would have claimed "the rest of the sets stay at …"
+  // and the explanation would have described remaining sets and kept a proposal that can never
+  // apply. Cleared for the same reason a stale one is: a completed set is not editable, and a
+  // decision that cannot be carried out must not stay outstanding.
+  if (future <= 0) {
+    setPendingSetRevision(null);
+    persist();
+    announceSetRevisionReply(active, `Every set of ${name} is already logged, so there are no future sets left to change — the plan is unchanged.`);
+    return true;
+  }
 
   if (action === 'approve_active_proposal') {
     // The EXISTING handler, with the athlete's actual words as the endorsement. It runs
@@ -3332,8 +3346,8 @@ function trySetRevisionFollowup(text) {
         : `Done — ${name} is updated.`);
       return true;
     }
-    // Nothing was emitted, so nothing may be claimed. When the reason is provable, state it.
-    if (future <= 0) { announceSetRevisionReply(active, noFutureSets); return true; }
+    // Nothing was emitted, so nothing may be claimed — no success response, and no invented reason.
+    // (The no-future case is already handled above, so this is the genuinely unexplained path.)
     return false;
   }
 
@@ -3354,8 +3368,6 @@ function trySetRevisionFollowup(text) {
   }
 
   // ── the three clarification classes: ask, and mutate nothing ────────────────
-  if (future <= 0) { announceSetRevisionReply(active, noFutureSets); return true; }
-
   if (action === 'clarify_keep') {
     // Four readings, three of which contradict each other: keep the original plan, keep Atlas's
     // change, keep the current weight, keep the exercise. The proposal stays active — neither

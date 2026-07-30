@@ -884,6 +884,39 @@ test('4b.Y10 (Codex P2) filler BETWEEN affirmative phrases still endorses', () =
   assert.equal(h.state.revisions.length, 3, 'and it reaches the one approval handler');
 });
 
+test('4b.Y11 (Codex P2) a proposal whose last set was logged is dead for EVERY class', () => {
+  // The athlete logs the final remaining set while the proposal is still open. The plan has not
+  // moved, so isProposalCurrent still passes — but emitFutureSetRevision would emit nothing. Before
+  // this, "keep the original" claimed "the rest of the sets stay at 225 lb …" and "why that weight?"
+  // described remaining sets and kept a proposal that could never apply.
+  const allLogged = () => [{ exercise: SLOT_NAME }, { exercise: SLOT_NAME }, { exercise: SLOT_NAME }];
+
+  for (const words of ['keep the original', 'why that weight?', 'do that', 'keep it',
+    'drop those', 'the last two sets']) {
+    const h = withProposal({ log: allLogged() });
+    assert.ok(h.state.pendingSetRevision, 'the fixture starts with a live proposal');
+
+    assert.equal(h.api.trySetRevisionFollowup(words), true, `"${words}" is answered honestly`);
+
+    const line = lastReply(h.state);
+    assert.match(line, /already logged/i, `"${words}" states that every set is done`);
+    assert.match(line, /plan is unchanged/, `"${words}" is explicit that nothing changed`);
+    assert.doesNotMatch(line, /rest of the sets stay|remaining sets are at|approve and/i,
+      `"${words}" never describes a completed set as editable`);
+    assert.equal(h.state.revisions.length, 0, `"${words}" captures nothing`);
+    assert.equal(h.state.posts.length, 0, `"${words}" checkpoints nothing`);
+    assert.equal(h.state.outcomes.length, 0);
+    assert.equal(h.state.pendingSetRevision, null,
+      `"${words}" clears a decision that can never be carried out`);
+  }
+
+  // One future set left is still a live proposal — the guard must not fire early.
+  const live = withProposal({ log: [{ exercise: SLOT_NAME }, { exercise: SLOT_NAME }] });
+  assert.equal(live.api.trySetRevisionFollowup('do that'), true);
+  assert.equal(live.state.revisions.length, 1, 'the last future set still revises');
+  assert.match(lastReply(live.state), /185/, 'and the success response is the real one');
+});
+
 test('4b.Y4 (Codex P1) a newer submit revokes an older one BEFORE any early return', () => {
   // `previewRequestSeq` advances on a form edit and inside invalidatePreview, and several newer
   // turns return before reaching either — a bug command, a plan request, an artifact ask, a held
