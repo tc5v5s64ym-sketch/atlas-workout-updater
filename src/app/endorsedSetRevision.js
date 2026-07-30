@@ -22,15 +22,63 @@ const ENDORSEMENTS = [
 
 // Any of these anywhere in the message vetoes an endorsement, even beside an affirmative token
 // ("no, let's do it" is contradictory — refuse rather than pick a side).
+//
+// `keep` / `leave` / `stick` / `stay` and the ORIGINAL-plan markers are vetoed as whole words
+// (Phase 4 criterion 4 step (b)): "yes, keep the original" opens with an affirmative while
+// declining the change, and the head-anchored rule below would otherwise have read it as consent
+// and applied the very revision the athlete just refused. Vetoing here keeps ONE consent authority
+// fail-closed for every caller — the card, the typed lane, and any future one.
 const VETOES = [
-  'no', 'nope', 'nah', 'not', 'dont', 'do not', 'never', 'skip', 'leave it', 'keep it',
+  'no', 'nope', 'nah', 'not', 'dont', 'do not', 'never', 'skip',
+  'keep', 'leave', 'stick', 'stay', 'original', 'as planned', 'as is', 'unchanged',
   'maybe', 'might', 'guess', 'probably', 'idk', 'unsure', 'not sure', 'hold off', 'wait',
   'cant', 'can not', 'wont', 'will not', 'shouldnt', 'rather', 'instead', 'later', 'yet',
 ];
 
+// An accept/apply verb plus an unambiguous reference to the PROPOSAL (Phase 4 criterion 4 step (b),
+// owner-approved phrase class 1: "apply that change", "go with that", "accept Atlas's change").
+// Deliberately narrow: the object must be a demonstrative pronoun or a named change-noun, so a
+// prescription statement ("make that 185") and a movement command ("do squats") can never read as
+// consent. `Atlas's` normalizes to `atlass`, hence the optional trailing s.
+// A bare `accept` / `approve` is admitted too: both verbs mean exactly one thing in reply to a
+// proposal, and they are the direct answer to the two-choice question the follow-up lane asks.
+const ACTION_ENDORSEMENT_RE = new RegExp(
+  '^(?:'
+  + '(?:accept|approve)'
+  + '|(?:do|apply|accept|approve|make|use|go\\s+with)\\s+'
+  + '(?:(?:it|that|this)'
+  + '|(?:(?:that|the|this|your|atlass?|his|its)\\s+)?'
+  + '(?:change|adjustment|revision|update|proposal|recommendation))'
+  + ')$'
+);
+
 // Bounded conversational lead-ins that may precede an affirmative without weakening it
 // ("ok yeah do it"). They are not endorsements on their own — see the fail-closed note above.
 const LEAD_INS = ['ok', 'okay', 'k', 'alright', 'right', 'well', 'so', 'um', 'uh', 'yea'];
+
+// TRAILING politeness, stripped from the END only. `please` deliberately does NOT belong in
+// LEAD_INS: `please do` is itself an ENDORSEMENTS entry, and stripping the leading `please` left the
+// unmatched word `do`, silently retiring a phrase this module has always accepted (Codex P2,
+// round 5 — a regression introduced by the standalone-endorsement fix). Stripping from the end
+// instead lets "do it please" pass without touching "please do".
+const TRAILING_FILLER = ['please', 'then', 'now', 'thanks', 'thank you'];
+
+// Connective / politeness filler that may sit BETWEEN two affirmative phrases ("yes AND do it",
+// "yes PLEASE do it", "go ahead AND do it"). It is stripped only after an endorsement has already
+// been consumed — never at the head of the utterance, or it would eat the `please` of `please do`.
+// Without it the standalone-endorsement rule refused three phrases this module used to accept
+// (Codex P2, round 6).
+const INTER_FILLER = /^(?:and|then|please|now|just|also|so)\s+/;
+
+function stripInterFiller(s) {
+  let out = s;
+  for (let i = 0; i < 3; i += 1) {
+    const before = out;
+    out = out.replace(INTER_FILLER, '').trim();
+    if (out === before) break;
+  }
+  return out;
+}
 
 function normalize(text) {
   return String(text == null ? '' : text)
@@ -58,14 +106,65 @@ function stripLeadIns(s) {
   return out.trim();
 }
 
-// Returns true ONLY for an unambiguous endorsement. Everything else — decline, question,
-// hedge, bare acknowledgement, empty — returns false.
+// Is the WHOLE utterance nothing but affirmative phrases and conversational filler?
 //
-// The affirmative must OPEN the utterance (after at most a few lead-ins). An affirmative token
-// anywhere in the sentence is not consent: "I can't say yes yet" contains `yes` while explicitly
-// withholding it, and an anywhere-match would have rewritten every remaining set on it
-// (Codex P2, this PR). Requiring the utterance to BEGIN with the affirmative is what separates
-// "yeah, do it" from a sentence that merely mentions agreeing.
+// A prefix match is not enough. "yes my knee hurts" and "sounds good but my knee hurts" both OPEN
+// with an endorsement while carrying a safety report the athlete needs answered — approving on
+// either would rewrite the remaining sets AND swallow the safety turn (Codex P1, this PR). So the
+// endorsement must ACCOUNT FOR THE ENTIRE TURN: every token is consumed by an affirmative phrase or
+// a lead-in, or there is no consent. Anything left over means the athlete said something more than
+// yes, and something more than yes is not a yes.
+// Strip a bounded run of trailing politeness from the END only.
+function stripTrailingFiller(s) {
+  let out = s;
+  for (let i = 0; i < 3; i += 1) {
+    const before = out;
+    for (const tail of TRAILING_FILLER) {
+      out = out.replace(new RegExp(`(^|\\s)${tail.replace(/\s+/g, '\\s+')}$`), '');
+    }
+    out = out.trim();
+    if (out === before) break;
+  }
+  return out;
+}
+
+// The object a consumed endorsement can leave behind. `please do` is an ENDORSEMENTS entry, so it
+// consumes the head of "please do it" and strands a bare `it`. Consumable only AFTER something has
+// matched and only as the ENTIRE remainder, so "yes it hurts" still refuses.
+const DANGLING_OBJECT_RE = /^(?:it|that|this|them|those|these)$/;
+
+function isEndorsementOnly(body) {
+  let rest = body;
+  let matched = false;
+  for (let guard = 0; guard < 8; guard += 1) {
+    rest = stripTrailingFiller(stripLeadIns(rest));
+    if (!rest) break;
+    // The action tier is end-anchored, so it can only match the whole remainder.
+    if (ACTION_ENDORSEMENT_RE.test(rest)) { rest = ''; matched = true; break; }
+    const hit = ENDORSEMENTS.find((e) => rest === e || rest.startsWith(`${e} `));
+    if (hit) { rest = rest.slice(hit.length).trim(); matched = true; continue; }
+    // No endorsement at the head. Only now may inter-phrase filler be consumed, and only after
+    // something has already matched — stripping it FIRST broke "yes, please do", because `please`
+    // was eaten as filler even though `please do` is itself a supported endorsement (Codex P2,
+    // round 9: the combination of the round-5 and round-6 fixes).
+    if (!matched) return false;
+    if (DANGLING_OBJECT_RE.test(rest)) { rest = ''; break; }
+    const stripped = stripInterFiller(rest);
+    if (stripped === rest) return false;                              // unconsumed content
+    rest = stripped;
+  }
+  return matched && !rest;
+}
+
+// Returns true ONLY for an unambiguous endorsement. Everything else — decline, question,
+// hedge, bare acknowledgement, an endorsement carrying extra content, empty — returns false.
+//
+// The affirmative must OPEN the utterance (after at most a few lead-ins) AND account for all of it.
+// An affirmative token anywhere in the sentence is not consent: "I can't say yes yet" contains `yes`
+// while explicitly withholding it, and an anywhere-match would have rewritten every remaining set on
+// it (Codex P2, #1188). Requiring the utterance to BEGIN with the affirmative is what separates
+// "yeah, do it" from a sentence that merely mentions agreeing; requiring it to END there is what
+// separates "yes" from "yes, my knee hurts".
 function isExplicitEndorsement(text) {
   const s = normalize(text);
   if (!s) return false;
@@ -73,7 +172,13 @@ function isExplicitEndorsement(text) {
   if (VETOES.some((v) => hasWholePhrase(s, v))) return false;
   const body = stripLeadIns(s);
   if (!body) return false;                                            // lead-ins alone are not consent
-  return ENDORSEMENTS.some((e) => body === e || body.startsWith(`${e} `));
+  if (isEndorsementOnly(body)) return true;
+  // "please do it": the `please do` entry consumes the endorsement and leaves a dangling `it`. Retry
+  // once with the leading politeness removed so the inner phrase (`do it`) is matched whole. Bounded
+  // and fail-closed — a retry can only accept a phrase that is ITSELF entirely an endorsement, so
+  // "please my knee hurts" still refuses.
+  const withoutPolite = body.replace(/^(?:please|then|now)\s+/, '');
+  return withoutPolite !== body && isEndorsementOnly(withoutPolite);
 }
 
 export { isExplicitEndorsement };

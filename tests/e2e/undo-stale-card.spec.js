@@ -131,26 +131,33 @@ async function openApp(page, capture) {
 }
 
 // Log a set (conversational readback), then "done" to raise the review card, then Save.
-async function logAndSave(page) {
+//
+// `expectedDone` is the number of saved cards this call should leave behind, and the wait is a
+// COUNT, not a visibility check. `.review.done` last() is not a barrier on the second cycle: card A
+// already carries `done`, so `last()` matched a visible card and the wait returned while write B was
+// still in flight — the test then read `lastWrite` before it had advanced to B. That made the
+// identity-guard assertion racy under load rather than deterministic (observed twice while landing
+// Phase 4 criterion 4 step (b); the spec's own contract is unchanged and no assertion is relaxed).
+async function logAndSave(page, expectedDone) {
   await page.locator('#workout-text').fill('bench 225 5/2 x3');
   await page.locator('#preview-btn').click();
   await expect(page.locator('#thread-messages .readback').last()).toBeVisible();
   await page.locator('#workout-text').fill('done');
   await page.locator('#preview-btn').click();
   await page.locator('.review:not(.done)').last().locator('.rv-save').click();
-  await expect(page.locator('.review.done').last()).toBeVisible();
+  await expect(page.locator('.review.done')).toHaveCount(expectedDone);
 }
 
 test('CLIENT-1: a newer write confirms → the older saved card loses its live Undo', async ({ page }) => {
   const capture = {};
   await openApp(page, capture);
 
-  await logAndSave(page);                       // write A → Log_Cleaned!A200:L202
+  await logAndSave(page, 1);                    // write A → Log_Cleaned!A200:L202
   const cardA = page.locator('.review').nth(0);
   await expect(cardA).toHaveClass(/done/);
   await expect(cardA.locator('.rv-undo')).toBeVisible();   // A is the newest → undoable
 
-  await logAndSave(page);                       // write B → Log_Cleaned!A300:L302
+  await logAndSave(page, 2);                    // write B → Log_Cleaned!A300:L302
   await expect(page.locator('.review')).toHaveCount(2);
   const cardB = page.locator('.review').nth(1);
   await expect(cardB).toHaveClass(/done/);
@@ -166,8 +173,8 @@ test('CLIENT-1: the identity guard refuses an undo bound to a superseded write',
   const capture = {};
   await openApp(page, capture);
 
-  await logAndSave(page);                       // write A → A200
-  await logAndSave(page);                       // write B → A300 (now the current lastWrite)
+  await logAndSave(page, 1);                    // write A → A200
+  await logAndSave(page, 2);                    // write B → A300 (now the current lastWrite)
   expect(capture.writeRequests).toHaveLength(2);
 
   // Directly exercise the guard: an Undo call carrying write A's identity must be
@@ -191,7 +198,7 @@ test('CLIENT-1: single-save undo still works unchanged (no regression)', async (
   const capture = {};
   await openApp(page, capture);
 
-  await logAndSave(page);                       // write A → A200
+  await logAndSave(page, 1);                    // write A → A200
   await page.locator('.review').nth(0).locator('.rv-undo').click();
 
   await expect.poll(() => capture.undoRequests.length).toBe(1);

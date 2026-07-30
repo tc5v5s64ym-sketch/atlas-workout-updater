@@ -2149,12 +2149,19 @@ import {
   // The Ask Why answer, composed by the shell from the STORED proposal and narrated here. The
   // proposal is still active — this is an explanation, not a decision — so the card above keeps
   // its Approve / Keep Original buttons live.
-  document.addEventListener('atlas:set-revision-explained', e => {
+  const narrateSetRevisionLine = e => {
     const d = (e && e.detail) || {};
     if (!d.line) return;
     const node = appendAtlasBubble();
     if (node && node.body) node.body.textContent = d.line;
-  });
+  };
+  document.addEventListener('atlas:set-revision-explained', narrateSetRevisionLine);
+  // Phase 4 criterion 4 step (b): the same channel narrates the TYPED lane's deterministic replies
+  // — the applied confirmation, the two-choice keep question, the set-scope question, the drop
+  // dimension question. Identical rendering on purpose: natural language and the card are one state
+  // machine, so they must not be two voices. Every line is composed by the shell from the STORED
+  // proposal, so there is nothing here to re-derive.
+  document.addEventListener('atlas:set-revision-reply', narrateSetRevisionLine);
 
   // P0 PR 4: a deterministic identity correction ("sorry that was squats") — app.js
   // already relabeled the logged lift in the session buffers; confirm it in the
