@@ -3277,7 +3277,7 @@ function setCountWord(n) {
 // Resolve a follow-up turn against the ACTIVE set-revision proposal. Returns true when the lane
 // owned the turn (it either decided the proposal or answered it), false to fall through to the
 // existing routing with the proposal untouched.
-function trySetRevisionFollowup(text) {
+function trySetRevisionFollowup(text, boundProposalId) {
   const SR = (typeof window !== 'undefined' && window.setRevisionFollowup) || null;
   if (!SR || typeof SR.classifySetRevisionFollowup !== 'function') return false;
   // The lane exists only while a stored proposal does. Without one there is no referent to act on,
@@ -3285,6 +3285,15 @@ function trySetRevisionFollowup(text) {
   // reaches the coach unchanged, grounded by the discussion referent (criterion 4 step (a)).
   const active = getPendingSetRevision();
   if (!active || active.kind !== 'set_revision' || !active.proposal_id) return false;
+
+  // CONSENT IS BOUND TO THE PROPOSAL THE ATHLETE COULD SEE (Codex P1, round 8). This runs after an
+  // `await`, and `proposeSetRevisionsForLoggedSlots` stages proposals from an UNAWAITED promise, so
+  // by now the active proposal may be a different one — or the first one ever — neither of which the
+  // athlete's words can have been about. The card has always been bound this way: it dispatches the
+  // id it rendered and `decideApproval` refuses anything else. The typed lane had no such binding,
+  // which made it the weaker of the two paths for exactly the case #1194 already guarded. A caller
+  // that supplies no binding gets no lane: "whatever is active now" is never a referent.
+  if (!boundProposalId || String(active.proposal_id) !== String(boundProposalId)) return false;
 
   const verdict = SR.classifySetRevisionFollowup(text) || null;
   const action = (verdict && verdict.action) || 'no_match';
@@ -6948,6 +6957,10 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
 
   composerTurnSeq += 1;                  // revoke any older in-flight submit BEFORE every early
   const turnSeq = composerTurnSeq;       // return below — see the `composerTurnSeq` declaration
+  // Bind this turn to the proposal the athlete could actually SEE when they pressed send. Captured
+  // synchronously, before any await — `proposeSetRevisionsForLoggedSlots` fires its producer as an
+  // unawaited promise, so a different proposal (or a first one) can land while this turn is parsing.
+  const turnProposalId = (getPendingSetRevision() || {}).proposal_id || null;
 
   // Paint the user's message bubble FIRST — before any routing, coach reply,
   // preview card, or logged-set reaction can append an Atlas bubble. Doing this
@@ -7201,7 +7214,7 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       // edit, and `composerTurnSeq` catches a newer submit that returned EARLY and so never reached
       // an invalidation point at all.
       if (submitSeq !== previewRequestSeq || turnSeq !== composerTurnSeq) return;
-      if (trySetRevisionFollowup(pendingChatText)) {
+      if (trySetRevisionFollowup(pendingChatText, turnProposalId)) {
         activeExercise = null;
         return;
       }

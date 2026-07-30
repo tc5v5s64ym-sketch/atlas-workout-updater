@@ -149,7 +149,15 @@ function harness(options) {
     ${sliceLane}
     ${sliceFollow}
     return { proposeSetRevision, approvePendingSetRevision, rejectPendingSetRevision,
-             explainPendingSetRevision, trySetRevisionFollowup };
+             explainPendingSetRevision,
+             // Mirror the composer: the turn is BOUND to the proposal visible at submit time. Tests
+             // may pass an explicit binding to exercise a mismatch or an absent one.
+             trySetRevisionFollowup: function (text, boundId) {
+               const bound = boundId === undefined
+                 ? ((state.pendingSetRevision || {}).proposal_id || null)
+                 : boundId;
+               return trySetRevisionFollowup(text, bound);
+             } };
     `
   );
 
@@ -614,7 +622,7 @@ test('4b.X2 (Codex P1) a superseded submit decides nothing', () => {
     appSrc.indexOf('tryResolvePendingReplacement(pendingChatText)')
   );
   const guardIdx = catchBlock.lastIndexOf('if (submitSeq !== previewRequestSeq');
-  const laneIdx = catchBlock.indexOf('trySetRevisionFollowup(pendingChatText)');
+  const laneIdx = catchBlock.indexOf('trySetRevisionFollowup(pendingChatText, turnProposalId)');
   assert.notEqual(guardIdx, -1, 'the lane must be preceded by a submit-authority check');
   assert.notEqual(laneIdx, -1, 'the lane must be wired in the catch block');
   assert.ok(guardIdx < laneIdx, 'submit authority is checked BEFORE the state-changing lane');
@@ -917,6 +925,58 @@ test('4b.Y11 (Codex P2) a proposal whose last set was logged is dead for EVERY c
   assert.match(lastReply(live.state), /185/, 'and the success response is the real one');
 });
 
+test('4b.Y12 (Codex P1) consent is bound to the proposal the athlete could SEE at submit time', () => {
+  // `proposeSetRevisionsForLoggedSlots` stages proposals from an UNAWAITED promise, so while a turn
+  // is parsing, the active proposal can become a DIFFERENT one — or the first one ever. Neither can
+  // be what the athlete's words were about. The card has always been bound this way (it dispatches
+  // the id it rendered); the typed lane was not, which made it the weaker of the two paths.
+
+  // (a) a DIFFERENT proposal landed mid-turn: the turn's binding no longer matches.
+  const h = withProposal();
+  const seen = h.state.pendingSetRevision.proposal_id;
+  const newer = h.api.proposeSetRevision({ ...PROPOSAL_INPUT, prescription: { weight: 205, reps: 5, rir: 2 } });
+  assert.notEqual(newer.proposal_id, seen, 'the fixture genuinely superseded mid-turn');
+  h.state.events.length = 0;
+
+  assert.equal(h.api.trySetRevisionFollowup('do that', seen), false,
+    'a "do that" bound to the proposal the athlete SAW must not apply the one that replaced it');
+  assert.equal(h.state.revisions.length, 0, 'nothing is applied');
+  assert.equal(h.state.posts.length, 0);
+  assert.ok(h.state.pendingSetRevision, 'and the newer proposal is left outstanding, not consumed');
+  assert.equal(h.state.pendingSetRevision.proposal_id, newer.proposal_id);
+
+  // (b) NO proposal existed at submit time, one landed during the parse.
+  const late = harness();
+  const staged = late.api.proposeSetRevision({ ...PROPOSAL_INPUT });
+  assert.ok(staged, 'a proposal is active now…');
+  late.state.events.length = 0;
+  assert.equal(late.api.trySetRevisionFollowup('do that', null), false,
+    '…but the athlete saw none when they spoke, so their words cannot endorse it');
+  assert.equal(late.state.revisions.length, 0);
+  assert.ok(late.state.pendingSetRevision, 'the new proposal still awaits a real decision');
+
+  // (c) the matching binding still works — this is not a blanket refusal.
+  const ok = withProposal();
+  const id = ok.state.pendingSetRevision.proposal_id;
+  assert.equal(ok.api.trySetRevisionFollowup('do that', id), true);
+  assert.equal(ok.state.revisions.length, 3);
+
+  // (d) the composer really does capture the binding synchronously, before any await.
+  const handlerStart = appSrc.indexOf("document.getElementById('logger-form').addEventListener('submit'");
+  const handler = appSrc.slice(handlerStart, appSrc.indexOf('trySetRevisionFollowup(pendingChatText, turnProposalId)'));
+  // Strip line comments before measuring: the words "await" and "proposal" appear in the prose here,
+  // and an index into a comment proves nothing about execution order.
+  const code = handler.replace(/\/\/[^\n]*/g, '');
+  const captureIdx = code.indexOf('const turnProposalId = (getPendingSetRevision() || {}).proposal_id || null;');
+  assert.notEqual(captureIdx, -1, 'the submit handler must capture the visible proposal id');
+  const firstAwait = code.indexOf('await ');
+  assert.ok(firstAwait === -1 || captureIdx < firstAwait,
+    'the capture must precede every await in the handler');
+  for (const branch of ['parseBugCommand(submittedText)', 'looksLikeSessionRequest(workoutTextInput.value)']) {
+    assert.ok(captureIdx < code.indexOf(branch), `captured before the ${branch} branch`);
+  }
+});
+
 test('4b.Y4 (Codex P1) a newer submit revokes an older one BEFORE any early return', () => {
   // `previewRequestSeq` advances on a form edit and inside invalidatePreview, and several newer
   // turns return before reaching either — a bug command, a plan request, an artifact ask, a held
@@ -924,7 +984,7 @@ test('4b.Y4 (Codex P1) a newer submit revokes an older one BEFORE any early retu
   // still have looked authoritative and could have approved a proposal the athlete moved on from.
   const handlerStart = appSrc.indexOf("document.getElementById('logger-form').addEventListener('submit'");
   assert.notEqual(handlerStart, -1, 'the composer submit handler must exist');
-  const handler = appSrc.slice(handlerStart, appSrc.indexOf('trySetRevisionFollowup(pendingChatText)'));
+  const handler = appSrc.slice(handlerStart, appSrc.indexOf('trySetRevisionFollowup(pendingChatText, turnProposalId)'));
 
   const bumpIdx = handler.indexOf('composerTurnSeq += 1;');
   const captureIdx = handler.indexOf('const turnSeq = composerTurnSeq;');
@@ -948,7 +1008,7 @@ test('4b.Y4 (Codex P1) a newer submit revokes an older one BEFORE any early retu
   }
 
   // …and the state-changing lane must check BOTH counters.
-  const guard = appSrc.slice(handlerStart, appSrc.indexOf('if (trySetRevisionFollowup(pendingChatText))'));
+  const guard = appSrc.slice(handlerStart, appSrc.indexOf('if (trySetRevisionFollowup(pendingChatText, turnProposalId))'));
   assert.match(guard, /if \(submitSeq !== previewRequestSeq \|\| turnSeq !== composerTurnSeq\) return;/,
     'the lane is gated on the preview seq AND the composer turn seq');
 
@@ -1163,7 +1223,7 @@ test('4b.R1 the follow-up lane is wired into the real composer message flow', ()
   const sessionIdx = appSrc.indexOf('looksLikeSessionRequest(workoutTextInput.value)');
   const clarifyIdx = appSrc.indexOf('resolvePendingClarification(workoutTextInput.value.trim())');
   const logItIdx = appSrc.indexOf('looksLikeLogIt(workoutTextInput.value)');
-  const revIdx = appSrc.indexOf('trySetRevisionFollowup(pendingChatText)');
+  const revIdx = appSrc.indexOf('trySetRevisionFollowup(pendingChatText, turnProposalId)');
   const replIdx = appSrc.indexOf('tryResolvePendingReplacement(pendingChatText)');
   const modalIdx = appSrc.indexOf('tryPreviewModality(pendingChatText');
   const propIdx = appSrc.indexOf('tryProposeReplacement(pendingChatText)');

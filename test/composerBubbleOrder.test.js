@@ -22,9 +22,12 @@ test('chat.js exposes addUserBubble and no longer paints on form submit (app.js 
 test('app.js paints the user bubble at the very top of the logger-form submit handler', () => {
   const start = appSrc.indexOf("getElementById('logger-form').addEventListener('submit'");
   assert.ok(start >= 0, 'logger-form submit handler exists');
-  // Look at the first stretch of the handler body (enough to cover the comment
-  // block + paint + the first routing branch).
-  const head = appSrc.slice(start, start + 1900);
+  // Slice to the handler's routing HEAD (up to its conversational lane) rather than a fixed byte
+  // budget: the contract asserted here is an ORDERING one, and a magic window silently starts
+  // failing whenever a comment above a branch grows, which says nothing about paint order.
+  const headEnd = appSrc.indexOf('const pendingChatText =', start);
+  assert.ok(headEnd > start, 'the submit handler must reach its conversational lane');
+  const head = appSrc.slice(start, headEnd);
   assert.match(head, /window\.atlasAddUserBubble/, 'must paint via the shared bubble painter');
   // The paint must come BEFORE the first routing branch (the session-request check),
   // so the user bubble precedes any coach/preview/reaction append.
