@@ -153,3 +153,13 @@ A list-item block moved only when its own first line carried a strong completion
 - Every unchecked checklist item.
 - Every shipped parent that still contains an explicit follow-up, deferred item, watch, owner decision, evidence gate, or live re-test requirement.
 - All unmarked prose, even when it looks historical, because deleting it safely requires a separate explicit editorial judgment rather than a completion-marker heuristic.
+
+## Second pass — historical re-section
+
+- Open/deferred blocks retained: **272**
+- `BACKLOG.md` lines: **1126 → 826**
+- Historical remainder preserved intact in `BACKLOG_ARCHIVE.md`: **yes**
+- Current Phase-4 carryovers added explicitly: **yes**
+- Runtime/code behavior changed: **no**
+
+The second pass did not delete the old prose. It archived the entire historical remainder verbatim, then rebuilt the active file from action-shaped unchecked/deferred/owner-gated bullets. Any ambiguous item was retained rather than guessed complete.
