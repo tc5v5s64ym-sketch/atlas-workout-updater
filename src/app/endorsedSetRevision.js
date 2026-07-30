@@ -54,10 +54,14 @@ const ACTION_ENDORSEMENT_RE = new RegExp(
 
 // Bounded conversational lead-ins that may precede an affirmative without weakening it
 // ("ok yeah do it"). They are not endorsements on their own — see the fail-closed note above.
-// `please` / `then` / `now` are here so a trailing politeness ("do it please") is filler rather than
-// unconsumed content once the standalone-endorsement rule below applies.
-const LEAD_INS = ['ok', 'okay', 'k', 'alright', 'right', 'well', 'so', 'um', 'uh', 'yea',
-  'please', 'then', 'now'];
+const LEAD_INS = ['ok', 'okay', 'k', 'alright', 'right', 'well', 'so', 'um', 'uh', 'yea'];
+
+// TRAILING politeness, stripped from the END only. `please` deliberately does NOT belong in
+// LEAD_INS: `please do` is itself an ENDORSEMENTS entry, and stripping the leading `please` left the
+// unmatched word `do`, silently retiring a phrase this module has always accepted (Codex P2,
+// round 5 — a regression introduced by the standalone-endorsement fix). Stripping from the end
+// instead lets "do it please" pass without touching "please do".
+const TRAILING_FILLER = ['please', 'then', 'now', 'thanks', 'thank you'];
 
 function normalize(text) {
   return String(text == null ? '' : text)
@@ -93,11 +97,25 @@ function stripLeadIns(s) {
 // endorsement must ACCOUNT FOR THE ENTIRE TURN: every token is consumed by an affirmative phrase or
 // a lead-in, or there is no consent. Anything left over means the athlete said something more than
 // yes, and something more than yes is not a yes.
+// Strip a bounded run of trailing politeness from the END only.
+function stripTrailingFiller(s) {
+  let out = s;
+  for (let i = 0; i < 3; i += 1) {
+    const before = out;
+    for (const tail of TRAILING_FILLER) {
+      out = out.replace(new RegExp(`(^|\\s)${tail.replace(/\s+/g, '\\s+')}$`), '');
+    }
+    out = out.trim();
+    if (out === before) break;
+  }
+  return out;
+}
+
 function isEndorsementOnly(body) {
   let rest = body;
   let matched = false;
   for (let guard = 0; guard < 6; guard += 1) {
-    rest = stripLeadIns(rest);
+    rest = stripTrailingFiller(stripLeadIns(rest));
     if (!rest) break;
     // The action tier is end-anchored, so it can only match the whole remainder.
     if (ACTION_ENDORSEMENT_RE.test(rest)) { rest = ''; matched = true; break; }
@@ -125,7 +143,13 @@ function isExplicitEndorsement(text) {
   if (VETOES.some((v) => hasWholePhrase(s, v))) return false;
   const body = stripLeadIns(s);
   if (!body) return false;                                            // lead-ins alone are not consent
-  return isEndorsementOnly(body);
+  if (isEndorsementOnly(body)) return true;
+  // "please do it": the `please do` entry consumes the endorsement and leaves a dangling `it`. Retry
+  // once with the leading politeness removed so the inner phrase (`do it`) is matched whole. Bounded
+  // and fail-closed — a retry can only accept a phrase that is ITSELF entirely an endorsement, so
+  // "please my knee hurts" still refuses.
+  const withoutPolite = body.replace(/^(?:please|then|now)\s+/, '');
+  return withoutPolite !== body && isEndorsementOnly(withoutPolite);
 }
 
 export { isExplicitEndorsement };

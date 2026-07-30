@@ -3390,6 +3390,18 @@ function trySetRevisionFollowup(text) {
     const requested = asked != null
       ? asked
       : (position === 'all' && Number.isFinite(accepted) ? accepted : null);
+    // A NAMED RANGE CANNOT EXCEED THE PLAN. "the first five sets" on a three-set slot named sets
+    // 4 and 5, which do not exist, and the intersection arithmetic below would have offered them
+    // (Codex P2, round 5). State the real set count instead of describing sets that were never
+    // prescribed — and never silently clamp, because clamping would answer a scope the athlete
+    // did not name.
+    if (requested != null && Number.isFinite(accepted) && requested > accepted) {
+      const plural = accepted === 1 ? 'set' : 'sets';
+      announceSetRevisionReply(active, future > 0
+        ? `${name} only has ${accepted} ${plural} in the plan, not ${requested}. What's still ahead is ${ahead} — do you mean ${future === 1 ? 'that one' : 'those'}?`
+        : `${name} only has ${accepted} ${plural} in the plan, not ${requested}, and all of them are already logged.`);
+      return true;
+    }
     if (countsFromFirstSet && requested != null && done > 0) {
       const named = position === 'all'
         ? `All ${requested} sets`

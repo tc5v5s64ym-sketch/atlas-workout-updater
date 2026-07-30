@@ -797,6 +797,52 @@ test('4b.Y6 (Codex P2) a first-anchored scope reports the INTERSECTION, not ever
   assert.match(lastReply(all.state), /sets 2–3/, 'the all-range intersection is the real remainder');
 });
 
+test('4b.Y7 (Codex P2) "please do" still endorses after the standalone-endorsement fix', () => {
+  // `please do` is an ENDORSEMENTS entry and has always been accepted. Adding `please` to LEAD_INS
+  // stripped it from the FRONT, leaving the unmatched word `do`, which silently retired the phrase.
+  assert.equal(endorse.isExplicitEndorsement('please do'), true, 'a long-supported endorsement');
+  assert.equal(endorse.isExplicitEndorsement('please do it'), true);
+  assert.equal(endorse.isExplicitEndorsement('do it please'), true, 'trailing politeness is filler');
+  assert.equal(endorse.isExplicitEndorsement('yes please'), true);
+  assert.equal(endorse.isExplicitEndorsement('do that thanks'), true);
+  // …and trailing filler alone still decides nothing.
+  assert.equal(endorse.isExplicitEndorsement('please'), false);
+  assert.equal(endorse.isExplicitEndorsement('thanks'), false);
+  assert.equal(endorse.isExplicitEndorsement('please my knee hurts'), false, 'still whole-turn');
+
+  const h = withProposal();
+  assert.equal(h.api.trySetRevisionFollowup('please do'), true, 'and it reaches the approval handler');
+  assert.equal(h.state.revisions.length, 3);
+});
+
+test('4b.Y8 (Codex P2) a named range that exceeds the plan is never answered with sets that do not exist', () => {
+  // A three-set proposal with set 1 logged. "the first five sets" names sets 4 and 5, which were
+  // never prescribed; the intersection arithmetic would have offered "sets 2–5".
+  const h = withProposal({ log: [{ exercise: SLOT_NAME }] });
+  assert.equal(h.api.trySetRevisionFollowup('the first five sets'), true);
+  const line = lastReply(h.state);
+  assert.match(line, /only has 3 sets in the plan, not 5/, 'the real set count is stated');
+  assert.doesNotMatch(line, /sets 2–5|set 4|set 5/, 'no set outside the plan is ever offered');
+  assert.equal(h.state.revisions.length, 0);
+
+  // Same for an all-logged movement, and for a last-anchored over-reach beyond the plan.
+  const allDone = withProposal({ log: Array(3).fill({ exercise: SLOT_NAME }) });
+  assert.equal(allDone.api.trySetRevisionFollowup('the first five sets'), true);
+  assert.match(lastReply(allDone.state), /already logged/i);
+
+  const lastOver = withProposal();
+  assert.equal(lastOver.api.trySetRevisionFollowup('the last five sets'), true);
+  assert.match(lastReply(lastOver.state), /only has 3 sets in the plan, not 5/);
+  assert.doesNotMatch(lastReply(lastOver.state), /the other 0/, 'never a nonsense completed count');
+  assert.equal(lastOver.state.revisions.length, 0);
+
+  // A range WITHIN the plan is still answered normally.
+  const ok = withProposal();
+  assert.equal(ok.api.trySetRevisionFollowup('the last two sets'), true);
+  assert.equal(lastReply(ok.state),
+    'What do you want to change about the last two sets — the weight, the reps, or remove them?');
+});
+
 test('4b.Y4 (Codex P1) a newer submit revokes an older one BEFORE any early return', () => {
   // `previewRequestSeq` advances on a form edit and inside invalidatePreview, and several newer
   // turns return before reaching either — a bug command, a plan request, an artifact ask, a held
