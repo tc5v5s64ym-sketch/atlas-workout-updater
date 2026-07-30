@@ -79,17 +79,38 @@ function stripLeadIns(s) {
 // "why that weight? my knee hurts" is a question PLUS a safety report, and claiming it would answer
 // the question and swallow the report (Codex P1, round 2). The whole-body anchor is what enforces
 // that; `PROPOSAL_REF_RE` is kept as a second, independent condition.
+// The proposal's own attributes, and the verbs that CHANGE them. Enumerated on purpose: the first
+// draft allowed an arbitrary-word gap (`[a-z]+` up to three times) between the subject and the
+// demonstrative, and "why does it hurt like that?" matched it — a pain question answered with a
+// prescription rationale, with the safety turn never reaching the coach (Codex P1, round 4). An
+// arbitrary word is exactly what must not be allowed here.
+const PROPOSAL_ATTRIBUTE = '(?:much|many|weight|weights|load|number|numbers|rep|reps|rir|set|sets'
+  + '|change|adjustment|revision|target|prescription|light|lighter|low|lower|heavy|heavier|high|higher)';
+const CHANGE_VERB = '(?:drop(?:ped|ping)?|lower(?:ed|ing)?|reduc(?:e|ed|ing)|cut(?:ting)?'
+  + '|chang(?:e|ed|ing)|adjust(?:ed|ing)?|revis(?:e|ed|ing)|back(?:ing)?\\s+off'
+  + '|increas(?:e|ed|ing)|rais(?:e|ed|ing)|bump(?:ed|ing)?|mov(?:e|ed|ing)|set(?:ting)?'
+  + '|tak(?:e|ing)|go(?:ing)?\\s+(?:with|to|up|down)|do(?:ing)?|pick(?:ed|ing)?|choos(?:e|ing)|chose)';
+
 const WHY_WHOLE_RE = new RegExp(
   '^(?:why|how\\s+come)\\s+'
   + '(?:'
-  +   '(?:only\\s+)?(?:that|those|this|these)\\s+'
-  +     '(?:much|many|weight|weights|load|number|numbers|rep|reps|rir|change|adjustment|revision|target|light|low|heavy|high)'
-  + '|(?:are|is|was|were|did|do|does|would|should|will)\\s+(?:we|you|i|it)\\s+'
-  +     '(?:[a-z]+\\s+){0,3}(?:that|those|this|these|it)'
-  + '|(?:we|you|i|it)\\s+(?:[a-z]+\\s+){0,3}(?:that|those|this|these|it)'
+  // "why that weight?" / "why those reps?" / "why only that much?"
+  + `(?:only\\s+)?(?:that|those|this|these)\\s+${PROPOSAL_ATTRIBUTE}`
+  // "why are we dropping it?" / "why did you change that?" / "why is it lower?"
+  + `|(?:are|is|was|were|did|do|does|would|should|will)\\s+(?:we|you|i|it)\\s+(?:not\\s+)?`
+  + `(?:${CHANGE_VERB}|${PROPOSAL_ATTRIBUTE})`
+  + `(?:\\s+(?:it|that|this|these|those))?(?:\\s+(?:down|up|to|so\\s+${PROPOSAL_ATTRIBUTE}))?`
+  // "why we dropped it" / "why you changed that"
+  + `|(?:we|you|i)\\s+${CHANGE_VERB}(?:\\s+(?:it|that|this|these|those))?`
   + ')\\s*\\??$'
 );
 const PROPOSAL_REF_RE = /\b(?:that|those|this|these|it)\b/;
+
+// A BODILY-SYMPTOM veto, applied to EVERY tier. This is the third round in which a safety turn has
+// been able to reach a follow-up tier, and each time the athlete's body was the subject. A veto is
+// the safe direction — it can only make the lane claim FEWER turns, never more — so any mention of a
+// symptom sends the whole message to the coach, whatever else the sentence looks like.
+const BODILY_SYMPTOM_RE = /\b(?:hurt|hurts|hurting|pain|painful|sore|soreness|ache|aches|aching|achy|sharp|twinge|tweak|tweaked|strain|strained|pinch|pinching|numb|numbness|tingling|dizzy|lightheaded|nauseous|injur\w*|cramp|cramping|swollen|stiff)\b/;
 
 // ── phrase 3: "keep it" vs "keep the original" ────────────────────────────────
 // An ORIGINAL marker turns an ambiguous "keep" into an unambiguous rejection.
@@ -178,6 +199,10 @@ function classifySetRevisionFollowup(text) {
   // ("why that weight? my knee hurts"), and the second thing may be the one that matters. Fall
   // through so the existing lanes see the whole message (Codex P1, round 2).
   if (/\?[^?]*[a-z0-9]/.test(body)) return NO_MATCH;
+
+  // The athlete's body outranks any proposal follow-up. A symptom anywhere in the turn sends the
+  // whole message to the coach — no tier may claim it (Codex P1, round 4).
+  if (BODILY_SYMPTOM_RE.test(body)) return NO_MATCH;
 
   // 1. Explanation first. "why are we dropping it?" mentions dropping, and a question is never an
   //    action — asking must never be able to fall into an executing or rejecting tier.

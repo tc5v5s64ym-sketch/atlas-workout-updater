@@ -732,6 +732,71 @@ test('4b.Y1 (Codex P1) EVERY tier must consume the whole turn, not just its open
   }
 });
 
+test('4b.Y5 (Codex P1) a pain or symptom question is never answered as a proposal rationale', () => {
+  const C = classifier();
+  // The whole-turn fix was not enough: an arbitrary-word gap in the why pattern let
+  // "why does it hurt like that?" match, so a single-clause SAFETY question was answered with a
+  // prescription rationale and never reached the coach.
+  const safety = [
+    'why does it hurt like that?',
+    'why does that hurt so much?',
+    'why is it sore like that?',
+    'why do i feel that in my knee?',
+    'is that supposed to hurt',
+    'that hurt',
+    'my knee hurts',
+    'keep it, that hurts',
+    'do that but it hurts',
+    'drop those they hurt',
+    'the last two sets hurt',
+  ];
+  for (const words of safety) {
+    assert.equal(C.classifySetRevisionFollowup(words).action, 'no_match',
+      `"${words}" is about the athlete's body and belongs to the coach`);
+    const h = withProposal();
+    assert.equal(h.api.trySetRevisionFollowup(words), false, `"${words}" must not be claimed`);
+    assert.equal(h.state.revisions.length, 0, `"${words}" must mutate nothing`);
+    assert.ok(h.state.pendingSetRevision, `"${words}" must not discard the proposal`);
+    assert.equal(replies(h.state).length, 0, `"${words}" must reach the coach, not this lane`);
+  }
+
+  // The approved why shapes still explain, and so do the natural change-verb forms.
+  for (const words of ['why that weight?', 'why those reps?', 'why that change?',
+    'why are we dropping it?', 'why only that much?', 'why did you change that?',
+    'why is it lower?', 'why we dropped it']) {
+    assert.equal(C.classifySetRevisionFollowup(words).action, 'explain_active_proposal', `"${words}"`);
+  }
+  // …and a coaching question that names its own subject still reaches the coach.
+  for (const words of ['why do i always stall on deadlifts?', 'why is my bench flat?']) {
+    assert.equal(C.classifySetRevisionFollowup(words).action, 'no_match', `"${words}"`);
+  }
+});
+
+test('4b.Y6 (Codex P2) a first-anchored scope reports the INTERSECTION, not every future set', () => {
+  // One of three logged. "the first two sets" names sets 1–2, of which only set 2 is still ahead.
+  // Reporting "2 sets" would offer sets 2–3 — a different scope from the one the athlete named.
+  const h = withProposal({ log: [{ exercise: SLOT_NAME }] });
+  assert.equal(h.api.trySetRevisionFollowup('the first two sets'), true);
+  const line = lastReply(h.state);
+  assert.match(line, /first 2 sets/, 'the named range is stated');
+  assert.match(line, /already logged/i, 'the completed overlap is stated');
+  assert.match(line, /set 2\b/, 'and the answer is the INTERSECTION — set 2 only');
+  assert.doesNotMatch(line, /sets 2–3|2 sets —/, 'never offers a set outside the named range');
+  assert.equal(h.state.revisions.length, 0);
+
+  // Every named set already logged → say so, and be explicit that what remains is outside the range.
+  const done = withProposal({ log: [{ exercise: SLOT_NAME }, { exercise: SLOT_NAME }] });
+  assert.equal(done.api.trySetRevisionFollowup('the first two sets'), true);
+  assert.match(lastReply(done.state), /outside the range you named/,
+    'an entirely-completed range is not silently replaced with a different one');
+
+  // "all sets" intersects the whole remainder, so its range genuinely is sets 2–3.
+  const all = withProposal({ log: [{ exercise: SLOT_NAME }] });
+  assert.equal(all.api.trySetRevisionFollowup('all sets'), true);
+  assert.match(lastReply(all.state), /All 3 sets/);
+  assert.match(lastReply(all.state), /sets 2–3/, 'the all-range intersection is the real remainder');
+});
+
 test('4b.Y4 (Codex P1) a newer submit revokes an older one BEFORE any early return', () => {
   // `previewRequestSeq` advances on a form edit and inside invalidatePreview, and several newer
   // turns return before reaching either — a bug command, a plan request, an artifact ask, a held

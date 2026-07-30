@@ -3394,7 +3394,18 @@ function trySetRevisionFollowup(text) {
       const named = position === 'all'
         ? `All ${requested} sets`
         : `The first ${requested === 1 ? 'set' : `${requested} sets`}`;
-      announceSetRevisionReply(active, `${named} of ${name} ${done >= requested ? 'are' : 'include sets that are'} already logged, and a completed set doesn't change. What's still ahead is ${ahead} — do you mean ${future === 1 ? 'that one' : 'those'}?`);
+      // The INTERSECTION of the named range with what is still ahead — not the total future count.
+      // "the first two sets" with set 1 logged names sets 1–2, of which only set 2 is editable;
+      // reporting both future sets would offer sets 2–3 and change the scope the athlete asked
+      // about (Codex P2, round 4). Sets 1…done are performed, so the named range keeps
+      // done+1…requested.
+      const inScope = Math.max(0, requested - done);
+      if (inScope <= 0) {
+        announceSetRevisionReply(active, `${named} of ${name} ${requested === 1 ? 'is' : 'are'} already logged, and a completed set doesn't change. What's still ahead is ${ahead}, outside the range you named — do you mean ${future === 1 ? 'that set' : 'those'}?`);
+        return true;
+      }
+      const inScopeSets = inScope === 1 ? `set ${done + 1}` : `sets ${done + 1}–${requested}`;
+      announceSetRevisionReply(active, `${named} of ${name}: ${done} of ${done === 1 ? 'those is' : 'those are'} already logged, and a completed set doesn't change. That leaves ${inScopeSets} — the weight, the reps, or remove ${inScope === 1 ? 'it' : 'them'}?`);
       return true;
     }
     if (requested != null && requested > future) {
