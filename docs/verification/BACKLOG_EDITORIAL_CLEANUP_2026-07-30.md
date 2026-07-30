@@ -179,3 +179,11 @@ The second pass did not delete the old prose. It archived the entire historical 
 - `BACKLOG.md` lines: **813 → 799**
 - Historical text discarded: **no**
 - Runtime/code behavior changed: **no**
+
+## Residual condensation pass
+
+- Shipped-parent narratives condensed: **4**
+- `BACKLOG.md` lines: **799 → 786**
+- Duplicate archive copies removed: **yes; exact historical snapshot retained**
+- Paper-weight note updated to reflect completed resection: **yes**
+- Runtime/code behavior changed: **no**
