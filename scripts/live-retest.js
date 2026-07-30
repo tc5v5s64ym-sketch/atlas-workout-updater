@@ -328,24 +328,35 @@ function printScenario(scenarioKey, scenario, { targetBaseUrl, dryRunOnly }) {
 // captures what the UI shows.
 // --- Deterministic response-settle -----------------------------------------
 // The coach reply renders in two observable phases (src/app/coach-conversation.js):
-// a pending bubble whose text is exactly "Thinking…", then that text is cleared
-// and the reply is typed out character by character. A fixed sleep raced this —
-// production replies were still streaming at 2500 ms, so the assertion read
-// "…Thinking…" and every authenticated run collapsed to a timing INCONCLUSIVE.
+// `appendAtlasBubble` adds a NEW `.chat-bubble-atlas` bubble whose text is first
+// "Thinking…", then that same bubble's text is cleared and the reply is typed out
+// character by character. A fixed sleep raced this — production replies were still
+// streaming at 2500 ms, so the assertion read "…Thinking…" and every
+// authenticated run collapsed to a timing INCONCLUSIVE.
 //
-// Instead, poll the thread until it is genuinely SETTLED: the "Thinking…" marker
-// is gone AND a non-empty reply has stopped growing (typeOut finished, detected
-// as the thread text being unchanged for `stableMs`). Bounded by `timeoutMs`; it
-// never waits indefinitely. On timeout it returns settled:false with the exact
-// reason, which the assertion turns into INCONCLUSIVE — never a PASS. Pure over
-// injected `readThread` / `sleep` / `now`, so it is unit-testable with no browser.
+// The settle test keys off the ATLAS REPLY BUBBLE, not the whole thread. The
+// submit handler paints the lifter's own `.chat-bubble-user` ("you missed a set")
+// synchronously; if coach routing is slow to add the "Thinking…" bubble, a
+// whole-thread stable-window would fire on that user bubble and read before the
+// reply arrives — reintroducing the very INCONCLUSIVE this fixes (Codex P2,
+// #1205). So a reply is SETTLED only when: a NEW atlas bubble exists (`present`,
+// beyond the pre-click baseline), it no longer shows "Thinking…", and its text is
+// non-empty and has stopped growing for `stableMs` (typeOut finished). Bounded by
+// `timeoutMs`; it never waits indefinitely, and on timeout returns settled:false
+// with the exact reason, which the assertion turns into INCONCLUSIVE — never a
+// PASS. Pure over an injected `readReply` / `sleep` / `now`, so it is
+// unit-testable with no browser.
+//
+// `readReply()` returns { present, thinking, text } about the newest atlas reply
+// bubble: `present` = a new atlas bubble has appeared since the click; `thinking`
+// = that bubble currently shows the marker; `text` = its text.
 const THINKING_MARKER = 'Thinking…';
 const SETTLE_TIMEOUT_MS = 20000;
 const SETTLE_POLL_MS = 250;
 const SETTLE_STABLE_MS = 750;
 
 async function waitForSettledResponse({
-  readThread,
+  readReply,
   timeoutMs = SETTLE_TIMEOUT_MS,
   pollMs = SETTLE_POLL_MS,
   stableMs = SETTLE_STABLE_MS,
@@ -356,23 +367,31 @@ async function waitForSettledResponse({
   let last = null;
   let lastChangeAt = start;
   let sawThinking = false;
+  let sawReply = false;
   for (;;) {
-    const text = String((await readThread()) || '');
-    const thinking = text.includes(THINKING_MARKER);
+    const s = (await readReply()) || {};
+    const present = Boolean(s.present);
+    const thinking = Boolean(s.thinking);
+    const body = String(s.text || '').split(THINKING_MARKER).join('').trim();
     if (thinking) sawThinking = true;
-    const body = text.split(THINKING_MARKER).join('').trim();
-    if (text !== last) { last = text; lastChangeAt = now(); }
+    if (present) sawReply = true;
+
+    // Restart the stable window on ANY change to the reply's observable state,
+    // so the window only completes once a real atlas reply has stopped growing —
+    // never on the untouched user bubble (present would be false there).
+    const key = JSON.stringify([present, thinking, s.text || '']);
+    if (key !== last) { last = key; lastChangeAt = now(); }
     const stableFor = now() - lastChangeAt;
 
-    // Settled: no pending indicator, a reply is present, and it stopped growing.
-    if (!thinking && body.length > 0 && stableFor >= stableMs) {
-      return { settled: true, text, sawThinking, reason: 'settled', waitedMs: now() - start };
+    if (present && !thinking && body.length > 0 && stableFor >= stableMs) {
+      return { settled: true, text: s.text || '', sawThinking, reason: 'settled', waitedMs: now() - start };
     }
     if (now() - start >= timeoutMs) {
-      const reason = thinking ? 'timeout_still_thinking'
-        : body.length === 0 ? 'timeout_no_response'
-          : 'timeout_unstable';
-      return { settled: false, text, sawThinking, reason, waitedMs: now() - start };
+      const reason = !sawReply ? 'timeout_no_response'
+        : thinking ? 'timeout_still_thinking'
+          : body.length === 0 ? 'timeout_no_response'
+            : 'timeout_unstable';
+      return { settled: false, text: s.text || '', sawThinking, reason, waitedMs: now() - start };
     }
     await sleep(pollMs);
   }
@@ -405,14 +424,24 @@ async function navigateScenario({ page, scenarioKey, scenario, outputDir, privac
   // Submit the preview flow (test_mode dry-run). Tolerant: a readback may or may
   // not render depending on the authenticated context — capturing the result is
   // enough for this slice.
+  // Baseline the atlas reply bubbles BEFORE the click, so settlement keys off a
+  // genuinely NEW reply and not the lifter's own bubble (Codex P2, #1205).
+  const atlasBubbles = page.locator('#thread-messages .chat-bubble-atlas');
+  const baselineAtlas = await atlasBubbles.count().catch(() => 0);
+
   console.log(`[navigate] clicking #preview-btn (preview/dry-run only — never Save)`);
   await page.locator('#preview-btn').click();
 
-  // Wait for a genuinely SETTLED response (no "Thinking…", reply stopped growing)
-  // rather than a fixed sleep. Bounded — never waits indefinitely. Reads the
-  // thread only; touches no write control.
+  // Wait for a genuinely SETTLED response: a NEW atlas reply bubble that no longer
+  // shows "Thinking…" and has stopped growing. Bounded — never waits indefinitely.
+  // Reads bubble state only; touches no write control.
   const settle = await waitForSettledResponse({
-    readThread: () => page.locator('#thread-messages').innerText().catch(() => ''),
+    readReply: async () => {
+      const n = await atlasBubbles.count().catch(() => 0);
+      if (n <= baselineAtlas) return { present: false, thinking: false, text: '' };
+      const text = await atlasBubbles.last().innerText().catch(() => '');
+      return { present: true, thinking: text.includes(THINKING_MARKER), text };
+    },
     sleep: (ms) => page.waitForTimeout(ms)
   });
   console.log(settle.settled
