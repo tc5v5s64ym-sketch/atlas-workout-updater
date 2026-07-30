@@ -15,6 +15,8 @@
  * session the athlete is mid-way through is not something to do on a guess.
  */
 
+import { performedSetCount } from './sessionLedger.js';
+
 const KIND = 'set_revision';
 
 function _str(v) {
@@ -145,4 +147,20 @@ function decideApproval(request, active, plan, isEndorsement) {
   return 'apply';
 }
 
-export { KIND, buildSetRevisionProposal, isProposalCurrent, supersedes, decideApproval };
+// How many sets of this proposal's movement are still AHEAD, given the session buffer.
+//
+// This is a session-truth SELECTOR, so it lives here rather than in the app shell: the Phase-2
+// app.js freeze forbids adding session-truth derivation to `src/app/app.js` (Codex P1, criterion 4
+// step (b) — it was written there first, which was the freeze violation the review caught). Pure by
+// construction: the caller passes the log in, and the performed count comes from the ledger's OWN
+// selector — the same one `emitFutureSetRevision` bounds its revisions by — so the scope Atlas talks
+// about and the scope it would actually revise can never disagree. A completed set is never counted
+// as editable.
+function futureSetCount(proposal, sessionLog) {
+  const accepted = _num(proposal && proposal.accepted_set_count);
+  if (accepted === null || accepted <= 0) return 0;
+  const done = performedSetCount(sessionLog, proposal && proposal.prescribed_name);
+  return Math.max(0, accepted - (Number.isFinite(done) ? done : 0));
+}
+
+export { KIND, buildSetRevisionProposal, isProposalCurrent, supersedes, decideApproval, futureSetCount };

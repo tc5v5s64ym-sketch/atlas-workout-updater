@@ -73,16 +73,35 @@ function stripLeadIns(s) {
 }
 
 // ── phrase 2: "why that weight?" ──────────────────────────────────────────────
-// Three conditions, all required. A "why" that carries its own subject ("why do I keep stalling on
+// WHOLE-TURN by construction. A "why" that carries its own subject ("why do I keep stalling on
 // deadlifts") is a coaching question and must reach the coach, so the utterance has to refer back to
-// the proposal (a demonstrative or "it") AND name something the proposal actually holds.
-const WHY_HEAD_RE = /^(?:why|how come)\b/;
+// the proposal AND name something the proposal actually holds. It must ALSO be the entire turn:
+// "why that weight? my knee hurts" is a question PLUS a safety report, and claiming it would answer
+// the question and swallow the report (Codex P1, round 2). The whole-body anchor is what enforces
+// that; `PROPOSAL_REF_RE` is kept as a second, independent condition.
+const WHY_WHOLE_RE = new RegExp(
+  '^(?:why|how\\s+come)\\s+'
+  + '(?:'
+  +   '(?:only\\s+)?(?:that|those|this|these)\\s+'
+  +     '(?:much|many|weight|weights|load|number|numbers|rep|reps|rir|change|adjustment|revision|target|light|low|heavy|high)'
+  + '|(?:are|is|was|were|did|do|does|would|should|will)\\s+(?:we|you|i|it)\\s+'
+  +     '(?:[a-z]+\\s+){0,3}(?:that|those|this|these|it)'
+  + '|(?:we|you|i|it)\\s+(?:[a-z]+\\s+){0,3}(?:that|those|this|these|it)'
+  + ')\\s*\\??$'
+);
 const PROPOSAL_REF_RE = /\b(?:that|those|this|these|it)\b/;
-const WHY_SUBJECT_RE = /\b(?:weight|weights|load|number|numbers|rep|reps|rir|change|changing|adjustment|revision|target|much|many|drop|dropping|lower|lowering|light|lighter|heavy|heavier|less|more)\b/;
 
 // ── phrase 3: "keep it" vs "keep the original" ────────────────────────────────
 // An ORIGINAL marker turns an ambiguous "keep" into an unambiguous rejection.
-const ORIGINAL_MARKER_RE = /\b(?:original|as\s+planned|as\s+is|as\s+it\s+is|as\s+it\s+was|unchanged|the\s+same|alone|the\s+plan|planned)\b/;
+// WHOLE-TURN, same rule as every other tier: "don't change it, my knee hurts" must not reject the
+// proposal and swallow the safety report (Codex P1, round 2).
+const KEEP_ORIGINAL_RE = new RegExp(
+  '^(?:keep|leave|stick\\s+with|stay\\s+with|stay\\s+on|go\\s+with)\\s+'
+  + '(?:(?:it|that|this|them|those|these)\\s+)?'
+  + '(?:the\\s+)?(?:as\\s+)?'
+  + '(?:original(?:\\s+(?:plan|weight|prescription|target|numbers?))?'
+  +  '|planned|as\\s+planned|as\\s+(?:it\\s+)?(?:is|was)|unchanged|the\\s+same|alone|plan)$'
+);
 // The bare ANSWER to the two-choice question this lane asks for phrase class 3 ("Keep the original
 // plan, or accept Atlas's change?"). Only the ORIGINAL side is admitted as a bare noun phrase,
 // because refusing a change is the safe outcome; the acceptance side must still be an explicit
@@ -90,7 +109,7 @@ const ORIGINAL_MARKER_RE = /\b(?:original|as\s+planned|as\s+is|as\s+it\s+is|as\s
 // asymmetry is the point — it is fail-closed, not an oversight.
 const ORIGINAL_ANSWER_RE = /^(?:the\s+)?original(?:\s+plan|\s+weight|\s+prescription|\s+numbers?)?$|^as\s+planned$/;
 // Unambiguous rejections that need no "keep": a cancel is a cancel.
-const CANCEL_RE = /^(?:dont\s+change\s+(?:it|that|this|them|those|anything)|do\s+not\s+change\s+(?:it|that|this|them|those|anything)|no\s+change(?:s)?|forget\s+it|cancel\s+(?:it|that)?|nevermind|never\s+mind)\b/;
+const CANCEL_RE = /^(?:(?:dont|do\s+not)\s+change\s+(?:it|that|this|them|those|anything)|no\s+changes?|forget\s+it|cancel(?:\s+(?:it|that))?|nevermind|never\s+mind)$/;
 // The ambiguous keep: a keep/leave verb whose object is a bare pronoun. Atlas's own proposal reads
 // "Keep Back Squat and take the rest of the sets to X", so "keep it" can mean keep the ORIGINAL
 // plan, keep Atlas's CHANGE, keep the current weight, or keep the exercise. Four readings, three of
@@ -113,9 +132,13 @@ const COUNT_WORDS = {
   one: 1, two: 2, three: 3, four: 4, five: 5, six: 6,
   a: 1, an: 1, couple: 2, few: 3, both: 2,
 };
+// `all` is a POSITION, never a discardable determiner. Swallowing it turned "all sets" into a
+// position-less, count-less scope, and the router then answered about the LAST N future sets —
+// silently narrowing the request and dropping the completed-set overlap (Codex P2, round 2).
 const SET_SCOPE_RE = new RegExp(
-  '^(?:(?:the|those|these|my|all)\\s+)*'                           // optional determiners
-  + '(?:(last|final|remaining|next|first)\\s+)?'                   // position
+  '^(?:(?:the|those|these|my)\\s+)*'                              // optional determiners
+  + '(?:(all|last|final|remaining|next|first)\\s+)?'               // position
+  + '(?:(?:the|those|these|my)\\s+)*'                             // determiners after the position
   + '(?:(\\d+|one|two|three|four|five|six|a|an|couple|few|both)\\s+)?'  // count
   + '(?:(last|final|remaining|next)\\s+)?'                         // position after the count
   + '(sets?)$'
@@ -149,9 +172,16 @@ function classifySetRevisionFollowup(text) {
   const body = stripLeadIns(s);
   if (!body) return NO_MATCH;               // lead-ins alone ("ok", "sure", "alright") decide nothing
 
+  // THE WHOLE-TURN RULE. Every tier below matches the ENTIRE body, never just its opening, so a
+  // follow-up phrase carrying a second statement is not a follow-up. This guard is the cheap,
+  // explicit half of it: content after a question mark means the athlete said more than one thing
+  // ("why that weight? my knee hurts"), and the second thing may be the one that matters. Fall
+  // through so the existing lanes see the whole message (Codex P1, round 2).
+  if (/\?[^?]*[a-z0-9]/.test(body)) return NO_MATCH;
+
   // 1. Explanation first. "why are we dropping it?" mentions dropping, and a question is never an
   //    action — asking must never be able to fall into an executing or rejecting tier.
-  if (WHY_HEAD_RE.test(body) && PROPOSAL_REF_RE.test(body) && WHY_SUBJECT_RE.test(body)) {
+  if (WHY_WHOLE_RE.test(body) && PROPOSAL_REF_RE.test(body)) {
     return { action: 'explain_active_proposal' };
   }
   // A bare "why" question that names its own subject stays with the coach; so does any other
@@ -161,7 +191,7 @@ function classifySetRevisionFollowup(text) {
   // 2. Unambiguous rejection.
   if (!isQuestion && (CANCEL_RE.test(body)
     || ORIGINAL_ANSWER_RE.test(body)
-    || (/^(?:keep|leave|stick|stay|go)\b/.test(body) && ORIGINAL_MARKER_RE.test(body)))) {
+    || KEEP_ORIGINAL_RE.test(body))) {
     return { action: 'reject_active_proposal' };
   }
 

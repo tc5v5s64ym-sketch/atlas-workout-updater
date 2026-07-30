@@ -64,7 +64,10 @@ import { remainingSlotNames, variantSatisfies, planSlotStatuses, firstUnloggedSl
 // and are checkpointed to the dry-run /revision sidecar.
 import { buildFutureRevisions, appendRevisions, performedSetCount as ledgerPerformedSetCount } from './sessionLedger.js';
 import { isExplicitEndorsement } from './endorsedSetRevision.js';
-import { buildSetRevisionProposal, decideApproval, isProposalCurrent } from './setRevisionProposal.js';
+import {
+  buildSetRevisionProposal, decideApproval, isProposalCurrent,
+  futureSetCount as setRevisionFutureSetCount,
+} from './setRevisionProposal.js';
 // The EFFECTIVE current prescription for a slot — the accepted (v1) prescription folded with any
 // prior set-level revisions and the frozen performed-set floor. A revision never rewrites the
 // slot, so the slot's own numbers go stale; every "would this change anything?" question must be
@@ -3261,18 +3264,10 @@ function announceSetRevisionReply(proposal, line) {
   return true;
 }
 
-// How many sets of this proposal's movement are still AHEAD. Structured end to end: the accepted
-// set count comes from the stored proposal and the performed count from the session buffer through
-// the ledger's own selector — the same one `emitFutureSetRevision` bounds its revisions by. So the
-// scope Atlas talks about and the scope it would revise can never disagree, and a completed set is
-// never reported as editable.
-function setRevisionFutureSetCount(proposal) {
-  const accepted = Number(proposal && proposal.accepted_set_count);
-  if (!Number.isFinite(accepted) || accepted <= 0) return 0;
-  const performed = ledgerPerformedSetCount(getSessionLog(), proposal && proposal.prescribed_name);
-  const done = Number.isFinite(performed) ? performed : 0;
-  return Math.max(0, accepted - done);
-}
+// How many sets of this proposal's movement are still ahead is a session-truth SELECTOR, so it is
+// NOT derived here: `setRevisionProposal.futureSetCount` owns it and this shell only passes the
+// session buffer in. The Phase-2 app.js freeze forbids adding truth derivation to this file, and the
+// first draft of this lane broke that rule (Codex P1, this PR).
 
 const SET_COUNT_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six'];
 function setCountWord(n) {
@@ -3321,7 +3316,7 @@ function trySetRevisionFollowup(text) {
     return false;
   }
 
-  const future = setRevisionFutureSetCount(active);
+  const future = setRevisionFutureSetCount(active, getSessionLog());
   const noFutureSets = `Every set of ${name} is already logged, so there are no future sets left to change.`;
 
   if (action === 'approve_active_proposal') {
@@ -3383,18 +3378,33 @@ function trySetRevisionFollowup(text) {
     const scopeInfo = verdict.setScope || {};
     const asked = scopeInfo.count || null;
     const position = scopeInfo.position || null;
-    const done = Math.max(0, Number(active.accepted_set_count) - future);
+    const accepted = Number(active.accepted_set_count);
+    const done = Math.max(0, accepted - future);
     const ahead = future === 1 ? '1 set' : `${future} sets`;
 
-    // A FIRST-anchored scope counts from set 1, so it can name sets that are already performed —
-    // and a completed set is not editable. Answering it as if it meant the LAST sets would silently
-    // change different sets from the ones the athlete named (Codex P2, this PR).
-    if (position === 'first' && asked != null && done > 0) {
-      announceSetRevisionReply(active, `The first ${asked === 1 ? 'set' : `${asked} sets`} of ${name} ${done >= asked ? 'are' : 'include sets that are'} already logged, and a completed set doesn't change. What's still ahead is ${ahead} — do you mean ${future === 1 ? 'that one' : 'those'}?`);
+    // A FIRST- or ALL-anchored scope counts from set 1, so it can name sets that are already
+    // performed — and a completed set is not editable. Answering either as if it meant the LAST
+    // sets would silently change different sets from the ones the athlete named (Codex P2, both
+    // review rounds). `all sets` carries no count of its own; the accepted count is what it names.
+    const countsFromFirstSet = position === 'first' || position === 'all';
+    const requested = asked != null
+      ? asked
+      : (position === 'all' && Number.isFinite(accepted) ? accepted : null);
+    if (countsFromFirstSet && requested != null && done > 0) {
+      const named = position === 'all'
+        ? `All ${requested} sets`
+        : `The first ${requested === 1 ? 'set' : `${requested} sets`}`;
+      announceSetRevisionReply(active, `${named} of ${name} ${done >= requested ? 'are' : 'include sets that are'} already logged, and a completed set doesn't change. What's still ahead is ${ahead} — do you mean ${future === 1 ? 'that one' : 'those'}?`);
       return true;
     }
-    if (asked != null && asked > future) {
+    if (requested != null && requested > future) {
       announceSetRevisionReply(active, `Only ${future} ${future === 1 ? 'set' : 'sets'} of ${name} ${future === 1 ? 'is' : 'are'} still ahead — the other ${done} ${done === 1 ? 'is' : 'are'} already logged. Do you mean ${future === 1 ? 'that one' : 'those'}, or something else?`);
+      return true;
+    }
+    // Nothing is logged yet, so every set the athlete named is still ahead. Echo their own scope
+    // word rather than substituting a different one.
+    if (position === 'all') {
+      announceSetRevisionReply(active, `What do you want to change about all ${requested != null ? `${requested} ` : ''}sets — the weight, the reps, or remove them?`);
       return true;
     }
     const n = asked != null ? asked : future;

@@ -123,7 +123,7 @@ function harness(options) {
   const factory = new Function(
     'document', 'CustomEvent', 'state', 'window',
     'buildFutureRevisions', 'appendRevisions', 'ledgerPerformedSetCount', 'isExplicitEndorsement',
-    'buildSetRevisionProposal', 'decideApproval', 'isProposalCurrent',
+    'buildSetRevisionProposal', 'decideApproval', 'isProposalCurrent', 'setRevisionFutureSetCount',
     `
     'use strict';
     function getActivePlannedSession(){ return state.plan; }
@@ -158,7 +158,7 @@ function harness(options) {
     ledger.buildFutureRevisions, ledger.appendRevisions, ledger.performedSetCount,
     endorse.isExplicitEndorsement,
     proposalModule.buildSetRevisionProposal, proposalModule.decideApproval,
-    proposalModule.isProposalCurrent,
+    proposalModule.isProposalCurrent, proposalModule.futureSetCount,
   );
   return { api, state };
 }
@@ -686,6 +686,100 @@ test('4b.X5 the two-choice question\'s own answers route to the two existing han
   assert.equal(thin.api.trySetRevisionFollowup('the change'), false,
     'a bare noun phrase never rewrites the remaining sets');
   assert.equal(thin.state.revisions.length, 0);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Codex review round 2 — three more real findings, pinned
+// ═══════════════════════════════════════════════════════════════════════════════
+
+test('4b.Y1 (Codex P1) EVERY tier must consume the whole turn, not just its opening', () => {
+  // The consent fix in round 1 covered only the approve tier. A compound turn still reached the
+  // explanation tier ("why that weight? my knee hurts" — the safety report never reaches the coach)
+  // and the rejection tier ("don't change it, my knee hurts" — which ALSO discarded the proposal).
+  const compound = [
+    'why that weight? my knee hurts',
+    'why those reps? my shoulder is killing me',
+    "don't change it, my knee hurts",
+    'keep the original, my back is sore',
+    'leave it as planned but my knee hurts',
+    'keep it, my elbow is bothering me',
+    'drop those, my knee hurts',
+    'the last two sets and my knee hurts',
+    'no changes, i think i tweaked something',
+  ];
+  const C = classifier();
+  for (const words of compound) {
+    assert.equal(C.classifySetRevisionFollowup(words).action, 'no_match',
+      `"${words}" says more than a follow-up, so the whole message must fall through`);
+    const h = withProposal();
+    assert.equal(h.api.trySetRevisionFollowup(words), false, `"${words}" must not be claimed`);
+    assert.ok(h.state.pendingSetRevision, `"${words}" must not discard the proposal`);
+    assert.equal(h.state.revisions.length, 0, `"${words}" must mutate nothing`);
+    assert.equal(replies(h.state).length, 0, `"${words}" must not be answered instead of the coach`);
+  }
+
+  // …and the five approved shapes of every class still work after the tightening.
+  for (const words of ['why that weight?', 'why those reps?', 'why that change?',
+    'why are we dropping it?', 'why only that much?']) {
+    assert.equal(C.classifySetRevisionFollowup(words).action, 'explain_active_proposal', `"${words}"`);
+  }
+  for (const words of ['keep the original', 'leave it as planned', "don't change it",
+    'stick with the original', 'no changes', 'forget it', 'keep it as is', 'leave it alone']) {
+    assert.equal(C.classifySetRevisionFollowup(words).action, 'reject_active_proposal', `"${words}"`);
+  }
+  for (const words of ['keep it', 'keep that', 'leave it', 'just keep it']) {
+    assert.equal(C.classifySetRevisionFollowup(words).action, 'clarify_keep', `"${words}"`);
+  }
+});
+
+test('4b.Y2 (Codex P2) an ALL-anchored scope is never narrowed to the last future sets', () => {
+  const C = classifier();
+  const all = C.classifySetRevisionFollowup('all sets');
+  assert.equal(all.action, 'clarify_set_scope');
+  assert.equal(all.setScope.position, 'all', 'the all marker is preserved, not discarded');
+  assert.equal(C.classifySetRevisionFollowup('all the sets').setScope.position, 'all');
+  assert.equal(C.classifySetRevisionFollowup('all three sets').setScope.count, 3);
+
+  // One of three logged: "all sets" names a completed set, so the overlap must be stated rather
+  // than silently answered as "the last two sets".
+  const h = withProposal({ log: [{ exercise: SLOT_NAME }] });
+  assert.equal(h.api.trySetRevisionFollowup('all sets'), true);
+  const line = lastReply(h.state);
+  assert.match(line, /All 3 sets/, 'the requested scope is named in full');
+  assert.match(line, /already logged/i, 'and the completed-set overlap is stated');
+  assert.doesNotMatch(line, /last two sets/, 'the request is never silently narrowed');
+  assert.equal(h.state.revisions.length, 0);
+
+  // Nothing logged: every named set really is ahead, so the question keeps the athlete's own word.
+  const clean = withProposal();
+  assert.equal(clean.api.trySetRevisionFollowup('all sets'), true);
+  assert.match(lastReply(clean.state), /about all 3 sets/, 'echoes "all", never "the last N"');
+});
+
+test('4b.Y3 (Codex P1) the future-set selector lives outside the frozen app.js shell', () => {
+  // CLAUDE.md app.js freeze: no new session-truth selector or truth derivation in src/app/app.js.
+  // The first draft derived the editable future-set count there, which broke that rule.
+  const mod = require('../src/app/setRevisionProposal.js');
+  assert.equal(typeof mod.futureSetCount, 'function',
+    'the selector must live in the proposal module, not the shell');
+
+  const proposal = proposalModule.buildSetRevisionProposal({ ...PROPOSAL_INPUT });
+  assert.equal(mod.futureSetCount(proposal, []), 3, 'nothing logged → every accepted set is ahead');
+  assert.equal(mod.futureSetCount(proposal, [{ exercise: SLOT_NAME }]), 2);
+  assert.equal(mod.futureSetCount(proposal, [{ exercise: SLOT_NAME }, { exercise: SLOT_NAME }]), 1);
+  assert.equal(mod.futureSetCount(proposal, Array(5).fill({ exercise: SLOT_NAME })), 0,
+    'never negative, and a completed set is never editable');
+  assert.equal(mod.futureSetCount(null, []), 0, 'fails closed on a missing proposal');
+
+  // The shell must PASS the session buffer in rather than derive the count itself.
+  const lane = appSrc.slice(
+    appSrc.indexOf('function trySetRevisionFollowup('),
+    appSrc.indexOf('function openTodaySessionPlan(')
+  );
+  assert.match(lane, /setRevisionFutureSetCount\(active, getSessionLog\(\)\)/,
+    'the shell only supplies state to the imported selector');
+  assert.doesNotMatch(appSrc.slice(appSrc.indexOf('function explainPendingSetRevision('), appSrc.indexOf('function openTodaySessionPlan(')),
+    /function setRevisionFutureSetCount\(/, 'no local selector remains in the shell');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
