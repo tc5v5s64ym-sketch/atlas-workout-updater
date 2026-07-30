@@ -298,6 +298,64 @@ test('the report names a failed authentication as a stop, not a silent downgrade
   assert.match(md, /authentication FAILED — the run stopped/);
 });
 
+// ── The INCONCLUSIVE hint must never contradict the run's real auth posture ──
+// Regression guard for the first authenticated production run (2026-07-30): the
+// hint was hardcoded to "likely an unauthenticated run", so an authed run was
+// told to retest in an authed context — advice the owner had already followed.
+
+const os = require('node:os');
+const fsx = require('node:fs');
+const pathx = require('node:path');
+const { assertScenario } = require('../scripts/live-retest');
+
+const HINT_TMP = pathx.join(os.tmpdir(), 'atlas-live-retest-auth-hint');
+fsx.mkdirSync(HINT_TMP, { recursive: true });
+
+// Force INCONCLUSIVE: no forbidden hit, one expected pattern that cannot match.
+const INCONCLUSIVE_SCENARIO = { bugId: 'HINT', assertion: { forbidden: [/never-present/i], expected: [/will-not-match/i] } };
+
+function hintFor(auth) {
+  const lines = [];
+  const realLog = console.log;
+  console.log = (...a) => lines.push(a.join(' '));
+  try {
+    const verdict = assertScenario({
+      scenarioKey: 'hint', scenario: INCONCLUSIVE_SCENARIO,
+      navResult: { navigated: true, threadText: 'you missed a set Thinking…' },
+      outputDir: HINT_TMP, auth
+    });
+    assert.equal(verdict, 'INCONCLUSIVE', 'fixture must produce INCONCLUSIVE');
+  } finally {
+    console.log = realLog;
+  }
+  return lines.join('\n');
+}
+
+test('an AUTHENTICATED inconclusive run is not told to retest in an authed context', () => {
+  const out = hintFor({ attempted: true, authenticated: true, status: 200, reason: 'ok' });
+  assert.ok(!/retest in an authed context/.test(out), 'must not repeat advice already followed');
+  assert.match(out, /WAS authenticated/);
+  assert.match(out, /not a credential problem/);
+});
+
+test('an UNAUTHENTICATED inconclusive run keeps the original hint', () => {
+  const out = hintFor({ attempted: false, authenticated: false, status: null, reason: 'no_credential' });
+  assert.match(out, /likely an unauthenticated run/);
+  assert.match(out, /retest in an authed context/);
+});
+
+test('omitting auth entirely preserves the pre-existing hint (back-compat)', () => {
+  const out = hintFor(undefined);
+  assert.match(out, /likely an unauthenticated run/);
+});
+
+test('a rejected-credential run is not described as authenticated', () => {
+  const out = hintFor({ attempted: true, authenticated: false, status: 401, reason: 'rejected' });
+  assert.ok(!/WAS authenticated/.test(out));
+});
+
+test.after(() => { try { fsx.rmSync(HINT_TMP, { recursive: true, force: true }); } catch { /* ignore */ } });
+
 // ── Cookie parsing ──────────────────────────────────────────────────────────
 
 test('parseSessionCookie reads the real Set-Cookie shape from services/session.js', () => {

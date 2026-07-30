@@ -348,7 +348,7 @@ async function navigateScenario({ page, scenarioKey, scenario, outputDir }) {
 //                   rendered) — the owner should retest in an authed context.
 //   MANUAL        — the scenario has no automatable assertion (e.g. the
 //                   restore-banner UI action).
-function assertScenario({ scenarioKey, scenario, navResult, outputDir }) {
+function assertScenario({ scenarioKey, scenario, navResult, outputDir, auth = null }) {
   const a = scenario.assertion;
   const threadText = (navResult && navResult.threadText) || '';
   const haystack = threadText.replace(/\s+/g, ' ').trim();
@@ -379,7 +379,11 @@ function assertScenario({ scenarioKey, scenario, navResult, outputDir }) {
   for (const f of forbidden) console.log(`[assert]   forbidden ${f.matched ? 'PRESENT ✗' : 'absent ✓'}: ${f.pattern}`);
   for (const e of expected) console.log(`[assert]   expected  ${e.matched ? 'present ✓' : 'MISSING …'}: ${e.pattern}`);
   if (verdict === 'INCONCLUSIVE') {
-    console.log('[assert]   (inconclusive — likely an unauthenticated run; retest in an authed context for a real PASS/FAIL.)');
+    // The hint must not send the owner to re-run something they already did. An
+    // authenticated run's INCONCLUSIVE is NOT a credential problem, so say so.
+    console.log(auth && auth.authenticated
+      ? '[assert]   (inconclusive — the session WAS authenticated, so this is not a credential problem; the expected reply did not render inside the observed window.)'
+      : '[assert]   (inconclusive — likely an unauthenticated run; retest in an authed context for a real PASS/FAIL.)');
   }
   return verdict;
 }
@@ -486,7 +490,7 @@ async function bootstrapBrowser({ baseUrl, scenarioKey, outputDir, scenario, acc
     // PR #718: assert the observed thread against the scenario's expected /
     // forbidden patterns. A FAIL (the bug behaviour reappeared) surfaces as a
     // non-zero exit; PASS / INCONCLUSIVE / MANUAL exit 0.
-    verdict = assertScenario({ scenarioKey, scenario, navResult, outputDir });
+    verdict = assertScenario({ scenarioKey, scenario, navResult, outputDir, auth });
     if (verdict === 'FAIL') exitCode = 2;
 
     console.log(`[bootstrap] DONE — read-only retest complete (verdict: ${verdict}). Never pressed Save, no writes.`);
