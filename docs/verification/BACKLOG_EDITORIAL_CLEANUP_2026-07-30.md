@@ -171,3 +171,11 @@ The second pass did not delete the old prose. It archived the entire historical 
 - `BACKLOG.md` lines: **826 → 813**
 - Historical text discarded: **no**
 - Runtime/code behavior changed: **no**
+
+## F10/current-state verification pass
+
+- Canonical verification: `docs/ATLAS_V1_EXECUTION_PLAN.md` records F10 COMPLETE and names SESS-4, SESS-5, PR-24 slice-3, and Workout Sheet duplicate-name identity as its resolved findings.
+- Resolved/completed blocks archived: **8**
+- `BACKLOG.md` lines: **813 → 799**
+- Historical text discarded: **no**
+- Runtime/code behavior changed: **no**
