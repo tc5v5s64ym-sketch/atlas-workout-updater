@@ -4140,6 +4140,22 @@ let activePreviewCorrelation = null;
 // seq is stale is dropped, so it can never overwrite a NEWER request's preview or pending write.
 let previewRequestSeq = 0;
 
+// Phase 4 criterion 4 step (b) — Codex P1, round 3. A SEPARATE monotonic counter, bumped at the very
+// top of every composer submit, before any early return.
+//
+// `previewRequestSeq` cannot carry this: it advances on a form edit and inside `invalidatePreview`,
+// and several newer turns return BEFORE reaching either — a bug command, a plan request, an artifact
+// ask, a held bodyweight clarification, finish/closeout, the post-save correction prompt. So an older
+// reply still awaiting `rowsFromWorkoutInput()` could pass a `submitSeq === previewRequestSeq` check
+// and act on a proposal the athlete had already moved on from. (A typed newer turn is in practice
+// already covered, because the composer lives inside `#logger-form` and its `input` listener calls
+// `invalidatePreview`; a PROGRAMMATIC submit — the closeout re-dispatch, the manual-effort trigger —
+// fires no input event, so the window is real.)
+//
+// Kept deliberately separate from `previewRequestSeq` so preview, parse, modality and blocked-log
+// semantics are untouched: this counter has exactly one consumer, the state-changing follow-up lane.
+let composerTurnSeq = 0;
+
 // In-thread effort cards mirror the global approve button. When a preview is
 // replaced or invalidated, an older card no longer matches the live pendingWrite,
 // so its Save must be permanently neutralised — otherwise clicking a stale card
@@ -6895,6 +6911,9 @@ function bindClarifiedRowsToCurrentSession(rows) {
 document.getElementById('logger-form').addEventListener('submit', async e => {
   e.preventDefault();
 
+  composerTurnSeq += 1;                  // revoke any older in-flight submit BEFORE every early
+  const turnSeq = composerTurnSeq;       // return below — see the `composerTurnSeq` declaration
+
   // Paint the user's message bubble FIRST — before any routing, coach reply,
   // preview card, or logged-set reaction can append an Atlas bubble. Doing this
   // synchronously at the top of the handler guarantees the pasted workout shows
@@ -7138,13 +7157,15 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       // commands still outrank it: bug capture, the plan request, a held bodyweight clarification
       // and finish/closeout all ran above, and a loggable set parsed and logged before this catch.
       //
-      // SUBMIT AUTHORITY FIRST (F07/CLIENT-3, Codex P1 this PR). This lane can APPROVE a plan
+      // SUBMIT AUTHORITY FIRST (F07/CLIENT-3, Codex P1 rounds 2 and 3). This lane can APPROVE a plan
       // revision, and it is reached after an `await`. If an older reply's parse rejects late, after
       // a newer submit has already been handled, a delayed "do that" would approve against a
       // proposal the athlete has since asked a clarifying question about — the clarification
       // deliberately KEEPS the proposal, so nothing else would stop it. A superseded submit decides
-      // nothing.
-      if (submitSeq !== previewRequestSeq) return;
+      // nothing. BOTH counters are checked: `previewRequestSeq` catches a newer submit or a form
+      // edit, and `composerTurnSeq` catches a newer submit that returned EARLY and so never reached
+      // an invalidation point at all.
+      if (submitSeq !== previewRequestSeq || turnSeq !== composerTurnSeq) return;
       if (trySetRevisionFollowup(pendingChatText)) {
         activeExercise = null;
         return;

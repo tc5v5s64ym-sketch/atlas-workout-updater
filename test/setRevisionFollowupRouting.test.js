@@ -613,7 +613,7 @@ test('4b.X2 (Codex P1) a superseded submit decides nothing', () => {
     appSrc.indexOf('if (pendingChatText && !hasAnyEffortInput()) {'),
     appSrc.indexOf('tryResolvePendingReplacement(pendingChatText)')
   );
-  const guardIdx = catchBlock.lastIndexOf('if (submitSeq !== previewRequestSeq) return;');
+  const guardIdx = catchBlock.lastIndexOf('if (submitSeq !== previewRequestSeq');
   const laneIdx = catchBlock.indexOf('trySetRevisionFollowup(pendingChatText)');
   assert.notEqual(guardIdx, -1, 'the lane must be preceded by a submit-authority check');
   assert.notEqual(laneIdx, -1, 'the lane must be wired in the catch block');
@@ -730,6 +730,58 @@ test('4b.Y1 (Codex P1) EVERY tier must consume the whole turn, not just its open
   for (const words of ['keep it', 'keep that', 'leave it', 'just keep it']) {
     assert.equal(C.classifySetRevisionFollowup(words).action, 'clarify_keep', `"${words}"`);
   }
+});
+
+test('4b.Y4 (Codex P1) a newer submit revokes an older one BEFORE any early return', () => {
+  // `previewRequestSeq` advances on a form edit and inside invalidatePreview, and several newer
+  // turns return before reaching either — a bug command, a plan request, an artifact ask, a held
+  // clarification, finish/closeout, the correction prompt. An older reply awaiting its parse would
+  // still have looked authoritative and could have approved a proposal the athlete moved on from.
+  const handlerStart = appSrc.indexOf("document.getElementById('logger-form').addEventListener('submit'");
+  assert.notEqual(handlerStart, -1, 'the composer submit handler must exist');
+  const handler = appSrc.slice(handlerStart, appSrc.indexOf('trySetRevisionFollowup(pendingChatText)'));
+
+  const bumpIdx = handler.indexOf('composerTurnSeq += 1;');
+  const captureIdx = handler.indexOf('const turnSeq = composerTurnSeq;');
+  assert.notEqual(bumpIdx, -1, 'every submit must bump the composer turn counter');
+  assert.notEqual(captureIdx, -1, 'and capture its own turn identity');
+  assert.ok(bumpIdx < captureIdx, 'bump, then capture — the current turn stays authoritative');
+
+  // It must precede EVERY early return in the handler, so the first one is the yardstick.
+  for (const earlier of [
+    'parseBugCommand(submittedText)',
+    'looksLikeSessionRequest(workoutTextInput.value)',
+    'looksLikeArtifactRequest(workoutTextInput.value)',
+    'resolvePendingClarification(workoutTextInput.value.trim())',
+    'looksLikeLogIt(workoutTextInput.value)',
+    'showCorrectionPrompt(correctionText)',
+    'const pendingChatText =',
+  ]) {
+    const idx = handler.indexOf(earlier);
+    assert.notEqual(idx, -1, `${earlier} must be present in the handler`);
+    assert.ok(bumpIdx < idx, `the revoke must precede the early return at ${earlier}`);
+  }
+
+  // …and the state-changing lane must check BOTH counters.
+  const guard = appSrc.slice(handlerStart, appSrc.indexOf('if (trySetRevisionFollowup(pendingChatText))'));
+  assert.match(guard, /if \(submitSeq !== previewRequestSeq \|\| turnSeq !== composerTurnSeq\) return;/,
+    'the lane is gated on the preview seq AND the composer turn seq');
+
+  // The new counter must not be repurposed anywhere else, so preview / parse / modality and
+  // blocked-log semantics stay exactly as they were: it appears in its own declaration, the
+  // handler's revoke, and the one lane guard — and in none of those other mechanisms.
+  for (const [label, from, to] of [
+    ['invalidatePreview', 'function invalidatePreview(', 'function renderPreview('],
+    ['tryPreviewModality', 'async function tryPreviewModality(', 'document.getElementById(\'logger-form\').addEventListener(\'submit\''],
+  ]) {
+    const a = appSrc.indexOf(from);
+    const b = appSrc.indexOf(to);
+    if (a === -1 || b === -1 || b <= a) continue;
+    assert.equal(appSrc.slice(a, b).includes('composerTurnSeq'), false,
+      `${label} must be untouched by the new counter`);
+  }
+  assert.doesNotMatch(appSrc, /blockedLogSeq\s*=\s*turnSeq/, 'it never displaces previewRequestSeq');
+  assert.doesNotMatch(appSrc, /previewRequestSeq\s*=\s*composerTurnSeq/, 'the two counters stay separate');
 });
 
 test('4b.Y2 (Codex P2) an ALL-anchored scope is never narrowed to the last future sets', () => {

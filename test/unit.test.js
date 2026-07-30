@@ -7076,7 +7076,12 @@ test('artifact route: classifier matches artifact asks and never digit-bearing i
 test('artifact route: submit path renders the deterministic artifact and falls through when unavailable', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const submitIdx = appSource.indexOf("document.getElementById('logger-form').addEventListener('submit'");
-  const submitBlock = appSource.slice(submitIdx, submitIdx + 4200);
+  // Slice to the handler's own routing HEAD (up to where the conversational catch block begins)
+  // rather than a fixed byte budget: the ordering contract asserted below is about which branch
+  // comes first, and a magic window silently starts failing when any comment above a branch grows.
+  const headEnd = appSource.indexOf('const pendingChatText =', submitIdx);
+  assert.ok(headEnd > submitIdx, 'the submit handler must reach its conversational lane');
+  const submitBlock = appSource.slice(submitIdx, headEnd);
   assert.match(submitBlock, /looksLikeArtifactRequest\(workoutTextInput\.value\)/, 'the submit path consults the artifact classifier');
   assert.match(submitBlock, /window\.atlasChipAnswerLast/, 'last-session asks use the nav.js artifact renderer');
   assert.match(submitBlock, /window\.atlasChipAnswerReport/, 'weekly asks use the nav.js report renderer');
