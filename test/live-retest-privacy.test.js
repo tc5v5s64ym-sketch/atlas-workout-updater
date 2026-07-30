@@ -65,6 +65,10 @@ function captureConsole(fn) {
 // every call so a privacy run can prove zero captures.
 function mockPage({ threadText = PRIVATE } = {}) {
   const screenshots = [];
+  // An atlas reply bubble appears only after the preview click (mirrors the app:
+  // appendAtlasBubble runs on submit). Settlement keys off this, so the mock must
+  // model it for navigateScenario's settle loop to complete.
+  let previewClicked = false;
   const locators = {
     '#workout-text': {
       fill: async () => {},
@@ -72,16 +76,21 @@ function mockPage({ threadText = PRIVATE } = {}) {
       waitFor: async () => {},
       getAttribute: async () => 'Log a set or ask anything…'
     },
-    '#preview-btn': { click: async () => {} },
+    '#preview-btn': { click: async () => { previewClicked = true; } },
     '#approve-btn': { isDisabled: async () => true },
     '#thread-messages': { innerText: async () => threadText },
+    '#thread-messages .chat-bubble-atlas': {
+      count: async () => (previewClicked ? 1 : 0),
+      last: () => ({ innerText: async () => threadText })
+    },
     body: { getAttribute: async () => 'coach' }
   };
   return {
     screenshots,
-    locator: (sel) => locators[sel] || { getAttribute: async () => null },
+    locator: (sel) => locators[sel] || { getAttribute: async () => null, count: async () => 0 },
     screenshot: async ({ path: p }) => { screenshots.push(p); },
-    waitForTimeout: async () => {}
+    // Real (short) sleep so the settle stable-window elapses in bounded time.
+    waitForTimeout: async (ms) => new Promise(r => setTimeout(r, Math.min(ms, 100)))
   };
 }
 

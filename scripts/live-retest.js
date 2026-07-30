@@ -326,6 +326,77 @@ function printScenario(scenarioKey, scenario, { targetBaseUrl, dryRunOnly }) {
 // approve/"Write to Google Sheets" button (#approve-btn) and never enables it.
 // Assertions (pass/fail) are a later slice (#718); this just navigates and
 // captures what the UI shows.
+// --- Deterministic response-settle -----------------------------------------
+// The coach reply renders in two observable phases (src/app/coach-conversation.js):
+// `appendAtlasBubble` adds a NEW `.chat-bubble-atlas` bubble whose text is first
+// "Thinking…", then that same bubble's text is cleared and the reply is typed out
+// character by character. A fixed sleep raced this — production replies were still
+// streaming at 2500 ms, so the assertion read "…Thinking…" and every
+// authenticated run collapsed to a timing INCONCLUSIVE.
+//
+// The settle test keys off the ATLAS REPLY BUBBLE, not the whole thread. The
+// submit handler paints the lifter's own `.chat-bubble-user` ("you missed a set")
+// synchronously; if coach routing is slow to add the "Thinking…" bubble, a
+// whole-thread stable-window would fire on that user bubble and read before the
+// reply arrives — reintroducing the very INCONCLUSIVE this fixes (Codex P2,
+// #1205). So a reply is SETTLED only when: a NEW atlas bubble exists (`present`,
+// beyond the pre-click baseline), it no longer shows "Thinking…", and its text is
+// non-empty and has stopped growing for `stableMs` (typeOut finished). Bounded by
+// `timeoutMs`; it never waits indefinitely, and on timeout returns settled:false
+// with the exact reason, which the assertion turns into INCONCLUSIVE — never a
+// PASS. Pure over an injected `readReply` / `sleep` / `now`, so it is
+// unit-testable with no browser.
+//
+// `readReply()` returns { present, thinking, text } about the newest atlas reply
+// bubble: `present` = a new atlas bubble has appeared since the click; `thinking`
+// = that bubble currently shows the marker; `text` = its text.
+const THINKING_MARKER = 'Thinking…';
+const SETTLE_TIMEOUT_MS = 20000;
+const SETTLE_POLL_MS = 250;
+const SETTLE_STABLE_MS = 750;
+
+async function waitForSettledResponse({
+  readReply,
+  timeoutMs = SETTLE_TIMEOUT_MS,
+  pollMs = SETTLE_POLL_MS,
+  stableMs = SETTLE_STABLE_MS,
+  sleep,
+  now = Date.now
+} = {}) {
+  const start = now();
+  let last = null;
+  let lastChangeAt = start;
+  let sawThinking = false;
+  let sawReply = false;
+  for (;;) {
+    const s = (await readReply()) || {};
+    const present = Boolean(s.present);
+    const thinking = Boolean(s.thinking);
+    const body = String(s.text || '').split(THINKING_MARKER).join('').trim();
+    if (thinking) sawThinking = true;
+    if (present) sawReply = true;
+
+    // Restart the stable window on ANY change to the reply's observable state,
+    // so the window only completes once a real atlas reply has stopped growing —
+    // never on the untouched user bubble (present would be false there).
+    const key = JSON.stringify([present, thinking, s.text || '']);
+    if (key !== last) { last = key; lastChangeAt = now(); }
+    const stableFor = now() - lastChangeAt;
+
+    if (present && !thinking && body.length > 0 && stableFor >= stableMs) {
+      return { settled: true, text: s.text || '', sawThinking, reason: 'settled', waitedMs: now() - start };
+    }
+    if (now() - start >= timeoutMs) {
+      const reason = !sawReply ? 'timeout_no_response'
+        : thinking ? 'timeout_still_thinking'
+          : body.length === 0 ? 'timeout_no_response'
+            : 'timeout_unstable';
+      return { settled: false, text: s.text || '', sawThinking, reason, waitedMs: now() - start };
+    }
+    await sleep(pollMs);
+  }
+}
+
 async function navigateScenario({ page, scenarioKey, scenario, outputDir, privacy = false }) {
   const nav = scenario.navigation || { type: 'manual' };
 
@@ -353,10 +424,29 @@ async function navigateScenario({ page, scenarioKey, scenario, outputDir, privac
   // Submit the preview flow (test_mode dry-run). Tolerant: a readback may or may
   // not render depending on the authenticated context — capturing the result is
   // enough for this slice.
+  // Baseline the atlas reply bubbles BEFORE the click, so settlement keys off a
+  // genuinely NEW reply and not the lifter's own bubble (Codex P2, #1205).
+  const atlasBubbles = page.locator('#thread-messages .chat-bubble-atlas');
+  const baselineAtlas = await atlasBubbles.count().catch(() => 0);
+
   console.log(`[navigate] clicking #preview-btn (preview/dry-run only — never Save)`);
   await page.locator('#preview-btn').click();
-  // Give the thread a moment to update without coupling to a specific outcome.
-  await page.waitForTimeout(2500);
+
+  // Wait for a genuinely SETTLED response: a NEW atlas reply bubble that no longer
+  // shows "Thinking…" and has stopped growing. Bounded — never waits indefinitely.
+  // Reads bubble state only; touches no write control.
+  const settle = await waitForSettledResponse({
+    readReply: async () => {
+      const n = await atlasBubbles.count().catch(() => 0);
+      if (n <= baselineAtlas) return { present: false, thinking: false, text: '' };
+      const text = await atlasBubbles.last().innerText().catch(() => '');
+      return { present: true, thinking: text.includes(THINKING_MARKER), text };
+    },
+    sleep: (ms) => page.waitForTimeout(ms)
+  });
+  console.log(settle.settled
+    ? `[navigate] response settled after ${settle.waitedMs}ms`
+    : `[navigate] response did NOT settle (${settle.reason}) after ${settle.waitedMs}ms — verdict will be INCONCLUSIVE`);
 
   // Re-confirm we never enabled/clicked the write button.
   const approveDisabled = await page.locator('#approve-btn').isDisabled().catch(() => null);
@@ -375,7 +465,7 @@ async function navigateScenario({ page, scenarioKey, scenario, outputDir, privac
     console.log(`[navigate] preview-flow screenshot saved`);
   }
 
-  return { navigated: true, threadText };
+  return { navigated: true, threadText, settle };
 }
 
 // --- PR #718: read-only assertion engine ------------------------------------
@@ -414,26 +504,46 @@ function assertScenario({ scenarioKey, scenario, navResult, outputDir, auth = nu
   const expected = (a.expected || []).map(re => ({ pattern: String(re), matched: re.test(haystack) }));
   const forbiddenHit = forbidden.some(f => f.matched);
 
+  // Response-settle gate. A run whose reply never settled (still "Thinking…",
+  // empty, or still streaming) cannot support a PASS — the expected reply was
+  // never fully observed. A forbidden/bug pattern that ALREADY appeared is still
+  // a real FAIL regardless (the bug behaviour is present). Otherwise an unsettled
+  // response is INCONCLUSIVE with the exact settle reason — never a false PASS.
+  // `settle` absent (unit callers / non-composer scenarios) is treated as settled
+  // for back-compatibility; the live path always provides it.
+  const settle = navResult && navResult.settle;
+  const unsettled = Boolean(settle) && settle.settled === false;
+
   let verdict;
+  let settleReason = null;
   if (forbiddenHit) {
     verdict = 'FAIL';
+  } else if (unsettled) {
+    verdict = 'INCONCLUSIVE';
+    settleReason = settle.reason;
   } else if (expected.length > 0) {
     verdict = expected.every(e => e.matched) ? 'PASS' : 'INCONCLUSIVE';
   } else {
     verdict = haystack ? 'PASS' : 'INCONCLUSIVE';
   }
 
-  writeResult(outputDir, scenarioKey, scenario, { verdict, authenticated_run, forbidden, expected, threadExcerpt: excerptOf(400) });
+  writeResult(outputDir, scenarioKey, scenario, { verdict, authenticated_run, settleReason, forbidden, expected, threadExcerpt: excerptOf(400) });
 
   console.log(`[assert] ${scenarioKey}: ${verdict}`);
   for (const f of forbidden) console.log(`[assert]   forbidden ${f.matched ? 'PRESENT ✗' : 'absent ✓'}: ${f.pattern}`);
   for (const e of expected) console.log(`[assert]   expected  ${e.matched ? 'present ✓' : 'MISSING …'}: ${e.pattern}`);
   if (verdict === 'INCONCLUSIVE') {
-    // The hint must not send the owner to re-run something they already did. An
-    // authenticated run's INCONCLUSIVE is NOT a credential problem, so say so.
-    console.log(auth && auth.authenticated
-      ? '[assert]   (inconclusive — the session WAS authenticated, so this is not a credential problem; the expected reply did not render inside the observed window.)'
-      : '[assert]   (inconclusive — likely an unauthenticated run; retest in an authed context for a real PASS/FAIL.)');
+    // The hint must name the real cause. A settle timeout is neither a credential
+    // problem nor an unauthenticated run — it is a response that never completed.
+    if (settleReason) {
+      console.log(`[assert]   (inconclusive — the response never settled (${settleReason}) within the bound; the reply was not fully observed. Not a credential problem.)`);
+    } else {
+      // The hint must not send the owner to re-run something they already did. An
+      // authenticated run's INCONCLUSIVE is NOT a credential problem, so say so.
+      console.log(auth && auth.authenticated
+        ? '[assert]   (inconclusive — the session WAS authenticated, so this is not a credential problem; the expected reply did not render inside the observed window.)'
+        : '[assert]   (inconclusive — likely an unauthenticated run; retest in an authed context for a real PASS/FAIL.)');
+    }
   }
   return verdict;
 }
@@ -742,5 +852,7 @@ module.exports = {
   SYNTHETIC_ORIGIN, SYNTHETIC_HEADERS, ACCESS_CODE_ENV, SESSION_COOKIE_NAME,
   redactCredential, parseSessionCookie, authenticateContext, shouldProceedToNavigation,
   // Authenticated-content privacy (public repository).
-  PRIVACY_MARKER, writePrivacyMarker, safeErrorSummary
+  PRIVACY_MARKER, writePrivacyMarker, safeErrorSummary,
+  // Deterministic response-settle.
+  waitForSettledResponse, THINKING_MARKER, SETTLE_TIMEOUT_MS
 };
