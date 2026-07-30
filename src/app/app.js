@@ -3188,6 +3188,13 @@ document.addEventListener('atlas:replacement-decision', e => {
 // active and Atlas answers it. No Sheet write occurs.
 document.addEventListener('atlas:set-revision-decision', e => {
   const d = (e && e.detail) || {};
+  // A card tap is a NEWER TURN, and it bypasses the composer, so nothing else advances the turn
+  // authority. Without this, a typed "do that" still awaiting its parse would apply the revision
+  // right after an ASK WHY tap — the one card action that deliberately keeps the proposal alive —
+  // so the athlete's question would be answered AND acted on (Codex P1, round 9). Bumped for all
+  // three decisions: approve and reject already consume the proposal, and revoking a superseded
+  // in-flight turn is correct in those cases too.
+  turnAuthoritySeq += 1;
   if (d.decision === 'approve') approvePendingSetRevision({ proposal_id: d.proposal_id, endorsement: d.endorsement });
   else if (d.decision === 'reject') rejectPendingSetRevision({ proposal_id: d.proposal_id });
   else if (d.decision === 'ask_why') explainPendingSetRevision(d.proposal_id);
@@ -4184,8 +4191,12 @@ let activePreviewCorrelation = null;
 // seq is stale is dropped, so it can never overwrite a NEWER request's preview or pending write.
 let previewRequestSeq = 0;
 
-// Phase 4 criterion 4 step (b) — Codex P1, round 3. A SEPARATE monotonic counter, bumped at the very
-// top of every composer submit, before any early return.
+// Phase 4 criterion 4 step (b) — Codex P1, rounds 3 and 9. "Has a NEWER TURN taken authority over
+// this conversation?" A separate monotonic counter, bumped by every turn that can take that
+// authority, before that turn does anything else. Two bump sites, both required:
+//
+//   1. Every composer submit, at the very top, before any early return.
+//   2. Every explicit decision on the set-revision CARD (`atlas:set-revision-decision`).
 //
 // `previewRequestSeq` cannot carry this: it advances on a form edit and inside `invalidatePreview`,
 // and several newer turns return BEFORE reaching either — a bug command, a plan request, an artifact
@@ -4196,9 +4207,15 @@ let previewRequestSeq = 0;
 // `invalidatePreview`; a PROGRAMMATIC submit — the closeout re-dispatch, the manual-effort trigger —
 // fires no input event, so the window is real.)
 //
+// The CARD bump exists because a card tap bypasses the composer entirely, so neither counter moved.
+// Approve and Keep Original consume the proposal, so an in-flight typed turn already fails its
+// binding — but ASK WHY deliberately PRESERVES the proposal, which left a delayed "do that" free to
+// apply the revision right after the athlete asked a question instead of deciding. Asking is not
+// consenting, and a question must not be answered AND acted on.
+//
 // Kept deliberately separate from `previewRequestSeq` so preview, parse, modality and blocked-log
 // semantics are untouched: this counter has exactly one consumer, the state-changing follow-up lane.
-let composerTurnSeq = 0;
+let turnAuthoritySeq = 0;
 
 // In-thread effort cards mirror the global approve button. When a preview is
 // replaced or invalidated, an older card no longer matches the live pendingWrite,
@@ -6955,8 +6972,8 @@ function bindClarifiedRowsToCurrentSession(rows) {
 document.getElementById('logger-form').addEventListener('submit', async e => {
   e.preventDefault();
 
-  composerTurnSeq += 1;                  // revoke any older in-flight submit BEFORE every early
-  const turnSeq = composerTurnSeq;       // return below — see the `composerTurnSeq` declaration
+  turnAuthoritySeq += 1;                  // revoke any older in-flight submit BEFORE every early
+  const turnSeq = turnAuthoritySeq;       // return below — see the `turnAuthoritySeq` declaration
   // Bind this turn to the proposal the athlete could actually SEE when they pressed send. Captured
   // synchronously, before any await — `proposeSetRevisionsForLoggedSlots` fires its producer as an
   // unawaited promise, so a different proposal (or a first one) can land while this turn is parsing.
@@ -7211,9 +7228,9 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       // proposal the athlete has since asked a clarifying question about — the clarification
       // deliberately KEEPS the proposal, so nothing else would stop it. A superseded submit decides
       // nothing. BOTH counters are checked: `previewRequestSeq` catches a newer submit or a form
-      // edit, and `composerTurnSeq` catches a newer submit that returned EARLY and so never reached
+      // edit, and `turnAuthoritySeq` catches a newer submit that returned EARLY and so never reached
       // an invalidation point at all.
-      if (submitSeq !== previewRequestSeq || turnSeq !== composerTurnSeq) return;
+      if (submitSeq !== previewRequestSeq || turnSeq !== turnAuthoritySeq) return;
       if (trySetRevisionFollowup(pendingChatText, turnProposalId)) {
         activeExercise = null;
         return;

@@ -925,6 +925,37 @@ test('4b.Y11 (Codex P2) a proposal whose last set was logged is dead for EVERY c
   assert.match(lastReply(live.state), /185/, 'and the success response is the real one');
 });
 
+test('4b.Y13 (Codex P1) a card tap revokes an in-flight typed turn — Ask Why especially', () => {
+  // A card tap bypasses the composer, so neither counter moved. Approve and Keep Original consume
+  // the proposal, so an in-flight typed turn already fails its binding — but ASK WHY deliberately
+  // PRESERVES the proposal, which left a delayed "do that" free to apply the revision right after the
+  // athlete asked a question instead of deciding. Asking is not consenting.
+  const listener = appSrc.slice(
+    appSrc.indexOf("document.addEventListener('atlas:set-revision-decision'"),
+    appSrc.indexOf('function explainPendingSetRevision(')
+  );
+  const bumpIdx = listener.indexOf('turnAuthoritySeq += 1;');
+  assert.notEqual(bumpIdx, -1, 'a card decision must advance the turn authority');
+  for (const branch of ["d.decision === 'approve'", "d.decision === 'reject'", "d.decision === 'ask_why'"]) {
+    const idx = listener.indexOf(branch);
+    assert.notEqual(idx, -1, `${branch} must still be handled`);
+    assert.ok(bumpIdx < idx, `the revoke must precede ${branch}`);
+  }
+
+  // The card's three actions are otherwise untouched — the bump is additive, not a rerouting.
+  assert.match(listener, /approvePendingSetRevision\(\{ proposal_id: d\.proposal_id, endorsement: d\.endorsement \}\)/);
+  assert.match(listener, /rejectPendingSetRevision\(\{ proposal_id: d\.proposal_id \}\)/);
+  assert.match(listener, /explainPendingSetRevision\(d\.proposal_id\)/);
+
+  // And the lane still refuses a turn whose authority was revoked, with the proposal intact —
+  // which is exactly the state Ask Why leaves behind.
+  const h = withProposal();
+  const id = h.state.pendingSetRevision.proposal_id;
+  assert.equal(h.api.explainPendingSetRevision(id), true, 'Ask Why answers and keeps the proposal');
+  assert.ok(h.state.pendingSetRevision, 'the proposal survives the question');
+  assert.equal(h.state.revisions.length, 0, 'and asking applied nothing');
+});
+
 test('4b.Y12 (Codex P1) consent is bound to the proposal the athlete could SEE at submit time', () => {
   // `proposeSetRevisionsForLoggedSlots` stages proposals from an UNAWAITED promise, so while a turn
   // is parsing, the active proposal can become a DIFFERENT one — or the first one ever. Neither can
@@ -986,8 +1017,8 @@ test('4b.Y4 (Codex P1) a newer submit revokes an older one BEFORE any early retu
   assert.notEqual(handlerStart, -1, 'the composer submit handler must exist');
   const handler = appSrc.slice(handlerStart, appSrc.indexOf('trySetRevisionFollowup(pendingChatText, turnProposalId)'));
 
-  const bumpIdx = handler.indexOf('composerTurnSeq += 1;');
-  const captureIdx = handler.indexOf('const turnSeq = composerTurnSeq;');
+  const bumpIdx = handler.indexOf('turnAuthoritySeq += 1;');
+  const captureIdx = handler.indexOf('const turnSeq = turnAuthoritySeq;');
   assert.notEqual(bumpIdx, -1, 'every submit must bump the composer turn counter');
   assert.notEqual(captureIdx, -1, 'and capture its own turn identity');
   assert.ok(bumpIdx < captureIdx, 'bump, then capture — the current turn stays authoritative');
@@ -1009,7 +1040,7 @@ test('4b.Y4 (Codex P1) a newer submit revokes an older one BEFORE any early retu
 
   // …and the state-changing lane must check BOTH counters.
   const guard = appSrc.slice(handlerStart, appSrc.indexOf('if (trySetRevisionFollowup(pendingChatText, turnProposalId))'));
-  assert.match(guard, /if \(submitSeq !== previewRequestSeq \|\| turnSeq !== composerTurnSeq\) return;/,
+  assert.match(guard, /if \(submitSeq !== previewRequestSeq \|\| turnSeq !== turnAuthoritySeq\) return;/,
     'the lane is gated on the preview seq AND the composer turn seq');
 
   // The new counter must not be repurposed anywhere else, so preview / parse / modality and
@@ -1022,11 +1053,11 @@ test('4b.Y4 (Codex P1) a newer submit revokes an older one BEFORE any early retu
     const a = appSrc.indexOf(from);
     const b = appSrc.indexOf(to);
     if (a === -1 || b === -1 || b <= a) continue;
-    assert.equal(appSrc.slice(a, b).includes('composerTurnSeq'), false,
+    assert.equal(appSrc.slice(a, b).includes('turnAuthoritySeq'), false,
       `${label} must be untouched by the new counter`);
   }
   assert.doesNotMatch(appSrc, /blockedLogSeq\s*=\s*turnSeq/, 'it never displaces previewRequestSeq');
-  assert.doesNotMatch(appSrc, /previewRequestSeq\s*=\s*composerTurnSeq/, 'the two counters stay separate');
+  assert.doesNotMatch(appSrc, /previewRequestSeq\s*=\s*turnAuthoritySeq/, 'the two counters stay separate');
 });
 
 test('4b.Y2 (Codex P2) an ALL-anchored scope is never narrowed to the last future sets', () => {

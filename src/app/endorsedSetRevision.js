@@ -128,20 +128,30 @@ function stripTrailingFiller(s) {
   return out;
 }
 
+// The object a consumed endorsement can leave behind. `please do` is an ENDORSEMENTS entry, so it
+// consumes the head of "please do it" and strands a bare `it`. Consumable only AFTER something has
+// matched and only as the ENTIRE remainder, so "yes it hurts" still refuses.
+const DANGLING_OBJECT_RE = /^(?:it|that|this|them|those|these)$/;
+
 function isEndorsementOnly(body) {
   let rest = body;
   let matched = false;
   for (let guard = 0; guard < 8; guard += 1) {
     rest = stripTrailingFiller(stripLeadIns(rest));
-    // Only BETWEEN phrases, never at the head — see INTER_FILLER.
-    if (matched) rest = stripInterFiller(rest);
     if (!rest) break;
     // The action tier is end-anchored, so it can only match the whole remainder.
     if (ACTION_ENDORSEMENT_RE.test(rest)) { rest = ''; matched = true; break; }
     const hit = ENDORSEMENTS.find((e) => rest === e || rest.startsWith(`${e} `));
-    if (!hit) return false;                                           // unconsumed content
-    rest = rest.slice(hit.length).trim();
-    matched = true;
+    if (hit) { rest = rest.slice(hit.length).trim(); matched = true; continue; }
+    // No endorsement at the head. Only now may inter-phrase filler be consumed, and only after
+    // something has already matched — stripping it FIRST broke "yes, please do", because `please`
+    // was eaten as filler even though `please do` is itself a supported endorsement (Codex P2,
+    // round 9: the combination of the round-5 and round-6 fixes).
+    if (!matched) return false;
+    if (DANGLING_OBJECT_RE.test(rest)) { rest = ''; break; }
+    const stripped = stripInterFiller(rest);
+    if (stripped === rest) return false;                              // unconsumed content
+    rest = stripped;
   }
   return matched && !rest;
 }

@@ -526,7 +526,10 @@ test('#1189 P2 — Ask Why produces a grounded explanation and keeps the proposa
   assert.match(appSrc, /function explainPendingSetRevision\(/,
     'the shell must answer Ask Why');
   const at = appSrc.indexOf("addEventListener('atlas:set-revision-decision'");
-  const listener = appSrc.slice(at, at + 700);
+  // Slice to the end of the listener (the next function declaration) rather than a fixed byte
+  // budget, so this routing assertion cannot start failing merely because a comment inside the
+  // listener grew.
+  const listener = appSrc.slice(at, appSrc.indexOf('function explainPendingSetRevision(', at));
   assert.match(listener, /ask_why/, 'the decision listener routes the Ask Why branch');
   assert.match(listener, /explainPendingSetRevision\(/, 'to the explanation handler');
 
