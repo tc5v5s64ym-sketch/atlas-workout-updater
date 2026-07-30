@@ -103,6 +103,43 @@ const SCENARIOS = {
     // Forbidden patterns recorded for when this flow becomes automatable; for now
     // the scenario is MANUAL (assertion: null) since the thread isn\'t driven here.
     assertion: null
+  },
+  // A PRODUCTION COACH-RESPONSE SETTLEMENT scenario (companion to the
+  // outage-specific bug-20260629-153258, which is unchanged). It exercises the
+  // real navigateScenario settlement path against production and reaches a
+  // genuine PASS/FAIL, WITHOUT asserting on nondeterministic reply wording. It
+  // uses verdict mode 'settled_no_forbidden' (assertion shape (a)): a settled
+  // coach reply that never reveals an outage is a PASS; an outage wording is a
+  // FAIL; anything that never produced an observable settled reply is
+  // INCONCLUSIVE. It carries NO `expected` regex and does NOT use the generic
+  // "no expected = PASS" path — the mode is explicit.
+  //
+  // SCOPE OF WHAT A PASS PROVES: exactly three things — (1) a NEW atlas reply
+  // bubble appeared, (2) it finished rendering and settled, (3) it contained no
+  // known outage/unavailable wording. The settled reply MAY come from Gemini OR
+  // from the deterministic engine fallback (which also settles cleanly and does
+  // not reveal an outage). This scenario therefore does NOT establish model
+  // provenance or Gemini health — proving those would need a separate
+  // provenance/evidence concern (a `source:'gemini'` gate), deliberately out of
+  // scope here.
+  'coach-response-settlement': {
+    bugId: 'COACH-RESPONSE-SETTLEMENT',
+    purpose: 'Production coach-response settlement: a conversational message must produce a settled coach reply that never reveals an LLM outage — end-to-end proof of the settlement path. The reply may come from Gemini OR the deterministic engine fallback; this does NOT establish model provenance or Gemini health.',
+    input: 'Type the conversational message "you missed a set" and wait for a settled coach reply.',
+    expected: 'A NEW coach bubble appears beyond the pre-submit baseline, stops showing "Thinking…", settles with non-empty content, and shows none of the four "coach unavailable" outage wordings. (No specific reply word/number/lift is required — that would test nondeterministic phrasing. Provenance is not asserted — the reply may be from Gemini or the engine fallback.)',
+    forbidden: 'Any "couldn\'t reach the coach" / "coach isn\'t available" / "ask again" outage wording in the settled reply.',
+    reference: 'Companion to bug-20260629-153258 (outage-specific); that scenario and its #719 anti-false-PASS assertion remain unchanged. Verdict mode: settled_no_forbidden. Model provenance / Gemini health is explicitly out of scope.',
+    navigation: { type: 'composer', text: 'you missed a set' },
+    // Verdict mode (assertion shape (a)). No `expected` regex by design.
+    assertion: {
+      mode: 'settled_no_forbidden',
+      forbidden: [
+        /coach.{0,15}(isn'?t|is not|not).{0,15}available/i,
+        /couldn'?t reach/i,
+        /reach the coach/i,
+        /coach[^.]{0,20}unavailable/i
+      ]
+    }
   }
 };
 
@@ -516,7 +553,27 @@ function assertScenario({ scenarioKey, scenario, navResult, outputDir, auth = nu
 
   let verdict;
   let settleReason = null;
-  if (forbiddenHit) {
+  if (a.mode === 'settled_no_forbidden') {
+    // Explicit regression verdict mode (assertion shape (a)). A PASS requires a
+    // GENUINELY SETTLED atlas reply — which `settle.settled === true` already
+    // guarantees end to end (a new .chat-bubble-atlas beyond the pre-submit
+    // baseline, no longer "Thinking…", non-empty, stable for the window) — and the
+    // absence of every forbidden pattern. A forbidden pattern is a FAIL. Anything
+    // that did not produce an observable settled reply is INCONCLUSIVE. This mode
+    // NEVER PASSes on a non-settled or unobservable response, and never uses the
+    // generic "no expected regex = PASS" path. It requires no specific reply word,
+    // so it does not test nondeterministic wording. (`settle` is always present on
+    // the live path; a missing settle object here means settlement was never
+    // observed, so it fails closed to INCONCLUSIVE.)
+    if (forbiddenHit) {
+      verdict = 'FAIL';
+    } else if (settle && settle.settled === true) {
+      verdict = 'PASS';
+    } else {
+      verdict = 'INCONCLUSIVE';
+      settleReason = settle ? settle.reason : 'no_settlement_observed';
+    }
+  } else if (forbiddenHit) {
     verdict = 'FAIL';
   } else if (unsettled) {
     verdict = 'INCONCLUSIVE';
