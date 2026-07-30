@@ -125,12 +125,19 @@ const BODILY_SYMPTOM_RE = /\b(?:hurt|hurts|hurting|pain|painful|sore|soreness|ac
 // An ORIGINAL marker turns an ambiguous "keep" into an unambiguous rejection.
 // WHOLE-TURN, same rule as every other tier: "don't change it, my knee hurts" must not reject the
 // proposal and swallow the safety report (Codex P1, round 2).
+// `go with` is NOT a keep verb, and a bare `plan` is NOT an original-plan marker. Both were, and
+// together they inverted an acceptance: "go with that" approved while "go with that plan" REJECTED
+// and consumed the proposal, then announced the opposite of the athlete's decision — a one-word
+// difference flipping the outcome (fresh-context audit, merge-blocking). "go with that" is an
+// owner-approved class-1 acceptance, and Atlas's own proposal IS a plan, so "that plan" cannot be
+// read as the original one. `original` still carries its own optional `plan` (so "keep the original
+// plan" still rejects); an ambiguous "keep the plan" now falls through and decides nothing.
 const KEEP_ORIGINAL_RE = new RegExp(
-  '^(?:keep|leave|stick\\s+with|stay\\s+with|stay\\s+on|go\\s+with)\\s+'
+  '^(?:keep|leave|stick\\s+with|stay\\s+with|stay\\s+on)\\s+'
   + '(?:(?:it|that|this|them|those|these)\\s+)?'
   + '(?:the\\s+)?(?:as\\s+)?'
   + '(?:original(?:\\s+(?:plan|weight|prescription|target|numbers?))?'
-  +  '|planned|as\\s+planned|as\\s+(?:it\\s+)?(?:is|was)|unchanged|the\\s+same|alone|plan)$'
+  +  '|planned|as\\s+planned|as\\s+(?:it\\s+)?(?:is|was)|unchanged|the\\s+same|alone)$'
 );
 // The bare ANSWER to the two-choice question this lane asks for phrase class 3 ("Keep the original
 // plan, or accept Atlas's change?"). Only the ORIGINAL side is admitted as a bare noun phrase,

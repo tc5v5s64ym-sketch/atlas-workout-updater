@@ -3284,9 +3284,13 @@ function setCountWord(n) {
 // Resolve a follow-up turn against the ACTIVE set-revision proposal. Returns true when the lane
 // owned the turn (it either decided the proposal or answered it), false to fall through to the
 // existing routing with the proposal untouched.
-function trySetRevisionFollowup(text, boundProposalId) {
+function trySetRevisionFollowup(text, boundProposalId, turnIsAuthoritative) {
   const SR = (typeof window !== 'undefined' && window.setRevisionFollowup) || null;
   if (!SR || typeof SR.classifySetRevisionFollowup !== 'function') return false;
+  // A SUPERSEDED TURN DECIDES NOTHING — but it is not silenced. Returning false (rather than the
+  // caller returning outright) leaves the message to the lanes below and ultimately to the coach,
+  // so revoking a decision can never swallow the sentence that carried it.
+  if (turnIsAuthoritative !== true) return false;
   // The lane exists only while a stored proposal does. Without one there is no referent to act on,
   // and manufacturing one from prose is exactly what this design forbids — so an ordinary turn
   // reaches the coach unchanged, grounded by the discussion referent (criterion 4 step (a)).
@@ -3461,7 +3465,7 @@ function trySetRevisionFollowup(text, boundProposalId) {
     const n = asked != null ? asked : future;
     const scope = n === 1 ? 'set' : `${setCountWord(n)} sets`;
     // Echo the position the athlete actually used, so the question is about the sets they named.
-    announceSetRevisionReply(active, `What do you want to change about the ${position || 'last'} ${scope} — the weight, the reps, or remove them?`);
+    announceSetRevisionReply(active, `What do you want to change about the ${position || 'last'} ${scope} — the weight, the reps, or remove ${n === 1 ? 'it' : 'them'}?`);
     return true;
   }
 
@@ -7222,16 +7226,21 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       // commands still outrank it: bug capture, the plan request, a held bodyweight clarification
       // and finish/closeout all ran above, and a loggable set parsed and logged before this catch.
       //
-      // SUBMIT AUTHORITY FIRST (F07/CLIENT-3, Codex P1 rounds 2 and 3). This lane can APPROVE a plan
-      // revision, and it is reached after an `await`. If an older reply's parse rejects late, after
-      // a newer submit has already been handled, a delayed "do that" would approve against a
-      // proposal the athlete has since asked a clarifying question about — the clarification
-      // deliberately KEEPS the proposal, so nothing else would stop it. A superseded submit decides
-      // nothing. BOTH counters are checked: `previewRequestSeq` catches a newer submit or a form
-      // edit, and `turnAuthoritySeq` catches a newer submit that returned EARLY and so never reached
-      // an invalidation point at all.
-      if (submitSeq !== previewRequestSeq || turnSeq !== turnAuthoritySeq) return;
-      if (trySetRevisionFollowup(pendingChatText, turnProposalId)) {
+      // SUBMIT AUTHORITY, SCOPED TO THIS LANE ONLY (F07/CLIENT-3; Codex P1 rounds 2, 3 and the
+      // fresh-context audit). The lane can APPROVE a plan revision and is reached after an `await`,
+      // so a superseded turn must not DECIDE anything: `previewRequestSeq` catches a newer submit or
+      // a form edit, and `turnAuthoritySeq` catches a newer submit that returned early or a card
+      // decision that never touched the composer at all.
+      //
+      // It is passed IN rather than used as an early `return`, because a `return` here revoked the
+      // WHOLE TURN. A card tap advances `turnAuthoritySeq`, so tapping any card button while an
+      // unrelated typed message ("my knee hurts") was still awaiting its parse dropped that message
+      // entirely — past every lane below, including the coach route at the end — leaving the
+      // athlete's bubble in the thread with no reply at all. A stale turn may not decide the
+      // proposal; it must still be ANSWERED. The base guard below (after modality) keeps its
+      // original superseded-submit semantics untouched.
+      if (trySetRevisionFollowup(pendingChatText, turnProposalId,
+        submitSeq === previewRequestSeq && turnSeq === turnAuthoritySeq)) {
         activeExercise = null;
         return;
       }

@@ -111,7 +111,6 @@ function harness(options) {
     events: [],
     snapshots: 0,
     outcomes: [],
-    coachCalls: [],
   };
 
   const fakeDoc = {
@@ -152,11 +151,12 @@ function harness(options) {
              explainPendingSetRevision,
              // Mirror the composer: the turn is BOUND to the proposal visible at submit time. Tests
              // may pass an explicit binding to exercise a mismatch or an absent one.
-             trySetRevisionFollowup: function (text, boundId) {
+             trySetRevisionFollowup: function (text, boundId, authoritative) {
                const bound = boundId === undefined
                  ? ((state.pendingSetRevision || {}).proposal_id || null)
                  : boundId;
-               return trySetRevisionFollowup(text, bound);
+               return trySetRevisionFollowup(text, bound,
+                 authoritative === undefined ? true : authoritative);
              } };
     `
   );
@@ -312,7 +312,10 @@ test('4b.10 "why that weight?" explains from the STRUCTURED proposal state', () 
   assert.match(line, /185/, 'the answer states the stored target');
   assert.match(line, /225/, 'and the stored current prescription');
   assert.match(line, new RegExp(SLOT_NAME), 'named from the stored proposal');
-  assert.equal(h.state.coachCalls.length, 0, 'the model is never invoked for a sufficient structured answer');
+  // The lane makes no model call and no network call at all: the answer is composed from the stored
+  // proposal. (The previous assertion here counted `state.coachCalls`, which nothing ever wrote —
+  // it was vacuous. `state.posts` records every api() call the sliced production code makes.)
+  assert.equal(h.state.posts.length, 0, 'explaining is read-only — no request of any kind is issued');
 });
 
 test('4b.10b every approved "why" shape reaches the same explanation', () => {
@@ -621,11 +624,16 @@ test('4b.X2 (Codex P1) a superseded submit decides nothing', () => {
     appSrc.indexOf('if (pendingChatText && !hasAnyEffortInput()) {'),
     appSrc.indexOf('tryResolvePendingReplacement(pendingChatText)')
   );
-  const guardIdx = catchBlock.lastIndexOf('if (submitSeq !== previewRequestSeq');
-  const laneIdx = catchBlock.indexOf('trySetRevisionFollowup(pendingChatText, turnProposalId)');
-  assert.notEqual(guardIdx, -1, 'the lane must be preceded by a submit-authority check');
+  const laneIdx = catchBlock.indexOf('trySetRevisionFollowup(pendingChatText, turnProposalId');
   assert.notEqual(laneIdx, -1, 'the lane must be wired in the catch block');
-  assert.ok(guardIdx < laneIdx, 'submit authority is checked BEFORE the state-changing lane');
+  // Authority is passed INTO the lane, so a superseded turn declines the DECISION without the
+  // composer abandoning the turn. It must NOT be an early whole-turn return above the lane —
+  // that swallowed unrelated messages whenever a card tap advanced the counter.
+  assert.match(catchBlock, /trySetRevisionFollowup\(pendingChatText, turnProposalId,\s*\n?\s*submitSeq === previewRequestSeq && turnSeq === turnAuthoritySeq\)/,
+    'both counters are supplied to the lane as its authority argument');
+  const preLane = catchBlock.slice(0, laneIdx);
+  assert.doesNotMatch(preLane, /turnSeq !== turnAuthoritySeq\)\s*return;/,
+    'the card-advanced counter must never abandon the whole turn before the lane');
 
   // And a clarification really does keep the proposal alive, which is what made the race reachable.
   const h = withProposal();
@@ -925,6 +933,70 @@ test('4b.Y11 (Codex P2) a proposal whose last set was logged is dead for EVERY c
   assert.match(lastReply(live.state), /185/, 'and the success response is the real one');
 });
 
+test('4b.Z1 (audit P1) a revoked turn declines the DECISION but is never swallowed', () => {
+  // The regression: the authority check was an early whole-turn `return` above every other lane, and
+  // a card tap advances the counter. So tapping any card button while an unrelated typed message was
+  // still awaiting its parse dropped that message entirely — past the replacement lane, modality,
+  // mutation, substitution and routeMessageToCoach — leaving the athlete's bubble with no reply.
+  // A stale turn may not DECIDE the proposal; it must still be ANSWERED.
+  for (const words of ['do that', 'keep the original', 'why that weight?', 'keep it', 'drop those']) {
+    const h = withProposal();
+    const id = h.state.pendingSetRevision.proposal_id;
+
+    // authoritative === false is exactly what a card tap (or a newer submit) produces.
+    assert.equal(h.api.trySetRevisionFollowup(words, id, false), false,
+      `"${words}" from a revoked turn must NOT be claimed — the composer keeps routing it`);
+
+    assert.equal(h.state.revisions.length, 0, `"${words}" decides nothing when revoked`);
+    assert.equal(h.state.posts.length, 0, `"${words}" checkpoints nothing when revoked`);
+    assert.ok(h.state.pendingSetRevision, `"${words}" leaves the proposal for a real decision`);
+    assert.equal(h.state.pendingSetRevision.proposal_id, id);
+    assert.equal(replies(h.state).length, 0, `"${words}" produces no reply of its own`);
+  }
+
+  // An authoritative turn is unaffected — this is a revocation, not a blanket refusal.
+  const live = withProposal();
+  const liveId = live.state.pendingSetRevision.proposal_id;
+  assert.equal(live.api.trySetRevisionFollowup('do that', liveId, true), true);
+  assert.equal(live.state.revisions.length, 3);
+
+  // A safety report is the case that mattered: revoked or not, it never belongs to this lane, and
+  // returning false is what lets the composer carry it to the coach.
+  const safety = withProposal();
+  assert.equal(safety.api.trySetRevisionFollowup('my knee hurts', null, false), false);
+  assert.equal(safety.api.trySetRevisionFollowup('my knee hurts', undefined, true), false);
+  assert.equal(replies(safety.state).length, 0, 'and the lane never answers it');
+  assert.ok(safety.state.pendingSetRevision);
+});
+
+test('4b.Z2 (audit P2) "go with that plan" never inverts into a rejection', () => {
+  const C = classifier();
+  // "go with that" is an owner-approved class-1 acceptance. Adding one word used to flip it into a
+  // rejection that consumed the proposal and announced the opposite of the athlete's decision.
+  assert.equal(C.classifySetRevisionFollowup('go with that').action, 'approve_active_proposal');
+  for (const words of ['go with that plan', 'go with the plan', 'keep the plan', 'keep that plan',
+    'leave the plan', 'stay on plan']) {
+    assert.notEqual(C.classifySetRevisionFollowup(words).action, 'reject_active_proposal',
+      `"${words}" must never be read as keeping the ORIGINAL — Atlas's proposal is a plan too`);
+  }
+
+  // Driven through the real lane: no inversion, no consumption, no false claim.
+  const h = withProposal();
+  const id = h.state.pendingSetRevision.proposal_id;
+  h.api.trySetRevisionFollowup('go with that plan');
+  assert.equal(h.state.revisions.length, 0, 'nothing is applied');
+  assert.ok(h.state.pendingSetRevision, 'and the live proposal is NOT consumed');
+  assert.equal(h.state.pendingSetRevision.proposal_id, id);
+  assert.doesNotMatch(lastReply(h.state) || '', /Keeping/,
+    'Atlas never announces a decision the athlete did not make');
+
+  // The genuine original-plan rejections still reject.
+  for (const words of ['keep the original', 'keep the original plan', 'leave it as planned',
+    "don't change it", 'stick with the original', 'keep it as is', 'leave it alone']) {
+    assert.equal(C.classifySetRevisionFollowup(words).action, 'reject_active_proposal', `"${words}"`);
+  }
+});
+
 test('4b.Y13 (Codex P1) a card tap revokes an in-flight typed turn — Ask Why especially', () => {
   // A card tap bypasses the composer, so neither counter moved. Approve and Keep Original consume
   // the proposal, so an in-flight typed turn already fails its binding — but ASK WHY deliberately
@@ -994,7 +1066,7 @@ test('4b.Y12 (Codex P1) consent is bound to the proposal the athlete could SEE a
 
   // (d) the composer really does capture the binding synchronously, before any await.
   const handlerStart = appSrc.indexOf("document.getElementById('logger-form').addEventListener('submit'");
-  const handler = appSrc.slice(handlerStart, appSrc.indexOf('trySetRevisionFollowup(pendingChatText, turnProposalId)'));
+  const handler = appSrc.slice(handlerStart, appSrc.indexOf('trySetRevisionFollowup(pendingChatText, turnProposalId'));
   // Strip line comments before measuring: the words "await" and "proposal" appear in the prose here,
   // and an index into a comment proves nothing about execution order.
   const code = handler.replace(/\/\/[^\n]*/g, '');
@@ -1015,7 +1087,7 @@ test('4b.Y4 (Codex P1) a newer submit revokes an older one BEFORE any early retu
   // still have looked authoritative and could have approved a proposal the athlete moved on from.
   const handlerStart = appSrc.indexOf("document.getElementById('logger-form').addEventListener('submit'");
   assert.notEqual(handlerStart, -1, 'the composer submit handler must exist');
-  const handler = appSrc.slice(handlerStart, appSrc.indexOf('trySetRevisionFollowup(pendingChatText, turnProposalId)'));
+  const handler = appSrc.slice(handlerStart, appSrc.indexOf('trySetRevisionFollowup(pendingChatText, turnProposalId'));
 
   const bumpIdx = handler.indexOf('turnAuthoritySeq += 1;');
   const captureIdx = handler.indexOf('const turnSeq = turnAuthoritySeq;');
@@ -1039,9 +1111,9 @@ test('4b.Y4 (Codex P1) a newer submit revokes an older one BEFORE any early retu
   }
 
   // …and the state-changing lane must check BOTH counters.
-  const guard = appSrc.slice(handlerStart, appSrc.indexOf('if (trySetRevisionFollowup(pendingChatText, turnProposalId))'));
-  assert.match(guard, /if \(submitSeq !== previewRequestSeq \|\| turnSeq !== turnAuthoritySeq\) return;/,
-    'the lane is gated on the preview seq AND the composer turn seq');
+  const guard = appSrc.slice(handlerStart, appSrc.indexOf('activeExercise = null;', appSrc.indexOf('trySetRevisionFollowup(pendingChatText, turnProposalId')));
+  assert.match(guard, /submitSeq === previewRequestSeq && turnSeq !== undefined|submitSeq === previewRequestSeq && turnSeq === turnAuthoritySeq/,
+    'the lane is gated on the preview seq AND the turn authority seq');
 
   // The new counter must not be repurposed anywhere else, so preview / parse / modality and
   // blocked-log semantics stay exactly as they were: it appears in its own declaration, the
@@ -1240,7 +1312,13 @@ test('4b.30 a reload-restored proposal behaves identically to a new one', async 
 });
 
 test('4b.27 no test in this file calls emitEndorsedSetRevision directly', () => {
-  const calls = selfSrc.split('\n').filter(l => /emitEndorsedSetRevision\s*\(/.test(l) && !/doesNotMatch|assert/.test(l));
+  // Exclude ONLY this guard's own two lines and the doesNotMatch assertion that names the emitter.
+  // The previous filter dropped every line containing "assert", so `assert.ok(emitEndorsedSetRevision(…))`
+  // would have been invisible to the guard that exists to forbid it (fresh-context audit).
+  const calls = selfSrc.split('\n').filter(l => /emitEndorsedSetRevision\s*\(/.test(l)
+    && !/^\s*\/\//.test(l)            // a comment is not a call
+    && !/doesNotMatch/.test(l)        // the 4b.SM assertion that forbids it in the lane
+    && !/\.filter\(/.test(l));        // this guard's own line
   assert.deepEqual(calls, [],
     'every capture proven here must go through an approval, never the emitter');
 });
@@ -1254,7 +1332,7 @@ test('4b.R1 the follow-up lane is wired into the real composer message flow', ()
   const sessionIdx = appSrc.indexOf('looksLikeSessionRequest(workoutTextInput.value)');
   const clarifyIdx = appSrc.indexOf('resolvePendingClarification(workoutTextInput.value.trim())');
   const logItIdx = appSrc.indexOf('looksLikeLogIt(workoutTextInput.value)');
-  const revIdx = appSrc.indexOf('trySetRevisionFollowup(pendingChatText, turnProposalId)');
+  const revIdx = appSrc.indexOf('trySetRevisionFollowup(pendingChatText, turnProposalId');
   const replIdx = appSrc.indexOf('tryResolvePendingReplacement(pendingChatText)');
   const modalIdx = appSrc.indexOf('tryPreviewModality(pendingChatText');
   const propIdx = appSrc.indexOf('tryProposeReplacement(pendingChatText)');
