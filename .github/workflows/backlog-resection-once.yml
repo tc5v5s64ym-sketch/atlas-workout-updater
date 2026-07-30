@@ -1,0 +1,38 @@
+name: Backlog resection (one-time)
+
+on:
+  push:
+    branches:
+      - agent/backlog-hygiene-20260730
+
+permissions:
+  contents: write
+
+jobs:
+  resection:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: agent/backlog-hygiene-20260730
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Resection historical backlog prose
+        run: node scripts/backlog-resection-once.js
+
+      - name: Verify paper-weight guard
+        run: node scripts/check-paper-weight.js
+
+      - name: Commit final governed docs
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add BACKLOG.md BACKLOG_ARCHIVE.md config/paper-weight.json docs/verification/BACKLOG_EDITORIAL_CLEANUP_2026-07-30.md scripts/backlog-resection-once.js .github/workflows/backlog-resection-once.yml
+          git commit -m "docs: resection backlog to active residuals"
+          git push origin HEAD:agent/backlog-hygiene-20260730
