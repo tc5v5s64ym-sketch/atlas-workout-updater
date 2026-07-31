@@ -113,7 +113,11 @@
         "bent row",
         "reverse-grip row",
         "reverse row",
-        "bor"
+        "bor",
+        "barbell row",
+        "barbell rows",
+        "bb row",
+        "bb rows"
       ]
     ],
     [
@@ -279,8 +283,8 @@
   ],
   "ambiguous_aliases": {
     "press": "Which press - OHP, bench, or incline?",
-    "row": "Which row - seated, bent-over, cable, or machine?",
-    "rows": "Which row - seated, bent-over, cable, or machine?"
+    "row": "Which row - barbell, seated, bent-over, cable, or machine?",
+    "rows": "Which row - barbell, seated, bent-over, cable, or machine?"
   },
   "contextual_aliases": {
     "Lat Pulldown": [

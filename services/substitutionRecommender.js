@@ -151,4 +151,4 @@ function recommendSubstitute(prescribed, opts = {}) {
   return { recommendation: best.candidate, quality: best.quality, reason: best.reason };
 }
 
-module.exports = { recommendSubstitute, SUBSTITUTE_CATALOG };
+module.exports = { recommendSubstitute, SUBSTITUTE_CATALOG, SUBSTITUTION_MAP: RAW_CATALOG };
