@@ -46,7 +46,7 @@ const assert = require('node:assert/strict');
 
 const { canonicalizeExerciseName } = require('../services/workoutTextParser');
 const grounding = require('../services/coachResponseGrounding');
-const { generateLiftCode } = require('../services/exerciseEnrichment');
+const { generateLiftCode, hasCuratedLiftCode } = require('../services/exerciseEnrichment');
 const { resolveLiftName } = require('../services/sessionQuestionAnswer');
 
 const QUESTION = 'How much should I lift for barbell rows?';
@@ -149,16 +149,43 @@ test('1b-bis. the Good Morning exception is bounded — plural and qualified for
     'the deterministic chat lane must answer about Bench Press, not Good Morning');
 });
 
-// Pins the claim the exception rests on: Good Morning is only ever a secondary
-// candidate. If it ever becomes a default, test 1c fails and this one explains why.
-test('1b-ter. Good Morning is never a DEFAULT substitute', () => {
+// KNOWN EXPOSURE — recorded honestly rather than asserted away (Codex #1209 P1, round 2).
+//
+// An earlier version of this test asserted "Good Morning is never a DEFAULT substitute"
+// and passed. That claim was TOO NARROW and I reported it to the owner as if it bounded
+// the exception: it only ever checked the CONTEXT-FREE default. Atlas also recommends
+// context-aware, passing the rest of the plan as `avoid` (index.js /api/suggest-substitute
+// → recommendSubstitute(current, { avoid })), and on that route Good Morning IS announced
+// to the athlete. The follow-up then resolves to the WRONG LIFT — not to nothing:
+//
+//   recommendSubstitute('Deadlift', { avoid: ['Romanian Deadlift'] }) → 'Good Morning'
+//   resolveLiftName('how much for good morning?', <that exchange>) → 'Deadlift'
+//
+// A Deadlift load answered for a Good Morning question is the same defect class this PR
+// exists to fix, on a much heavier lift. It is pending an owner ruling (the prior ruling
+// rested on the narrower claim above), so this test pins the REAL current behavior —
+// including the failure — so nothing can quietly claim the exception is bounded.
+test('1b-ter. KNOWN: Good Morning is context-free-safe but reachable via `avoid`', () => {
   const { recommendSubstitute, SUBSTITUTION_MAP } = require('../services/substitutionRecommender');
+
+  // Still true, and still worth pinning: no lift defaults to it.
   for (const from of Object.keys(SUBSTITUTION_MAP || {})) {
     const rec = recommendSubstitute(from);
-    const name = rec && (rec.recommendation || rec.name);
-    assert.notEqual(name, 'Good Morning',
+    assert.notEqual(rec && (rec.recommendation || rec.name), 'Good Morning',
       `recommendSubstitute(${JSON.stringify(from)}) must not DEFAULT to the one unparseable name`);
   }
+
+  // …but the context-aware route DOES announce it. This is the exposure.
+  const ctxAware = recommendSubstitute('Deadlift', { avoid: ['Romanian Deadlift'] });
+  assert.equal(ctxAware && ctxAware.recommendation, 'Good Morning',
+    'documents the reachable path: with RDL avoided, Atlas announces Good Morning');
+
+  // And the bare-singular follow-up resolves to the WRONG lift rather than failing closed.
+  const exchange = [{ text: 'swap deadlift, rack is taken' }, { text: 'Try Good Morning instead.' }];
+  assert.equal(resolveLiftName('how much for good morning?', exchange, {}), 'Deadlift',
+    'KNOWN FAILURE pending owner ruling — the bare singular answers with Deadlift\'s load');
+  // The plural an athlete may equally well type is fine, which is why this is narrow.
+  assert.equal(resolveLiftName('how much for good mornings?', exchange, {}), 'Good Morning');
 });
 
 test('1c. the DEFAULT substitute for every lift is recognizable', () => {
@@ -236,11 +263,60 @@ test('3c. /api/suggest-substitute canonicalizes before deriving the lift code', 
   const fs = require('fs');
   const path = require('path');
   const src = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
-  const i = src.indexOf('const code = generateLiftCode(');
-  assert.notEqual(i, -1, 'the substitute lift-code derivation exists');
-  const window = src.slice(Math.max(0, i - 400), i + 200);
-  assert.match(window, /canonicalizeExerciseName\(rec\.recommendation\)/,
-    'the recommendation must be canonicalized before its lift code is derived');
+  const i = src.indexOf('const canon = canonicalizeExerciseName(rec.recommendation');
+  assert.notEqual(i, -1, 'the recommendation is canonicalized on the substitute route');
+  const window = src.slice(i, i + 500);
+  assert.match(window, /strictVariantGuard:\s*true/,
+    'the canonicalization must use the variant guard so a qualified lift never collapses');
+  assert.match(window, /hasCuratedLiftCode\(rec\.recommendation\)/,
+    'a curated code on the raw name must win over the canonical');
+});
+
+// Codex #1209 P1 (round 2). The round-1 fix canonicalized UNCONDITIONALLY, and
+// canonicalizeExerciseName matches an alias anywhere in the string — so it silently
+// moved three substitutes onto another lift's history. `next_target` is a PRESCRIBED
+// LOAD, so this is a load-safety path: a Goblet Squat slot would have been handed Back
+// Squat's working weight. This replays the exact derivation the route performs.
+function routeLiftCode(name) {
+  const canon = canonicalizeExerciseName(name, { strictVariantGuard: true });
+  const canonName = (canon && canon.canonicalName) || name;
+  return hasCuratedLiftCode(name)
+    ? generateLiftCode(name)
+    : generateLiftCode(canonName);
+}
+
+test('3d. canonicalizing a substitute never moves it onto ANOTHER lift\'s history', () => {
+  // The owner-ruled merge (2026-07-31 ruling 1) — this one MUST change.
+  assert.equal(routeLiftCode('Barbell Row'), 'BOR01',
+    'barbell row must share Bent-Over Row history — the whole point of this PR');
+  assert.notEqual(generateLiftCode('Barbell Row'), 'BOR01', 'the merge is genuinely load-bearing');
+
+  // Everything else must keep its own code. Each of these regressed under the
+  // unconditional round-1 fix; the codes on the right are what a blanket
+  // canonicalization produced.
+  const mustNotDrift = [
+    ['Dips',         'DIP01', 'DWX01'],   // curated code abandoned for a generated one
+    ['Goblet Squat', 'GSX01', 'SQ01'],    // a dumbbell squat handed a barbell squat's load
+    ['Hack Squat',   'HSX01', 'SQ01'],    // machine squat handed a barbell squat's load
+  ];
+  for (const [name, own, drifted] of mustNotDrift) {
+    assert.equal(routeLiftCode(name), own, `${name} must keep its own lift code`);
+    assert.notEqual(routeLiftCode(name), drifted,
+      `${name} must never inherit ${drifted} — that prescribes another lift's load`);
+  }
+});
+
+test('3e. NO substitute silently changes lift code except the owner-ruled merge', () => {
+  const { SUBSTITUTION_MAP } = require('../services/substitutionRecommender');
+  const names = new Set();
+  for (const [from, tos] of Object.entries(SUBSTITUTION_MAP || {})) {
+    names.add(from);
+    for (const t of (tos || [])) names.add(t);
+  }
+  const changed = [...names].filter((n) => routeLiftCode(n) !== generateLiftCode(n)).sort();
+  assert.deepEqual(changed, ['Barbell Row'],
+    'exactly one substitute may change lift code, and only because the owner ruled that '
+    + `barbell row shares Bent-Over Row's history. Got: ${changed.join(', ')}`);
 });
 
 // ── 4. Adjacent coverage the owner asked for ────────────────────────────────
