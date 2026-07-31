@@ -11,7 +11,12 @@ credentials*.json
 *.key
 *.pem
 backups/
-.claude/
+# Local Claude Code state stays ignored. The one exception is the shared,
+# checked-in permission ruleset: .claude/settings.json (deny-only). Exclude the
+# directory CONTENTS, not the directory itself — git cannot re-include a file
+# inside an excluded directory.
+.claude/*
+!.claude/settings.json
 outputs/
 
 # Playwright transient output (traces, screenshots on failure)
