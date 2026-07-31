@@ -431,7 +431,9 @@ test('9b. the exact endpoints the implicit plan acceptance calls are blocked', (
     const d = golden.classifyOutboundRequest({ method: 'POST', url: `https://example.test${path}`, body: JSON.stringify({ session_id: 'x' }) });
     assert.equal(d.writeCapable, true, `${path} is write-capable`);
     assert.equal(d.allowed, false, `${path} must be aborted`);
-    assert.equal(d.reason, 'write_capable_without_test_mode');
+    // These routes never read test_mode, so they are blocked on the stronger ground
+    // that the ROUTE cannot dry-run at all — not merely that the field was absent.
+    assert.equal(d.reason, 'write_capable_route_ignores_test_mode');
   }
 });
 
@@ -454,6 +456,51 @@ test('9d. a live write (no test_mode) is aborted, and undeterminable requests fa
   assert.equal(golden.classifyOutboundRequest({ method: 'POST', url: 'https://example.test/api/log-workout', body: '<<unreadable>>' }).allowed, false);
   assert.equal(golden.classifyOutboundRequest({ method: 'POST', url: 'not a url', body: '{}' }).allowed, false, 'an unparseable URL fails closed');
   assert.equal(golden.classifyOutboundRequest({ method: 'POST', url: 'https://example.test/api/log-workout' }).allowed, false, 'a missing body fails closed');
+});
+
+test('9d-bis. a route that IGNORES test_mode is aborted even when the payload carries it', () => {
+  // Codex #1207 P1 (second pass): keying the bypass on the PRESENCE of a test_mode
+  // field was a fail-open. routes/sessionPlans.js never reads test_mode — accept
+  // calls captureAccept regardless — so a payload merely carrying the field must
+  // NOT buy passage.
+  for (const path of [
+    '/api/session-plans/accept', '/api/session-plans/outcome', '/api/session-plans/closeout',
+    '/api/session-plan-sets/accept', '/api/session-plan-sets/revision', '/api/session-plan-sets/implicit',
+    '/api/deload/begin', '/api/deload/advance', '/api/deload/resolve',
+    '/api/log-workout/undo-last', '/api/flight/ingest', '/api/bug-report',
+    '/api/coaching-notes', '/api/constraints'
+  ]) {
+    const d = golden.classifyOutboundRequest({
+      method: 'POST', url: `https://example.test${path}`, body: JSON.stringify({ test_mode: true, items: [{ x: 1 }] })
+    });
+    assert.equal(d.allowed, false, `${path} ignores test_mode and must abort regardless`);
+    assert.equal(d.reason, 'write_capable_route_ignores_test_mode');
+  }
+});
+
+test('9d-ter. the test_mode allow-list matches the routes that ACTUALLY honor it in index.js', () => {
+  // Re-derive the set from source so the allow-list cannot silently drift: a
+  // write-capable handler genuinely honors test_mode only if it calls
+  // isTestModeEnabled(). If a route gains or loses that, this test fails.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8').split('\n');
+  const starts = [];
+  src.forEach((l, i) => {
+    const m = l.match(/^app\.(post|put|patch|delete)\('([^']+)'/);
+    if (m) starts.push({ line: i + 1, path: m[2] });
+  });
+  const { routeDefinitions } = require('../config/routes');
+  const writeCapable = new Set(routeDefinitions.filter(r => r.writeCapable === true).map(r => r.path));
+  const derived = [];
+  for (let i = 0; i < starts.length; i += 1) {
+    const from = starts[i].line;
+    const to = i + 1 < starts.length ? starts[i + 1].line : src.length;
+    const body = src.slice(from - 1, to - 1).join('\n');
+    if (writeCapable.has(starts[i].path) && /isTestModeEnabled\(/.test(body)) derived.push(starts[i].path);
+  }
+  assert.deepEqual([...golden.TEST_MODE_HONORING_ROUTES].sort(), derived.sort(),
+    'the dry-run allow-list must equal the write-capable routes that call isTestModeEnabled()');
+  assert.ok(derived.includes('/api/log-workout'), 'the preview path is among them');
+  assert.equal(derived.includes('/api/session-plans/accept'), false, 'the plan-ledger sidecars are NOT among them');
 });
 
 test('9e. read-only routes are untouched, so ordinary traffic is unaffected', () => {
@@ -491,7 +538,7 @@ test('9f. installWriteBlockade aborts a live write and continues a dry-run, on e
     'continue:https://a.test/api/log-workout',
     'continue:https://a.test/api/coach/message'
   ]);
-  assert.deepEqual(blocked, [{ path: '/api/session-plans/accept', reason: 'write_capable_without_test_mode' }]);
+  assert.deepEqual(blocked, [{ path: '/api/session-plans/accept', reason: 'write_capable_route_ignores_test_mode' }]);
 });
 
 test('9g. the blockade records the path and reason only — never the request body', async () => {

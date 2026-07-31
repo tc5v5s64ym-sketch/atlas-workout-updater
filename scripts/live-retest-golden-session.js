@@ -51,11 +51,12 @@ const SCENARIO_KEY = 'golden-session';
 // derived from `config/routes.js` — the canonical manifest — so it can never drift
 // from the real route set, and it is not a hand-kept second list.
 //
-//   • a route that is not write-capable          → allowed
-//   • a write-capable route carrying test_mode   → allowed (the documented dry-run;
-//                                                  this IS the preview flow)
-//   • a write-capable route with no test_mode    → ABORTED, and recorded
-//   • anything undeterminable                    → ABORTED (fails closed)
+//   • a route that is not write-capable                    → allowed
+//   • a write-capable route that HONORS test_mode, carrying
+//     an explicit test_mode dry-run                        → allowed (the preview flow)
+//   • a write-capable route that IGNORES test_mode         → ABORTED unconditionally
+//   • a write-capable route with no test_mode              → ABORTED, and recorded
+//   • anything undeterminable                              → ABORTED (fails closed)
 //
 // This enforces the harness's standing contract rather than changing it: a request
 // it aborts is one that would have violated "never writes".
@@ -77,6 +78,35 @@ function pathMatches(pattern, pathname) {
 function matchesWriteCapableRoute(method, pathname) {
   const m = String(method || '').toUpperCase();
   return WRITE_CAPABLE_ROUTES.some(r => r.methods.includes(m) && pathMatches(r.path, pathname));
+}
+
+// Routes that GENUINELY implement dry-run semantics — verified as the only
+// write-capable handlers that call `isTestModeEnabled(...)`:
+//   • /api/log-workout        (index.js)
+//   • /api/complete-workout   (index.js)
+//   • /api/log-modality       (index.js)
+//   • /api/bodyweight         (index.js)
+//
+// This list exists because keying the bypass on the PRESENCE of a `test_mode` field
+// was a fail-open (Codex #1207 P1, second pass). `routes/sessionPlans.js` contains no
+// `test_mode` reference at all: `POST /api/session-plans/accept` ignores the field and
+// calls `captureAccept` regardless, so a payload that merely CARRIES `test_mode: true`
+// would have sailed through the blockade and could still have appended rows. A field in
+// the request proves nothing; only the handler honoring it does.
+//
+// So the dry-run bypass is now granted per ROUTE, not per payload. Everything else
+// write-capable is aborted unconditionally, `test_mode` present or not.
+// `test/live-retest-golden-session.test.js` re-derives this set from `index.js` and
+// fails if it ever drifts.
+const TEST_MODE_HONORING_ROUTES = Object.freeze([
+  '/api/log-workout',
+  '/api/complete-workout',
+  '/api/log-modality',
+  '/api/bodyweight'
+]);
+
+function honorsTestMode(pathname) {
+  return TEST_MODE_HONORING_ROUTES.some(p => pathMatches(p, pathname));
 }
 
 // Is this request body an explicit `test_mode` dry-run? Handles the three shapes the
@@ -108,6 +138,11 @@ function classifyOutboundRequest({ method, url, body } = {}) {
   }
   if (!matchesWriteCapableRoute(method, pathname)) {
     return { writeCapable: false, dryRun: false, allowed: true, reason: 'not_write_capable', pathname };
+  }
+  // A route that does not implement dry-run semantics is aborted unconditionally —
+  // carrying a `test_mode` field cannot make a handler that ignores it safe.
+  if (!honorsTestMode(pathname)) {
+    return { writeCapable: true, dryRun: false, allowed: false, reason: 'write_capable_route_ignores_test_mode', pathname };
   }
   if (isTestModeDryRun(body)) {
     return { writeCapable: true, dryRun: true, allowed: true, reason: 'test_mode_dry_run', pathname };
@@ -471,6 +506,7 @@ module.exports = {
   SCENARIO_KEY, WRITE_POSTURE, SEAM_POLICY, WRITE_BLOCK_REASON, EVIDENCE_FIELDS,
   renderSet, renderBeatInput, classifyBeat, buildGoldenSessionPlan, markReplayAmbiguity,
   WRITE_CAPABLE_ROUTES, matchesWriteCapableRoute, isTestModeDryRun, classifyOutboundRequest,
+  TEST_MODE_HONORING_ROUTES, honorsTestMode,
   mayExecuteBeat, beatSettlementFailure, goldenSessionVerdict,
   describeGoldenSessionPlan, buildGoldenSessionReport
 };
