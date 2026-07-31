@@ -154,6 +154,17 @@ async function _ensureReady(ensure, getHeader) {
 // append is logged once and swallowed. Deduped by turn_id so a retry never doubles a row.
 function persist(params) {
   const p = params && typeof params === 'object' ? params : {};
+
+  // SYNTHETIC CONTAINMENT (owner ruling, 2026-07-31). See the matching guard in
+  // services/coachShadowSheet.js. Coach_Response stores the VISIBLE coach reply
+  // text, so a synthetic turn does not merely add a row — it puts fabricated
+  // conversation into the owner's review record. The 2026-07-31 live-retest run
+  // appended rows 84–85 that way. Gated on a positive synthetic identification;
+  // `unknown` still persists so genuine-but-unclassified owner turns are never lost.
+  // Returns before `_seen` is touched, so suppressing a synthetic turn can never
+  // mask a later genuine one.
+  if (p.synthetic === true) return null;
+
   const turnId = p.turnId != null ? String(p.turnId) : '';
   if (turnId && _seen.has(turnId)) return null; // already captured this turn
   const row = buildRow(p);

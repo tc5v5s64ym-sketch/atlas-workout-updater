@@ -122,6 +122,22 @@ async function _ensureReady(ensure, getHeader) {
 // Queue one durable row without entering the served response path. A failed
 // append is logged once and swallowed; the next turn starts from a clean queue.
 function persist(params) {
+  // SYNTHETIC CONTAINMENT (owner ruling, 2026-07-31). A positively-synthetic request
+  // — an agent/CI/Playwright run marked `x-atlas-request-origin` — must never append
+  // here. Coach_Shadow is owner review evidence, and the 2026-07-31 live-retest run
+  // (Actions run 30596164330) appended rows 90–91 with no synthetic provenance,
+  // contaminating that evidence. The Coach_Shadow schema carries no provenance
+  // columns, so an untagged row is indistinguishable from genuine owner activity:
+  // the only safe containment is not to write it at all.
+  //
+  // Deliberately gated on a POSITIVE synthetic identification, not on
+  // `evidence_eligible === false`. `unknown` traffic still persists — for an
+  // evidence tab, silently dropping unclassifiable-but-possibly-genuine owner turns
+  // would destroy real evidence, which is the worse failure. Intent_Shadow and
+  // Brain_Shadow are unaffected: they carry evidence_class/evidence_eligible/
+  // request_origin columns and correctly tag synthetic rows, so they keep recording.
+  if (params && params.synthetic === true) return null;
+
   const row = buildRow(params);
 
   // Existing unit/route tests enable the shadow flag but must never touch a real

@@ -3,12 +3,19 @@ name: Live retest (manual)
 # Manual-only, on-demand targeted live-retest scaffolding. This is NOT a merge
 # gate and is NOT required in branch protection. It lines up a known
 # fixed-pending-live-retest bug and prints exactly what the owner should check;
-# it performs no live calls and never writes to Google Sheets (this slice).
+# it performs no live calls and mutates no workout or session state.
+#
+# SCOPE OF THE SAFETY CLAIM (corrected 2026-07-31): a live run mutates no workout
+# or session state — the browser write blockade aborts plan-ledger, workout-log,
+# closeout, revision, seal, and flight-recorder writes. It is NOT a claim of zero
+# Sheet writes: with ATLAS_INTERACTION_TRACE=shadow enabled, read-only coach routes
+# still append synthetic telemetry to Intent_Shadow and Brain_Shadow, correctly
+# tagged evidence_class=synthetic / evidence_eligible=false / request_origin.
 on:
   workflow_dispatch:
     inputs:
       scenario:
-        description: 'Which scenario to line up ("all" runs every bug retest; "golden-session" replays the Golden Session fixture and is not part of "all")'
+        description: 'Which fixed-pending-live-retest bug to line up ("all" runs every scenario)'
         required: true
         type: choice
         options:
@@ -19,25 +26,20 @@ on:
           - bug-20260629-002945
           - bug-20260629-204817
           - coach-response-settlement
-          # The Golden Session fixture replay (Phase 4 slice PR B). Read-only:
-          # its write-capable beats (start-this-plan / revise / closeout / seal)
-          # have no executor and are blocked pending the PR-D write posture, so
-          # this selection cannot produce a production write.
-          - golden-session
       target_base_url:
         description: 'Base URL to retest against. Leave blank to use the ATLAS_BASE_URL secret.'
         required: false
         default: ''
         type: string
       dry_run_only:
-        description: 'Dry-run only (no live calls, no Sheets writes). Keep true.'
+        description: 'Dry-run only (no live calls, no state mutation). Keep true.'
         required: true
         default: true
         type: boolean
 
 jobs:
   live-retest:
-    name: Live retest (manual, no-write)
+    name: Live retest (manual, no state mutation)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -93,7 +95,7 @@ jobs:
             {
               echo "## 🏋️ Atlas live-retest"
               echo ""
-              echo "Dry-run (no browser, no live calls, no Sheets writes) — scenario \`${{ inputs.scenario }}\` was described only."
+              echo "Dry-run (no browser, no live calls, no state mutation) — scenario \`${{ inputs.scenario }}\` was described only."
               echo ""
               echo "> Re-run with \`dry_run_only: false\` for a read-only live retest report."
             } >> "$GITHUB_STEP_SUMMARY"
