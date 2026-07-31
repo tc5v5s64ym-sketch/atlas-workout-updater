@@ -14,6 +14,7 @@
  */
 
 const { canonicalizeExerciseName } = require('./workoutTextParser');
+const { unresolvableExerciseReference, unresolvedExerciseAsk } = require('./explicitExerciseReference');
 
 // Which session attribute(s) the message is asking about. A message may ask for
 // several at once ("how many reps and rir").
@@ -37,13 +38,28 @@ function normName(v) {
   return String(v == null ? '' : v).trim().toLowerCase();
 }
 
+/**
+ * True when the message NAMES an exercise the parser cannot resolve to one canonical lift
+ * (owner gym session 2026-07-31: "how much for good morning?" answered with the Deadlift
+ * load). The contextual fallback below exists for shorthand that names NO lift; an
+ * explicitly named but unresolvable lift must never borrow another lift's numbers.
+ * See services/explicitExerciseReference.js for how a name is told from ordinary wording.
+ */
+function namesUnresolvableLift(message) {
+  return unresolvableExerciseReference(message, canonicalizeExerciseName);
+}
+
 // Resolve the lift the question is about, in priority order:
 //   1. a lift named in the current message,
 //   2. a lift named in the most recent prior turns (closest first),
 //   3. the lift in the live preview / plan from the client context.
+// Steps 2 and 3 are for shorthand that names no lift at all ("how much?", "and reps?").
+// A message that DOES name a lift we cannot resolve fails closed at step 1 — it never
+// inherits the prior turn's or the plan's lift.
 function resolveLiftName(message, history, clientContext) {
   const fromMsg = canonicalizeExerciseName(message);
   if (fromMsg && fromMsg.canonicalName) return fromMsg.canonicalName;
+  if (namesUnresolvableLift(message)) return null;
 
   const turns = Array.isArray(history) ? history : [];
   for (let i = turns.length - 1; i >= 0; i -= 1) {
@@ -167,7 +183,12 @@ function buildSessionQuestionAnswer(message, { history = [], clientContext = nul
   if (!attrs.length) return null;
 
   const liftName = resolveLiftName(message, history, clientContext);
-  if (!liftName) return null;
+  if (!liftName) {
+    // Named a lift we cannot resolve → say so. Silence here would hand the turn back to
+    // the caller's generic fallback; the honest floor is to name what was heard and ask.
+    const named = namesUnresolvableLift(message);
+    return named ? unresolvedExerciseAsk(named) : null;
+  }
 
   const planTarget = targetFromContext(liftName, clientContext);
   // Consult the engine whenever the accepted plan can't cover EVERY asked attribute
@@ -469,6 +490,33 @@ function answerPlannedLiftQuestion(message, clientContext = null) {
   return `${name} today: ${parts.join(', ')}.`;
 }
 
+/**
+ * Fail-closed answer for a session-value question about an exercise Atlas cannot resolve.
+ *
+ * This is the lane the owner's 2026-07-31 session exposed: Atlas recommended Good Morning,
+ * the athlete asked "how much for good morning?", and the answer came back with the
+ * Deadlift load. Every other deterministic lane declines such a turn (they need a resolved
+ * lift), so without this the turn reached the LLM with the whole plan in context and the
+ * wrong lift's numbers were worded as the answer. Declining out loud is the honest floor.
+ *
+ * Owns the turn ONLY when the message asks a session attribute AND names a lift that
+ * cannot be resolved. Past-tense and advice framings defer, exactly as the plan-first lane
+ * does, so "should I do good mornings instead?" still reaches the coach.
+ *
+ * READ-ONLY: no Sheets, no LLM, no numbers at all — it deliberately answers with none.
+ *
+ * @returns {{kind:'clarify', text:string}|null}
+ */
+function answerUnresolvedExerciseQuestion(message) {
+  const raw = String(message == null ? '' : message);
+  if (!attributesAsked(raw).length) return null;
+  if (HISTORY_RE.test(raw)) return null; // past → history/LLM
+  if (ADVICE_RE.test(raw)) return null;  // "should I … instead?" → the coach's judgement
+  const named = namesUnresolvableLift(raw);
+  if (!named) return null;
+  return { kind: 'clarify', text: unresolvedExerciseAsk(named) };
+}
+
 // A "total" question wants sets × reps as a PLANNED total, not the per-set target.
 const TOTAL_RE = /\btotal\b/i;
 
@@ -510,4 +558,4 @@ function answerTotalRepsQuestion(message, { history = [], clientContext = null }
   return `${name} today: ${total} total reps planned (${target.sets} sets × ${target.reps}).`;
 }
 
-module.exports = { buildSessionQuestionAnswer, buildSessionAdviceFallback, attributesAsked, resolveLiftName, answerBareShorthand, isBareSessionShorthand, isCurrentExercisePrescriptionQuestion, answerCurrentExercisePrescription, isWarmupQuestion, answerPlannedLiftQuestion, answerTotalRepsQuestion };
+module.exports = { buildSessionQuestionAnswer, buildSessionAdviceFallback, attributesAsked, resolveLiftName, namesUnresolvableLift, answerUnresolvedExerciseQuestion, answerBareShorthand, isBareSessionShorthand, isCurrentExercisePrescriptionQuestion, answerCurrentExercisePrescription, isWarmupQuestion, answerPlannedLiftQuestion, answerTotalRepsQuestion };
