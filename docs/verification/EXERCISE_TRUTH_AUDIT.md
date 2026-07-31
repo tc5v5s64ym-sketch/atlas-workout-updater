@@ -44,7 +44,7 @@ history form):
 
 **A — Parser (workoutTextParser.js — EXERCISE_ALIASES + CONTEXTUAL_ALIASES)**
 - Canonical count: 28
-- Alias-to-canonical entries: 132
+- Alias-to-canonical entries: 134
 
 **B — Data JSON (exercise_catalog.v1.json + exercise_aliases.v1.json)**
 - Canonical count: 346
