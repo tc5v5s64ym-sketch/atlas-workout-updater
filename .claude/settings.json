@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "deny": [
+      "Read(.env)",
+      "Read(.env.local)",
+      "Read(.env.development)",
+      "Read(.env.production)",
+      "Read(.secret)",
+      "Read(secrets/**)",
+      "Read(service-account.json)",
+      "Read(google-credentials.json)",
+      "Read(credentials*.json)",
+      "Read(*.key)",
+      "Read(*.pem)",
+      "Read(backups/**)",
+      "Read(outputs/**)",
+      "Read(live-retest-artifacts/**)",
+
+      "Edit(.env)",
+      "Edit(.env.local)",
+      "Edit(.env.development)",
+      "Edit(.env.production)",
+      "Edit(.secret)",
+      "Edit(secrets/**)",
+      "Edit(service-account.json)",
+      "Edit(google-credentials.json)",
+      "Edit(credentials*.json)",
+      "Edit(*.key)",
+      "Edit(*.pem)",
+      "Edit(backups/**)",
+      "Edit(outputs/**)",
+      "Edit(live-retest-artifacts/**)"
+    ]
+  }
+}
