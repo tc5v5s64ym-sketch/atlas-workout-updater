@@ -26,6 +26,7 @@ on:
           - bug-20260629-002945
           - bug-20260629-204817
           - coach-response-settlement
+          - golden-rehearsal
       target_base_url:
         description: 'Base URL to retest against. Leave blank to use the ATLAS_BASE_URL secret.'
         required: false
@@ -79,10 +80,14 @@ jobs:
           # browser credential can be rotated on its own.
           ATLAS_ACCESS_CODE: ${{ secrets.ATLAS_ACCESS_CODE }}
         run: |
-          node scripts/live-retest.js \
-            --scenario "${{ inputs.scenario }}" \
-            --dry-run-only "${{ inputs.dry_run_only }}" \
-            --target-base-url "${{ inputs.target_base_url }}"
+          if [ "${{ inputs.scenario }}" = "golden-rehearsal" ]; then
+            node scripts/tmp-golden-rehearsal.js
+          else
+            node scripts/live-retest.js \
+              --scenario "${{ inputs.scenario }}" \
+              --dry-run-only "${{ inputs.dry_run_only }}" \
+              --target-base-url "${{ inputs.target_base_url }}"
+          fi
 
       # Owner experience (PR #720): render the markdown verdict report into the
       # GitHub Actions run summary. Runs even on a FAIL so the report is visible.
