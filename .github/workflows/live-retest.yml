@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       scenario:
-        description: 'Which fixed-pending-live-retest bug to line up ("all" runs every scenario)'
+        description: 'Which scenario to line up ("all" runs every bug retest; "golden-session" replays the Golden Session fixture and is not part of "all")'
         required: true
         type: choice
         options:
@@ -19,6 +19,11 @@ on:
           - bug-20260629-002945
           - bug-20260629-204817
           - coach-response-settlement
+          # The Golden Session fixture replay (Phase 4 slice PR B). Read-only:
+          # its write-capable beats (start-this-plan / revise / closeout / seal)
+          # have no executor and are blocked pending the PR-D write posture, so
+          # this selection cannot produce a production write.
+          - golden-session
       target_base_url:
         description: 'Base URL to retest against. Leave blank to use the ATLAS_BASE_URL secret.'
         required: false

@@ -19,6 +19,18 @@
 
 const fs = require('fs');
 const path = require('path');
+const golden = require('./live-retest-golden-session');
+
+// The "coach unavailable" outage wordings — the bug signal. Shared by the
+// settlement scenario and the Golden Session walk. The two outage-specific bug
+// scenarios keep their own byte-identical literals so their long-standing
+// assertions are untouched by this slice.
+const OUTAGE_PATTERNS = Object.freeze([
+  /coach.{0,15}(isn'?t|is not|not).{0,15}available/i,
+  /couldn'?t reach/i,
+  /reach the coach/i,
+  /coach[^.]{0,20}unavailable/i
+]);
 
 // --- Scenario catalogue -----------------------------------------------------
 // Each entry describes one retest. Sourced from docs/BUG_TRIAGE_LEDGER.md
@@ -133,12 +145,36 @@ const SCENARIOS = {
     // Verdict mode (assertion shape (a)). No `expected` regex by design.
     assertion: {
       mode: 'settled_no_forbidden',
-      forbidden: [
-        /coach.{0,15}(isn'?t|is not|not).{0,15}available/i,
-        /couldn'?t reach/i,
-        /reach the coach/i,
-        /coach[^.]{0,20}unavailable/i
-      ]
+      forbidden: [...OUTAGE_PATTERNS]
+    }
+  },
+  // THE GOLDEN SESSION (Phase 4 live-testing slice PR B). Not a bug retest: a
+  // replay of the ONE canonical scripted session defined in
+  // `test/fixtures/goldenSession.js`. Every beat, its order, and its semantics
+  // come from that fixture — `scripts/live-retest-golden-session.js` adapts it,
+  // and this entry holds no beats of its own.
+  //
+  // NON-WRITE-CAPABLE BY CONSTRUCTION. The four write-capable beats
+  // (start-this-plan / revise / closeout / seal) are blocked deterministically:
+  // the runner has NO executor for them, so Approve, Save, Closeout, and Seal
+  // cannot be pressed. PR D installs the owner-authorized write posture; PR C
+  // adds evidence capture. Neither is implemented here.
+  //
+  // It is deliberately EXCLUDED from `all` (`excludeFromAll`) so the existing
+  // bug-retest sweep keeps its exact prior scenario set and its verdict tally is
+  // unchanged.
+  'golden-session': {
+    bugId: 'GOLDEN-SESSION',
+    excludeFromAll: true,
+    purpose: 'Replay the canonical Golden Session fixture through the real browser flow. This slice wires the fixture in and walks its READ-ONLY beats; the write-capable beats are described, planned, and deterministically blocked pending the PR-D write posture.',
+    input: 'The fixture\'s beats in their canonical order; each read-only beat is typed into the composer and previewed (test_mode dry-run).',
+    expected: 'Every fixture beat is accounted for in order, classified as executable / write-blocked / fixture error; each executable beat produces a settled reply with no outage wording. Because write-capable beats are blocked, the canonical sequence is not walked end to end, so the best achievable verdict here is INCONCLUSIVE — never PASS.',
+    forbidden: 'Any "coach unavailable" outage wording in an executed beat\'s reply; any skipped, duplicated, reordered, or unknown beat; any execution of a write-capable beat.',
+    reference: 'test/fixtures/goldenSession.js (single definition) · docs/verification/PHASE_4_OWNER_GATE_HANDOFF.md §9 · verdict mode: golden_session_walk.',
+    navigation: { type: 'golden-session' },
+    assertion: {
+      mode: 'golden_session_walk',
+      forbidden: [...OUTAGE_PATTERNS]
     }
   }
 };
@@ -355,6 +391,14 @@ function printScenario(scenarioKey, scenario, { targetBaseUrl, dryRunOnly }) {
   console.log(`Target base URL   : ${targetBaseUrl || '(none provided — set ATLAS_BASE_URL or --target-base-url)'}`);
   console.log(`Mode              : ${dryRunOnly ? 'DRY-RUN (no browser, no live calls, no Sheets writes)' : 'LIVE (read-only: load + populate composer + preview + assert; never Save)'}`);
   console.log(line);
+  // The Golden Session's beats live in the fixture, not in this catalogue, so the
+  // scenario description alone cannot show them. Print the adapter's beat plan —
+  // this IS the owner's dry-run report: every fixture beat, which are executable
+  // now, which are blocked pending PR D, and the evidence fields PR C will add.
+  if ((scenario.navigation || {}).type === 'golden-session') {
+    for (const l of golden.describeGoldenSessionPlan(golden.buildGoldenSessionPlan())) console.log(l);
+    console.log(line);
+  }
 }
 
 // --- PR #717: scenario navigation (composer populate + preview) -------------
@@ -434,8 +478,131 @@ async function waitForSettledResponse({
   }
 }
 
+// --- Golden Session walk (PR B) ---------------------------------------------
+// Drive the fixture's beats through the real browser flow, in the fixture's exact
+// order, one plan entry per beat.
+//
+// The read-only beats reuse the EXACT path the runner already uses for every other
+// scenario: fill `#workout-text`, click `#preview-btn` (a `test_mode` dry-run), and
+// wait for a settled reply. Nothing new is added to the write surface.
+//
+// The write-capable beats are not "skipped with a flag off" — there is NO branch
+// below that can execute one. `golden.mayExecuteBeat` is the single gate, and the
+// only body it guards is composer + preview. `#approve-btn` is never clicked, never
+// enabled, and no closeout/seal control is touched. A blocked beat is recorded with
+// its reason and the walk moves to the next beat, so the ledger still accounts for
+// every beat in order.
+//
+// `settleOptions` is an injection point for the settle bounds (the same pattern
+// `waitForSettledResponse` already uses for `sleep`/`now`), so the walk is testable
+// without waiting out the production timings. Omitted in every real run.
+async function navigateGoldenSession({ page, scenarioKey, outputDir, privacy = false, assertion = null, settleOptions = null }) {
+  const plan = golden.buildGoldenSessionPlan();
+  const forbidden = (assertion && assertion.forbidden) || [];
+  const ledger = { beats: [] };
+
+  console.log(`[golden] walking ${plan.counts.total} fixture beats — ${plan.counts.executable} executable, ${plan.counts.write_blocked} write-blocked, ${plan.counts.fixture_error} fixture errors`);
+  console.log(`[golden] write posture installed=${plan.writePosture.installed} — no write-capable beat has an executor in this slice`);
+
+  const atlasBubbles = page.locator('#thread-messages .chat-bubble-atlas');
+
+  for (const b of plan.beats) {
+    const row = { beat_id: b.id, beat_index: b.index, seam: b.seam, class: b.class };
+
+    if (b.class === 'fixture_error') {
+      // Fail closed and loudly: an unusable fixture entry is an ERROR, never a
+      // silent skip that would leave the walk looking complete.
+      row.executed = false;
+      row.error = b.reason;
+      console.error(`[golden] beat ${b.index + 1} "${b.id}": FIXTURE ERROR — ${b.reason}`);
+      ledger.beats.push(row);
+      continue;
+    }
+
+    if (b.class === 'write_blocked') {
+      row.executed = false;
+      row.blocked_reason = b.reason;
+      row.write_posture_installed = plan.writePosture.installed;
+      console.log(`[golden] beat ${b.index + 1} "${b.id}" [${b.seam}]: BLOCKED — ${b.reason}`);
+      ledger.beats.push(row);
+      continue;
+    }
+
+    if (!golden.mayExecuteBeat(b)) {
+      // Defensive: an unclassified beat must never reach the browser.
+      row.executed = false;
+      row.error = 'beat is not executable and has no handled class — failing closed';
+      console.error(`[golden] beat ${b.index + 1} "${b.id}": ${row.error}`);
+      row.class = 'fixture_error';
+      ledger.beats.push(row);
+      continue;
+    }
+
+    // --- executable: composer + preview only (test_mode dry-run) --------------
+    console.log(`[golden] beat ${b.index + 1} "${b.id}" [${b.seam}]: composer ${JSON.stringify(b.input)} → #preview-btn (dry-run, never Save)`);
+    const composer = page.locator('#workout-text');
+    await composer.fill(b.input);
+    const typed = await composer.inputValue();
+    if (typed !== b.input) {
+      row.executed = false;
+      row.class = 'fixture_error';
+      row.error = 'composer did not accept the beat input';
+      console.error(`[golden] beat ${b.index + 1} "${b.id}": composer rejected the input`);
+      ledger.beats.push(row);
+      continue;
+    }
+
+    const baselineAtlas = await atlasBubbles.count().catch(() => 0);
+    await page.locator('#preview-btn').click();
+
+    const settle = await waitForSettledResponse({
+      readReply: async () => {
+        const n = await atlasBubbles.count().catch(() => 0);
+        if (n <= baselineAtlas) return { present: false, thinking: false, text: '' };
+        const text = await atlasBubbles.last().innerText().catch(() => '');
+        return { present: true, thinking: text.includes(THINKING_MARKER), text };
+      },
+      sleep: (ms) => page.waitForTimeout(ms),
+      ...(settleOptions || {})
+    });
+
+    row.executed = true;
+    row.settled = settle.settled;
+    row.settle_reason = settle.reason;
+    row.waited_ms = settle.waitedMs;
+    // Length only, never the reply itself — an authenticated run renders the
+    // owner's private surface and this repository is public.
+    row.reply_length = String(settle.text || '').length;
+    const haystack = String(settle.text || '').replace(/\s+/g, ' ').trim();
+    row.forbidden_hit = forbidden.some(re => re.test(haystack));
+
+    console.log(settle.settled
+      ? `[golden] beat ${b.index + 1} "${b.id}": settled after ${settle.waitedMs}ms (reply_length=${row.reply_length}, forbidden_hit=${row.forbidden_hit})`
+      : `[golden] beat ${b.index + 1} "${b.id}": SETTLEMENT FAILURE (${settle.reason}) after ${settle.waitedMs}ms`);
+    if (!settle.settled) {
+      Object.assign(row, golden.beatSettlementFailure(b, settle));
+      row.class = 'executable';
+    }
+    ledger.beats.push(row);
+  }
+
+  // Re-confirm the write control was never touched.
+  const approveDisabled = await page.locator('#approve-btn').isDisabled().catch(() => null);
+  console.log(`[golden] post-walk: #approve-btn disabled=${approveDisabled} (never clicked — no write was possible)`);
+
+  if (!privacy) {
+    await page.screenshot({ path: path.join(outputDir, `${scenarioKey}-03-preview.png`), fullPage: true }).catch(() => {});
+  }
+
+  return { navigated: true, threadText: '', golden: ledger };
+}
+
 async function navigateScenario({ page, scenarioKey, scenario, outputDir, privacy = false }) {
   const nav = scenario.navigation || { type: 'manual' };
+
+  if (nav.type === 'golden-session') {
+    return navigateGoldenSession({ page, scenarioKey, outputDir, privacy, assertion: scenario.assertion });
+  }
 
   if (nav.type !== 'composer') {
     console.log(`[navigate] scenario "${scenarioKey}" is ${nav.type} (${nav.note || 'no composer step'}); skipping composer navigation.`);
@@ -553,6 +720,32 @@ function assertScenario({ scenarioKey, scenario, navResult, outputDir, auth = nu
 
   let verdict;
   let settleReason = null;
+  if (a.mode === 'golden_session_walk') {
+    // The Golden Session verdict comes from the BEAT LEDGER, not from the thread
+    // text: a session walk is judged beat by beat. `goldenSessionVerdict` fails
+    // closed — an unusable fixture is ERROR, an outage wording in any executed
+    // beat is FAIL, and while ANY beat is blocked the walk is INCONCLUSIVE, so
+    // replaying only the non-write subset can never read PASS. A missing ledger
+    // (the walk never ran) is likewise INCONCLUSIVE, never a pass.
+    const ledger = navResult && navResult.golden;
+    const g = ledger ? golden.goldenSessionVerdict(ledger) : { verdict: 'INCONCLUSIVE', reason: 'no_walk_observed' };
+    verdict = g.verdict;
+    settleReason = g.verdict === 'PASS' ? null : g.reason;
+    writeResult(outputDir, scenarioKey, scenario, {
+      verdict, authenticated_run, settleReason,
+      // The patterns only — a whole-thread `matched` flag would be misleading
+      // here, because forbidden matching is per beat (`beats[].forbidden_hit`).
+      forbiddenPatterns: (a.forbidden || []).map(String),
+      writePosture: golden.WRITE_POSTURE,
+      beats: (ledger && ledger.beats) || [],
+      threadExcerpt: null
+    });
+    console.log(`[assert] ${scenarioKey}: ${verdict}${settleReason ? ` (${settleReason})` : ''}`);
+    if (verdict !== 'PASS' && verdict !== 'FAIL') {
+      console.log('[assert]   (the canonical sequence was not walked end to end — write-capable beats stay blocked until the PR-D write posture exists. No production write was possible.)');
+    }
+    return verdict;
+  }
   if (a.mode === 'settled_no_forbidden') {
     // Explicit regression verdict mode (assertion shape (a)). A PASS requires a
     // GENUINELY SETTLED atlas reply — which `settle.settled === true` already
@@ -653,6 +846,7 @@ async function bootstrapBrowser({ baseUrl, scenarioKey, outputDir, scenario, acc
 
   let exitCode = 0;
   let verdict = 'UNKNOWN';
+  let goldenLedger = null;
   let auth = { attempted: false, authenticated: false, status: null, reason: 'no_credential' };
   // Privacy engages on credential PRESENCE (fail closed), not login success.
   const privacy = Boolean(accessCode);
@@ -716,6 +910,7 @@ async function bootstrapBrowser({ baseUrl, scenarioKey, outputDir, scenario, acc
 
     // PR #717: drive the scenario through the composer/preview flow (no Save).
     const navResult = await navigateScenario({ page, scenarioKey, scenario, outputDir, privacy });
+    goldenLedger = (navResult && navResult.golden) || null;
 
     // PR #718: assert the observed thread against the scenario's expected /
     // forbidden patterns. A FAIL (the bug behaviour reappeared) surfaces as a
@@ -743,7 +938,7 @@ async function bootstrapBrowser({ baseUrl, scenarioKey, outputDir, scenario, acc
   } finally {
     await browser.close().catch(() => {});
   }
-  return { exitCode, verdict, auth };
+  return { exitCode, verdict, auth, golden: goldenLedger };
 }
 
 async function run(argv, env = process.env) {
@@ -761,8 +956,14 @@ async function run(argv, env = process.env) {
     return 1;
   }
 
-  // "all" runs every scenario in sequence and prints a summary (PR #719).
-  const keys = scenarioKey === 'all' ? Object.keys(SCENARIOS) : [scenarioKey];
+  // "all" runs every bug-retest scenario in sequence and prints a summary (PR
+  // #719). Scenarios marked `excludeFromAll` (the Golden Session — a multi-beat
+  // session walk, not a single-bug retest) are NOT part of that sweep, so `all`
+  // keeps exactly the scenario set and verdict tally it had before this slice.
+  // They remain selectable by name.
+  const keys = scenarioKey === 'all'
+    ? Object.keys(SCENARIOS).filter(k => !SCENARIOS[k].excludeFromAll)
+    : [scenarioKey];
   if (scenarioKey !== 'all' && !SCENARIOS[scenarioKey]) {
     console.error(`ERROR: unknown scenario "${scenarioKey}".`);
     console.error(`Valid scenarios: all, ${Object.keys(SCENARIOS).join(', ')}`);
@@ -774,6 +975,20 @@ async function run(argv, env = process.env) {
   if (dryRunOnly) {
     console.log('DRY-RUN: nothing was executed. This only describes the retest(s);');
     console.log('the owner runs the real app and decides pass/fail. No browser, no Sheets writes.');
+    // The Golden Session's dry-run description is the owner report for this
+    // slice, so publish it as markdown too (the workflow renders summary.md into
+    // the run summary). Written only when the Golden Session was explicitly
+    // selected — every other dry-run is unchanged and still writes nothing.
+    if (keys.includes(golden.SCENARIO_KEY)) {
+      try {
+        fs.mkdirSync(outputDir, { recursive: true });
+        fs.writeFileSync(path.join(outputDir, 'summary.md'),
+          golden.buildGoldenSessionReport(golden.buildGoldenSessionPlan()));
+        console.log(`Golden Session dry-run report written to ${path.join(outputDir, 'summary.md')}`);
+      } catch (err) {
+        console.error(`could not write the Golden Session dry-run report: ${err.message}`);
+      }
+    }
     return 0;
   }
 
@@ -802,8 +1017,12 @@ async function run(argv, env = process.env) {
 
   const results = [];
   for (const k of keys) {
-    const { exitCode, verdict, auth } = await bootstrapBrowser({ baseUrl: targetBaseUrl, scenarioKey: k, outputDir, scenario: SCENARIOS[k], accessCode });
-    results.push({ scenario: k, bugId: SCENARIOS[k].bugId, verdict, exitCode, auth });
+    const { exitCode, verdict, auth, golden: goldenLedger } = await bootstrapBrowser({ baseUrl: targetBaseUrl, scenarioKey: k, outputDir, scenario: SCENARIOS[k], accessCode });
+    const entry = { scenario: k, bugId: SCENARIOS[k].bugId, verdict, exitCode, auth };
+    // Only the Golden Session carries a beat ledger — every other scenario's
+    // summary entry keeps its exact prior shape.
+    if (goldenLedger) entry.golden = goldenLedger;
+    results.push(entry);
   }
 
   writeSummary(results, outputDir);
@@ -892,6 +1111,13 @@ function buildMarkdownReport(results, ctx = {}) {
   lines.push('');
   lines.push('> Read-only retest — it never presses Save and never writes to Google Sheets. **Not a merge gate and not a replacement for owner judgment.**');
   lines.push('');
+  // Golden Session: append the fixture's full beat plan whenever that scenario
+  // was part of the run, so the owner sees every beat, what ran, and what is
+  // still blocked.
+  if (results.some(r => r.scenario === golden.SCENARIO_KEY)) {
+    lines.push(golden.buildGoldenSessionReport(golden.buildGoldenSessionPlan(),
+      (results.find(r => r.scenario === golden.SCENARIO_KEY) || {}).golden || null));
+  }
   return lines.join('\n');
 }
 
@@ -903,8 +1129,10 @@ if (require.main === module) {
 }
 
 module.exports = {
-  SCENARIOS, parseArgs, toBool, run, bootstrapBrowser, navigateScenario, assertScenario,
+  SCENARIOS, OUTAGE_PATTERNS, parseArgs, toBool, run, bootstrapBrowser, navigateScenario, assertScenario,
   writeSummary, buildMarkdownReport,
+  // Golden Session adapter (PR B) — the fixture stays the single definition.
+  navigateGoldenSession, goldenSession: golden,
   // Synthetic provenance + optional authentication (PR A).
   SYNTHETIC_ORIGIN, SYNTHETIC_HEADERS, ACCESS_CODE_ENV, SESSION_COOKIE_NAME,
   redactCredential, parseSessionCookie, authenticateContext, shouldProceedToNavigation,
