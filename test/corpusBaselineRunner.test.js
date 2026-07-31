@@ -84,6 +84,78 @@ test('the real shadow / divergence stream is never contaminated by the replay', 
   assert.equal(coachTurnPacketShadow.getShadowLog().length, 0, 'no [coach-turn-shadow] records emitted');
 });
 
+// REGRESSION: the runner deleted ATLAS_INTERACTION_TRACE before requiring the app, but
+// index.js runs `require('dotenv').config()` during that require, which repopulated the
+// variable from a local `.env`. interactionTraceShadow reads the flag PER REQUEST, so on a
+// machine whose `.env` carried ATLAS_INTERACTION_TRACE=shadow the replay emitted real
+// [coach-turn-shadow] records — measured at 69 for one replay — and those synthetic turns
+// would then read as production divergence evidence.
+//
+// Setting the variable here reproduces the exact post-dotenv state: the app is already
+// loaded, and the flag is on when the replay starts. The runner must still emit nothing.
+test('a .env that switches the shadow flag back on cannot contaminate the replay', async () => {
+  const saved = process.env.ATLAS_INTERACTION_TRACE;
+  process.env.ATLAS_INTERACTION_TRACE = 'shadow';
+  try {
+    coachTurnPacketShadow._resetForTesting();
+    await runner.replayAll();
+    assert.equal(coachTurnPacketShadow.getShadowLog().length, 0,
+      'the replay emits no [coach-turn-shadow] records even when the flag was set after app load');
+    assert.notEqual(process.env.ATLAS_INTERACTION_TRACE, 'shadow',
+      'replayAll unsets the flag rather than trusting the caller');
+  } finally {
+    if (saved === undefined) delete process.env.ATLAS_INTERACTION_TRACE;
+    else process.env.ATLAS_INTERACTION_TRACE = saved;
+  }
+});
+
+// The fail-closed half: if a future change ever lets a corpus turn reach the shadow
+// stream, replayAll must ABORT rather than return a clean-looking result. Proven by
+// seeding the shadow log mid-replay through the same module the runner checks.
+test('replayAll fails closed when the shadow log grows during a replay', async () => {
+  coachTurnPacketShadow._resetForTesting();
+  const real = coachTurnPacketShadow.getShadowLog;
+  let calls = 0;
+  // First call is the pre-replay snapshot (empty); the post-replay call reports growth.
+  coachTurnPacketShadow.getShadowLog = () => (++calls === 1 ? [] : [{ synthetic: 'contaminant' }]);
+  try {
+    await assert.rejects(
+      () => runner.replayAll(),
+      /\[coach-turn-shadow\] record\(s\) emitted during a segregated replay/,
+      'a contaminated replay aborts instead of returning observations');
+  } finally {
+    coachTurnPacketShadow.getShadowLog = real;
+    coachTurnPacketShadow._resetForTesting();
+  }
+});
+
+// REGRESSION: the first version of the check compared the shadow log's LENGTH before
+// and after the replay. coachTurnPacketShadow keeps a bounded ring buffer
+// (MAX_LOG = 200, `_log.shift()` on overflow), so once the log is saturated each new
+// record evicts one old record and the length never moves. A fully contaminated replay
+// then reported a delta of 0 and finished successfully.
+//
+// This models the buffer exactly at cap: 200 records before, 200 after, one of them new.
+// A depth comparison sees 0; an identity comparison sees 1.
+test('a saturated shadow ring buffer cannot hide contamination', async () => {
+  const real = coachTurnPacketShadow.getShadowLog;
+  const saturated = Array.from({ length: 200 }, (_, i) => ({ pre_existing: i }));
+  // Post-replay: oldest evicted, one corpus record appended. Length is unchanged at 200.
+  const afterEviction = [...saturated.slice(1), { corpus_contaminant: true }];
+  assert.equal(saturated.length, afterEviction.length, 'the ring buffer length is unchanged — a depth check sees nothing');
+  let calls = 0;
+  coachTurnPacketShadow.getShadowLog = () => (++calls === 1 ? saturated : afterEviction);
+  try {
+    await assert.rejects(
+      () => runner.replayAll(),
+      /1 \[coach-turn-shadow\] record\(s\) emitted during a segregated replay/,
+      'identity comparison catches the evicted-and-replaced record a depth delta misses');
+  } finally {
+    coachTurnPacketShadow.getShadowLog = real;
+    coachTurnPacketShadow._resetForTesting();
+  }
+});
+
 test('the scoreboard is deterministic (run twice → identical scores)', async () => {
   const a = await runner.run();
   const b = await runner.run();
