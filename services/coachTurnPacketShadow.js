@@ -188,7 +188,11 @@ function observe(params) {
     };
     _logShadow(record);
     _push(record);
-    coachShadowSheet.persist({ recordedAt, trace: traceRec, assembled: a, visible });
+    // `synthetic` is forwarded, never inferred here: only the route holds the request
+    // and can classify it (services/evidenceProvenance.evidenceForRequest). A caller
+    // that omits it is treated as non-synthetic, which is why
+    // test/coachShadowSyntheticContainment.test.js asserts every call site passes it.
+    coachShadowSheet.persist({ recordedAt, trace: traceRec, assembled: a, visible, synthetic: p.synthetic === true });
     return record;
   } catch (_) {
     return null; // shadow must never surface a failure

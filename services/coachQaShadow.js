@@ -39,6 +39,7 @@ const { getProfileGoal } = require('./profileGoal');
 const { buildCoachingDecisionFromExplanation, buildRecoveryDecision } = require('./coachDecisionSnapshot');
 const { isTurnPrecedenceEnabled } = require('./turnPrecedence');
 const turnCorrelation = require('./turnCorrelation');
+const { evidenceForRequest, SYNTHETIC_ORIGINS } = require('./evidenceProvenance');
 
 // The session identity a coach request carries — delegated to the ONE shared definition in
 // turnCorrelation so this site and /api/coach/message cannot drift apart (#1165).
@@ -188,8 +189,13 @@ function observeQaTurn(req, res, opts) {
       const assembled = coachTurnPacketShadow.assembleShadowPacket({ turnId: turn.turnId, profileGoal: getProfileGoal(), session: canonicalSession, decision: canonicalDecision });
       // Forward the route's referent pick so the shadow record can compare it to the packet's
       // referent (now carried on the session, D10) — the Phase-4 divergence signal.
-      coachTurnPacketShadow.observe({ trace: traceRecord, assembled, visible, routeReferent, grounding });
+      // Synthetic containment (owner ruling 2026-07-31) — same rule as the
+      // /api/coach/message hook: a positively-synthetic turn never reaches
+      // Coach_Shadow / Coach_Response.
+      const syntheticTurn = SYNTHETIC_ORIGINS.has(evidenceForRequest(req).request_origin);
+      coachTurnPacketShadow.observe({ trace: traceRecord, assembled, visible, routeReferent, grounding, synthetic: syntheticTurn });
       coachResponseSheet.persist({
+        synthetic: syntheticTurn,
         turnId: turn.turnId,
         sessionId: reqBody.sessionId || reqBody.session_id || ctx.session_id || ctx.sessionId || null,
         route,

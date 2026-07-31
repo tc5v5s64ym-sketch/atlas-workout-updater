@@ -61,7 +61,9 @@ test('server: every coach-engine shadow call site classifies the request via evi
 
 test('server: the intent-observe route classifies from the body marker + fails closed', () => {
   const co = read('routes/coachOps.js');
-  assert.match(co, /const \{ evidenceForRequest \} = require\('\.\.\/services\/evidenceProvenance'\)/);
+  // The destructure also carries EVIDENCE_CLASSES since the 2026-07-31 synthetic
+  // containment fix, so match the classifier import without pinning the full list.
+  assert.match(co, /const \{ evidenceForRequest[^}]*\} = require\('\.\.\/services\/evidenceProvenance'\)/);
   assert.match(co, /req\.body\.request_origin/, 'reads the body marker (this POST bypasses the header seam)');
   assert.match(co, /evidenceForRequest\(req,\s*\{\s*bodyOrigin\s*\}\)/, 'passes the body marker to the classifier');
   assert.match(co, /observeChatMessage\(message,\s*\{[^}]*evidence[^}]*\}\)/, 'forwards the verdict to the shadow recorder');

@@ -64,7 +64,7 @@ const { generateLiftCode, buildExerciseCatalogMap, normalizeExerciseKey, closest
 const { getShadowLog, observeChatMessage } = require('../services/intentShadow');
 const { getBrainShadowLog } = require('../services/brainShadow');
 // PR-GATEA1 — evidence provenance for the Intent_Shadow diagnostics row.
-const { evidenceForRequest } = require('../services/evidenceProvenance');
+const { evidenceForRequest, SYNTHETIC_ORIGINS } = require('../services/evidenceProvenance');
 const { getFlightRecorderLog, isFlightRecorderEnabled, recordClientBatch } = require('../services/flightRecorder');
 const { BUG_REPORT_TAB, BUG_REPORT_COLUMNS, buildBugReportRow } = require('../services/bugReport');
 const { readCurrentDeloadState } = require('../services/deloadState');
@@ -611,7 +611,19 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
           // route produces canonically today (athlete.profile_goal); the rest is null/[]
           // — the bypasses the nightly divergence report surfaces (H-03/H-08/H-11/H-12).
           const assembled = coachTurnPacketShadow.assembleShadowPacket({ turnId: turn.turnId, profileGoal: getProfileGoal() });
-          coachTurnPacketShadow.observe({ trace: traceRecord, assembled, visible: visibleBody });
+          // Synthetic containment (owner ruling 2026-07-31): an agent/CI/Playwright
+          // turn must not append to Coach_Shadow / Coach_Response — neither tab has
+          // provenance columns, so an untagged synthetic row is indistinguishable
+          // from owner evidence. Intent_Shadow / Brain_Shadow are untouched.
+          //
+          // Keyed on the request DECLARING a synthetic origin, not on
+          // `evidence_class === SYNTHETIC`. That class also covers any non-production
+          // runtime, which would suppress legitimate sandbox/test persistence and
+          // silently narrow what the shadow records outside production. The origin
+          // token is the precise signal the ruling names, and it is already bounded
+          // and normalized by the provenance service.
+          const syntheticTurn = SYNTHETIC_ORIGINS.has(evidenceForRequest(req).request_origin);
+          coachTurnPacketShadow.observe({ trace: traceRecord, assembled, visible: visibleBody, synthetic: syntheticTurn });
           // Companion durable record of the FINAL visible response (Coach_Response),
           // keyed by the SAME turn id — restores reviewable response evidence that does
           // not depend on the browser Flight Recorder. `visibleBody` is the exact payload
@@ -620,6 +632,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
           const reqBody = req.body && typeof req.body === 'object' ? req.body : {};
           const bodyFacts = reqBody.facts && typeof reqBody.facts === 'object' ? reqBody.facts : {};
           coachResponseSheet.persist({
+            synthetic: syntheticTurn,
             turnId: turn.turnId,
             sessionId: bodyFacts.sessionId || bodyFacts.session_id || reqBody.sessionId || reqBody.session_id || null,
             route: '/api/coach/message',

@@ -96,7 +96,13 @@ test('buildMarkdownReport renders a verdict table, totals, links, and the read-o
   // BUG id linked to a commit search when server/repo are known.
   assert.match(md, /\[BUG-20260629-153258\]\(https:\/\/github\.com\/o\/r\/search\?q=BUG-20260629-153258&type=commits\)/);
   assert.match(md, /Totals:.*PASS=1.*INCONCLUSIVE=1.*MANUAL=1/);
-  assert.match(md, /never writes to Google Sheets/);
+  // The report must state the CORRECTED safety scope (owner ruling 2026-07-31):
+  // no workout/session-state mutation, and explicitly NOT a zero-Sheet-writes
+  // claim while synthetic shadow telemetry is still appended.
+  assert.match(md, /mutates no workout or session state/);
+  assert.match(md, /not\* a claim of zero Sheet writes/);
+  assert.doesNotMatch(md, /never writes to Google Sheets/,
+    'the retired absolute claim must not reappear');
   assert.match(md, /Not a merge gate/);
 });
 

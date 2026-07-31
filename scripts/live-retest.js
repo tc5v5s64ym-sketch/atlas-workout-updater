@@ -7,18 +7,38 @@
 //   PR #715 — scaffolding (scenario catalogue, dry-run describe only).   [done]
 //   PR #716 — browser bootstrap (THIS slice): launch Playwright, open the
 //             deployed Atlas, verify it loads, locate the composer, capture
-//             screenshots, exit. READ-ONLY — no save, no writes, no runtime
-//             change.
+//             screenshots, exit. READ-ONLY — no save, no state mutation, no
+//             runtime change.
 //   PR #717+ — scenario navigation / assertions / library / owner UX.
 //
-// Safety contract (unchanged): this harness NEVER presses Save, never calls a
-// write endpoint, and never writes to Google Sheets. `--dry-run-only` (default
-// true) describes the retest without opening a browser. `--dry-run-only false`
-// performs the read-only browser bootstrap below. It is NOT a merge gate and NOT
-// a replacement for owner judgment.
+// Safety contract. This harness NEVER presses Save and MUTATES NO WORKOUT OR
+// SESSION STATE: the write blockade below aborts plan-ledger, workout-log,
+// closeout, revision, seal, and flight-recorder writes at the browser transport.
+//
+// It is NOT a claim of zero Sheet writes (corrected 2026-07-31 after Actions run
+// 30596164330). With `ATLAS_INTERACTION_TRACE=shadow` enabled, read-only coach
+// routes still append synthetic telemetry rows to Intent_Shadow and Brain_Shadow —
+// correctly tagged `evidence_class=synthetic`, `evidence_eligible=false`,
+// `request_origin`, so they stay auditable and never count as owner evidence.
+// Coach_Shadow and Coach_Response carry no provenance columns and are contained
+// server-side instead (services/coachShadowSheet.js, services/coachResponseSheet.js).
+//
+// `--dry-run-only` (default true) describes the retest without opening a browser.
+// It is NOT a merge gate and NOT a replacement for owner judgment.
 
 const fs = require('fs');
 const path = require('path');
+const blockade = require('./live-retest-write-blockade');
+
+// The "coach unavailable" outage wordings — the bug signal. Shared by the
+// settlement scenario. The two outage-specific bug scenarios keep their own
+// byte-identical literals so their long-standing assertions are untouched.
+const OUTAGE_PATTERNS = Object.freeze([
+  /coach.{0,15}(isn'?t|is not|not).{0,15}available/i,
+  /couldn'?t reach/i,
+  /reach the coach/i,
+  /coach[^.]{0,20}unavailable/i
+]);
 
 // --- Scenario catalogue -----------------------------------------------------
 // Each entry describes one retest. Sourced from docs/BUG_TRIAGE_LEDGER.md
@@ -133,12 +153,7 @@ const SCENARIOS = {
     // Verdict mode (assertion shape (a)). No `expected` regex by design.
     assertion: {
       mode: 'settled_no_forbidden',
-      forbidden: [
-        /coach.{0,15}(isn'?t|is not|not).{0,15}available/i,
-        /couldn'?t reach/i,
-        /reach the coach/i,
-        /coach[^.]{0,20}unavailable/i
-      ]
+      forbidden: [...OUTAGE_PATTERNS]
     }
   }
 };
@@ -340,6 +355,51 @@ function safeErrorSummary(err) {
   return `${(err && err.name) || 'Error'}/${kind} — details withheld (authenticated run on a public repository)`;
 }
 
+// --- Write blockade (Codex #1207 P1) ----------------------------------------
+// Intercept EVERY request the browser context makes and abort any that would be a
+// live write. This closes a hole that "the harness never clicks Save" did not: the
+// APP itself calls a write-capable endpoint on its own. Once a plan is displayed or
+// engaged, clicking PREVIEW trips `unacceptedPlanGateRec` (`src/app/app.js`), which
+// silently calls `acceptDisplayedPlan` → `POST /api/session-plans/accept` +
+// `POST /api/session-plan-sets/accept` — both `writeCapable: true`. No beat asked
+// for that, and no amount of "we never click Approve" prevents it.
+//
+// The rule is the Atlas invariant itself: `test_mode` absent means live write. A
+// write-capable request carrying an explicit `test_mode` dry-run is allowed (that IS
+// the preview flow every scenario already uses); anything else write-capable is
+// aborted and recorded. Undeterminable requests fail closed.
+//
+// Installed for EVERY scenario: this enforces the harness's standing
+// no-state-mutation contract rather than changing behavior — any request it
+// aborts was already a contract violation.
+async function installWriteBlockade(context, { onBlocked = null, logger = console } = {}) {
+  await context.route('**/*', async (route) => {
+    let decision;
+    try {
+      const request = route.request();
+      decision = blockade.classifyOutboundRequest({
+        method: request.method(),
+        url: request.url(),
+        body: request.postData()
+      });
+    } catch {
+      decision = { writeCapable: true, dryRun: false, allowed: false, reason: 'request_unreadable' };
+    }
+
+    if (decision.allowed) {
+      await route.continue().catch(() => {});
+      return;
+    }
+
+    // Record path + reason only — never the request body, which on an
+    // authenticated run is the owner's private workout content.
+    logger.error(`[blockade] ABORTED a state-mutating request: ${decision.pathname || '(unparseable)'} (${decision.reason}) — the harness mutates no workout or session state`);
+    if (onBlocked) onBlocked({ path: decision.pathname || null, reason: decision.reason });
+    await route.abort('blockedbyclient').catch(() => {});
+  });
+  logger.log(`[blockade] installed — ${blockade.WRITE_CAPABLE_ROUTES.length} write-capable routes (from config/routes.js) are aborted unless the request is an explicit test_mode dry-run`);
+}
+
 function printScenario(scenarioKey, scenario, { targetBaseUrl, dryRunOnly }) {
   const line = '─'.repeat(72);
   console.log(line);
@@ -353,7 +413,7 @@ function printScenario(scenarioKey, scenario, { targetBaseUrl, dryRunOnly }) {
   console.log(`Reference         : ${scenario.reference}`);
   console.log(line);
   console.log(`Target base URL   : ${targetBaseUrl || '(none provided — set ATLAS_BASE_URL or --target-base-url)'}`);
-  console.log(`Mode              : ${dryRunOnly ? 'DRY-RUN (no browser, no live calls, no Sheets writes)' : 'LIVE (read-only: load + populate composer + preview + assert; never Save)'}`);
+  console.log(`Mode              : ${dryRunOnly ? 'DRY-RUN (no browser, no live calls, no state mutation)' : 'LIVE (read-only: load + populate composer + preview + assert; never Save)'}`);
   console.log(line);
 }
 
@@ -653,6 +713,9 @@ async function bootstrapBrowser({ baseUrl, scenarioKey, outputDir, scenario, acc
 
   let exitCode = 0;
   let verdict = 'UNKNOWN';
+  // Every state-mutating request the blockade aborted. A non-empty list is
+  // important evidence: the run WOULD have written without the blockade.
+  const blockedWrites = [];
   let auth = { attempted: false, authenticated: false, status: null, reason: 'no_credential' };
   // Privacy engages on credential PRESENCE (fail closed), not login success.
   const privacy = Boolean(accessCode);
@@ -664,6 +727,10 @@ async function bootstrapBrowser({ baseUrl, scenarioKey, outputDir, scenario, acc
     // Every request from this context is marked synthetic (see SYNTHETIC_HEADERS).
     await context.setExtraHTTPHeaders({ ...SYNTHETIC_HEADERS });
     console.log(`[bootstrap] synthetic provenance set on every request: x-atlas-request-origin: ${SYNTHETIC_ORIGIN}`);
+
+    // Write blockade FIRST — before authentication and before any navigation, so no
+    // request in this context can ever escape it (Codex #1207 P1).
+    await installWriteBlockade(context, { onBlocked: (b) => blockedWrites.push(b) });
 
     // Authenticate BEFORE the first navigation so the app shell loads as the
     // owner rather than rendering its unauthenticated state first.
@@ -723,7 +790,7 @@ async function bootstrapBrowser({ baseUrl, scenarioKey, outputDir, scenario, acc
     verdict = assertScenario({ scenarioKey, scenario, navResult, outputDir, auth, privacy });
     if (verdict === 'FAIL') exitCode = 2;
 
-    console.log(`[bootstrap] DONE — read-only retest complete (verdict: ${verdict}). Never pressed Save, no writes.`);
+    console.log(`[bootstrap] DONE — retest complete (verdict: ${verdict}). Never pressed Save; ${blockedWrites.length} state-mutating request(s) aborted by the blockade. No workout/session state changed.`);
   } catch (err) {
     exitCode = 1;
     verdict = 'ERROR';
@@ -743,7 +810,7 @@ async function bootstrapBrowser({ baseUrl, scenarioKey, outputDir, scenario, acc
   } finally {
     await browser.close().catch(() => {});
   }
-  return { exitCode, verdict, auth };
+  return { exitCode, verdict, auth, blockedWrites };
 }
 
 async function run(argv, env = process.env) {
@@ -761,8 +828,12 @@ async function run(argv, env = process.env) {
     return 1;
   }
 
-  // "all" runs every scenario in sequence and prints a summary (PR #719).
-  const keys = scenarioKey === 'all' ? Object.keys(SCENARIOS) : [scenarioKey];
+  // "all" runs every bug-retest scenario in sequence and prints a summary (PR
+  // #719). Scenarios marked `excludeFromAll` are not part of that sweep but stay
+  // selectable by name. No scenario sets it today.
+  const keys = scenarioKey === 'all'
+    ? Object.keys(SCENARIOS).filter(k => !SCENARIOS[k].excludeFromAll)
+    : [scenarioKey];
   if (scenarioKey !== 'all' && !SCENARIOS[scenarioKey]) {
     console.error(`ERROR: unknown scenario "${scenarioKey}".`);
     console.error(`Valid scenarios: all, ${Object.keys(SCENARIOS).join(', ')}`);
@@ -773,7 +844,7 @@ async function run(argv, env = process.env) {
 
   if (dryRunOnly) {
     console.log('DRY-RUN: nothing was executed. This only describes the retest(s);');
-    console.log('the owner runs the real app and decides pass/fail. No browser, no Sheets writes.');
+    console.log('the owner runs the real app and decides pass/fail. No browser, no state mutation.');
     return 0;
   }
 
@@ -802,8 +873,12 @@ async function run(argv, env = process.env) {
 
   const results = [];
   for (const k of keys) {
-    const { exitCode, verdict, auth } = await bootstrapBrowser({ baseUrl: targetBaseUrl, scenarioKey: k, outputDir, scenario: SCENARIOS[k], accessCode });
-    results.push({ scenario: k, bugId: SCENARIOS[k].bugId, verdict, exitCode, auth });
+    const { exitCode, verdict, auth, blockedWrites } = await bootstrapBrowser({ baseUrl: targetBaseUrl, scenarioKey: k, outputDir, scenario: SCENARIOS[k], accessCode });
+    const entry = { scenario: k, bugId: SCENARIOS[k].bugId, verdict, exitCode, auth };
+    // Only recorded when the blockade actually aborted something, so an ordinary
+    // clean run keeps its exact prior summary shape.
+    if (blockedWrites && blockedWrites.length) entry.blockedWrites = blockedWrites;
+    results.push(entry);
   }
 
   writeSummary(results, outputDir);
@@ -886,11 +961,18 @@ function buildMarkdownReport(results, ctx = {}) {
   lines.push('');
   lines.push(`All traffic is marked synthetic (\`x-atlas-request-origin: ${SYNTHETIC_ORIGIN}\`) and never counts as genuine owner/gym evidence.`);
   lines.push('');
+  // Write blockade posture. Reported on every run so "no write happened" is an
+  // observed fact rather than an assumption.
+  const blocked = results.flatMap(r => r.blockedWrites || []);
+  lines.push(blocked.length
+    ? `**Write blockade:** ⛔ aborted ${blocked.length} state-mutating request(s) the app attempted on its own — ${[...new Set(blocked.map(b => `\`${b.path}\``))].join(', ')}. No workout or session state changed; these would have been writes without the blockade.`
+    : '**Write blockade:** active — no state-mutating request was attempted. Write-capable routes (from `config/routes.js`) are aborted at the transport unless the request is an explicit `test_mode` dry-run.');
+  lines.push('');
   lines.push('Screenshots and result JSON for each step are attached as the `live-retest-artifacts-*` workflow artifact.');
   lines.push('');
   lines.push('**Verdicts:** ✅ PASS — expected behaviour seen · ⚠️ INCONCLUSIVE — no bug signal but the expected reply didn\'t render (likely an unauthenticated run; retest in an authed context) · ❌ FAIL — a forbidden/bug pattern reappeared · ◻️ MANUAL — needs a hands-on retest (no automatable assertion yet).');
   lines.push('');
-  lines.push('> Read-only retest — it never presses Save and never writes to Google Sheets. **Not a merge gate and not a replacement for owner judgment.**');
+  lines.push('> Read-only retest — it never presses Save and **mutates no workout or session state** (the blockade aborts plan-ledger, workout-log, closeout, revision, seal, and flight-recorder writes). This is *not* a claim of zero Sheet writes: with shadow tracing on, read-only coach routes still append synthetic Intent_Shadow / Brain_Shadow telemetry, tagged `evidence_class=synthetic` and never owner evidence. **Not a merge gate and not a replacement for owner judgment.**');
   lines.push('');
   return lines.join('\n');
 }
@@ -903,8 +985,10 @@ if (require.main === module) {
 }
 
 module.exports = {
-  SCENARIOS, parseArgs, toBool, run, bootstrapBrowser, navigateScenario, assertScenario,
+  SCENARIOS, OUTAGE_PATTERNS, parseArgs, toBool, run, bootstrapBrowser, navigateScenario, assertScenario,
   writeSummary, buildMarkdownReport,
+  // Browser write blockade.
+  installWriteBlockade, writeBlockade: blockade,
   // Synthetic provenance + optional authentication (PR A).
   SYNTHETIC_ORIGIN, SYNTHETIC_HEADERS, ACCESS_CODE_ENV, SESSION_COOKIE_NAME,
   redactCredential, parseSessionCookie, authenticateContext, shouldProceedToNavigation,
