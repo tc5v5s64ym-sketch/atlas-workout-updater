@@ -17,10 +17,14 @@
 // SEGREGATION / SAFETY (the invariants this instrument must never break):
 //   • TEST MODE: sheets.js is require-cache stubbed; appendRows THROWS, so a live write is
 //     impossible. vision + the coach LLM are stubbed deterministically.
-//   • NO SHADOW CONTAMINATION: ATLAS_INTERACTION_TRACE is force-unset, so the real
-//     [coach-turn-shadow] log stream / Coach_Shadow tab / divergence pipeline never see a
-//     corpus turn. The CoachTurnPacket is assembled OUT OF BAND (assembleShadowPacket)
-//     purely to score it — it is never logged to the shadow stream.
+//   • NO SHADOW CONTAMINATION: ATLAS_INTERACTION_TRACE is force-unset THREE times — before
+//     the app loads, again after it loads (index.js runs dotenv.config(), which repopulates
+//     the variable from a local .env), and once more at the top of replayAll. The flag is
+//     read per request, so any of those windows would otherwise let a corpus turn mint a
+//     real [coach-turn-shadow] record. The CoachTurnPacket is assembled OUT OF BAND
+//     (assembleShadowPacket) purely to score it — it is never logged to the shadow stream.
+//     Segregation is then PROVEN, not assumed: replayAll fails closed if the shadow log
+//     grew by even one record during the replay.
 //   • CORPUS-SYNTHETIC: every turn id is `corpus-synthetic:*` and every observation is
 //     tagged corpus-synthetic (services/corpusBaseline.deriveTurnObservation).
 
@@ -81,7 +85,18 @@ require.cache[require.resolve('../services/coach')] = {
 };
 
 const { app } = require('../index');
-const { assembleShadowPacket } = require('../services/coachTurnPacketShadow');
+// Re-apply the hard segregation AFTER the app loads. index.js runs
+// `require('dotenv').config()` at load time, which repopulates
+// ATLAS_INTERACTION_TRACE from a local `.env` and silently undoes the delete
+// above. services/interactionTraceShadow.js reads the flag PER REQUEST, so on a
+// machine whose `.env` sets ATLAS_INTERACTION_TRACE=shadow every replayed turn
+// minted a [coach-turn-shadow] record (measured: 69 records in one replay). The
+// delete above is kept — it keeps the app from ever loading with the flag set —
+// and this one closes the dotenv window it opens.
+delete process.env.ATLAS_INTERACTION_TRACE;
+
+const coachTurnPacketShadow = require('../services/coachTurnPacketShadow');
+const { assembleShadowPacket } = coachTurnPacketShadow;
 const corpusBaseline = require('../services/corpusBaseline');
 const { SESSIONS } = require('../test/fixtures/corpusBaseline/sessions');
 
@@ -141,6 +156,14 @@ async function replayTurn(baseUrl, session, turn, index) {
 // Boot the real app, replay every session's turns, return the raw observations. Exposed
 // so the runner test can assert segregation (corpus-synthetic tagging) and no-write safety.
 async function replayAll() {
+  // Belt to the dotenv brace above: a caller (or anything that re-read `.env`
+  // since load) must not be able to switch the shadow stream on for a corpus
+  // replay. The flag is read per request, so unsetting it here is sufficient.
+  delete process.env.ATLAS_INTERACTION_TRACE;
+  // Segregation is asserted, not assumed. Record the shadow-log depth BEFORE the
+  // replay (non-destructive — a caller may have its own records) and prove below
+  // that the corpus added none.
+  const shadowDepthBefore = coachTurnPacketShadow.getShadowLog().length;
   // Silence the app's per-request logger so stdout stays clean for --json / the summary.
   const saved = { log: console.log, info: console.info, warn: console.warn, debug: console.debug };
   console.log = () => {}; console.info = () => {}; console.warn = () => {}; console.debug = () => {};
@@ -161,6 +184,13 @@ async function replayAll() {
   } finally {
     await new Promise((res) => server.close(() => res()));
     restore();
+  }
+  // FAIL CLOSED: a corpus turn must never reach the real [coach-turn-shadow]
+  // stream that npm run atlas:divergence consumes. If it did, the replay's
+  // synthetic turns would be readable as production divergence evidence.
+  const shadowAdded = coachTurnPacketShadow.getShadowLog().length - shadowDepthBefore;
+  if (shadowAdded > 0) {
+    throw new Error(`corpus-baseline: ${shadowAdded} [coach-turn-shadow] record(s) emitted during a segregated replay — aborting`);
   }
   return observationsBySession;
 }
