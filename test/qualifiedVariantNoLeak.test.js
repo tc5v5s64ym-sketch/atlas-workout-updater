@@ -196,17 +196,59 @@ test('11. two lifts that SHARE a word are both kept — that turn is ambiguous, 
   assert.equal(namesDifferentExercise('how much for zercher squat?', 'Back Squat'), true);
 });
 
-test('12. a question about one lift no longer drags in another that shares a word', () => {
-  // Pre-existing over-broad narrowing, corrected by the same span rule: "why did you
-  // program bench press?" matched Overhead Press too, on the shared word "press", so that
-  // lift's diagnostics were forwarded for a question that never mentioned it.
+test('12. an unrelated lift sharing a word is left exactly as it was — not this PR\'s concern', () => {
+  // "why did you program bench press?" also matches Overhead Press, through the module's
+  // pre-existing loose significant-word match on "press". That is over-broad narrowing,
+  // but it is NOT a variant leak: no lift is being answered under another lift's name, and
+  // the cause is the word matcher, not exercise identity.
+  //
+  // An earlier revision of this change happened to suppress it, as a side effect of a
+  // lexical-overlap rule that ALSO dropped both lifts from "bench press and overhead
+  // press". The correct containment rule does neither, so this behaviour returns to
+  // exactly what `main` does. Pinned here so the scope boundary is explicit and a future
+  // reader does not mistake it for a regression.
   const twoPress = {
     current_plan: [
       { name: 'Bench Press', sets: 3, reps: 8, weight: 185, rir: 2 },
       { name: 'Overhead Press', sets: 3, reps: 8, weight: 95, rir: 2 },
     ],
   };
-  assert.deepEqual(grounding.resolveTurnExercises('why did you program bench press?', twoPress), ['Bench Press']);
+  assert.deepEqual(
+    grounding.resolveTurnExercises('why did you program bench press?', twoPress),
+    ['Bench Press', 'Overhead Press'],
+    'unchanged from main — the loose word match is a separate concern',
+  );
+});
+
+test('13. abbreviated and possessive variants are caught too', () => {
+  const plan = { current_plan: [{ name: 'Deadlift', sets: 3, reps: 5, weight: 405, rir: 2 }] };
+  const history = [{ role: 'user', text: 'deadlift 405 5/2' }];
+  // `dl` spells none of "deadlift", so a lexical comparison missed these entirely.
+  for (const variant of ['sumo dl', 'deficit dl']) {
+    const message = `how much for ${variant}?`;
+    assert.equal(resolveLiftName(message, history, plan), null, message);
+    assert.equal(answerPlannedLiftQuestion(message, plan), null, message);
+    assert.doesNotMatch(
+      buildSessionQuestionAnswer(message, { history, clientContext: plan }), /405/, message,
+    );
+  }
+  // The plain abbreviation still resolves — only the QUALIFIED form is rejected.
+  assert.equal(resolveLiftName('how much for dl?', history, plan), 'Deadlift');
+
+  // A possessive must not slip past the check by splitting the phrase apart.
+  const squatPlan = { current_plan: [{ name: 'Back Squat', sets: 3, reps: 5, weight: 315, rir: 2 }] };
+  assert.equal(resolveLiftName("how much for zercher's squat?", [], squatPlan), null);
+  assert.equal(answerPlannedLiftQuestion("how much for zercher's squat?", squatPlan), null);
+});
+
+test('14. a full canonical name is never read as qualifying itself', () => {
+  // "incline bench press" contains the shorter alias "bench press", which maps to a
+  // different KB exercise. Reading that nested alias as a qualifier rejected the athlete's
+  // own correct, complete lift name.
+  const plan = { current_plan: [{ name: 'Incline Bench Press', sets: 3, reps: 8, weight: 155, rir: 2 }] };
+  assert.equal(resolveLiftName('how much for incline bench press?', [], plan), 'Incline Bench Press');
+  assert.match(answerPlannedLiftQuestion('how much for incline bench press?', plan), /Incline Bench Press today: 155 lbs/);
+  assert.equal(namesDifferentExercise('how much for incline bench press?', 'Incline Bench Press'), false);
 });
 
 // ── Part C — the same fixtures against the PRE-FIX resolution ──────────────
