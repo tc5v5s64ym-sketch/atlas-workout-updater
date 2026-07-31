@@ -78,7 +78,22 @@ describe('coachResponseSheet', () => {
     }));
     assert.equal(row[7], 'FALSE');
     assert.equal(row[9], 'TRUE');             // suppressed
-    assert.equal(row[10], 'validator_suppressed');
+    // No producer code supplied → fails closed to the bounded `unknown` suffix, never to
+    // arbitrary text and never silently back to the bare historical value.
+    assert.equal(row[10], 'validator_suppressed:unknown');
+    assert.ok(responseSheet.isValidatorSuppressed(row[10]));
+
+    // With a producer code, the same row carries the precise reason.
+    const coded = responseSheet.buildRow(sampleParams({
+      visible: envelope({ message: null, kind: 'block' }),
+      modelStatus: 'ok',
+      suppressionCode: 'profanity_without_permission',
+    }));
+    assert.equal(coded[10], 'validator_suppressed:profanity_without_permission');
+    assert.ok(responseSheet.isValidatorSuppressed(coded[10]));
+
+    // The historical exact value still groups as a suppression (rows are never rewritten).
+    assert.ok(responseSheet.isValidatorSuppressed('validator_suppressed'));
   });
 
   it('represents an LLM-outage fallback and an error fallback explicitly', () => {

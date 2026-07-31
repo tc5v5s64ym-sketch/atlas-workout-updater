@@ -202,6 +202,8 @@ function observeQaTurn(req, res, opts) {
         intentType,
         visible,
         modelStatus,
+        // Published by the chat route at its own suppression point; never inferred here.
+        suppressionCode: (res.locals && res.locals.coachSuppressionCode) || null,
         appVersion: reqBody.appVersion || reqBody.app_version || null,
       });
     } catch (_) { /* shadow must never affect the response */ }

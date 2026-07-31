@@ -36,6 +36,9 @@ const { detectDiscouragement } = require('../services/discouragementSignal');
 const interactionTraceShadow = require('../services/interactionTraceShadow');
 const coachTurnPacketShadow = require('../services/coachTurnPacketShadow');
 const coachResponseSheet = require('../services/coachResponseSheet');
+// Fixed, privacy-safe suppression classification. Only enum codes cross this boundary —
+// never the model draft, the matched phrase, or any free-form validator text.
+const { SUPPRESSION_CODES: CODES, classifyRegisterViolations } = require('../services/suppressionReason');
 const coachQaShadow = require('../services/coachQaShadow');
 const { INTENSITIES, grantRegister } = require('../services/registerPermissions');
 const { computeCelebrationScarcity } = require('../services/celebrationScarcity');
@@ -527,13 +530,29 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     // An empty/whitespace-only model reply is NOT a coach message — normalize it to
     // null so the endpoint never serializes `message: ""` (PR-11 Bug 4). The client
     // then falls back to its templated voice instead of rendering a blank.
+    //
+    // `suppression_code` is OBSERVATIONAL ONLY: it names which branch nulled the prose so
+    // the durable record can say why. It never participates in the decision — every
+    // condition below is byte-identical to before.
     const msg = (typeof message === 'string' && !message.trim()) ? null : message;
-    if (!voiceBase) return { message: msg, voice: null };
+    const emptied = msg === null && message !== null && message !== undefined;
+    if (!voiceBase) {
+      return { message: msg, voice: null, suppression_code: emptied ? CODES.EMPTY_MODEL_REPLY : null };
+    }
     const contradictions = findForbiddenContradictions(voiceBase.reason_codes, msg);
     const suppress = voiceBase.suppress_generic_prose || contradictions.length > 0;
+    let suppression_code = null;
+    if (emptied) suppression_code = CODES.EMPTY_MODEL_REPLY;
+    else if (suppress && msg !== null) {
+      // Same order as the `||` above, so the recorded cause matches the deciding branch.
+      suppression_code = voiceBase.suppress_generic_prose
+        ? CODES.SET_VOICE_GENERIC_PROSE
+        : CODES.SET_VOICE_CONTRADICTION;
+    }
     return {
       message: suppress ? null : msg,
       voice: { ...voiceBase, contradictions },
+      suppression_code,
     };
   }
 
@@ -547,12 +566,24 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
   function finalizeCoachVoice(message, voiceBase, subVoiceBase, registerCtx = null) {
     const setFin = finalizeSetVoice(message, voiceBase);
     let outMessage = setFin.message;
+    // The FIRST producer that nulled the prose is the true cause, so the code is only ever
+    // set when it is still null — later stages cannot overwrite an earlier verdict. Purely
+    // observational; no branch below reads it.
+    let suppression_code = setFin.suppression_code || null;
+    const noteSuppression = (code) => { if (!suppression_code) suppression_code = code; };
     let sub_voice = null;
     if (subVoiceBase) {
       const goodPivot = subVoiceBase.severity === 'pivot';
       const contradictions = findSubstitutionContradictions(goodPivot, message);
       sub_voice = { ...subVoiceBase, contradictions };
-      if (subVoiceBase.suppress_generic_prose || contradictions.length > 0) outMessage = null;
+      if (subVoiceBase.suppress_generic_prose || contradictions.length > 0) {
+        if (outMessage !== null) {
+          noteSuppression(subVoiceBase.suppress_generic_prose
+            ? CODES.SUBSTITUTION_GENERIC_PROSE
+            : CODES.SUBSTITUTION_CONTRADICTION);
+        }
+        outMessage = null;
+      }
     }
     // PR-B4 slice 3 — register suppressor. The deterministic engine wins here too:
     // if the LLM prose outran its granted register (a swear word without
@@ -561,9 +592,16 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     // deterministic line — exactly like a reason-code contradiction.
     if (outMessage && registerCtx && typeof coach.findRegisterViolations === 'function') {
       const violations = coach.findRegisterViolations(outMessage, registerCtx);
-      if (violations.length > 0) outMessage = null;
+      if (violations.length > 0) {
+        // Only the fixed enum code is kept. `violations` also carries the matched phrase;
+        // classifyRegisterViolations reads `.code` and nothing else, so no prose escapes.
+        noteSuppression(classifyRegisterViolations(violations));
+        outMessage = null;
+      }
     }
-    return { message: outMessage, voice: setFin.voice, sub_voice };
+    // A response that survived carries no suppression reason.
+    if (outMessage !== null) suppression_code = null;
+    return { message: outMessage, voice: setFin.voice, sub_voice, suppression_code };
   }
 
   router.post('/api/coach/message', async (req, res) => {
@@ -639,6 +677,9 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
             intentType: kind,
             visible: visibleBody,
             modelStatus,
+            // Set at the suppression point itself (finalizeCoachVoice), never inferred
+            // afterwards from coach_mode, register, or the visible output.
+            suppressionCode: res.locals.coachSuppressionCode || null,
             appVersion: reqBody.appVersion || reqBody.app_version || null,
           });
         } catch (_) { /* shadow must never affect the response */ }
@@ -986,6 +1027,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     }
     if (!coach.isConfigured()) {
       const fin = finalizeCoachVoice(null, voiceBase, subVoiceBase);
+      res.locals.coachSuppressionCode = fin.suppression_code || null;
       validatorRan = true; // the deterministic validator ran; the model was skipped (outage)
       if (surfacedSignalBlock) return ackOnlyBlockResponse();
       return standardSuccess(req, res, 'Coach voice unavailable — use templated fallback', {
@@ -1002,6 +1044,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // when it contradicts (or would speak over) a non-neutral set-effort signal,
       // or when it outruns its granted register (slice 3).
       const fin = finalizeCoachVoice(message, voiceBase, subVoiceBase, registerCtx);
+      res.locals.coachSuppressionCode = fin.suppression_code || null;
       validatorRan = true;
       return standardSuccess(req, res, 'Coach message', { message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: true, model: coach.coachModel(), source: 'gemini', kind, ...noteMeta, ...effortExtras, flight_recorder_context });
     } catch (error) {
@@ -1009,6 +1052,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // Degrade gracefully: tell the client to use its templated fallback rather
       // than surfacing an error in the chat.
       const fin = finalizeCoachVoice(null, voiceBase, subVoiceBase);
+      res.locals.coachSuppressionCode = fin.suppression_code || null;
       validatorRan = true;
       if (surfacedSignalBlock) return ackOnlyBlockResponse();
       return standardSuccess(req, res, 'Coach generation failed — use templated fallback', {
@@ -1710,6 +1754,15 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
           : ['register_guard_unavailable'])
         : [];
       const hasSafeReply = hasReply && registerViolations.length === 0;
+      // Observational only — records WHY the prose was dropped, at the point it is dropped.
+      // `hasReply` false means the model returned nothing usable; otherwise the register
+      // guard rejected it. Only the fixed enum code is published; `registerViolations`
+      // carries the matched phrase and it never leaves this line.
+      if (!hasSafeReply) {
+        res.locals.coachSuppressionCode = hasReply
+          ? classifyRegisterViolations(registerViolations)
+          : CODES.EMPTY_MODEL_REPLY;
+      }
       // F09H (PR-CLAIM-1): a self-reported "that was a PR" / personal-best claim is a
       // session RESULT, not a durable fact — it must never open note/constraint consent
       // or reach Coaching_Notes (PR status is engine-owned, from logged rows, never a

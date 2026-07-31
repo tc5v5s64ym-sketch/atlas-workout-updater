@@ -158,7 +158,13 @@ test('SUPPRESSED: the stored text is the FINAL (nulled) output, never the model 
   assert.equal(row[COL.visible_message], '');
   assert.equal(row[COL.visible_message_present], 'FALSE');
   assert.equal(row[COL.suppressed], 'TRUE');
-  assert.equal(row[COL.suppression_reason], 'validator_suppressed');
+  // The reason now names the producer that actually nulled the prose, set at the
+  // suppression point in finalizeCoachVoice — not inferred afterwards.
+  assert.match(row[COL.suppression_reason], /^validator_suppressed:/);
+  assert.ok(responseSheet.isValidatorSuppressed(row[COL.suppression_reason]));
+  // Whatever the producer, the stored value is a bounded enum — never prose.
+  assert.doesNotMatch(row[COL.suppression_reason], /\s/);
+  assert.ok(!row[COL.suppression_reason].includes(coachState.message));
   delete process.env.ATLAS_INTERACTION_TRACE;
 });
 

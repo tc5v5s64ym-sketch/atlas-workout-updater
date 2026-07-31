@@ -151,7 +151,9 @@ test('D. suppressed (chat): the FINAL nulled answer is recorded, not the model d
   assert.notEqual(respRow[RESP.visible_message], coachState.reply); // never the draft
   assert.equal(respRow[RESP.visible_message_present], 'FALSE');
   assert.equal(respRow[RESP.suppressed], 'TRUE');
-  assert.equal(respRow[RESP.suppression_reason], 'validator_suppressed');
+  // The stub reports a violation code the enum does not know, so the recorder fails closed
+  // to `unknown` rather than persisting the stub's arbitrary string.
+  assert.equal(respRow[RESP.suppression_reason], 'validator_suppressed:unknown');
   coachState.reply = 'ok'; coachState.propose_note = null; coachState.violations = [];
   delete process.env.ATLAS_INTERACTION_TRACE;
 });
