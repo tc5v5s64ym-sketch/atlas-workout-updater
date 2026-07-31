@@ -57,16 +57,24 @@ or owner merge click is required for a routine authorized PR.
 ### Additional findings
 
 <!--
-Owner ruling 2026-07-30 (corrected 2026-07-31) — backlog intake is closed and GitHub Issues
-are not a replacement backlog. Every finding discovered while doing this work gets exactly one
-disposition. "Add to BACKLOG" and "file it as an issue" are not dispositions. Keep only the
-lines that apply. OWNER DECISION REQUIRED means stop and report it to the owner — it creates
-no issue, no backlog line, and no execution-plan entry unless the owner selects it.
+Owner ruling 2026-07-30, final form 2026-07-31 — bounded backlog ledger. Every finding
+discovered while doing this work gets exactly one disposition. Keep only the lines that apply.
+GitHub Issues are not a parallel backlog.
+
+ADDED TO BOUNDED BACKLOG requires the three declaration lines below it: BACKLOG.md has fixed
+capacity, so an added item must be paid for by removing, archiving, or promoting existing
+content. Name what went in, what came out, and the resulting counts — the guard checks the
+numbers, review checks that the removal was honest. Fill "counts:" in the form
+`items 282 → 282 · lines 787 → 787 · cap 787 → 787`.
 -->
 
 - None
 - FIXED NOW:
 - REJECTED:
+- ADDED TO BOUNDED BACKLOG:
+  - added:
+  - removed/archived/promoted:
+  - counts:
 - OWNER DECISION REQUIRED:
 
 ### Advisory disposition

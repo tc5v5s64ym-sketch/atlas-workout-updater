@@ -1,32 +1,41 @@
 'use strict';
 
-// Drift Guard 7 — BACKLOG INTAKE CLOSURE (owner ruling 2026-07-30).
+// Drift Guard 7 — BOUNDED BACKLOG LEDGER (owner ruling 2026-07-30, final form 2026-07-31).
 //
-// Spec: docs/ATLAS_V1_EXECUTION_PLAN.md "OWNER RULING — 2026-07-30 — Backlog intake closed"
-// and "Drift guards" #7. Published in CLAUDE.md.
+// Spec: docs/ATLAS_V1_EXECUTION_PLAN.md "OWNER RULING — bounded backlog ledger" and
+// "Drift guards" #7. Published in CLAUDE.md.
 //
-// BACKLOG.md is a FROZEN LEGACY INVENTORY. A new finding gets one disposition — FIX NOW,
-// REJECT, or OWNER DECISION REQUIRED — never a backlog line. Owner correction 2026-07-31:
-// GitHub Issues are not a replacement backlog, so "file it as an issue" is not a disposition.
+// BACKLOG.md is a BOUNDED, ACTIVELY CONSUMED evidence ledger of proven deferred work. It
+// preserves findings; it never selects work, authorizes a PR, or competes with the execution
+// plan. Intake is allowed — under a fixed capacity.
 //
-// The guard is deliberately MECHANICAL: it compares three counts between the PR base and the
-// head and never reads or classifies prose. Nothing written in the diff — a rationale, an
-// owner-sounding note, a justification in config/paper-weight.json — can make it pass.
+// THE FIXED-CAPACITY RULE. BACKLOG.md may never grow in top-level item count, in total line
+// count, or in config/paper-weight.json `backlog_max_lines`. A PR that adds an item must
+// archive, reject, resolve, deduplicate, or promote enough existing content that all three
+// counts stay flat or fall.
 //
-//  1. BACKLOG.md top-level work items (column-0 bullets) may not increase.
-//  2. BACKLOG.md lines may not increase. This covers a finding written as a paragraph, a
+// So a NET-NEUTRAL REPLACEMENT — one item in, one item out — is the intended bounded-intake
+// operation, not a loophole. This guard deliberately permits it and cannot judge whether the
+// removed content was genuinely fixed, stale, duplicated, rejected, archived, or promoted.
+// That honesty check belongs to exact-head review and to the merge card, where a PR adding an
+// item must name the added item, the removed item, and the resulting counts. Removing a
+// valuable item merely to make room is a review failure, never a green build.
+//
+// The guard is MECHANICAL — three counts, no prose classification, no semantic similarity
+// matching. Nothing written in the diff (a rationale, an owner-sounding note, a justification
+// in config/paper-weight.json) changes its answer:
+//
+//  1. BACKLOG.md top-level items may not increase.
+//  2. BACKLOG.md lines may not increase. This also covers an item written as a paragraph, a
 //     table row, or an indented child instead of a bullet, without classifying any text.
-//  3. config/paper-weight.json `backlog_max_lines` may not increase. The cap is permanently
-//     non-increasing; CI may never be made green by raising it.
+//  3. `backlog_max_lines` may not increase. The cap is permanently non-increasing; CI may
+//     never be made green by raising it.
 //
 // It FAILS CLOSED: a base ref that cannot be resolved, fetched, or parsed is an error, never a
 // silent pass, because an unreadable base leaves nothing to compare against.
 //
-// Removal, archival, deduplication, and in-place correction all pass — none of them raise a
-// count. KNOWN LIMIT: deleting one item and adding a different one keeps every count flat, so
-// this guard does not catch that swap. Catching it needs semantic diff matching, which the
-// owner ruling deliberately excludes; PR review and the merge card's "Additional findings"
-// field cover it.
+// Removal, archival, deduplication, promotion into the execution plan, and in-place correction
+// all pass — none of them raises a count.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -48,11 +57,16 @@ function countLines(text) {
   return s.split('\n').length - (s.endsWith('\n') ? 1 : 0);
 }
 
-// A top-level work item is a column-0 list item. Markdown accepts "-", "*", and "+" as
-// unordered markers and "1." / "1)" as ordered ones; all of them are counted, because any of
-// them adds an item — a builder converting an existing blank line to "+ new work" would
-// otherwise add an item without adding a line.
-const TOP_LEVEL_ITEM_RE = /^([-*+]|\d+[.)])\s/;
+// A top-level work item is a list item at the outer level. Markdown accepts "-", "*", and "+"
+// as unordered markers and "1." / "1)" as ordered ones; all count, because any of them adds an
+// item — a builder converting an existing blank line to "+ new work" would otherwise add an
+// item without adding a line.
+//
+// Leading space: 0 or 1. A marker indented one space is still a sibling, because a "- " parent's
+// content starts at column 2, so only an indent of 2 or more makes the bullet that parent's
+// CHILD. Accepting 0-1 closes the " - new item" bypass without reclassifying the file's nested
+// children (BACKLOG.md today: 282 bullets at column 0, 48 at two spaces, 7 at four, none at one).
+const TOP_LEVEL_ITEM_RE = /^ ?([-*+]|\d+[.)])\s/;
 
 /**
  * Count top-level work items. Fenced code blocks are skipped so an example bullet inside ```
@@ -99,17 +113,17 @@ function analyze({ base, head } = {}) {
 
   if (headItems > baseItems) {
     errors.push(
-      `${BACKLOG_REL} adds ${headItems - baseItems} work item(s) (${baseItems} → ${headItems}) — backlog intake `
-      + 'is CLOSED (owner ruling 2026-07-30). Give the finding a disposition instead: FIX NOW (fix it in this PR), '
-      + 'REJECT (record the rationale in the PR discussion), or OWNER DECISION REQUIRED (stop and report it to '
-      + 'the owner — no GitHub issue, no backlog line).',
+      `${BACKLOG_REL} grew by ${headItems - baseItems} item(s) (${baseItems} → ${headItems}). The backlog is a `
+      + 'BOUNDED ledger: adding an item requires archiving, rejecting, resolving, deduplicating, or promoting '
+      + 'enough existing content to keep the item count flat or falling. Either make room, or give the finding a '
+      + 'different disposition: FIX NOW, REJECT, or OWNER DECISION REQUIRED.',
     );
   }
 
   if (headLines > baseLines) {
     errors.push(
-      `${BACKLOG_REL} grew ${baseLines} → ${headLines} lines. The frozen inventory never grows; it may only be `
-      + 'corrected, deduplicated, archived, or reduced, so a correction must be net-neutral or reducing.',
+      `${BACKLOG_REL} grew ${baseLines} → ${headLines} lines. The bounded ledger never grows: an added item has `
+      + 'to be paid for by removing, archiving, or promoting at least as many lines. Keep the entry compact.',
     );
   }
 
@@ -126,8 +140,8 @@ function analyze({ base, head } = {}) {
     errors.push(`${CONFIG_REL}: backlog_max_lines must be a positive integer (head).`);
   } else if (baseCap !== null && headCap > baseCap) {
     errors.push(
-      `${CONFIG_REL}: backlog_max_lines rose ${baseCap} → ${headCap}. The paper-weight cap is permanently `
-      + 'non-increasing — do not raise it to make CI pass. Archive or reduce the file instead '
+      `${CONFIG_REL}: backlog_max_lines rose ${baseCap} → ${headCap}. The cap is permanently non-increasing — `
+      + 'never raise it to make CI pass or to fit a new item. Archive or promote existing records instead '
       + '(`npm run archive:backlog -- --apply`).',
     );
   }
@@ -175,7 +189,7 @@ function run(argv, env) {
   const baseRef = resolveBaseRef(argv, env);
 
   if (!baseRef) {
-    const msg = 'Drift Guard 7 — backlog intake: no base ref given (pass one, or set GITHUB_BASE_REF).';
+    const msg = 'Drift Guard 7 — bounded backlog: no base ref given (pass one, or set GITHUB_BASE_REF).';
     if (requireBase) { console.error(`❌ ${msg}`); return 1; }
     console.log(`⏭️  ${msg} Skipped — this guard compares a PR against its base.`);
     return 0;
@@ -184,14 +198,14 @@ function run(argv, env) {
   let mergeBase;
   try { mergeBase = gitRev(['merge-base', baseRef, 'HEAD']); }
   catch (e) {
-    console.error(`❌ Drift Guard 7 — backlog intake: cannot resolve the merge base of "${baseRef}" and HEAD (${String(e.stderr || e.message).trim()}).`);
+    console.error(`❌ Drift Guard 7 — bounded backlog: cannot resolve the merge base of "${baseRef}" and HEAD (${String(e.stderr || e.message).trim()}).`);
     return 1;
   }
 
   const base = { backlog: showAt(mergeBase, BACKLOG_REL), config: showAt(mergeBase, CONFIG_REL) };
   if (!base.backlog || !base.config) {
     console.error(
-      `❌ Drift Guard 7 — backlog intake: cannot read ${!base.backlog ? BACKLOG_REL : CONFIG_REL} at the base `
+      `❌ Drift Guard 7 — bounded backlog: cannot read ${!base.backlog ? BACKLOG_REL : CONFIG_REL} at the base `
       + `commit ${mergeBase.slice(0, 8)} — failing closed. Fetch the base ref and re-run.`,
     );
     return 1;
@@ -200,12 +214,14 @@ function run(argv, env) {
   const r = analyze({ base, head });
 
   if (!r.valid) {
-    console.error(`❌ Backlog-intake guard FAILED (base ${mergeBase.slice(0, 8)}):\n- ` + r.errors.join('\n- '));
+    console.error(`❌ Bounded-backlog guard FAILED (base ${mergeBase.slice(0, 8)}):\n- ` + r.errors.join('\n- '));
     return 1;
   }
+  const delta = r.headItems === r.baseItems && r.headLines === r.baseLines ? 'flat' : 'reduced';
   console.log(
-    `✅ Backlog-intake guard OK — no new intake (items ${r.baseItems} → ${r.headItems}, `
-    + `lines ${r.baseLines} → ${r.headLines}, cap ${r.baseCap} → ${r.headCap}); base ${mergeBase.slice(0, 8)}.`,
+    `✅ Bounded-backlog guard OK — capacity ${delta} (items ${r.baseItems} → ${r.headItems}, `
+    + `lines ${r.baseLines} → ${r.headLines}, cap ${r.baseCap} → ${r.headCap}); base ${mergeBase.slice(0, 8)}. `
+    + 'A net-neutral replacement is intentional bounded intake; review verifies the removal was honest.',
   );
   return 0;
 }
