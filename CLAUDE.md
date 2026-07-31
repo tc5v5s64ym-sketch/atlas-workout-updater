@@ -148,15 +148,7 @@ GitHub Issues are **not** a replacement backlog (owner correction 2026-07-31). W
 
 ### High-risk files
 
-These may be touched only when the active card explicitly requires them, with a tiny focused diff and live-path tests:
-
-- `index.js` — write path, `test_mode`, proof fields, enrichment/append orchestration
-- `src/app/app.js` — preview → approve → write trust loop and major client state
-- `services/workoutTextParser.js` — slash notation and parser grammar
-
-Editing the file is not automatically owner-reserved; changing its protected contract is.
-
-**app.js freeze rule (Phase 2, owner-adopted 2026-07-20).** `src/app/app.js` (H-21, ~7,800 lines) is frozen for **new session-state logic**: no new session-state store, session-truth selector, or truth-derivation may be added here. New session-state logic goes in a dedicated module (`src/app/activeSession.js`, a `services/` contract, etc.) and is imported. Bug-fix edits, comments, and labels on existing code are fine; growing the shell's session-state surface is not. Enforced by review now; the app.js extraction lands in Phase 5.
+`index.js`, `src/app/app.js`, and `services/workoutTextParser.js` carry extra rules, including the app.js session-state freeze. The full rule is in [`.claude/rules/high-risk-files.md`](.claude/rules/high-risk-files.md) and loads automatically when one of those files is opened.
 
 ## Merge gate
 
@@ -225,45 +217,7 @@ Never change these semantics without explicit owner approval:
 
 ## Sheet schemas
 
-No columns may be added, removed, or reordered without a migration and explicit owner approval. `config/columns.js` and the relevant sheet contract are authoritative.
-
-### `Log_Cleaned` — 12 columns
-
-```text
-date_clean | session_id | exercise | canonical_exercise | muscle_group | lift_code | set_number | weight | reps | rir | notes | volume_calc
-```
-
-### `Effort` — 9 columns
-
-```text
-date | session_id | duration | active_calories | total_calories | average_hr | peak_hr | location | notes
-```
-
-`average_hr` and `peak_hr` are distinct.
-
-### `Constraints` — 5 columns
-
-```text
-date | kind | target | rule | note
-```
-
-Use the vocabulary and validation in `config/columns.js` and the active reader/writer; do not invent row conventions.
-
-### `Deload_State` — 7 columns
-
-```text
-updated_at | training_state | deload_protocol | deload_reason | deload_start_date | deload_sessions_remaining | deload_exit_criteria
-```
-
-Append-only system state.
-
-### `Session_Plans` — 13 columns
-
-```text
-idempotency_key | session_id | session_date | plan_version | event_type | plan_item_id | planned_order | planned_lift_code | movement_pattern | outcome | performed_lift_code | closeout_status | recorded_at
-```
-
-Append-only, deterministic idempotency, canonical lift codes, and plan-item identity. It does not pass through the logged-set preview/write loop.
+No columns may be added, removed, or reordered without a migration and explicit owner approval. `config/columns.js` and the relevant sheet contract are authoritative. The per-tab column layouts (`Log_Cleaned`, `Effort`, `Constraints`, `Deload_State`, `Session_Plans`) are in [`.claude/rules/sheet-schemas.md`](.claude/rules/sheet-schemas.md) and load automatically when a file that defines, writes, or validates a Sheet row is opened.
 
 ## Coach/LLM boundary
 
