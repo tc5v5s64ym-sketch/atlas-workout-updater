@@ -131,19 +131,27 @@ test('gate posture: the default harness is model-down with no key anywhere (the 
   } finally { gate.child.kill(); }
 });
 
-// ── 3. Explicit model-up remains available ───────────────────────────────────────────
-test('gate posture: ATLAS_GATE_MODEL_UP=1 with a key present yields an explicit model-up harness', async () => {
+// ── 3. Model-up is proven by REACHABILITY, never by key presence ─────────────────────
+// Codex review (PR #1226, P2): publishing model-up on key presence alone accepts an
+// expired key, a bad GEMINI_COACH_MODEL, a quota block, or an unreachable provider —
+// leaving the coach routes on their deterministic fallbacks while the harness advertised
+// model-up. That is the same unbacked claim this file exists to remove, just relocated.
+//
+// A valid key cannot live in CI, so the committed proof is the FAIL-CLOSED direction: an
+// unusable key must never yield a model-up harness. Whichever way the ping fails —
+// HTTP 400 from the provider, or no egress at all — the harness must refuse to publish.
+// The passing direction needs a genuine provider and is an operator-run proof, recorded
+// in the PR rather than faked here.
+test('gate posture: model-up with an unusable key is refused — presence is not reachability', async () => {
   const cwd = makeCwd(null);
   const gate = await startGate({ cwd, env: childEnv({ ATLAS_GATE_MODEL_UP: '1', GEMINI_API_KEY: FAKE_KEY }) });
-  assert.equal(gate.exited, false, `explicit model-up must remain available (stderr: ${gate.stderr})`);
   try {
-    assert.match(gate.stdout, /GATE_MODEL_POSTURE=model-up/);
-    const state = await gateState(gate.statePort);
-    assert.equal(state.model_posture, 'model-up');
-    assert.equal(state.provider_key_present, true, 'model-up keeps the provider key reachable');
-    // Deliberately NOT calling /api/coach/health here: with a key present that route
-    // pings the provider for real. Reaching a provider is a property of the RUN, and
-    // proving it is the operator's job — never a unit test's.
+    assert.equal(gate.exited, true, 'an unreachable provider must not be served as model-up');
+    assert.equal(gate.exitCode, 2);
+    assert.match(gate.stderr, /GATE_POSTURE_ERROR/);
+    assert.match(gate.stderr, /not reachable/, 'the refusal must name reachability as the unmet condition');
+    assert.doesNotMatch(gate.stdout, /GATE_MODEL_POSTURE=/, 'no posture may be published before it is proven');
+    assert.doesNotMatch(gate.stdout, /GATE_PORT=/, 'no port may be published by an unproven harness');
   } finally { gate.child.kill(); }
 });
 
