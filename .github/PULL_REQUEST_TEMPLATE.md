@@ -77,6 +77,37 @@ numbers, review checks that the removal was honest. Fill "counts:" in the form
   - counts:
 - OWNER DECISION REQUIRED:
 
+### Architecture and closed-loop impact
+
+<!--
+Closed-Loop Delivery Contract (CLAUDE.md): Purpose → Authority → Integration → Proof →
+Cleanup → Closure. Current authority per concept is in docs/ATLAS_SYSTEM_AUTHORITY.md.
+A foundation PR is progress, not completion. Net open-loop change is normally zero or
+negative; a positive result needs an explicit owner-approved reason and a closure chain.
+Write "n/a" on a line that genuinely does not apply.
+-->
+
+- Defect classification: <!-- local defect / authority defect / missing capability -->
+- Parent product/phase outcome:
+- Loop this PR closes:
+- Current live authority:
+- Intended sole authority:
+- Competing authority removed:
+- Exact live consumer:
+- Integration proof: <!-- unit / integration / browser-full-session / owner evidence -->
+- Temporary artifacts introduced:
+- Compatibility bridge:
+- Sunset/removal condition:
+- Production branches added:
+- Production branches removed:
+- Displaced code/tests/docs removed:
+- Open loops closed:
+- Open loops created:
+- Net open-loop change:
+- Parent status after PR: <!-- foundation / integrated / proven / closed -->
+- Why the parent is or is not fully closed:
+- Owner-approved reason if complexity or open loops increase:
+
 ### Advisory disposition
 
 <!-- List each real finding and fix, each false alarm and rationale, or “none.” -->

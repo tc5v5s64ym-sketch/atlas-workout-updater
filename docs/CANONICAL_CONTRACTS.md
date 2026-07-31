@@ -76,5 +76,5 @@ Ordered low-risk → high-risk so the load-bearing contracts are ratified only a
 ## 5. Relationship to the other Phase 2 guards
 
 - The **wiring guard** (`scripts/check-wired-modules.js`, semantic since Work item 1a) keeps a ratified contract's builder/validator from silently going dead.
-- The **ownership/connectivity inventory** (`docs/ATLAS_OWNERSHIP_CONNECTIVITY_INVENTORY.md`, Work item 1b) is the surface map; this charter is the *shape* map. A contract's `adapt` disposition there points at its row here.
+- The **system authority map** (`docs/ATLAS_SYSTEM_AUTHORITY.md`, which replaced the Work item 1b ownership/connectivity inventory) is the *authority* map; this charter is the *shape* map. A contract ratified here holds production authority only where that map says so — several contracts ratified below are `CONTRACT ONLY` today.
 - The **completion-ladder** (Work item 3) will let a capability claim `route-consumed`/`user-visible` only against a ratified contract with a linked test — this charter is what "ratified" means for that validator.

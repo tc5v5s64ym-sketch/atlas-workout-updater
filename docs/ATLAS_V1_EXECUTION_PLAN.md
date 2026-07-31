@@ -21,12 +21,14 @@ Read in this order for routine work:
 
 1. `CLAUDE.md` — operating, safety, branch, review, and merge rules.
 2. `docs/ATLAS_V1_EXECUTION_PLAN.md` — the sole work-selection and sequencing authority.
-3. `docs/DECISION_KERNEL.md` — durable product and trust principles.
-4. `BACKLOG.md` — intake/deferred ledger and supporting finding detail; **not a competing queue** while this plan has eligible work.
-5. Relevant specs, invariants, tests, and evidence ledgers.
+3. `docs/ATLAS_SYSTEM_AUTHORITY.md` — the ownership authority: what decides each concept today, what is intended to, and the exact sunset condition for every competing path.
+4. `docs/DECISION_KERNEL.md` — durable product and trust principles.
+5. `BACKLOG.md` — intake/deferred ledger and supporting finding detail; **not a competing queue** while this plan has eligible work.
+6. Relevant specs, invariants, tests, and evidence ledgers.
 
 The following remain separate because they are not execution plans:
 
+- `docs/ATLAS_SYSTEM_AUTHORITY.md` — records authority; selects no work. It replaced `docs/ATLAS_OWNERSHIP_CONNECTIVITY_INVENTORY.md`, which was removed.
 - `docs/ATLAS_PRODUCT_VISION.md` — product north star.
 - `docs/CONSTITUTION.md` and `docs/INVARIANTS.md` — non-negotiable rules.
 - `docs/ARCHITECTURE.md` — current system boundaries.
@@ -94,6 +96,8 @@ This is the single active, executable campaign. It is embedded here — not besi
 
 ### CAMPAIGN STATE
 
+**Owner ruling 2026-07-31 — authority governance (governance insertion, no phase change).** Two durable records landed together. (1) [`docs/ATLAS_SYSTEM_AUTHORITY.md`](ATLAS_SYSTEM_AUTHORITY.md) is the ownership authority; it replaced `docs/ATLAS_OWNERSHIP_CONNECTIVITY_INVENTORY.md`, which was removed, so exactly one ownership document exists. (2) The **Closed-Loop Delivery Contract** (`CLAUDE.md`) governs delivery: Purpose → Authority → Integration → Proof → Cleanup → Closure, with the no-orphan rule and net-open-loop reporting in the merge card. The architectural ruling is one winner per authority — pick a winner, remove the loser, or name an exact sunset condition; never add permanent reconciliation around competing authorities. **No Phase 5 consolidation is authorized by this insertion.** A concept recorded as `DUPLICATED` or `TRANSITIONAL` is honest bookkeeping, not a work item. The active phase stays Phase 4, and **Stage A: 0/5. Stage B: not open.** remains unchanged.
+
 **Owner ruling 2026-07-31 — Phase 4 two-stage operational acceptance gate (governance insertion, no phase change).** Recorded below under "OWNER RULING — 2026-07-31 — PHASE 4 TWO-STAGE OPERATIONAL ACCEPTANCE GATE". Phase 4 exits only after Stage A (five consecutive AI-run full sessions, synthetic data, sandbox Sheet) and Stage B (five consecutive owner-run workouts) both pass and the owner explicitly authorizes Phase 5. Stage A precedes Stage B. Current counts: **Stage A: 0/5. Stage B: not open.** The active phase stays Phase 4. `SESSION_PLAN_SETS_WRITE_ENABLED` stays `0`; Stage A does not require it.
 
 **Owner ruling 2026-07-30, final form 2026-07-31 — bounded backlog ledger (governance insertion, no phase change).** Recorded below under "OWNER RULING — 2026-07-30, FINAL FORM 2026-07-31 — BOUNDED BACKLOG LEDGER" and enforced by Drift Guard 7: four dispositions, and `BACKLOG.md` at fixed capacity. The active phase stays Phase 4.
@@ -118,6 +122,8 @@ Structured chat proposals use the same initiation authority: after prose renderi
 4. The trust loop is untouchable. Preview→approve→write, no silent writes, owner gates for anything touching live data.
 5. Drift guards are grow-only. A guard, once added, is never removed or weakened without an owner instruction recorded in this plan.
 
+**Closed-loop requirement for every implementation card from here on.** Each card's PR follows the Closed-Loop Delivery Contract in `CLAUDE.md`: it names the parent phase outcome it advances, the exact live consumer of anything it adds, the competing authority it removes or the exact sunset condition of the bridge it keeps, and its open-loops-closed / open-loops-created / net-open-loop numbers. **A foundation PR is progress, not completion**, and a card is not done while its displaced authority, obsolete tests, flags, adapters, shadow paths, or stale documentation remain without a sunset condition. Net open-loop change is normally zero or negative; a positive result needs an explicit owner-approved reason and a complete closure chain. Current authority per concept is recorded in [`docs/ATLAS_SYSTEM_AUTHORITY.md`](ATLAS_SYSTEM_AUTHORITY.md).
+
 ### The Golden Session (defined once, used three times)
 
 One scripted two-exercise workout: plan from history → accept → log normally → human reply or deliberate silence → ask why → fatigue or substitution → revise → close out once → seal → reload → review. It is the Phase 1 gate (does it feel like a coach?), the Phase 4 gate (does it run through one packet and one trace?), and a permanent Phase 7 regression test. It is now a reusable fixture — `test/fixtures/goldenSession.js` (the scripted beats + behavioral expectations) — replayed through the real seam by `test/soulGoldenTranscripts.test.js` and available for the Phase 4 live run.
@@ -134,7 +140,7 @@ One scripted two-exercise workout: plan from history → accept → log normally
 
 - **WORK:** (1) Extend `scripts/check-wired-modules.js` from file reachability to semantic reachability (does output affect a user-visible decision?) and publish one ownership/connectivity inventory covering every route, service, client module, flag, Sheet tab, and planning document, with a keep/adapt/retire column. (2) Ratify eight canonical contracts as versioned schemas with docs: WorkoutSession, AthleteContext, ExerciseIdentity, CoachingDecision, CoachTurnPacket, SafetyDecision, CloseoutTransaction, InteractionTrace. (3) Replace the capability manifest's single status with completion-ladder fields: built, unit-tested, runner-wired, inputs-available, route-consumed, user-visible, validator-covered, live-proven, owner-accepted. (4) Paper hygiene: shipped items from BACKLOG.md to the archive; an open-P0/P1 index at the top; current-as-of dates and historical banners on active docs; adopt the app.js freeze rule (no new session-state logic in app.js); label closeout reconstruction "recovery-only — verify every row." (5) Build Drift Guards 1, 2, 3, 4, and 6 (below).
 - **OWNER GATE:** none.
-- **DONE WHEN:** contracts merged, inventory published, backlog index exists, manifest speaks ladder, guards red/green in CI. ✅ **All met 2026-07-21** — eight contracts ratified; `docs/ATLAS_OWNERSHIP_CONNECTIVITY_INVENTORY.md` published; open-P0/P1 index atop `BACKLOG.md`; the manifest speaks the nine-rung ladder (`docs/CAPABILITY_COMPLETION_LADDER.md`); Drift Guards 1/2/3/4/6 all red/green in CI.
+- **DONE WHEN:** contracts merged, inventory published, backlog index exists, manifest speaks ladder, guards red/green in CI. ✅ **All met 2026-07-21** — eight contracts ratified; the ownership/connectivity inventory published (**replaced 2026-07-31 by [`docs/ATLAS_SYSTEM_AUTHORITY.md`](ATLAS_SYSTEM_AUTHORITY.md); the old file was removed**); open-P0/P1 index atop `BACKLOG.md`; the manifest speaks the nine-rung ladder (`docs/CAPABILITY_COMPLETION_LADDER.md`); Drift Guards 1/2/3/4/6 all red/green in CI.
 - **CLOSES:** H-05, H-15, H-22; advances H-07, H-17, H-20, H-21.
 - **OWNER RULINGS (2026-07-20, recorded here to govern — Work item 2 is now decomposed and sequenced by the owner):**
   1. **Sequencing.** All eight canonical contracts are ratified. Do the *rest* of Work item 2 in two batches: **first** paper hygiene (item 4) and Drift Guards **1, 2, 3, and 6** — quick, and they protect the repo while the harder work happens; **then** the completion-ladder manifest (item 3) plus Drift Guard **4** (the completion-ladder validator) as **its own fresh session**.
