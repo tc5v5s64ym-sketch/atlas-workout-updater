@@ -187,7 +187,9 @@ test('7a. no golden-session scenario or adapter remains', () => {
 });
 
 test('7b. the pre-existing scenario set is exactly what it was before the adapter', () => {
-  assert.deepEqual(Object.keys(SCENARIOS), [
+  // The `all` sweep set is the invariant. An `excludeFromAll` entry (e.g. a
+  // throwaway isolated-replay vehicle) never joins the sweep and cannot change it.
+  assert.deepEqual(Object.keys(SCENARIOS).filter(k => !SCENARIOS[k].excludeFromAll), [
     'bug-20260629-153258', 'bug-20260629-153312', 'bug-20260629-003505',
     'bug-20260629-002945', 'bug-20260629-204817', 'coach-response-settlement'
   ]);

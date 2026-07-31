@@ -26,6 +26,7 @@ on:
           - bug-20260629-002945
           - bug-20260629-204817
           - coach-response-settlement
+          - isolated-bench-replay
       target_base_url:
         description: 'Base URL to retest against. Leave blank to use the ATLAS_BASE_URL secret.'
         required: false

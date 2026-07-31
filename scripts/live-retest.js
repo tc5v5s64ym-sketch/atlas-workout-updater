@@ -155,6 +155,29 @@ const SCENARIOS = {
       mode: 'settled_no_forbidden',
       forbidden: [...OUTAGE_PATTERNS]
     }
+  },
+  // ISOLATED REPLAY — owner-directed follow-up to live-retest run 30596164330,
+  // where the multi-beat walk's `log-ex2-first-set-routine` beat timed out
+  // (timeout_no_response, 20221 ms) while the structurally identical earlier beat
+  // settled in 2032 ms. This runs ONLY that input, with no preceding beats, to
+  // determine whether the timeout reproduces without multi-beat fixture state.
+  //
+  // Deliberately a single composer entry on the existing lane: same navigation,
+  // same settlement logic, same verdict mode as `coach-response-settlement`. It
+  // exists on a throwaway branch as a test vehicle and is not part of `all`.
+  'isolated-bench-replay': {
+    bugId: 'ISOLATED-BENCH-REPLAY',
+    excludeFromAll: true,
+    purpose: 'Replay a single production input in isolation to test whether the multi-beat timeout reproduces without preceding fixture state.',
+    input: 'Type "Bench Press 135 8/2 135 8/2" and wait for a settled coach reply.',
+    expected: 'A NEW coach bubble appears, stops showing "Thinking…", settles with non-empty content, and shows no outage wording.',
+    forbidden: 'Any "coach unavailable" outage wording; a reply that never settles inside the bound.',
+    reference: 'Follow-up to run 30596164330 beat 6. Verdict mode: settled_no_forbidden.',
+    navigation: { type: 'composer', text: 'Bench Press 135 8/2 135 8/2' },
+    assertion: {
+      mode: 'settled_no_forbidden',
+      forbidden: [...OUTAGE_PATTERNS]
+    }
   }
 };
 
