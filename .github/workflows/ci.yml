@@ -238,7 +238,12 @@ jobs:
               if (lower === 'playwright.config.js') return true;
               if (lower === 'package.json' || lower === 'package-lock.json') return true;
               if (lower === 'index.js' || lower === 'server.js' || lower === 'app.js') return true;
-              if (/^(services|src|api|scripts)\//.test(lower)) return true;
+              // config/ feeds the gate specs: gate-server.js loads the real app
+              // (index.js) which reads config/columns, config/routes, etc. A schema
+              // or route-config change must run the E2E that asserts against it.
+              // scripts/ stays required: `npm run build` (pretest:e2e) runs
+              // scripts/write-build-info.js, so scripts feed the built client too.
+              if (/^(services|src|api|scripts|config)\//.test(lower)) return true;
               if (lower.startsWith('.github/workflows/')) return true;
 
               return false;
@@ -264,9 +269,27 @@ jobs:
         if: steps.e2e_policy.outputs.should_run == 'true'
         run: npm ci
 
-      - name: Install Playwright Chromium
+      # Cache the Chromium download across runs. Keyed on the lockfile, so a
+      # Playwright version bump (which changes package-lock.json) misses the cache
+      # and reinstalls the matching browser; same version reuses it. CI installs to
+      # the default ~/.cache/ms-playwright (PLAYWRIGHT_BROWSERS_PATH is unset here).
+      - name: Cache Playwright browsers
         if: steps.e2e_policy.outputs.should_run == 'true'
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
+
+      # Cache miss (or a new Playwright version): full install — browser + OS deps.
+      - name: Install Playwright (browser + system deps)
+        if: steps.e2e_policy.outputs.should_run == 'true' && steps.playwright-cache.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps chromium
+
+      # Cache hit: the browser is restored; only the apt system deps need (re)installing.
+      - name: Install Playwright system deps
+        if: steps.e2e_policy.outputs.should_run == 'true' && steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
 
       - name: E2E tests
         if: steps.e2e_policy.outputs.should_run == 'true'
