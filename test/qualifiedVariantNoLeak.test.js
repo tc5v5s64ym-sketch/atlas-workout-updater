@@ -172,6 +172,43 @@ test('9. the qualifier check requires the KB to say so, and requires overlap', (
   assert.equal(kbExerciseId('program bench press'), null);
 });
 
+// A qualifier COVERS the base lift's mention; a second lift sits beside it. Getting this
+// wrong is not theoretical — an earlier revision of this change dropped BOTH lifts from
+// "how are bench press and overhead press?", because each shares the word "press" with the
+// other. The span test below is what separates the two cases.
+test('11. two lifts that SHARE a word are both kept — that turn is ambiguous, not qualified', () => {
+  const twoPress = {
+    current_plan: [
+      { name: 'Bench Press', sets: 3, reps: 8, weight: 185, rir: 2 },
+      { name: 'Overhead Press', sets: 3, reps: 8, weight: 95, rir: 2 },
+    ],
+  };
+  assert.deepEqual(
+    grounding.resolveTurnExercises('how are bench press and overhead press?', twoPress),
+    ['Bench Press', 'Overhead Press'],
+    'both lifts are named in their own right; neither may be silently dropped',
+  );
+  assert.equal(namesDifferentExercise('how are bench press and overhead press?', 'Bench Press'), false);
+  assert.equal(namesDifferentExercise('how are bench press and overhead press?', 'Overhead Press'), false);
+
+  // …while a variant that CONTAINS the base alias still qualifies it.
+  assert.equal(namesDifferentExercise('how much for close grip bench?', 'Bench Press'), true);
+  assert.equal(namesDifferentExercise('how much for zercher squat?', 'Back Squat'), true);
+});
+
+test('12. a question about one lift no longer drags in another that shares a word', () => {
+  // Pre-existing over-broad narrowing, corrected by the same span rule: "why did you
+  // program bench press?" matched Overhead Press too, on the shared word "press", so that
+  // lift's diagnostics were forwarded for a question that never mentioned it.
+  const twoPress = {
+    current_plan: [
+      { name: 'Bench Press', sets: 3, reps: 8, weight: 185, rir: 2 },
+      { name: 'Overhead Press', sets: 3, reps: 8, weight: 95, rir: 2 },
+    ],
+  };
+  assert.deepEqual(grounding.resolveTurnExercises('why did you program bench press?', twoPress), ['Bench Press']);
+});
+
 // ── Part C — the same fixtures against the PRE-FIX resolution ──────────────
 
 // Resolution exactly as it stood before this change: whatever the parser's lenient,

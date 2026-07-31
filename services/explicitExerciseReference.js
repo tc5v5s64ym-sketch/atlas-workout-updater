@@ -309,21 +309,33 @@ function namesDifferentExercise(message, matchedName) {
   );
   if (!matchedWords.size) return false;
 
+  // Every KB alias occurrence in the message, with the word span it covers.
   const words = aliasKey(message).split(' ').filter(Boolean);
-  for (let size = Math.min(KB_MAX_ALIAS_WORDS, words.length); size >= 2; size -= 1) {
+  const own = [];        // spans naming the matched lift itself
+  const qualifying = []; // spans naming a DIFFERENT lift that shares a word with it
+  for (let size = Math.min(KB_MAX_ALIAS_WORDS, words.length); size >= 1; size -= 1) {
     for (let i = 0; i + size <= words.length; i += 1) {
       const phraseWords = words.slice(i, i + size);
       const id = kbExerciseId(phraseWords.join(' '));
-      if (!id || id === matchedId) continue;
-      // It must QUALIFY the matched lift, not merely be a second lift in the same
-      // sentence: "front squat" shares `squat` with Back Squat and replaces it, while
-      // "How are Bench Press and Back Squat?" names two lifts that share nothing — that
-      // is an ambiguous multi-lift turn, which other lanes already fail closed on, and
-      // silently dropping one of them here would break their ambiguity detection.
-      if (phraseWords.some((w) => matchedWords.has(stem(w)))) return true;
+      if (!id) continue;
+      if (id === matchedId) { own.push([i, i + size]); continue; }
+      // A different lift only QUALIFIES this one when it shares a word with it:
+      // "front squat" replaces Back Squat, while "how are bench press and back squat?"
+      // names two lifts that share nothing — an ambiguous multi-lift turn the other
+      // lanes must keep seeing as two, not one silently dropped here.
+      if (size >= 2 && phraseWords.some((w) => matchedWords.has(stem(w)))) {
+        qualifying.push([i, i + size]);
+      }
     }
   }
-  return false;
+  if (!qualifying.length) return false;
+
+  // The qualifier must COVER the matched lift's mention, not sit beside it. In "zercher
+  // squat" the base alias `squat` lies inside the variant's span, so the athlete named one
+  // lift. In "bench press and overhead press" each lift has its own span, so both are
+  // genuinely named and neither may be dropped — that turn is ambiguous, not qualified.
+  const disjoint = ([aS, aE], [bS, bE]) => aE <= bS || bE <= aS;
+  return qualifying.some((q) => !own.some((o) => disjoint(o, q)));
 }
 
 module.exports = {
