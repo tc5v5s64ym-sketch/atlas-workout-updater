@@ -220,7 +220,7 @@ Every newly discovered issue, review finding, follow-up, edge case, or improveme
 
 "Add to BACKLOG", "defer to BACKLOG", and "file it as an issue" are prohibited dispositions. Advisory review findings do not automatically become work — each one is fixed, rejected, or escalated to the owner. **Agents may not manufacture future work queues from advisory findings.**
 
-`BACKLOG.md` receives no new work items. It may only be corrected, deduplicated, archived, or reduced. It stays legacy reference material until its surviving real items are either filed as issues or rejected, and it may never be used to justify expanding a current PR.
+`BACKLOG.md` receives no new work items. It may only be corrected, deduplicated, archived, or reduced. It stays legacy reference material until its surviving real items are either selected by the owner or rejected, and it may never be used to justify expanding a current PR.
 
 The paper-weight cap is permanently non-increasing. Do not raise `backlog_max_lines` to make CI pass.
 
