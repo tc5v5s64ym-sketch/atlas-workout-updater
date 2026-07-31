@@ -61,6 +61,38 @@ if (LEDGER_SANDBOX) {
   delete process.env.ATLAS_SESSION_PLANS_WRITE;
 }
 
+// SCRIPTED COACH (ATLAS_GATE_COACH_SCRIPT=1) — a third opt-in posture, default OFF.
+//
+// The two postures above are model-DOWN: no key, so every coach surface takes its
+// deterministic fallback. That cannot prove a guard that acts on MODEL PROSE, because a
+// down model produces none. This posture makes the model an adversary the spec controls:
+// `services/coach` is require-cache stubbed to report configured and to return whatever
+// reply the harness has armed via the state server's `/arm-coach-reply`. It calls nothing
+// outbound — there is still no key and no provider client — so it is not "model-up"; it is
+// a scripted stand-in whose only purpose is to feed the real route a known bad reply and
+// prove the real server-side grounding rejects it before the browser renders it.
+//
+// Flag absent → this block does not run and the harness is byte-identical to before.
+const COACH_SCRIPT = process.env.ATLAS_GATE_COACH_SCRIPT === '1';
+const scriptedCoach = { reply: null };
+if (COACH_SCRIPT) {
+  const coachPath = require.resolve('../../../services/coach');
+  require.cache[coachPath] = {
+    id: coachPath, filename: coachPath, loaded: true,
+    exports: {
+      isConfigured: () => true,
+      coachModel: () => 'scripted-gate-coach',
+      generateCoachMessage: async () => null,
+      generatePlanMessage: async () => null,
+      generateChatReply: async () => ({ reply: scriptedCoach.reply }),
+      findRegisterViolations: () => [],
+      looksLikePrClaim: () => false,
+      sanitizeFacts: (f) => f,
+      sanitizeChatContext: (c) => c,
+    },
+  };
+}
+
 const { logCleanedColumns, effortColumns, sessionPlanSetsColumns, sessionPlansColumns } = require('../../../config/columns');
 
 // --- Synthetic training history (no owner data) ---------------------------------
@@ -221,6 +253,20 @@ const stateServer = http.createServer((req, res) => {
   // honest-partial report and the reachable idempotent retry.
   if (String(req.url || '').startsWith('/fail-next-seal')) {
     state.failNextSeal = true;
+    res.end(JSON.stringify({ armed: true }));
+    return;
+  }
+  // Harness control (scripted-coach posture only): arm the exact prose the stubbed model
+  // will return on the next chat turn, so a spec can feed the real route a known
+  // fabrication. Refused unless the posture is explicitly enabled.
+  if (String(req.url || '').startsWith('/arm-coach-reply')) {
+    if (!COACH_SCRIPT) {
+      res.statusCode = 409;
+      res.end(JSON.stringify({ armed: false, error: 'ATLAS_GATE_COACH_SCRIPT=1 required' }));
+      return;
+    }
+    const u = new URL(req.url, 'http://127.0.0.1');
+    scriptedCoach.reply = u.searchParams.get('reply') || null;
     res.end(JSON.stringify({ armed: true }));
     return;
   }

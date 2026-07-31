@@ -304,6 +304,224 @@ function detectUnsupportedMutationClaim(text) {
   return segments(text).filter(isCompletedMutationSegment);
 }
 
+// ── completed-work grounding ────────────────────────────────────────────────
+//
+// A PRESCRIPTION IS NOT WORK. Soul Corpus V2 Session 12 drew, after the athlete's
+// goodbye ("…Later."), a reply enumerating three never-performed plan slots as actual
+// sets at zero load and then declaring "You have completed the workout." — and, one
+// turn earlier, "You've logged 3 sessions so far" when three EXERCISES had been logged
+// in ONE session. Nothing rejected either claim: the mutation backstop above covers
+// plan MUTATION only, so a fabricated COMPLETION passed straight through to the athlete.
+//
+// The deterministic verdicts already exist on this route and are already forwarded to
+// the model:
+//   - `plan_state` (services/sessionPlanExecutor.planStateFromContext) — planned /
+//     completed / remaining, with `isComplete` recomputed server-side, never trusted
+//     from the client;
+//   - `session_tally` — the per-exercise record of what was actually logged this session;
+//   - `session_count` — the count of HISTORICAL sessions read from the log.
+//
+// These helpers hold the model to them. Completed-set and completed-session truth wins:
+// a remaining slot may be described as planned or remaining, never projected as actual
+// completed work, and a completion verdict may only restate the deterministic one.
+// Fail-closed — when the deterministic state is absent, a completion claim is ungrounded
+// rather than assumed true.
+
+// Exercises with genuine completed work this session: plan_state.completed plus every
+// exercise the deterministic session tally records as logged.
+function completedExerciseKeys(context) {
+  const c = context && typeof context === 'object' ? context : {};
+  const keys = new Set();
+  const ps = c.plan_state && typeof c.plan_state === 'object' ? c.plan_state : null;
+  if (ps && Array.isArray(ps.completed)) {
+    for (const n of ps.completed) { const k = nameKey(n); if (k) keys.add(k); }
+  }
+  const tally = c.session_tally && typeof c.session_tally === 'object' ? c.session_tally : null;
+  if (tally && Array.isArray(tally.exercises)) {
+    for (const e of tally.exercises) {
+      const k = nameKey(e && e.exercise);
+      // A tally row with no set actually logged is not completed work.
+      if (k && (e.sets == null || Number(e.sets) > 0)) keys.add(k);
+    }
+  }
+  return keys;
+}
+
+// Exercises the deterministic plan state still lists as outstanding, minus anything the
+// tally proves was logged (the tally is the stronger evidence of actual work).
+function remainingExerciseNames(context) {
+  const c = context && typeof context === 'object' ? context : {};
+  const ps = c.plan_state && typeof c.plan_state === 'object' ? c.plan_state : null;
+  if (!ps || !Array.isArray(ps.remaining)) return [];
+  const done = completedExerciseKeys(c);
+  return ps.remaining
+    .filter((n) => typeof n === 'string' && n.trim())
+    .map((n) => n.trim())
+    .filter((n) => !done.has(nameKey(n)));
+}
+
+// The ONLY grounded source of "the workout is finished". Absent state → not complete.
+function workoutIsComplete(context) {
+  const c = context && typeof context === 'object' ? context : {};
+  const ps = c.plan_state && typeof c.plan_state === 'object' ? c.plan_state : null;
+  return Boolean(ps && ps.isComplete === true);
+}
+
+// True when there is ANY authoritative session state to judge a completion claim against.
+function hasAuthoritativeSessionState(context) {
+  const c = context && typeof context === 'object' ? context : {};
+  const ps = c.plan_state && typeof c.plan_state === 'object' ? c.plan_state : null;
+  return Boolean(ps && Array.isArray(ps.planned) && ps.planned.length);
+}
+
+// Asserts the whole workout/session is finished.
+const WORKOUT_COMPLETION_PATTERNS = [
+  /\b(?:you|we)(?:'ve| have)?\s+(?:just\s+|now\s+|already\s+)?(?:completed|finished|wrapped up)\s+(?:the|your|today'?s|tonight'?s|this)\s+(?:workout|session|training|training session)\b/,
+  /\b(?:the|your|today'?s|tonight'?s|this)\s+(?:workout|session)\s+(?:is|'s|has been|have been|was)\s+(?:now\s+)?(?:complete|completed|done|finished|over|wrapped|in the books)\b/,
+  /\bthat'?s\s+(?:the\s+|your\s+|today'?s\s+)?(?:workout|session|everything|it|all of it)\s+(?:done|complete|completed|finished|wrapped)\b/,
+  /\b(?:you|we)(?:'re| are)\s+(?:all\s+)?done\s+(?:for\s+(?:the\s+day|today|tonight)|with\s+(?:the|your|today'?s)\s+(?:workout|session))\b/,
+  /\bworkout\s+(?:complete|completed|finished)\b/,
+];
+
+// A completed-work verb applied to a specific exercise. This — NOT the mere presence of
+// numbers — is what makes a segment an actual-work claim. Set enumeration alone is a
+// PRESCRIPTION signal at least as often as a performance one ("the plan calls for 200 for
+// 10 reps at 1 RIR on Seated Row"), so keying on numerals would reject truthful planning
+// prose; the zero-load rule below covers the bare-enumeration fabrication instead.
+const COMPLETED_WORK_VERB = /\b(?:completed|finished|logged|did|done|hit|knocked out|got through|wrapped up)\b/;
+// Zero LOAD in an actual-set enumeration. Genuine bodyweight work carries weight `null`
+// and renders without a load (services/workoutTextParser), so a literal "0 x 8" is always
+// a null-coerced prescription rendered as work — never a real logged set. The lookbehinds
+// keep an RIR/@ figure ("RIR 0 x 8") from reading as a zero load.
+const ZERO_LOAD_SET = /(?<!rir\s)(?<!@\s)(?<![\d.])\b0\s*(?:x|×)\s*\d+/;
+
+// A claim of N HISTORICAL sessions. "3 sets" / "3 exercises" are deliberately not matched.
+const SESSION_COUNT_CLAIM = [
+  /\b(?:you(?:'ve| have)?\s+)?(?:logged|completed|done|got|recorded)\s+(\d+)\s+(?:sessions?|workouts?)\b/,
+  /\b(\d+)\s+(?:sessions?|workouts?)\s+(?:so far|logged|completed|recorded|in the books|under your belt)\b/,
+];
+
+// Shared state-awareness with the mutation backstop: a proposal, question, quotation of
+// the athlete, or negation is not an assertion.
+function isAssertionSegment(seg) {
+  const s = String(seg || '').trim();
+  if (!s) return false;
+  if (s.includes('?')) return false;
+  if (PROPOSAL_MARKER.test(s)) return false;
+  if (ATTRIBUTION_MARKER.test(s)) return false;
+  if (NEGATION_MARKER.test(s)) return false;
+  return true;
+}
+
+// Does this segment describe the named exercise as PLANNED/REMAINING rather than done?
+// Prescription framings ("the plan calls for…", "the target is…") belong here: they are
+// truthful statements ABOUT a remaining slot and must pass through untouched.
+const REMAINING_FRAMING = /\b(?:remaining|remains|still (?:to|has|have|left|on|shows?)|left to|to come|coming up|next up|planned|prescribed|scheduled|on the plan|outstanding|upcoming|yet to|calls for|call for|target(?:ing|s)?|aim(?:ing)? for|we'?ll|you'?ll|should (?:do|hit|aim)|going to)\b/;
+
+/**
+ * detectUngroundedCompletionClaim(text, context) → [{ segment, kind }]
+ *
+ * Flags prose that converts prescription into completed work, invents actual set
+ * numbers, converts an exercise count into a historical session count, or declares
+ * completion the deterministic state does not support. Empty array = grounded.
+ *
+ * Pure. Judges ONLY against `plan_state`, `session_tally`, and `session_count`.
+ */
+function detectUngroundedCompletionClaim(text, context) {
+  const c = context && typeof context === 'object' ? context : {};
+  const out = [];
+  const remaining = remainingExerciseNames(c);
+  const remainingKeys = new Set(remaining.map(nameKey).filter(Boolean));
+  const complete = workoutIsComplete(c);
+  const authoritative = hasAuthoritativeSessionState(c);
+  const engineCount = typeof c.session_count === 'number' && Number.isFinite(c.session_count)
+    ? c.session_count
+    : null;
+
+  for (const seg of segments(text)) {
+    if (!isAssertionSegment(seg)) continue;
+
+    // 1. Workout-completion claim. Grounded ONLY by the deterministic verdict.
+    if (!complete && WORKOUT_COMPLETION_PATTERNS.some((re) => re.test(seg))) {
+      out.push({ segment: seg, kind: 'workout_completion' });
+      continue;
+    }
+
+    // 2. Fabricated zero-load actual sets — never a real logged set.
+    if (ZERO_LOAD_SET.test(seg)) {
+      out.push({ segment: seg, kind: 'fabricated_sets' });
+      continue;
+    }
+
+    // 3. A remaining slot described as completed work, or enumerated as actual sets.
+    if (remainingKeys.size && !REMAINING_FRAMING.test(seg)) {
+      const named = remaining.filter((n) => {
+        const words = significantWords(n);
+        if (!words.length) return normalize(seg).includes(normalize(n));
+        return words.every((w) => new RegExp(`\\b${escapeRe(w)}`).test(normalize(seg)));
+      });
+      if (named.length && COMPLETED_WORK_VERB.test(seg)) {
+        out.push({ segment: seg, kind: 'unperformed_slot_as_work' });
+        continue;
+      }
+    }
+
+    // 4. Historical session count. Fail closed when the engine has no count to match.
+    for (const re of SESSION_COUNT_CLAIM) {
+      const m = re.exec(normalize(seg));
+      if (!m) continue;
+      const claimed = Number(m[1]);
+      if (!Number.isFinite(claimed)) continue;
+      if (engineCount == null || claimed !== engineCount) {
+        out.push({ segment: seg, kind: 'session_count' });
+      }
+      break;
+    }
+  }
+  // A completion claim made with NO authoritative session state at all is ungrounded even
+  // when no pattern above fired on a remaining slot — there is nothing to complete against.
+  if (!authoritative && !complete) {
+    for (const seg of segments(text)) {
+      if (!isAssertionSegment(seg)) continue;
+      if (out.some((o) => o.segment === seg)) continue;
+      if (WORKOUT_COMPLETION_PATTERNS.some((re) => re.test(seg))) {
+        out.push({ segment: seg, kind: 'workout_completion' });
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * buildGroundedSessionStateStatement(context) → string
+ *
+ * The deterministic replacement for rejected completion prose: what is actually logged
+ * and what is actually still outstanding, read straight from the engine's state. It
+ * never claims completion, never states a load the tally does not carry, and says so
+ * plainly when there is no authoritative state.
+ */
+function buildGroundedSessionStateStatement(context) {
+  const c = context && typeof context === 'object' ? context : {};
+  const ps = c.plan_state && typeof c.plan_state === 'object' ? c.plan_state : null;
+  const tally = c.session_tally && typeof c.session_tally === 'object' ? c.session_tally : null;
+  const logged = tally && Array.isArray(tally.exercises)
+    ? tally.exercises.map((e) => e && e.exercise).filter(Boolean)
+    : [];
+  const remaining = remainingExerciseNames(c);
+
+  const parts = [];
+  if (logged.length) parts.push(`Logged this session: ${logged.join(', ')}.`);
+  else if (ps && Array.isArray(ps.completed) && ps.completed.length) parts.push(`Logged this session: ${ps.completed.join(', ')}.`);
+
+  if (remaining.length) parts.push(`Still remaining: ${remaining.join(', ')}.`);
+
+  if (!parts.length) {
+    return "I don't have an authoritative record of what you've completed this session, so I can't say what's done or still outstanding.";
+  }
+  if (remaining.length) parts.push("Those are still planned, not done — nothing counts as completed until it's logged.");
+  return parts.join(' ');
+}
+
 // ── grounded plan statement ─────────────────────────────────────────────────
 
 function formatPlanLine(entry) {
@@ -627,6 +845,10 @@ module.exports = {
   isActivePlanGroundedTurn,
   narrowContextToPlanTurn,
   detectUnsupportedMutationClaim,
+  detectUngroundedCompletionClaim,
+  buildGroundedSessionStateStatement,
+  workoutIsComplete,
+  remainingExerciseNames,
   extractClaimedTargets,
   resolveDisputedLiftEntry,
   isNextUpQuestion,

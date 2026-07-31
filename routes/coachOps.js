@@ -1791,6 +1791,23 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
           configured: true, model: coach.coachModel(), source: 'engine'
         });
       }
+      // Completed-work BACKSTOP (Soul Corpus V2 S12). The engine owns completion: the
+      // deterministic `plan_state` verdict and `session_tally` decide what is done, and
+      // `session_count` decides how many HISTORICAL sessions exist. Model prose may word
+      // those facts; it may never convert a prescribed-but-unperformed slot into actual
+      // work, invent set numbers for it, turn an exercise count into a session count, or
+      // declare completion the deterministic state does not support. Rejected prose is
+      // replaced with the engine's own statement of logged-vs-remaining, and any proposal
+      // is dropped — a turn that fabricates completed work is not a trustworthy proposal.
+      // State-aware, exactly like the mutation backstop: proposals, questions, athlete
+      // quotations, negations, and honest "still remaining" framings pass through.
+      if (hasSafeReply && coachResponseGrounding.detectUngroundedCompletionClaim(reply, llmContext).length > 0) {
+        const grounded = coachResponseGrounding.buildGroundedSessionStateStatement(llmContext);
+        return standardSuccess(req, res, 'Coach chat — grounded (ungrounded completion claim rejected)', {
+          message: grounded, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
+          configured: true, model: coach.coachModel(), source: 'engine'
+        });
+      }
       // Return the Gemini result when it has usable prose OR carries a structured
       // proposal (edit/note/constraint) — a proposal must never be dropped just
       // because the prose came back empty. Only a truly empty result (no prose, no
