@@ -17,6 +17,7 @@ backups/
 # inside an excluded directory.
 .claude/*
 !.claude/settings.json
+!.claude/rules/
 outputs/
 
 # Playwright transient output (traces, screenshots on failure)
