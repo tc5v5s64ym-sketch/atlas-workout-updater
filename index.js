@@ -1105,7 +1105,14 @@ app.post('/api/suggest-substitute', async (req, res) => {
   // Log_Cleaned rows — NOT exercise_id from the KB, which is a different namespace.
   let next_target = null;
   try {
-    const code = generateLiftCode(rec.recommendation);
+    // CANONICALIZE FIRST (Codex #1209 P1). generateLiftCode derives the code from the
+    // NAME it is handed, so passing the recommender's display string splits history:
+    // 'Barbell Row' → BRX01 while its canonical 'Bent-Over Row' → BOR01, and the
+    // Log_Cleaned lookup below would miss every BOR01 row. Resolving the canonical
+    // first means every alias of a lift shares one code and one history — which is the
+    // whole point of aliasing 'barbell row' onto the catalog's Bent-Over Row.
+    const canon = canonicalizeExerciseName(rec.recommendation);
+    const code = generateLiftCode((canon && canon.canonicalName) || rec.recommendation);
     if (code) {
       const allLog = await getSheetRows(logSheetName);
       const prescription = recommendNextSet(allLog, code);

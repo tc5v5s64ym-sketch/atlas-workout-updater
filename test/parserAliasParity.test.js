@@ -59,6 +59,12 @@ const FROZEN_EXERCISE_ALIASES = [
   ['Dips (Weighted)', ['weighted dips', 'dips', 'dip', 'wd']],
   ['Push-Up', ['push-up', 'push up', 'pushups', 'push ups', 'push-ups', 'pushup']],
   ['Cable Tricep Pushdown', ['cable tricep pushdown', 'cable tricep pushdowns', 'tricep pushdown', 'tricep pushdowns', 'tricep pulldown', 'tricep pulldowns', 'tricep pull', 'tricep pulls', 'cable triceps', 'cable tricep']],
+  // ADDED 2026-07-31: two more lifts the substitution recommender can suggest but no
+  // parser table knew. Both names come from the existing truth sources — 'Good Morning'
+  // is an exercise-catalog canonical, 'Cable Fly' is the coaching KB's canonical for
+  // config/coaching/exercises/cable-chest-fly.json (the recommender's 'Chest Fly').
+  ['Good Morning', ['good morning', 'good mornings', 'barbell good morning']],
+  ['Cable Fly', ['cable fly', 'cable flies', 'cable crossover', 'chest fly', 'chest flies']],
 ];
 
 const FROZEN_AMBIGUOUS_ALIASES = {

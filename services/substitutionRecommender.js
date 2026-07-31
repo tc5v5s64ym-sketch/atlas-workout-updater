@@ -63,8 +63,8 @@ const RAW_CATALOG = {
   // acceptable). Leg Curl (hamstring) is a DIFFERENT-muscle knee isolation and is
   // correctly excluded by the quality scorer.
   'Leg Extension':      ['Leg Press', 'Hack Squat', 'Goblet Squat'],
-  'Bench Press':        ['Incline Press', 'Dips', 'Chest Fly'],
-  'Incline Press':      ['Bench Press', 'Dips'],
+  'Bench Press':        ['Incline DB Press', 'Dips', 'Chest Fly'],
+  'Incline DB Press':   ['Bench Press', 'Dips'],
   'Overhead Press':     ['Bench Press', 'Dips'],
   'Lat Pulldown':       ['Pull-up', 'Seated Row'],
   'Pull-up':            ['Lat Pulldown', 'Seated Row'],

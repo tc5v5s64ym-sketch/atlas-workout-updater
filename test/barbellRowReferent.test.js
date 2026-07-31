@@ -80,23 +80,20 @@ test('1a-bis. the parser agrees with the exercise catalog — no A↔B fork', ()
     `the barbell-row aliases must agree with the catalog: ${JSON.stringify(conflicts)}`);
 });
 
-// The defect generalized: the recommender offered a lift the parser could not name.
-// This guard enumerates every lift the recommender can suggest and asserts none is
-// unrecognizable — EXCEPT a frozen, documented list of three that carry the identical
-// defect but need an owner taxonomy decision before they can be fixed:
+// The defect generalized (Codex #1209 P1). The recommender offered names that NO
+// truth source knew — 'Incline Press' (the DEFAULT substitute for Bench Press) and
+// 'Chest Fly' were absent from the catalog, the coaching KB, and the parser alike.
+// Any athlete who accepted one and then asked about it would hit the identical stale
+// answer, on the most common lift in the program.
 //
-//   • Good Morning  — no entry anywhere; a clean add once named canonically.
-//   • Chest Fly     — no entry; bare "fly"/"flies" would also need an ambiguity call.
-//   • Incline Press — "incline press" already exists as a CONTEXTUAL alias of
-//                     "Incline DB Press". Promoting it to a full alias would decide
-//                     that a barbell incline and a dumbbell incline are the same lift.
-//                     That is a taxonomy judgment, not a parser fix.
+// Fixed at both ends rather than allowlisted: the recommender now names lifts that
+// exist ('Incline DB Press', 'Cable Fly' — the coaching KB's own canonical for
+// config/coaching/exercises/cable-chest-fly.json), and 'Good Morning' (a real catalog
+// canonical) gained its parser aliases.
 //
-// The list is SHRINK-ONLY in spirit: a NEW unrecognizable substitute fails this test,
-// so the class of defect the owner hit cannot silently reappear.
-const KNOWN_UNPARSEABLE_SUBSTITUTES = ['Chest Fly', 'Good Morning', 'Incline Press'];
-
-test('1b. no NEW unrecognizable substitute can be added (Barbell Row is fixed)', () => {
+// The allowlist is now EMPTY, so this is an absolute invariant: Atlas can never
+// recommend a substitute it cannot afterwards discuss.
+test('1b. every recommendable substitute is recognizable — no exceptions', () => {
   const { SUBSTITUTION_MAP } = require('../services/substitutionRecommender');
   const names = new Set();
   for (const [from, tos] of Object.entries(SUBSTITUTION_MAP || {})) {
@@ -108,14 +105,21 @@ test('1b. no NEW unrecognizable substitute can be added (Barbell Row is fixed)',
     const c = canonicalizeExerciseName(n);
     return !(c && c.canonicalName);
   }).sort();
-
-  assert.equal(unparseable.includes('Barbell Row'), false,
-    'Barbell Row — the lift the owner actually hit — must be recognizable');
-  assert.equal(canonicalizeExerciseName('Barbell Row').canonicalName, 'Bent-Over Row',
-    'the recommender\'s suggested name resolves to the catalog canonical');
-  assert.deepEqual(unparseable, KNOWN_UNPARSEABLE_SUBSTITUTES,
-    'a NEW unrecognizable substitute means Atlas can suggest a lift it cannot discuss — '
+  assert.deepEqual(unparseable, [],
+    'Atlas must never suggest a substitute it cannot then recognize by name — '
     + `the exact defect from the 2026-07-31 session. Got: ${unparseable.join(', ')}`);
+});
+
+test('1c. the DEFAULT substitute for every lift is recognizable', () => {
+  const { recommendSubstitute, SUBSTITUTION_MAP } = require('../services/substitutionRecommender');
+  for (const from of Object.keys(SUBSTITUTION_MAP || {})) {
+    const rec = recommendSubstitute(from);
+    const name = rec && (rec.recommendation || rec.name);
+    if (!name) continue;
+    const c = canonicalizeExerciseName(String(name));
+    assert.ok(c && c.canonicalName,
+      `recommendSubstitute(${JSON.stringify(from)}) → ${JSON.stringify(name)} must be recognizable`);
+  }
 });
 
 // ── 2. The question names a lift, so the whole-plan fallback must not fire ───
@@ -147,11 +151,45 @@ test('3a. a barbell row never carries Seated Row\'s or Bench\'s lift code', () =
   const seated = generateLiftCode('Seated Row');
   assert.equal(seated, 'ROW01', 'ROW01 is Seated Row (pre-existing mapping)');
   for (const n of ['Barbell Row', 'barbell rows', 'Bent-Over Row']) {
-    const code = generateLiftCode(n);
+    const code = liftCodeFor(n);
     assert.notEqual(code, seated, `${n} must not share Seated Row's ROW01 — that conflation is the defect`);
     assert.notEqual(code, 'SR01', `${n} must not be Seated Row`);
     assert.notEqual(code, 'BEN01', `${n} must not be Bench Press`);
   }
+});
+
+// Codex #1209 P1: aliasing only unified the PARSER. generateLiftCode derives the code
+// from the name it is handed, so the raw recommender string 'Barbell Row' yields BRX01
+// while the canonical 'Bent-Over Row' yields BOR01 — and the Log_Cleaned history lookup
+// in /api/suggest-substitute would miss every BOR01 row. The route now canonicalizes
+// first; this pins that every alias collapses to ONE code, so history is genuinely shared.
+function liftCodeFor(name) {
+  const c = canonicalizeExerciseName(name);
+  return generateLiftCode((c && c.canonicalName) || name);
+}
+
+test('3b. every barbell-row alias collapses to ONE lift code — history is genuinely shared', () => {
+  const expected = generateLiftCode('Bent-Over Row');
+  assert.equal(expected, 'BOR01');
+  for (const n of ['Barbell Row', 'barbell row', 'barbell rows', 'bb row', 'bb rows', 'bent over row']) {
+    assert.equal(liftCodeFor(n), expected,
+      `${n} must resolve to ${expected} so the substitute's history lookup finds its rows`);
+  }
+  // The raw (un-canonicalized) string is what the bug used — prove it really differs,
+  // so this test fails if someone removes the canonicalization step.
+  assert.notEqual(generateLiftCode('Barbell Row'), expected,
+    'the raw name genuinely yields a different code — canonicalization is load-bearing');
+});
+
+test('3c. /api/suggest-substitute canonicalizes before deriving the lift code', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
+  const i = src.indexOf('const code = generateLiftCode(');
+  assert.notEqual(i, -1, 'the substitute lift-code derivation exists');
+  const window = src.slice(Math.max(0, i - 400), i + 200);
+  assert.match(window, /canonicalizeExerciseName\(rec\.recommendation\)/,
+    'the recommendation must be canonicalized before its lift code is derived');
 });
 
 // ── 4. Adjacent coverage the owner asked for ────────────────────────────────
