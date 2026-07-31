@@ -8,7 +8,7 @@ This index tells agents which documents have authority and prevents old plans fr
 2. [`docs/BUILDER_PORTABILITY.md`](./BUILDER_PORTABILITY.md) — tool-neutral compatibility and handoff mapping so Claude Code and Codex can serve as the active implementation agent under the same rules. It selects no work.
 3. [`docs/ATLAS_V1_EXECUTION_PLAN.md`](./ATLAS_V1_EXECUTION_PLAN.md) — **the sole active execution queue and work-selection authority** through V1 stabilization. It currently carries the **Atlas Recovery Campaign (Issue #1073)** as the active controlling owner insertion; that campaign lives inside the plan, never beside it.
 4. [`docs/DECISION_KERNEL.md`](./DECISION_KERNEL.md) — durable principles for routine decisions.
-5. [`BACKLOG.md`](../BACKLOG.md) — **frozen legacy inventory of open/deferred items — no new intake** (owner ruling 2026-07-30). Reference only; never a competing queue. A new finding is fixed now, rejected, or filed as a GitHub issue.
+5. [`BACKLOG.md`](../BACKLOG.md) — **frozen legacy inventory of open/deferred items — no new intake** (owner ruling 2026-07-30). Reference only; never a competing queue. A new finding is fixed now, rejected, or escalated to the owner (owner correction 2026-07-31: GitHub Issues are not a replacement backlog).
 6. The relevant spec, invariant, test, or evidence document for the active card.
 
 If another document appears to sequence work, the V1 execution plan wins and the conflict must be corrected.
@@ -147,4 +147,4 @@ Before adding a document, classify it as exactly one of:
 4. research/audit/reference;
 5. the canonical execution plan.
 
-Atlas may have only **one** canonical execution plan. Do not add another roadmap, phase plan, fix-it plan, campaign controller, or session-specific master prompt. File new work as a GitHub issue (backlog intake closed 2026-07-30); promote it into the execution plan only when it is actually prioritized, through an explicit owner-approved campaign change.
+Atlas may have only **one** canonical execution plan. Do not add another roadmap, phase plan, fix-it plan, campaign controller, or session-specific master prompt. Backlog intake closed 2026-07-30, and GitHub Issues are not a replacement backlog (owner correction 2026-07-31). New work enters the execution plan only when the owner explicitly selects it, through an explicit owner-approved campaign change.

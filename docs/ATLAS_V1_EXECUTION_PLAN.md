@@ -214,11 +214,11 @@ Every newly discovered issue, review finding, follow-up, edge case, or improveme
 
 1. **FIX NOW** — the finding is a genuine blocker or an in-scope correctness defect. Fix it and test it in the current PR.
 2. **REJECT** — the behavior is not required, is too speculative, is a duplicate, is not worth its complexity, or is outside Atlas's intended product. Record the rejection and its rationale in the PR discussion. Do not add it to `BACKLOG.md` and do not open an issue.
-3. **FILE AS GITHUB ISSUE** — the finding is real and worth building, but not in the current PR. Open a dedicated issue that states the user-visible impact, the severity, concrete acceptance criteria, and its triage status. A target phase or dated milestone is **not** required until the issue is actually prioritized.
+3. **OWNER DECISION REQUIRED** — use this only when the finding needs a genuine product, safety, scope, architecture, or priority decision. Stop and report it to the owner. Do not create a GitHub issue, do not add it to `BACKLOG.md`, and do not add it to this execution plan unless the owner explicitly selects it.
 
-Only a prioritized issue enters this execution plan. Filing an issue schedules nothing on its own; the plan stays the sole work-selection authority.
+**OWNER CORRECTION — 2026-07-31.** GitHub Issues are **not** a replacement backlog. "File as a GitHub issue" is no longer a disposition, and an agent may not create one to park an advisory finding. Work enters this execution plan only when the owner explicitly selects it; nothing else schedules work.
 
-"Add to BACKLOG", "defer to BACKLOG", and equivalent dispositions are prohibited. Advisory review findings do not automatically become work — each one is fixed, rejected, or filed.
+"Add to BACKLOG", "defer to BACKLOG", and "file it as an issue" are prohibited dispositions. Advisory review findings do not automatically become work — each one is fixed, rejected, or escalated to the owner. **Agents may not manufacture future work queues from advisory findings.**
 
 `BACKLOG.md` receives no new work items. It may only be corrected, deduplicated, archived, or reduced. It stays legacy reference material until its surviving real items are either filed as issues or rejected, and it may never be used to justify expanding a current PR.
 
@@ -229,7 +229,7 @@ Enforcement: Drift Guard 7 above (mechanical counts) plus the merge card's "Addi
 ### The heartbeat (recurring cards, created at install)
 
 - Monthly, and after any batch of coaching-path PRs: one owner verdict workout using the gate-verdict script. The owner's session is the one detector no agent can fake.
-- Quarterly: re-run the whole-system health audit read-only and report deltas against the 23 findings. Each new finding is fixed, rejected, or filed as a GitHub issue under the 2026-07-30 intake ruling; none enters the backlog, and none spawns a new roadmap.
+- Quarterly: re-run the whole-system health audit read-only and report deltas against the 23 findings. Each new finding is fixed, rejected, or escalated to the owner under the 2026-07-30 intake ruling as corrected 2026-07-31; none enters the backlog, none becomes a GitHub issue, and none spawns a new roadmap.
 
 ### Findings reference (the 23; full detail in the Complete Health Report)
 

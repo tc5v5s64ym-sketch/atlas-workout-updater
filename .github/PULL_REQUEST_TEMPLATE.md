@@ -57,15 +57,17 @@ or owner merge click is required for a routine authorized PR.
 ### Additional findings
 
 <!--
-Owner ruling 2026-07-30 — backlog intake is closed. Every finding discovered while doing
-this work gets one disposition. "Add to BACKLOG" is not a disposition. Keep only the lines
-that apply; a filed issue states impact, severity, acceptance criteria, and triage status.
+Owner ruling 2026-07-30 (corrected 2026-07-31) — backlog intake is closed and GitHub Issues
+are not a replacement backlog. Every finding discovered while doing this work gets exactly one
+disposition. "Add to BACKLOG" and "file it as an issue" are not dispositions. Keep only the
+lines that apply. OWNER DECISION REQUIRED means stop and report it to the owner — it creates
+no issue, no backlog line, and no execution-plan entry unless the owner selects it.
 -->
 
 - None
 - FIXED NOW:
 - REJECTED:
-- FILED AS ISSUE:
+- OWNER DECISION REQUIRED:
 
 ### Advisory disposition
 

@@ -43,7 +43,11 @@ describe('Drift Guard 7 — backlog intake closure', () => {
     const r = analyze({ base: BASE, head: { backlog: head, config: CONFIG(BASE_CAP) } });
     assert.equal(r.valid, false);
     assert.ok(/adds 1 work item\(s\) \(3 → 4\)/.test(errorsOf(r)), errorsOf(r));
-    assert.ok(/FIX NOW|REJECT|FILE AS GITHUB ISSUE/.test(errorsOf(r)));
+    // The three permanent dispositions (owner correction 2026-07-31 — no "file as an issue").
+    assert.ok(/FIX NOW/.test(errorsOf(r)), errorsOf(r));
+    assert.ok(/REJECT/.test(errorsOf(r)), errorsOf(r));
+    assert.ok(/OWNER DECISION REQUIRED/.test(errorsOf(r)), errorsOf(r));
+    assert.ok(!/FILE AS GITHUB ISSUE/i.test(errorsOf(r)), errorsOf(r));
   });
 
   it('fails when an existing item is duplicated', () => {

@@ -6,7 +6,8 @@
 // and "Drift guards" #7. Published in CLAUDE.md.
 //
 // BACKLOG.md is a FROZEN LEGACY INVENTORY. A new finding gets one disposition — FIX NOW,
-// REJECT, or FILE AS GITHUB ISSUE — never a backlog line.
+// REJECT, or OWNER DECISION REQUIRED — never a backlog line. Owner correction 2026-07-31:
+// GitHub Issues are not a replacement backlog, so "file it as an issue" is not a disposition.
 //
 // The guard is deliberately MECHANICAL: it compares three counts between the PR base and the
 // head and never reads or classifies prose. Nothing written in the diff — a rationale, an
@@ -100,8 +101,8 @@ function analyze({ base, head } = {}) {
     errors.push(
       `${BACKLOG_REL} adds ${headItems - baseItems} work item(s) (${baseItems} → ${headItems}) — backlog intake `
       + 'is CLOSED (owner ruling 2026-07-30). Give the finding a disposition instead: FIX NOW (fix it in this PR), '
-      + 'REJECT (record the rationale in the PR discussion), or FILE AS GITHUB ISSUE (impact, severity, '
-      + 'acceptance criteria, triage status).',
+      + 'REJECT (record the rationale in the PR discussion), or OWNER DECISION REQUIRED (stop and report it to '
+      + 'the owner — no GitHub issue, no backlog line).',
     );
   }
 
