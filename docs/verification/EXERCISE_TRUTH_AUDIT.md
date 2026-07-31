@@ -43,8 +43,8 @@ history form):
 ## Sources
 
 **A — Parser (workoutTextParser.js — EXERCISE_ALIASES + CONTEXTUAL_ALIASES)**
-- Canonical count: 30
-- Alias-to-canonical entries: 140
+- Canonical count: 28
+- Alias-to-canonical entries: 132
 
 **B — Data JSON (exercise_catalog.v1.json + exercise_aliases.v1.json)**
 - Canonical count: 346
@@ -543,9 +543,7 @@ history form):
 | Exercise | Present In |
 |----------|-----------|
 | Bent-Over Row | A, B, C |
-| Cable Fly | A, B, C |
 | Chin-Up | A, B, C |
-| Good Morning | A, B, C |
 | Hammer Curl | A, B, C |
 | Hip Thrust | A, B, C |
 | Incline Bench Press | A, B, C |
@@ -566,6 +564,7 @@ history form):
 |----------|-----------|
 | Box Squat | B, C |
 | Bulgarian Split Squat | B, C |
+| Cable Fly | B, C |
 | Cable Row | B, C |
 | Cable Woodchopper | B, C |
 | Calf Raise | B, C |
@@ -576,6 +575,7 @@ history form):
 | Farmers Carry | B, C |
 | Front Squat | B, C |
 | Goblet Squat | B, C |
+| Good Morning | B, C |
 | Hack Squat | B, C |
 | Inverted Row | B, C |
 | Kettlebell Swing | B, C |

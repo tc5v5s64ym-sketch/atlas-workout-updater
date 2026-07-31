@@ -59,16 +59,6 @@ const FROZEN_EXERCISE_ALIASES = [
   ['Dips (Weighted)', ['weighted dips', 'dips', 'dip', 'wd']],
   ['Push-Up', ['push-up', 'push up', 'pushups', 'push ups', 'push-ups', 'pushup']],
   ['Cable Tricep Pushdown', ['cable tricep pushdown', 'cable tricep pushdowns', 'tricep pushdown', 'tricep pushdowns', 'tricep pulldown', 'tricep pulldowns', 'tricep pull', 'tricep pulls', 'cable triceps', 'cable tricep']],
-  // ADDED 2026-07-31: two more lifts the substitution recommender can suggest but no
-  // parser table knew. Both names come from the existing truth sources — 'Good Morning'
-  // is an exercise-catalog canonical, 'Cable Fly' is the coaching KB's canonical for
-  // config/coaching/exercises/cable-chest-fly.json (the recommender's 'Chest Fly').
-  // The BARE 'good morning' is deliberately absent: it is a far more common gym
-  // greeting than it is a lift, and findExerciseInText matches a start-of-message
-  // alias ahead of any later lift, so it stole the referent from "Good morning, how
-  // much for bench?" (Codex #1209). Plural + qualified forms only.
-  ['Good Morning', ['good mornings', 'barbell good morning']],
-  ['Cable Fly', ['cable fly', 'cable flies', 'cable crossover', 'chest fly', 'chest flies']],
 ];
 
 const FROZEN_AMBIGUOUS_ALIASES = {

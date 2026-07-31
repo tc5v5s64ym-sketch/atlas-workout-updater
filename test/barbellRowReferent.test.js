@@ -81,53 +81,53 @@ test('1a-bis. the parser agrees with the exercise catalog — no A↔B fork', ()
     `the barbell-row aliases must agree with the catalog: ${JSON.stringify(conflicts)}`);
 });
 
-// The defect generalized (Codex #1209 P1). The recommender offered names that NO
-// truth source knew — 'Incline Press' (the DEFAULT substitute for Bench Press) and
-// 'Chest Fly' were absent from the catalog, the coaching KB, and the parser alike.
-// Any athlete who accepted one and then asked about it would hit the identical stale
-// answer, on the most common lift in the program.
+// THE DEFECT GENERALIZED — and where this PR deliberately stops.
 //
-// Fixed at both ends rather than allowlisted: the recommender now names lifts that
-// exist ('Incline DB Press', 'Cable Fly' — the coaching KB's own canonical for
-// config/coaching/exercises/cable-chest-fly.json), and 'Good Morning' (a real catalog
-// canonical) gained its plural and qualified parser aliases.
+// The barbell-row failure is one instance of a class: the recommender can suggest a
+// name no parser table knows, and the athlete's follow-up then resolves to the WRONG
+// lift instead of failing closed. Three names were in that state on main:
 //
-// ONE documented exception remains — 'Good Morning' — and it is NOT the rationalized
-// allowlist Codex rejected earlier. Codex #1209 (c4128d6) then showed that making the
-// BARE phrase a strong alias costs more than it buys: findExerciseInText matches an
-// alias at the START of a message before any later lift, so "Good morning, how much for
-// bench?" canonicalized to Good Morning and sessionQuestionAnswer.resolveLiftName
-// returned Good Morning's load for a BENCH question. isConversationalAside correctly
-// refuses to swallow that message (it carries real coaching content), so nothing else
-// catches it. A morning greeting is far more frequent in a gym session than the Good
-// Morning lift, so the greeting must win.
+//   'Incline Press'  the DEFAULT substitute for Bench Press, and known to NO truth
+//                    source (the catalog's name is 'Incline DB Press')
+//   'Good Morning'   a real exercise-catalog canonical the parser simply lacked
+//   'Chest Fly'      the coaching KB's canonical is 'Cable Fly'
 //
-// The bare alias is therefore removed; 'good mornings' and 'barbell good morning' stay
-// (both verified unambiguous).
+// ONLY the first is fixed here, by renaming the recommendation to the catalog's real
+// 'Incline DB Press' (owner ruling 3, 2026-07-31). It is the DEFAULT for Bench Press —
+// the most common lift in the program — so it is the one case where the class defect
+// sits on a hot path.
 //
-// THE EXCEPTION IS NOT FULLY BOUNDED, and an earlier version of this comment claimed it
-// was (Codex #1209 P1, round 2). That claim said 'Good Morning' is "never a DEFAULT
-// substitute … so the hot path is genuinely unaffected". It rested on the CONTEXT-FREE
-// default only. Atlas also recommends context-aware — /api/suggest-substitute forwards
-// the rest of the plan as `avoid` — and on that route Good Morning IS announced to the
-// athlete, after which the bare-singular follow-up resolves to the PRECEDING lift and
-// answers with Deadlift's load. Test 1b-ter now pins that real behavior, failure and all.
+// 'Good Morning' and 'Chest Fly' are LEFT UNPARSEABLE, exactly as they are on main.
+// That is a deliberate scope boundary, not an oversight, and the history is worth
+// recording because two attempts to fix them here both made things worse:
 //
-// What remains true, and is all this exception rests on:
-//   • it is exactly one name, asserted by equality — a new unparseable substitute still
-//     fails test 1b;
-//   • no lift DEFAULTS to it (test 1c stays absolute with an empty allowlist);
-//   • renaming the recommender's emission is not a cheap fix: 'Good Morning' is also a
-//     KEY in SUBSTITUTION_MAP, so emitting 'Barbell Good Morning' would make the accepted
-//     substitute unkeyable on the next lookup — trading this gap for a different one.
-// Both remedies (restore the bare alias / rename the emission) were ruled out of this PR
-// by the owner on 2026-07-31, before the context-aware exposure was known; the correction
-// is with the owner. The repair this test's author would argue for is a matcher-level
-// guard that fails CLOSED on an unresolvable name instead of inheriting the preceding
-// lift — logged to BACKLOG.md as its own concern rather than widened into this PR.
-const SUBSTITUTE_PARSE_EXCEPTIONS = ['Good Morning'];
+//   • Adding a bare 'good morning' parser alias created a NEW defect on a more common
+//     path — findExerciseInText matches a start-of-message alias ahead of any later
+//     lift, so "Good morning, how much for bench?" returned Good Morning's load for a
+//     BENCH question (Codex #1209, round 2).
+//   • Restricting it to plural/qualified forms did not close the case either: Atlas
+//     recommends context-aware (/api/suggest-substitute forwards the plan as `avoid`),
+//     and on that route Good Morning IS announced, after which the bare singular
+//     resolves to the preceding lift and answers with DEADLIFT's load (round 3).
+//
+// Both fixes traded one wrong-lift path for another, because the real defect is not
+// the missing vocabulary — it is that an unresolvable name INHERITS the preceding lift
+// instead of failing closed. That is a change to shared parser matching semantics
+// affecting every alias, so it is its own PR, logged in BACKLOG.md.
+//
+// The invariant below is therefore stated honestly: NOT "every substitute is
+// recognizable" (that was never true and this PR does not make it true), but "the
+// unparseable set never GROWS, and no DEFAULT recommendation is ever unparseable".
+//
+// Measured against main rather than asserted — replaying main's own alias table over
+// main's own substitution map yields FOUR unparseable substitutes:
+//     ["Barbell Row", "Chest Fly", "Good Morning", "Incline Press"]
+// This PR retires two of them (Barbell Row by alias, Incline Press by rename) and
+// leaves the other two exactly as they were. So the set is strictly smaller, and the
+// two that remain are unchanged rather than newly broken.
+const SUBSTITUTES_UNPARSEABLE_ON_MAIN = ['Chest Fly', 'Good Morning'];
 
-test('1b. every recommendable substitute is recognizable — one documented exception', () => {
+test('1b. the unparseable-substitute set never grows', () => {
   const { SUBSTITUTION_MAP } = require('../services/substitutionRecommender');
   const names = new Set();
   for (const [from, tos] of Object.entries(SUBSTITUTION_MAP || {})) {
@@ -139,64 +139,19 @@ test('1b. every recommendable substitute is recognizable — one documented exce
     const c = canonicalizeExerciseName(n);
     return !(c && c.canonicalName);
   }).sort();
-  assert.deepEqual(unparseable, SUBSTITUTE_PARSE_EXCEPTIONS,
-    'Atlas must never suggest a substitute it cannot then recognize by name — '
-    + `the exact defect from the 2026-07-31 session. Got: ${unparseable.join(', ') || '(none)'}`);
+  assert.deepEqual(unparseable, SUBSTITUTES_UNPARSEABLE_ON_MAIN,
+    'this PR must not leave MORE substitutes unrecognizable than main did. Two are '
+    + 'knowingly left (their fix is the fail-closed matcher guard, see BACKLOG.md); a '
+    + `THIRD appearing here is a new instance of the 2026-07-31 defect. Got: ${unparseable.join(', ')}`);
 });
 
-// The exception is bounded on both sides: the bare phrase does not resolve, but the
-// plural and qualified forms DO, so an athlete who accepts the substitute can still
-// discuss it in the wording they would naturally use.
-test('1b-bis. the Good Morning exception is bounded — plural and qualified forms resolve', () => {
-  for (const usable of ['good mornings', 'barbell good morning', 'good mornings 135 8/2']) {
-    const c = canonicalizeExerciseName(usable);
-    assert.equal(c && c.canonicalName, 'Good Morning', `${usable} must resolve`);
-  }
-  // …and the greeting must never hijack a question about another lift.
+test('1b-bis. no morning greeting can steal the referent from the lift asked about', () => {
+  // Guards the round-2 regression at its root: with no bare 'good morning' alias there
+  // is nothing for a start-of-message match to latch onto.
   const greeting = canonicalizeExerciseName('Good morning, how much for bench?');
-  assert.equal(greeting && greeting.canonicalName, 'Bench Press',
-    'a morning greeting must not steal the referent from the lift actually asked about');
+  assert.equal(greeting && greeting.canonicalName, 'Bench Press');
   assert.equal(resolveLiftName('Good morning, how much for bench?', [], {}), 'Bench Press',
     'the deterministic chat lane must answer about Bench Press, not Good Morning');
-});
-
-// KNOWN EXPOSURE — recorded honestly rather than asserted away (Codex #1209 P1, round 2).
-//
-// An earlier version of this test asserted "Good Morning is never a DEFAULT substitute"
-// and passed. That claim was TOO NARROW and I reported it to the owner as if it bounded
-// the exception: it only ever checked the CONTEXT-FREE default. Atlas also recommends
-// context-aware, passing the rest of the plan as `avoid` (index.js /api/suggest-substitute
-// → recommendSubstitute(current, { avoid })), and on that route Good Morning IS announced
-// to the athlete. The follow-up then resolves to the WRONG LIFT — not to nothing:
-//
-//   recommendSubstitute('Deadlift', { avoid: ['Romanian Deadlift'] }) → 'Good Morning'
-//   resolveLiftName('how much for good morning?', <that exchange>) → 'Deadlift'
-//
-// A Deadlift load answered for a Good Morning question is the same defect class this PR
-// exists to fix, on a much heavier lift. It is pending an owner ruling (the prior ruling
-// rested on the narrower claim above), so this test pins the REAL current behavior —
-// including the failure — so nothing can quietly claim the exception is bounded.
-test('1b-ter. KNOWN: Good Morning is context-free-safe but reachable via `avoid`', () => {
-  const { recommendSubstitute, SUBSTITUTION_MAP } = require('../services/substitutionRecommender');
-
-  // Still true, and still worth pinning: no lift defaults to it.
-  for (const from of Object.keys(SUBSTITUTION_MAP || {})) {
-    const rec = recommendSubstitute(from);
-    assert.notEqual(rec && (rec.recommendation || rec.name), 'Good Morning',
-      `recommendSubstitute(${JSON.stringify(from)}) must not DEFAULT to the one unparseable name`);
-  }
-
-  // …but the context-aware route DOES announce it. This is the exposure.
-  const ctxAware = recommendSubstitute('Deadlift', { avoid: ['Romanian Deadlift'] });
-  assert.equal(ctxAware && ctxAware.recommendation, 'Good Morning',
-    'documents the reachable path: with RDL avoided, Atlas announces Good Morning');
-
-  // And the bare-singular follow-up resolves to the WRONG lift rather than failing closed.
-  const exchange = [{ text: 'swap deadlift, rack is taken' }, { text: 'Try Good Morning instead.' }];
-  assert.equal(resolveLiftName('how much for good morning?', exchange, {}), 'Deadlift',
-    'KNOWN FAILURE pending owner ruling — the bare singular answers with Deadlift\'s load');
-  // The plural an athlete may equally well type is fine, which is why this is narrow.
-  assert.equal(resolveLiftName('how much for good mornings?', exchange, {}), 'Good Morning');
 });
 
 test('1c. the DEFAULT substitute for every lift is recognizable', () => {
