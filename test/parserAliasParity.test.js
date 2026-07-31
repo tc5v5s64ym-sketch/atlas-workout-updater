@@ -63,15 +63,21 @@ const FROZEN_EXERCISE_ALIASES = [
   // parser table knew. Both names come from the existing truth sources — 'Good Morning'
   // is an exercise-catalog canonical, 'Cable Fly' is the coaching KB's canonical for
   // config/coaching/exercises/cable-chest-fly.json (the recommender's 'Chest Fly').
-  ['Good Morning', ['good morning', 'good mornings', 'barbell good morning']],
+  // The BARE 'good morning' is deliberately absent: it is a far more common gym
+  // greeting than it is a lift, and findExerciseInText matches a start-of-message
+  // alias ahead of any later lift, so it stole the referent from "Good morning, how
+  // much for bench?" (Codex #1209). Plural + qualified forms only.
+  ['Good Morning', ['good mornings', 'barbell good morning']],
   ['Cable Fly', ['cable fly', 'cable flies', 'cable crossover', 'chest fly', 'chest flies']],
 ];
 
 const FROZEN_AMBIGUOUS_ALIASES = {
   press: 'Which press - OHP, bench, or incline?',
   // RECONCILED 2026-07-31: the prompt enumerates the options, and barbell is now one.
-  row: 'Which row - barbell, seated, bent-over, cable, or machine?',
-  rows: 'Which row - barbell, seated, bent-over, cable, or machine?',
+  // 'bent-over' dropped: it and 'barbell' resolve to the SAME canonical, so offering
+  // both asked the athlete to choose between one lift and itself (Codex #1209).
+  row: 'Which row - barbell, seated, cable, or machine?',
+  rows: 'Which row - barbell, seated, cable, or machine?',
 };
 
 const FROZEN_CONTEXTUAL_ALIASES = {

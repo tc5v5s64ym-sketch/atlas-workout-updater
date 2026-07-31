@@ -283,7 +283,6 @@
     [
       "Good Morning",
       [
-        "good morning",
         "good mornings",
         "barbell good morning"
       ]
@@ -301,8 +300,8 @@
   ],
   "ambiguous_aliases": {
     "press": "Which press - OHP, bench, or incline?",
-    "row": "Which row - barbell, seated, bent-over, cable, or machine?",
-    "rows": "Which row - barbell, seated, bent-over, cable, or machine?"
+    "row": "Which row - barbell, seated, cable, or machine?",
+    "rows": "Which row - barbell, seated, cable, or machine?"
   },
   "contextual_aliases": {
     "Lat Pulldown": [

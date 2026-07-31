@@ -47,6 +47,7 @@ const assert = require('node:assert/strict');
 const { canonicalizeExerciseName } = require('../services/workoutTextParser');
 const grounding = require('../services/coachResponseGrounding');
 const { generateLiftCode } = require('../services/exerciseEnrichment');
+const { resolveLiftName } = require('../services/sessionQuestionAnswer');
 
 const QUESTION = 'How much should I lift for barbell rows?';
 
@@ -89,11 +90,33 @@ test('1a-bis. the parser agrees with the exercise catalog — no A↔B fork', ()
 // Fixed at both ends rather than allowlisted: the recommender now names lifts that
 // exist ('Incline DB Press', 'Cable Fly' — the coaching KB's own canonical for
 // config/coaching/exercises/cable-chest-fly.json), and 'Good Morning' (a real catalog
-// canonical) gained its parser aliases.
+// canonical) gained its plural and qualified parser aliases.
 //
-// The allowlist is now EMPTY, so this is an absolute invariant: Atlas can never
-// recommend a substitute it cannot afterwards discuss.
-test('1b. every recommendable substitute is recognizable — no exceptions', () => {
+// ONE documented exception remains — 'Good Morning' — and it is NOT the rationalized
+// allowlist Codex rejected earlier. Codex #1209 (c4128d6) then showed that making the
+// BARE phrase a strong alias costs more than it buys: findExerciseInText matches an
+// alias at the START of a message before any later lift, so "Good morning, how much for
+// bench?" canonicalized to Good Morning and sessionQuestionAnswer.resolveLiftName
+// returned Good Morning's load for a BENCH question. isConversationalAside correctly
+// refuses to swallow that message (it carries real coaching content), so nothing else
+// catches it. A morning greeting is far more frequent in a gym session than the Good
+// Morning lift, so the greeting must win.
+//
+// The bare alias is therefore removed; 'good mornings' and 'barbell good morning' stay
+// (both verified unambiguous). Three properties keep this honest rather than convenient:
+//   • the exception is exactly one name, asserted by equality — a new unparseable
+//     substitute still fails this test;
+//   • 'Good Morning' is never a DEFAULT substitute (test 1c stays absolute, empty
+//     allowlist) — it is a secondary candidate for Deadlift / Romanian Deadlift only,
+//     verified below, so the hot path Codex flagged is genuinely unaffected;
+//   • renaming the recommender's emission was rejected: 'Good Morning' is also a KEY in
+//     SUBSTITUTION_MAP, so emitting 'Barbell Good Morning' would make the accepted
+//     substitute unkeyable on the next lookup — trading this gap for a worse one.
+// The real repair is a matcher-level greeting/lift-name collision guard, logged to
+// BACKLOG.md as its own concern rather than widened into this PR.
+const SUBSTITUTE_PARSE_EXCEPTIONS = ['Good Morning'];
+
+test('1b. every recommendable substitute is recognizable — one documented exception', () => {
   const { SUBSTITUTION_MAP } = require('../services/substitutionRecommender');
   const names = new Set();
   for (const [from, tos] of Object.entries(SUBSTITUTION_MAP || {})) {
@@ -105,9 +128,37 @@ test('1b. every recommendable substitute is recognizable — no exceptions', () 
     const c = canonicalizeExerciseName(n);
     return !(c && c.canonicalName);
   }).sort();
-  assert.deepEqual(unparseable, [],
+  assert.deepEqual(unparseable, SUBSTITUTE_PARSE_EXCEPTIONS,
     'Atlas must never suggest a substitute it cannot then recognize by name — '
-    + `the exact defect from the 2026-07-31 session. Got: ${unparseable.join(', ')}`);
+    + `the exact defect from the 2026-07-31 session. Got: ${unparseable.join(', ') || '(none)'}`);
+});
+
+// The exception is bounded on both sides: the bare phrase does not resolve, but the
+// plural and qualified forms DO, so an athlete who accepts the substitute can still
+// discuss it in the wording they would naturally use.
+test('1b-bis. the Good Morning exception is bounded — plural and qualified forms resolve', () => {
+  for (const usable of ['good mornings', 'barbell good morning', 'good mornings 135 8/2']) {
+    const c = canonicalizeExerciseName(usable);
+    assert.equal(c && c.canonicalName, 'Good Morning', `${usable} must resolve`);
+  }
+  // …and the greeting must never hijack a question about another lift.
+  const greeting = canonicalizeExerciseName('Good morning, how much for bench?');
+  assert.equal(greeting && greeting.canonicalName, 'Bench Press',
+    'a morning greeting must not steal the referent from the lift actually asked about');
+  assert.equal(resolveLiftName('Good morning, how much for bench?', [], {}), 'Bench Press',
+    'the deterministic chat lane must answer about Bench Press, not Good Morning');
+});
+
+// Pins the claim the exception rests on: Good Morning is only ever a secondary
+// candidate. If it ever becomes a default, test 1c fails and this one explains why.
+test('1b-ter. Good Morning is never a DEFAULT substitute', () => {
+  const { recommendSubstitute, SUBSTITUTION_MAP } = require('../services/substitutionRecommender');
+  for (const from of Object.keys(SUBSTITUTION_MAP || {})) {
+    const rec = recommendSubstitute(from);
+    const name = rec && (rec.recommendation || rec.name);
+    assert.notEqual(name, 'Good Morning',
+      `recommendSubstitute(${JSON.stringify(from)}) must not DEFAULT to the one unparseable name`);
+  }
 });
 
 test('1c. the DEFAULT substitute for every lift is recognizable', () => {
@@ -209,8 +260,26 @@ test('4b. bare "rows" stays AMBIGUOUS and asks which row — it never guesses', 
   // The clarification must now offer barbell, since it is a real option.
   assert.match(c.message, /barbell/i,
     'the disambiguation prompt must list barbell now that Barbell Row exists');
+  // …and must NOT also offer "bent-over" (Codex #1209 P2). Both labels resolve to the
+  // SAME canonical, so listing both asks the athlete to choose between one lift and
+  // itself. 'barbell' is kept because it is the owner's own wording from the session
+  // that surfaced this defect.
+  assert.doesNotMatch(c.message, /bent[- ]over/i,
+    'barbell and bent-over are one canonical — the prompt must not present them as a choice');
   const bare = canonicalizeExerciseName('row');
   assert.ok(bare && bare.ambiguous === true);
+  assert.equal(bare.message, c.message, '"row" and "rows" must ask the identical question');
+});
+
+// The clarification's remaining labels are NOT all distinct: 'seated', 'cable', and
+// 'machine' all canonicalize to Seated Row. That collapse PRE-DATES this PR (none of
+// those labels is touched here) and narrowing it is an owner-facing taxonomy decision,
+// so it is logged to BACKLOG.md rather than widened into this change. This test pins
+// the current truth so the backlog item cannot silently rot.
+test('4b-bis. KNOWN: seated/cable/machine still collapse to one canonical (pre-existing)', () => {
+  for (const label of ['seated row', 'cable row', 'machine row']) {
+    assert.equal(canonicalizeExerciseName(label).canonicalName, 'Seated Row', label);
+  }
 });
 
 test('4c. a bare follow-up ("how much should I lift?") still falls back to the plan', () => {
