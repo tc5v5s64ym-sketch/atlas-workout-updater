@@ -184,6 +184,16 @@ One scripted two-exercise workout: plan from history → accept → log normally
 
 ### Phase 6 — Wire in the research
 
+- **PHASE 6 ENTRY SEQUENCE:**
+  1. Confirm Phase 5 is complete.
+  2. Read `docs/research/knowledge-foundation/README.md`.
+  3. Read `docs/research/coaching-intelligence/README.md`.
+  4. Use the authoritative final-package Drive folder and Atlas Knowledge Research Tracker linked from the Knowledge Foundation README.
+  5. Treat Google Docs copies as operational indexes, not canonical sources.
+  6. Do not ingest predecessor machine files without the Prompt 26 normalization overlay.
+  7. Verify the six canonical final deliverables against the recorded hashes.
+  8. Use the canonical manifest, dependency graph, conflict-resolution log, reason-code mappings, question contracts, decision tables, validation rules, and curated source archive as the inputs to the WORK below.
+
 - **WORK:** convert `docs/research/coaching-intelligence` into versioned knowledge records; map reason codes and question types to records; retrieve two to six high-signal records per turn into the CoachTurnPacket; record knowledge IDs and applicability in the InteractionTrace; validator checks every science-bearing claim against retrieved records; deprecate static duplicate cards; same system for planning, live interpretation, and Q&A.
 - **OWNER GATE:** none formal — invite the owner to ask hard "why" questions in real sessions and report anything generic or wrong.
 - **DONE WHEN:** answers cite retrievable records in the trace and the validator gates the claims.
