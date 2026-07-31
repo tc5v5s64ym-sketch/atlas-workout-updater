@@ -160,10 +160,16 @@ async function replayAll() {
   // since load) must not be able to switch the shadow stream on for a corpus
   // replay. The flag is read per request, so unsetting it here is sufficient.
   delete process.env.ATLAS_INTERACTION_TRACE;
-  // Segregation is asserted, not assumed. Record the shadow-log depth BEFORE the
-  // replay (non-destructive — a caller may have its own records) and prove below
-  // that the corpus added none.
-  const shadowDepthBefore = coachTurnPacketShadow.getShadowLog().length;
+  // Segregation is asserted, not assumed. Snapshot the shadow log's record
+  // IDENTITIES before the replay (non-destructive — a caller may have its own
+  // records) and prove below that the corpus added none.
+  //
+  // Identity, not depth: coachTurnPacketShadow keeps a BOUNDED ring buffer
+  // (MAX_LOG = 200, `_log.shift()` on overflow). At saturation each new record
+  // evicts one old record, so the length never changes and a depth delta reads 0
+  // through a fully contaminated replay. Comparing object references is exact at
+  // every fill level, because every pushed record is a distinct object.
+  const shadowBefore = new Set(coachTurnPacketShadow.getShadowLog());
   // Silence the app's per-request logger so stdout stays clean for --json / the summary.
   const saved = { log: console.log, info: console.info, warn: console.warn, debug: console.debug };
   console.log = () => {}; console.info = () => {}; console.warn = () => {}; console.debug = () => {};
@@ -188,7 +194,7 @@ async function replayAll() {
   // FAIL CLOSED: a corpus turn must never reach the real [coach-turn-shadow]
   // stream that npm run atlas:divergence consumes. If it did, the replay's
   // synthetic turns would be readable as production divergence evidence.
-  const shadowAdded = coachTurnPacketShadow.getShadowLog().length - shadowDepthBefore;
+  const shadowAdded = coachTurnPacketShadow.getShadowLog().filter((r) => !shadowBefore.has(r)).length;
   if (shadowAdded > 0) {
     throw new Error(`corpus-baseline: ${shadowAdded} [coach-turn-shadow] record(s) emitted during a segregated replay — aborting`);
   }

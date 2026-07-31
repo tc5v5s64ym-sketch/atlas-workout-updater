@@ -116,13 +116,40 @@ test('replayAll fails closed when the shadow log grows during a replay', async (
   coachTurnPacketShadow._resetForTesting();
   const real = coachTurnPacketShadow.getShadowLog;
   let calls = 0;
-  // First call is the pre-replay depth (0); the post-replay call reports growth.
+  // First call is the pre-replay snapshot (empty); the post-replay call reports growth.
   coachTurnPacketShadow.getShadowLog = () => (++calls === 1 ? [] : [{ synthetic: 'contaminant' }]);
   try {
     await assert.rejects(
       () => runner.replayAll(),
       /\[coach-turn-shadow\] record\(s\) emitted during a segregated replay/,
       'a contaminated replay aborts instead of returning observations');
+  } finally {
+    coachTurnPacketShadow.getShadowLog = real;
+    coachTurnPacketShadow._resetForTesting();
+  }
+});
+
+// REGRESSION: the first version of the check compared the shadow log's LENGTH before
+// and after the replay. coachTurnPacketShadow keeps a bounded ring buffer
+// (MAX_LOG = 200, `_log.shift()` on overflow), so once the log is saturated each new
+// record evicts one old record and the length never moves. A fully contaminated replay
+// then reported a delta of 0 and finished successfully.
+//
+// This models the buffer exactly at cap: 200 records before, 200 after, one of them new.
+// A depth comparison sees 0; an identity comparison sees 1.
+test('a saturated shadow ring buffer cannot hide contamination', async () => {
+  const real = coachTurnPacketShadow.getShadowLog;
+  const saturated = Array.from({ length: 200 }, (_, i) => ({ pre_existing: i }));
+  // Post-replay: oldest evicted, one corpus record appended. Length is unchanged at 200.
+  const afterEviction = [...saturated.slice(1), { corpus_contaminant: true }];
+  assert.equal(saturated.length, afterEviction.length, 'the ring buffer length is unchanged — a depth check sees nothing');
+  let calls = 0;
+  coachTurnPacketShadow.getShadowLog = () => (++calls === 1 ? saturated : afterEviction);
+  try {
+    await assert.rejects(
+      () => runner.replayAll(),
+      /1 \[coach-turn-shadow\] record\(s\) emitted during a segregated replay/,
+      'identity comparison catches the evicted-and-replaced record a depth delta misses');
   } finally {
     coachTurnPacketShadow.getShadowLog = real;
     coachTurnPacketShadow._resetForTesting();
