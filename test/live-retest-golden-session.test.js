@@ -412,6 +412,131 @@ test('8d. the runner report appends the Golden Session plan only when that scena
   assert.equal(/Golden Session — beat plan/.test(without), false, 'the bug sweep report is unchanged');
 });
 
+// ── 9. The write blockade (Codex #1207 P1) ───────────────────────────────────
+// "No executor for a write beat" was necessary but not sufficient: the APP itself
+// calls a write-capable endpoint when a preview click trips the unaccepted-plan
+// gate. These pin the transport-layer blockade that closes it.
+
+test('9a. the blockade list is derived from config/routes.js, not hand-kept', () => {
+  const { routeDefinitions } = require('../config/routes');
+  const expected = routeDefinitions.filter(r => r.writeCapable === true).map(r => r.path).sort();
+  assert.deepEqual(golden.WRITE_CAPABLE_ROUTES.map(r => r.path).sort(), expected);
+  assert.ok(expected.length >= 18, 'the manifest genuinely lists write-capable routes');
+});
+
+test('9b. the exact endpoints the implicit plan acceptance calls are blocked', () => {
+  // The precise P1 mechanism: src/app/app.js acceptDisplayedPlan posts these two
+  // with NO test_mode, from a plain preview click.
+  for (const path of ['/api/session-plans/accept', '/api/session-plan-sets/accept']) {
+    const d = golden.classifyOutboundRequest({ method: 'POST', url: `https://example.test${path}`, body: JSON.stringify({ session_id: 'x' }) });
+    assert.equal(d.writeCapable, true, `${path} is write-capable`);
+    assert.equal(d.allowed, false, `${path} must be aborted`);
+    assert.equal(d.reason, 'write_capable_without_test_mode');
+  }
+});
+
+test('9c. the preview flow still passes — a test_mode dry-run is allowed in every shape the app sends', () => {
+  const url = 'https://example.test/api/log-workout';
+  for (const body of [
+    JSON.stringify({ log_rows: [], test_mode: true }),
+    JSON.stringify({ log_rows: [], test_mode: 'true' }),
+    '------x\r\nContent-Disposition: form-data; name="test_mode"\r\n\r\ntrue\r\n------x--'
+  ]) {
+    const d = golden.classifyOutboundRequest({ method: 'POST', url, body });
+    assert.equal(d.allowed, true, `dry-run body must be allowed: ${String(body).slice(0, 40)}`);
+    assert.equal(d.dryRun, true);
+  }
+});
+
+test('9d. a live write (no test_mode) is aborted, and undeterminable requests fail closed', () => {
+  const live = golden.classifyOutboundRequest({ method: 'POST', url: 'https://example.test/api/log-workout', body: JSON.stringify({ log_rows: [] }) });
+  assert.equal(live.allowed, false, 'test_mode absent = live write = aborted');
+  assert.equal(golden.classifyOutboundRequest({ method: 'POST', url: 'https://example.test/api/log-workout', body: '<<unreadable>>' }).allowed, false);
+  assert.equal(golden.classifyOutboundRequest({ method: 'POST', url: 'not a url', body: '{}' }).allowed, false, 'an unparseable URL fails closed');
+  assert.equal(golden.classifyOutboundRequest({ method: 'POST', url: 'https://example.test/api/log-workout' }).allowed, false, 'a missing body fails closed');
+});
+
+test('9e. read-only routes are untouched, so ordinary traffic is unaffected', () => {
+  for (const [method, path] of [['POST', '/api/coach/message'], ['POST', '/api/coach/ask'], ['GET', '/api/history/recent'], ['POST', '/api/session/login']]) {
+    const d = golden.classifyOutboundRequest({ method, url: `https://example.test${path}`, body: '{}' });
+    assert.equal(d.allowed, true, `${method} ${path} is read-only and must pass`);
+    assert.equal(d.writeCapable, false);
+  }
+  // Method matters: GET on a path whose POST is write-capable is not blocked.
+  assert.equal(golden.classifyOutboundRequest({ method: 'GET', url: 'https://example.test/api/constraints', body: '' }).allowed, true);
+});
+
+test('9f. installWriteBlockade aborts a live write and continues a dry-run, on every scenario', async () => {
+  const { installWriteBlockade } = require('../scripts/live-retest');
+  const outcomes = [];
+  const blocked = [];
+  const context = {
+    async route(_pattern, handler) { context._handler = handler; }
+  };
+  await installWriteBlockade(context, { onBlocked: b => blocked.push(b), logger: { log() {}, error() {} } });
+  assert.equal(typeof context._handler, 'function', 'a route handler is installed');
+
+  const fire = (method, url, body) => context._handler({
+    request: () => ({ method: () => method, url: () => url, postData: () => body }),
+    continue: async () => { outcomes.push(`continue:${url}`); },
+    abort: async (reason) => { outcomes.push(`abort:${url}:${reason}`); }
+  });
+
+  await fire('POST', 'https://a.test/api/session-plans/accept', JSON.stringify({ x: 1 }));
+  await fire('POST', 'https://a.test/api/log-workout', JSON.stringify({ test_mode: true }));
+  await fire('POST', 'https://a.test/api/coach/message', JSON.stringify({ x: 1 }));
+
+  assert.deepEqual(outcomes, [
+    'abort:https://a.test/api/session-plans/accept:blockedbyclient',
+    'continue:https://a.test/api/log-workout',
+    'continue:https://a.test/api/coach/message'
+  ]);
+  assert.deepEqual(blocked, [{ path: '/api/session-plans/accept', reason: 'write_capable_without_test_mode' }]);
+});
+
+test('9g. the blockade records the path and reason only — never the request body', async () => {
+  const { installWriteBlockade } = require('../scripts/live-retest');
+  const blocked = [];
+  const logs = [];
+  const context = { async route(_p, h) { context._handler = h; } };
+  await installWriteBlockade(context, { onBlocked: b => blocked.push(b), logger: { log() {}, error: m => logs.push(m) } });
+  await context._handler({
+    request: () => ({ method: () => 'POST', url: () => 'https://a.test/api/log-workout', postData: () => JSON.stringify({ secret: 'PRIVATE WORKOUT CONTENT' }) }),
+    continue: async () => {}, abort: async () => {}
+  });
+  assert.equal(JSON.stringify(blocked).includes('PRIVATE WORKOUT CONTENT'), false);
+  assert.equal(logs.join('\n').includes('PRIVATE WORKOUT CONTENT'), false);
+  assert.deepEqual(Object.keys(blocked[0]).sort(), ['path', 'reason']);
+});
+
+// ── 10. Replay-semantics ambiguity (Codex #1207 P2) ──────────────────────────
+
+test('10a. a beat that renders identically to its predecessor is flagged, not silently double-logged', () => {
+  const plan = golden.buildGoldenSessionPlan();
+  const flagged = plan.beats.filter(b => b.replaySemanticsAmbiguous);
+  assert.deepEqual(flagged.map(b => b.id), ['log-ex1-second-set-routine'],
+    'the two ROUTINE_ACCESSORY beats render identically and the second is flagged');
+  assert.match(flagged[0].replayAmbiguityReason, /write-enabled replay must not run this beat/);
+  assert.deepEqual(plan.replayBlockers.map(r => r.beat), ['log-ex1-second-set-routine']);
+});
+
+test('10b. an ambiguous beat is still previewable now, but refused once a write posture exists', () => {
+  const beat = golden.buildGoldenSessionPlan().beats.find(b => b.replaySemanticsAmbiguous);
+  assert.equal(golden.mayExecuteBeat(beat), true, 'preview-only today is safe — nothing durable is touched');
+  assert.equal(golden.mayExecuteBeat(beat, { installed: true }), false,
+    'a write-enabled replay must refuse it until the fixture semantics are settled');
+  // A non-ambiguous beat is unaffected by the posture.
+  const clean = golden.buildGoldenSessionPlan().beats.find(b => b.class === 'executable' && !b.replaySemanticsAmbiguous);
+  assert.equal(golden.mayExecuteBeat(clean, { installed: true }), true);
+});
+
+test('10c. the ambiguity is surfaced in the owner report, not buried', () => {
+  const md = golden.buildGoldenSessionReport(golden.buildGoldenSessionPlan());
+  assert.match(md, /Replay blockers/);
+  assert.match(md, /log-ex1-second-set-routine/);
+  assert.match(md, /Write blockade/);
+});
+
 // ── Test double: a Playwright-shaped page that records every interaction ─────
 // It answers like a healthy app (a new atlas bubble that settles immediately) and
 // records each locator action, so a test can prove exactly which controls were touched.

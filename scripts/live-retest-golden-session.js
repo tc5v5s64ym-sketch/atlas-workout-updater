@@ -15,6 +15,9 @@
 // execute one — not "disabled by a flag", but absent. Nothing here presses Approve, Save,
 // Closeout, or Seal.
 //
+// Absence of an executor is necessary but NOT sufficient, because the APP can initiate a
+// write on its own (see the write blockade below). Both layers are required.
+//
 // FOUR OUTCOME CLASSES (the adapter must tell these apart — they are not interchangeable):
 //   • executable      — a read-only browser beat that can be driven now (composer +
 //                       preview, the same dry-run path the runner already uses).
@@ -29,8 +32,88 @@
 // calls into the pure functions here, so the whole beat plan is unit-testable.
 
 const { GOLDEN_SESSION } = require('../test/fixtures/goldenSession');
+const { routeDefinitions } = require('../config/routes');
 
 const SCENARIO_KEY = 'golden-session';
+
+// --- The write blockade (Codex #1207 P1) --------------------------------------
+// A beat having no executor is NOT sufficient. The app itself can reach a
+// write-capable endpoint on its own: once a plan is displayed or engaged (the
+// fixture's first beat asks for exactly that), logging a set through the PREVIEW
+// button trips `unacceptedPlanGateRec` in `src/app/app.js`, which silently calls
+// `acceptDisplayedPlan` → `POST /api/session-plans/accept` +
+// `POST /api/session-plan-sets/accept`. Both are `writeCapable: true` in
+// `config/routes.js`. So a "read-only" walk could have created ledger rows through
+// a path no beat asked for.
+//
+// The fix is a transport-layer blockade over the whole browser context, enforcing
+// the invariant Atlas already states: `test_mode` absent means LIVE WRITE. It is
+// derived from `config/routes.js` — the canonical manifest — so it can never drift
+// from the real route set, and it is not a hand-kept second list.
+//
+//   • a route that is not write-capable          → allowed
+//   • a write-capable route carrying test_mode   → allowed (the documented dry-run;
+//                                                  this IS the preview flow)
+//   • a write-capable route with no test_mode    → ABORTED, and recorded
+//   • anything undeterminable                    → ABORTED (fails closed)
+//
+// This enforces the harness's standing contract rather than changing it: a request
+// it aborts is one that would have violated "never writes".
+const WRITE_CAPABLE_ROUTES = Object.freeze(
+  routeDefinitions
+    .filter(r => r && r.writeCapable === true)
+    .map(r => Object.freeze({ path: r.path, methods: Object.freeze([...(r.methods || [])]) }))
+);
+
+// Match a concrete request path against a manifest path, honoring `:param`
+// segments so the matcher stays correct if the manifest grows one.
+function pathMatches(pattern, pathname) {
+  const p = String(pattern).split('/').filter(Boolean);
+  const a = String(pathname).split('/').filter(Boolean);
+  if (p.length !== a.length) return false;
+  return p.every((seg, i) => seg.startsWith(':') || seg.toLowerCase() === a[i].toLowerCase());
+}
+
+function matchesWriteCapableRoute(method, pathname) {
+  const m = String(method || '').toUpperCase();
+  return WRITE_CAPABLE_ROUTES.some(r => r.methods.includes(m) && pathMatches(r.path, pathname));
+}
+
+// Is this request body an explicit `test_mode` dry-run? Handles the three shapes the
+// app actually sends: JSON boolean `true`, JSON string `'true'`, and a multipart
+// form field. Anything it cannot read confidently returns false, so the caller
+// blocks — an unreadable body is never assumed safe.
+function isTestModeDryRun(body) {
+  if (body === undefined || body === null || body === '') return false;
+  const raw = String(body);
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') {
+      return parsed.test_mode === true || parsed.test_mode === 'true';
+    }
+  } catch { /* not JSON — fall through to the form-encoded shapes */ }
+  if (/name="test_mode"[\s\S]{0,80}?\btrue\b/i.test(raw)) return true;
+  if (/(^|[&?])test_mode=true(&|$)/i.test(raw)) return true;
+  return false;
+}
+
+// Classify one outbound browser request. Pure — the runner supplies method/url/body.
+function classifyOutboundRequest({ method, url, body } = {}) {
+  let pathname;
+  try {
+    pathname = new URL(String(url)).pathname;
+  } catch {
+    // An unparseable URL cannot be proven read-only. Fail closed.
+    return { writeCapable: true, dryRun: false, allowed: false, reason: 'unparseable_url' };
+  }
+  if (!matchesWriteCapableRoute(method, pathname)) {
+    return { writeCapable: false, dryRun: false, allowed: true, reason: 'not_write_capable', pathname };
+  }
+  if (isTestModeDryRun(body)) {
+    return { writeCapable: true, dryRun: true, allowed: true, reason: 'test_mode_dry_run', pathname };
+  }
+  return { writeCapable: true, dryRun: false, allowed: false, reason: 'write_capable_without_test_mode', pathname };
+}
 
 // --- The write posture (installed by PR D; NOT present in this PR) -----------
 // A single frozen fact the whole adapter reads. It is `installed: false` here, and this
@@ -194,14 +277,49 @@ function classifyBeat(beat, index) {
 // --- The beat plan -------------------------------------------------------------
 // The whole fixture, in the fixture's exact order, one plan entry per beat — no beat
 // dropped, none added, none reordered. `counts` is a tally, not a filter.
+// --- Replay-semantics ambiguity (Codex #1207 P2) ------------------------------
+// The fixture is a COACH-MESSAGE facts fixture: every `coach/message:*` beat is an
+// independent post, and `test/soulGoldenTranscripts.test.js` drives each one on its
+// own with no accumulation. A BROWSER, however, accumulates — so when two
+// consecutive beats carry the same exercise and the same `todaySets`, the two
+// readings genuinely diverge: "two independent 2-set blocks" (what the fixture data
+// says) versus "the second set of the same exercise" (what the beat NAME suggests).
+// The fixture does not disambiguate, and rewriting it is out of scope here.
+//
+// So this is neither silently double-logged nor silently deduped: the beat is
+// FLAGGED. It stays executable in this preview-only slice (a repeated preview
+// touches no durable state), and the flag is a forward tripwire — once a write
+// posture exists, `mayExecuteBeat` refuses it, so no write-enabled replay can be
+// built on an ambiguous rendering. Resolving the semantics is a fixture decision,
+// filed rather than guessed at here.
+function markReplayAmbiguity(beats) {
+  let prev = null;
+  for (const b of beats) {
+    if (b.class !== 'executable' || !b.input) continue;
+    if (prev && prev.input === b.input) {
+      b.replaySemanticsAmbiguous = true;
+      b.replayAmbiguityReason = `renders identically to the preceding beat "${prev.id}" — the fixture does not say whether these are two independent blocks or one cumulative snapshot, so a write-enabled replay must not run this beat until the semantics are settled`;
+    } else {
+      b.replaySemanticsAmbiguous = false;
+    }
+    prev = b;
+  }
+  return beats;
+}
+
 function buildGoldenSessionPlan(fixture = GOLDEN_SESSION) {
-  const beats = ((fixture && fixture.beats) || []).map(classifyBeat);
+  const beats = markReplayAmbiguity(((fixture && fixture.beats) || []).map(classifyBeat));
   const counts = beats.reduce((acc, b) => { acc[b.class] = (acc[b.class] || 0) + 1; return acc; }, {});
   return {
     title: (fixture && fixture.title) || 'Golden Session',
     source: 'test/fixtures/goldenSession.js',
     writePosture: WRITE_POSTURE,
     beats,
+    // Reasons a WRITE-ENABLED replay (PR D) must not proceed as-is. Empty today
+    // would mean the fixture renders unambiguously; it does not.
+    replayBlockers: beats
+      .filter(b => b.replaySemanticsAmbiguous)
+      .map(b => ({ beat: b.id, reason: b.replayAmbiguityReason })),
     counts: {
       total: beats.length,
       executable: counts.executable || 0,
@@ -215,8 +333,13 @@ function buildGoldenSessionPlan(fixture = GOLDEN_SESSION) {
 // The runner asks this before touching the page. It is the single decision point, and it
 // answers `false` for every non-executable class, so a write-capable beat cannot reach a
 // browser interaction even if a future caller loops carelessly.
-function mayExecuteBeat(planBeat) {
-  return Boolean(planBeat) && planBeat.class === 'executable';
+function mayExecuteBeat(planBeat, posture = WRITE_POSTURE) {
+  if (!planBeat || planBeat.class !== 'executable') return false;
+  // Forward tripwire (P2): a beat whose browser rendering is ambiguous is safe to
+  // PREVIEW but must never run once writes are live, because the replay would
+  // diverge from the canonical workout in durable state.
+  if (planBeat.replaySemanticsAmbiguous && posture && posture.installed) return false;
+  return true;
 }
 
 // Record a settlement failure as its OWN outcome. A beat that ran but never settled is
@@ -284,6 +407,7 @@ function describeGoldenSessionPlan(plan) {
     lines.push(`  ${n}. ${CLASS_ICON[b.class] || '?'} ${b.class.padEnd(13)} ${b.id}  [${b.seam}]`);
     lines.push(`      ${b.reason}`);
     if (b.input) lines.push(`      composer input: ${JSON.stringify(b.input)}`);
+    if (b.replaySemanticsAmbiguous) lines.push(`      ⚠ replay-ambiguous: ${b.replayAmbiguityReason}`);
     if (b.expectedBehaviorFields.length) {
       lines.push(`      PR C behavior evidence: ${b.expectedBehaviorFields.join(', ')}`);
     }
@@ -293,6 +417,10 @@ function describeGoldenSessionPlan(plan) {
   lines.push(`Totals           : ${plan.counts.total} beats — ${plan.counts.executable} executable now, ${plan.counts.write_blocked} blocked pending ${plan.writePosture.installedBy}, ${plan.counts.fixture_error} fixture errors`);
   lines.push('Best achievable verdict in this PR: INCONCLUSIVE — the canonical sequence cannot be walked end to end while write-capable beats are blocked, so the non-write subset alone can never read PASS.');
   lines.push('Sequence caveat  : plan acceptance is blocked, so the executable beats after it run OUTSIDE an accepted plan. Their behavioral expectations are therefore recorded, NOT scored, in this PR.');
+  lines.push(`Write blockade   : ${WRITE_CAPABLE_ROUTES.length} write-capable routes (derived from config/routes.js) are aborted at the browser transport unless the request carries an explicit test_mode dry-run. This also stops the app's own implicit plan-acceptance calls.`);
+  if (plan.replayBlockers.length) {
+    lines.push(`Replay blockers  : ${plan.replayBlockers.length} beat(s) render ambiguously and must not run under a write-enabled replay — ${plan.replayBlockers.map(r => r.beat).join(', ')}`);
+  }
   return lines;
 }
 
@@ -314,6 +442,14 @@ function buildGoldenSessionReport(plan, ledger = null) {
   lines.push('');
   lines.push(`**Totals:** ${plan.counts.total} beats — ${plan.counts.executable} executable now · ${plan.counts.write_blocked} blocked pending ${plan.writePosture.installedBy} · ${plan.counts.fixture_error} fixture errors`);
   lines.push('');
+  lines.push(`**Write blockade:** ${WRITE_CAPABLE_ROUTES.length} write-capable routes (derived from \`config/routes.js\`) are aborted at the browser transport unless the request carries an explicit \`test_mode\` dry-run. This holds for the whole context, so it also stops write calls the APP initiates on its own — notably the implicit plan acceptance a preview click can trigger once a plan is displayed.`);
+  lines.push('');
+  if (plan.replayBlockers.length) {
+    lines.push('**Replay blockers (must be settled before any write-enabled replay):**');
+    lines.push('');
+    for (const r of plan.replayBlockers) lines.push(`- \`${r.beat}\` — ${r.reason}`);
+    lines.push('');
+  }
   if (ledger && Array.isArray(ledger.beats) && ledger.beats.length) {
     const v = goldenSessionVerdict(ledger);
     lines.push(`**Walk verdict:** ${v.verdict} (${v.reason})`);
@@ -333,7 +469,8 @@ function buildGoldenSessionReport(plan, ledger = null) {
 
 module.exports = {
   SCENARIO_KEY, WRITE_POSTURE, SEAM_POLICY, WRITE_BLOCK_REASON, EVIDENCE_FIELDS,
-  renderSet, renderBeatInput, classifyBeat, buildGoldenSessionPlan,
+  renderSet, renderBeatInput, classifyBeat, buildGoldenSessionPlan, markReplayAmbiguity,
+  WRITE_CAPABLE_ROUTES, matchesWriteCapableRoute, isTestModeDryRun, classifyOutboundRequest,
   mayExecuteBeat, beatSettlementFailure, goldenSessionVerdict,
   describeGoldenSessionPlan, buildGoldenSessionReport
 };
