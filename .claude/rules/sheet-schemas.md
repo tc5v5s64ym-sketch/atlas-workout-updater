@@ -5,15 +5,23 @@ paths:
   - "sheets.js"
   - "index.js"
   - "routes/sessionPlans.js"
-  - "services/sessionPlanEvents.js"
-  - "services/sessionPlanReader.js"
+  - "routes/coachOps.js"
+  - "services/sessionPlan*.js"
+  - "services/deloadState.js"
+  - "services/closeoutFinality.js"
+  - "services/flightRecorder.js"
+  - "services/driftShadow.js"
+  - "services/turnCorrelation.js"
+  - "services/turnWriteArtifact.js"
 ---
 
 # Sheet schemas
 
 Moved verbatim from `CLAUDE.md` so it loads when a file that defines, writes, or validates a Sheet row is opened, instead of in every session. The rule is unchanged; `CLAUDE.md` keeps a one-line pointer.
 
-Scope note: the `paths` list covers the files that construct or validate row shape — the two column contracts, the single Sheets client, the write route, and the `Session_Plans` append path, which is the one tab with a writer outside `index.js`. Modules that only mention a tab name (analytics, telemetry, readers of derived state) do not carry the column contract and are deliberately excluded.
+Scope note: the `paths` list covers the files that construct, append, or validate a row of one of the five documented tabs — derived by sweeping for `appendRows`/range writes, for imports of `config/columns.js`, and for references to the tab names themselves. Shadow and telemetry sheets (`brainShadow`, `intentShadow`, `coachShadowSheet`, `coachResponseSheet`, `sessionPlanSetsStore`) write their own tabs, which this rule does not document, so they are excluded.
+
+Drift note: a `paths` list is an enumeration and a new row writer added later will not match it. The always-on backstop is the one sentence kept in `CLAUDE.md` — no columns may be added, removed, or reordered without a migration and explicit owner approval. A missed path costs the preloaded layouts, never the rule itself.
 
 No columns may be added, removed, or reordered without a migration and explicit owner approval. `config/columns.js` and the relevant sheet contract are authoritative.
 
