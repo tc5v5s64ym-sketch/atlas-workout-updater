@@ -159,27 +159,48 @@ function namedExercisePhrase(message) {
  * `workoutTextParser.canonicalizeExerciseName` — so this module stays pure and the
  * caller keeps ownership of what "resolvable" means.
  *
- * An AMBIGUOUS parser hit ("row") counts as unresolvable: the name was understood but it
- * still identifies no single lift, so inheriting the previous lift is the same defect.
+ * An AMBIGUOUS parser hit ("rows") counts as unresolvable: the name was understood but it
+ * still identifies no single lift, so inheriting the previous lift is the same defect. Its
+ * own disambiguation message is carried through, because "which row?" is the truthful ask
+ * there — Atlas HAS rows; it just cannot tell which one was meant.
  *
- * @returns {{ phrase: string }|null}
+ * @returns {{ phrase: string, ambiguousMessage: string|null }|null}
  */
 function unresolvableExerciseReference(message, resolve) {
   const phrase = namedExercisePhrase(message);
   if (!phrase) return null;
-  let hit = null;
-  try {
-    hit = typeof resolve === 'function' ? resolve(message) : null;
-  } catch (_) {
-    hit = null; // a resolver failure must fail CLOSED, never fall through to another lift
-  }
+
+  // A resolver failure must fail CLOSED, never fall through to another lift.
+  const tryResolve = (text) => {
+    try { return typeof resolve === 'function' ? resolve(text) : null; }
+    catch (_) { return null; }
+  };
+
+  const hit = tryResolve(message);
   if (hit && hit.canonicalName) return null;
-  return { phrase };
+
+  // The parser reports ambiguity only for a name it sees at the START of the text, so
+  // "how much for rows?" comes back empty while the bare "rows" comes back ambiguous.
+  // Re-ask with the extracted phrase alone to recover that message. Only the AMBIGUITY
+  // is taken from it — an anywhere-position canonical hit would already have been found
+  // in the full message above, so this can never turn a decline into a resolution.
+  const fromPhrase = (hit && hit.ambiguous) ? hit : tryResolve(phrase);
+  const ambiguousMessage = fromPhrase && fromPhrase.ambiguous
+    && typeof fromPhrase.message === 'string' && fromPhrase.message.trim()
+    ? fromPhrase.message.trim()
+    : null;
+  return { phrase, ambiguousMessage };
 }
 
-/** The short fail-closed ask. It names what was heard and asks; it never guesses a lift. */
-function unresolvedExerciseAsk(phrase) {
-  const named = String(phrase == null ? '' : phrase).trim();
+/**
+ * The short fail-closed ask. It never guesses a lift. A name the parser understood but
+ * could not narrow keeps the parser's own disambiguation wording; an unknown name is named
+ * back so the athlete can see exactly what Atlas heard.
+ */
+function unresolvedExerciseAsk(reference) {
+  const ref = typeof reference === 'string' ? { phrase: reference } : (reference || {});
+  if (ref.ambiguousMessage) return ref.ambiguousMessage;
+  const named = String(ref.phrase == null ? '' : ref.phrase).trim();
   return named
     ? `I don't have "${named}" as a lift I can program. Which lift did you mean?`
     : "I don't have that lift. Which lift did you mean?";

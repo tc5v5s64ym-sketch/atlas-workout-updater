@@ -187,7 +187,7 @@ function buildSessionQuestionAnswer(message, { history = [], clientContext = nul
     // Named a lift we cannot resolve → say so. Silence here would hand the turn back to
     // the caller's generic fallback; the honest floor is to name what was heard and ask.
     const named = namesUnresolvableLift(message);
-    return named ? unresolvedExerciseAsk(named.phrase) : null;
+    return named ? unresolvedExerciseAsk(named) : null;
   }
 
   const planTarget = targetFromContext(liftName, clientContext);
@@ -514,7 +514,7 @@ function answerUnresolvedExerciseQuestion(message) {
   if (ADVICE_RE.test(raw)) return null;  // "should I … instead?" → the coach's judgement
   const named = namesUnresolvableLift(raw);
   if (!named) return null;
-  return { kind: 'clarify', text: unresolvedExerciseAsk(named.phrase) };
+  return { kind: 'clarify', text: unresolvedExerciseAsk(named) };
 }
 
 // A "total" question wants sets × reps as a PLANNED total, not the per-set target.

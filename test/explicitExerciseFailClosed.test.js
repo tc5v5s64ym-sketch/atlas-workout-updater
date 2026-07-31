@@ -148,6 +148,19 @@ test('6. a greeting containing "good morning" does not steal a real lift referen
   assert.equal(namedExercisePhrase('how much for good morning?'), 'good morning');
 });
 
+test('an AMBIGUOUS name fails closed with the parser\'s own disambiguation, not a "no such lift" line', () => {
+  // "rows" is understood but identifies no single lift, so inheriting the prior lift is the
+  // same defect — and telling the athlete Atlas has no rows would be false.
+  for (const message of ['how much for rows?', 'how much for row?']) {
+    assert.equal(resolveLiftName(message, HISTORY, CONTEXT), null, message);
+    const asked = answerUnresolvedExerciseQuestion(message);
+    assert.ok(asked, message);
+    assert.match(asked.text, /which row/i, message);
+    assert.doesNotMatch(asked.text, /don't have/i, message);
+    assert.doesNotMatch(asked.text, /deadlift|315/i, message);
+  }
+});
+
 test('a coaching question about an unresolvable lift still reaches the coach', () => {
   // Advice and history framings are the model's, not this lane's.
   assert.equal(answerUnresolvedExerciseQuestion('should i do good mornings instead?'), null);
