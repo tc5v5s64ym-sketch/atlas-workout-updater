@@ -59,7 +59,9 @@ These levels are distinct and are never collapsed. They are the same rungs the c
 | 13 | InteractionTrace / turn-write proof | `interactionTraceShadow`, `turnCorrelation` (flag-gated) | same, graduated to live | TEST/OBSERVABILITY ONLY |
 | 14 | Deload | `deloadEngine`, `deloadProtocols`, `deloadState`, `deloadStateMachine`, `deloadPolicy` | one `DeloadLifecycle` | DUPLICATED |
 | 15 | Frontend coordination | `src/app/app.js` monolith + extracted modules | extracted modules; shell coordinates | TRANSITIONAL |
-| 16 | Shadow / fallback / legacy paths | `coachTurnPacketShadow`, `brainShadow`, `intentShadow`, `driftShadow`, `legacyBridge` | none — all retire | TEST/OBSERVABILITY ONLY |
+| 16a | Observational shadows | `coachTurnPacketShadow`, `brainShadow`, `intentShadow`, `driftShadow`, `coachShadowSheet`, `coachResponseSheet` | none — all retire | TEST/OBSERVABILITY ONLY |
+| 16b | `legacyBridge` (live browser bridge) | `src/app/legacyBridge.js`, imported on every page load | none — deleted, not promoted | TRANSITIONAL |
+| 17 | Athlete context (profile, level, equipment, readiness) | `ATLAS_PROFILE_GOAL` env var only; other fields have no live source | one layered `AthleteContext` | CONTRACT ONLY |
 
 ---
 
@@ -132,7 +134,8 @@ These levels are distinct and are never collapsed. They are the same rungs the c
 - **Intended sole authority.** The engine decides every number and verdict; the LLM only words whitelisted facts.
 - **Competing authority.** Multiple renderer/polish modules can shape the same visible line.
 - **Status.** TRANSITIONAL.
-- **Exact production consumer.** `POST /api/coach/message`, `/api/coach/chat`, `/api/coach/ask` — all read-only, never write Sheets.
+- **Exact production consumer.** `POST /api/coach/message`, `/api/coach/chat`, `/api/coach/ask`.
+- **Write posture — precise.** These routes are **read-only with respect to the training record**: they never append to `Log_Cleaned`, `Effort`, or any tab the preview→approve→write loop owns. They are **not** write-free. When `ATLAS_INTERACTION_TRACE=shadow` is set and the turn is not classified synthetic, `services/coachQaShadow.js` runs after the response finishes and calls `coachTurnPacketShadow.observe(...)` then `coachResponseSheet.persist(...)` (`services/coachQaShadow.js:196-197`), which append **telemetry** rows to `Coach_Shadow` and `Coach_Response`. Those appends are flag-gated, post-response, and provenance-tagged, and they are the same appenders listed under concept 11. Do not describe these routes as "never write Sheets" — that wording hid a real production write from safety and schema review.
 - **Compatibility bridge.** The deterministic fallback is permanent by design, not a bridge: an outage must degrade to templated or null behaviour, never a guess.
 - **Sunset condition.** Not a removal target. The consolidation target is one renderer chain, in Phase 5f.
 - **Phase 4 relevance.** Bounded — Drift Guard 2 already forbids the contentless normal-path receipt (H-02).
@@ -251,22 +254,51 @@ These levels are distinct and are never collapsed. They are the same rungs the c
 
 ## 16. Shadow, fallback and legacy paths
 
-- **Current live authority.** `coachTurnPacketShadow`, `brainShadow`, `intentShadow`, `driftShadow`, `coachShadowSheet`, `coachResponseSheet`, and `legacyBridge`.
-- **Intended sole authority.** None. Every one of these retires; no permanent shadow or legacy lane is allowed.
-- **Competing authority.** By construction these observe rather than decide — but they do write telemetry rows.
+This concept holds **two different things**. They are separated because grouping them once described a live browser dependency as off-path.
+
+**16a. Observational shadows — `coachTurnPacketShadow`, `brainShadow`, `intentShadow`, `driftShadow`, `coachShadowSheet`, `coachResponseSheet`.**
+
+- **Current live authority.** None — these observe rather than decide.
+- **Intended sole authority.** None. Every one retires; no permanent shadow lane is allowed.
 - **Status.** **TEST/OBSERVABILITY ONLY.**
-- **Exact production consumer.** None on the product path. `coachTurnPacketShadow` assembles after `res.on('finish')`, so it cannot serve a live answer.
+- **Exact production consumer.** None on the product path — no shadow decides a visible answer. `coachTurnPacketShadow` assembles inside `res.on('finish')`, so it cannot serve a live answer. They **do** append telemetry rows when their flags are set (see concepts 6 and 11); observational is not the same as write-free.
+
+**16b. `legacyBridge.js` — a LIVE browser bridge, not an observer.**
+
+- **Current live authority.** It installs helper objects on `window` for live `app.js` consumers, and `src/app/atlasEntry.js:20` imports it on **every normal browser load**. Several client modules load transitively through it.
+- **Intended sole authority.** None — it is a bridge, and it is deleted rather than promoted.
+- **Status.** **TRANSITIONAL.** It is a live product dependency today.
+- **Exact production consumer.** The browser client on every page load, via `atlasEntry.js`.
+- **Sunset condition.** Delete `legacyBridge.js` when the last consumer of its exports is extracted from `app.js`. It is the same bridge named under concept 15, and Phase 5g cleanup must treat it as live wiring, not as an off-path shadow.
+
+The remaining fields below apply to **16a**.
+
+- **Competing authority.** By construction these observe rather than decide — but they do write telemetry rows.
 - **Compatibility bridge.** The flags `ATLAS_INTENT_ROUTER`, `ATLAS_BRAIN_SHADOW_PERSIST`, `ATLAS_DRIFT_SHADOW`, `ATLAS_INTERACTION_TRACE`.
-- **Sunset condition.** Delete each lane and its flag when its phase closes: intent/brain/drift at Phase 5f; `legacyBridge` at Phase 5g. A lane whose phase has closed and which is still present is a defect.
+- **Sunset condition.** Delete each shadow lane and its flag when its phase closes: intent/brain/drift at Phase 5f. (`legacyBridge` has its own sunset condition under 16b — it is not a shadow lane.) A lane whose phase has closed and which is still present is a defect.
 - **Phase 4 relevance.** The packet stays a **completed-turn observation**. The 2026-07-29 owner ruling (Option B) forbids moving assembly ahead of the response. `packet.session` is observational and never becomes a live dependency.
 - **Evidence.** `services/coachQaShadow.js` registers `res.on('finish', …)`. Drift Guard 5 proves the shadow never claims a fact its contract does not validate.
+
+## 17. Athlete context (profile, training level, equipment, readiness)
+
+- **Current live authority.** Scattered, with no single owner. `profile_goal` comes from the `ATLAS_PROFILE_GOAL` environment variable via `services/profileGoal.js:14`. `training_level`, `population`, and `equipment_profile` have **no live source** — they are nullable, shape-only fields in the v1 contract. Readiness has no plumbed source. Durable rules live in the `Constraints` tab; session-scoped constraints with expiry do not exist yet.
+- **Intended sole authority.** One layered `AthleteContext`: session-scoped constraints with expiry layered over durable rules, with training level, equipment profile, and readiness each plumbed from a defined source.
+- **Competing authority.** None competing — the problem is **absence**, not duplication. `services/athleteContext.js` names and versions the shape but is required **only** by `services/coachTurnPacket.js` and `services/coachTurnPacketShadow.js`.
+- **Status.** **CONTRACT ONLY.** The contract exists; no production route consumes it, and most of its fields have no live source at all.
+- **Exact production consumer.** None. `profileGoal` is read directly by its own callers, not through the contract.
+- **Compatibility bridge.** None.
+- **Sunset condition.** Not a removal target — this is a **missing capability**, not an authority defect. It closes when the layered context is route-consumed and every field named above resolves from a defined source rather than from an environment variable or a null.
+- **Phase 4 relevance.** Bounded. Phase 4 must not claim `packet.athlete` is authoritative beyond `profile_goal`, and Drift Guard 5 already fails an embedded-presence overclaim.
+- **Later phase.** Phase 5e — "plumb training level, equipment profile, and readiness from their defined sources; close Issue #914. Finishes H-07."
+- **Evidence.** `services/athleteContext.js:79-80` (nullable fields); `services/profileGoal.js:14` (the env-var source); the requirer list above.
 
 ---
 
 ## What this map does not claim
 
 - It does not claim any TRANSITIONAL concept is finished.
-- It does not claim a CONTRACT ONLY concept has production authority. Four canonical contracts — `safetyDecision`, `exerciseIdentity`, `closeoutTransaction`, `athleteContext` — are required only by `services/coachTurnPacket.js` and decide nothing live today.
+- It does not claim a CONTRACT ONLY concept has production authority. Four canonical contracts — `safetyDecision`, `exerciseIdentity`, `closeoutTransaction`, `athleteContext` — are required only by `services/coachTurnPacket.js` (and, for `athleteContext`, its shadow) and decide nothing live today. `athleteContext` is tracked as concept 17 rather than only mentioned here, so a later Phase 5 closure test cannot read as satisfied while H-07 is still open.
+- It does not claim any route is write-free. Several read-only coach routes append flag-gated telemetry after the response finishes; concept 6 states this precisely rather than calling them "never write Sheets".
 - It does not authorize removing any competing authority. Phase 5 owns consolidation, and no part of this map starts it.
 - It is not a roadmap, campaign, backlog, or capability manifest. The completion ladder (`config/coaching/manifests/capabilities.json`) remains the per-capability evidence record; this map is the per-concept authority record.
 
