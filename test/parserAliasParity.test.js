@@ -41,7 +41,7 @@ const FROZEN_EXERCISE_ALIASES = [
   // Added as aliases of the EXISTING Bent-Over Row because the exercise catalog
   // (truth source B) already resolves 'barbell row' → 'Bent-Over Row'; minting a new
   // canonical would have forked the taxonomy and tripped the Exercise Truth Audit.
-  ['Bent-Over Row', ['bent-over row', 'bent over row', 'bent row', 'reverse-grip row', 'reverse row', 'bor', 'barbell row', 'barbell rows', 'bb row', 'bb rows']],
+  ['Bent-Over Row', ['bent-over row', 'bent-over rows', 'bent over row', 'bent over rows', 'bent row', 'bent rows', 'reverse-grip row', 'reverse row', 'bor', 'barbell row', 'barbell rows', 'bb row', 'bb rows']],
   ['Hammer Curl', ['hammer curls', 'hammer curl', 'hammers', 'hammer']],
   ['Bicep Curl', ['bicep curls', 'biceps curls', 'bicep curl', 'biceps curl']],
   ['Face Pull', ['face pulls', 'face pull']],
@@ -63,11 +63,14 @@ const FROZEN_EXERCISE_ALIASES = [
 
 const FROZEN_AMBIGUOUS_ALIASES = {
   press: 'Which press - OHP, bench, or incline?',
-  // RECONCILED 2026-07-31: the prompt enumerates the options, and barbell is now one.
-  // 'bent-over' dropped: it and 'barbell' resolve to the SAME canonical, so offering
-  // both asked the athlete to choose between one lift and itself (Codex #1209).
-  row: 'Which row - barbell, seated, cable, or machine?',
-  rows: 'Which row - barbell, seated, cable, or machine?',
+  // RECONCILED 2026-07-31: the prompt offers the two DISTINCT row identities, not five
+  // labels for two lifts. Each group is one canonical exercise — barbell/bent-over is
+  // Bent-Over Row, seated/cable/machine is Seated Row — so the athlete chooses between
+  // two lifts while keeping the wording they actually use. Pinned by
+  // test/rowClarificationDistinctChoices.test.js, which reads the groups out of this
+  // very string and fails if any group ever spans more or fewer than one canonical.
+  row: 'Which row \u2014 barbell/bent-over, or seated/cable/machine?',
+  rows: 'Which row \u2014 barbell/bent-over, or seated/cable/machine?',
 };
 
 const FROZEN_CONTEXTUAL_ALIASES = {

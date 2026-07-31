@@ -302,23 +302,39 @@ test('4b. bare "rows" stays AMBIGUOUS and asks which row — it never guesses', 
   // The clarification must now offer barbell, since it is a real option.
   assert.match(c.message, /barbell/i,
     'the disambiguation prompt must list barbell now that Barbell Row exists');
-  // …and must NOT also offer "bent-over" (Codex #1209 P2). Both labels resolve to the
-  // SAME canonical, so listing both asks the athlete to choose between one lift and
-  // itself. 'barbell' is kept because it is the owner's own wording from the session
-  // that surfaced this defect.
-  assert.doesNotMatch(c.message, /bent[- ]over/i,
-    'barbell and bent-over are one canonical — the prompt must not present them as a choice');
+  // …and must never present "barbell" and "bent-over" as SEPARATE choices (Codex #1209
+  // P2): both resolve to the same canonical, so offering them as alternatives asks the
+  // athlete to choose between one lift and itself.
+  //
+  // UPDATED 2026-07-31 (owner instruction, row-clarification PR): the prompt now GROUPS
+  // athlete wording instead of dropping it — "barbell/bent-over" is one choice worded two
+  // ways, not two choices. Dropping "bent-over" was the earlier way to satisfy the same
+  // rule; grouping satisfies it while keeping wording the athlete actually uses. The rule
+  // itself is unchanged and is asserted directly: whatever words appear, they must not sit
+  // in different choice groups. test/rowClarificationDistinctChoices.test.js generalises
+  // this over every group by resolving each phrase through the parser.
+  const choiceGroups = c.message
+    .replace(/^[^—:-]*[—:-]\s*/, '')
+    .replace(/\?\s*$/, '')
+    .split(/\s*,?\s*\bor\b\s*/i);
+  const barbellGroup = choiceGroups.findIndex((g) => /barbell/i.test(g));
+  const bentOverGroup = choiceGroups.findIndex((g) => /bent[- ]over/i.test(g));
+  assert.ok(barbellGroup !== -1, 'barbell must appear in a choice group');
+  if (bentOverGroup !== -1) {
+    assert.equal(bentOverGroup, barbellGroup,
+      'barbell and bent-over are one canonical — they may share a group, never be separate choices');
+  }
   const bare = canonicalizeExerciseName('row');
   assert.ok(bare && bare.ambiguous === true);
   assert.equal(bare.message, c.message, '"row" and "rows" must ask the identical question');
 });
 
-// The clarification's remaining labels are NOT all distinct: 'seated', 'cable', and
-// 'machine' all canonicalize to Seated Row. That collapse PRE-DATES this PR (none of
-// those labels is touched here) and narrowing it is an owner-facing taxonomy decision,
-// so it is logged to BACKLOG.md rather than widened into this change. This test pins
-// the current truth so the backlog item cannot silently rot.
-test('4b-bis. KNOWN: seated/cable/machine still collapse to one canonical (pre-existing)', () => {
+// 'seated', 'cable', and 'machine' all canonicalize to Seated Row. When this test was
+// written that collapse was a KNOWN defect in the prompt, which offered the three as
+// separate choices; it is now fixed (owner instruction 2026-07-31) by grouping them as
+// one choice worded three ways. The resolution below is unchanged and is still pinned
+// here; the grouping itself is pinned by test/rowClarificationDistinctChoices.test.js.
+test('4b-bis. seated/cable/machine are one canonical — now offered as one grouped choice', () => {
   for (const label of ['seated row', 'cable row', 'machine row']) {
     assert.equal(canonicalizeExerciseName(label).canonicalName, 'Seated Row', label);
   }
