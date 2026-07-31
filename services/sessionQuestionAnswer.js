@@ -14,7 +14,7 @@
  */
 
 const { canonicalizeExerciseName } = require('./workoutTextParser');
-const { unresolvableExerciseReference, unresolvedExerciseAsk } = require('./explicitExerciseReference');
+const { unresolvableExerciseReference, unresolvedExerciseAsk, namesDifferentExercise } = require('./explicitExerciseReference');
 
 // Which session attribute(s) the message is asking about. A message may ask for
 // several at once ("how many reps and rir").
@@ -44,9 +44,30 @@ function normName(v) {
  * load). The contextual fallback below exists for shorthand that names NO lift; an
  * explicitly named but unresolvable lift must never borrow another lift's numbers.
  * See services/explicitExerciseReference.js for how a name is told from ordinary wording.
+ *
+ * It resolves with `canonicalizeForAnswer`, the SAME resolver the answer uses, so the two
+ * cannot disagree about what "resolvable" means. If this used the raw parser while the
+ * answer path rejected a qualified variant, the turn would fall through to the prior turn
+ * or the plan — the exact inheritance this module exists to stop.
  */
 function namesUnresolvableLift(message) {
-  return unresolvableExerciseReference(message, canonicalizeExerciseName);
+  return unresolvableExerciseReference(message, canonicalizeForAnswer);
+}
+
+/**
+ * Resolve a lift name for a coaching ANSWER.
+ *
+ * The parser matches an alias anywhere in the text, so "how much for zercher squat?"
+ * matched `squat` and answered with BACK SQUAT's prescribed weight, planned total, and
+ * engine recommendation. A match the message QUALIFIES into a different exercise is
+ * rejected here, so the athlete is never handed another lift's numbers under the name they
+ * did not ask about. Only the Exercise KB's own verdict counts, so every legitimate alias
+ * and all ordinary phrasing resolve exactly as before.
+ */
+function canonicalizeForAnswer(text) {
+  const hit = canonicalizeExerciseName(text);
+  if (hit && hit.canonicalName && namesDifferentExercise(text, hit.canonicalName)) return null;
+  return hit;
 }
 
 // Resolve the lift the question is about, in priority order:
@@ -57,7 +78,7 @@ function namesUnresolvableLift(message) {
 // A message that DOES name a lift we cannot resolve fails closed at step 1 — it never
 // inherits the prior turn's or the plan's lift.
 function resolveLiftName(message, history, clientContext) {
-  const fromMsg = canonicalizeExerciseName(message);
+  const fromMsg = canonicalizeForAnswer(message);
   if (fromMsg && fromMsg.canonicalName) return fromMsg.canonicalName;
   if (namesUnresolvableLift(message)) return null;
 
@@ -65,7 +86,9 @@ function resolveLiftName(message, history, clientContext) {
   for (let i = turns.length - 1; i >= 0; i -= 1) {
     const text = turns[i] && turns[i].text;
     if (!text) continue;
-    const hit = canonicalizeExerciseName(text);
+    // The prior turn is held to the same standard: a turn that discussed a VARIANT is not
+    // evidence the athlete is now asking about the base lift.
+    const hit = canonicalizeForAnswer(text);
     if (hit && hit.canonicalName) return hit.canonicalName;
   }
 
@@ -472,7 +495,7 @@ function answerPlannedLiftQuestion(message, clientContext = null) {
   if (HISTORY_RE.test(raw)) return null; // past-tense → history owns it
   if (ADVICE_RE.test(raw)) return null;  // "why / should / increase" → let Gemini coach
 
-  const named = canonicalizeExerciseName(message);
+  const named = canonicalizeForAnswer(message);
   const liftName = named && named.canonicalName;
   if (!liftName) return null; // no lift named → education/clarify path stays correct
 
