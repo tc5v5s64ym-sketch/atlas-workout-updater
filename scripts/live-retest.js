@@ -15,13 +15,17 @@
 // SESSION STATE: the write blockade below aborts plan-ledger, workout-log,
 // closeout, revision, seal, and flight-recorder writes at the browser transport.
 //
-// It is NOT a claim of zero Sheet writes (corrected 2026-07-31 after Actions run
-// 30596164330). With `ATLAS_INTERACTION_TRACE=shadow` enabled, read-only coach
-// routes still append synthetic telemetry rows to Intent_Shadow and Brain_Shadow —
-// correctly tagged `evidence_class=synthetic`, `evidence_eligible=false`,
-// `request_origin`, so they stay auditable and never count as owner evidence.
-// Coach_Shadow and Coach_Response carry no provenance columns and are contained
-// server-side instead (services/coachShadowSheet.js, services/coachResponseSheet.js).
+// SHADOW TABS. A declared-synthetic run (this harness sends
+// `x-atlas-request-origin: playwright`) appends to NONE of the four shadow tabs:
+// Coach_Shadow and Coach_Response are contained server-side by #1207, and
+// Intent_Shadow and Brain_Shadow by the follow-up quota containment — the synthetic
+// mirror exhausted the Sheets per-minute quota in run 30596164330 and degraded
+// production. The in-memory rings and console lines still record the turns, so the
+// debug endpoints and divergence tooling are unaffected.
+//
+// This is still not an absolute "zero Sheet writes" claim for every possible
+// deployment: the guarantee is scoped to what this harness declares about itself.
+// Traffic that does not declare a synthetic origin persists as it always has.
 //
 // `--dry-run-only` (default true) describes the retest without opening a browser.
 // It is NOT a merge gate and NOT a replacement for owner judgment.
@@ -972,7 +976,7 @@ function buildMarkdownReport(results, ctx = {}) {
   lines.push('');
   lines.push('**Verdicts:** ✅ PASS — expected behaviour seen · ⚠️ INCONCLUSIVE — no bug signal but the expected reply didn\'t render (likely an unauthenticated run; retest in an authed context) · ❌ FAIL — a forbidden/bug pattern reappeared · ◻️ MANUAL — needs a hands-on retest (no automatable assertion yet).');
   lines.push('');
-  lines.push('> Read-only retest — it never presses Save and **mutates no workout or session state** (the blockade aborts plan-ledger, workout-log, closeout, revision, seal, and flight-recorder writes). This is *not* a claim of zero Sheet writes: with shadow tracing on, read-only coach routes still append synthetic Intent_Shadow / Brain_Shadow telemetry, tagged `evidence_class=synthetic` and never owner evidence. **Not a merge gate and not a replacement for owner judgment.**');
+  lines.push('> Read-only retest — it never presses Save and **mutates no workout or session state** (the blockade aborts plan-ledger, workout-log, closeout, revision, seal, and flight-recorder writes). This run declares `x-atlas-request-origin: playwright`, so it appends to **none of the four shadow tabs** — Coach_Shadow, Coach_Response, Intent_Shadow, Brain_Shadow. The in-memory rings still record the turns, so the debug endpoints and divergence tooling are unaffected. **Not a merge gate and not a replacement for owner judgment.**');
   lines.push('');
   return lines.join('\n');
 }

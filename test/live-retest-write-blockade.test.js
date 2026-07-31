@@ -9,10 +9,10 @@
 // on its own: `/api/session-plans/accept`, `/api/session-plan-sets/accept`, and four
 // `/api/flight/ingest` posts. Without it those would have been real writes.
 //
-// SCOPE OF THE CLAIM. It stops WORKOUT AND SESSION STATE MUTATION. It is NOT a claim
-// of zero Sheet writes — synthetic shadow telemetry (Intent_Shadow / Brain_Shadow)
-// is still appended, correctly provenance-tagged, and Coach_Shadow / Coach_Response
-// are contained server-side instead (test/coachShadowSyntheticContainment.test.js).
+// SCOPE OF THE CLAIM. It stops WORKOUT AND SESSION STATE MUTATION. Shadow-tab
+// containment is separate and server-side: a declared-synthetic run now appends to
+// none of the four shadow tabs (test/coachShadowSyntheticContainment.test.js and
+// test/syntheticShadowQuotaContainment.test.js).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -159,11 +159,16 @@ test('5a. installWriteBlockade aborts a live write, continues a dry-run, and rec
 
 // ── 6. The safety claim is stated honestly ───────────────────────────────────
 
-test('6a. the report claims no state mutation, and explicitly disclaims zero Sheet writes', () => {
+test('6a. the report claims no state mutation and states the current shadow-tab truth', () => {
   const md = buildMarkdownReport([{ scenario: 'x', bugId: 'B', verdict: 'PASS', exitCode: 0 }]);
   assert.match(md, /mutates no workout or session state/);
-  assert.match(md, /not\* a claim of zero Sheet writes/);
-  assert.match(md, /Intent_Shadow \/ Brain_Shadow/);
+  // The report must state the CURRENT truth: a declared-synthetic run reaches none
+  // of the four shadow tabs. Asserting the retired "still appends synthetic
+  // telemetry" wording would freeze a false operational claim into CI.
+  assert.match(md, /none of the four shadow tabs/);
+  assert.match(md, /Coach_Shadow, Coach_Response, Intent_Shadow, Brain_Shadow/);
+  assert.doesNotMatch(md, /still append synthetic/,
+    'the retired shadow-write disclaimer must not reappear');
   assert.doesNotMatch(md, /never writes to Google Sheets/,
     'the retired absolute claim must never come back');
 });

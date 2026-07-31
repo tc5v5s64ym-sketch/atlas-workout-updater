@@ -87,7 +87,33 @@ test('Brain_Shadow: a declared-synthetic turn is NOT persisted (quota containmen
   });
   await flush();
   try {
-    assert.deepEqual(appended, [], 'a synthetic origin never reaches the Brain_Shadow tab');
+    assert.deepEqual(appended, [], 'a declared synthetic origin never reaches the Brain_Shadow tab');
+  } finally { delete process.env.ATLAS_BRAIN_SHADOW_PERSIST; }
+});
+
+// The `synthetic` CLASS can still persist, and must still be tagged correctly. The
+// containment keys on the declared ORIGIN, not the class — so a non-production
+// request with no declared synthetic origin classifies `synthetic` with
+// request_origin `non_production_runtime`, which is deliberately NOT in
+// SYNTHETIC_ORIGINS. That row still reaches the tab, and its provenance columns
+// must still read synthetic / FALSE. Without this case the rewrite above would
+// have silently dropped all row-level coverage for the synthetic class (Codex
+// #1208 P2).
+test('Brain_Shadow: a synthetic-CLASS row with a non-declared origin still persists, tagged synthetic/ineligible', async () => {
+  const appended = [];
+  process.env.ATLAS_BRAIN_SHADOW_PERSIST = '1';
+  brainReset(async (tab, rows) => { appended.push({ tab, rows }); });
+  brainShadow.observeBrainFailure({
+    route: '/api/recommend/next', liftCode: 'BEN01', mode: HYBRID, reason: 'orchestrator_error', ms: 2,
+    evidence: { evidence_class: 'synthetic', evidence_eligible: false, request_origin: 'non_production_runtime' },
+  });
+  await flush();
+  try {
+    assert.equal(appended.length, 1, 'a non-declared synthetic-class row is still mirrored');
+    const row = appended[0].rows[0];
+    assert.equal(row[16], 'synthetic', 'evidence_class');
+    assert.equal(row[17], 'FALSE', 'evidence_eligible');
+    assert.equal(row[18], 'non_production_runtime', 'request_origin bounded token');
   } finally { delete process.env.ATLAS_BRAIN_SHADOW_PERSIST; }
 });
 

@@ -120,6 +120,21 @@ test('2c. unclassified/unknown traffic still persists — only a DECLARED synthe
   }
 });
 
+test('2c-bis. a synthetic-CLASS row with a non-declared origin still persists, tagged synthetic/ineligible', async () => {
+  // The containment keys on the declared ORIGIN, not the class. A non-production
+  // request with no declared synthetic origin classifies `synthetic` with
+  // request_origin `non_production_runtime`, which is deliberately NOT in
+  // SYNTHETIC_ORIGINS — so it still mirrors, and must still be tagged honestly
+  // (Codex #1208 P2: keep row-level coverage for the persisted synthetic class).
+  const ev = { evidence_class: EVIDENCE_CLASSES.SYNTHETIC, evidence_eligible: false, request_origin: 'non_production_runtime' };
+  const rows = await intentAppends(ev);
+  assert.equal(rows.length, 1, 'a non-declared synthetic-class row still reaches Intent_Shadow');
+  const row = rows[0].r[0];
+  assert.ok(row.includes(EVIDENCE_CLASSES.SYNTHETIC), 'evidence_class stays synthetic');
+  assert.ok(row.includes('FALSE'), 'evidence_eligible stays FALSE');
+  assert.ok(row.includes('non_production_runtime'), 'the bounded origin token is preserved');
+});
+
 test('2d. the ring and console line are kept, so the debug endpoint and divergence tooling still see synthetic turns', async () => {
   intentShadow._resetForTesting({ append: async () => {} });
   const count = () => intentShadow.getShadowLog().entries.length;
