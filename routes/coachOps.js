@@ -53,7 +53,7 @@ const { patternFor } = require('../services/movementPattern');
 const { musclesFor } = require('../services/muscleCoverage');
 const { assembleBatchNoteFacts } = require('../services/batchNoteFacts');
 const { detectExtraWork } = require('../services/extraWorkDetector');
-const { buildSessionQuestionAnswer, buildSessionAdviceFallback, answerBareShorthand, isBareSessionShorthand, isCurrentExercisePrescriptionQuestion, answerCurrentExercisePrescription, isWarmupQuestion, answerPlannedLiftQuestion, answerTotalRepsQuestion } = require('../services/sessionQuestionAnswer');
+const { buildSessionQuestionAnswer, buildSessionAdviceFallback, answerBareShorthand, isBareSessionShorthand, isCurrentExercisePrescriptionQuestion, answerCurrentExercisePrescription, isWarmupQuestion, answerPlannedLiftQuestion, answerTotalRepsQuestion, answerUnresolvedExerciseQuestion } = require('../services/sessionQuestionAnswer');
 const { isTurnPrecedenceEnabled } = require('../services/turnPrecedence');
 const { isTirednessExpression, buildTirednessRecoveryAnswer, buildTirednessRecoveryAnswerFromDecision } = require('../services/recoveryRouting');
 const { planStateFromContext, buildSessionCloseAnswer, buildSessionCloseAnswerFromSession, buildNextUpAnswer, buildNextUpAnswerFromSession } = require('../services/sessionPlanExecutor');
@@ -1286,6 +1286,29 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     // as before). Read-only; no write, no plan mutation.
     const warmupDefer = isTurnPrecedenceEnabled() && isWarmupQuestion(message);
 
+    // Fail closed on an explicitly NAMED but unresolvable lift (owner gym session
+    // 2026-07-31). Atlas recommended Good Morning; "how much for good morning?" could not
+    // be resolved, so every deterministic lane below declined it and the turn went to the
+    // LLM with the whole plan in context, which answered with the DEADLIFT load. Ask
+    // instead of guessing.
+    //
+    // This runs BEFORE the reassure and warm-up bypasses on purpose (Codex #1213 P1).
+    // Inside that block it was skipped exactly where the wrong-lift answer still reached
+    // the model: "I'm frustrated. How much for good morning" sets reassureBypass, and
+    // "how many warm up sets for good morning?" sets warmupDefer, and both then reached a
+    // configured model with the stale plan lift available. Which lift the athlete means is
+    // a question of fact, so it is settled before any voice or routing choice is made.
+    // The lane is tightly gated — it needs a session attribute AND a named-but-
+    // unresolvable lift, and it declines advice and past-tense framings — so a
+    // discouragement or warm-up turn that names a lift Atlas CAN resolve routes exactly as
+    // before. Read-only; it answers with no numbers at all.
+    const unresolvedLift = answerUnresolvedExerciseQuestion(message);
+    if (unresolvedLift) {
+      return standardSuccess(req, res, 'Coach chat — clarify which lift', {
+        message: unresolvedLift.text, configured: coach.isConfigured(), model: coach.coachModel(), source: 'engine'
+      });
+    }
+
     // The deterministic lift-answer lanes (bare shorthand → planned total → planned
     // value) answer factual "what's my RIR/reps/total" questions before the LLM. They
     // are SKIPPED for an explicit-discouragement message (Owner Decision 1): a phrase
@@ -1345,6 +1368,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
           message: planned, configured: coach.isConfigured(), model: coach.coachModel(), source: 'engine'
         });
       }
+
 
       // Phase 4 (chat/SME lane — divergence D3), flag-gated ATLAS_TURN_PRECEDENCE (default
       // inert). A BARE, no-lift-named COMPOUND prescription question ("What weight and how
