@@ -1,10 +1,10 @@
-# Atlas — Backlog · ⛔ FROZEN LEGACY INVENTORY — NO NEW INTAKE
+# Atlas — Backlog · BOUNDED EVIDENCE LEDGER
 
-**Current as of:** 2026-07-30 (owner ruling: intake closed; completed records archived).
+**Current as of:** 2026-07-31 (owner ruling final form: bounded, actively consumed ledger).
 
-> ⛔ **FROZEN LEGACY INVENTORY — NO NEW INTAKE (owner ruling 2026-07-30).** This file receives **no new work items**. It may only be corrected, deduplicated, archived, or reduced, and it never justifies expanding a PR. A newly discovered issue, finding, follow-up, edge case, or improvement takes exactly one disposition — **FIX NOW**, **REJECT**, or **OWNER DECISION REQUIRED** (stop and report; no issue, no backlog line) — per `CLAUDE.md` and [`docs/ATLAS_V1_EXECUTION_PLAN.md`](./docs/ATLAS_V1_EXECUTION_PLAN.md), the sole work-selection authority. Drift Guard 7 (`npm run check:backlog-intake`) fails CI on any addition here and on any rise in `backlog_max_lines`.
+> 📋 **BOUNDED LEDGER — FIXED CAPACITY (owner ruling 2026-07-30, final form 2026-07-31).** This file preserves proven deferred work; it never selects work or authorizes a PR. Intake is allowed but **capacity is fixed**: item count, line count, and `backlog_max_lines` may never grow, so adding an item means archiving, rejecting, resolving, deduplicating, or promoting enough existing content to keep all three flat or falling — and the removed content must genuinely be fixed, stale, duplicated, rejected, or promoted. Never delete a valuable item just to make room. An item qualifies only when current-state verification proves it real, it has concrete impact, it is outside the current PR's one concern or genuinely blocked, and it beats an older item. State compactly: classification (`trust-critical` / `correctness` / `polish` / `housekeeping`), status (`READY` / `BLOCKED` / `OWNER DECISION`), impact, evidence, acceptance criteria, reason not fixed now, next review trigger. Drift Guard 7 (`npm run check:backlog-intake`) enforces the three counts; review verifies the removal was honest.
 
-**Reference list of open and deferred work, NOT the work-selection queue.** Legacy reference material until its surviving real items are owner-selected or rejected. The execution plan, issue state, tests, and git history outrank stale prose here.
+**Deferred work, NOT the work-selection queue.** [`docs/ATLAS_V1_EXECUTION_PLAN.md`](./docs/ATLAS_V1_EXECUTION_PLAN.md) is the sole execution authority and consumes this ledger through the Bounded Backlog Review at every phase boundary, and before discretionary work when the last review is over seven days old. Legacy items predate the compact format and are not rewritten.
 
 ### Open P0 / P1 index (reconciled 2026-07-30)
 

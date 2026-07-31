@@ -214,32 +214,67 @@ Each is a CI check that fails the build; a rule that lives only in a document is
 4. **COMPLETION-LADDER VALIDATOR** (Phase 2, ✅ BUILT 2026-07-21 — `scripts/check-completion-ladder.js`, `npm run check:ladder`): no capability may claim route-consumed or live-proven without a linked test or trace ID; it also fails a structurally invalid ladder (nine boolean rungs, monotonic, a named consumer at route-consumed or higher). A synthetic-violation self-test (`test/completionLadderGuard.test.js`) proves the guard actually fails on an unsubstantiated claim.
 5. **PACKET AND TRACE CONTRACT TESTS** (Phases 4–5): every full-session test asserts the visible reply was produced from a schema-valid CoachTurnPacket and that one turn ID spans input through write proof. ✅ **FIRST INCREMENT BUILT 2026-07-24** (`scripts/check-packet-trace.js`, `npm run check:packet-trace`): the shadow anti-overclaim honesty guard — `assembleShadowPacket` may never report a packet valid that isn't, nor claim an embedded fact (session/decision/safety/closeout/exercises) present that does not validate under its own canonical contract (an underclaim is safe), nor emit a trace whose `missing`-stage list is dishonest; synthetic-violation self-test `test/packetTraceGuard.test.js`. The fuller remit — every full-session test asserting the visible reply came from a schema-valid packet with one turn ID spanning input→write proof — lands as the live route consumes the packet (Phases 4–5).
 6. **PAPER-WEIGHT GUARD** (Phase 2): CI fails when BACKLOG.md exceeds its size cap or contains shipped items older than seven days; an auto-archive job keeps it clean. The cap (`backlog_max_lines`) is permanently non-increasing under the 2026-07-30 owner ruling below.
-7. **BACKLOG-INTAKE GUARD** (owner ruling 2026-07-30, ✅ BUILT — `scripts/check-backlog-intake.js`, `npm run check:backlog-intake`): on a PR diff, CI fails when `BACKLOG.md` gains a work item or a line, or when `backlog_max_lines` rises above the base value. It is mechanical — three counts, no prose classification — so removal, archival, deduplication, and in-place correction all pass, and no justification text can turn it green. Synthetic-violation self-tests: `test/backlogIntakeGuard.test.js`. Known limit: deleting one item and adding a different one keeps every count flat, so review and the merge card's "Additional findings" field cover that case.
+7. **BOUNDED-BACKLOG GUARD** (owner ruling 2026-07-30, final form 2026-07-31, ✅ BUILT — `scripts/check-backlog-intake.js`, `npm run check:backlog-intake`): on a PR diff CI fails when `BACKLOG.md` grows in top-level item count or in line count, or when `backlog_max_lines` rises above the base value. It is mechanical — three counts, no prose classification, no similarity matching — so no justification text turns it green. Removal, archival, deduplication, promotion, and in-place correction all pass, and a NET-NEUTRAL REPLACEMENT is the intended bounded-intake operation rather than a loophole: the guard cannot judge whether the removed content was genuinely fixed, stale, duplicated, rejected, or promoted, so exact-head review and the merge card's named added/removed/counts declaration carry that check. Self-tests: `test/backlogIntakeGuard.test.js`.
 
-### OWNER RULING — 2026-07-30 — BACKLOG INTAKE CLOSED
+### OWNER RULING — 2026-07-30, FINAL FORM 2026-07-31 — BOUNDED BACKLOG LEDGER
 
-`BACKLOG.md` is a frozen legacy inventory, not an intake destination. This ruling governs every session from its adoption date.
+`BACKLOG.md` is a **bounded, actively consumed evidence ledger**. This supersedes the blanket intake closure; it does not restore unlimited intake.
 
-Every newly discovered issue, review finding, follow-up, edge case, or improvement takes **exactly one** disposition:
+#### Document roles
 
-1. **FIX NOW** — the finding is a genuine blocker or an in-scope correctness defect. Fix it and test it in the current PR.
-2. **REJECT** — the behavior is not required, is too speculative, is a duplicate, is not worth its complexity, or is outside Atlas's intended product. Record the rejection and its rationale in the PR discussion. Do not add it to `BACKLOG.md` and do not open an issue.
-3. **OWNER DECISION REQUIRED** — use this only when the finding needs a genuine product, safety, scope, architecture, or priority decision. Stop and report it to the owner. Do not create a GitHub issue, do not add it to `BACKLOG.md`, and do not add it to this execution plan unless the owner explicitly selects it.
+This execution plan remains the **sole work-selection and sequencing authority**. `BACKLOG.md` preserves proven deferred work: it does not select work, authorize a PR, or compete with this plan. GitHub Issues are not a parallel backlog.
 
-**OWNER CORRECTION — 2026-07-31.** GitHub Issues are **not** a replacement backlog. "File as a GitHub issue" is no longer a disposition, and an agent may not create one to park an advisory finding. Work enters this execution plan only when the owner explicitly selects it; nothing else schedules work.
+#### Finding dispositions
 
-"Add to BACKLOG", "defer to BACKLOG", and "file it as an issue" are prohibited dispositions. Advisory review findings do not automatically become work — each one is fixed, rejected, or escalated to the owner. **Agents may not manufacture future work queues from advisory findings.**
+Every new finding receives exactly one:
 
-`BACKLOG.md` receives no new work items. It may only be corrected, deduplicated, archived, or reduced. It stays legacy reference material until its surviving real items are either selected by the owner or rejected, and it may never be used to justify expanding a current PR.
+1. **FIX NOW** — fix and test it in the current PR.
+2. **REJECT** — record the rejection and a short rationale in the PR discussion.
+3. **ADD TO BOUNDED BACKLOG** — record it in `BACKLOG.md` under the fixed-capacity rule below.
+4. **OWNER DECISION REQUIRED** — stop and report it to the owner.
 
-The paper-weight cap is permanently non-increasing. Do not raise `backlog_max_lines` to make CI pass.
+Advisory findings do not automatically become work.
 
-Enforcement: Drift Guard 7 above (mechanical counts) plus the merge card's "Additional findings" field. This ruling closes intake and changes no safety, branch, merge, or owner gate, and it does not reorder any phase.
+#### Qualification for intake
+
+A finding may enter `BACKLOG.md` only when **all four** hold:
+
+- current-state verification proves it is real;
+- it has concrete user or system impact;
+- it is outside the current PR's one concern, or is genuinely blocked;
+- preserving it is more valuable than preserving at least one older backlog item.
+
+Each newly added or materially reviewed item states, compactly: **classification** (`trust-critical` / `correctness` / `polish` / `housekeeping`), **status** (`READY` / `BLOCKED` / `OWNER DECISION`), **impact**, **evidence or reproduction**, **acceptance criteria**, **reason not fixed now**, and a **next review trigger** (dependency, campaign phase, or date). Compact means a few lines, not a template; the historical backlog is not rewritten to match.
+
+#### The fixed-capacity rule
+
+`BACKLOG.md` may never grow in **top-level item count**, in **total line count**, or in **`backlog_max_lines`**. A PR that adds an item must archive, reject, resolve, deduplicate, or promote enough existing content that all three counts stay flat or fall.
+
+The removed content must be genuinely fixed, stale, duplicated, rejected, archived, or moved into this plan. **Do not delete a valuable item merely to create space.** `backlog_max_lines` is permanently non-increasing.
+
+A net-neutral replacement is therefore an **intentional bounded-intake operation**, not a prohibited loophole. Drift Guard 7 enforces the three counts mechanically and cannot judge whether a removal was honest; exact-head review does that, using the merge card, where a PR adding an item names the added item, the removed or archived or promoted item, and the resulting item, line, and cap counts.
+
+#### Bounded Backlog Review protocol
+
+A review is required **at every campaign phase boundary**, and **before starting discretionary or overnight work when the recorded backlog review is more than seven days old**.
+
+Each review examines **up to 20** highest-severity or oldest eligible items and gives each a current-state verdict. Allowed outcomes:
+
+- **FIX NOW** — create a fresh, focused PR;
+- **PROMOTE** — add the selected work to this plan with sequencing;
+- **KEEP BLOCKED** — record the exact dependency and the next review trigger;
+- **ARCHIVE / REJECT** — remove fixed, stale, duplicate, superseded, or low-value work.
+
+During one review cycle, implement **at most two** backlog fixes: backlog cleanup never derails the active campaign. A currently reproducible trust-critical or correctness defect may be fixed under standing authority when it is bounded and not owner-reserved. Polish, housekeeping, architectural forks, schema changes, production-write changes, and priority conflicts stay subject to the ordinary plan and owner gates.
+
+#### Stability period
+
+This backlog policy is **locked for four completed backlog-review cycles**. Do not propose another backlog-governance redesign during that period unless a concrete failure proves that legitimate work is being lost or left unaddressed.
 
 ### The heartbeat (recurring cards, created at install)
 
 - Monthly, and after any batch of coaching-path PRs: one owner verdict workout using the gate-verdict script. The owner's session is the one detector no agent can fake.
-- Quarterly: re-run the whole-system health audit read-only and report deltas against the 23 findings. Each new finding is fixed, rejected, or escalated to the owner under the 2026-07-30 intake ruling as corrected 2026-07-31; none enters the backlog, none becomes a GitHub issue, and none spawns a new roadmap.
+- Quarterly: re-run the whole-system health audit read-only and report deltas against the 23 findings. Each new finding takes one of the four dispositions — fixed now, rejected, added to the bounded backlog under the fixed-capacity rule, or escalated to the owner. None becomes a GitHub issue, and none spawns a new roadmap.
 
 ### Findings reference (the 23; full detail in the Complete Health Report)
 

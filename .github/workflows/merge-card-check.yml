@@ -26,23 +26,44 @@ jobs:
               problems.push('PR body is missing the "Atlas Merge Card" section. Start from .github/PULL_REQUEST_TEMPLATE.md.');
             }
 
-            // Owner ruling 2026-07-30, corrected 2026-07-31 — backlog intake closed and GitHub
-            // Issues are not a replacement backlog. Every PR records what happened to the
-            // findings it discovered. The check is literal, not semantic: the section must exist
-            // and carry at least one of the four allowed dispositions (None, FIXED NOW, REJECTED,
-            // OWNER DECISION REQUIRED). The substance is reviewed, never machine-classified.
+            // Owner ruling 2026-07-30, final form 2026-07-31 — bounded backlog ledger. Every PR
+            // records what happened to the findings it discovered. The check is LITERAL, never
+            // semantic: the section must exist and carry one of the allowed dispositions. When a
+            // PR says it added a backlog item, it must also name what was added, what was removed
+            // to pay for it, and the resulting counts — BACKLOG.md has fixed capacity. Drift
+            // Guard 7 checks the numbers; exact-head review checks that the removal was honest.
+            //
             // Anchor on the HEADING, not on any mention of the phrase: a body that discusses
             // "Additional findings" in prose before the section would otherwise capture the
             // wrong span and false-fail.
             const findingsHeading = /^[ \t]*#{2,4}[ \t]*Additional findings[ \t]*$/im.exec(body);
             if (!findingsHeading) {
-              problems.push('PR body is missing the "Additional findings" section (None / FIXED NOW / REJECTED / OWNER DECISION REQUIRED).');
+              problems.push('PR body is missing the "Additional findings" section (None / FIXED NOW / REJECTED / ADDED TO BOUNDED BACKLOG / OWNER DECISION REQUIRED).');
             } else {
               const section = body
                 .slice(findingsHeading.index + findingsHeading[0].length)
                 .split(/\n[ \t]*#{2,4}[ \t]+/)[0];
-              if (!/^[ \t]*[-*][ \t]*(None|FIXED NOW|REJECTED|OWNER DECISION REQUIRED)\b/im.test(section)) {
-                problems.push('"Additional findings" must record one disposition: None, FIXED NOW, REJECTED, or OWNER DECISION REQUIRED.');
+
+              if (!/^[ \t]*[-*][ \t]*(None|FIXED NOW|REJECTED|ADDED TO BOUNDED BACKLOG|OWNER DECISION REQUIRED)\b/im.test(section)) {
+                problems.push('"Additional findings" must record one disposition: None, FIXED NOW, REJECTED, ADDED TO BOUNDED BACKLOG, or OWNER DECISION REQUIRED.');
+              }
+
+              // A claimed backlog addition must declare its bounded-capacity trade. "Claimed"
+              // means the author wrote something: either the disposition line carries text, or
+              // any of the three declaration lines is filled. An untouched template scaffold —
+              // every line empty — is not a claim and is not failed here.
+              const filled = {
+                disposition: /^[ \t]*[-*][ \t]*ADDED TO BOUNDED BACKLOG[ \t]*:?[ \t]*(?![:\s])\S/im.test(section),
+                'added:': /^[ \t]*[-*][ \t]*added[ \t]*:[ \t]*\S/im.test(section),
+                'removed/archived/promoted:': /^[ \t]*[-*][ \t]*removed(\/archived\/promoted)?[ \t]*:[ \t]*\S/im.test(section),
+                'counts:': /^[ \t]*[-*][ \t]*counts[ \t]*:[ \t]*\S/im.test(section),
+              };
+              if (Object.values(filled).some(Boolean)) {
+                for (const label of ['added:', 'removed/archived/promoted:', 'counts:']) {
+                  if (!filled[label]) {
+                    problems.push(`ADDED TO BOUNDED BACKLOG requires a filled "${label}" line — name the added item, what was removed to pay for it, and the resulting item/line/cap counts.`);
+                  }
+                }
               }
             }
 
