@@ -30,11 +30,17 @@ jobs:
             // to the findings it discovered. The check is literal, not semantic: the section
             // must exist and carry at least one of the four allowed dispositions. The substance
             // is reviewed, never machine-classified.
-            if (!/Additional findings/i.test(body)) {
+            // Anchor on the HEADING, not on any mention of the phrase: a body that discusses
+            // "Additional findings" in prose before the section would otherwise capture the
+            // wrong span and false-fail.
+            const findingsHeading = /^[ \t]*#{2,4}[ \t]*Additional findings[ \t]*$/im.exec(body);
+            if (!findingsHeading) {
               problems.push('PR body is missing the "Additional findings" section (None / FIXED NOW / REJECTED / FILED AS ISSUE).');
             } else {
-              const section = body.split(/Additional findings/i)[1].split(/\n#{2,3}\s/)[0];
-              if (!/^\s*[-*]\s*(None|FIXED NOW|REJECTED|FILED AS ISSUE)\b/im.test(section)) {
+              const section = body
+                .slice(findingsHeading.index + findingsHeading[0].length)
+                .split(/\n[ \t]*#{2,4}[ \t]+/)[0];
+              if (!/^[ \t]*[-*][ \t]*(None|FIXED NOW|REJECTED|FILED AS ISSUE)\b/im.test(section)) {
                 problems.push('"Additional findings" must record one disposition: None, FIXED NOW, REJECTED, or FILED AS ISSUE.');
               }
             }
