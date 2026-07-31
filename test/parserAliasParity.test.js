@@ -32,7 +32,16 @@ const FROZEN_EXERCISE_ALIASES = [
   ['Overhead Press', ['overhead press', 'over head press', 'military press', 'standing press', 'strict press', 'overhead', 'ohp']],
   ['Lat Pulldown', ['lat pulldown', 'lat pull down', 'pulldown', 'cable pulldown']],
   ['Seated Row', ['seated row', 'seated rows', 'cable row', 'cable rows', 'machine row', 'machine rows']],
-  ['Bent-Over Row', ['bent-over row', 'bent over row', 'bent row', 'reverse-grip row', 'reverse row', 'bor']],
+  // RECONCILED 2026-07-31 (owner gym session, build 2964ba8). 'barbell row' and its
+  // variants were absent from every parser table, so Atlas could RECOMMEND a Barbell
+  // Row substitute (services/substitutionRecommender.js) and then fail to recognize
+  // the name — canonicalizeExerciseName returned null, messageNamesALift went false,
+  // and coachResponseGrounding.resolveTurnExercises fell back to the WHOLE plan,
+  // leaking a stale Seated Row / Bench Press prescription into the answer.
+  // Added as aliases of the EXISTING Bent-Over Row because the exercise catalog
+  // (truth source B) already resolves 'barbell row' → 'Bent-Over Row'; minting a new
+  // canonical would have forked the taxonomy and tripped the Exercise Truth Audit.
+  ['Bent-Over Row', ['bent-over row', 'bent over row', 'bent row', 'reverse-grip row', 'reverse row', 'bor', 'barbell row', 'barbell rows', 'bb row', 'bb rows']],
   ['Hammer Curl', ['hammer curls', 'hammer curl', 'hammers', 'hammer']],
   ['Bicep Curl', ['bicep curls', 'biceps curls', 'bicep curl', 'biceps curl']],
   ['Face Pull', ['face pulls', 'face pull']],
@@ -54,8 +63,11 @@ const FROZEN_EXERCISE_ALIASES = [
 
 const FROZEN_AMBIGUOUS_ALIASES = {
   press: 'Which press - OHP, bench, or incline?',
-  row: 'Which row - seated, bent-over, cable, or machine?',
-  rows: 'Which row - seated, bent-over, cable, or machine?',
+  // RECONCILED 2026-07-31: the prompt enumerates the options, and barbell is now one.
+  // 'bent-over' dropped: it and 'barbell' resolve to the SAME canonical, so offering
+  // both asked the athlete to choose between one lift and itself (Codex #1209).
+  row: 'Which row - barbell, seated, cable, or machine?',
+  rows: 'Which row - barbell, seated, cable, or machine?',
 };
 
 const FROZEN_CONTEXTUAL_ALIASES = {

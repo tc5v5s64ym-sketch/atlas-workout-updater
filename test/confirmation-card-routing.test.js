@@ -123,17 +123,29 @@ test('card-routing: Seated Row 135 8/1 x3 → log_sets → confirmation card pat
   assert.equal(result.sets.length, 3);
 });
 
-test('card-routing: Barbell Row 135 8/1 → log_sets with unknown_exercise → confirmation card path', () => {
-  // "Barbell Row" is not in EXERCISE_ALIASES. The parser flags it as unknown
-  // but still returns log_sets — it is card-eligible. The enrichment pipeline
-  // downstream maps it to a planned exercise ("Rows") via lift_code.
+// CONTRACT CHANGE 2026-07-31 (owner gym session, build 2964ba8). This case previously
+// asserted that "Barbell Row" was UNKNOWN — flagged `unknown_exercise`, marked
+// `needs_catalog_review`, and routed to the confirmation card.
+//
+// That gap was the root cause of a live coaching failure: Atlas RECOMMENDS Barbell Row
+// as the substitute for Seated Row (services/substitutionRecommender.js), the athlete
+// accepted it, then asked "how much should I lift for barbell rows?" — and because the
+// parser could not name the lift, coachResponseGrounding fell back to the whole plan and
+// answered with a stale Seated Row / Bench Press prescription.
+//
+// 'barbell row' is now an alias of the EXISTING Bent-Over Row (matching the exercise
+// catalog, truth source B), so it parses cleanly and no longer needs a catalog-review
+// card. See test/barbellRowReferent.test.js for the full failure chain.
+test('card-routing: Barbell Row 135 8/1 → known lift (Bent-Over Row), no catalog-review card', () => {
   const result = parseWorkoutText('Barbell Row 135 8/1');
-  assertRoutesToCard(result, 'Barbell Row');
-  assert.ok(
-    result.warnings.includes('unknown_exercise'),
-    'Barbell Row is unknown — must flag for catalog review'
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.exercise, 'Bent-Over Row',
+    'a barbell row resolves to the catalog canonical, not an unknown exercise');
+  assert.equal(
+    result.warnings.includes('unknown_exercise'), false,
+    'a lift Atlas itself recommends must not be flagged unknown'
   );
-  assert.equal(result.needs_catalog_review, true);
+  assert.notEqual(result.needs_catalog_review, true);
   assert.equal(result.sets.length, 1);
   assert.deepEqual(result.sets.map(s => [s.weight, s.reps, s.rir]), [[135, 8, 1]]);
 });

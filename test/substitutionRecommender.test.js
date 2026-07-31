@@ -91,10 +91,14 @@ describe('recommendSubstitute — quality tier selection', () => {
     assert.strictEqual(r.quality, 'acceptable');
   });
 
-  it('Bench Press → Incline Press (excellent, same horizontal_push pattern)', () => {
+  // RENAMED 2026-07-31: the catalog knows 'Incline DB Press'; nothing knew the generic
+  // 'Incline Press', so Atlas recommended a lift it could not afterwards discuss (the
+  // barbell-row defect, live on the DEFAULT Bench Press path). Same movement pattern
+  // (horizontal_push) and same quality tier — only the name became real.
+  it('Bench Press → Incline DB Press (excellent, same horizontal_push pattern)', () => {
     const r = recommendSubstitute('Bench Press');
     assert.ok(r);
-    assert.strictEqual(r.recommendation, 'Incline Press');
+    assert.strictEqual(r.recommendation, 'Incline DB Press');
     assert.strictEqual(r.quality, 'excellent');
   });
 

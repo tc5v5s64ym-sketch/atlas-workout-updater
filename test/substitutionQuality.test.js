@@ -50,8 +50,8 @@ describe('scoreSubstitutionQuality — excellent tier', () => {
     assert.strictEqual(r.quality, 'excellent');
   });
 
-  it('horizontal_push → horizontal_push, same MEDIUM: Bench Press → Incline Press', () => {
-    const r = scoreSubstitutionQuality('Bench Press', 'Incline Press');
+  it('horizontal_push → horizontal_push, same MEDIUM: Bench Press → Incline DB Press', () => {
+    const r = scoreSubstitutionQuality('Bench Press', 'Incline DB Press');
     assert.strictEqual(r.quality, 'excellent');
   });
 

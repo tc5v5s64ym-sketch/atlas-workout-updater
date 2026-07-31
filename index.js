@@ -84,7 +84,7 @@ const { createTtlCache } = require('./services/cache');
 const { parseWorkoutScreenshot } = require('./services/vision');
 const coach = require('./services/coach');
 const coachPolish = require('./services/coachPolish');
-const { normalizeExerciseKey, generateLiftCode, makeLiftCodeRegistry, buildExerciseCatalogMap, enrichLogRow, closestExerciseMatches } = require('./services/exerciseEnrichment');
+const { normalizeExerciseKey, generateLiftCode, hasCuratedLiftCode, makeLiftCodeRegistry, buildExerciseCatalogMap, enrichLogRow, closestExerciseMatches } = require('./services/exerciseEnrichment');
 const { normalizeDurationString } = require('./services/duration');
 const { buildWorkoutTextParseDryRunResponse, canonicalizeExerciseName } = require('./services/workoutTextParser');
 const { applyFirstExercise } = require('./services/planFirstExercise');
@@ -1105,7 +1105,33 @@ app.post('/api/suggest-substitute', async (req, res) => {
   // Log_Cleaned rows — NOT exercise_id from the KB, which is a different namespace.
   let next_target = null;
   try {
-    const code = generateLiftCode(rec.recommendation);
+    // CANONICALIZE FIRST (Codex #1209 P1), BUT ONLY WHEN IT GENUINELY MERGES HISTORY
+    // (Codex #1209 P1, second round). generateLiftCode derives the code from the NAME it
+    // is handed, so passing the recommender's display string splits history: 'Barbell Row'
+    // → BRX01 while its canonical 'Bent-Over Row' → BOR01, and the Log_Cleaned lookup
+    // below would miss every BOR01 row.
+    //
+    // A BLANKET canonicalization is worse than the bug, because canonicalizeExerciseName
+    // matches an alias anywhere in the string. Unguarded it drifts three substitutes onto
+    // ANOTHER LIFT'S history — and 'next_target' becomes a prescribed load, so this is a
+    // load-safety path, not a bookkeeping one:
+    //   Goblet Squat → Back Squat (GSX01→SQ01) and Hack Squat → Back Squat (HSX01→SQ01)
+    //     would prescribe a barbell back-squat load for a far lighter movement;
+    //   Dips → Dips (Weighted) (DIP01→DWX01) would abandon every curated DIP01 row.
+    // Two guards keep the merge to names that really are the same lift:
+    //   1. strictVariantGuard — the parser's own PARSE-1 rule that a leading qualifier
+    //      makes a DIFFERENT lift ('front squat' is not Back Squat), which is exactly
+    //      what separates Hack/Goblet Squat from Back Squat;
+    //   2. a CURATED code on the raw name wins — knownLiftCodeOverrides is the registry
+    //      of codes real history already uses, so if the recommender's own name is in it,
+    //      that code IS its history and must not be moved.
+    // 'Barbell Row' passes both (no qualifier, no curated code), so the owner-ruled
+    // barbell-row → BOR01 merge is preserved; the drifting names keep their own codes.
+    const canon = canonicalizeExerciseName(rec.recommendation, { strictVariantGuard: true });
+    const canonName = (canon && canon.canonicalName) || rec.recommendation;
+    const code = hasCuratedLiftCode(rec.recommendation)
+      ? generateLiftCode(rec.recommendation)
+      : generateLiftCode(canonName);
     if (code) {
       const allLog = await getSheetRows(logSheetName);
       const prescription = recommendNextSet(allLog, code);
