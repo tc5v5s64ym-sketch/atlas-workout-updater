@@ -280,6 +280,25 @@ test('C1. historical rows and new rows group together; other reasons do not', ()
   }
 });
 
+test('C1b. COVERAGE: /api/coach/ask cannot produce a validator suppression at all', () => {
+  // The third route that records a Coach_Response row. It is captured only when it carries
+  // a non-empty answer (_askIsAthleteFacing), and _normalizeVisible falls back to
+  // `data.answer` for the message — so `messagePresent` is always true when captured and
+  // the suppressed branch is unreachable. That is why it needs no producer code, rather
+  // than silently recording `unknown`.
+  const qaShadow = require('../services/coachQaShadow');
+  const askBody = { data: { depth: 'deep', answer: 'Rest 2-3 minutes between heavy sets.', source: 'training_sme' } };
+  assert.equal(qaShadow._askIsAthleteFacing(askBody), true, 'an athlete-facing ask IS captured');
+  assert.equal(qaShadow._normalizeVisible(askBody).data.message, askBody.data.answer, 'the answer IS the message');
+  // Captured ⇒ message present ⇒ never suppressed, whatever the model status.
+  for (const status of ['ok', 'skipped']) {
+    assert.equal(responseSheet.deriveSuppression(status, true, true).suppressed, false, status);
+  }
+  // And an empty-answer / log_only pre-check is not captured at all, so it writes no row.
+  assert.equal(qaShadow._askIsAthleteFacing({ data: { depth: 'log_only', answer: 'x' } }), false);
+  assert.equal(qaShadow._askIsAthleteFacing({ data: { depth: 'deep', answer: '   ' } }), false);
+});
+
 test('C2. no Sheet schema change — the header is byte-identical', () => {
   assert.deepEqual(responseSheet.RESPONSE_HEADERS, [
     'recorded_at', 'turn_id', 'session_id', 'route', 'intent_type', 'visible_source',
