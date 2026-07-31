@@ -66,7 +66,18 @@ test('Brain_Shadow: a missing evidence object fails closed to unknown/ineligible
   } finally { delete process.env.ATLAS_BRAIN_SHADOW_PERSIST; }
 });
 
-test('Brain_Shadow: a synthetic evidence object records synthetic/ineligible', async () => {
+// CONTRACT CHANGE (owner ruling 2026-07-31). This case previously asserted that a
+// declared-synthetic turn was PERSISTED with `synthetic` / `FALSE` provenance. The
+// tagging was always correct — the problem was VOLUME: in live-retest run
+// 30596164330 the synthetic Brain_Shadow mirror produced 126 of 150 Sheets
+// quota-exceeded events and degraded production (20–38 s latencies; HTTP 500 on
+// /api/history/recent and /api/summary/weekly). A declared-synthetic turn now does
+// not reach the Sheet at all, so there is no row to inspect.
+//
+// Provenance tagging for every OTHER class stays asserted by the neighbouring cases
+// (athlete_ui above, unknown/fail-closed below), and the ring + console line still
+// record synthetic turns — see test/syntheticShadowQuotaContainment.test.js.
+test('Brain_Shadow: a declared-synthetic turn is NOT persisted (quota containment)', async () => {
   const appended = [];
   process.env.ATLAS_BRAIN_SHADOW_PERSIST = '1';
   brainReset(async (tab, rows) => { appended.push({ tab, rows }); });
@@ -76,10 +87,7 @@ test('Brain_Shadow: a synthetic evidence object records synthetic/ineligible', a
   });
   await flush();
   try {
-    const row = appended[0].rows[0];
-    assert.equal(row[16], 'synthetic');
-    assert.equal(row[17], 'FALSE');
-    assert.equal(row[18], 'sim');
+    assert.deepEqual(appended, [], 'a synthetic origin never reaches the Brain_Shadow tab');
   } finally { delete process.env.ATLAS_BRAIN_SHADOW_PERSIST; }
 });
 

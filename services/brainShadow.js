@@ -32,7 +32,7 @@
 // reset on deploy/restart, the right lifetime for a calibration log). The optional
 // Brain_Shadow tab is the only durable, aggregatable copy for offline owner review.
 
-const { normalizeEvidenceClass, normalizeRequestOrigin, EVIDENCE_CLASSES } = require('./evidenceProvenance');
+const { normalizeEvidenceClass, normalizeRequestOrigin, EVIDENCE_CLASSES, SYNTHETIC_ORIGINS } = require('./evidenceProvenance');
 
 const RING_MAX = 50;
 
@@ -129,6 +129,15 @@ function _record(entry, appVersion) {
 // NEVER be blocked or failed by shadow persistence. Touches no workout tab or write
 // path; this is diagnostics, not a logged set.
 function _persistRow(entry, appVersion) {
+  // SYNTHETIC QUOTA CONTAINMENT (owner ruling 2026-07-31) — same rule as
+  // services/intentShadow.js. Brain_Shadow was the dominant quota consumer in
+  // live-retest run 30596164330: 126 of 150 Sheets quota-exceeded events, because a
+  // single agent turn fans out one row per candidate lift and each append retries up
+  // to three times against a per-minute write quota. `entry.request_origin` is already
+  // the bounded token from _evidence(). Ring + console line are kept; only the Sheet
+  // mirror is skipped. Owner traffic is unaffected.
+  if (SYNTHETIC_ORIGINS.has(normalizeRequestOrigin(entry && entry.request_origin))) return;
+
   Promise.resolve()
     .then(() => {
       const append = _append || require('../sheets').appendRows;

@@ -21,7 +21,7 @@
 // lifetime for a calibration log).
 
 const { classifyIntent } = require('./intentRouter');
-const { normalizeEvidenceClass, normalizeRequestOrigin, EVIDENCE_CLASSES } = require('./evidenceProvenance');
+const { normalizeEvidenceClass, normalizeRequestOrigin, EVIDENCE_CLASSES, SYNTHETIC_ORIGINS } = require('./evidenceProvenance');
 
 const RING_MAX = 50;
 const PREVIEW_CHARS = 80;
@@ -68,6 +68,23 @@ function _record(entry, meta) {
 // NEVER be blocked or failed by shadow persistence. Touches no workout tab or
 // write path; this is diagnostics, not a logged set.
 function _persistRow(entry, meta) {
+  // SYNTHETIC QUOTA CONTAINMENT (owner ruling 2026-07-31). A request that DECLARES a
+  // synthetic origin (agent / CI / Playwright) does not mirror to the Sheet.
+  //
+  // These rows were correctly TAGGED (evidence_class=synthetic, evidence_eligible=FALSE)
+  // and were never mistaken for owner evidence — the problem is VOLUME, not honesty.
+  // In live-retest run 30596164330 the synthetic shadow mirror exhausted the Google
+  // Sheets per-minute quota (150 quota-exceeded events; Brain_Shadow alone 126), which
+  // degraded PRODUCTION traffic: /api/plan/today 19.5 s, /api/recommend/next 38.6 s, and
+  // HTTP 500 on /api/history/recent and /api/summary/weekly. Owner-facing requests were
+  // collateral damage of agent telemetry.
+  //
+  // The in-memory ring and the console line are KEPT: they are free, they are what the
+  // debug endpoint and the divergence tooling read, and they touch no quota. Only the
+  // Sheet mirror is skipped. Owner traffic is completely unaffected.
+  const _ev = (meta && typeof meta.evidence === 'object' && meta.evidence) ? meta.evidence : {};
+  if (SYNTHETIC_ORIGINS.has(normalizeRequestOrigin(_ev.request_origin))) return;
+
   Promise.resolve()
     .then(() => {
       const append = _append || require('../sheets').appendRows;
