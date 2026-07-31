@@ -53,7 +53,7 @@ const { patternFor } = require('../services/movementPattern');
 const { musclesFor } = require('../services/muscleCoverage');
 const { assembleBatchNoteFacts } = require('../services/batchNoteFacts');
 const { detectExtraWork } = require('../services/extraWorkDetector');
-const { buildSessionQuestionAnswer, buildSessionAdviceFallback, answerBareShorthand, isBareSessionShorthand, isCurrentExercisePrescriptionQuestion, answerCurrentExercisePrescription, isWarmupQuestion, answerPlannedLiftQuestion, answerTotalRepsQuestion } = require('../services/sessionQuestionAnswer');
+const { buildSessionQuestionAnswer, buildSessionAdviceFallback, answerBareShorthand, isBareSessionShorthand, isCurrentExercisePrescriptionQuestion, answerCurrentExercisePrescription, isWarmupQuestion, answerPlannedLiftQuestion, answerTotalRepsQuestion, answerUnresolvedExerciseQuestion } = require('../services/sessionQuestionAnswer');
 const { isTurnPrecedenceEnabled } = require('../services/turnPrecedence');
 const { isTirednessExpression, buildTirednessRecoveryAnswer, buildTirednessRecoveryAnswerFromDecision } = require('../services/recoveryRouting');
 const { planStateFromContext, buildSessionCloseAnswer, buildSessionCloseAnswerFromSession, buildNextUpAnswer, buildNextUpAnswerFromSession } = require('../services/sessionPlanExecutor');
@@ -1343,6 +1343,20 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       if (planned) {
         return standardSuccess(req, res, 'Coach chat — current plan answer', {
           message: planned, configured: coach.isConfigured(), model: coach.coachModel(), source: 'engine'
+        });
+      }
+
+      // Fail closed on an explicitly NAMED but unresolvable lift (owner gym session
+      // 2026-07-31). Atlas recommended Good Morning; "how much for good morning?" reached
+      // this point unresolved — the lanes above all need a resolved lift — and the turn
+      // went to the LLM with the whole plan in context, which answered with the DEADLIFT
+      // load. Ask instead of guessing. Placed AFTER the lanes that can genuinely answer,
+      // so a resolvable lift is never intercepted, and it declines a past-tense or advice
+      // framing, so coaching questions still reach the model. Read-only; no numbers.
+      const unresolvedLift = answerUnresolvedExerciseQuestion(message);
+      if (unresolvedLift) {
+        return standardSuccess(req, res, 'Coach chat — clarify which lift', {
+          message: unresolvedLift.text, configured: coach.isConfigured(), model: coach.coachModel(), source: 'engine'
         });
       }
 
