@@ -57,11 +57,16 @@ function countLines(text) {
   return s.split('\n').length - (s.endsWith('\n') ? 1 : 0);
 }
 
-// A top-level work item is a column-0 list item. Markdown accepts "-", "*", and "+" as
-// unordered markers and "1." / "1)" as ordered ones; all of them are counted, because any of
-// them adds an item — a builder converting an existing blank line to "+ new work" would
-// otherwise add an item without adding a line.
-const TOP_LEVEL_ITEM_RE = /^([-*+]|\d+[.)])\s/;
+// A top-level work item is a list item at the outer level. Markdown accepts "-", "*", and "+"
+// as unordered markers and "1." / "1)" as ordered ones; all count, because any of them adds an
+// item — a builder converting an existing blank line to "+ new work" would otherwise add an
+// item without adding a line.
+//
+// Leading space: 0 or 1. A marker indented one space is still a sibling, because a "- " parent's
+// content starts at column 2, so only an indent of 2 or more makes the bullet that parent's
+// CHILD. Accepting 0-1 closes the " - new item" bypass without reclassifying the file's nested
+// children (BACKLOG.md today: 282 bullets at column 0, 48 at two spaces, 7 at four, none at one).
+const TOP_LEVEL_ITEM_RE = /^ ?([-*+]|\d+[.)])\s/;
 
 /**
  * Count top-level work items. Fenced code blocks are skipped so an example bullet inside ```

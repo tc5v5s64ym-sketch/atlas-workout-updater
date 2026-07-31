@@ -48,20 +48,28 @@ jobs:
                 problems.push('"Additional findings" must record one disposition: None, FIXED NOW, REJECTED, ADDED TO BOUNDED BACKLOG, or OWNER DECISION REQUIRED.');
               }
 
-              // A claimed backlog addition must declare its bounded-capacity trade. "Claimed"
-              // means the author wrote something: either the disposition line carries text, or
-              // any of the three declaration lines is filled. An untouched template scaffold —
-              // every line empty — is not a claim and is not failed here.
-              const filled = {
-                disposition: /^[ \t]*[-*][ \t]*ADDED TO BOUNDED BACKLOG[ \t]*:?[ \t]*(?![:\s])\S/im.test(section),
-                'added:': /^[ \t]*[-*][ \t]*added[ \t]*:[ \t]*\S/im.test(section),
-                'removed/archived/promoted:': /^[ \t]*[-*][ \t]*removed(\/archived\/promoted)?[ \t]*:[ \t]*\S/im.test(section),
-                'counts:': /^[ \t]*[-*][ \t]*counts[ \t]*:[ \t]*\S/im.test(section),
-              };
-              if (Object.values(filled).some(Boolean)) {
-                for (const label of ['added:', 'removed/archived/promoted:', 'counts:']) {
-                  if (!filled[label]) {
-                    problems.push(`ADDED TO BOUNDED BACKLOG requires a filled "${label}" line — name the added item, what was removed to pay for it, and the resulting item/line/cap counts.`);
+              // Two states per line, because an untouched scaffold and a typo must differ:
+              //   WRITTEN — anything at all after the colon, including punctuation;
+              //   FILLED  — a first character that is neither whitespace nor another colon.
+              // A scaffold with every line empty is not a claim and passes. A line that was
+              // written but is not filled (`added::`) is an attempted declaration and fails.
+              const LINES = [
+                ['added:', /^[ \t]*[-*][ \t]*added[ \t]*:[ \t]*(\S)/im],
+                ['removed/archived/promoted:', /^[ \t]*[-*][ \t]*removed(?:\/archived\/promoted)?[ \t]*:[ \t]*(\S)/im],
+                ['counts:', /^[ \t]*[-*][ \t]*counts[ \t]*:[ \t]*(\S)/im],
+              ];
+              const dispositionClaim = /^[ \t]*[-*][ \t]*ADDED TO BOUNDED BACKLOG[ \t]*:?[ \t]*(\S)/im.exec(section);
+              const state = LINES.map(([label, re]) => {
+                const m = re.exec(section);
+                return { label, written: Boolean(m), filled: Boolean(m) && m[1] !== ':' };
+              });
+
+              const claimed = state.some((f) => f.written)
+                || (dispositionClaim && dispositionClaim[1] !== ':');
+              if (claimed) {
+                for (const f of state) {
+                  if (!f.filled) {
+                    problems.push(`ADDED TO BOUNDED BACKLOG requires a filled "${f.label}" line — name the added item, what was removed to pay for it, and the resulting item/line/cap counts.`);
                   }
                 }
               }

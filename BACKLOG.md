@@ -16,7 +16,7 @@ The execution plan is the authoritative open-work queue; this glance-index surfa
 
 > 🗂️ **Completed and cancelled records live in [`BACKLOG_ARCHIVE.md`](./BACKLOG_ARCHIVE.md).** This file should contain only open, in-progress, deferred, evidence-gated, or owner-reserved work. A shipped parent remains only when its attached follow-up cannot yet be separated safely.
 
-Seeded from the open GitHub issues, the not-yet-done items in [`FIX_PLAN.md`](./FIX_PLAN.md), the still-live findings in [`AUDIT.md`](./AUDIT.md) (the 2026-06-14 read-only code audit), and owner decisions. Intake closed 2026-07-30 (corrected 2026-07-31: GitHub Issues are not a replacement backlog); see "Finding disposition" in [`CLAUDE.md`](./CLAUDE.md) for what to do with a new finding.
+Seeded from the open GitHub issues, the not-yet-done items in [`FIX_PLAN.md`](./FIX_PLAN.md), the still-live findings in [`AUDIT.md`](./AUDIT.md) (the 2026-06-14 read-only code audit), and owner decisions. Intake is bounded, not closed (owner ruling final form 2026-07-31): adding an item requires removing, archiving, or promoting enough existing content to keep item, line, and cap counts flat or falling. See "Finding disposition" in [`CLAUDE.md`](./CLAUDE.md).
 
 ### Deferred item tags
 

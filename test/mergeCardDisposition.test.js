@@ -114,6 +114,31 @@ describe('merge card — bounded-intake declaration', () => {
     assert.match(failure, /added:|removed|counts:/);
   });
 
+  // Codex P2 — a value of ":" is punctuation, not content. All three must reject it.
+  it('fails a declaration whose values are only another colon', () => {
+    const failure = check(findings([
+      '- ADDED TO BOUNDED BACKLOG:',
+      '  - added::',
+      '  - removed/archived/promoted::',
+      '  - counts::',
+    ].join('\n')));
+    assert.match(failure, /must record one disposition|added:|removed|counts:/);
+    for (const label of ['added:', 'removed/archived/promoted:', 'counts:']) {
+      assert.ok(failure.includes(label), `${label} not demanded: ${failure}`);
+    }
+  });
+
+  it('fails when one declaration is real and the others are punctuation', () => {
+    const failure = check(findings([
+      '- ADDED TO BOUNDED BACKLOG:',
+      '  - added: closeout banner double-fires',
+      '  - removed/archived/promoted::',
+      '  - counts::',
+    ].join('\n')));
+    assert.ok(failure.includes('removed/archived/promoted:'), failure);
+    assert.ok(failure.includes('counts:'), failure);
+  });
+
   it('does not fail an untouched scaffold whose declaration lines are all empty', () => {
     const failure = check(findings([
       '- None',

@@ -106,6 +106,21 @@ describe('Drift Guard 7 — bounded backlog ledger', () => {
     assert.ok(/grew \d+ → \d+ lines/.test(errorsOf(r)), errorsOf(r));
   });
 
+  // Codex P2 — a one-space-indented marker is still a top-level Markdown item, so writing one
+  // over an existing blank line adds an item while every count stays flat.
+  it('fails a one-space-indented item written over an existing blank line', () => {
+    const head = BASE_BACKLOG.replace(`\n\n${ITEM_FINISHING_SET}`, `\n - \`[polish]\` **Snuck in.** no trade\n${ITEM_FINISHING_SET}`);
+    const r = analyze({ base: BASE, head: at(head) });
+    assert.equal(r.valid, false, 'a one-space bullet is a sibling, not a child');
+    assert.ok(/grew by 1 item/.test(errorsOf(r)), errorsOf(r));
+    assert.equal(r.headLines, r.baseLines, 'lines are flat — the item count is what bites');
+  });
+
+  it('still treats a two-space bullet as a child, not a new item', () => {
+    assert.equal(countItems('- parent\n  - child\n'), 1);
+    assert.equal(countItems('- parent\n - sibling\n'), 2);
+  });
+
   it('fails a "+" or ordered item written over an existing blank line', () => {
     for (const marker of ['+ ', '1. ', '1) ']) {
       const head = BASE_BACKLOG.replace(`\n\n${ITEM_FINISHING_SET}`, `\n${marker}new work\n${ITEM_FINISHING_SET}`);
