@@ -1,10 +1,10 @@
-# Atlas — Backlog
+# Atlas — Backlog · ⛔ FROZEN LEGACY INVENTORY — NO NEW INTAKE
 
-**Current as of:** 2026-07-30 (owner-authorized editorial cleanup; completed records archived).
+**Current as of:** 2026-07-30 (owner ruling: intake closed; completed records archived).
 
-**Reference list of open and deferred work — awareness and deferred discoveries, NOT the work-selection queue.** The sole authority for which work is selected and in what order is [`docs/ATLAS_V1_EXECUTION_PLAN.md`](./docs/ATLAS_V1_EXECUTION_PLAN.md); this file records open/deferred items so they are not lost, but it does not sequence the campaign. One line per item with a link to its issue/PR where one exists.
+> ⛔ **FROZEN LEGACY INVENTORY — NO NEW INTAKE (owner ruling 2026-07-30).** This file receives **no new work items**. It may only be corrected, deduplicated, archived, or reduced, and it never justifies expanding a PR. A newly discovered issue, finding, follow-up, edge case, or improvement takes exactly one disposition — **FIX NOW**, **REJECT**, or **OWNER DECISION REQUIRED** (stop and report; no issue, no backlog line) — per `CLAUDE.md` and [`docs/ATLAS_V1_EXECUTION_PLAN.md`](./docs/ATLAS_V1_EXECUTION_PLAN.md), the sole work-selection authority. Drift Guard 7 (`npm run check:backlog-intake`) fails CI on any addition here and on any rise in `backlog_max_lines`.
 
-> ⏳ **Reconciled 2026-07-30:** strongly completed records with no open/deferred child were moved to `BACKLOG_ARCHIVE.md`. Ambiguous entries and shipped items that still carry a live follow-up remain here. The execution plan, issue state, tests, and git history still outrank stale prose.
+**Reference list of open and deferred work, NOT the work-selection queue.** Legacy reference material until its surviving real items are owner-selected or rejected. The execution plan, issue state, tests, and git history outrank stale prose here.
 
 ### Open P0 / P1 index (reconciled 2026-07-30)
 
@@ -16,7 +16,7 @@ The execution plan is the authoritative open-work queue; this glance-index surfa
 
 > 🗂️ **Completed and cancelled records live in [`BACKLOG_ARCHIVE.md`](./BACKLOG_ARCHIVE.md).** This file should contain only open, in-progress, deferred, evidence-gated, or owner-reserved work. A shipped parent remains only when its attached follow-up cannot yet be separated safely.
 
-Seeded from the open GitHub issues, the not-yet-done items in [`FIX_PLAN.md`](./FIX_PLAN.md), the still-live findings in [`AUDIT.md`](./AUDIT.md) (the 2026-06-14 read-only code audit), and owner decisions. See the "Backlog and roadmap discipline" section in [`AGENTS.md`](./AGENTS.md) for how to keep this current.
+Seeded from the open GitHub issues, the not-yet-done items in [`FIX_PLAN.md`](./FIX_PLAN.md), the still-live findings in [`AUDIT.md`](./AUDIT.md) (the 2026-06-14 read-only code audit), and owner decisions. Intake closed 2026-07-30 (corrected 2026-07-31: GitHub Issues are not a replacement backlog); see "Finding disposition" in [`CLAUDE.md`](./CLAUDE.md) for what to do with a new finding.
 
 ### Deferred item tags
 

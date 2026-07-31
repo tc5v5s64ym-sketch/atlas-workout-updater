@@ -22,6 +22,7 @@
     "check:banned": "node scripts/check-banned-patterns.js",
     "check:allowlist": "node scripts/check-allowlist-ratchet.js",
     "check:paper-weight": "node scripts/check-paper-weight.js",
+    "check:backlog-intake": "node scripts/check-backlog-intake.js",
     "check:ladder": "node scripts/check-completion-ladder.js",
     "check:packet-trace": "node scripts/check-packet-trace.js",
     "archive:backlog": "node scripts/archive-backlog.js",
