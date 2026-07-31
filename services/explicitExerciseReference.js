@@ -54,6 +54,14 @@ const GENERIC_HEADS = new Set([
   'steps', 'shots', 'waves', 'laps', 'b', 'j', 'lift', 'lifts', 'knee', 'knees', 'shoulder',
   'ankle', 'calves', 'triceps', 'delts', 'abductors', 'adductors', 'hip', 'sit', 'sits',
   'roll', 'rolling', 'roller', 'rope', 'ropes', 'roping', 'slide', 'slides', 'trainer',
+  // Equipment, not movement (Codex #1213 P2). A catalogue alias may END in a piece of
+  // equipment, which would otherwise make "what weight on the barbell?" or "how much for
+  // the dumbbell?" read as a named exercise and decline ordinary shorthand. Equipment
+  // never identifies a lift on its own, and every exercise that uses it carries its own
+  // movement word ("cable fly", "dumbbell row"), so excluding these loses no detection.
+  'barbell', 'barbells', 'dumbbell', 'dumbbells', 'dumbell', 'dumbells', 'kettlebell',
+  'kettlebells', 'cable', 'cables', 'band', 'bands', 'plate', 'plates', 'rack', 'sled',
+  'belt', 'strap', 'straps', 'chalk', 'smith', 'weight', 'weights', 'bench', 'benches',
 ]);
 
 // Only word-shaped tokens join the vocabulary. Three letters is the floor because real

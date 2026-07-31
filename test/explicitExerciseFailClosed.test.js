@@ -170,6 +170,25 @@ test('a coaching question about an unresolvable lift still reaches the coach', (
   assert.equal(answerUnresolvedExerciseQuestion('good mornings are my favourite'), null);
 });
 
+// Codex #1213 P2 — a catalogue alias can END in a piece of equipment, which would make
+// equipment shorthand read as a named exercise and decline a question it should answer.
+test('equipment is not an exercise name — equipment shorthand keeps its referent', () => {
+  for (const message of [
+    'what weight on the barbell?',
+    'how much for the dumbbell?',
+    'how much weight on the bar?',
+    'how much for the cable?',
+    'how many plates?',
+    'what weight on the machine?',
+  ]) {
+    assert.equal(resolveLiftName(message, HISTORY, CONTEXT), 'Deadlift', message);
+    assert.equal(answerUnresolvedExerciseQuestion(message), null, message);
+  }
+  // The movement word still decides, so an equipment-qualified lift is unaffected.
+  assert.equal(resolveLiftName('how much for barbell rows?', HISTORY, CONTEXT), 'Bent-Over Row');
+  assert.ok(answerUnresolvedExerciseQuestion('how much for dumbbell flyes?'), 'a movement word still names a lift');
+});
+
 test('an unresolvable name is not detected in ordinary conversation', () => {
   for (const message of [
     'how much water should i drink?',
@@ -258,6 +277,41 @@ test('LIVE ROUTE: "how much for good morning?" is declined, never answered with 
   // Declined deterministically — the turn never reached the model with the plan in context.
   assert.equal(coachState.chatReplyCalls, 0);
   assert.equal(json.data.source, 'engine');
+});
+
+// Codex #1213 P1 — the guard used to sit inside `if (!reassureBypass && !warmupDefer)`,
+// which is exactly where the wrong-lift answer still reached the model.
+
+test('LIVE ROUTE: a DISCOURAGED framing cannot smuggle the unresolvable lift past the guard', async () => {
+  const { res, json } = await chat("I'm frustrated. How much for good morning", CONTEXT);
+  assert.equal(res.status, 200);
+  const reply = String((json.data && json.data.message) || '');
+  assert.doesNotMatch(reply, /deadlift/i, reply);
+  assert.doesNotMatch(reply, /315/, reply);
+  assert.match(reply, /which lift/i, reply);
+  assert.equal(coachState.chatReplyCalls, 0, 'the reassure bypass must not carry it to the model');
+});
+
+test('LIVE ROUTE: a WARM-UP framing cannot smuggle the unresolvable lift past the guard', async () => {
+  process.env.ATLAS_TURN_PRECEDENCE = '1'; // turns warmupDefer on
+  try {
+    const { res, json } = await chat('how many warm up sets for good morning?', CONTEXT);
+    assert.equal(res.status, 200);
+    const reply = String((json.data && json.data.message) || '');
+    assert.doesNotMatch(reply, /deadlift/i, reply);
+    assert.doesNotMatch(reply, /315/, reply);
+    assert.match(reply, /which lift/i, reply);
+    assert.equal(coachState.chatReplyCalls, 0, 'the warm-up defer must not carry it to the model');
+  } finally {
+    delete process.env.ATLAS_TURN_PRECEDENCE;
+  }
+});
+
+test('LIVE ROUTE: a discouraged framing about a RESOLVABLE lift still routes as before', async () => {
+  // The guard is tightly gated, so the reassure lane keeps every turn it owned.
+  const { json } = await chat("I'm frustrated. My bench reps are going nowhere", CONTEXT);
+  const reply = String((json.data && json.data.message) || '');
+  assert.doesNotMatch(reply, /which lift/i, 'the fail-closed lane must not intercept a resolvable lift');
 });
 
 test('LIVE ROUTE: a resolvable lift is untouched and still answers from the plan', async () => {
