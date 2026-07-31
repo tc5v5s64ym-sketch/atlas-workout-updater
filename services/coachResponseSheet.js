@@ -34,6 +34,8 @@ const RESPONSE_HEADERS = Object.freeze([
   'visible_error',
 ]);
 
+const { formatSuppressionReason, isValidatorSuppressed } = require('./suppressionReason');
+
 const MAX_MESSAGE_CHARS = 4000; // bound the stored visible text (coach lines are short)
 const MAX_FIELD_CHARS = 256;    // bound short string fields
 const MAX_SEEN = 1000;          // dedup ring bound
@@ -61,13 +63,20 @@ function _bool(value) {
 
 // Explicit silence-vs-suppression classification so a quiet turn is never indistinguishable
 // from missing data. Derived from the response the athlete received, not from internals.
-function deriveSuppression(modelStatus, messagePresent, configured) {
+//
+// `suppressionCode` is the fixed enum code the SUPPRESSION POINT reported (see
+// services/suppressionReason.js). It only refines the coarse `validator_suppressed` value
+// into `validator_suppressed:<code>` — it never changes WHETHER a turn counts as
+// suppressed. A missing or unrecognized code fails closed to `validator_suppressed:unknown`,
+// so no arbitrary text can be persisted through this path.
+function deriveSuppression(modelStatus, messagePresent, configured, suppressionCode) {
   if (modelStatus === 'error') return { suppressed: false, reason: 'model_error_fallback' };
   if (configured === false) return { suppressed: false, reason: 'outage_fallback' };
   if (modelStatus === 'ok') {
     return messagePresent
       ? { suppressed: false, reason: '' }
-      : { suppressed: true, reason: 'validator_suppressed' }; // model produced a line; the validator nulled it
+      // The model produced a line; a validator nulled it. The code names which one.
+      : { suppressed: true, reason: formatSuppressionReason(suppressionCode) };
   }
   // model skipped, coach configured
   return messagePresent
@@ -97,7 +106,7 @@ function buildRow(params) {
   const msg = typeof data.message === 'string' ? data.message : null;
   const messagePresent = !!(msg && msg.trim());
   const configured = data.configured === true ? true : (data.configured === false ? false : null);
-  const { suppressed, reason } = deriveSuppression(p.modelStatus, messagePresent, configured);
+  const { suppressed, reason } = deriveSuppression(p.modelStatus, messagePresent, configured, p.suppressionCode);
   const appVersion = (p.appVersion != null && String(p.appVersion).trim()) ? p.appVersion : _serverBuildTag();
 
   return [
@@ -224,6 +233,9 @@ module.exports = {
   RESPONSE_HEADERS,
   MAX_MESSAGE_CHARS,
   deriveSuppression,
+  // Re-exported so a consumer grouping suppressions has ONE correct predicate that
+  // recognizes both the historical exact value and every validator_suppressed:* value.
+  isValidatorSuppressed,
   buildRow,
   validateHeaders,
   persist,

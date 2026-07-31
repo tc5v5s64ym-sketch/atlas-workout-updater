@@ -151,7 +151,32 @@ test('D. suppressed (chat): the FINAL nulled answer is recorded, not the model d
   assert.notEqual(respRow[RESP.visible_message], coachState.reply); // never the draft
   assert.equal(respRow[RESP.visible_message_present], 'FALSE');
   assert.equal(respRow[RESP.suppressed], 'TRUE');
-  assert.equal(respRow[RESP.suppression_reason], 'validator_suppressed');
+  // The stub reports a violation code the enum does not know, so the recorder fails closed
+  // to `unknown` rather than persisting the stub's arbitrary string.
+  assert.equal(respRow[RESP.suppression_reason], 'validator_suppressed:unknown');
+  coachState.reply = 'ok'; coachState.propose_note = null; coachState.violations = [];
+  delete process.env.ATLAS_INTERACTION_TRACE;
+});
+
+test('D2. suppressed (chat): a RECOGNIZED violation records its exact code, proving the chat wiring', async () => {
+  // Codex #1219 P2: asserting `unknown` above cannot prove the chat wiring works, because
+  // an unwired route also yields `unknown` (formatSuppressionReason(null)). This test uses a
+  // code the enum KNOWS, so removing the res.locals assignment in the chat route — or its
+  // forwarding through coachQaShadow — makes the suffix fall back to `unknown` and fails here.
+  process.env.ATLAS_INTERACTION_TRACE = 'shadow';
+  coachState.configured = true; coachState.throwOnChat = false;
+  coachState.reply = 'Fucking great work there.';
+  coachState.propose_note = { note: 'keep going' };
+  coachState.violations = [{ code: 'profanity_without_permission', phrase: 'Fucking' }];
+  const { res, json, respRow } = await post('/api/coach/chat', Q);
+  assert.equal(res.status, 200);
+  assert.equal(json.data.message, null, 'the register-violating reply is still suppressed to null');
+  assert.ok(respRow);
+  assert.equal(respRow[RESP.suppressed], 'TRUE');
+  assert.equal(respRow[RESP.suppression_reason], 'validator_suppressed:profanity_without_permission');
+  // The draft and the matched phrase never reach the record.
+  assert.ok(!respRow.join(' | ').includes(coachState.reply));
+  assert.ok(!/fucking/i.test(respRow.join(' | ')));
   coachState.reply = 'ok'; coachState.propose_note = null; coachState.violations = [];
   delete process.env.ATLAS_INTERACTION_TRACE;
 });
