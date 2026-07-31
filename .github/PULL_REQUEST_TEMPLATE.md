@@ -54,6 +54,19 @@ or owner merge click is required for a routine authorized PR.
 
 <!-- Commands, deterministic CI, live/closest-integration proof, and deployed validation when applicable. -->
 
+### Additional findings
+
+<!--
+Owner ruling 2026-07-30 — backlog intake is closed. Every finding discovered while doing
+this work gets one disposition. "Add to BACKLOG" is not a disposition. Keep only the lines
+that apply; a filed issue states impact, severity, acceptance criteria, and triage status.
+-->
+
+- None
+- FIXED NOW:
+- REJECTED:
+- FILED AS ISSUE:
+
 ### Advisory disposition
 
 <!-- List each real finding and fix, each false alarm and rationale, or “none.” -->

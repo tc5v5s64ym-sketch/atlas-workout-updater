@@ -26,6 +26,19 @@ jobs:
               problems.push('PR body is missing the "Atlas Merge Card" section. Start from .github/PULL_REQUEST_TEMPLATE.md.');
             }
 
+            // Owner ruling 2026-07-30 — backlog intake closed. Every PR records what happened
+            // to the findings it discovered. The check is literal, not semantic: the section
+            // must exist and carry at least one of the four allowed dispositions. The substance
+            // is reviewed, never machine-classified.
+            if (!/Additional findings/i.test(body)) {
+              problems.push('PR body is missing the "Additional findings" section (None / FIXED NOW / REJECTED / FILED AS ISSUE).');
+            } else {
+              const section = body.split(/Additional findings/i)[1].split(/\n#{2,3}\s/)[0];
+              if (!/^\s*[-*]\s*(None|FIXED NOW|REJECTED|FILED AS ISSUE)\b/im.test(section)) {
+                problems.push('"Additional findings" must record one disposition: None, FIXED NOW, REJECTED, or FILED AS ISSUE.');
+              }
+            }
+
             // Sentinels copied from the unfilled template. Checkboxes are reviewed
             // rather than mechanically enforced because an authorized exception can
             // legitimately leave one unchecked with an explanation.

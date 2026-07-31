@@ -170,6 +170,31 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+  backlog-intake-guard:
+    name: Backlog intake guard (Drift Guard 7)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # PR-only: the guard compares BACKLOG.md and the paper-weight cap against the
+    # PR base, so it needs a base ref. Owner ruling 2026-07-30 — backlog intake closed.
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # need history so the merge base resolves
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Backlog intake closed (no new items, no cap raise)
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git fetch --no-tags origin "$BASE_REF"
+          npm run -s check:backlog-intake -- --require-base "origin/$BASE_REF"
+
   secret-scan:
     name: Secret scan
     runs-on: ubuntu-latest
