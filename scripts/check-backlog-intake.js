@@ -35,19 +35,34 @@ const ROOT = path.join(__dirname, '..');
 const BACKLOG_REL = 'BACKLOG.md';
 const CONFIG_REL = 'config/paper-weight.json';
 
-function countLines(text) { return (String(text).match(/\n/g) || []).length; } // matches `wc -l`
+/**
+ * Count real lines, INCLUDING a final line with no terminating newline. `wc -l` semantics
+ * (newline characters only) would let a builder append content while dropping the trailing
+ * newline: the file gains a line in the diff but the newline count is unchanged, which passes
+ * the growth check. Counting content lines closes that.
+ */
+function countLines(text) {
+  const s = String(text);
+  if (s === '') return 0;
+  return s.split('\n').length - (s.endsWith('\n') ? 1 : 0);
+}
+
+// A top-level work item is a column-0 list item. Markdown accepts "-", "*", and "+" as
+// unordered markers and "1." / "1)" as ordered ones; all of them are counted, because any of
+// them adds an item — a builder converting an existing blank line to "+ new work" would
+// otherwise add an item without adding a line.
+const TOP_LEVEL_ITEM_RE = /^([-*+]|\d+[.)])\s/;
 
 /**
- * Count top-level work items: column-0 bullets ("- …" / "* …"), the same item unit the
- * auto-archive job moves (scripts/archive-backlog.js). Fenced code blocks are skipped so an
- * example bullet inside ``` never counts. Pure; never throws.
+ * Count top-level work items. Fenced code blocks are skipped so an example bullet inside ```
+ * never counts. Pure; never throws.
  */
 function countItems(text) {
   let items = 0;
   let inFence = false;
   for (const line of String(text).split('\n')) {
     if (/^\s*(```|~~~)/.test(line)) { inFence = !inFence; continue; }
-    if (!inFence && /^[-*] /.test(line)) items++;
+    if (!inFence && TOP_LEVEL_ITEM_RE.test(line)) items++;
   }
   return items;
 }

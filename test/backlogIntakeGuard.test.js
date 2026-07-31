@@ -140,6 +140,26 @@ describe('Drift Guard 7 — backlog intake closure', () => {
     assert.ok(/grew \d+ → \d+ lines/.test(errorsOf(r)), errorsOf(r));
   });
 
+  // Codex P1 — appended intake that drops the trailing newline keeps the newline count flat.
+  it('fails prose appended without a terminating newline', () => {
+    const head = BASE_BACKLOG + 'New finding from review: the closeout banner double-fires.';
+    const r = analyze({ base: BASE, head: { backlog: head, config: CONFIG(BASE_CAP) } });
+    assert.equal(r.valid, false);
+    assert.ok(/grew \d+ → \d+ lines/.test(errorsOf(r)), errorsOf(r));
+  });
+
+  // Codex P1 — "+" and ordered markers are valid Markdown list items; converting an existing
+  // blank line to one adds an item without adding a line.
+  it('fails a "+" or ordered item written over an existing blank line', () => {
+    for (const marker of ['+ ', '1. ', '1) ']) {
+      const head = BASE_BACKLOG.replace(`\n\n${ITEM_FINISHING_SET}`, `\n${marker}new work\n${ITEM_FINISHING_SET}`);
+      const r = analyze({ base: BASE, head: { backlog: head, config: CONFIG(BASE_CAP) } });
+      assert.equal(r.valid, false, `marker "${marker}" must fail`);
+      assert.ok(/adds 1 work item/.test(errorsOf(r)), errorsOf(r));
+      assert.equal(r.headLines, r.baseLines, 'the line count is unchanged — the item count is what bites');
+    }
+  });
+
   // Correction, dedup, and reduction stay possible.
   it('passes when an existing item is corrected in place', () => {
     const head = BASE_BACKLOG.replace(
@@ -195,7 +215,7 @@ describe('Drift Guard 7 — backlog intake closure', () => {
 });
 
 describe('Drift Guard 7 — item counting and base resolution', () => {
-  it('counts only column-0 bullets and ignores fenced examples', () => {
+  it('counts only column-0 list items and ignores fenced examples', () => {
     const text = [
       '# Title',
       '- real item one',
@@ -204,9 +224,18 @@ describe('Drift Guard 7 — item counting and base resolution', () => {
       '- example bullet inside a fence',
       '```',
       '* real item two',
+      '+ real item three',
+      '1. real item four',
       '',
     ].join('\n');
-    assert.equal(countItems(text), 2);
+    assert.equal(countItems(text), 4);
+  });
+
+  it('counts a final line that has no terminating newline', () => {
+    assert.equal(countLines('a\nb\n'), 2);
+    assert.equal(countLines('a\nb'), 2);
+    assert.equal(countLines('a\nb\nc'), 3);
+    assert.equal(countLines(''), 0);
   });
 
   it('resolves the base ref from an argument, ATLAS_BASE_REF, or GITHUB_BASE_REF', () => {
