@@ -10,13 +10,43 @@
  *     never initializes googleapis, so there is no client that COULD reach a sheet;
  *   - every append lands in this process's memory, inspectable at GET /__gate/state
  *     so the rerun transcript can show exactly what the app "wrote";
- *   - no LLM key is present, so every coach surface uses its deterministic fallback;
+ *   - the model posture is explicit and asserted (see MODEL POSTURE below) — the
+ *     default harness is model-DOWN and fails closed rather than run mislabeled;
  *   - Playwright drives the UI with navigator.webdriver=true, so the client itself
  *     marks every request synthetic (x-atlas-request-origin: playwright) per the
  *     live-testing playbook — the run can never masquerade as owner activity.
  *
  * Prints GATE_PORT=<port> on stdout once listening (dynamic port; parallel-safe).
  */
+
+// ── The harness is the ONLY authority on this process's environment ──────────────
+//
+// index.js line 3 runs `require('dotenv').config()`. dotenv never OVERRIDES a
+// variable that already exists, which made every `delete process.env.X` below read
+// as safe — but a DELETED variable is not an existing one, so dotenv SET each of
+// them again from a local `.env`, after the deletes and before the first request.
+//
+// Measured on main, in a directory whose `.env` carries GEMINI_API_KEY: this
+// "no LLM key" harness answered GET /api/coach/health with configured:true and made
+// a real outbound call to generativelanguage.googleapis.com. Every other delete in
+// this file was restored the same way — the five telemetry flags AND the two ledger
+// write-enable flags, so the default posture silently claimed dry-run while the
+// write-enable flags were on.
+//
+// One winner, not a reconciliation: dotenv is require-cache neutralized here, BEFORE
+// index.js can load it, so nothing may repopulate what this file decides. The harness
+// wants no `.env` value at all — every variable it needs is either set explicitly
+// below or passed by the spawning spec's `env`. Both this file and index.js resolve
+// `dotenv` to the same node_modules path, so this single cache entry covers both.
+try {
+  const dotenvPath = require.resolve('dotenv');
+  require.cache[dotenvPath] = {
+    id: dotenvPath,
+    filename: dotenvPath,
+    loaded: true,
+    exports: { config: () => ({ parsed: {} }), parse: () => ({}) },
+  };
+} catch { /* dotenv not installed — nothing to neutralize */ }
 
 process.env.ATLAS_API_KEY = process.env.ATLAS_GATE_KEY || 'playwright-gate-key';
 process.env.GOOGLE_SHEETS_ID = 'stub-sheet';
@@ -28,11 +58,29 @@ process.env.ATLAS_API_RATE_LIMIT_MAX = '1000000';
 process.env.ATLAS_WRITE_RATE_LIMIT_MAX = '1000000';
 process.env.ATLAS_VISION_RATE_LIMIT_MAX = '1000000';
 process.env.ATLAS_LOGIN_RATE_LIMIT_MAX = '1000000';
-// Deterministic coach voice + zero outbound calls: no LLM key may reach the app,
-// even if a dev shell exported one. index.js's dotenv load never overrides these.
-delete process.env.GEMINI_API_KEY;
-delete process.env.OPENAI_API_KEY;
-delete process.env.ANTHROPIC_API_KEY;
+// ── MODEL POSTURE — exactly two modes, both explicit, neither ever inferred ──────
+//
+// MODEL-DOWN (default, flag absent): the provider is unavailable BY CONSTRUCTION.
+//   The three provider keys are deleted, dotenv can no longer restore them (above),
+//   and the assertion after the app loads EXITS the harness rather than serve a
+//   spec a mislabeled server. Every coach surface takes its deterministic fallback,
+//   which is what the F10S/F10D specs already assume and what keeps them repeatable.
+//
+// MODEL-UP (ATLAS_GATE_MODEL_UP=1): opt-in only. Model-up is never inferred from a
+//   key merely being present — that inference IS the defect this block fixes. The
+//   keys are left intact, and a MISSING key is a hard failure, because a run that
+//   calls itself model-up must never quietly degrade into a model-down run. The key
+//   comes from the SPAWNING environment, never from `.env` (neutralized above): one
+//   rule, no exceptions, so there is no path by which a stray file changes a posture.
+//
+// Note what this flag does NOT do: it does not PROVE model-up. Proof is a property
+// of the run, not the harness — /api/coach/health must report configured AND ok with
+// the expected model, and an eligible coach turn must show an unambiguous
+// live-provider source. A configured-but-unreachable provider reports ok:false and
+// so can never satisfy that bar (absence of outage wording is not proof).
+const MODEL_UP = process.env.ATLAS_GATE_MODEL_UP === '1';
+const PROVIDER_KEYS = ['GEMINI_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY'];
+if (!MODEL_UP) for (const key of PROVIDER_KEYS) delete process.env[key];
 // Pin every behavior/telemetry flag to the deterministic baseline. An inherited
 // shadow-persistence flag (e.g. ATLAS_FLIGHT_RECORDER=1 in a live-validation
 // shell) would make the real middleware append telemetry rows through the stub
@@ -61,11 +109,13 @@ if (LEDGER_SANDBOX) {
   delete process.env.ATLAS_SESSION_PLANS_WRITE;
 }
 
-// SCRIPTED COACH (ATLAS_GATE_COACH_SCRIPT=1) — a third opt-in posture, default OFF.
+// SCRIPTED COACH (ATLAS_GATE_COACH_SCRIPT=1) — an opt-in COACH-PROSE posture, default OFF.
 //
-// The two postures above are model-DOWN: no key, so every coach surface takes its
-// deterministic fallback. That cannot prove a guard that acts on MODEL PROSE, because a
-// down model produces none. This posture makes the model an adversary the spec controls:
+// This is NOT a third model posture: it calls nothing outbound, so it is model-DOWN by
+// the definition above and reports as such. The default model-down harness takes every
+// coach surface's deterministic fallback, which cannot prove a guard that acts on MODEL
+// PROSE, because a down model produces none. This posture makes the model an adversary
+// the spec controls:
 // `services/coach` is require-cache stubbed to report configured and to return whatever
 // reply the harness has armed via the state server's `/arm-coach-reply`. It calls nothing
 // outbound — there is still no key and no provider client — so it is not "model-up"; it is
@@ -243,6 +293,56 @@ require.cache[visionPath] = {
 
 const { app } = require('../../../index.js');
 
+// ── Posture assertion — a harness that CLAIMS a posture must BE in it ─────────────
+// Loading the app is the only window in which anything could repopulate the
+// environment, so the claim is checked here rather than trusted. Failure exits
+// non-zero; every spec's spawn handler rejects on an early exit, so a mislabeled
+// harness surfaces as a loud gate failure instead of a quietly mislabeled run.
+const modelPosture = MODEL_UP ? 'model-up' : 'model-down';
+const modelUpProof = { model: null, reachable: false };
+
+// MODEL-DOWN is proven by absence: no provider key can be reached, so no call is made.
+function assertModelDown() {
+  const present = PROVIDER_KEYS.filter(key => process.env[key]);
+  if (present.length) {
+    console.error(`GATE_POSTURE_ERROR: model-down harness has provider key(s) present after app load: ${present.join(', ')}`);
+    process.exit(2);
+  }
+}
+
+// MODEL-UP is proven by REACHABILITY, never by key presence. A present-but-expired key,
+// a bad GEMINI_COACH_MODEL, a quota block, or an unreachable provider would each leave
+// the coach routes silently taking their deterministic fallbacks while the harness
+// advertised model-up — the same unbacked claim this file exists to remove, just moved.
+// So the posture is not published until the provider actually answers.
+//
+// `pingGemini` calls the SAME model `coachModel()` resolves, so a successful ping proves
+// both legs the harness can prove: configured AND reachable, with the expected model. The
+// third leg — an eligible coach turn showing an unambiguous live-provider source — is a
+// property of the RUN, and stays the consuming spec's obligation.
+async function assertModelUp() {
+  // Contradictory by construction: the scripted stub REPLACES services/coach, so no
+  // provider is reachable however many keys are present. Serving that as "model-up"
+  // would be the same lie in a new costume, so refuse the combination outright.
+  if (COACH_SCRIPT) {
+    console.error('GATE_POSTURE_ERROR: ATLAS_GATE_MODEL_UP=1 with ATLAS_GATE_COACH_SCRIPT=1 — a scripted coach calls no provider and can never be a model-up run.');
+    process.exit(2);
+  }
+  const coach = require('../../../services/coach');
+  if (!coach.isConfigured()) {
+    console.error('GATE_POSTURE_ERROR: ATLAS_GATE_MODEL_UP=1 but the coach reports unconfigured — a model-up run may not degrade into a model-down one.');
+    process.exit(2);
+  }
+  try {
+    await coach.pingGemini({ timeoutMs: 10000 });
+  } catch (error) {
+    console.error(`GATE_POSTURE_ERROR: ATLAS_GATE_MODEL_UP=1 but the provider is not reachable, so model-up is unproven: ${error && error.message}`);
+    process.exit(2);
+  }
+  modelUpProof.model = coach.coachModel();
+  modelUpProof.reachable = true;
+}
+
 // Harness-only observability on its OWN server (the app's 404 catch-all is already
 // registered, so a route added post-require would never match): what the app believes
 // it wrote, for the transcript's write-evidence appendix.
@@ -278,15 +378,36 @@ const stateServer = http.createServer((req, res) => {
     plan_set_rows: state.planSetRows,
     vision_calls: state.visionCalls,
     ledger_sandbox: LEDGER_SANDBOX,
+    // The harness's posture claim, read from the live environment at request time so
+    // the transcript records what was TRUE, not what was intended. `model-down` is
+    // backed by key absence; `model-up` is backed by a provider that ANSWERED before
+    // this server ever listened — `provider_reachable` is never true on assumption.
+    // `coach_scripted` marks the stubbed stand-in, which is model-down (nothing
+    // outbound) with the coach module replaced.
+    model_posture: modelPosture,
+    provider_key_present: PROVIDER_KEYS.some(key => Boolean(process.env[key])),
+    provider_reachable: modelUpProof.reachable,
+    coach_model: modelUpProof.model,
+    coach_scripted: COACH_SCRIPT,
     google_client_initialized: false,
     sheets_stubbed_in_memory: true
   }));
 });
 
-const server = app.listen(0, () => {
-  stateServer.listen(0, () => {
-    // The spec parses these lines to find the dynamic ports.
-    console.log(`GATE_STATE_PORT=${stateServer.address().port}`);
-    console.log(`GATE_PORT=${server.address().port}`);
+// The posture is PROVEN before a single port is published, so a spec can never attach
+// to a harness whose advertised posture has not been verified. Model-down proves itself
+// synchronously and makes no call; only model-up awaits the provider.
+(async () => {
+  if (MODEL_UP) await assertModelUp(); else assertModelDown();
+
+  const server = app.listen(0, () => {
+    stateServer.listen(0, () => {
+      // The spec parses these lines to find the dynamic ports. The posture line is
+      // printed first so a rerun transcript records which model posture served it,
+      // and model-up carries the model that actually answered.
+      console.log(`GATE_MODEL_POSTURE=${modelPosture}${MODEL_UP ? ` model=${modelUpProof.model}` : ''}`);
+      console.log(`GATE_STATE_PORT=${stateServer.address().port}`);
+      console.log(`GATE_PORT=${server.address().port}`);
+    });
   });
-});
+})();
