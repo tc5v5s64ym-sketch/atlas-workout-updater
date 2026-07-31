@@ -413,6 +413,38 @@ function isAssertionSegment(seg) {
   return true;
 }
 
+// Clause split (Codex #1225 P1). Sentence-level state-awareness is too coarse: a false
+// completion ASSERTED in one clause escaped when a LATER clause carried a question mark
+// or a modal — "You completed the workout, so should we cool down?" and "You completed
+// the workout, so you should cool down." both reached the athlete unchanged. Each clause
+// is judged on its own markers instead.
+//
+// Splits only on an explicit clause boundary — a semicolon, a dash, or a comma FOLLOWED
+// BY a conjunction — so an ordinary list ("Squat, Bench Press and Row are logged") stays
+// one clause. Clause findings are UNIONED with the whole-segment result, never substituted
+// for it, so splitting can only ever add a detection.
+const CLAUSE_BOUNDARY = /\s*(?:;|,\s*(?:so|but|and|then|although|though|while|yet)\b|\s+[—–]\s+)\s*/;
+
+function assertedClauses(seg) {
+  const whole = String(seg || '').trim();
+  if (!whole) return [];
+  const out = [];
+  if (isAssertionSegment(whole)) out.push(whole);
+  const parts = whole.split(CLAUSE_BOUNDARY).map((p) => p.trim()).filter(Boolean);
+  if (parts.length > 1) {
+    for (const p of parts) if (isAssertionSegment(p) && !out.includes(p)) out.push(p);
+  }
+  return out;
+}
+
+// A count framed as THIS session rather than training history. `session_count` is built
+// from PREVIOUSLY logged sessions (routes/coachOps.js) and deliberately excludes the
+// in-progress one, so comparing a current-session count against it rejects a truthful
+// statement — "You completed 1 workout today" (Codex #1225 P2). Current-session counts
+// are governed by plan_state / session_tally, which the completion rules above already
+// enforce; they are not historical claims and are not judged here.
+const CURRENT_SESSION_FRAMING = /\b(?:today|tonight|this (?:session|workout|morning|evening|afternoon)|just now|right now)\b/;
+
 // Does this segment describe the named exercise as PLANNED/REMAINING rather than done?
 // Prescription framings ("the plan calls for…", "the target is…") belong here: they are
 // truthful statements ABOUT a remaining slot and must pass through untouched.
@@ -438,54 +470,61 @@ function detectUngroundedCompletionClaim(text, context) {
     ? c.session_count
     : null;
 
-  for (const seg of segments(text)) {
-    if (!isAssertionSegment(seg)) continue;
+  const seen = new Set();
+  const flag = (segment, kind) => {
+    const key = `${kind}::${segment}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ segment, kind });
+  };
 
-    // 1. Workout-completion claim. Grounded ONLY by the deterministic verdict.
-    if (!complete && WORKOUT_COMPLETION_PATTERNS.some((re) => re.test(seg))) {
-      out.push({ segment: seg, kind: 'workout_completion' });
-      continue;
-    }
-
-    // 2. Fabricated zero-load actual sets — never a real logged set.
-    if (ZERO_LOAD_SET.test(seg)) {
-      out.push({ segment: seg, kind: 'fabricated_sets' });
-      continue;
-    }
-
-    // 3. A remaining slot described as completed work, or enumerated as actual sets.
-    if (remainingKeys.size && !REMAINING_FRAMING.test(seg)) {
-      const named = remaining.filter((n) => {
-        const words = significantWords(n);
-        if (!words.length) return normalize(seg).includes(normalize(n));
-        return words.every((w) => new RegExp(`\\b${escapeRe(w)}`).test(normalize(seg)));
-      });
-      if (named.length && COMPLETED_WORK_VERB.test(seg)) {
-        out.push({ segment: seg, kind: 'unperformed_slot_as_work' });
+  for (const whole of segments(text)) {
+    for (const seg of assertedClauses(whole)) {
+      // 1. Workout-completion claim. Grounded ONLY by the deterministic verdict.
+      if (!complete && WORKOUT_COMPLETION_PATTERNS.some((re) => re.test(seg))) {
+        flag(seg, 'workout_completion');
         continue;
       }
-    }
 
-    // 4. Historical session count. Fail closed when the engine has no count to match.
-    for (const re of SESSION_COUNT_CLAIM) {
-      const m = re.exec(normalize(seg));
-      if (!m) continue;
-      const claimed = Number(m[1]);
-      if (!Number.isFinite(claimed)) continue;
-      if (engineCount == null || claimed !== engineCount) {
-        out.push({ segment: seg, kind: 'session_count' });
+      // 2. Fabricated zero-load actual sets — never a real logged set.
+      if (ZERO_LOAD_SET.test(seg)) {
+        flag(seg, 'fabricated_sets');
+        continue;
       }
-      break;
+
+      // 3. A remaining slot described as completed work.
+      if (remainingKeys.size && !REMAINING_FRAMING.test(seg)) {
+        const named = remaining.filter((n) => {
+          const words = significantWords(n);
+          if (!words.length) return normalize(seg).includes(normalize(n));
+          return words.every((w) => new RegExp(`\\b${escapeRe(w)}`).test(normalize(seg)));
+        });
+        if (named.length && COMPLETED_WORK_VERB.test(seg)) {
+          flag(seg, 'unperformed_slot_as_work');
+          continue;
+        }
+      }
+
+      // 4. HISTORICAL session count. A current-session framing is governed by the rules
+      // above, not by `session_count`, so it is never judged here. Fail closed when the
+      // engine has no historical count to match.
+      if (CURRENT_SESSION_FRAMING.test(seg)) continue;
+      for (const re of SESSION_COUNT_CLAIM) {
+        const m = re.exec(normalize(seg));
+        if (!m) continue;
+        const claimed = Number(m[1]);
+        if (!Number.isFinite(claimed)) continue;
+        if (engineCount == null || claimed !== engineCount) flag(seg, 'session_count');
+        break;
+      }
     }
   }
   // A completion claim made with NO authoritative session state at all is ungrounded even
   // when no pattern above fired on a remaining slot — there is nothing to complete against.
   if (!authoritative && !complete) {
-    for (const seg of segments(text)) {
-      if (!isAssertionSegment(seg)) continue;
-      if (out.some((o) => o.segment === seg)) continue;
-      if (WORKOUT_COMPLETION_PATTERNS.some((re) => re.test(seg))) {
-        out.push({ segment: seg, kind: 'workout_completion' });
+    for (const whole of segments(text)) {
+      for (const seg of assertedClauses(whole)) {
+        if (WORKOUT_COMPLETION_PATTERNS.some((re) => re.test(seg))) flag(seg, 'workout_completion');
       }
     }
   }

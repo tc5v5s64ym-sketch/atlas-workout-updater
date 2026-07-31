@@ -175,6 +175,48 @@ test('A9. state-awareness: proposals, questions, quotations and negations are no
   }
 });
 
+test('A9b. Codex #1225 P1 — a false completion asserted in ONE clause is caught, whatever the rest of the sentence does', () => {
+  const ctx = s12Context();
+  // Sentence-level state-awareness was too coarse: a question mark or a modal ANYWHERE in
+  // the sentence excused the asserted clause, so these reached the athlete unchanged.
+  for (const claim of [
+    'You completed the workout, so should we cool down?',
+    'You completed the workout, so you should cool down.',
+    'You have completed the workout, but let me know if you want more.',
+    'You have completed the workout; I can queue up next week if you like.',
+    'Nice work — you completed the workout, and I could write it up now.',
+  ]) {
+    assert.ok(grounding.detectUngroundedCompletionClaim(claim, ctx).length > 0, `must flag: ${claim}`);
+  }
+});
+
+test('A9c. Codex #1225 P1 — clause splitting adds detections without inventing them', () => {
+  const ctx = s12Context();
+  for (const ok of [
+    // A genuine whole-sentence proposal or negation stays safe once split.
+    "You haven't completed the workout, so let's keep going.",
+    'Do you want me to say you completed the workout?',
+    // An ordinary list is one clause — no comma-conjunction boundary inside it.
+    'Barbell Squat, Barbell Bench Press and Barbell Row are logged.',
+  ]) {
+    assert.equal(grounding.detectUngroundedCompletionClaim(ok, ctx).length, 0, `must NOT flag: ${ok}`);
+  }
+});
+
+test('A9d. Codex #1225 P2 — a current-session count is not judged against the HISTORICAL count', () => {
+  const done = s12Context();
+  done.plan_state.completed = done.plan_state.planned.slice();
+  done.plan_state.remaining = [];
+  done.plan_state.isComplete = true;
+  // session_count counts PREVIOUSLY logged sessions and excludes the in-progress one, so
+  // this truthful line must not be rejected just because it differs from that number.
+  for (const ok of ['You completed 1 workout today.', "That's 1 session done today.", 'You have logged 1 workout this session.']) {
+    assert.equal(grounding.detectUngroundedCompletionClaim(ok, done).length, 0, `must NOT flag: ${ok}`);
+  }
+  // The historical claim is still caught — it carries no current-session framing.
+  assert.ok(grounding.detectUngroundedCompletionClaim("You've logged 3 sessions so far.", done).length > 0);
+});
+
 test('A10. the deterministic replacement states logged and remaining, and claims nothing', () => {
   const statement = grounding.buildGroundedSessionStateStatement(s12Context());
   assert.match(statement, /Barbell Squat/);
