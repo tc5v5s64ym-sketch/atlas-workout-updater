@@ -26,6 +26,26 @@ jobs:
               problems.push('PR body is missing the "Atlas Merge Card" section. Start from .github/PULL_REQUEST_TEMPLATE.md.');
             }
 
+            // Owner ruling 2026-07-30, corrected 2026-07-31 — backlog intake closed and GitHub
+            // Issues are not a replacement backlog. Every PR records what happened to the
+            // findings it discovered. The check is literal, not semantic: the section must exist
+            // and carry at least one of the four allowed dispositions (None, FIXED NOW, REJECTED,
+            // OWNER DECISION REQUIRED). The substance is reviewed, never machine-classified.
+            // Anchor on the HEADING, not on any mention of the phrase: a body that discusses
+            // "Additional findings" in prose before the section would otherwise capture the
+            // wrong span and false-fail.
+            const findingsHeading = /^[ \t]*#{2,4}[ \t]*Additional findings[ \t]*$/im.exec(body);
+            if (!findingsHeading) {
+              problems.push('PR body is missing the "Additional findings" section (None / FIXED NOW / REJECTED / OWNER DECISION REQUIRED).');
+            } else {
+              const section = body
+                .slice(findingsHeading.index + findingsHeading[0].length)
+                .split(/\n[ \t]*#{2,4}[ \t]+/)[0];
+              if (!/^[ \t]*[-*][ \t]*(None|FIXED NOW|REJECTED|OWNER DECISION REQUIRED)\b/im.test(section)) {
+                problems.push('"Additional findings" must record one disposition: None, FIXED NOW, REJECTED, or OWNER DECISION REQUIRED.');
+              }
+            }
+
             // Sentinels copied from the unfilled template. Checkboxes are reviewed
             // rather than mechanically enforced because an authorized exception can
             // legitimately leave one unchecked with an explanation.
