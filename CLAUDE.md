@@ -24,10 +24,13 @@ For routine implementation:
 
 1. `CLAUDE.md`
 2. `docs/ATLAS_V1_EXECUTION_PLAN.md`
-3. `docs/DECISION_KERNEL.md`
-4. `docs/CONTROLLED_TECHNICAL_WRITING.md`
-5. `BACKLOG.md` for awareness and deferred discoveries
-6. relevant specs, invariants, tests, and evidence ledgers
+3. `docs/ATLAS_SYSTEM_AUTHORITY.md`
+4. `docs/DECISION_KERNEL.md`
+5. `docs/CONTROLLED_TECHNICAL_WRITING.md`
+6. `BACKLOG.md` for awareness and deferred discoveries
+7. relevant specs, invariants, tests, and evidence ledgers
+
+[`docs/ATLAS_SYSTEM_AUTHORITY.md`](docs/ATLAS_SYSTEM_AUTHORITY.md) is the **ownership authority**: for each major concept it records the current live authority, the intended sole authority, any competing authority, status, the exact production consumer, any compatibility bridge, and the exact sunset condition. Read it before changing who decides something. It records authority; it selects no work.
 
 Read `docs/DOCS_INDEX.md` when classifying a document. Read the full Vision/Architecture only when the active card reaches product direction, architecture, or a genuine conflict.
 
@@ -36,6 +39,46 @@ Read `docs/DOCS_INDEX.md` when classifying a document. Read the full Vision/Arch
 Every implementation agent reads [`docs/CONTROLLED_TECHNICAL_WRITING.md`](docs/CONTROLLED_TECHNICAL_WRITING.md) and follows it when writing plans, reviews, failure reports, handoffs, implementation summaries, PR bodies, commit messages, and documentation. It is **controlled technical writing inspired by ASD-STE100**; Atlas claims no formal ASD-STE100 compliance.
 
 That document holds the rules. Do not restate them here or in any other file, and do not apply them to Atlas's user-facing coaching voice, which `docs/COACHING_NOTE_VOICE.md` governs. It is a writing standard only: it selects no work and changes no safety, branch, merge, or owner gate.
+
+## Closed-Loop Delivery Contract
+
+**Purpose → Authority → Integration → Proof → Cleanup → Closure.**
+
+Work is finished when a loop is closed, not when code lands.
+
+1. Every PR names the exact **parent product or phase outcome** it advances.
+2. "Useful foundation", "future flexibility", and "might be needed later" are **not** sufficient purpose.
+3. Every new module, contract, runner, adapter, flag, bridge, or framework names its **exact live consumer** and its **final closure condition**.
+4. A module, contract, import, route registration, unit test, or passing suite is **not** proof of integration or completion.
+5. Proof stays **level-correct**:
+   - a unit test proves local logic;
+   - an integration test proves wiring;
+   - a browser or full-session test proves the complete product path;
+   - real owner evidence proves owner operation;
+   - owner acceptance proves completion where required.
+6. A **foundation PR is progress, not completion**.
+7. A migration stays **open** until the displaced authority and the obsolete code, tests, flags, adapters, fallbacks, shadow paths, and stale documentation are removed — or each carries an exact sunset condition.
+8. **No-orphan rule.** A production building block may merge only when it is either (a) integrated in the same PR, or (b) an unavoidable slice of a complete named chain already recorded in `docs/ATLAS_V1_EXECUTION_PLAN.md`, with the immediately following consumer, the cleanup slice, and the final closure condition all identified.
+9. Unrelated work may not **leapfrog** an eligible integration, cleanup, or proving slice needed to close the current parent loop, unless a documented dependency blocks that slice.
+10. Every PR reports **open loops closed**, **open loops created**, and **net open-loop change**.
+
+**Normal requirement: net open-loop change is zero or negative.** A positive result requires an explicit owner-approved reason, a complete closure chain, and exact sunset conditions.
+
+This is a delivery discipline recorded in the merge card. It creates no new roadmap, ledger, campaign, capability manifest, or governance system, and it adds no CI guard.
+
+### Architectural ruling — one winner per authority
+
+For an **authority defect**, select one intended winner and **remove the loser**. When immediate removal is genuinely unsafe, name the compatibility bridge and its **exact** sunset condition. Do not add permanent reconciliation logic around competing authorities.
+
+Classify an implementation defect before dispatching it:
+
+- **local defect** — one owner behaves wrongly; fix it in place;
+- **authority defect** — two or more things decide the same concept; pick a winner and delete the loser;
+- **missing capability** — nothing owns it yet; build it with a named consumer.
+
+Prefer replacement and deletion over parallel implementation. Record the classification in the merge card.
+
+Recording a concept as `DUPLICATED` or `TRANSITIONAL` in [`docs/ATLAS_SYSTEM_AUTHORITY.md`](docs/ATLAS_SYSTEM_AUTHORITY.md) is honest bookkeeping — it does **not** authorize fixing it early. Phase 5 owns consolidation.
 
 ## Roles and authority
 
