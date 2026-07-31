@@ -89,5 +89,14 @@ Each session is scored only on the capabilities the synthesis says it demonstrat
 
 Per the owner side-instrument insertion recorded in the execution plan's `CAMPAIGN STATE`, the runner reruns and **appends a new dated section below** at the close of **Phase 4**, **Phase 6**, and **Phase 7** — the same rubric against the same real code, so the deltas are honest. The absent→partial→pass movement is the campaign converging on the corpus.
 
+## Rerun — Phase 4 pre-AI operational acceptance (2026-07-31)
+
+Headline: ✅ pass **1** · 🟡 partial **1** · ⬜ absent **33** of 35.
+
+| # | Capability | Status |
+|---|---|---|
+| 13 | Substitution compatibility | 🟡 partial |
+| 32 | Deliberate brevity / silence | ✅ pass |
+
 ---
 _This scoreboard is generated. Segregation invariant: corpus-synthetic, test-mode, no live write, no real shadow/divergence contamination._
