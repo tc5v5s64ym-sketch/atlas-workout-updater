@@ -100,7 +100,9 @@ test('buildMarkdownReport renders a verdict table, totals, links, and the read-o
   // no workout/session-state mutation, and explicitly NOT a zero-Sheet-writes
   // claim while synthetic shadow telemetry is still appended.
   assert.match(md, /mutates no workout or session state/);
-  assert.match(md, /not\* a claim of zero Sheet writes/);
+  // A declared-synthetic run now reaches none of the four shadow tabs, so the
+  // report states that instead of the retired "still appends synthetic" disclaimer.
+  assert.match(md, /none of the four shadow tabs/);
   assert.doesNotMatch(md, /never writes to Google Sheets/,
     'the retired absolute claim must not reappear');
   assert.match(md, /Not a merge gate/);
