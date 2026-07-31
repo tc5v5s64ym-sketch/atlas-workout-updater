@@ -103,17 +103,28 @@ test('1a-bis. the parser agrees with the exercise catalog — no A↔B fork', ()
 // Morning lift, so the greeting must win.
 //
 // The bare alias is therefore removed; 'good mornings' and 'barbell good morning' stay
-// (both verified unambiguous). Three properties keep this honest rather than convenient:
-//   • the exception is exactly one name, asserted by equality — a new unparseable
-//     substitute still fails this test;
-//   • 'Good Morning' is never a DEFAULT substitute (test 1c stays absolute, empty
-//     allowlist) — it is a secondary candidate for Deadlift / Romanian Deadlift only,
-//     verified below, so the hot path Codex flagged is genuinely unaffected;
-//   • renaming the recommender's emission was rejected: 'Good Morning' is also a KEY in
-//     SUBSTITUTION_MAP, so emitting 'Barbell Good Morning' would make the accepted
-//     substitute unkeyable on the next lookup — trading this gap for a worse one.
-// The real repair is a matcher-level greeting/lift-name collision guard, logged to
-// BACKLOG.md as its own concern rather than widened into this PR.
+// (both verified unambiguous).
+//
+// THE EXCEPTION IS NOT FULLY BOUNDED, and an earlier version of this comment claimed it
+// was (Codex #1209 P1, round 2). That claim said 'Good Morning' is "never a DEFAULT
+// substitute … so the hot path is genuinely unaffected". It rested on the CONTEXT-FREE
+// default only. Atlas also recommends context-aware — /api/suggest-substitute forwards
+// the rest of the plan as `avoid` — and on that route Good Morning IS announced to the
+// athlete, after which the bare-singular follow-up resolves to the PRECEDING lift and
+// answers with Deadlift's load. Test 1b-ter now pins that real behavior, failure and all.
+//
+// What remains true, and is all this exception rests on:
+//   • it is exactly one name, asserted by equality — a new unparseable substitute still
+//     fails test 1b;
+//   • no lift DEFAULTS to it (test 1c stays absolute with an empty allowlist);
+//   • renaming the recommender's emission is not a cheap fix: 'Good Morning' is also a
+//     KEY in SUBSTITUTION_MAP, so emitting 'Barbell Good Morning' would make the accepted
+//     substitute unkeyable on the next lookup — trading this gap for a different one.
+// Both remedies (restore the bare alias / rename the emission) were ruled out of this PR
+// by the owner on 2026-07-31, before the context-aware exposure was known; the correction
+// is with the owner. The repair this test's author would argue for is a matcher-level
+// guard that fails CLOSED on an unresolvable name instead of inheriting the preceding
+// lift — logged to BACKLOG.md as its own concern rather than widened into this PR.
 const SUBSTITUTE_PARSE_EXCEPTIONS = ['Good Morning'];
 
 test('1b. every recommendable substitute is recognizable — one documented exception', () => {
