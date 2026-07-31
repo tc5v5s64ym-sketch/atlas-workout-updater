@@ -59,9 +59,14 @@ const GENERIC_HEADS = new Set([
   // the dumbbell?" read as a named exercise and decline ordinary shorthand. Equipment
   // never identifies a lift on its own, and every exercise that uses it carries its own
   // movement word ("cable fly", "dumbbell row"), so excluding these loses no detection.
+  // NOTE: 'bench' is deliberately NOT excluded, even though "on the bench" reads as
+  // equipment. It is itself a lift alias, so the resolver answers those turns and this
+  // detector never sees them; excluding it only created a hole — "close grip bench" failed
+  // to resolve AND failed to be detected, so it inherited the active lift. A word that is
+  // its own alias belongs in the vocabulary. The words below are not aliases of anything.
   'barbell', 'barbells', 'dumbbell', 'dumbbells', 'dumbell', 'dumbells', 'kettlebell',
   'kettlebells', 'cable', 'cables', 'band', 'bands', 'plate', 'plates', 'rack', 'sled',
-  'belt', 'strap', 'straps', 'chalk', 'smith', 'weight', 'weights', 'bench', 'benches',
+  'belt', 'strap', 'straps', 'chalk', 'smith', 'weight', 'weights',
 ]);
 
 // Only word-shaped tokens join the vocabulary. Three letters is the floor because real
@@ -157,7 +162,15 @@ function residueWords(message) {
 function namedExercisePhrase(message) {
   const words = residueWords(message);
   if (!words.length) return null;
-  if (!words.some((w) => MOVEMENT_VOCABULARY.has(w))) return null;
+  // A movement word, OR a phrase the Exercise KB itself recognises. The second signal
+  // catches names built on an ABBREVIATION, which carries no movement word at all: "sumo
+  // dl" is a real exercise the KB knows, but `dl` is two letters and spells nothing, so
+  // the vocabulary alone read it as ordinary text and the turn inherited the plan's lift
+  // (Codex #1216 P1). Equipment and conversation stay out because the KB does not know
+  // them either — "barbell", "cable", "plates", "rest", "water" all resolve to nothing.
+  if (!words.some((w) => MOVEMENT_VOCABULARY.has(w)) && !longestKbExerciseIdIn(words.join(' '))) {
+    return null;
+  }
   return words.join(' ');
 }
 
@@ -214,9 +227,138 @@ function unresolvedExerciseAsk(reference) {
     : "I don't have that lift. Which lift did you mean?";
 }
 
+// ── qualified-variant detection ─────────────────────────────────────────────
+//
+// The parser's alias table is deliberately narrow and matches an alias ANYWHERE in the
+// text, so "how much for zercher squat?" matched `squat` and answered with BACK SQUAT's
+// prescribed weight, planned total, and engine recommendation. Front, Goblet and Hack
+// Squat, Close-Grip and Paused Bench, and Deficit Deadlift all leaked the base lift's
+// numbers the same way. The athlete named one lift and got another lift's data.
+//
+// The parser already has `strictVariantGuard` for this, but it is calibrated for the LOG
+// path: it rejects a match whose preceding token is merely NAME-LIKE, which in free-text
+// coaching questions fires on ordinary verbs — "why did you program bench press?" would
+// stop resolving. So the read path needs a check that recognises a real qualifier and
+// nothing else.
+//
+// The Exercise KB already knows: "zercher squat" is `barbell_zercher_squat`, a different
+// exercise from `back_squat`. So the question is answered from data, not from a
+// hand-maintained modifier list — the message's own phrase is looked up, and it counts as
+// a different lift only when the KB says so. A phrase the KB does not know ("program bench
+// press") makes no claim at all, so ordinary wording is never rejected.
+
+/**
+ * Alias key: lowercase, hyphens and punctuation to spaces, whitespace collapsed.
+ *
+ * A possessive is dropped BEFORE punctuation becomes whitespace, so "zercher's squat"
+ * keys as "zercher squat" and still matches the KB alias. Without that step the
+ * apostrophe split the phrase into "zercher s squat", no n-gram matched, and the
+ * possessive phrasing walked straight past the variant check (Codex #1216 P1).
+ */
+function aliasKey(text) {
+  return String(text == null ? '' : text)
+    .toLowerCase()
+    .replace(/[‘’ʼ′']s\b/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function buildKbIndex() {
+  const byAlias = new Map();
+  for (const entry of Array.isArray(KB_ALIASES) ? KB_ALIASES : []) {
+    if (!entry || !entry.alias || !entry.exercise_id) continue;
+    const key = aliasKey(entry.alias);
+    if (key && !byAlias.has(key)) byAlias.set(key, String(entry.exercise_id));
+  }
+  return byAlias;
+}
+
+const KB_ID_BY_ALIAS = buildKbIndex();
+
+/** The KB exercise id for a phrase, trying the plural form too. Null when unknown. */
+function kbExerciseId(phrase) {
+  const key = aliasKey(phrase);
+  if (!key) return null;
+  if (KB_ID_BY_ALIAS.has(key)) return KB_ID_BY_ALIAS.get(key);
+  const singular = key.replace(/s$/, '');
+  if (singular !== key && KB_ID_BY_ALIAS.has(singular)) return KB_ID_BY_ALIAS.get(singular);
+  return null;
+}
+
+// The longest KB alias appearing anywhere in the text, as an exercise id. Longest wins on
+// purpose: a qualified variant is always longer than the base it contains, so "front
+// squat" beats "squat" and "close grip bench" beats "bench". Scanning the text rather than
+// requiring the whole message to be an alias is what makes "why did you program front
+// squat?" work — the framing words no longer hide the name.
+const KB_MAX_ALIAS_WORDS = 6;
+
+function longestKbExerciseIdIn(text) {
+  const words = aliasKey(text).split(' ').filter(Boolean);
+  if (!words.length) return null;
+  for (let size = Math.min(KB_MAX_ALIAS_WORDS, words.length); size >= 1; size -= 1) {
+    for (let i = 0; i + size <= words.length; i += 1) {
+      const id = kbExerciseId(words.slice(i, i + size).join(' '));
+      if (id) return id;
+    }
+  }
+  return null;
+}
+
+/**
+ * True when the message names a DIFFERENT real exercise than the one the parser matched.
+ *
+ * Both sides must be known to the KB. When either is unknown this returns false, because
+ * an unknown phrase is not evidence of anything — the caller keeps whatever the parser
+ * decided. That one-sided design is what keeps ordinary conversation and every legitimate
+ * alias untouched: only a phrase the KB positively identifies as another exercise counts.
+ *
+ * @param {string} message        the athlete's message
+ * @param {string} matchedName    the canonical name the parser resolved it to
+ */
+function namesDifferentExercise(message, matchedName) {
+  const matchedId = longestKbExerciseIdIn(matchedName);
+  if (!matchedId) return false;
+
+  // Every KB alias occurrence in the message, with the word span it covers: `own` names
+  // the matched lift, `other` names some different exercise.
+  const words = aliasKey(message).split(' ').filter(Boolean);
+  const own = [];
+  const other = [];
+  for (let size = Math.min(KB_MAX_ALIAS_WORDS, words.length); size >= 1; size -= 1) {
+    for (let i = 0; i + size <= words.length; i += 1) {
+      const id = kbExerciseId(words.slice(i, i + size).join(' '));
+      if (!id) continue;
+      (id === matchedId ? own : other).push([i, i + size]);
+    }
+  }
+  if (!own.length || !other.length) return false;
+
+  const contains = ([oS, oE], [iS, iE]) => oS <= iS && iE <= oE;
+  const disjoint = ([aS, aE], [bS, bE]) => aE <= bS || bE <= aS;
+
+  // A different exercise QUALIFIES this one only when it is built AROUND this lift's own
+  // mention — "zercher squat" wraps `squat`, "sumo dl" wraps `dl`, "close grip bench"
+  // wraps `bench`. Structure decides it, not shared spelling, so an abbreviation the
+  // athlete actually uses is caught too (a lexical comparison missed "sumo dl" entirely,
+  // because `dl` spells none of "deadlift" — Codex #1216 P1).
+  //
+  // Two guards keep legitimate references intact:
+  //   • a span NESTED INSIDE this lift's own longer alias is not a qualifier — in
+  //     "incline bench press" the base `bench press` sits inside the canonical name, and
+  //     reading it as a qualifier rejected the athlete's own full lift name (P2);
+  //   • an own mention DISJOINT from the qualifier means both lifts are named in their own
+  //     right — "bench press and overhead press" is an ambiguous two-lift turn the other
+  //     lanes must keep seeing as two, not one silently dropped here (P1).
+  return other.some((q) => own.some((o) => contains(q, o))       // built around this lift
+    && !own.some((o) => contains(o, q))                          // …not nested inside it
+    && !own.some((o) => disjoint(o, q)));                        // …and no separate mention
+}
+
 module.exports = {
   namedExercisePhrase,
   unresolvableExerciseReference,
   unresolvedExerciseAsk,
+  namesDifferentExercise,
+  kbExerciseId,
   MOVEMENT_VOCABULARY,
 };

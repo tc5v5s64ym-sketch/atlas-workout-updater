@@ -39,6 +39,9 @@
 const { generateLiftCode } = require('./exerciseEnrichment');
 const { deriveChatCoachMode } = require('./chatCoachMode');
 const { canonicalizeExerciseName } = require('./workoutTextParser');
+// Whether the message names a DIFFERENT real exercise than the one matched here — decided
+// by the Exercise KB, not by a modifier list this module would have to keep in step.
+const { namesDifferentExercise } = require('./explicitExerciseReference');
 
 // ── text utilities ──────────────────────────────────────────────────────────
 
@@ -152,17 +155,25 @@ function namedLiftsInMessage(message, context) {
   const m = normalize(message);
   if (!m) return [];
   const known = knownLiftNames(context);
-  // 1. Loose significant-word match ("seated rows" → "Seated Row").
+  // 1. Loose significant-word match ("seated rows" → "Seated Row"), minus any lift the
+  //    message QUALIFIES into a different exercise. One shared word is otherwise enough:
+  //    "zercher squat" matched a planned Back Squat on `squat` and handed back that lift's
+  //    diagnostics for an exercise the athlete named explicitly.
   const wordMatched = known.filter((name) => {
     const words = significantWords(name);
-    return words.length > 0 && words.some((w) => new RegExp(`\\b${escapeRe(w)}`).test(m));
+    if (!words.length) return false;
+    if (!words.some((w) => new RegExp(`\\b${escapeRe(w)}`).test(m))) return false;
+    return !namesDifferentExercise(message, name);
   });
   if (wordMatched.length) return wordMatched;
   // 2. Abbreviation/alias resolution via the canonicalizer (RDL, OHP, …): map the message
-  // to a canonical lift and match it against the known lifts by canonical key.
+  // to a canonical lift and match it against the known lifts by canonical key. The same
+  // qualifier check applies — the canonicalizer resolves "zercher squat" to Back Squat by
+  // its trailing alias, so without it the variant leaks back in through this path.
   const msgKey = canonicalKey(message);
   if (msgKey) {
-    const aliasMatched = known.filter((name) => canonicalKey(name) === msgKey);
+    const aliasMatched = known.filter((name) => canonicalKey(name) === msgKey
+      && !namesDifferentExercise(message, name));
     if (aliasMatched.length) return aliasMatched;
   }
   return [];
