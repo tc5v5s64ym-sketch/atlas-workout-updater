@@ -83,6 +83,19 @@ function generateLiftCode(exerciseName) {
   return `${prefix.padEnd(3, 'X')}01`;
 }
 
+// True when this exact name carries a CURATED lift code from knownLiftCodeOverrides
+// above — i.e. the code is a deliberate registry entry that real Log_Cleaned history
+// already uses, not a generated initialism fallback.
+//
+// Callers that canonicalize a name before deriving its code need this to tell a genuine
+// history MERGE from a history LOSS. 'Barbell Row' has no curated code (BRX01 is just an
+// initialism), so resolving it to Bent-Over Row's BOR01 unifies history — the owner-ruled
+// intent. 'Dips' IS curated to DIP01, so resolving it to the canonical 'Dips (Weighted)'
+// would silently move it to a generated DWX01 and abandon every logged DIP01 row.
+function hasCuratedLiftCode(exerciseName) {
+  return knownLiftCodeOverrides.has(normalizeExerciseKey(exerciseName));
+}
+
 // Pick a lift code: catalog -> row-provided -> generated (in that priority).
 // Returns { lift_code, generated: true } when we had to generate a fallback.
 // registry (optional) enables cross-row uniqueness for generated fallbacks only.
@@ -377,7 +390,7 @@ function canonicalLiftCodeFor(exerciseName) {
 }
 
 module.exports = {
-  normalizeExerciseKey, generateLiftCode, makeLiftCodeRegistry, buildExerciseCatalogMap,
+  normalizeExerciseKey, generateLiftCode, hasCuratedLiftCode, makeLiftCodeRegistry, buildExerciseCatalogMap,
   enrichLogRow, closestExerciseMatches, canonicalLiftCodeFor,
   // Exported for exerciseTruthAudit.js (report-only; not imported by production paths)
   knownLiftCodeOverrides, PREFERRED_ALIAS_TARGETS, SHORTHAND_EXPANSIONS,
