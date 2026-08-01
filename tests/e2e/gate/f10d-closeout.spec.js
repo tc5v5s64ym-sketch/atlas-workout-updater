@@ -21,7 +21,11 @@
  *        the SAME durable checkpoint rows written before the reload;
  *   RT — a seal outage after committed appends reports honest-partial, and the
  *        review card's own Save performs the reachable idempotent retry: zero
- *        duplicate rows, the seal lands, the closeout verifies.
+ *        duplicate rows, the seal lands, the closeout verifies;
+ *   NL — F-SB1: a planned session whose accept checkpoint was LOST. The seal
+ *        succeeds with nothing to seal, so the server's verdict is still negative
+ *        but no retry can ever clear it: the save completes, the negative verdict
+ *        is reported, and no unreachable "Retry ledger seal" is offered.
  *
  * Artifacts: numbered screenshots + transcript.json + TRANSCRIPT.md under
  * ATLAS_GATE_ARTIFACT_DIR (default test-results/f10d-closeout/<project>).
@@ -86,6 +90,7 @@ async function bootSandbox() {
     stop: () => child.kill('SIGTERM'),
     state: async () => (await fetch(`http://127.0.0.1:${ports.state}/state`)).json(),
     armSealFailure: async () => (await fetch(`http://127.0.0.1:${ports.state}/fail-next-seal`)).json(),
+    loseCheckpointRows: async () => (await fetch(`http://127.0.0.1:${ports.state}/lose-plan-set-rows`)).json(),
   };
 }
 
@@ -377,6 +382,66 @@ test('F10D-RT: a seal outage reports honest-partial; the review card retries ide
     expect(st.updates.filter(u => !u.failed)).toHaveLength(1);
     record('F10D-RT', `retry healed the closeout idempotently: still 1 Log row, 1 Effort row, 1 finalized event; ledger sealed under ${ids[0]}`);
     await snap(page, 'RT-02-retry-sealed-verified.png');
+  } finally { srv.stop(); }
+});
+
+// =================================================================================
+// F-SB1 — the defect the owner hit on Stage B workout 1 (2026-08-01). His 20 sets were
+// written and his closeout event recorded, but the plan ledger held no rows for the
+// session, so `closeout_fully_verified` came back false. The client read that as a
+// failed seal, told him his workout might be unverified, and offered "Retry ledger
+// seal" — a button that re-reads the same absent rows and can never clear. He reported
+// the session as "it didn't save the workout". It had.
+//
+// This is a DIFFERENT failure from RT above: there the seal call broke and a retry
+// genuinely heals it. Here the seal call SUCCEEDS (`sealed_ok:true`, `no_ledger:true`)
+// and there is nothing a retry could do. The harness reaches it by losing the accept
+// checkpoint's rows — the append reports success, the rows never land.
+test('F10D-NL: a lost accept checkpoint reports the negative verdict honestly and offers NO unreachable retry', async ({ page }) => {
+  test.setTimeout(150000);
+  const srv = await bootSandbox();
+  try {
+    await openApp(page, srv.base);
+    await srv.loseCheckpointRows();
+    await acceptPlan(page, [
+      { exercise: 'Romanian Deadlift', lift_code: 'RDL01', target_weight: 245, target_reps: 6, target_sets: 1, target_rir: 3 }
+    ]);
+    // The checkpoint ran and believed it succeeded; its rows are simply gone.
+    await expect.poll(async () => (await srv.state()).appends
+      .filter(a => a.tabName === 'Session_Plan_Sets').length, { timeout: 15000 }).toBe(1);
+    const armed = await srv.state();
+    expect(armed.plan_set_rows_lost).toBe(true);
+    expect(armed.plan_set_rows).toHaveLength(0);
+    record('F10D-NL', 'plan accepted (RDL 1×245×6@3); the accept checkpoint appended and reported success, but 0 ledger rows materialized — a lost checkpoint');
+
+    await logSet(page, 'Romanian Deadlift 245 x 6 @3');
+    await expectLoggedCount(page, 1);
+    await fillEffort(page);
+    await compileCloseout(page);
+    await page.locator('.review:not(.done) .rv-save').click();
+
+    // The save COMPLETES. The sets are committed and no second call could bind rows
+    // that were never written, so holding the session open would only cost the owner
+    // his next workout to a duplicate-session collision.
+    await expect(page.locator('.review.done')).toBeVisible({ timeout: 25000 });
+    const st = await srv.state();
+    expect(rowsFor(st, 'Log_Cleaned')).toHaveLength(1);
+    expect(rowsFor(st, 'Effort')).toHaveLength(1);
+    expect(finalizedEvents(st)).toHaveLength(1);
+    expect(st.plan_set_rows).toHaveLength(0);        // still nothing to seal
+    expect(st.updates).toHaveLength(0);              // a working seal stamped nothing
+
+    // The negative verdict is REPORTED — never silently upgraded to a clean success.
+    await expect(page.locator('#logger-status')).toContainText('Plan tracking incomplete');
+    await expect(page.locator('#logger-status')).toContainText('there is nothing to retry');
+    // …and the unreachable retry is NOT offered.
+    const approve = page.locator('#approve-btn');
+    await expect(approve).not.toHaveText('Retry ledger seal');
+    await expect(approve).toHaveText('Written ✓');
+    // The session really ended: the buffer is clear, so the next set starts a new one.
+    expect(await page.evaluate(() => window.getSessionLog().length)).toBe(0);
+    await snap(page, 'NL-01-no-ledger-reported-no-retry.png');
+    record('F10D-NL', 'lost checkpoint: 1 Log row + 1 Effort row committed, 1 finalized event, 0 ledger rows, 0 seal stamps; the incomplete-plan-tracking verdict is shown under a completed save, no retry offered, session torn down');
   } finally { srv.stop(); }
 });
 

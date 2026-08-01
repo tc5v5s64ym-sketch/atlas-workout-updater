@@ -195,6 +195,8 @@ const state = {
   updateCalls: [],   // every updateColumnCells call (the seal stamp primitive)
   planSetRows: [],   // sandbox: the materialized Session_Plan_Sets tab (appends + seal stamps)
   failNextSeal: false, // sandbox: armed via the state server; the next seal attempt throws once
+  losePlanSetRows: false, // sandbox: armed via the state server; Session_Plan_Sets appends report
+                          // success but never materialize — a LOST accept checkpoint
   visionCalls: [],   // every stubbed vision parse (the F10D screenshot scenario's evidence)
   refusals: []       // sandbox-live: every guard refusal (always a canary FAILURE, never a pass)
 };
@@ -210,7 +212,13 @@ const fakeSheets = {
     state.appendCalls.push({ at: new Date().toISOString(), tabName, rows: rows.map(r => [...r]) });
     // Sandbox: Session_Plan_Sets appends MATERIALIZE, so the closeout seal can
     // stamp the very rows the accept checkpoint durably wrote (amendment A2).
-    if (tabName === 'Session_Plan_Sets') for (const r of rows) state.planSetRows.push([...r]);
+    // Unless the LOST-CHECKPOINT knob is armed: the append is still recorded and still
+    // reports success to its caller, but the rows never land — so the closeout seal
+    // later reads an empty ledger for a session that DID declare planned items. That
+    // is the exact state the owner hit on Stage B workout 1 (F-SB1).
+    if (tabName === 'Session_Plan_Sets' && !state.losePlanSetRows) {
+      for (const r of rows) state.planSetRows.push([...r]);
+    }
     return { data: { updates: { updatedRange: `${tabName}!A100:L${99 + rows.length}`, updatedRows: rows.length } } };
   },
   readRange: async range => {
@@ -397,6 +405,16 @@ const stateServer = http.createServer((req, res) => {
     res.end(JSON.stringify({ armed: true }));
     return;
   }
+  // Harness control: lose every Session_Plan_Sets append from here on. The accept
+  // checkpoint still succeeds from the app's point of view; the rows simply are not
+  // there at closeout. This is the ONLY way to reach `no_ledger` with the write flag
+  // on, and it is a distinct failure from /fail-next-seal — that one breaks the seal
+  // call, this one leaves nothing for a working seal to bind.
+  if (String(req.url || '').startsWith('/lose-plan-set-rows')) {
+    state.losePlanSetRows = true;
+    res.end(JSON.stringify({ armed: true }));
+    return;
+  }
   // Harness control (scripted-coach posture only): arm the exact prose the stubbed model
   // will return on the next chat turn, so a spec can feed the real route a known
   // fabrication. Refused unless the posture is explicitly enabled.
@@ -422,6 +440,7 @@ const stateServer = http.createServer((req, res) => {
     ensure_tab_calls: state.ensureTabCalls,
     updates: state.updateCalls,
     plan_set_rows: state.planSetRows,
+    plan_set_rows_lost: state.losePlanSetRows,
     vision_calls: state.visionCalls,
     ledger_sandbox: LEDGER_SANDBOX,
     // The harness's posture claim, read from the live environment at request time so

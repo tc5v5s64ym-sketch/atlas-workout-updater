@@ -135,14 +135,52 @@ test('F10D wiring: an unverified closeout keeps the retry REACHABLE and is never
   // Codex P2 (PR #1069): the staged write stays ALIVE — fresh write_id (a reused
   // id would replay the recorded failure), effort row dropped (never a duplicate-
   // session 409), Save re-enabled — and the early return SKIPS the teardown.
-  const retryBlock = appSrc.slice(appSrc.indexOf('if (closeoutSealUnverified) {'), appSrc.indexOf('if (closeoutSealUnverified) {') + 900);
+  const retryAnchor = "if (closeoutSealUnverified === 'retry') {";
+  const retryBlock = appSrc.slice(appSrc.indexOf(retryAnchor), appSrc.indexOf(retryAnchor) + 900);
   assert.match(retryBlock, /pendingWrite\.payload\.write_id = generateWriteId\(\)/, 'the retry mints a fresh write_id');
   assert.match(retryBlock, /delete pendingWrite\.payload\.effort_row/, 'the already-written effort row never rides the retry');
   assert.match(retryBlock, /approveBtn\.disabled = false/, 'Save is re-enabled for the retry');
   assert.match(retryBlock, /return;/, 'the unverified path returns BEFORE the preview teardown');
-  const retryIdx = appSrc.indexOf('if (closeoutSealUnverified) {');
+  const retryIdx = appSrc.indexOf(retryAnchor);
   const teardownIdx = appSrc.indexOf('invalidatePreview();\n    setHistoryLoaded(false);');
   assert.ok(retryIdx > -1 && teardownIdx > -1 && retryIdx < teardownIdx, 'the retry staging precedes the teardown');
+});
+
+// F-SB1 (Stage B workout 1, 2026-08-01). `closeout_fully_verified:false` is not one
+// outcome. A seal that SUCCEEDED with nothing to seal can never be cleared by tapping
+// Save again, so it must not be offered as a retry — but it is still a negative verdict
+// and must still be reported.
+test('F-SB1 wiring: a no-ledger closeout is reported, is NOT offered a retry, and still tears the session down', () => {
+  // The split is driven by the server's own envelope, and mirrors closeoutVerification():
+  // a failed Session_Plans event independently disqualifies, so it cannot ride in behind
+  // a clean seal and be silenced.
+  const pred = appSrc.slice(appSrc.indexOf('function closeoutSealIsRetryable'),
+    appSrc.indexOf('const CLOSEOUT_RETRY_MSG'));
+  assert.match(pred, /seal\.no_ledger === true && seal\.sealed_ok === true && eventOk/,
+    'only a SUCCEEDED seal with nothing to seal is non-retryable');
+  assert.match(pred, /ev\.captured === true \|\| ev\.status === 'disabled' \|\| ev\.status === 'no_plan'/,
+    'a failed closeout event stays retryable — it never rides in behind the seal envelope');
+  assert.match(appSrc, /closeoutSealUnverified = closeoutSealIsRetryable\(writeData\) \? 'retry' : 'no_ledger'/,
+    'the verdict is classified, never discarded');
+
+  // The no-ledger case takes NO early return: the sets are committed and no second call
+  // can bind rows that were never written, so holding the session open would only cost the
+  // owner his next workout to a duplicate-session collision.
+  const retryAnchor = "if (closeoutSealUnverified === 'retry') {";
+  const retryBlock = appSrc.slice(appSrc.indexOf(retryAnchor), appSrc.indexOf(retryAnchor) + 900);
+  assert.doesNotMatch(retryBlock, /no_ledger/, 'the no-ledger case never enters the retry staging block');
+
+  // …but it is reported, as a persistent note under the completed save.
+  assert.match(appSrc, /Plan tracking incomplete — this session had no plan-ledger rows to seal\. Your sets are saved; there is nothing to retry\./,
+    'the non-retryable partial copy exists');
+  const noticeIdx = appSrc.indexOf("if (closeoutSealUnverified === 'no_ledger')");
+  const teardownIdx = appSrc.indexOf('invalidatePreview();\n    setHistoryLoaded(false);');
+  assert.ok(noticeIdx > teardownIdx, 'the notice is appended AFTER the teardown, not instead of it');
+  assert.match(appSrc.slice(noticeIdx, noticeIdx + 200), /appendNoLedgerNotice\(loggerStatus\)/,
+    'the notice is appended to the status area rather than replacing the success message');
+  assert.match(appSrc.slice(appSrc.indexOf('function appendNoLedgerNotice'), noticeIdx),
+    /statusEl\.appendChild\(el\('div', \{ class: 'parser-status', text: CLOSEOUT_NO_LEDGER_MSG \}\)\)/,
+    'the notice really renders the non-retryable copy');
 });
 
 // ── buildCloseoutConfirm — behavioral render (fake DOM) ─────────────────────────
