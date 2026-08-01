@@ -336,23 +336,35 @@ test('Stage-A canary: one complete synthetic workout through the real browser to
     exercise: e.exercise || e.canonical_exercise, weight: e.weight, reps: e.reps, rir: e.rir,
   })));
   observations.ui.preview_names_all_exercises = observations.ui.exercises_logged.every(x => previewText.includes(x));
-  observations.ui.preview_proof_present = await page.evaluate(() =>
-    document.getElementById('approve-btn') !== null && document.getElementById('approve-btn').disabled === false);
+  // The review card's Save is the visible approval control, and it appears only once the
+  // preview proof exists — so its presence IS the preview-proof gate, not a separate claim.
+  // `#approve-btn.disabled` is read (never clicked) as the second half of the same evidence.
+  const saveControl = page.locator('.review:not(.done) .rv-save');
+  await expect(saveControl).toBeVisible({ timeout: 40000 });
+  observations.ui.preview_proof_present = await page.evaluate(() => {
+    const b = document.getElementById('approve-btn');
+    return b !== null && b.disabled === false;
+  });
   await snap(page, '05-preview-before-write.png');
-  note('preview', `closeout confirmation rendered with ${observations.ui.preview_sets.length} sets; approve enabled ${observations.ui.preview_proof_present}`);
+  note('preview', `closeout confirmation rendered with ${observations.ui.preview_sets.length} sets; review Save visible; approve-btn enabled ${observations.ui.preview_proof_present}`);
 
   // ── 9. The real approval control ─────────────────────────────────────────────
-  await page.locator('#approve-btn').click();
+  //
+  // The athlete taps the review card's "Save workout" (`coach-conversation.js`), which is the
+  // ONLY visible approval control. `#approve-btn` is the underlying gated write trigger — it
+  // is never visible, so clicking it directly is not a gesture a user could perform, and the
+  // previous attempt to do so could never succeed. The existing F10D closeout specs use this
+  // same `.rv-save` gesture, so the canary follows the established gate authority.
+  await saveControl.click();
   observations.ui.approval_clicked = true;
-  observations.ui.approval_control = '#approve-btn';
+  observations.ui.approval_control = '.review:not(.done) .rv-save';
+  observations.ui.write_trigger = '#approve-btn';
   observations.ui.direct_write_route_used = false; // nothing in this spec calls a write route
-  await expect.poll(async () => (await serverState()).appends.length, { timeout: 60000 }).toBeGreaterThan(0);
-  await expect.poll(async () => page.evaluate(() => {
-    const b = document.getElementById('approve-btn');
-    return b ? b.textContent : '';
-  }), { timeout: 60000 }).toMatch(/Written|Retry|Saved/i);
+  await expect.poll(async () => (await serverState()).appends.length, { timeout: 90000 }).toBeGreaterThan(0);
+  // `.review.done` is the client's own post-write state, so it is read rather than inferred.
+  await expect(page.locator('.review.done')).toBeVisible({ timeout: 90000 });
   await snap(page, '06-after-approval.png');
-  note('approve', 'real #approve-btn clicked; server reported appends');
+  note('approve', 'real review-card Save clicked (routes to #approve-btn); server reported appends; review card marked done');
 
   // ── 10. The durable sandbox write ───────────────────────────────────────────
   await expect.poll(async () => (await durableRows(SESSION_ID)).log_rows.length, { timeout: 60000 })
@@ -388,22 +400,25 @@ test('Stage-A canary: one complete synthetic workout through the real browser to
   note('durable', `${after.log_rows.length} Log_Cleaned rows and ${after.effort_rows.length} Effort rows for ${SESSION_ID}`);
 
   // ── 11-13. Complete the workout, exercise closeout/seal, verify sealed state ─
-  const sealedLabel = await page.evaluate(() => {
-    const b = document.getElementById('approve-btn');
-    return b ? b.textContent.trim() : '';
-  });
+  // The sealed state is the client's own rendering: the review card is `.done` and carries its
+  // saved confirmation. A card still offering Save means the closeout did NOT seal.
+  const sealedLabel = await page.locator('.review.done .rv-saved-txt').innerText().catch(() => '');
+  const stillOfferingSave = await page.locator('.review:not(.done) .rv-save').count();
   observations.ui.closeout_approved = true;
-  observations.ui.sealed_state_label = sealedLabel;
-  // A sealed state is the write having completed AND the approval control no longer
-  // offering another write — a retry label means the closeout did NOT seal.
-  observations.ui.sealed_state_valid = /Written/i.test(sealedLabel)
-    && (await page.evaluate(() => document.getElementById('approve-btn').disabled)) === true;
+  observations.ui.sealed_state_label = sealedLabel.trim();
+  observations.ui.sealed_state_valid = sealedLabel.trim().length > 0 && stillOfferingSave === 0;
   await snap(page, '07-sealed.png');
-  note('seal', `sealed state label "${sealedLabel}"; valid ${observations.ui.sealed_state_valid}`);
+  note('seal', `sealed state "${sealedLabel.trim()}"; unsaved review cards remaining ${stillOfferingSave}`);
 
-  // At-most-once: a second approval gesture must add no durable row.
+  // At-most-once: re-triggering the underlying write control must add no durable row. This
+  // deliberately pokes `#approve-btn` — the gated trigger itself — rather than the Save button,
+  // because the visible Save is gone once the card is done, and the property under test is that
+  // the WRITE TRIGGER cannot fire twice for one approved action.
   observations.ui.second_approval_attempted = true;
-  await page.evaluate(() => document.getElementById('approve-btn').click());
+  await page.evaluate(() => {
+    const b = document.getElementById('approve-btn');
+    if (b) b.click();
+  });
   await page.waitForTimeout(2500);
   const afterRetry = await durableRows(SESSION_ID);
   observations.durable.rows_added_by_second_approval =

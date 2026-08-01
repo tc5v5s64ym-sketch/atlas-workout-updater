@@ -75,10 +75,11 @@ function goodObservations() {
       durable_rows_before_approval: 0, appends_before_approval: 0,
       preview_rendered: true, preview_proof_present: true,
       preview_sets: SETS.map(s => ({ exercise: s.exercise, weight: s.weight, reps: s.reps, rir: s.rir })),
-      approval_clicked: true, approval_control: '#approve-btn', direct_write_route_used: false,
+      approval_clicked: true, approval_control: '.review:not(.done) .rv-save',
+      write_trigger: '#approve-btn', direct_write_route_used: false,
       second_approval_attempted: true,
       closeout_rendered: true, closeout_approved: true,
-      sealed_state_valid: true, sealed_state_label: 'Written ✓',
+      sealed_state_valid: true, sealed_state_label: '✓ Saved to your sheet',
     },
     durable: {
       log_rows: SETS.map(logRow),
@@ -260,6 +261,12 @@ test('10. a run in which browser approval was never clicked is refused', () => {
 test('11. using a direct write route instead of UI approval is refused', () => {
   assertBites('direct route', 'browser_approval', 'FAIL', o => { o.ui.direct_write_route_used = true; });
   assertBites('wrong control', 'browser_approval', 'FAIL', o => { o.ui.approval_control = 'fetch(/api/log-workout)'; });
+  // The first canary attempt clicked the never-visible #approve-btn directly. A run may not
+  // record that as the browser gesture, because no athlete could have performed it.
+  assertBites('clicked the invisible trigger as the gesture', 'browser_approval', 'FAIL', o => {
+    o.ui.approval_control = '#approve-btn';
+  });
+  assertBites('no write trigger recorded', 'browser_approval', 'FAIL', o => { delete o.ui.write_trigger; });
 });
 
 test('12. a write occurring before approval is refused', () => {

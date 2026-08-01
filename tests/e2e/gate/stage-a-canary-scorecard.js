@@ -309,14 +309,21 @@ const CONDITIONS = Object.freeze([
       const u = obs.ui;
       if (!u) return missing('UI observations');
       if (u.approval_clicked !== true) return fail('the approval control was never clicked');
-      if (str(u.approval_control) !== '#approve-btn') {
-        return fail(`the write was triggered by "${str(u.approval_control) || 'an unrecorded control'}" rather than the real approval control`);
+      // Two distinct facts, both required. The VISIBLE control the athlete taps is the review
+      // card's Save; `#approve-btn` is the gated write trigger it routes to and is never itself
+      // visible. Recording only the trigger would let a run claim a browser approval it could
+      // not have performed — which is exactly how the first canary attempt failed.
+      if (str(u.approval_control) !== '.review:not(.done) .rv-save') {
+        return fail(`the approval gesture was "${str(u.approval_control) || 'an unrecorded control'}" rather than the review card's Save — the only visible approval control`);
+      }
+      if (str(u.write_trigger) !== '#approve-btn') {
+        return fail(`the write was triggered by "${str(u.write_trigger) || 'an unrecorded trigger'}" rather than the single gated write trigger`);
       }
       if (u.direct_write_route_used === true) {
         return fail('a write route was called directly instead of going through browser approval');
       }
       if (u.direct_write_route_used !== false) return missing('a determination that no direct write route was used');
-      return pass('the write was triggered by a real #approve-btn click in the browser');
+      return pass('the write was triggered by a real review-card Save click, routed through the gated #approve-btn');
     },
   },
   {
