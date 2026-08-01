@@ -533,6 +533,42 @@ test('REGRESSION: durable rows are matched on the contract FIELD name, never the
   });
 });
 
+test('REGRESSION: an eligible turn is judged by its OWN responses, not the whole session', () => {
+  // A real model-up run observed six coach responses across the session: an /api/coach/ask
+  // log-only pre-check (training_sme), the eligible /api/coach/chat answer (gemini), and four
+  // set-logging /api/coach/message turns. Judging the eligible turn by all six called a
+  // correct run ambiguous. Scoping must not become leniency, so both directions are pinned.
+  const up = o => {
+    o.run.mode = 'model-up';
+    o.server.model_posture = 'model-up';
+    o.server.provider_key_present = true;
+    o.server.provider_reachable = true;
+    o.server.coach_model = 'gemini-2.5-flash-lite';
+  };
+  // The eligible turn answered by the live model passes, even though other turns did not.
+  const good = goodObservations();
+  up(good);
+  good.ui.grounded_question.provider_called = true;
+  good.ui.grounded_question.source = 'live_model';
+  good.ui.grounded_question.source_ambiguous = false;
+  assert.strictEqual(statusOf(scoreCanary(good), 'model_source_marker'), 'PASS');
+
+  // But an eligible turn that produced NO live-provider response still fails — scoping did
+  // not make "any gemini anywhere" sufficient.
+  assertBites('eligible turn never reached the provider', 'model_source_marker', 'FAIL', o => {
+    up(o);
+    o.ui.grounded_question.provider_called = false;
+    o.ui.grounded_question.source = 'training_sme';
+  });
+  // And a live-provider claim that cannot name the model is ambiguous, not a pass.
+  assertBites('gemini with no model named', 'model_source_marker', 'ERROR', o => {
+    up(o);
+    o.ui.grounded_question.provider_called = true;
+    o.ui.grounded_question.source = 'live_model';
+    o.ui.grounded_question.source_ambiguous = true;
+  });
+});
+
 test('REGRESSION: model-up proof requires source "gemini", not a route name or the SME path', () => {
   const upgrade = o => {
     o.run.mode = 'model-up';

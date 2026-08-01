@@ -293,6 +293,11 @@ test('Stage-A canary: one complete synthetic workout through the real browser to
     } catch { /* non-JSON or already consumed — recorded as absent, never guessed */ }
   });
 
+  // Everything the ELIGIBLE turn produces is bracketed. A whole session issues many coach
+  // calls, and judging the provider from all of them together is a category error: a
+  // set-logging turn legitimately answers deterministically while the conversational question
+  // is answered by the model. Aggregating them made a correct model-up run look ambiguous.
+  const beforeQuestion = coachResponses.length;
   const threadBefore = await page.locator('#thread-messages').innerText();
   await say(page, 'what is left in this session?');
   await expect.poll(async () => (await page.locator('#thread-messages').innerText()).length,
@@ -306,8 +311,9 @@ test('Stage-A canary: one complete synthetic workout through the real browser to
     reply_text: reply,
     grounded_in_session: /squat|bench|remaining|left/i.test(reply),
   };
+  const eligibleTurnResponses = coachResponses.slice(beforeQuestion);
   await snap(page, '03-grounded-question.png');
-  note('question', `asked a session-state question; reply length ${reply.length}`);
+  note('question', `asked a session-state question; reply length ${reply.length}; eligible-turn coach responses ${eligibleTurnResponses.length} (${eligibleTurnResponses.map(r => `${r.url}:${r.source || 'none'}`).join(', ')})`);
 
   // ── 5. Enter the workout through the real composer ───────────────────────────
   let logged = 0;
@@ -456,27 +462,28 @@ test('Stage-A canary: one complete synthetic workout through the real browser to
   observations.write_proof.records = parseMarker('[turn-write-proof]');
   note('artifacts', `${observations.trace.records.length} interaction-trace records, ${observations.write_proof.records.length} turn-write-proof records`);
 
-  // Model source marker, read from the eligible coach turn's OWN RESPONSE. A positive
+  // Model source marker, read from the ELIGIBLE turn's own responses. A positive
   // `source: 'gemini'` is the only thing treated as live-provider proof; a settled reply,
   // the absence of outage wording, and `configured: true` are each explicitly not proof.
+  //
+  // Scoping to the eligible turn is what makes this check meaningful rather than lenient: a
+  // turn that produces NO gemini response still fails, and `training_sme` — the /api/coach/ask
+  // log-only pre-check, which is not athlete-facing — is never proof on its own. What scoping
+  // removes is only the false ambiguity of judging one turn by other turns' routes.
   const finalState = await serverState();
   observations.provenance.coach_responses = coachResponses;
-  const observedSources = [...new Set(coachResponses.map(r => r.source).filter(Boolean))];
-  const gemini = coachResponses.filter(r => r.source === 'gemini');
+  observations.provenance.eligible_turn_responses = eligibleTurnResponses;
+  const gemini = eligibleTurnResponses.filter(r => r.source === 'gemini');
+  const eligibleSources = [...new Set(eligibleTurnResponses.map(r => r.source).filter(Boolean))];
   observations.ui.grounded_question.provider_called = gemini.length > 0;
   observations.ui.grounded_question.source = gemini.length > 0
     ? 'live_model'
-    : (observedSources[0] || '');
-  // Ambiguity is a real observation, not an inference: in a model-up run the eligible turn
-  // must show one unmistakable provider verdict. A mix of gemini and non-gemini sources means
-  // some eligible turn fell back, which the scorecard must see rather than have averaged away.
+    : (eligibleSources[0] || '');
+  // A model-up run must be able to name the model that answered, on the same response that
+  // claimed the provider. A gemini source with no model name is genuinely ambiguous.
   observations.ui.grounded_question.source_ambiguous = MODE === 'model-up'
-    && observedSources.length > 1
-    && gemini.length > 0;
-  // Model-up additionally requires the answering model to be named on the same response.
-  if (MODE === 'model-up' && gemini.length > 0 && !gemini.some(r => r.model)) {
-    observations.ui.grounded_question.source_ambiguous = true;
-  }
+    && gemini.length > 0
+    && !gemini.some(r => r.model);
 
   // ── server + environment observations ───────────────────────────────────────
   observations.server = finalState;
