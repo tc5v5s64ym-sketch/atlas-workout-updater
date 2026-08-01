@@ -290,6 +290,23 @@ const _exports = (function () {
     m = t.match(/^(?:swap|switch|sub(?:stitute)?|replace|change)(?:\s+out)?\s+(.+?)(?:\s+out)?\s+(?:for|with|to|into|->|→)\s+(.+)$/);
     if (m) return replace(m[1], m[2]);
 
+    // F-SB1-C (Stage B workout 1, 2026-08-01). An explicit request for an UNNAMED
+    // substitute for a NAMED lift: "I'm looking for a substitute for bench press",
+    // "give me an alternative to squats", "suggest a replacement for RDLs". The athlete
+    // named what to swap and asked the ENGINE to pick, which is exactly an IMPLICIT
+    // substitution — so it reaches `tryApplyImplicitSubstitution`, which sends
+    // `intent:'substitute'` and gets a deterministic recommendation. Without this lane the
+    // turn falls to `checkAndSuggestSubstitute`, which sends NO intent, so the route's
+    // constraint gate ("busy"/"taken") refuses it and the athlete gets generic coach prose
+    // instead of a swap (Codex P1, PR #1238).
+    //
+    // Anchored on the substitute NOUN, so it never touches the verb forms below: "swap for
+    // dips" / "sub in leg curls" keep naming a DESTINATION. English agrees — "a substitute
+    // FOR bench press" is the thing bench press is replaced BY, so the named lift is the
+    // target, never the replacement.
+    m = t.match(/\b(?:substitutes?|substitution|alternatives?|replacements?)\s+(?:for|to)\s+(.+)$/);
+    if (m) { const sub = implicitSubstitute(m[1]); if (sub) return sub; }
+
     // Destination-only: "swap/switch/sub/replace/change to|for|in|with Y" — no source
     // named, so Y goes INTO the current/next slot (positional). Distinct from the pattern
     // above, which needs a source before the preposition.
