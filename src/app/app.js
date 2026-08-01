@@ -3494,6 +3494,14 @@ function looksLikeSessionRequest(text) {
   // with back squats", "build me a pull workout") must reach the AUTHORITATIVE recommendation
   // pipeline here, not the free-form /api/coach/chat pseudo-plan lane (2026-07-22 failure).
   if (sessionQuestion.isWorkoutGenerationRequest(t)) return true;
+  // F-SB1-C (Stage B workout 1, 2026-08-01): a request for a SUBSTITUTE is about one lift,
+  // never a request to generate today's session. "Bench press is taken at the moment, suggest
+  // a substitute workout out with reps and weights" matched the generic
+  // `(suggest|recommend) a <word> workout` shape below — its optional adjective slot took
+  // "substitute" — so the owner asking for a bench alternative had today's plan read back at
+  // him. Placed AFTER the generation classifier, which stays authoritative for an explicit
+  // "plan/build me a workout"; this only stops the loose phrase match from claiming a swap.
+  if (/\b(?:substitute|substitution|alternative|replacement|instead of)\b/.test(t)) return false;
   return /\b(recommended (workout|session)|what should i train|what (should|do) (i|we) do today|what are we doing|today'?s plan|what'?s the plan|what (workout|session) (would|do|should|can) you (suggest|recommend)|(suggest|recommend) (a |an |me |today'?s )?(\w+ )?(workout|session)|do (my|the|your) (workout|session)|let'?s (do|start|run) (it|this|the workout|my workout|the session|your recommended workout))\b/.test(t);
 }
 

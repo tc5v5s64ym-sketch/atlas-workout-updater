@@ -103,6 +103,40 @@ test('looksLikeSessionRequest still leaves education / dispute / modification / 
   }
 });
 
+// --- F-SB1-C: a substitute request is about ONE lift, not a whole session -------------
+// Stage B workout 1 (2026-08-01), owner session FR-20260801152350-nngk9o6f. The owner
+// typed "Bench press is taken at the moment, suggest a substitute workout out with reps
+// and weights." The composer gate's loose phrase match — `(suggest|recommend) a <word>
+// workout`, whose optional adjective slot took "substitute" — claimed it as a generation
+// request, so he got today's plan read back at him ("Today, let's make it core.") and no
+// substitute was ever offered. The turn never reached /api/suggest-substitute.
+test('F-SB1-C: a substitute request never routes to the session-generation pick lane', () => {
+  for (const q of [
+    'Bench press is taken at the moment, suggest a substitute workout out with reps and weights.',
+    'suggest a substitute workout',
+    'recommend a substitute workout',
+    'bench is taken, recommend an alternative workout',
+    'suggest a replacement workout',
+    'recommend a workout instead of bench',
+  ]) {
+    assert.equal(looksLikeSessionRequest(q), false,
+      `a swap request must stay off the pick lane: ${JSON.stringify(q)}`);
+  }
+});
+
+// The guard is narrow: an EXPLICIT generation request still wins, because the generation
+// classifier runs first and stays authoritative.
+test('F-SB1-C: the guard does not cost the generation lane its own phrases', () => {
+  for (const g of [
+    'Plan me a workout.',
+    'Build me a pull workout.',
+    'suggest a push workout',
+    'recommend a session',
+  ]) {
+    assert.equal(looksLikeSessionRequest(g), true, `still generation: ${JSON.stringify(g)}`);
+  }
+});
+
 // --- The extracted constraints become authoritative-pipeline query params ------------
 
 test('buildIntentRecommendationQuery encodes the requested first exercise and focus', () => {
