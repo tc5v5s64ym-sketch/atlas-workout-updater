@@ -548,13 +548,15 @@ test('Stage-A canary: one complete synthetic workout through the real browser to
   observations.provenance.eligible_turn_responses = eligibleTurnResponses;
   const gemini = eligibleTurnResponses.filter(r => r.source === 'gemini');
   const eligibleSources = [...new Set(eligibleTurnResponses.map(r => r.source).filter(Boolean))];
-  observations.ui.grounded_question.provider_called = gemini.length > 0;
-  observations.ui.grounded_question.source = gemini.length > 0
+  // These belong to the OPEN turn (ui.model_turn), which is what the scorecard's
+  // model_source_marker reads — not the grounded turn, which the engine always answers.
+  observations.ui.model_turn.provider_called = gemini.length > 0;
+  observations.ui.model_turn.source = gemini.length > 0
     ? 'live_model'
     : (eligibleSources[0] || '');
   // A model-up run must be able to name the model that answered, on the same response that
   // claimed the provider. A gemini source with no model name is genuinely ambiguous.
-  observations.ui.grounded_question.source_ambiguous = MODE === 'model-up'
+  observations.ui.model_turn.source_ambiguous = MODE === 'model-up'
     && gemini.length > 0
     && !gemini.some(r => r.model);
 
