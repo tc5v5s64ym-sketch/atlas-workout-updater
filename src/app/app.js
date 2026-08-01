@@ -8197,6 +8197,36 @@ window.atlasCurrentWriteIdentity = () => (lastWrite && lastWrite.log_appended_ra
   ? { log_appended_range: lastWrite.log_appended_range, session_id: lastWrite.session_id }
   : null;
 
+// F-SB1 (Stage B workout 1, 2026-08-01). `closeout_fully_verified:false` covers three
+// different situations, and only some are RETRYABLE. When a planned session simply had no
+// ledger rows to bind, the seal itself SUCCEEDED with nothing to seal (`sealed_ok:true`,
+// `no_ledger:true`, `reason:'no_rows'`); re-running it re-reads the same absent rows and
+// returns the same verdict forever, so "Retry ledger seal" is a button that can never clear.
+//
+// The verdict is still NEGATIVE and is still reported — no ledger rows for a planned session
+// can mean the acceptance checkpoint was lost, which is exactly what this defect surfaced.
+// It is reported as a persistent note under the completed save, because the SETS are safe and
+// the session really is finished: there is no second call that could bind rows that were never
+// written. Holding the session open for an unreachable retry loses the owner's next workout to
+// a duplicate-session collision, which is a worse failure than the one being reported.
+//
+// Mirrors the server's own `closeoutVerification()` (index.js): a failed Session_Plans
+// closeout event is independently disqualifying, so it is checked here too — otherwise a
+// concurrent event failure would ride in behind the seal envelope and be silenced.
+function closeoutSealIsRetryable(writeData) {
+  const seal = writeData && writeData.ledger_seal;
+  const ev = writeData && writeData.session_plans_closeout;
+  const eventOk = !ev || ev.captured === true || ev.status === 'disabled' || ev.status === 'no_plan';
+  return !(Boolean(seal) && seal.no_ledger === true && seal.sealed_ok === true && eventOk);
+}
+const CLOSEOUT_RETRY_MSG = 'Workout written to Google Sheets ✓ — but the plan-ledger record could not be verified. Your sets are safe; tap Save again to re-verify (no rows will duplicate).';
+const CLOSEOUT_NO_LEDGER_MSG = 'Plan tracking incomplete — this session had no plan-ledger rows to seal. Your sets are saved; there is nothing to retry.';
+// Appended UNDER the completed save's own message, the same way the readback verdict is
+// — the save really did succeed, and this names the one thing that did not.
+function appendNoLedgerNotice(statusEl) {
+  statusEl.appendChild(el('div', { class: 'parser-status', text: CLOSEOUT_NO_LEDGER_MSG }));
+}
+
 document.getElementById('approve-btn').addEventListener('click', async () => {
   if (writeInFlight) return;
   if (!pendingWriteHasPreviewProof(pendingWrite)) {
@@ -8313,7 +8343,7 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
       // is false when the ledger seal failed, a planned session had no ledger
       // rows to bind, or the closeout event could not be recorded.
       if (wasSessionCloseout && writeData.closeout_fully_verified === false) {
-        closeoutSealUnverified = true;
+        closeoutSealUnverified = closeoutSealIsRetryable(writeData) ? 'retry' : 'no_ledger';
       }
       // Capture undo details in a local — invalidatePreview() (called below) clears lastWrite.
       // On a blocked duplicate the original response is echoed back, so the
@@ -8338,7 +8368,7 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
     // already-written effort row (a retry must never 409 on the duplicate-session
     // guard), and re-enable Save. The retry lands in the server's all-duplicate
     // lane: zero re-appends, idempotent seal + closeout-event re-attempt.
-    if (closeoutSealUnverified) {
+    if (closeoutSealUnverified === 'retry') {
       lastWrite = pendingLastWrite;
       if (pendingWrite && pendingWrite.payload) {
         pendingWrite.payload.write_id = generateWriteId();
@@ -8346,11 +8376,7 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
       }
       approveBtn.disabled = false;
       approveBtn.textContent = 'Retry ledger seal';
-      setStatus(
-        loggerStatus,
-        'Workout written to Google Sheets ✓ — but the plan-ledger record could not be verified. Your sets are safe; tap Save again to re-verify (no rows will duplicate).',
-        'warn'
-      );
+      setStatus(loggerStatus, CLOSEOUT_RETRY_MSG, 'warn');
       return;
     }
     invalidatePreview();
@@ -8371,6 +8397,7 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
           : wasEffortOnly ? 'Effort written to Google Sheets. ✓' : 'Workout written to Google Sheets. ✓',
       'ok'
     );
+    if (closeoutSealUnverified === 'no_ledger') appendNoLedgerNotice(loggerStatus);
     // Always reflect the write that just happened. Screenshot / effort-only
     // writes produce no undoable log range (pendingLastWrite stays null), so
     // this clears any stale manual range — otherwise a correction after an
