@@ -32,11 +32,11 @@ playwright-report/
 # Live-retest harness screenshots (uploaded as CI artifacts, never committed)
 live-retest-artifacts/
 
-# Stage-A canary evidence (bounded, privacy-scanned; never committed)
+# Stage-A acceptance evidence — raw runs from the Phase 4 Stage-A streak (2026-08-01).
+# The machinery that produced these was removed under its recorded sunset once Stage A
+# reached 5/5, so nothing regenerates them — but the runs themselves are preserved locally
+# and must NEVER be committed. Screenshots and full logs stay out of the repository; what
+# enters it is the bounded, privacy-safe record per session under docs/verification/,
+# carrying SHA-256 hashes of these files rather than the files.
 canary-artifacts/
-
-# Stage-A SESSION evidence — count-eligible run artifacts, kept in their own directory so a
-# canary run can never overwrite or be mistaken for streak evidence. Bounded and
-# privacy-scanned, but still raw: screenshots and full logs are never committed. The bounded,
-# privacy-safe verification record under docs/verification/ is what enters the repository.
 stage-a-artifacts/

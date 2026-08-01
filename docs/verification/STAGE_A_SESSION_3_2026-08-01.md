@@ -49,9 +49,15 @@ The single `NOT_APPLICABLE` is the owner-authorized `Session_Plans` / `Session_P
 | Artifacts privacy-safe | PASS — 9 artifacts scanned, 0 violations, within bound |
 | Synthetic provenance | PASS — origin `playwright`, synthetic and evidence-ineligible; session id matches its declared purpose |
 
-## Note on run duration
+## Note on run duration — observation only
 
-This session took noticeably longer than sessions 1 and 2 (~1.2 min of runner time against ~34 s and ~1.4 min), spent in the post-approval durable readback. Three qualifying sessions hit the same sandbox workbook within minutes, so Sheets **read** quota throttled the verification reads. The runner backs those off deliberately and retries **reads only** — never a write — so the delay is an environment cost and not a product signal. It changed no verdict: the readback still found exactly the intended rows.
+This session took roughly **1.1 min** of runner time, against ~29 s for session 1. The extra time was spent in the post-approval durable readback.
+
+**The cause is not established.** An earlier version of this record stated that Sheets read-quota throttling explained it. That claim is withdrawn: the runner's read-retry path is silent — it matches `/quota/i` and backs off without logging the error, the attempt, or the fact that it retried — and this run's captured output contains no quota, `429`, `RESOURCE_EXHAUSTED`, or rate-limit indication. The claim was inference from a known code path plus a timing difference, not evidence.
+
+Read-quota throttling is one **unverified hypothesis**; an intermittent runner or product effect is not ruled out. The evidence that would settle it — a logged retry carrying the provider's own error — was not captured.
+
+What is established: the duration changed no verdict. Every scorecard condition passed and the readback found exactly the intended rows.
 
 ## Session-start boundary
 
