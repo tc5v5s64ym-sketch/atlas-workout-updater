@@ -177,7 +177,11 @@ test.afterAll(async () => {
 });
 
 test('Stage-A canary: one complete synthetic workout through the real browser to the sandbox Sheet', async ({ page }) => {
-  test.setTimeout(300000);
+  // The durable verifier reads the whole sandbox workbook (thousands of rows) on each of its
+  // four calls, on top of a full browser session. 300s was tight enough that a slow read could
+  // have timed the run out and produced no scorecard — an environment cost reported as a
+  // product failure. This is an operator-run canary, not CI, so the headroom is cheap.
+  test.setTimeout(900000);
 
   const observations = {
     run: { run_id: RUN_ID, mode: MODE, session_id: SESSION_ID, athlete_id: ATHLETE_ID,
@@ -194,9 +198,28 @@ test('Stage-A canary: one complete synthetic workout through the real browser to
   note('open', 'real built Atlas client loaded against the sandbox-live server');
 
   // ── 2. Confirm the synthetic identity and an isolated initial state ──────────
-  // The session id is typed into the REAL product control, so every row this run writes
-  // carries the unique synthetic id and can never collide with owner or prior-run data.
-  await page.locator('#log-session-id').fill(SESSION_ID);
+  // The session id goes into `#log-session-id`, the REAL product input the write path reads
+  // (`src/app/app.js`: `sessionInput?.value?.trim() || generateSessionId(date)`), so every row
+  // this run writes carries the unique synthetic id and can never collide with owner data or a
+  // prior canary run.
+  //
+  // It is set by value + `input` event rather than `locator.fill()` because its container
+  // (`#logger-details`) is `hidden` by design — "Session fields: hidden, auto-populated
+  // silently" — so a visibility-gated gesture can never reach it. This is the same seam the
+  // F10D closeout spec already uses for the sibling `#effort-*` inputs in the hidden
+  // `#effort-details` panel, so the canary follows the existing gate authority rather than
+  // inventing a second convention.
+  //
+  // This is NOT fixture-only DOM mutation: the field is a genuine product input whose value the
+  // write path reads, and nothing here asserts the app honored it. That is proven END TO END —
+  // the durable readback filters on this exact id, and `no_contamination` fails if any written
+  // row carries a different one. If the app ignored the value, the canary fails.
+  await page.evaluate(id => {
+    const el = document.getElementById('log-session-id');
+    el.value = id;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  }, SESSION_ID);
   const idApplied = await page.evaluate(() => document.getElementById('log-session-id').value);
   observations.ui.identity_confirmed = idApplied === SESSION_ID;
   observations.ui.initial_logged_sets = await page.evaluate(() => (window.getSessionLog ? window.getSessionLog().length : -1));
