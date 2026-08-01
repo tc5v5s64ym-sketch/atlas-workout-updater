@@ -67,8 +67,14 @@ function goodObservations() {
     ui: {
       identity_confirmed: true, initial_logged_sets: 0, durable_rows_before_run: 0,
       plan_established: true, plan_exercises: ['Back Squat', 'Bench Press'], plan_remaining_visible: true,
+      // Grounding is proven by the ENGINE-answered turn (deterministic lanes run before
+      // Gemini, so this grounds in both postures).
       grounded_question: {
-        asked: true, reply_text: 'Back Squat is next, 2 sets remaining.', grounded_in_session: true,
+        asked: true, reply_text: 'Bench Press today: 185 lbs.', grounded_in_session: true,
+      },
+      // Provider use is proven by the OPEN turn, which is a different turn.
+      model_turn: {
+        asked: true, reply_text: 'Keep going.',
         source: 'deterministic', provider_called: false, source_ambiguous: false,
       },
       logged_sets: 4, exercises_logged: ['Back Squat', 'Bench Press'],
@@ -149,8 +155,8 @@ test('a passing model-up run requires a positive live-provider marker, not the a
   obs.server.provider_key_present = true;
   obs.server.provider_reachable = true;
   obs.server.coach_model = 'gemini-2.5-flash-lite';
-  obs.ui.grounded_question.provider_called = true;
-  obs.ui.grounded_question.source = 'live_model';
+  obs.ui.model_turn.provider_called = true;
+  obs.ui.model_turn.source = 'live_model';
   const card = scoreCanary(obs);
   assert.strictEqual(card.overall, 'PASS');
 });
@@ -233,8 +239,8 @@ test('9. a model-up turn that falls back to the deterministic engine is refused'
     o.server.provider_key_present = true;
     o.server.provider_reachable = true;
     o.server.coach_model = 'gemini-2.5-flash-lite';
-    o.ui.grounded_question.provider_called = false;
-    o.ui.grounded_question.source = 'deterministic';
+    o.ui.model_turn.provider_called = false;
+    o.ui.model_turn.source = 'deterministic';
   });
 });
 
@@ -245,11 +251,11 @@ test('9b. a model-up run with an ambiguous or missing source marker is ERROR', (
     o.server.provider_key_present = true;
     o.server.provider_reachable = true;
     o.server.coach_model = 'gemini-2.5-flash-lite';
-    o.ui.grounded_question.provider_called = true;
-    o.ui.grounded_question.source = 'live_model';
+    o.ui.model_turn.provider_called = true;
+    o.ui.model_turn.source = 'live_model';
   };
-  assertBites('ambiguous source', 'model_source_marker', 'ERROR', o => { upgrade(o); o.ui.grounded_question.source_ambiguous = true; });
-  assertBites('missing source', 'model_source_marker', 'ERROR', o => { upgrade(o); o.ui.grounded_question.source = ''; });
+  assertBites('ambiguous source', 'model_source_marker', 'ERROR', o => { upgrade(o); o.ui.model_turn.source_ambiguous = true; });
+  assertBites('missing source', 'model_source_marker', 'ERROR', o => { upgrade(o); o.ui.model_turn.source = ''; });
 });
 
 test('9c. an unexpected model in a model-up run is refused', () => {
@@ -260,8 +266,8 @@ test('9c. an unexpected model in a model-up run is refused', () => {
     o.server.provider_key_present = true;
     o.server.provider_reachable = true;
     o.server.coach_model = 'some-other-model';
-    o.ui.grounded_question.provider_called = true;
-    o.ui.grounded_question.source = 'live_model';
+    o.ui.model_turn.provider_called = true;
+    o.ui.model_turn.source = 'live_model';
   });
 });
 
@@ -548,24 +554,24 @@ test('REGRESSION: an eligible turn is judged by its OWN responses, not the whole
   // The eligible turn answered by the live model passes, even though other turns did not.
   const good = goodObservations();
   up(good);
-  good.ui.grounded_question.provider_called = true;
-  good.ui.grounded_question.source = 'live_model';
-  good.ui.grounded_question.source_ambiguous = false;
+  good.ui.model_turn.provider_called = true;
+  good.ui.model_turn.source = 'live_model';
+  good.ui.model_turn.source_ambiguous = false;
   assert.strictEqual(statusOf(scoreCanary(good), 'model_source_marker'), 'PASS');
 
   // But an eligible turn that produced NO live-provider response still fails — scoping did
   // not make "any gemini anywhere" sufficient.
   assertBites('eligible turn never reached the provider', 'model_source_marker', 'FAIL', o => {
     up(o);
-    o.ui.grounded_question.provider_called = false;
-    o.ui.grounded_question.source = 'training_sme';
+    o.ui.model_turn.provider_called = false;
+    o.ui.model_turn.source = 'training_sme';
   });
   // And a live-provider claim that cannot name the model is ambiguous, not a pass.
   assertBites('gemini with no model named', 'model_source_marker', 'ERROR', o => {
     up(o);
-    o.ui.grounded_question.provider_called = true;
-    o.ui.grounded_question.source = 'live_model';
-    o.ui.grounded_question.source_ambiguous = true;
+    o.ui.model_turn.provider_called = true;
+    o.ui.model_turn.source = 'live_model';
+    o.ui.model_turn.source_ambiguous = true;
   });
 });
 
@@ -582,27 +588,27 @@ test('REGRESSION: model-up proof requires source "gemini", not a route name or t
   for (const routeName of ['coach_chat', 'coach_message', 'coach_ask']) {
     assertBites(`route name ${routeName} is not provider proof`, 'model_source_marker', 'FAIL', o => {
       upgrade(o);
-      o.ui.grounded_question.provider_called = false;
-      o.ui.grounded_question.source = routeName;
+      o.ui.model_turn.provider_called = false;
+      o.ui.model_turn.source = routeName;
     });
   }
   // `training_sme` is the SME path, and the directive names it explicitly as not model-up proof.
   assertBites('training_sme is not model-up proof', 'model_source_marker', 'FAIL', o => {
     upgrade(o);
-    o.ui.grounded_question.provider_called = false;
-    o.ui.grounded_question.source = 'training_sme';
+    o.ui.model_turn.provider_called = false;
+    o.ui.model_turn.source = 'training_sme';
   });
   // `engine` is the deterministic fallback.
   assertBites('engine is not model-up proof', 'model_source_marker', 'FAIL', o => {
     upgrade(o);
-    o.ui.grounded_question.provider_called = false;
-    o.ui.grounded_question.source = 'engine';
+    o.ui.model_turn.provider_called = false;
+    o.ui.model_turn.source = 'engine';
   });
   // Only a positive live-provider marker passes.
   const good = goodObservations();
   upgrade(good);
-  good.ui.grounded_question.provider_called = true;
-  good.ui.grounded_question.source = 'live_model';
+  good.ui.model_turn.provider_called = true;
+  good.ui.model_turn.source = 'live_model';
   assert.strictEqual(statusOf(scoreCanary(good), 'model_source_marker'), 'PASS');
 });
 

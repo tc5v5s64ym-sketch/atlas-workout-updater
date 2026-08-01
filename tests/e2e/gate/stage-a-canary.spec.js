@@ -305,8 +305,57 @@ test('Stage-A canary: one complete synthetic workout through the real browser to
   // calls, and judging the provider from all of them together is a category error: a
   // set-logging turn legitimately answers deterministically while the conversational question
   // is answered by the model. Aggregating them made a correct model-up run look ambiguous.
-  currentPhase = 'eligible_question';
+  // TWO questions, because grounding and provider-use are proven by different turns.
+  //
+  // The deterministic lanes (services/sessionQuestionAnswer.js) run BEFORE Gemini, so a
+  // question naming a planned lift and asking an attribute is answered from session state by
+  // the ENGINE in both postures — that is the turn that can prove grounding. An open question
+  // falls past those lanes: with the model up it reaches Gemini, and with the model down it
+  // takes the templated acknowledgment. That is the turn that can prove provider use.
+  //
+  // Using one turn for both is what made the model-down run fail: it asked the open question
+  // and then demanded a grounded reply the deterministic path is not designed to give.
+  const settleReply = async (question, phase) => {
+    currentPhase = phase;
+    const before = await page.locator('#thread-messages').innerText();
+    await say(page, question);
+    const THINKING = 'Thinking…';
+    let settled = '';
+    let stableSince = null;
+    let lastSeen = null;
+    await expect.poll(async () => {
+      const now = await page.locator('#thread-messages').innerText();
+      const delta = now.slice(before.length);
+      if (delta !== lastSeen) { lastSeen = delta; stableSince = Date.now(); return false; }
+      const body = delta.split(THINKING).join('').replace(question, '').trim();
+      if (delta.includes(THINKING) || body.length === 0) return false;
+      if (stableSince === null || Date.now() - stableSince < 750) return false;
+      settled = delta;
+      return true;
+    }, { timeout: 90000, intervals: [250] }).toBe(true);
+    // The assistant's words only — the echoed question is stripped, so nothing can be proven
+    // from the athlete's own text.
+    return settled.split(THINKING).join('').replace(question, '').trim();
+  };
+
+  // Q1 — grounded. Names a planned lift and asks its planned load, so the engine answers from
+  // THIS session's plan ("Bench Press today: 185 lbs.").
+  const GROUNDED_Q = 'how much weight for bench press today?';
+  const groundedReply = await settleReply(GROUNDED_Q, 'grounded_question');
+  observations.ui.grounded_question = {
+    asked: true,
+    reply_text: groundedReply,
+    // Strict: the reply must name the planned lift AND carry its exact planned load, so a
+    // generic acknowledgment can never satisfy it.
+    grounded_in_session: /bench press/i.test(groundedReply) && /185/.test(groundedReply),
+  };
+  note('grounded-question', `engine-grounded question answered (${groundedReply.length} chars); grounded ${observations.ui.grounded_question.grounded_in_session}`);
+
+  // Q2 — the open conversational turn, used only for the model-source marker.
   const QUESTION = 'what is left in this session?';
+  // Set BEFORE the request is issued: the response handler captures the phase at event time,
+  // so flipping it afterwards would tag this turn's responses with the previous phase.
+  currentPhase = 'eligible_question';
   const threadBefore = await page.locator('#thread-messages').innerText();
   await say(page, QUESTION);
 
@@ -331,16 +380,8 @@ test('Stage-A canary: one complete synthetic workout through the real browser to
     return true;
   }, { timeout: 90000, intervals: [250] }).toBe(true);
 
-  // The assistant's words only — the echoed question is stripped, so grounding can never be
-  // satisfied by the athlete's own text.
   const reply = settledText.split(THINKING).join('').replace(QUESTION, '').trim();
-  // Grounding requires the reply to name a lift that is actually in THIS session's plan,
-  // not merely to contain a plausible word.
-  observations.ui.grounded_question = {
-    asked: true,
-    reply_text: reply,
-    grounded_in_session: /back squat|bench press|squat|bench/i.test(reply),
-  };
+  observations.ui.model_turn = { asked: true, reply_text: reply };
   await snap(page, '03-grounded-question.png');
   note('question', `asked a session-state question; reply length ${reply.length}`);
 

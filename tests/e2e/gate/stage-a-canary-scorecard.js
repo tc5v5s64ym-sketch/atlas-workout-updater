@@ -165,7 +165,10 @@ const CONDITIONS = Object.freeze([
     title: 'An eligible coach turn exposed an unambiguous source marker for the declared posture',
     evaluate(obs) {
       const mode = str(obs.run && obs.run.mode);
-      const q = obs.ui && obs.ui.grounded_question;
+      // The provider marker is read from the OPEN conversational turn, not the grounded one.
+      // The deterministic session-answer lanes run before Gemini, so a grounded question is
+      // answered by the engine in BOTH postures and could never demonstrate provider use.
+      const q = obs.ui && obs.ui.model_turn;
       if (!mode) return missing('run mode');
       if (!q) return missing('the eligible coach turn');
       const source = str(q.source);
