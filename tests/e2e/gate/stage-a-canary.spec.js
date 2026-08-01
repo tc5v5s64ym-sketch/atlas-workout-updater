@@ -1,6 +1,19 @@
 'use strict';
 /*
- * PHASE 4 STAGE-A CANARY — temporary Phase 4 machinery.
+ * PHASE 4 STAGE-A RUNNER — temporary Phase 4 machinery. THE ONLY browser runner.
+ *
+ * It serves TWO purposes, declared by the operator command that spawns it and never
+ * defaulted here (`ATLAS_RUN_PURPOSE`):
+ *
+ *   CANARY           (`npm run atlas:stage-a-canary`)  — readiness proof. Publishes
+ *                    stage_a_eligible=false always, and never advances the Stage A streak.
+ *   STAGE_A_SESSION  (`npm run atlas:stage-a-session`) — a count-eligible session under the
+ *                    2026-07-31 two-stage owner ruling. May publish stage_a_eligible=true.
+ *
+ * The SCENARIO IS IDENTICAL for both. That is deliberate: the canary's whole value is that it
+ * proves the exact path a counted session will take, and redesigning the workout to make a
+ * Stage A run "look different" would throw that proof away. Only the purpose, the identity
+ * family, and the recorded source facts differ.
  *
  * One small, complete, deterministic synthetic workout driven end to end through:
  *   Playwright browser → real built Atlas client → real local Express (index.js)
@@ -9,12 +22,8 @@
  *   → browser preview → browser approve → durable Log_Cleaned + Effort write
  *   → closeout/seal → InteractionTrace → turn-write proof → mechanical scorecard.
  *
- * This spec PROVES the machine path holds for a whole session before the owner spends a
- * real workout on it. It is NOT a Stage A session: it produces canary evidence only and
- * never advances the Stage A 0/5 streak.
- *
  * It runs ONLY under ATLAS_GATE_SANDBOX_LIVE=1 (playwright.config.js ignores this file
- * otherwise), and only via `npm run atlas:stage-a-canary`, which builds the child
+ * otherwise), and only via one of the two operator commands above, which build the child
  * environment explicitly. It is never collected by the default credential-free CI lane.
  *
  * This file OBSERVES; it does not judge. Every assertion that decides the run lives in
@@ -29,7 +38,8 @@ const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { scoreCanary, renderMarkdown } = require('./stage-a-canary-scorecard');
+const { scoreStageARun, renderMarkdown } = require('./stage-a-canary-scorecard');
+const { normalizePurpose, STAGE_A_SESSION } = require('./stage-a-run-purpose');
 const { pickNetworkPassthrough, assertNoWorkbookId, GATE_STARTUP_TIMEOUT_MS } = require('./canary-child-env');
 const { SANDBOX_SPREADSHEET_ID, SANDBOX_SPREADSHEET_ID_LAST6 } = require('../../../config/sandboxSheet');
 const { logCleanedColumns, effortColumns } = require('../../../config/columns');
@@ -40,6 +50,31 @@ const RUN_ID = process.env.ATLAS_CANARY_RUN_ID;
 const SESSION_ID = process.env.ATLAS_CANARY_SESSION_ID;
 const ATHLETE_ID = process.env.ATLAS_CANARY_ATHLETE_ID;
 const ARTIFACT_DIR = process.env.ATLAS_CANARY_ARTIFACT_DIR;
+
+// Purpose is READ, never inferred. A missing or unrecognized value stays null and the
+// scorecard's `run_purpose_declared` condition turns the run ERROR — fail-closed, because
+// defaulting an unlabelled run to either purpose is precisely how a canary artifact could
+// come to be read as Stage A evidence.
+const RUN_PURPOSE = normalizePurpose(process.env.ATLAS_RUN_PURPOSE);
+const rawSessionNumber = process.env.ATLAS_STAGE_A_SESSION_NUMBER;
+const STAGE_A_SESSION_NUMBER = /^[0-9]+$/.test(String(rawSessionNumber || ''))
+  ? Number(rawSessionNumber)
+  : null;
+// The source facts the operator command MEASURED before the run. They are recorded so the
+// published evidence names the exact tree it came from, and re-checked by the scorecard so a
+// run cannot claim count-eligibility on facts it never carried.
+const rawPriorCount = process.env.ATLAS_STAGE_A_PRIOR_COUNT;
+const SOURCE = {
+  branch: process.env.ATLAS_RUN_SOURCE_BRANCH || '',
+  head_sha: process.env.ATLAS_RUN_SOURCE_SHA || '',
+  origin_head_sha: process.env.ATLAS_RUN_SOURCE_ORIGIN_SHA || '',
+  // Tri-state on purpose: '1' is clean, '0' is dirty, and an unset variable stays undefined
+  // so the scorecard reports missing evidence rather than assuming either.
+  clean: process.env.ATLAS_RUN_SOURCE_CLEAN === undefined
+    ? undefined
+    : process.env.ATLAS_RUN_SOURCE_CLEAN === '1',
+  prior_stage_a_count: /^[0-9]+$/.test(String(rawPriorCount || '')) ? Number(rawPriorCount) : null,
+};
 
 // ── the deterministic synthetic workout ─────────────────────────────────────────
 // Two exercises, four sets — small, complete, and genuinely representative. The loads
@@ -130,7 +165,7 @@ test.describe.configure({ mode: 'serial' });
 
 test.beforeAll(async () => {
   if (!RUN_ID || !SESSION_ID || !ATHLETE_ID || !ARTIFACT_DIR) {
-    throw new Error('Stage-A canary: run it through `npm run atlas:stage-a-canary` — the unique run/session/athlete ids and artifact dir are minted there, never here.');
+    throw new Error('Stage-A runner: run it through `npm run atlas:stage-a-canary` or `npm run atlas:stage-a-session` — the unique run/session/athlete ids and artifact dir are minted there, never here.');
   }
   artDir = ARTIFACT_DIR;
   fs.mkdirSync(artDir, { recursive: true });
@@ -189,7 +224,7 @@ test.afterAll(async () => {
   if (child) child.kill('SIGTERM');
 });
 
-test('Stage-A canary: one complete synthetic workout through the real browser to the sandbox Sheet', async ({ page }) => {
+test('Stage-A runner: one complete synthetic workout through the real browser to the sandbox Sheet', async ({ page }) => {
   // The durable verifier reads the whole sandbox workbook (thousands of rows) on each of its
   // four calls, on top of a full browser session. 300s was tight enough that a slow read could
   // have timed the run out and produced no scorecard — an environment cost reported as a
@@ -197,8 +232,10 @@ test('Stage-A canary: one complete synthetic workout through the real browser to
   test.setTimeout(900000);
 
   const observations = {
-    run: { run_id: RUN_ID, mode: MODE, session_id: SESSION_ID, athlete_id: ATHLETE_ID,
+    run: { run_id: RUN_ID, purpose: RUN_PURPOSE, mode: MODE, session_id: SESSION_ID,
+      athlete_id: ATHLETE_ID, stage_a_session_number: STAGE_A_SESSION_NUMBER,
       expected_model: process.env.GEMINI_COACH_MODEL || '' },
+    source: { ...SOURCE },
     expected: { sets: WORKOUT.map(s => ({ ...s })), effort: { ...EFFORT } },
     ui: {}, durable: {}, env: {}, provenance: {}, trace: {}, write_proof: {}, privacy: {},
   };
@@ -587,6 +624,7 @@ test('Stage-A canary: one complete synthetic workout through the real browser to
 
   const evidence = {
     run: observations.run,
+    source: observations.source,
     workbook_last6: SANDBOX_SPREADSHEET_ID_LAST6,
     timeline,
     server: finalState,
@@ -628,7 +666,7 @@ test('Stage-A canary: one complete synthetic workout through the real browser to
   };
 
   // ── score, render, persist ─────────────────────────────────────────────────
-  const scorecard = scoreCanary(observations);
+  const scorecard = scoreStageARun(observations);
   const scorecardJson = JSON.stringify(scorecard, null, 2);
   const scorecardMd = renderMarkdown(scorecard);
   // The two scorecard files are derived from already-scanned data, so they cannot be part of
@@ -642,8 +680,19 @@ test('Stage-A canary: one complete synthetic workout through the real browser to
 
   const failed = scorecard.conditions.filter(c => c.status === 'FAIL' || c.status === 'ERROR');
   if (failed.length) {
-    console.error('\n[stage-a-canary] conditions not passing:');
+    console.error(`\n[stage-a-runner] conditions not passing (purpose ${RUN_PURPOSE || 'UNDECLARED'}):`);
     for (const c of failed) console.error(`  ${c.status}  ${c.id} — ${c.detail}`);
   }
-  expect(scorecard.overall, `canary scorecard: ${failed.map(c => `${c.id}=${c.status}`).join(', ') || 'see SCORECARD.md'}`).toBe('PASS');
+  expect(scorecard.overall, `scorecard: ${failed.map(c => `${c.id}=${c.status}`).join(', ') || 'see SCORECARD.md'}`).toBe('PASS');
+  // Eligibility is asserted in BOTH directions, so neither purpose can drift into the other's
+  // verdict: a canary that somehow published true, and a Stage A session that passed every
+  // condition but still published false, are each a red run rather than a quiet mislabel.
+  if (RUN_PURPOSE === STAGE_A_SESSION) {
+    expect(scorecard.stage_a_eligible,
+      'a passing Stage A session must publish stage_a_eligible=true').toBe(true);
+    expect(scorecard.run.stage_a_session_number).toBe(STAGE_A_SESSION_NUMBER);
+  } else {
+    expect(scorecard.stage_a_eligible,
+      'a canary run must always publish stage_a_eligible=false').toBe(false);
+  }
 });

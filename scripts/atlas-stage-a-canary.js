@@ -28,6 +28,7 @@ const crypto = require('node:crypto');
 
 const { SANDBOX_SPREADSHEET_ID_LAST6 } = require('../config/sandboxSheet');
 const { pickNetworkPassthrough, assertNoWorkbookId } = require('../tests/e2e/gate/canary-child-env');
+const { CANARY, mintIdentities } = require('../tests/e2e/gate/stage-a-run-purpose');
 
 function fail(message) {
   console.error(`[stage-a-canary] ${message}`);
@@ -47,9 +48,10 @@ const MODE = wantUp ? 'model-up' : 'model-down';
 // the workbook, and the scorecard refuses a session id that does not.
 const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+/, '');
 const nonce = crypto.randomBytes(3).toString('hex').toUpperCase();
-const RUN_ID = `canary-${stamp}-${nonce}`;
-const SESSION_ID = `CANARY-${stamp}-${nonce}`;
-const ATHLETE_ID = `canary-athlete-${nonce}`;
+// Minted through the shared identity authority — the same function the Stage-A session
+// command uses — so the two families stay disjoint by construction rather than by two
+// string templates that could drift into overlapping.
+const { run_id: RUN_ID, session_id: SESSION_ID, athlete_id: ATHLETE_ID } = mintIdentities({ purpose: CANARY, stamp, nonce });
 // Artifacts live OUTSIDE `test-results/`. Playwright owns that directory and wipes it at the
 // start of every run, so a scorecard written there is destroyed by the next canary — which is
 // exactly what happened to the first passing model-down run. Evidence that a later run can
@@ -80,6 +82,10 @@ const childEnv = {
   PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH,
   PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: process.env.PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD,
   ATLAS_GATE_SANDBOX_LIVE: '1',
+  // Declared, never defaulted: the scorecard refuses a run whose purpose is unstated, so
+  // this canary says what it is rather than relying on being scored as one by default.
+  // A CANARY run always publishes stage_a_eligible = false, whatever else it achieves.
+  ATLAS_RUN_PURPOSE: CANARY,
   ATLAS_CANARY_MODE: MODE,
   ATLAS_CANARY_RUN_ID: RUN_ID,
   ATLAS_CANARY_SESSION_ID: SESSION_ID,
@@ -123,6 +129,7 @@ runner.on('exit', (code) => {
     for (const c of card.conditions) {
       if (c.status !== 'PASS') console.log(`  ${c.status.padEnd(14)} ${c.id} — ${c.detail}`);
     }
+    console.log(`[stage-a-canary] stage_a_eligible: ${card.stage_a_eligible}`);
     console.log(`[stage-a-canary] ${card.stage_a_note}`);
   } else {
     console.error('\n[stage-a-canary] no scorecard was produced — the run did not reach scoring (posture refused, or the harness never started).');
