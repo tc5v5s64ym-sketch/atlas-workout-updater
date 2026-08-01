@@ -30,7 +30,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { scoreCanary, renderMarkdown } = require('./stage-a-canary-scorecard');
-const { pickNetworkPassthrough, assertNoWorkbookId } = require('./canary-child-env');
+const { pickNetworkPassthrough, assertNoWorkbookId, GATE_STARTUP_TIMEOUT_MS } = require('./canary-child-env');
 const { SANDBOX_SPREADSHEET_ID, SANDBOX_SPREADSHEET_ID_LAST6 } = require('../../../config/sandboxSheet');
 const { logCleanedColumns, effortColumns } = require('../../../config/columns');
 
@@ -44,11 +44,15 @@ const ARTIFACT_DIR = process.env.ATLAS_CANARY_ARTIFACT_DIR;
 // ── the deterministic synthetic workout ─────────────────────────────────────────
 // Two exercises, four sets — small, complete, and genuinely representative. The loads
 // mirror the catalog the app already resolves, so identity resolution does real work.
+// Each set is ONE message carrying its own exercise name — the form the existing gate specs
+// use ('Romanian Deadlift 245 x 6 @3'). An earlier attempt switched exercise with a bare lift
+// name and then sent a bare load, and the first set after the switch never committed. Naming
+// the lift on every set removes the two-step dependency and keeps each turn self-contained.
 const WORKOUT = Object.freeze([
-  { exercise: 'Back Squat', set_number: 1, weight: 225, reps: 5, rir: 2, say: '225 5/2' },
-  { exercise: 'Back Squat', set_number: 2, weight: 225, reps: 5, rir: 2, say: '225 5/2' },
-  { exercise: 'Bench Press', set_number: 1, weight: 185, reps: 8, rir: 3, say: '185 8/3' },
-  { exercise: 'Bench Press', set_number: 2, weight: 185, reps: 7, rir: 2, say: '185 7/2' },
+  { exercise: 'Back Squat', set_number: 1, weight: 225, reps: 5, rir: 2, say: 'Back Squat 225 x 5 @2' },
+  { exercise: 'Back Squat', set_number: 2, weight: 225, reps: 5, rir: 2, say: 'Back Squat 225 x 5 @2' },
+  { exercise: 'Bench Press', set_number: 1, weight: 185, reps: 8, rir: 3, say: 'Bench Press 185 x 8 @3' },
+  { exercise: 'Bench Press', set_number: 2, weight: 185, reps: 7, rir: 2, say: 'Bench Press 185 x 7 @2' },
 ]);
 const EFFORT = Object.freeze({
   duration: '44:30', active_calories: 366, total_calories: 488, average_hr: 124, peak_hr: 159,
@@ -74,13 +78,19 @@ async function readJson(url, what) {
   for (let attempt = 1; attempt <= 4; attempt += 1) {
     try {
       const res = await fetch(url);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const body = await res.json();
+      // Read the body BEFORE deciding: the harness reports why it failed in the body, and
+      // throwing on the status alone discards that and leaves only a bare "HTTP 500".
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(`HTTP ${res.status}${body && body.error ? ` — ${body.error}` : ''}`);
       if (body && body.error) throw new Error(String(body.error));
       return body;
     } catch (error) {
       lastError = error;
-      await new Promise(r => setTimeout(r, 1000 * attempt));
+      // A Sheets read-QUOTA rejection is per MINUTE, so a few seconds of backoff cannot clear
+      // it — the retry would just burn its attempts and report a product failure. Back off past
+      // the quota window instead. Reads only; nothing here retries a write.
+      const quota = /quota/i.test(String(error && error.message));
+      await new Promise(r => setTimeout(r, quota ? 30000 : 1000 * attempt));
     }
   }
   throw new Error(`Stage-A canary: ${what} failed after 4 attempts — ${lastError && lastError.message}`);
@@ -155,7 +165,10 @@ test.beforeAll(async () => {
     { env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] });
 
   const ports = await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('gate-server did not report its ports within 60s')), 60000);
+    // Strictly longer than the harness's worst-case preflight backoff — the two are derived
+    // from one declared budget so they cannot drift apart again.
+    const timer = setTimeout(() => reject(new Error(
+      `gate-server did not report its ports within ${GATE_STARTUP_TIMEOUT_MS / 1000}s`)), GATE_STARTUP_TIMEOUT_MS);
     let stderr = '';
     child.stdout.on('data', d => {
       serverStdout += String(d);
@@ -177,7 +190,11 @@ test.afterAll(async () => {
 });
 
 test('Stage-A canary: one complete synthetic workout through the real browser to the sandbox Sheet', async ({ page }) => {
-  test.setTimeout(300000);
+  // The durable verifier reads the whole sandbox workbook (thousands of rows) on each of its
+  // four calls, on top of a full browser session. 300s was tight enough that a slow read could
+  // have timed the run out and produced no scorecard — an environment cost reported as a
+  // product failure. This is an operator-run canary, not CI, so the headroom is cheap.
+  test.setTimeout(900000);
 
   const observations = {
     run: { run_id: RUN_ID, mode: MODE, session_id: SESSION_ID, athlete_id: ATHLETE_ID,
@@ -194,9 +211,28 @@ test('Stage-A canary: one complete synthetic workout through the real browser to
   note('open', 'real built Atlas client loaded against the sandbox-live server');
 
   // ── 2. Confirm the synthetic identity and an isolated initial state ──────────
-  // The session id is typed into the REAL product control, so every row this run writes
-  // carries the unique synthetic id and can never collide with owner or prior-run data.
-  await page.locator('#log-session-id').fill(SESSION_ID);
+  // The session id goes into `#log-session-id`, the REAL product input the write path reads
+  // (`src/app/app.js`: `sessionInput?.value?.trim() || generateSessionId(date)`), so every row
+  // this run writes carries the unique synthetic id and can never collide with owner data or a
+  // prior canary run.
+  //
+  // It is set by value + `input` event rather than `locator.fill()` because its container
+  // (`#logger-details`) is `hidden` by design — "Session fields: hidden, auto-populated
+  // silently" — so a visibility-gated gesture can never reach it. This is the same seam the
+  // F10D closeout spec already uses for the sibling `#effort-*` inputs in the hidden
+  // `#effort-details` panel, so the canary follows the existing gate authority rather than
+  // inventing a second convention.
+  //
+  // This is NOT fixture-only DOM mutation: the field is a genuine product input whose value the
+  // write path reads, and nothing here asserts the app honored it. That is proven END TO END —
+  // the durable readback filters on this exact id, and `no_contamination` fails if any written
+  // row carries a different one. If the app ignored the value, the canary fails.
+  await page.evaluate(id => {
+    const el = document.getElementById('log-session-id');
+    el.value = id;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  }, SESSION_ID);
   const idApplied = await page.evaluate(() => document.getElementById('log-session-id').value);
   observations.ui.identity_confirmed = idApplied === SESSION_ID;
   observations.ui.initial_logged_sets = await page.evaluate(() => (window.getSessionLog ? window.getSessionLog().length : -1));
@@ -218,9 +254,13 @@ test('Stage-A canary: one complete synthetic workout through the real browser to
   // ── 3. Establish a plan through the current product path ─────────────────────
   const started = await page.evaluate(() => window.atlasAcceptPlan({
     id: 'work_day', label: 'Work', why_today: 'Phase 4 Stage-A canary.',
+    // The exercise shape the existing gate specs pass to atlasAcceptPlan — `exercise` +
+    // `target_*`, not `name`/`sets`. A wrong shape is accepted silently and produces a plan
+    // the client cannot render, so it is copied from the established call site rather than
+    // guessed from the field names.
     exercises: [
-      { name: 'Back Squat', lift_code: 'SQ01', sets: 2, target_reps: 5, target_rir: 2, weight: 225 },
-      { name: 'Bench Press', lift_code: 'BEN01', sets: 2, target_reps: 8, target_rir: 3, weight: 185 },
+      { exercise: 'Back Squat', lift_code: 'SQ01', target_weight: 225, target_reps: 5, target_sets: 2, target_rir: 2 },
+      { exercise: 'Bench Press', lift_code: 'BEN01', target_weight: 185, target_reps: 8, target_sets: 2, target_rir: 3 },
     ],
   }));
   observations.ui.plan_established = Boolean(started && started.started);
@@ -241,13 +281,21 @@ test('Stage-A canary: one complete synthetic workout through the real browser to
   // what `services/coachQaShadow.js` reads to decide `modelRan` (`data.source === 'gemini'`).
   // `engine` is the deterministic fallback and `training_sme` is the SME path; neither is
   // model-up proof.
+  // Each response is tagged with the phase captured SYNCHRONOUSLY at event time. The handler
+  // awaits res.json(), so anything read from a shared variable after that await — or any slice
+  // of the array taken before the handler has pushed — races the network. An earlier version
+  // sliced the array right after the reply rendered and saw zero responses, because none had
+  // been recorded yet even though all six eventually arrived.
+  let currentPhase = 'setup';
   const coachResponses = [];
   page.on('response', async (res) => {
+    const phase = currentPhase;
     if (!/\/api\/coach\/(chat|ask|message)\b/.test(res.url())) return;
     try {
       const body = await res.json();
       const data = body && body.data && typeof body.data === 'object' ? body.data : body;
       coachResponses.push({
+        phase,
         url: new URL(res.url()).pathname,
         source: data && typeof data.source === 'string' ? data.source : null,
         model: data && typeof data.model === 'string' ? data.model : null,
@@ -256,29 +304,96 @@ test('Stage-A canary: one complete synthetic workout through the real browser to
     } catch { /* non-JSON or already consumed — recorded as absent, never guessed */ }
   });
 
-  const threadBefore = await page.locator('#thread-messages').innerText();
-  await say(page, 'what is left in this session?');
-  await expect.poll(async () => (await page.locator('#thread-messages').innerText()).length,
-    { timeout: 40000 }).toBeGreaterThan(threadBefore.length);
-  const threadAfter = await page.locator('#thread-messages').innerText();
-  const reply = threadAfter.slice(threadBefore.length).trim();
-  // Grounding is proven by the reply naming session truth (a planned lift), not by the
-  // reply merely existing and not by the absence of outage wording.
+  // Everything the ELIGIBLE turn produces is bracketed. A whole session issues many coach
+  // calls, and judging the provider from all of them together is a category error: a
+  // set-logging turn legitimately answers deterministically while the conversational question
+  // is answered by the model. Aggregating them made a correct model-up run look ambiguous.
+  // TWO questions, because grounding and provider-use are proven by different turns.
+  //
+  // The deterministic lanes (services/sessionQuestionAnswer.js) run BEFORE Gemini, so a
+  // question naming a planned lift and asking an attribute is answered from session state by
+  // the ENGINE in both postures — that is the turn that can prove grounding. An open question
+  // falls past those lanes: with the model up it reaches Gemini, and with the model down it
+  // takes the templated acknowledgment. That is the turn that can prove provider use.
+  //
+  // Using one turn for both is what made the model-down run fail: it asked the open question
+  // and then demanded a grounded reply the deterministic path is not designed to give.
+  const settleReply = async (question, phase) => {
+    currentPhase = phase;
+    const before = await page.locator('#thread-messages').innerText();
+    await say(page, question);
+    const THINKING = 'Thinking…';
+    let settled = '';
+    let stableSince = null;
+    let lastSeen = null;
+    await expect.poll(async () => {
+      const now = await page.locator('#thread-messages').innerText();
+      const delta = now.slice(before.length);
+      if (delta !== lastSeen) { lastSeen = delta; stableSince = Date.now(); return false; }
+      const body = delta.split(THINKING).join('').replace(question, '').trim();
+      if (delta.includes(THINKING) || body.length === 0) return false;
+      if (stableSince === null || Date.now() - stableSince < 750) return false;
+      settled = delta;
+      return true;
+    }, { timeout: 90000, intervals: [250] }).toBe(true);
+    // The assistant's words only — the echoed question is stripped, so nothing can be proven
+    // from the athlete's own text.
+    return settled.split(THINKING).join('').replace(question, '').trim();
+  };
+
+  // Q1 — grounded. Names a planned lift and asks its planned load, so the engine answers from
+  // THIS session's plan ("Bench Press today: 185 lbs.").
+  const GROUNDED_Q = 'how much weight for bench press today?';
+  const groundedReply = await settleReply(GROUNDED_Q, 'grounded_question');
   observations.ui.grounded_question = {
     asked: true,
-    reply_text: reply,
-    grounded_in_session: /squat|bench|remaining|left/i.test(reply),
+    reply_text: groundedReply,
+    // Strict: the reply must name the planned lift AND carry its exact planned load, so a
+    // generic acknowledgment can never satisfy it.
+    grounded_in_session: /bench press/i.test(groundedReply) && /185/.test(groundedReply),
   };
+  note('grounded-question', `engine-grounded question answered (${groundedReply.length} chars); grounded ${observations.ui.grounded_question.grounded_in_session}`);
+
+  // Q2 — the open conversational turn, used only for the model-source marker.
+  const QUESTION = 'what is left in this session?';
+  // Set BEFORE the request is issued: the response handler captures the phase at event time,
+  // so flipping it afterwards would tag this turn's responses with the previous phase.
+  currentPhase = 'eligible_question';
+  const threadBefore = await page.locator('#thread-messages').innerText();
+  await say(page, QUESTION);
+
+  // Wait for a SETTLED reply, using the discipline scripts/live-retest.js already documents:
+  // the 'Thinking…' marker must be gone, the body non-empty, and the text stable. An earlier
+  // version settled on "thread text grew", which the echoed user bubble plus the 'Thinking…'
+  // placeholder satisfies instantly — so the run captured "what is left in this session?
+  // Thinking…" as the reply and scored grounding PASS off the word "left" in the ECHOED
+  // QUESTION. A false green in the exact condition this canary exists to make honest.
+  const THINKING = 'Thinking…';
+  let settledText = '';
+  let stableSince = null;
+  let lastSeen = null;
+  await expect.poll(async () => {
+    const now = await page.locator('#thread-messages').innerText();
+    const delta = now.slice(threadBefore.length);
+    if (delta !== lastSeen) { lastSeen = delta; stableSince = Date.now(); return false; }
+    const body = delta.split(THINKING).join('').replace(QUESTION, '').trim();
+    if (delta.includes(THINKING) || body.length === 0) return false;
+    if (stableSince === null || Date.now() - stableSince < 750) return false;
+    settledText = delta;
+    return true;
+  }, { timeout: 90000, intervals: [250] }).toBe(true);
+
+  const reply = settledText.split(THINKING).join('').replace(QUESTION, '').trim();
+  observations.ui.model_turn = { asked: true, reply_text: reply };
   await snap(page, '03-grounded-question.png');
   note('question', `asked a session-state question; reply length ${reply.length}`);
 
   // ── 5. Enter the workout through the real composer ───────────────────────────
-  await logSet(page, 'back squat', 0).catch(() => {});
-  let logged = await page.evaluate(() => window.getSessionLog().length);
+  currentPhase = 'logging';
+  let logged = 0;
   for (const set of WORKOUT) {
-    if (set.set_number === 1) { await say(page, set.exercise.toLowerCase()); }
-    await logSet(page, set.say, logged + 1);
     logged += 1;
+    await logSet(page, set.say, logged);
   }
   observations.ui.logged_sets = await page.evaluate(() => window.getSessionLog().length);
   observations.ui.exercises_logged = await page.evaluate(() =>
@@ -313,28 +428,49 @@ test('Stage-A canary: one complete synthetic workout through the real browser to
     exercise: e.exercise || e.canonical_exercise, weight: e.weight, reps: e.reps, rir: e.rir,
   })));
   observations.ui.preview_names_all_exercises = observations.ui.exercises_logged.every(x => previewText.includes(x));
-  observations.ui.preview_proof_present = await page.evaluate(() =>
-    document.getElementById('approve-btn') !== null && document.getElementById('approve-btn').disabled === false);
+  // The review card's Save is the visible approval control, and it appears only once the
+  // preview proof exists — so its presence IS the preview-proof gate, not a separate claim.
+  // `#approve-btn.disabled` is read (never clicked) as the second half of the same evidence.
+  const saveControl = page.locator('.review:not(.done) .rv-save');
+  await expect(saveControl).toBeVisible({ timeout: 40000 });
+  observations.ui.preview_proof_present = await page.evaluate(() => {
+    const b = document.getElementById('approve-btn');
+    return b !== null && b.disabled === false;
+  });
   await snap(page, '05-preview-before-write.png');
-  note('preview', `closeout confirmation rendered with ${observations.ui.preview_sets.length} sets; approve enabled ${observations.ui.preview_proof_present}`);
+  note('preview', `closeout confirmation rendered with ${observations.ui.preview_sets.length} sets; review Save visible; approve-btn enabled ${observations.ui.preview_proof_present}`);
 
   // ── 9. The real approval control ─────────────────────────────────────────────
-  await page.locator('#approve-btn').click();
+  //
+  // The athlete taps the review card's "Save workout" (`coach-conversation.js`), which is the
+  // ONLY visible approval control. `#approve-btn` is the underlying gated write trigger — it
+  // is never visible, so clicking it directly is not a gesture a user could perform, and the
+  // previous attempt to do so could never succeed. The existing F10D closeout specs use this
+  // same `.rv-save` gesture, so the canary follows the established gate authority.
+  await saveControl.click();
   observations.ui.approval_clicked = true;
-  observations.ui.approval_control = '#approve-btn';
+  observations.ui.approval_control = '.review:not(.done) .rv-save';
+  observations.ui.write_trigger = '#approve-btn';
   observations.ui.direct_write_route_used = false; // nothing in this spec calls a write route
-  await expect.poll(async () => (await serverState()).appends.length, { timeout: 60000 }).toBeGreaterThan(0);
-  await expect.poll(async () => page.evaluate(() => {
-    const b = document.getElementById('approve-btn');
-    return b ? b.textContent : '';
-  }), { timeout: 60000 }).toMatch(/Written|Retry|Saved/i);
+  await expect.poll(async () => (await serverState()).appends.length,
+    { timeout: 90000, intervals: [500, 1000, 2000] }).toBeGreaterThan(0);
+  // `.review.done` is the client's own post-write state, so it is read rather than inferred.
+  await expect(page.locator('.review.done')).toBeVisible({ timeout: 90000 });
   await snap(page, '06-after-approval.png');
-  note('approve', 'real #approve-btn clicked; server reported appends');
+  note('approve', 'real review-card Save clicked (routes to #approve-btn); server reported appends; review card marked done');
 
   // ── 10. The durable sandbox write ───────────────────────────────────────────
-  await expect.poll(async () => (await durableRows(SESSION_ID)).log_rows.length, { timeout: 60000 })
+  // Poll slowly and explicitly. Each check costs real Sheets read requests, and the limit that
+  // bites is requests-per-minute — a default fast poll can exhaust the quota by itself and then
+  // report the resulting failure as a missing durable write.
+  // Capture the settled read rather than issuing another identical one. Every durable read
+  // costs Sheets request quota, and the poll's final value IS the post-write state.
+  let after = null;
+  await expect.poll(async () => {
+    after = await durableRows(SESSION_ID);
+    return after.log_rows.length;
+  }, { timeout: 180000, intervals: [3000, 5000, 5000, 10000] })
     .toBe(WORKOUT.length);
-  const after = await durableRows(SESSION_ID);
   observations.durable.log_rows = after.log_rows;
   observations.durable.effort_rows = after.effort_rows;
   observations.durable.log_column_index = {
@@ -365,22 +501,25 @@ test('Stage-A canary: one complete synthetic workout through the real browser to
   note('durable', `${after.log_rows.length} Log_Cleaned rows and ${after.effort_rows.length} Effort rows for ${SESSION_ID}`);
 
   // ── 11-13. Complete the workout, exercise closeout/seal, verify sealed state ─
-  const sealedLabel = await page.evaluate(() => {
-    const b = document.getElementById('approve-btn');
-    return b ? b.textContent.trim() : '';
-  });
+  // The sealed state is the client's own rendering: the review card is `.done` and carries its
+  // saved confirmation. A card still offering Save means the closeout did NOT seal.
+  const sealedLabel = await page.locator('.review.done .rv-saved-txt').innerText().catch(() => '');
+  const stillOfferingSave = await page.locator('.review:not(.done) .rv-save').count();
   observations.ui.closeout_approved = true;
-  observations.ui.sealed_state_label = sealedLabel;
-  // A sealed state is the write having completed AND the approval control no longer
-  // offering another write — a retry label means the closeout did NOT seal.
-  observations.ui.sealed_state_valid = /Written/i.test(sealedLabel)
-    && (await page.evaluate(() => document.getElementById('approve-btn').disabled)) === true;
+  observations.ui.sealed_state_label = sealedLabel.trim();
+  observations.ui.sealed_state_valid = sealedLabel.trim().length > 0 && stillOfferingSave === 0;
   await snap(page, '07-sealed.png');
-  note('seal', `sealed state label "${sealedLabel}"; valid ${observations.ui.sealed_state_valid}`);
+  note('seal', `sealed state "${sealedLabel.trim()}"; unsaved review cards remaining ${stillOfferingSave}`);
 
-  // At-most-once: a second approval gesture must add no durable row.
+  // At-most-once: re-triggering the underlying write control must add no durable row. This
+  // deliberately pokes `#approve-btn` — the gated trigger itself — rather than the Save button,
+  // because the visible Save is gone once the card is done, and the property under test is that
+  // the WRITE TRIGGER cannot fire twice for one approved action.
   observations.ui.second_approval_attempted = true;
-  await page.evaluate(() => document.getElementById('approve-btn').click());
+  await page.evaluate(() => {
+    const b = document.getElementById('approve-btn');
+    if (b) b.click();
+  });
   await page.waitForTimeout(2500);
   const afterRetry = await durableRows(SESSION_ID);
   observations.durable.rows_added_by_second_approval =
@@ -397,27 +536,32 @@ test('Stage-A canary: one complete synthetic workout through the real browser to
   observations.write_proof.records = parseMarker('[turn-write-proof]');
   note('artifacts', `${observations.trace.records.length} interaction-trace records, ${observations.write_proof.records.length} turn-write-proof records`);
 
-  // Model source marker, read from the eligible coach turn's OWN RESPONSE. A positive
+  // Model source marker, read from the ELIGIBLE turn's own responses. A positive
   // `source: 'gemini'` is the only thing treated as live-provider proof; a settled reply,
   // the absence of outage wording, and `configured: true` are each explicitly not proof.
+  //
+  // Scoping to the eligible turn is what makes this check meaningful rather than lenient: a
+  // turn that produces NO gemini response still fails, and `training_sme` — the /api/coach/ask
+  // log-only pre-check, which is not athlete-facing — is never proof on its own. What scoping
+  // removes is only the false ambiguity of judging one turn by other turns' routes.
   const finalState = await serverState();
   observations.provenance.coach_responses = coachResponses;
-  const observedSources = [...new Set(coachResponses.map(r => r.source).filter(Boolean))];
-  const gemini = coachResponses.filter(r => r.source === 'gemini');
-  observations.ui.grounded_question.provider_called = gemini.length > 0;
-  observations.ui.grounded_question.source = gemini.length > 0
+  // Resolved HERE, at the end of the run, so every async response handler has completed.
+  const eligibleTurnResponses = coachResponses.filter(r => r.phase === 'eligible_question');
+  observations.provenance.eligible_turn_responses = eligibleTurnResponses;
+  const gemini = eligibleTurnResponses.filter(r => r.source === 'gemini');
+  const eligibleSources = [...new Set(eligibleTurnResponses.map(r => r.source).filter(Boolean))];
+  // These belong to the OPEN turn (ui.model_turn), which is what the scorecard's
+  // model_source_marker reads — not the grounded turn, which the engine always answers.
+  observations.ui.model_turn.provider_called = gemini.length > 0;
+  observations.ui.model_turn.source = gemini.length > 0
     ? 'live_model'
-    : (observedSources[0] || '');
-  // Ambiguity is a real observation, not an inference: in a model-up run the eligible turn
-  // must show one unmistakable provider verdict. A mix of gemini and non-gemini sources means
-  // some eligible turn fell back, which the scorecard must see rather than have averaged away.
-  observations.ui.grounded_question.source_ambiguous = MODE === 'model-up'
-    && observedSources.length > 1
-    && gemini.length > 0;
-  // Model-up additionally requires the answering model to be named on the same response.
-  if (MODE === 'model-up' && gemini.length > 0 && !gemini.some(r => r.model)) {
-    observations.ui.grounded_question.source_ambiguous = true;
-  }
+    : (eligibleSources[0] || '');
+  // A model-up run must be able to name the model that answered, on the same response that
+  // claimed the provider. A gemini source with no model name is genuinely ambiguous.
+  observations.ui.model_turn.source_ambiguous = MODE === 'model-up'
+    && gemini.length > 0
+    && !gemini.some(r => r.model);
 
   // ── server + environment observations ───────────────────────────────────────
   observations.server = finalState;

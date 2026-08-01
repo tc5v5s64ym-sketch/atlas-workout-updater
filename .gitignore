@@ -31,3 +31,6 @@ playwright-report/
 
 # Live-retest harness screenshots (uploaded as CI artifacts, never committed)
 live-retest-artifacts/
+
+# Stage-A canary evidence (bounded, privacy-scanned; never committed)
+canary-artifacts/

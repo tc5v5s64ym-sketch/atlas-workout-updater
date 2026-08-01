@@ -67,18 +67,25 @@ function goodObservations() {
     ui: {
       identity_confirmed: true, initial_logged_sets: 0, durable_rows_before_run: 0,
       plan_established: true, plan_exercises: ['Back Squat', 'Bench Press'], plan_remaining_visible: true,
+      // Grounding is proven by the ENGINE-answered turn (deterministic lanes run before
+      // Gemini, so this grounds in both postures).
       grounded_question: {
-        asked: true, reply_text: 'Back Squat is next, 2 sets remaining.', grounded_in_session: true,
+        asked: true, reply_text: 'Bench Press today: 185 lbs.', grounded_in_session: true,
+      },
+      // Provider use is proven by the OPEN turn, which is a different turn.
+      model_turn: {
+        asked: true, reply_text: 'Keep going.',
         source: 'deterministic', provider_called: false, source_ambiguous: false,
       },
       logged_sets: 4, exercises_logged: ['Back Squat', 'Bench Press'],
       durable_rows_before_approval: 0, appends_before_approval: 0,
       preview_rendered: true, preview_proof_present: true,
       preview_sets: SETS.map(s => ({ exercise: s.exercise, weight: s.weight, reps: s.reps, rir: s.rir })),
-      approval_clicked: true, approval_control: '#approve-btn', direct_write_route_used: false,
+      approval_clicked: true, approval_control: '.review:not(.done) .rv-save',
+      write_trigger: '#approve-btn', direct_write_route_used: false,
       second_approval_attempted: true,
       closeout_rendered: true, closeout_approved: true,
-      sealed_state_valid: true, sealed_state_label: 'Written ✓',
+      sealed_state_valid: true, sealed_state_label: '✓ Saved to your sheet',
     },
     durable: {
       log_rows: SETS.map(logRow),
@@ -87,9 +94,22 @@ function goodObservations() {
       foreign_identity_rows: 0, other_session_rows_delta: 0, rows_added_by_second_approval: 0,
     },
     trace: { records: [{ turn_id: TURN, valid: true, stages: [{ stage: 'intent', status: 'ok' }], source: 'deterministic' }] },
+    // The REAL two-record shape a canary run produces: the dry-run preview, then the
+    // authoritative live write on the same turn. Copied from a genuine sandbox run's
+    // evidence.json, not invented — an invented shape is how the first version of this
+    // condition came to check a field the live envelope never carries.
     write_proof: {
-      records: [{ turn_id: TURN, session_id: SESSION, route: '/api/complete-workout',
-        proof: { sheet_written: true, log_rows_appended: 4 }, withheld_evidence: [] }],
+      records: [
+        { turn_id: TURN, session_id: SESSION, route: '/api/log-workout',
+          pairing: { established_at_preview: true, write_attempt: 0 },
+          proof: { test_mode: true, sheet_write: 'skipped', sheet_written: false, no_write_confirmed: true },
+          withheld_evidence: [] },
+        { turn_id: TURN, session_id: SESSION, route: '/api/log-workout',
+          pairing: { established_at_preview: true, write_attempt: 1, payload_bound: true },
+          proof: { test_mode: false, sheet_write: 'success', duplicate_write: false,
+            log_rows_written: 4, effort_rows_written: 1, idempotency_status: 'completed' },
+          withheld_evidence: [] },
+      ],
     },
     privacy: { violations: [], artifacts_scanned: 9, artifact_bytes: 40000, artifact_bytes_limit: 2000000 },
   };
@@ -135,8 +155,8 @@ test('a passing model-up run requires a positive live-provider marker, not the a
   obs.server.provider_key_present = true;
   obs.server.provider_reachable = true;
   obs.server.coach_model = 'gemini-2.5-flash-lite';
-  obs.ui.grounded_question.provider_called = true;
-  obs.ui.grounded_question.source = 'live_model';
+  obs.ui.model_turn.provider_called = true;
+  obs.ui.model_turn.source = 'live_model';
   const card = scoreCanary(obs);
   assert.strictEqual(card.overall, 'PASS');
 });
@@ -219,8 +239,8 @@ test('9. a model-up turn that falls back to the deterministic engine is refused'
     o.server.provider_key_present = true;
     o.server.provider_reachable = true;
     o.server.coach_model = 'gemini-2.5-flash-lite';
-    o.ui.grounded_question.provider_called = false;
-    o.ui.grounded_question.source = 'deterministic';
+    o.ui.model_turn.provider_called = false;
+    o.ui.model_turn.source = 'deterministic';
   });
 });
 
@@ -231,11 +251,11 @@ test('9b. a model-up run with an ambiguous or missing source marker is ERROR', (
     o.server.provider_key_present = true;
     o.server.provider_reachable = true;
     o.server.coach_model = 'gemini-2.5-flash-lite';
-    o.ui.grounded_question.provider_called = true;
-    o.ui.grounded_question.source = 'live_model';
+    o.ui.model_turn.provider_called = true;
+    o.ui.model_turn.source = 'live_model';
   };
-  assertBites('ambiguous source', 'model_source_marker', 'ERROR', o => { upgrade(o); o.ui.grounded_question.source_ambiguous = true; });
-  assertBites('missing source', 'model_source_marker', 'ERROR', o => { upgrade(o); o.ui.grounded_question.source = ''; });
+  assertBites('ambiguous source', 'model_source_marker', 'ERROR', o => { upgrade(o); o.ui.model_turn.source_ambiguous = true; });
+  assertBites('missing source', 'model_source_marker', 'ERROR', o => { upgrade(o); o.ui.model_turn.source = ''; });
 });
 
 test('9c. an unexpected model in a model-up run is refused', () => {
@@ -246,8 +266,8 @@ test('9c. an unexpected model in a model-up run is refused', () => {
     o.server.provider_key_present = true;
     o.server.provider_reachable = true;
     o.server.coach_model = 'some-other-model';
-    o.ui.grounded_question.provider_called = true;
-    o.ui.grounded_question.source = 'live_model';
+    o.ui.model_turn.provider_called = true;
+    o.ui.model_turn.source = 'live_model';
   });
 });
 
@@ -260,6 +280,12 @@ test('10. a run in which browser approval was never clicked is refused', () => {
 test('11. using a direct write route instead of UI approval is refused', () => {
   assertBites('direct route', 'browser_approval', 'FAIL', o => { o.ui.direct_write_route_used = true; });
   assertBites('wrong control', 'browser_approval', 'FAIL', o => { o.ui.approval_control = 'fetch(/api/log-workout)'; });
+  // The first canary attempt clicked the never-visible #approve-btn directly. A run may not
+  // record that as the browser gesture, because no athlete could have performed it.
+  assertBites('clicked the invisible trigger as the gesture', 'browser_approval', 'FAIL', o => {
+    o.ui.approval_control = '#approve-btn';
+  });
+  assertBites('no write trigger recorded', 'browser_approval', 'FAIL', o => { delete o.ui.write_trigger; });
 });
 
 test('12. a write occurring before approval is refused', () => {
@@ -325,17 +351,61 @@ test('17. a missing InteractionTrace is refused', () => {
 
 test('18. a missing turn-write proof is refused', () => {
   assertBites('no write proof', 'turn_write_proof_present', 'FAIL', o => { o.write_proof.records = []; });
-  assertBites('write proof reports no write', 'turn_write_proof_present', 'FAIL', o => {
-    o.write_proof.records[0].proof.sheet_written = false;
+  assertBites('only a dry-run record, no live write', 'turn_write_proof_present', 'FAIL', o => {
+    o.write_proof.records = [o.write_proof.records[0]];
   });
   assertBites('write proof for another session', 'turn_write_proof_present', 'FAIL', o => {
-    o.write_proof.records[0].session_id = 'CANARY-SOMEONE-ELSE';
+    o.write_proof.records.forEach(r => { r.session_id = 'CANARY-SOMEONE-ELSE'; });
+  });
+  // sheet_written belongs to the DRY-RUN envelope and is false there. A record claiming a
+  // live write with only that field, and no authoritative sheet_write/row evidence, is not proof.
+  assertBites('sheet_written is not live-write proof', 'turn_write_proof_present', 'FAIL', o => {
+    o.write_proof.records[1].proof = { sheet_written: true, log_rows_appended: 4 };
+  });
+  assertBites('success with zero rows is not proof', 'turn_write_proof_present', 'FAIL', o => {
+    o.write_proof.records[1].proof.log_rows_written = 0;
+  });
+  // A published proof must not contradict the run it describes. Positive-but-wrong counts
+  // used to pass while the durable readback separately found all five rows.
+  assertBites('proof claims fewer log rows than were written', 'turn_write_proof_present', 'FAIL', o => {
+    o.write_proof.records[1].proof.log_rows_written = 1;
+  });
+  assertBites('proof omits the effort row', 'turn_write_proof_present', 'FAIL', o => {
+    delete o.write_proof.records[1].proof.effort_rows_written;
+  });
+  assertBites('proof zeroes the effort row', 'turn_write_proof_present', 'FAIL', o => {
+    o.write_proof.records[1].proof.effort_rows_written = 0;
+  });
+  // The preview must sit on the LIVE WRITE's own turn. A dry run from another turn in the
+  // same session used to stand in for it, so a broken correlation could still pass.
+  assertBites('preview is on a different turn', 'turn_write_proof_present', 'FAIL', o => {
+    o.write_proof.records[0].turn_id = 'turn:2026-08-01T09:00:00.000Z_2_stale0';
+  });
+  assertBites('a live write still in test_mode is not proof', 'turn_write_proof_present', 'FAIL', o => {
+    o.write_proof.records[1].proof.test_mode = true;
+  });
+  assertBites('two live writes for one approval', 'turn_write_proof_present', 'FAIL', o => {
+    o.write_proof.records.push(JSON.parse(JSON.stringify(o.write_proof.records[1])));
+  });
+  assertBites('a live write with no preview record', 'turn_write_proof_present', 'FAIL', o => {
+    o.write_proof.records = [o.write_proof.records[1]];
+  });
+  assertBites('a live write not established at preview', 'turn_write_proof_present', 'FAIL', o => {
+    o.write_proof.records[1].pairing.established_at_preview = false;
+  });
+  assertBites('a duplicate write', 'turn_write_proof_present', 'FAIL', o => {
+    o.write_proof.records[1].proof.duplicate_write = true;
   });
 });
 
 test('19. a trace and write proof carrying different turn_ids do not join', () => {
   assertBites('turn id mismatch', 'trace_write_join', 'FAIL', o => {
-    o.write_proof.records[0].turn_id = 'turn:2026-08-01T13:00:00.000Z_9_zzzzzz';
+    o.write_proof.records.forEach(r => { r.turn_id = 'turn:2026-08-01T13:00:00.000Z_9_zzzzzz'; });
+  });
+  // The trace must join the LIVE WRITE's turn, not merely some write-proof turn. A trace
+  // covering only the dry-run turn leaves the actual write uncorrelated.
+  assertBites('trace covers only the dry-run turn', 'trace_write_join', 'FAIL', o => {
+    o.write_proof.records[1].turn_id = 'turn:2026-08-01T09:30:00.000Z_7_liveee';
   });
 });
 
@@ -490,6 +560,42 @@ test('REGRESSION: durable rows are matched on the contract FIELD name, never the
   });
 });
 
+test('REGRESSION: an eligible turn is judged by its OWN responses, not the whole session', () => {
+  // A real model-up run observed six coach responses across the session: an /api/coach/ask
+  // log-only pre-check (training_sme), the eligible /api/coach/chat answer (gemini), and four
+  // set-logging /api/coach/message turns. Judging the eligible turn by all six called a
+  // correct run ambiguous. Scoping must not become leniency, so both directions are pinned.
+  const up = o => {
+    o.run.mode = 'model-up';
+    o.server.model_posture = 'model-up';
+    o.server.provider_key_present = true;
+    o.server.provider_reachable = true;
+    o.server.coach_model = 'gemini-2.5-flash-lite';
+  };
+  // The eligible turn answered by the live model passes, even though other turns did not.
+  const good = goodObservations();
+  up(good);
+  good.ui.model_turn.provider_called = true;
+  good.ui.model_turn.source = 'live_model';
+  good.ui.model_turn.source_ambiguous = false;
+  assert.strictEqual(statusOf(scoreCanary(good), 'model_source_marker'), 'PASS');
+
+  // But an eligible turn that produced NO live-provider response still fails — scoping did
+  // not make "any gemini anywhere" sufficient.
+  assertBites('eligible turn never reached the provider', 'model_source_marker', 'FAIL', o => {
+    up(o);
+    o.ui.model_turn.provider_called = false;
+    o.ui.model_turn.source = 'training_sme';
+  });
+  // And a live-provider claim that cannot name the model is ambiguous, not a pass.
+  assertBites('gemini with no model named', 'model_source_marker', 'ERROR', o => {
+    up(o);
+    o.ui.model_turn.provider_called = true;
+    o.ui.model_turn.source = 'live_model';
+    o.ui.model_turn.source_ambiguous = true;
+  });
+});
+
 test('REGRESSION: model-up proof requires source "gemini", not a route name or the SME path', () => {
   const upgrade = o => {
     o.run.mode = 'model-up';
@@ -503,27 +609,27 @@ test('REGRESSION: model-up proof requires source "gemini", not a route name or t
   for (const routeName of ['coach_chat', 'coach_message', 'coach_ask']) {
     assertBites(`route name ${routeName} is not provider proof`, 'model_source_marker', 'FAIL', o => {
       upgrade(o);
-      o.ui.grounded_question.provider_called = false;
-      o.ui.grounded_question.source = routeName;
+      o.ui.model_turn.provider_called = false;
+      o.ui.model_turn.source = routeName;
     });
   }
   // `training_sme` is the SME path, and the directive names it explicitly as not model-up proof.
   assertBites('training_sme is not model-up proof', 'model_source_marker', 'FAIL', o => {
     upgrade(o);
-    o.ui.grounded_question.provider_called = false;
-    o.ui.grounded_question.source = 'training_sme';
+    o.ui.model_turn.provider_called = false;
+    o.ui.model_turn.source = 'training_sme';
   });
   // `engine` is the deterministic fallback.
   assertBites('engine is not model-up proof', 'model_source_marker', 'FAIL', o => {
     upgrade(o);
-    o.ui.grounded_question.provider_called = false;
-    o.ui.grounded_question.source = 'engine';
+    o.ui.model_turn.provider_called = false;
+    o.ui.model_turn.source = 'engine';
   });
   // Only a positive live-provider marker passes.
   const good = goodObservations();
   upgrade(good);
-  good.ui.grounded_question.provider_called = true;
-  good.ui.grounded_question.source = 'live_model';
+  good.ui.model_turn.provider_called = true;
+  good.ui.model_turn.source = 'live_model';
   assert.strictEqual(statusOf(scoreCanary(good), 'model_source_marker'), 'PASS');
 });
 

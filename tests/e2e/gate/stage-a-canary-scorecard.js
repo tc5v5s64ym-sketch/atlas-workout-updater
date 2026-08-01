@@ -165,7 +165,10 @@ const CONDITIONS = Object.freeze([
     title: 'An eligible coach turn exposed an unambiguous source marker for the declared posture',
     evaluate(obs) {
       const mode = str(obs.run && obs.run.mode);
-      const q = obs.ui && obs.ui.grounded_question;
+      // The provider marker is read from the OPEN conversational turn, not the grounded one.
+      // The deterministic session-answer lanes run before Gemini, so a grounded question is
+      // answered by the engine in BOTH postures and could never demonstrate provider use.
+      const q = obs.ui && obs.ui.model_turn;
       if (!mode) return missing('run mode');
       if (!q) return missing('the eligible coach turn');
       const source = str(q.source);
@@ -309,14 +312,21 @@ const CONDITIONS = Object.freeze([
       const u = obs.ui;
       if (!u) return missing('UI observations');
       if (u.approval_clicked !== true) return fail('the approval control was never clicked');
-      if (str(u.approval_control) !== '#approve-btn') {
-        return fail(`the write was triggered by "${str(u.approval_control) || 'an unrecorded control'}" rather than the real approval control`);
+      // Two distinct facts, both required. The VISIBLE control the athlete taps is the review
+      // card's Save; `#approve-btn` is the gated write trigger it routes to and is never itself
+      // visible. Recording only the trigger would let a run claim a browser approval it could
+      // not have performed — which is exactly how the first canary attempt failed.
+      if (str(u.approval_control) !== '.review:not(.done) .rv-save') {
+        return fail(`the approval gesture was "${str(u.approval_control) || 'an unrecorded control'}" rather than the review card's Save — the only visible approval control`);
+      }
+      if (str(u.write_trigger) !== '#approve-btn') {
+        return fail(`the write was triggered by "${str(u.write_trigger) || 'an unrecorded trigger'}" rather than the single gated write trigger`);
       }
       if (u.direct_write_route_used === true) {
         return fail('a write route was called directly instead of going through browser approval');
       }
       if (u.direct_write_route_used !== false) return missing('a determination that no direct write route was used');
-      return pass('the write was triggered by a real #approve-btn click in the browser');
+      return pass('the write was triggered by a real review-card Save click, routed through the gated #approve-btn');
     },
   },
   {
@@ -448,9 +458,55 @@ const CONDITIONS = Object.freeze([
       }
       // The canonical record nests the W1–W3 proof fields under `proof`; read them there
       // rather than in a flattened copy, so this consumes the real format and not a second one.
-      const wrote = mine.filter((r) => r.proof && r.proof.sheet_written === true);
-      if (wrote.length === 0) return fail('no turn-write-proof record reports a completed write');
-      return pass(`${mine.length} turn-write-proof record(s) for this session; ${wrote.length} reporting a completed write`);
+      //
+      // A live write is NOT proven by `sheet_written:true`. That field belongs to the DRY-RUN
+      // envelope, where it is false alongside `no_write_confirmed:true`. Per Invariants W1–W3,
+      // live-write success requires an authoritative `sheet_write:'success'` PLUS positive row
+      // evidence, with `test_mode` explicitly false. Accepting `sheet_written` here would have
+      // meant no live write could ever satisfy this condition — and, worse, a future envelope
+      // that set it true in a dry run would have satisfied it wrongly.
+      const isDryRun = (p) => p.test_mode === true && p.no_write_confirmed === true && p.sheet_written === false;
+      // The counts must equal what this canary INTENDED to write, not merely be positive.
+      // `> 0` let a proof claiming 1 log row and no effort row pass while the durable readback
+      // separately found all five — a published proof contradicting the run it describes.
+      const expectedLogRows = arr(obs.expected && obs.expected.sets) ? obs.expected.sets.length : null;
+      const expectedEffortRows = obs.expected && obs.expected.effort ? 1 : null;
+      const isLiveWrite = (p) => p.test_mode === false && p.sheet_write === 'success';
+
+      const wrote = mine.filter((r) => r.proof && isLiveWrite(r.proof));
+      if (wrote.length === 0) {
+        const dry = mine.filter((r) => r.proof && isDryRun(r.proof)).length;
+        return fail(`no turn-write-proof record reports an authoritative live write (${dry} dry-run record(s) present)`);
+      }
+      if (wrote.length > 1) {
+        return fail(`${wrote.length} live-write records for one approved action — a single approval must write once`);
+      }
+      const live = wrote[0];
+      if (expectedLogRows === null || expectedEffortRows === null) return missing('the expected row counts');
+      if (!Number.isInteger(live.proof.log_rows_written) || live.proof.log_rows_written !== expectedLogRows) {
+        return fail(`the live write reports log_rows_written ${live.proof.log_rows_written}, expected exactly ${expectedLogRows}`);
+      }
+      if (!Number.isInteger(live.proof.effort_rows_written) || live.proof.effort_rows_written !== expectedEffortRows) {
+        return fail(`the live write reports effort_rows_written ${live.proof.effort_rows_written}, expected exactly ${expectedEffortRows}`);
+      }
+      // The write must have been ESTABLISHED AT PREVIEW on THE SAME TURN. Matching only on
+      // session id let a dry run from a DIFFERENT turn stand in for the preview, so a broken
+      // correlation — trace joined to a stale preview, live write stranded on another turn —
+      // could still pass. The preview is now required on the live write's own turn_id.
+      const liveTurn = str(live.turn_id);
+      if (!liveTurn) return missing('a turn_id on the live-write record');
+      const previews = mine.filter((r) => r.proof && isDryRun(r.proof) && str(r.turn_id) === liveTurn);
+      if (previews.length === 0) {
+        const otherTurn = mine.filter((r) => r.proof && isDryRun(r.proof)).length;
+        return fail(`the live write has no dry-run record on its OWN turn ${liveTurn}${otherTurn ? ` (${otherTurn} dry-run record(s) exist on other turns)` : ''} — preview→approve→write is unproven at the proof level`);
+      }
+      if (!(live.pairing && live.pairing.established_at_preview === true)) {
+        return fail('the live write does not report a preview-established pairing');
+      }
+      if (live.proof.duplicate_write === true) {
+        return fail('the live write reports duplicate_write');
+      }
+      return pass(`1 authoritative live write on turn ${liveTurn} (${live.proof.log_rows_written} log rows, ${live.proof.effort_rows_written} effort row, exactly as intended), preview-established on the same turn`);
     },
   },
   {
@@ -465,11 +521,20 @@ const CONDITIONS = Object.freeze([
       if (!traceIds || !writeIds) return missing('turn ids on both artifacts');
       if (traceIds.length === 0) return fail('no InteractionTrace record carried a turn_id');
       if (writeIds.length === 0) return fail('no turn-write-proof record carried a turn_id');
-      const shared = writeIds.filter((id) => traceIds.includes(id));
-      if (shared.length === 0) {
-        return fail('the trace and the write proof share no turn_id — the artifacts do not join');
+      // Join on the LIVE WRITE's turn specifically. Any-record matching would let the trace
+      // join a dry-run turn while the actual write sat on a different one, which is precisely
+      // the broken correlation this condition exists to catch.
+      const liveWrite = arr(w.records)
+        ? w.records.find((r) => r.proof && r.proof.test_mode === false && r.proof.sheet_write === 'success')
+        : null;
+      if (!liveWrite) return fail('no live-write record to join the trace to');
+      const liveTurn = str(liveWrite.turn_id);
+      if (!liveTurn) return missing('a turn_id on the live-write record');
+      if (!traceIds.includes(liveTurn)) {
+        return fail(`the InteractionTrace carries no record for the live write's turn ${liveTurn} — the artifacts do not join`);
       }
-      return pass(`${shared.length} turn_id(s) join the trace to the approved write`);
+      const shared = writeIds.filter((id) => traceIds.includes(id));
+      return pass(`the trace joins the live write on turn ${liveTurn} (${shared.length} correlated write record(s))`);
     },
   },
   {

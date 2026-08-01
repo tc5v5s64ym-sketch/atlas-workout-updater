@@ -50,7 +50,11 @@ const nonce = crypto.randomBytes(3).toString('hex').toUpperCase();
 const RUN_ID = `canary-${stamp}-${nonce}`;
 const SESSION_ID = `CANARY-${stamp}-${nonce}`;
 const ATHLETE_ID = `canary-athlete-${nonce}`;
-const ARTIFACT_DIR = path.join(__dirname, '..', 'test-results', 'stage-a-canary', `${MODE}-${stamp}-${nonce}`);
+// Artifacts live OUTSIDE `test-results/`. Playwright owns that directory and wipes it at the
+// start of every run, so a scorecard written there is destroyed by the next canary — which is
+// exactly what happened to the first passing model-down run. Evidence that a later run can
+// delete is not preserved evidence.
+const ARTIFACT_DIR = path.join(__dirname, '..', 'canary-artifacts', `${MODE}-${stamp}-${nonce}`);
 
 // Required credentials, checked here so the failure is a clear operator message rather
 // than a child process exiting mid-spawn.
