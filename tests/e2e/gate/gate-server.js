@@ -505,11 +505,27 @@ async function assertSandboxLive() {
 
   // The tabs must ALREADY exist. The canary reads this rather than creating anything —
   // `ensureSheetTab` is refused by the guard, so a missing tab can only ever be reported.
+  // A read-quota rejection is a transient environment condition, not an unreachable sandbox,
+  // and reporting it as the latter sends an operator hunting the wrong problem. Retried with
+  // backoff — and if it still fails, the preflight still refuses. Reads only; nothing here
+  // retries a write.
   let tabs = [];
-  try {
-    tabs = await sheets.getSpreadsheetTabs();
-  } catch (error) {
-    record('sandbox_reachable', false, `could not list tabs: ${error && error.message}`);
+  let lastError = null;
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    try {
+      tabs = await sheets.getSpreadsheetTabs();
+      lastError = null;
+      break;
+    } catch (error) {
+      lastError = error;
+      const quota = /quota|rate limit|429/i.test(String(error && error.message));
+      if (attempt < 4) await new Promise(r => setTimeout(r, quota ? 20000 * attempt : 2000 * attempt));
+    }
+  }
+  if (lastError) {
+    const quota = /quota/i.test(String(lastError.message));
+    record('sandbox_reachable', false,
+      `${quota ? 'Sheets READ QUOTA exhausted (transient — wait a minute and rerun)' : 'could not list tabs'}: ${lastError.message}`);
   }
   record('sandbox_reachable', Array.isArray(tabs) && tabs.length > 0,
     'the sandbox workbook returned no tabs');
@@ -623,18 +639,44 @@ const stateServer = http.createServer((req, res) => {
         res.end(JSON.stringify({ error: 'durable verifier: session_id column not found in the contract' }));
         return;
       }
-      const [logRowsAll, effRowsAll] = await Promise.all([
-        real.getSheetRows('Log_Cleaned'),
-        real.getSheetRows('Effort'),
+      // AT MOST TWO Sheets requests per tab: the session-id column, then ONE contiguous range
+      // spanning the matched rows.
+      //
+      // The Sheets limit that bites here is "read REQUESTS per minute per user", not payload —
+      // so reading each matched row individually made quota pressure worse, not better, even
+      // though every response was small. A canary's rows are consecutive appends, so one range
+      // from the first hit to the last covers them, and a run with no rows yet costs one
+      // request. Totals stay exact because the column read sees every row.
+      const colLetter = (i) => String.fromCharCode('A'.charCodeAt(0) + i);
+      async function readSession(tab, idx, width) {
+        const col = await real.readRange(`${tab}!${colLetter(idx)}:${colLetter(idx)}`);
+        const ids = Array.isArray(col) ? col.map(r => String((r && r[0]) || '').trim()) : [];
+        // Row 1 is the header; data rows are 2-based in A1 notation.
+        const hits = [];
+        for (let i = 0; i < ids.length; i += 1) if (ids[i] === wantSession) hits.push(i + 1);
+        // Total DATA rows, header excluded, matching what getSheetRows would have returned.
+        const total = Math.max(0, ids.length - 1);
+        if (hits.length === 0) return { rows: [], total };
+        const first = hits[0];
+        const last = hits[hits.length - 1];
+        const span = await real.readRange(`${tab}!A${first}:${colLetter(width - 1)}${last}`);
+        // Re-filter the span: a non-contiguous layout would otherwise let a neighbouring
+        // session's row ride along, which `no_contamination` must never be handed as ours.
+        const rows = (Array.isArray(span) ? span : [])
+          .filter(r => Array.isArray(r) && String(r[idx] || '').trim() === wantSession);
+        return { rows, total };
+      }
+      const [logResult, effResult] = await Promise.all([
+        readSession('Log_Cleaned', logIdx, lc.length),
+        readSession('Effort', effIdx, ec.length),
       ]);
-      const match = (rows, idx) => rows.filter(r => String(r[idx] || '').trim() === wantSession);
       res.end(JSON.stringify({
         sandbox_last6: SANDBOX_SPREADSHEET_ID_LAST6,
         session_id: wantSession,
-        log_rows: match(logRowsAll, logIdx),
-        effort_rows: match(effRowsAll, effIdx),
-        log_total_rows: logRowsAll.length,
-        effort_total_rows: effRowsAll.length,
+        log_rows: logResult.rows,
+        effort_rows: effResult.rows,
+        log_total_rows: logResult.total,
+        effort_total_rows: effResult.total,
       }));
     })().catch(error => {
       res.statusCode = 500;

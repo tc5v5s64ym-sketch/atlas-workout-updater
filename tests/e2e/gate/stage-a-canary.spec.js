@@ -78,8 +78,10 @@ async function readJson(url, what) {
   for (let attempt = 1; attempt <= 4; attempt += 1) {
     try {
       const res = await fetch(url);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const body = await res.json();
+      // Read the body BEFORE deciding: the harness reports why it failed in the body, and
+      // throwing on the status alone discards that and leaves only a bare "HTTP 500".
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(`HTTP ${res.status}${body && body.error ? ` — ${body.error}` : ''}`);
       if (body && body.error) throw new Error(String(body.error));
       return body;
     } catch (error) {
@@ -366,14 +368,19 @@ test('Stage-A canary: one complete synthetic workout through the real browser to
   observations.ui.approval_control = '.review:not(.done) .rv-save';
   observations.ui.write_trigger = '#approve-btn';
   observations.ui.direct_write_route_used = false; // nothing in this spec calls a write route
-  await expect.poll(async () => (await serverState()).appends.length, { timeout: 90000 }).toBeGreaterThan(0);
+  await expect.poll(async () => (await serverState()).appends.length,
+    { timeout: 90000, intervals: [500, 1000, 2000] }).toBeGreaterThan(0);
   // `.review.done` is the client's own post-write state, so it is read rather than inferred.
   await expect(page.locator('.review.done')).toBeVisible({ timeout: 90000 });
   await snap(page, '06-after-approval.png');
   note('approve', 'real review-card Save clicked (routes to #approve-btn); server reported appends; review card marked done');
 
   // ── 10. The durable sandbox write ───────────────────────────────────────────
-  await expect.poll(async () => (await durableRows(SESSION_ID)).log_rows.length, { timeout: 60000 })
+  // Poll slowly and explicitly. Each check costs real Sheets read requests, and the limit that
+  // bites is requests-per-minute — a default fast poll can exhaust the quota by itself and then
+  // report the resulting failure as a missing durable write.
+  await expect.poll(async () => (await durableRows(SESSION_ID)).log_rows.length,
+    { timeout: 120000, intervals: [3000, 5000, 5000, 10000] })
     .toBe(WORKOUT.length);
   const after = await durableRows(SESSION_ID);
   observations.durable.log_rows = after.log_rows;
