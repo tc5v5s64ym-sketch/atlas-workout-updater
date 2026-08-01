@@ -86,7 +86,11 @@ async function readJson(url, what) {
       return body;
     } catch (error) {
       lastError = error;
-      await new Promise(r => setTimeout(r, 1000 * attempt));
+      // A Sheets read-QUOTA rejection is per MINUTE, so a few seconds of backoff cannot clear
+      // it — the retry would just burn its attempts and report a product failure. Back off past
+      // the quota window instead. Reads only; nothing here retries a write.
+      const quota = /quota/i.test(String(error && error.message));
+      await new Promise(r => setTimeout(r, quota ? 30000 : 1000 * attempt));
     }
   }
   throw new Error(`Stage-A canary: ${what} failed after 4 attempts — ${lastError && lastError.message}`);
@@ -379,10 +383,14 @@ test('Stage-A canary: one complete synthetic workout through the real browser to
   // Poll slowly and explicitly. Each check costs real Sheets read requests, and the limit that
   // bites is requests-per-minute — a default fast poll can exhaust the quota by itself and then
   // report the resulting failure as a missing durable write.
-  await expect.poll(async () => (await durableRows(SESSION_ID)).log_rows.length,
-    { timeout: 120000, intervals: [3000, 5000, 5000, 10000] })
+  // Capture the settled read rather than issuing another identical one. Every durable read
+  // costs Sheets request quota, and the poll's final value IS the post-write state.
+  let after = null;
+  await expect.poll(async () => {
+    after = await durableRows(SESSION_ID);
+    return after.log_rows.length;
+  }, { timeout: 180000, intervals: [3000, 5000, 5000, 10000] })
     .toBe(WORKOUT.length);
-  const after = await durableRows(SESSION_ID);
   observations.durable.log_rows = after.log_rows;
   observations.durable.effort_rows = after.effort_rows;
   observations.durable.log_column_index = {
