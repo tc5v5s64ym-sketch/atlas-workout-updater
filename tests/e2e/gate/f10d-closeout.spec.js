@@ -367,9 +367,13 @@ test('F10D-RT: a seal outage reports honest-partial; the review card retries ide
     await snap(page, 'RT-01-honest-partial-retry-offered.png');
     record('F10D-RT', 'seal outage after committed appends: 1 Log row + 1 Effort row written, ledger UNSEALED, no verified claim — Save re-offered as "Retry ledger seal"');
 
-    // The promised retry, through the review card's own Save.
+    // The promised retry, through the review card's own Save. F-SB1-B: the owner never
+    // sees #approve-btn, so the retry LABEL has to reach the control he actually taps —
+    // his Stage B workout 1 screenshot showed it still reading "Saving…" while the status
+    // told him to tap Save again.
     const retrySave = page.locator('.review:not(.done) .rv-save');
     await expect(retrySave).toBeEnabled({ timeout: 15000 });
+    await expect(retrySave).toHaveText('Retry ledger seal');
     await retrySave.click();
     await expect(page.locator('.review.done')).toBeVisible({ timeout: 25000 });
 

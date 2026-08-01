@@ -204,9 +204,19 @@ import {
   // The approval gate lives in app.js: #approve-btn is only enabled once a
   // dry-run preview has proven no-write safety. Mirror its disabled state onto
   // the review card's Save so it can never write before the gate allows it.
+  //
+  // F-SB1-B (Stage B workout 1, 2026-08-01): mirror the RETRY LABEL too. After an
+  // unverified closeout app.js re-enables the gate and relabels it 'Retry ledger seal',
+  // but the owner never sees #approve-btn — he sees this card's Save, which its own click
+  // handler left reading 'Saving…'. He was told to tap Save again while looking at a button
+  // still claiming to save, and reported the session as lost. Scoped to that one label so
+  // the error branch below keeps owning its own 'Save workout' reset.
+  const RETRY_LABEL = 'Retry ledger seal';
   if (approveBtn) {
     new MutationObserver(() => {
-      if (currentReview && !currentReview.done) currentReview.saveBtn.disabled = approveBtn.disabled;
+      if (!currentReview || currentReview.done) return;
+      currentReview.saveBtn.disabled = approveBtn.disabled;
+      if (approveBtn.textContent === RETRY_LABEL) currentReview.saveBtn.textContent = RETRY_LABEL;
     }).observe(approveBtn, { attributes: true, attributeFilter: ['disabled'] });
   }
 
