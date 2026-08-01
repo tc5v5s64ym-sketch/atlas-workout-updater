@@ -18,6 +18,12 @@ const executablePath = process.env.PLAYWRIGHT_BROWSERS_PATH
 
 module.exports = defineConfig({
   testDir: './tests/e2e',
+  // The Phase 4 Stage-A canary talks to a REAL sandbox Google Sheet and needs credentials,
+  // so it is collected ONLY under the explicit sandbox-live posture that
+  // `npm run atlas:stage-a-canary` sets. Default CI — and a bare `npx playwright test` —
+  // never collects it, which keeps the default lane credential-free and write-free.
+  // The direction is fail-closed: the flag's ABSENCE excludes the file.
+  testIgnore: process.env.ATLAS_GATE_SANDBOX_LIVE === '1' ? [] : ['**/stage-a-canary.spec.js'],
   timeout: 30000,
   fullyParallel: true,
   forbidOnly: !!process.env.CI,

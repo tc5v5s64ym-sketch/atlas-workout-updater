@@ -302,6 +302,30 @@ This ruling changes the Phase 4 exit condition only. It adds no capability, chan
 3. Stage A does not require `SESSION_PLAN_SETS_WRITE_ENABLED=1` on Render. That flag stays `0` until the Stage B gate script (a) sets it.
 4. A failed session resets the Stage A count to 0/5. The cause of the failure becomes the next card, exactly as the M4 reset rule already states.
 
+#### Stage A technical readiness — the sandbox-live canary (temporary Phase 4 machinery)
+
+Stage A needs one trustworthy automated runner before its streak can start. The canary is that runner's proof, and it is **not** a Stage A session.
+
+**Command.** `npm run atlas:stage-a-canary -- --model-down` and `npm run atlas:stage-a-canary -- --model-up`. Exactly one posture must be named; there is no default.
+
+**Purpose.** Drive one small, complete, deterministic synthetic workout through the real browser, the real built client, the real local Express backend, the real production parser/router/session/coach/validator paths, and the repository-declared sandbox Google Sheet — preview, approve, durable `Log_Cleaned` + `Effort` write, closeout/seal, InteractionTrace, turn-write proof, and a mechanical scorecard.
+
+**Exact live consumer.** `tests/e2e/gate/stage-a-canary.spec.js`, run by `scripts/atlas-stage-a-canary.js` on the existing gate harness (`tests/e2e/gate/gate-server.js`). No second browser runner, parser, approval engine, trace format, score system, or provenance token is introduced.
+
+**Model modes.** Consumes PR #1226's posture authority unchanged: model-down is the default and is proven by key absence; model-up is explicit, refuses startup unless the provider answers, and additionally requires an eligible coach turn carrying an unambiguous live-provider marker. "Configured: true", a settled response, and the absence of outage wording are each explicitly not proof.
+
+**Sandbox-only write rule.** The ambient `GOOGLE_SHEETS_ID` is never inherited. The harness assigns the declared sandbox id from `config/sandboxSheet.js`, then proves the resolved workbook before publishing a port. Writes are confined to `Log_Cleaned` and `Effort`; `ensureSheetTab`, row deletion, and cell rewrites always refuse. Any refusal fails the canary.
+
+**Evidence output.** Per run under `test-results/stage-a-canary/<mode>-<stamp>/`: `SCORECARD.md`, `scorecard.json`, `evidence.json`, and numbered screenshots. Every condition is `PASS`, `FAIL`, `ERROR`, or `NOT_APPLICABLE`; there is no inconclusive state. `NOT_APPLICABLE` is authorized for exactly one condition — the Sheet-level `Session_Plans` / `Session_Plan_Sets` evidence — and only with this exact reason:
+
+> Current Phase 4 flags and sandbox schema do not make Session_Plans or Session_Plan_Sets writes part of this canary.
+
+If the exercised production path ever attempts a required plan-ledger write, that condition becomes `ERROR` and work stops for owner review. The tab is never created, stubbed, or hidden.
+
+**Relationship to Stage A.** A passing canary gives **readiness for 0/5**. It does **not** count as Session 1 and never advances the Stage A count. Its evidence is synthetic and is never owner evidence, LT evidence, or a GATE A eligible event.
+
+**Sunset.** Delete the sandbox-live canary posture (`ATLAS_GATE_SANDBOX_LIVE`), its dedicated scenario, its scorecard, and its operator command in the same PR that records Stage A at 5/5, unless Dale explicitly retains a named portion for a later acceptance gate. The permanent safety assertions that protect the normal gate harness from a false posture or an unsafe workbook selection are **not** temporary and stay.
+
 #### Stage B — five consecutive owner-run workouts
 
 **Definition.** Stage B is five consecutive clean workouts that Dale runs himself, live.

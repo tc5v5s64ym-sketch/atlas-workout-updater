@@ -18,6 +18,7 @@
 |---|---|---|---|---|---|
 | Node unit/integration suite (~297 files) | `test/` | `npm test` | Offline | No (Sheets stubbed) | Current |
 | Playwright browser E2E (+ F10 gate) | `tests/e2e/`, `tests/e2e/gate/` | `npm run test:e2e` (`:headed`) | Browser E2E (local, API mocked) | No | Current |
+| Phase 4 Stage-A canary (temporary) | `tests/e2e/gate/stage-a-canary.spec.js`, `scripts/atlas-stage-a-canary.js` | `npm run atlas:stage-a-canary -- --model-down\|--model-up` | Browser + real local backend + real Sheet | **Sandbox only, bounded rows** (fails closed) | Temporary — sunsets at Stage A 5/5 |
 | Simulation harness | `scripts/sim/` | `node scripts/sim/run.js --base-url <local>` | Local-integration | **Sandbox only** (fails closed) | Current |
 | Flight Recorder replay | `test/helpers/flightReplay.js`, `test/fixtures/replays/` | `npm test` | Offline | No | Current (ADD-3 pending #914) |
 | Voice corpus + Golden Session | `test/fixtures/voiceCorpusSetC.js`, `test/fixtures/goldenSession.js`, `test/helpers/voiceViolationDetectors.js` | `npm test` | Offline | No | Current |
@@ -54,6 +55,23 @@ The bulk of coverage: ~297 `node --test` files under `test/`. Offline — `sheet
 ### 2. Browser E2E — `npm run test:e2e`
 
 Real Chromium + mobile-Chromium (iPhone 13) drives of the built app shell (`tests/e2e/*.spec.js`, ~22 specs) plus the **F10 gate suite** (`tests/e2e/gate/` with its own `gate-server.js`). Config: `playwright.config.js`. Fully local — static server on `127.0.0.1:3107`, service workers blocked, `**/api/**` mocked, so **no real backend and no Sheet write**. `pretest:e2e` builds first. Chromium resolves from the pre-installed browser (`PLAYWRIGHT_BROWSERS_PATH`). Output: Playwright `list` reporter + traces on first retry.
+
+#### 2a. Phase 4 Stage-A canary — `npm run atlas:stage-a-canary` (temporary Phase 4 machinery)
+
+The one runner that proves a complete synthetic workout through the real browser, the real built client, the real local Express backend, the real production paths, **and the repository-declared sandbox Google Sheet**. It is a posture of the SAME gate harness (`tests/e2e/gate/gate-server.js`), not a second runner.
+
+```bash
+npm run atlas:stage-a-canary -- --model-down    # default posture: provider unavailable by construction
+npm run atlas:stage-a-canary -- --model-up      # explicit: refuses to start unless the provider answers
+```
+
+Exactly one posture must be named. Requires `GOOGLE_SERVICE_ACCOUNT_EMAIL` + `GOOGLE_PRIVATE_KEY` (and `GEMINI_API_KEY` for `--model-up`) exported by the operator. **Local/operator-run only — never CI.** `playwright.config.js` ignores the spec unless `ATLAS_GATE_SANDBOX_LIVE=1`, so `npm run test:e2e` and default CI stay credential-free and write-free, and the normal fake-Sheets gate suite is unchanged.
+
+Safety, all fail-closed and all proven before a port is published: the ambient `GOOGLE_SHEETS_ID` is never inherited (the harness assigns the declared sandbox id from `config/sandboxSheet.js`); the resolved workbook must equal that id with `isSandboxSheet === true` and a false production fingerprint; `Log_Cleaned` and `Effort` must already exist with contract-matching headers; the ledger tabs must be absent and their write flags off; telemetry persistence must be off. Writes are confined to `Log_Cleaned` and `Effort` — `ensureSheetTab`, row deletion, and cell rewrites always refuse, so no schema change or data rewrite is reachable. Any refusal fails the run.
+
+Evidence per run in `test-results/stage-a-canary/<mode>-<stamp>/`: `SCORECARD.md`, `scorecard.json`, `evidence.json`, screenshots. Statuses are `PASS` / `FAIL` / `ERROR` / `NOT_APPLICABLE` only — no inconclusive state, and `NOT_APPLICABLE` is authorized for exactly one condition (Sheet-level `Session_Plans` evidence) with one exact reason. **A passing canary gives readiness for Stage A 0/5; it never counts as a Stage A session and is never owner evidence.**
+
+Offline tests that hold this honest, all in `npm test`: `test/stageACanaryScorecard.test.js` (the scorecard's bite + ablation tests) and `test/gateHarnessSandboxPosture.test.js` (the harness refuses an inherited/production/unverified workbook, a claimed-but-absent sandbox, the ledger posture, and a false model posture). Neither requires a credential and neither performs a write.
 
 ### 3. Simulation harness — `scripts/sim/`
 
