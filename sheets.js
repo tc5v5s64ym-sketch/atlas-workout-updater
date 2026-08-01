@@ -5,7 +5,9 @@ const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
 const privateKeyRaw = process.env.GOOGLE_PRIVATE_KEY;
 const logSheetName = process.env.LOG_SHEET_NAME || 'Log_Cleaned';
 const effortSheetName = process.env.EFFORT_SHEET_NAME || 'Effort';
-const sandboxSpreadsheetId = '1UuprDIBoV2Y9jEraOkKaqdX1PHE6ESiF9ZLFJH3CeXE';
+// One literal, declared in config/sandboxSheet.js — see that file for why this id
+// may not be copied into a second module.
+const { SANDBOX_SPREADSHEET_ID: sandboxSpreadsheetId } = require('./config/sandboxSheet');
 
 function validateConfig() {
   if (!spreadsheetId || !clientEmail || !privateKeyRaw) {

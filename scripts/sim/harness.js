@@ -3,7 +3,9 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
-const SANDBOX_SHEET_ID = '1UuprDIBoV2Y9jEraOkKaqdX1PHE6ESiF9ZLFJH3CeXE';
+// One literal, declared in config/sandboxSheet.js. This module used to keep its own
+// copy, so "is this the sandbox" had two deciders; it now has one.
+const { SANDBOX_SPREADSHEET_ID: SANDBOX_SHEET_ID } = require('../../config/sandboxSheet');
 
 // Marks every simulation request so the server-side Flight Recorder can identify sim
 // traffic (docs/FLIGHT_RECORDER_SPEC.md). Its isolation guard NEVER persists a
