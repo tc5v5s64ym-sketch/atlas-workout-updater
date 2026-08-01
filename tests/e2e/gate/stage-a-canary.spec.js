@@ -278,13 +278,21 @@ test('Stage-A canary: one complete synthetic workout through the real browser to
   // what `services/coachQaShadow.js` reads to decide `modelRan` (`data.source === 'gemini'`).
   // `engine` is the deterministic fallback and `training_sme` is the SME path; neither is
   // model-up proof.
+  // Each response is tagged with the phase captured SYNCHRONOUSLY at event time. The handler
+  // awaits res.json(), so anything read from a shared variable after that await — or any slice
+  // of the array taken before the handler has pushed — races the network. An earlier version
+  // sliced the array right after the reply rendered and saw zero responses, because none had
+  // been recorded yet even though all six eventually arrived.
+  let currentPhase = 'setup';
   const coachResponses = [];
   page.on('response', async (res) => {
+    const phase = currentPhase;
     if (!/\/api\/coach\/(chat|ask|message)\b/.test(res.url())) return;
     try {
       const body = await res.json();
       const data = body && body.data && typeof body.data === 'object' ? body.data : body;
       coachResponses.push({
+        phase,
         url: new URL(res.url()).pathname,
         source: data && typeof data.source === 'string' ? data.source : null,
         model: data && typeof data.model === 'string' ? data.model : null,
@@ -297,7 +305,7 @@ test('Stage-A canary: one complete synthetic workout through the real browser to
   // calls, and judging the provider from all of them together is a category error: a
   // set-logging turn legitimately answers deterministically while the conversational question
   // is answered by the model. Aggregating them made a correct model-up run look ambiguous.
-  const beforeQuestion = coachResponses.length;
+  currentPhase = 'eligible_question';
   const threadBefore = await page.locator('#thread-messages').innerText();
   await say(page, 'what is left in this session?');
   await expect.poll(async () => (await page.locator('#thread-messages').innerText()).length,
@@ -311,11 +319,11 @@ test('Stage-A canary: one complete synthetic workout through the real browser to
     reply_text: reply,
     grounded_in_session: /squat|bench|remaining|left/i.test(reply),
   };
-  const eligibleTurnResponses = coachResponses.slice(beforeQuestion);
   await snap(page, '03-grounded-question.png');
-  note('question', `asked a session-state question; reply length ${reply.length}; eligible-turn coach responses ${eligibleTurnResponses.length} (${eligibleTurnResponses.map(r => `${r.url}:${r.source || 'none'}`).join(', ')})`);
+  note('question', `asked a session-state question; reply length ${reply.length}`);
 
   // ── 5. Enter the workout through the real composer ───────────────────────────
+  currentPhase = 'logging';
   let logged = 0;
   for (const set of WORKOUT) {
     logged += 1;
@@ -472,6 +480,8 @@ test('Stage-A canary: one complete synthetic workout through the real browser to
   // removes is only the false ambiguity of judging one turn by other turns' routes.
   const finalState = await serverState();
   observations.provenance.coach_responses = coachResponses;
+  // Resolved HERE, at the end of the run, so every async response handler has completed.
+  const eligibleTurnResponses = coachResponses.filter(r => r.phase === 'eligible_question');
   observations.provenance.eligible_turn_responses = eligibleTurnResponses;
   const gemini = eligibleTurnResponses.filter(r => r.source === 'gemini');
   const eligibleSources = [...new Set(eligibleTurnResponses.map(r => r.source).filter(Boolean))];
