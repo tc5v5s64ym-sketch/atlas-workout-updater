@@ -8197,6 +8197,21 @@ window.atlasCurrentWriteIdentity = () => (lastWrite && lastWrite.log_appended_ra
   ? { log_appended_range: lastWrite.log_appended_range, session_id: lastWrite.session_id }
   : null;
 
+// F-SB1 (Stage B workout 1, 2026-08-01). `closeout_fully_verified:false` covers three
+// different situations, and only some are retryable. "A planned session had no ledger rows
+// to bind" is not a failure of anything: the seal itself SUCCEEDED, it simply had nothing to
+// seal (`sealed_ok:true` with `no_ledger:true`, `reason:'no_rows'`).
+//
+// Treating that like a failed seal told the owner his workout might not be saved when every
+// row was committed, and offered a "Retry ledger seal" that CANNOT help — re-running the
+// seal re-reads the same absent rows and returns the same verdict forever. The write
+// response already carries the seal envelope, so the client can tell these apart instead of
+// assuming the worst. A genuine seal error, or a failed closeout event, still retries.
+function sealHadNothingToSeal(writeData) {
+  const seal = writeData && writeData.ledger_seal;
+  return Boolean(seal) && seal.no_ledger === true && seal.sealed_ok === true;
+}
+
 document.getElementById('approve-btn').addEventListener('click', async () => {
   if (writeInFlight) return;
   if (!pendingWriteHasPreviewProof(pendingWrite)) {
@@ -8312,7 +8327,7 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
       // confirmation therefore writes nothing at all. `closeout_fully_verified`
       // is false when the ledger seal failed, a planned session had no ledger
       // rows to bind, or the closeout event could not be recorded.
-      if (wasSessionCloseout && writeData.closeout_fully_verified === false) {
+      if (wasSessionCloseout && writeData.closeout_fully_verified === false && !sealHadNothingToSeal(writeData)) {
         closeoutSealUnverified = true;
       }
       // Capture undo details in a local — invalidatePreview() (called below) clears lastWrite.
