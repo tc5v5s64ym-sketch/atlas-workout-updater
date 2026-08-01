@@ -49,9 +49,13 @@ The single `NOT_APPLICABLE` is the owner-authorized `Session_Plans` / `Session_P
 | Artifacts privacy-safe | PASS — 9 artifacts scanned, 0 violations, within bound |
 | Synthetic provenance | PASS — origin `playwright`, synthetic and evidence-ineligible; session id matches its declared purpose |
 
-## Note on run duration
+## Note on run duration — observation only
 
-This session completed in **34.2 s**, back in line with sessions 1 and 2 and well under session 3's ~1.2 min. That confirms session 3's slowdown was transient Sheets **read**-quota throttling from three runs hitting the same workbook in quick succession, not a degradation in the product or the runner. No verdict was affected in either case.
+This session completed in **34.2 s**, in line with session 1 (~29 s) and shorter than sessions 2 and 3 (~1.1 min each).
+
+A faster session does **not** establish why the slower ones were slower. An earlier version of this record claimed it confirmed Sheets read-quota throttling and ruled out product or runner degradation; that claim is withdrawn as unsupported. No captured run output contains a quota, `429`, `RESOURCE_EXHAUSTED`, or rate-limit indication, and the runner's read-retry path never logs one, so no evidence of causality exists in either direction.
+
+The durations are recorded as measurements. The cause remains **unknown**, and no verdict depended on it — every scorecard condition passed in every session.
 
 ## Session-start boundary
 
