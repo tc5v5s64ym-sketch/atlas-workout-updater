@@ -462,6 +462,7 @@ test('the qualifying preflight refuses every disqualifying condition, and says w
     mode: 'model-up',
     sessionId: SESSION,
     git: { branch: 'main', clean: true, head: SHA, originHead: SHA },
+    originRefreshed: true,
     priorStageACount: 0,
     env: {
       childCarriesWorkbookId: false, sandboxLiveDeclared: true, declaredWorkbookIsSandbox: true,
@@ -477,6 +478,11 @@ test('the qualifying preflight refuses every disqualifying condition, and says w
     ['session 2 at 0\/5', { sessionNumber: 2, sessionId: 'STAGEA-S2-x-y' }, /requires the canonical count to be 1/],
     ['session 1 at 1\/5', { priorStageACount: 1 }, /the plan records 1\/5/],
     ['unreadable count', { priorStageACount: null, priorCountReason: 'conflicting' }, /unreadable/],
+    // Codex #1229 P1: a failed fetch must REFUSE, not fall back to the local tracking ref.
+    // A stale origin/main that happens to equal HEAD would make a superseded tree look
+    // current, and "we could not check" is not "the check passed".
+    ['fetch failed', { originRefreshed: false }, /did not succeed.*stale/],
+    ['fetch result unknown', { originRefreshed: undefined }, /did not succeed.*stale/],
     ['feature branch', { git: { ...good.git, branch: 'claude/x' } }, /must execute on main/],
     ['dirty tree', { git: { ...good.git, clean: false } }, /clean worktree/],
     ['stale head', { git: { ...good.git, originHead: '0'.repeat(40) } }, /stale/],
@@ -497,6 +503,92 @@ test('the qualifying preflight refuses every disqualifying condition, and says w
   }
   // Everything wrong at once reports everything, rather than one restart per fix.
   assert.ok(evaluateStageAPreflight({}).refusals.length > 5);
+});
+
+// ── the session-start boundary (Codex #1229 P1) ───────────────────────────────
+
+test('a run with no scorecard is classified by the recorded boundary, never inferred', () => {
+  const { classifyIncompleteRun, markRunStarted, readRunStart, RUN_START_MARKER } =
+    require('../tests/e2e/gate/stage-a-run-start');
+
+  // Before the first athlete turn: NOT STARTED, and the streak survives.
+  const notStarted = classifyIncompleteRun(null);
+  assert.strictEqual(notStarted.started, false);
+  assert.strictEqual(notStarted.verdict, 'NOT_STARTED');
+  assert.match(notStarted.detail, /streak is unchanged/);
+
+  // After it: a FAILED session, and the streak resets. This is the case that used to be
+  // indistinguishable from a startup refusal — a timeout waiting for the first coach reply
+  // dies before scoring, but the session had already begun.
+  const failed = classifyIncompleteRun({ started: true, at: '2026-08-01T12:00:00.000Z' });
+  assert.strictEqual(failed.started, true);
+  assert.strictEqual(failed.verdict, 'FAILED_SESSION');
+  assert.match(failed.detail, /resets to 0\/5/);
+  assert.match(failed.detail, /Do not repair and re-run/);
+
+  // A malformed or half-written marker must not be read as a start.
+  for (const bad of [{}, { started: false }, { started: 'yes' }, undefined]) {
+    assert.strictEqual(classifyIncompleteRun(bad).verdict, 'NOT_STARTED');
+  }
+
+  // The marker round-trips through a real directory, and the FIRST crossing wins: a later
+  // turn must not move the boundary forward.
+  const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'stage-a-boundary-'));
+  try {
+    assert.strictEqual(readRunStart(dir), null, 'an empty directory must read as not started');
+    assert.strictEqual(markRunStarted(dir, { run_id: 'stage-a-s1-x', session_id: SESSION }), true);
+    const first = readRunStart(dir);
+    assert.strictEqual(first.started, true);
+    assert.strictEqual(first.run_id, 'stage-a-s1-x');
+    assert.ok(first.at, 'the marker must record when the boundary was crossed');
+
+    assert.strictEqual(markRunStarted(dir, { run_id: 'stage-a-s1-LATER' }), false,
+      'a second turn must not re-mark the boundary');
+    assert.strictEqual(readRunStart(dir).run_id, 'stage-a-s1-x', 'the first crossing was overwritten');
+
+    assert.strictEqual(classifyIncompleteRun(readRunStart(dir)).verdict, 'FAILED_SESSION');
+    assert.ok(fs.existsSync(path.join(dir, RUN_START_MARKER)));
+
+    // Best-effort by design: an unwritable target must never abort a run that genuinely
+    // started. It returns false rather than throwing.
+    assert.strictEqual(markRunStarted('', {}), false);
+    assert.strictEqual(markRunStarted(path.join(dir, 'no', 'such', 'dir'), {}), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the source facts are measured, and an unanswerable git yields absence not a guess', () => {
+  const { measureSourceTree } = require('../tests/e2e/gate/stage-a-source-facts');
+
+  // Against the real repository: the shape both consumers depend on.
+  const real = measureSourceTree();
+  assert.strictEqual(typeof real.branch, 'string');
+  assert.match(real.head_sha, /^[0-9a-f]{40}$/);
+  assert.ok(real.clean === true || real.clean === false);
+  assert.ok(Number.isInteger(real.prior_stage_a_count),
+    `the plan's Stage A count must be readable: ${real.prior_count_reason}`);
+
+  // Outside a git repository, every fact is absent — never defaulted to a passing value.
+  // `clean` in particular must not become `true` just because `git status` printed nothing.
+  const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'stage-a-nogit-'));
+  try {
+    const nothing = measureSourceTree(dir);
+    assert.strictEqual(nothing.head_sha, '');
+    assert.strictEqual(nothing.origin_head_sha, '');
+    assert.strictEqual(nothing.clean, undefined, 'an unanswerable git must not report a clean tree');
+    assert.strictEqual(nothing.prior_stage_a_count, null);
+    // And those absences refuse, rather than passing quietly.
+    const verdict = evaluateStageAPreflight({
+      purpose: STAGE_A_SESSION, sessionNumber: 1, mode: 'model-up', sessionId: SESSION,
+      originRefreshed: true, priorStageACount: nothing.prior_stage_a_count,
+      git: { branch: nothing.branch, clean: nothing.clean, head: nothing.head_sha, originHead: nothing.origin_head_sha },
+      env: {},
+    });
+    assert.strictEqual(verdict.ok, false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('normalizePurpose accepts only the two declared purposes', () => {

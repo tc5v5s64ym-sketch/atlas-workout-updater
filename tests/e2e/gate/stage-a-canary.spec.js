@@ -40,6 +40,8 @@ const path = require('node:path');
 
 const { scoreStageARun, renderMarkdown } = require('./stage-a-canary-scorecard');
 const { normalizePurpose, STAGE_A_SESSION } = require('./stage-a-run-purpose');
+const { measureSourceTree } = require('./stage-a-source-facts');
+const { markRunStarted } = require('./stage-a-run-start');
 const { pickNetworkPassthrough, assertNoWorkbookId, GATE_STARTUP_TIMEOUT_MS } = require('./canary-child-env');
 const { SANDBOX_SPREADSHEET_ID, SANDBOX_SPREADSHEET_ID_LAST6 } = require('../../../config/sandboxSheet');
 const { logCleanedColumns, effortColumns } = require('../../../config/columns');
@@ -60,21 +62,12 @@ const rawSessionNumber = process.env.ATLAS_STAGE_A_SESSION_NUMBER;
 const STAGE_A_SESSION_NUMBER = /^[0-9]+$/.test(String(rawSessionNumber || ''))
   ? Number(rawSessionNumber)
   : null;
-// The source facts the operator command MEASURED before the run. They are recorded so the
-// published evidence names the exact tree it came from, and re-checked by the scorecard so a
-// run cannot claim count-eligibility on facts it never carried.
-const rawPriorCount = process.env.ATLAS_STAGE_A_PRIOR_COUNT;
-const SOURCE = {
-  branch: process.env.ATLAS_RUN_SOURCE_BRANCH || '',
-  head_sha: process.env.ATLAS_RUN_SOURCE_SHA || '',
-  origin_head_sha: process.env.ATLAS_RUN_SOURCE_ORIGIN_SHA || '',
-  // Tri-state on purpose: '1' is clean, '0' is dirty, and an unset variable stays undefined
-  // so the scorecard reports missing evidence rather than assuming either.
-  clean: process.env.ATLAS_RUN_SOURCE_CLEAN === undefined
-    ? undefined
-    : process.env.ATLAS_RUN_SOURCE_CLEAN === '1',
-  prior_stage_a_count: /^[0-9]+$/.test(String(rawPriorCount || '')) ? Number(rawPriorCount) : null,
-};
+// The source facts are MEASURED HERE, by the run, not handed over on the environment by the
+// launcher. The operator command measures the same facts through the same module to refuse
+// early, but what the published evidence carries is what this process observed — an
+// assertion passed on an env var is a weaker claim than a measurement, and the point of the
+// Stage A mode is that evidence means what it claims.
+const SOURCE = measureSourceTree();
 
 // ── the deterministic synthetic workout ─────────────────────────────────────────
 // Two exercises, four sets — small, complete, and genuinely representative. The loads
@@ -144,8 +137,22 @@ async function snap(page, name) {
   await page.screenshot({ path: path.join(artDir, name), fullPage: true });
 }
 
+// Every athlete turn goes through here, so this is where the owner ruling's session-start
+// boundary is crossed and recorded. Marking it inside `say` rather than at a named step means
+// the marker cannot drift if the scenario's order changes: the FIRST composer submission is
+// the boundary by definition, whichever turn that happens to be.
+//
+// The marker is written BEFORE the click. A submission that is dispatched and then dies is
+// still a submission; recording afterwards would lose exactly the case the boundary exists
+// to classify — a run that began and then failed, which must reset the streak.
 async function say(page, text) {
   await page.locator('#workout-text').fill(text);
+  if (markRunStarted(artDir, {
+    run_id: RUN_ID, purpose: RUN_PURPOSE, stage_a_session_number: STAGE_A_SESSION_NUMBER,
+    session_id: SESSION_ID, source_sha: SOURCE.head_sha,
+  })) {
+    note('session-start', 'BOUNDARY CROSSED — first synthetic athlete turn submitted; a failure from here is a failed session');
+  }
   await page.locator('#preview-btn').click();
   note('say', text);
 }

@@ -171,6 +171,13 @@ function evaluateStageAPreflight(input) {
   }
 
   const git = i.git && typeof i.git === 'object' ? i.git : {};
+  // A failed `git fetch origin main` is a REFUSAL, not a fallback. Continuing on the local
+  // tracking ref would compare HEAD against a possibly-stale origin/main — and when that
+  // stale ref happens to equal HEAD, a superseded tree would look current and could publish
+  // stage_a_eligible = true. "We could not check" is not "the check passed".
+  if (i.originRefreshed !== true) {
+    add('`git fetch origin main` did not succeed, so origin/main may be stale — the staleness check cannot be trusted');
+  }
   if (git.branch !== 'main') {
     add(`a qualifying run must execute on main; the working branch is "${git.branch || 'unknown'}"`);
   }

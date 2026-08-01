@@ -29,7 +29,7 @@
 // Sunset: deleted, together with `ATLAS_RUN_PURPOSE` and the rest of the temporary Stage-A
 // machinery, in the same PR that records Stage A at 5/5 (see docs/ATLAS_V1_EXECUTION_PLAN.md).
 
-const { spawn, execFileSync } = require('node:child_process');
+const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
@@ -40,10 +40,10 @@ const { SANDBOX_SPREADSHEET_ID_LAST6, isSandboxSpreadsheetId, SANDBOX_SPREADSHEE
 const { pickNetworkPassthrough, assertNoWorkbookId } = require('../tests/e2e/gate/canary-child-env');
 const {
   STAGE_A_SESSION, STAGE_A_STREAK_LENGTH,
-  mintIdentities, parseCanonicalStageACount, evaluateStageAPreflight,
+  mintIdentities, evaluateStageAPreflight,
 } = require('../tests/e2e/gate/stage-a-run-purpose');
-
-const PLAN_PATH = path.join(REPO_ROOT, 'docs', 'ATLAS_V1_EXECUTION_PLAN.md');
+const { fetchOriginMain, measureSourceTree } = require('../tests/e2e/gate/stage-a-source-facts');
+const { readRunStart, classifyIncompleteRun } = require('../tests/e2e/gate/stage-a-run-start');
 
 function fail(message) {
   console.error(`[stage-a-session] ${message}`);
@@ -83,36 +83,20 @@ const SESSION_NUMBER = /^[0-9]+$/.test(sessionRaw) ? Number(sessionRaw) : NaN;
 // ── measure the world ──────────────────────────────────────────────────────────
 // This script MEASURES; `evaluateStageAPreflight` DECIDES. Keeping the two apart is what
 // makes the decision unit-testable without a git repository, a network, or credentials.
-function git(...args) {
-  try {
-    return execFileSync('git', args, { cwd: REPO_ROOT, encoding: 'utf8' }).trim();
-  } catch {
-    return '';
-  }
-}
-
-// Fetch origin/main first, so "HEAD equals origin/main" is measured against the real remote
-// rather than a stale local ref that would make a superseded tree look current.
-try {
-  execFileSync('git', ['fetch', 'origin', 'main'], { cwd: REPO_ROOT, stdio: 'ignore' });
-} catch {
-  console.warn('[stage-a-session] warning: could not fetch origin/main; the staleness check will use the local ref.');
-}
-
+// The measuring itself is shared with the spec (`stage-a-source-facts.js`), so the facts
+// this refusal is based on are the same facts the run will later record.
+//
+// A FAILED fetch is a refusal, not a warning. Falling back to the local tracking ref would
+// compare HEAD against a possibly-stale origin/main, and a stale ref that happens to equal
+// HEAD would make a superseded tree look current.
+const originRefreshed = fetchOriginMain(REPO_ROOT);
+const source = measureSourceTree(REPO_ROOT);
 const gitFacts = {
-  branch: git('rev-parse', '--abbrev-ref', 'HEAD'),
-  head: git('rev-parse', 'HEAD'),
-  originHead: git('rev-parse', 'origin/main'),
-  clean: git('status', '--porcelain') === '',
+  branch: source.branch,
+  head: source.head_sha,
+  originHead: source.origin_head_sha,
+  clean: source.clean,
 };
-
-let planText = '';
-try {
-  planText = fs.readFileSync(PLAN_PATH, 'utf8');
-} catch {
-  planText = '';
-}
-const canonical = parseCanonicalStageACount(planText);
 
 const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+/, '');
 const nonce = crypto.randomBytes(3).toString('hex').toUpperCase();
@@ -147,13 +131,11 @@ const childEnv = {
   // readiness proof. The spec records it; the scorecard decides what it permits.
   ATLAS_RUN_PURPOSE: STAGE_A_SESSION,
   ATLAS_STAGE_A_SESSION_NUMBER: String(SESSION_NUMBER),
-  // The measured source facts, recorded in the evidence and re-checked by the scorecard, so a
-  // published artifact carries the exact tree it came from rather than an unverifiable claim.
-  ATLAS_RUN_SOURCE_SHA: gitFacts.head,
-  ATLAS_RUN_SOURCE_ORIGIN_SHA: gitFacts.originHead,
-  ATLAS_RUN_SOURCE_BRANCH: gitFacts.branch,
-  ATLAS_RUN_SOURCE_CLEAN: gitFacts.clean ? '1' : '0',
-  ATLAS_STAGE_A_PRIOR_COUNT: canonical.ok ? String(canonical.count) : '',
+  // NOTE: the source facts are deliberately NOT passed here. The spec measures them itself
+  // through the same shared module, so the published evidence carries what the RUN observed
+  // rather than what this launcher asserted. An assertion handed over on the environment is
+  // weaker evidence than a measurement, and this mode exists to make evidence mean what it
+  // claims. This script measures them only to refuse early.
   // The runner's existing identity transport, shared by both purposes — one runner, one set
   // of names. The VALUES here are Stage-A identities, minted above.
   ATLAS_CANARY_MODE: MODE,
@@ -178,8 +160,9 @@ const preflight = evaluateStageAPreflight({
   mode: MODE,
   sessionId: SESSION_ID,
   git: gitFacts,
-  priorStageACount: canonical.ok ? canonical.count : null,
-  priorCountReason: canonical.reason,
+  originRefreshed,
+  priorStageACount: source.prior_stage_a_count,
+  priorCountReason: source.prior_count_reason,
   env: {
     childCarriesWorkbookId,
     sandboxLiveDeclared: childEnv.ATLAS_GATE_SANDBOX_LIVE === '1',
@@ -196,7 +179,7 @@ fs.mkdirSync(ARTIFACT_DIR, { recursive: true });
 
 const ambientLast6 = process.env.GOOGLE_SHEETS_ID ? String(process.env.GOOGLE_SHEETS_ID).slice(-6) : null;
 console.log(`[stage-a-session] purpose  : ${STAGE_A_SESSION} — session ${SESSION_NUMBER} of ${STAGE_A_STREAK_LENGTH}`);
-console.log(`[stage-a-session] prior    : canonical Stage A count ${canonical.count}/${STAGE_A_STREAK_LENGTH} (from the execution plan)`);
+console.log(`[stage-a-session] prior    : canonical Stage A count ${source.prior_stage_a_count}/${STAGE_A_STREAK_LENGTH} (from the execution plan)`);
 console.log(`[stage-a-session] source   : ${gitFacts.branch} @ ${gitFacts.head.slice(0, 12)} (clean, = origin/main)`);
 console.log(`[stage-a-session] run      : ${RUN_ID}`);
 console.log(`[stage-a-session] posture  : ${MODE}`);
@@ -217,11 +200,14 @@ const runner = spawn(
 runner.on('exit', (code) => {
   const scorecardPath = path.join(ARTIFACT_DIR, 'scorecard.json');
   if (!fs.existsSync(scorecardPath)) {
-    // No scorecard means the run never reached scoring. A green process exit is explicitly
-    // NOT sufficient evidence, and neither is a red one sufficient to call a session failed:
-    // the operator reads the boundary rule to classify it.
+    // No scorecard means the run never reached scoring — but that alone does not say WHICH
+    // SIDE of the session-start boundary it died on, and those two outcomes have opposite
+    // consequences for the streak. The run recorded the crossing itself, so the verdict is
+    // read from that marker rather than inferred by the operator.
+    const classification = classifyIncompleteRun(readRunStart(ARTIFACT_DIR));
     console.error('\n[stage-a-session] NO SCORECARD — the run did not reach scoring.');
-    console.error('[stage-a-session] If no synthetic athlete turn was submitted, this is NOT STARTED and the streak is unchanged.');
+    console.error(`[stage-a-session] ${classification.verdict}: ${classification.detail}`);
+    console.error(`[stage-a-session] evidence preserved at ${path.relative(process.cwd(), ARTIFACT_DIR)}`);
     process.exit(1);
   }
   const card = JSON.parse(fs.readFileSync(scorecardPath, 'utf8'));
