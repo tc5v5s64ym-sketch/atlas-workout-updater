@@ -306,18 +306,40 @@ test('Stage-A canary: one complete synthetic workout through the real browser to
   // set-logging turn legitimately answers deterministically while the conversational question
   // is answered by the model. Aggregating them made a correct model-up run look ambiguous.
   currentPhase = 'eligible_question';
+  const QUESTION = 'what is left in this session?';
   const threadBefore = await page.locator('#thread-messages').innerText();
-  await say(page, 'what is left in this session?');
-  await expect.poll(async () => (await page.locator('#thread-messages').innerText()).length,
-    { timeout: 40000 }).toBeGreaterThan(threadBefore.length);
-  const threadAfter = await page.locator('#thread-messages').innerText();
-  const reply = threadAfter.slice(threadBefore.length).trim();
-  // Grounding is proven by the reply naming session truth (a planned lift), not by the
-  // reply merely existing and not by the absence of outage wording.
+  await say(page, QUESTION);
+
+  // Wait for a SETTLED reply, using the discipline scripts/live-retest.js already documents:
+  // the 'Thinking…' marker must be gone, the body non-empty, and the text stable. An earlier
+  // version settled on "thread text grew", which the echoed user bubble plus the 'Thinking…'
+  // placeholder satisfies instantly — so the run captured "what is left in this session?
+  // Thinking…" as the reply and scored grounding PASS off the word "left" in the ECHOED
+  // QUESTION. A false green in the exact condition this canary exists to make honest.
+  const THINKING = 'Thinking…';
+  let settledText = '';
+  let stableSince = null;
+  let lastSeen = null;
+  await expect.poll(async () => {
+    const now = await page.locator('#thread-messages').innerText();
+    const delta = now.slice(threadBefore.length);
+    if (delta !== lastSeen) { lastSeen = delta; stableSince = Date.now(); return false; }
+    const body = delta.split(THINKING).join('').replace(QUESTION, '').trim();
+    if (delta.includes(THINKING) || body.length === 0) return false;
+    if (stableSince === null || Date.now() - stableSince < 750) return false;
+    settledText = delta;
+    return true;
+  }, { timeout: 90000, intervals: [250] }).toBe(true);
+
+  // The assistant's words only — the echoed question is stripped, so grounding can never be
+  // satisfied by the athlete's own text.
+  const reply = settledText.split(THINKING).join('').replace(QUESTION, '').trim();
+  // Grounding requires the reply to name a lift that is actually in THIS session's plan,
+  // not merely to contain a plausible word.
   observations.ui.grounded_question = {
     asked: true,
     reply_text: reply,
-    grounded_in_session: /squat|bench|remaining|left/i.test(reply),
+    grounded_in_session: /back squat|bench press|squat|bench/i.test(reply),
   };
   await snap(page, '03-grounded-question.png');
   note('question', `asked a session-state question; reply length ${reply.length}`);
