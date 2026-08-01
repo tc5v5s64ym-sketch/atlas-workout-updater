@@ -44,11 +44,15 @@ const ARTIFACT_DIR = process.env.ATLAS_CANARY_ARTIFACT_DIR;
 // ── the deterministic synthetic workout ─────────────────────────────────────────
 // Two exercises, four sets — small, complete, and genuinely representative. The loads
 // mirror the catalog the app already resolves, so identity resolution does real work.
+// Each set is ONE message carrying its own exercise name — the form the existing gate specs
+// use ('Romanian Deadlift 245 x 6 @3'). An earlier attempt switched exercise with a bare lift
+// name and then sent a bare load, and the first set after the switch never committed. Naming
+// the lift on every set removes the two-step dependency and keeps each turn self-contained.
 const WORKOUT = Object.freeze([
-  { exercise: 'Back Squat', set_number: 1, weight: 225, reps: 5, rir: 2, say: '225 5/2' },
-  { exercise: 'Back Squat', set_number: 2, weight: 225, reps: 5, rir: 2, say: '225 5/2' },
-  { exercise: 'Bench Press', set_number: 1, weight: 185, reps: 8, rir: 3, say: '185 8/3' },
-  { exercise: 'Bench Press', set_number: 2, weight: 185, reps: 7, rir: 2, say: '185 7/2' },
+  { exercise: 'Back Squat', set_number: 1, weight: 225, reps: 5, rir: 2, say: 'Back Squat 225 x 5 @2' },
+  { exercise: 'Back Squat', set_number: 2, weight: 225, reps: 5, rir: 2, say: 'Back Squat 225 x 5 @2' },
+  { exercise: 'Bench Press', set_number: 1, weight: 185, reps: 8, rir: 3, say: 'Bench Press 185 x 8 @3' },
+  { exercise: 'Bench Press', set_number: 2, weight: 185, reps: 7, rir: 2, say: 'Bench Press 185 x 7 @2' },
 ]);
 const EFFORT = Object.freeze({
   duration: '44:30', active_calories: 366, total_calories: 488, average_hr: 124, peak_hr: 159,
@@ -241,9 +245,13 @@ test('Stage-A canary: one complete synthetic workout through the real browser to
   // ── 3. Establish a plan through the current product path ─────────────────────
   const started = await page.evaluate(() => window.atlasAcceptPlan({
     id: 'work_day', label: 'Work', why_today: 'Phase 4 Stage-A canary.',
+    // The exercise shape the existing gate specs pass to atlasAcceptPlan — `exercise` +
+    // `target_*`, not `name`/`sets`. A wrong shape is accepted silently and produces a plan
+    // the client cannot render, so it is copied from the established call site rather than
+    // guessed from the field names.
     exercises: [
-      { name: 'Back Squat', lift_code: 'SQ01', sets: 2, target_reps: 5, target_rir: 2, weight: 225 },
-      { name: 'Bench Press', lift_code: 'BEN01', sets: 2, target_reps: 8, target_rir: 3, weight: 185 },
+      { exercise: 'Back Squat', lift_code: 'SQ01', target_weight: 225, target_reps: 5, target_sets: 2, target_rir: 2 },
+      { exercise: 'Bench Press', lift_code: 'BEN01', target_weight: 185, target_reps: 8, target_sets: 2, target_rir: 3 },
     ],
   }));
   observations.ui.plan_established = Boolean(started && started.started);
@@ -296,12 +304,10 @@ test('Stage-A canary: one complete synthetic workout through the real browser to
   note('question', `asked a session-state question; reply length ${reply.length}`);
 
   // ── 5. Enter the workout through the real composer ───────────────────────────
-  await logSet(page, 'back squat', 0).catch(() => {});
-  let logged = await page.evaluate(() => window.getSessionLog().length);
+  let logged = 0;
   for (const set of WORKOUT) {
-    if (set.set_number === 1) { await say(page, set.exercise.toLowerCase()); }
-    await logSet(page, set.say, logged + 1);
     logged += 1;
+    await logSet(page, set.say, logged);
   }
   observations.ui.logged_sets = await page.evaluate(() => window.getSessionLog().length);
   observations.ui.exercises_logged = await page.evaluate(() =>

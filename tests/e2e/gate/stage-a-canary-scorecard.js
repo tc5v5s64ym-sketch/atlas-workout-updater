@@ -455,9 +455,39 @@ const CONDITIONS = Object.freeze([
       }
       // The canonical record nests the W1–W3 proof fields under `proof`; read them there
       // rather than in a flattened copy, so this consumes the real format and not a second one.
-      const wrote = mine.filter((r) => r.proof && r.proof.sheet_written === true);
-      if (wrote.length === 0) return fail('no turn-write-proof record reports a completed write');
-      return pass(`${mine.length} turn-write-proof record(s) for this session; ${wrote.length} reporting a completed write`);
+      //
+      // A live write is NOT proven by `sheet_written:true`. That field belongs to the DRY-RUN
+      // envelope, where it is false alongside `no_write_confirmed:true`. Per Invariants W1–W3,
+      // live-write success requires an authoritative `sheet_write:'success'` PLUS positive row
+      // evidence, with `test_mode` explicitly false. Accepting `sheet_written` here would have
+      // meant no live write could ever satisfy this condition — and, worse, a future envelope
+      // that set it true in a dry run would have satisfied it wrongly.
+      const isDryRun = (p) => p.test_mode === true && p.no_write_confirmed === true && p.sheet_written === false;
+      const isLiveWrite = (p) => p.test_mode === false
+        && p.sheet_write === 'success'
+        && Number(p.log_rows_written) > 0;
+
+      const wrote = mine.filter((r) => r.proof && isLiveWrite(r.proof));
+      if (wrote.length === 0) {
+        const dry = mine.filter((r) => r.proof && isDryRun(r.proof)).length;
+        return fail(`no turn-write-proof record reports an authoritative live write (${dry} dry-run record(s) present)`);
+      }
+      if (wrote.length > 1) {
+        return fail(`${wrote.length} live-write records for one approved action — a single approval must write once`);
+      }
+      // The write must have been ESTABLISHED AT PREVIEW, not free-floating: the same turn must
+      // also carry a dry-run record, and the live record must report the preview pairing.
+      const previews = mine.filter((r) => r.proof && isDryRun(r.proof));
+      if (previews.length === 0) {
+        return fail('the live write has no matching dry-run record on the same turn — preview→approve→write is unproven at the proof level');
+      }
+      if (!(wrote[0].pairing && wrote[0].pairing.established_at_preview === true)) {
+        return fail('the live write does not report a preview-established pairing');
+      }
+      if (wrote[0].proof.duplicate_write === true) {
+        return fail('the live write reports duplicate_write');
+      }
+      return pass(`1 authoritative live write (${wrote[0].proof.log_rows_written} log rows, ${wrote[0].proof.effort_rows_written} effort row), preview-established, preceded by ${previews.length} dry-run record(s)`);
     },
   },
   {

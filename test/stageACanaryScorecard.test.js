@@ -88,9 +88,22 @@ function goodObservations() {
       foreign_identity_rows: 0, other_session_rows_delta: 0, rows_added_by_second_approval: 0,
     },
     trace: { records: [{ turn_id: TURN, valid: true, stages: [{ stage: 'intent', status: 'ok' }], source: 'deterministic' }] },
+    // The REAL two-record shape a canary run produces: the dry-run preview, then the
+    // authoritative live write on the same turn. Copied from a genuine sandbox run's
+    // evidence.json, not invented — an invented shape is how the first version of this
+    // condition came to check a field the live envelope never carries.
     write_proof: {
-      records: [{ turn_id: TURN, session_id: SESSION, route: '/api/complete-workout',
-        proof: { sheet_written: true, log_rows_appended: 4 }, withheld_evidence: [] }],
+      records: [
+        { turn_id: TURN, session_id: SESSION, route: '/api/log-workout',
+          pairing: { established_at_preview: true, write_attempt: 0 },
+          proof: { test_mode: true, sheet_write: 'skipped', sheet_written: false, no_write_confirmed: true },
+          withheld_evidence: [] },
+        { turn_id: TURN, session_id: SESSION, route: '/api/log-workout',
+          pairing: { established_at_preview: true, write_attempt: 1, payload_bound: true },
+          proof: { test_mode: false, sheet_write: 'success', duplicate_write: false,
+            log_rows_written: 4, effort_rows_written: 1, idempotency_status: 'completed' },
+          withheld_evidence: [] },
+      ],
     },
     privacy: { violations: [], artifacts_scanned: 9, artifact_bytes: 40000, artifact_bytes_limit: 2000000 },
   };
@@ -332,17 +345,40 @@ test('17. a missing InteractionTrace is refused', () => {
 
 test('18. a missing turn-write proof is refused', () => {
   assertBites('no write proof', 'turn_write_proof_present', 'FAIL', o => { o.write_proof.records = []; });
-  assertBites('write proof reports no write', 'turn_write_proof_present', 'FAIL', o => {
-    o.write_proof.records[0].proof.sheet_written = false;
+  assertBites('only a dry-run record, no live write', 'turn_write_proof_present', 'FAIL', o => {
+    o.write_proof.records = [o.write_proof.records[0]];
   });
   assertBites('write proof for another session', 'turn_write_proof_present', 'FAIL', o => {
-    o.write_proof.records[0].session_id = 'CANARY-SOMEONE-ELSE';
+    o.write_proof.records.forEach(r => { r.session_id = 'CANARY-SOMEONE-ELSE'; });
+  });
+  // sheet_written belongs to the DRY-RUN envelope and is false there. A record claiming a
+  // live write with only that field, and no authoritative sheet_write/row evidence, is not proof.
+  assertBites('sheet_written is not live-write proof', 'turn_write_proof_present', 'FAIL', o => {
+    o.write_proof.records[1].proof = { sheet_written: true, log_rows_appended: 4 };
+  });
+  assertBites('success with zero rows is not proof', 'turn_write_proof_present', 'FAIL', o => {
+    o.write_proof.records[1].proof.log_rows_written = 0;
+  });
+  assertBites('a live write still in test_mode is not proof', 'turn_write_proof_present', 'FAIL', o => {
+    o.write_proof.records[1].proof.test_mode = true;
+  });
+  assertBites('two live writes for one approval', 'turn_write_proof_present', 'FAIL', o => {
+    o.write_proof.records.push(JSON.parse(JSON.stringify(o.write_proof.records[1])));
+  });
+  assertBites('a live write with no preview record', 'turn_write_proof_present', 'FAIL', o => {
+    o.write_proof.records = [o.write_proof.records[1]];
+  });
+  assertBites('a live write not established at preview', 'turn_write_proof_present', 'FAIL', o => {
+    o.write_proof.records[1].pairing.established_at_preview = false;
+  });
+  assertBites('a duplicate write', 'turn_write_proof_present', 'FAIL', o => {
+    o.write_proof.records[1].proof.duplicate_write = true;
   });
 });
 
 test('19. a trace and write proof carrying different turn_ids do not join', () => {
   assertBites('turn id mismatch', 'trace_write_join', 'FAIL', o => {
-    o.write_proof.records[0].turn_id = 'turn:2026-08-01T13:00:00.000Z_9_zzzzzz';
+    o.write_proof.records.forEach(r => { r.turn_id = 'turn:2026-08-01T13:00:00.000Z_9_zzzzzz'; });
   });
 });
 
