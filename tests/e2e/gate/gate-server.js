@@ -612,8 +612,17 @@ const stateServer = http.createServer((req, res) => {
     (async () => {
       const real = require('../../../sheets');
       const { logCleanedColumns: lc, effortColumns: ec } = require('../../../config/columns');
-      const logIdx = lc.indexOf('Session ID');
-      const effIdx = ec.indexOf('Session ID');
+      // Contract FIELD names, not display labels. `config/columns.js` holds `session_id`;
+      // the workbook header holds "Session ID". Looking up the label returns -1, and `row[-1]`
+      // is undefined, so every row would silently fail to match and the verifier would report
+      // an empty workbook for a session that had just been written.
+      const logIdx = lc.indexOf('session_id');
+      const effIdx = ec.indexOf('session_id');
+      if (logIdx < 0 || effIdx < 0) {
+        res.statusCode = 500;
+        res.end(JSON.stringify({ error: 'durable verifier: session_id column not found in the contract' }));
+        return;
+      }
       const [logRowsAll, effRowsAll] = await Promise.all([
         real.getSheetRows('Log_Cleaned'),
         real.getSheetRows('Effort'),

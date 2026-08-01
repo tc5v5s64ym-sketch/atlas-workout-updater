@@ -65,13 +65,34 @@ function note(step, detail) {
   timeline.push({ at: new Date().toISOString(), step, detail });
 }
 
+// The durable read pulls the whole sandbox workbook (thousands of rows), so a cold first call
+// can be slow enough for the socket to reset. A transient read failure proves NOTHING about the
+// product, so it is retried rather than allowed to become a false FAIL — but the retry is on the
+// READ only, never on a write, and it gives up rather than returning a guess.
+async function readJson(url, what) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const body = await res.json();
+      if (body && body.error) throw new Error(String(body.error));
+      return body;
+    } catch (error) {
+      lastError = error;
+      await new Promise(r => setTimeout(r, 1000 * attempt));
+    }
+  }
+  throw new Error(`Stage-A canary: ${what} failed after 4 attempts — ${lastError && lastError.message}`);
+}
+
 async function serverState() {
-  return (await fetch(`${stateBase}/`)).json();
+  return readJson(`${stateBase}/`, 'harness state read');
 }
 
 // The harness-side READ-ONLY verifier: what the WORKBOOK holds, not what the app believes.
 async function durableRows(sessionId) {
-  return (await fetch(`${stateBase}/durable-rows?session_id=${encodeURIComponent(sessionId)}`)).json();
+  return readJson(`${stateBase}/durable-rows?session_id=${encodeURIComponent(sessionId)}`, 'durable row read');
 }
 
 async function snap(page, name) {
@@ -212,6 +233,29 @@ test('Stage-A canary: one complete synthetic workout through the real browser to
   note('plan', `plan accepted and visible in the pin: ${pinText.replace(/\n/g, ' ')}`);
 
   // ── 4. One conversational question grounded in current session state ─────────
+  //
+  // The provider marker is read from the RESPONSE the eligible turn actually received.
+  // The InteractionTrace's `source` names the ROUTE (`coach_chat` / `coach_message`), not the
+  // provider, so inferring model use from it would be a category error — it can never carry
+  // "gemini". The authoritative marker is the response body's own `source`, which is exactly
+  // what `services/coachQaShadow.js` reads to decide `modelRan` (`data.source === 'gemini'`).
+  // `engine` is the deterministic fallback and `training_sme` is the SME path; neither is
+  // model-up proof.
+  const coachResponses = [];
+  page.on('response', async (res) => {
+    if (!/\/api\/coach\/(chat|ask|message)\b/.test(res.url())) return;
+    try {
+      const body = await res.json();
+      const data = body && body.data && typeof body.data === 'object' ? body.data : body;
+      coachResponses.push({
+        url: new URL(res.url()).pathname,
+        source: data && typeof data.source === 'string' ? data.source : null,
+        model: data && typeof data.model === 'string' ? data.model : null,
+        configured: data ? data.configured === true : null,
+      });
+    } catch { /* non-JSON or already consumed — recorded as absent, never guessed */ }
+  });
+
   const threadBefore = await page.locator('#thread-messages').innerText();
   await say(page, 'what is left in this session?');
   await expect.poll(async () => (await page.locator('#thread-messages').innerText()).length,
@@ -353,16 +397,27 @@ test('Stage-A canary: one complete synthetic workout through the real browser to
   observations.write_proof.records = parseMarker('[turn-write-proof]');
   note('artifacts', `${observations.trace.records.length} interaction-trace records, ${observations.write_proof.records.length} turn-write-proof records`);
 
-  // Model source marker, read from the eligible coach turn's own telemetry rather than
-  // from the absence of outage wording.
+  // Model source marker, read from the eligible coach turn's OWN RESPONSE. A positive
+  // `source: 'gemini'` is the only thing treated as live-provider proof; a settled reply,
+  // the absence of outage wording, and `configured: true` are each explicitly not proof.
   const finalState = await serverState();
-  observations.ui.grounded_question.provider_called = finalState.provider_reachable === true
-    && observations.trace.records.some(r => r.source && /model|live|gemini/i.test(String(r.source)));
-  const sources = [...new Set(observations.trace.records.map(r => String(r.source || '')).filter(Boolean))];
-  observations.ui.grounded_question.source = MODE === 'model-up'
-    ? (observations.ui.grounded_question.provider_called ? 'live_model' : (sources[0] || 'deterministic'))
-    : (sources[0] || 'deterministic');
-  observations.ui.grounded_question.source_ambiguous = sources.length > 1 && MODE === 'model-up';
+  observations.provenance.coach_responses = coachResponses;
+  const observedSources = [...new Set(coachResponses.map(r => r.source).filter(Boolean))];
+  const gemini = coachResponses.filter(r => r.source === 'gemini');
+  observations.ui.grounded_question.provider_called = gemini.length > 0;
+  observations.ui.grounded_question.source = gemini.length > 0
+    ? 'live_model'
+    : (observedSources[0] || '');
+  // Ambiguity is a real observation, not an inference: in a model-up run the eligible turn
+  // must show one unmistakable provider verdict. A mix of gemini and non-gemini sources means
+  // some eligible turn fell back, which the scorecard must see rather than have averaged away.
+  observations.ui.grounded_question.source_ambiguous = MODE === 'model-up'
+    && observedSources.length > 1
+    && gemini.length > 0;
+  // Model-up additionally requires the answering model to be named on the same response.
+  if (MODE === 'model-up' && gemini.length > 0 && !gemini.some(r => r.model)) {
+    observations.ui.grounded_question.source_ambiguous = true;
+  }
 
   // ── server + environment observations ───────────────────────────────────────
   observations.server = finalState;
@@ -398,20 +453,48 @@ test('Stage-A canary: one complete synthetic workout through the real browser to
     trace: observations.trace,
     write_proof: observations.write_proof,
   };
+  // Persist the evidence FIRST so the scan covers what is actually published, then scan every
+  // file in the artifact directory — screenshots included. Counting files it never opened, and
+  // measuring only the JSON, would let the privacy condition claim coverage it did not perform;
+  // that is the exact false green this canary exists to prevent, so the scan reads real bytes.
   const evidenceText = JSON.stringify(evidence, null, 2);
-  const violations = forbidden.filter(f => f.re.test(evidenceText)).map(f => ({ kind: f.kind }));
+  fs.writeFileSync(path.join(artDir, 'evidence.json'), evidenceText);
+
+  const scanned = [];
+  const violations = [];
+  let totalBytes = 0;
+  for (const name of fs.readdirSync(artDir)) {
+    const full = path.join(artDir, name);
+    if (!fs.statSync(full).isFile()) continue;
+    const buf = fs.readFileSync(full);
+    totalBytes += buf.length;
+    // Byte-level scan: catches a forbidden literal anywhere in the file, including PNG text
+    // chunks and metadata, not just in the JSON this spec authored.
+    const asText = buf.toString('latin1');
+    for (const f of forbidden) {
+      if (f.re.test(asText)) violations.push({ kind: f.kind, file: name });
+    }
+    scanned.push(name);
+  }
   observations.privacy = {
     violations,
-    artifacts_scanned: 1 + fs.readdirSync(artDir).length,
-    artifact_bytes: Buffer.byteLength(evidenceText),
-    artifact_bytes_limit: 2_000_000,
+    artifacts_scanned: scanned.length,
+    artifact_bytes: totalBytes,
+    artifact_bytes_limit: 8_000_000,
   };
 
   // ── score, render, persist ─────────────────────────────────────────────────
   const scorecard = scoreCanary(observations);
-  fs.writeFileSync(path.join(artDir, 'evidence.json'), evidenceText);
-  fs.writeFileSync(path.join(artDir, 'scorecard.json'), JSON.stringify(scorecard, null, 2));
-  fs.writeFileSync(path.join(artDir, 'SCORECARD.md'), renderMarkdown(scorecard));
+  const scorecardJson = JSON.stringify(scorecard, null, 2);
+  const scorecardMd = renderMarkdown(scorecard);
+  // The two scorecard files are derived from already-scanned data, so they cannot be part of
+  // the scan that produced them. Check them directly instead of asserting they are safe.
+  for (const [label, text] of [['scorecard.json', scorecardJson], ['SCORECARD.md', scorecardMd]]) {
+    const leak = forbidden.find(f => f.re.test(text));
+    expect(leak, `${label} would publish a forbidden value (${leak && leak.kind})`).toBeUndefined();
+  }
+  fs.writeFileSync(path.join(artDir, 'scorecard.json'), scorecardJson);
+  fs.writeFileSync(path.join(artDir, 'SCORECARD.md'), scorecardMd);
 
   const failed = scorecard.conditions.filter(c => c.status === 'FAIL' || c.status === 'ERROR');
   if (failed.length) {

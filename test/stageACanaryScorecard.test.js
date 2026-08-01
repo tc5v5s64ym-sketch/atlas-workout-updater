@@ -472,6 +472,73 @@ test('a run where every condition is N/A is never an overall pass', () => {
   }
 });
 
+// ── regressions for the three defects Codex found on 89b29bc ───────────────────
+
+test('REGRESSION: durable rows are matched on the contract FIELD name, never the display label', () => {
+  // `config/columns.js` holds `session_id`; the workbook header holds "Session ID". Looking up
+  // the label returns -1, `row[-1]` is undefined, and the verifier reports an empty workbook for
+  // a session that was just written — so the canary would time out after a successful write.
+  const { logCleanedColumns, effortColumns } = require('../config/columns');
+  assert.ok(logCleanedColumns.indexOf('session_id') >= 0, 'Log_Cleaned contract lost session_id');
+  assert.ok(effortColumns.indexOf('session_id') >= 0, 'Effort contract lost session_id');
+  assert.strictEqual(logCleanedColumns.indexOf('Session ID'), -1,
+    'the display label must NOT resolve — this is the trap the verifier fell into');
+
+  // And the scorecard must reject the resulting empty readback rather than pass it.
+  assertBites('label lookup returned nothing', 'durable_log_rows_exact', 'FAIL', o => {
+    o.durable.log_rows = [];
+  });
+});
+
+test('REGRESSION: model-up proof requires source "gemini", not a route name or the SME path', () => {
+  const upgrade = o => {
+    o.run.mode = 'model-up';
+    o.server.model_posture = 'model-up';
+    o.server.provider_key_present = true;
+    o.server.provider_reachable = true;
+    o.server.coach_model = 'gemini-2.5-flash-lite';
+  };
+  // The InteractionTrace `source` names the ROUTE (`coach_chat` / `coach_message`) and can never
+  // carry a provider name. Treating a route name as a provider marker is a category error.
+  for (const routeName of ['coach_chat', 'coach_message', 'coach_ask']) {
+    assertBites(`route name ${routeName} is not provider proof`, 'model_source_marker', 'FAIL', o => {
+      upgrade(o);
+      o.ui.grounded_question.provider_called = false;
+      o.ui.grounded_question.source = routeName;
+    });
+  }
+  // `training_sme` is the SME path, and the directive names it explicitly as not model-up proof.
+  assertBites('training_sme is not model-up proof', 'model_source_marker', 'FAIL', o => {
+    upgrade(o);
+    o.ui.grounded_question.provider_called = false;
+    o.ui.grounded_question.source = 'training_sme';
+  });
+  // `engine` is the deterministic fallback.
+  assertBites('engine is not model-up proof', 'model_source_marker', 'FAIL', o => {
+    upgrade(o);
+    o.ui.grounded_question.provider_called = false;
+    o.ui.grounded_question.source = 'engine';
+  });
+  // Only a positive live-provider marker passes.
+  const good = goodObservations();
+  upgrade(good);
+  good.ui.grounded_question.provider_called = true;
+  good.ui.grounded_question.source = 'live_model';
+  assert.strictEqual(statusOf(scoreCanary(good), 'model_source_marker'), 'PASS');
+});
+
+test('REGRESSION: a violation found in a screenshot fails the privacy condition', () => {
+  // The scan must cover every persisted artifact, not only the JSON the spec authored.
+  assertBites('leak in a screenshot', 'artifacts_privacy_safe', 'FAIL', o => {
+    o.privacy.violations = [{ kind: 'workbook_id', file: '05-preview-before-write.png' }];
+  });
+  // Screenshot bytes count toward the stated bound, so a run cannot bypass it by measuring
+  // only the JSON.
+  assertBites('screenshots push past the byte bound', 'artifacts_privacy_safe', 'FAIL', o => {
+    o.privacy.artifact_bytes = o.privacy.artifact_bytes_limit + 1;
+  });
+});
+
 // ── privacy + schema ───────────────────────────────────────────────────────────
 
 test('privacy violations and unbounded artifacts are refused', () => {
