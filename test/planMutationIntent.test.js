@@ -294,6 +294,82 @@ test('ADD-2: "no X" lane stays conservative on non-skips', () => {
   assert.equal(classifyMutationIntent("my back is sore but i won't skip rdls"), null);
 });
 
+// ── F-SB1-C: a conversational "no" is a correction, never a skip ───────────────
+// Stage B workout 1 (2026-08-01), owner session FR-20260801152350-nngk9o6f. The owner
+// typed "No I'm looking for a substitute for bench press". The "no X" lane captured the
+// WHOLE clause as the skip target — looksLikeExercise accepts any 2–60 char string — the
+// downstream resolver matched it to the Bench Press slot, and the lift was silently
+// dropped ("Skipped Bench Press. Next up: Dumbbell Side Bend."). He asked for a swap and
+// the plan lost the exercise.
+test('F-SB1-C: the owner\'s exact turn is an implicit substitution ON bench press, never a skip', () => {
+  // Curly apostrophe, exactly as a mobile keyboard produced it.
+  for (const text of [
+    'No I’m looking for a substitute for bench press',
+    "No I'm looking for a substitute for bench press",
+    'i am looking for a substitute for bench press',
+  ]) {
+    const r = classifyMutationIntent(text);
+    assert.equal(r && r.action, 'substitute', `must request a swap, not a skip: ${text}`);
+    assert.equal(r.target, 'bench press', 'the NAMED lift is what gets replaced');
+    assert.equal(r.implicit, true, 'the engine picks the substitute — the athlete named none');
+  }
+});
+
+// Codex P1 (PR #1238): returning null was not enough. `checkAndSuggestSubstitute` sends no
+// `intent`, so /api/suggest-substitute's constraint gate ("busy"/"taken") refuses a message
+// like this one and the athlete gets generic coach prose. Classifying it routes the turn to
+// tryApplyImplicitSubstitution, which DOES send `intent:'substitute'`.
+test('F-SB1-C: "<substitute noun> for|to X" names the lift being REPLACED, not the replacement', () => {
+  for (const [text, target] of [
+    ['give me an alternative to squats', 'squats'],
+    ['suggest a replacement for rdls', 'rdls'],
+    ['substitute for bench press', 'bench press'],
+    ['i need a substitute for leg press', 'leg press'],
+  ]) {
+    const r = classifyMutationIntent(text);
+    assert.equal(r && r.action, 'substitute', `substitute request: ${text}`);
+    assert.equal(r.target, target, `target: ${text}`);
+  }
+});
+
+// The noun anchor keeps the destination-only VERB forms untouched.
+test('F-SB1-C: destination-only swaps still name a destination', () => {
+  for (const text of ['swap to dips', 'swap for dips', 'switch to incline bench', 'sub in leg curls', 'replace with dips']) {
+    const r = classifyMutationIntent(text);
+    assert.equal(r && r.action, 'replace', `still a destination-only replace: ${text}`);
+    assert.equal(r.target, '__current__', `the CURRENT slot is the target: ${text}`);
+  }
+});
+
+test('F-SB1-C: a conversational "no" never becomes a plan mutation', () => {
+  for (const text of [
+    'no i want to keep squats',            // the opposite of a skip
+    "no that's not what i meant",
+    'no thanks',
+    'no you misread me',
+    'no we already did that one',
+    'no it was the other lift',
+    'no wait, i still need to do rdls',    // "rdls" appears but the intent is to KEEP it
+  ]) {
+    assert.equal(classifyMutationIntent(text), null, `must not mutate: ${text}`);
+  }
+});
+
+// The guard must not cost the lane the owner finds it EXISTS for (2026-07-07).
+test('F-SB1-C: the noun-phrase "no X" skip still classifies', () => {
+  for (const [text, target] of [
+    ['no RDLs for me today', 'rdls'],
+    ['no more curls', 'curls'],
+    ['no leg press today', 'leg press'],
+    ['no bench press', 'bench press'],
+    ['no single leg seated leg press', 'single leg seated leg press'],
+  ]) {
+    const r = classifyMutationIntent(text);
+    assert.equal(r && r.action, 'skip', `still a skip: ${text}`);
+    assert.equal(r.target, target, `target: ${text}`);
+  }
+});
+
 // ── ADD-2: lift-code stem resolution so "rdls" reaches the RDL01 slot ─────────
 test('ADD-2: resolvePlanTargets resolves a token to a slot by lift-code stem', () => {
   const plan = [{ name: 'Romanian Deadlift', liftCode: 'RDL01' }, { name: 'Seated Row', liftCode: 'ROW01' }];

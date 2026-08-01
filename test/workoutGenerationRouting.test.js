@@ -103,6 +103,45 @@ test('looksLikeSessionRequest still leaves education / dispute / modification / 
   }
 });
 
+// --- F-SB1-C: a substitute request is about ONE lift, not a whole session -------------
+// Stage B workout 1 (2026-08-01), owner session FR-20260801152350-nngk9o6f. The owner
+// typed "Bench press is taken at the moment, suggest a substitute workout out with reps
+// and weights." The composer gate's loose phrase match — `(suggest|recommend) a <word>
+// workout`, whose optional adjective slot took "substitute" — claimed it as a generation
+// request, so he got today's plan read back at him ("Today, let's make it core.") and no
+// substitute was ever offered. The turn never reached /api/suggest-substitute.
+test('F-SB1-C: a LIFT-LEVEL swap request never routes to the session-generation pick lane', () => {
+  for (const q of [
+    // The owner's exact turn — the lift is named and reported unavailable.
+    'Bench press is taken at the moment, suggest a substitute workout out with reps and weights.',
+    'suggest a substitute for bench press',
+    'bench is taken, recommend an alternative',
+    'give me a replacement for squats',
+    'recommend a workout instead of bench',   // "instead of" always names its target
+  ]) {
+    assert.equal(looksLikeSessionRequest(q), false,
+      `a swap request must stay off the pick lane: ${JSON.stringify(q)}`);
+  }
+});
+
+// Codex P2 (PR #1238): the substitution WORD alone must not disqualify a turn. A whole-session
+// alternative names no lift and reports no lift unavailable, so it keeps the pick lane — it is
+// still a request to generate a session, just a different one.
+test('F-SB1-C: a WHOLE-SESSION alternative keeps the generation lane', () => {
+  for (const g of [
+    'recommend an alternative workout',
+    'suggest a replacement session',
+    'suggest a substitute workout',
+    // and the lane's own phrases, unchanged
+    'Plan me a workout.',
+    'Build me a pull workout.',
+    'suggest a push workout',
+    'recommend a session',
+  ]) {
+    assert.equal(looksLikeSessionRequest(g), true, `still generation: ${JSON.stringify(g)}`);
+  }
+});
+
 // --- The extracted constraints become authoritative-pipeline query params ------------
 
 test('buildIntentRecommendationQuery encodes the requested first exercise and focus', () => {

@@ -290,6 +290,23 @@ const _exports = (function () {
     m = t.match(/^(?:swap|switch|sub(?:stitute)?|replace|change)(?:\s+out)?\s+(.+?)(?:\s+out)?\s+(?:for|with|to|into|->|→)\s+(.+)$/);
     if (m) return replace(m[1], m[2]);
 
+    // F-SB1-C (Stage B workout 1, 2026-08-01). An explicit request for an UNNAMED
+    // substitute for a NAMED lift: "I'm looking for a substitute for bench press",
+    // "give me an alternative to squats", "suggest a replacement for RDLs". The athlete
+    // named what to swap and asked the ENGINE to pick, which is exactly an IMPLICIT
+    // substitution — so it reaches `tryApplyImplicitSubstitution`, which sends
+    // `intent:'substitute'` and gets a deterministic recommendation. Without this lane the
+    // turn falls to `checkAndSuggestSubstitute`, which sends NO intent, so the route's
+    // constraint gate ("busy"/"taken") refuses it and the athlete gets generic coach prose
+    // instead of a swap (Codex P1, PR #1238).
+    //
+    // Anchored on the substitute NOUN, so it never touches the verb forms below: "swap for
+    // dips" / "sub in leg curls" keep naming a DESTINATION. English agrees — "a substitute
+    // FOR bench press" is the thing bench press is replaced BY, so the named lift is the
+    // target, never the replacement.
+    m = t.match(/\b(?:substitutes?|substitution|alternatives?|replacements?)\s+(?:for|to)\s+(.+)$/);
+    if (m) { const sub = implicitSubstitute(m[1]); if (sub) return sub; }
+
     // Destination-only: "swap/switch/sub/replace/change to|for|in|with Y" — no source
     // named, so Y goes INTO the current/next slot (positional). Distinct from the pattern
     // above, which needs a source before the preposition.
@@ -333,8 +350,17 @@ const _exports = (function () {
     // fillers were stripped by cleanName; the downstream plan-slot resolution is the
     // safety net for a non-exercise capture ("no thanks" → no matching slot → falls
     // through to the coach). "no" alone (nothing after) never matches.
+    // F-SB1-C (Stage B workout 1, 2026-08-01): a CONVERSATIONAL "no" is a correction of
+    // what Atlas just said, never a skip instruction. "No I'm looking for a substitute for
+    // bench press" was captured whole — looksLikeExercise accepts any 2–60 char string, so
+    // the entire clause became the skip target, resolved to the Bench Press slot, and the
+    // lift was silently dropped. The owner asked for a swap and the plan lost the exercise.
+    // This lane exists for a bare NOUN PHRASE ("no RDLs for me today", "no more curls"), so
+    // a remainder opening with a subject pronoun or a discourse word is refused outright.
+    // No exercise name begins with one of these words, so nothing real is lost.
+    const CONVERSATIONAL_NO = /^(?:i|i'?m|im|i'?ve|i'?d|i'?ll|you|u|we|they|he|she|it|it'?s|that|that'?s|this|there|thanks|thank\s+you|not|but|sorry|wait|actually|please|let'?s|need|want|keep|still|just)\b/;
     m = t.match(/^no\s+(?:more\s+)?(.+)$/);
-    if (m) return skip(m[1]);
+    if (m && !CONVERSATIONAL_NO.test(m[1].trim())) return skip(m[1]);
 
     // Reason-clause tolerance (owner live find 2026-07-03: "My legs are fried
     // right now I think I'll skip single leg press and leg extensions" fell to
