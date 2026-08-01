@@ -96,6 +96,8 @@ This is the single active, executable campaign. It is embedded here — not besi
 
 ### CAMPAIGN STATE
 
+**OWNER AUTHORIZATION 2026-08-01 — Stage A is OPEN at 0/5 (no phase change).** Dale explicitly authorized Phase 4 Stage A to open. This is the owner instruction that starts the streak; it governs because it is recorded here, not because it was said in a session. It opens Stage A only: **Stage A: 0/5. Stage B: not open.** Phase 5 stays unauthorized, `SESSION_PLAN_SETS_WRITE_ENABLED` stays `0`, and no Sheet tab is created. Attempt one qualifying session at a time. The qualifying execution mode, the counting rule, the run-start boundary, and the sunset condition are recorded below under "Stage A qualifying sessions".
+
 **Owner ruling 2026-07-31 — authority governance (governance insertion, no phase change).** Two durable records landed together. (1) [`docs/ATLAS_SYSTEM_AUTHORITY.md`](ATLAS_SYSTEM_AUTHORITY.md) is the ownership authority; it replaced `docs/ATLAS_OWNERSHIP_CONNECTIVITY_INVENTORY.md`, which was removed, so exactly one ownership document exists. (2) The **Closed-Loop Delivery Contract** (`CLAUDE.md`) governs delivery: Purpose → Authority → Integration → Proof → Cleanup → Closure, with the no-orphan rule and net-open-loop reporting in the merge card. The architectural ruling is one winner per authority — pick a winner, remove the loser, or name an exact sunset condition; never add permanent reconciliation around competing authorities. **No Phase 5 consolidation is authorized by this insertion.** A concept recorded as `DUPLICATED` or `TRANSITIONAL` is honest bookkeeping, not a work item. The active phase stays Phase 4, and **Stage A: 0/5. Stage B: not open.** remains unchanged.
 
 **Owner ruling 2026-07-31 — Phase 4 two-stage operational acceptance gate (governance insertion, no phase change).** Recorded below under "OWNER RULING — 2026-07-31 — PHASE 4 TWO-STAGE OPERATIONAL ACCEPTANCE GATE". Phase 4 exits only after Stage A (five consecutive AI-run full sessions, synthetic data, sandbox Sheet) and Stage B (five consecutive owner-run workouts) both pass and the owner explicitly authorizes Phase 5. Stage A precedes Stage B. Current counts: **Stage A: 0/5. Stage B: not open.** The active phase stays Phase 4. `SESSION_PLAN_SETS_WRITE_ENABLED` stays `0`; Stage A does not require it.
@@ -326,6 +328,37 @@ If the exercised production path ever attempts a required plan-ledger write, tha
 
 **Sunset.** Delete the sandbox-live canary posture (`ATLAS_GATE_SANDBOX_LIVE`), its dedicated scenario, its scorecard, and its operator command in the same PR that records Stage A at 5/5, unless Dale explicitly retains a named portion for a later acceptance gate. The permanent safety assertions that protect the normal gate harness from a false posture or an unsafe workbook selection are **not** temporary and stay.
 
+#### Stage A qualifying sessions (temporary Phase 4 machinery, opened 2026-08-01)
+
+The canary proved the machine path. A run that may **count** needs one more thing: a mechanical distinction between readiness proof and a numbered session, plus the preconditions that make the second claim honest. That distinction is a declared **run purpose**, and it is the whole of what was added.
+
+**Command.** `npm run atlas:stage-a-session -- --session=<n> --model-up`. Both arguments are explicit and neither has a default.
+
+**Exact live consumer.** The same `tests/e2e/gate/stage-a-canary.spec.js` on the same `tests/e2e/gate/gate-server.js`, with the same scenario, sandbox posture, scorecard, parser/router/session/coach/validator paths, trace format, and turn-write-proof format. `scripts/atlas-stage-a-session.js` is the sibling of `scripts/atlas-stage-a-canary.js`; the counting rules live in `tests/e2e/gate/stage-a-run-purpose.js`. **No second runner, scenario engine, score system, environment authority, approval path, or provenance format exists.**
+
+**Run purpose (the distinction, mechanical).** Every run declares exactly one purpose, and an undeclared purpose is `ERROR`:
+
+| Purpose | Command | `stage_a_eligible` |
+|---|---|---|
+| `CANARY` | `npm run atlas:stage-a-canary -- --model-down` / `--model-up` | **always `false`** |
+| `STAGE_A_SESSION` | `npm run atlas:stage-a-session -- --session=<n> --model-up` | `true` only when every rule below holds |
+
+**Canary evidence is not Stage A evidence.** The canary commands are unchanged and remain non-counting. The two previously passing canaries are **readiness evidence only** and count as **0 sessions**. A canary artifact is never relabelled: the identity families are disjoint (`CANARY-…` vs `STAGEA-S<n>-…`), and a run carrying the other family's identity is refused in both directions.
+
+**Counting rule.** `stage_a_eligible` is derived, never supplied. It is `true` only when the overall scorecard is `PASS` with 0 `FAIL`, 0 `ERROR`, and exactly the one authorized `NOT_APPLICABLE`; the purpose is `STAGE_A_SESSION`; the posture is model-up with a proven live provider on the eligible turn; the session number is an integer 1–5 matching the identity; the source commit is recorded; the run executed from a clean `main` equal to `origin/main`; and the canonical count in this plan is exactly `n-1` — which is what refuses a skipped, repeated, stale, or out-of-order session number.
+
+**Model posture.** Stage A is **model-up only**; `--model-down` is refused outright rather than downgraded. The provider must be proven reachable before the port is published, and the eligible turn must carry an unambiguous live-provider marker. A deterministic fallback is a failed qualifying session.
+
+**Run-start boundary (governing).** A Stage A session **begins** when, after all startup and safety preflight passes, the real browser submits the **first synthetic athlete turn**. Before that point — missing credentials, unreachable provider, sandbox refusal, build failure, server startup refusal, dirty or stale `main`, an unverifiable staleness check — the result is **NOT STARTED**: it is not a failed session and the streak is unchanged. After it, any meaningful `FAIL` or `ERROR` is a **failed session**, and the count resets to 0/5. Do not repair and re-run a failed session as though it never happened; preserve the evidence, record the failure, name the next exact card, and stop. The runner's own bounded read retries are not a second session; a second full browser workout is.
+
+The crossing is **recorded, never inferred.** The runner writes `RUN_START.json` into the run's artifact directory at the first composer submission, before the click. A run that dies before scoring is then classified from that marker rather than from the operator's reading of the logs — because a startup refusal and a timeout waiting for the first coach reply produce the same "no scorecard", and an operator inferring NOT STARTED for a session that had in fact begun would leave the streak silently un-reset. A missing marker reads as NOT STARTED, which is the safe direction only because the marker is written by the code that performs the crossing.
+
+**Staleness is proven, not assumed.** `git fetch origin main` must succeed before a qualifying run. If it does not, the run is refused: comparing HEAD against a possibly-stale tracking ref that happens to equal it would let a superseded tree publish `stage_a_eligible=true`. "We could not check" is not "the check passed."
+
+**Evidence.** Raw artifacts land in the ignored `stage-a-artifacts/session-<n>-<stamp>-<nonce>/`, kept apart from `canary-artifacts/` so a canary run can never overwrite or be mistaken for streak evidence. What enters the repository is one bounded, privacy-safe record under `docs/verification/` per session — never raw screenshots, credentials, full Sheet ids, or unbounded logs.
+
+**Sunset.** Delete `npm run atlas:stage-a-session`, `scripts/atlas-stage-a-session.js`, `tests/e2e/gate/stage-a-run-purpose.js`, and the `ATLAS_RUN_PURPOSE` plumbing in the **same PR that records Stage A at 5/5**, together with the temporary sandbox-live canary machinery above, unless Dale explicitly retains a named component. The permanent sandbox and false-posture safety checks stay.
+
 #### Stage B — five consecutive owner-run workouts
 
 **Definition.** Stage B is five consecutive clean workouts that Dale runs himself, live.
@@ -358,7 +391,7 @@ This ruling governs the Phase 4 exit gate. It does not redefine the Milestone M4
 
 #### Recording
 
-Record the current counts in the `CAMPAIGN STATE` block using the existing `Streak: <k>/5.` field, labelled by stage — for example `Stage A: 0/5. Stage B: not open.` Update it in every campaign PR that changes a count.
+Record the current counts in the `CAMPAIGN STATE` block using the existing `Streak: <k>/5.` field, labelled by stage — for example `Stage A: <k>/5. Stage B: not open.` Update it in every campaign PR that changes a count.
 
 ### The heartbeat (recurring cards, created at install)
 

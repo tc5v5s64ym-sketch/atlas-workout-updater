@@ -13,7 +13,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 
 const {
-  scoreCanary, renderMarkdown, CONDITION_IDS, NA_CONDITION_ID, NA_REQUIRED_REASON,
+  scoreStageARun, renderMarkdown, CONDITION_IDS, NA_CONDITION_ID, NA_REQUIRED_REASON,
 } = require('../tests/e2e/gate/stage-a-canary-scorecard');
 
 const SESSION = 'CANARY-20260801T120000-AB12CD';
@@ -44,7 +44,10 @@ function logRow(s) {
 // A fully-passing run. Every mutation below starts here.
 function goodObservations() {
   return {
-    run: { run_id: 'canary-1', mode: 'model-down', session_id: SESSION, athlete_id: 'canary-athlete-x' },
+    run: {
+      run_id: 'canary-1', purpose: 'CANARY', mode: 'model-down',
+      session_id: SESSION, athlete_id: 'canary-athlete-x',
+    },
     expected: {
       sets: SETS.map(s => ({ ...s })),
       effort: { duration: '44:30', active_calories: 366, total_calories: 488, average_hr: 124, peak_hr: 159 },
@@ -125,7 +128,7 @@ function statusOf(card, id) {
 function scoreWith(mutate) {
   const obs = goodObservations();
   mutate(obs);
-  return scoreCanary(obs);
+  return scoreStageARun(obs);
 }
 
 // Assert the run does NOT pass, and that the named condition is the one that stopped it.
@@ -139,7 +142,7 @@ function assertBites(label, conditionId, wantStatus, mutate) {
 // ── the baseline the mutations are measured against ────────────────────────────
 
 test('a complete, honest model-down run passes with exactly one authorized N/A', () => {
-  const card = scoreCanary(goodObservations());
+  const card = scoreStageARun(goodObservations());
   const notPassing = card.conditions.filter(c => c.status !== 'PASS' && c.status !== 'NOT_APPLICABLE');
   assert.deepStrictEqual(notPassing.map(c => `${c.id}=${c.status}: ${c.detail}`), []);
   assert.strictEqual(card.overall, 'PASS');
@@ -157,13 +160,15 @@ test('a passing model-up run requires a positive live-provider marker, not the a
   obs.server.coach_model = 'gemini-2.5-flash-lite';
   obs.ui.model_turn.provider_called = true;
   obs.ui.model_turn.source = 'live_model';
-  const card = scoreCanary(obs);
+  const card = scoreStageARun(obs);
   assert.strictEqual(card.overall, 'PASS');
 });
 
 test('the canary never claims Stage A credit', () => {
-  const card = scoreCanary(goodObservations());
-  assert.strictEqual(card.stage_a_credit, false);
+  const card = scoreStageARun(goodObservations());
+  assert.strictEqual(card.stage_a_eligible, false);
+  assert.strictEqual(card.run.purpose, 'CANARY');
+  assert.strictEqual(card.run.stage_a_session_number, null);
   assert.match(card.stage_a_note, /does not count toward the Stage A/i);
   assert.match(card.stage_a_note, /not owner evidence/i);
 });
@@ -421,6 +426,14 @@ test('20. missing synthetic provenance is refused', () => {
   assertBites('session id unmarked', 'synthetic_provenance', 'FAIL', o => { o.run.session_id = '20260801-PM-01'; });
 });
 
+test('20b. a canary carrying a Stage A identity is refused', () => {
+  // The mirror of the rule that stops canary evidence counting: readiness proof may not
+  // dress itself in a counted session's identity either.
+  assertBites('canary wearing a Stage A id', 'run_purpose_declared', 'FAIL', o => {
+    o.run.session_id = 'STAGEA-S1-20260801T120000-AB12CD';
+  });
+});
+
 test('21. synthetic evidence labelled as owner evidence is refused', () => {
   assertBites('athlete_ui claim', 'synthetic_provenance', 'FAIL', o => { o.provenance.request_origin = 'athlete_ui'; });
   assertBites('evidence eligible', 'synthetic_provenance', 'FAIL', o => { o.provenance.evidence_eligible = true; });
@@ -448,7 +461,7 @@ test('23. a required condition silently downgraded to N/A is refused', () => {
       value: () => ({ status: 'NOT_APPLICABLE', detail: 'not relevant today' }),
       configurable: true, writable: true,
     });
-    const card = scoreCanary(goodObservations());
+    const card = scoreStageARun(goodObservations());
     assert.strictEqual(statusOf(card, 'durable_log_rows_exact'), 'ERROR',
       'an unauthorized N/A must become ERROR');
     assert.notStrictEqual(card.overall, 'PASS');
@@ -468,7 +481,7 @@ test('23b. the authorized N/A requires the owner ruling\'s exact reason', () => 
       value: () => ({ status: 'NOT_APPLICABLE', detail: 'not applicable' }),
       configurable: true, writable: true,
     });
-    const card = scoreCanary(goodObservations());
+    const card = scoreStageARun(goodObservations());
     assert.strictEqual(statusOf(card, NA_CONDITION_ID), 'ERROR');
     assert.notStrictEqual(card.overall, 'PASS');
   } finally {
@@ -496,18 +509,18 @@ test('24. MUTATION — removing a decisive assertion cannot make a bad run green
   // it was handed would go green; this one must stay red because the condition is frozen.
   const bad = goodObservations();
   bad.durable.log_rows = [];
-  assert.notStrictEqual(scoreCanary(bad).overall, 'PASS');
+  assert.notStrictEqual(scoreStageARun(bad).overall, 'PASS');
 
   const ablated = goodObservations();
   delete ablated.durable;          // the whole evidence branch removed
-  const card = scoreCanary(ablated);
+  const card = scoreStageARun(ablated);
   assert.notStrictEqual(card.overall, 'PASS', 'deleting the durable evidence made the run pass');
   assert.strictEqual(statusOf(card, 'durable_log_rows_exact'), 'ERROR');
   assert.strictEqual(statusOf(card, 'durable_effort_row_exact'), 'ERROR');
   assert.strictEqual(statusOf(card, 'no_contamination'), 'ERROR');
 
   // And an entirely empty observation set is ERROR across the board — never a pass.
-  const empty = scoreCanary({});
+  const empty = scoreStageARun({});
   assert.notStrictEqual(empty.overall, 'PASS');
   assert.strictEqual(empty.counts.PASS, 0);
 });
@@ -517,10 +530,10 @@ test('24b. MUTATION — inverting a decisive assertion is caught by its own bite
   // scorecard reports NOT-PASS for a broken run. This case pins the property those
   // depend on — that the frozen list is emitted in full on every score, so a condition
   // cannot be dropped from the report to avoid its verdict.
-  const card = scoreCanary(goodObservations());
+  const card = scoreStageARun(goodObservations());
   assert.deepStrictEqual(card.conditions.map(c => c.id), [...CONDITION_IDS]);
   assert.strictEqual(card.conditions.length, CONDITION_IDS.length);
-  const badCard = scoreCanary({ run: { mode: 'model-down' } });
+  const badCard = scoreStageARun({ run: { mode: 'model-down' } });
   assert.deepStrictEqual(badCard.conditions.map(c => c.id), [...CONDITION_IDS],
     'a failing run must still report every frozen condition');
 });
@@ -535,7 +548,7 @@ test('a run where every condition is N/A is never an overall pass', () => {
         configurable: true, writable: true,
       });
     }
-    const card = scoreCanary(goodObservations());
+    const card = scoreStageARun(goodObservations());
     assert.notStrictEqual(card.overall, 'PASS');
   } finally {
     CONDITIONS.forEach((c, i) => Object.defineProperty(c, 'evaluate', { value: saved[i], configurable: true, writable: true }));
@@ -578,7 +591,7 @@ test('REGRESSION: an eligible turn is judged by its OWN responses, not the whole
   good.ui.model_turn.provider_called = true;
   good.ui.model_turn.source = 'live_model';
   good.ui.model_turn.source_ambiguous = false;
-  assert.strictEqual(statusOf(scoreCanary(good), 'model_source_marker'), 'PASS');
+  assert.strictEqual(statusOf(scoreStageARun(good), 'model_source_marker'), 'PASS');
 
   // But an eligible turn that produced NO live-provider response still fails — scoping did
   // not make "any gemini anywhere" sufficient.
@@ -630,7 +643,7 @@ test('REGRESSION: model-up proof requires source "gemini", not a route name or t
   upgrade(good);
   good.ui.model_turn.provider_called = true;
   good.ui.model_turn.source = 'live_model';
-  assert.strictEqual(statusOf(scoreCanary(good), 'model_source_marker'), 'PASS');
+  assert.strictEqual(statusOf(scoreStageARun(good), 'model_source_marker'), 'PASS');
 });
 
 test('REGRESSION: a violation found in a screenshot fails the privacy condition', () => {
@@ -703,12 +716,13 @@ test('an incomplete scenario cannot pass', () => {
 // ── rendering ──────────────────────────────────────────────────────────────────
 
 test('the markdown scorecard renders every condition and never leaks a workbook id', () => {
-  const md = renderMarkdown(scoreCanary(goodObservations()));
+  const md = renderMarkdown(scoreStageARun(goodObservations()));
   for (const id of CONDITION_IDS) {
     const title = require('../tests/e2e/gate/stage-a-canary-scorecard').CONDITIONS.find(c => c.id === id).title;
     assert.ok(md.includes(title), `markdown is missing condition ${id}`);
   }
   assert.ok(md.includes('**Overall: PASS**'));
+  assert.ok(md.includes('**stage_a_eligible: false**'), 'a canary scorecard must state its ineligibility in the rendered card');
   assert.ok(md.includes('does not count toward the Stage A'));
   assert.ok(!/1UuprDIBoV2Y9jEraOkKaqdX1PHE6ESiF9ZLFJH3CeXE/.test(md), 'the markdown leaked the full workbook id');
 });

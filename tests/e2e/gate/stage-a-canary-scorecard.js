@@ -1,10 +1,21 @@
 'use strict';
 
-// ── Phase 4 Stage-A canary scorecard (temporary Phase 4 machinery) ──────────────
+// ── Phase 4 Stage-A run scorecard (temporary Phase 4 machinery) ─────────────────
 //
-// Scores ONE canary run against a FROZEN list of required conditions. Pure and
-// deterministic: no clock, network, filesystem, Sheets, or environment access — the
-// caller collects observations, this module decides what they prove.
+// Scores ONE run of the single gate runner against a FROZEN list of required conditions.
+// Pure and deterministic: no clock, network, filesystem, Sheets, or environment access —
+// the caller collects observations, this module decides what they prove.
+//
+// The runner serves two purposes and this is the ONE score system for both (there is no
+// second scorecard, and adding one would be the exact authority defect the campaign forbids):
+//
+//   CANARY           — readiness proof. `stage_a_eligible` is ALWAYS false.
+//   STAGE_A_SESSION  — count-eligible under the 2026-07-31 two-stage owner ruling.
+//                      `stage_a_eligible` is true only when the overall verdict is PASS AND
+//                      the purpose/identity/source-tree conditions below all pass.
+//
+// `stage_a_eligible` is the single published field that decides whether a run may advance
+// the streak. Nothing else in the repository may grant Stage A credit.
 //
 // Four statuses, no fifth. There is deliberately no INCONCLUSIVE:
 //
@@ -20,6 +31,11 @@
 // happened to supply can be made green by supplying fewer — so every condition in
 // CONDITIONS is always emitted, and a condition whose observation is missing scores ERROR.
 // Removing an assertion therefore turns the run RED rather than quietly shrinking the bar.
+
+const {
+  CANARY, STAGE_A_SESSION, STAGE_A_STREAK_LENGTH,
+  normalizePurpose, isStageASessionNumber, identityRefusal,
+} = require('./stage-a-run-purpose');
 
 // The one condition the owner ruled may be NOT_APPLICABLE, and the exact reason that
 // ruling requires. A different reason string is not the ruling and is refused.
@@ -60,6 +76,80 @@ function cellEquals(cell, expected) {
 // Each entry: { id, title, evaluate(obs) -> {status, detail} }.
 // `evaluate` must tolerate a completely absent observation branch and return ERROR.
 const CONDITIONS = Object.freeze([
+  {
+    id: 'run_purpose_declared',
+    title: 'The run declared exactly one purpose, and its identity and posture match it',
+    evaluate(obs) {
+      const run = obs.run;
+      if (!run) return missing('the run block');
+      const purpose = normalizePurpose(run.purpose);
+      // Fail-closed: an undeclared purpose is ambiguous evidence, not a canary by default.
+      // Defaulting here would let an unlabelled run be scored as whichever purpose suited it.
+      if (!purpose) return err(`the run declared no recognized purpose (got "${str(run.purpose) || 'nothing'}")`);
+      const idRefusal = identityRefusal({
+        purpose, sessionNumber: run.stage_a_session_number, sessionId: run.session_id,
+      });
+      if (idRefusal) return fail(idRefusal);
+      if (purpose === CANARY) {
+        if (run.stage_a_session_number != null) {
+          return fail(`a CANARY run carried Stage A session number ${run.stage_a_session_number}; a canary is never a numbered session`);
+        }
+        return pass('purpose CANARY with canary identity — readiness proof only, never Stage A credit');
+      }
+      // Stage A. Every one of these is a counting precondition, so each is a refusal.
+      const n = run.stage_a_session_number;
+      if (!isStageASessionNumber(n)) {
+        return fail(`a Stage A run must declare a session number 1..${STAGE_A_STREAK_LENGTH}; got ${n === undefined ? 'nothing' : JSON.stringify(n)}`);
+      }
+      if (str(run.mode) !== 'model-up') {
+        return fail(`Stage A sessions are model-up only; this run declared "${str(run.mode) || 'no posture'}"`);
+      }
+      const sha = str(obs.source && obs.source.head_sha);
+      if (!sha) return missing('the source commit sha for a Stage A run');
+      if (!/^[0-9a-f]{40}$/.test(sha)) return fail(`the recorded source sha "${sha}" is not a resolved commit sha`);
+      return pass(`purpose STAGE_A_SESSION, session ${n}, model-up, source ${sha.slice(0, 7)}`);
+    },
+  },
+  {
+    id: 'stage_a_source_tree_verified',
+    title: 'A count-eligible run executed from clean, current main at the recorded prior count',
+    evaluate(obs) {
+      const run = obs.run;
+      if (!run) return missing('the run block');
+      const purpose = normalizePurpose(run.purpose);
+      if (!purpose) return err('the run declared no recognized purpose, so source-tree eligibility cannot be judged');
+      // The canary is deliberately NOT gated on the source tree: it is a readiness probe an
+      // operator may legitimately run from a feature branch, and it can never count. Saying so
+      // explicitly is the honest form — the run still publishes stage_a_eligible = false.
+      if (purpose === CANARY) {
+        return pass('CANARY: not source-tree gated, and not count-eligible under any source tree');
+      }
+      const s = obs.source;
+      if (!s) return missing('the source-tree observations for a Stage A run');
+      if (str(s.branch) !== 'main') {
+        return fail(`a qualifying run must execute on main; the source branch was "${str(s.branch) || 'unrecorded'}"`);
+      }
+      if (s.clean !== true) {
+        return s.clean === false
+          ? fail('the worktree was dirty when the qualifying run began')
+          : missing('a clean-worktree determination');
+      }
+      const head = str(s.head_sha);
+      const origin = str(s.origin_head_sha);
+      if (!head || !origin) return missing('both HEAD and origin/main shas');
+      if (head !== origin) {
+        return fail(`HEAD ${head.slice(0, 7)} did not equal origin/main ${origin.slice(0, 7)} — the source tree was stale`);
+      }
+      const prior = s.prior_stage_a_count;
+      const n = run.stage_a_session_number;
+      if (!Number.isInteger(prior)) return missing('the canonical prior Stage A count');
+      if (!isStageASessionNumber(n)) return fail(`session number ${JSON.stringify(n)} is not in 1..${STAGE_A_STREAK_LENGTH}`);
+      if (prior !== n - 1) {
+        return fail(`session ${n} requires a canonical prior count of ${n - 1}/${STAGE_A_STREAK_LENGTH}; the plan recorded ${prior}/${STAGE_A_STREAK_LENGTH}`);
+      }
+      return pass(`clean main at ${head.slice(0, 7)} (= origin/main), canonical prior count ${prior}/${STAGE_A_STREAK_LENGTH}`);
+    },
+  },
   {
     id: 'sandbox_posture_proven',
     title: 'The server proved the declared sandbox workbook before publishing a port',
@@ -205,8 +295,17 @@ const CONDITIONS = Object.freeze([
       }
       const sid = str(obs.run && obs.run.session_id);
       if (!sid) return missing('the synthetic session id');
-      if (!/CANARY/i.test(sid)) return fail(`session id "${sid}" does not carry the synthetic canary marker`);
-      return pass(`origin "${origin}", classified synthetic and evidence-ineligible; session id marked CANARY`);
+      // The session-id marker is checked AGAINST THE DECLARED PURPOSE, not against a single
+      // hard-coded family. Both directions matter: a Stage A run carrying a CANARY id would be
+      // canary evidence relabelled, and a canary carrying a Stage A id would be readiness proof
+      // dressed as a counted session. `identityRefusal` owns both rules.
+      const idRefusal = identityRefusal({
+        purpose: obs.run && obs.run.purpose,
+        sessionNumber: obs.run && obs.run.stage_a_session_number,
+        sessionId: sid,
+      });
+      if (idRefusal) return fail(idRefusal);
+      return pass(`origin "${origin}", classified synthetic and evidence-ineligible; session id "${sid}" matches its declared purpose`);
     },
   },
   {
@@ -615,7 +714,7 @@ const CONDITION_IDS = Object.freeze(CONDITIONS.map((c) => c.id));
 //
 // Overall PASS requires: every non-N/A condition PASS, and the only N/A is the one
 // authorized condition carrying the ruling's exact reason. Anything else is not a pass.
-function scoreCanary(observations) {
+function scoreStageARun(observations) {
   const obs = observations && typeof observations === 'object' ? observations : {};
   const results = CONDITIONS.map((condition) => {
     let outcome;
@@ -652,22 +751,55 @@ function scoreCanary(observations) {
   // A run in which EVERY condition is N/A must never read as a pass.
   const overall = allRequiredPass && naAuthorized ? PASS : (counts.FAIL > 0 ? FAIL : ERROR);
 
+  // ── Stage A eligibility ──────────────────────────────────────────────────────
+  //
+  // The one field that decides whether a run may advance the streak. It is DERIVED, never
+  // supplied: no observation can set it, so no runner, operator, or future caller can hand
+  // itself credit. Every clause is stated explicitly rather than leaning on `overall`,
+  // because a later change to the overall rule must not silently widen who may count.
+  const purpose = normalizePurpose(obs.run && obs.run.purpose);
+  const statusOf = (id) => {
+    const hit = results.find((r) => r.id === id);
+    return hit ? hit.status : ERROR;
+  };
+  const stageAEligible = overall === PASS
+    && purpose === STAGE_A_SESSION
+    && counts.FAIL === 0
+    && counts.ERROR === 0
+    && naAuthorized
+    && statusOf('run_purpose_declared') === PASS
+    && statusOf('stage_a_source_tree_verified') === PASS
+    && statusOf('synthetic_provenance') === PASS
+    && isStageASessionNumber(obs.run && obs.run.stage_a_session_number)
+    && str(obs.run && obs.run.mode) === 'model-up';
+
+  const sessionNumber = isStageASessionNumber(obs.run && obs.run.stage_a_session_number)
+    ? obs.run.stage_a_session_number
+    : null;
+
   return {
-    schema_version: 1,
+    schema_version: 2,
     run: {
       run_id: str(obs.run && obs.run.run_id) || null,
+      purpose: purpose || null,
       mode: str(obs.run && obs.run.mode) || null,
       session_id: str(obs.run && obs.run.session_id) || null,
       athlete_id: str(obs.run && obs.run.athlete_id) || null,
       workbook_last6: str(obs.env && obs.env.declared_sandbox_last6) || null,
+      stage_a_session_number: purpose === STAGE_A_SESSION ? sessionNumber : null,
+      source_sha: str(obs.source && obs.source.head_sha) || null,
     },
     overall,
     counts,
     conditions: results,
     // Stated on the artifact itself so a reader can never mistake canary proof for a
     // Stage A session, and never mistake synthetic evidence for owner evidence.
-    stage_a_credit: false,
-    stage_a_note: 'Canary proof only. This run does not count toward the Stage A 0/5 streak and is not owner evidence.',
+    stage_a_eligible: stageAEligible,
+    stage_a_note: stageAEligible
+      ? `Stage A session ${sessionNumber} of ${STAGE_A_STREAK_LENGTH}: count-eligible. Synthetic evidence — never owner evidence, LT evidence, or a GATE A eligible event.`
+      : (purpose === CANARY
+        ? 'Canary proof only. This run does not count toward the Stage A streak and is not owner evidence.'
+        : 'NOT count-eligible. This run does not advance the Stage A streak and is not owner evidence.'),
   };
 }
 
@@ -675,11 +807,14 @@ function renderMarkdown(scorecard) {
   const s = scorecard;
   const icon = { PASS: '✅', FAIL: '❌', ERROR: '⚠️', NOT_APPLICABLE: '➖' };
   const lines = [
-    '# Phase 4 Stage-A canary scorecard',
+    `# Phase 4 Stage-A run scorecard — ${s.run.purpose || 'UNDECLARED PURPOSE'}`,
     '',
     `**Overall: ${s.overall}**`,
+    `**stage_a_eligible: ${s.stage_a_eligible}**`,
     '',
-    `- Run: \`${s.run.run_id || '—'}\` (${s.run.mode || '—'})`,
+    `- Run: \`${s.run.run_id || '—'}\` (purpose ${s.run.purpose || '—'}, ${s.run.mode || '—'})`,
+    `- Stage A session number: ${s.run.stage_a_session_number == null ? '— (not a Stage A session)' : s.run.stage_a_session_number}`,
+    `- Source commit: \`${s.run.source_sha || '—'}\``,
     `- Synthetic session: \`${s.run.session_id || '—'}\``,
     `- Synthetic athlete: \`${s.run.athlete_id || '—'}\``,
     `- Sandbox workbook (last 6): \`${s.run.workbook_last6 || '—'}\``,
@@ -699,7 +834,7 @@ function renderMarkdown(scorecard) {
 }
 
 module.exports = {
-  scoreCanary,
+  scoreStageARun,
   renderMarkdown,
   CONDITIONS,
   CONDITION_IDS,
