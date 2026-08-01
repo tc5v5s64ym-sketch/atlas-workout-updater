@@ -365,6 +365,22 @@ test('18. a missing turn-write proof is refused', () => {
   assertBites('success with zero rows is not proof', 'turn_write_proof_present', 'FAIL', o => {
     o.write_proof.records[1].proof.log_rows_written = 0;
   });
+  // A published proof must not contradict the run it describes. Positive-but-wrong counts
+  // used to pass while the durable readback separately found all five rows.
+  assertBites('proof claims fewer log rows than were written', 'turn_write_proof_present', 'FAIL', o => {
+    o.write_proof.records[1].proof.log_rows_written = 1;
+  });
+  assertBites('proof omits the effort row', 'turn_write_proof_present', 'FAIL', o => {
+    delete o.write_proof.records[1].proof.effort_rows_written;
+  });
+  assertBites('proof zeroes the effort row', 'turn_write_proof_present', 'FAIL', o => {
+    o.write_proof.records[1].proof.effort_rows_written = 0;
+  });
+  // The preview must sit on the LIVE WRITE's own turn. A dry run from another turn in the
+  // same session used to stand in for it, so a broken correlation could still pass.
+  assertBites('preview is on a different turn', 'turn_write_proof_present', 'FAIL', o => {
+    o.write_proof.records[0].turn_id = 'turn:2026-08-01T09:00:00.000Z_2_stale0';
+  });
   assertBites('a live write still in test_mode is not proof', 'turn_write_proof_present', 'FAIL', o => {
     o.write_proof.records[1].proof.test_mode = true;
   });
@@ -385,6 +401,11 @@ test('18. a missing turn-write proof is refused', () => {
 test('19. a trace and write proof carrying different turn_ids do not join', () => {
   assertBites('turn id mismatch', 'trace_write_join', 'FAIL', o => {
     o.write_proof.records.forEach(r => { r.turn_id = 'turn:2026-08-01T13:00:00.000Z_9_zzzzzz'; });
+  });
+  // The trace must join the LIVE WRITE's turn, not merely some write-proof turn. A trace
+  // covering only the dry-run turn leaves the actual write uncorrelated.
+  assertBites('trace covers only the dry-run turn', 'trace_write_join', 'FAIL', o => {
+    o.write_proof.records[1].turn_id = 'turn:2026-08-01T09:30:00.000Z_7_liveee';
   });
 });
 

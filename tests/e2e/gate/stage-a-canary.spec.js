@@ -30,7 +30,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { scoreCanary, renderMarkdown } = require('./stage-a-canary-scorecard');
-const { pickNetworkPassthrough, assertNoWorkbookId } = require('./canary-child-env');
+const { pickNetworkPassthrough, assertNoWorkbookId, GATE_STARTUP_TIMEOUT_MS } = require('./canary-child-env');
 const { SANDBOX_SPREADSHEET_ID, SANDBOX_SPREADSHEET_ID_LAST6 } = require('../../../config/sandboxSheet');
 const { logCleanedColumns, effortColumns } = require('../../../config/columns');
 
@@ -165,7 +165,10 @@ test.beforeAll(async () => {
     { env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] });
 
   const ports = await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('gate-server did not report its ports within 60s')), 60000);
+    // Strictly longer than the harness's worst-case preflight backoff — the two are derived
+    // from one declared budget so they cannot drift apart again.
+    const timer = setTimeout(() => reject(new Error(
+      `gate-server did not report its ports within ${GATE_STARTUP_TIMEOUT_MS / 1000}s`)), GATE_STARTUP_TIMEOUT_MS);
     let stderr = '';
     child.stdout.on('data', d => {
       serverStdout += String(d);

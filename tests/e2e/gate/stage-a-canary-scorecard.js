@@ -466,9 +466,12 @@ const CONDITIONS = Object.freeze([
       // meant no live write could ever satisfy this condition — and, worse, a future envelope
       // that set it true in a dry run would have satisfied it wrongly.
       const isDryRun = (p) => p.test_mode === true && p.no_write_confirmed === true && p.sheet_written === false;
-      const isLiveWrite = (p) => p.test_mode === false
-        && p.sheet_write === 'success'
-        && Number(p.log_rows_written) > 0;
+      // The counts must equal what this canary INTENDED to write, not merely be positive.
+      // `> 0` let a proof claiming 1 log row and no effort row pass while the durable readback
+      // separately found all five — a published proof contradicting the run it describes.
+      const expectedLogRows = arr(obs.expected && obs.expected.sets) ? obs.expected.sets.length : null;
+      const expectedEffortRows = obs.expected && obs.expected.effort ? 1 : null;
+      const isLiveWrite = (p) => p.test_mode === false && p.sheet_write === 'success';
 
       const wrote = mine.filter((r) => r.proof && isLiveWrite(r.proof));
       if (wrote.length === 0) {
@@ -478,19 +481,32 @@ const CONDITIONS = Object.freeze([
       if (wrote.length > 1) {
         return fail(`${wrote.length} live-write records for one approved action — a single approval must write once`);
       }
-      // The write must have been ESTABLISHED AT PREVIEW, not free-floating: the same turn must
-      // also carry a dry-run record, and the live record must report the preview pairing.
-      const previews = mine.filter((r) => r.proof && isDryRun(r.proof));
-      if (previews.length === 0) {
-        return fail('the live write has no matching dry-run record on the same turn — preview→approve→write is unproven at the proof level');
+      const live = wrote[0];
+      if (expectedLogRows === null || expectedEffortRows === null) return missing('the expected row counts');
+      if (!Number.isInteger(live.proof.log_rows_written) || live.proof.log_rows_written !== expectedLogRows) {
+        return fail(`the live write reports log_rows_written ${live.proof.log_rows_written}, expected exactly ${expectedLogRows}`);
       }
-      if (!(wrote[0].pairing && wrote[0].pairing.established_at_preview === true)) {
+      if (!Number.isInteger(live.proof.effort_rows_written) || live.proof.effort_rows_written !== expectedEffortRows) {
+        return fail(`the live write reports effort_rows_written ${live.proof.effort_rows_written}, expected exactly ${expectedEffortRows}`);
+      }
+      // The write must have been ESTABLISHED AT PREVIEW on THE SAME TURN. Matching only on
+      // session id let a dry run from a DIFFERENT turn stand in for the preview, so a broken
+      // correlation — trace joined to a stale preview, live write stranded on another turn —
+      // could still pass. The preview is now required on the live write's own turn_id.
+      const liveTurn = str(live.turn_id);
+      if (!liveTurn) return missing('a turn_id on the live-write record');
+      const previews = mine.filter((r) => r.proof && isDryRun(r.proof) && str(r.turn_id) === liveTurn);
+      if (previews.length === 0) {
+        const otherTurn = mine.filter((r) => r.proof && isDryRun(r.proof)).length;
+        return fail(`the live write has no dry-run record on its OWN turn ${liveTurn}${otherTurn ? ` (${otherTurn} dry-run record(s) exist on other turns)` : ''} — preview→approve→write is unproven at the proof level`);
+      }
+      if (!(live.pairing && live.pairing.established_at_preview === true)) {
         return fail('the live write does not report a preview-established pairing');
       }
-      if (wrote[0].proof.duplicate_write === true) {
+      if (live.proof.duplicate_write === true) {
         return fail('the live write reports duplicate_write');
       }
-      return pass(`1 authoritative live write (${wrote[0].proof.log_rows_written} log rows, ${wrote[0].proof.effort_rows_written} effort row), preview-established, preceded by ${previews.length} dry-run record(s)`);
+      return pass(`1 authoritative live write on turn ${liveTurn} (${live.proof.log_rows_written} log rows, ${live.proof.effort_rows_written} effort row, exactly as intended), preview-established on the same turn`);
     },
   },
   {
@@ -505,11 +521,20 @@ const CONDITIONS = Object.freeze([
       if (!traceIds || !writeIds) return missing('turn ids on both artifacts');
       if (traceIds.length === 0) return fail('no InteractionTrace record carried a turn_id');
       if (writeIds.length === 0) return fail('no turn-write-proof record carried a turn_id');
-      const shared = writeIds.filter((id) => traceIds.includes(id));
-      if (shared.length === 0) {
-        return fail('the trace and the write proof share no turn_id — the artifacts do not join');
+      // Join on the LIVE WRITE's turn specifically. Any-record matching would let the trace
+      // join a dry-run turn while the actual write sat on a different one, which is precisely
+      // the broken correlation this condition exists to catch.
+      const liveWrite = arr(w.records)
+        ? w.records.find((r) => r.proof && r.proof.test_mode === false && r.proof.sheet_write === 'success')
+        : null;
+      if (!liveWrite) return fail('no live-write record to join the trace to');
+      const liveTurn = str(liveWrite.turn_id);
+      if (!liveTurn) return missing('a turn_id on the live-write record');
+      if (!traceIds.includes(liveTurn)) {
+        return fail(`the InteractionTrace carries no record for the live write's turn ${liveTurn} — the artifacts do not join`);
       }
-      return pass(`${shared.length} turn_id(s) join the trace to the approved write`);
+      const shared = writeIds.filter((id) => traceIds.includes(id));
+      return pass(`the trace joins the live write on turn ${liveTurn} (${shared.length} correlated write record(s))`);
     },
   },
   {

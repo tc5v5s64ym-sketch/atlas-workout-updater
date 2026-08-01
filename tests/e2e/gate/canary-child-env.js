@@ -46,4 +46,28 @@ function assertNoWorkbookId(childEnv) {
   }
 }
 
-module.exports = { NETWORK_PASSTHROUGH, pickNetworkPassthrough, assertNoWorkbookId };
+// ── The startup budget, declared ONCE and consumed by both sides ────────────────
+//
+// The harness retries a Sheets read-quota rejection with backoff; the spec waits for the
+// harness to publish a port. Those two numbers must agree, and when they were set
+// independently they did not: the backoff reached 120s while the spec gave up at 60s, so
+// the last two retries could never complete and the advertised quota recovery was dead
+// code in the exact scenario it existed for.
+//
+// One declared budget removes the possibility of that drift. The harness bounds its total
+// backoff to PREFLIGHT_QUOTA_BACKOFF_MS * attempts; the spec waits strictly longer.
+const PREFLIGHT_QUOTA_ATTEMPTS = 4;
+const PREFLIGHT_QUOTA_BACKOFF_MS = 20000;
+// Worst case: three waits between four attempts, plus generous room for the requests
+// themselves and for process startup.
+const PREFLIGHT_WORST_CASE_MS = PREFLIGHT_QUOTA_BACKOFF_MS * (PREFLIGHT_QUOTA_ATTEMPTS - 1);
+const GATE_STARTUP_TIMEOUT_MS = PREFLIGHT_WORST_CASE_MS + 120000;
+
+module.exports = {
+  NETWORK_PASSTHROUGH,
+  pickNetworkPassthrough,
+  assertNoWorkbookId,
+  PREFLIGHT_QUOTA_ATTEMPTS,
+  PREFLIGHT_QUOTA_BACKOFF_MS,
+  GATE_STARTUP_TIMEOUT_MS,
+};

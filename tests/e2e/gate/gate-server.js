@@ -509,9 +509,13 @@ async function assertSandboxLive() {
   // and reporting it as the latter sends an operator hunting the wrong problem. Retried with
   // backoff — and if it still fails, the preflight still refuses. Reads only; nothing here
   // retries a write.
+  // The backoff is FLAT, not escalating, and bounded by the shared startup budget — an
+  // escalating wait reached 120s against a 60s port deadline, so the last two attempts could
+  // never run and the recovery was unreachable in the scenario it targets.
+  const { PREFLIGHT_QUOTA_ATTEMPTS, PREFLIGHT_QUOTA_BACKOFF_MS } = require('./canary-child-env');
   let tabs = [];
   let lastError = null;
-  for (let attempt = 1; attempt <= 4; attempt += 1) {
+  for (let attempt = 1; attempt <= PREFLIGHT_QUOTA_ATTEMPTS; attempt += 1) {
     try {
       tabs = await sheets.getSpreadsheetTabs();
       lastError = null;
@@ -519,7 +523,9 @@ async function assertSandboxLive() {
     } catch (error) {
       lastError = error;
       const quota = /quota|rate limit|429/i.test(String(error && error.message));
-      if (attempt < 4) await new Promise(r => setTimeout(r, quota ? 20000 * attempt : 2000 * attempt));
+      if (attempt < PREFLIGHT_QUOTA_ATTEMPTS) {
+        await new Promise(r => setTimeout(r, quota ? PREFLIGHT_QUOTA_BACKOFF_MS : 2000 * attempt));
+      }
     }
   }
   if (lastError) {
