@@ -634,8 +634,16 @@ function validateEffortRowBounds(row) {
   }
 }
 
-function formatEffortRow(effortRow) {
+// `canonicalSessionId`, when given, is the identity the server RESOLVED for this
+// request, and it overrides whatever the client put in the effort row. One workout is
+// one session: if Log_Cleaned is written under the allocated …-02 while the Effort row
+// keeps the …-01 the client proposed, the two tabs disagree about the same workout and
+// nothing downstream can rejoin them. Stamped after normalization so it lands on the
+// canonical 9-column row whichever shape the client sent, and before bounds validation
+// so a stamped row is validated exactly like any other.
+function formatEffortRow(effortRow, canonicalSessionId) {
   const row = normalizeEffortRow(effortRow);
+  if (canonicalSessionId) row[effortColumns.indexOf('session_id')] = canonicalSessionId;
   validateEffortRowBounds(row);
   return row;
 }
@@ -3141,7 +3149,7 @@ app.post('/api/log-workout', async (req, res) => {
   let formattedEffortRow = null;
   if (effort_row !== undefined) {
     try {
-      formattedEffortRow = formatEffortRow(effort_row);
+      formattedEffortRow = formatEffortRow(effort_row, session_id);
     } catch (error) {
       return standardError(req, res, error.message, null, 400);
     }

@@ -3479,6 +3479,29 @@ test('multi-session/day: effort-only uploads send a blank session_id so the serv
   assert.match(submitSection, /pendingWrite = \{ mode: 'effort-only', logRows, sessionId: resolvedEffortSessionId,/);
 });
 
+test('server allocation preserves turn correlation: correlate on the provisional, rebind to the resolved', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const anchor = "getElementById('logger-form').addEventListener('submit'";
+  const submitSection = appSource.slice(
+    appSource.indexOf(anchor),
+    appSource.indexOf('async function submitCompleteWorkout('),
+  );
+
+  // A blank payload id means the SERVER allocates — but the coach turn this save answers
+  // is held under the PROVISIONAL id the conversation ran under. Correlating on the blank
+  // value finds no turn state and silently drops the turn↔write pairing, so the manual
+  // branch must use the same provisional handshake as the screenshot and effort-only
+  // branches: correlate on the provisional, then rebind once the preview names the identity.
+  assert.match(submitSection, /beginCorrelatedPreview\(\{\s*\n\s*sessionId: payload\.session_id \|\| sessionId,\s*\n\s*\.\.\.\(!payload\.session_id \? \{ provisionalSessionId: sessionId \} : \{\}\),/,
+    'the manual branch correlates on the provisional id when the payload id is blank');
+  assert.doesNotMatch(submitSection, /beginCorrelatedPreview\(\{ sessionId: payload\.session_id \}\)/,
+    'never correlate on a payload id that may be blank');
+  // And the rebind is mandatory — a preview whose correlation cannot be bound to the
+  // resolved session fails closed rather than approving an uncorrelated write.
+  assert.match(submitSection, /if \(correlationPreview && !resolveCorrelatedPreviewSession\(correlationPreview, resolvedManualSessionId\)\) \{[\s\S]{0,160}?throw new Error\('Preview session correlation could not be bound/,
+    'the resolved identity is rebound onto the correlation before the payload is pinned');
+});
+
 test('multi-session/day: a saved session clears #log-session-id so the next upload is a new session', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const anchor = "getElementById('approve-btn').addEventListener('click'";

@@ -7918,7 +7918,15 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
             }));
       }
 
-      const correlationPreview = beginCorrelatedPreview({ sessionId: payload.session_id });
+      // The coach turn this save answers is held under the PROVISIONAL id (the local
+      // value the conversation ran under), so correlating on a blank payload id would
+      // find no turn state and silently drop the turn↔write pairing. Same provisional
+      // handshake the screenshot and effort-only branches use: correlate on the
+      // provisional now, rebind to the server-resolved identity once the preview names it.
+      const correlationPreview = beginCorrelatedPreview({
+        sessionId: payload.session_id || sessionId,
+        ...(!payload.session_id ? { provisionalSessionId: sessionId } : {}),
+      });
       activePreviewCorrelation = correlationPreview;
       if (correlationPreview) payload.correlation = correlationPreview.correlation;
       const result = await api('/api/log-workout', {
@@ -7944,6 +7952,9 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       const resolvedManualSessionId = (result?.data?.session_id || '').trim();
       if (!resolvedManualSessionId) {
         throw new Error('Preview did not resolve a session identity. Nothing can be written.');
+      }
+      if (correlationPreview && !resolveCorrelatedPreviewSession(correlationPreview, resolvedManualSessionId)) {
+        throw new Error('Preview session correlation could not be bound to the server-resolved session.');
       }
       payload.session_id = resolvedManualSessionId;
       sessionIdInput.value = resolvedManualSessionId;

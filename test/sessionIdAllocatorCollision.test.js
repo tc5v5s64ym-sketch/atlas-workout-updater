@@ -237,6 +237,27 @@ test('a stale row-level session_id cannot override the allocated identity', asyn
     'every written row carries the ALLOCATED identity, not the one the rows proposed');
 });
 
+test('the Effort row is written under the allocated identity, not the one the client proposed', async () => {
+  // One workout is ONE session. If Log_Cleaned lands under the allocated …-02 while the
+  // Effort row keeps the …-01 the client proposed, the two tabs disagree about the same
+  // workout and nothing downstream can rejoin them — the exact Log/Effort desync that
+  // blocked extending server allocation to uploads carrying sets. The duplicate-Effort
+  // guard checks the RESOLVED id, so the stale row sails past it and appends.
+  reset();
+  await logNewWorkoutWithoutEffort('Back Squat', 225);   // occupies …-01
+
+  const { response } = await post('/api/log-workout', {
+    date: DATE, write_id: crypto.randomUUID(),
+    log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 185, reps: 5, rir: 2 }],
+    // No top-level session_id, and the effort row carries the stale one.
+    effort_row: { date: DATE, session_id: '20260802-PM-01', duration: 60, active_calories: 400, total_calories: 500, average_hr: 120, peak_hr: 160, location: 'Gym', notes: '' },
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual([...new Set(writtenSessionIds())], ['20260802-PM-01', '20260802-PM-02']);
+  assert.deepEqual(state.effortSessionIds, ['20260802-PM-02'],
+    'the Effort row carries the ALLOCATED identity — Log_Cleaned and Effort must never disagree');
+});
+
 test('a duplicate Effort session is still refused — the pre-existing guard is untouched', async () => {
   // The Effort tab remains a legitimate input, and its own duplicate hard-stop (never
   // double-write an Effort row) must keep working. It is scoped to writes that actually
