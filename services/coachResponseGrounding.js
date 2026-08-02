@@ -794,6 +794,85 @@ function resolveDisputedLiftEntry(message, context, history, opts) {
   return null;
 }
 
+// ── fail-closed substitution answer (F-SB3, owner ruling 2026-08-02) ─────────
+//
+// /api/coach/chat is READ-ONLY. It cannot swap a plan slot, cannot retain the original
+// `plan_item_id`, and cannot emit the canonical `substituted` item_outcome — so ANY
+// substitution wording it produces describes a mutation the durable ledger never saw.
+//
+// In the 2026-08-02 live session the model answered a substitution request with
+// "Understood. You're substituting Bench Press with Incline Dumbbell Press." and
+// "Okay, I've noted the substitution." The ledger recorded ZERO item_outcome events,
+// Bench Press stayed pending, and the closeout sealed over the contradiction. Atlas
+// visibly claimed a substitution it never performed.
+//
+// The mutation-claim denylist missed BOTH phrasings — `noted` is not one of its verbs
+// and it has no second-person completed frame — and extending it is the losing strategy
+// this module already documents: the model can always word it a new way. The winning
+// pattern is the one `buildDisputeAnswer` established. Answer the turn deterministically
+// and never call the model at all, so there is no wording to outrun.
+//
+// The mutation itself belongs to the client's ONE substitution proposal lane (propose →
+// accept → applySessionSubstitution), which this answer points the athlete back at. It
+// never claims, promises, or performs a plan change.
+
+// A lift-level substitution request or discussion. Broad on purpose: an UNDER-match here
+// hands the turn back to the model on a route that cannot honestly answer it, which is the
+// exact trust failure. An OVER-match degrades safely to a grounded, claim-free statement of
+// what the plan actually shows.
+const SUBSTITUTION_CUE = new RegExp([
+  '\\bsubstitut(?:e|es|ed|ing|ion|ions)\\b',
+  '\\bsubbing\\b',
+  '\\ba sub\\b',
+  '\\bswap(?:s|ped|ping)?\\b',
+  '\\binstead of\\b',
+  '\\balternatives?\\b',
+  '\\breplacements?\\b',
+  '\\breplace(?:s|d)?\\b',
+  '\\bsomething else\\b',
+  '\\bdifferent (?:lift|exercise|movement)\\b',
+].join('|'));
+
+// A "why DID/DO/HAVE you …" question is an explanation of a past choice, not a request to
+// change anything — so it keeps its (narrowed) model narration. PLAN_EXPLAIN_RE does not
+// cover it here because its verb list has no substitution verb. The auxiliary is required,
+// so a request phrased as a question ("why don't you swap it for me") is NOT excluded.
+const SUBSTITUTION_EXPLAIN_RE = /\bwhy\b[^?]*\b(?:did|do|have)\s+you\b/;
+
+// True for an active-session substitution turn whose answer must be built deterministically.
+// An explanation and a broad-session review are excluded — neither is a mutation request.
+function isSubstitutionTurn(message, context) {
+  if (!hasActiveSession(context)) return false;
+  const m = normalize(message);
+  if (!m || BROAD_REVIEW_RE.test(m)) return false;
+  if (PLAN_EXPLAIN_RE.test(m) || SUBSTITUTION_EXPLAIN_RE.test(m)) return false;
+  return SUBSTITUTION_CUE.test(m);
+}
+
+// The deterministic answer to a substitution turn: state what the plan STILL shows for the
+// lift in question, state plainly that nothing has been changed, and name the one thing that
+// actually produces a substitute the athlete can approve. Never claims a completed mutation,
+// never invents a substitute, never invents a load.
+function buildSubstitutionAnswer(message, context) {
+  const c = context && typeof context === 'object' ? context : {};
+  const plan = Array.isArray(c.current_plan) ? c.current_plan.filter((e) => e && (e.name || e.exercise)) : [];
+  const ASK = 'Tell me the lift is unavailable — for example "bench is taken" — and I\'ll pull up a substitute with its target for you to approve.';
+  if (!plan.length) {
+    return `I don't have your current plan in view here, so I can't set up a swap — and I haven't changed anything. ${ASK}`;
+  }
+  // Resolve the lift ONLY when the message names exactly one plan lift; otherwise say so
+  // rather than answering about a lift the athlete did not mean (the same fail-closed rule
+  // the dispute resolver uses).
+  const named = namedLiftsInMessage(message, c);
+  const entry = named.length === 1 && !mentionsAnotherLift(message, named[0])
+    ? plan.find((e) => canonicalKey(e.name || e.exercise) === canonicalKey(named[0])) || null
+    : null;
+  if (entry) {
+    return `Your plan still shows ${formatPlanLine(entry)} — I haven't changed it. ${ASK}`;
+  }
+  return `I haven't changed your plan. ${ASK}`;
+}
+
 // A "what's next? / what am I doing next?" next-up question. Tight on purpose: this only
 // seeds the discussion-referent, so over-matching would mis-seed a later bare dispute.
 const NEXT_UP_RE = /\bwhat('?s| is)? next\b|\bwhat am i (?:doing|lifting|on|up to)(?: next)?\b|\bnext (?:exercise|lift|movement|up)\b/;
@@ -880,6 +959,8 @@ module.exports = {
   isPlanReferenceLike,
   isPlanModificationRequest,
   isFactualPlanDispute,
+  isSubstitutionTurn,
+  buildSubstitutionAnswer,
   isBroadReview,
   isActivePlanGroundedTurn,
   narrowContextToPlanTurn,

@@ -148,9 +148,13 @@ export function getState() {
 //
 // Storage KEY is unchanged (`atlas_session_snapshot_v1`) so an in-flight phone can
 // still find its snapshot across the deploy; the payload SHAPE version is bumped
-// v1 → v2 to carry `pendingSubstitution` (audit SESS-2: a declared swap was dropped
-// on reload, stranding the swapped-out lift as pending forever). A v1 snapshot (no
-// pendingSubstitution) is still read — the missing field simply restores as null.
+// v1 → v2 carried `pendingSubstitution` (audit SESS-2). F-SB3 (owner ruling 2026-08-02)
+// RETIRED that field: the cross-turn producer of a deferred swap was the competing
+// substitution authority, and `pendingReplacement` (v5, below) is the one surviving
+// pending-decision state. What remains of `pendingSubstitution` is a one-turn token that
+// is armed and consumed inside a single log commit, so it can never legitimately outlive
+// a reload. It is no longer written to or read from the snapshot; an older snapshot that
+// still carries the field is simply ignored.
 // v2 → v3 carries `sessionRevisions` (F10B — the durable mid-session recommendation
 // revisions), so the effective plan survives a reload; older snapshots restore [].
 // v3 → v4 carries `sessionImplicitRecs` (F10C — implicit recommendations for
@@ -183,7 +187,6 @@ export function persistSessionSnapshot(sessionId) {
     const log = _sessionLog.value;
     const plan = _activePlannedSession.value;
     if (!(Array.isArray(log) && log.length) && !plan) { store.removeItem(SNAPSHOT_KEY); return; }
-    const sub = _pendingSubstitution.value;
     const revs = _sessionRevisions.value;
     const implicit = _sessionImplicitRecs.value;
     const pendingReplacement = _pendingReplacement.value;
@@ -194,7 +197,6 @@ export function persistSessionSnapshot(sessionId) {
       sessionLog: log,
       sessionCompleted: _sessionCompleted.value,
       activePlannedSession: plan,
-      ...(sub ? { pendingSubstitution: sub } : {}),
       ...(Array.isArray(revs) && revs.length ? { sessionRevisions: revs } : {}),
       ...(Array.isArray(implicit) && implicit.length ? { sessionImplicitRecs: implicit } : {}),
       ...(pendingReplacement ? { pendingReplacement } : {}),
@@ -237,10 +239,11 @@ export function hydrateSessionSnapshot() {
     setSessionCompleted(snap.sessionCompleted);
     setActivePlannedSession((snap.activePlannedSession && Array.isArray(snap.activePlannedSession.exercises))
       ? snap.activePlannedSession : null);
-    // SESS-2: restore the deferred swap (v2+) so a declared substitution survives a
-    // reload; v1 snapshots have no such field and correctly restore as no pending swap.
-    setPendingSubstitution((snap.pendingSubstitution && typeof snap.pendingSubstitution === 'object')
-      ? snap.pendingSubstitution : null);
+    // F-SB3: the one-turn substitution token is never restored — it is armed and consumed
+    // inside a single log commit, so a value surviving a reload could only bind a stale
+    // swap to an unrelated later log. A v2–v6 snapshot carrying the retired field restores
+    // as no pending swap.
+    setPendingSubstitution(null);
     // F10B: restore the durable mid-session revisions (v3+); older snapshots restore [].
     setSessionRevisions(Array.isArray(snap.sessionRevisions) ? snap.sessionRevisions : []);
     // F10C: restore the implicit recommendations (v4+); older snapshots restore [].

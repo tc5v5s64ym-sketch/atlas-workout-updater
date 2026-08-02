@@ -294,7 +294,7 @@ const _exports = (function () {
     // substitute for a NAMED lift: "I'm looking for a substitute for bench press",
     // "give me an alternative to squats", "suggest a replacement for RDLs". The athlete
     // named what to swap and asked the ENGINE to pick, which is exactly an IMPLICIT
-    // substitution — so it reaches `tryApplyImplicitSubstitution`, which sends
+    // substitution — so it reaches `tryProposeImplicitSubstitution`, which sends
     // `intent:'substitute'` and gets a deterministic recommendation. Without this lane the
     // turn falls to `checkAndSuggestSubstitute`, which sends NO intent, so the route's
     // constraint gate ("busy"/"taken") refuses it and the athlete gets generic coach prose

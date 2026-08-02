@@ -410,3 +410,93 @@ test('a fresh-write_id retry on an ALREADY-sealed closeout fails closed (never r
   assert.equal(body.data.ledger_seal.reason, 'conflicting_seal', 'the ledger stays bound to the ORIGINAL approved closeout');
   assert.equal(body.data.closeout_fully_verified, false, 'a new id can never claim an already-sealed closeout');
 });
+
+
+// ── F-SB3: substitution coherence at the closeout boundary (owner ruling 2026-08-02) ──
+//
+// Workout 20260801-PM-01 sealed with closeout_fully_verified:true over a plain
+// contradiction: Atlas told the owner "You're substituting Bench Press with Incline
+// Dumbbell Press", Incline DB Press completed as an INSERTED exercise, Bench Press stayed
+// pending, and ZERO item_outcome events were written. The one closeout verdict must refuse
+// to certify that — while an honestly disclosed unfinished lift still passes, because the
+// failure condition is the CONTRADICTION, never incompleteness.
+
+const IDB_ACTUALS = [
+  { exercise: 'Weighted Dip', set_number: 1, weight: 90, reps: 10, rir: 2 },
+];
+
+test('F-SB3: the owner\'s exact contradictory state is NOT fully verified', async () => {
+  reset();
+  const { response, body } = await post('/api/log-workout', {
+    session_id: SESSION_ID, date: '2026-07-18', write_id: 'w-co-fsb3-1',
+    log_rows: IDB_ACTUALS,
+    closeout_context: {
+      // Bench Press was accepted and stayed PENDING — no outcome at all.
+      items: [{ plan_item_id: 'pi_ben', planned_lift_code: 'BEN01', name: 'Bench Press' }],
+      // …while the substitution the athlete was told about was never resolved.
+      pending_substitution: {
+        source_plan_item_id: 'pi_ben', source_name: 'Bench Press',
+        replacement_name: 'Incline Dumbbell Press', replacement_lift_code: 'IDB01',
+      },
+    },
+  });
+  assert.equal(response.status, 200);
+  const d = body.data;
+  // The WRITE is still reported truthfully — the rows are safe; only the verdict is honest.
+  assert.equal(d.sheet_write, 'success');
+  assert.equal(d.closeout_fully_verified, false,
+    'a substitution the plan never made can never be certified as a verified closeout');
+});
+
+test('F-SB3: an honestly disclosed UNFINISHED lift still passes (incompleteness is not a contradiction)', async () => {
+  reset();
+  const { body } = await post('/api/log-workout', closeoutPayload({
+    write_id: 'w-co-fsb3-2',
+    closeout_context: {
+      items: [
+        { plan_item_id: 'pi_dip', planned_lift_code: 'DIP01', name: 'Weighted Dip', outcome: 'completed' },
+        { plan_item_id: 'pi_ben', planned_lift_code: 'BEN01', name: 'Bench Press', outcome: 'skipped' },
+      ],
+    },
+  }));
+  assert.equal(body.data.closeout_fully_verified, true, 'an unfinished lift, honestly labelled, is coherent');
+});
+
+test('F-SB3: a proposal the athlete declined by DOING the original lift is coherent', async () => {
+  reset();
+  const { body } = await post('/api/log-workout', closeoutPayload({
+    write_id: 'w-co-fsb3-3',
+    closeout_context: {
+      items: [{ plan_item_id: 'pi_dip', planned_lift_code: 'DIP01', name: 'Weighted Dip', outcome: 'completed' }],
+      pending_substitution: {
+        source_plan_item_id: 'pi_dip', source_name: 'Weighted Dip',
+        replacement_name: 'Incline Dumbbell Press', replacement_lift_code: 'IDB01',
+      },
+    },
+  }));
+  assert.equal(body.data.closeout_fully_verified, true,
+    'the source slot completed — the unaccepted proposal contradicts nothing');
+});
+
+test('F-SB3: a substitution outcome that binds no performed lift is NOT fully verified', async () => {
+  reset();
+  const { body } = await post('/api/log-workout', closeoutPayload({
+    write_id: 'w-co-fsb3-4',
+    closeout_context: {
+      items: [{ plan_item_id: 'pi_dip', planned_lift_code: '', name: 'Weighted Dip', outcome: 'substituted' }],
+    },
+  }));
+  assert.equal(body.data.closeout_fully_verified, false,
+    'a slot claiming a swap the ledger cannot bind to anything is a contradiction');
+});
+
+test('F-SB3: a resolved substitution (bound performed lift) stays fully verified', async () => {
+  reset();
+  const { body } = await post('/api/log-workout', closeoutPayload({
+    write_id: 'w-co-fsb3-5',
+    closeout_context: {
+      items: [{ plan_item_id: 'pi_dip', planned_lift_code: '', performed_lift_code: 'IDB01', name: 'Incline Dumbbell Press', outcome: 'substituted' }],
+    },
+  }));
+  assert.equal(body.data.closeout_fully_verified, true, 'a canonically bound substitution is coherent');
+});

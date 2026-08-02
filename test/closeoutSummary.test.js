@@ -185,3 +185,73 @@ test('a performed value NEVER appears as a target: actual-only lifts carry no ta
   assert.equal('target_weight' in up.sets[0], false, 'no target field exists to be conflated with the actual');
   assert.equal(up.sets[0].weight, 60);
 });
+
+// ── F-SB3: substitution coherence detector (owner ruling 2026-08-02) ──────────
+//
+// Pure, canonical-state-only. It reads the closeout context's structured items and the ONE
+// unresolved substitution proposal — never exercise similarity, never freeform prose. The
+// failure condition is a CONTRADICTION, not incompleteness.
+
+const { detectSubstitutionContradictions, boundCloseoutPendingSubstitution } = require('../services/closeoutSummary');
+
+const codes = ctx => detectSubstitutionContradictions(ctx).map(x => x.code);
+
+test('F-SB3 detector: a coherent closeout reports nothing', () => {
+  assert.deepEqual(codes({ items: [
+    { plan_item_id: 'pi_1', planned_lift_code: 'SQ01', outcome: 'completed' },
+    { plan_item_id: 'pi_2', planned_lift_code: 'BEN01', outcome: 'skipped' },          // honest unfinished lift
+    { plan_item_id: 'pi_3', performed_lift_code: 'IDB01', outcome: 'substituted' },    // bound swap
+    { plan_item_id: 'pi_4', planned_lift_code: 'SR01' },                               // started, no outcome
+  ] }), []);
+  assert.deepEqual(codes({}), [], 'no context at all is not a contradiction');
+  assert.deepEqual(codes({ items: [] }), []);
+});
+
+test('F-SB3 detector: a substituted outcome with no performed lift is a contradiction', () => {
+  assert.deepEqual(codes({ items: [{ plan_item_id: 'pi_1', outcome: 'substituted' }] }),
+    ['substitution_outcome_without_performed_lift']);
+});
+
+test('F-SB3 detector: one logged movement cannot satisfy two planned slots', () => {
+  assert.deepEqual(codes({ items: [
+    { plan_item_id: 'pi_1', performed_lift_code: 'IDB01', outcome: 'substituted' },
+    { plan_item_id: 'pi_2', performed_lift_code: 'idb01', outcome: 'substituted' },
+  ] }), ['duplicate_substitution_binding']);
+});
+
+test("F-SB3 detector: the owner's exact shape — an unresolved proposal over a still-pending source", () => {
+  const ctx = {
+    items: [{ plan_item_id: 'pi_ben', planned_lift_code: 'BEN01', name: 'Bench Press' }],
+    pending_substitution: {
+      source_plan_item_id: 'pi_ben', source_name: 'Bench Press',
+      replacement_name: 'Incline Dumbbell Press', replacement_lift_code: 'IDB01',
+    },
+  };
+  assert.deepEqual(codes(ctx), ['unresolved_substitution_proposal']);
+  // A source slot the athlete actually COMPLETED (they did the original lift instead)
+  // resolves the proposal by declining it — no contradiction.
+  ctx.items[0].outcome = 'completed';
+  assert.deepEqual(codes(ctx), []);
+  // …and a source slot that was canonically substituted is resolved too.
+  ctx.items[0].outcome = 'substituted';
+  ctx.items[0].performed_lift_code = 'IDB01';
+  assert.deepEqual(codes(ctx), []);
+  // A proposal whose source is a SKIPPED slot is still unresolved: the athlete asked for a
+  // swap, the swap never happened, and the lift was never done.
+  ctx.items[0].outcome = 'skipped';
+  delete ctx.items[0].performed_lift_code;
+  assert.deepEqual(codes(ctx), ['unresolved_substitution_proposal']);
+});
+
+test('F-SB3 detector: the pending proposal is bounded, and a proposal with no identity is ignored', () => {
+  assert.equal(boundCloseoutPendingSubstitution(null), null);
+  assert.equal(boundCloseoutPendingSubstitution({ source_name: 'Bench Press' }), null,
+    'without the source plan_item_id there is no ledger identity to test against');
+  const bounded = boundCloseoutPendingSubstitution({
+    source_plan_item_id: ' pi_ben ', source_name: 'x'.repeat(500),
+    replacement_name: 'Incline Dumbbell Press', replacement_lift_code: 'IDB01', junk: 'dropped',
+  });
+  assert.equal(bounded.source_plan_item_id, 'pi_ben');
+  assert.equal(bounded.source_name.length, 200, 'every string is capped');
+  assert.equal('junk' in bounded, false, 'unknown fields never reach the verdict');
+});

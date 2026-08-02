@@ -1682,6 +1682,24 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
           configured: true, model: coach.coachModel(), source: 'engine'
         });
       }
+      // FAIL-CLOSED SUBSTITUTION TURN (F-SB3, owner ruling 2026-08-02). This route is
+      // READ-ONLY: it cannot swap a plan slot, retain the original plan_item_id, or emit the
+      // canonical `substituted` item_outcome. So a substitution request is answered
+      // DETERMINISTICALLY here and the model is BYPASSED — exactly as a factual dispute is.
+      //
+      // On 2026-08-02 the model answered this turn with "You're substituting Bench Press with
+      // Incline Dumbbell Press." and "I've noted the substitution." while the ledger recorded
+      // no outcome and Bench Press stayed pending. The mutation-claim denylist below missed
+      // both phrasings; a denylist always can. Removing the model from the turn removes the
+      // wording it would have to catch. The real substitution lives in the client's one
+      // propose → accept → applySessionSubstitution path, which this answer points back at.
+      if (coachResponseGrounding.isSubstitutionTurn(message, context)) {
+        const substitutionAnswer = coachResponseGrounding.buildSubstitutionAnswer(message, context);
+        return standardSuccess(req, res, 'Coach chat — grounded substitution turn (deterministic)', {
+          message: substitutionAnswer, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
+          configured: true, model: coach.coachModel(), source: 'engine'
+        });
+      }
       // Recommendation-explanation grounding (2026-07-22 production, FR-20260722231349).
       // "Why only 175 for bench?" asks why the DISPLAYED recommendation chose its numbers.
       // narrowContextToPlanTurn cannot fix it — the challenged lift IS the lift being asked

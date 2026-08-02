@@ -8,11 +8,15 @@
 // entry), so the deterministic implicit-substitution path fell through to the LLM.
 //
 // This E2E drives the REAL mutation slice out of the built public/app.js with the REAL
-// planMutationIntent classifier and the REAL substitutionRecommender behind the
-// /api/suggest-substitute stub — plus a REAL canonical session (activeSession.js) that
-// derives completion from a logged-set list, so the stale index cursor is exercised
-// exactly as production. It locks in the four diagnosed facets: target resolution,
-// active-index repair, mutation result, and confirmation truthfulness.
+// planMutationIntent classifier, the REAL activeReplacement proposal module, and the REAL
+// substitutionRecommender behind the /api/suggest-substitute stub — plus a REAL canonical
+// session (activeSession.js) that derives completion from a logged-set list, so the stale
+// index cursor is exercised exactly as production. It locks in the four diagnosed facets:
+// target resolution, active-index repair, mutation result, and confirmation truthfulness.
+//
+// F-SB3 (owner ruling 2026-08-02) split the last two across the proposal boundary: the
+// recommendation resolves the target and mutates NOTHING, and acceptance is what repairs
+// the cursor and earns the confirmation.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -24,10 +28,11 @@ const { recommendSubstitute } = require('../services/substitutionRecommender');
 const repoRoot = path.join(__dirname, '..');
 const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
 
-let planMutationIntent, activeSession;
+let planMutationIntent, activeSession, activeReplacement;
 test.before(async () => {
   planMutationIntent = await import('../src/app/planMutationIntent.js');
   activeSession = await import('../src/app/activeSession.js');
+  activeReplacement = await import('../src/app/activeReplacement.js');
 });
 
 class FakeCustomEvent {
@@ -47,7 +52,7 @@ function loadHarness(completed) {
   const events = [];
   const calls = [];
   const fakeDoc = { getElementById: () => null, dispatchEvent: evt => events.push(evt) };
-  const fakeWindow = { planMutationIntent, activeSession };
+  const fakeWindow = { planMutationIntent, activeSession, activeReplacement };
   const api = async (pathArg, opts) => {
     const body = JSON.parse((opts && opts.body) || '{}');
     calls.push({ path: pathArg, body });
@@ -94,8 +99,10 @@ function loadHarness(completed) {
       bannerCurrent: () => { syncPlannedIndexToCanonical(); const s = activePlannedSession; const e = s && s.exercises[s.index]; return e ? (e.canonicalName || e.name) : null; },
       getIndex: () => activePlannedSession && activePlannedSession.index,
       firstUnlogged: () => firstUnloggedPlannedLift(),
-      tryApplyImplicitSubstitution,
+      tryProposeImplicitSubstitution,
       tryApplyPlanMutation,
+      approvePendingReplacement,
+      getProposal: () => getPendingReplacement(),
       getEvents: () => events.slice(),
       getCalls: () => calls.slice(),
     };
@@ -120,11 +127,11 @@ function legDayPlan() {
 }
 const COMPLETED = ['Romanian Deadlift', 'Back Squat', 'Single-Leg Seated Leg Press', 'Seated Row'];
 
-test('E2E: "Swap leg extensions out for something else." substitutes Leg Extension in place despite the stale cursor', async () => {
+test('E2E: "Swap leg extensions out for something else." resolves the NAMED pending lift despite the stale cursor, proposes, then applies on acceptance', async () => {
   const h = loadHarness(COMPLETED);
   h.setActivePlannedSession(legDayPlan());
 
-  const handled = await h.tryApplyImplicitSubstitution('Swap leg extensions out for something else.');
+  const handled = await h.tryProposeImplicitSubstitution('Swap leg extensions out for something else.');
 
   // Confirmation truthfulness: handled deterministically → never falls through to the
   // LLM chat path that falsely said "Plan updated".
@@ -138,14 +145,24 @@ test('E2E: "Swap leg extensions out for something else." substitutes Leg Extensi
   assert.equal(calls[0].body.current_exercise, 'Leg Extension');
   assert.equal(calls[0].body.intent, 'substitute');
 
-  // Mutation result: Leg Extension is REPLACED in place by a valid substitute — the
-  // list length is unchanged and Seated Row (the stale cursor's lift) is untouched.
+  // F-SB3 requirement A: the plan is UNTOUCHED while the proposal is pending.
+  assert.deepEqual(h.getExercises(),
+    ['Romanian Deadlift', 'Back Squat', 'Single-Leg Seated Leg Press', 'Seated Row', 'Leg Extension'],
+    'the recommendation mutates nothing');
+  const proposal = h.getProposal();
+  assert.equal(proposal.source.name, 'Leg Extension', 'the proposal names the resolved pending lift');
+  const sub = proposal.replacement.name;
+  assert.ok(['Leg Press', 'Hack Squat', 'Goblet Squat'].includes(sub), `a valid quad substitute was proposed, got ${sub}`);
+  assert.equal(h.getEvents().filter(e => e.type === 'atlas:plan-mutated').length, 0, 'nothing announced as mutated');
+
+  // Acceptance: Leg Extension is REPLACED in place — the list length is unchanged and
+  // Seated Row (the stale cursor's lift) is untouched.
+  assert.equal(h.approvePendingReplacement(), true);
   const names = h.getExercises();
   assert.ok(!names.includes('Leg Extension'), 'Leg Extension is gone (replaced, not left in place)');
   assert.equal(names.length, 5, 'in-place replace — no slot added or dropped');
   assert.deepEqual(names.slice(0, 4), ['Romanian Deadlift', 'Back Squat', 'Single-Leg Seated Leg Press', 'Seated Row'], 'the completed slots are preserved in order');
-  const sub = names[4];
-  assert.ok(['Leg Press', 'Hack Squat', 'Goblet Squat'].includes(sub), `a valid quad substitute took the slot, got ${sub}`);
+  assert.equal(names[4], sub, 'exactly the proposed replacement took the slot');
 
   // Active-index repair: the substitute becomes the active lift even though the cursor
   // was stale on Seated Row (idx 3) — the header/composer now point at the substitute.
@@ -153,10 +170,11 @@ test('E2E: "Swap leg extensions out for something else." substitutes Leg Extensi
   assert.equal(h.bannerCurrent(), sub, 'the header/cursor is repaired onto the substitute');
   assert.equal(h.getIndex(), 4, 'the cursor advanced off the stale Seated Row to the substitute slot');
 
-  // Confirmation truthfulness: the announced summary names the ACTUAL swap that happened.
+  // Confirmation truthfulness: the announced summary names the ACTUAL swap that happened,
+  // and it is emitted only after the canonical mutation succeeded.
   const mutated = h.getEvents().filter(e => e.type === 'atlas:plan-mutated');
   assert.equal(mutated.length, 1, 'exactly one truthful mutation announcement');
-  assert.equal(mutated[0].detail.summary, `Swapped Leg Extension → ${sub}.`);
+  assert.equal(mutated[0].detail.summary, `Replaced Leg Extension with ${sub}.`);
   assert.equal(mutated[0].detail.current, sub, 'the composer re-points to the substitute');
 });
 

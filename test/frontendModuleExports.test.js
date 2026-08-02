@@ -29,7 +29,7 @@ const EXPECTED = {
   ],
   sessionQuestion: ['isSessionStateQuestion', 'isPlannedLiftQuestion', 'isPlanReference', 'isPlanModificationRequest', 'isWorkoutGenerationRequest', 'extractGenerationConstraints'],
   coachVoiceTemplates: [
-    'liftLabel', 'templatedSubstitutionLine', 'formatSubstituteCoachLine',
+    'liftLabel', 'templatedSubstitutionLine',
     'templatedNextMoveAdvisoryLine', 'templatedRecoveryAdvisoryLine',
     'governorOverridesProgressionInvite', 'templatedGovernorHoldLine', 'isBriefTier',
     'templatedAckLine', 'templatedOnPlanWrapLine',

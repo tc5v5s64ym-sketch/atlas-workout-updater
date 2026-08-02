@@ -52,6 +52,7 @@ These levels are distinct and are never collapsed. They are the same rungs the c
 | 6 | Visible coach wording | `coachRunners` / renderer chain + deterministic fallbacks | engine decides, LLM words | TRANSITIONAL |
 | 7 | Safety | `constraintDetector` **and** `constraintResolver` | `SafetyDecision` | DUPLICATED |
 | 8 | Substitution | `turnPrecedence` (flag-gated) + legacy route-local reading | `turnPrecedence` | TRANSITIONAL |
+| 8b | Substitution decision + mutation | `pendingReplacement` proposal → `applySessionSubstitution` | same | **SOLE LIVE AUTHORITY** |
 | 9 | Preview approval | `/api/log-workout` + client approve path | unchanged — already single | SOLE LIVE AUTHORITY |
 | 10 | Turn/write correlation | `turnCorrelation` | `turnCorrelation` | SOLE LIVE AUTHORITY |
 | 11 | Durable Sheet write | `sheets.js` | `sheets.js` | SOLE LIVE AUTHORITY |
@@ -165,6 +166,18 @@ These levels are distinct and are never collapsed. They are the same rungs the c
 - **Sunset condition.** Delete the legacy reading and the flag once Stage A and Stage B pass with the flag on.
 - **Phase 4 relevance.** Direct — this was the Phase 4 first concern (divergence D5/D6).
 - **Evidence.** `test/turnPrecedence.test.js`; `test/api-smoke.test.js` flag-on/flag-off regressions.
+
+## 8b. Substitution decision and mutation
+
+- **Current live authority.** The ONE pending proposal (`store.pendingReplacement`, built by `src/app/activeReplacement.js`) decides; `applySessionSubstitution` (`src/app/app.js`) is the ONE mutation transition, which retains the original `plan_item_id` and emits the one canonical `Session_Plans` `substituted` `item_outcome`.
+- **Intended sole authority.** The same. Resolved by F-SB3 (owner ruling 2026-08-02).
+- **Competing authority.** None remaining. The engine lanes' own decision state is gone: `checkAndSuggestSubstitute` and `tryProposeImplicitSubstitution` now stage the same proposal instead of parking a cross-turn `pendingSubstitution` / mutating immediately. Coach prose is no longer a second claim authority either — a substitution turn on the read-only `/api/coach/chat` is answered deterministically (`coachResponseGrounding.buildSubstitutionAnswer`), so the model is never asked.
+- **Status.** **SOLE LIVE AUTHORITY.**
+- **Exact production consumer.** The composer substitution lanes (`tryProposeReplacement`, `tryProposeImplicitSubstitution`, `checkAndSuggestSubstitute`), the acceptance paths (`approvePendingReplacement`, `bindLoggedSubstituteToProposal`), and `closeoutVerification` (`index.js`) via `detectSubstitutionContradictions`.
+- **Compatibility bridge.** `pendingSubstitution` survives ONLY as the one-turn "\<substitute log\> instead of \<original\>" token (F10S2), armed and consumed inside a single log commit. It is no longer persisted to or restored from the session snapshot, so it cannot cross a turn or a reload. Requirement D of the ruling explicitly permits it.
+- **Sunset condition.** The token folds into the proposal object when `src/app/app.js` is extracted in Phase 5 (H-21); at that point `pendingSubstitution` is deleted from the store outright.
+- **Phase 4 relevance.** Direct — this is the F-SB3 card.
+- **Evidence.** `test/substitutionProposalLifecycle.test.js` (A–E lifecycle + negatives, with four mutation bite proofs), `tests/e2e/substitution-truth.spec.js` (the owner's exact flow through the real browser path; fails on `origin/main`), `test/closeoutSealIntegration.test.js` (closeout coherence end to end), `test/coachResponseGrounding.test.js` (the deterministic answer).
 
 ## 9. Preview approval
 

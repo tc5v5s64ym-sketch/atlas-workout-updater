@@ -73,7 +73,6 @@ const _exports = (function (root) {
   let ATLAS_EVENT_MAP = {
     'atlas:preview-ready': 'card_rendered',
     'atlas:chat-message': 'coach_message_rendered',
-    'atlas:substitute-suggested': 'coach_message_rendered',
     'atlas:glance-ready': 'screen_rendered',
     'atlas:placeholder-owned': 'screen_rendered',
     'atlas:set-logged': 'session_state_changed',

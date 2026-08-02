@@ -47,6 +47,7 @@ function buildEmitHarness() {
     let parsedRowsEditor = { hidden: false };
     function resolveCompletedIdentity(name){ return name; }
     function applySessionSubstitution(){}
+    function bindLoggedSubstituteToProposal(){ return false; }   // F-SB3 — no proposal in these fixtures
     function emitImplicitRecommendation(){}
     function isOffPlanLoggedExercise(){ return false; }
     function remainingPlannedExercises(){ return []; }

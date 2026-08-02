@@ -43,17 +43,10 @@ const _exports = (function () {
     }
   }
 
-  // Coach-voice text for a proactive equipment-substitution recommendation
-  // (atlas:substitute-suggested). Returns null when required fields are absent.
-  // Sounds like one coach talking, not a structured diagnostic card.
-  function formatSubstituteCoachLine({ prescribed, recommendation, quality, reason } = {}) {
-    if (!prescribed || !recommendation) return null;
-    const reasonPart = reason ? ` ${reason}.` : '';
-    if (quality === 'excellent') {
-      return `No ${prescribed} today — ${recommendation} is your best swap.${reasonPart} Same stimulus, different bar.`;
-    }
-    return `No ${prescribed} today — switch to ${recommendation}.${reasonPart} Not a perfect one-for-one, but it covers the session — get ${prescribed} back in when the equipment's free.`;
-  }
+  // F-SB3 (2026-08-02) removed formatSubstituteCoachLine. It voiced the proactive
+  // equipment-substitution bubble, which belonged to the losing substitution authority:
+  // a recommendation nothing could accept, answer, or record. Substitution wording is now
+  // the ONE proposal line (src/app/activeReplacement.formatProposalLine).
 
   // Deterministic one-line voicing of the Fatigue Router's next-move SUGGESTION
   // (PR 483/484), used when the LLM is unavailable so the engine's heads-up for
@@ -212,7 +205,6 @@ const _exports = (function () {
     liftLabel,
     templatedOnPlanWrapLine,
     templatedSubstitutionLine,
-    formatSubstituteCoachLine,
     templatedNextMoveAdvisoryLine,
     templatedRecoveryAdvisoryLine,
     governorOverridesProgressionInvite,
@@ -228,7 +220,6 @@ export const {
   liftLabel,
   templatedOnPlanWrapLine,
   templatedSubstitutionLine,
-  formatSubstituteCoachLine,
   templatedNextMoveAdvisoryLine,
   templatedRecoveryAdvisoryLine,
   governorOverridesProgressionInvite,

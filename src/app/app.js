@@ -2351,7 +2351,7 @@ function tryApplyPlanMutation(text) {
   const intent = PM.classifyMutationIntent(text);
   if (!intent) return false;                  // classify FIRST — never materialize on non-mutations
   // This deterministic sync path handles a one-sided SKIP only. An IMPLICIT substitution
-  // (engine picks the sub) is async (tryApplyImplicitSubstitution); an EXPLICIT REPLACE is
+  // (engine picks the sub) is async (tryProposeImplicitSubstitution); an EXPLICIT REPLACE is
   // now a GATED PROPOSAL (tryProposeReplacement, which runs BEFORE this lane) — a direct
   // "replace X with Y" must never immediately mutate the plan (production trust fix
   // FR-20260723031748). Guard defensively so a replace can never fall into the immediate
@@ -2464,12 +2464,98 @@ async function tryProposeReplacement(text) {
 // Render the pending replacement PROPOSAL to the coach thread — one coherent proposal with
 // the complete proposed prescription and an Approve / Reject affordance. The plan is NOT
 // mutated here; approval is what applies it. Reuses the coach layer via an event so the
-// composer stays the single owner of thread rendering.
-function renderReplacementProposal(proposal) {
+// composer stays the single owner of thread rendering. `line` lets an engine-recommended
+// proposal carry the recommender's own reason; it defaults to the pure proposal line.
+function renderReplacementProposal(proposal, line) {
   const AR = window.activeReplacement;
   document.dispatchEvent(new CustomEvent('atlas:replacement-proposed', {
-    detail: { proposal, line: AR.formatProposalLine(proposal) }
+    detail: { proposal, line: line || AR.formatProposalLine(proposal) }
   }));
+}
+
+// ── F-SB3: ONE substitution proposal, ONE mutation transition ─────────────────
+// Owner ruling 2026-08-02 (substitution truth). EVERY substitution RECOMMENDATION —
+// the athlete's explicit "replace X with Y" (tryProposeReplacement), the engine's
+// implicit pick for a declined lift (tryProposeImplicitSubstitution), and the
+// constraint-detected swap for an unavailable lift (checkAndSuggestSubstitute) —
+// now stages the SAME bounded, session-scoped pending proposal
+// (store.pendingReplacement) and MUTATES NOTHING. The source lift stays in the plan.
+// Acceptance is what mutates, exactly once, through the single applySessionSubstitution
+// transition (which retains the original plan_item_id and emits the one canonical
+// `substituted` item_outcome).
+//
+// Before this, the two engine lanes each carried their own decision state: one mutated
+// the plan immediately with no acceptance at all, the other parked an un-approvable
+// `pendingSubstitution` that no lane could answer "how much should I lift?" from. Two
+// representations of one decision is the authority defect the ruling names — the
+// proposal wins and the competing engine-lane state is gone.
+//
+// Returns the staged proposal, or null when there is nothing legitimate to propose.
+function stageSubstitutionProposal(sourceName, sourceLiftCode, rec) {
+  const AR = (typeof window !== 'undefined' && window.activeReplacement) || null;
+  if (!AR || !sourceName || !rec || !rec.recommendation) return null;
+  // Resolve the substitute's catalog identity for its lift code (the same tiers the
+  // named swap uses); keep the recommender's name when the catalog doesn't know it.
+  const resolved = resolveCatalogExercise(rec.recommendation);
+  const subName = (resolved && resolved.matched && resolved.name) || rec.recommendation;
+  const subCode = (resolved && resolved.liftCode) || '';
+  // A substitute that collapses to the source is not a substitution.
+  if (String(subName).toLowerCase() === String(sourceName).toLowerCase()) return null;
+  const t = rec.next_target && typeof rec.next_target === 'object' ? rec.next_target : {};
+  const proposal = AR.buildReplacementProposal({
+    source: { name: sourceName, lift_code: sourceLiftCode || null },
+    replacement: {
+      name: subName, lift_code: subCode,
+      weight: t.weight ?? null, reps: t.reps ?? null, sets: t.sets ?? null, rir: t.rir ?? null,
+    },
+    planExercises: (getActivePlannedSession() && getActivePlannedSession().exercises) || [],
+  });
+  setPendingReplacement(proposal);
+  persistSessionSnapshot(document.getElementById('log-session-id')?.value || null);
+  // The recommender's own reason rides along as prose only — never a number, never a
+  // completed-mutation claim ("I've noted the substitution", "you're substituting X").
+  const reason = typeof rec.reason === 'string' ? rec.reason.trim() : '';
+  renderReplacementProposal(proposal,
+    reason ? `${AR.formatProposalLine(proposal)} ${reason}.` : undefined);
+  return proposal;
+}
+
+// F-SB3 requirement D — ACCEPTANCE BY LOGGING. The athlete answers a pending proposal by
+// simply DOING the replacement. Bind the logged lift to the proposal's ORIGINAL slot
+// through the one applySessionSubstitution transition (original plan_item_id retained,
+// one canonical `substituted` outcome) BEFORE emitSetLogged can resolve it as an
+// unrelated inserted exercise. Returns true only when the plan actually bound.
+//
+// Fails closed. It binds ONLY when the logged lift genuinely IS the proposed replacement
+// — by lift code when both carry one, else by canonical name — so an ordinary off-plan
+// accessory logged while a proposal is open stays an insertion and never satisfies a
+// planned slot. Identity is never inferred from similarity or prose.
+//
+// Idempotent: the proposal is cleared on a successful bind, so a repeat log of the same
+// lift is a plain insert and can never emit a second item_outcome.
+function bindLoggedSubstituteToProposal(rawName, enrichmentRow) {
+  const AR = (typeof window !== 'undefined' && window.activeReplacement) || null;
+  const proposal = getPendingReplacement();
+  if (!AR || !proposal || proposal.status !== 'pending') return false;
+  if (!getActivePlannedSession() || !Array.isArray(getActivePlannedSession().exercises)) return false;
+  const planExercises = getActivePlannedSession().exercises;
+  // A stale proposal (the plan changed under it, or the source slot is already gone) is
+  // discarded rather than applied to the wrong slot — the same guard the tap path uses.
+  if (!AR.isProposalFresh(proposal, planExercises)) return false;
+  const enr = enrichmentRow && typeof enrichmentRow === 'object' ? enrichmentRow : {};
+  const r = proposal.replacement || {};
+  const loggedName = enr.canonical_exercise || rawName;
+  const loggedCode = enr.lift_code || '';
+  const matches = (r.lift_code && loggedCode)
+    ? String(r.lift_code).toLowerCase() === String(loggedCode).toLowerCase()
+    : String(r.name || '').toLowerCase() === String(loggedName || '').toLowerCase();
+  if (!matches) return false;
+  const prescription = { weight: r.weight ?? null, reps: r.reps ?? null, sets: r.sets ?? null, rir: r.rir ?? null };
+  const swapped = applySessionSubstitution(
+    proposal.source && proposal.source.name, loggedName, loggedCode || r.lift_code || '', prescription);
+  setPendingReplacement(null);
+  persistSessionSnapshot(document.getElementById('log-session-id')?.value || null);
+  return swapped;
 }
 
 // APPROVE the pending replacement: remove exactly the source and insert exactly the
@@ -2497,10 +2583,19 @@ function approvePendingReplacement(fromCard) {
   const r = proposal.replacement || {};
   const prescription = { weight: r.weight ?? null, reps: r.reps ?? null, sets: r.sets ?? null, rir: r.rir ?? null };
   const swapped = applySessionSubstitution(proposal.source.name, r.name, r.lift_code || '', prescription);
+  const sourceStillPlanned = AR.findSlotIndex(
+    (getActivePlannedSession() && getActivePlannedSession().exercises) || [], proposal.source.name) !== -1;
   setPendingReplacement(null);
   persistSessionSnapshot(document.getElementById('log-session-id')?.value || null);
   if (swapped) {
+    // The success claim is emitted ONLY after the canonical mutation reports success —
+    // never before it, and never by the model (F-SB3 requirement C).
     announcePlanMutation(`Replaced ${proposal.source.name} with ${r.name}.`, curNameAfterMutation());
+  } else if (sourceStillPlanned) {
+    // F-SB3 requirement E — the mutation FAILED and the source lift is still on the plan.
+    // Say so plainly. Never a success claim, never silence that reads as one.
+    announcePlanMutation(
+      `I couldn't change the plan — ${proposal.source.name} is still on it.`, curNameAfterMutation());
   } else {
     // Source already gone (e.g. approved twice) — idempotent no-op, not a phantom swap.
     announcePlanMutation('', curNameAfterMutation());
@@ -2572,12 +2667,15 @@ function tryResolvePendingReplacement(text) {
 // for "something else" WITHOUT naming it (classifier action 'substitute', production
 // bug 2026-07-11). Resolve the target slot, ask the DETERMINISTIC recommender
 // (services/substitutionRecommender via the read-only /api/suggest-substitute) for a
-// valid substitute, and replace the slot IN PLACE with the SAME executor the explicit
-// swap uses — so the substitute becomes the active exercise and the remaining plan
-// order is preserved. Falls through (false) when there is no plan, no matching slot,
-// or no known substitute; the coach then handles it. Async because the recommender is
-// server-side (its quality/pattern chain is not in the browser bundle).
-async function tryApplyImplicitSubstitution(text) {
+// valid substitute, and stage the ONE pending proposal. Falls through (false) when
+// there is no plan, no matching slot, or no known substitute; the coach then handles
+// it. Async because the recommender is server-side (its quality/pattern chain is not
+// in the browser bundle).
+//
+// F-SB3: this lane used to apply the swap IMMEDIATELY, so an engine recommendation and
+// an accepted decision were the same event — a second acceptance model beside the gated
+// proposal. It now proposes and waits, like every other substitution lane.
+async function tryProposeImplicitSubstitution(text) {
   const submitSeq = typeof previewRequestSeq === 'number' ? previewRequestSeq : null;
   const PM = (typeof window !== 'undefined' && window.planMutationIntent) || null;
   if (!PM) return false;
@@ -2617,17 +2715,10 @@ async function tryApplyImplicitSubstitution(text) {
     rec = res && res.data && res.data.recommendation;
   } catch { return false; }
   if (!rec || !rec.recommendation) return false; // no known substitute → fall through to the coach
-  // Resolve the substitute's catalog identity for its lift code (same tiers the named
-  // swap uses); keep the recommender's name if the catalog doesn't know it.
-  const resolvedSub = resolveCatalogExercise(rec.recommendation);
-  const subName = (resolvedSub && resolvedSub.matched && resolvedSub.name) || rec.recommendation;
-  const subCode = (resolvedSub && resolvedSub.liftCode) || '';
-  const swapped = applySessionSubstitution(targetName, subName, subCode, rec.next_target || null);
-  if (!swapped) return false; // e.g. the recommender returned the same lift → nothing changed
-  // Re-point to the ACTUAL current lift after the in-place swap (now the substitute).
-  const cur = firstUnloggedPlannedLift();
-  announcePlanMutation(`Swapped ${targetName} → ${subName}.`, cur || subName);
-  return true;
+  const targetSlot = targetIdx >= 0 ? planExs[targetIdx] : null;
+  // Stage the ONE proposal — the plan is NOT mutated here (F-SB3 requirement A). The
+  // target lift stays in the plan until the athlete accepts.
+  return Boolean(stageSubstitutionProposal(targetName, (targetSlot && targetSlot.liftCode) || '', rec));
 }
 
 // ── P0 PR 4: deterministic exercise-identity correction (AC7) ──────────────────
@@ -3490,6 +3581,17 @@ function openTodaySessionPlan() {
 function looksLikeSessionRequest(text) {
   const t = String(text || '').trim().toLowerCase();
   if (!t || /\d/.test(t)) return false;
+  const SWAP_WORD = /\b(?:substitutes?|substitution|alternatives?|replacements?)\b/;
+  // F-SB3 (2026-08-02): a substitution word plus an UNAVAILABILITY report is a lift-level
+  // swap even when the sentence also says "plan". The owner's exact turn — "The bench is
+  // taken at the gym so plan give me a substitute workout" — was claimed by the generation
+  // classifier on the word "plan", so the substitution lane never ran at all. A
+  // whole-session alternative ("recommend an alternative workout") never reports a lift as
+  // taken/busy/broken, so this cue cannot swallow one. The weaker "for|to <word>" cue stays
+  // BELOW the generation classifier, where it cannot mis-claim "plan me a substitute
+  // workout for tomorrow".
+  const UNAVAILABLE_CUE = /\b(?:taken|busy|occupied|in use|unavailable|out of order|broken|not working|someone'?s? (?:on|using)|can'?t (?:do|use))\b/;
+  if (SWAP_WORD.test(t) && UNAVAILABLE_CUE.test(t)) return false;
   // Workout-GENERATION requests ("plan me a workout", "plan me a workout but have it start
   // with back squats", "build me a pull workout") must reach the AUTHORITATIVE recommendation
   // pipeline here, not the free-form /api/coach/chat pseudo-plan lane (2026-07-22 failure).
@@ -3508,8 +3610,8 @@ function looksLikeSessionRequest(text) {
   // names its target, so it needs no second cue.
   //
   // Placed AFTER the generation classifier, which stays authoritative for an explicit
-  // "plan/build me a workout".
-  const SWAP_WORD = /\b(?:substitutes?|substitution|alternatives?|replacements?)\b/;
+  // "plan/build me a workout". (The unavailability half of this cue is hoisted ABOVE it —
+  // see F-SB3 at the top of this function.)
   const LIFT_LEVEL_CUE = /\b(?:for|to)\s+\w|\b(?:taken|busy|occupied|in use|unavailable|out of order|broken|not working|someone'?s? (?:on|using)|can'?t (?:do|use))\b/;
   if (/\binstead of\b/.test(t)) return false;
   if (SWAP_WORD.test(t) && LIFT_LEVEL_CUE.test(t)) return false;
@@ -5242,6 +5344,31 @@ function closeoutContextItems() {
   });
 }
 
+// F-SB3 — the ONE unresolved substitution decision, as canonical identity, for the
+// closeout confirmation. Reads the single pending proposal (store.pendingReplacement)
+// and resolves its SOURCE slot to the accepted plan_item_id the ledger addresses, so
+// the server can test the proposal against that item's recorded outcome. Returns null
+// when nothing is pending, when there is no accepted plan, or when the source slot no
+// longer carries an identity — it never invents one.
+function closeoutContextPendingSubstitution() {
+  const proposal = getPendingReplacement();
+  const s = getActivePlannedSession();
+  if (!proposal || proposal.status !== 'pending' || !s || s.accepted !== true) return null;
+  const sourceName = String((proposal.source && proposal.source.name) || '');
+  if (!sourceName) return null;
+  const key = sourceName.toLowerCase();
+  const slot = (Array.isArray(s.exercises) ? s.exercises : []).find(ex =>
+    (ex.canonicalName || ex.name || '').toLowerCase() === key || (ex.name || '').toLowerCase() === key);
+  if (!slot || !slot.plan_item_id) return null;
+  const r = proposal.replacement || {};
+  return {
+    source_plan_item_id: slot.plan_item_id,
+    source_name: sourceName,
+    replacement_name: r.name || '',
+    replacement_lift_code: r.lift_code || '',
+  };
+}
+
 // ── F10D acceptance boundary (owner canary finding, 2026-07-18) ────────────────
 // A DISPLAYED recommendation is never an active plan: without the explicit
 // "Start this plan" acceptance there is no plan identity, no Session_Plans
@@ -5880,23 +6007,13 @@ function currentPlannedExercise() {
   const cur = canon && AS.currentExercise(canon);
   if (!cur) return null; // all exercises logged — caller (advancePlannedSession) ends session correctly
 
-  // Step 379 guard: if the lifter declared a swap for this exact exercise
-  // (pendingSubstitution is set and the prescribed name matches the canonical current),
-  // the swap hasn't been applied yet (emitSetLogged applies it at log time), so
-  // sessionCompleted still excludes the swapped-out lift — meaning the canonical session
-  // would keep returning it as "current" on every subsequent message. Skip it here and
-  // peek at the next unswapped remaining exercise instead, so substitute checks and the
-  // plan payload always send the actual next-up lift, not the declared-taken one.
-  let name = cur.name;
-  if (getPendingSubstitution()) {
-    const prescKey = (getPendingSubstitution().prescribed || '').toLowerCase();
-    if (prescKey && name.toLowerCase() === prescKey) {
-      const nextName = remainingPlannedExercises().find(n => n.toLowerCase() !== prescKey);
-      if (!nextName) return null;
-      name = nextName;
-    }
-  }
-
+  // F-SB3 removed the Step 379 skip-the-declared-taken-lift guard that stood here. It
+  // existed only because checkAndSuggestSubstitute parked a cross-turn pendingSubstitution
+  // and advanced the cursor past the unavailable lift before any acceptance. That lane now
+  // stages a pending PROPOSAL and moves nothing, so the unavailable lift is legitimately
+  // still the current exercise until the athlete accepts — which is exactly what the
+  // ruling requires ("Bench Press stays in the plan").
+  const name = cur.name;
   const key = name.toLowerCase();
   return getActivePlannedSession().exercises.find(
     ex => (ex.canonicalName || ex.name || '').toLowerCase() === key
@@ -6105,15 +6222,17 @@ function emitSetLogged(logObjs, text, substitutions, enrichment) {
   if (Array.isArray(enrichment)) {
     for (const e of enrichment) { if (e && e.exercise) enrichMap.set(e.exercise, e); }
   }
-  // Step 373b: if a swap was declared for the current step, the first logged
-  // exercise is the substitute — apply it to the live session BEFORE resolving
-  // completed identities, so the substitute (not the swapped-out lift) is what
-  // gets marked done and what leaves remaining.
-  if (getPendingSubstitution() && getActivePlannedSession() && Array.isArray(logObjs) && logObjs.length && logObjs[0].exercise) {
-    const primaryRaw = logObjs[0].exercise;
-    const enr = enrichMap.get(primaryRaw) || {};
-    applySessionSubstitution(getPendingSubstitution().prescribed, enr.canonical_exercise || primaryRaw, enr.lift_code || '', getPendingSubstitution().prescription || null);
+  // Step 373b: the one-turn "instead of <original>" directive rode this parse, so the first
+  // logged exercise is the substitute — apply it BEFORE identity resolution so it (not the
+  // swapped-out lift) is marked done. F-SB3 requirement D otherwise: the athlete answered a
+  // pending proposal by DOING it — bind before it can resolve as an unrelated insert.
+  const primaryLogged = (logObjs && logObjs.length && logObjs[0].exercise) || null;
+  if (getPendingSubstitution() && getActivePlannedSession() && primaryLogged) {
+    const enr = enrichMap.get(primaryLogged) || {};
+    applySessionSubstitution(getPendingSubstitution().prescribed, enr.canonical_exercise || primaryLogged, enr.lift_code || '', getPendingSubstitution().prescription || null);
     setPendingSubstitution(null);
+  } else if (primaryLogged) {
+    bindLoggedSubstituteToProposal(primaryLogged, enrichMap.get(primaryLogged) || {});
   }
   for (const o of (logObjs || [])) {
     if (!o.exercise) continue;
@@ -6276,18 +6395,15 @@ async function checkAndSuggestSubstitute(text) {
     if (submitSeq !== null && submitSeq !== previewRequestSeq) return false;
     const rec = res && res.data && res.data.recommendation;
     if (rec) {
-      // Step 373b / AC3: record the prescribed lift and target before moving the cursor.
-      setPendingSubstitution({ prescribed: currentEx.canonicalName || currentEx.name,
-        prescription: rec.next_target || null });
-      // Step 379: move past the taken slot without clearing the deferred swap; clamp at the end.
-      if (getActivePlannedSession().index < getActivePlannedSession().exercises.length - 1) {
-        getActivePlannedSession().index += 1;
-        renderActiveSessionBanner();
-      }
-      document.dispatchEvent(new CustomEvent('atlas:substitute-suggested', {
-        detail: { prescribed: currentEx.name, ...rec }
-      }));
-      return true;
+      // F-SB3 (owner ruling 2026-08-02). This lane used to park the recommendation in
+      // `pendingSubstitution` and advance the cursor past the unavailable lift — a second
+      // pending-decision state that carried no approval affordance, could not answer "how
+      // much should I lift?", and half-moved the plan before any acceptance. It now stages
+      // the ONE proposal: the unavailable lift STAYS in the plan and stays current until
+      // the athlete accepts, and the engine's prescription rides on the proposal so the
+      // follow-up prescription question is answered deterministically from it.
+      return Boolean(stageSubstitutionProposal(
+        currentEx.canonicalName || currentEx.name, currentEx.liftCode || '', rec));
     }
   } catch { /* best-effort */ }
   return false;
@@ -7299,8 +7415,8 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       }
       // An implicit substitution ("I don't want to do squats, give me something else")
       // — the athlete declined a lift and asked for an unnamed replacement. Resolve a
-      // deterministic substitute and swap it in place, before the suggest/coach routes.
-      if (await tryApplyImplicitSubstitution(pendingChatText)) {
+      // deterministic substitute and PROPOSE it, before the suggest/coach routes.
+      if (await tryProposeImplicitSubstitution(pendingChatText)) {
         activeExercise = null;
         return;
       }
@@ -7739,6 +7855,13 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
           plan_version: (getActivePlannedSession() && getActivePlannedSession().accepted === true
             && getActivePlannedSession().plan_version) || '',
           items: closeoutContextItems(),
+          // F-SB3 closeout coherence: a substitution proposal still PENDING at closeout is
+          // an unresolved decision. Sent as canonical mutation state (the source slot's
+          // immutable plan_item_id + the two lift identities) — never prose, never a
+          // similarity guess — so the server can refuse to certify a closeout whose plan
+          // and conversation disagree. Absent when nothing is pending.
+          ...(closeoutContextPendingSubstitution()
+            ? { pending_substitution: closeoutContextPendingSubstitution() } : {}),
         };
       }
       if (lastPrescribed && lastPrescribed.length > 0 && logRows.length > 0) {

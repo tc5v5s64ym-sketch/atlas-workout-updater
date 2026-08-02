@@ -2,10 +2,10 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 // PR-08: coachVoiceTemplates is an ES module now — dynamic import (Node 20 CI has
 // no require(esm)).
-let liftLabel, templatedSubstitutionLine, formatSubstituteCoachLine, templatedNextMoveAdvisoryLine,
+let liftLabel, templatedSubstitutionLine, templatedNextMoveAdvisoryLine,
   templatedRecoveryAdvisoryLine, governorOverridesProgressionInvite, templatedGovernorHoldLine;
 test.before(async () => {
-  ({ liftLabel, templatedSubstitutionLine, formatSubstituteCoachLine, templatedNextMoveAdvisoryLine,
+  ({ liftLabel, templatedSubstitutionLine, templatedNextMoveAdvisoryLine,
     templatedRecoveryAdvisoryLine, governorOverridesProgressionInvite, templatedGovernorHoldLine } =
     await import('../src/app/coachVoiceTemplates.js'));
 });
@@ -197,50 +197,11 @@ test('templatedRecoveryAdvisoryLine: non-recovery decisions and null carry no ad
   assert.equal(templatedRecoveryAdvisoryLine(null), null);
 });
 
-/* ===== formatSubstituteCoachLine ===== */
-
-test('formatSubstituteCoachLine: excellent quality — single-coach prose', () => {
-  const text = formatSubstituteCoachLine({
-    prescribed: 'Barbell Back Squat',
-    recommendation: 'Leg Press',
-    quality: 'excellent',
-    reason: 'Same quad/glute load'
-  });
-  assert.match(text, /No Barbell Back Squat today/);
-  assert.match(text, /Leg Press is your best swap/);
-  assert.match(text, /Same quad\/glute load/);
-  assert.match(text, /Same stimulus, different bar/i);
-});
-
-test('formatSubstituteCoachLine: non-excellent quality — covers-the-session language', () => {
-  const text = formatSubstituteCoachLine({
-    prescribed: 'Deadlift',
-    recommendation: 'Romanian Deadlift',
-    quality: 'good',
-    reason: 'Hip hinge pattern preserved'
-  });
-  assert.match(text, /No Deadlift today/);
-  assert.match(text, /switch to Romanian Deadlift/i);
-  assert.match(text, /Hip hinge pattern preserved/);
-  assert.match(text, /get Deadlift back in/i);
-});
-
-test('formatSubstituteCoachLine: omits reason clause when reason is absent', () => {
-  const text = formatSubstituteCoachLine({
-    prescribed: 'Pull-up',
-    recommendation: 'Lat Pulldown',
-    quality: 'excellent'
-  });
-  assert.match(text, /No Pull-up today/);
-  assert.doesNotMatch(text, /\. \./);   // no double-period artefact from empty reason
-});
-
-test('formatSubstituteCoachLine: returns null when required fields are missing', () => {
-  assert.equal(formatSubstituteCoachLine({ recommendation: 'Leg Press' }), null);
-  assert.equal(formatSubstituteCoachLine({ prescribed: 'Squat' }), null);
-  assert.equal(formatSubstituteCoachLine({}), null);
-  assert.equal(formatSubstituteCoachLine(), null);
-});
+/* ===== formatSubstituteCoachLine — RETIRED by F-SB3 (2026-08-02) =====
+   It voiced the proactive equipment-substitution bubble, which belonged to the losing
+   substitution authority: a recommendation nothing could accept, answer, or record.
+   Substitution wording is now the ONE proposal line (activeReplacement.formatProposalLine),
+   covered by test/activeReplacement.test.js and test/substitutionProposalLifecycle.test.js. */
 
 /* ===== Composer placeholder: compact full prescription + parse-safe aliases ===== */
 const fs = require('node:fs');

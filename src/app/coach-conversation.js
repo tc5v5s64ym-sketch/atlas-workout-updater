@@ -1442,21 +1442,6 @@ import {
     // Additional substitutions beyond the first are appended as inline text.
     const primarySub = substitutions.length ? substitutions[0] : undefined;
 
-    const loggedName = primarySub && primarySub.logged && typeof primarySub.logged.name === 'string'
-      ? primarySub.logged.name : '';
-    const rawPrescribed = primarySub && primarySub.prescribed;
-    const prescribedName = rawPrescribed && typeof rawPrescribed === 'object'
-      ? (typeof rawPrescribed.name === 'string' ? rawPrescribed.name : '')
-      : (typeof rawPrescribed === 'string' ? rawPrescribed : '');
-    const suggestMatch = lastSuggestion
-      && typeof lastSuggestion.recommendation === 'string'
-      && typeof lastSuggestion.prescribed === 'string'
-      && loggedName !== ''
-      && prescribedName !== ''
-      && loggedName.toLowerCase() === lastSuggestion.recommendation.toLowerCase()
-      && prescribedName.toLowerCase() === lastSuggestion.prescribed.toLowerCase();
-    if (suggestMatch) lastSuggestion = null;
-
     // Owner gate ruling (Issue #1073, 2026-07-20): the on-plan coaching line is timed to
     // the EXERCISE, not to every set — coach a block logged as a BATCH (all its sets in one
     // submission), and stay quiet on an intermediate single set during per-set logging so
@@ -1480,7 +1465,7 @@ import {
       // (activePlannedSession still null) keeps its intent.
       intentId: (typeof getActiveIntentId === 'function' ? getActiveIntentId() : (activeSession && activeSession.intentId)) || null,
       planned_queue: Array.isArray(detail.plannedQueue) ? detail.plannedQueue : [],
-      substitution: suggestMatch ? undefined : primarySub
+      substitution: primarySub
     }, sessionId, exercises.length === 1 ? responseTicket : null);
     if (!responseMayRenderSelectedProse()) return;
     const note = reaction.note;
@@ -1496,16 +1481,6 @@ import {
       return;
     }
 
-    if (suggestMatch && loggedName) {
-      const ack = document.createElement('div');
-      ack.className = 'coach-msg';
-      const ackText = (primarySub && primarySub.classification === 'preserved')
-        ? `Good call — you went with ${loggedName}. Intent preserved.`
-        : `You went with ${loggedName}.`;
-      await typeOut(ack, ackText);
-      if (!responseMayContinue()) return;
-      bubble.appendChild(ack);
-    }
 
     // Deterministic, engine-backed set-effort line (PR 477). One short line only —
     // it never expands into a full-session recap. When the Coach Voice Renderer is
@@ -1850,27 +1825,14 @@ import {
     bubble.appendChild(buildReviewCard(rows, liftCodes, effortOnly, effort, dateInfo));
   }
 
-  // Tracks the last substitute suggestion so handleSetLogged can acknowledge it
-  // rather than re-voice the same quality rationale through the LLM.
-  // Consumed on first match — one acknowledgment per suggestion per session.
-  let lastSuggestion = null;
-
-  /* ===== Proactive substitute recommendation (atlas:substitute-suggested) ===== */
-
-  // Renders a coach-voice Atlas bubble when a constraint message is detected
-  // during an active planned session. No LLM — all text is derived from the
-  // recommendation engine's quality tier and reason string via formatSubstituteCoachLine.
-  async function handleSubstituteSuggested(detail) {
-    const text = coachVoiceTemplates.formatSubstituteCoachLine(detail || {});
-    if (!text) return;
-    const handle = appendAtlasBubble();
-    if (!handle) return;
-    await typeOut(handle.body, text);
-    const { prescribed, recommendation } = detail || {};
-    if (prescribed && typeof recommendation === 'string') {
-      lastSuggestion = { prescribed, recommendation };
-    }
-  }
+  /* ===== Proactive substitute recommendation — RETIRED by F-SB3 (2026-08-02) =====
+     A constraint-detected swap used to render its own coach-voice bubble here and park a
+     `lastSuggestion` acknowledgment token. Both belonged to the losing substitution
+     authority: the bubble announced a recommendation that no lane could accept, answer, or
+     record. Every substitution recommendation is now the ONE gated proposal card
+     (atlas:replacement-proposed), which carries the engine prescription and the Approve /
+     Keep-it affordance, so this path had no producer left and is gone rather than left
+     inert. See docs/ATLAS_SYSTEM_AUTHORITY.md §8b. */
 
   /* ===== Coach-nav wiring (avatar → Settings) =====
      The hamburger (#coach-menu-btn) is owned by drawer.js, which opens the
@@ -2022,7 +1984,6 @@ import {
       }
     });
   });
-  document.addEventListener('atlas:substitute-suggested', e => { handleSubstituteSuggested(e.detail).catch(() => {}); });
   // F10D acceptance boundary — the boundary's DATA guarantee is intact (the app.js
   // gate still mints identity + the Session_Plans acceptance + the ledger
   // checkpoint before any set commits), but its in-thread "Start this plan to track

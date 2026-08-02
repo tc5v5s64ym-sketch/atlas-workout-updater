@@ -1272,13 +1272,6 @@ test('Step 373b: a declared swap is recorded and applied to the live session at 
   assert.match(appSource, /keep in sync with applySubstitution in services\/sessionPlanExecutor\.js/,
     'helper must carry the keep-in-sync marker to the engine');
 
-  // The swap is recorded when the lifter declares it (substitute suggestion path).
-  const suggestFn = appSource.slice(
-    appSource.indexOf('async function checkAndSuggestSubstitute'),
-    appSource.indexOf('async function checkAndSuggestSubstitute') + 1200
-  );
-  assert.match(suggestFn, /setPendingSubstitution\(\{ prescribed:/, 'must record the prescribed lift on a declared swap');
-
   // emitSetLogged applies the swap BEFORE the identity-resolution loop so the
   // substitute (not the swapped-out lift) is what gets marked done.
   const emitFn = appSource.slice(
@@ -1314,7 +1307,12 @@ test('Step 373b: a declared swap is recorded and applied to the live session at 
   assert.match(startFn, /setPendingSubstitution\(null\)/, 'starting a session must clear any stale pending swap');
 });
 
-test('Step 379: a declared swap advances the session cursor so subsequent checks use the next slot', () => {
+// F-SB3 (owner ruling 2026-08-02) RETIRED Step 379. A constraint-detected swap used to
+// park an un-approvable `pendingSubstitution` and advance the cursor past the unavailable
+// lift — half-moving the plan before any acceptance, and leaving no state that could answer
+// "how much should I lift?". Requirement A is the opposite: the recommendation mutates
+// NOTHING and the source lift stays in the plan until the athlete accepts.
+test('F-SB3: a constraint-detected swap stages the ONE proposal and moves nothing', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
 
   const suggestFn = appSource.slice(
@@ -1322,32 +1320,30 @@ test('Step 379: a declared swap advances the session cursor so subsequent checks
     appSource.indexOf('async function checkAndSuggestSubstitute') + 2200
   );
 
-  // current_exercise is sourced from the canonical session (currentPlannedExercise()),
-  // not the stale index cursor — so the swap is declared against the correct exercise
-  // and the cursor still moves so the next check sees the next slot.
-  const currentExIdx = suggestFn.indexOf('currentPlannedExercise()');
-  const recordIdx = suggestFn.indexOf('setPendingSubstitution({ prescribed:');
-  const advanceIdx = suggestFn.indexOf('getActivePlannedSession().index += 1');
-  assert.ok(currentExIdx !== -1, 'current_exercise must be read via currentPlannedExercise() (canonical session)');
-  assert.ok(recordIdx !== -1, 'must record the prescribed lift before advancing');
-  assert.ok(advanceIdx !== -1, 'must advance the authoritative session cursor after a declared swap');
-  // Order matters: the prescribed (taken) lift is recorded against the PRE-advance
-  // slot, then the cursor moves on. Reversing it would record the wrong slot.
-  assert.ok(recordIdx < advanceIdx, 'the swap must be recorded before the cursor advances');
-
-  // The advance must be clamped so the last slot does not overrun / end the session,
-  // and must re-render the banner so the displayed step matches the new cursor.
-  const advanceBlock = suggestFn.slice(recordIdx, advanceIdx + 120);
-  assert.match(advanceBlock, /getActivePlannedSession\(\)\.index < getActivePlannedSession\(\)\.exercises\.length - 1/,
-    'the cursor advance must be clamped to the plan length');
-  assert.match(advanceBlock, /renderActiveSessionBanner\(\)/, 'must re-render the banner after advancing');
-
-  // Must NOT reuse advancePlannedSession(): that clears pendingSubstitution (so the
-  // deferred swap would be lost) and restarts the logger input mid-conversation. The
-  // advance is an inline, clamped index bump — assert no actual call statement exists
-  // (the explanatory comment names the function, so match an invocation, not the name).
+  // current_exercise is still sourced from the canonical session, not the stale cursor.
+  assert.ok(suggestFn.indexOf('currentPlannedExercise()') !== -1,
+    'current_exercise must be read via currentPlannedExercise() (canonical session)');
+  // It stages the one proposal — it does not record a second pending-decision state.
+  assert.match(suggestFn, /stageSubstitutionProposal\(/, 'must stage the one substitution proposal');
+  assert.doesNotMatch(suggestFn, /setPendingSubstitution\(/,
+    'must not create a second pending-substitution state');
+  // Nothing about the live plan moves: no cursor advance, no in-place swap.
+  assert.doesNotMatch(suggestFn, /getActivePlannedSession\(\)\.index \+= 1/,
+    'the unavailable lift stays current — the cursor must not advance before acceptance');
+  assert.doesNotMatch(suggestFn, /applySessionSubstitution\(/,
+    'a recommendation must never mutate the plan');
   assert.doesNotMatch(suggestFn, /^\s*advancePlannedSession\(\);?\s*$/m,
-    'must not call advancePlannedSession() — it would clear the pending swap and restart the logger');
+    'must not advance the session on a recommendation');
+
+  // The staging helper reuses the ONE proposal store and mutates nothing itself.
+  const stageFn = appSource.slice(
+    appSource.indexOf('function stageSubstitutionProposal('),
+    appSource.indexOf('function bindLoggedSubstituteToProposal(')
+  );
+  assert.ok(stageFn, 'stageSubstitutionProposal must exist');
+  assert.match(stageFn, /setPendingReplacement\(proposal\)/, 'stages into the one proposal store');
+  assert.match(stageFn, /renderReplacementProposal\(/, 'surfaces the Approve / Keep-it affordance');
+  assert.doesNotMatch(stageFn, /applySessionSubstitution\(/, 'staging must never mutate the plan');
 });
 
 test('two-way chat: coach-conversation handles the chat event read-only via /api/coach/chat', () => {
@@ -6658,52 +6654,13 @@ test('mid-session substitution: handleSetLogged passes substitution into coach f
   assert.doesNotMatch(fn, /log-workout/, 'handleSetLogged must NOT call /api/log-workout — the coach layer is purely visual');
 });
 
-// Suggestion acknowledgment (PR 347 / coach-intelligence PR 345)
-// When Atlas surfaced a substitute suggestion and the user logs that exact exercise,
-// handleSetLogged suppresses the sub from the LLM facts and appends a short ack
-// instead. The match requires both logged name AND prescribed name to agree with
-// the stored lastSuggestion — preventing stale suggestions from misfiring on
-// unrelated substitutions later in the session.
-
-test('suggestion acknowledgment: handleSubstituteSuggested stores prescribed and recommendation from detail', () => {
-  const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
-  const start = cc.indexOf('async function handleSubstituteSuggested(');
-  const fn = cc.slice(start, start + 600);
-  assert.match(fn, /lastSuggestion\s*=/, 'handleSubstituteSuggested must assign lastSuggestion');
-  assert.match(fn, /prescribed/, 'handleSubstituteSuggested must store prescribed from detail');
-  assert.match(fn, /recommendation/, 'handleSubstituteSuggested must store recommendation from detail');
-  assert.match(fn, /typeof recommendation.*string|typeof.*recommendation.*===.*string/, 'handleSubstituteSuggested must type-guard recommendation before storing');
-});
-
-test('suggestion acknowledgment: handleSetLogged guards lastSuggestion types before comparing', () => {
-  const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
-  const start = cc.indexOf('async function handleSetLogged(');
-  const end = cc.indexOf('  async function handlePreviewReady(');
-  const fn = cc.slice(start, end > start ? end : start + 4000);
-  assert.match(fn, /typeof lastSuggestion\.recommendation.*string/, 'must guard lastSuggestion.recommendation is a string');
-  assert.match(fn, /typeof lastSuggestion\.prescribed.*string/, 'must guard lastSuggestion.prescribed is a string');
-  assert.match(fn, /prescribedName/, 'must extract prescribedName from the substitution object');
-});
-
-test('suggestion acknowledgment: handleSetLogged scopes match to both logged and prescribed names', () => {
-  const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
-  const start = cc.indexOf('async function handleSetLogged(');
-  const end = cc.indexOf('  async function handlePreviewReady(');
-  const fn = cc.slice(start, end > start ? end : start + 4000);
-  assert.match(fn, /lastSuggestion\.recommendation/, 'suggestMatch must compare against lastSuggestion.recommendation');
-  assert.match(fn, /lastSuggestion\.prescribed/, 'suggestMatch must also compare against lastSuggestion.prescribed');
-  assert.match(fn, /prescribedName\.toLowerCase\(\)/, 'prescribedName comparison must be case-insensitive');
-});
-
-test('suggestion acknowledgment: handleSetLogged suppresses substitution from LLM on match and appends ack', () => {
-  const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
-  const start = cc.indexOf('async function handleSetLogged(');
-  const end = cc.indexOf('  async function handlePreviewReady(');
-  const fn = cc.slice(start, end > start ? end : start + 4000);
-  assert.match(fn, /suggestMatch\s*\?\s*undefined\s*:\s*primarySub/, 'must suppress substitution from LLM facts when suggestMatch is true');
-  assert.match(fn, /Good call.*you went with|you went with.*Intent preserved/, 'must append deterministic ack text on match');
-  assert.match(fn, /if\s*\(\s*suggestMatch/, 'ack must be gated on suggestMatch');
-});
+// Suggestion acknowledgment — RETIRED by F-SB3 (owner ruling 2026-08-02).
+// Atlas used to voice a proactive substitute bubble, park a `lastSuggestion` token, and
+// suppress the substitution fact when the athlete later logged that exercise. All of it
+// belonged to the losing substitution authority: a recommendation nothing could accept,
+// answer, or record. Every substitution recommendation is now the ONE gated proposal, and
+// the athlete logging the replacement is an ACCEPTANCE that binds to the original slot
+// (test/substitutionProposalLifecycle.test.js, requirement D).
 
 // --- Multi-line partial-log wiring (owner decision 2026-07-02) ---
 // Server contract is golden-tested in test/multilinePartialLog.test.js; these pin
@@ -6978,7 +6935,12 @@ test('session pin: wired to every session-state moment (log, plan render, reset)
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   assert.match(appSource, /document\.addEventListener\('atlas:session-reset', renderSessionPin\)/,
     'the reset signal re-derives (and hides) the pin');
-  const emitFn = appSource.slice(appSource.indexOf('function emitSetLogged('), appSource.indexOf('function emitSetLogged(') + 7200);
+  // Slice to the NEXT top-level function rather than a character budget: the old fixed
+  // window silently depended on emitSetLogged's exact length, so an unrelated edit inside
+  // it could fail this assertion without touching the pin wiring at all.
+  const emitStart = appSource.indexOf('function emitSetLogged(');
+  const emitEnd = appSource.indexOf('\nfunction ', emitStart + 1);
+  const emitFn = appSource.slice(emitStart, emitEnd === -1 ? undefined : emitEnd);
   assert.match(emitFn, /renderSessionPin\(\)/, 'every logged set refreshes the pin');
   const bannerFn = appSource.slice(appSource.indexOf('function renderActiveSessionBanner('), appSource.indexOf('function renderActiveSessionBanner(') + 4000);
   assert.match(bannerFn, /renderSessionPin\(\)/, 'plan engage/mutate/restore refresh the pin');

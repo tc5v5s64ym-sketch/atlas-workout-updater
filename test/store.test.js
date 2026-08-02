@@ -139,11 +139,11 @@ test('start → substitution pending → applied clears the pending swap', () =>
   assert.equal(store.getActivePlannedSession().exercises[0].name, 'Hack Squat');
 });
 
-test('persist writes a v6 snapshot carrying pendingSubstitution (SESS-2), sessionRevisions (F10B), sessionImplicitRecs (F10C), pendingReplacement, pendingSetRevision (#1189) + sessionId', () => {
+test('persist writes a v6 snapshot carrying sessionRevisions (F10B), sessionImplicitRecs (F10C), pendingReplacement, pendingSetRevision (#1189) + sessionId — and NEVER pendingSubstitution (F-SB3)', () => {
   store.setActivePlannedSession({ label: 'p', exercises: [{ name: 'Leg Press' }], index: 0 });
   store.getSessionLog().push({ exercise: 'Bench Press', weight: 225, reps: 5, rir: 2 });
   store.setSessionCompleted(['Bench Press']);
-  store.setPendingSubstitution({ prescribed: 'Leg Press' });
+  store.setPendingSubstitution({ prescribed: 'Leg Press' });   // the one-turn token — must NOT persist
   store.setSessionRevisions([{ plan_item_id: 'pi_1', set_index: 2, plan_version: 2, target_weight: 60, target_reps: 8, target_rir: 2, recommendation_source: 'live_revision' }]);
   store.setSessionImplicitRecs([{ plan_item_id: 'pi_impl_S1_HCURL', planned_lift_code: 'HCURL', target_weight: 30, target_reps: 12, target_rir: 1, target_set_count: 1 }]);
   store.setPendingReplacement({ proposal_id: 'repl:LEGPRESS->BENCHPRESS@x', source: { name: 'Leg Press' }, replacement: { name: 'Bench Press' }, status: 'pending' });
@@ -160,7 +160,10 @@ test('persist writes a v6 snapshot carrying pendingSubstitution (SESS-2), sessio
   assert.equal(snap.v, 6);
   assert.equal(typeof snap.ts, 'number');
   assert.equal(snap.sessionId, 'SESSION-42');
-  assert.deepEqual(snap.pendingSubstitution, { prescribed: 'Leg Press' });
+  // F-SB3: the retired cross-turn field is never written. What survives of
+  // pendingSubstitution is a token armed and consumed inside one log commit, so a
+  // persisted value could only bind a stale swap to an unrelated later log.
+  assert.equal(snap.pendingSubstitution, undefined, 'the retired field is never persisted');
   assert.deepEqual(snap.sessionCompleted, ['Bench Press']);
   assert.equal(snap.sessionRevisions.length, 1);
   assert.equal(snap.sessionRevisions[0].plan_version, 2);
@@ -220,8 +223,10 @@ test('persist drops the snapshot when nothing is in progress', () => {
   assert.equal(globalThis.localStorage.getItem('atlas_session_snapshot_v1'), null);
 });
 
-test('resume-after-reload restores buffers, plan, AND the pending swap (SESS-2)', () => {
-  // Simulate: mid-session with a declared-but-unapplied swap, then a reload.
+// F-SB3: reload restores only a valid bounded PROPOSAL. The one-turn substitution token is
+// never restored — a value surviving a reload could only bind a stale swap to an unrelated
+// later log, which is the failure mode the ruling forbids.
+test('resume-after-reload restores buffers and plan; the one-turn swap token is NOT restored', () => {
   store.setActivePlannedSession({ label: 'p', exercises: [{ name: 'Leg Press' }], index: 0 });
   store.getSessionLog().push({ exercise: 'Bench Press', weight: 225, reps: 5, rir: 2 });
   store.setSessionCompleted(['Bench Press']);
@@ -237,8 +242,21 @@ test('resume-after-reload restores buffers, plan, AND the pending swap (SESS-2)'
   assert.equal(res.hasPlan, true);
   assert.equal(store.getSessionLog().length, 1);
   assert.deepEqual(store.getSessionCompleted(), ['Bench Press']);
-  // The stranded-swap bug: before SESS-2 this was lost on reload.
-  assert.deepEqual(store.getPendingSubstitution(), { prescribed: 'Leg Press', prescription: null });
+  assert.equal(store.getPendingSubstitution(), null, 'the one-turn token never crosses a reload');
+});
+
+// An OLD snapshot written before F-SB3 still carries the retired field. It must be ignored,
+// never rehydrated into a live pending swap.
+test('F-SB3 back-compat: a pre-existing snapshot carrying pendingSubstitution restores it as null', () => {
+  globalThis.localStorage.setItem('atlas_session_snapshot_v1', JSON.stringify({
+    v: 6, ts: Date.now(),
+    sessionLog: [{ exercise: 'Bench Press', weight: 225, reps: 5, rir: 2 }],
+    sessionCompleted: ['Bench Press'],
+    activePlannedSession: { label: 'p', exercises: [{ name: 'Leg Press' }], index: 0 },
+    pendingSubstitution: { prescribed: 'Leg Press', prescription: null },
+  }));
+  assert.equal(store.hydrateSessionSnapshot().resumed, true);
+  assert.equal(store.getPendingSubstitution(), null, 'the retired field is ignored on restore');
 });
 
 test('v1 snapshot back-compat: resumes; missing pendingSubstitution restores as null', () => {
