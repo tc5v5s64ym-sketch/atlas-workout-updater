@@ -409,9 +409,16 @@ function buildSessionEvidence(session, corpora, options) {
   // An explicitly supplied workout identity ALWAYS WINS. When the operator names
   // the workout session, correlation is exact and the weak date fallback is never
   // consulted, so the tool cannot drift onto a neighbouring session's rows.
+  //
+  // "Wins" must mean REPLACES, not "is added to". Seeding the discovery set with
+  // the explicit id and then letting the transcript scan add its own would let a
+  // stale or neighbouring identity correlate alongside the named one, while the
+  // join still called itself exact. `workoutSessionIds` therefore stays purely
+  // the DISCOVERED set (it is reported as such), and correlation reads
+  // `correlationIds` below, which the explicit ids replace outright.
   const explicitIds = (options.explicitWorkoutSessionIds || [])
     .map(s => String(s || '').trim()).filter(Boolean);
-  const workoutSessionIds = new Set(explicitIds);
+  const workoutSessionIds = new Set();
   const userInputs = [];
   const coachMessages = [];
   const apiCalls = [];
@@ -475,22 +482,33 @@ function buildSessionEvidence(session, corpora, options) {
     if (ep) routeHints.add(ep.replace(/^[a-z]+\s+/, '')); // drop leading method ("post ")
   }
 
-  // Exact identity beats the date heuristic: with an explicit workout id (or one
-  // discovered in the transcript) the date fallback is switched off entirely.
+  // Exact identity beats the date heuristic. An explicit id REPLACES transcript
+  // discovery, and with either one present the date fallback is switched off.
+  const correlationIds = explicitIds.length ? new Set(explicitIds) : workoutSessionIds;
   const dateFallbackAllowed = explicitIds.length === 0;
   const dateSet = dateFallbackAllowed ? sessionDateSet(session, windowMs) : new Set();
-  let logRows = correlateLogs(session, corpora.Log_Cleaned, workoutSessionIds, dateSet);
+  let logRows = correlateLogs(session, corpora.Log_Cleaned, correlationIds, dateSet);
 
   // Grade the join, and refuse a date fallback that cannot name one workout.
   const usedDateFallback = logRows.length > 0 && logRows.every(x => x.match === 'date_window');
   const ambiguity = usedDateFallback ? dateFallbackAmbiguity(logRows) : { ambiguous: false, distinct_session_ids: [], reason: '' };
   if (ambiguity.ambiguous) logRows = [];
+
+  // When the date fallback DID name exactly one workout, that identity is now
+  // ESTABLISHED and every sidecar tab is joined against it. Without this the
+  // sidecars would still be matched on date alone, so an `Effort` or
+  // `Session_Plans` row carrying a DIFFERENT workout id could be attributed to
+  // this verdict — two workouts' evidence reported as one session's PASS.
+  const establishedIds = new Set(correlationIds);
+  if (!ambiguity.ambiguous) for (const id of ambiguity.distinct_session_ids) establishedIds.add(id);
+
   const logCorrelation = {
     basis: explicitIds.length ? 'explicit_session_id'
       : (logRows.length && !usedDateFallback ? 'session_id'
         : (usedDateFallback ? 'date_window' : 'none')),
     date_fallback_allowed: dateFallbackAllowed,
     dates_considered: Array.from(dateSet).sort(),
+    established_session_ids: Array.from(establishedIds).map(s => String(s).toLowerCase()).sort(),
     ambiguous: ambiguity.ambiguous,
     distinct_session_ids: ambiguity.distinct_session_ids,
     reason: ambiguity.reason

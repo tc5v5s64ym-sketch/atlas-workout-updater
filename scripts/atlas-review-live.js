@@ -120,12 +120,6 @@ function sessionEndMs(s) {
   return -Infinity;
 }
 
-// Pick the NEWEST session to review. Crucially, LINKED sessions and UNLINKED (server-only)
-// clusters are compared on the SAME time axis: in the exact v141 shape this command exists to
-// catch, the newest owner session can have ONLY unlinked server rows while older LINKED
-// sessions sit in the same cumulative tab — so preferring "any linked session" would review
-// an old good session and silently skip the newest broken one (a false green). We instead
-// select the candidate with the latest end time. (Codex P1.)
 // A TOTAL, deterministic ordering over candidate sessions.
 //
 // The previous comparator was `endA - endB`, and `sessionEndMs` returns
@@ -226,19 +220,6 @@ function selectLatestSession(frRecords, opts) {
         : ''
     }
   };
-}
-
-// Correlate sidecar rows (Session_Plans / Effort) to the session by workout session id, else
-// by session date. Returns the matched records with how they matched.
-function correlateSidecar(rows, idSet, dateSet) {
-  const out = [];
-  for (const r of rows || []) {
-    const sid = String(r.session_id || '').trim().toLowerCase();
-    const d = String(r.session_date || r.date || r.date_clean || '').trim();
-    if (sid && idSet.has(sid)) out.push({ match: 'session_id', rec: r });
-    else if (d && dateSet.has(d)) out.push({ match: 'date', rec: r });
-  }
-  return out;
 }
 
 // STRICT correlation for closeout-truth rows (the seal criterion's inputs): a row
@@ -523,8 +504,12 @@ function reviewCorpora(corpora, opts) {
   const evidence = fr.buildSessionEvidence(session, corpora, { windowMs, explicitWorkoutSessionIds });
   const logCorrelation = evidence.log_correlation || { basis: 'none', ambiguous: false, reason: '', distinct_session_ids: [] };
 
-  // Sidecar joins (Session_Plans + Effort) by workout session id, else by date.
-  const idSet = new Set([session.flight_session_id, ...(evidence.workout_session_ids || [])]
+  // Sidecar joins run against the ESTABLISHED workout identity — the explicit id
+  // when one was supplied, else the ids discovered in the transcript, else the
+  // single workout the date fallback resolved. Building this from raw transcript
+  // discovery instead would re-admit an identity the explicit id was meant to
+  // replace.
+  const idSet = new Set([session.flight_session_id, ...(logCorrelation.established_session_ids || [])]
     .map(s => String(s || '').trim().toLowerCase()).filter(Boolean));
   // The date fallback is refused wholesale when it cannot name one workout, or
   // when an exact identity was supplied. Refusing it HERE too matters: correlating
@@ -534,9 +519,15 @@ function reviewCorpora(corpora, opts) {
   const dateSet = (logCorrelation.ambiguous || explicitWorkoutSessionIds.length)
     ? new Set()
     : fr.sessionDateSet(session, windowMs);
+  // EVERY sidecar join is id-strict: a row that carries a workout id correlates
+  // only when that id is the established one, and the date fallback serves id-less
+  // rows alone. The permissive variant let a row naming workout B attach to
+  // workout A's verdict purely because it shared a candidate date — so plan
+  // capture, write verification and correlation identity could all report PASS on
+  // evidence drawn from two different workouts.
   const sidecar = {
-    session_plans: correlateSidecar(corpora.Session_Plans, idSet, dateSet),
-    effort: correlateSidecar(corpora.Effort, idSet, dateSet),
+    session_plans: correlateSidecarStrict(corpora.Session_Plans, idSet, dateSet),
+    effort: correlateSidecarStrict(corpora.Effort, idSet, dateSet),
     plan_sets: correlateSidecarStrict(corpora.Session_Plan_Sets, idSet, dateSet),
     // The finalized-closeout scan for the seal criterion is likewise id-strict —
     // a neighbor same-day session's finalized event must not vouch for this one.
@@ -750,7 +741,6 @@ module.exports = {
   compareCandidates,
   selectLatestSession,
   clusterUnlinked,
-  correlateSidecar,
   correlateSidecarStrict,
   planRowHasSetTarget,
   evaluateCriteria,

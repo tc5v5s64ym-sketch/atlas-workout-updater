@@ -211,6 +211,58 @@ test('F-SB4A: an explicit --workout-session gives an exact join and refuses the 
   assert.equal(verdictOf(review, 'correlation_identity'), 'PASS');
 });
 
+test('F-SB4A: an explicit workout identity REPLACES transcript discovery, it does not merge with it', () => {
+  // Codex P1. Seeding the discovery set with the explicit id and then letting the
+  // transcript scan add its own would correlate BOTH workouts while still calling
+  // the join exact — the named identity plus whatever stale or neighbouring id the
+  // transcript happens to mention.
+  const c = eveningCorpora();
+  // The transcript now leaks a DIFFERENT workout id, exactly as a real one can.
+  c.Flight_Recorder = c.Flight_Recorder.concat([
+    fe({ flight_session_id: 'FR-EVENING', seq: 5, captured_at: utc(6), event_type: 'api_response',
+      api_endpoint: 'POST /api/log-workout', response_summary: '200 OK session_id=20260801-AM-01' })
+  ]);
+  c.Log_Cleaned = c.Log_Cleaned.concat([
+    { session_id: '20260801-AM-01', date_clean: LOCAL_DATE, exercise: 'Deadlift', set_number: '1', weight: '405', reps: '3', rir: '1' }
+  ]);
+  c.Effort = c.Effort.concat([{ session_id: '20260801-AM-01', date: LOCAL_DATE, duration: '30', active_calories: '200' }]);
+
+  // Without the explicit id, the transcript-discovered identity legitimately correlates.
+  const discovered = rl.reviewCorpora(c, { now: utc(9) });
+  assert.equal(discovered.session.log_rows, 1, 'sanity: transcript discovery finds the AM workout');
+
+  // Naming the PM workout must exclude the AM one entirely — log AND sidecars.
+  const named = rl.reviewCorpora(c, { now: utc(9), workoutSessionIds: [WORKOUT_ID] });
+  assert.equal(named.log_correlation.basis, 'explicit_session_id');
+  assert.deepEqual(named.log_correlation.established_session_ids, [WORKOUT_ID.toLowerCase()],
+    'only the named identity may be established');
+  assert.equal(named.session.log_rows, 3, 'the neighbouring workout must not correlate');
+  assert.equal(named.session.effort_rows, 1, 'nor may its Effort row');
+  assert.equal(verdictOf(named, 'correlation_identity'), 'PASS');
+});
+
+test('F-SB4A: a sidecar row naming a DIFFERENT workout cannot date-attach to this verdict', () => {
+  // Codex P1. The Log rows date-match and name workout A unambiguously, so
+  // log-level ambiguity is false and the date set stays live. A permissive sidecar
+  // join then let an Effort / Session_Plans row carrying workout B attach purely by
+  // sharing a candidate date — and the review reported plan capture, write
+  // verification and correlation identity as PASS on two workouts' evidence.
+  const c = eveningCorpora();
+  c.Effort = c.Effort.concat([
+    { session_id: 'OTHER-WORKOUT', date: LOCAL_DATE, duration: '99', active_calories: '999' }
+  ]);
+  c.Session_Plans = c.Session_Plans.concat([
+    { session_id: 'OTHER-WORKOUT', session_date: LOCAL_DATE, planned_lift_code: 'DL01', target_weight: '405', target_reps: '3', target_rir: '1' }
+  ]);
+
+  const review = rl.reviewCorpora(c, { now: utc(9) });
+
+  assert.equal(review.log_correlation.ambiguous, false, 'the Log join itself is unambiguous');
+  assert.deepEqual(review.log_correlation.established_session_ids, [WORKOUT_ID.toLowerCase()]);
+  assert.equal(review.session.effort_rows, 1, 'the foreign Effort row must be refused');
+  assert.equal(review.session.plan_rows, 1, 'and the foreign Session_Plans row too');
+});
+
 test('F-SB4A: --workout-session parses repeated and comma-separated values', () => {
   assert.deepEqual(rl.parseArgs(['--workout-session=A', '--workout-session=B']).workoutSessionIds, ['A', 'B']);
   assert.deepEqual(rl.parseArgs(['--workout-session=A,B , C']).workoutSessionIds, ['A', 'B', 'C']);
