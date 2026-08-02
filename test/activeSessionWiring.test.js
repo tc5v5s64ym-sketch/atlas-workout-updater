@@ -45,20 +45,23 @@ test('wiring: currentPlannedExercise() has index fallback when AS unavailable', 
   );
 });
 
-test('wiring: currentPlannedExercise() skips pending-swap exercise (Step 379 guard)', () => {
+// F-SB3 (owner ruling 2026-08-02) retired the Step 379 skip guard. It existed only because
+// a constraint-detected swap parked a cross-turn `pendingSubstitution` and advanced past the
+// unavailable lift before any acceptance. That lane now stages a pending PROPOSAL and moves
+// nothing, so the unavailable lift is legitimately still the current exercise until the
+// athlete accepts — which is what requirement A demands ("Bench Press stays in the plan").
+test('wiring: currentPlannedExercise() reads the canonical current lift with no pending-swap skip', () => {
   const start = appSrc.indexOf('function currentPlannedExercise()');
   assert.ok(start !== -1);
   const next = appSrc.indexOf('\nfunction ', start + 1);
   const body = appSrc.slice(start, next === -1 ? start + 1500 : next);
-  // When pendingSubstitution is set, the swapped-out lift must be skipped so a second
-  // conversational message doesn't re-send the taken lift as current_exercise.
   assert.ok(
-    body.includes('pendingSubstitution'),
-    'must check pendingSubstitution to skip the declared-taken lift'
+    !/getPendingSubstitution\(\)/.test(body),
+    'the current lift must not be derived from a pending-substitution state'
   );
   assert.ok(
-    body.includes('remainingPlannedExercises()'),
-    'must use remainingPlannedExercises() to find the next unswapped lift'
+    body.includes('AS.currentExercise(canon)'),
+    'the current lift comes from the canonical session'
   );
 });
 
@@ -157,17 +160,21 @@ test('wiring: tryApplyPlanMutation curName() uses firstUnloggedPlannedLift(), no
 
 // ── AC3: checkAndSuggestSubstitute stores prescription in pendingSubstitution ─
 
-test('wiring: checkAndSuggestSubstitute stores rec.next_target as pendingSubstitution.prescription (AC3)', () => {
-  const start = appSrc.indexOf('async function checkAndSuggestSubstitute(');
-  assert.ok(start !== -1, 'checkAndSuggestSubstitute must exist');
-  const next = appSrc.indexOf('\nasync function ', start + 1);
+// AC3 lives on the proposal now (F-SB3): the engine prescription is carried by the ONE
+// pending proposal, which is what answers "how much should I lift?" and what supplies the
+// replacement slot's weight/reps/sets on acceptance.
+test('wiring: the staged substitution proposal carries the engine prescription (AC3)', () => {
+  const start = appSrc.indexOf('function stageSubstitutionProposal(');
+  assert.ok(start !== -1, 'stageSubstitutionProposal must exist');
+  const next = appSrc.indexOf('\nfunction ', start + 1);
   const body = appSrc.slice(start, next === -1 ? start + 2000 : next);
-  // The prescription from the suggest-substitute API must be stored on
-  // pendingSubstitution so applySessionSubstitution can populate the replacement
-  // slot with weight/reps/sets instead of null (AC3).
   assert.ok(
-    body.includes('prescription') && body.includes('rec.next_target'),
-    'checkAndSuggestSubstitute must store rec.next_target as pendingSubstitution.prescription'
+    body.includes('rec.next_target'),
+    'the proposal must carry the engine-owned next_target prescription'
+  );
+  assert.ok(
+    /weight: t\.weight/.test(body) && /reps: t\.reps/.test(body) && /sets: t\.sets/.test(body),
+    'weight / reps / sets ride on the proposal replacement'
   );
 });
 

@@ -553,7 +553,7 @@ test('4b.24 replacement-proposal follow-ups remain unchanged', () => {
   // (b) the replacement follow-up resolver itself is unchanged in the bundle.
   const fn = appSrc.slice(
     appSrc.indexOf('function tryResolvePendingReplacement('),
-    appSrc.indexOf('function tryApplyImplicitSubstitution(')
+    appSrc.indexOf('async function tryProposeImplicitSubstitution(')
   );
   assert.match(fn, /AR\.classifyFollowup\(text, proposal\)/, 'still classifies through activeReplacement');
   assert.match(fn, /approvePendingReplacement\(\)/, 'still approves through its own handler');
@@ -1337,7 +1337,7 @@ test('4b.R1 the follow-up lane is wired into the real composer message flow', ()
   const modalIdx = appSrc.indexOf('tryPreviewModality(pendingChatText');
   const propIdx = appSrc.indexOf('tryProposeReplacement(pendingChatText)');
   const mutIdx = appSrc.indexOf('tryApplyPlanMutation(pendingChatText)');
-  const implicitIdx = appSrc.indexOf('tryApplyImplicitSubstitution(pendingChatText)');
+  const implicitIdx = appSrc.indexOf('tryProposeImplicitSubstitution(pendingChatText)');
   const icIdx = appSrc.indexOf('tryApplyIdentityCorrection(pendingChatText)');
   const suggestIdx = appSrc.indexOf('checkAndSuggestSubstitute(pendingChatText)');
   const coachIdx = appSrc.indexOf('routeMessageToCoach(pendingChatText)');

@@ -403,3 +403,92 @@ test('resolveTurnExercises: a message that names an unmappable lift does NOT fal
   // Names nothing → the active plan it refers to.
   assert.deepEqual(g.resolveTurnExercises("That isn't what you planned.", { current_plan: [{ name: 'Seated Row' }] }), ['Seated Row']);
 });
+
+// ── F-SB3: fail-closed substitution turn (owner ruling 2026-08-02) ───────────
+//
+// Workout 20260801-PM-01 / FR-20260802025836-l7hey0gz: the model answered a substitution
+// request with "Understood. You're substituting Bench Press with Incline Dumbbell Press."
+// and "Okay, I've noted the substitution." The ledger recorded ZERO item_outcome events,
+// Bench Press stayed pending, Incline DB Press completed as an inserted exercise, and the
+// closeout sealed over the contradiction. Atlas claimed a substitution it never performed.
+
+const benchPlanCtx = () => ({
+  current_plan: [
+    { name: 'Bench Press', sets: 2, reps: 8, weight: 185, rir: 2 },
+    { name: 'Seated Row', sets: 2, reps: 10, weight: 200, rir: 1 },
+  ],
+});
+
+test('F-SB3: the two live phrasings that beat the denylist are exactly why the model is bypassed', () => {
+  // Both wordings the model actually produced pass the completed-mutation denylist
+  // untouched — `noted` is not one of its verbs, and it has no second-person completed
+  // frame. A denylist alone would have shipped both to the athlete.
+  for (const prose of [
+    "Okay, I've noted the substitution.",
+    "Understood. You're substituting Bench Press with Incline Dumbbell Press.",
+  ]) {
+    assert.equal(g.detectUnsupportedMutationClaim(prose).length, 0,
+      `the denylist does NOT catch: ${JSON.stringify(prose)}`);
+  }
+  // The turn that drew them is claimed by the deterministic lane instead, so the model
+  // is never asked. That is the fix — not another pattern.
+  const ctx = benchPlanCtx();
+  assert.equal(g.isSubstitutionTurn('The bench is taken, give me a substitute', ctx), true);
+  assert.equal(g.isSubstitutionTurn('No I meant I substitute work out for bench press, like incline dumbbell or something', ctx), true);
+  assert.equal(g.isSubstitutionTurn('Well I was asking for a substitute', ctx), true);
+});
+
+test('F-SB3 isSubstitutionTurn: needs an active session; explanations and broad reviews are excluded', () => {
+  const ctx = benchPlanCtx();
+  for (const m of [
+    'swap bench for something else',
+    'what can I do instead of bench press',
+    'give me an alternative to the bench',
+    'can I replace the row',
+    'the bench is busy, I need a sub',
+    'something else for chest',
+  ]) {
+    assert.equal(g.isSubstitutionTurn(m, ctx), true, `should claim: ${JSON.stringify(m)}`);
+  }
+  // No active session → nothing to be truthful about; the turn routes normally.
+  assert.equal(g.isSubstitutionTurn('swap bench for something else', {}), false);
+  // "Why did you substitute…" is an EXPLANATION, not a mutation request — it keeps its
+  // (narrowed) model narration.
+  assert.equal(g.isSubstitutionTurn('why did you substitute bench press?', ctx), false);
+  // A broad-session review keeps the full picture.
+  assert.equal(g.isSubstitutionTurn('any problems with my recent training? should I swap anything?', ctx), false);
+  // An ordinary turn is untouched.
+  assert.equal(g.isSubstitutionTurn('how is my bench trending?', ctx), false);
+});
+
+test('F-SB3 buildSubstitutionAnswer: grounded in the plan, never a completed-mutation claim', () => {
+  const ctx = benchPlanCtx();
+  const named = g.buildSubstitutionAnswer('the bench is taken, give me a substitute for bench press', ctx);
+  assert.match(named, /Bench Press: 2 sets of 8 reps at 185 lb 2 RIR/, 'reads back the plan it still shows');
+  assert.match(named, /haven't changed/i, 'states plainly that nothing changed');
+
+  // FAIL-CLOSED property: for EVERY substitution turn the answer is claim-free by
+  // construction — there is no wording for a denylist to outrun, because no model runs.
+  for (const m of [
+    'the bench is taken, give me a substitute',
+    'No I meant I substitute work out for bench press, like incline dumbbell or something',
+    'Well I was asking for a substitute',
+    'swap the row for something else',
+    'can I replace bench press and seated row',
+  ]) {
+    const a = g.buildSubstitutionAnswer(m, ctx);
+    assert.equal(g.detectUnsupportedMutationClaim(a).length, 0, `claim-free: ${JSON.stringify(m)}`);
+    assert.match(a, /haven't changed/i, `says nothing changed: ${JSON.stringify(m)}`);
+    assert.ok(!/\b(i've noted|you're substituting|you are substituting)\b/i.test(a),
+      `never the live failure's wording: ${JSON.stringify(m)}`);
+  }
+
+  // Ambiguous / unnamed / off-plan referents fail closed rather than answering for a lift
+  // the athlete did not mean.
+  assert.match(g.buildSubstitutionAnswer('I need a substitute', ctx), /haven't changed your plan/i);
+  assert.match(g.buildSubstitutionAnswer('swap deadlift for something', ctx), /haven't changed your plan/i);
+  // No plan in view → says so, still claim-free.
+  const noPlan = g.buildSubstitutionAnswer('swap bench for something else', {});
+  assert.match(noPlan, /don't have your current plan in view/i);
+  assert.equal(g.detectUnsupportedMutationClaim(noPlan).length, 0);
+});

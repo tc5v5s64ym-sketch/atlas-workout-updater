@@ -216,6 +216,9 @@ function loadEmitHarness(catalogOptions) {
      let lastParsedWorkoutText = '';
      let lastUnverifiedExercise = null;
      function applySessionSubstitution() {}
+     // F-SB3 — the acceptance-by-logging binder lives outside this slice; these cases
+     // carry no pending substitution proposal, so a no-op stub is the real behavior.
+     function bindLoggedSubstituteToProposal() { return false; }
      ${slice}
      return {
        // setIntentData models the ENGAGED Coach's Pick flow (see loadIdentityHarness).

@@ -254,4 +254,82 @@ function boundCloseoutContextItems(items) {
     .filter(it => it.plan_item_id);
 }
 
-module.exports = { buildCloseoutSummary, boundCloseoutContextItems };
+// Bound + sanitize the CLIENT-supplied unresolved substitution proposal (F-SB3). Same
+// discipline as the items above: known fields only, trimmed and capped. Returns null for
+// anything that does not carry the source slot's plan_item_id — the ledger addresses items
+// by identity, and a proposal without one cannot be tested against an outcome.
+function boundCloseoutPendingSubstitution(pending) {
+  const p = pending && typeof pending === 'object' ? pending : null;
+  if (!p) return null;
+  const source_plan_item_id = _cap(p.source_plan_item_id);
+  if (!source_plan_item_id) return null;
+  return {
+    source_plan_item_id,
+    source_name: _cap(p.source_name),
+    replacement_name: _cap(p.replacement_name),
+    replacement_lift_code: _cap(p.replacement_lift_code),
+  };
+}
+
+// F-SB3 closeout coherence (owner ruling 2026-08-02). Return the substitution
+// contradictions present in the CANONICAL structured closeout state — never inferred from
+// exercise similarity, never from freeform prose. Empty array = coherent.
+//
+// On 2026-08-02 Atlas visibly told the owner "You're substituting Bench Press with Incline
+// Dumbbell Press", Incline DB Press completed as an INSERTED exercise, Bench Press stayed
+// pending, zero item_outcome events were written — and the closeout still sealed with
+// `closeout_fully_verified:true`. A closeout that certifies a session whose plan and
+// conversation disagree is the failure this detects.
+//
+// The failure condition is the CONTRADICTION, never incompleteness. An honestly disclosed
+// unfinished lift — a slot with no outcome, or an outcome of `skipped`, and no unresolved
+// substitution attached to it — is coherent and passes.
+//
+//   substitution_outcome_without_performed_lift
+//     An item structurally records `outcome:'substituted'` but names no performed lift.
+//     The slot claims a swap the ledger cannot bind to anything.
+//   duplicate_substitution_binding
+//     Two different accepted items claim the SAME performed lift as their substitute. One
+//     logged movement cannot satisfy two planned slots.
+//   unresolved_substitution_proposal
+//     A substitution proposal was still pending at closeout AND its source slot recorded
+//     neither `completed` nor `substituted` — the athlete asked for a swap, the canonical
+//     mutation never happened, and the original lift was never done either. This is the
+//     owner's exact shape. A proposal the athlete simply declined by DOING the original
+//     lift leaves that slot `completed` and is not flagged.
+function detectSubstitutionContradictions(closeoutContext) {
+  const ctx = closeoutContext && typeof closeoutContext === 'object' ? closeoutContext : {};
+  const items = boundCloseoutContextItems(ctx.items);
+  const pending = boundCloseoutPendingSubstitution(ctx.pending_substitution);
+  const out = [];
+  const performedSeen = new Map();
+  for (const it of items) {
+    if (it.outcome === 'substituted') {
+      if (!it.performed_lift_code) {
+        out.push({ code: 'substitution_outcome_without_performed_lift', plan_item_id: it.plan_item_id });
+        continue;
+      }
+      const key = _lc(it.performed_lift_code);
+      if (performedSeen.has(key)) {
+        out.push({ code: 'duplicate_substitution_binding', plan_item_id: it.plan_item_id });
+      } else {
+        performedSeen.set(key, it.plan_item_id);
+      }
+    }
+  }
+  if (pending) {
+    const source = items.find(it => it.plan_item_id === pending.source_plan_item_id) || null;
+    const resolved = source && (source.outcome === 'completed' || source.outcome === 'substituted');
+    if (!resolved) {
+      out.push({ code: 'unresolved_substitution_proposal', plan_item_id: pending.source_plan_item_id });
+    }
+  }
+  return out;
+}
+
+module.exports = {
+  buildCloseoutSummary,
+  boundCloseoutContextItems,
+  boundCloseoutPendingSubstitution,
+  detectSubstitutionContradictions,
+};

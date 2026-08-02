@@ -167,7 +167,7 @@ function completeWorkoutCorrelationPayload(formFields, normalized) {
     ...(f.correlation !== undefined ? { correlation: multipartCorrelation(f.correlation) } : {}),
   };
 }
-const { buildCloseoutSummary, boundCloseoutContextItems } = require('./services/closeoutSummary');
+const { buildCloseoutSummary, boundCloseoutContextItems, detectSubstitutionContradictions } = require('./services/closeoutSummary');
 // F10D (Codex P1, PR #1069) — the finalized Session_Plans closeout event records
 // INSIDE the one approved write, with proof, instead of a client fire-and-forget.
 const { captureCloseout } = require('./services/sessionPlanCapture');
@@ -2936,8 +2936,14 @@ function closeoutVerification(ledgerSeal, closeoutContext, sessionPlansCloseout)
   const ev = sessionPlansCloseout || null;
   const eventOk = !ev || ev.captured === true || ev.status === 'disabled' || ev.status === 'no_plan';
   if (!eventOk) return false;
-  if (ledgerSeal.dry_run === true) return true;
   const ctx = closeoutContext && typeof closeoutContext === 'object' ? closeoutContext : {};
+  // F-SB3 — SUBSTITUTION COHERENCE (owner ruling 2026-08-02). One verdict, not a parallel
+  // one: a closeout whose canonical structured state contains a substitution contradiction
+  // is not fully verified, whatever the seal says. It is checked before the dry-run
+  // shortcut because the contradiction is in the session's own state, not in the write.
+  // Contradiction only — an honestly disclosed unfinished lift still passes.
+  if (detectSubstitutionContradictions(ctx).length > 0) return false;
+  if (ledgerSeal.dry_run === true) return true;
   const plannedItems = boundCloseoutContextItems(ctx.items).length > 0;
   if (ledgerSeal.no_ledger === true && plannedItems) return false;
   return ledgerSeal.sealed_ok === true;

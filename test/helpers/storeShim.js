@@ -39,4 +39,17 @@ module.exports.STORE_SHIM = `
     function setSessionImplicitRecs(v){ sessionImplicitRecs = Array.isArray(v) ? v : []; }
     function getCoachDiscussionSinceLog(){ return coachDiscussionSinceLog; }
     function setCoachDiscussionSinceLog(v){ coachDiscussionSinceLog = !!v; }
+    let pendingReplacement = null;
+    let pendingSetRevision = null;
+    function getPendingReplacement(){ return pendingReplacement; }
+    function setPendingReplacement(v){
+      pendingReplacement = (v && typeof v === 'object') ? v : null;
+      if (pendingReplacement) pendingSetRevision = null;   // one decision at a time
+    }
+    function getPendingSetRevision(){ return pendingSetRevision; }
+    function setPendingSetRevision(v){
+      pendingSetRevision = (v && typeof v === 'object') ? v : null;
+      if (pendingSetRevision) pendingReplacement = null;
+    }
+    function persistSessionSnapshot(){}
 `;

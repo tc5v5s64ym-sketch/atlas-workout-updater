@@ -100,8 +100,12 @@ test('F10D wiring: EVERY end trigger attaches closeout_context to the ONE payloa
   // OTHER end-of-session trigger and must enter the confirmation/seal path too.
   assert.match(appSrc, /const isSessionCloseout = sessionCompiledAwaitingPreview === true[\s\S]*?\|\| closeoutPreviewStaged === true[\s\S]*?\|\| \(logRows\.length > 0 && Boolean\(manualEffort\)\)[\s\S]*?\|\| screenshotConvertedCloseout;/,
     'the closeout marker covers the compiled path, the re-preview latch (#1123), manual-effort-with-rows, AND the converted screenshot-with-rows lane');
-  assert.match(appSrc, /payload\.closeout_context = \{\s*\n\s*plan_version: \(getActivePlannedSession\(\) && getActivePlannedSession\(\)\.accepted === true\s*\n\s*&& getActivePlannedSession\(\)\.plan_version\) \|\| '',\s*\n\s*items: closeoutContextItems\(\),\s*\n\s*\};/,
+  assert.match(appSrc, /payload\.closeout_context = \{\s*\n\s*plan_version: \(getActivePlannedSession\(\) && getActivePlannedSession\(\)\.accepted === true\s*\n\s*&& getActivePlannedSession\(\)\.plan_version\) \|\| '',\s*\n\s*items: closeoutContextItems\(\),/,
     'the context carries the accepted plan pv_ token so the SERVER records the finalized event with proof');
+  // F-SB3 — an UNRESOLVED substitution proposal rides along as canonical identity so the
+  // server's one closeout verdict can refuse to certify a contradicted session.
+  assert.match(appSrc, /pending_substitution: closeoutContextPendingSubstitution\(\)/,
+    'an unresolved substitution decision reaches the closeout verdict');
   assert.match(appSrc, /pendingWrite = \{ mode: 'manual', payload, sessionCloseout: isSessionCloseout,/,
     'the staged write remembers it is a session closeout');
 });

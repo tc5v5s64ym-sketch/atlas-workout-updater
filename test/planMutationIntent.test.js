@@ -176,7 +176,7 @@ test('wrong-target guard: an EXACT name match outranks a substring match (single
     { name: 'Leg Press', status: 'pending' },
   ];
   // The athlete named "leg press" EXACTLY — that slot must rank first: the live
-  // caller (tryApplyPlanMutation / tryApplyImplicitSubstitution) mutates
+  // caller (tryApplyPlanMutation / tryProposeImplicitSubstitution) mutates
   // targetNames[0], so plan order alone would skip/swap the single-leg variant
   // the athlete never named. The fuzzy match still resolves — ranked after.
   assert.deepEqual(resolvePlanTargets('leg press', plan), ['Leg Press', 'Single-Leg Seated Leg Press']);
@@ -318,7 +318,7 @@ test('F-SB1-C: the owner\'s exact turn is an implicit substitution ON bench pres
 // Codex P1 (PR #1238): returning null was not enough. `checkAndSuggestSubstitute` sends no
 // `intent`, so /api/suggest-substitute's constraint gate ("busy"/"taken") refuses a message
 // like this one and the athlete gets generic coach prose. Classifying it routes the turn to
-// tryApplyImplicitSubstitution, which DOES send `intent:'substitute'`.
+// tryProposeImplicitSubstitution, which DOES send `intent:'substitute'`.
 test('F-SB1-C: "<substitute noun> for|to X" names the lift being REPLACED, not the replacement', () => {
   for (const [text, target] of [
     ['give me an alternative to squats', 'squats'],
