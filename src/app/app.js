@@ -2533,7 +2533,13 @@ function stageSubstitutionProposal(sourceName, sourceLiftCode, rec) {
 //
 // Idempotent: the proposal is cleared on a successful bind, so a repeat log of the same
 // lift is a plain insert and can never emit a second item_outcome.
-function bindLoggedSubstituteToProposal(rawName, enrichmentRow) {
+//
+// It scans EVERY logged exercise in the submission, not just the first (Codex P1, this PR).
+// One submission can carry several exercises, and the replacement need not lead it — a batch
+// like "seated row 200 10/1 · incline db press 90 10/2" would otherwise resolve the
+// replacement as an off-plan insertion and leave the source slot pending, which is the exact
+// contradiction this card exists to prevent.
+function bindLoggedSubstituteToProposal(logObjs, enrichMap) {
   const AR = (typeof window !== 'undefined' && window.activeReplacement) || null;
   const proposal = getPendingReplacement();
   if (!AR || !proposal || proposal.status !== 'pending') return false;
@@ -2542,20 +2548,24 @@ function bindLoggedSubstituteToProposal(rawName, enrichmentRow) {
   // A stale proposal (the plan changed under it, or the source slot is already gone) is
   // discarded rather than applied to the wrong slot — the same guard the tap path uses.
   if (!AR.isProposalFresh(proposal, planExercises)) return false;
-  const enr = enrichmentRow && typeof enrichmentRow === 'object' ? enrichmentRow : {};
   const r = proposal.replacement || {};
-  const loggedName = enr.canonical_exercise || rawName;
-  const loggedCode = enr.lift_code || '';
-  const matches = (r.lift_code && loggedCode)
-    ? String(r.lift_code).toLowerCase() === String(loggedCode).toLowerCase()
-    : String(r.name || '').toLowerCase() === String(loggedName || '').toLowerCase();
-  if (!matches) return false;
-  const prescription = { weight: r.weight ?? null, reps: r.reps ?? null, sets: r.sets ?? null, rir: r.rir ?? null };
-  const swapped = applySessionSubstitution(
-    proposal.source && proposal.source.name, loggedName, loggedCode || r.lift_code || '', prescription);
-  setPendingReplacement(null);
-  persistSessionSnapshot(document.getElementById('log-session-id')?.value || null);
-  return swapped;
+  for (const o of (Array.isArray(logObjs) ? logObjs : [])) {
+    if (!o || !o.exercise) continue;
+    const enr = (enrichMap && typeof enrichMap.get === 'function' && enrichMap.get(o.exercise)) || {};
+    const loggedName = enr.canonical_exercise || o.exercise;
+    const loggedCode = enr.lift_code || '';
+    const matches = (r.lift_code && loggedCode)
+      ? String(r.lift_code).toLowerCase() === String(loggedCode).toLowerCase()
+      : String(r.name || '').toLowerCase() === String(loggedName || '').toLowerCase();
+    if (!matches) continue;
+    const prescription = { weight: r.weight ?? null, reps: r.reps ?? null, sets: r.sets ?? null, rir: r.rir ?? null };
+    const swapped = applySessionSubstitution(
+      proposal.source && proposal.source.name, loggedName, loggedCode || r.lift_code || '', prescription);
+    setPendingReplacement(null);
+    persistSessionSnapshot(document.getElementById('log-session-id')?.value || null);
+    return swapped;
+  }
+  return false;  // nothing in this submission is the proposed replacement — proposal stays open
 }
 
 // APPROVE the pending replacement: remove exactly the source and insert exactly the
@@ -6231,8 +6241,8 @@ function emitSetLogged(logObjs, text, substitutions, enrichment) {
     const enr = enrichMap.get(primaryLogged) || {};
     applySessionSubstitution(getPendingSubstitution().prescribed, enr.canonical_exercise || primaryLogged, enr.lift_code || '', getPendingSubstitution().prescription || null);
     setPendingSubstitution(null);
-  } else if (primaryLogged) {
-    bindLoggedSubstituteToProposal(primaryLogged, enrichMap.get(primaryLogged) || {});
+  } else {
+    bindLoggedSubstituteToProposal(logObjs, enrichMap);
   }
   for (const o of (logObjs || [])) {
     if (!o.exercise) continue;

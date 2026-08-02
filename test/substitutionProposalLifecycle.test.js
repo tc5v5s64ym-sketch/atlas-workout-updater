@@ -315,6 +315,37 @@ test('D: logging the replacement binds it to the ORIGINAL slot — never IDB ins
   assert.equal(h.api.getProposal(), null, 'the proposal is consumed by the acceptance');
 });
 
+test('D: the replacement binds even when it is NOT the first row of a batch (Codex P1)', () => {
+  const h = staged();
+  h.api.setProposal({
+    proposal_id: 'repl:x', source: { name: 'Bench Press', lift_code: 'BEN01' },
+    replacement: { name: 'Incline Dumbbell Press', lift_code: 'IDB01', weight: 90, reps: 10, sets: 2, rir: 2 },
+    position: 0, plan_fingerprint: 'BENCHPRESS|SEATEDROW', status: 'pending',
+  });
+
+  // One submission, two exercises, the replacement SECOND. Scanning only the first row would
+  // resolve Incline DB Press as an off-plan insertion and leave Bench Press pending — the
+  // exact contradiction this card exists to prevent.
+  h.api.emitSetLogged(
+    [
+      { exercise: 'Seated Row', weight: 200, reps: 10, rir: 1 },
+      { exercise: 'Incline DB Press', weight: 90, reps: 10, rir: 2 },
+    ],
+    '', null,
+    [
+      { exercise: 'Seated Row', canonical_exercise: 'Seated Row', lift_code: 'SR01' },
+      { exercise: 'Incline DB Press', canonical_exercise: 'Incline Dumbbell Press', lift_code: 'IDB01' },
+    ]
+  );
+
+  assert.deepEqual(h.api.getNames(), ['Incline Dumbbell Press', 'Seated Row'], 'it bound to the Bench Press slot');
+  assert.equal(h.api.getSlot(0).plan_item_id, 'pi_ben', 'the original plan_item_id is retained');
+  assert.ok(!h.api.remaining().includes('Bench Press'), 'Bench Press does NOT stay pending');
+  assert.deepEqual(h.outcomes, [{ plan_item_id: 'pi_ben', outcome: 'substituted', performed_lift_code: 'IDB01' }],
+    'exactly one canonical outcome, naming the performed lift');
+  assert.equal(h.api.getProposal(), null);
+});
+
 test('D: repeated logging creates no duplicate item_outcome', () => {
   const h = staged();
   h.api.setProposal({
