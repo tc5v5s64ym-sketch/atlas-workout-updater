@@ -328,8 +328,13 @@ test('F10D readiness doc: the quoted production header row IS sessionPlanSetsCol
 // the server's summary, seal, and finalized event address the session the appends
 // are stamped with, never the stale pre-parse lexicals.
 test('F10D screenshot conversion: the closeout payload uses the screenshot-resolved identity', () => {
-  assert.match(appSrc, /session_id: screenshotResolvedSessionId \|\| sessionId,/,
-    'the payload session_id prefers the screenshot-resolved id');
+  // Screenshot-resolved id → the established field value → blank. `sessionId` is a
+  // local PROVISIONAL value for correlation and must never reach a write payload as
+  // though it were a decided identity; blank means "server, you allocate".
+  assert.match(appSrc, /session_id: screenshotResolvedSessionId \|\| explicitSessionId,/,
+    'the payload session_id prefers the screenshot-resolved id, then the established field');
+  assert.doesNotMatch(appSrc, /session_id: screenshotResolvedSessionId \|\| sessionId,/,
+    'the provisional client-derived id never becomes the payload identity');
   assert.match(appSrc, /date: screenshotResolvedDate \|\| date,/,
     'the payload date prefers the screenshot-resolved date');
   assert.match(appSrc, /screenshotResolvedSessionId = resolvedShotSessionId;\s*\n\s*screenshotResolvedDate = resolvedShot\.date;/,

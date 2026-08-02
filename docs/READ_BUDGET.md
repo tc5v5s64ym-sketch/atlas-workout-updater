@@ -36,8 +36,8 @@ the **same** number of reads. The budget is **O(1) in workout size**.
 | Read | sheets.js call | Purpose |
 |---|---|---|
 | `Exercise_Catalog!A:Z` | `getExerciseCatalog()` | enrich each row to canonical name / lift_code |
-| `Effort!B:B` | `getEffortSessionIds()` | duplicate-session guard (effort row only) |
-| `Log_Cleaned!B:G` | `getLogCompositeKeys()` | row-level dedup (session‖exercise‖set) |
+| `Effort!B:B` | `getEffortSessionIds()` | duplicate-session guard (effort row only); session-id allocator |
+| `Log_Cleaned!B:G` | `getLogCompositeKeys()` | row-level dedup (session‖exercise‖set); session-id allocator |
 | `Log_Cleaned!1:1` | `getHeaderRow(log)` | header-drift guard |
 | `Effort!1:1` | `getHeaderRow(effort)` | header-drift guard (effort row only) |
 
@@ -50,6 +50,27 @@ and G all sit inside the contiguous `B:G` span, so a single ROWS-major range rea
 returns all three at once (index 0 = B, 1 = C, 5 = G). The composite keys computed
 are identical — header rows and rows missing any of the three fields are still
 skipped, keys are still lowercased.
+
+## Session-id allocation reuses these reads
+
+When a request carries a **blank** `session_id` the server allocates one, and it must
+step over every record that proves a workout already exists — `Effort!B:B` **and**
+`Log_Cleaned!B:G`. Reading Effort alone was the identity defect: an Effort row is
+optional, so a workout logged without watch data was invisible to the allocator and the
+next same-period workout silently merged into it.
+
+Both write routes memoize these two reads per request, so the allocator and the guards
+below it share **one** fetch each rather than repeating them. The net cost is at most
+**one extra column read**, only on the request that actually allocates (the first preview
+of a new session), and only where that path did not already read the column:
+
+- an upload carrying workout rows already read `Log_Cleaned!B:G` for the row dedup → **+0**;
+- an effort-only upload already read `Effort!B:B` → **+1** (`Log_Cleaned!B:G`);
+- a JSON dry-run without an effort row already read `Log_Cleaned!B:G` → **+1** (`Effort!B:B`).
+
+A request that supplies an established id never allocates and is byte-identical to before.
+The memo is **per request** — it never caches across requests, so the "never cached"
+contract below is intact: every write still dedups against the current sheet state.
 
 `getExerciseCatalog()` is fetched **once** per Save (the enricher receives the
 already-fetched catalog map on the `/api/complete-workout` path), so it is not a

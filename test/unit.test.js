@@ -3430,7 +3430,14 @@ test('screenshot preview date resolution: pendingWrite uses server-resolved date
 
   assert.match(submitSection, /const resolvedData = result\?\.data\?\.data \|\| \{\}/);
   assert.match(submitSection, /const resolvedDate = resolvedData\.date \|\| date \|\| getLocalDateString\(\)/);
-  assert.match(submitSection, /const resolvedSessionId = resolvedData\.session_id \|\| sessionId \|\| generateSessionId\(resolvedDate\)/);
+  // The SERVER allocates the identity and reports it. There is deliberately no
+  // client-side fallback: a guessed id here would put the client back in the
+  // allocator's chair, which is exactly the authority this path gave up.
+  assert.match(submitSection, /const resolvedSessionId = resolvedData\.session_id;/);
+  assert.match(submitSection, /if \(!resolvedSessionId\) \{\s*\n\s*throw new Error\('Preview did not resolve a session identity\./,
+    'a preview that named no session fails closed instead of falling back to a guess');
+  assert.doesNotMatch(submitSection, /resolvedData\.session_id \|\| sessionId/,
+    'no client-derived fallback may re-enter the resolved identity');
   assert.match(submitSection, /document\.getElementById\('log-date'\)\.value = resolvedDate/);
   assert.match(submitSection, /sessionIdInput\.value = resolvedSessionId/);
   assert.match(submitSection, /pendingWrite = \{[\s\S]*mode: 'screenshot'[\s\S]*sessionId: resolvedSessionId,[\s\S]*date: resolvedDate/);
@@ -3455,11 +3462,14 @@ test('multi-session/day: effort-only uploads send a blank session_id so the serv
     appSource.indexOf('async function submitCompleteWorkout(')
   );
 
-  // The session_id sent for a complete-workout upload is gated on effortOnly: an
-  // effort-only upload sends the RAW field (blank for a fresh upload → server
-  // auto-increments), while an upload carrying workout rows keeps the resolved id.
+  // EVERY complete-workout upload sends the RAW field — blank for a fresh session, so
+  // the server allocates. The old `effortOnly ?` gate kept a client-derived id on any
+  // upload carrying workout rows, which is how a second same-period workout re-minted
+  // the first one's id and merged into it. The client allocates no identity at all now.
   assert.match(submitSection, /const explicitSessionId = sessionIdInput\.value\.trim\(\)/);
-  assert.match(submitSection, /const completeWorkoutSessionId = effortOnly \? explicitSessionId : sessionId/);
+  assert.match(submitSection, /const completeWorkoutSessionId = explicitSessionId;/);
+  assert.doesNotMatch(submitSection, /completeWorkoutSessionId = effortOnly \?/,
+    'the effortOnly gate is gone — no upload carries a client-derived identity');
   // Both complete-workout branches submit the gated id, not the forced …-01.
   assert.match(submitSection, /submitCompleteWorkout\(\{ file, logRows, sessionId: completeWorkoutSessionId,/);
   assert.match(submitSection, /submitCompleteWorkout\(\{ logRows, sessionId: completeWorkoutSessionId,/);
@@ -5265,8 +5275,13 @@ test('RC2: the closeout branch resolves the date and applies it to #log-date + s
   // date-derived id remains only the no-identity fallback.
   assert.match(guard, /const acceptedShotSid = \(getActivePlannedSession\(\) && getActivePlannedSession\(\)\.accepted === true/,
     'prefers the ACCEPTED session identity');
-  assert.match(guard, /sessionIdInput\.value = acceptedShotSid \|\| sessionIdInput\.value\.trim\(\) \|\| generateSessionId\(resolvedCloseout\.date\)/,
-    'accepted id → existing input → date-derived id, in that order');
+  // …and when NEITHER exists the field stays blank so the server allocates. The old
+  // date-derived fallback wrote a guessed id into the field, where it read back as an
+  // established identity and reached the write payload as though the owner chose it.
+  assert.match(guard, /sessionIdInput\.value = acceptedShotSid \|\| sessionIdInput\.value\.trim\(\);/,
+    'accepted id → existing input → blank (server allocates), in that order');
+  assert.doesNotMatch(guard, /generateSessionId\(/,
+    'the closeout branch never derives a session identity');
   const applyIdx = guard.indexOf('document.getElementById(\'log-date\').value = resolvedCloseout.date');
   const submitIdx = guard.indexOf('await handleLogIt();');
   assert.ok(applyIdx > 0 && applyIdx < submitIdx, 'the date is applied BEFORE the re-submit so the rebuilt rows use it');

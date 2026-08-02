@@ -536,6 +536,27 @@ function withCanonicalSessionDate(row, sessionDate) {
   return row;
 }
 
+// The session-id twin of withCanonicalSessionDate. ONE session_id decides a
+// workout's identity, and the server's allocator is the only thing that can see the
+// durable records, so the resolved id must reach every row it writes. A client sends
+// Log rows either as objects (session_id falls back to the top-level id already) or
+// as 12-column arrays, whose column-2 session_id used to be honoured verbatim — that
+// asymmetry is exactly why the client could not send a blank id for an upload
+// carrying sets without desyncing Log_Cleaned from Effort. Stamping closes it.
+// Only stamps the rows being written now — never a historical rewrite.
+function withCanonicalSessionId(row, sessionId) {
+  if (!sessionId) return row;
+  if (Array.isArray(row)) {
+    const copy = row.slice();
+    copy[1] = sessionId;
+    return copy;
+  }
+  if (row && typeof row === 'object') {
+    return { ...row, session_id: sessionId, sessionId: undefined };
+  }
+  return row;
+}
+
 function logRowArrayToObject(row) {
   if (!Array.isArray(row) || (row.length !== logCleanedColumns.length && row.length !== logCleanedColumns.length - 1)) {
     throw new Error(`Each log row must contain ${logCleanedColumns.length - 1} or ${logCleanedColumns.length} values in Log_Cleaned column order.`);
@@ -712,7 +733,7 @@ function partitionLogRowsByExisting(formattedRows, existingLogKeys) {
   return { newRows, skippedDuplicates };
 }
 
-const { generateSessionId, nextAvailableSessionId } = require('./services/sessionId');
+const { generateSessionId, nextAvailableSessionId, sessionIdsFromLogCompositeKeys } = require('./services/sessionId');
 
 function isTestModeEnabled(value) {
   return String(value || '').trim().toLowerCase() === 'true';
@@ -2393,6 +2414,18 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       return standardError(req, res, 'Failed to validate duplicate session.', null, 500);
     }
 
+    // Read Log_Cleaned's composite keys AT MOST ONCE per request. Two things need
+    // them — the session-id allocator below and the row-level dedup at step 7 — and
+    // before this memo the allocator simply never saw them. Memoizing keeps the Save
+    // read budget exactly where it was (docs/READ_BUDGET.md): a path that already read
+    // them still reads them once, and a path that did not (effort-only) still does not
+    // unless the allocator actually has to run.
+    let cachedLogCompositeKeys = null;
+    const logCompositeKeys = async () => {
+      if (cachedLogCompositeKeys === null) cachedLogCompositeKeys = await getLogCompositeKeys();
+      return cachedLogCompositeKeys;
+    };
+
     // If the client supplied a session_id, honour it (explicit beats implicit).
     // A supplied id that already exists is still a duplicate (same data sent twice).
     //
@@ -2423,7 +2456,24 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         sessionId = priorMintedSessionId;
         sessionIdReused = true;
       } else {
-        sessionId = nextAvailableSessionId(dateValue, existingEffortSessionIds);
+        // The allocator steps over every DURABLE record, not just Effort. An Effort
+        // row is optional, so a workout logged without watch data used to be invisible
+        // here and the next same-period workout re-minted its id — two real sessions
+        // silently collapsed onto one identity.
+        let durableSessionIds = existingEffortSessionIds;
+        try {
+          durableSessionIds = existingEffortSessionIds
+            .concat(sessionIdsFromLogCompositeKeys(await logCompositeKeys()));
+        } catch (error) {
+          // Fail CLOSED on identity: without the Log read we cannot prove the slot is
+          // free, so refuse rather than mint an id that may already belong to a saved
+          // workout. Effort-only knowledge is exactly the blindness that caused the
+          // silent merge; falling back to it would reinstate the defect under load.
+          console.error('❌ Failed to read Log_Cleaned for session-id allocation:', error);
+          if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
+          return standardError(req, res, 'Failed to allocate a session id.', null, 500);
+        }
+        sessionId = nextAvailableSessionId(dateValue, durableSessionIds);
       }
     }
 
@@ -2459,7 +2509,15 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         // uses dateValue) on a screenshot-dated or backdated closeout. Applies to
         // the dry-run preview AND the live write — the preview shows exactly what
         // Approve writes.
-        const sessionDatedLogRows = parsedLogRows.map(row => withCanonicalSessionDate(row, dateValue));
+        // …and the resolved session_id for the same reason. An object row already fell
+        // back to the top-level id, but a 12-column ARRAY row carried its own column-2
+        // id verbatim, so the client could not send a blank id on an upload carrying
+        // sets without splitting Log_Cleaned (…-01 rows) from Effort (…-02). That
+        // asymmetry was the recorded blocker on multi-session-with-sets; stamping the
+        // one resolved id onto every shape removes it.
+        const sessionDatedLogRows = parsedLogRows
+          .map(row => withCanonicalSessionDate(row, dateValue))
+          .map(row => withCanonicalSessionId(row, sessionId));
         const enrichResult = await enrichAndFormatLogRows(sessionDatedLogRows, sessionId, dateValue, catalogMap);
         formattedLogRows = enrichResult.formattedRows;
         enrichWarnings = enrichResult.warnings || [];
@@ -2495,7 +2553,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
     const rowsToWrite = [];
     const skippedDuplicates = [];
     if (!effortOnly) {
-      const existingLogKeys = await getLogCompositeKeys();
+      const existingLogKeys = await logCompositeKeys();
       const intendedKeys = formattedLogRows.map(row => {
         // formatted row order follows logCleanedColumns
         const sid = String(row[1] || '').trim().toLowerCase();
@@ -2977,16 +3035,16 @@ app.post('/api/log-workout', async (req, res) => {
     return standardError(req, res, 'Invalid JSON payload. A JSON object is required.', null, 400);
   }
 
-  const { session_id, date, log_rows, effort_row } = payload;
+  // The client's id is a PROPOSAL, not the identity. When it is blank the server's
+  // allocator decides — see below. `session_id` stays the name every consumer in this
+  // route already reads, so it always holds the RESOLVED identity from here on.
+  const { session_id: clientSessionId, date, log_rows, effort_row } = payload;
+  let session_id = clientSessionId;
   if (isAmbiguousTestMode(payload.test_mode)) {
     return standardError(req, res, AMBIGUOUS_TEST_MODE_MESSAGE, null, 400);
   }
   const testMode = isTestModeEnabled(payload.test_mode);
   const writeId = payload.write_id;
-
-  if (!session_id) {
-    return standardError(req, res, 'session_id is required.', null, 400);
-  }
 
   if (!date) {
     return standardError(req, res, 'date is required.', null, 400);
@@ -2996,6 +3054,39 @@ app.post('/api/log-workout', async (req, res) => {
   const workoutDate = normalizeWorkoutDateStrict(date);
   if (!workoutDate) {
     return standardError(req, res, 'date must be a valid calendar date (YYYY-MM-DD).', null, 400);
+  }
+
+  // Read each duplicate-guard column AT MOST ONCE per request. Both are needed twice
+  // now — once by the allocator, once by the guards further down — and memoizing keeps
+  // this route's Sheets read count exactly where docs/READ_BUDGET.md records it.
+  let cachedLogCompositeKeys = null;
+  const logCompositeKeys = async () => {
+    if (cachedLogCompositeKeys === null) cachedLogCompositeKeys = await getLogCompositeKeys();
+    return cachedLogCompositeKeys;
+  };
+  let cachedEffortSessionIds = null;
+  const effortSessionIds = async () => {
+    if (cachedEffortSessionIds === null) cachedEffortSessionIds = await getEffortSessionIds();
+    return cachedEffortSessionIds;
+  };
+
+  // A blank session_id means "this is a new workout — you decide". The server is the
+  // only party that can see the durable records, so it is the only party that can
+  // allocate an identity truthfully: the client cannot know that a workout already
+  // occupies …-01 today. Explicit still beats implicit — a supplied id is honoured
+  // unchanged, exactly as before.
+  if (!session_id) {
+    try {
+      const durableSessionIds = (await effortSessionIds())
+        .concat(sessionIdsFromLogCompositeKeys(await logCompositeKeys()));
+      session_id = nextAvailableSessionId(workoutDate, durableSessionIds);
+    } catch (error) {
+      // Fail CLOSED on identity: an unreadable durable record means we cannot prove
+      // the slot is free, and minting into an occupied slot merges two real workouts
+      // irreversibly. Refuse instead.
+      console.error('❌ Failed to allocate a session id:', error);
+      return standardError(req, res, 'Failed to allocate a session id.', null, 500);
+    }
   }
 
   if (log_rows === undefined) {
@@ -3028,7 +3119,15 @@ app.post('/api/log-workout', async (req, res) => {
   let ruleFlags = [];
   let enrichedRowObjects = [];
   try {
-    const logResult = await enrichAndFormatLogRows(log_rows, session_id, workoutDate);
+    // Stamp the RESOLVED identity onto every row. A row carries its own session_id
+    // (the client's collectLogRows writes one into each), and a row-level value beats
+    // the top-level fallback — so without this an allocated id would be silently
+    // overridden by the stale one the client proposed, and the write would land in the
+    // very slot the allocator just stepped over. This route writes exactly one session:
+    // the dedupe, the Effort row, and the correlation all key on `session_id`, so a row
+    // that disagrees with it was never meaningful.
+    const sessionIdentifiedRows = log_rows.map(row => withCanonicalSessionId(row, session_id));
+    const logResult = await enrichAndFormatLogRows(sessionIdentifiedRows, session_id, workoutDate);
     formattedLogRows = logResult.formattedRows;
     warnings = logResult.warnings || [];
     pendingExercisesForPreview = logResult.pending_exercises || [];
@@ -3101,7 +3200,7 @@ app.post('/api/log-workout', async (req, res) => {
     let previewLogRows = formattedLogRows;
     let previewSkippedDuplicates = 0;
     try {
-      const existingLogKeys = await getLogCompositeKeys();
+      const existingLogKeys = await logCompositeKeys();
       const partition = partitionLogRowsByExisting(formattedLogRows, existingLogKeys);
       previewLogRows = partition.newRows;
       previewSkippedDuplicates = partition.skippedDuplicates.length;
@@ -3160,6 +3259,12 @@ app.post('/api/log-workout', async (req, res) => {
       sheet_write: 'skipped',
       sheet_written: false,
       no_write_confirmed: true,
+      // The RESOLVED identity, so a client that sent a blank id can pin what the
+      // allocator chose onto the write it is about to approve. Without it the write
+      // would re-allocate, and the owner would be approving a preview whose session
+      // identity nobody had stated. Additive: a client that supplied an id sees its
+      // own value back, exactly as the live-write responses already report it.
+      session_id,
       effortWritten: Boolean(formattedEffortRow),
       log_rows_preview: previewLogRows
     };
@@ -3225,7 +3330,7 @@ app.post('/api/log-workout', async (req, res) => {
   if (formattedEffortRow) {
     let existingEffortSessionIds;
     try {
-      existingEffortSessionIds = await getEffortSessionIds();
+      existingEffortSessionIds = await effortSessionIds();
     } catch (error) {
       console.error('❌ Failed to check duplicate session IDs:', error);
       if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
@@ -3252,7 +3357,7 @@ app.post('/api/log-workout', async (req, res) => {
   let rowsToWrite = formattedLogRows;
   let skippedDuplicates = [];
   try {
-    const existingLogKeys = await getLogCompositeKeys();
+    const existingLogKeys = await logCompositeKeys();
     const partition = partitionLogRowsByExisting(formattedLogRows, existingLogKeys);
     rowsToWrite = partition.newRows;
     skippedDuplicates = partition.skippedDuplicates;
@@ -3445,6 +3550,11 @@ app.post('/api/log-workout', async (req, res) => {
 
     const responseBody = {
       message: 'Workout data appended successfully.',
+      // The identity the rows were actually written under. When the client sent a blank
+      // id the server allocated it, and the client cannot address its own workout —
+      // verify-range, undo, the closeout seal, correlation — without being told which
+      // session it got. A client that supplied an id sees its own value back.
+      session_id,
       logAppendedRange: logResponse?.data?.updates?.updatedRange || null,
       log_rows_written: Number(logResponse?.data?.updates?.updatedRows || 0),
       effort_rows_written: Number(effortResponse?.data?.updates?.updatedRows || 0),
