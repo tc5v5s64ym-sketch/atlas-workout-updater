@@ -290,7 +290,7 @@ test('S1 — the bench is taken: recommend, answer from the proposal, accept by 
     verdict(1, 'acceptance_control_offered', approveVisible,
       'the proposal must offer a visible acceptance control');
     if (approveVisible) {
-      await approve.click();
+      await approve.click({ timeout: 15000 });
       await page.waitForTimeout(3000);
       await snap(page, 'S1-02b-after-approve.png');
     }
@@ -303,7 +303,7 @@ test('S1 — the bench is taken: recommend, answer from the proposal, accept by 
 
     // Repeating the acceptance must not duplicate the canonical outcome.
     if (await approve.isVisible().catch(() => false)) {
-      await approve.click().catch(() => {});
+      await approve.click({ timeout: 5000 }).catch(() => {});
       await page.waitForTimeout(2500);
     }
     const afterRepeatAccept = await srv.state();
@@ -363,7 +363,7 @@ test('S1 — the bench is taken: recommend, answer from the proposal, accept by 
       'the final preview must not say Bench Press remains');
 
     // (16) one visible approval through the review-card Save control.
-    await reviewSave.click();
+    await reviewSave.click({ timeout: 20000 });
     await expect(page.locator('.review.done')).toHaveCount(1, { timeout: 60000 });
     await snap(page, 'S1-04-after-approval.png');
 
@@ -383,7 +383,7 @@ test('S1 — the bench is taken: recommend, answer from the proposal, accept by 
     // (17) a repeated approval writes nothing.
     const appendsBeforeRepeat = afterWrite.appends.length;
     if (await reviewSave.isVisible().catch(() => false)) {
-      await reviewSave.click().catch(() => {});
+      await reviewSave.click({ timeout: 5000 }).catch(() => {});
       await page.waitForTimeout(3000);
     }
     const afterRepeat = await srv.state();
