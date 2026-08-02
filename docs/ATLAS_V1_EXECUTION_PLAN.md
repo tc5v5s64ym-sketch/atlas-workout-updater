@@ -146,7 +146,113 @@ This is the single active, executable campaign. It is embedded here — not besi
 - **Classification: missing capability**, not a regression. `services/turnPrecedence.js` names it in its own header as a planned Phase-4 concern — *"scope a current-exercise prescription question to the active exercise"* — alongside promoting `discussion_referent` to a canonical CoachTurnPacket field.
 - **Unverified.** Whether the recommender returned a non-null `next_target` for the substitute is **not established** — the recommendation body is not logged. The fix must therefore handle both branches, and must say it has no target rather than guess.
 
-**Next card — F-SB2.** Answer a prescription question deterministically from the pending substitution's stored target, and say plainly that there is no target when none is stored. Never a model guess. **OWNER GATE: this adds a new deterministic coaching lane and new coaching copy, which is owner-reserved scope — it is not built on agent initiative.** The general `discussion_referent` capability stays where this plan already put it and is not pulled forward.
+**F-SB2 — SUPERSEDED.** Folded under F-SB3 below by the owner ruling of 2026-08-02. Its evidence is retained there; it is not a parallel card.
+
+---
+
+## OWNER RULING 2026-08-02 — F-SB3: SUBSTITUTION TRUTH (authority defect)
+
+**This ruling is the owner authorization. It governs because it is recorded here.** Dale explicitly authorizes the deterministic coaching behavior required to close this defect, including answering a grounded prescription question ("How much should I lift?") from the engine-owned pending-substitution prescription. **The model gets authority over neither the number nor the mutation.**
+
+**One parent concern:** recommendation, acceptance, canonical mutation, visible claim, and closeout coherence must agree. The narrower **F-SB1-C** and **F-SB2** framings are superseded and folded in; their evidence is retained, and no parallel cards are created.
+
+### The live failure
+
+Workout session `20260801-PM-01`, Flight Recorder `FR-20260802025836-l7hey0gz`, commit `0990c6c`, 02:58:36→03:06:27Z. The save itself was correct: 18 `Log_Cleaned` rows, `sheet_write:"success"`, `closeout_fully_verified:true`, 12 ledger rows sealed, one finalized closeout, no duplicates, no deploy inside the window.
+
+**Atlas visibly claimed a substitution it never performed.** From the recorder's own UI snapshots:
+
+> *"Understood. You're substituting Bench Press with Incline Dumbbell Press."*
+> *"Okay, I've noted the substitution. Since you're opting for Incline Dumbbell Press, what weight and reps were you planning for that?"*
+
+The durable ledger disagrees, verified read-only against the live workbook:
+
+| check | result |
+|---|---|
+| `Session_Plans` events for the session | 6 × `plan_accepted` (SQ01, OHP01, RDL01, **BEN01**, SR01, BC01) + 1 `session_closeout` |
+| `item_outcome` events | **0** |
+| any `performed_lift_code` = IDB01 | **false** |
+| `Session_Plan_Sets` by planned lift | `{SQ01:2, OHP01:2, RDL01:2, BEN01:2, SR01:2, BC01:2}` — BEN01 prescription untouched |
+| `Log_Cleaned` | 3 performed IDB01 rows at 90 × 10 RIR 2 |
+
+So Incline DB Press completed as an **inserted** exercise, Bench Press stayed **pending**, the final preview still read *"Still on your plan: Bench Press"*, and the closeout sealed with `closeout_fully_verified:true` over the contradiction.
+
+### Classification: AUTHORITY DEFECT
+
+- **Intended sole authority (winner):** the canonical active-session plan slot, its retained `plan_item_id`, and its durable `Session_Plans` `item_outcome` event.
+- **Losing authority (to be removed):** coach prose, pending conversational state, or an independently inserted completed exercise being treated as proof that the plan changed.
+- The visible coach may **explain** a canonical mutation. It may never become a second mutation authority. **No permanent reconciliation** between prose and the plan ledger.
+
+### Audit findings (2026-08-02, against `0990c6c`)
+
+**The canonical mutation machinery already exists and is correct.** `applySessionSubstitution` (`src/app/app.js:1645`) reads the original `plan_item_id` off the slot before swapping, retains it on the replacement slot, preserves the accepted set count, checkpoints a bounded future-set revision, and emits `emitPlanItemOutcome({outcome:'substituted', performed_lift_code})`. **It is the intended sole transition. Do not build a third substitution path.** In Dale's session it was simply never called.
+
+**The visible-claim backstop already exists and is already wired.** `coachResponseGrounding.detectUnsupportedMutationClaim` is consumed at `routes/coachOps.js:1785` on `/api/coach/chat`; on a hit it replaces the prose with a grounded statement and drops every proposal. **It has a denylist gap** — measured on `0990c6c`:
+
+| prose | detected? |
+|---|---|
+| `I've swapped Bench Press for Incline Dumbbell Press.` | **yes** |
+| `I updated the plan.` / `The plan has been changed.` | **yes** |
+| `I've noted the substitution.` | **NO** — the verb `noted` is absent from `COMPLETED_MUTATION_PATTERNS` |
+| `You're substituting Bench Press with Incline Dumbbell Press.` | **NO** — no second-person completed frame exists |
+
+The model happened to choose the two phrasings the denylist misses.
+
+**Extending the denylist is NOT the fix, and the codebase already says so.** `test/coachResponseGrounding.test.js` (~line 367) asserts that a novel completed-write wording is deliberately *not* caught, precisely to prove the denylist is a finite backstop — and the established winning pattern beside it is a **deterministic, model-free answer** (`buildDisputeAnswer`). Substitution needs that same treatment. Patching prose patterns is the same losing strategy as patching routing regexes, which this campaign has now tried twice.
+
+**Why the turn never reached the canonical path.** `looksLikeSessionRequest` claimed *"The bench is taken at the gym so plan give me a substitute workout"* because `sessionQuestion.isWorkoutGenerationRequest` returns **true** on it (the word *"plan"*), and PR #1238 deliberately placed its lift-level guard **after** that classifier. The follow-ups *"No I meant I substitute work out for bench press, like incline dumbbell or something"* and *"Well I was asking for a substitute"* both classify as **null**. Routing may determine which existing operation receives a turn; **routing success is not mutation success**, and no further routing patch closes this card.
+
+### Required lifecycle (A–E)
+
+**A. RECOMMENDATION** — no mutation; Bench Press stays in the plan; the recommendation is a bounded, session-scoped pending proposal. Atlas must **not** say "I changed it", "I noted the substitution", "You're substituting it", "The plan is updated", or equivalent completed-mutation wording.
+
+**B. GROUNDED FOLLOW-UP** — "How much?" / "How many reps?" / "What weight?" are answered **deterministically from the pending proposal's engine-owned prescription**. An ungrounded numbers question never goes to the LLM. Stale, missing, ambiguous, or cross-session proposals **fail closed** with a focused clarification.
+
+**C. ACCEPTANCE** — a clear acceptance binds only to the current session's fresh pending proposal. On acceptance: mutate the canonical slot; retain the original `plan_item_id`; bind IDB01 as performed; emit **exactly one** `item_outcome` (`planned_lift_code=BEN01`, `outcome=substituted`, `performed_lift_code=IDB01`); remove Bench Press from remaining work; make IDB01 satisfy the original slot; clear the proposal; persist the snapshot. **Only after that succeeds** may Atlas emit deterministic confirmation ("Incline Dumbbell Press replaced Bench Press"). The LLM never invents or paraphrases the success claim.
+
+**D. ACCEPTANCE BY LOGGING** — the existing deferred "instead of" binding may remain if it is the canonical path: bind the logged replacement to the original slot **before** accepting it as an unrelated inserted exercise, emitting the same `item_outcome` exactly once. It may never produce *IDB01 inserted + BEN01 pending + a visible success claim*.
+
+**E. FAILURE** — leave the plan unchanged, emit no success wording, preserve the recommendation where safe, tell Dale plainly the plan was not changed, and never silently log the replacement as satisfying the slot.
+
+### Durable ledger rule
+
+**Do not destructively rewrite accepted `Session_Plan_Sets` history** because a substitution occurred. The original BEN01 prescribed sets are valid evidence of what was accepted. The substitution is represented by the retained `plan_item_id`, the canonical `item_outcome`, `performed_lift_code=IDB01`, the bound slot, and the actual IDB01 rows.
+
+### Closeout coherence
+
+**Extend the existing `closeoutVerification` (`index.js`). Do not create a parallel verdict.** `closeout_fully_verified` must be false when the canonical structured state contains a substitution contradiction — at minimum: a structurally accepted substitution with no canonical `item_outcome`; a replacement completed as an inserted exercise while its source slot stays pending under the same accepted proposal; conflicting or duplicate substitution outcomes; a visible success response generated without a successful canonical mutation result; pending accepted replacement state surviving closeout unresolved.
+
+It must **consume canonical mutation state and outcomes** — never infer intent from exercise similarity or freeform prose. **An honestly disclosed unfinished lift must still pass.** The failure condition is the *contradiction*, not incompleteness.
+
+### Authorities to reconcile
+
+`pendingSubstitution` · `pendingReplacement` · `applySessionSubstitution` · `tryApplyImplicitSubstitution` · `checkAndSuggestSubstitute` · `classifyMutationIntent` · `emitPlanItemOutcome` · `emitSetLogged` · `activePlannedSession` · `planSlotStatuses`/`remainingPlannedExercises` · `Session_Plans` persistence · `Session_Plan_Sets` sealing · `closeoutVerification` · visible mutation-claim validation · snapshot hydration/reset.
+
+**Choose one mutation transition.** If `pendingSubstitution` and `pendingReplacement` are competing representations of the same accepted decision, pick one winner and delete the losing production path, or name a narrowly unavoidable bridge with an exact sunset condition. **Two permanent approval systems are not acceptable.**
+
+### Regression proof (must fail pre-fix, pass post-fix)
+
+Dale's exact flow, through the **real browser path** — no new runner: plan includes Bench Press → bench occupied, substitute requested → Atlas recommends Incline DB Press with an engine-owned prescription → Dale asks how much → answered from the pending prescription → Dale accepts or logs IDB01 → substitution applied **exactly once** → IDB01 bound to the original BEN01 `plan_item_id` → BEN01 leaves remaining work → one `substituted` `item_outcome` → the final preview does **not** say *"Still on your plan: Bench Press"* → `closeout_fully_verified` may become true only once state and ledger agree.
+
+**Required negative tests:** recommendation alone neither mutates nor emits completed wording; "How much?" uses the pending engine prescription; a generic "yes" cannot bind to an expired, cross-session, other-exercise, superseded, or post-reset proposal; repeated acceptance is idempotent; repeated logging creates no duplicate `item_outcome`; a mutation failure cannot emit success wording; an unrelated off-plan exercise stays a legitimate insertion; a deliberate skip stays distinct from a substitution; a whole-session alternative stays distinct from a lift-level substitution; reload restores only a valid bounded proposal; closeout refuses Dale's exact contradictory state; closeout still permits an honestly disclosed unfinished lift. **Bite proofs:** removing the `item_outcome` emission, leaving BEN01 pending after accepted IDB01, or returning success prose before mutation must each fail a test.
+
+### PR shape
+
+Prefer **one focused end-to-end PR**. Split only if the diff proves two independently reviewable slices are unavoidable; if split, land the canonical mutation/claim authority first, then the closeout coherence consumer immediately after, name both slices and the final closure condition here, and do no unrelated work between them. Target: one authority reused, the losing claim path deleted, no additional permanent state machine, **net complexity zero or negative**. A small positive change is owner-authorized only for the independent closeout tripwire, offset by deleting the competing claim/mutation path.
+
+### Post-merge protocol
+
+Refresh `main`; verify a clean worktree and no open PR; verify the exact SHA deployed to Render; inspect recent Render logs read-only. **Do not run or simulate an owner workout. Do not delete Dale's test rows without separate explicit authorization. Stage B stays at 0/5.** Stop for Dale's next owner test.
+
+### Secondary — `GET /api/summary/weekly` → 500
+
+Reported at ≈`2026-08-02T03:06:26.608Z`, **post-write**, so it does not threaten the durable save. **Not independently confirmed by the agent yet.** Confirm read-only from Render logs; claim no cause without evidence; fix it in the substitution PR **only** if the identical root cause is mechanically proven, otherwise record one bounded separate finding. It must not delay F-SB3.
+
+### Owner-authorized scope note
+
+Dale's test rows deleted from `Log_Cleaned` up to his last real workout on 2026-07-31 are **his own cleanup**, confirmed by him on 2026-08-02. This explains the lower append range (`A1634` vs `A1677`) and is **not** a data-integrity anomaly.
+
+**Next card — F-SB3, implementation.** The audit above is complete and this record is self-sufficient: implementation resumes from repository state and needs no chat context.
 
 **Instrument defect — `atlas:review-live` reported a passing session as all-UNKNOWN (trust-critical, tooling).** It correlated **0 Log · 0 Effort · 0 Session_Plans · 0 Session_Plan_Sets** for a session that wrote 12 rows and sealed 24. Cause: the recorder stores request field **names**, never values, so no workout `session_id` is discoverable in the transcript and correlation falls back to dates; `sessionDateSet` (`scripts/flight-review.js`) builds its window **forward only** from the flight session's UTC timestamps. A 17:34 Pacific workout is `2026-08-02` in UTC while its rows are correctly dated `2026-08-01`, so the set was `{2026-08-02, 2026-08-03}` and matched nothing. **Every evening workout breaks it**; the morning session correlated because its UTC and local dates agree. `UNKNOWN` is defined as never-a-pass, so trusting the instrument would have reset a passing streak. This is the second defect found in this tool (the first: text and `--json` runs auto-selecting different sessions). It adjudicates Stage B and should be fixed before workout 2.
 
