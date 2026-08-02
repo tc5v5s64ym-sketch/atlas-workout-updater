@@ -216,16 +216,22 @@ test('renderHuman is TOTAL and leaks no raw workout content', () => {
   assert.doesNotMatch(out, /225 5\/2/);
 });
 
-test('correlateSidecar matches by session_id then by date', () => {
+test('correlateSidecarStrict matches by session_id, and by date ONLY for id-less rows', () => {
+  // There is exactly ONE sidecar join now. The permissive variant that let a row
+  // naming a DIFFERENT workout attach purely by sharing a date was removed, not
+  // kept alongside this one — a mismatched identity must never date-attach.
   const rows = [
-    { session_id: 'W1', session_date: '2099-01-01' },
-    { session_id: 'ZZ', session_date: DAY },
-    { session_id: 'ZZ', session_date: '1999-01-01' }
+    { session_id: 'W1', session_date: '2099-01-01' },  // id match, wrong date → in
+    { session_id: 'ZZ', session_date: DAY },            // WRONG id, right date → out
+    { session_id: '', session_date: DAY },              // no id, right date → in
+    { session_id: 'ZZ', session_date: '1999-01-01' }    // wrong id, wrong date → out
   ];
-  const matched = rl.correlateSidecar(rows, new Set(['w1']), new Set([DAY]));
+  const matched = rl.correlateSidecarStrict(rows, new Set(['w1']), new Set([DAY]));
   assert.equal(matched.length, 2);
   assert.equal(matched[0].match, 'session_id');
   assert.equal(matched[1].match, 'date');
+  assert.equal(matched[1].rec.session_id, '');
+  assert.equal(rl.correlateSidecar, undefined, 'the permissive join must be gone, not merely unused');
 });
 
 test('planRowHasSetTarget is true only with a set-level prescription', () => {

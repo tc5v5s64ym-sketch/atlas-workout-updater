@@ -334,18 +334,68 @@ function correlateLogs(session, logRecords, workoutSessionIds, dateSet) {
   return byId.length ? byId : byDate;
 }
 
-// The set of local dates spanned by a session window (YYYY-MM-DD), for the
-// date-window log fallback (Log_Cleaned carries a date, not a timestamp).
+// The set of LOCAL dates that can intersect a session's UTC evidence window
+// (YYYY-MM-DD), for the date-window log fallback (Log_Cleaned carries a local
+// date, not a timestamp).
+//
+// The window timestamps are UTC; the rows are stamped in the athlete's LOCAL
+// date. Those two disagree whenever the local offset pushes the workout across
+// midnight, so the set must reach BOTH WAYS. This used to walk forward only
+// (`lo` → `hi + 1 day`), which silently broke every evening session west of
+// UTC: a 17:34 Pacific workout is captured at `2026-08-02T00:34Z` while its
+// rows are correctly dated `2026-08-01`, so the set was
+// `{2026-08-02, 2026-08-03}` and matched nothing — zero correlated rows and an
+// all-UNKNOWN verdict for a session that wrote and sealed correctly.
+//
+// Real UTC offsets span −12h…+14h, so a local date can differ from the UTC date
+// by at most one day in either direction. Padding the window by a full day on
+// each side therefore covers every zone exactly, with no timezone configuration
+// to get wrong. Widening the candidate set widens over-attach risk in exchange,
+// which is why the date fallback is now ambiguity-checked (see
+// `dateFallbackAmbiguity`) and refused outright when it cannot name one workout.
+const LOCAL_DATE_PAD_MS = 86400000; // one day each side — covers UTC−12…UTC+14
 function sessionDateSet(session, windowMs) {
   const set = new Set();
   if (session.first_at_ms == null) return set;
-  const lo = session.first_at_ms - windowMs;
-  const hi = (session.last_at_ms == null ? session.first_at_ms : session.last_at_ms) + windowMs;
-  for (let t = lo; t <= hi + 86400000; t += 86400000) {
+  const lo = session.first_at_ms - windowMs - LOCAL_DATE_PAD_MS;
+  const hi = (session.last_at_ms == null ? session.first_at_ms : session.last_at_ms)
+    + windowMs + LOCAL_DATE_PAD_MS;
+  for (let t = lo; t <= hi; t += 86400000) {
     set.add(new Date(t).toISOString().slice(0, 10));
   }
   set.add(new Date(hi).toISOString().slice(0, 10));
   return set;
+}
+
+// Whether a set of DATE-matched rows can be attributed to exactly one workout.
+//
+// The date fallback exists only because the recorder stores request field NAMES
+// and never their values, so a workout `session_id` is often undiscoverable in
+// the transcript. It is a weak join: every row sharing a candidate date matches.
+// With the window now reaching both ways, a neighbouring session's rows can sit
+// on a candidate date too — so before trusting the fallback the tool checks that
+// the matched rows name at most ONE workout. Two or more distinct workout
+// identities means the tool cannot tell which workout is the reviewed one, and
+// guessing would silently attribute another session's rows. That fails closed
+// instead, carrying the exact reason.
+//
+// Rows that carry no session_id at all are not ambiguous on their own — they
+// name no competing workout.
+function dateFallbackAmbiguity(rows) {
+  const ids = new Set();
+  for (const r of rows || []) {
+    const row = r && r.row ? r.row : (r && r.rec ? r.rec : r);
+    const sid = String((row && row.session_id) || '').trim();
+    if (sid) ids.add(sid.toLowerCase());
+  }
+  const distinct = Array.from(ids).sort();
+  return {
+    ambiguous: distinct.length > 1,
+    distinct_session_ids: distinct,
+    reason: distinct.length > 1
+      ? `date-window correlation matched rows from ${distinct.length} distinct workout sessions (${distinct.join(', ')}) — cannot attribute them to one session`
+      : ''
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -356,6 +406,18 @@ function buildSessionEvidence(session, corpora, options) {
   const windowMs = options.windowMs;
   const events = session.events;
 
+  // An explicitly supplied workout identity ALWAYS WINS. When the operator names
+  // the workout session, correlation is exact and the weak date fallback is never
+  // consulted, so the tool cannot drift onto a neighbouring session's rows.
+  //
+  // "Wins" must mean REPLACES, not "is added to". Seeding the discovery set with
+  // the explicit id and then letting the transcript scan add its own would let a
+  // stale or neighbouring identity correlate alongside the named one, while the
+  // join still called itself exact. `workoutSessionIds` therefore stays purely
+  // the DISCOVERED set (it is reported as such), and correlation reads
+  // `correlationIds` below, which the explicit ids replace outright.
+  const explicitIds = (options.explicitWorkoutSessionIds || [])
+    .map(s => String(s || '').trim()).filter(Boolean);
   const workoutSessionIds = new Set();
   const userInputs = [];
   const coachMessages = [];
@@ -420,8 +482,37 @@ function buildSessionEvidence(session, corpora, options) {
     if (ep) routeHints.add(ep.replace(/^[a-z]+\s+/, '')); // drop leading method ("post ")
   }
 
-  const dateSet = sessionDateSet(session, windowMs);
-  const logRows = correlateLogs(session, corpora.Log_Cleaned, workoutSessionIds, dateSet);
+  // Exact identity beats the date heuristic. An explicit id REPLACES transcript
+  // discovery, and with either one present the date fallback is switched off.
+  const correlationIds = explicitIds.length ? new Set(explicitIds) : workoutSessionIds;
+  const dateFallbackAllowed = explicitIds.length === 0;
+  const dateSet = dateFallbackAllowed ? sessionDateSet(session, windowMs) : new Set();
+  let logRows = correlateLogs(session, corpora.Log_Cleaned, correlationIds, dateSet);
+
+  // Grade the join, and refuse a date fallback that cannot name one workout.
+  const usedDateFallback = logRows.length > 0 && logRows.every(x => x.match === 'date_window');
+  const ambiguity = usedDateFallback ? dateFallbackAmbiguity(logRows) : { ambiguous: false, distinct_session_ids: [], reason: '' };
+  if (ambiguity.ambiguous) logRows = [];
+
+  // When the date fallback DID name exactly one workout, that identity is now
+  // ESTABLISHED and every sidecar tab is joined against it. Without this the
+  // sidecars would still be matched on date alone, so an `Effort` or
+  // `Session_Plans` row carrying a DIFFERENT workout id could be attributed to
+  // this verdict — two workouts' evidence reported as one session's PASS.
+  const establishedIds = new Set(correlationIds);
+  if (!ambiguity.ambiguous) for (const id of ambiguity.distinct_session_ids) establishedIds.add(id);
+
+  const logCorrelation = {
+    basis: explicitIds.length ? 'explicit_session_id'
+      : (logRows.length && !usedDateFallback ? 'session_id'
+        : (usedDateFallback ? 'date_window' : 'none')),
+    date_fallback_allowed: dateFallbackAllowed,
+    dates_considered: Array.from(dateSet).sort(),
+    established_session_ids: Array.from(establishedIds).map(s => String(s).toLowerCase()).sort(),
+    ambiguous: ambiguity.ambiguous,
+    distinct_session_ids: ambiguity.distinct_session_ids,
+    reason: ambiguity.reason
+  };
   const brain = correlateByTime(session, corpora.Brain_Shadow, windowMs, routeHints);
   const intent = correlateByTime(session, corpora.Intent_Shadow, windowMs, routeHints);
 
@@ -453,6 +544,7 @@ function buildSessionEvidence(session, corpora, options) {
     bug_markers: bugMarkers,
     errors,
     workout_rows_written: logRows.map(x => ({ match: x.match, ...pickLogRow(x.row) })),
+    log_correlation: logCorrelation,
     brain_shadow_near: brain.map(x => ({ match: x.match, ...pickBrainRow(x.rec) })),
     intent_shadow_near: intent.map(x => ({ match: x.match, ...pickIntentRow(x.rec) })),
     bug_reports: bugReports.map(x => ({ match: x.match, ...pickBugRow(x.rec) }))
@@ -948,6 +1040,7 @@ module.exports = {
   correlateByTime,
   correlateLogs,
   sessionDateSet,
+  dateFallbackAmbiguity,
   buildSessionEvidence,
   detectAnomalies,
   parseConfirmClaim,
