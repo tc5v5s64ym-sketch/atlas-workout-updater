@@ -126,23 +126,106 @@ function sessionEndMs(s) {
 // sessions sit in the same cumulative tab — so preferring "any linked session" would review
 // an old good session and silently skip the newest broken one (a false green). We instead
 // select the candidate with the latest end time. (Codex P1.)
+// A TOTAL, deterministic ordering over candidate sessions.
+//
+// The previous comparator was `endA - endB`, and `sessionEndMs` returns
+// -Infinity for a session whose timestamps are all unparseable. Two such
+// sessions produced `-Infinity - -Infinity` = NaN, and a NaN comparator leaves
+// the sort order implementation-defined — so two runs over the SAME data could
+// pick different sessions. That is one of the two ways a text run and a --json
+// run disagreed. Every branch below returns a real number, and the final
+// tie-break is the session id, so identical input always yields an identical
+// pick regardless of run, output mode, or engine.
+function compareCandidates(a, b) {
+  const ea = sessionEndMs(a.session);
+  const eb = sessionEndMs(b.session);
+  if (ea !== eb) {
+    if (ea === -Infinity) return -1;
+    if (eb === -Infinity) return 1;
+    return ea < eb ? -1 : 1;
+  }
+  const fa = a.session.first_at_ms == null ? -Infinity : a.session.first_at_ms;
+  const fb = b.session.first_at_ms == null ? -Infinity : b.session.first_at_ms;
+  if (fa !== fb) {
+    if (fa === -Infinity) return -1;
+    if (fb === -Infinity) return 1;
+    return fa < fb ? -1 : 1;
+  }
+  const ia = String(a.session.flight_session_id || '');
+  const ib = String(b.session.flight_session_id || '');
+  if (ia !== ib) return ia < ib ? -1 : 1;
+  return a.mode < b.mode ? -1 : (a.mode > b.mode ? 1 : 0);
+}
+
+// Pick the NEWEST session to review. Crucially, LINKED sessions and UNLINKED (server-only)
+// clusters are compared on the SAME time axis: in the exact v141 shape this command exists to
+// catch, the newest owner session can have ONLY unlinked server rows while older LINKED
+// sessions sit in the same cumulative tab — so preferring "any linked session" would review
+// an old good session and silently skip the newest broken one (a false green). We instead
+// select the candidate with the latest end time. (Codex P1.)
+//
+// An explicitly requested session ALWAYS WINS, and the returned `selection` block
+// records how the pick was made so a text run and a --json run can be compared
+// field by field instead of trusted.
 function selectLatestSession(frRecords, opts) {
   const { sessions, noSession } = fr.groupBySession(frRecords || []);
   if (opts && opts.session) {
     const want = String(opts.session).trim();
     const hit = sessions.find(s => s.flight_session_id === want);
-    if (hit) return { session: hit, mode: 'linked', other_session_count: sessions.length - 1 };
-    return { session: null, mode: 'none', other_session_count: sessions.length, requested_missing: want };
+    if (hit) {
+      return {
+        session: hit,
+        mode: 'linked',
+        other_session_count: sessions.length - 1,
+        selection: { basis: 'explicit', requested: want, candidate_count: sessions.length, ambiguous: false, reason: '' }
+      };
+    }
+    return {
+      session: null,
+      mode: 'none',
+      other_session_count: sessions.length,
+      requested_missing: want,
+      selection: { basis: 'explicit', requested: want, candidate_count: sessions.length, ambiguous: false, reason: `requested session ${want} not found` }
+    };
   }
   const unlinked = clusterUnlinked(noSession, opts && opts.unlinkedGapMs);
   const candidates = [
     ...sessions.map(s => ({ session: s, mode: 'linked' })),
     ...unlinked.map(s => ({ session: s, mode: 'server-only' }))
   ];
-  if (!candidates.length) return { session: null, mode: 'none', other_session_count: 0 };
-  candidates.sort((a, b) => sessionEndMs(a.session) - sessionEndMs(b.session));
+  if (!candidates.length) {
+    return {
+      session: null,
+      mode: 'none',
+      other_session_count: 0,
+      selection: { basis: 'latest', requested: null, candidate_count: 0, ambiguous: false, reason: '' }
+    };
+  }
+  candidates.sort(compareCandidates);
   const latest = candidates[candidates.length - 1];
-  return { session: latest.session, mode: latest.mode, other_session_count: candidates.length - 1 };
+
+  // Two DIFFERENT sessions ending at the same instant cannot be separated by
+  // "newest". The tie-break above still makes the pick reproducible, but a
+  // reproducible guess is still a guess — so the ambiguity is reported and the
+  // verdict fails closed rather than vouching for a session nobody chose.
+  const tied = candidates.filter(c => sessionEndMs(c.session) === sessionEndMs(latest.session));
+  const tiedDistinct = new Set(tied.map(c => `${c.mode}:${c.session.flight_session_id}`));
+  const ambiguous = tiedDistinct.size > 1;
+
+  return {
+    session: latest.session,
+    mode: latest.mode,
+    other_session_count: candidates.length - 1,
+    selection: {
+      basis: 'latest',
+      requested: null,
+      candidate_count: candidates.length,
+      ambiguous,
+      reason: ambiguous
+        ? `${tiedDistinct.size} sessions share the newest end time (${Array.from(tiedDistinct).sort().join(', ')}) — "newest" cannot name one; pass --session=<flight_session_id>`
+        : ''
+    }
+  };
 }
 
 // Correlate sidecar rows (Session_Plans / Effort) to the session by workout session id, else
@@ -279,8 +362,9 @@ function evaluateLedgerSeal(planSetRecs, ledgerReadable, sessionPlansRecs) {
 
 // Evaluate the trust criteria for the selected session. Every criterion is PASS / FAIL /
 // UNKNOWN; UNKNOWN means MISSING EVIDENCE (never a false green).
-function evaluateCriteria(evidence, session, mode, sidecar) {
+function evaluateCriteria(evidence, session, mode, sidecar, selection) {
   const ledgerReadable = sidecar && sidecar.ledger_readable === true;
+  const logCorrelation = (evidence && evidence.log_correlation) || { basis: 'none', ambiguous: false, reason: '', distinct_session_ids: [] };
   const counts = (evidence && evidence.event_type_counts) || {};
   const clientEvents = sumCounts(counts, CLIENT_EVENT_TYPES);
   const serverEvents = sumCounts(counts, SERVER_EVENT_TYPES);
@@ -376,6 +460,31 @@ function evaluateCriteria(evidence, session, mode, sidecar) {
   // 7. F10D — the Session_Plan_Sets seal (see evaluateLedgerSeal for the rules).
   out.push(evaluateLedgerSeal(sidecar.plan_sets || [], ledgerReadable, sidecar.session_plans_strict || sidecar.session_plans || []));
 
+  // 8. Correlation identity — is this evidence provably THIS session's?
+  //    Every criterion above reads correlated rows, so a wrong join makes the
+  //    whole verdict unreliable. This states the join's basis outright, and goes
+  //    UNKNOWN (never a pass) whenever the tool could not name one session.
+  const title = 'Evidence correlates to exactly one session';
+  if (selection && selection.ambiguous) {
+    out.push(crit('correlation_identity', title, V.UNKNOWN, selection.reason, true));
+  } else if (logCorrelation.ambiguous) {
+    out.push(crit('correlation_identity', title, V.UNKNOWN,
+      `${logCorrelation.reason}. Date-based correlation was refused for the log and every sidecar tab — pass --workout-session=<session_id> to correlate exactly.`, true));
+  } else if (logCorrelation.basis === 'explicit_session_id') {
+    out.push(crit('correlation_identity', title, V.PASS,
+      'Correlated by an explicitly supplied workout session id — exact join, no date heuristic used.'));
+  } else if (logCorrelation.basis === 'session_id') {
+    out.push(crit('correlation_identity', title, V.PASS,
+      'Correlated by a workout session id discovered in the transcript — exact join, no date heuristic used.'));
+  } else if (logCorrelation.basis === 'date_window') {
+    const named = logCorrelation.distinct_session_ids || [];
+    out.push(crit('correlation_identity', title, V.PASS,
+      `Correlated by the local-date window (no workout session id in the transcript); the matched rows name ${named.length ? `one workout (${named[0]})` : 'no competing workout'}.`));
+  } else {
+    out.push(crit('correlation_identity', title, V.UNKNOWN,
+      'No Log rows correlate by id or date, so no evidence could be attributed to this session.', true));
+  }
+
   return out;
 }
 
@@ -402,17 +511,29 @@ function reviewCorpora(corpora, opts) {
       reason: picked.requested_missing ? `requested session ${picked.requested_missing} not found` : 'no Flight Recorder sessions found',
       criteria: [],
       build_change: { detected: false, versions: [] },
-      other_session_count: picked.other_session_count || 0
+      other_session_count: picked.other_session_count || 0,
+      selection: picked.selection || null
     };
   }
 
   const session = picked.session;
-  const evidence = fr.buildSessionEvidence(session, corpora, { windowMs });
+  // An explicitly supplied workout identity always wins over every heuristic.
+  const explicitWorkoutSessionIds = (options.workoutSessionIds || [])
+    .map(s => String(s || '').trim()).filter(Boolean);
+  const evidence = fr.buildSessionEvidence(session, corpora, { windowMs, explicitWorkoutSessionIds });
+  const logCorrelation = evidence.log_correlation || { basis: 'none', ambiguous: false, reason: '', distinct_session_ids: [] };
 
   // Sidecar joins (Session_Plans + Effort) by workout session id, else by date.
   const idSet = new Set([session.flight_session_id, ...(evidence.workout_session_ids || [])]
     .map(s => String(s || '').trim().toLowerCase()).filter(Boolean));
-  const dateSet = fr.sessionDateSet(session, windowMs);
+  // The date fallback is refused wholesale when it cannot name one workout, or
+  // when an exact identity was supplied. Refusing it HERE too matters: correlating
+  // the log strictly while still date-matching the sidecars would attribute another
+  // session's plan, effort and ledger rows to this verdict — the precise silent
+  // mis-attribution this fix exists to prevent.
+  const dateSet = (logCorrelation.ambiguous || explicitWorkoutSessionIds.length)
+    ? new Set()
+    : fr.sessionDateSet(session, windowMs);
   const sidecar = {
     session_plans: correlateSidecar(corpora.Session_Plans, idSet, dateSet),
     effort: correlateSidecar(corpora.Effort, idSet, dateSet),
@@ -435,7 +556,7 @@ function reviewCorpora(corpora, opts) {
     if (v && !versions.includes(v)) versions.push(v);
   }
 
-  const criteria = evaluateCriteria(evidence, session, picked.mode, sidecar);
+  const criteria = evaluateCriteria(evidence, session, picked.mode, sidecar, picked.selection);
 
   return {
     generated_at: options.now || null,
@@ -457,7 +578,9 @@ function reviewCorpora(corpora, opts) {
     overall: overallFrom(criteria),
     criteria,
     anomalies: evidence.anomalies,
-    other_session_count: picked.other_session_count || 0
+    other_session_count: picked.other_session_count || 0,
+    selection: picked.selection || null,
+    log_correlation: logCorrelation
   };
 }
 
@@ -480,8 +603,18 @@ function renderHuman(review) {
   }
   const s = review.session;
   L.push(`Session:     ${s.flight_session_id}  (${s.mode})`);
+  // Both output modes print the same selection and correlation facts, so a text
+  // run and a --json run can be compared directly instead of taken on trust.
+  if (review.selection) {
+    L.push(`Selected by: ${review.selection.basis}${review.selection.requested ? ` (--session=${review.selection.requested})` : ''}   candidates: ${review.selection.candidate_count}`);
+    if (review.selection.ambiguous) L.push(`  ⚠️  ambiguous: ${review.selection.reason}`);
+  }
   L.push(`Window:      ${s.first_at || '?'} → ${s.last_at || '?'}   events: ${s.event_count}`);
   L.push(`Correlated:  ${s.log_rows} Log · ${s.effort_rows} Effort · ${s.plan_rows} Session_Plans · ${s.ledger_rows != null ? s.ledger_rows : '?'} Session_Plan_Sets`);
+  if (review.log_correlation) {
+    L.push(`Join basis:  ${review.log_correlation.basis}`);
+    if (review.log_correlation.ambiguous) L.push(`  ⚠️  ${review.log_correlation.reason}`);
+  }
   if (review.build_change.detected) {
     L.push(`Build change: ⚠️  ${review.build_change.versions.join(' → ')} (split-build caveat)`);
   }
@@ -504,7 +637,7 @@ function renderHuman(review) {
 
 // ---- IO shell (live sheets / offline dir) ---------------------------------------------
 function parseArgs(argv) {
-  const opts = { json: false, windowMins: 5, fromDir: null, sheet: null, session: null };
+  const opts = { json: false, windowMins: 5, fromDir: null, sheet: null, session: null, workoutSessionIds: [] };
   for (const a of argv) {
     if (a === '--json') opts.json = true;
     else if (a === '--help' || a === '-h') opts.help = true;
@@ -512,6 +645,14 @@ function parseArgs(argv) {
     else if (a.startsWith('--from-dir=')) opts.fromDir = a.slice('--from-dir='.length);
     else if (a.startsWith('--sheet=')) opts.sheet = a.slice('--sheet='.length);
     else if (a.startsWith('--session=')) opts.session = a.slice('--session='.length);
+    // Repeatable, and comma-separated for convenience. Naming the workout makes
+    // correlation exact and switches the date heuristic off completely.
+    else if (a.startsWith('--workout-session=')) {
+      for (const id of a.slice('--workout-session='.length).split(',')) {
+        const v = id.trim();
+        if (v) opts.workoutSessionIds.push(v);
+      }
+    }
   }
   return opts;
 }
@@ -557,6 +698,7 @@ function helpText() {
     '  npm run atlas:review-live                 Human summary of the newest session',
     '  npm run atlas:review-live -- --json       Machine-readable review',
     '  npm run atlas:review-live -- --session=<flight_session_id>',
+    '  npm run atlas:review-live -- --workout-session=<session_id>   Exact join; no date heuristic',
     '  npm run atlas:review-live -- --from-dir=backups/<ts>   (offline)',
     '',
     'No Sheet ID / tab / session id needed: reads local .env + config/sheetContract.js.',
@@ -590,6 +732,7 @@ async function main() {
   const review = reviewCorpora(corpora, {
     windowMins: opts.windowMins,
     session: opts.session,
+    workoutSessionIds: opts.workoutSessionIds,
     source,
     rowCounts,
     now: new Date().toISOString()
@@ -603,6 +746,8 @@ module.exports = {
   REVIEW_TABS,
   REVIEW_COLUMNS,
   toReviewCorpora,
+  parseArgs,
+  compareCandidates,
   selectLatestSession,
   clusterUnlinked,
   correlateSidecar,
