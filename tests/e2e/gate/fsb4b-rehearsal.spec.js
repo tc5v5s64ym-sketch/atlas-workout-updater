@@ -245,15 +245,27 @@ async function finishAndSave(page, srv, session, expectLogRows, prefix) {
   }
   await snap(page, `${prefix}-after-approval.png`);
 
-  const saveLabel = await page.locator('.review .rv-save').first().innerText().catch(() => '');
   const writeCalls = netLog.filter(n => /log-?workout|complete-?workout/i.test(n.path));
   verdict(session, 'approval_completes_the_save', doneCount > 0,
-    `review card reached .done=${doneCount}; Save reads ${JSON.stringify(saveLabel)}; write calls: ${JSON.stringify(writeCalls.slice(-4))}`);
+    `review card reached .done=${doneCount}; write calls: ${JSON.stringify(writeCalls.slice(-4))}`);
 
-  // The visible control must reach a COMPLETED state — the F-SB1-B trust defect was a
-  // button left reading "Saving…" over a write that had actually succeeded.
-  verdict(session, 'save_control_not_stuck', !/saving/i.test(saveLabel),
-    `the review-card Save control reads ${JSON.stringify(saveLabel)}`);
+  // The completed state must be what the OWNER SEES. F-SB1-B was a trust defect precisely
+  // because the owner read a stuck "Saving…" as a lost workout, so the honest check is the
+  // VISIBLE surface: the action row is replaced by the saved confirmation, and no visible
+  // text still claims a save is in flight.
+  //
+  // Reading `.rv-save`'s text directly is the wrong check — `.review.done .rv-act` is
+  // `display: none`, so that label is retired along with the whole action row and its
+  // residual "Saving…" is never rendered to anyone. Asserting on hidden text reports a
+  // defect the product does not have.
+  const actVisible = await page.locator('.review.done .rv-act').isVisible().catch(() => false);
+  const savedVisible = await page.locator('.review.done .rv-saved').isVisible().catch(() => false);
+  const visibleCardText = await page.locator('.review.done').first().innerText().catch(() => '');
+  verdict(session, 'save_control_reaches_completed_state',
+    doneCount > 0 && !actVisible && savedVisible,
+    `action row visible=${actVisible} (must be false), saved confirmation visible=${savedVisible} (must be true)`);
+  verdict(session, 'no_visible_saving_state_remains', !/saving/i.test(visibleCardText),
+    `the saved card still shows an in-flight state: ${JSON.stringify(visibleCardText.slice(0, 160))}`);
 
   const afterWrite = await srv.state();
   const logRows = rowsFor(afterWrite, 'Log_Cleaned');
@@ -294,7 +306,10 @@ async function finishAndSave(page, srv, session, expectLogRows, prefix) {
 // 2026-08-02 was post-write and never independently confirmed; this is where it would
 // reproduce, so the exact status and body prefix are preserved either way.
 async function weeklySummary(base) {
-  const res = await fetch(`${base}/api/summary/weekly`, { headers: { 'x-api-key': GATE_KEY } });
+  // `x-atlas-api-key` is the gate the app itself authenticates with (index.js). An
+  // `x-api-key` header is simply unauthenticated and returns 401 — a harness mistake that
+  // would have been misread as the endpoint failing.
+  const res = await fetch(`${base}/api/summary/weekly`, { headers: { 'x-atlas-api-key': GATE_KEY } });
   const text = await res.text();
   let parsed = null;
   try { parsed = JSON.parse(text); } catch { /* body preserved as text below */ }
@@ -304,8 +319,11 @@ async function weeklySummary(base) {
 async function checkWeeklySummary(base, session) {
   const r = await weeklySummary(base);
   verdict(session, 'weekly_summary_200', r.status === 200, `HTTP ${r.status} — body: ${JSON.stringify(r.body)}`);
-  verdict(session, 'weekly_summary_bounded_body', r.parsed !== null && typeof r.parsed === 'object',
-    `body did not parse as a bounded JSON object: ${JSON.stringify(r.body)}`);
+  // A parseable body is not enough: an error envelope parses too. The response must be a
+  // SUCCESSFUL bounded document, or the check would pass on the very 500 it exists to catch.
+  verdict(session, 'weekly_summary_bounded_body',
+    r.status === 200 && r.parsed !== null && typeof r.parsed === 'object' && r.parsed.status !== 'error',
+    `expected a successful bounded JSON object, got HTTP ${r.status}: ${JSON.stringify(r.body)}`);
   return r;
 }
 
