@@ -66,9 +66,29 @@ function freshRunId(session) {
   return `FSB4B-S${session}-${stamp}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
 }
 
+// Every verdict is appended to disk the moment it is decided.
+//
+// Playwright restarts its worker process after a failing test, which re-imports this file
+// and resets any in-memory array. A whole five-session run once reported "PASS 0 · FAIL 0"
+// for that reason alone — the final worker had only ever seen the last session. The
+// durable JSONL is the authority; the in-memory array is only a convenience.
 function verdict(session, id, ok, detail) {
-  scorecard.push({ session, id, verdict: ok ? 'PASS' : 'FAIL', detail: detail || '' });
+  const row = { session, id, verdict: ok ? 'PASS' : 'FAIL', detail: detail || '' };
+  scorecard.push(row);
+  if (artDir) {
+    try { fs.appendFileSync(path.join(artDir, 'verdicts.jsonl'), `${JSON.stringify(row)}\n`); }
+    catch { /* the in-memory copy still carries it */ }
+  }
   return ok;
+}
+
+// Read back every verdict this RUN recorded, across all workers, in order.
+function allVerdicts() {
+  const file = path.join(artDir, 'verdicts.jsonl');
+  if (!fs.existsSync(file)) return scorecard;
+  return fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map(l => {
+    try { return JSON.parse(l); } catch { return null; }
+  }).filter(Boolean);
 }
 
 // Sessions run in order (the runner uses --workers=1) but are INDEPENDENT. Serial mode
@@ -92,14 +112,15 @@ test.beforeAll(async ({}, testInfo) => {
 
 test.afterAll(async () => {
   if (!artDir) return;
-  const pass = scorecard.filter(s => s.verdict === 'PASS').length;
-  const fail = scorecard.filter(s => s.verdict === 'FAIL').length;
-  const summary = { generated_at: new Date().toISOString(), pass, fail, conditions: scorecard };
+  const all = allVerdicts();
+  const pass = all.filter(s => s.verdict === 'PASS').length;
+  const fail = all.filter(s => s.verdict === 'FAIL').length;
+  const summary = { generated_at: new Date().toISOString(), pass, fail, conditions: all };
   fs.writeFileSync(path.join(artDir, 'scorecard.json'), JSON.stringify(summary, null, 2));
   const md = [
     '# F-SB4B owner-pattern rehearsal scorecard', '',
     `PASS ${pass} · FAIL ${fail}`, '',
-    ...scorecard.map(s => `- **S${s.session} ${s.id}** — ${s.verdict}${s.detail ? ` — ${s.detail}` : ''}`),
+    ...all.map(s => `- **S${s.session} ${s.id}** — ${s.verdict}${s.detail ? ` — ${s.detail}` : ''}`),
   ];
   fs.writeFileSync(path.join(artDir, 'SCORECARD.md'), md.join('\n'));
 });
@@ -362,7 +383,7 @@ function writeSessionEvidence(session, runId, srv, result, extra) {
 // Fail the test only at the END, so one bad condition still yields a full scorecard.
 function assertSessionPassed(session) {
   dumpDiagnostics(session);
-  const failed = scorecard.filter(s => s.session === session && s.verdict === 'FAIL');
+  const failed = allVerdicts().filter(s => s.session === session && s.verdict === 'FAIL');
   expect(failed, `S${session} conditions failed:\n${failed.map(f => `  ${f.id}: ${f.detail}`).join('\n')}`).toHaveLength(0);
 }
 
@@ -902,27 +923,24 @@ test('S5 — an evening session: the referent stays on the fresh proposal and th
   const SESSION_NO = 5;
   const runId = freshRunId(5);
 
-  // Place the session at 20:34 Pacific, whose UTC instant is 03:34 the FOLLOWING day.
-  // `services/sessionId.js` derives the session date and AM/PM from process-local time,
-  // so TZ plus the offset reproduce the condition deterministically at any real hour.
-  const realNow = new Date();
-  const target = new Date(Date.UTC(realNow.getUTCFullYear(), realNow.getUTCMonth(), realNow.getUTCDate(), 3, 34, 0));
-  if (target.getTime() <= realNow.getTime()) target.setUTCDate(target.getUTCDate() + 1);
-  const clockOffsetMs = target.getTime() - realNow.getTime();
-
-  const srv = await bootRehearsalServer({
-    TZ: 'America/Los_Angeles',
-    ATLAS_GATE_CLOCK_OFFSET_MS: String(clockOffsetMs),
-  });
+  // The evening condition WITHOUT touching the clock.
+  //
+  // The defect this session reproduces is a RELATIONSHIP: the workout rows carry the
+  // athlete's local date while the transcript carries UTC timestamps from later that
+  // evening, whose UTC date is the next day. Shifting the process clock to manufacture
+  // that relationship broke Google's auth outright — a service-account JWT must be
+  // short-lived and in a reasonable timeframe, so a twelve-hour offset made every Sheets
+  // call fail with invalid_grant and no session could even boot.
+  //
+  // Nothing needs to move. The session runs at real time under TZ=America/Los_Angeles, so
+  // its rows carry the true Pacific date. The transcript is then materialized at 20:34
+  // Pacific ON THAT SAME DATE, whose UTC instant falls on the following day. That is the
+  // exact relationship the reviewer failed on, built from real durable rows.
+  const srv = await bootRehearsalServer({ TZ: 'America/Los_Angeles' });
   try {
     verdict(5, 'model_up_posture', /GATE_MODEL_POSTURE=model-up/.test(srv.banner), srv.banner.match(/GATE_MODEL_POSTURE=[^\n]*/)?.[0]);
     verdict(5, 'sandbox_posture', /GATE_SHEETS_POSTURE=sandbox-live/.test(srv.banner), srv.banner.match(/GATE_SHEETS_POSTURE=[^\n]*/)?.[0]);
 
-    const shifted = srv.banner.match(/shifted_now=(\S+)/)?.[1] || '';
-    const shiftedUtcDate = shifted.slice(0, 10);
-    const localDate = new Date(target.getTime()).toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
-    verdict(5, 'evening_condition_established', Boolean(shiftedUtcDate) && localDate < shiftedUtcDate,
-      `Pacific-local date ${localDate} must precede the UTC date ${shiftedUtcDate} (shifted_now=${shifted})`);
 
     await openApp(page, srv.base);
     await acceptPlan(page, [
@@ -1005,7 +1023,14 @@ test('S5 — an evening session: the referent stays on the fresh proposal and th
 
     // This session's transcript, at the EVENING UTC instants — the condition under test.
     const flightSessionId = `FR-FSB4B-S5-${crypto.randomBytes(4).toString('hex')}`;
-    const t0 = new Date(target.getTime());
+    // 20:34 Pacific on the session's own local date. Its UTC instant is the NEXT day —
+    // the exact relationship that made the reviewer report a passing session all-UNKNOWN.
+    const sessionLocalDate = (result.logRows[0] && String(result.logRows[0][LOG('date_clean')] || '').trim())
+      || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
+    const t0 = new Date(`${sessionLocalDate}T20:34:00-07:00`);
+    const eveningUtcDate = t0.toISOString().slice(0, 10);
+    verdict(5, 'evening_condition_established', sessionLocalDate < eveningUtcDate,
+      `Pacific-local workout date ${sessionLocalDate} must precede the transcript's UTC date ${eveningUtcDate}`);
     const frRows = [
       ['captured_at', 'flight_session_id', 'seq', 'app_version', 'device_id', 'route', 'event_type',
         'user_input', 'user_action', 'ui_snapshot_json', 'session_state_json', 'api_endpoint',
@@ -1061,9 +1086,8 @@ test('S5 — an evening session: the referent stays on the fresh proposal and th
 
     writeSessionEvidence(5, runId, srv, result, {
       flight_session_id: flightSessionId,
-      pacific_local_date: localDate,
-      utc_date: shiftedUtcDate,
-      clock_offset_ms: clockOffsetMs,
+      pacific_local_date: sessionLocalDate,
+      transcript_utc_date: eveningUtcDate,
     });
     assertSessionPassed(5);
   } finally {

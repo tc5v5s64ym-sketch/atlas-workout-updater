@@ -38,35 +38,6 @@
 // wants no `.env` value at all — every variable it needs is either set explicitly
 // below or passed by the spawning spec's `env`. Both this file and index.js resolve
 // `dotenv` to the same node_modules path, so this single cache entry covers both.
-// ── TEMPORARY F-SB4B CLOCK SHIM. REMOVE IN F-SB4C. ─────────────────────────────
-//
-// Session 5 of the owner-pattern rehearsal must run at a Pacific EVENING timestamp whose
-// UTC date is the FOLLOWING day — the exact shape that broke `atlas:review-live`, where
-// the workout rows carry the local date and the transcript carries UTC. That condition
-// only occurs naturally when real UTC time is between 00:00 and ~07:00, so waiting for it
-// would make the rehearsal unrunnable for most of the day.
-//
-// `services/sessionId.js` derives both the session date and the AM/PM suffix from
-// PROCESS-LOCAL time, so the condition is reproducible with two knobs: the spawning spec
-// sets TZ=America/Los_Angeles and passes a millisecond offset here. Nothing in production
-// reads this; it is installed in the harness child only, before index.js loads, and no
-// application file is touched. `faketime` is not available in this environment, which is
-// why the shim is a Date subclass rather than a process-wide clock.
-const CLOCK_OFFSET_MS = Number(process.env.ATLAS_GATE_CLOCK_OFFSET_MS || 0);
-if (Number.isFinite(CLOCK_OFFSET_MS) && CLOCK_OFFSET_MS !== 0) {
-  const RealDate = Date;
-  const shifted = () => RealDate.now() + CLOCK_OFFSET_MS;
-  class ShiftedDate extends RealDate {
-    constructor(...args) {
-      if (args.length === 0) super(shifted());
-      else super(...args);
-    }
-    static now() { return shifted(); }
-  }
-  globalThis.Date = ShiftedDate;
-  console.log(`GATE_CLOCK_OFFSET_MS=${CLOCK_OFFSET_MS} shifted_now=${new ShiftedDate().toISOString()}`);
-}
-
 try {
   const dotenvPath = require.resolve('dotenv');
   require.cache[dotenvPath] = {
