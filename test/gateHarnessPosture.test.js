@@ -108,15 +108,49 @@ test('an exported production-looking workbook id is ignored, not inherited', asy
   assert.ok(!/a-production-workbook-id/.test(r.stdout), 'the harness echoed the supplied workbook id');
 });
 
-test('the harness advertises no live-workbook posture at all', async () => {
-  // The sandbox-live posture is gone. A harness that advertised it again — by a restored flag,
-  // a revived branch, or a copied file — would be reintroducing a path to a real workbook, and
-  // that must fail here rather than be discovered by a reviewer.
-  const r = await runHarness({ ATLAS_GATE_KEY: 'k', ATLAS_GATE_SANDBOX_LIVE: '1', ...FAKE_CREDS });
+test('the sandbox-live posture refuses fake credentials rather than serving a half-configured run', async () => {
+  // TEMPORARY F-SB4B — RESTORE THE UNCONDITIONAL ASSERTION IN F-SB4C.
+  //
+  // Until Stage A closed, this test asserted that NO live-workbook posture existed at all.
+  // The owner ruling of 2026-08-02 (option A) restored the posture for the F-SB4 rehearsal,
+  // so the absence assertion is temporarily wrong and would fail on correct code. What must
+  // still hold — and what this now pins — is that the posture cannot be entered casually:
+  // it fails CLOSED on anything it needs and does not have.
+  //
+  // FAKE_CREDS are syntactically present but not a real service account, so the sandbox
+  // preflight cannot resolve the declared workbook and must refuse. A harness that PUBLISHED
+  // a port here would be serving a run whose workbook was never verified.
+  const r = await runHarness({ ATLAS_GATE_KEY: 'k', ATLAS_GATE_SANDBOX_LIVE: '1', ...FAKE_CREDS }, { timeoutMs: 90000 });
+  assert.ok(!served(r), 'the sandbox-live posture published a port without a verified workbook');
+  assert.strictEqual(r.code, 2);
+  assert.match(r.stderr, /GATE_SANDBOX_ERROR:/,
+    'the refusal must name which sandbox preflight check failed');
+});
+
+test('the sandbox-live + ledger combination is refused for any workbook that is not the declared sandbox', async () => {
+  // TEMPORARY F-SB4B — DELETE WITH THE PERMISSION IN F-SB4C.
+  //
+  // The owner authorized the ledger tabs in the DECLARED SANDBOX ONLY. The permission is
+  // therefore scoped to that one workbook literal, and every other workbook keeps the
+  // original hard refusal — so a stray GOOGLE_SHEETS_ID can never unlock a live ledger
+  // write. This pins the scope, which is the part of the permission that must not drift.
+  const r = await runHarness({
+    ATLAS_GATE_KEY: 'k',
+    ATLAS_GATE_SANDBOX_LIVE: '1',
+    ATLAS_GATE_LEDGER_SANDBOX: '1',
+    ...FAKE_CREDS,
+  }, { timeoutMs: 90000 });
+  assert.ok(!served(r), 'a ledger-enabled sandbox-live run published a port without a verified workbook');
+  assert.strictEqual(r.code, 2);
+});
+
+test('the default posture is still the in-memory stub, and never sandbox-live', async () => {
+  // The restored posture is STRICTLY OPT-IN. Without the flag nothing Google-shaped exists,
+  // which is what keeps every other gate spec credential-free and write-free.
+  const r = await runHarness({ ATLAS_GATE_KEY: 'k', ...FAKE_CREDS });
   assert.ok(served(r), `the harness failed to start: ${r.stderr.slice(-600)}`);
-  assert.match(r.stdout, /GATE_SHEETS_POSTURE=in-memory-stub/,
-    'a retired posture flag changed the sheets posture');
-  assert.ok(!/sandbox-live/.test(r.stdout), 'the harness advertised a sandbox-live posture');
+  assert.match(r.stdout, /GATE_SHEETS_POSTURE=in-memory-stub/);
+  assert.ok(!/sandbox-live/.test(r.stdout), 'the default posture advertised sandbox-live');
 });
 
 // ── model posture, unchanged authority from PR #1226 ───────────────────────────
@@ -207,8 +241,46 @@ test('the retired Stage-A operator commands and runner are absent', () => {
     'a retired Stage-A operator command reappeared in package.json');
 
   const harness = fs.readFileSync(path.join(root, 'tests/e2e/gate/gate-server.js'), 'utf8');
-  for (const token of ['ATLAS_GATE_SANDBOX_LIVE', 'buildGuardedSheets', 'assertSandboxLive', 'durable-rows']) {
-    assert.ok(!harness.includes(token),
-      `gate-server.js reintroduced "${token}" — the live-workbook path is back`);
+  // The durable-row verifier stayed retired. It was a harness-side endpoint that read
+  // workbook rows back; the F-SB4 rehearsal reads the sandbox directly with the
+  // read-only reviewer instead, so no such endpoint is reintroduced.
+  assert.ok(!harness.includes('durable-rows'),
+    'gate-server.js reintroduced the durable-row verifier endpoint');
+});
+
+test('every restored F-SB4B artifact carries its F-SB4C removal marker', () => {
+  // TEMPORARY F-SB4B — THIS TEST IS DELETED IN F-SB4C, ONCE THE ARTIFACTS ARE.
+  //
+  // The sandbox-live posture is back under the owner ruling of 2026-08-02 (option A), so
+  // asserting its ABSENCE would now fail on correct code. What replaces that assertion is
+  // this: every restored piece must SAY it is temporary and name the slice that removes
+  // it. A sunset recorded only in a plan is a promise; a sunset that fails the build is a
+  // mechanism. F-SB4C deletes the artifacts, this test, and the two posture tests above
+  // together — and the file-absence list below keeps guarding the pieces that were never
+  // restored.
+  const fs = require('node:fs');
+  const root = path.join(__dirname, '..');
+  const harness = fs.readFileSync(path.join(root, 'tests/e2e/gate/gate-server.js'), 'utf8');
+
+  for (const token of ['ATLAS_GATE_SANDBOX_LIVE', 'buildGuardedSheets', 'assertSandboxLive']) {
+    assert.ok(harness.includes(token),
+      `gate-server.js is missing "${token}" — if F-SB4C has run, delete this test with it`);
   }
+  const markers = harness.match(/REMOVE IN F-SB4C/g) || [];
+  assert.ok(markers.length >= 3,
+    `each restored F-SB4B block must carry a "REMOVE IN F-SB4C" marker; found ${markers.length}`);
+
+  // The provisioner is temporary too, and says so in its own header.
+  const provisioner = path.join(root, 'scripts/fsb4b-provision-sandbox-ledger.js');
+  assert.strictEqual(fs.existsSync(provisioner), true,
+    'the F-SB4B provisioner is missing — if F-SB4C has run, delete this test with it');
+  assert.match(fs.readFileSync(provisioner, 'utf8'), /DELETE IN F-SB4C/,
+    'the provisioner must declare its own removal condition');
+
+  // The permission is SCOPED: the harness must still refuse a non-sandbox workbook.
+  assert.match(harness, /permitted ONLY against the declared sandbox workbook/,
+    'the ledger permission lost its declared-sandbox scope');
+  // And the app must still be structurally unable to create a tab.
+  assert.match(harness, /creating or ensuring a tab is a schema change and is owner-reserved/,
+    'the harness stopped refusing ensureSheetTab');
 });
