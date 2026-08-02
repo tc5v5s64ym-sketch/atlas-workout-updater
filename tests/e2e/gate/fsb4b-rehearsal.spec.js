@@ -71,7 +71,10 @@ function verdict(session, id, ok, detail) {
   return ok;
 }
 
-test.describe.configure({ mode: 'serial' });
+// Sessions run in order (the runner uses --workers=1) but are INDEPENDENT. Serial mode
+// skips every later test once one fails, which discards the evidence four other sessions
+// would have produced — the opposite of what a diagnosis needs. Consecutiveness is judged
+// from the scorecard, not from Playwright's skip behavior.
 
 // A full owner-pattern workout is a dozen model-up turns, each a real Gemini call and a
 // real Sheets round-trip, plus preview, approval, a durable write and a closeout. The
@@ -220,7 +223,22 @@ async function snap(page, name) {
 // `expectLogRows` is the session's DECLARED row count, stated before the run.
 async function finishAndSave(page, srv, session, expectLogRows, prefix) {
   await say(page, 'done');
-  await expect(page.locator('.closeout-confirm')).toHaveCount(1, { timeout: 60000 });
+  // Settle on the closeout WITHOUT throwing. A "done" that does not produce a closeout is
+  // a finding in its own right, and a bare timeout would discard the network trace and
+  // Atlas's own reply — the evidence that says whether the turn was misrouted or merely slow.
+  let confirmCount = 0;
+  for (let i = 0; i < 90 && confirmCount === 0; i += 1) {
+    await page.waitForTimeout(1000);
+    confirmCount = await page.locator('.closeout-confirm').count();
+  }
+  if (confirmCount === 0) {
+    const prose = await lastAtlas(page).innerText().catch(() => '');
+    await snap(page, `${prefix}-no-closeout.png`);
+    verdict(session, 'finish_produces_a_closeout', false,
+      `"done" produced no closeout card in 90s; Atlas said: ${JSON.stringify(prose.slice(0, 240))}; last calls: ${JSON.stringify(netLog.slice(-6))}`);
+    return { state: await srv.state(), logRows: [], sessionIds: [], previewText: '' };
+  }
+  verdict(session, 'finish_produces_a_closeout', true, `closeout card rendered after ${confirmCount} match(es)`);
   const reviewSave = page.locator('.review:not(.done) .rv-save');
   await expect(reviewSave).toBeVisible({ timeout: 30000 });
   await snap(page, `${prefix}-preview-before-write.png`);
@@ -381,6 +399,7 @@ const substitutedOutcomes = state => rowsFor(state, 'Session_Plans')
 //   closeout        closeout_fully_verified true only once state and ledger agree
 // =================================================================================
 test('S1 — the bench is taken: recommend, answer from the proposal, accept by logging, one canonical substitution', async ({ page }) => {
+  const SESSION_NO = 1;
   const runId = freshRunId(1);
   const srv = await bootRehearsalServer();
   try {
@@ -540,6 +559,7 @@ test('S1 — the bench is taken: recommend, answer from the proposal, accept by 
 
     assertSessionPassed(1);
   } finally {
+    dumpDiagnostics(SESSION_NO);
     srv.stop();
   }
 });
@@ -561,6 +581,7 @@ test('S1 — the bench is taken: recommend, answer from the proposal, accept by 
 //   durable rows    5 Log_Cleaned rows · 1 finalized closeout · ledger sealed
 // =================================================================================
 test('S2 — a conversational "No" is a correction, not a skip, and a generic yes binds once', async ({ page }) => {
+  const SESSION_NO = 2;
   const runId = freshRunId(2);
   const srv = await bootRehearsalServer();
   try {
@@ -658,6 +679,7 @@ test('S2 — a conversational "No" is a correction, not a skip, and a generic ye
     writeSessionEvidence(2, runId, srv, result);
     assertSessionPassed(2);
   } finally {
+    dumpDiagnostics(SESSION_NO);
     srv.stop();
   }
 });
@@ -680,6 +702,7 @@ test('S2 — a conversational "No" is a correction, not a skip, and a generic ye
 //   durable rows    6 Log_Cleaned rows · 1 finalized closeout · ledger sealed
 // =================================================================================
 test('S3 — a replacement second in a batch still binds to its source slot, exactly once', async ({ page }) => {
+  const SESSION_NO = 3;
   const runId = freshRunId(3);
   const srv = await bootRehearsalServer();
   try {
@@ -764,6 +787,7 @@ test('S3 — a replacement second in a batch still binds to its source slot, exa
     writeSessionEvidence(3, runId, srv, result);
     assertSessionPassed(3);
   } finally {
+    dumpDiagnostics(SESSION_NO);
     srv.stop();
   }
 });
@@ -785,6 +809,7 @@ test('S3 — a replacement second in a batch still binds to its source slot, exa
 //   endpoint        GET /api/summary/weekly → HTTP 200 with a bounded body
 // =================================================================================
 test('S4 — an honestly unfinished lift still saves, seals, and reports the truth', async ({ page }) => {
+  const SESSION_NO = 4;
   const runId = freshRunId(4);
   const srv = await bootRehearsalServer();
   try {
@@ -848,6 +873,7 @@ test('S4 — an honestly unfinished lift still saves, seals, and reports the tru
     writeSessionEvidence(4, runId, srv, result, { effort_rows: effortRows.length });
     assertSessionPassed(4);
   } finally {
+    dumpDiagnostics(SESSION_NO);
     srv.stop();
   }
 });
@@ -873,6 +899,7 @@ test('S4 — an honestly unfinished lift still saves, seals, and reports the tru
 //   endpoint        GET /api/summary/weekly → HTTP 200
 // =================================================================================
 test('S5 — an evening session: the referent stays on the fresh proposal and the reviewer finds it', async ({ page }) => {
+  const SESSION_NO = 5;
   const runId = freshRunId(5);
 
   // Place the session at 20:34 Pacific, whose UTC instant is 03:34 the FOLLOWING day.
@@ -1040,6 +1067,7 @@ test('S5 — an evening session: the referent stays on the fresh proposal and th
     });
     assertSessionPassed(5);
   } finally {
+    dumpDiagnostics(SESSION_NO);
     srv.stop();
   }
 });
