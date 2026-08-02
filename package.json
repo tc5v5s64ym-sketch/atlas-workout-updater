@@ -35,7 +35,8 @@
     "scan:secrets": "node scripts/check-changed-files-for-secrets.js",
     "smoke:render": "node scripts/smoke-test-render.js",
     "backup:sheets": "node scripts/export-sheets-backup.js",
-    "audit:finalized-orphans": "node scripts/atlas-audit-finalized-orphans.js"
+    "audit:finalized-orphans": "node scripts/atlas-audit-finalized-orphans.js",
+    "fsb4b:rehearsal": "ATLAS_FSB4B_REHEARSAL=1 playwright test tests/e2e/gate/fsb4b-rehearsal.spec.js --project=mobile-chromium --workers=1"
   },
   "engines": {
     "node": ">=18"

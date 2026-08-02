@@ -192,25 +192,31 @@ test('a scripted coach can never be served as a model-up run', async () => {
 
 // ── the default Playwright lane stays credential-free and write-free ───────────
 
-test('no spec in the e2e lane is gated behind a credentialed posture flag', () => {
-  // The one spec that needed excluding here was the temporary Stage-A runner, removed with
-  // its posture. `testIgnore` is therefore gone, and the lane collects everything — which is
-  // only safe because nothing left in it can reach a credential or a workbook.
+test('exactly ONE spec is credentialed, and it is excluded from the default lane', () => {
+  // TEMPORARY F-SB4B — RESTORE THE "NOTHING IS EXCLUDED" ASSERTION IN F-SB4C.
+  //
+  // The default e2e lane is credential-free and write-free by construction, and that is
+  // what lets CI run it. The F-SB4 rehearsal runner is the single exception: it drives a
+  // real provider and a real sandbox workbook. The risk is not that an exception exists —
+  // it is that the set of exceptions GROWS unnoticed, so this pins the set to exactly one
+  // named file and pins that the file is genuinely excluded.
   const fs = require('node:fs');
   const configText = fs.readFileSync(path.join(__dirname, '..', 'playwright.config.js'), 'utf8');
-  assert.ok(!/testIgnore/.test(configText),
-    'playwright.config.js reintroduced testIgnore — a spec is being excluded from the default lane');
+  assert.match(configText, /testIgnore:.*ATLAS_FSB4B_REHEARSAL.*'\*\*\/fsb4b-rehearsal\.spec\.js'/s,
+    'the credentialed rehearsal spec must be excluded unless explicitly opted into');
   assert.ok(!/ATLAS_GATE_SANDBOX_LIVE/.test(configText),
-    'playwright.config.js reintroduced the retired sandbox-live posture flag');
+    'playwright.config.js must not itself set the sandbox-live posture flag');
 
   const specDir = path.join(__dirname, '..', 'tests', 'e2e');
   const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const full = path.join(dir, e.name);
     return e.isDirectory() ? walk(full) : (e.name.endsWith('.spec.js') ? [full] : []);
   });
-  const offenders = walk(specDir).filter((f) => /ATLAS_GATE_SANDBOX_LIVE/.test(fs.readFileSync(f, 'utf8')));
-  assert.deepStrictEqual(offenders, [],
-    'a spec references the retired sandbox-live posture, so it may expect a real workbook');
+  const offenders = walk(specDir)
+    .filter((f) => /ATLAS_GATE_SANDBOX_LIVE/.test(fs.readFileSync(f, 'utf8')))
+    .map((f) => path.basename(f));
+  assert.deepStrictEqual(offenders, ['fsb4b-rehearsal.spec.js'],
+    'exactly one spec may reach a real workbook, and it is the F-SB4B rehearsal runner');
 });
 
 // ── the temporary Stage-A machinery is gone and stays gone ─────────────────────

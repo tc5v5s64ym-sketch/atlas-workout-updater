@@ -18,6 +18,15 @@ const executablePath = process.env.PLAYWRIGHT_BROWSERS_PATH
 
 module.exports = defineConfig({
   testDir: './tests/e2e',
+  // TEMPORARY F-SB4B — REMOVE IN F-SB4C.
+  // Exactly one spec talks to a real sandbox workbook and a real provider: the
+  // owner-pattern rehearsal runner. It needs credentials CI does not have and must never
+  // run in the default lane, which is credential-free and write-free by construction.
+  // It is invoked explicitly by `npm run fsb4b:rehearsal`, which is the ONLY thing that
+  // sets ATLAS_FSB4B_REHEARSAL=1. Collection is opt-in rather than opt-out, so a plain
+  // `playwright test` — with or without a path filter — can never pick it up by accident.
+  // When F-SB4C deletes the spec, this exclusion goes with it.
+  testIgnore: process.env.ATLAS_FSB4B_REHEARSAL === '1' ? [] : ['**/fsb4b-rehearsal.spec.js'],
   // Every spec in this directory is credential-free and write-free. The temporary Phase 4
   // Stage-A runner — the one spec that talked to a real sandbox workbook and had to be
   // excluded here — was removed under its recorded sunset once Stage A reached 5/5, so
