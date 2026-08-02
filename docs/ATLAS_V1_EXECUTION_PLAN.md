@@ -125,7 +125,30 @@ This is the single active, executable campaign. It is embedded here — not besi
 
 **Why zero checkpoint rows — still NOT established.** PR #1237 fixes how the condition is *reported*; it does not explain why a planned session produced zero `Session_Plan_Sets` rows with the live-write flag on and the tab present. Whether the checkpoint ran while the flag was still rolling out (a Render env change itself redeploys, so the flag's own rollout may overlap the session start) remains untested. Stage B workout 1's rerun is the next evidence.
 
-**Next card — F-SB1-C: substitution misrouting.** Diagnosed and fixed above. After it lands, restart Stage B at workout 1 from a single stable build.
+**F-SB1-C: substitution misrouting.** Diagnosed and fixed above (PR #1238). F-SB1 is closed.
+
+---
+
+**STAGE B — WORKOUT 1 RERUN: MISS (2026-08-02). Streak stays 0/5.** Owner verdict: **failed**. Flight Recorder `FR-20260802003433-ekvc9w8r`, 00:34:33→00:39:54Z, on a single build (`0b3967d`, deployed 00:25:04Z) with **no deploy or restart inside the session window** — the first Stage B evidence free of the split-build contaminant.
+
+**All three F-SB1 fixes held in production.**
+
+- **A/B — the save.** `test_mode:false`, `sheet_write:"success"`, `logAppendedRange` `Log_Cleaned!A1677:L1688`, `log_rows_written:12`, **`closeout_fully_verified:true`** — the exact field that was `false` in the first attempt.
+- **The plan ledger.** `ledger_seal_sealed_ok:true` with **24 rows sealed** (first attempt: **0**, `no_ledger`), `session_plans_closeout_captured:true`. **This settles the open question:** the first session's zero checkpoint rows were the write flag's own rollout overlapping the session start, not a defect in the checkpoint. Shown on the same code path with the flag settled, not inferred.
+- **C — the substitution.** "Seated row machine is busy I need a sub" classified `substitute_exercise` at confidence 0.9; `/api/suggest-substitute` returned 200. The first attempt silently skipped the lift instead.
+
+**F-SB2 — a prescription question is answered without an exercise referent (trust-critical). NEW.** Immediately after the substitute was offered, the owner asked **"Nice! How much should I lift?"** and Atlas answered about **Bench Press** — a lift he had finished twenty minutes earlier.
+
+- **Evidence.** `[coach-turn-shadow]` for `turn:2026-08-02T00:37:23.356Z_4_2hjb1y`: `embedded.exercises: 0`, `referent: {route: null, packet: null}`, `grounding: null`, `visible.source: "gemini"`. The turn reached `/api/coach/chat` carrying **no exercise identity at all**, so the model supplied its own referent.
+- **Constitution breach.** The engine owns numbers and the LLM only words facts. Here a numbers question was handed to the model with no engine fact attached.
+- **The deterministic answer existed and went unused.** `checkAndSuggestSubstitute` stores the substitute's prescription in `pendingSubstitution.prescription` (`src/app/app.js`). Its only consumer applies it when the next set is logged (line ~6112); nothing reads it to answer a question.
+- **Not a missed classifier.** `sessionQuestion.isSessionStateQuestion("Nice! How much should I lift?")` returns **true**. That flag only selects SME-vs-session-aware-coach; both branches end at the LLM. No deterministic prescription-answer lane exists.
+- **Classification: missing capability**, not a regression. `services/turnPrecedence.js` names it in its own header as a planned Phase-4 concern — *"scope a current-exercise prescription question to the active exercise"* — alongside promoting `discussion_referent` to a canonical CoachTurnPacket field.
+- **Unverified.** Whether the recommender returned a non-null `next_target` for the substitute is **not established** — the recommendation body is not logged. The fix must therefore handle both branches, and must say it has no target rather than guess.
+
+**Next card — F-SB2.** Answer a prescription question deterministically from the pending substitution's stored target, and say plainly that there is no target when none is stored. Never a model guess. **OWNER GATE: this adds a new deterministic coaching lane and new coaching copy, which is owner-reserved scope — it is not built on agent initiative.** The general `discussion_referent` capability stays where this plan already put it and is not pulled forward.
+
+**Instrument defect — `atlas:review-live` reported a passing session as all-UNKNOWN (trust-critical, tooling).** It correlated **0 Log · 0 Effort · 0 Session_Plans · 0 Session_Plan_Sets** for a session that wrote 12 rows and sealed 24. Cause: the recorder stores request field **names**, never values, so no workout `session_id` is discoverable in the transcript and correlation falls back to dates; `sessionDateSet` (`scripts/flight-review.js`) builds its window **forward only** from the flight session's UTC timestamps. A 17:34 Pacific workout is `2026-08-02` in UTC while its rows are correctly dated `2026-08-01`, so the set was `{2026-08-02, 2026-08-03}` and matched nothing. **Every evening workout breaks it**; the morning session correlated because its UTC and local dates agree. `UNKNOWN` is defined as never-a-pass, so trusting the instrument would have reset a passing streak. This is the second defect found in this tool (the first: text and `--json` runs auto-selecting different sessions). It adjudicates Stage B and should be fixed before workout 2.
 
 **OWNER GATE PASSED 2026-08-01 — STAGE B IS OPEN AT 0/5.** Dale set `SESSION_PLAN_SETS_WRITE_ENABLED=1` on Render and gave the go, which is step (a) of the Phase 4 owner gate script. Step (a) is now asked and answered; it is never asked again.
 
