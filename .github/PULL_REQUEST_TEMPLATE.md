@@ -17,7 +17,7 @@ or owner merge click is required for a routine authorized PR.
 | **Current-state verdict** | <!-- STILL BROKEN / ALREADY FIXED / PARTIALLY FIXED / FIXED BUT UNTESTED / STALE-SUPERSEDED / NEEDS OWNER APP-TEST --> |
 | **Tests / hard gates** | <!-- exact commands/checks + results --> |
 | **Advisory findings** | <!-- independent agent/optional clean review: fixed / non-issue / none --> |
-| **ChatGPT Atlas Contract Review** | <!-- NON-BLOCKING / READY / BLOCKING / not risk-triggered --> |
+| **Atlas Contract / Systems Review** | <!-- required (name the trigger) / not required (say why) — see the block below --> |
 | **Owner authorization required** | <!-- No, or exact reserved category and status --> |
 | **Live validation** | <!-- evidence/script needed, or n/a --> |
 | **Merge authority** | <!-- active builder merges exact passing head / blocked on owner authorization --> |
@@ -107,6 +107,31 @@ Write "n/a" on a line that genuinely does not apply.
 - Parent status after PR: <!-- foundation / integrated / proven / closed -->
 - Why the parent is or is not fully closed:
 - Owner-approved reason if complexity or open loops increase:
+
+### Atlas Contract / Systems Review
+
+<!--
+Owner instruction 2026-08-03, recorded in docs/ATLAS_V1_EXECUTION_PLAN.md. The ONE existing
+review lane — no second review system, no CI status, no reviewer account, no marker.
+
+Required when this PR touches: campaign gates · scorecards and counters · adjudicators ·
+rehearsal or test runners · evidence collectors · identity and correlation machinery · phase or
+count advancement · trust-sensitive write, schema, security, promotion, or destructive changes.
+Also required for phase transitions, roadmap changes, product/trust-contract changes, and genuine
+ambiguity. The reviewer reads the EXACT head in a clean context; an earlier commit does not count.
+
+The review asks: (1) does this hold in the next legitimate repository state, not only the current
+fixture? (2) can missing, no-op, defaulted, circular, or hardcoded evidence produce a false green?
+(3) does the proof establish identity, content, order, and authority — not cardinality alone?
+(4) does it remain correct when historical records coexist with current state? (5) what authority
+wins, what loses, what bridge remains, and when is it removed? (6) could this falsely advance a
+count or phase? (7) what temporary machinery must be deleted?
+-->
+
+- Required: <!-- required (name the trigger) / not required (say why no trigger fired) -->
+- Exact reviewed head: <!-- full 40-character commit SHA, or n/a -->
+- Reviewer: <!-- who or what performed the review, or n/a -->
+- Findings and dispositions: <!-- each finding + fixed / non-issue / routed, or "none", or n/a -->
 
 ### Advisory disposition
 
