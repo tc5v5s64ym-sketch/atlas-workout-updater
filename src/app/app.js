@@ -7755,7 +7755,15 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
   // It never could allocate one truthfully: only the server can see the durable records,
   // and a client that always guesses …-01 silently merged a second same-period workout
   // into the first whenever the first carried no (optional) Effort row.
-  const explicitSessionId = sessionIdInput.value.trim();
+  // An ACCEPTED plan's id is an ESTABLISHED identity, not a guess: acceptance already
+  // wrote Session_Plans and Session_Plan_Sets rows under it. Sending blank here would let
+  // the server allocate a second id for Log/Effort, forking one workout across four tabs —
+  // and the closeout would then look for its ledger under an id that has none, so no
+  // confirmation card can be built. Same precedence the closeout screenshot branch uses.
+  const acceptedPlanSessionId = (getActivePlannedSession()
+    && getActivePlannedSession().accepted === true
+    && getActivePlannedSession().session_id) || '';
+  const explicitSessionId = sessionIdInput.value.trim() || acceptedPlanSessionId;
   const completeWorkoutSessionId = explicitSessionId;
 
   try {
@@ -8553,7 +8561,8 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
       if (writeData.logAppendedRange) {
         pendingLastWrite = {
           log_appended_range: writeData.logAppendedRange,
-          session_id: realPayload.session_id,
+          // Server-reported identity first: it may have allocated one for a blank payload.
+          session_id: writeData.session_id || realPayload.session_id,
           log_rows_written: writeData.log_rows_written
         };
       }
