@@ -489,6 +489,7 @@ The card also forbids the escape hatches: *"No authorized `N/A` may hide a seam 
 4. The returned established identity is captured and used ONLY for evidence correlation, sandbox row reads, and `atlas:review-live` adjudication — never as an input to any product write.
 5. No prior rehearsal or setup row may satisfy the current session's assertions: every scorecard comparison filters durable rows by the CURRENT session's server-allocated identity (and fresh run/turn identities), so the pre-existing sandbox rows — and every earlier rehearsal session's rows — are structurally invisible to it.
 6. Temporary sandbox-live execution pieces are restored only as the smallest necessary set from the proven Stage A implementation, named individually for F-SB4C removal; the Stage A sunset is not permanently reversed.
+7. **F-SB4C removes REPOSITORY-SIDE machinery only.** The sandbox `Session_Plans` and `Session_Plan_Sets` tabs were created by the owner and carry data; deleting a tab or its rows in a real workbook is owner-reserved destruction, so no agent removes them under any reading of Option A's earlier cleanup sentence. If the owner wants those tabs gone after 5/5, that is his action or his explicit per-instance authorization — never part of the automated F-SB4C sweep.
 
 **Counting unchanged:** Rehearsal (F-SB4): 0/5 · Stage A: 5/5 COMPLETE · Stage B: 0/5 OPEN · Phase 5 unauthorized · `SESSION_PLAN_SETS_WRITE_ENABLED` untouched (the rehearsal's ledger writes are the harness posture against the sandbox workbook only, never a production flag change).
 
