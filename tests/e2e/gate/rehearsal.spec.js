@@ -28,7 +28,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
-const { scoreRehearsalRun, renderMarkdown, compareLedgerToDeclaration } = require('./rehearsal-scorecard');
+const { scoreRehearsalRun, renderMarkdown, compareLedgerToDeclaration, classifyRepeatApprovalProbe } = require('./rehearsal-scorecard');
 const { REHEARSAL_SESSION } = require('./rehearsal-run-purpose');
 const { measureSourceTree } = require('./rehearsal-source-facts');
 const { markRunStarted, verifyRunStartMarker } = require('./rehearsal-run-start');
@@ -245,26 +245,40 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
   // eligible open turn is the only accepted marker).
   let currentPhase = 'setup';
   const coachResponses = [];
-  // Save-route capture for the W1 dry-run proof: every preview runs test_mode:true and
+  // Save-route capture for the W1 proof fields: every preview runs test_mode:true and
   // must answer sheet_written:false + no_write_confirmed:true; the ONE live write
   // answers sheet_write:'success'. Observed from the real network, never inferred.
+  // BOTH save routes are captured — the closeout may write through /api/log-workout
+  // OR the transactional /api/complete-workout (state-dependent), and the latter
+  // nests its body one level deeper; a capture that watched only one route scored
+  // the write UNPROVEN on runs that took the other (found on live iteration 5).
+  // A body that cannot be parsed is recorded as capture_failed — distinguishable
+  // from "no request", and never counted as a proven write (fail-closed).
   const saveResponses = [];
   page.on('response', async (res) => {
     const phase = currentPhase;
     const url = res.url();
-    if (/\/api\/log-workout\b/.test(url)) {
+    if (/\/api\/(log-workout|complete-workout)\b/.test(url)) {
+      const endpoint = url.includes('complete-workout') ? 'complete-workout' : 'log-workout';
       try {
         const body = await res.json();
-        const data = body && body.data && typeof body.data === 'object' ? body.data : body;
+        const layers = [body, body && body.data, body && body.data && body.data.data]
+          .filter(l => l && typeof l === 'object');
+        const data = layers.find(l => 'test_mode' in l || 'sheet_write' in l || 'sheet_written' in l) || null;
         saveResponses.push({
           phase,
           at: Date.now(),
+          endpoint,
+          status: res.status(),
           test_mode: data ? data.test_mode : undefined,
           sheet_written: data ? data.sheet_written : undefined,
           no_write_confirmed: data ? data.no_write_confirmed : undefined,
           sheet_write: data ? data.sheet_write : undefined,
+          capture_failed: data ? false : true,
         });
-      } catch { /* recorded as absent, never guessed */ }
+      } catch {
+        saveResponses.push({ phase, at: Date.now(), endpoint, status: null, capture_failed: true });
+      }
       return;
     }
     if (!/\/api\/coach\/(chat|ask|message)\b/.test(url)) return;
@@ -453,7 +467,10 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
   //                              nothing, and issued no request: the approval gate
   //                              explicitly refusing the repeat.
   // Anything else is 'no-op-unproven' and the scorecard refuses it as evidence.
-  const liveWritesBefore = saveResponses.filter(r => r.test_mode !== true).length;
+  // The repeat window counts EVERY save-route response (parsed or capture_failed):
+  // any response during the probe proves the handler acted, even if its body was
+  // unreadable — while a capture_failed entry can never prove write SUCCESS below.
+  const liveWritesBefore = saveResponses.length;
   const repeatClick = await page.evaluate(() => {
     const b = document.getElementById('approve-btn');
     if (!b) return { control_present: false, disabled_at_click: null, dispatched: false };
@@ -466,13 +483,19 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
     return { control_present: true, disabled_at_click: disabled, dispatched };
   });
   await page.waitForTimeout(2500);
-  const liveWritesAfter = saveResponses.filter(r => r.test_mode !== true).length;
-  const handlerInvoked = liveWritesAfter > liveWritesBefore || repeatClick.dispatched === true;
-  const gateRefused = repeatClick.control_present === true
-    && repeatClick.disabled_at_click === true
-    && repeatClick.dispatched === false
-    && liveWritesAfter === liveWritesBefore;
-  const repeatOutcome = handlerInvoked ? 'handler-invoked' : (gateRefused ? 'refused-disabled-control' : 'no-op-unproven');
+  const liveWritesAfter = saveResponses.length;
+  // Classification is the scorecard module's PURE, bitten function — a DOM dispatch
+  // alone (the probe's own listener firing) is NOT application evidence: a
+  // neutralized approval handler leaves the dispatch observable while nothing
+  // happens, so the enabled path demands an OBSERVED second live save request
+  // (owner contract review, PR #1254).
+  const repeatOutcome = classifyRepeatApprovalProbe({
+    control_present: repeatClick.control_present,
+    disabled_at_click: repeatClick.disabled_at_click,
+    dispatched: repeatClick.dispatched,
+    live_saves_before: liveWritesBefore,
+    live_saves_after: liveWritesAfter,
+  });
   note('repeat-approval', `outcome=${repeatOutcome} (control=${repeatClick.control_present}, disabled=${repeatClick.disabled_at_click}, dispatched=${repeatClick.dispatched}, live saves ${liveWritesBefore}→${liveWritesAfter})`);
   // Zero additional durable rows across ALL FOUR tabs — a repeat that leaked a plan
   // or ledger row would hide behind a log/effort-only diff.
@@ -652,6 +675,10 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
             weight: subWeight, reps: subReps,
             rir: null, // asserted only when the proposal carries one; this proposal's RIR is engine-optional
           },
+          // Every durable row — accepted and revision — must carry the contract's
+          // reliable confidence; revision target_set_count is bound inside the
+          // comparator to the immutable accepted grain (owner contract review, #1254).
+          confidence: 'reliable',
         });
         return {
           row_count: spsRows.length, distinct_seals: seals.filter(s => s !== '').length,
@@ -704,8 +731,10 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
       foreign_id_probe_status: foreignStatus,
     },
     write: (() => {
-      const previews = saveResponses.filter(r => r.test_mode === true);
-      const lives = saveResponses.filter(r => r.test_mode !== true);
+      // Proof classification uses PARSED responses only; a capture_failed entry can
+      // never prove a preview or a successful write (fail-closed).
+      const previews = saveResponses.filter(r => r.capture_failed !== true && r.test_mode === true);
+      const lives = saveResponses.filter(r => r.capture_failed !== true && r.test_mode !== true);
       const lastPreview = previews[previews.length - 1] || null;
       const firstLive = lives[0] || null;
       return {

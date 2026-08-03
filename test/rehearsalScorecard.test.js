@@ -12,7 +12,7 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
-  CONDITIONS, scoreRehearsalRun, renderMarkdown, compareLedgerToDeclaration, PASS, FAIL, ERROR,
+  CONDITIONS, scoreRehearsalRun, renderMarkdown, compareLedgerToDeclaration, classifyRepeatApprovalProbe, PASS, FAIL, ERROR,
 } = require('../tests/e2e/gate/rehearsal-scorecard');
 const { sessionPlanSetsColumns } = require('../config/columns');
 
@@ -227,6 +227,46 @@ describe('rendering', () => {
   });
 });
 
+// ── the repeat-approval classification — a DOM dispatch is not evidence ─────────
+// Owner contract review (PR #1254): the probe's own listener firing proves only
+// that a DOM event dispatched. A neutralized application handler, or an enabled
+// no-op control, leaves the dispatch observable while no save request occurs —
+// that must classify no-op-unproven, and no-op-unproven can never PASS.
+describe('classifyRepeatApprovalProbe', () => {
+  const base = { control_present: true, disabled_at_click: false, dispatched: true, live_saves_before: 1, live_saves_after: 1 };
+
+  it('an observed second live save request is handler-invoked', () => {
+    assert.equal(classifyRepeatApprovalProbe({ ...base, live_saves_after: 2 }), 'handler-invoked');
+  });
+
+  it('a disabled control with proven no-dispatch and no request is refused-disabled-control', () => {
+    assert.equal(classifyRepeatApprovalProbe({ ...base, disabled_at_click: true, dispatched: false }), 'refused-disabled-control');
+  });
+
+  it('an ENABLED control whose click dispatched but produced NO request is no-op-unproven (neutralized handler)', () => {
+    assert.equal(classifyRepeatApprovalProbe(base), 'no-op-unproven');
+  });
+
+  it('a dispatch on a disabled-reported control is no-op-unproven (contradictory evidence)', () => {
+    assert.equal(classifyRepeatApprovalProbe({ ...base, disabled_at_click: true, dispatched: true }), 'no-op-unproven');
+  });
+
+  it('a missing control and unknown request counts are no-op-unproven', () => {
+    assert.equal(classifyRepeatApprovalProbe({ control_present: false, dispatched: false }), 'no-op-unproven');
+    assert.equal(classifyRepeatApprovalProbe({}), 'no-op-unproven');
+  });
+
+  it('a neutralized-handler probe can never score approval_at_most_once PASS end-to-end', () => {
+    const obs = greenObservations();
+    obs.write.repeat_outcome = classifyRepeatApprovalProbe(base); // enabled, dispatched, no request
+    obs.write.repeat_attempted = obs.write.repeat_outcome !== 'no-op-unproven';
+    const card = scoreRehearsalRun(obs);
+    const c = card.conditions.find(x => x.id === 'approval_at_most_once');
+    assert.notEqual(c.status, PASS);
+    assert.equal(card.rehearsal_eligible, false);
+  });
+});
+
 // ── the declared ledger multiset — mutation proofs (owner P1, 2026-08-03) ───────
 // A valid Session-1-shaped 14-row ledger, mirroring the REAL durable rows the
 // harness wrote (accepted v1 grain + two live_revision rows superseding the same-set
@@ -283,6 +323,7 @@ describe('compareLedgerToDeclaration', () => {
       source_lift: 'BEN01', replacement_lift: 'IDB01', rows: 2, set_indexes: [1, 2],
       source: 'live_revision', plan_version: 2, weight: 55, reps: 8, rir: null,
     },
+    confidence: 'reliable',
   });
 
   it('accepts the exact declared multiset (the real Session-1 durable shape)', () => {
@@ -328,6 +369,16 @@ describe('compareLedgerToDeclaration', () => {
     ['a foreign session identity riding along', (rows) => {
       rows[3][COL('session_id')] = '20260803-PM-99';
     }, /session identities/],
+    ['an inflated revision target_set_count beyond the immutable accepted grain (owner P1, #1254)', (rows) => {
+      rows[12][COL('target_set_count')] = '99';
+      rows[13][COL('target_set_count')] = '99';
+    }, /differs from the immutable accepted grain 2/],
+    ['a revision carrying no_reliable_target confidence', (rows) => {
+      rows[12][COL('confidence')] = 'no_reliable_target';
+    }, /confidence "no_reliable_target", declared "reliable"/],
+    ['an accepted row carrying the wrong confidence', (rows) => {
+      rows[0][COL('confidence')] = 'no_reliable_target';
+    }, /accepted SQ01 set 1: confidence/],
   ];
 
   for (const [name, corrupt, re] of bites) {

@@ -47,6 +47,31 @@ const str = (v) => (typeof v === 'string' ? v.trim() : '');
 
 const SHA_RE = /^[0-9a-f]{40}$/;
 
+// ── the repeat-approval probe classification ───────────────────────────────────
+// Pure and bite-able: the spec measures, this decides. A DOM click event proves
+// only that an event fired — the probe's own listener firing is NOT evidence the
+// APPLICATION approval handler ran (a neutralized handler leaves the dispatch
+// observable and everything else unchanged — owner contract review, PR #1254).
+// The only affirmative outcomes:
+//   handler-invoked          — a second live save request/response was OBSERVED
+//                              (application-owned network evidence);
+//   refused-disabled-control — the control was present, disabled, provably
+//                              dispatched nothing, and issued no request.
+// A bare dispatch with no request, an enabled no-op control, or missing counts
+// all classify no-op-unproven, which condition 17 refuses.
+function classifyRepeatApprovalProbe(p) {
+  const probe = p && typeof p === 'object' ? p : {};
+  const before = probe.live_saves_before;
+  const after = probe.live_saves_after;
+  const countsKnown = Number.isInteger(before) && Number.isInteger(after);
+  if (countsKnown && after > before) return 'handler-invoked';
+  if (countsKnown && after === before
+    && probe.control_present === true
+    && probe.disabled_at_click === true
+    && probe.dispatched === false) return 'refused-disabled-control';
+  return 'no-op-unproven';
+}
+
 // ── the scenario-declared ledger multiset ──────────────────────────────────────
 // Compares the session's raw Session_Plan_Sets rows (arrays in the
 // sessionPlanSetsColumns order, exactly as the durable verifier serves them)
@@ -71,7 +96,11 @@ const SHA_RE = /^[0-9a-f]{40}$/;
 //     weight, reps,          // the approved proposal's own numbers
 //     rir,                   // optional: asserted only when the proposal carried one
 //   } | null,                // null = the scenario declares no revisions
+//   confidence,              // the exact durable confidence every row must carry
 // }
+// Revision target_set_count is NOT separately declarable: it must equal the matched
+// source item's accepted set_count — the immutable accepted grain (PR #1249) that a
+// revision may never inflate.
 // Returns { ok, problems }; pure, throws never (a malformed row is a problem).
 function compareLedgerToDeclaration(rawRows, declaration) {
   const problems = [];
@@ -81,7 +110,7 @@ function compareLedgerToDeclaration(rawRows, declaration) {
     item: col('plan_item_id'), lift: col('planned_lift_code'), set: col('set_index'),
     count: col('target_set_count'), weight: col('target_weight'), reps: col('target_reps'),
     rir: col('target_rir'), src: col('recommendation_source'), supersedes: col('supersedes_key'),
-    seal: col('closeout_write_id'),
+    confidence: col('confidence'), seal: col('closeout_write_id'),
   };
   const rows = (Array.isArray(rawRows) ? rawRows : []).map((r) => (Array.isArray(r) ? r : []));
   const decl = declaration && typeof declaration === 'object' ? declaration : {};
@@ -139,6 +168,9 @@ function compareLedgerToDeclaration(rawRows, declaration) {
       if (d.rir != null && !cellEquals(r[idx.rir], d.rir)) problems.push(`accepted ${lift} set ${r[idx.set]}: rir ${r[idx.rir]}, declared ${d.rir}`);
       if (Number(r[idx.version]) !== 1) problems.push(`accepted ${lift} set ${r[idx.set]}: plan_version ${r[idx.version]}, expected 1`);
       if (String(r[idx.supersedes] || '').trim() !== '') problems.push(`accepted ${lift} set ${r[idx.set]} carries a supersedes_key — an accepted v1 row supersedes nothing`);
+      if (String(r[idx.confidence] || '').trim() !== String(decl.confidence || '')) {
+        problems.push(`accepted ${lift} set ${r[idx.set]}: confidence "${r[idx.confidence]}", declared "${decl.confidence}"`);
+      }
       acceptedKeyBySlot.set(`${String(r[idx.item]).trim()}#${Number(r[idx.set])}`, String(r[idx.key] || '').trim());
     }
     if (rev && lift === String(rev.source_lift).toUpperCase()) acceptedLiftForRevisions = item;
@@ -153,6 +185,7 @@ function compareLedgerToDeclaration(rawRows, declaration) {
   } else {
     if (others.length !== rev.rows) problems.push(`expected ${rev.rows} revision row(s), found ${others.length} (missing or unexpected extra revision)`);
     if (!acceptedLiftForRevisions) problems.push(`no single accepted item carries the revision source lift ${rev.source_lift}`);
+    const srcDecl = declaredAccepted.find((d) => String(d.lift).toUpperCase() === String(rev.source_lift).toUpperCase()) || null;
     const gotRevSets = others.map((r) => Number(r[idx.set])).sort((a, b) => a - b);
     const wantRevSets = (rev.set_indexes || []).slice().sort((a, b) => a - b);
     if (JSON.stringify(gotRevSets) !== JSON.stringify(wantRevSets)) {
@@ -170,6 +203,14 @@ function compareLedgerToDeclaration(rawRows, declaration) {
       }
       if (String(r[idx.src] || '').trim() !== rev.source) problems.push(`revision set ${set}: recommendation_source "${r[idx.src]}", expected "${rev.source}"`);
       if (Number(r[idx.version]) !== rev.plan_version) problems.push(`revision set ${set}: plan_version ${r[idx.version]}, expected ${rev.plan_version}`);
+      // The immutable accepted grain (PR #1249): a revision's target_set_count must
+      // equal the SOURCE item's accepted set_count — never inflated, never shrunk.
+      if (srcDecl && Number(r[idx.count]) !== srcDecl.set_count) {
+        problems.push(`revision set ${set}: target_set_count ${r[idx.count]} differs from the immutable accepted grain ${srcDecl.set_count}`);
+      }
+      if (String(r[idx.confidence] || '').trim() !== String(decl.confidence || '')) {
+        problems.push(`revision set ${set}: confidence "${r[idx.confidence]}", declared "${decl.confidence}"`);
+      }
       if (!cellEquals(r[idx.weight], rev.weight)) problems.push(`revision set ${set}: weight ${r[idx.weight]}, expected the proposal's ${rev.weight}`);
       if (!cellEquals(r[idx.reps], rev.reps)) problems.push(`revision set ${set}: reps ${r[idx.reps]}, expected the proposal's ${rev.reps}`);
       if (rev.rir != null && !cellEquals(r[idx.rir], rev.rir)) problems.push(`revision set ${set}: rir ${r[idx.rir]}, expected ${rev.rir}`);
@@ -630,4 +671,4 @@ function renderMarkdown(card) {
   return `${lines.join('\n')}\n`;
 }
 
-module.exports = { CONDITIONS, scoreRehearsalRun, renderMarkdown, compareLedgerToDeclaration, PASS, FAIL, ERROR, NOT_APPLICABLE };
+module.exports = { CONDITIONS, scoreRehearsalRun, renderMarkdown, compareLedgerToDeclaration, classifyRepeatApprovalProbe, PASS, FAIL, ERROR, NOT_APPLICABLE };
