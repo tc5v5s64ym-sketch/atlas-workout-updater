@@ -47,7 +47,19 @@ function effectivePrescription(input) {
   const slot = o.slot && typeof o.slot === 'object' ? o.slot : null;
   if (!slot) return null;
   const planItemId = slot.plan_item_id || slot.planItemId || null;
-  const acceptedSetCount = numOrNull(slot.sets);
+  // The IMMUTABLE v1 grain stamped at acceptance wins. `slot.sets` is the display
+  // grain and a substitution may overwrite it with the replacement prescription's own
+  // count — reading it here let an inflated count flow into an approved revision for
+  // a set with no v1 predecessor, which the seal's chain validation rejects forever
+  // (malformed_chain; Codex P1, 2026-08-03). Presence is what matters, not
+  // truthiness: a stamped NULL means the accepted item had no set count, so NO v1
+  // rows exist and no revision may ever be bounded here — falling back to `sets`
+  // would rebuild the dangling chain the moment a substitution populates it. The
+  // `slot.sets` fallback applies only to slots and restored snapshots that predate
+  // the stamped field, where the two never diverged.
+  const acceptedSetCount = Object.prototype.hasOwnProperty.call(slot, 'accepted_set_count')
+    ? numOrNull(slot.accepted_set_count)
+    : numOrNull(slot.sets);
   if (!planItemId || acceptedSetCount == null || acceptedSetCount <= 0) return null;
 
   const name = slot.canonicalName || slot.name || '';

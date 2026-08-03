@@ -196,7 +196,19 @@ export async function runAcceptance(rec, deps) {
     // the object through reorder/advance and is persisted in the snapshot, so a later
     // skip/substitution reads the item identity DIRECTLY off the slot — never
     // recovered by lift-code / name / array position (owner: fail closed if missing).
-    exercises: exercises.map((ex, i) => ({ ...ex, plan_item_id: built.items[i].plan_item_id })),
+    //
+    // accepted_set_count is the IMMUTABLE v1 ledger grain, stamped once here from the
+    // same `sets` the accepted checkpoint projects into target_set_count — and never
+    // overwritten afterward. `slot.sets` stays the DISPLAY grain and a substitution
+    // may legitimately change it, but every revision must stay bounded by this value:
+    // a revision for a set beyond it has no v1 predecessor, the seal's chain
+    // validation rejects the ledger as malformed, and the workout can never obtain a
+    // verified seal (Codex P1, adjudicated 2026-08-03).
+    exercises: exercises.map((ex, i) => ({
+      ...ex,
+      plan_item_id: built.items[i].plan_item_id,
+      accepted_set_count: (() => { const n = Number(ex.sets); return Number.isInteger(n) && n >= 1 ? n : null; })(),
+    })),
     index: 0,
   };
 
