@@ -22,13 +22,18 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const RUN_START_MARKER = 'RUN_START.json';
+// The one counting-boundary declaration every marker must carry, verbatim — the
+// writer stamps it and the verifier requires it, from the same constant.
+const RUN_START_BOUNDARY = 'the real browser submitted the first synthetic athlete turn';
 
 // Written at the FIRST composer submission, never overwritten. This function never
 // throws, but it is NOT fire-and-forget: the one submitting caller (rehearsal.spec.js
-// `say()`) verifies the marker exists on disk BEFORE clicking submit and refuses the
-// submission otherwise — a pre-submission refusal is honestly NOT STARTED, whereas
-// submitting with no durable marker would misclassify a later crash as NOT STARTED
-// when the counting rule demands a streak reset (Codex P2, PR #1252).
+// `say()`) READS THE MARKER BACK through verifyRunStartMarker BEFORE clicking submit
+// and refuses the submission on any mismatch — a pre-submission refusal is honestly
+// NOT STARTED, whereas submitting with no verified durable marker would misclassify a
+// later crash as NOT STARTED when the counting rule demands a streak reset (Codex P2,
+// PR #1252; hardened from existence-only to full read-back in the runner-honesty
+// corrective PR).
 function markRunStarted(artifactDir, details) {
   if (!artifactDir) return false;
   const target = path.join(artifactDir, RUN_START_MARKER);
@@ -37,13 +42,44 @@ function markRunStarted(artifactDir, details) {
     fs.writeFileSync(target, `${JSON.stringify({
       started: true,
       at: new Date().toISOString(),
-      boundary: 'the real browser submitted the first synthetic athlete turn',
+      boundary: RUN_START_BOUNDARY,
       ...details,
     }, null, 2)}\n`);
     return true;
   } catch {
     return false;
   }
+}
+
+// The pre-submission read-back. Path existence is not evidence: an empty, partial,
+// malformed, stale, or foreign-run marker EXISTS and would permit submission while
+// later failing readRunStart — misclassifying a genuinely started run as NOT STARTED,
+// the exact direction the counting rule cannot tolerate. So the marker is read back
+// through the SAME canonical parse the operator command uses, and every identity
+// field must match this run exactly. Returns { ok, reason }; never throws.
+function verifyRunStartMarker(artifactDir, expected) {
+  if (!artifactDir) return { ok: false, reason: 'no artifact directory to verify the marker in' };
+  const parsed = readRunStart(artifactDir);
+  if (!parsed) {
+    return { ok: false, reason: 'the session-start marker could not be read back as started:true through the canonical reader (missing, empty, malformed, or not started)' };
+  }
+  const want = expected && typeof expected === 'object' ? expected : {};
+  const fields = [
+    ['run_id', want.run_id],
+    ['purpose', want.purpose],
+    ['rehearsal_session_number', want.rehearsal_session_number],
+    ['source_sha', want.source_sha],
+    ['boundary', RUN_START_BOUNDARY],
+  ];
+  for (const [field, wantValue] of fields) {
+    if (parsed[field] !== wantValue) {
+      return {
+        ok: false,
+        reason: `the marker's ${field} is ${JSON.stringify(parsed[field])} but this run requires ${JSON.stringify(wantValue)} — a stale or foreign marker cannot vouch for this run's counting boundary`,
+      };
+    }
+  }
+  return { ok: true, reason: null };
 }
 
 function readRunStart(artifactDir) {
@@ -74,4 +110,4 @@ function classifyIncompleteRun(runStart) {
   };
 }
 
-module.exports = { RUN_START_MARKER, markRunStarted, readRunStart, classifyIncompleteRun };
+module.exports = { RUN_START_MARKER, RUN_START_BOUNDARY, markRunStarted, verifyRunStartMarker, readRunStart, classifyIncompleteRun };

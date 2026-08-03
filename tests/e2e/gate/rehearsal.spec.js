@@ -28,10 +28,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
-const { scoreRehearsalRun, renderMarkdown } = require('./rehearsal-scorecard');
+const { scoreRehearsalRun, renderMarkdown, compareLedgerToDeclaration } = require('./rehearsal-scorecard');
 const { REHEARSAL_SESSION } = require('./rehearsal-run-purpose');
 const { measureSourceTree } = require('./rehearsal-source-facts');
-const { markRunStarted, RUN_START_MARKER } = require('./rehearsal-run-start');
+const { markRunStarted, verifyRunStartMarker } = require('./rehearsal-run-start');
 const { pickNetworkPassthrough, assertNoWorkbookId, GATE_STARTUP_TIMEOUT_MS } = require('./rehearsal-child-env');
 const { SANDBOX_SPREADSHEET_ID, SANDBOX_SPREADSHEET_ID_LAST6 } = require('../../../config/sandboxSheet');
 const { logCleanedColumns, effortColumns, sessionPlansColumns, sessionPlanSetsColumns } = require('../../../config/columns');
@@ -122,21 +122,24 @@ const durableRows = (sessionId) => readJson(`${stateBase}/durable-rows?session_i
 const snap = async (page, name) => page.screenshot({ path: path.join(artDir, name), fullPage: true });
 
 // The session-start boundary is crossed at the FIRST composer submission, recorded
-// BEFORE the click so a submission that dies is still a submission. The marker must
-// be DURABLY on disk before the click: if it cannot be persisted, this refuses to
-// submit at all (a pre-submission refusal is honestly NOT STARTED), because a
-// submitted-but-unmarked turn would later misread as NOT STARTED and skip a streak
-// reset the counting rule requires (Codex P2, PR #1252).
+// BEFORE the click so a submission that dies is still a submission. The marker is
+// READ BACK through the canonical reader before the click and every identity field
+// must match THIS run exactly — path existence is not evidence: an empty, partial,
+// malformed, stale, or foreign-run marker exists and would permit submission while
+// later reading as NOT STARTED, skipping a streak reset the counting rule requires
+// (Codex P2, PR #1252; read-back hardening per owner instruction 2026-08-03).
 let sessionStartMarked = false;
 async function say(page, text) {
   await page.locator('#workout-text').fill(text);
   if (!sessionStartMarked) {
-    markRunStarted(artDir, { run_id: RUN_ID, purpose: RUN_PURPOSE, rehearsal_session_number: SESSION_NUMBER, source_sha: SOURCE.head_sha });
-    sessionStartMarked = fs.existsSync(path.join(artDir, RUN_START_MARKER));
-    if (!sessionStartMarked) {
-      throw new Error('rehearsal: refusing to submit the first athlete turn — the session-start marker could not be persisted, and crossing the counting boundary without evidence would misclassify a later crash as NOT STARTED.');
+    const boundary = { run_id: RUN_ID, purpose: RUN_PURPOSE, rehearsal_session_number: SESSION_NUMBER, source_sha: SOURCE.head_sha };
+    markRunStarted(artDir, boundary);
+    const verified = verifyRunStartMarker(artDir, boundary);
+    if (!verified.ok) {
+      throw new Error(`rehearsal: refusing to submit the first athlete turn — ${verified.reason}`);
     }
-    note('session-start', 'BOUNDARY CROSSED — first synthetic athlete turn submitted');
+    sessionStartMarked = true;
+    note('session-start', 'BOUNDARY CROSSED — first synthetic athlete turn submitted (marker verified by read-back)');
   }
   await page.locator('#preview-btn').click();
   note('say', text);
@@ -439,12 +442,45 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
     return d.log_cleaned.rows.length;
   }, { timeout: 180000, intervals: [3000, 5000, 5000, 10000] }).toBe(SC.expected.log_rows);
 
-  // Repeat-approval probe: the gated trigger must add nothing.
-  await page.evaluate(() => { const b = document.getElementById('approve-btn'); if (b) b.click(); });
+  // Repeat-approval probe with AFFIRMATIVE evidence, never a hardcoded flag (owner
+  // P1, 2026-08-03): a disabled control's .click() can dispatch nothing, so "zero new
+  // rows" alone may mean no second attempt ever happened. A one-shot listener proves
+  // whether the click DISPATCHED; the save-route network capture proves whether the
+  // write handler was INVOKED. The two honest outcomes:
+  //   handler-invoked          — the click dispatched or a second live save request
+  //                              was observed; the write path itself must dedup;
+  //   refused-disabled-control — the control was disabled, provably dispatched
+  //                              nothing, and issued no request: the approval gate
+  //                              explicitly refusing the repeat.
+  // Anything else is 'no-op-unproven' and the scorecard refuses it as evidence.
+  const liveWritesBefore = saveResponses.filter(r => r.test_mode !== true).length;
+  const repeatClick = await page.evaluate(() => {
+    const b = document.getElementById('approve-btn');
+    if (!b) return { control_present: false, disabled_at_click: null, dispatched: false };
+    let dispatched = false;
+    const seen = () => { dispatched = true; };
+    b.addEventListener('click', seen, { once: true });
+    const disabled = b.disabled === true;
+    b.click();
+    b.removeEventListener('click', seen);
+    return { control_present: true, disabled_at_click: disabled, dispatched };
+  });
   await page.waitForTimeout(2500);
+  const liveWritesAfter = saveResponses.filter(r => r.test_mode !== true).length;
+  const handlerInvoked = liveWritesAfter > liveWritesBefore || repeatClick.dispatched === true;
+  const gateRefused = repeatClick.control_present === true
+    && repeatClick.disabled_at_click === true
+    && repeatClick.dispatched === false
+    && liveWritesAfter === liveWritesBefore;
+  const repeatOutcome = handlerInvoked ? 'handler-invoked' : (gateRefused ? 'refused-disabled-control' : 'no-op-unproven');
+  note('repeat-approval', `outcome=${repeatOutcome} (control=${repeatClick.control_present}, disabled=${repeatClick.disabled_at_click}, dispatched=${repeatClick.dispatched}, live saves ${liveWritesBefore}→${liveWritesAfter})`);
+  // Zero additional durable rows across ALL FOUR tabs — a repeat that leaked a plan
+  // or ledger row would hide behind a log/effort-only diff.
   const dRetry = await durableRows(workoutId);
   const dupRows = (dRetry.log_cleaned.rows.length - d.log_cleaned.rows.length)
-    + (dRetry.effort.rows.length - d.effort.rows.length);
+    + (dRetry.effort.rows.length - d.effort.rows.length)
+    + (dRetry.session_plans.rows.length - d.session_plans.rows.length)
+    + (dRetry.session_plan_sets.rows.length - d.session_plan_sets.rows.length);
   d = dRetry;
 
   // Foreign-identity probe: the verifier must refuse an identity this process never wrote.
@@ -596,12 +632,36 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
     ]),
     durable: {
       session_plans: { event_counts: Object.entries(eventCounts).map(([event, count]) => ({ event, count })) },
-      session_plan_sets: {
-        row_count: spsRows.length, distinct_seals: seals.filter(s => s !== '').length,
-        blank_seals: spsRows.filter(r => String(r[spsIdx.seal] || '').trim() === '').length,
-        accepted_grain_ok: grainOk,
-        grain_detail: `items ${acceptedItems.length}, counts ${[...new Set(acceptedRows.map(r => String(r[spsIdx.count])))].join('/')}`,
-      },
+      session_plan_sets: (() => {
+        // The FULL scenario-declared ledger multiset (owner P1, 2026-08-03): accepted
+        // v1 grain per item, the substitution revisions bound to the accepted Bench
+        // slot carrying the replacement's own durable lift code, same-set supersession
+        // keys, engine-validated chain, one seal, nothing extra. The replacement lift
+        // code comes from the substitute's own Log_Cleaned rows — durable evidence,
+        // never invented here.
+        const cmp = compareLedgerToDeclaration(spsRows, {
+          accepted: SC.plan.map(p => ({
+            lift: p.lift_code, set_count: p.target_sets,
+            weight: p.target_weight, reps: p.target_reps, rir: p.target_rir,
+          })),
+          revisions: {
+            source_lift: 'BEN01',
+            replacement_lift: subLogLiftCodes[0] || '',
+            rows: 2, set_indexes: [1, 2],
+            source: 'live_revision', plan_version: 2,
+            weight: subWeight, reps: subReps,
+            rir: null, // asserted only when the proposal carries one; this proposal's RIR is engine-optional
+          },
+        });
+        return {
+          row_count: spsRows.length, distinct_seals: seals.filter(s => s !== '').length,
+          blank_seals: spsRows.filter(r => String(r[spsIdx.seal] || '').trim() === '').length,
+          accepted_grain_ok: grainOk,
+          grain_detail: `items ${acceptedItems.length}, counts ${[...new Set(acceptedRows.map(r => String(r[spsIdx.count])))].join('/')}`,
+          declared_multiset_ok: cmp.ok,
+          multiset_detail: cmp.ok ? '' : cmp.problems.slice(0, 6).join('; '),
+        };
+      })(),
       log_cleaned: (() => {
         // Content, not cardinality (Codex P1, PR #1252): every durable row must match a
         // declared set on lift name + weight + reps + RIR, one-for-one. The declared
@@ -657,7 +717,9 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
         approvals_clicked: 1,
         write_success: Boolean(firstLive && firstLive.sheet_write === 'success')
           && d.log_cleaned.rows.length === SC.expected.log_rows,
-        repeat_attempted: true, duplicate_rows: dupRows,
+        repeat_attempted: repeatOutcome !== 'no-op-unproven',
+        repeat_outcome: repeatOutcome,
+        duplicate_rows: dupRows,
       };
     })(),
     closeout: {

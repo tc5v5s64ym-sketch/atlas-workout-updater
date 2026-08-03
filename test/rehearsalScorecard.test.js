@@ -12,8 +12,9 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
-  CONDITIONS, scoreRehearsalRun, renderMarkdown, PASS, FAIL, ERROR,
+  CONDITIONS, scoreRehearsalRun, renderMarkdown, compareLedgerToDeclaration, PASS, FAIL, ERROR,
 } = require('../tests/e2e/gate/rehearsal-scorecard');
+const { sessionPlanSetsColumns } = require('../config/columns');
 
 const HEAD = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678';
 
@@ -54,7 +55,7 @@ function greenObservations() {
     state_agreement: [{ id: 'bench-current', ok: true }],
     durable: {
       session_plans: { event_counts: [{ event: 'plan_accepted', count: 6 }, { event: 'item_outcome', count: 1 }, { event: 'session_closeout', count: 1 }] },
-      session_plan_sets: { row_count: 14, distinct_seals: 1, blank_seals: 0, accepted_grain_ok: true },
+      session_plan_sets: { row_count: 14, distinct_seals: 1, blank_seals: 0, accepted_grain_ok: true, declared_multiset_ok: true, multiset_detail: '' },
       log_cleaned: { row_count: 12, rows_match_declaration: true },
       effort: { row_count: 1 },
       foreign_rows: 0,
@@ -62,7 +63,8 @@ function greenObservations() {
     },
     write: {
       preview_seen: true, preview_no_write_confirmed: true, preview_before_write: true,
-      approvals_clicked: 1, write_success: true, repeat_attempted: true, duplicate_rows: 0,
+      approvals_clicked: 1, write_success: true,
+      repeat_attempted: true, repeat_outcome: 'refused-disabled-control', duplicate_rows: 0,
     },
     closeout: { fully_verified: true, ui_stuck_saving: false, final_state_ok: true },
     trace: { join_ok: true, turn_id: 'turn-live-write' },
@@ -179,6 +181,9 @@ describe('write-safety and posture bites', () => {
     ['two approval clicks', (o) => { o.write.approvals_clicked = 2; }, 'browser_approval'],
     ['a duplicate row after the repeat probe', (o) => { o.write.duplicate_rows = 1; }, 'approval_at_most_once'],
     ['a skipped repeat probe is ERROR-not-PASS', (o) => { o.write.repeat_attempted = false; }, 'approval_at_most_once'],
+    ['a disabled/no-op repeat click with no affirmative evidence', (o) => { o.write.repeat_outcome = 'no-op-unproven'; }, 'approval_at_most_once'],
+    ['a repeat probe with no recorded outcome at all', (o) => { delete o.write.repeat_outcome; }, 'approval_at_most_once'],
+    ['a ledger that fails the declared multiset comparison', (o) => { o.durable.session_plan_sets.declared_multiset_ok = false; o.durable.session_plan_sets.multiset_detail = 'revision set 1 is attached to item pi_wrong'; }, 'session_plan_sets_binding_and_seal'],
     ['a preview without the no-write proof', (o) => { o.write.preview_no_write_confirmed = false; }, 'preview_before_write'],
     ['no live-provider turn observed', (o) => { o.model.live_provider_turn_observed = false; }, 'model_posture_proven'],
     ['a served workbook that is not the declared sandbox', (o) => { o.sandbox.sandbox_last6 = 'ZZZZZZ'; }, 'sandbox_posture_proven'],
@@ -219,5 +224,128 @@ describe('rendering', () => {
     const md = renderMarkdown(card);
     assert.match(md, /rehearsal_eligible: true/);
     for (const c of card.conditions) assert.ok(md.includes(c.id), c.id);
+  });
+});
+
+// ── the declared ledger multiset — mutation proofs (owner P1, 2026-08-03) ───────
+// A valid Session-1-shaped 14-row ledger, mirroring the REAL durable rows the
+// harness wrote (accepted v1 grain + two live_revision rows superseding the same-set
+// accepted Bench rows, one seal). Each bite plants exactly one corruption that
+// PRESERVES the row/item/seal counts the old check relied on.
+describe('compareLedgerToDeclaration', () => {
+  const SEAL = 'wr_20260803_0001';
+  const COL = (name) => sessionPlanSetsColumns.indexOf(name);
+
+  function row(over = {}) {
+    const base = {
+      idempotency_key: 'k', session_id: '20260803-AM-09', session_date: '2026-08-03',
+      plan_version: '1', plan_item_id: 'pi_x', planned_lift_code: 'SQ01', set_index: '1',
+      target_set_count: '2', target_weight: '225', target_reps: '5', target_rir: '2',
+      recommendation_source: 'accepted', supersedes_key: '', confidence: 'reliable',
+      closeout_write_id: SEAL, recorded_at: '2026-08-03T18:00:00.000Z',
+    };
+    const rec = { ...base, ...over };
+    return sessionPlanSetsColumns.map((c) => (rec[c] == null ? '' : String(rec[c])));
+  }
+
+  const ITEMS = [
+    { item: 'pi_sq', lift: 'SQ01', weight: 225, reps: 5, rir: 2 },
+    { item: 'pi_ohp', lift: 'OHP01', weight: 110, reps: 6, rir: 2 },
+    { item: 'pi_rdl', lift: 'RDL01', weight: 235, reps: 5, rir: 2 },
+    { item: 'pi_ben', lift: 'BEN01', weight: 215, reps: 5, rir: 2 },
+    { item: 'pi_sr', lift: 'SR01', weight: 205, reps: 10, rir: 2 },
+    { item: 'pi_bc', lift: 'BC01', weight: 35, reps: 15, rir: 2 },
+  ];
+
+  function validLedger() {
+    const rows = [];
+    for (const it of ITEMS) {
+      for (const set of [1, 2]) {
+        rows.push(row({
+          idempotency_key: `k_${it.item}_${set}`, plan_item_id: it.item, planned_lift_code: it.lift,
+          set_index: String(set), target_weight: String(it.weight), target_reps: String(it.reps), target_rir: String(it.rir),
+        }));
+      }
+    }
+    for (const set of [1, 2]) {
+      rows.push(row({
+        idempotency_key: `k_rev_${set}`, plan_item_id: 'pi_ben', planned_lift_code: 'IDB01',
+        set_index: String(set), plan_version: '2', recommendation_source: 'live_revision',
+        supersedes_key: `k_pi_ben_${set}`, target_weight: '55', target_reps: '8', target_rir: '',
+      }));
+    }
+    return rows;
+  }
+
+  const declaration = () => ({
+    accepted: ITEMS.map((it) => ({ lift: it.lift, set_count: 2, weight: it.weight, reps: it.reps, rir: it.rir })),
+    revisions: {
+      source_lift: 'BEN01', replacement_lift: 'IDB01', rows: 2, set_indexes: [1, 2],
+      source: 'live_revision', plan_version: 2, weight: 55, reps: 8, rir: null,
+    },
+  });
+
+  it('accepts the exact declared multiset (the real Session-1 durable shape)', () => {
+    const r = compareLedgerToDeclaration(validLedger(), declaration());
+    assert.deepEqual(r, { ok: true, problems: [] });
+  });
+
+  const bites = [
+    ['a revision attached to the wrong plan_item_id', (rows) => {
+      rows[12][COL('plan_item_id')] = 'pi_sq';
+    }, /attached to item pi_sq|supersession/],
+    ['a duplicate accepted row standing in for a revision row', (rows) => {
+      rows[13] = row({ idempotency_key: 'k_dup', plan_item_id: 'pi_ben', planned_lift_code: 'BEN01', set_index: '2' });
+    }, /set indexes|revision/],
+    ['a wrong revision set index', (rows) => {
+      rows[13][COL('set_index')] = '3';
+    }, /set indexes/],
+    ['a missing revision row', (rows) => {
+      rows.pop();
+    }, /expected 2 revision row/],
+    ['an unexpected extra revision row', (rows) => {
+      rows.push(row({ idempotency_key: 'k_rev_3', plan_item_id: 'pi_ben', planned_lift_code: 'IDB01', set_index: '1', plan_version: '3', recommendation_source: 'live_revision', supersedes_key: 'k_rev_1', target_weight: '55', target_reps: '8', target_rir: '' }));
+    }, /expected 2 revision row|total rows/],
+    ['a broken supersession chain (revision superseding the wrong-set accepted row)', (rows) => {
+      rows[12][COL('supersedes_key')] = 'k_pi_ben_2';
+    }, /broken supersession/],
+    ['a dangling supersession key the engine itself refuses', (rows) => {
+      rows[12][COL('supersedes_key')] = 'k_never_existed';
+    }, /broken supersession|malformed_chain/],
+    ['a mismatched seal on one row', (rows) => {
+      rows[5][COL('closeout_write_id')] = 'wr_other_seal';
+    }, /different closeout seals|mismatched seal/],
+    ['an unsealed row', (rows) => {
+      rows[5][COL('closeout_write_id')] = '';
+    }, /no closeout seal/],
+    ['a wrong accepted weight (counts all still match)', (rows) => {
+      rows[0][COL('target_weight')] = '135';
+    }, /weight 135, declared 225/],
+    ['a wrong replacement lift on a revision', (rows) => {
+      rows[12][COL('planned_lift_code')] = 'BEN01';
+      rows[13][COL('planned_lift_code')] = 'BEN01';
+    }, /expected the replacement IDB01/],
+    ['a foreign session identity riding along', (rows) => {
+      rows[3][COL('session_id')] = '20260803-PM-99';
+    }, /session identities/],
+  ];
+
+  for (const [name, corrupt, re] of bites) {
+    it(`bites on ${name}`, () => {
+      const rows = validLedger();
+      corrupt(rows);
+      const r = compareLedgerToDeclaration(rows, declaration());
+      assert.equal(r.ok, false, name);
+      assert.ok(r.problems.some((p) => re.test(p)), `${name}: ${JSON.stringify(r.problems)}`);
+    });
+  }
+
+  it('fails closed on zero rows and on a declaration with no revisions but revision rows present', () => {
+    assert.equal(compareLedgerToDeclaration([], declaration()).ok, false);
+    const d = declaration();
+    d.revisions = null;
+    const r = compareLedgerToDeclaration(validLedger(), d);
+    assert.equal(r.ok, false);
+    assert.ok(r.problems.some((p) => /declares no revisions/.test(p)));
   });
 });
