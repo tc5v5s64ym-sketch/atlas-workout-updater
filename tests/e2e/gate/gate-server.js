@@ -50,28 +50,47 @@ try {
 
 process.env.ATLAS_API_KEY = process.env.ATLAS_GATE_KEY || 'playwright-gate-key';
 
-// ── SHEETS POSTURE — one mode, and no way to reach a real workbook ──────────────
+// ── SHEETS POSTURE — default in-memory; TEMPORARY sandbox-live for F-SB4B ───────
 //
-// `sheets.js` is replaced in-process by the in-memory stub further down. No Google
-// client can initialize, so nothing COULD reach a workbook from this harness.
+// DEFAULT (flag absent): `sheets.js` is replaced in-process by the in-memory stub
+//   further down. No Google client can initialize, so nothing COULD reach a workbook.
+//   Every existing gate spec runs here and is byte-identical to before this block.
 //
-// This was briefly two modes: a temporary SANDBOX-LIVE posture let the Phase 4 Stage-A
-// runner prove a durable write against the repository-declared sandbox workbook. Stage A
-// reached 5/5 on 2026-08-01 and that posture was removed under its recorded sunset, along
-// with its guard, preflight, and durable-row verifier.
+// SANDBOX-LIVE (ATLAS_GATE_SANDBOX_LIVE=1): the REAL `sheets.js` is loaded against the
+//   repository-declared sandbox workbook so the F-SB4B owner-pattern rehearsal can prove
+//   durable writes through the real client, the real routes, and a real Google Sheet.
+//   TEMPORARY F-SB4B machinery, restored in rehearsal form from the proven Stage A
+//   implementation (built PR #1227, sunset PR #1234) under the owner resolution recorded
+//   in docs/ATLAS_V1_EXECUTION_PLAN.md (F-SB4B, 2026-08-03). Named for F-SB4C removal:
+//   this posture block, the write guard, the sandbox preflight, and the durable-row
+//   verifier all leave in the F-SB4C completion PR.
 //
-// Removing it made the guarantee STRONGER rather than weaker. The old protection was an
-// assertion — "the resolved workbook must be the declared sandbox" — which is only as good
-// as the code that runs it. The protection now is structural: no real adapter is ever
-// loaded, so there is no workbook to select wrongly and no assertion left to bypass.
-//
-// The ambient GOOGLE_SHEETS_ID is still never inherited. It is overwritten unconditionally
-// below, which matters because an operator shell here resolves it to a real workbook.
-process.env.GOOGLE_SHEETS_ID = 'stub-sheet';
-process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = 'stub@example.com';
-// Not a real key — sheets.js is fully stubbed below, so this is never parsed; it
-// only satisfies config validation. No PEM header, so secret scans stay quiet.
-process.env.GOOGLE_PRIVATE_KEY = 'test-private-key-stub';
+// The ambient GOOGLE_SHEETS_ID is NEVER inherited in either mode. That is the single
+// most dangerous value in this file: an operator shell here resolves it to a NON-sandbox
+// workbook, so inheriting it would point a write-enabled browser run at production. It is
+// therefore ASSIGNED from config/sandboxSheet.js — the one declared literal — and then
+// re-verified after `sheets.js` has captured it, because assignment alone is not proof.
+const SANDBOX_LIVE = process.env.ATLAS_GATE_SANDBOX_LIVE === '1';
+const { SANDBOX_SPREADSHEET_ID, SANDBOX_SPREADSHEET_ID_LAST6 } = require('../../../config/sandboxSheet');
+
+if (SANDBOX_LIVE) {
+  // Assigned, never inherited. `sheets.js` reads this at module load, so it must be set
+  // before the require below — and before index.js — or the capture takes the wrong id.
+  process.env.GOOGLE_SHEETS_ID = SANDBOX_SPREADSHEET_ID;
+  // The service account must come from the operator's environment. dotenv is neutralized
+  // above, so there is no file path by which these could arrive; if the operator did not
+  // export them, the preflight refuses to start rather than serve a half-configured run.
+  if (!process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || !process.env.GOOGLE_PRIVATE_KEY) {
+    console.error('GATE_POSTURE_ERROR: ATLAS_GATE_SANDBOX_LIVE=1 requires GOOGLE_SERVICE_ACCOUNT_EMAIL and GOOGLE_PRIVATE_KEY in the spawning environment.');
+    process.exit(2);
+  }
+} else {
+  process.env.GOOGLE_SHEETS_ID = 'stub-sheet';
+  process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = 'stub@example.com';
+  // Not a real key — sheets.js is fully stubbed below, so this is never parsed; it
+  // only satisfies config validation. No PEM header, so secret scans stay quiet.
+  process.env.GOOGLE_PRIVATE_KEY = 'test-private-key-stub';
+}
 process.env.ATLAS_API_RATE_LIMIT_MAX = '1000000';
 process.env.ATLAS_WRITE_RATE_LIMIT_MAX = '1000000';
 process.env.ATLAS_VISION_RATE_LIMIT_MAX = '1000000';
@@ -125,6 +144,26 @@ if (LEDGER_SANDBOX) {
 } else {
   delete process.env.SESSION_PLAN_SETS_WRITE_ENABLED;
   delete process.env.ATLAS_SESSION_PLANS_WRITE;
+}
+
+// ── The F-SB4B REHEARSAL posture is BOTH flags together ─────────────────────────
+// Stage A refused this combination outright, because the ledger posture then required
+// materializing a Session_Plan_Sets tab and creating a tab in a real workbook is
+// owner-reserved. That blocker is resolved: the OWNER created both plan-ledger tabs in
+// the sandbox workbook (recorded in the execution plan, F-SB4B resolution 2026-08-03),
+// so the combined posture no longer creates anything — the preflight below REQUIRES
+// both tabs to already exist with exact contract headers and refuses to serve
+// otherwise. The two write-enable flags set above are the harness process's own
+// environment, never a production configuration change. `ensureSheetTab` still always
+// refuses in the write guard, so this posture remains structurally incapable of a
+// schema change. TEMPORARY — leaves with the rest of the F-SB4B machinery at F-SB4C.
+const REHEARSAL_LIVE = SANDBOX_LIVE && LEDGER_SANDBOX;
+// Exactly ONE live posture exists: the combined rehearsal. The Stage A standalone
+// sandbox-live posture stays sunset — restoring it would be a second live mode with no
+// consumer, which is exactly the surface the smallest-necessary rule forbids.
+if (SANDBOX_LIVE && !LEDGER_SANDBOX) {
+  console.error('GATE_POSTURE_ERROR: ATLAS_GATE_SANDBOX_LIVE=1 requires ATLAS_GATE_LEDGER_SANDBOX=1 — the F-SB4B rehearsal posture is the combined one; the Stage A standalone live posture was sunset and is not restored.');
+  process.exit(2);
 }
 
 // SCRIPTED COACH (ATLAS_GATE_COACH_SCRIPT=1) — an opt-in COACH-PROSE posture, default OFF.
@@ -287,17 +326,103 @@ const fakeSheets = {
 
 const sheetsPath = require.resolve('../../../sheets');
 
-// ── The Sheets adapter the app will see ─────────────────────────────────────────
+// ── TEMPORARY F-SB4B write guard (sunset: F-SB4C) ───────────────────────────────
+// SANDBOX-LIVE only: the REAL adapter, wrapped in a guard NARROWER than the app.
+// Restored in rehearsal form from the proven Stage A guard (PR #1227). It fails CLOSED:
 //
-// Always the in-memory stub above. The sandbox-live write guard that used to wrap the real
-// adapter — call-time sandbox re-check, a two-tab append allowlist, and unconditional
-// refusal of ensureSheetTab / deleteRowsByRange / updateColumnCells — was removed with the
-// posture it contained. It has nothing left to contain: the real module is never loaded.
+//   • every mutating call re-checks `isSandboxSheet` at CALL TIME, so even if something
+//     could change the resolved workbook mid-run, the write is refused, not attempted;
+//   • appends are allowed ONLY to the rehearsal's authorized tabs. Stage A wrote
+//     Log_Cleaned and Effort; the F-SB4B rehearsal adds Session_Plans and
+//     Session_Plan_Sets — the two tabs the OWNER created for it (recorded resolution
+//     2026-08-03) — and ONLY under the combined REHEARSAL_LIVE posture. A shadow or
+//     telemetry append is refused, so a flag flipped anywhere cannot widen the blast
+//     radius;
+//   • `ensureSheetTab` ALWAYS refuses. Creating a tab is a schema change, and this
+//     harness must be structurally incapable of one, not merely uninstructed;
+//   • `deleteRowsByRange` ALWAYS refuses — the rehearsal adds bounded rows and never
+//     deletes sandbox data (the owner-created tabs and their rows are owner property);
+//   • `updateColumnCells` refuses EXCEPT the one cell class the product under test
+//     must stamp: the Session_Plan_Sets closeout-seal column, REHEARSAL_LIVE only.
+//     The store it serves touches only the blank closeout_write_id cell of the current
+//     session's rows and fails closed on a conflicting seal, so prior rows cannot be
+//     rewritten through this opening.
+//
+// A refusal is recorded AND thrown. Recording alone would let a silent product retry
+// hide it; throwing alone would leave no evidence. The scorecard treats any refusal as
+// a hard failure — a refusal means production tried something this rehearsal is not
+// allowed to do; that is a finding, never a pass.
+const WRITABLE_TABS = new Set(REHEARSAL_LIVE
+  ? ['Log_Cleaned', 'Effort', 'Session_Plans', 'Session_Plan_Sets']
+  : ['Log_Cleaned', 'Effort']);
+const SEAL_COL_LETTER = (() => {
+  let n = sessionPlanSetsColumns.indexOf('closeout_write_id') + 1;
+  let s = '';
+  while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = (n - m - 1) / 26; }
+  return s;
+})();
+
+function buildGuardedSheets() {
+  const real = require('../../../sheets');
+
+  function assertSandboxNow(operation, tabName) {
+    const cfg = real.getSafeSpreadsheetConfig('test');
+    if (cfg.isSandboxSheet !== true || cfg.id !== SANDBOX_SPREADSHEET_ID) {
+      const why = `resolved workbook is not the declared sandbox (last6 ${cfg.idLast6 || 'none'})`;
+      state.refusals.push({ at: new Date().toISOString(), operation, tabName: tabName || null, reason: why });
+      throw new Error(`GATE_SANDBOX_GUARD: refused ${operation} — ${why}`);
+    }
+  }
+
+  function refuse(operation, tabName, reason) {
+    state.refusals.push({ at: new Date().toISOString(), operation, tabName: tabName || null, reason });
+    throw new Error(`GATE_SANDBOX_GUARD: refused ${operation} — ${reason}`);
+  }
+
+  return {
+    ...real,
+    appendRows: async (tabName, rows) => {
+      assertSandboxNow('appendRows', tabName);
+      if (!WRITABLE_TABS.has(tabName)) {
+        refuse('appendRows', tabName, `tab is outside the rehearsal's authorized write set (${[...WRITABLE_TABS].join(', ')})`);
+      }
+      // Recorded BEFORE the call: an append that throws after Google committed it must
+      // still appear in the evidence, or the transcript would under-report a real write.
+      const entry = { at: new Date().toISOString(), tabName, rows: rows.map(r => [...r]), live: true };
+      state.appendCalls.push(entry);
+      const result = await real.appendRows(tabName, rows);
+      entry.updated_range = result && result.data && result.data.updates
+        ? result.data.updates.updatedRange : null;
+      return result;
+    },
+    updateColumnCells: async (tabName, columnLetter, cells) => {
+      assertSandboxNow('updateColumnCells', tabName);
+      if (!(REHEARSAL_LIVE && tabName === 'Session_Plan_Sets' && columnLetter === SEAL_COL_LETTER)) {
+        refuse('updateColumnCells', tabName,
+          `only the Session_Plan_Sets seal column (${SEAL_COL_LETTER}) may be stamped, and only under the combined rehearsal posture`);
+      }
+      const entry = { at: new Date().toISOString(), tabName, columnLetter, cells: cells.map(c => ({ ...c })), live: true };
+      state.updateCalls.push(entry);
+      return real.updateColumnCells(tabName, columnLetter, cells);
+    },
+    ensureSheetTab: async (tabName) => {
+      state.ensureTabCalls.push(tabName);
+      refuse('ensureSheetTab', tabName, 'creating or ensuring a tab is a schema change and is owner-reserved');
+    },
+    deleteRowsByRange: async (...args) => {
+      refuse('deleteRowsByRange', args && args[0], 'the rehearsal never deletes existing sandbox data');
+    },
+  };
+}
+
+// ── The Sheets adapter the app will see ─────────────────────────────────────────
+// DEFAULT: the in-memory stub above (unchanged, and the only mode every permanent
+// gate spec uses). SANDBOX-LIVE: the guarded real adapter — TEMPORARY F-SB4B.
 require.cache[sheetsPath] = {
   id: sheetsPath,
   filename: sheetsPath,
   loaded: true,
-  exports: fakeSheets,
+  exports: SANDBOX_LIVE ? buildGuardedSheets() : fakeSheets,
 };
 
 // The vision LLM is likewise replaced in-process: no key exists here (deleted
@@ -382,15 +507,128 @@ async function assertModelUp() {
   modelUpProof.reachable = true;
 }
 
-// The sandbox preflight lived here. It proved, before publishing a port, that the resolved
-// workbook really was the declared sandbox, that the runtime did not fingerprint as
-// production, that the required tabs existed with contract-matching headers, and that the
-// ledger and telemetry write flags were off. All of it existed to make ONE thing safe: a
-// harness that could reach a real Google workbook.
+// ── TEMPORARY F-SB4B SANDBOX PREFLIGHT (sunset: F-SB4C) ─────────────────────────
+// Restored in rehearsal form from the proven Stage A preflight (PR #1227). Every check
+// is a precondition for a REAL write and runs before `app.listen`, so a browser can
+// never attach to a server whose workbook has not been verified. Any failure exits
+// non-zero; the spec's spawn handler rejects on an early exit, so an unverified sandbox
+// surfaces as a loud refusal rather than a quiet production write.
 //
-// It was removed with that posture under the Stage-A sunset. Nothing here can reach a
-// workbook now, so there is no resolved id to verify and no tab to require. The guarantee
-// it enforced is not weaker — it is structural rather than asserted.
+// The FIRST check is the resolved id compared against the declared literal. Assignment
+// happens at the top of this file, but `sheets.js` captured the value at its own module
+// load, so this reads back what the adapter ACTUALLY holds.
+//
+// What changed from Stage A, per the recorded 2026-08-03 resolution: the plan-ledger
+// tabs must now be PRESENT with EXACT contract headers (the owner created them; the
+// rehearsal proves Session_Plans / Session_Plan_Sets truth against them), and the two
+// ledger write-enable flags are the posture rather than a violation. Telemetry
+// persistence stays off — synthetic rows must never land in the shadow evidence tabs.
+const { PREFLIGHT_QUOTA_ATTEMPTS, PREFLIGHT_QUOTA_BACKOFF_MS } = require('./rehearsal-child-env');
+const sandboxPreflight = { checks: [], ok: false };
+
+async function assertSandboxLive() {
+  const sheets = require('../../../sheets');
+  const record = (name, ok, detail) => {
+    sandboxPreflight.checks.push({ name, ok: ok === true, detail: detail || null });
+    if (ok !== true) {
+      console.error(`GATE_SANDBOX_ERROR: ${name} — ${detail || 'failed'}`);
+      process.exit(2);
+    }
+  };
+
+  const cfg = sheets.getSafeSpreadsheetConfig('test');
+  record('safe_spreadsheet_config_resolves', cfg.canVerify === true,
+    'getSafeSpreadsheetConfig could not resolve a workbook id');
+  record('resolved_workbook_is_declared_sandbox', cfg.id === SANDBOX_SPREADSHEET_ID,
+    `resolved workbook last6 ${cfg.idLast6 || 'none'} != declared sandbox last6 ${SANDBOX_SPREADSHEET_ID_LAST6}`);
+  record('is_sandbox_sheet_true', cfg.isSandboxSheet === true,
+    'getSafeSpreadsheetConfig().isSandboxSheet is not true');
+
+  // Production fingerprint — the same predicate the telemetry classifier uses.
+  const { isProductionRuntime } = require('../../../services/evidenceProvenance');
+  const productionRuntime = isProductionRuntime({
+    nodeEnv: process.env.NODE_ENV,
+    isSandboxSheet: cfg.isSandboxSheet === true,
+  });
+  record('production_fingerprint_false', productionRuntime === false,
+    'the runtime fingerprints as production');
+
+  // Reachability, retried with FLAT bounded backoff (a read-quota rejection is a
+  // transient environment condition, not an unreachable sandbox). Reads only.
+  let tabs = [];
+  let lastError = null;
+  for (let attempt = 1; attempt <= PREFLIGHT_QUOTA_ATTEMPTS; attempt += 1) {
+    try {
+      tabs = await sheets.getSpreadsheetTabs();
+      lastError = null;
+      break;
+    } catch (error) {
+      lastError = error;
+      const quota = /quota|rate limit|429/i.test(String(error && error.message));
+      if (attempt < PREFLIGHT_QUOTA_ATTEMPTS) {
+        await new Promise(r => setTimeout(r, quota ? PREFLIGHT_QUOTA_BACKOFF_MS : 2000 * attempt));
+      }
+    }
+  }
+  if (lastError) {
+    const quota = /quota/i.test(String(lastError.message));
+    record('sandbox_reachable', false,
+      `${quota ? 'Sheets READ QUOTA exhausted (transient — wait a minute and rerun)' : 'could not list tabs'}: ${lastError.message}`);
+  }
+  record('sandbox_reachable', Array.isArray(tabs) && tabs.length > 0,
+    'the sandbox workbook returned no tabs');
+  for (const tab of WRITABLE_TABS) {
+    record(`tab_present_${tab}`, tabs.includes(tab),
+      `required tab ${tab} is absent from the sandbox workbook`);
+  }
+
+  // Log_Cleaned / Effort headers: the workbook's header row holds DISPLAY LABELS
+  // ("Set #") while config/columns.js holds contract field names, so the alias-aware
+  // canonicalizer — the one production reads through — decides the match.
+  const { canonicalizeHeaderName } = require('../../../scripts/flight-review');
+  for (const [tab, contract] of [['Log_Cleaned', logCleanedColumns], ['Effort', effortColumns]]) {
+    let header = [];
+    try { header = await sheets.getHeaderRow(tab); } catch (error) {
+      record(`header_readable_${tab}`, false, `${tab} header unreadable: ${error && error.message}`);
+    }
+    const known = new Set(contract);
+    const mismatched = contract
+      .map((col, i) => ({ col, at: i, got: canonicalizeHeaderName(header[i], known) }))
+      .filter((x) => x.got !== x.col);
+    record(`header_matches_contract_${tab}`, mismatched.length === 0,
+      `${tab} header mismatch at ${mismatched.map((m) => `col ${m.at}: expected ${m.col}, got ${m.got}`).join('; ')}`);
+    record(`header_covers_contract_${tab}`, header.length >= contract.length,
+      `${tab} header has ${header.length} columns, fewer than the ${contract.length}-column contract`);
+  }
+
+  // Plan-ledger headers: EXACT, position by position — the same comparison the capture
+  // layers make before every write, so a preflight pass means the product's own header
+  // gates will pass for the same reason, not a looser one.
+  for (const [tab, contract] of [['Session_Plans', sessionPlansColumns], ['Session_Plan_Sets', sessionPlanSetsColumns]]) {
+    let header = [];
+    try { header = await sheets.getHeaderRow(tab); } catch (error) {
+      record(`header_readable_${tab}`, false, `${tab} header unreadable: ${error && error.message}`);
+    }
+    const exact = header.length >= contract.length
+      && contract.every((col, i) => String(header[i] == null ? '' : header[i]).trim() === col);
+    record(`header_exact_${tab}`, exact,
+      `${tab} header does not exactly match the ${contract.length}-column contract`);
+  }
+
+  // The ledger write-enable flags ARE the combined posture — record them as facts.
+  record('ledger_write_flags_on',
+    process.env.SESSION_PLAN_SETS_WRITE_ENABLED === '1' && process.env.ATLAS_SESSION_PLANS_WRITE === '1',
+    'the combined rehearsal posture requires both ledger write-enable flags in this process');
+
+  // Telemetry persistence must be off, or the real adapter would append shadow rows to
+  // the sandbox's Brain_Shadow / Intent_Shadow / Flight_Recorder tabs — writes this
+  // rehearsal never authorized, and synthetic rows landing in evidence tabs.
+  record('telemetry_persistence_off',
+    !process.env.ATLAS_FLIGHT_RECORDER && !process.env.ATLAS_BRAIN_SHADOW_PERSIST,
+    'a telemetry persistence flag is set');
+
+  sandboxPreflight.ok = true;
+}
 
 // Harness-only observability on its OWN server (the app's 404 catch-all is already
 // registered, so a route added post-require would never match): what the app believes
@@ -429,11 +667,76 @@ const stateServer = http.createServer((req, res) => {
     res.end(JSON.stringify({ armed: true }));
     return;
   }
-  // The harness-side read-only durable verifier lived here. It read back what the WORKBOOK
-  // held for a session id, so the Stage-A runner could check the sheet rather than trust the
-  // app's own claim about what it wrote. It was deliberately on the harness port and never on
-  // the Express app, so no permanent product endpoint exposing sheet rows was ever added for
-  // a temporary test — which is why removing it leaves no product surface behind.
+  // TEMPORARY F-SB4B durable-row verifier (sunset: F-SB4C), restored in rehearsal form
+  // from the proven Stage A verifier. READ-ONLY, sandbox-live only, on the HARNESS port —
+  // never the Express app, so no permanent product endpoint exposing sheet rows exists
+  // for a temporary test. The rehearsal must check what the WORKBOOK holds, not what the
+  // app believes it wrote — those are the same claim twice otherwise.
+  //
+  // ISOLATION IS STRUCTURAL HERE (recorded instruction, rule 5): the verifier answers
+  // ONLY for the session_id it is given — the identity the SERVER allocated at
+  // acceptance and the client adopted — so a prior rehearsal's rows, the owner's setup
+  // rows, and every other session's rows are invisible to the caller by construction.
+  // It reports per-tab totals alongside, so a scorecard can additionally prove its
+  // session ADDED exactly its declared rows without reading anyone else's content.
+  if (String(req.url || '').startsWith('/durable-rows')) {
+    if (!REHEARSAL_LIVE) {
+      res.statusCode = 409;
+      res.end(JSON.stringify({ error: 'the combined rehearsal posture (ATLAS_GATE_SANDBOX_LIVE=1 + ATLAS_GATE_LEDGER_SANDBOX=1) is required' }));
+      return;
+    }
+    const u = new URL(req.url, 'http://127.0.0.1');
+    const wantSession = String(u.searchParams.get('session_id') || '').trim();
+    if (!wantSession) {
+      res.statusCode = 400;
+      res.end(JSON.stringify({ error: 'session_id is required — the verifier answers only for one session identity' }));
+      return;
+    }
+    (async () => {
+      const real = require('../../../sheets');
+      const colLetter = (i) => {
+        let n = i + 1; let s = '';
+        while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = (n - m - 1) / 26; }
+        return s;
+      };
+      // AT MOST TWO Sheets read requests per tab: the session-id column, then ONE
+      // contiguous range spanning the matched rows (appends are consecutive). The
+      // Sheets limit that bites is read REQUESTS per minute, not payload.
+      async function readSession(tab, contract) {
+        const idx = contract.indexOf('session_id');
+        if (idx < 0) throw new Error(`durable verifier: session_id not in the ${tab} contract`);
+        const col = await real.readRange(`${tab}!${colLetter(idx)}:${colLetter(idx)}`);
+        const ids = Array.isArray(col) ? col.map(r => String((r && r[0]) || '').trim()) : [];
+        const hits = [];
+        for (let i = 0; i < ids.length; i += 1) if (ids[i] === wantSession) hits.push(i + 1);
+        const total = Math.max(0, ids.length - 1); // data rows, header excluded
+        if (hits.length === 0) return { rows: [], total };
+        const span = await real.readRange(`${tab}!A${hits[0]}:${colLetter(contract.length - 1)}${hits[hits.length - 1]}`);
+        // Re-filter the span: a non-contiguous layout must never let a neighbouring
+        // session's row ride along into this session's evidence.
+        const rows = (Array.isArray(span) ? span : [])
+          .filter(r => Array.isArray(r) && String(r[idx] || '').trim() === wantSession);
+        return { rows, total };
+      }
+      try {
+        const [log, effort, plans, planSets] = await Promise.all([
+          readSession('Log_Cleaned', logCleanedColumns),
+          readSession('Effort', effortColumns),
+          readSession('Session_Plans', sessionPlansColumns),
+          readSession('Session_Plan_Sets', sessionPlanSetsColumns),
+        ]);
+        res.end(JSON.stringify({
+          sandbox_last6: SANDBOX_SPREADSHEET_ID_LAST6,
+          session_id: wantSession,
+          log_cleaned: log, effort, session_plans: plans, session_plan_sets: planSets,
+        }));
+      } catch (error) {
+        res.statusCode = 500;
+        res.end(JSON.stringify({ error: `durable verifier read failed: ${error && error.message}` }));
+      }
+    })();
+    return;
+  }
   res.end(JSON.stringify({
     appends: state.appendCalls,
     deletes: state.deleteCalls,
@@ -454,10 +757,13 @@ const stateServer = http.createServer((req, res) => {
     provider_reachable: modelUpProof.reachable,
     coach_model: modelUpProof.model,
     coach_scripted: COACH_SCRIPT,
-    // The sheets posture, stated as what is TRUE rather than what was intended. There is
-    // now exactly one truth to state: nothing Google-shaped exists in this process.
-    google_client_initialized: false,
-    sheets_stubbed_in_memory: true,
+    // The sheets posture, stated as what is TRUE rather than what was intended.
+    google_client_initialized: SANDBOX_LIVE,
+    sheets_stubbed_in_memory: !SANDBOX_LIVE,
+    sandbox_live: SANDBOX_LIVE,
+    rehearsal_live: REHEARSAL_LIVE,
+    sandbox_last6: SANDBOX_LIVE ? SANDBOX_SPREADSHEET_ID_LAST6 : null,
+    sandbox_preflight: sandboxPreflight,
     refusals: state.refusals,
     ledger_write_flags_off: !process.env.SESSION_PLAN_SETS_WRITE_ENABLED && !process.env.ATLAS_SESSION_PLANS_WRITE,
     telemetry_persistence_off: !process.env.ATLAS_FLIGHT_RECORDER && !process.env.ATLAS_BRAIN_SHADOW_PERSIST
@@ -469,6 +775,9 @@ const stateServer = http.createServer((req, res) => {
 // synchronously and makes no call; only model-up awaits the provider.
 (async () => {
   if (MODEL_UP) await assertModelUp(); else assertModelDown();
+  // The sandbox is PROVEN before a port is published — a browser can never attach to a
+  // server whose workbook has not been verified (TEMPORARY F-SB4B; sunset: F-SB4C).
+  if (SANDBOX_LIVE) await assertSandboxLive();
 
   const server = app.listen(0, () => {
     stateServer.listen(0, () => {
@@ -476,7 +785,9 @@ const stateServer = http.createServer((req, res) => {
       // printed first so a rerun transcript records which model posture served it,
       // and model-up carries the model that actually answered.
       console.log(`GATE_MODEL_POSTURE=${modelPosture}${MODEL_UP ? ` model=${modelUpProof.model}` : ''}`);
-      console.log('GATE_SHEETS_POSTURE=in-memory-stub');
+      console.log(SANDBOX_LIVE
+        ? `GATE_SHEETS_POSTURE=sandbox-live-guarded last6=${SANDBOX_SPREADSHEET_ID_LAST6}`
+        : 'GATE_SHEETS_POSTURE=in-memory-stub');
       console.log(`GATE_STATE_PORT=${stateServer.address().port}`);
       console.log(`GATE_PORT=${server.address().port}`);
     });
