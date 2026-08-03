@@ -23,9 +23,12 @@ const path = require('node:path');
 
 const RUN_START_MARKER = 'RUN_START.json';
 
-// Written at the FIRST composer submission, never overwritten. Best-effort by design —
-// a marker that threw would abort a run that had genuinely started; a missing marker
-// reads as NOT STARTED, the honest default direction.
+// Written at the FIRST composer submission, never overwritten. This function never
+// throws, but it is NOT fire-and-forget: the one submitting caller (rehearsal.spec.js
+// `say()`) verifies the marker exists on disk BEFORE clicking submit and refuses the
+// submission otherwise — a pre-submission refusal is honestly NOT STARTED, whereas
+// submitting with no durable marker would misclassify a later crash as NOT STARTED
+// when the counting rule demands a streak reset (Codex P2, PR #1252).
 function markRunStarted(artifactDir, details) {
   if (!artifactDir) return false;
   const target = path.join(artifactDir, RUN_START_MARKER);

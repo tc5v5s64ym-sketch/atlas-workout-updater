@@ -31,7 +31,7 @@ const crypto = require('node:crypto');
 const { scoreRehearsalRun, renderMarkdown } = require('./rehearsal-scorecard');
 const { REHEARSAL_SESSION } = require('./rehearsal-run-purpose');
 const { measureSourceTree } = require('./rehearsal-source-facts');
-const { markRunStarted } = require('./rehearsal-run-start');
+const { markRunStarted, RUN_START_MARKER } = require('./rehearsal-run-start');
 const { pickNetworkPassthrough, assertNoWorkbookId, GATE_STARTUP_TIMEOUT_MS } = require('./rehearsal-child-env');
 const { SANDBOX_SPREADSHEET_ID, SANDBOX_SPREADSHEET_ID_LAST6 } = require('../../../config/sandboxSheet');
 const { logCleanedColumns, effortColumns, sessionPlansColumns, sessionPlanSetsColumns } = require('../../../config/columns');
@@ -122,10 +122,20 @@ const durableRows = (sessionId) => readJson(`${stateBase}/durable-rows?session_i
 const snap = async (page, name) => page.screenshot({ path: path.join(artDir, name), fullPage: true });
 
 // The session-start boundary is crossed at the FIRST composer submission, recorded
-// BEFORE the click so a submission that dies is still a submission.
+// BEFORE the click so a submission that dies is still a submission. The marker must
+// be DURABLY on disk before the click: if it cannot be persisted, this refuses to
+// submit at all (a pre-submission refusal is honestly NOT STARTED), because a
+// submitted-but-unmarked turn would later misread as NOT STARTED and skip a streak
+// reset the counting rule requires (Codex P2, PR #1252).
+let sessionStartMarked = false;
 async function say(page, text) {
   await page.locator('#workout-text').fill(text);
-  if (markRunStarted(artDir, { run_id: RUN_ID, purpose: RUN_PURPOSE, rehearsal_session_number: SESSION_NUMBER, source_sha: SOURCE.head_sha })) {
+  if (!sessionStartMarked) {
+    markRunStarted(artDir, { run_id: RUN_ID, purpose: RUN_PURPOSE, rehearsal_session_number: SESSION_NUMBER, source_sha: SOURCE.head_sha });
+    sessionStartMarked = fs.existsSync(path.join(artDir, RUN_START_MARKER));
+    if (!sessionStartMarked) {
+      throw new Error('rehearsal: refusing to submit the first athlete turn — the session-start marker could not be persisted, and crossing the counting boundary without evidence would misclassify a later crash as NOT STARTED.');
+    }
     note('session-start', 'BOUNDARY CROSSED — first synthetic athlete turn submitted');
   }
   await page.locator('#preview-btn').click();
@@ -472,10 +482,25 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
   try { reviewJson = JSON.parse(review.stdout.slice(review.stdout.indexOf('{'))); } catch { reviewJson = null; }
   const reviewCriteria = reviewJson && Array.isArray(reviewJson.criteria) ? reviewJson.criteria : [];
   const reviewFailed = reviewCriteria.filter(c => (c.verdict || c.status) === 'FAIL').map(c => c.id || c.name);
-  const reviewAllUnknown = reviewCriteria.length > 0 && reviewCriteria.every(c => (c.verdict || c.status) === 'UNKNOWN');
-  const reviewFound = Boolean(reviewJson && reviewJson.log_correlation
-    ? reviewJson.log_correlation.ambiguous !== true && !reviewAllUnknown
-    : reviewJson && !reviewAllUnknown);
+  // Credit is granted ONLY on a fully affirmative adjudication: process success,
+  // overall PASS, nonempty criteria, and an unambiguous correlation naming exactly
+  // this run's workout identity. An empty or partial-UNKNOWN result previously slipped
+  // through as found_exact_session:true (Codex P1, PR #1252) — an UNKNOWN is never a
+  // pass, and zero criteria is the all-UNKNOWN class, not a clean bill.
+  const reviewAllUnknown = reviewCriteria.length === 0
+    || (reviewJson && reviewJson.overall === 'UNKNOWN')
+    || reviewCriteria.every(c => (c.verdict || c.status) === 'UNKNOWN');
+  const reviewCorr = (reviewJson && reviewJson.log_correlation) || null;
+  const reviewCorrIds = reviewCorr && Array.isArray(reviewCorr.distinct_session_ids)
+    ? reviewCorr.distinct_session_ids.map(s => String(s).trim()) : [];
+  const reviewFound = review.status === 0
+    && Boolean(reviewJson)
+    && reviewJson.overall === 'PASS'
+    && reviewCriteria.length > 0
+    && Boolean(reviewCorr)
+    && reviewCorr.ambiguous !== true
+    && reviewCorrIds.length > 0
+    && reviewCorrIds.every(id => id === workoutId);
 
   // ── 14. Assemble observations for the frozen scorecard ───────────────────────
   const finalState = await serverState();
@@ -499,9 +524,38 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
     + d.effort.rows.filter(r => String(r[effSidIdx]).trim() !== workoutId).length
     + spRows.filter(r => String(r[sessionPlansColumns.indexOf('session_id')]).trim() !== workoutId).length
     + spsRows.filter(r => String(r[sessionPlanSetsColumns.indexOf('session_id')]).trim() !== workoutId).length;
+  // The substituted outcome must BIND: one row, attached to the accepted Bench slot's
+  // plan_item_id, planned=BEN01, and a performed_lift_code that is a real different
+  // lift — the same code the substitute's own Log_Cleaned rows carry. A row that
+  // merely says outcome=substituted proves nothing about WHICH slot or WHAT was
+  // performed (Codex P1, PR #1252).
   const substitutedOutcomes = spRows.filter(r => String(r[spIdx.ev]) === 'item_outcome'
     && String(r[sessionPlansColumns.indexOf('outcome')] || '') === 'substituted');
-  beat('one-substituted-outcome', substitutedOutcomes.length === 1, `${substitutedOutcomes.length} substituted item_outcome rows`);
+  const spItemIdx = sessionPlansColumns.indexOf('plan_item_id');
+  const spPlannedIdx = sessionPlansColumns.indexOf('planned_lift_code');
+  const spPerformedIdx = sessionPlansColumns.indexOf('performed_lift_code');
+  const spsPlannedIdx = sessionPlanSetsColumns.indexOf('planned_lift_code');
+  const benchItemIds = [...new Set(acceptedRows
+    .filter(r => String(r[spsPlannedIdx] || '').trim().toUpperCase() === 'BEN01')
+    .map(r => String(r[spsIdx.item] || '').trim()))];
+  const logExIdx = logCleanedColumns.indexOf('exercise');
+  const logCanonIdx = logCleanedColumns.indexOf('canonical_exercise');
+  const logLiftIdx = logCleanedColumns.indexOf('lift_code');
+  const subNameLc = subName.toLowerCase();
+  const subLogRows = d.log_cleaned.rows.filter(r =>
+    String(r[logCanonIdx] || '').trim().toLowerCase() === subNameLc
+    || String(r[logExIdx] || '').trim().toLowerCase() === subNameLc);
+  const subLogLiftCodes = [...new Set(subLogRows.map(r => String(r[logLiftIdx] || '').trim().toUpperCase()).filter(Boolean))];
+  const oRow = substitutedOutcomes[0] || [];
+  const oPerformed = String(oRow[spPerformedIdx] || '').trim().toUpperCase();
+  const outcomeBound = substitutedOutcomes.length === 1
+    && benchItemIds.length === 1
+    && String(oRow[spItemIdx] || '').trim() === benchItemIds[0]
+    && String(oRow[spPlannedIdx] || '').trim().toUpperCase() === 'BEN01'
+    && oPerformed !== '' && oPerformed !== 'BEN01'
+    && subLogLiftCodes.length === 1 && subLogLiftCodes[0] === oPerformed;
+  beat('one-substituted-outcome', outcomeBound,
+    `${substitutedOutcomes.length} substituted item_outcome row(s); bench slot ${benchItemIds.join('/') || '(none)'} vs outcome slot ${String(oRow[spItemIdx] || '(none)')}; performed ${oPerformed || '(blank)'} vs substitute log lift ${subLogLiftCodes.join('/') || '(none)'}`);
   const eligible = coachResponses.filter(r => r.phase === 'eligible_question');
   const gemini = eligible.filter(r => r.source === 'gemini');
 
@@ -548,11 +602,43 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
         accepted_grain_ok: grainOk,
         grain_detail: `items ${acceptedItems.length}, counts ${[...new Set(acceptedRows.map(r => String(r[spsIdx.count])))].join('/')}`,
       },
-      log_cleaned: {
-        row_count: d.log_cleaned.rows.length,
-        rows_match_declaration: d.log_cleaned.rows.length === SC.expected.log_rows,
-        detail: `${d.log_cleaned.rows.length} rows for ${workoutId}`,
-      },
+      log_cleaned: (() => {
+        // Content, not cardinality (Codex P1, PR #1252): every durable row must match a
+        // declared set on lift name + weight + reps + RIR, one-for-one. The declared
+        // multiset is the scenario's shorthand plus the two substitute sets carrying
+        // the PROPOSAL's own numbers.
+        const parseShorthand = (s) => {
+          const m = s.match(/^(.+?)\s+([\d.]+)\s*x\s*(\d+)\s*@\s*(\d+)$/i);
+          return { name: m[1].trim().toLowerCase(), weight: Number(m[2]), reps: Number(m[3]), rir: Number(m[4]) };
+        };
+        const declaredSets = [
+          ...SC.preBenchSets.map(parseShorthand),
+          { name: subNameLc, weight: subWeight, reps: subReps, rir: 2 },
+          { name: subNameLc, weight: subWeight, reps: subReps, rir: 2 },
+          ...SC.postBenchSets.map(parseShorthand),
+        ];
+        const wIdx = logCleanedColumns.indexOf('weight');
+        const rIdx = logCleanedColumns.indexOf('reps');
+        const rirIdx = logCleanedColumns.indexOf('rir');
+        const remaining = [...declaredSets];
+        const unmatched = [];
+        for (const row of d.log_cleaned.rows) {
+          const names = [String(row[logCanonIdx] || '').trim().toLowerCase(), String(row[logExIdx] || '').trim().toLowerCase()];
+          const i = remaining.findIndex(sSet => names.includes(sSet.name)
+            && Number(row[wIdx]) === sSet.weight && Number(row[rIdx]) === sSet.reps && Number(row[rirIdx]) === sSet.rir);
+          if (i >= 0) remaining.splice(i, 1);
+          else unmatched.push(`${names[0] || names[1]} ${row[wIdx]}x${row[rIdx]}@${row[rirIdx]}`);
+        }
+        const contentOk = d.log_cleaned.rows.length === SC.expected.log_rows
+          && remaining.length === 0 && unmatched.length === 0;
+        return {
+          row_count: d.log_cleaned.rows.length,
+          rows_match_declaration: contentOk,
+          detail: contentOk
+            ? `${d.log_cleaned.rows.length} rows, each matching a declared set on lift/weight/reps/RIR`
+            : `undeclared rows: [${unmatched.join('; ') || 'none'}]; declared sets unmatched: ${remaining.length}`,
+        };
+      })(),
       effort: { row_count: d.effort.rows.length },
       foreign_rows: foreignRows,
       foreign_id_probe_status: foreignStatus,
