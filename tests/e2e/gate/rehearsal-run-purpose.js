@@ -80,27 +80,40 @@ function runIdentityRefusal({ sessionNumber, runId }) {
 }
 
 // ── the canonical rehearsal count ──────────────────────────────────────────────
-// The count lives in docs/ATLAS_V1_EXECUTION_PLAN.md in the owner insertion's own
-// field — `Rehearsal (F-SB4): <k>/5` — and NOT in a second machine-readable file.
-// Every DIGIT occurrence must agree; the template occurrence (`<k>/5`) never matches.
-// Fail-closed on: no occurrence, disagreement, unreadable document.
+// The CURRENT count lives in exactly one place: the ACTIVE `CAMPAIGN STATE:` line's
+// streak field in docs/ATLAS_V1_EXECUTION_PLAN.md (the plan's own mandated format,
+// `Rehearsal (F-SB4): <k>/5`, recorded beside the stage streaks). The plan also
+// intentionally preserves DATED HISTORICAL statements of the count (owner insertions,
+// resolution blocks, "Counting unchanged" lines) that keep their original numbers
+// forever — after Session 1 the active field reads 1/5 while history still reads 0/5.
+// A whole-document every-occurrence-must-agree scan therefore refuses every session
+// after the first, so ONLY markers on a `CAMPAIGN STATE:` line participate here, and
+// historical evidence is never rewritten to appease the parser.
+// Fail-closed on: unreadable document, no current marker, more than one current
+// marker (two state lines, or two markers on one), malformed marker, impossible count.
 function parseCanonicalRehearsalCount(planText) {
   if (typeof planText !== 'string' || planText.trim() === '') {
     return { ok: false, count: null, reason: 'the execution plan could not be read' };
   }
-  const found = [...planText.matchAll(/Rehearsal \(F-SB4\):\s*(\d+)\s*\/\s*5/g)].map((m) => Number(m[1]));
-  if (found.length === 0) {
-    return { ok: false, count: null, reason: 'the execution plan states no `Rehearsal (F-SB4): <k>/5` count' };
+  const stateLines = planText.split('\n').filter((l) => l.includes('CAMPAIGN STATE:'));
+  const markers = [];
+  for (const line of stateLines) {
+    // The colon after (F-SB4) is optional: the mandated format carries it, the live
+    // streak field historically omits it — both name the same current field. The
+    // template `<k>/5` never matches (no digits).
+    for (const m of line.matchAll(/Rehearsal \(F-SB4\):?\s*(\d+)\s*\/\s*5/g)) markers.push(Number(m[1]));
   }
-  const distinct = [...new Set(found)];
-  if (distinct.length > 1) {
-    return { ok: false, count: null, reason: `the execution plan states conflicting rehearsal counts (${distinct.join(', ')}); refusing to guess which governs` };
+  if (markers.length === 0) {
+    return { ok: false, count: null, reason: 'the active CAMPAIGN STATE line carries no current `Rehearsal (F-SB4): <k>/5` marker' };
   }
-  const count = distinct[0];
+  if (markers.length > 1) {
+    return { ok: false, count: null, reason: `the plan carries ${markers.length} current CAMPAIGN STATE rehearsal markers (${markers.join(', ')}); exactly one must exist` };
+  }
+  const count = markers[0];
   if (!Number.isInteger(count) || count < 0 || count > REHEARSAL_STREAK_LENGTH) {
     return { ok: false, count: null, reason: `the execution plan states an impossible rehearsal count ${count}` };
   }
-  return { ok: true, count, reason: null, occurrences: found.length };
+  return { ok: true, count, reason: null, occurrences: 1 };
 }
 
 // ── the qualifying-run preflight ───────────────────────────────────────────────

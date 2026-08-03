@@ -87,31 +87,59 @@ describe('runIdentityRefusal — a prior rehearsal can never satisfy this sessio
   });
 });
 
-describe('parseCanonicalRehearsalCount — fail-closed', () => {
-  it('parses agreeing digit occurrences', () => {
-    const r = parseCanonicalRehearsalCount('a\nRehearsal (F-SB4): 2/5 …\nRehearsal (F-SB4): 2 / 5\n');
-    assert.deepEqual({ ok: r.ok, count: r.count, occurrences: r.occurrences }, { ok: true, count: 2, occurrences: 2 });
+describe('parseCanonicalRehearsalCount — anchored to the ACTIVE CAMPAIGN STATE field, fail-closed', () => {
+  // The exact shape the plan will have after Session 1: the active field advances to
+  // 1/5 while dated historical statements keep 0/5 forever. The historical numbers
+  // must never participate — an every-occurrence-must-agree scan would refuse
+  // Session 2 (owner P1, 2026-08-03).
+  const planAfterSession1 = [
+    '`CAMPAIGN STATE: Phase 4 — The canonical proof. Streak: Stage A 5/5 COMPLETE · Stage B 0/5 OPEN · Rehearsal (F-SB4) 1/5.`',
+    '**OWNER INSERTION 2026-08-02 — Stage A: 5/5 — COMPLETE. Stage B: 0/5 — OPEN. Rehearsal (F-SB4): 0/5 — OPEN.**',
+    '**Counting unchanged:** Rehearsal (F-SB4): 0/5 · Stage A: 5/5 COMPLETE',
+  ].join('\n');
+
+  it('reads the current count from the active field and ignores historical dated counts', () => {
+    const r = parseCanonicalRehearsalCount(planAfterSession1);
+    assert.deepEqual({ ok: r.ok, count: r.count }, { ok: true, count: 1 });
   });
 
-  it('never matches the template occurrence `<k>/5`', () => {
-    const r = parseCanonicalRehearsalCount('Rehearsal (F-SB4): <k>/5');
+  it('accepts the mandated colon form on the active field too', () => {
+    const r = parseCanonicalRehearsalCount('`CAMPAIGN STATE: Phase 4. Streak: Rehearsal (F-SB4): 3/5.`\nRehearsal (F-SB4): 0/5 historical');
+    assert.deepEqual({ ok: r.ok, count: r.count }, { ok: true, count: 3 });
+  });
+
+  it('fails closed when the active marker is missing (historical counts alone are not a current count)', () => {
+    const r = parseCanonicalRehearsalCount('**OWNER INSERTION — Rehearsal (F-SB4): 0/5 — OPEN.**\nCounting unchanged: Rehearsal (F-SB4): 0/5');
     assert.equal(r.ok, false);
-    assert.match(r.reason, /states no/);
+    assert.match(r.reason, /no current .*marker/);
   });
 
-  it('fails closed on an unreadable document, absence, disagreement, and impossible counts', () => {
+  it('fails closed on duplicate current markers — two state lines or two markers on one', () => {
+    const twoLines = parseCanonicalRehearsalCount('`CAMPAIGN STATE: A. Rehearsal (F-SB4) 1/5.`\n`CAMPAIGN STATE: B. Rehearsal (F-SB4) 2/5.`');
+    assert.equal(twoLines.ok, false);
+    assert.match(twoLines.reason, /exactly one/);
+    const oneLine = parseCanonicalRehearsalCount('`CAMPAIGN STATE: Rehearsal (F-SB4) 1/5 … Rehearsal (F-SB4) 1/5.`');
+    assert.equal(oneLine.ok, false);
+    assert.match(oneLine.reason, /exactly one/);
+  });
+
+  it('fails closed on a malformed current marker (template or non-numeric)', () => {
+    for (const bad of ['`CAMPAIGN STATE: Rehearsal (F-SB4): <k>/5.`', '`CAMPAIGN STATE: Rehearsal (F-SB4): x/5.`', '`CAMPAIGN STATE: no rehearsal field.`']) {
+      const r = parseCanonicalRehearsalCount(`${bad}\nRehearsal (F-SB4): 0/5 historical`);
+      assert.equal(r.ok, false, bad);
+      assert.match(r.reason, /no current .*marker/, bad);
+    }
+  });
+
+  it('fails closed on an unreadable document and an impossible active count', () => {
     assert.equal(parseCanonicalRehearsalCount('').ok, false);
     assert.equal(parseCanonicalRehearsalCount(null).ok, false);
-    assert.equal(parseCanonicalRehearsalCount('no count here').ok, false);
-    const conflict = parseCanonicalRehearsalCount('Rehearsal (F-SB4): 1/5\nRehearsal (F-SB4): 2/5');
-    assert.equal(conflict.ok, false);
-    assert.match(conflict.reason, /conflicting/);
-    const impossible = parseCanonicalRehearsalCount('Rehearsal (F-SB4): 9/5');
+    const impossible = parseCanonicalRehearsalCount('`CAMPAIGN STATE: Rehearsal (F-SB4) 9/5.`');
     assert.equal(impossible.ok, false);
     assert.match(impossible.reason, /impossible/);
   });
 
-  it('agrees with the REAL execution plan right now (0..5, unambiguous)', () => {
+  it('agrees with the REAL execution plan right now (exactly one active marker; count 0..5)', () => {
     const fs = require('node:fs');
     const path = require('node:path');
     const plan = fs.readFileSync(path.join(__dirname, '..', 'docs', 'ATLAS_V1_EXECUTION_PLAN.md'), 'utf8');

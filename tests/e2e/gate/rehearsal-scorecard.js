@@ -26,6 +26,10 @@ const {
   normalizePurpose, isRehearsalSessionNumber,
   workoutIdentityRefusal, runIdentityRefusal,
 } = require('./rehearsal-run-purpose');
+const { sessionPlanSetsColumns } = require('../../../config/columns');
+// The ENGINE's own fail-closed ledger selectors decide chain validity — the scorecard
+// never reimplements supersession rules, it asks the same authority the seal uses.
+const { parseRow: parseLedgerRow, effectivePlan: ledgerEffectivePlan } = require('../../../services/sessionPlanLedger');
 
 const PASS = 'PASS';
 const FAIL = 'FAIL';
@@ -42,6 +46,197 @@ const arr = (v) => (Array.isArray(v) ? v : null);
 const str = (v) => (typeof v === 'string' ? v.trim() : '');
 
 const SHA_RE = /^[0-9a-f]{40}$/;
+
+// ── the repeat-approval probe classification ───────────────────────────────────
+// Pure and bite-able: the spec measures, this decides. A DOM click event proves
+// only that an event fired — the probe's own listener firing is NOT evidence the
+// APPLICATION approval handler ran (a neutralized handler leaves the dispatch
+// observable and everything else unchanged — owner contract review, PR #1254).
+// The only affirmative outcomes:
+//   handler-invoked          — a second live save request/response was OBSERVED
+//                              (application-owned network evidence);
+//   refused-disabled-control — the control was present, disabled, provably
+//                              dispatched nothing, and issued no request.
+// A bare dispatch with no request, an enabled no-op control, or missing counts
+// all classify no-op-unproven, which condition 17 refuses.
+function classifyRepeatApprovalProbe(p) {
+  const probe = p && typeof p === 'object' ? p : {};
+  const before = probe.live_saves_before;
+  const after = probe.live_saves_after;
+  const countsKnown = Number.isInteger(before) && Number.isInteger(after);
+  if (countsKnown && after > before) return 'handler-invoked';
+  if (countsKnown && after === before
+    && probe.control_present === true
+    && probe.disabled_at_click === true
+    && probe.dispatched === false) return 'refused-disabled-control';
+  return 'no-op-unproven';
+}
+
+// ── the scenario-declared ledger multiset ──────────────────────────────────────
+// Compares the session's raw Session_Plan_Sets rows (arrays in the
+// sessionPlanSetsColumns order, exactly as the durable verifier serves them)
+// against the scenario's declared ledger: the accepted v1 grain per item AND the
+// substitution revision grain, row for row. Row counts, item counts, and seal
+// counts alone cannot distinguish "the declared workout" from "any 14 sealed
+// rows" — revisions attached to the wrong slot, swapped set indexes, a duplicate
+// accepted row standing in for a revision, or a broken supersession chain all
+// preserve the counts. Every declared row must be matched exactly once, every
+// durable row must match a declaration, and the chain must validate through the
+// engine's own selectors.
+//
+// declaration = {
+//   accepted: [{ lift, set_count, weight, reps, rir }],   // one entry per plan item
+//   revisions: {
+//     source_lift,           // the accepted slot the revisions must bind to
+//     replacement_lift,      // the durable lift code the revisions must carry
+//     rows,                  // exact revision row count
+//     set_indexes,           // exact set indexes, e.g. [1, 2]
+//     source,                // exact recommendation_source, e.g. 'live_revision'
+//     plan_version,          // exact ledger version, e.g. 2
+//     weight, reps,          // the approved proposal's own numbers
+//     rir,                   // optional: asserted only when the proposal carried one
+//   } | null,                // null = the scenario declares no revisions
+//   confidence,              // the exact durable confidence every row must carry
+// }
+// Revision target_set_count is NOT separately declarable: it must equal the matched
+// source item's accepted set_count — the immutable accepted grain (PR #1249) that a
+// revision may never inflate.
+// Returns { ok, problems }; pure, throws never (a malformed row is a problem).
+function compareLedgerToDeclaration(rawRows, declaration) {
+  const problems = [];
+  const col = (name) => sessionPlanSetsColumns.indexOf(name);
+  const idx = {
+    key: col('idempotency_key'), sid: col('session_id'), version: col('plan_version'),
+    item: col('plan_item_id'), lift: col('planned_lift_code'), set: col('set_index'),
+    count: col('target_set_count'), weight: col('target_weight'), reps: col('target_reps'),
+    rir: col('target_rir'), src: col('recommendation_source'), supersedes: col('supersedes_key'),
+    confidence: col('confidence'), seal: col('closeout_write_id'),
+  };
+  const rows = (Array.isArray(rawRows) ? rawRows : []).map((r) => (Array.isArray(r) ? r : []));
+  const decl = declaration && typeof declaration === 'object' ? declaration : {};
+  const declaredAccepted = Array.isArray(decl.accepted) ? decl.accepted : [];
+  const rev = decl.revisions || null;
+
+  if (!rows.length) return { ok: false, problems: ['zero ledger rows for this session'] };
+  for (const r of rows) {
+    if (parseLedgerRow(sessionPlanSetsColumns.map((_, i) => (r[i] == null ? '' : String(r[i])))).malformed) {
+      problems.push('a ledger row is structurally unparseable');
+    }
+  }
+
+  // One session identity and ONE seal across the whole session ledger.
+  const sids = [...new Set(rows.map((r) => String(r[idx.sid] || '').trim()))];
+  if (sids.length !== 1) problems.push(`rows span ${sids.length} session identities`);
+  const seals = rows.map((r) => String(r[idx.seal] || '').trim());
+  if (seals.some((s) => s === '')) problems.push(`${seals.filter((s) => s === '').length} row(s) carry no closeout seal`);
+  const distinctSeals = [...new Set(seals.filter((s) => s !== ''))];
+  if (distinctSeals.length > 1) problems.push(`rows carry ${distinctSeals.length} different closeout seals (mismatched seal)`);
+
+  const accepted = rows.filter((r) => String(r[idx.src] || '').trim() === 'accepted');
+  const others = rows.filter((r) => String(r[idx.src] || '').trim() !== 'accepted');
+
+  // Accepted v1 grain: exactly the declared items, each with set indexes 1..count,
+  // no duplicates, no gaps, exact targets, version 1, no supersession.
+  const byItem = new Map();
+  for (const r of accepted) {
+    const item = String(r[idx.item] || '').trim();
+    if (!byItem.has(item)) byItem.set(item, []);
+    byItem.get(item).push(r);
+  }
+  if (byItem.size !== declaredAccepted.length) {
+    problems.push(`expected ${declaredAccepted.length} accepted plan items, found ${byItem.size}`);
+  }
+  const remainingDecl = declaredAccepted.slice();
+  const acceptedKeyBySlot = new Map(); // `${item}#${set}` -> idempotency_key (for supersession checks)
+  let acceptedLiftForRevisions = null;
+  for (const [item, itemRows] of byItem) {
+    const lifts = [...new Set(itemRows.map((r) => String(r[idx.lift] || '').trim().toUpperCase()))];
+    if (lifts.length !== 1) { problems.push(`accepted item ${item} spans lift codes ${lifts.join('/')}`); continue; }
+    const lift = lifts[0];
+    const di = remainingDecl.findIndex((d) => String(d.lift).toUpperCase() === lift);
+    if (di < 0) { problems.push(`accepted item for ${lift} matches no declared plan item (or a declared item was consumed twice)`); continue; }
+    const d = remainingDecl.splice(di, 1)[0];
+    const wantSets = Array.from({ length: d.set_count }, (_, i) => i + 1);
+    const gotSets = itemRows.map((r) => Number(r[idx.set])).sort((a, b) => a - b);
+    if (JSON.stringify(gotSets) !== JSON.stringify(wantSets)) {
+      problems.push(`accepted ${lift}: set indexes [${gotSets.join(',')}], declared [${wantSets.join(',')}] (duplicate or missing accepted set index)`);
+    }
+    for (const r of itemRows) {
+      if (Number(r[idx.count]) !== d.set_count) problems.push(`accepted ${lift} set ${r[idx.set]}: target_set_count ${r[idx.count]}, declared ${d.set_count}`);
+      if (!cellEquals(r[idx.weight], d.weight)) problems.push(`accepted ${lift} set ${r[idx.set]}: weight ${r[idx.weight]}, declared ${d.weight}`);
+      if (!cellEquals(r[idx.reps], d.reps)) problems.push(`accepted ${lift} set ${r[idx.set]}: reps ${r[idx.reps]}, declared ${d.reps}`);
+      if (d.rir != null && !cellEquals(r[idx.rir], d.rir)) problems.push(`accepted ${lift} set ${r[idx.set]}: rir ${r[idx.rir]}, declared ${d.rir}`);
+      if (Number(r[idx.version]) !== 1) problems.push(`accepted ${lift} set ${r[idx.set]}: plan_version ${r[idx.version]}, expected 1`);
+      if (String(r[idx.supersedes] || '').trim() !== '') problems.push(`accepted ${lift} set ${r[idx.set]} carries a supersedes_key — an accepted v1 row supersedes nothing`);
+      if (String(r[idx.confidence] || '').trim() !== String(decl.confidence || '')) {
+        problems.push(`accepted ${lift} set ${r[idx.set]}: confidence "${r[idx.confidence]}", declared "${decl.confidence}"`);
+      }
+      acceptedKeyBySlot.set(`${String(r[idx.item]).trim()}#${Number(r[idx.set])}`, String(r[idx.key] || '').trim());
+    }
+    if (rev && lift === String(rev.source_lift).toUpperCase()) acceptedLiftForRevisions = item;
+  }
+  for (const d of remainingDecl) problems.push(`declared plan item ${d.lift} has no accepted ledger rows`);
+
+  // Revision grain: exactly the declared revision rows, bound to the source slot,
+  // carrying the replacement lift, the declared version/source, and a supersession
+  // key naming the SAME-SET accepted row.
+  if (!rev) {
+    if (others.length) problems.push(`${others.length} non-accepted row(s) present but the scenario declares no revisions`);
+  } else {
+    if (others.length !== rev.rows) problems.push(`expected ${rev.rows} revision row(s), found ${others.length} (missing or unexpected extra revision)`);
+    if (!acceptedLiftForRevisions) problems.push(`no single accepted item carries the revision source lift ${rev.source_lift}`);
+    const srcDecl = declaredAccepted.find((d) => String(d.lift).toUpperCase() === String(rev.source_lift).toUpperCase()) || null;
+    const gotRevSets = others.map((r) => Number(r[idx.set])).sort((a, b) => a - b);
+    const wantRevSets = (rev.set_indexes || []).slice().sort((a, b) => a - b);
+    if (JSON.stringify(gotRevSets) !== JSON.stringify(wantRevSets)) {
+      problems.push(`revision set indexes [${gotRevSets.join(',')}], declared [${wantRevSets.join(',')}]`);
+    }
+    for (const r of others) {
+      const item = String(r[idx.item] || '').trim();
+      const set = Number(r[idx.set]);
+      if (acceptedLiftForRevisions && item !== acceptedLiftForRevisions) {
+        problems.push(`revision set ${set} is attached to item ${item}, not the accepted ${rev.source_lift} slot ${acceptedLiftForRevisions}`);
+      }
+      const lift = String(r[idx.lift] || '').trim().toUpperCase();
+      if (lift !== String(rev.replacement_lift || '').toUpperCase()) {
+        problems.push(`revision set ${set}: lift code ${lift || '(blank)'}, expected the replacement ${rev.replacement_lift}`);
+      }
+      if (String(r[idx.src] || '').trim() !== rev.source) problems.push(`revision set ${set}: recommendation_source "${r[idx.src]}", expected "${rev.source}"`);
+      if (Number(r[idx.version]) !== rev.plan_version) problems.push(`revision set ${set}: plan_version ${r[idx.version]}, expected ${rev.plan_version}`);
+      // The immutable accepted grain (PR #1249): a revision's target_set_count must
+      // equal the SOURCE item's accepted set_count — never inflated, never shrunk.
+      if (srcDecl && Number(r[idx.count]) !== srcDecl.set_count) {
+        problems.push(`revision set ${set}: target_set_count ${r[idx.count]} differs from the immutable accepted grain ${srcDecl.set_count}`);
+      }
+      if (String(r[idx.confidence] || '').trim() !== String(decl.confidence || '')) {
+        problems.push(`revision set ${set}: confidence "${r[idx.confidence]}", declared "${decl.confidence}"`);
+      }
+      if (!cellEquals(r[idx.weight], rev.weight)) problems.push(`revision set ${set}: weight ${r[idx.weight]}, expected the proposal's ${rev.weight}`);
+      if (!cellEquals(r[idx.reps], rev.reps)) problems.push(`revision set ${set}: reps ${r[idx.reps]}, expected the proposal's ${rev.reps}`);
+      if (rev.rir != null && !cellEquals(r[idx.rir], rev.rir)) problems.push(`revision set ${set}: rir ${r[idx.rir]}, expected ${rev.rir}`);
+      const wantSupersedes = acceptedKeyBySlot.get(`${item}#${set}`);
+      const gotSupersedes = String(r[idx.supersedes] || '').trim();
+      if (!wantSupersedes || gotSupersedes !== wantSupersedes) {
+        problems.push(`revision set ${set}: supersedes_key does not name the same-set accepted row (broken supersession binding)`);
+      }
+    }
+  }
+
+  // Chain validity through the engine's own fail-closed selectors.
+  const rawForEngine = rows.map((r) => sessionPlanSetsColumns.map((_, i) => (r[i] == null ? '' : String(r[i]))));
+  const itemIds = [...new Set(rawForEngine.map((r) => parseLedgerRow(r).rec.plan_item_id).filter(Boolean))];
+  for (const itemId of itemIds) {
+    const eff = ledgerEffectivePlan(rawForEngine, itemId);
+    const bad = eff.find((e) => e.confidence === 'no_reliable_target' && e.reason === 'malformed_chain');
+    if (bad) problems.push(`item ${itemId} set ${bad.set_index}: the engine's selectors refuse this history (malformed_chain)`);
+  }
+
+  // Exact total: nothing beyond the declared multiset may ride along.
+  const declaredTotal = declaredAccepted.reduce((n, d) => n + d.set_count, 0) + (rev ? rev.rows : 0);
+  if (rows.length !== declaredTotal) problems.push(`${rows.length} total rows, declared ${declaredTotal}`);
+
+  return { ok: problems.length === 0, problems };
+}
 
 // Sheets string/number ambiguity ('225' vs 225) without treating '' as 0.
 function cellEquals(cell, expected) {
@@ -231,7 +426,14 @@ const CONDITIONS = Object.freeze([
       if (d.distinct_seals !== 1) return fail(`expected ONE closeout seal across the session's ledger rows, found ${d.distinct_seals}`);
       if (d.blank_seals !== 0) return fail(`${d.blank_seals} ledger row(s) were left unsealed`);
       if (d.accepted_grain_ok !== true) return fail(d.grain_detail || 'the accepted rows did not carry the declared per-item set counts');
-      return pass(`${d.row_count} rows, one seal, accepted grain exact`);
+      // Counts alone cannot prove the DECLARED workout: the full scenario multiset —
+      // accepted grain per item, revision rows bound to the accepted source slot with
+      // the replacement lift and a valid same-set supersession chain, nothing extra —
+      // must compare exactly (runner-honesty corrective, owner instruction 2026-08-03).
+      if (d.declared_multiset_ok !== true) {
+        return fail(d.multiset_detail || 'the ledger rows did not match the scenario-declared multiset (accepted grain + revision chain)');
+      }
+      return pass(`${d.row_count} rows, one seal, accepted grain exact, declared multiset (incl. revision binding and supersession chain) exact`);
     },
   },
   // (13) exact Log_Cleaned rows.
@@ -299,8 +501,19 @@ const CONDITIONS = Object.freeze([
       const w = obs && obs.write;
       if (!w) return missing('the write evidence');
       if (w.repeat_attempted !== true) return err('the repeat-approval probe did not run');
-      if (w.duplicate_rows !== 0) return fail(`${w.duplicate_rows} duplicate durable rows appeared after the repeated approval`);
-      return pass('the repeated approval produced zero new durable rows');
+      // A hardcoded flag is not evidence: the probe must record HOW the repeat
+      // attempt landed — either the write handler was provably invoked, or the
+      // approval gate provably refused it (a disabled control whose click dispatched
+      // nothing AND issued no request). A click that cannot prove either is a no-op,
+      // and a no-op proves nothing about repeat safety (owner P1, 2026-08-03).
+      const outcome = str(w.repeat_outcome);
+      if (outcome !== 'handler-invoked' && outcome !== 'refused-disabled-control') {
+        return fail(`the repeat attempt carries no affirmative evidence (outcome "${outcome || 'unrecorded'}") — a no-op click cannot prove the write path refuses repeats`);
+      }
+      if (w.duplicate_rows !== 0) return fail(`${w.duplicate_rows} duplicate durable row(s) appeared after the repeated approval (checked across Log_Cleaned, Effort, Session_Plans, Session_Plan_Sets)`);
+      return pass(outcome === 'handler-invoked'
+        ? 'the repeated approval reached the write handler and produced zero new durable rows across all four tabs'
+        : 'the repeated approval was refused by the disabled approval control (proven no-dispatch, no request) and zero new durable rows appeared across all four tabs');
     },
   },
   // (18) correct closeout state.
@@ -458,4 +671,4 @@ function renderMarkdown(card) {
   return `${lines.join('\n')}\n`;
 }
 
-module.exports = { CONDITIONS, scoreRehearsalRun, renderMarkdown, PASS, FAIL, ERROR, NOT_APPLICABLE };
+module.exports = { CONDITIONS, scoreRehearsalRun, renderMarkdown, compareLedgerToDeclaration, classifyRepeatApprovalProbe, PASS, FAIL, ERROR, NOT_APPLICABLE };
