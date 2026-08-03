@@ -449,7 +449,9 @@ Widening the window widened over-attach risk, so exact identity now beats the he
 
 Two P1 findings from exact-head review — an explicit identity merging with discovery, and a mismatched sidecar identity date-attaching — were real and are fixed in the same PR. Proof: `test/reviewLiveCorrelation.test.js` (18 tests); restoring the forward-only window fails 6, restoring the subtracting comparator fails 1, restoring the merge behavior fails 1, restoring a permissive sidecar join fails 1. Full suite 7209/7209, Playwright 254/254, all seven guards, lint 0 errors.
 
-### F-SB4B — NOT STARTED. Owner decision required: the sandbox workbook has no plan-ledger tabs.
+### F-SB4B — CONSTRUCTION IN PROGRESS (0/5). The 2026-08-02 blocker below (no plan-ledger tabs) is RESOLVED — see the 2026-08-03 resolution block after it.
+
+The following block is the 2026-08-02 finding, kept verbatim as the dated record of why the rehearsal could not start as specified:
 
 **No session was attempted. No synthetic athlete turn was submitted. Rehearsal streak stays 0/5, Stage A stays 5/5 COMPLETE, Stage B stays 0/5 OPEN, Phase 5 stays unauthorized.** Under the counting rule this is a **sandbox / instrumentation refusal before the first synthetic athlete turn**, which is NOT STARTED — it is not a failed session and it resets nothing.
 
@@ -472,6 +474,24 @@ The card also forbids the escape hatches: *"No authorized `N/A` may hide a seam 
 **Recommendation: A.** It is the only option that satisfies the card as written, its blast radius is one non-production workbook, and its cleanup is already scheduled into F-SB4C.
 
 **Nothing was created, changed, or written while this was established.** Every check above was read-only.
+
+### F-SB4B — BLOCKER RESOLVED 2026-08-03 (Option A, by owner action) and the owner's isolation instruction, recorded here to govern
+
+**The tabs exist.** Verified read-only on 2026-08-03: the declared sandbox workbook (last6 `H3CeXE`) now carries BOTH `Session_Plans` and `Session_Plan_Sets`, each with a header row exactly matching `config/columns.js` position-by-position. Tab creation in a real workbook is owner-reserved and no agent performed it, so this is the owner materializing **Option A**. Both tabs already carry prior data rows — which is precisely why the isolation rules below exist.
+
+**Prerequisite fixes, merged before any session counts.** (1) PR #1246 — the accepted-plan identity authority defect: the client's `${date}-{AM|PM}-01` acceptance mint is removed; `POST /api/session-plans/accept` allocates via `nextAvailableSessionId` over the durable union Effort ∪ `Log_Cleaned` ∪ `Session_Plans`, resolves retries from durable `plan_accepted` rows, fails closed on unreadable occupancy, and returns the identity; the client adopts it. Reproduction + regression: `tests/e2e/gate/two-accepted-plans-identity.spec.js`, green on clean `main` post-merge. (2) PR #1249 — the substitution-inflated revision chain: `accepted_set_count` is stamped immutably per slot at acceptance; every revision is bounded by the lower of that ledger ceiling and the displayed count, so the closeout seal can never be made permanently unreachable by a substitute's set count, and no phantom proposal targets a set the UI completed. (3) PR #1248 — the accepted-set-count capture adjudicated non-defect (`docs/verification/ACCEPTED_SET_COUNT_TRACE_2026-08-03.md`); rehearsal assertions pin the real ledger contract stated there.
+
+**Owner instruction 2026-08-03 — session-identity isolation (governs from here).**
+
+1. The rehearsal restarts at **0/5**. A harness or scenario failure does not count as a pass; a confirmed product defect resets the streak to 0/5 and restarts at Session 1 after the fix merges; never resume mid-streak; every rerun uses fresh identities; F-SB4 sessions never increment Stage B; no simulation is owner evidence.
+2. Every rehearsal session is provably isolated by fresh athlete, session, run, turn, preview, pairing, and write identities.
+3. **No session identity is injected or pre-seeded before accepted-plan allocation.** The real accepted-plan product path obtains the identity from the server allocator (the PR #1246 authority); pre-seeding would bypass the product authority the rehearsal exists to prove.
+4. The returned established identity is captured and used ONLY for evidence correlation, sandbox row reads, and `atlas:review-live` adjudication — never as an input to any product write.
+5. No prior rehearsal or setup row may satisfy the current session's assertions: every scorecard comparison filters durable rows by the CURRENT session's server-allocated identity (and fresh run/turn identities), so the pre-existing sandbox rows — and every earlier rehearsal session's rows — are structurally invisible to it.
+6. Temporary sandbox-live execution pieces are restored only as the smallest necessary set from the proven Stage A implementation, named individually for F-SB4C removal; the Stage A sunset is not permanently reversed.
+7. **F-SB4C removes REPOSITORY-SIDE machinery only.** The sandbox `Session_Plans` and `Session_Plan_Sets` tabs were created by the owner and carry data; deleting a tab or its rows in a real workbook is owner-reserved destruction, so no agent removes them under any reading of Option A's earlier cleanup sentence. If the owner wants those tabs gone after 5/5, that is his action or his explicit per-instance authorization — never part of the automated F-SB4C sweep.
+
+**Counting unchanged:** Rehearsal (F-SB4): 0/5 · Stage A: 5/5 COMPLETE · Stage B: 0/5 OPEN · Phase 5 unauthorized · `SESSION_PLAN_SETS_WRITE_ENABLED` untouched (the rehearsal's ledger writes are the harness posture against the sandbox workbook only, never a production flag change).
 
 ### Final verdict
 
