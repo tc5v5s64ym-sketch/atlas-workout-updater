@@ -3503,14 +3503,16 @@ test('server allocation preserves turn correlation: correlate on the provisional
     'the manual branch correlates on the provisional id when the payload id is blank');
   assert.doesNotMatch(submitSection, /beginCorrelatedPreview\(\{ sessionId: payload\.session_id \}\)/,
     'never correlate on a payload id that may be blank');
-  // When the server NAMES a session the rebind is mandatory — a correlation that cannot be
-  // bound to it fails closed rather than approving an uncorrelated write. When it names
-  // none, the payload keeps exactly what was sent (blank stays blank → the write allocates)
-  // and the correlation keeps its provisional binding, which approvalClaim accepts.
-  assert.match(submitSection, /if \(resolvedManualSessionId\) \{\s*\n\s*if \(correlationPreview && !resolveCorrelatedPreviewSession\(correlationPreview, resolvedManualSessionId\)\) \{[\s\S]{0,200}?throw new Error\('Preview session correlation could not be bound/,
-    'a named identity is rebound onto the correlation before the payload is pinned');
-  assert.match(submitSection, /payload\.session_id = resolvedManualSessionId;/,
-    'a named identity is pinned onto the payload the approve handler re-sends');
+  // The dry-run deliberately does NOT report the resolved identity back on this route. Its
+  // body is projected into the turn-write-proof record under an exhaustive field inventory
+  // (services/turnWriteArtifact.js), and ANY extra scalar invalidates that proof — which
+  // cost the closeout its confirmation card (gate specs AB-2 / F10D-R, both green once the
+  // field was removed). So a blank payload stays blank through approval, the SERVER
+  // allocates at write time, and the write response reports what it wrote under.
+  assert.doesNotMatch(submitSection, /resolved_session_id/,
+    'the dry-run body must not carry an identity field — it invalidates the write proof');
+  assert.doesNotMatch(submitSection, /payload\.session_id = /,
+    'the preview never pins an identity onto the payload; the write allocates');
 });
 
 test('multi-session/day: a saved session clears #log-session-id so the next upload is a new session', () => {

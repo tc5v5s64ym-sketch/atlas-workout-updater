@@ -7962,18 +7962,12 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       // PIN the server-allocated identity onto the payload the approve handler re-sends,
       // and onto the field, so the live write addresses the SAME session the owner just
       // previewed instead of re-allocating. Fail closed if the preview named none.
-      // Only when the server NAMED a session. If it did not, the payload keeps exactly what
-      // we sent — blank stays blank, so the live write re-sends blank and the server
-      // allocates then. Nothing is guessed either way, and an unnamed preview is not a
-      // failure: correlation keeps its provisional binding, which approvalClaim accepts.
-      const resolvedManualSessionId = (result?.data?.session_id || '').trim();
-      if (resolvedManualSessionId) {
-        if (correlationPreview && !resolveCorrelatedPreviewSession(correlationPreview, resolvedManualSessionId)) {
-          throw new Error('Preview session correlation could not be bound to the server-resolved session.');
-        }
-        payload.session_id = resolvedManualSessionId;
-        sessionIdInput.value = resolvedManualSessionId;
-      }
+      // The dry-run deliberately does NOT report the resolved identity: its body is
+      // projected into the turn-write-proof record under an exhaustive field inventory
+      // (services/turnWriteArtifact.js), and any extra scalar invalidates the proof —
+      // which cost the closeout its confirmation card. So a blank payload stays blank
+      // through approval and the SERVER allocates at write time, reporting the identity
+      // on the write response, which pendingLastWrite adopts for undo and readback.
       pendingWrite = { mode: 'manual', payload, sessionCloseout: isSessionCloseout,
         correlationPreview,
         previewProof: previewProofFromResult(result, 'manual')

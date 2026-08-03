@@ -3267,12 +3267,6 @@ app.post('/api/log-workout', async (req, res) => {
       sheet_write: 'skipped',
       sheet_written: false,
       no_write_confirmed: true,
-      // The RESOLVED identity, so a client that sent a blank id can pin what the
-      // allocator chose onto the write it is about to approve. Without it the write
-      // would re-allocate, and the owner would be approving a preview whose session
-      // identity nobody had stated. Additive: a client that supplied an id sees its
-      // own value back, exactly as the live-write responses already report it.
-      session_id,
       effortWritten: Boolean(formattedEffortRow),
       log_rows_preview: previewLogRows
     };
