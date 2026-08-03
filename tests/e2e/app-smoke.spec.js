@@ -96,6 +96,11 @@ async function mockAtlasApis(page, capture = {}) {
         data: {
           sheet_write: 'success',
           sheet_written: true,
+          // The real server reports the identity it WROTE under — it may have allocated
+          // one for a payload that carried none — and the client addresses undo and the
+          // readback verification to it. A mock that omits it leaves the client unable to
+          // verify its own write, which is not what production does.
+          session_id: body.session_id || 'PW-E2E-SESSION',
           log_rows_written: 3,
           logAppendedRange: 'Log_Cleaned!A200:L202'
         }

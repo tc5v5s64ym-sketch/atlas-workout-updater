@@ -3430,7 +3430,21 @@ test('screenshot preview date resolution: pendingWrite uses server-resolved date
 
   assert.match(submitSection, /const resolvedData = result\?\.data\?\.data \|\| \{\}/);
   assert.match(submitSection, /const resolvedDate = resolvedData\.date \|\| date \|\| getLocalDateString\(\)/);
-  assert.match(submitSection, /const resolvedSessionId = resolvedData\.session_id \|\| sessionId \|\| generateSessionId\(resolvedDate\)/);
+  // The SERVER allocates the identity and reports it; the fallback is the id we actually
+  // SENT, never a client-derived one — a guess here would put the client back in the
+  // allocator's chair, which is exactly the authority this path gave up. When both are
+  // blank the identity stays unnamed and the live write re-sends blank, so the server
+  // allocates then. That is correct, not a failure: requiring the response to name a
+  // session would turn a silent contract into a hard gate on the write path.
+  assert.match(submitSection, /const resolvedSessionId = resolvedData\.session_id \|\| completeWorkoutSessionId \|\| '';/);
+  assert.doesNotMatch(submitSection, /resolvedData\.session_id \|\| sessionId/,
+    'no client-derived fallback may re-enter the resolved identity');
+  assert.doesNotMatch(submitSection, /generateSessionId\(resolvedDate\)/,
+    'the screenshot branch never derives an identity');
+  // The correlation rebind is conditional on the server having NAMED a session —
+  // resolution migrates off the provisional id, it is not a precondition for approval.
+  assert.match(submitSection, /if \(resolvedSessionId && correlationPreview\s*\n\s*&& !resolveCorrelatedPreviewSession\(correlationPreview, resolvedSessionId\)\)/,
+    'an unnamed preview keeps its provisional correlation instead of failing the save');
   assert.match(submitSection, /document\.getElementById\('log-date'\)\.value = resolvedDate/);
   assert.match(submitSection, /sessionIdInput\.value = resolvedSessionId/);
   assert.match(submitSection, /pendingWrite = \{[\s\S]*mode: 'screenshot'[\s\S]*sessionId: resolvedSessionId,[\s\S]*date: resolvedDate/);
@@ -3455,11 +3469,14 @@ test('multi-session/day: effort-only uploads send a blank session_id so the serv
     appSource.indexOf('async function submitCompleteWorkout(')
   );
 
-  // The session_id sent for a complete-workout upload is gated on effortOnly: an
-  // effort-only upload sends the RAW field (blank for a fresh upload → server
-  // auto-increments), while an upload carrying workout rows keeps the resolved id.
+  // EVERY complete-workout upload sends the RAW field — blank for a fresh session, so
+  // the server allocates. The old `effortOnly ?` gate kept a client-derived id on any
+  // upload carrying workout rows, which is how a second same-period workout re-minted
+  // the first one's id and merged into it. The client allocates no identity at all now.
   assert.match(submitSection, /const explicitSessionId = sessionIdInput\.value\.trim\(\)/);
-  assert.match(submitSection, /const completeWorkoutSessionId = effortOnly \? explicitSessionId : sessionId/);
+  assert.match(submitSection, /const completeWorkoutSessionId = explicitSessionId;/);
+  assert.doesNotMatch(submitSection, /completeWorkoutSessionId = effortOnly \?/,
+    'the effortOnly gate is gone — no upload carries a client-derived identity');
   // Both complete-workout branches submit the gated id, not the forced …-01.
   assert.match(submitSection, /submitCompleteWorkout\(\{ file, logRows, sessionId: completeWorkoutSessionId,/);
   assert.match(submitSection, /submitCompleteWorkout\(\{ logRows, sessionId: completeWorkoutSessionId,/);
@@ -3467,6 +3484,35 @@ test('multi-session/day: effort-only uploads send a blank session_id so the serv
   // live write reuses the SAME session the preview computed.
   assert.match(submitSection, /const resolvedEffortSessionId = resolvedEffortData\.session_id \|\| completeWorkoutSessionId \|\| sessionId/);
   assert.match(submitSection, /pendingWrite = \{ mode: 'effort-only', logRows, sessionId: resolvedEffortSessionId,/);
+});
+
+test('server allocation preserves turn correlation: correlate on the provisional, rebind to the resolved', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const anchor = "getElementById('logger-form').addEventListener('submit'";
+  const submitSection = appSource.slice(
+    appSource.indexOf(anchor),
+    appSource.indexOf('async function submitCompleteWorkout('),
+  );
+
+  // A blank payload id means the SERVER allocates — but the coach turn this save answers
+  // is held under the PROVISIONAL id the conversation ran under. Correlating on the blank
+  // value finds no turn state and silently drops the turn↔write pairing, so the manual
+  // branch must use the same provisional handshake as the screenshot and effort-only
+  // branches: correlate on the provisional, then rebind once the preview names the identity.
+  assert.match(submitSection, /beginCorrelatedPreview\(\{\s*\n\s*sessionId: payload\.session_id \|\| sessionId,\s*\n\s*\.\.\.\(!payload\.session_id \? \{ provisionalSessionId: sessionId \} : \{\}\),/,
+    'the manual branch correlates on the provisional id when the payload id is blank');
+  assert.doesNotMatch(submitSection, /beginCorrelatedPreview\(\{ sessionId: payload\.session_id \}\)/,
+    'never correlate on a payload id that may be blank');
+  // The dry-run deliberately does NOT report the resolved identity back on this route. Its
+  // body is projected into the turn-write-proof record under an exhaustive field inventory
+  // (services/turnWriteArtifact.js), and ANY extra scalar invalidates that proof — which
+  // cost the closeout its confirmation card (gate specs AB-2 / F10D-R, both green once the
+  // field was removed). So a blank payload stays blank through approval, the SERVER
+  // allocates at write time, and the write response reports what it wrote under.
+  assert.doesNotMatch(submitSection, /resolved_session_id/,
+    'the dry-run body must not carry an identity field — it invalidates the write proof');
+  assert.doesNotMatch(submitSection, /payload\.session_id = /,
+    'the preview never pins an identity onto the payload; the write allocates');
 });
 
 test('multi-session/day: a saved session clears #log-session-id so the next upload is a new session', () => {
@@ -3503,7 +3549,7 @@ test('reaction layer: approve-btn captures lift codes and fires write reaction',
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   const approveSection = appSource.slice(
     appSource.indexOf(anchor),
-    appSource.indexOf(anchor) + 13000
+    appSource.indexOf(anchor) + 13600
   );
   assert.match(approveSection, /reactionLiftCodes/, 'must capture reactionLiftCodes before invalidatePreview');
   assert.match(approveSection, /fetchReaction/, 'must call fetchReaction after write');
@@ -3562,7 +3608,7 @@ test('verdict: post-write block shows Logged verdict and Next recommendation', (
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   const approveSection = appSource.slice(
     appSource.indexOf(anchor),
-    appSource.indexOf(anchor) + 13000
+    appSource.indexOf(anchor) + 13600
   );
   assert.match(approveSection, /buildVerdict\(rec\)/, 'must call buildVerdict');
   assert.match(approveSection, /'Logged'/, 'must label verdict row "Logged"');
@@ -3575,7 +3621,7 @@ test('verdict: write safety unchanged — undo button still wired after verdict 
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   const approveSection = appSource.slice(
     appSource.indexOf(anchor),
-    appSource.indexOf(anchor) + 13000
+    appSource.indexOf(anchor) + 13600
   );
   // undo button must still be appended before the verdict fetch
   const undoIdx = approveSection.indexOf('undo-write-btn');
@@ -3694,7 +3740,7 @@ test('readback: verifyWrittenRange function exists and fails quietly', () => {
 test('readback: approve handler fires verifyWrittenRange after write, before reaction fetch', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const anchor = "getElementById('approve-btn').addEventListener('click'";
-  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 13000);
+  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 13600);
   assert.match(handler, /verifyWrittenRange/, 'must call verifyWrittenRange in success path');
   assert.match(handler, /Verified in Sheet/, 'must show Verified in Sheet note');
   assert.match(handler, /readback verification unavailable/, 'must show unavailable note on failure');
@@ -5069,7 +5115,7 @@ test('Step 385: approve handler marks deload session written; advance fires once
   const approveStart = app.indexOf("document.getElementById('approve-btn').addEventListener('click'");
   assert.ok(approveStart !== -1, 'approve-btn click handler must exist');
   // F10D widened: the seal-verdict + finalized-emission block sits above this.
-  const handlerBody = app.slice(approveStart, approveStart + 7400);
+  const handlerBody = app.slice(approveStart, approveStart + 7600);
 
   // advance must NOT appear anywhere in the approve handler — it belongs in endPlannedSession.
   assert.doesNotMatch(handlerBody, /\/api\/deload\/advance/, 'advance must NOT be called inside the approve handler (it fires once per session in endPlannedSession)');
@@ -5265,8 +5311,13 @@ test('RC2: the closeout branch resolves the date and applies it to #log-date + s
   // date-derived id remains only the no-identity fallback.
   assert.match(guard, /const acceptedShotSid = \(getActivePlannedSession\(\) && getActivePlannedSession\(\)\.accepted === true/,
     'prefers the ACCEPTED session identity');
-  assert.match(guard, /sessionIdInput\.value = acceptedShotSid \|\| sessionIdInput\.value\.trim\(\) \|\| generateSessionId\(resolvedCloseout\.date\)/,
-    'accepted id → existing input → date-derived id, in that order');
+  // …and when NEITHER exists the field stays blank so the server allocates. The old
+  // date-derived fallback wrote a guessed id into the field, where it read back as an
+  // established identity and reached the write payload as though the owner chose it.
+  assert.match(guard, /sessionIdInput\.value = acceptedShotSid \|\| sessionIdInput\.value\.trim\(\);/,
+    'accepted id → existing input → blank (server allocates), in that order');
+  assert.doesNotMatch(guard, /generateSessionId\(/,
+    'the closeout branch never derives a session identity');
   const applyIdx = guard.indexOf('document.getElementById(\'log-date\').value = resolvedCloseout.date');
   const submitIdx = guard.indexOf('await handleLogIt();');
   assert.ok(applyIdx > 0 && applyIdx < submitIdx, 'the date is applied BEFORE the re-submit so the rebuilt rows use it');

@@ -7293,7 +7293,10 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     // only when no session identity exists yet.
     const acceptedShotSid = (getActivePlannedSession() && getActivePlannedSession().accepted === true
       && getActivePlannedSession().session_id) || '';
-    sessionIdInput.value = acceptedShotSid || sessionIdInput.value.trim() || generateSessionId(resolvedCloseout.date);
+    // Leave the field BLANK when no identity exists yet rather than deriving one: a
+    // derived id read back out of the field later would look established and reach the
+    // write payload as though the owner had chosen it. The server allocates instead.
+    sessionIdInput.value = acceptedShotSid || sessionIdInput.value.trim();
     // FB: the screenshot upload IS the completion signal at closeout — drive the
     // EXISTING closeout (handleLogIt → runCloseout → preview → approve → write) directly
     // instead of staging the effort and waiting for a separate "done". On re-entry the
@@ -7557,7 +7560,9 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     });
     closeoutScreenshotDateSource = resolvedShot.source;
     document.getElementById('log-date').value = resolvedShot.date;
-    const resolvedShotSessionId = sessionIdInput.value.trim() || generateSessionId(resolvedShot.date);
+    // Blank stays blank — the server allocates on the dry-run below and the resolved id
+    // is captured back into the field before any write can be approved.
+    const resolvedShotSessionId = sessionIdInput.value.trim();
     sessionIdInput.value = resolvedShotSessionId;
     screenshotResolvedSessionId = resolvedShotSessionId;
     screenshotResolvedDate = resolvedShot.date;
@@ -7735,16 +7740,31 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
   previewBtn.disabled = true;
   previewBtn.textContent = 'Previewing…';
 
-  // Multiple sessions per day: a fresh effort-only upload (a later run/ride after the
-  // gym session was already saved) must NOT be forced to …-01 and collide with the
-  // earlier session. When the owner hasn't explicitly tagged a session_id, send it BLANK
-  // for effort-only uploads so the server auto-increments (…-02, …-03 via
-  // nextAvailableSessionId). A concluded save clears #log-session-id, so the next upload
-  // starts blank = "a new session". Uploads that carry workout rows keep the resolved id
-  // so Log_Cleaned and Effort never disagree on session_id (BACKLOG: multi-session for
-  // screenshot-with-sets).
-  const explicitSessionId = sessionIdInput.value.trim();
-  const completeWorkoutSessionId = effortOnly ? explicitSessionId : sessionId;
+  // Multiple sessions per day: a fresh upload (a later run/ride, or simply a second
+  // workout) must NOT be forced to …-01 and collide with the earlier session. When the
+  // owner hasn't explicitly tagged a session_id, send it BLANK so the SERVER allocates
+  // (…-02, …-03 via nextAvailableSessionId). A concluded save clears #log-session-id, so
+  // the next upload starts blank = "a new session".
+  //
+  // This used to apply to effort-only uploads alone; an upload carrying workout rows kept
+  // the client-derived id, because a 12-column array row's own session_id was honoured
+  // verbatim and blanking the top-level id would have split Log_Cleaned (…-01 rows) from
+  // Effort (…-02). The server now stamps the resolved id onto every row shape, so that
+  // blocker is gone and the gate is removed — the client no longer allocates ANY identity.
+  //
+  // It never could allocate one truthfully: only the server can see the durable records,
+  // and a client that always guesses …-01 silently merged a second same-period workout
+  // into the first whenever the first carried no (optional) Effort row.
+  // An ACCEPTED plan's id is an ESTABLISHED identity, not a guess: acceptance already
+  // wrote Session_Plans and Session_Plan_Sets rows under it. Sending blank here would let
+  // the server allocate a second id for Log/Effort, forking one workout across four tabs —
+  // and the closeout would then look for its ledger under an id that has none, so no
+  // confirmation card can be built. Same precedence the closeout screenshot branch uses.
+  const acceptedPlanSessionId = (getActivePlannedSession()
+    && getActivePlannedSession().accepted === true
+    && getActivePlannedSession().session_id) || '';
+  const explicitSessionId = sessionIdInput.value.trim() || acceptedPlanSessionId;
+  const completeWorkoutSessionId = explicitSessionId;
 
   try {
     // F07 / CLIENT-3: a newer preview submit superseded this one during the parse — abandon
@@ -7782,8 +7802,19 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       if (submitSeq !== previewRequestSeq) return;
       const resolvedData = result?.data?.data || {};
       const resolvedDate = resolvedData.date || date || getLocalDateString();
-      const resolvedSessionId = resolvedData.session_id || sessionId || generateSessionId(resolvedDate);
-      if (correlationPreview && !resolveCorrelatedPreviewSession(correlationPreview, resolvedSessionId)) {
+      // The server allocates and reports the identity; adopt it, then fall back to the id
+      // we actually SENT. There is deliberately no client-derived fallback — a guessed id
+      // here would put the client back in the allocator's chair. When both are blank the
+      // identity simply stays unnamed: the live write re-sends blank and the server
+      // allocates then, which is correct rather than a failure. Requiring the response to
+      // name a session would make a silent contract a hard gate on the write path.
+      const resolvedSessionId = resolvedData.session_id || completeWorkoutSessionId || '';
+      // Rebind the correlation only when the server actually NAMED a session. Resolution
+      // is a migration off the provisional id, not a precondition — approvalClaim needs
+      // the pairing token, not a resolved session — so an unnamed preview keeps its
+      // provisional binding instead of failing the save.
+      if (resolvedSessionId && correlationPreview
+          && !resolveCorrelatedPreviewSession(correlationPreview, resolvedSessionId)) {
         throw new Error('Preview session correlation could not be bound to the server-resolved session.');
       }
       document.getElementById('log-date').value = resolvedDate;
@@ -7849,7 +7880,11 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       // so the summary, seal, and finalized event address the same session the
       // appends are stamped with (Codex P1, this PR).
       const payload = {
-        session_id: screenshotResolvedSessionId || sessionId,
+        // Blank when no identity is established yet — the server allocates and returns
+        // it, and the preview pins it below before anything can be approved. `sessionId`
+        // is a local PROVISIONAL value for correlation only; it must never be presented
+        // to a write path as though it were a decided identity.
+        session_id: screenshotResolvedSessionId || explicitSessionId,
         date: screenshotResolvedDate || date,
         log_rows: logRows, test_mode: 'true', write_id: generateWriteId()
       };
@@ -7896,7 +7931,15 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
             }));
       }
 
-      const correlationPreview = beginCorrelatedPreview({ sessionId: payload.session_id });
+      // The coach turn this save answers is held under the PROVISIONAL id (the local
+      // value the conversation ran under), so correlating on a blank payload id would
+      // find no turn state and silently drop the turn↔write pairing. Same provisional
+      // handshake the screenshot and effort-only branches use: correlate on the
+      // provisional now, rebind to the server-resolved identity once the preview names it.
+      const correlationPreview = beginCorrelatedPreview({
+        sessionId: payload.session_id || sessionId,
+        ...(!payload.session_id ? { provisionalSessionId: sessionId } : {}),
+      });
       activePreviewCorrelation = correlationPreview;
       if (correlationPreview) payload.correlation = correlationPreview.correlation;
       const result = await api('/api/log-workout', {
@@ -7916,6 +7959,15 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       }
       // F07 / CLIENT-3: drop a superseded dry-run response — a newer submit's preview wins.
       if (submitSeq !== previewRequestSeq) return;
+      // PIN the server-allocated identity onto the payload the approve handler re-sends,
+      // and onto the field, so the live write addresses the SAME session the owner just
+      // previewed instead of re-allocating. Fail closed if the preview named none.
+      // The dry-run deliberately does NOT report the resolved identity: its body is
+      // projected into the turn-write-proof record under an exhaustive field inventory
+      // (services/turnWriteArtifact.js), and any extra scalar invalidates the proof —
+      // which cost the closeout its confirmation card. So a blank payload stays blank
+      // through approval and the SERVER allocates at write time, reporting the identity
+      // on the write response, which pendingLastWrite adopts for undo and readback.
       pendingWrite = { mode: 'manual', payload, sessionCloseout: isSessionCloseout,
         correlationPreview,
         previewProof: previewProofFromResult(result, 'manual')
@@ -8503,7 +8555,8 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
       if (writeData.logAppendedRange) {
         pendingLastWrite = {
           log_appended_range: writeData.logAppendedRange,
-          session_id: realPayload.session_id,
+          // Server-reported identity first: it may have allocated one for a blank payload.
+          session_id: writeData.session_id || realPayload.session_id,
           log_rows_written: writeData.log_rows_written
         };
       }
