@@ -107,3 +107,17 @@ conversation/correlation and never reaches a durable write as authority.
 
 Mutations were applied to scratch-preserved working copies and byte-identical
 restoration was verified (`cmp`) before the final green rerun.
+
+## Advisory hardening (Codex P1 on the PR) — lost-response identity recovery
+
+A lost `/accept` response — including the client's own 10 s abort — can follow a
+COMPLETED server-side write, leaving the allocated identity unrecoverable on the
+client: outcome/closeout fail closed and a later save could allocate a different
+id. `runAcceptance` now makes ONE bounded recovery retry (unestablished only) with
+the IDENTICAL `pv_` payload; the route's durable retry-reuse returns the original
+identity, so the retry can recover an id but never mint a second one. The
+"couldn't confirm the plan record" note is reported only when the acceptance
+really ended unconfirmed. Regressions: identical-payload recovery + adoption,
+exactly-one-retry on double failure, no retry for an established identity
+(`test/planAcceptance.test.js`); disabling the retry bites both recovery tests.
+The sidecar-stall gate spec (SS-1…SS-5) passes unchanged.

@@ -2216,7 +2216,12 @@ async function acceptDisplayedPlan(rec) {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
       }),
     });
-    return sidecarTimedOut ? { ...accepted, sidecarTimedOut: true } : accepted;
+    // The UNCONFIRMED note is reported only when the acceptance really ended
+    // unconfirmed: a first-attempt timeout that the recovery retry then captured
+    // (runAcceptance's idempotent re-POST) is a confirmed acceptance, and warning
+    // "couldn't confirm the plan record" over it would be false.
+    return sidecarTimedOut && accepted && accepted.captured !== true
+      ? { ...accepted, sidecarTimedOut: true } : accepted;
   } finally {
     _acceptInFlight = false;
   }

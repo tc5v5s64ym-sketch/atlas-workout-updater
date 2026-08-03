@@ -333,16 +333,55 @@ test('unestablished + a response naming NO identity: nothing is adopted, no chec
   assert.equal(calls.postLedgerCheckpoint.length, 0, 'no ledger row under an unnamed session');
 });
 
-test('unestablished + sidecar failure: started, unnamed, no adoption, no checkpoint', async () => {
+test('unestablished + BOTH attempts fail: started, unnamed, no adoption, no checkpoint, exactly one recovery retry', async () => {
+  let attempts = 0;
   const { deps, calls, adopted } = unestablishedHarness({
-    postAccept: async () => { throw new Error('network down'); },
+    postAccept: async () => { attempts += 1; throw new Error('network down'); },
   });
   const r = await mod.runAcceptance(REC_SETS_ONE, deps);
   assert.equal(r.started, true);
   assert.equal(r.captured, false);
+  assert.equal(attempts, 2, 'one original attempt + ONE bounded recovery retry, never more');
   assert.deepEqual(adopted, []);
   assert.equal(calls.setActivePlan[0].session_id, null);
   assert.equal(calls.postLedgerCheckpoint.length, 0);
+});
+
+// Codex P1 (this PR): a lost response can follow a COMPLETED server-side write. The
+// recovery retry re-sends the identical pv_ payload; the route's durable retry-reuse
+// returns the ORIGINAL identity, so the client recovers the id instead of leaving the
+// session unnamed (where outcome/closeout fail closed and a later save could split
+// the workout across identities).
+test('unestablished + lost first response: the recovery retry recovers the SAME allocated identity and adopts it', async () => {
+  let attempts = 0;
+  const payloads = [];
+  const { deps, calls, adopted } = unestablishedHarness({
+    postAccept: async (payload) => {
+      attempts += 1;
+      payloads.push(payload);
+      if (attempts === 1) throw new Error('response lost (client abort)');
+      return { data: { session_plans: { captured: true, status: 'skipped' }, session_id: ALLOCATED } };
+    },
+  });
+  const r = await mod.runAcceptance(REC_SETS_ONE, deps);
+  assert.equal(attempts, 2);
+  assert.deepEqual(payloads[0], payloads[1], 'the retry re-sends the IDENTICAL payload — same pv_/pi_ identity, never re-minted');
+  assert.deepEqual(adopted, [ALLOCATED], 'the recovered identity is adopted');
+  assert.equal(calls.setActivePlan[0].session_id, ALLOCATED);
+  assert.equal(calls.postLedgerCheckpoint.length, 1, 'the ledger checkpoint fires under the recovered identity');
+  assert.equal(calls.postLedgerCheckpoint[0].session_id, ALLOCATED);
+  assert.equal(r.captured, true);
+  assert.equal(r.session_id, ALLOCATED);
+});
+
+test('established + sidecar failure: NO recovery retry — an established identity needs none', async () => {
+  let attempts = 0;
+  const { deps } = harness({
+    postAccept: async () => { attempts += 1; throw new Error('network down'); },
+  });
+  const r = await mod.runAcceptance(REC, deps);
+  assert.equal(r.started, true);
+  assert.equal(attempts, 1, 'the pre-fix single-attempt semantics hold when identity is already established');
 });
 
 test('established: the identity is sent, the checkpoint fires immediately under it, and nothing is adopted', async () => {

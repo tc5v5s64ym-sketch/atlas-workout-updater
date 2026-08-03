@@ -238,18 +238,34 @@ export async function runAcceptance(rec, deps) {
 
   let captured = false;
   let copy = acceptCopy(null); // neutral by default (covers flag OFF / no response)
+  let resp = null;
   try {
-    const resp = typeof d.postAccept === 'function' ? await d.postAccept(payload) : null;
-    const env = resp && resp.data && resp.data.session_plans ? resp.data.session_plans
-      : (resp && resp.session_plans ? resp.session_plans : null);
+    resp = typeof d.postAccept === 'function' ? await d.postAccept(payload) : null;
+  } catch {
+    // ONE bounded recovery retry, unestablished only (Codex P1, this PR): a lost
+    // response — including postAccept's own 10s abort — may follow a COMPLETED
+    // server-side write, and without the response the allocated identity is
+    // unrecoverable here: outcome/closeout would fail closed and a later save could
+    // allocate a different id, splitting one workout. The identical pv_ payload is
+    // idempotent — the route resolves a retry from the durable plan_accepted rows
+    // and returns the ORIGINAL identity, so this recovers an id but can never mint
+    // a second one. postAccept arms its own bound per call, so acceptance still
+    // settles. An ESTABLISHED identity needs no recovery — no retry, as before.
+    if (!establishedSessionId && typeof d.postAccept === 'function') {
+      try { resp = await d.postAccept(payload); } catch { resp = null; }
+    }
+  }
+  if (resp) {
+    const env = resp.data && resp.data.session_plans ? resp.data.session_plans
+      : (resp.session_plans ? resp.session_plans : null);
     // Adopt the server-allocated identity: the response's session_id is the identity
     // the acceptance was durably written under, and from here on it is the session's
     // established one — Session_Plan_Sets, Log_Cleaned/Effort, closeout, seal, undo
     // and readback all address it. `accepted` is the live store object, so the
     // mutation is visible to every consumer holding the active plan.
-    const serverSessionId = resp && resp.data && typeof resp.data.session_id === 'string'
+    const serverSessionId = resp.data && typeof resp.data.session_id === 'string'
       ? resp.data.session_id.trim()
-      : (resp && typeof resp.session_id === 'string' ? resp.session_id.trim() : '');
+      : (typeof resp.session_id === 'string' ? resp.session_id.trim() : '');
     if (!establishedSessionId && serverSessionId) {
       accepted.session_id = serverSessionId;
       if (typeof d.adoptSessionId === 'function') d.adoptSessionId(serverSessionId);
@@ -257,13 +273,10 @@ export async function runAcceptance(rec, deps) {
     }
     copy = acceptCopy(env);
     captured = copy.memory === true;
-  } catch {
-    // Sidecar failure — keep the accepted snapshot, no retry with new IDs, neutral copy.
-    // No identity is adopted or invented: the session stays unnamed and the write path's
-    // server allocator names it at save time.
-    copy = acceptCopy(null);
-    captured = false;
   }
+  // Both attempts failed → keep the accepted snapshot, no retry with new IDs, neutral
+  // copy. No identity is adopted or invented: the session stays unnamed and the write
+  // path's server allocator names it at save time.
 
   return { started: true, captured, message: copy.text, plan_version: planVersion, payload, session_id: accepted.session_id };
 }
