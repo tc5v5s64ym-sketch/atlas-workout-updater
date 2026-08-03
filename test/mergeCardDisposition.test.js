@@ -172,3 +172,62 @@ describe('merge card — the shipped template satisfies its own check', () => {
     assert.ok(!/ADDED TO BOUNDED BACKLOG requires/.test(failure), failure);
   });
 });
+
+// Owner instruction 2026-08-03 — the Atlas Contract / Systems Review block. The four
+// fields exist so a review names what it read. An unfilled block must fail the check,
+// or a risk-triggered PR could claim a review it never had while the gate stayed green
+// (Codex P1, PR #1257). These run the REAL workflow source, like every test above.
+describe('merge card — the Atlas Contract / Systems Review block', () => {
+  const REVIEW_BLOCK = fs.readFileSync(TEMPLATE, 'utf8')
+    .split(/^### Atlas Contract \/ Systems Review$/m)[1];
+  // A card whose OTHER required section is already satisfied, so each assertion below
+  // measures the review block alone.
+  const CARD_OK = `${CARD}### Additional findings\n\n- None\n\n`;
+
+  it('the template actually ships the block', () => {
+    assert.ok(REVIEW_BLOCK, 'the PR template must carry an "### Atlas Contract / Systems Review" heading');
+    for (const field of ['Required:', 'Exact reviewed head:', 'Reviewer:', 'Findings and dispositions:']) {
+      assert.ok(REVIEW_BLOCK.includes(field), `${field} missing from the review block`);
+    }
+  });
+
+  it('rejects the block left exactly as the template ships it', () => {
+    const failure = check(`${CARD_OK}### Atlas Contract / Systems Review${REVIEW_BLOCK.split(/^### /m)[0]}`);
+    assert.match(failure, /template placeholder/, 'an untouched review block must fail the check');
+  });
+
+  // The bite: each sentinel is load-bearing on its own. Remove one field's placeholder
+  // and that field alone must stop being reported — proving the check reads all three
+  // rather than tripping once on something else.
+  for (const [field, placeholder] of [
+    ['Exact reviewed head', 'full 40-character commit SHA, or n/a'],
+    ['Reviewer', 'who or what performed the review, or n/a'],
+    ['Findings and dispositions', 'each finding + fixed / non-issue / routed'],
+  ]) {
+    it(`catches an unfilled "${field}" placeholder specifically`, () => {
+      const failure = check(`${CARD_OK}### Atlas Contract / Systems Review\n\n- x: <!-- ${placeholder} -->\n`);
+      assert.ok(failure.includes(placeholder),
+        `the check must name the unfilled "${field}" placeholder; got: ${failure}`);
+    });
+  }
+
+  it('passes once every field carries a real value', () => {
+    const filled = [
+      '### Atlas Contract / Systems Review',
+      '',
+      '- Required: required — the PR changes a scorecard',
+      '- Exact reviewed head: 50d75cbe1c59847ad91084bc75ae02b45330ed77',
+      '- Reviewer: clean-context systems review',
+      '- Findings and dispositions: one P1, fixed',
+      '',
+    ].join('\n');
+    assert.equal(check(`${CARD_OK}${filled}`), '');
+  });
+
+  // The retired row must not come back: its template field no longer exists, so the
+  // sentinel could only false-fail a body that quotes the old wording.
+  it('no longer trips on a body quoting the retired status wording', () => {
+    const failure = check(`${CARD_OK}The old row allowed NON-BLOCKING / READY / BLOCKING / not risk-triggered.\n`);
+    assert.equal(failure, '', 'quoting the retired wording is prose, not an unfilled field');
+  });
+});
