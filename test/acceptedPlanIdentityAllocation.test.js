@@ -218,6 +218,27 @@ test('no sheet reader at all → 503 for an allocating request; an established i
   assert.equal(ok.body.data.session_id, SLOT(1));
 });
 
+// F-SB4B overflow regression (2026-08-03): with every scanned slot occupied the old
+// allocator WRAPPED to -01, and this route wrote a fresh acceptance into the first
+// (sealed, finalized) session of the period — durably proven in the rehearsal debug
+// sweep, where PM-01 accumulated four separate acceptances. The 11th acceptance must
+// allocate slot 11; total exhaustion must refuse (503), never reuse.
+test('the 11th same-period acceptance allocates slot 11 — never wraps into the sealed first session', async () => {
+  for (let n = 1; n <= 10; n += 1) tabs.Session_Plans.push(sessionPlansRow({ sessionId: SLOT(n) }));
+  const r = await accept(NO_ID);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.data.session_id, SLOT(11));
+  assert.equal(captureCalls[0].session.session_id, SLOT(11));
+});
+
+test('total slot exhaustion fails CLOSED: 503, no identity minted, nothing written', async () => {
+  for (let n = 1; n <= 99; n += 1) tabs.Session_Plans.push(sessionPlansRow({ sessionId: SLOT(n) }));
+  const r = await accept(NO_ID);
+  assert.equal(r.status, 503);
+  assert.match(String(r.body.error || r.body.message || ''), /every slot .* occupied/i);
+  assert.equal(captureCalls.length, 0, 'nothing may be written under a reused identity');
+});
+
 test('an unallocatable session_date → 400, nothing written', async () => {
   const { status } = await accept({ ...NO_ID, session_date: 'not-a-date' });
   assert.equal(status, 400);

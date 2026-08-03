@@ -8096,3 +8096,64 @@ test('turn precedence OFF (default): an ambiguous pronoun-only malfunction still
   assert.equal(body.data.turn_precedence, undefined, 'flag off ⇒ no turn_precedence envelope is emitted');
   assert.equal(fakeSheetsState.appendCalls.length, before, 'suggest-substitute never writes');
 });
+
+// ── Session-id allocator overflow — the /api/complete-workout caller (PR #1255) ──
+// The allocator fails CLOSED on true exhaustion (SESSION_SLOTS_EXHAUSTED) and the
+// multipart caller must keep the two refusal classes distinct: every-slot-occupied
+// is 503 unavailability; a malformed manual date (resolveWorkoutDate preserves the
+// string) is the client's 400 — never the exhaustion claim, which would misreport
+// the sheet's actual state. Both refusals happen before any durable write and must
+// clean up the uploaded temp file (owner contract review, PR #1255).
+
+test('complete-workout: total slot exhaustion → 503, temp upload cleaned, zero durable writes', async () => {
+  const fs = require('node:fs');
+  const { formatAmPmSuffix } = require('../services/sessionId');
+  fakeSheetsState.appendCalls.length = 0;
+  const today = getLocalDateString();
+  const prefix = today.replace(/-/g, '');
+  const suffix = formatAmPmSuffix();
+  fakeSheetsState.effortSessionIds = Array.from({ length: 99 }, (_, i) => `${prefix}-${suffix}-${String(i + 1).padStart(2, '0')}`);
+  fakeVisionParsedMetrics = { date: null, duration: '00:40:00', activeCalories: 400, totalCalories: 500, averageHR: 140, peakHR: 160, workoutType: 'Traditional Strength Training' };
+  const uploadsBefore = fs.readdirSync('/tmp/uploads').length;
+  try {
+    const form = new FormData();
+    form.append('date', today);
+    form.append('log_rows_json', JSON.stringify([{ exercise: 'Bench Press', set_number: 1, weight: 225, reps: 5, rir: 2 }]));
+    form.append('test_mode', 'false');
+    form.append('write_id', 'wr_overflow_test_0001');
+    form.append('image', new Blob(['watch'], { type: 'image/png' }), 'watch.png');
+    const { response, body } = await requestMultipart('/api/complete-workout', form);
+    assert.equal(response.status, 503, JSON.stringify(body));
+    assert.match(String(body.error || body.message || ''), /every slot .* occupied/i);
+    assert.equal(fakeSheetsState.appendCalls.length, 0, 'a refused allocation must write nothing');
+    assert.equal(fs.readdirSync('/tmp/uploads').length, uploadsBefore, 'the uploaded temp file must be cleaned up');
+  } finally {
+    fakeSheetsState.effortSessionIds = [];
+    fakeVisionParsedMetrics = null;
+  }
+});
+
+test('complete-workout: malformed manual date → 400 invalid-date, never the exhaustion claim, temp upload cleaned, zero durable writes', async () => {
+  const fs = require('node:fs');
+  fakeSheetsState.appendCalls.length = 0;
+  fakeVisionParsedMetrics = { date: null, duration: '00:40:00', activeCalories: 400, totalCalories: 500, averageHR: 140, peakHR: 160, workoutType: 'Traditional Strength Training' };
+  const uploadsBefore = fs.readdirSync('/tmp/uploads').length;
+  try {
+    const form = new FormData();
+    form.append('date', 'not-a-real-date');
+    form.append('log_rows_json', JSON.stringify([{ exercise: 'Bench Press', set_number: 1, weight: 225, reps: 5, rir: 2 }]));
+    form.append('test_mode', 'false');
+    form.append('write_id', 'wr_overflow_test_0002');
+    form.append('image', new Blob(['watch'], { type: 'image/png' }), 'watch.png');
+    const { response, body } = await requestMultipart('/api/complete-workout', form);
+    const message = String(body.error || body.message || '');
+    assert.equal(response.status, 400, JSON.stringify(body));
+    assert.match(message, /invalid workout date/i);
+    assert.doesNotMatch(message, /every slot/i, 'a bad date must never be reported as slot exhaustion');
+    assert.equal(fakeSheetsState.appendCalls.length, 0, 'a refused allocation must write nothing');
+    assert.equal(fs.readdirSync('/tmp/uploads').length, uploadsBefore, 'the uploaded temp file must be cleaned up');
+  } finally {
+    fakeSheetsState.effortSessionIds = [];
+    fakeVisionParsedMetrics = null;
+  }
+});
