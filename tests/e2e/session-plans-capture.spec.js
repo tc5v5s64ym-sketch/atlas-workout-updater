@@ -120,6 +120,10 @@ test('logging a set from the Coach\'s Pick auto-accepts — POSTs /api/session-p
   expect(accept.body.items.length).toBeGreaterThan(0);
   expect(accept.body.items[0].plan_item_id).toMatch(/^pi_/);
   expect(accept.body.items[0].planned_lift_code).toBe('BEN01');
+  // The removed authority stays removed: with no established identity the client
+  // sends NO session_id — never a derived `${date}-{AM|PM}-01`. The server
+  // allocates and its response names the identity.
+  expect(accept.body.session_id).toBeUndefined();
 });
 
 test('auto-accept uses the DISPLAYED pick even when the dashboard intent cache was empty', async ({ page }) => {

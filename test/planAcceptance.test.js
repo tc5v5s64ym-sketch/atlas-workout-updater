@@ -267,3 +267,143 @@ test('runAcceptance: the POST payload carries identity + planned metadata only (
   assert.ok(it.plan_item_id && it.planned_order && it.planned_lift_code);
   assert.ok(!('weight' in it) && !('reps' in it) && !('rir' in it), 'no loads/reps/RIR in the accept payload');
 });
+
+// ── server-allocated session identity (authority fix, 2026-08-03) ───────────────
+// With no ESTABLISHED identity the client derives nothing (its old
+// `${date}-{AM|PM}-01` mint re-used the first same-period session's identity):
+// it sends NO session_id, and the /accept response's server-allocated identity
+// becomes the session's established one.
+
+const ALLOCATED = '20260803-PM-02';
+const REC_SETS_ONE = { label: 'Push', id: 'i1', exercises: [{ name: 'Weighted Dip', liftCode: 'DIP01', sets: 3, weight: 65, reps: 5, rir: 2 }] };
+
+function unestablishedHarness(overrides = {}) {
+  const adopted = [];
+  const h = harness({
+    sessionId: null,
+    adoptSessionId: (sid) => adopted.push(sid),
+    postAccept: async (payload) => {
+      h.calls.postAccept.push(payload);
+      return { data: { session_plans: { captured: true, status: 'written' }, session_id: ALLOCATED } };
+    },
+    ...overrides,
+  });
+  return { ...h, adopted };
+}
+
+test('unestablished: the accept payload carries NO session_id key at all', async () => {
+  const { deps, calls } = unestablishedHarness();
+  await mod.runAcceptance(REC, deps);
+  assert.equal(calls.postAccept.length, 1);
+  assert.ok(!('session_id' in calls.postAccept[0]), 'no decided identity is sent — omitted, not blanked');
+  assert.deepEqual(Object.keys(calls.postAccept[0]).sort(), ['items', 'plan_version', 'session_date'].sort());
+});
+
+test('unestablished: the server-allocated identity is ADOPTED — stored plan, adopt hook, result', async () => {
+  const { deps, calls, adopted } = unestablishedHarness();
+  const r = await mod.runAcceptance(REC, deps);
+  assert.deepEqual(adopted, [ALLOCATED], 'adoptSessionId receives the allocated identity exactly once');
+  assert.equal(calls.setActivePlan[0].session_id, ALLOCATED, 'the LIVE stored plan carries the adopted identity');
+  assert.equal(r.session_id, ALLOCATED);
+  assert.equal(r.captured, true);
+});
+
+test('unestablished: the ledger checkpoint WAITS for the allocated identity and carries it', async () => {
+  const { deps, calls } = unestablishedHarness();
+  let checkpointBeforeAccept = false;
+  deps.postLedgerCheckpoint = async (payload) => {
+    if (calls.postAccept.length === 0) checkpointBeforeAccept = true;
+    calls.postLedgerCheckpoint.push(payload);
+    return { data: { session_plan_sets: { captured: false, status: 'dry_run' } } };
+  };
+  await mod.runAcceptance(REC_SETS_ONE, deps);
+  assert.equal(checkpointBeforeAccept, false, 'no checkpoint row may exist under a guessed identity');
+  assert.equal(calls.postLedgerCheckpoint.length, 1);
+  assert.equal(calls.postLedgerCheckpoint[0].session_id, ALLOCATED);
+});
+
+test('unestablished + a response naming NO identity: nothing is adopted, no checkpoint fires, the workout still starts', async () => {
+  const { deps, calls, adopted } = unestablishedHarness({
+    postAccept: async (payload) => { calls.postAccept.push(payload); return { data: { session_plans: { captured: true, status: 'written' } } }; },
+  });
+  const r = await mod.runAcceptance(REC_SETS_ONE, deps);
+  assert.equal(r.started, true);
+  assert.deepEqual(adopted, []);
+  assert.equal(calls.setActivePlan[0].session_id, null, 'the session stays unnamed — never a client-derived identity');
+  assert.equal(calls.postLedgerCheckpoint.length, 0, 'no ledger row under an unnamed session');
+});
+
+test('unestablished + BOTH attempts fail: started, unnamed, no adoption, no checkpoint, exactly one recovery retry', async () => {
+  let attempts = 0;
+  const { deps, calls, adopted } = unestablishedHarness({
+    postAccept: async () => { attempts += 1; throw new Error('network down'); },
+  });
+  const r = await mod.runAcceptance(REC_SETS_ONE, deps);
+  assert.equal(r.started, true);
+  assert.equal(r.captured, false);
+  assert.equal(attempts, 2, 'one original attempt + ONE bounded recovery retry, never more');
+  assert.deepEqual(adopted, []);
+  assert.equal(calls.setActivePlan[0].session_id, null);
+  assert.equal(calls.postLedgerCheckpoint.length, 0);
+});
+
+// Codex P1 (this PR): a lost response can follow a COMPLETED server-side write. The
+// recovery retry re-sends the identical pv_ payload; the route's durable retry-reuse
+// returns the ORIGINAL identity, so the client recovers the id instead of leaving the
+// session unnamed (where outcome/closeout fail closed and a later save could split
+// the workout across identities).
+test('unestablished + lost first response: the recovery retry recovers the SAME allocated identity and adopts it', async () => {
+  let attempts = 0;
+  const payloads = [];
+  const { deps, calls, adopted } = unestablishedHarness({
+    postAccept: async (payload) => {
+      attempts += 1;
+      payloads.push(payload);
+      if (attempts === 1) throw new Error('response lost (client abort)');
+      return { data: { session_plans: { captured: true, status: 'skipped' }, session_id: ALLOCATED } };
+    },
+  });
+  const r = await mod.runAcceptance(REC_SETS_ONE, deps);
+  assert.equal(attempts, 2);
+  assert.deepEqual(payloads[0], payloads[1], 'the retry re-sends the IDENTICAL payload — same pv_/pi_ identity, never re-minted');
+  assert.deepEqual(adopted, [ALLOCATED], 'the recovered identity is adopted');
+  assert.equal(calls.setActivePlan[0].session_id, ALLOCATED);
+  assert.equal(calls.postLedgerCheckpoint.length, 1, 'the ledger checkpoint fires under the recovered identity');
+  assert.equal(calls.postLedgerCheckpoint[0].session_id, ALLOCATED);
+  assert.equal(r.captured, true);
+  assert.equal(r.session_id, ALLOCATED);
+});
+
+test('established + sidecar failure: NO recovery retry — an established identity needs none', async () => {
+  let attempts = 0;
+  const { deps } = harness({
+    postAccept: async () => { attempts += 1; throw new Error('network down'); },
+  });
+  const r = await mod.runAcceptance(REC, deps);
+  assert.equal(r.started, true);
+  assert.equal(attempts, 1, 'the pre-fix single-attempt semantics hold when identity is already established');
+});
+
+test('established: the identity is sent, the checkpoint fires immediately under it, and nothing is adopted', async () => {
+  const adopted = [];
+  const { deps, calls } = harness({
+    adoptSessionId: (sid) => adopted.push(sid),
+    postAccept: async (payload) => {
+      calls.postAccept.push(payload);
+      // the server echoes an established identity verbatim
+      return { data: { session_plans: { captured: true, status: 'written' }, session_id: '20260710-AM-01' } };
+    },
+  });
+  let checkpointBeforeAccept = false;
+  deps.postLedgerCheckpoint = async (payload) => {
+    if (calls.postAccept.length === 0) checkpointBeforeAccept = true;
+    calls.postLedgerCheckpoint.push(payload);
+    return {};
+  };
+  const r = await mod.runAcceptance(REC_SETS_ONE, deps);
+  assert.equal(calls.postAccept[0].session_id, '20260710-AM-01');
+  assert.equal(checkpointBeforeAccept, true, 'an established identity checkpoints immediately, as before');
+  assert.equal(calls.postLedgerCheckpoint[0].session_id, '20260710-AM-01');
+  assert.deepEqual(adopted, [], 'an echoed established identity is not an adoption');
+  assert.equal(r.session_id, '20260710-AM-01');
+});

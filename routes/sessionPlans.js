@@ -23,6 +23,16 @@ const setsCapture = require('../services/sessionPlanSetsCapture');
 const { deriveImplicitRecommendation } = require('../services/implicitRecommendation');
 const { ITEM_OUTCOMES, CLOSEOUT_STATUSES } = require('../services/sessionPlanEvents');
 const { CONFIDENCE, REVISION_SOURCES } = require('../services/sessionPlanLedger');
+const { nextAvailableSessionId } = require('../services/sessionId');
+const { sessionPlansColumns, logCleanedColumns, effortColumns } = require('../config/columns');
+
+// Column positions for acceptance-time occupancy reads (the layouts are the
+// authoritative config/columns.js contracts, never guessed).
+const SP_SESSION_IDX = sessionPlansColumns.indexOf('session_id');
+const SP_PLAN_VERSION_IDX = sessionPlansColumns.indexOf('plan_version');
+const SP_EVENT_IDX = sessionPlansColumns.indexOf('event_type');
+const LOG_SESSION_IDX = logCleanedColumns.indexOf('session_id');
+const EFFORT_SESSION_IDX = effortColumns.indexOf('session_id');
 
 // Opaque, client-generated identity tokens (spec §4.4): a prefix + a non-empty
 // body. The server validates SHAPE only (it never mints IDs); the builders enforce
@@ -80,16 +90,42 @@ function _ledgerItemError(item, { requireRevision = false } = {}) {
 // only place that history lives). The other routes are pure checkpoint sinks and use no
 // deps — so an older `registerSessionPlanRoutes()` call still works (deps default to {}).
 module.exports = function registerSessionPlanRoutes(deps = {}) {
-  const { getSheetRows, logSheetName = 'Log_Cleaned', effortSheetName = 'Effort' } = deps;
+  const { getSheetRows, logSheetName = 'Log_Cleaned', effortSheetName = 'Effort',
+    sessionPlansSheetName = capture.SESSION_PLANS_TAB } = deps;
   const router = express.Router();
+
+  // Collect the session ids present in one durable tab. The read is NOT guarded here:
+  // a throw must reach the caller, because an unreadable occupancy source means slot
+  // availability cannot be proven and allocation must fail closed, never fall open.
+  async function _durableSessionIds(tabName, idx) {
+    const rows = await getSheetRows(tabName);
+    const ids = [];
+    for (const row of Array.isArray(rows) ? rows : []) {
+      const id = Array.isArray(row) ? _str(row[idx]) : '';
+      if (id) ids.push(id);
+    }
+    return ids;
+  }
 
   // POST /api/session-plans/accept — establishes plan identity: one plan_accepted
   // row per accepted item.
+  //
+  // session_id is OPTIONAL here, unlike every other Session_Plans route: a plan
+  // accepted before any set is logged has no established workout identity, and the
+  // client no longer derives one (its hardcoded `${date}-{AM|PM}-01` mint re-used the
+  // first same-period session's identity, merging two accepted workouts). When the
+  // request carries no session_id the SERVER allocates one — the same
+  // nextAvailableSessionId authority /api/log-workout uses — over the durable union
+  // Effort ∪ Log_Cleaned ∪ Session_Plans, and reports the identity it wrote under.
+  // Session_Plans is in the union because an accepted-but-not-yet-logged workout
+  // exists ONLY there. A retry of the same acceptance (same pv_ plan_version) must
+  // re-use the identity its durable rows already carry, never allocate a second one.
   router.post('/api/session-plans/accept', async (req, res) => {
     const body = req.body && typeof req.body === 'object' ? req.body : {};
     const session = _readSession(body);
-    const sessionErr = _sessionError(session);
-    if (sessionErr) return standardError(req, res, sessionErr, null, 400);
+    if (!session.session_date) return standardError(req, res, 'session_date is required', null, 400);
+    if (!session.plan_version) return standardError(req, res, 'plan_version is required', null, 400);
+    if (!PV_SHAPE.test(session.plan_version)) return standardError(req, res, 'plan_version must be an opaque token (pv_…)', null, 400);
     const items = Array.isArray(body.items) ? body.items : null;
     if (!items || items.length === 0) return standardError(req, res, 'items[] is required and must be non-empty', null, 400);
     for (const it of items) {
@@ -97,8 +133,58 @@ module.exports = function registerSessionPlanRoutes(deps = {}) {
       if (!PI_SHAPE.test(_str(item.plan_item_id))) return standardError(req, res, 'each item requires an opaque plan_item_id (pi_…)', null, 400);
       if (!LIFT_CODE_SHAPE.test(_str(item.planned_lift_code))) return standardError(req, res, 'each item requires a canonical planned_lift_code (non-empty, no spaces)', null, 400);
     }
+
+    if (!session.session_id) {
+      if (typeof getSheetRows !== 'function') {
+        return standardError(req, res, 'Cannot allocate a session id: no durable-record access.', null, 503);
+      }
+      // Durable retry evidence first: an acceptance that already wrote rows under
+      // this plan_version owns its identity. Checking before the occupancy union is
+      // load-bearing — after the first attempt the union CONTAINS the allocated id,
+      // so a replay that skipped this check would allocate the next slot and fork
+      // one accepted workout into two identities.
+      let planRows;
+      try {
+        planRows = await getSheetRows(sessionPlansSheetName);
+      } catch (e) {
+        console.error('❌ Session_Plans unreadable for acceptance session-id allocation:', e);
+        return standardError(req, res, 'Cannot allocate a session id: Session_Plans occupancy is unreadable.', null, 503);
+      }
+      const spRows = Array.isArray(planRows) ? planRows : [];
+      const prior = spRows.find(r => Array.isArray(r)
+        && _str(r[SP_PLAN_VERSION_IDX]) === session.plan_version
+        && _str(r[SP_EVENT_IDX]) === 'plan_accepted'
+        && _str(r[SP_SESSION_IDX]) !== '');
+      if (prior) {
+        session.session_id = _str(prior[SP_SESSION_IDX]);
+      } else {
+        let effortIds;
+        let logIds;
+        try {
+          effortIds = await _durableSessionIds(effortSheetName, EFFORT_SESSION_IDX);
+        } catch (e) {
+          console.error('❌ Effort unreadable for acceptance session-id allocation:', e);
+          return standardError(req, res, 'Cannot allocate a session id: Effort occupancy is unreadable.', null, 503);
+        }
+        try {
+          logIds = await _durableSessionIds(logSheetName, LOG_SESSION_IDX);
+        } catch (e) {
+          console.error('❌ Log_Cleaned unreadable for acceptance session-id allocation:', e);
+          return standardError(req, res, 'Cannot allocate a session id: Log_Cleaned occupancy is unreadable.', null, 503);
+        }
+        const spIds = spRows.map(r => (Array.isArray(r) ? _str(r[SP_SESSION_IDX]) : '')).filter(Boolean);
+        try {
+          session.session_id = nextAvailableSessionId(session.session_date, [...effortIds, ...logIds, ...spIds]);
+        } catch (e) {
+          return standardError(req, res, 'session_date must be a calendar date (YYYY-MM-DD).', null, 400);
+        }
+      }
+    }
+
     const result = await capture.captureAccept(session, items);
-    return standardSuccess(req, res, 'Session_Plans accept', { session_plans: result });
+    // The identity the acceptance was written under, echoed verbatim — for an
+    // allocating request this is the client's ONLY source of the session identity.
+    return standardSuccess(req, res, 'Session_Plans accept', { session_plans: result, session_id: session.session_id });
   });
 
   // POST /api/session-plans/outcome — one explicit item outcome

@@ -10,6 +10,10 @@ const { test, expect } = require('@playwright/test');
 
 const TEST_KEY = 'playwright-test-key';
 const SETS = [{ weight: 140, reps: 10, rir: 2 }, { weight: 140, reps: 10, rir: 2 }, { weight: 140, reps: 10, rir: 2 }];
+// The identity the mocked server "allocates" for the acceptance — an arbitrary
+// fixed value (no wall-clock dependency); the client must ADOPT it and address
+// every later lifecycle call with it.
+const ALLOCATED_SID = '20260612-PM-03';
 
 function json(body, status = 200) {
   return { status, contentType: 'application/json; charset=utf-8', body: JSON.stringify(body) };
@@ -26,7 +30,11 @@ async function mockApis(page, capture) {
 
     if (path.startsWith('/api/session-plans/')) {
       capture.posts.push({ path, body });
-      return route.fulfill(json({ status: 'ok', data: { session_plans: { captured: true, status: 'written' } } }));
+      // The accept contract: the server allocates the session identity when the
+      // client (correctly) sends none, and reports the identity it wrote under.
+      const data = { session_plans: { captured: true, status: 'written' } };
+      if (path === '/api/session-plans/accept') data.session_id = (body && body.session_id) || ALLOCATED_SID;
+      return route.fulfill(json({ status: 'ok', data }));
     }
     if (path === '/api/plan/intent-recommendation') {
       return route.fulfill(json({ status: 'success', data: {
@@ -93,7 +101,11 @@ test('full Session_Plans lifecycle fires accept + completed/substituted/skipped 
   await expect.poll(() => capture.posts.filter(p => p.path === '/api/session-plans/accept').length).toBeGreaterThan(0);
   const accept = capture.posts.find(p => p.path === '/api/session-plans/accept').body;
   const [A, B, C] = accept.items.map(it => it.plan_item_id); // Seated Row, Leg Extension, Overhead Press
-  const SID = accept.session_id, PV = accept.plan_version;
+  // No established identity exists at acceptance, so the client sends NO session_id
+  // (the old client-minted `${date}-{AM|PM}-01` here is the removed authority) and
+  // must ADOPT the server-allocated identity for the whole lifecycle.
+  expect(accept.session_id).toBeUndefined();
+  const SID = ALLOCATED_SID, PV = accept.plan_version;
   expect(PV).toMatch(/^pv_/); for (const id of [A, B, C]) expect(id).toMatch(/^pi_/);
   await expect(page.locator('#thread-messages .readback').last()).toBeVisible();
 
