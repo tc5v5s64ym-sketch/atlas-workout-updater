@@ -161,6 +161,12 @@ const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 
 test.describe.configure({ mode: 'serial' });
 
+// The default credential-free lane collects this file but must never run it: without
+// the operator command's envelope the spec SKIPS — no hook runs, no server spawns, the
+// lane stays green and write-free. Only `npm run atlas:rehearsal-session` sets the flag.
+test.skip(process.env.ATLAS_REHEARSAL_RUN !== '1',
+  'rehearsal sessions run only through `npm run atlas:rehearsal-session -- --session=N --model-up`');
+
 test.beforeAll(async () => {
   if (!RUN_ID || !ATHLETE_ID || !ARTIFACT_DIR) {
     throw new Error('rehearsal: run it through `npm run atlas:rehearsal-session` — the run/athlete ids and artifact dir are minted there, never here.');
@@ -283,7 +289,9 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
   const proposalLine = await page.locator('#thread-messages .replacement-proposal-line').last().innerText();
   beat('substitution-lane', /replace bench press with/i.test(proposalLine), `proposal: "${proposalLine.slice(0, 160)}"`);
   // Engine-owned prescription parsed from the PROPOSAL — the numbers this run will log.
-  const m = proposalLine.match(/with\s+(.+?)\s+—\s*([\d.]+)\s*lbs?\s*×\s*(\d+)\s*reps(?:\s*@\s*(\d+)\s*RIR)?/i)
+  // The engine's exact line shape (src/app/activeReplacement.js formatProposalLine):
+  // "Replace <src> with <name> — <w> lb <r> reps @ <rir> RIR × <s> sets."
+  const m = proposalLine.match(/with\s+(.+?)\s+—\s*([\d.]+)\s*lbs?\s+(\d+)\s*reps/i)
     || proposalLine.match(/with\s+([A-Za-z .-]+)/i);
   const subName = m ? m[1].trim() : '';
   const subWeight = m && m[2] ? Number(m[2]) : null;
@@ -298,8 +306,10 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
   const benchStillCurrent = /bench press/i.test(planAfterAsk.names[planAfterAsk.index] || '');
   beat('no-mutation-before-acceptance', planAfterAsk.names.some(n => /bench press/i.test(n)) && benchStillCurrent,
     `plan after ask: [${planAfterAsk.names.join(', ')}], current index ${planAfterAsk.index}`);
-  const oneProposal = await page.evaluate(() => (window.getPendingReplacement ? (window.getPendingReplacement() ? 1 : 0) : -1));
-  stateCheck('one-bounded-proposal', oneProposal !== 0, `pendingReplacement present: ${oneProposal}`);
+  // One bounded proposal, observed through the real UI (the store's pendingReplacement
+  // is not window-exposed, and this spec adds no new client surface to read it).
+  const approveButtons = await page.locator('#thread-messages .replacement-approve-btn').count();
+  stateCheck('one-bounded-proposal', approveButtons === 1, `${approveButtons} approve control(s) in the thread`);
   const subThreadDelta = (await page.locator('#thread-messages').innerText()).slice(threadBeforeSub.length);
   const mutationWording = /i've noted the substitution|you're substituting|has been (swapped|replaced)/i.test(subThreadDelta);
   beat('no-completed-mutation-wording', !mutationWording, mutationWording ? 'completed-mutation wording appeared before acceptance' : 'clean');
@@ -407,9 +417,11 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
     .map(l => { try { return JSON.parse(l.slice(l.indexOf(marker) + marker.length).trim()); } catch { return null; } }).filter(Boolean);
   const traces = parseMarker('[interaction-trace]');
   const proofs = parseMarker('[turn-write-proof]');
-  const liveProof = proofs.find(p => p && p.write && p.write.sheet_write === 'success') || proofs[proofs.length - 1] || null;
-  const proofTurn = liveProof ? (liveProof.turn_id || (liveProof.turn && liveProof.turn.turn_id)) : null;
-  const joined = Boolean(proofTurn) && traces.some(t => (t.turn_id || (t.trace && t.trace.turn_id)) === proofTurn);
+  // The record's proof fields live under `proof` (services/turnCorrelation.js
+  // buildWriteProofRecord); the live write carries sheet_write:'success' there.
+  const liveProof = proofs.find(p => p && p.proof && p.proof.sheet_write === 'success') || proofs[proofs.length - 1] || null;
+  const proofTurn = liveProof ? liveProof.turn_id : null;
+  const joined = Boolean(proofTurn) && traces.some(t => t.turn_id === proofTurn);
 
   // ── 13. Review-tool adjudication against the SANDBOX (read-only) ─────────────
   const review = spawnSync(process.execPath, ['scripts/atlas-review-live.js', '--json', `--workout-session=${workoutId}`], {

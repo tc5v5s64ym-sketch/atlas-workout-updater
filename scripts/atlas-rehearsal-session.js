@@ -33,6 +33,13 @@ const crypto = require('node:crypto');
 
 const REPO_ROOT = path.join(__dirname, '..');
 
+// The credentials and provider key live in the repo's .env (docs/AGENT_LIVE_TESTING.md),
+// exactly as index.js loads them. Loaded here so the preflight sees the real facts; the
+// child still receives ONLY the field-by-field allowlist below — the ambient
+// GOOGLE_SHEETS_ID that dotenv also loads is never copied in, and the preflight
+// re-verifies that mechanically (childCarriesWorkbookId).
+require('dotenv').config({ path: path.join(REPO_ROOT, '.env') });
+
 const { SANDBOX_SPREADSHEET_ID_LAST6, isSandboxSpreadsheetId, SANDBOX_SPREADSHEET_ID } = require('../config/sandboxSheet');
 const { pickNetworkPassthrough, assertNoWorkbookId } = require('../tests/e2e/gate/rehearsal-child-env');
 const {
