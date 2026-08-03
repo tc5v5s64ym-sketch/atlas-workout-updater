@@ -232,9 +232,29 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
   // eligible open turn is the only accepted marker).
   let currentPhase = 'setup';
   const coachResponses = [];
+  // Save-route capture for the W1 dry-run proof: every preview runs test_mode:true and
+  // must answer sheet_written:false + no_write_confirmed:true; the ONE live write
+  // answers sheet_write:'success'. Observed from the real network, never inferred.
+  const saveResponses = [];
   page.on('response', async (res) => {
     const phase = currentPhase;
-    if (!/\/api\/coach\/(chat|ask|message)\b/.test(res.url())) return;
+    const url = res.url();
+    if (/\/api\/log-workout\b/.test(url)) {
+      try {
+        const body = await res.json();
+        const data = body && body.data && typeof body.data === 'object' ? body.data : body;
+        saveResponses.push({
+          phase,
+          at: Date.now(),
+          test_mode: data ? data.test_mode : undefined,
+          sheet_written: data ? data.sheet_written : undefined,
+          no_write_confirmed: data ? data.no_write_confirmed : undefined,
+          sheet_write: data ? data.sheet_write : undefined,
+        });
+      } catch { /* recorded as absent, never guessed */ }
+      return;
+    }
+    if (!/\/api\/coach\/(chat|ask|message)\b/.test(url)) return;
     try {
       const body = await res.json();
       const data = body && body.data && typeof body.data === 'object' ? body.data : body;
@@ -247,7 +267,9 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
   await page.goto(`${base}/app/`);
   await page.waitForLoadState('networkidle');
   await snap(page, '01-client-open.png');
-  const shellBuild = await page.evaluate(() => (typeof window.ATLAS_SHELL_BUILD !== 'undefined' ? String(window.ATLAS_SHELL_BUILD) : ''));
+  // The shell tag is baked into the bundle and rendered into #shell-version at load
+  // (app.js populateBuildInfo) — the DOM is the observable, not a window global.
+  const shellBuild = await page.evaluate(() => (document.getElementById('shell-version')?.textContent || '').trim());
   const idBefore = await page.evaluate(() => document.getElementById('log-session-id').value);
   const preseedClean = idBefore === '';
   beat('no-preseeded-identity', preseedClean, `#log-session-id before acceptance: "${idBefore}"`);
@@ -318,12 +340,18 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
   // ── 5. "Nice! How much should I lift?" — proposal-grounded, engine-owned ─────
   currentPhase = 'prescription_question';
   const howMuch = await settleReply(page, SC.prescriptionAsk);
+  // The deterministic proposal-grounded answer may identify the substitute by NAME or as
+  // "the (proposed) replacement for Bench Press" — both are grounded; what it must carry
+  // is the proposal's own numbers (weight AND reps), never an invented figure.
   const namesSubstitute = subName && new RegExp(subName.split(/\s+/)[0], 'i').test(howMuch);
+  const referencesProposal = /replacement for bench press|proposed (?:target|replacement)/i.test(howMuch);
   const carriesWeight = subWeight != null && new RegExp(`\\b${subWeight}\\b`).test(howMuch);
+  const carriesReps = subReps != null && new RegExp(`\\b${subReps}\\b`).test(howMuch);
   // Never an earlier completed lift's prescription (the F-SB2 drift): the reply must not
   // answer about a lift already completed this session.
   const driftsToCompleted = /back squat|overhead press|romanian deadlift/i.test(howMuch);
-  beat('prescription-from-proposal', namesSubstitute && carriesWeight && !driftsToCompleted,
+  beat('prescription-from-proposal',
+    (namesSubstitute || referencesProposal) && carriesWeight && carriesReps && !driftsToCompleted,
     `reply: "${howMuch.slice(0, 200)}"`);
   await snap(page, '05-how-much.png');
 
@@ -361,11 +389,16 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
   for (const s of SC.postBenchSets) { logged += 1; await logSet(page, s, logged); }
   await snap(page, '06-workout-logged.png');
 
-  // Pre-approval: no durable row for this identity may exist (the verifier 403s an
-  // identity with no live append yet — that refusal IS the proof of no write).
-  let preApprovalRefused = false;
-  try { await durableRows(workoutId); } catch (e) { preApprovalRefused = e.status === 403; }
-  beat('no-write-before-approval', preApprovalRefused, 'the verifier refused the identity pre-write (no live append had occurred)');
+  // Pre-approval: the acceptance checkpoint has already durably recorded the PLAN
+  // (plan_accepted + ledger v1 rows — an authorized write, PR #1246), so the identity
+  // is readable. What must NOT exist before the visible approval is any LOG or EFFORT
+  // row: the workout record itself.
+  let preState = null;
+  try { preState = await durableRows(workoutId); } catch (e) { preState = e.status === 403 ? { log_cleaned: { rows: [] }, effort: { rows: [] } } : null; }
+  const noWorkoutRowsPreApproval = Boolean(preState)
+    && preState.log_cleaned.rows.length === 0 && preState.effort.rows.length === 0;
+  beat('no-write-before-approval', noWorkoutRowsPreApproval,
+    preState ? `pre-approval durable state: ${preState.log_cleaned.rows.length} log, ${preState.effort.rows.length} effort rows` : 'pre-approval durable state unreadable');
 
   // ── 9. Effort, preview, ONE approval, the durable write ──────────────────────
   currentPhase = 'closeout';
@@ -524,11 +557,23 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
       foreign_rows: foreignRows,
       foreign_id_probe_status: foreignStatus,
     },
-    write: {
-      preview_seen: true, preview_no_write_confirmed: preApprovalRefused, preview_before_write: true,
-      approvals_clicked: 1, write_success: d.log_cleaned.rows.length === SC.expected.log_rows,
-      repeat_attempted: true, duplicate_rows: dupRows,
-    },
+    write: (() => {
+      const previews = saveResponses.filter(r => r.test_mode === true);
+      const lives = saveResponses.filter(r => r.test_mode !== true);
+      const lastPreview = previews[previews.length - 1] || null;
+      const firstLive = lives[0] || null;
+      return {
+        preview_seen: previews.length > 0,
+        preview_no_write_confirmed: Boolean(lastPreview
+          && lastPreview.sheet_written === false && lastPreview.no_write_confirmed === true)
+          && noWorkoutRowsPreApproval,
+        preview_before_write: Boolean(lastPreview && firstLive && lastPreview.at < firstLive.at),
+        approvals_clicked: 1,
+        write_success: Boolean(firstLive && firstLive.sheet_write === 'success')
+          && d.log_cleaned.rows.length === SC.expected.log_rows,
+        repeat_attempted: true, duplicate_rows: dupRows,
+      };
+    })(),
     closeout: {
       fully_verified: seals.filter(s => s !== '').length === 1
         && spsRows.every(r => String(r[spsIdx.seal] || '').trim() !== ''),
