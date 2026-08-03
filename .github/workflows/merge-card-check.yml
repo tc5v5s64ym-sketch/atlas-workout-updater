@@ -87,7 +87,14 @@ jobs:
               'STILL BROKEN / ALREADY FIXED / PARTIALLY FIXED',
               'exact commands/checks + results',
               'independent agent/optional clean review: fixed / non-issue / none',
-              'NON-BLOCKING / READY / BLOCKING / not risk-triggered',
+              // The Atlas Contract / Systems Review block (owner instruction 2026-08-03).
+              // These replace the retired 'NON-BLOCKING / READY / BLOCKING / not
+              // risk-triggered' sentinel: the template row it named no longer exists, so
+              // it could only false-fail a body that quotes the old wording, while the
+              // four fields that replaced it were unguarded. Net coverage increases.
+              'full 40-character commit SHA, or n/a',
+              'who or what performed the review, or n/a',
+              'each finding + fixed / non-issue / routed',
               'No, or exact reserved category and status',
               'evidence/script needed, or n/a',
               'active builder merges exact passing head / blocked on owner authorization',
