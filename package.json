@@ -17,6 +17,7 @@
     "atlas:divergence": "node scripts/atlas-divergence.js",
     "atlas:turn-write-artifact": "node scripts/atlas-turn-write-artifact.js",
     "atlas:corpus-baseline": "node scripts/corpus-baseline-runner.js",
+    "atlas:rehearsal-session": "node scripts/atlas-rehearsal-session.js",
     "check:wiring": "node scripts/check-wired-modules.js",
     "check:authority": "node scripts/check-authority-consistency.js",
     "check:banned": "node scripts/check-banned-patterns.js",

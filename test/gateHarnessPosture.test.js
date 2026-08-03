@@ -186,8 +186,32 @@ test('no spec in the e2e lane is gated behind a credentialed posture flag', () =
     return e.isDirectory() ? walk(full) : (e.name.endsWith('.spec.js') ? [full] : []);
   });
   const offenders = walk(specDir).filter((f) => /ATLAS_GATE_SANDBOX_LIVE/.test(fs.readFileSync(f, 'utf8')));
-  assert.deepStrictEqual(offenders, [],
+
+  // Under the recorded F-SB4B authorization exactly ONE spec may set the live flag:
+  // the rehearsal spec, which the plan names individually for F-SB4C removal. Even for
+  // that one file the mention is legal only in the safe form: (a) the plan currently
+  // records the authorization and sunset, (b) the flag is set ONLY together with the
+  // ledger flag (the combined posture — a standalone live server refuses to boot), and
+  // (c) the spec self-skips out of the default lane, so a plain `playwright test` run
+  // never reaches the flag. Any other spec, or the rehearsal spec without those
+  // properties, still fails here. When F-SB4C removes the spec, `permitted` empties
+  // and this reverts to the plain no-offenders pin.
+  const REHEARSAL_SPEC = path.join(specDir, 'gate', 'rehearsal.spec.js');
+  const permitted = offenders.filter((f) => f === REHEARSAL_SPEC);
+  assert.deepStrictEqual(offenders.filter((f) => f !== REHEARSAL_SPEC), [],
     'a spec references the retired sandbox-live posture, so it may expect a real workbook');
+  for (const f of permitted) {
+    const spec = fs.readFileSync(f, 'utf8');
+    const plan = fs.readFileSync(path.join(__dirname, '..', 'docs', 'ATLAS_V1_EXECUTION_PLAN.md'), 'utf8');
+    assert.ok(/F-SB4B — BLOCKER RESOLVED 2026-08-03/.test(plan) && /named individually for F-SB4C removal/.test(plan),
+      'the rehearsal spec sets the live flag but the plan does not record the F-SB4B authorization');
+    assert.ok(/sunset: F-SB4C/.test(spec),
+      'the rehearsal spec must carry its F-SB4C sunset marker');
+    assert.match(spec, /ATLAS_GATE_SANDBOX_LIVE: '1',\n\s*ATLAS_GATE_LEDGER_SANDBOX: '1',/,
+      'the rehearsal spec may set the live flag only together with the ledger flag (the combined posture)');
+    assert.match(spec, /test\.skip\(process\.env\.ATLAS_REHEARSAL_RUN !== '1'/,
+      'the rehearsal spec must self-skip out of the default lane');
+  }
 });
 
 // ── the temporary Stage-A machinery is gone and stays gone ─────────────────────

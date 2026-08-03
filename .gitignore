@@ -40,3 +40,4 @@ live-retest-artifacts/
 # carrying SHA-256 hashes of these files rather than the files.
 canary-artifacts/
 stage-a-artifacts/
+rehearsal-artifacts/
