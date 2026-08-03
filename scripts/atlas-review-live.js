@@ -27,6 +27,9 @@
  *   npm run atlas:review-live
  *   npm run atlas:review-live -- --json
  *   npm run atlas:review-live -- --session=<flight_session_id>
+ *   npm run atlas:review-live -- --workout-session=<session_id>  # exact join; if the
+ *       Flight Recorder holds NO session, adjudicates the four durable tabs directly
+ *       (durable-session mode, transcript criteria declared out of scope)
  *   npm run atlas:review-live -- --from-dir=backups/<ts>     # offline, from a backup export
  *   npm run atlas:review-live -- --window-mins=5 --sheet=<spreadsheetId>
  *
@@ -341,6 +344,105 @@ function evaluateLedgerSeal(planSetRecs, ledgerReadable, sessionPlansRecs) {
     `All ${sealed.length} of ${rows.length} correlated ledger row(s) sealed under one closeout_write_id (${sealIds[0].slice(0, 12)}…), chain valid, one session identity, matching the finalized closeout. Evidence: ${evidenceRange}.`);
 }
 
+// ── DURABLE-SESSION MODE (F-SB4B truthful-adjudicator completion; F-SB4A precedent) ──
+// When the caller names an exact workout identity (--workout-session=<id>) and the
+// Flight Recorder holds NO session at all, the review adjudicates the four durable tabs
+// (Log_Cleaned, Effort, Session_Plans, Session_Plan_Sets) directly — the F-SB4 card's
+// "exact Flight Recorder or session identity". The transcript criteria below are named
+// OUT OF SCOPE for this mode, openly, rather than silently dropped or reported as
+// hidden UNKNOWNs; `overall` is computed over the mode's DECLARED criteria set only,
+// and UNKNOWN still means missing evidence, never a pass. The mode is never entered
+// for auto-selection, and never when --session requested a specific transcript — the
+// Flight-Recorder-first behavior of every other invocation is unchanged.
+const DURABLE_OUT_OF_SCOPE = Object.freeze([
+  'client_replay', 'session_linkage', 'no_server_errors', 'confirm_matches_actual', 'write_verified'
+]);
+
+function reviewDurableSession(corpora, options, explicitIds) {
+  const idSet = new Set(explicitIds.map(s => s.toLowerCase()));
+  const noDates = new Set(); // never a date fallback here — the exact id is the whole point
+  const logRecs = correlateSidecarStrict(corpora.Log_Cleaned, idSet, noDates);
+  const sidecar = {
+    session_plans: correlateSidecarStrict(corpora.Session_Plans, idSet, noDates),
+    effort: correlateSidecarStrict(corpora.Effort, idSet, noDates),
+    plan_sets: correlateSidecarStrict(corpora.Session_Plan_Sets, idSet, noDates),
+    session_plans_strict: correlateSidecarStrict(corpora.Session_Plans, idSet, noDates),
+    ledger_readable: options.rowCounts
+      ? options.rowCounts.Session_Plan_Sets != null
+      : corpora.Session_Plan_Sets != null
+  };
+
+  const criteria = [];
+  const idLabel = explicitIds.join(', ');
+  // 1. Correlation identity — exact join by construction; UNKNOWN when nothing correlates.
+  const correlated = logRecs.length + sidecar.session_plans.length + sidecar.effort.length + sidecar.plan_sets.length;
+  criteria.push(correlated > 0
+    ? crit('correlation_identity', 'Evidence correlates to exactly one session', V.PASS,
+      `Correlated by the explicitly supplied workout session id (${idLabel}) — exact join; no transcript, no date heuristic.`)
+    : crit('correlation_identity', 'Evidence correlates to exactly one session', V.UNKNOWN,
+      `No durable rows in any tab carry the supplied workout session id (${idLabel}).`, true));
+  // 2. Durable log rows attributed to exactly this identity.
+  criteria.push(logRecs.length > 0
+    ? crit('durable_rows_attributed', 'Log rows attributed to this exact session', V.PASS,
+      `${logRecs.length} Log_Cleaned row(s) carry exactly this session id.`)
+    : crit('durable_rows_attributed', 'Log rows attributed to this exact session', V.UNKNOWN,
+      'No Log_Cleaned rows carry this session id (a rejected preview writes nothing — not a failure).', true));
+  // 3. Plan capture — ledger-aware: Session_Plan_Sets IS the set-level plan record (F10A),
+  //    so the ledger rows satisfy this directly; Session_Plans alone stays UNKNOWN as in
+  //    the transcript mode.
+  const ledgerTargets = sidecar.plan_sets.filter(x => planRowHasSetTarget(x.rec));
+  if (ledgerTargets.length) {
+    criteria.push(crit('plan_captured', 'Plan captured with set-level targets', V.PASS,
+      `${ledgerTargets.length} Session_Plan_Sets row(s) carry set-level target weight/reps/rir for this session.`));
+  } else if (sidecar.session_plans.length) {
+    criteria.push(crit('plan_captured', 'Plan captured with set-level targets', V.UNKNOWN,
+      `${sidecar.session_plans.length} Session_Plans row(s) correlate but no ledger row carries set-level targets.`, true));
+  } else {
+    criteria.push(crit('plan_captured', 'Plan captured with set-level targets', V.UNKNOWN,
+      'No plan rows correlate to this session.', true));
+  }
+  // 4. The seal — the same fail-closed evaluator the transcript mode uses, unchanged.
+  criteria.push(evaluateLedgerSeal(sidecar.plan_sets, sidecar.ledger_readable, sidecar.session_plans_strict));
+
+  return {
+    generated_at: options.now || null,
+    source: options.source || null,
+    session: {
+      flight_session_id: null,
+      mode: 'durable-session',
+      first_at: null,
+      last_at: null,
+      event_count: 0,
+      event_type_counts: {},
+      workout_session_ids: explicitIds,
+      log_rows: logRecs.length,
+      effort_rows: sidecar.effort.length,
+      ledger_rows: sidecar.plan_sets.length,
+      plan_rows: sidecar.session_plans.length
+    },
+    build_change: { detected: false, versions: [] },
+    overall: overallFrom(criteria),
+    criteria,
+    anomalies: [],
+    other_session_count: 0,
+    selection: {
+      mode: 'durable-session',
+      basis: 'explicit_workout_session_id',
+      candidate_count: 0,
+      ambiguous: false,
+      reason: 'explicit workout session id; the Flight Recorder holds no session, so the four durable tabs are adjudicated directly'
+    },
+    out_of_scope: DURABLE_OUT_OF_SCOPE.slice(),
+    log_correlation: {
+      basis: 'explicit_session_id',
+      ambiguous: false,
+      reason: '',
+      distinct_session_ids: explicitIds.slice(),
+      established_session_ids: explicitIds.slice()
+    }
+  };
+}
+
 // Evaluate the trust criteria for the selected session. Every criterion is PASS / FAIL /
 // UNKNOWN; UNKNOWN means MISSING EVIDENCE (never a false green).
 function evaluateCriteria(evidence, session, mode, sidecar, selection) {
@@ -483,6 +585,15 @@ function reviewCorpora(corpora, opts) {
   const picked = selectLatestSession(corpora.Flight_Recorder, options);
 
   if (!picked.session) {
+    // Durable-session mode: ONLY for an explicitly named workout identity when the
+    // recorder holds no session at all. A --session request for a missing transcript
+    // stays a missing-transcript UNKNOWN (no silent mode switch), and auto-selection
+    // with no explicit id keeps today's empty UNKNOWN result.
+    const explicitIds = (options.workoutSessionIds || [])
+      .map(s => String(s || '').trim()).filter(Boolean);
+    if (explicitIds.length && !options.session) {
+      return reviewDurableSession(corpora, options, explicitIds);
+    }
     return {
       generated_at: options.now || null,
       source: options.source || null,
@@ -593,7 +704,12 @@ function renderHuman(review) {
     return L.join('\n');
   }
   const s = review.session;
-  L.push(`Session:     ${s.flight_session_id}  (${s.mode})`);
+  L.push(s.mode === 'durable-session'
+    ? `Session:     workout ${(s.workout_session_ids || []).join(', ')}  (durable-session — no Flight Recorder transcript)`
+    : `Session:     ${s.flight_session_id}  (${s.mode})`);
+  if (review.out_of_scope && review.out_of_scope.length) {
+    L.push(`Scope:       transcript criteria out of scope in this mode: ${review.out_of_scope.join(', ')}`);
+  }
   // Both output modes print the same selection and correlation facts, so a text
   // run and a --json run can be compared directly instead of taken on trust.
   if (review.selection) {
@@ -745,6 +861,8 @@ module.exports = {
   planRowHasSetTarget,
   evaluateCriteria,
   evaluateLedgerSeal,
+  reviewDurableSession,
+  DURABLE_OUT_OF_SCOPE,
   reviewCorpora,
   renderHuman,
   overallFrom,
