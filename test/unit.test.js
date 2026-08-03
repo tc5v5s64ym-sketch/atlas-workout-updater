@@ -3430,14 +3430,21 @@ test('screenshot preview date resolution: pendingWrite uses server-resolved date
 
   assert.match(submitSection, /const resolvedData = result\?\.data\?\.data \|\| \{\}/);
   assert.match(submitSection, /const resolvedDate = resolvedData\.date \|\| date \|\| getLocalDateString\(\)/);
-  // The SERVER allocates the identity and reports it. There is deliberately no
-  // client-side fallback: a guessed id here would put the client back in the
-  // allocator's chair, which is exactly the authority this path gave up.
-  assert.match(submitSection, /const resolvedSessionId = resolvedData\.session_id;/);
-  assert.match(submitSection, /if \(!resolvedSessionId\) \{\s*\n\s*throw new Error\('Preview did not resolve a session identity\./,
-    'a preview that named no session fails closed instead of falling back to a guess');
+  // The SERVER allocates the identity and reports it; the fallback is the id we actually
+  // SENT, never a client-derived one — a guess here would put the client back in the
+  // allocator's chair, which is exactly the authority this path gave up. When both are
+  // blank the identity stays unnamed and the live write re-sends blank, so the server
+  // allocates then. That is correct, not a failure: requiring the response to name a
+  // session would turn a silent contract into a hard gate on the write path.
+  assert.match(submitSection, /const resolvedSessionId = resolvedData\.session_id \|\| completeWorkoutSessionId \|\| '';/);
   assert.doesNotMatch(submitSection, /resolvedData\.session_id \|\| sessionId/,
     'no client-derived fallback may re-enter the resolved identity');
+  assert.doesNotMatch(submitSection, /generateSessionId\(resolvedDate\)/,
+    'the screenshot branch never derives an identity');
+  // The correlation rebind is conditional on the server having NAMED a session —
+  // resolution migrates off the provisional id, it is not a precondition for approval.
+  assert.match(submitSection, /if \(resolvedSessionId && correlationPreview\s*\n\s*&& !resolveCorrelatedPreviewSession\(correlationPreview, resolvedSessionId\)\)/,
+    'an unnamed preview keeps its provisional correlation instead of failing the save');
   assert.match(submitSection, /document\.getElementById\('log-date'\)\.value = resolvedDate/);
   assert.match(submitSection, /sessionIdInput\.value = resolvedSessionId/);
   assert.match(submitSection, /pendingWrite = \{[\s\S]*mode: 'screenshot'[\s\S]*sessionId: resolvedSessionId,[\s\S]*date: resolvedDate/);
@@ -3496,10 +3503,14 @@ test('server allocation preserves turn correlation: correlate on the provisional
     'the manual branch correlates on the provisional id when the payload id is blank');
   assert.doesNotMatch(submitSection, /beginCorrelatedPreview\(\{ sessionId: payload\.session_id \}\)/,
     'never correlate on a payload id that may be blank');
-  // And the rebind is mandatory — a preview whose correlation cannot be bound to the
-  // resolved session fails closed rather than approving an uncorrelated write.
-  assert.match(submitSection, /if \(correlationPreview && !resolveCorrelatedPreviewSession\(correlationPreview, resolvedManualSessionId\)\) \{[\s\S]{0,160}?throw new Error\('Preview session correlation could not be bound/,
-    'the resolved identity is rebound onto the correlation before the payload is pinned');
+  // When the server NAMES a session the rebind is mandatory — a correlation that cannot be
+  // bound to it fails closed rather than approving an uncorrelated write. When it names
+  // none, the payload keeps exactly what was sent (blank stays blank → the write allocates)
+  // and the correlation keeps its provisional binding, which approvalClaim accepts.
+  assert.match(submitSection, /if \(resolvedManualSessionId\) \{\s*\n\s*if \(correlationPreview && !resolveCorrelatedPreviewSession\(correlationPreview, resolvedManualSessionId\)\) \{[\s\S]{0,200}?throw new Error\('Preview session correlation could not be bound/,
+    'a named identity is rebound onto the correlation before the payload is pinned');
+  assert.match(submitSection, /payload\.session_id = resolvedManualSessionId;/,
+    'a named identity is pinned onto the payload the approve handler re-sends');
 });
 
 test('multi-session/day: a saved session clears #log-session-id so the next upload is a new session', () => {

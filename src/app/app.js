@@ -7794,14 +7794,19 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       if (submitSeq !== previewRequestSeq) return;
       const resolvedData = result?.data?.data || {};
       const resolvedDate = resolvedData.date || date || getLocalDateString();
-      // The server allocates and reports the identity. Fail CLOSED if it did not — a
-      // client-side fallback here would put a guessed id back on the write path, which
-      // is the exact authority this change removes.
-      const resolvedSessionId = resolvedData.session_id;
-      if (!resolvedSessionId) {
-        throw new Error('Preview did not resolve a session identity. Nothing can be written.');
-      }
-      if (correlationPreview && !resolveCorrelatedPreviewSession(correlationPreview, resolvedSessionId)) {
+      // The server allocates and reports the identity; adopt it, then fall back to the id
+      // we actually SENT. There is deliberately no client-derived fallback — a guessed id
+      // here would put the client back in the allocator's chair. When both are blank the
+      // identity simply stays unnamed: the live write re-sends blank and the server
+      // allocates then, which is correct rather than a failure. Requiring the response to
+      // name a session would make a silent contract a hard gate on the write path.
+      const resolvedSessionId = resolvedData.session_id || completeWorkoutSessionId || '';
+      // Rebind the correlation only when the server actually NAMED a session. Resolution
+      // is a migration off the provisional id, not a precondition — approvalClaim needs
+      // the pairing token, not a resolved session — so an unnamed preview keeps its
+      // provisional binding instead of failing the save.
+      if (resolvedSessionId && correlationPreview
+          && !resolveCorrelatedPreviewSession(correlationPreview, resolvedSessionId)) {
         throw new Error('Preview session correlation could not be bound to the server-resolved session.');
       }
       document.getElementById('log-date').value = resolvedDate;
@@ -7949,15 +7954,18 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       // PIN the server-allocated identity onto the payload the approve handler re-sends,
       // and onto the field, so the live write addresses the SAME session the owner just
       // previewed instead of re-allocating. Fail closed if the preview named none.
+      // Only when the server NAMED a session. If it did not, the payload keeps exactly what
+      // we sent — blank stays blank, so the live write re-sends blank and the server
+      // allocates then. Nothing is guessed either way, and an unnamed preview is not a
+      // failure: correlation keeps its provisional binding, which approvalClaim accepts.
       const resolvedManualSessionId = (result?.data?.session_id || '').trim();
-      if (!resolvedManualSessionId) {
-        throw new Error('Preview did not resolve a session identity. Nothing can be written.');
+      if (resolvedManualSessionId) {
+        if (correlationPreview && !resolveCorrelatedPreviewSession(correlationPreview, resolvedManualSessionId)) {
+          throw new Error('Preview session correlation could not be bound to the server-resolved session.');
+        }
+        payload.session_id = resolvedManualSessionId;
+        sessionIdInput.value = resolvedManualSessionId;
       }
-      if (correlationPreview && !resolveCorrelatedPreviewSession(correlationPreview, resolvedManualSessionId)) {
-        throw new Error('Preview session correlation could not be bound to the server-resolved session.');
-      }
-      payload.session_id = resolvedManualSessionId;
-      sessionIdInput.value = resolvedManualSessionId;
       pendingWrite = { mode: 'manual', payload, sessionCloseout: isSessionCloseout,
         correlationPreview,
         previewProof: previewProofFromResult(result, 'manual')
