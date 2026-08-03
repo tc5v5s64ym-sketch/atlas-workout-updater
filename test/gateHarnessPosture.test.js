@@ -108,15 +108,20 @@ test('an exported production-looking workbook id is ignored, not inherited', asy
   assert.ok(!/a-production-workbook-id/.test(r.stdout), 'the harness echoed the supplied workbook id');
 });
 
-test('the harness advertises no live-workbook posture at all', async () => {
-  // The sandbox-live posture is gone. A harness that advertised it again — by a restored flag,
-  // a revived branch, or a copied file — would be reintroducing a path to a real workbook, and
-  // that must fail here rather than be discovered by a reviewer.
+test('the standalone sandbox-live flag refuses loudly — it can never quietly serve a live workbook', async () => {
+  // The Stage A STANDALONE live posture stays sunset. Under the recorded F-SB4B
+  // resolution (docs/ATLAS_V1_EXECUTION_PLAN.md, 2026-08-03) the ONLY live posture is
+  // the combined rehearsal one, TEMPORARY and named for F-SB4C removal — and a lone
+  // ATLAS_GATE_SANDBOX_LIVE=1 now refuses with an explicit error rather than serving
+  // anything at all. Refusing loudly is strictly safer than the old silent-ignore: a
+  // misconfigured operator learns immediately instead of running a stub believing it
+  // is live. The combined posture's own safety net is
+  // test/gateHarnessRehearsalPosture.test.js (removed together with the posture at
+  // F-SB4C, at which point this case reverts to the sunset shape).
   const r = await runHarness({ ATLAS_GATE_KEY: 'k', ATLAS_GATE_SANDBOX_LIVE: '1', ...FAKE_CREDS });
-  assert.ok(served(r), `the harness failed to start: ${r.stderr.slice(-600)}`);
-  assert.match(r.stdout, /GATE_SHEETS_POSTURE=in-memory-stub/,
-    'a retired posture flag changed the sheets posture');
-  assert.ok(!/sandbox-live/.test(r.stdout), 'the harness advertised a sandbox-live posture');
+  assert.ok(!served(r), 'a standalone sandbox-live flag must never serve');
+  assert.strictEqual(r.code, 2);
+  assert.match(r.stderr, /requires ATLAS_GATE_LEDGER_SANDBOX=1/);
 });
 
 // ── model posture, unchanged authority from PR #1226 ───────────────────────────
@@ -161,13 +166,19 @@ test('a scripted coach can never be served as a model-up run', async () => {
 test('no spec in the e2e lane is gated behind a credentialed posture flag', () => {
   // The one spec that needed excluding here was the temporary Stage-A runner, removed with
   // its posture. `testIgnore` is therefore gone, and the lane collects everything — which is
-  // only safe because nothing left in it can reach a credential or a workbook.
+  // only safe because nothing in the default lane can reach a credential or a workbook.
+  // Under the recorded F-SB4B authorization the config may reference the live flag for
+  // exactly ONE purpose: DELETING it before any spec worker exists, so an exported flag in
+  // the invoking shell is inert for the whole lane (Codex P1, PR #1251). Any other use of
+  // the flag in the config — gating collection, enabling a posture — still fails here.
   const fs = require('node:fs');
   const configText = fs.readFileSync(path.join(__dirname, '..', 'playwright.config.js'), 'utf8');
   assert.ok(!/testIgnore/.test(configText),
     'playwright.config.js reintroduced testIgnore — a spec is being excluded from the default lane');
-  assert.ok(!/ATLAS_GATE_SANDBOX_LIVE/.test(configText),
-    'playwright.config.js reintroduced the retired sandbox-live posture flag');
+  const flagUses = configText.match(/ATLAS_GATE_SANDBOX_LIVE/g) || [];
+  assert.strictEqual(flagUses.length, 1, 'the config may mention the live flag exactly once — the scrub');
+  assert.match(configText, /delete process\.env\.ATLAS_GATE_SANDBOX_LIVE;/,
+    'the single permitted mention must be the scrub that deletes it');
 
   const specDir = path.join(__dirname, '..', 'tests', 'e2e');
   const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
@@ -182,9 +193,8 @@ test('no spec in the e2e lane is gated behind a credentialed posture flag', () =
 // ── the temporary Stage-A machinery is gone and stays gone ─────────────────────
 
 test('the retired Stage-A operator commands and runner are absent', () => {
-  // The sunset is recorded in docs/ATLAS_V1_EXECUTION_PLAN.md. This is the mechanical half:
-  // if any of it is restored without an owner instruction, this fails rather than quietly
-  // reopening a path from a browser test to a real Google workbook.
+  // The Stage A sunset is recorded in docs/ATLAS_V1_EXECUTION_PLAN.md. This is the
+  // mechanical half: none of the Stage-A-specific machinery may reappear.
   const fs = require('node:fs');
   const root = path.join(__dirname, '..');
   const gone = [
@@ -205,10 +215,29 @@ test('the retired Stage-A operator commands and runner are absent', () => {
   const scripts = require('../package.json').scripts;
   assert.deepStrictEqual(Object.keys(scripts).filter((k) => /stage-a/i.test(k)), [],
     'a retired Stage-A operator command reappeared in package.json');
+});
 
+test('the F-SB4B live-workbook tokens exist ONLY while the plan records their authorization and sunset', () => {
+  // The live-workbook path is back in gate-server.js — TEMPORARILY, in rehearsal form,
+  // under the owner resolution recorded in the execution plan (F-SB4B, 2026-08-03),
+  // which names every piece for F-SB4C removal. This case fails in BOTH dishonest
+  // directions: if the tokens exist while the plan does not carry the authorization,
+  // the restoration is unauthorized; and when F-SB4C removes the machinery, this case
+  // is removed with it and the `gone` list above grows the rehearsal files.
+  const fs = require('node:fs');
+  const root = path.join(__dirname, '..');
   const harness = fs.readFileSync(path.join(root, 'tests/e2e/gate/gate-server.js'), 'utf8');
+  const plan = fs.readFileSync(path.join(root, 'docs/ATLAS_V1_EXECUTION_PLAN.md'), 'utf8');
   for (const token of ['ATLAS_GATE_SANDBOX_LIVE', 'buildGuardedSheets', 'assertSandboxLive', 'durable-rows']) {
-    assert.ok(!harness.includes(token),
-      `gate-server.js reintroduced "${token}" — the live-workbook path is back`);
+    assert.ok(harness.includes(token), `expected the temporary F-SB4B token "${token}" in gate-server.js`);
+  }
+  assert.ok(/F-SB4B — BLOCKER RESOLVED 2026-08-03/.test(plan),
+    'gate-server.js carries the live-workbook posture but the plan does not record its authorization');
+  assert.ok(/named individually for F-SB4C removal/.test(plan),
+    'the recorded authorization must pin the F-SB4C sunset for the restored pieces');
+  // The temporary pieces stay marked in the source, so the F-SB4C sweep can find them
+  // mechanically and a reviewer can see the boundary without the plan open.
+  for (const marker of ['TEMPORARY F-SB4B', 'sunset: F-SB4C']) {
+    assert.ok(harness.includes(marker), `gate-server.js is missing the "${marker}" marker on the restored machinery`);
   }
 });
