@@ -33,6 +33,7 @@ const crypto = require('node:crypto');
 const assert = require('node:assert/strict');
 const { resetIdempotencyStore } = require('../services/idempotency');
 const { logCleanedColumns, effortColumns } = require('../config/columns');
+const { formatAmPmSuffix } = require('../services/sessionId');
 
 process.env.ATLAS_API_KEY = 'test-api-key';
 process.env.GOOGLE_SHEETS_ID = 'stub-sheet';
@@ -143,6 +144,15 @@ function writtenSessionIds() {
 
 const DATE = '2026-08-02';
 
+// The allocator stamps AM or PM from the WALL CLOCK (`formatAmPmSuffix`), so an id with a
+// hardcoded period is a test that passes in the afternoon and fails before noon — which is
+// exactly how this file first went red in CI. Derive the period from the same function the
+// allocator uses, so these assertions pin the INCREMENT (…-01 → …-02), which is what the fix
+// is about, and never the time of day. Read once: a run that straddles noon would disagree
+// with the route, and that is rare enough to accept but not to leave unsaid.
+const PERIOD = formatAmPmSuffix();
+const slot = n => `20260802-${PERIOD}-${String(n).padStart(2, '0')}`;
+
 // The FIXED client path. `#log-session-id` is blank for a session whose identity is not
 // yet established — a fresh app load, or the field cleared by a concluded save — so the
 // payload carries no session_id and the server allocates. See the app.js source
@@ -166,7 +176,7 @@ test('two same-period workouts without Effort rows get distinct session_ids', as
   const first = await logNewWorkoutWithoutEffort('Back Squat', 225);
   assert.equal(first.response.status, 200, `first workout must write: ${JSON.stringify(first.body).slice(0, 300)}`);
   const firstIds = [...new Set(writtenSessionIds())];
-  assert.deepEqual(firstIds, ['20260802-PM-01'], 'the first workout takes the first free slot');
+  assert.deepEqual(firstIds, [slot(1)], 'the first workout takes the first free slot');
 
   // The first workout is now durably in Log_Cleaned. It wrote NO Effort row, which is
   // entirely legitimate — the athlete simply had no watch data. Effort-only knowledge is
@@ -178,14 +188,14 @@ test('two same-period workouts without Effort rows get distinct session_ids', as
   assert.equal(second.response.status, 200, `second workout must write: ${JSON.stringify(second.body).slice(0, 300)}`);
 
   const allIds = [...new Set(writtenSessionIds())];
-  assert.deepEqual(allIds, ['20260802-PM-01', '20260802-PM-02'],
+  assert.deepEqual(allIds, [slot(1), slot(2)],
     `the second workout must take the NEXT free slot. Ids written: ${JSON.stringify(allIds)}. ` +
     'Re-minting the first id collapses two real workouts onto one identity, and every ' +
     'downstream consumer that joins on session_id can no longer tell them apart.');
 
   // The response must NAME the identity it chose — the client pins it onto the write it
   // is about to approve, and the owner sees the real …-02 rather than a forced …-01.
-  assert.equal(second.body?.data?.session_id, '20260802-PM-02',
+  assert.equal(second.body?.data?.session_id, slot(2),
     'the allocated identity is reported back to the client');
 });
 
@@ -208,14 +218,14 @@ test('continuing an established session appends to it rather than forking a new 
   reset();
   const first = await logNewWorkoutWithoutEffort('Back Squat', 225);
   const established = first.body?.data?.session_id;
-  assert.equal(established, '20260802-PM-01');
+  assert.equal(established, slot(1));
 
   const { response } = await post('/api/log-workout', {
     session_id: established, date: DATE, write_id: crypto.randomUUID(),
     log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 185, reps: 5, rir: 2 }],
   });
   assert.equal(response.status, 200);
-  assert.deepEqual([...new Set(writtenSessionIds())], ['20260802-PM-01'],
+  assert.deepEqual([...new Set(writtenSessionIds())], [slot(1)],
     'a continued session keeps its identity — the allocator must not fork it');
 });
 
@@ -230,10 +240,10 @@ test('a stale row-level session_id cannot override the allocated identity', asyn
   const { response, body } = await post('/api/log-workout', {
     date: DATE, write_id: crypto.randomUUID(),
     // No top-level session_id, but the rows carry the stale one.
-    log_rows: [{ session_id: '20260802-PM-01', exercise: 'Bench Press', set_number: 1, weight: 185, reps: 5, rir: 2 }],
+    log_rows: [{ session_id: slot(1), exercise: 'Bench Press', set_number: 1, weight: 185, reps: 5, rir: 2 }],
   });
   assert.equal(response.status, 200, JSON.stringify(body).slice(0, 300));
-  assert.deepEqual([...new Set(writtenSessionIds())], ['20260802-PM-01', '20260802-PM-02'],
+  assert.deepEqual([...new Set(writtenSessionIds())], [slot(1), slot(2)],
     'every written row carries the ALLOCATED identity, not the one the rows proposed');
 });
 
@@ -250,11 +260,11 @@ test('the Effort row is written under the allocated identity, not the one the cl
     date: DATE, write_id: crypto.randomUUID(),
     log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 185, reps: 5, rir: 2 }],
     // No top-level session_id, and the effort row carries the stale one.
-    effort_row: { date: DATE, session_id: '20260802-PM-01', duration: 60, active_calories: 400, total_calories: 500, average_hr: 120, peak_hr: 160, location: 'Gym', notes: '' },
+    effort_row: { date: DATE, session_id: slot(1), duration: 60, active_calories: 400, total_calories: 500, average_hr: 120, peak_hr: 160, location: 'Gym', notes: '' },
   });
   assert.equal(response.status, 200);
-  assert.deepEqual([...new Set(writtenSessionIds())], ['20260802-PM-01', '20260802-PM-02']);
-  assert.deepEqual(state.effortSessionIds, ['20260802-PM-02'],
+  assert.deepEqual([...new Set(writtenSessionIds())], [slot(1), slot(2)]);
+  assert.deepEqual(state.effortSessionIds, [slot(2)],
     'the Effort row carries the ALLOCATED identity — Log_Cleaned and Effort must never disagree');
 });
 
