@@ -151,6 +151,46 @@ test('guard: a corpus WITH Flight Recorder sessions keeps the transcript-first m
   assert.equal(review.session.flight_session_id, 'FR-A');
 });
 
+test('guard: multiple distinct identities are AMBIGUOUS — never one exact-identity verdict (Codex P1)', () => {
+  const c = durableCorpora();
+  // Rows exist for BOTH identities; a unioned join would let them jointly earn PASS.
+  c.Log_Cleaned.push({ session_id: '20260803-PM-02', date_clean: DAY, exercise: 'Bench Press', set_number: '1', weight: '215', reps: '5', rir: '2' });
+  const review = rl.reviewCorpora(c, { now: at(9), workoutSessionIds: [WID, '20260803-PM-02'] });
+  assert.equal(review.session.mode, 'durable-session');
+  assert.equal(review.overall, 'UNKNOWN');
+  assert.equal(verdictOf(review, 'correlation_identity'), 'UNKNOWN');
+  assert.equal(verdictOf(review, 'ledger_sealed'), 'UNKNOWN');
+  assert.equal(review.log_correlation.ambiguous, true);
+  assert.equal(review.selection.ambiguous, true);
+  const corr = review.criteria.find(x => x.id === 'correlation_identity');
+  assert.match(corr.detail, /exactly one/);
+  for (const cr of review.criteria) assert.notEqual(cr.verdict, 'PASS', cr.id);
+});
+
+test('guard: the same identity repeated (case-insensitively) is ONE identity, not ambiguity', () => {
+  const review = rl.reviewCorpora(durableCorpora(), { now: at(9), workoutSessionIds: [WID, WID.toLowerCase()] });
+  assert.equal(review.session.mode, 'durable-session');
+  assert.equal(review.overall, 'PASS');
+});
+
+test('guard: an UNREADABLE recorder never enters durable mode — unreadability is not emptiness (Codex P1)', () => {
+  const c = durableCorpora();
+  delete c.Flight_Recorder; // key absent = unreadable, matching the ledger_readable convention
+  const review = rl.reviewCorpora(c, { now: at(9), workoutSessionIds: [WID] });
+  assert.equal(review.session, null);
+  assert.equal(review.overall, 'UNKNOWN');
+  assert.match(review.reason, /absent or unreadable/);
+  assert.match(review.reason, /never inferred/);
+});
+
+test('guard: the CLI rowCounts readability signal wins over an empty synthesized corpus', () => {
+  const c = durableCorpora(); // Flight_Recorder: [] present in the corpus
+  const rowCounts = { Flight_Recorder: null, Log_Cleaned: 2, Session_Plans: 2, Effort: 1, Session_Plan_Sets: 2 };
+  const review = rl.reviewCorpora(c, { now: at(9), workoutSessionIds: [WID], rowCounts });
+  assert.equal(review.session, null, 'rowCounts says the tab was unreadable — the empty array must not be trusted');
+  assert.equal(review.overall, 'UNKNOWN');
+});
+
 test('text and JSON agree: renderHuman names the mode, the identity, and the declared scope', () => {
   const review = rl.reviewCorpora(durableCorpora(), { now: at(9), workoutSessionIds: [WID] });
   const out = rl.renderHuman(review);
