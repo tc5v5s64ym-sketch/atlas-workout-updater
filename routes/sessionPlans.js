@@ -176,6 +176,12 @@ module.exports = function registerSessionPlanRoutes(deps = {}) {
         try {
           session.session_id = nextAvailableSessionId(session.session_date, [...effortIds, ...logIds, ...spIds]);
         } catch (e) {
+          // Exhaustion is a REFUSAL, never a reuse: the allocator fails closed when
+          // every slot in the period is occupied, and this route must surface that
+          // as unavailability — not mislabel it as a bad date.
+          if (e && e.code === 'SESSION_SLOTS_EXHAUSTED') {
+            return standardError(req, res, 'Cannot allocate a session id: every slot for this date and period is occupied.', null, 503);
+          }
           return standardError(req, res, 'session_date must be a calendar date (YYYY-MM-DD).', null, 400);
         }
       }

@@ -6527,6 +6527,27 @@ test('nextAvailableSessionId handles null/undefined existing list', () => {
   assert.equal(nextAvailableSessionId('2026-06-14', undefined, noon), '20260614-PM-01');
 });
 
+// F-SB4B overflow regression (2026-08-03): with slots 01..10 occupied the old
+// allocator silently RETURNED -01 — reusing the first (already-sealed) workout's
+// identity and merging a fresh session into a finalized record. Proven durably in
+// the rehearsal debug sweep: the 11th same-period acceptance wrote four separate
+// acceptances into one sealed session. The 11th slot must allocate -11.
+test('nextAvailableSessionId allocates the 11th slot instead of wrapping to -01', () => {
+  const noon = new Date('2026-06-14T14:00:00');
+  const existing = Array.from({ length: 10 }, (_, i) => `20260614-PM-${String(i + 1).padStart(2, '0')}`);
+  assert.equal(nextAvailableSessionId('2026-06-14', existing, noon), '20260614-PM-11');
+});
+
+test('nextAvailableSessionId FAILS CLOSED on total exhaustion — never a reuse', () => {
+  const noon = new Date('2026-06-14T14:00:00');
+  const existing = Array.from({ length: 99 }, (_, i) => `20260614-PM-${String(i + 1).padStart(2, '0')}`);
+  assert.throws(
+    () => nextAvailableSessionId('2026-06-14', existing, noon),
+    (e) => e.code === 'SESSION_SLOTS_EXHAUSTED' && /all 99 slots are occupied/.test(e.message),
+    'an unallocatable slot must be a refusal, never a silent reuse of an occupied identity',
+  );
+});
+
 test('session/compile route is registered as read-only', () => {
   const route = routeDefinitions.find(r => r.path === '/api/session/compile');
   assert.ok(route, '/api/session/compile must be in routeDefinitions');

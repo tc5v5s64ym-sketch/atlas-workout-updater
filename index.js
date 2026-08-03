@@ -2481,7 +2481,16 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
           if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
           return standardError(req, res, 'Failed to allocate a session id.', null, 500);
         }
-        sessionId = nextAvailableSessionId(dateValue, durableSessionIds);
+        try {
+          sessionId = nextAvailableSessionId(dateValue, durableSessionIds);
+        } catch (error) {
+          // Exhaustion fails CLOSED (SESSION_SLOTS_EXHAUSTED): every slot in the
+          // period is occupied, and reusing one would merge this session into a
+          // saved workout. Refuse the write instead.
+          console.error('❌ Session-id allocation refused:', error);
+          if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
+          return standardError(req, res, 'Cannot allocate a session id: every slot for this date and period is occupied.', null, 503);
+        }
       }
     }
 
