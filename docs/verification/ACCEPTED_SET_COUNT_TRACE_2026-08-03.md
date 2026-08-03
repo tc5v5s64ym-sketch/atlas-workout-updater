@@ -38,30 +38,56 @@ matching the finalized closeout.
    (`services/sessionPlanLedger.js`) expands one row per planned set —
    `set_index` 1..`target_set_count`, source `accepted`. The production rows
    match this shape exactly.
-4. **Why `target_set_count` "becomes 1".** It does not. No durable row shows it.
-   The only lane that structurally writes `(set_index=1, target_set_count=1)` is
-   the implicit-recommendation lane (`buildImplicitRows`, one next set only by
-   design, source `implicit_unplanned`) — and the tab contains zero implicit
-   rows. The likeliest origin of the claim is a column misread of a capture
-   (`plan_version` is `1` on every row and sits three columns left of
-   `set_index`).
+4. **Why `target_set_count` "becomes 1".** It does not — no inspected durable row
+   shows it, in any lane. Two lanes can structurally write
+   `(set_index=1, target_set_count=1)`: the implicit-recommendation lane always
+   does (`buildImplicitRows`, one next set only by design, source
+   `implicit_unplanned`), and the accepted lane does for a genuinely one-set item
+   (`buildAcceptedRows` loops 1..count for any positive count). The lanes are
+   distinguished by `recommendation_source`, and the conclusion here is limited
+   to the production rows actually inspected: all 30 carry source `accepted` with
+   counts 3 and 2 — zero `(1,1)` rows of either lane exist. The likeliest origin
+   of the claim is a column misread of a capture (`plan_version` is `1` on every
+   row and sits three columns left of `set_index`).
 5. **What the rows represent.** One accepted slot's each planned set, with the
    full target — per design amendment A2. Neither a one-set truncation nor a
    malformed projection.
 6. **Whether visible remaining-work consumes those rows.** No. Remaining work
    derives from the client store (`effectivePrescription`:
-   `acceptedSetCount = slot.sets`), the same accepted-exercise value the ledger's
-   `target_set_count` was projected from at acceptance — one source, two
-   consumers, no divergence path.
+   `acceptedSetCount = slot.sets`). On the un-substituted path that is the same
+   accepted-exercise value the ledger's `target_set_count` was projected from at
+   acceptance — one source, two consumers.
+
+   **The substitution path CAN diverge the two grains, and does so by recorded
+   design, not by accident.** `applySessionSubstitution`
+   (`src/app/app.js`) overwrites `slot.sets` with an explicit replacement
+   prescription's own set count (AC3/F10S2: the replacement slot carries the
+   substitute's real prescription), while `emitFutureSetRevision` deliberately
+   bounds the ledger revisions by the ORIGINAL accepted count — its comment
+   states the invariant: every revised set must have a v1 predecessor, so "an
+   increased substitute set count can never create a dangling chain, a decreased
+   one can never strand a stale v1 row." A 2-set accepted slot replaced by a
+   3-set substitute therefore shows 3 sets of remaining work while the durable
+   ledger keeps the v1 grain of 2. The visible plan follows the prescription the
+   athlete approved; the ledger keeps its chain invariant. Whether the extra
+   substitute sets should gain their own ledger representation is an F10E/Phase-5
+   design question, not a silent defect — and it is NOT the captured claim this
+   trace adjudicates: the inspected session's ledger contains zero revision rows,
+   so no substitution grain shaped its rows at all.
 
 ## Figure discrepancy noted honestly
 
-The campaign state records the rerun as "24 rows sealed"; the durable tab and
+The campaign state recorded the rerun as "24 rows sealed"; the durable tab and
 `atlas:review-live` both show **12** rows for that session under one seal. The
 12-row figure is the durable truth (the tab's other 18 rows belong to
 `20260724-PM-01` under a different seal). The "24" and the "all rows (1,1)"
 figures appear to come from the same capture artifact, which the durable records
-do not support.
+do not support. Because the execution plan is the sole campaign authority, the
+correction is applied there in this same PR (the rerun block now carries the
+12-row figure with a dated correction note); the settled conclusion it supported
+— workout 1's zero checkpoint rows were the write flag's own rollout, not a
+checkpoint defect — survives unchanged, since 12 sealed rows on the same code
+path prove the checkpoint exactly as 24 would have.
 
 ## Consequence
 
