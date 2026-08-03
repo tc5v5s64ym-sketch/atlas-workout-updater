@@ -72,6 +72,19 @@ test('acceptance posts ONLY /api/session-plans/accept — no outcome or closeout
   assert.doesNotMatch(acceptBlock, /\/api\/session-plans\/closeout/, 'the accept flow does not send a closeout');
 });
 
+test('the adapter never derives a session identity — server-allocated, client-adopted (authority fix 2026-08-03)', () => {
+  // The removed authority stays removed: acceptDisplayedPlan's hardcoded
+  // `${date}-{AM|PM}-01` mint re-used the first same-period session's identity,
+  // writing a second accepted plan into a finalized, sealed workout
+  // (docs/verification/ACCEPTED_PLAN_IDENTITY_2026-08-03.md). Identity is either
+  // already ESTABLISHED (#log-session-id) or the SERVER allocates it at /accept
+  // and the adapter adopts the response's identity.
+  assert.doesNotMatch(acceptBlock, /generateSessionId\(/, 'the acceptance adapter never mints a session identity');
+  assert.match(acceptBlock, /sessionId: existingId \|\| null,/, 'no established identity → null, never a derived id');
+  assert.match(acceptBlock, /adoptSessionId: \(sid\) => \{/, 'the adapter wires the server-identity adoption hook');
+  assert.match(acceptBlock, /sessionIdEl\.value = sid;/, 'adoption stamps the field the save/closeout flows read');
+});
+
 test('acceptance never touches the main workout-write / trust path', () => {
   assert.doesNotMatch(acceptBlock, /\/api\/log-workout|\/api\/complete-workout|sheet_write|no_write_confirmed|beginWrite/,
     'the acceptance adapter must not touch the workout write/proof path (sidecar only)');

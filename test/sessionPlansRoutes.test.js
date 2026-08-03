@@ -61,12 +61,26 @@ test('accept: a valid request forwards session+items and returns the envelope', 
   assert.equal(captureCalls[0].items[0].plan_item_id, PI);
 });
 
-test('accept: missing session_id / plan_version → 400, capture not called', async () => {
-  for (const bad of [{ ...BASE, session_id: '' }, { ...BASE, plan_version: '' }]) {
-    const { status } = await post('/api/session-plans/accept', { ...bad, items: [ACCEPT_ITEM] });
-    assert.equal(status, 400);
-  }
+test('accept: missing plan_version → 400, capture not called', async () => {
+  const { status } = await post('/api/session-plans/accept', { ...BASE, plan_version: '', items: [ACCEPT_ITEM] });
+  assert.equal(status, 400);
   assert.equal(captureCalls.length, 0);
+});
+
+test('accept: missing session_id means the SERVER must allocate — with no durable-record access it fails closed (503), never mints', async () => {
+  // This router was registered with NO deps, so the allocation path has no
+  // getSheetRows to prove slot availability with. The allocator-equipped behavior
+  // (allocate over Effort ∪ Log_Cleaned ∪ Session_Plans, retry reuse, fail-closed
+  // per source) is covered in test/acceptedPlanIdentityAllocation.test.js.
+  const { status } = await post('/api/session-plans/accept', { ...BASE, session_id: '', items: [ACCEPT_ITEM] });
+  assert.equal(status, 503);
+  assert.equal(captureCalls.length, 0, 'no acceptance may be written under an unprovable identity');
+});
+
+test('accept: the response echoes the session identity the acceptance was written under', async () => {
+  const { status, body } = await post('/api/session-plans/accept', { ...BASE, items: [ACCEPT_ITEM] });
+  assert.equal(status, 200);
+  assert.equal(body.data.session_id, BASE.session_id);
 });
 
 test('accept: plan_version without pv_ prefix → 400', async () => {

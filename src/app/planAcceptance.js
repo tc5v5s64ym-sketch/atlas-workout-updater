@@ -144,16 +144,23 @@ export function acceptCopy(envelope) {
 //   crypto        — the cryptographic source (window.crypto)
 //   guard         — a mutable object; guard.busy prevents a concurrent double-tap
 //                   from minting a second revision
-//   sessionId, sessionDate — the reused workout session id + today's date
+//   sessionId     — the ESTABLISHED workout session id, or null. Null means no
+//                   identity exists yet; the client NEVER derives one (its old
+//                   `${date}-{AM|PM}-01` mint re-used the first same-period
+//                   session's identity). The /accept response carries the
+//                   server-allocated identity, which is adopted below.
+//   sessionDate   — today's date
 //   setActivePlan(plan)    — store setter (setActivePlannedSession)
 //   persist()              — snapshot persist (saveSessionSnapshot)
+//   adoptSessionId(sid)    — record the server-allocated identity as the session's
+//                            established one (DOM field + re-persist)
 //   startWorkout(plan)     — begin the workout (banner + first lift)
 //   postAccept(payload)    — POST /api/session-plans/accept → resolves the response
 //                            body (or rejects on transport/HTTP error)
 //
-// Returns { started, blocked, ignored, captured, message, plan_version }. The
-// workout is started for EVERY non-blocked acceptance, before and independent of the
-// sidecar POST; a sidecar failure never unwinds the local accepted snapshot.
+// Returns { started, blocked, ignored, captured, message, plan_version, session_id }.
+// The workout is started for EVERY non-blocked acceptance, before and independent of
+// the sidecar POST; a sidecar failure never unwinds the local accepted snapshot.
 export async function runAcceptance(rec, deps) {
   const d = deps || {};
   const guard = d.guard || {};
@@ -171,10 +178,15 @@ export async function runAcceptance(rec, deps) {
 
   guard.busy = true; // held: this card is spent — a repeat tap can't mint a 2nd revision
 
+  // The identity the session already OWNS, if any. When null, no id is sent and no id
+  // is derived — the server allocator is the one authority, and its response names
+  // the identity this acceptance was durably written under.
+  const establishedSessionId = d.sessionId || null;
+
   const accepted = {
     label: (rec && rec.label) || 'Recommended session',
     intentId: (rec && (rec.id != null ? rec.id : rec.intentId)) || null,
-    session_id: d.sessionId || null,
+    session_id: establishedSessionId,
     session_date: d.sessionDate || null,
     plan_version: planVersion,
     accepted: true,
@@ -200,17 +212,25 @@ export async function runAcceptance(rec, deps) {
   // the owner enables live writes at F10D — that never blocks the workout, never
   // unwinds the accepted snapshot, and never touches the preview→approve→write path.
   const ledgerItems = buildLedgerAcceptedItems(built.items, exercises);
-  if (ledgerItems.length && typeof d.postLedgerCheckpoint === 'function') {
+  const postLedger = (sid) => {
+    if (!ledgerItems.length || typeof d.postLedgerCheckpoint !== 'function') return;
     Promise.resolve(d.postLedgerCheckpoint({
-      session_id: accepted.session_id,
+      session_id: sid,
       session_date: accepted.session_date,
       plan_version: planVersion,
       items: ledgerItems,
     })).catch(() => { /* sidecar failure never unwinds the accepted plan */ });
-  }
+  };
+  // An established identity checkpoints immediately, as before. An unestablished one
+  // CANNOT: the ledger row's identity is the server's to allocate, so the checkpoint
+  // waits below for /accept to name it — and is skipped entirely when it never does
+  // (a row under a client-guessed id would be the exact merge this removes).
+  if (establishedSessionId) postLedger(establishedSessionId);
 
+  // No decided session identity is ever sent when none is established: the key is
+  // OMITTED, not blanked, so the server's allocation path is unambiguous.
   const payload = {
-    session_id: accepted.session_id,
+    ...(establishedSessionId ? { session_id: establishedSessionId } : {}),
     session_date: accepted.session_date,
     plan_version: planVersion,
     items: built.items.map(toAcceptPayloadItem),
@@ -222,13 +242,28 @@ export async function runAcceptance(rec, deps) {
     const resp = typeof d.postAccept === 'function' ? await d.postAccept(payload) : null;
     const env = resp && resp.data && resp.data.session_plans ? resp.data.session_plans
       : (resp && resp.session_plans ? resp.session_plans : null);
+    // Adopt the server-allocated identity: the response's session_id is the identity
+    // the acceptance was durably written under, and from here on it is the session's
+    // established one — Session_Plan_Sets, Log_Cleaned/Effort, closeout, seal, undo
+    // and readback all address it. `accepted` is the live store object, so the
+    // mutation is visible to every consumer holding the active plan.
+    const serverSessionId = resp && resp.data && typeof resp.data.session_id === 'string'
+      ? resp.data.session_id.trim()
+      : (resp && typeof resp.session_id === 'string' ? resp.session_id.trim() : '');
+    if (!establishedSessionId && serverSessionId) {
+      accepted.session_id = serverSessionId;
+      if (typeof d.adoptSessionId === 'function') d.adoptSessionId(serverSessionId);
+      postLedger(serverSessionId);
+    }
     copy = acceptCopy(env);
     captured = copy.memory === true;
   } catch {
     // Sidecar failure — keep the accepted snapshot, no retry with new IDs, neutral copy.
+    // No identity is adopted or invented: the session stays unnamed and the write path's
+    // server allocator names it at save time.
     copy = acceptCopy(null);
     captured = false;
   }
 
-  return { started: true, captured, message: copy.text, plan_version: planVersion, payload };
+  return { started: true, captured, message: copy.text, plan_version: planVersion, payload, session_id: accepted.session_id };
 }

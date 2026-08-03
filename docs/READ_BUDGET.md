@@ -95,6 +95,25 @@ safety flags) and stays under the same ceiling.
 The saving repeats on **every** Save request in a session's burst, so the
 per-minute read pressure drops by ~2 reads × (previews + writes).
 
+## Acceptance-time allocation (sidecar, not the Save path)
+
+`POST /api/session-plans/accept` allocates the session id when the client has no
+established identity (the client's own `${date}-{AM|PM}-01` mint was removed —
+it re-used the first same-period session's identity). The allocating request reads,
+via the shared `getSheetRows` wrapper:
+
+- `Session_Plans` (always, uncached) — retry evidence + occupancy; an accepted-but-
+  not-yet-logged workout exists only here;
+- `Effort` + `Log_Cleaned` (only when no retry evidence, 30 s TTL cache shared with
+  the dashboard reads; every live write invalidates it) — the rest of the durable
+  union.
+
+That is at most **3 tab reads, once per newly accepted session** — not per set, not
+per Save, and never on a request that carries an established id. The Save budget
+above is unchanged; these reads happen on the acceptance sidecar request only.
+An unreadable source fails the allocation closed (503) rather than minting an
+identity whose availability cannot be proven.
+
 ## The guard
 
 `test/sheets-adapter-reads.test.js` runs the real `sheets.js` read helpers against

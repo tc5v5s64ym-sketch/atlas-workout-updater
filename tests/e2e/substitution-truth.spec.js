@@ -51,7 +51,11 @@ async function mockApis(page, capture) {
 
     if (path.startsWith('/api/session-plans/')) {
       capture.posts.push({ path, body });
-      return route.fulfill(json({ status: 'ok', data: { session_plans: { captured: true, status: 'written' } } }));
+      // /accept reports the identity the acceptance was written under — the server
+      // allocates one when the client (correctly) sends none, and the client adopts it.
+      const data = { session_plans: { captured: true, status: 'written' } };
+      if (path === '/api/session-plans/accept') data.session_id = (body && body.session_id) || '20260612-PM-01';
+      return route.fulfill(json({ status: 'ok', data }));
     }
     if (path.startsWith('/api/session-plan-sets/')) {
       capture.posts.push({ path, body });

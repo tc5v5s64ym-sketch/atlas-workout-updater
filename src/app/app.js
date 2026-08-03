@@ -2158,13 +2158,19 @@ async function acceptDisplayedPlan(rec) {
     const sessionDate = getLocalDateString();
     const sessionIdEl = typeof document !== 'undefined' ? document.getElementById('log-session-id') : null;
     const existingId = sessionIdEl && sessionIdEl.value ? sessionIdEl.value.trim() : '';
-    const sessionId = existingId || generateSessionId(sessionDate);
     const cryptoObj = (typeof window !== 'undefined' && window.crypto) ? window.crypto
       : (typeof crypto !== 'undefined' ? crypto : null);
     const accepted = await runAcceptance({ label: rec && rec.label, id: rec && rec.id, exercises }, {
       crypto: cryptoObj,
       guard: {},
-      sessionId,
+      // The ESTABLISHED identity only — never a derived one. A hardcoded
+      // `${date}-{AM|PM}-01` mint here re-used the first same-period session's
+      // identity, writing a second accepted plan into a finalized, sealed workout.
+      // With null, runAcceptance sends no session_id and the SERVER allocates over
+      // the durable records (Effort ∪ Log_Cleaned ∪ Session_Plans) — the same
+      // nextAvailableSessionId authority the save route uses; the response's
+      // identity is adopted below.
+      sessionId: existingId || null,
       sessionDate,
       // A newly-accepted session must not inherit a stale swap from an
       // abandoned/reloaded prior session (mirrors startPlannedSession's
@@ -2173,7 +2179,13 @@ async function acceptDisplayedPlan(rec) {
       setActivePlan: (plan) => { setPendingSubstitution(null); setSessionRevisions([]); setSessionImplicitRecs([]); setActivePlannedSession(plan); },
       persist: () => {
         document.getElementById('coach-empty')?.setAttribute('hidden', '');
-        if (sessionIdEl && !existingId) sessionIdEl.value = sessionId; // reuse this id on the eventual save
+        saveSessionSnapshot();
+      },
+      // The ONE place a durable session identity enters this client: the /accept
+      // response. Stamp the field the save/closeout flows read, then re-persist so
+      // a reload resumes under the same identity.
+      adoptSessionId: (sid) => {
+        if (sessionIdEl) sessionIdEl.value = sid;
         saveSessionSnapshot();
       },
       startWorkout: (plan) => {
