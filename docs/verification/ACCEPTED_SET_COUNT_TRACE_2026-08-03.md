@@ -58,22 +58,27 @@ matching the finalized closeout.
    accepted-exercise value the ledger's `target_set_count` was projected from at
    acceptance — one source, two consumers.
 
-   **The substitution path CAN diverge the two grains, and does so by recorded
-   design, not by accident.** `applySessionSubstitution`
-   (`src/app/app.js`) overwrites `slot.sets` with an explicit replacement
-   prescription's own set count (AC3/F10S2: the replacement slot carries the
-   substitute's real prescription), while `emitFutureSetRevision` deliberately
-   bounds the ledger revisions by the ORIGINAL accepted count — its comment
-   states the invariant: every revised set must have a v1 predecessor, so "an
-   increased substitute set count can never create a dangling chain, a decreased
-   one can never strand a stale v1 row." A 2-set accepted slot replaced by a
-   3-set substitute therefore shows 3 sets of remaining work while the durable
-   ledger keeps the v1 grain of 2. The visible plan follows the prescription the
-   athlete approved; the ledger keeps its chain invariant. Whether the extra
-   substitute sets should gain their own ledger representation is an F10E/Phase-5
-   design question, not a silent defect — and it is NOT the captured claim this
-   trace adjudicates: the inspected session's ledger contains zero revision rows,
-   so no substitution grain shaped its rows at all.
+   **The substitution path COULD diverge the two grains — and that divergence
+   was a real defect, established in review and fixed the same day (correction
+   2026-08-03).** The original version of this paragraph called it recorded
+   design; adversarial review (Codex P1 on PR #1248) established the full
+   failure chain and it was verified link-by-link: `applySessionSubstitution`
+   overwrote `slot.sets` with a replacement prescription's own (larger) set
+   count; `effectivePrescription` read that mutable value as `acceptedSetCount`;
+   an approved post-log set revision carried it into `buildFutureRevisions`,
+   which emitted a v2 revision for a set with no v1 predecessor
+   (`nextRevisionVersion` never consults the durable ledger); the closeout
+   seal's `validateChain` then failed `non_contiguous_version` →
+   `malformed_chain` with nothing stamped — permanently, since every retry
+   recomputes the same chain. The verified seal became unreachable for that
+   workout. The fix: `accepted_set_count` is stamped immutably per slot at
+   acceptance (the same value the accepted checkpoint projects into
+   `target_set_count`), never overwritten by a substitution, and every revision
+   path is bounded by it; `slot.sets` remains the display grain. Regression +
+   defect reproduction against the real store and seal:
+   `test/immutableAcceptedSetCount.test.js`. None of this changes the capture
+   adjudication above: the inspected session's ledger contains zero revision
+   rows, so no substitution grain shaped the rows the capture described.
 
 ## Figure discrepancy noted honestly
 
@@ -91,15 +96,19 @@ path prove the checkpoint exactly as 24 would have.
 
 ## Consequence
 
-- No product fix. No authority defect: one projection
-  (`buildLedgerAcceptedItems` → `buildAcceptedRows`) owns the checkpoint's set
-  counts and the durable rows agree with the displayed plan.
+- No product fix FOR THE CAPTURED CLAIM. No authority defect there: one
+  projection (`buildLedgerAcceptedItems` → `buildAcceptedRows`) owns the
+  checkpoint's set counts and the durable rows agree with the displayed plan.
+  *(Correction 2026-08-03: the adjacent substitution-inflated revision defect
+  established in review — step 6 above — WAS a real product defect and is fixed
+  with its own regression; the capture verdict is unaffected.)*
 - The earlier "the pin displayed 1 of 3 sets" claim stays retired — unsupported
   by artifacts, per the owner instruction.
 - F-SB4B rehearsal assertions about `Session_Plan_Sets` should assert the real
-  contract: per-item `target_set_count` equal to the displayed plan's working-set
-  count, `set_index` enumerating 1..count, source `accepted`, one seal per
-  session.
+  contract: per-item `target_set_count` equal to the accepted plan's per-item
+  set count (the immutable v1 grain — never a substitute's display count),
+  `set_index` enumerating 1..count, source `accepted`, revisions only for sets
+  within the v1 grain, one seal per session.
 
 Everything in this trace was read-only; nothing was created, changed, or written
 in any workbook.

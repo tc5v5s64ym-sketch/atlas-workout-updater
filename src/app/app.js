@@ -1657,11 +1657,18 @@ function applySessionSubstitution(prescribedName, subName, subLiftCode, prescrip
   // plan_item_id (read off the slot before it is replaced/spliced). The replacement
   // slot below retains it so a later action still resolves the accepted item.
   const originalItemId = exs[idx].plan_item_id;
-  // F10B — the ACCEPTED plan's set count for this slot (the v1 ledger grain), read
-  // BEFORE the in-place swap below overwrites it. A revision bounds its future sets by
-  // THIS count so every revised set has a v1 predecessor — never by the substitute's own
-  // prescribed set count (which can differ and would dangle/strand the chain).
-  const originalSetCount = exs[idx].sets;
+  // F10B — the ACCEPTED plan's set count for this slot (the v1 ledger grain). A
+  // revision bounds its future sets by THIS count so every revised set has a v1
+  // predecessor — never by the substitute's own prescribed set count (which can
+  // differ and would dangle/strand the chain). Read from the IMMUTABLE field stamped
+  // at acceptance: reading the mutable `sets` was only correct for the FIRST swap —
+  // a second swap of the same slot read the first substitute's count and rebuilt the
+  // exact dangling chain this bound exists to prevent. Presence beats truthiness (a
+  // stamped NULL means no v1 rows exist and nothing may be bounded); the `sets`
+  // fallback covers pre-stamp slots/snapshots, where the two never diverged before
+  // the first swap.
+  const originalSetCount = Object.prototype.hasOwnProperty.call(exs[idx], 'accepted_set_count')
+    ? exs[idx].accepted_set_count : exs[idx].sets;
   const subCode = String(subLiftCode || '').toLowerCase();
   // Dedupe: if the substitute is already a slot elsewhere, drop the prescribed
   // slot instead of duplicating it (one logged set must not close two slots).
@@ -1696,7 +1703,11 @@ function applySessionSubstitution(prescribedName, subName, subLiftCode, prescrip
       reason: 'substituted',
       // Keep the ORIGINAL planned item's identity on the slot (PR-G1) — the item was
       // substituted, not replaced by a new plan item.
-      plan_item_id: originalItemId
+      plan_item_id: originalItemId,
+      // …and the IMMUTABLE v1 grain travels with it: `sets` above may now carry the
+      // substitute's own display count, but every later revision (including a second
+      // swap of this same slot) stays bounded by the accepted count.
+      accepted_set_count: originalSetCount != null ? originalSetCount : null
     };
     // F10B — the in-place swap is an EXPLICIT mid-session recommendation for THIS slot's
     // FUTURE (unperformed) sets. Checkpoint it as a durable revision (append-only,
