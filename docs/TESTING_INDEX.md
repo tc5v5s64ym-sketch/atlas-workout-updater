@@ -9,6 +9,7 @@
 - **Exactly one script in the repo can write the production Sheet: `scripts/catalog-maintenance.js`** — and only the `Exercise_Catalog` tab, **dry-run by default**, requiring an explicit `--confirm`.
 - **No CI workflow can write a Sheet** — none carries Google write credentials.
 - The **simulation harness** can write, but **only to the sandbox sheet** — it fails closed unless the running server confirms the sandbox sheet fingerprint.
+- **TEMPORARY (sunset: F-SB4C):** the **F-SB4B rehearsal posture** of the gate server can also write, **only to the sandbox workbook** and only when a launcher explicitly sets `ATLAS_GATE_SANDBOX_LIVE=1` + `ATLAS_GATE_LEDGER_SANDBOX=1` on its own gate-server spawn with real credentials in that environment. `npm run test:e2e` can NEVER reach it: `playwright.config.js` scrubs the flag before any spec worker exists, so an exported flag in the invoking shell is inert for the whole default lane. Details in the Playwright section below.
 - Everything else is **offline**, **read-only**, or **`test_mode` dry-run**.
 - The structural guarantee: only `sheets.js` holds the read-write scope (`appendRows` / `deleteRowsByRange` / `batchUpdate`). Every read-only tool builds its own `spreadsheets.readonly` client and never imports those helpers.
 
@@ -17,7 +18,7 @@
 | System | Location | Command | Class | Writes real Sheet? | Status |
 |---|---|---|---|---|---|
 | Node unit/integration suite (~297 files) | `test/` | `npm test` | Offline | No (Sheets stubbed) | Current |
-| Playwright browser E2E (+ F10 gate) | `tests/e2e/`, `tests/e2e/gate/` | `npm run test:e2e` (`:headed`) | Browser E2E (local, API mocked) | No | Current |
+| Playwright browser E2E (+ F10 gate) | `tests/e2e/`, `tests/e2e/gate/` | `npm run test:e2e` (`:headed`) | Browser E2E (local, API mocked) | No — the config scrubs the temporary F-SB4B live flag, so this command cannot reach a workbook; the posture needs its own explicit launcher (see Playwright section) | Current |
 | ~~Phase 4 Stage-A canary~~ (**removed**) | — | — | — | — | **Retired 2026-08-01** at Stage A 5/5 — see §2a |
 | Simulation harness | `scripts/sim/` | `node scripts/sim/run.js --base-url <local>` | Local-integration | **Sandbox only** (fails closed) | Current |
 | Flight Recorder replay | `test/helpers/flightReplay.js`, `test/fixtures/replays/` | `npm test` | Offline | No | Current (ADD-3 pending #914) |
@@ -54,7 +55,7 @@ The bulk of coverage: ~297 `node --test` files under `test/`. Offline — `sheet
 
 ### 2. Browser E2E — `npm run test:e2e`
 
-Real Chromium + mobile-Chromium (iPhone 13) drives of the built app shell (`tests/e2e/*.spec.js`, ~22 specs) plus the **F10 gate suite** (`tests/e2e/gate/` with its own `gate-server.js`). Config: `playwright.config.js`. Fully local — static server on `127.0.0.1:3107`, service workers blocked, `**/api/**` mocked, so **no real backend and no Sheet write**. `pretest:e2e` builds first. Chromium resolves from the pre-installed browser (`PLAYWRIGHT_BROWSERS_PATH`). Output: Playwright `list` reporter + traces on first retry.
+Real Chromium + mobile-Chromium (iPhone 13) drives of the built app shell (`tests/e2e/*.spec.js`, ~22 specs) plus the **F10 gate suite** (`tests/e2e/gate/` with its own `gate-server.js`). Config: `playwright.config.js`. Fully local — static server on `127.0.0.1:3107`, service workers blocked, `**/api/**` mocked, so **no real backend and no Sheet write** in the default lane; the config scrubs `ATLAS_GATE_SANDBOX_LIVE` before any spec worker exists, so the temporary F-SB4B write-capable posture (below) is unreachable from `npm run test:e2e` even under a rehearsal-configured shell. `pretest:e2e` builds first. Chromium resolves from the pre-installed browser (`PLAYWRIGHT_BROWSERS_PATH`). Output: Playwright `list` reporter + traces on first retry.
 
 #### 2a. Phase 4 Stage-A runner — **RETIRED 2026-08-01**
 
@@ -70,7 +71,7 @@ What was **retained**, because it was never Stage-A machinery, is in `npm test`:
 - **TEMPORARY (sunset: F-SB4C)** — the F-SB4B combined rehearsal posture (`ATLAS_GATE_SANDBOX_LIVE=1` + `ATLAS_GATE_LEDGER_SANDBOX=1`, both required together): the gate server loads the REAL Sheets adapter against the declared sandbox workbook only, behind a call-time guard (append allowlist `Log_Cleaned`/`Effort`/`Session_Plans`/`Session_Plan_Sets`; `ensureSheetTab` and `deleteRowsByRange` always refused; `updateColumnCells` limited to the `Session_Plan_Sets` seal column), a pre-listen sandbox preflight (declared-id, non-production fingerprint, tab presence, exact ledger headers), and a session-id-filtered read-only durable verifier on the harness port. **CAN write to the sandbox workbook; can never reach production** (the ambient `GOOGLE_SHEETS_ID` is never inherited). Safety net: `test/gateHarnessRehearsalPosture.test.js` (offline, fake credentials). Restored from the proven Stage A implementation under the owner resolution recorded in the execution plan (F-SB4B, 2026-08-03).
 - `config/sandboxSheet.js` — the single declaration of the sandbox workbook id, consumed by `sheets.js` (`isSandboxSheet`) and `scripts/sim/harness.js` (whether write mode is legal).
 
-The **simulation harness** below is now the only tooling in this catalogue that can write to the sandbox Sheet, and it is read-only unless explicitly invoked otherwise.
+The **simulation harness** below and the temporary F-SB4B rehearsal posture above are the only tooling in this catalogue that can write to the sandbox Sheet; each is unreachable without its own explicit multi-signal invocation, and the rehearsal posture leaves at F-SB4C.
 
 ### 3. Simulation harness — `scripts/sim/`
 

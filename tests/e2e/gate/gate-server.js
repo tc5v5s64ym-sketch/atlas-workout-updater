@@ -692,6 +692,19 @@ const stateServer = http.createServer((req, res) => {
       res.end(JSON.stringify({ error: 'session_id is required — the verifier answers only for one session identity' }));
       return;
     }
+    // Only an identity THIS PROCESS durably wrote may be read back (Codex P2, PR
+    // #1251): the guard records every live append, and every appended tab's contract
+    // carries session_id at index 1, so the set of identities this run created is
+    // known exactly. A prior rehearsal's id, the owner's setup rows, or a guessed
+    // date-pattern id are refused — the verifier cannot be used to browse the
+    // workbook even from loopback.
+    const wroteSession = state.appendCalls.some(c => c.live === true
+      && Array.isArray(c.rows) && c.rows.some(r => Array.isArray(r) && String(r[1] || '').trim() === wantSession));
+    if (!wroteSession) {
+      res.statusCode = 403;
+      res.end(JSON.stringify({ error: 'the verifier answers only for a session identity this process durably wrote' }));
+      return;
+    }
     (async () => {
       const real = require('../../../sheets');
       const colLetter = (i) => {
@@ -779,8 +792,11 @@ const stateServer = http.createServer((req, res) => {
   // server whose workbook has not been verified (TEMPORARY F-SB4B; sunset: F-SB4C).
   if (SANDBOX_LIVE) await assertSandboxLive();
 
-  const server = app.listen(0, () => {
-    stateServer.listen(0, () => {
+  // LOOPBACK ONLY, both ports (Codex P2, PR #1251): an unspecified host binds beyond
+  // 127.0.0.1, and in the live posture the state server can read real sandbox rows —
+  // a reachable peer must not get that surface. The specs always dial 127.0.0.1.
+  const server = app.listen(0, '127.0.0.1', () => {
+    stateServer.listen(0, '127.0.0.1', () => {
       // The spec parses these lines to find the dynamic ports. The posture line is
       // printed first so a rerun transcript records which model posture served it,
       // and model-up carries the model that actually answered.

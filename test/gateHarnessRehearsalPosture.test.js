@@ -195,4 +195,18 @@ test('the durable verifier answers only for one explicit session identity (isola
     'a session-less read must be refused, never a whole-workbook dump');
   assert.match(verifier, /String\(r\[idx\] \|\| ''\)\.trim\(\) === wantSession/,
     'the span is re-filtered by the requested session id');
+  // Codex P2 (PR #1251): the verifier may answer ONLY for an identity this process
+  // durably wrote — a prior rehearsal's id, the owner's setup rows, or a guessed
+  // date-pattern id must be refused, so the endpoint cannot browse the workbook.
+  assert.match(verifier, /the verifier answers only for a session identity this process durably wrote/,
+    'an identity this process did not write must be refused (403)');
+  assert.match(verifier, /c\.live === true/, 'the write record consulted is the LIVE append log');
+});
+
+test('both harness servers bind to loopback and the default lane scrubs the live flag (Codex P1/P2)', () => {
+  assert.match(gateSrc, /app\.listen\(0, '127\.0\.0\.1'/, 'the app server must bind loopback only');
+  assert.match(gateSrc, /stateServer\.listen\(0, '127\.0\.0\.1'/, 'the state server must bind loopback only');
+  const cfg = fs.readFileSync(path.join(__dirname, '..', 'playwright.config.js'), 'utf8');
+  assert.match(cfg, /delete process\.env\.ATLAS_GATE_SANDBOX_LIVE;/,
+    'playwright.config.js must scrub the live flag before any spec worker exists — an exported flag in the invoking shell must be inert for the whole default lane');
 });

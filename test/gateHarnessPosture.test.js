@@ -166,13 +166,19 @@ test('a scripted coach can never be served as a model-up run', async () => {
 test('no spec in the e2e lane is gated behind a credentialed posture flag', () => {
   // The one spec that needed excluding here was the temporary Stage-A runner, removed with
   // its posture. `testIgnore` is therefore gone, and the lane collects everything — which is
-  // only safe because nothing left in it can reach a credential or a workbook.
+  // only safe because nothing in the default lane can reach a credential or a workbook.
+  // Under the recorded F-SB4B authorization the config may reference the live flag for
+  // exactly ONE purpose: DELETING it before any spec worker exists, so an exported flag in
+  // the invoking shell is inert for the whole lane (Codex P1, PR #1251). Any other use of
+  // the flag in the config — gating collection, enabling a posture — still fails here.
   const fs = require('node:fs');
   const configText = fs.readFileSync(path.join(__dirname, '..', 'playwright.config.js'), 'utf8');
   assert.ok(!/testIgnore/.test(configText),
     'playwright.config.js reintroduced testIgnore — a spec is being excluded from the default lane');
-  assert.ok(!/ATLAS_GATE_SANDBOX_LIVE/.test(configText),
-    'playwright.config.js reintroduced the retired sandbox-live posture flag');
+  const flagUses = configText.match(/ATLAS_GATE_SANDBOX_LIVE/g) || [];
+  assert.strictEqual(flagUses.length, 1, 'the config may mention the live flag exactly once — the scrub');
+  assert.match(configText, /delete process\.env\.ATLAS_GATE_SANDBOX_LIVE;/,
+    'the single permitted mention must be the scrub that deletes it');
 
   const specDir = path.join(__dirname, '..', 'tests', 'e2e');
   const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
