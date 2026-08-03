@@ -47,20 +47,29 @@ function effectivePrescription(input) {
   const slot = o.slot && typeof o.slot === 'object' ? o.slot : null;
   if (!slot) return null;
   const planItemId = slot.plan_item_id || slot.planItemId || null;
-  // The IMMUTABLE v1 grain stamped at acceptance wins. `slot.sets` is the display
-  // grain and a substitution may overwrite it with the replacement prescription's own
-  // count — reading it here let an inflated count flow into an approved revision for
-  // a set with no v1 predecessor, which the seal's chain validation rejects forever
-  // (malformed_chain; Codex P1, 2026-08-03). Presence is what matters, not
-  // truthiness: a stamped NULL means the accepted item had no set count, so NO v1
-  // rows exist and no revision may ever be bounded here — falling back to `sets`
-  // would rebuild the dangling chain the moment a substitution populates it. The
-  // `slot.sets` fallback applies only to slots and restored snapshots that predate
-  // the stamped field, where the two never diverged.
-  const acceptedSetCount = Object.prototype.hasOwnProperty.call(slot, 'accepted_set_count')
+  // The IMMUTABLE v1 grain stamped at acceptance is the LEDGER CEILING. `slot.sets`
+  // is the display grain and a substitution may overwrite it with the replacement
+  // prescription's own count — reading it as the ceiling let an inflated count flow
+  // into an approved revision for a set with no v1 predecessor, which the seal's
+  // chain validation rejects forever (malformed_chain; Codex P1, 2026-08-03).
+  // Presence is what matters, not truthiness: a stamped NULL means the accepted item
+  // had no set count, so NO v1 rows exist and no revision may ever be bounded here —
+  // falling back to `sets` would rebuild the dangling chain the moment a
+  // substitution populates it. The `slot.sets` fallback applies only to slots and
+  // restored snapshots that predate the stamped field, where the two never diverged.
+  const ledgerCeiling = Object.prototype.hasOwnProperty.call(slot, 'accepted_set_count')
     ? numOrNull(slot.accepted_set_count)
     : numOrNull(slot.sets);
-  if (!planItemId || acceptedSetCount == null || acceptedSetCount <= 0) return null;
+  if (!planItemId || ledgerCeiling == null || ledgerCeiling <= 0) return null;
+  // The revisable scope is the LOWER of the two grains (Codex P1 #2, same day): the
+  // ceiling stops a revision beyond the v1 rows, and the displayed count stops a
+  // revision for a set the athlete will never perform — a 2-set substitute over a
+  // 3-set accepted slot completes in the UI at 2, so proposing for "set 3" would
+  // offer work that no longer exists. A missing display count leaves the ceiling.
+  const displayCount = numOrNull(slot.sets);
+  const acceptedSetCount = displayCount != null && displayCount > 0
+    ? Math.min(ledgerCeiling, displayCount)
+    : ledgerCeiling;
 
   const name = slot.canonicalName || slot.name || '';
   // Performed sets are the frozen floor — a revision may only target set indexes above it. This

@@ -104,6 +104,19 @@ test('a substitution-inflated slot.sets does not move acceptedSetCount', () => {
   assert.equal(eff2.futureSetsRemain, false, 'set 3 is beyond the v1 grain — nothing left to revise');
 });
 
+test('a DECREASED substitute count caps the revisable scope — no proposal for a displayed set that no longer exists', () => {
+  // Codex P1 #2 (same day): immutable grain 3, 2-set substitute. The UI completes the
+  // slot at 2 logged sets (requiredSets = slot.sets), so the proposal machinery must
+  // agree: futureSetsRemain false at 2 performed, never a phantom "set 3" proposal.
+  const slot = { plan_item_id: PI, name: 'Leg Press', sets: 2, accepted_set_count: 3, weight: 200, reps: 10, rir: 2 };
+  const done2 = effective.effectivePrescription({ slot, sessionLog: [{ exercise: 'Leg Press' }, { exercise: 'Leg Press' }], sessionRevisions: [] });
+  assert.equal(done2.acceptedSetCount, 2, 'the revisable scope is the LOWER of ledger ceiling and displayed count');
+  assert.equal(done2.futureSetsRemain, false, 'the slot the UI shows complete has nothing left to revise');
+  const done1 = effective.effectivePrescription({ slot, sessionLog: [{ exercise: 'Leg Press' }], sessionRevisions: [] });
+  assert.equal(done1.nextSetIndex, 2, 'displayed set 2 is still revisable');
+  assert.equal(done1.futureSetsRemain, true);
+});
+
 test('a stamped-NULL grain fails closed even after substitution populates sets', () => {
   const slot = { plan_item_id: PI, name: 'Cable Fly', sets: 3, accepted_set_count: null, weight: 40, reps: 12 };
   assert.equal(effective.effectivePrescription({ slot, sessionLog: [], sessionRevisions: [] }), null,
