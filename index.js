@@ -2484,12 +2484,19 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         try {
           sessionId = nextAvailableSessionId(dateValue, durableSessionIds);
         } catch (error) {
-          // Exhaustion fails CLOSED (SESSION_SLOTS_EXHAUSTED): every slot in the
-          // period is occupied, and reusing one would merge this session into a
-          // saved workout. Refuse the write instead.
           console.error('❌ Session-id allocation refused:', error);
           if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
-          return standardError(req, res, 'Cannot allocate a session id: every slot for this date and period is occupied.', null, 503);
+          // TWO distinct refusal classes, never conflated (owner contract review,
+          // PR #1255): true exhaustion (SESSION_SLOTS_EXHAUSTED — every slot in the
+          // period is occupied; reusing one would merge this session into a saved
+          // workout) is 503 unavailability; anything else is the allocator refusing
+          // the DATE itself (resolveWorkoutDate preserves a malformed manual date
+          // string), which is the client's 400 — claiming "all slots occupied" for
+          // a bad date would misreport the sheet's actual state.
+          if (error && error.code === 'SESSION_SLOTS_EXHAUSTED') {
+            return standardError(req, res, 'Cannot allocate a session id: every slot for this date and period is occupied.', null, 503);
+          }
+          return standardError(req, res, 'Invalid workout date for session-id allocation (use YYYY-MM-DD).', null, 400);
         }
       }
     }
