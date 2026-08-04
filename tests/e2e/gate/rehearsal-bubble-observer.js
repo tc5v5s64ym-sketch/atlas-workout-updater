@@ -346,7 +346,29 @@ function classifyClaimAgainstBoundary(record, boundary) {
 // is marked `retroactive` because its timestamp is the inspection time, not the render
 // time. It may never overwrite or improve a live timestamp — doing so is precisely the
 // retroactive assignment this module exists to prevent.
-function reconcileSweep(records, texts, { phase, nowMs, thinkingMarker = 'Thinking…' } = {}) {
+//
+// `collectorQuiet` — WAS THE OBSERVER GIVEN ITS SAY BEFORE THIS SWEEP LOOKED?
+//
+// THE DEFECT THIS CLOSES (F-SB4B corrective 4). "The text differs from the record" is
+// evidence the observer MISSED a change only when the observer has nothing left to
+// deliver. `say()` sweeps immediately after submitting, inside the collector's flush
+// window, so a change the observer HAD seen was routinely swept before its report
+// landed. The sweep wrote the new text and set `retroactive` — and the live report that
+// followed could not clear the mark, because `ingestLiveObservation` only resets it
+// when the text DIFFERS and the sweep had already written that very text. The record
+// stayed untrustworthy forever despite having been observed live, and every claim
+// decision failed closed on it. Session 1 reported seven messages as seen only by the
+// sweep for exactly this reason, against a product that had rendered them normally.
+//
+// So a sweep facing a collector that still holds an undelivered change may NOT downgrade
+// an existing live record: that record's report is in flight and will carry the change's
+// own logical time. Leaving it alone is safe precisely because the observer re-marks
+// EVERY index on every mutation, so the pending delivery updates it.
+//
+// FAIL-CLOSED is unchanged in the direction that matters. A bubble with NO record at all
+// is still filled in and still marked `retroactive`, whatever the collector's state —
+// an unobserved bubble is never silently trusted.
+function reconcileSweep(records, texts, { phase, nowMs, thinkingMarker = 'Thinking…', collectorQuiet = true } = {}) {
   const out = records && typeof records === 'object' ? records : {};
   const list = Array.isArray(texts) ? texts : [];
   for (let i = 0; i < list.length; i += 1) {
@@ -357,6 +379,8 @@ function reconcileSweep(records, texts, { phase, nowMs, thinkingMarker = 'Thinki
       continue;
     }
     if (text !== prior.text) {
+      // A change the observer still owes us is not a change it missed.
+      if (collectorQuiet !== true) continue;
       // The observer missed this transition. Keep the record but mark it untrustworthy
       // for timing; the claim decisions fail closed on it.
       prior.text = text;

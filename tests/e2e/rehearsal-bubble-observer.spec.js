@@ -719,3 +719,121 @@ test('identity: a reused bubble stays marked and is never counted as the turn\'s
   expect(await page.locator('#thread-messages .chat-bubble-atlas').first().innerText())
     .toContain('rebuilt in place');
 });
+
+// ── F-SB4B corrective 4: a sweep may not race the flush it reconciles ──────────
+//
+// THE DEFECT. `reconcileSweep` marks a record `retroactive` whenever the swept text
+// differs from the record's. `say()` sweeps the instant it submits — inside the
+// collector's flush window — so a change the observer HAD seen was swept before its
+// report landed: the sweep wrote the new text and set `retroactive`. The live report
+// that followed could not clear the mark, because `ingestLiveObservation` only resets it
+// when the text DIFFERS and the sweep had already written that very text. The record
+// stayed untrustworthy forever, and every claim decision failed closed on it. Session 1
+// reported seven messages as seen only by the sweep for exactly this reason, against a
+// product that had rendered them normally.
+//
+// The fix is at the source: a sweep drains first and reads the collector's own state at
+// the same instant it reads the text, and a sweep facing a collector that still owes a
+// report may not downgrade an existing live record.
+test.describe('F-SB4B sweep — a pending report is not a missed one', () => {
+  // The runner's real sweep: drain, then read text and collector state in ONE page
+  // evaluation, so `quiet` describes the instant the texts were taken.
+  const sweepLikeRunner = async (page, records, phase) => {
+    const swept = await page.evaluate(async () => {
+      let flushed = null;
+      try {
+        flushed = typeof window.__atlasBubbleFlush === 'function' ? await window.__atlasBubbleFlush() : null;
+      } catch { flushed = null; }
+      const texts = Array.from(document.querySelectorAll('#thread-messages .chat-bubble-atlas'))
+        .map(e => String(e.innerText || ''));
+      let state = null;
+      try {
+        state = typeof window.__atlasBubbleState === 'function' ? window.__atlasBubbleState() : null;
+      } catch { state = null; }
+      return { texts, quiet: Boolean(flushed && flushed.ok === true) && Boolean(state) && state.pending === false };
+    }).catch(() => ({ texts: [], quiet: false }));
+    reconcileSweep(records, swept.texts, {
+      phase, nowMs: Date.now(), thinkingMarker: THINKING, collectorQuiet: swept.quiet,
+    });
+    return swept;
+  };
+
+  const REPLY = 'Replace Bench Press with Incline Dumbbell Press — 90 lb 10 reps.';
+
+  test('BITE: the OLD undrained sweep poisons a live-observed record permanently', async ({ page }) => {
+    const phaseRef = { value: 'logging' };
+    const { records } = await startCollector(page, phaseRef);
+    await appendBubble(page, THINKING);
+    await settle(page);
+    expect(records[0].retroactive).toBe(false);
+
+    // The bubble becomes the real reply; the old sweep looks immediately, without a drain.
+    await rewriteBubble(page, 0, REPLY);
+    const texts = await page.evaluate(() => Array.from(
+      document.querySelectorAll('#thread-messages .chat-bubble-atlas')).map(e => String(e.innerText || '')));
+    reconcileSweep(records, texts, { phase: 'substitution_ask', nowMs: Date.now(), thinkingMarker: THINKING });
+    expect(records[0].retroactive, 'the undrained sweep marks it').toBe(true);
+
+    // The observer's OWN live report for that very change now lands — and cannot help,
+    // because the sweep already wrote the text it would have differed from.
+    await settle(page);
+    expect(records[0].text).toContain('Incline Dumbbell Press');
+    expect(records[0].retroactive, 'this is the defect: permanently untrustworthy though observed live').toBe(true);
+  });
+
+  test('the drained sweep leaves the in-flight record alone, and the live report keeps it trusted', async ({ page }) => {
+    const phaseRef = { value: 'logging' };
+    const { records } = await startCollector(page, phaseRef);
+    await appendBubble(page, THINKING);
+    await settle(page);
+
+    await rewriteBubble(page, 0, REPLY);
+    const swept = await sweepLikeRunner(page, records, 'substitution_ask');
+    expect(swept.texts[0]).toContain('Incline Dumbbell Press');
+
+    // Either the drain delivered the change (so the record is live and current) or the
+    // collector was not quiet (so the sweep declined to downgrade it). Both end trusted.
+    await settle(page);
+    expect(records[0].text).toContain('Incline Dumbbell Press');
+    expect(records[0].retroactive, 'a change the observer saw is never reported as sweep-only').toBe(false);
+    expect(Number.isFinite(records[0].changeSeq), 'it keeps the change\'s own logical time').toBe(true);
+  });
+
+  test('a bubble the observer never reported is STILL filled in and STILL marked retroactive', async ({ page }) => {
+    const phaseRef = { value: 'logging' };
+    const { records, state } = await startCollector(page, phaseRef);
+
+    // Reports cannot land at all — the observer's say is genuinely lost.
+    state.rejectReports = true;
+    await appendBubble(page, 'a bubble no report will ever describe');
+    await settle(page);
+    expect(records[0], 'nothing was ingested').toBeUndefined();
+
+    await sweepLikeRunner(page, records, 'teardown');
+    expect(records[0], 'the sweep still fills it in').toBeTruthy();
+    expect(records[0].retroactive, 'and an unobserved bubble is never silently trusted').toBe(true);
+  });
+
+  test('a genuinely missed TRANSITION is still marked when the collector is quiet', async ({ page }) => {
+    const phaseRef = { value: 'logging' };
+    const { records, state } = await startCollector(page, phaseRef);
+    await appendBubble(page, THINKING);
+    await settle(page);
+    expect(records[0].retroactive).toBe(false);
+
+    // The observer stops being able to deliver, so the transition is truly lost. The
+    // drain cannot prove its postcondition, so the sweep declines to downgrade — and the
+    // record keeps its OWN honest text rather than acquiring a claim it never observed.
+    state.rejectReports = true;
+    await rewriteBubble(page, 0, REPLY);
+    const swept = await sweepLikeRunner(page, records, 'substitution_ask');
+    expect(swept.quiet, 'a failed drain is never quiet').toBe(false);
+    expect(records[0].text, 'an unbacked claim is not written into a trusted record').toBe(THINKING);
+
+    // Once delivery works again the observer reports it, and the record is honest.
+    state.rejectReports = false;
+    await settle(page);
+    expect(records[0].text).toContain('Incline Dumbbell Press');
+    expect(records[0].retroactive).toBe(false);
+  });
+});

@@ -1161,6 +1161,58 @@ describe('P1-C — write claims are timed against the live write, not the word "
 // restamp a claim into the earned window, and a bubble the observer never saw must not
 // be trusted for timing at all.
 
+// F-SB4B corrective 4. "The text differs from the record" is evidence the observer
+// MISSED a change only when the observer has nothing left to deliver. `say()` sweeps the
+// instant it submits, inside the flush window, so a change the observer HAD seen was
+// swept before its report landed — and the mark could never be cleared afterwards,
+// because `ingestLiveObservation` only resets `retroactive` when the text DIFFERS and the
+// sweep had already written that very text. Session 1 lost seven messages to this.
+describe('reconcileSweep — a pending report is not a missed one', () => {
+  it('a sweep facing a NON-QUIET collector does not downgrade an existing live record', () => {
+    const records = {};
+    ingestLiveObservation(records, { index: 0, text: 'Thinking…', changeSeq: 1 }, { phase: 'ask', nowMs: 100 });
+    reconcileSweep(records, ['Replace Bench Press with Incline Dumbbell Press.'],
+      { phase: 'ask', nowMs: 150, collectorQuiet: false });
+    const m = recordsToMessages(records)[0];
+    assert.equal(m.retroactive, false, 'a report still in flight is not a missed observation');
+    assert.equal(m.text, 'Thinking…', 'and the sweep writes no claim the observer has not backed');
+    assert.equal(m.atMs, 100, 'the live timing is untouched');
+
+    // The in-flight report then lands and the record is honest, with its own logical time.
+    ingestLiveObservation(records, { index: 0, text: 'Replace Bench Press with Incline Dumbbell Press.', changeSeq: 2 },
+      { phase: 'ask', nowMs: 200 });
+    const after = recordsToMessages(records)[0];
+    assert.equal(after.retroactive, false);
+    assert.equal(after.changeSeq, 2);
+    assert.equal(after.atMs, 200);
+  });
+
+  it('a NON-QUIET sweep still fills in a bubble with NO record, still retroactive', () => {
+    const records = {};
+    reconcileSweep(records, ['a bubble nothing ever reported'],
+      { phase: 'teardown', nowMs: 900, collectorQuiet: false });
+    const m = recordsToMessages(records)[0];
+    assert.equal(m.retroactive, true, 'an unobserved bubble is never silently trusted');
+    assert.equal(m.text, 'a bubble nothing ever reported');
+  });
+
+  it('a QUIET sweep still marks a genuinely missed transition', () => {
+    const records = {};
+    ingestLiveObservation(records, { index: 0, text: 'Thinking…', changeSeq: 1 }, { phase: 'ask', nowMs: 100 });
+    reconcileSweep(records, ['saved to your sheet'], { phase: 'teardown', nowMs: 900, collectorQuiet: true });
+    const m = recordsToMessages(records)[0];
+    assert.equal(m.retroactive, true, 'the observer had its say and still never reported this');
+    assert.equal(m.text, 'saved to your sheet');
+  });
+
+  it('quiet is the DEFAULT, so an existing caller keeps the old fail-closed behavior', () => {
+    const records = {};
+    ingestLiveObservation(records, { index: 0, text: 'Thinking…' }, { phase: 'ask', nowMs: 100 });
+    reconcileSweep(records, ['saved to your sheet'], { phase: 'teardown', nowMs: 900 });
+    assert.equal(recordsToMessages(records)[0].retroactive, true);
+  });
+});
+
 describe('reconcileSweep — a later look cannot rewrite when a claim became visible', () => {
   it('BITE — a live claim keeps its own timestamp when a later sweep sees the same text', () => {
     const records = {};

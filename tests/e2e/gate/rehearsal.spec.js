@@ -947,15 +947,43 @@ let liveWriteChangeSeq = null;
 // A RECONCILER, not the collector. It can fill in a bubble the observer never reported,
 // and such a record is marked retroactive so the claim decisions fail closed on it. It
 // never improves a live timestamp.
+// It DRAINS FIRST, and reads the collector's own state at the same instant it reads the
+// text (F-SB4B corrective 4). Sweeping without a drain made the sweep race the flush it
+// is supposed to reconcile: `say()` sweeps the moment it submits, so a change the
+// observer had already seen was swept before its report landed and the record was marked
+// `retroactive` forever — the live report that followed could not clear a mark on text
+// the sweep had itself written. Session 1 lost seven messages to that race.
+//
+// The drain and both reads happen in ONE page evaluation, so `quiet` describes the very
+// instant the texts were taken rather than some earlier moment. A drain that cannot
+// prove its postcondition, a collector that still holds an undelivered change, or a
+// missing flush hook all yield `quiet:false`, and the reducer then declines to downgrade
+// an existing live record while still filling in any bubble it has never seen.
 async function sweepAtlasBubbles(page) {
-  const bubbles = page.locator('#thread-messages .chat-bubble-atlas');
-  const total = await bubbles.count().catch(() => 0);
-  const texts = [];
-  for (let i = 0; i < total; i += 1) texts.push(await bubbles.nth(i).innerText().catch(() => ''));
-  reconcileSweep(bubbleRecords, texts, {
+  const swept = await page.evaluate(async () => {
+    let flushed = null;
+    try {
+      flushed = typeof window.__atlasBubbleFlush === 'function' ? await window.__atlasBubbleFlush() : null;
+    } catch { flushed = null; }
+    // Read the text SYNCHRONOUSLY after the flush resolves, then the collector's state,
+    // so `pending` and the text describe the same instant.
+    const texts = Array.from(document.querySelectorAll('#thread-messages .chat-bubble-atlas'))
+      .map(e => String(e.innerText || ''));
+    let state = null;
+    try {
+      state = typeof window.__atlasBubbleState === 'function' ? window.__atlasBubbleState() : null;
+    } catch { state = null; }
+    return {
+      texts,
+      quiet: Boolean(flushed && flushed.ok === true) && Boolean(state) && state.pending === false,
+    };
+  }).catch(() => ({ texts: [], quiet: false }));
+  reconcileSweep(bubbleRecords, swept.texts, {
     phase: currentPhaseRef.value, nowMs: Date.now(), thinkingMarker: THINKING,
+    collectorQuiet: swept.quiet,
   });
-  return total;
+  if (!swept.quiet) note('sweep', `collector not quiet at sweep — existing live records left for their pending reports (${swept.texts.length} bubble(s))`);
+  return swept.texts.length;
 }
 const THINKING = 'Thinking…';
 const SETTLE_TIMEOUT_MS = 90000;
