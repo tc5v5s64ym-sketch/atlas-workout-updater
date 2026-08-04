@@ -155,53 +155,6 @@ function compareReplacementIdentity(identity, durable) {
   return { ok: problems.length === 0, problems };
 }
 
-// ── per-bubble lifecycle record ────────────────────────────────────────────────
-// Pure: folds successive observations of the thread's Atlas bubbles into ONE record
-// per bubble, keeping the FINAL rendered text.
-//
-// The defect this replaces (owner P1, 2026-08-03): the sweep recorded each bubble index
-// once and advanced past it. `say()` sweeps immediately after submitting, so a bubble
-// created asynchronously was routinely captured while it still read `Thinking…`; when
-// that same element later became the real reply, every later sweep SKIPPED it because
-// its index was already marked seen. The final visible message never entered the claim
-// record, its timestamp described the placeholder, and a completed-mutation claim
-// rendered before acceptance could be missing entirely from the sweep.
-//
-// The phase is bound at FIRST observation — the turn that created the bubble — while
-// the text and timestamp track the final rendered state.
-//
-// records : Map-like plain object keyed by bubble index (mutated and returned)
-// texts   : the current innerText of every Atlas bubble, in DOM order
-function foldBubbleObservations(records, texts, { phase, nowMs, thinkingMarker = 'Thinking…' } = {}) {
-  const out = records && typeof records === 'object' ? records : {};
-  const list = Array.isArray(texts) ? texts : [];
-  for (let i = 0; i < list.length; i += 1) {
-    const text = String(list[i] == null ? '' : list[i]).replace(/\s+/g, ' ').trim();
-    const prior = out[i];
-    if (!prior) {
-      out[i] = { index: i, text, atMs: nowMs, phase, placeholder: text.includes(thinkingMarker) };
-      continue;
-    }
-    // Same element, later observation: keep the originating phase, take the newer text.
-    if (text !== prior.text) {
-      prior.text = text;
-      prior.atMs = nowMs;
-      prior.placeholder = text.includes(thinkingMarker);
-    }
-  }
-  return out;
-}
-
-// The claim-sweep input: every recorded bubble, in DOM order.
-function bubbleRecordsToMessages(records) {
-  const out = records && typeof records === 'object' ? records : {};
-  return Object.keys(out)
-    .map((k) => Number(k))
-    .filter((k) => Number.isInteger(k))
-    .sort((a, b) => a - b)
-    .map((k) => out[k]);
-}
-
 // ── coach-response capture classification ──────────────────────────────────────
 // Pure: decides what ONE coach response proves about the reply that turn served.
 //
@@ -260,6 +213,16 @@ function detectUnsupportedWriteClaim(input) {
     return { unsupported: true, detail: 'no visible messages were captured, so a write claim cannot be ruled out', matches: [] };
   }
   const writeAtMs = Number.isFinite(i.liveWriteAtMs) ? i.liveWriteAtMs : null;
+  // Same rule as the mutation sweep: a timestamp assigned by a later inspection cannot
+  // place a claim before or after the write.
+  const retro = messages.filter((m) => m && m.retroactive === true);
+  if (retro.length) {
+    return {
+      unsupported: true,
+      detail: `${retro.length} visible message(s) were only observed by a later sweep, so their timing cannot be trusted against the live write`,
+      matches: [],
+    };
+  }
   const matches = [];
   for (const m of messages) {
     const text = String((m && m.text) || '');
@@ -334,6 +297,18 @@ function detectUnsupportedMutationWording(input) {
     return {
       unsupported: true,
       detail: `${unresolved.length} visible message(s) were still rendering when the sweep ended, so the claim evidence is incomplete`,
+      matches: [],
+    };
+  }
+  // A RETROACTIVE record carries the time the harness inspected the text, not the time
+  // the text became visible, so it cannot place a claim relative to a mutation. Fail
+  // closed rather than judge on a timestamp that a later look assigned backwards
+  // (owner P1, 2026-08-03).
+  const retro = messages.filter((m) => m && m.retroactive === true);
+  if (retro.length) {
+    return {
+      unsupported: true,
+      detail: `${retro.length} visible message(s) were only observed by a later sweep, so their timing cannot be trusted to place a claim`,
       matches: [],
     };
   }
@@ -1257,4 +1232,4 @@ function renderMarkdown(card) {
   return `${lines.join('\n')}\n`;
 }
 
-module.exports = { CONDITIONS, scoreRehearsalRun, renderMarkdown, compareLedgerToDeclaration, classifyRepeatApprovalProbe, classifySettlement, isSettled, SETTLED_OUTCOMES, deriveExpectedRemaining, compareRemainingToExpectation, replyMatchesExpectation, pinMatchesExpectation, explicitNextUpClaim, detectUnsupportedMutationWording, COMPLETED_MUTATION_PATTERNS, compareReplacementIdentity, foldBubbleObservations, bubbleRecordsToMessages, classifyCoachResponseCapture, detectUnsupportedWriteClaim, WRITE_CLAIM_PATTERNS, PASS, FAIL, ERROR, NOT_APPLICABLE };
+module.exports = { CONDITIONS, scoreRehearsalRun, renderMarkdown, compareLedgerToDeclaration, classifyRepeatApprovalProbe, classifySettlement, isSettled, SETTLED_OUTCOMES, deriveExpectedRemaining, compareRemainingToExpectation, replyMatchesExpectation, pinMatchesExpectation, explicitNextUpClaim, detectUnsupportedMutationWording, COMPLETED_MUTATION_PATTERNS, compareReplacementIdentity, classifyCoachResponseCapture, detectUnsupportedWriteClaim, WRITE_CLAIM_PATTERNS, PASS, FAIL, ERROR, NOT_APPLICABLE };

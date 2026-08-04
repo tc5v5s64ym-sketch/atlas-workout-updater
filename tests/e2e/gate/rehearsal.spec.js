@@ -33,13 +33,16 @@ const {
   classifySettlement, isSettled,
   deriveExpectedRemaining, compareRemainingToExpectation, replyMatchesExpectation,
   detectUnsupportedMutationWording, compareReplacementIdentity, pinMatchesExpectation,
-  foldBubbleObservations, bubbleRecordsToMessages, classifyCoachResponseCapture,
-  detectUnsupportedWriteClaim,
+  classifyCoachResponseCapture, detectUnsupportedWriteClaim,
 } = require('./rehearsal-scorecard');
 const { REHEARSAL_SESSION } = require('./rehearsal-run-purpose');
 const { measureSourceTree } = require('./rehearsal-source-facts');
 const { markRunStarted, verifyRunStartMarker } = require('./rehearsal-run-start');
 const { pickNetworkPassthrough, assertNoWorkbookId, GATE_STARTUP_TIMEOUT_MS } = require('./rehearsal-child-env');
+const {
+  OBSERVER_FLUSH_MS, bubbleObserverInitScript,
+  ingestLiveObservation, reconcileSweep, recordsToMessages,
+} = require('./rehearsal-bubble-observer');
 const { SANDBOX_SPREADSHEET_ID, SANDBOX_SPREADSHEET_ID_LAST6 } = require('../../../config/sandboxSheet');
 const { logCleanedColumns, effortColumns, sessionPlansColumns, sessionPlanSetsColumns } = require('../../../config/columns');
 
@@ -716,6 +719,12 @@ async function proveTeardownAndNoInheritance(page, h, { base }) {
 
   // 2. ONE bounded fresh-session transition in the SAME browser context. A reload is
   //    the product's real next-session entry point and writes nothing.
+  //
+  //    The reload restarts bubble indexing at 0. The finished session's evidence was
+  //    already snapshotted in 13a, so the collector is reset here — otherwise a fresh
+  //    bubble would overwrite the record of a completed-session bubble at the same
+  //    index and corrupt the very evidence this proof is meant to leave intact.
+  bubbleRecords = {};
   await page.goto(`${base}/app/`);
   await page.waitForLoadState('networkidle');
 
@@ -878,15 +887,29 @@ const coachCaptureFailures = { count: 0 };
 // claim record at all (owner P1, 2026-08-03). Records are now re-read on every sweep:
 // the phase is bound at first observation — the turn that created the bubble — while
 // the text and timestamp track the FINAL rendered state.
-const bubbleRecords = {};
+let bubbleRecords = {};
 
+// The page REPORTS its own text changes (see rehearsal-bubble-observer.js). Node stamps
+// each report on receipt, so the timestamp is on the same clock as `saveResponses` and
+// cannot be assigned retroactively by a later sweep.
+function onBubblesObserved(batch) {
+  const now = Date.now();
+  for (const item of (Array.isArray(batch) ? batch : [])) {
+    ingestLiveObservation(bubbleRecords, item, {
+      phase: currentPhaseRef.value, nowMs: now, thinkingMarker: THINKING,
+    });
+  }
+}
+
+// A RECONCILER, not the collector. It can fill in a bubble the observer never reported,
+// and such a record is marked retroactive so the claim decisions fail closed on it. It
+// never improves a live timestamp.
 async function sweepAtlasBubbles(page) {
   const bubbles = page.locator('#thread-messages .chat-bubble-atlas');
   const total = await bubbles.count().catch(() => 0);
   const texts = [];
   for (let i = 0; i < total; i += 1) texts.push(await bubbles.nth(i).innerText().catch(() => ''));
-  // The FOLD is the scorecard module's pure, unit-bitten function.
-  foldBubbleObservations(bubbleRecords, texts, {
+  reconcileSweep(bubbleRecords, texts, {
     phase: currentPhaseRef.value, nowMs: Date.now(), thinkingMarker: THINKING,
   });
   return total;
@@ -1139,6 +1162,16 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
     note('clock', `controlled ${SC.clock.timezoneId} evening installed: ${t.toISOString()}`);
   }
   await page.addInitScript(key => { localStorage.setItem('atlas_api_key', key); }, GATE_KEY);
+  // The bubble-lifecycle observer, installed BEFORE any application script and on every
+  // navigation (so the fresh-session transition is covered too). It reports changed
+  // bubbles; Node stamps them on receipt.
+  await page.exposeFunction('__atlasBubbleObserved', onBubblesObserved);
+  await page.addInitScript(bubbleObserverInitScript, {
+    flushMs: OBSERVER_FLUSH_MS,
+    threadId: 'thread-messages',
+    bubbleSelector: '.chat-bubble-atlas',
+    callbackName: '__atlasBubbleObserved',
+  });
   await page.goto(`${base}/app/`);
   await page.waitForLoadState('networkidle');
   await snap(page, '01-client-open.png');
@@ -1385,8 +1418,10 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
   // save claim in the ORIGINAL thread vanish and condition 9 pass (owner P1,
   // 2026-08-03). Both claim verdicts are computed from evidence captured here; the
   // fresh session's thread is separate evidence and never a replacement carrier.
+  // Let any in-flight observer flush land before the snapshot.
+  await page.waitForTimeout(OBSERVER_FLUSH_MS * 3);
   await sweepAtlasBubbles(page);
-  const originalVisibleMessages = bubbleRecordsToMessages(bubbleRecords);
+  const originalVisibleMessages = recordsToMessages(bubbleRecords);
 
   // ── 13b. Cross-session teardown and inheritance (declared scenarios only) ────
   // Runs AFTER every durable read AND after the evidence above is preserved, and

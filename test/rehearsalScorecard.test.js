@@ -17,11 +17,15 @@ const {
   deriveExpectedRemaining, compareRemainingToExpectation, replyMatchesExpectation,
   detectUnsupportedMutationWording, compareReplacementIdentity,
   pinMatchesExpectation, explicitNextUpClaim,
-  foldBubbleObservations, bubbleRecordsToMessages, classifyCoachResponseCapture,
-  detectUnsupportedWriteClaim,
+  classifyCoachResponseCapture, detectUnsupportedWriteClaim,
   PASS, FAIL, ERROR,
 } = require('../tests/e2e/gate/rehearsal-scorecard');
 const { sessionPlanSetsColumns } = require('../config/columns');
+// The bubble-lifecycle collector is its own module: the page reports its text changes
+// and Node stamps them on receipt, so a timestamp cannot be assigned by a later sweep.
+const {
+  ingestLiveObservation, reconcileSweep, recordsToMessages,
+} = require('../tests/e2e/gate/rehearsal-bubble-observer');
 
 const HEAD = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678';
 
@@ -945,15 +949,15 @@ describe('P1-A — a bubble frozen at Thinking… must not hide its final text',
   // the SAME element later becomes unsupported wording, and condition 9 must fail.
   function replaySweeps() {
     const records = {};
-    // 1. say() clicks and sweeps immediately — the bubble exists but is still thinking.
-    foldBubbleObservations(records, ['Thinking…'], { phase: 'substitution_ask', nowMs: 100 });
-    // 2. The same element resolves to a completed-mutation claim, before any mutation.
-    foldBubbleObservations(records, ["Done — I've noted the substitution."], { phase: 'prescription_question', nowMs: 400 });
+    // 1. The bubble is created and first reported while it is still thinking.
+    ingestLiveObservation(records, { index: 0, text: 'Thinking…' }, { phase: 'substitution_ask', nowMs: 100 });
+    // 2. The SAME element resolves to a completed-mutation claim, before any mutation.
+    ingestLiveObservation(records, { index: 0, text: "Done — I've noted the substitution." }, { phase: 'prescription_question', nowMs: 400 });
     return records;
   }
 
   it('the later sweep UPDATES the same index instead of skipping it', () => {
-    const msgs = bubbleRecordsToMessages(replaySweeps());
+    const msgs = recordsToMessages(replaySweeps());
     assert.equal(msgs.length, 1, 'one bubble, one record');
     assert.match(msgs[0].text, /noted the substitution/, 'the final text must replace the placeholder');
     assert.equal(msgs[0].placeholder, false);
@@ -963,7 +967,7 @@ describe('P1-A — a bubble frozen at Thinking… must not hide its final text',
 
   it('BITE — condition 9 FAILS on wording that only appeared after the first sweep', () => {
     const sweep = detectUnsupportedMutationWording({
-      messages: bubbleRecordsToMessages(replaySweeps()),
+      messages: recordsToMessages(replaySweeps()),
       mutationAtMs: 900,           // the mutation happens later — the claim is unearned
     });
     assert.equal(sweep.unsupported, true, sweep.detail);
@@ -977,18 +981,18 @@ describe('P1-A — a bubble frozen at Thinking… must not hide its final text',
 
   it('a record still holding the placeholder at the end fails CLOSED', () => {
     const records = {};
-    foldBubbleObservations(records, ['Thinking…'], { phase: 'x', nowMs: 100 });
-    const sweep = detectUnsupportedMutationWording({ messages: bubbleRecordsToMessages(records), mutationAtMs: 900 });
+    ingestLiveObservation(records, { index: 0, text: 'Thinking…' }, { phase: 'x', nowMs: 100 });
+    const sweep = detectUnsupportedMutationWording({ messages: recordsToMessages(records), mutationAtMs: 900 });
     assert.equal(sweep.unsupported, true, 'an unfinished render means the evidence is incomplete');
     assert.match(sweep.detail, /still rendering/);
   });
 
   it('growing text across several sweeps keeps only the final state', () => {
     const records = {};
-    foldBubbleObservations(records, ['Go with'], { phase: 'p', nowMs: 10 });
-    foldBubbleObservations(records, ['Go with 185 lb'], { phase: 'p', nowMs: 20 });
-    foldBubbleObservations(records, ['Go with 185 lb for 5 reps.'], { phase: 'p', nowMs: 30 });
-    const msgs = bubbleRecordsToMessages(records);
+    ingestLiveObservation(records, { index: 0, text: 'Go with' }, { phase: 'p', nowMs: 10 });
+    ingestLiveObservation(records, { index: 0, text: 'Go with 185 lb' }, { phase: 'p', nowMs: 20 });
+    ingestLiveObservation(records, { index: 0, text: 'Go with 185 lb for 5 reps.' }, { phase: 'p', nowMs: 30 });
+    const msgs = recordsToMessages(records);
     assert.equal(msgs.length, 1);
     assert.equal(msgs[0].text, 'Go with 185 lb for 5 reps.');
     assert.equal(msgs[0].atMs, 30);
@@ -996,10 +1000,10 @@ describe('P1-A — a bubble frozen at Thinking… must not hide its final text',
 
   it('keeps one record per bubble as the thread grows, in DOM order', () => {
     const records = {};
-    foldBubbleObservations(records, ['a'], { phase: 'p1', nowMs: 10 });
-    foldBubbleObservations(records, ['a', 'b'], { phase: 'p2', nowMs: 20 });
-    foldBubbleObservations(records, ['a', 'b', 'c'], { phase: 'p3', nowMs: 30 });
-    const msgs = bubbleRecordsToMessages(records);
+    ingestLiveObservation(records, { index: 0, text: 'a' }, { phase: 'p1', nowMs: 10 });
+    ingestLiveObservation(records, { index: 1, text: 'b' }, { phase: 'p2', nowMs: 20 });
+    ingestLiveObservation(records, { index: 2, text: 'c' }, { phase: 'p3', nowMs: 30 });
+    const msgs = recordsToMessages(records);
     assert.deepEqual(msgs.map(m => m.text), ['a', 'b', 'c']);
     assert.deepEqual(msgs.map(m => m.phase), ['p1', 'p2', 'p3'], 'each bubble keeps its originating phase');
   });
@@ -1107,5 +1111,65 @@ describe('P1-C — write claims are timed against the live write, not the word "
     assert.equal(detectUnsupportedWriteClaim({
       messages: [{ text: 'Nice work today.', atMs: 10, phase: 'closeout' }], liveWriteAtMs: 500,
     }).unsupported, false);
+  });
+});
+
+
+// ── the sweep may never assign a timestamp retroactively ─────────────────────
+// The gap the final review named: the fold fixed "index recorded once" but not "no
+// observation occurred while the lifecycle changed". A later sweep must not be able to
+// restamp a claim into the earned window, and a bubble the observer never saw must not
+// be trusted for timing at all.
+
+describe('reconcileSweep — a later look cannot rewrite when a claim became visible', () => {
+  it('BITE — a live claim keeps its own timestamp when a later sweep sees the same text', () => {
+    const records = {};
+    ingestLiveObservation(records, { index: 0, text: 'saved to your sheet' }, { phase: 'closeout', nowMs: 300 });
+    reconcileSweep(records, ['saved to your sheet'], { phase: 'teardown', nowMs: 900 });
+    const m = recordsToMessages(records)[0];
+    assert.equal(m.atMs, 300, 'the sweep must not restamp a live observation');
+    assert.equal(m.retroactive, false);
+    // The write happened at 500 — AFTER the claim was visible, so it is unsupported.
+    assert.equal(detectUnsupportedWriteClaim({ messages: [m], liveWriteAtMs: 500 }).unsupported, true);
+  });
+
+  it('BITE — a bubble the observer never reported is retroactive and fails closed', () => {
+    const records = {};
+    reconcileSweep(records, ['saved to your sheet'], { phase: 'teardown', nowMs: 900 });
+    const m = recordsToMessages(records)[0];
+    assert.equal(m.retroactive, true);
+    for (const sweep of [
+      detectUnsupportedWriteClaim({ messages: [m], liveWriteAtMs: 100 }),
+      detectUnsupportedMutationWording({ messages: [m], mutationAtMs: 100 }),
+    ]) {
+      assert.equal(sweep.unsupported, true, 'an inspection-time timestamp cannot place a claim');
+      assert.match(sweep.detail, /only observed by a later sweep/);
+    }
+  });
+
+  it('a sweep that finds text the observer never reported marks the record retroactive', () => {
+    const records = {};
+    ingestLiveObservation(records, { index: 0, text: 'Thinking…' }, { phase: 'closeout', nowMs: 100 });
+    reconcileSweep(records, ['saved to your sheet'], { phase: 'teardown', nowMs: 900 });
+    assert.equal(recordsToMessages(records)[0].retroactive, true,
+      'the observer missed this transition, so its timing is not trustworthy');
+  });
+
+  it('a later LIVE report clears a retroactive mark', () => {
+    const records = {};
+    reconcileSweep(records, ['Thinking…'], { phase: 'x', nowMs: 100 });
+    assert.equal(recordsToMessages(records)[0].retroactive, true);
+    ingestLiveObservation(records, { index: 0, text: 'the real reply' }, { phase: 'x', nowMs: 200 });
+    const m = recordsToMessages(records)[0];
+    assert.equal(m.retroactive, false);
+    assert.equal(m.atMs, 200);
+  });
+
+  it('ignores a malformed report rather than recording a bogus index', () => {
+    const records = {};
+    for (const bad of [null, {}, { index: -1, text: 'x' }, { index: 'a', text: 'x' }]) {
+      ingestLiveObservation(records, bad, { phase: 'x', nowMs: 1 });
+    }
+    assert.deepEqual(recordsToMessages(records), []);
   });
 });
