@@ -38,7 +38,7 @@ Decision-desk labels such as `atlas-decision-desk` and `needs-pm-decision` are w
 6. Any missing/failed hard gate or real unresolved P0/P1 makes the PR `blocked`.
 7. Record the label and rationale in the Merge Card.
 
-A risk-triggered ChatGPT Atlas Contract Review may be required by the active governance, but routine campaign work does not become owner-reserved merely because it touches an important file.
+The Atlas Contract / Systems Review may be required by the active governance — `CLAUDE.md` holds the one trigger list — but routine campaign work does not become owner-reserved merely because it touches an important file.
 
 ## Enforcement
 

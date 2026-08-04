@@ -244,14 +244,25 @@ describe('merge card — the Atlas Contract / Systems Review block', () => {
     });
   }
 
-  // The Required field is guarded by a PREFIX shared with the merge-card table row, so
-  // both carriers of the same verdict fail while unfilled. Proven separately from the
-  // bullet above, since the row and the bullet are different lines in the template.
+  // The Required verdict has TWO carriers: this bullet and the merge-card table row.
+  // The row is READ FROM THE TEMPLATE for the same reason the bullets are — retyping it
+  // would let a row rewording silently kill that sentinel while this suite stayed green
+  // (exact-head review of PR #1257, F4/C).
+  const TABLE_ROW = (() => {
+    const line = fs.readFileSync(TEMPLATE, 'utf8').split('\n')
+      .find((l) => /^\|.*Atlas Contract \/ Systems Review.*\|/.test(l));
+    return line || null;
+  })();
+
+  it('the template ships a merge-card row for the review, carrying a placeholder', () => {
+    assert.ok(TABLE_ROW, 'the merge-card table must carry an Atlas Contract / Systems Review row');
+    assert.match(TABLE_ROW, /<!--.*-->/, 'that row must ship an unfilled placeholder to guard');
+  });
+
   it('catches the unfilled Required verdict in the merge-card table row too', () => {
-    const row = '| **Atlas Contract / Systems Review** | <!-- required (name the trigger) / not required (say why) — see the block below --> |';
-    const failure = check(`${CARD_OK}${row}\n`);
-    assert.ok(failure.includes('required (name the trigger) / not required (say why'),
-      `the table row's unfilled verdict must fail too; got: ${failure}`);
+    const failure = check(`${CARD_OK}${TABLE_ROW}\n`);
+    assert.match(failure, /template placeholder/,
+      `the table row's unfilled verdict must fail too; got: ${failure || '(passed)'}`);
   });
 
   it('passes once every field carries a real value', () => {
