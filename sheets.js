@@ -131,7 +131,10 @@ async function retryWithBackoff(operation, options = {}) {
 //                   dropped socket. Bounded retry is safe and correct.
 //   'permanent'   — anything else: bad credentials, revoked access, a malformed
 //                   range, a missing spreadsheet. Retrying cannot help; fail closed.
-const TRANSIENT_READ_STATUSES = new Set([429, 500, 502, 503, 504]);
+// 408 is here and NOT in the append guard, and that is the whole point of keeping the
+// two separate: a request timeout means the server gave up waiting for the request,
+// which is safe to repeat for an idempotent read and ambiguous for an append.
+const TRANSIENT_READ_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
 const TRANSIENT_TRANSPORT_CODES = new Set([
   'ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'ECONNABORTED',
   'EAI_AGAIN', 'ENOTFOUND', 'EPIPE', 'EHOSTUNREACH', 'ENETUNREACH', 'ERR_SOCKET_CONNECTION_TIMEOUT',
@@ -146,30 +149,43 @@ function classifySheetsReadError(error) {
       : (error.response && error.response.status != null) ? error.response.status
         : NaN
   );
+  const apiError = (error.response && error.response.data && error.response.data.error) || null;
+  const nested = (apiError && Array.isArray(apiError.errors)) ? apiError.errors : [];
   const message = String((error && error.message) || '');
-  const apiMessage = String(
-    (error.response && error.response.data && error.response.data.error
-      && error.response.data.error.message) || ''
-  );
-  const reason = String(
-    (error.errors && error.errors[0] && error.errors[0].reason)
-    || (error.response && error.response.data && error.response.data.error
-      && error.response.data.error.status)
-    || ''
-  );
+  const apiMessage = String((apiError && apiError.message) || '');
+
+  // EVERY place Google can name why it rejected the request, tested together rather
+  // than in `first || second` order. The order mattered and was wrong: a Sheets quota
+  // rejection arrives as HTTP 403 with `error.status: 'PERMISSION_DENIED'` AND
+  // `error.errors[0].reason: 'userRateLimitExceeded'` — the errors array nested under
+  // `response.data.error`, not on the error object. So the truthy 'PERMISSION_DENIED'
+  // short-circuited the check, the nested reason was never read at all, and a
+  // retryable quota response was classified permanent. Collect, then test all.
+  const reasonSignals = [
+    error.errors && error.errors[0] && error.errors[0].reason,
+    apiError && apiError.status,
+    apiMessage,
+    ...nested.map(e => e && e.reason),
+    ...nested.map(e => e && e.message),
+    message,
+  ].filter(Boolean).map(String);
 
   // A missing tab is identified by Google's own range-parse rejection, never by a
   // loose "not found" match — "not found" is also how a missing SPREADSHEET and a
   // revoked permission read, and treating either as an absent tab would report a
   // misconfigured deployment as an empty ledger.
-  if (/unable to parse range/i.test(message) || /unable to parse range/i.test(apiMessage)) {
+  const RANGE_PARSE = /unable to parse range/i;
+  if (RANGE_PARSE.test(message) || RANGE_PARSE.test(apiMessage)
+    || nested.some(e => e && RANGE_PARSE.test(String(e.message || '')))) {
     return 'tab_missing';
   }
 
   if (TRANSIENT_READ_STATUSES.has(status)) return 'transient';
   // A 403 is transient ONLY when Google names rate limiting or quota; a 403 for a
-  // revoked service account is permanent and must not be retried four times.
-  if (status === 403) return /rateLimit|quota|RESOURCE_EXHAUSTED/i.test(reason || apiMessage) ? 'transient' : 'permanent';
+  // revoked service account is permanent and must not be retried three times.
+  if (status === 403) {
+    return reasonSignals.some(s => /rateLimit|quota|RESOURCE_EXHAUSTED/i.test(s)) ? 'transient' : 'permanent';
+  }
   // Any other explicit HTTP status is a decision the server made about this exact
   // request; repeating it produces the same answer.
   if (Number.isFinite(status)) return 'permanent';

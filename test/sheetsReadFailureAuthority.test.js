@@ -143,6 +143,67 @@ test('a 403 is transient ONLY when Google names rate limiting or quota', () => {
   assert.equal(classifySheetsReadError(gaxios(403, 'The caller does not have permission')), 'permanent');
 });
 
+// The REAL shape of a Sheets per-user rate limit, and the reason the reason-signals
+// are tested together instead of in `first || second` order. Google sends HTTP 403
+// with `error.status: 'PERMISSION_DENIED'` AND the actual cause in
+// `error.errors[0].reason`, nested under `response.data.error` — not on the error
+// object. A short-circuit on the truthy 'PERMISSION_DENIED' therefore never reads the
+// field that mattered, and the most common retryable failure in production was
+// classified permanent: no retry, and a hard 500 out of the read routes.
+test('a 403 quota rejection is transient even when its status says PERMISSION_DENIED', () => {
+  const e = Object.assign(new Error('Quota exceeded for quota metric \'Read requests\''), {
+    status: 403,
+    response: {
+      status: 403,
+      data: {
+        error: {
+          code: 403,
+          status: 'PERMISSION_DENIED',
+          message: 'Quota exceeded for quota metric \'Read requests\'',
+          errors: [{ domain: 'usageLimits', reason: 'userRateLimitExceeded', message: 'User Rate Limit Exceeded' }],
+        }
+      }
+    }
+  });
+  assert.equal(classifySheetsReadError(e), 'transient');
+
+  // …and the nested reason alone is enough, even when no message names quota — the
+  // signals must be read, not merely the first truthy one.
+  const reasonOnly = {
+    status: 403,
+    message: 'Request failed with status code 403',
+    response: {
+      status: 403,
+      data: { error: { code: 403, status: 'PERMISSION_DENIED', message: 'Forbidden', errors: [{ reason: 'rateLimitExceeded' }] } }
+    }
+  };
+  assert.equal(classifySheetsReadError(reasonOnly), 'transient');
+
+  // The guard against over-correcting: a genuine permission denial carries no quota
+  // signal anywhere, and must stay permanent.
+  const denied = Object.assign(new Error('The caller does not have permission'), {
+    status: 403,
+    response: {
+      status: 403,
+      data: {
+        error: {
+          code: 403, status: 'PERMISSION_DENIED', message: 'The caller does not have permission',
+          errors: [{ domain: 'global', reason: 'forbidden', message: 'The caller does not have permission' }],
+        }
+      }
+    }
+  });
+  assert.equal(classifySheetsReadError(denied), 'permanent');
+});
+
+// A request timeout is the server saying it stopped waiting for the request. For an
+// idempotent read that is the textbook retry; the explicit-status branch below would
+// otherwise call it permanent before the timeout-message check could ever run.
+test('HTTP 408 is a transient READ failure', () => {
+  assert.equal(classifySheetsReadError(gaxios(408, 'Request Timeout')), 'transient');
+  assert.equal(isTransientReadError(gaxios(408, 'Request Timeout')), true);
+});
+
 test('a transport failure with no HTTP status at all is transient', () => {
   for (const code of ['ETIMEDOUT', 'ECONNRESET', 'EAI_AGAIN', 'ENOTFOUND', 'ECONNREFUSED']) {
     assert.equal(classifySheetsReadError(transport(code, 'network')), 'transient', code);
@@ -275,7 +336,7 @@ test('the exported read surface is exactly the set proven to retry', () => {
 // predicate, appendRows starts retrying an ambiguous 503 and can double-write a
 // workout row. The disagreement IS the contract.
 test('the read guard retries the ambiguous statuses that the append guard must refuse', () => {
-  for (const status of [500, 502, 503, 504]) {
+  for (const status of [408, 500, 502, 503, 504]) {
     const e = gaxios(status, 'upstream');
     assert.equal(isTransientReadError(e), true, `read must retry HTTP ${status} — a read is idempotent`);
     assert.equal(sheets.isTransientAppendError(e), false, `append must NEVER retry HTTP ${status} — the row may already be committed`);
