@@ -25,9 +25,9 @@
 //
 // EXACT-HEADER validation (owner requirement): before any write, read row 1 of the
 // tab and compare it POSITION-BY-POSITION to config/columns.js `sessionPlansColumns`.
-// A missing/unreadable tab ⇒ `tab_missing`; any positional difference ⇒
-// `header_mismatch`. Never guess column positions; a non-ok header disables the
-// write and surfaces a clear diagnostic reason.
+// A CONFIRMED-absent tab ⇒ `tab_missing`; an UNREADABLE one ⇒ `error`; any positional
+// difference ⇒ `header_mismatch`. Never guess column positions; a non-ok header
+// disables the write and surfaces a clear diagnostic reason.
 
 const sheets = require('../sheets');
 const { sessionPlansColumns } = require('../config/columns');
@@ -60,15 +60,22 @@ function _envelope(status, captured, extra = {}) {
 }
 
 // Read row 1 and compare it to the contract, position by position. Returns
-// { ok:true } or { ok:false, status:'tab_missing'|'header_mismatch', reason }.
+// { ok:true } or { ok:false, status:'tab_missing'|'header_mismatch'|'error', reason }.
 async function validateHeader() {
   let rows;
   try {
     rows = await sheets.readRange(HEADER_RANGE);
   } catch (e) {
-    // The Sheets API throws when the tab does not exist — a missing tab is a safe,
-    // explicit tab_missing (never a guessed write).
-    return { ok: false, status: 'tab_missing', reason: `Session_Plans header unreadable (${e.message})` };
+    // Ask the ONE read-failure authority. This used to report EVERY read failure as
+    // `tab_missing`, which told the owner to run a schema migration when Google had
+    // merely rate-limited us. `tab_missing` is a durable schema fact and is claimed
+    // only when `confirmTabMissing` has independently established it — the metadata
+    // read succeeded AND this tab is genuinely absent. A malformed range, an
+    // unreadable spreadsheet, or any other failure is `error`: a non-capture outcome
+    // either way, so the write never proceeds on a guess in either direction.
+    return (await sheets.confirmTabMissing(e, SESSION_PLANS_TAB))
+      ? { ok: false, status: 'tab_missing', reason: 'Session_Plans tab confirmed absent' }
+      : { ok: false, status: 'error', reason: `Session_Plans header unreadable (${e.message})` };
   }
   const header = Array.isArray(rows) && Array.isArray(rows[0]) ? rows[0] : [];
   if (header.length === 0) {

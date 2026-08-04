@@ -52,7 +52,17 @@ async function validateHeader() {
   try {
     rows = await sheets.readRange(HEADER_RANGE);
   } catch (e) {
-    return { ok: false, status: 'tab_missing', reason: `Session_Plan_Sets header unreadable (${e.message})` };
+    // Same one authority as sessionPlanCapture, and this is the site where it matters
+    // most: the seal artifact treats `tab_missing` as a VERIFIED-empty ledger
+    // (services/turnWriteArtifact.js VERIFIED_EMPTY_SEAL_REASONS). So a transient
+    // outage — or a malformed A1 range, which Google reports with the SAME
+    // "Unable to parse range" wording as an absent tab — must never reach it, or a
+    // closeout is claimed verified while real rows sit unstamped. `confirmTabMissing`
+    // returns true only after independently confirming the metadata was readable and
+    // this tab is absent from it.
+    return (await sheets.confirmTabMissing(e, SESSION_PLAN_SETS_TAB))
+      ? { ok: false, status: 'tab_missing', reason: 'Session_Plan_Sets tab confirmed absent' }
+      : { ok: false, status: 'error', reason: `Session_Plan_Sets header unreadable (${e.message})` };
   }
   const header = Array.isArray(rows) && Array.isArray(rows[0]) ? rows[0] : [];
   if (header.length === 0) return { ok: false, status: 'tab_missing', reason: 'Session_Plan_Sets tab has no header row' };
