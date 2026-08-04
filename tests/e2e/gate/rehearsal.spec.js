@@ -42,6 +42,9 @@ const { pickNetworkPassthrough, assertNoWorkbookId, GATE_STARTUP_TIMEOUT_MS } = 
 const {
   OBSERVER_FLUSH_MS, bubbleObserverInitScript,
   ingestLiveObservation, reconcileSweep, recordsToMessages, makeBoundary,
+  SEEN_ATTR,
+  NEW_BUBBLE_SELECTOR,
+  markExistingBubblesScript,
 } = require('./rehearsal-bubble-observer');
 const { SANDBOX_SPREADSHEET_ID, SANDBOX_SPREADSHEET_ID_LAST6 } = require('../../../config/sandboxSheet');
 const { logCleanedColumns, effortColumns, sessionPlansColumns, sessionPlanSetsColumns } = require('../../../config/columns');
@@ -315,7 +318,7 @@ function parseProposalLine(line) {
 
 // Assert the STAGED (unaccepted) proposal state: source lift still in the plan and
 // still current, no completed-mutation wording, and the parsed prescription present.
-async function assertStagedProposal(page, h, { bubblesBefore, sourceRegex }) {
+async function assertStagedProposal(page, h, { sourceRegex }) {
   await expect(page.locator('#thread-messages .replacement-proposal-line').last()).toBeVisible({ timeout: 60000 });
   const line = await page.locator('#thread-messages .replacement-proposal-line').last().innerText();
   const rx = parseProposalLine(line);
@@ -329,10 +332,10 @@ async function assertStagedProposal(page, h, { bubblesBefore, sourceRegex }) {
   // `wholeThread.slice(before.length)`. That offset slice carries the same shrinking-
   // prefix assumption that produced the "ve." fragment, so a pre-acceptance
   // completed-mutation claim could be sliced away or missed entirely.
-  const askBubbles = page.locator('#thread-messages .chat-bubble-atlas');
+  const askBubbles = page.locator(NEW_BUBBLE_SELECTOR);
   const askTotal = await askBubbles.count();
   const newTexts = [];
-  for (let i = Math.max(0, bubblesBefore); i < askTotal; i += 1) {
+  for (let i = 0; i < askTotal; i += 1) {
     newTexts.push(String(await askBubbles.nth(i).innerText().catch(() => '')).replace(/\s+/g, ' ').trim());
   }
   const mutationWording = newTexts.some(t => /i've noted the substitution|you're substituting|has been (swapped|replaced)/i.test(t));
@@ -399,9 +402,9 @@ const DRIVERS = {
     await h.snap('03-source-current.png');
 
     h.setPhase('substitution_ask');
-    const bubblesBefore = await page.locator('#thread-messages .chat-bubble-atlas').count();
+    await markBubblesSeen(page);   // the ask's own bubbles are the unmarked ones
     await h.say(SC.substitutionAsk);
-    const sub = await assertStagedProposal(page, h, { bubblesBefore, sourceRegex: /bench press/i });
+    const sub = await assertStagedProposal(page, h, { sourceRegex: /bench press/i });
     h.beat('substitution-lane', /replace bench press with/i.test(sub.line), `proposal: "${sub.line.slice(0, 160)}"`);
     const approveButtons = await page.locator('#thread-messages .replacement-approve-btn').count();
     h.stateCheck('one-bounded-proposal', approveButtons === 1, `${approveButtons} approve control(s) in the thread`);
@@ -485,9 +488,9 @@ const DRIVERS = {
     }
     // The unavailability statement the product's own clarify asks for stages the
     // ONE bounded proposal, which the corrections then KEEP.
-    const bubblesBefore = await page.locator('#thread-messages .chat-bubble-atlas').count();
+    await markBubblesSeen(page);   // the statement's own bubbles are the unmarked ones
     await h.say(SC.unavailabilityStatement);
-    const sub = await assertStagedProposal(page, h, { bubblesBefore, sourceRegex: /bench press/i });
+    const sub = await assertStagedProposal(page, h, { sourceRegex: /bench press/i });
     h.beat('one-proposal-staged-and-kept', /replace bench press with/i.test(sub.line),
       `proposal after "${SC.unavailabilityStatement}": "${sub.line.slice(0, 140)}"`);
     await h.snap('04-corrected-proposal.png');
@@ -535,9 +538,9 @@ const DRIVERS = {
     h.beat('bench-current', /bench press/i.test(st.names[st.index] || ''), `current lift: "${st.names[st.index] || ''}"`);
 
     h.setPhase('substitution_ask');
-    const bubblesBefore = await page.locator('#thread-messages .chat-bubble-atlas').count();
+    await markBubblesSeen(page);   // the ask's own bubbles are the unmarked ones
     await h.say(SC.substitutionAsk);
-    const sub = await assertStagedProposal(page, h, { bubblesBefore, sourceRegex: /bench press/i });
+    const sub = await assertStagedProposal(page, h, { sourceRegex: /bench press/i });
     h.beat('substitution-lane', /replace bench press with/i.test(sub.line), `proposal: "${sub.line.slice(0, 160)}"`);
     await h.snap('04-substitution-proposal.png');
 
@@ -645,9 +648,9 @@ const DRIVERS = {
       `current lift after the completed press: "${st.names[st.index] || ''}"`);
 
     h.setPhase('substitution_ask');
-    const bubblesBefore = await page.locator('#thread-messages .chat-bubble-atlas').count();
+    await markBubblesSeen(page);   // the ask's own bubbles are the unmarked ones
     await h.say(SC.substitutionAsk);
-    const sub = await assertStagedProposal(page, h, { bubblesBefore, sourceRegex: /seated row/i });
+    const sub = await assertStagedProposal(page, h, { sourceRegex: /seated row/i });
     h.beat('substitution-lane', /replace seated row with/i.test(sub.line), `proposal: "${sub.line.slice(0, 160)}"`);
     await h.snap('04-substitution-proposal.png');
 
@@ -966,18 +969,34 @@ const servedReplies = [];
 let mutationBoundary = null;
 const norm = (t) => String(t == null ? '' : t).replace(/\s+/g, ' ').trim();
 
+// Mark every bubble that exists NOW, so the turn's own bubbles are exactly the unmarked
+// ones afterwards. Returns the marked count purely so the caller can prove the mark took.
+// See rehearsal-bubble-observer.js for why counting and indexing are both unsafe here.
+async function markBubblesSeen(page) {
+  return page.evaluate(markExistingBubblesScript, SEEN_ATTR);
+}
+
 async function settleReply(page, question) {
-  const bubbles = page.locator('#thread-messages .chat-bubble-atlas');
-  const bubblesBefore = await bubbles.count();
+  const newBubbles = page.locator(NEW_BUBBLE_SELECTOR);
   const servedBefore = servedReplies.length;
   const captureFailuresBefore = coachCaptureFailures.count;
 
+  // Precondition, asserted rather than assumed: nothing is unmarked before the turn, so
+  // anything unmarked afterwards was produced BY this turn.
+  await markBubblesSeen(page);
+  const strays = await newBubbles.count();
+  if (strays !== 0) {
+    throw new Error(`rehearsal: ${strays} bubble(s) were unmarked before the turn — the turn's own reply could not be identified`);
+  }
+
   await say(page, question);
 
-  // 1. THE turn's own bubble. A new one must appear; we read only that element.
-  await expect.poll(() => bubbles.count(), { timeout: SETTLE_TIMEOUT_MS, intervals: [250] })
-    .toBeGreaterThan(bubblesBefore);
-  const mine = bubbles.nth(bubblesBefore);
+  // 1. THE turn's own bubble, by IDENTITY. The thread evicts its oldest bubble past
+  // MAX_BUBBLES, so a count can stay flat while the reply renders, and an index can
+  // address a different turn's bubble entirely.
+  await expect.poll(() => newBubbles.count(), { timeout: SETTLE_TIMEOUT_MS, intervals: [250] })
+    .toBeGreaterThan(0);
+  const mine = newBubbles.first();
 
   // 2. Settle it.
   let settled = '';

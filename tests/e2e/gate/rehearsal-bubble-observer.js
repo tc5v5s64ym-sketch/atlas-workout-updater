@@ -71,6 +71,49 @@
 
 const OBSERVER_FLUSH_MS = 100;
 
+// ── Turn-own-bubble identity (F-SB4B corrective 2, sweep Session 1) ────────────
+//
+// THE DEFECT THIS REPLACES. The driver identified a turn's own reply POSITIONALLY:
+// it counted `.chat-bubble-atlas` before the turn and then waited for the count to
+// rise, reading the reply at `nth(bubblesBefore)`. Both halves assume the thread only
+// ever GROWS.
+//
+// It does not. `src/app/chat.js` caps the thread at MAX_BUBBLES = 12 and prunes
+// `thread.firstChild` whenever a new bubble pushes it over. In a long session the
+// user's own message is painted first, evicting the OLDEST atlas bubble, and the reply
+// is then appended — so the count is unchanged even though the reply rendered
+// perfectly. Debug sweep Session 1 hung the full 90 s on exactly this, at bubble 7 of
+// a six-lift, six-set scenario, and reported a silent turn against a product that had
+// answered correctly.
+//
+// The index is the worse half. After an eviction, `nth(bubblesBefore)` addresses a
+// DIFFERENT turn's bubble, so a turn whose count did happen to rise would be settled
+// and scored against the wrong reply — false evidence in a qualifying rehearsal, not
+// merely a hang. `assertStagedProposal` read its new-bubble window the same way, which
+// could shift a pre-acceptance completed-mutation claim out of view entirely and turn
+// a trust assertion green on unread text.
+//
+// The replacement is IDENTITY, exactly as the earlier corrective replaced byte-offset
+// thread slicing with per-element reads: mark every bubble that exists BEFORE the turn,
+// then the turn's own bubbles are precisely the unmarked ones. Eviction cannot forge
+// that — a pruned bubble is gone, and a surviving one keeps its mark. Reuse is handled
+// for free: `handlePreviewReady` reuses an existing bubble element, which stays marked
+// and so is correctly not counted as new.
+//
+// The attribute is inert: no application code reads or writes it, and it is set from
+// the driver, never by the page's own scripts.
+const SEEN_ATTR = 'data-rehearsal-seen';
+const NEW_BUBBLE_SELECTOR = `#thread-messages .chat-bubble-atlas:not([${SEEN_ATTR}])`;
+
+// In-page: mark every atlas bubble currently in the thread. Returns how many carry the
+// mark afterwards, so the driver can assert the precondition actually took rather than
+// assume it.
+function markExistingBubblesScript(attr) {
+  const nodes = document.querySelectorAll('#thread-messages .chat-bubble-atlas');
+  for (const n of nodes) n.setAttribute(attr, '1');
+  return document.querySelectorAll(`#thread-messages .chat-bubble-atlas[${attr}]`).length;
+}
+
 // The in-page installer, as a function Playwright serializes into an init script. It
 // runs before any application script on every navigation, so it is installed for the
 // fresh-session transition too. It reports `{ index, text }` per changed bubble and
@@ -335,6 +378,9 @@ function recordsToMessages(records) {
 
 module.exports = {
   OBSERVER_FLUSH_MS,
+  SEEN_ATTR,
+  NEW_BUBBLE_SELECTOR,
+  markExistingBubblesScript,
   bubbleObserverInitScript,
   ingestLiveObservation,
   reconcileSweep,

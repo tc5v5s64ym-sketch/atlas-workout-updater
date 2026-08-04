@@ -26,6 +26,9 @@ const {
   ingestLiveObservation, reconcileSweep, recordsToMessages, makeBoundary,
 } = require('./gate/rehearsal-bubble-observer');
 const { detectUnsupportedWriteClaim, detectUnsupportedMutationWording } = require('./gate/rehearsal-scorecard');
+const {
+  SEEN_ATTR, NEW_BUBBLE_SELECTOR, markExistingBubblesScript,
+} = require('./gate/rehearsal-bubble-observer');
 
 const THINKING = 'Thinking…';
 
@@ -620,4 +623,99 @@ test.describe('F-SB4B collector — a rejected batch keeps its original causal s
     expect(claim.changeSeq, 'repeated unrelated mutations must not drag the claim forward')
       .toBeLessThanOrEqual(claimSeq);
   });
+});
+
+
+// ── Turn-own-bubble identity, and the eviction that broke counting ────────────
+//
+// Debug sweep Session 1 hung the full 90 s on a turn the product had answered
+// correctly. `src/app/chat.js` caps the thread at MAX_BUBBLES = 12 and prunes
+// `thread.firstChild` past it, so on a long session the user's own message evicts the
+// OLDEST atlas bubble and the reply is then appended: the count never rises. The driver
+// waited on `count() > bubblesBefore` and read the reply at `nth(bubblesBefore)`.
+//
+// These drive that exact shape — append with an eviction — and prove identity survives
+// what counting and indexing cannot.
+
+const evictOldestAndAppend = (page, text) => page.evaluate((t) => {
+  const thread = document.getElementById('thread-messages');
+  // Exactly what chat.js does: append, then prune from the front past the cap.
+  const b = document.createElement('div');
+  b.className = 'chat-bubble chat-bubble-atlas';
+  const body = document.createElement('div');
+  body.textContent = t;
+  b.appendChild(body);
+  thread.appendChild(b);
+  thread.removeChild(thread.firstChild);
+}, text);
+
+const countAll = (page) => page.locator('#thread-messages .chat-bubble-atlas').count();
+const countNew = (page) => page.locator(NEW_BUBBLE_SELECTOR).count();
+
+test('identity: after marking, only bubbles added by the turn are unmarked', async ({ page }) => {
+  await startCollector(page, { value: 'identity' });
+  await appendBubble(page, 'older reply');
+  await appendBubble(page, 'previous reply');
+
+  const marked = await page.evaluate(markExistingBubblesScript, SEEN_ATTR);
+  expect(marked).toBe(2);
+  expect(await countNew(page)).toBe(0);      // nothing is the turn's own yet
+
+  await appendBubble(page, 'THE TURN REPLY');
+  expect(await countNew(page)).toBe(1);
+  expect(await page.locator(NEW_BUBBLE_SELECTOR).first().innerText()).toContain('THE TURN REPLY');
+});
+
+// THE BITE for the Session 1 defect. The count is FLAT across the turn — the pre-fix
+// driver polled exactly this and could never proceed — while identity finds the reply.
+test('identity: survives the thread evicting its oldest bubble (the Session 1 hang)', async ({ page }) => {
+  await startCollector(page, { value: 'identity' });
+  for (const t of ['bubble 1', 'bubble 2', 'bubble 3']) await appendBubble(page, t);
+
+  await page.evaluate(markExistingBubblesScript, SEEN_ATTR);
+  const totalBefore = await countAll(page);
+
+  await evictOldestAndAppend(page, 'THE TURN REPLY');
+
+  // Counting cannot see this turn at all: the total is unchanged.
+  expect(await countAll(page)).toBe(totalBefore);
+  // Identity can.
+  expect(await countNew(page)).toBe(1);
+  expect(await page.locator(NEW_BUBBLE_SELECTOR).first().innerText()).toContain('THE TURN REPLY');
+});
+
+// THE BITE for the worse half. With an eviction, the old positional read addresses a
+// DIFFERENT turn's bubble — so a settled reply could be scored against the wrong turn.
+// This asserts the index is genuinely wrong and that identity is genuinely right, so the
+// test fails if someone reverts to indexing even where the count does rise.
+test('identity: an index into the thread addresses the WRONG bubble after an eviction', async ({ page }) => {
+  await startCollector(page, { value: 'identity' });
+  for (const t of ['bubble 1', 'bubble 2', 'bubble 3']) await appendBubble(page, t);
+
+  const bubblesBefore = await countAll(page);           // what the old driver captured
+  await page.evaluate(markExistingBubblesScript, SEEN_ATTR);
+
+  await evictOldestAndAppend(page, 'reply A');
+  await appendBubble(page, 'reply B');                  // now the count does rise
+
+  const all = page.locator('#thread-messages .chat-bubble-atlas');
+  const positional = await all.nth(bubblesBefore).innerText();
+  expect(positional, 'the old index lands on an unrelated bubble').not.toContain('reply A');
+
+  const byIdentity = await page.locator(NEW_BUBBLE_SELECTOR).first().innerText();
+  expect(byIdentity, 'identity addresses the turn\'s own first bubble').toContain('reply A');
+  expect(await countNew(page)).toBe(2);                 // both of this turn's bubbles
+});
+
+// A bubble the app REUSES (handlePreviewReady reuses an existing element rather than
+// appending) keeps its mark, so it is correctly not mistaken for new work.
+test('identity: a reused bubble stays marked and is never counted as the turn\'s own', async ({ page }) => {
+  await startCollector(page, { value: 'identity' });
+  await appendBubble(page, 'existing card');
+  await page.evaluate(markExistingBubblesScript, SEEN_ATTR);
+
+  await rewriteBubble(page, 0, 'existing card, rebuilt in place');
+  expect(await countNew(page)).toBe(0);
+  expect(await page.locator('#thread-messages .chat-bubble-atlas').first().innerText())
+    .toContain('rebuilt in place');
 });
