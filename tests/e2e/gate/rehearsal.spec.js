@@ -28,7 +28,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
-const { scoreRehearsalRun, renderMarkdown, compareLedgerToDeclaration, classifyRepeatApprovalProbe } = require('./rehearsal-scorecard');
+const { scoreRehearsalRun, renderMarkdown, compareLedgerToDeclaration, classifyRepeatApprovalProbe, classifySettlement, isSettled } = require('./rehearsal-scorecard');
 const { REHEARSAL_SESSION } = require('./rehearsal-run-purpose');
 const { measureSourceTree } = require('./rehearsal-source-facts');
 const { markRunStarted, verifyRunStartMarker } = require('./rehearsal-run-start');
@@ -624,23 +624,89 @@ async function logSet(page, text, expectAfter) {
   await expect.poll(() => loggedCount(page), { timeout: 30000 }).toBe(expectAfter);
 }
 
-// Settled-reply discipline (from the proven Stage A spec): 'Thinking…' gone, body
-// non-empty, text stable ≥750ms — never "thread text grew".
+// ── Reply settlement (F-SB4B corrective, owner instruction 2026-08-03) ───────────
+// THE DEFECT THIS REPLACES. The previous probe read the WHOLE thread's innerText and
+// sliced the new content off by byte offset: `now.slice(before.length)`. That is only
+// valid while every character before the new reply is immutable, and in this client it
+// is not — `appendAtlasBubble` calls `hideHomeEmpty()`, the 'Thinking…' placeholder is
+// replaced by '' before `typeOut` starts, and `innerText` is layout-derived, so text
+// EARLIER in the thread can shrink. When the prefix shrinks, `slice(before.length)`
+// overshoots into the middle of the reply and returns its tail. That is exactly the
+// Session 2 capture of "ve." — a trailing fragment of a reply the server had served in
+// full (the coach-turn shadow recorded message_len 167 and 321 on those turns).
+//
+// The replacement never slices. It selects the ONE new Atlas bubble this turn created
+// and reads that element's own text, so nothing before it can shift the reading.
+//
+// COMPLETION, not brief stability. Text that has stopped changing for 750 ms is not
+// proof that rendering FINISHED — `typeOut` renders character by character, so any
+// pause inside it looks identical to the end. Settlement therefore prefers an
+// AUTHORITATIVE completion signal: the reply the server actually served for this turn,
+// captured from the network. The bubble is settled when it contains that whole served
+// message. Stability alone is the fallback for a turn that legitimately serves no
+// message (a deterministic/outage reply), and the settlement MODE is recorded so
+// evidence never conflates "proven complete" with "looked quiet for a moment".
+//
+// Timeouts are UNCHANGED and no retry is added: hiding provider latency behind a longer
+// wait would convert a real product problem into a slow green. What changes is that a
+// timeout now reports WHY — still thinking, still typing, or served-but-unrendered —
+// so the next occurrence is diagnosable instead of opaque.
+const THINKING = 'Thinking…';
+const SETTLE_TIMEOUT_MS = 90000;
+const STABLE_MS = 750;
+
+// Server-served coach replies for this run, in arrival order. Filled by the response
+// listener installed in the test. Only the LENGTH and a normalized copy are used for
+// matching; nothing here reaches an artifact.
+const servedReplies = [];
+const norm = (t) => String(t == null ? '' : t).replace(/\s+/g, ' ').trim();
+
 async function settleReply(page, question) {
-  const before = await page.locator('#thread-messages').innerText();
+  const bubbles = page.locator('#thread-messages .chat-bubble-atlas');
+  const bubblesBefore = await bubbles.count();
+  const servedBefore = servedReplies.length;
+
   await say(page, question);
-  const THINKING = 'Thinking…';
-  let settled = ''; let stableSince = null; let lastSeen = null;
-  await expect.poll(async () => {
-    const now = await page.locator('#thread-messages').innerText();
-    const delta = now.slice(before.length);
-    if (delta !== lastSeen) { lastSeen = delta; stableSince = Date.now(); return false; }
-    const body = delta.split(THINKING).join('').replace(question, '').trim();
-    if (delta.includes(THINKING) || body.length === 0) return false;
-    if (stableSince === null || Date.now() - stableSince < 750) return false;
-    settled = delta; return true;
-  }, { timeout: 90000, intervals: [250] }).toBe(true);
-  return settled.split(THINKING).join('').replace(question, '').trim();
+
+  // 1. THE turn's own bubble. A new one must appear; we read only that element.
+  await expect.poll(() => bubbles.count(), { timeout: SETTLE_TIMEOUT_MS, intervals: [250] })
+    .toBeGreaterThan(bubblesBefore);
+  const mine = bubbles.nth(bubblesBefore);
+
+  // 2. Settle it.
+  let settled = '';
+  let mode = null;
+  let stableSince = null;
+  let lastSeen = null;
+  let lastDiagnosis = 'no observation yet';
+  const DIAGNOSIS = {
+    thinking: 'the bubble still showed Thinking… — the request had not returned',
+    empty: 'the bubble was empty — rendering had not begun',
+    growing: 'the bubble text was still growing — typeOut had not finished',
+    'partial-render': 'the bubble stopped changing while still shorter than the reply the server served — a partial render, not a settled one (this is the "ve." class)',
+  };
+  try {
+    await expect.poll(async () => {
+      const text = norm(await mine.innerText().catch(() => ''));
+      if (text !== lastSeen) { lastSeen = text; stableSince = Date.now(); }
+      // The DECISION is the scorecard module's pure, unit-bitten function; this poll
+      // only OBSERVES. One authority for what "settled" means.
+      const outcome = classifySettlement({
+        text,
+        servedMessages: servedReplies.slice(servedBefore),
+        stableForMs: stableSince === null ? 0 : Date.now() - stableSince,
+        stableThresholdMs: STABLE_MS,
+        thinkingMarker: THINKING,
+      });
+      if (isSettled(outcome)) { settled = text; mode = outcome; return true; }
+      lastDiagnosis = DIAGNOSIS[outcome] || `settlement refused (${outcome})`;
+      return false;
+    }, { timeout: SETTLE_TIMEOUT_MS, intervals: [250] }).toBe(true);
+  } catch (e) {
+    throw new Error(`rehearsal: reply never settled for "${String(question).slice(0, 60)}" after ${SETTLE_TIMEOUT_MS / 1000}s — ${lastDiagnosis}`);
+  }
+  note('settle', `mode=${mode} chars=${settled.length}`);
+  return settled;
 }
 
 const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
@@ -788,6 +854,10 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
       const body = await res.json();
       const data = body && body.data && typeof body.data === 'object' ? body.data : body;
       coachResponses.push({ phase, source: data && typeof data.source === 'string' ? data.source : null, model: data && typeof data.model === 'string' ? data.model : null });
+      // The AUTHORITATIVE completion signal for settleReply: what the server actually
+      // served for this turn. Held in memory only — never written to an artifact.
+      const served = data && typeof data.message === 'string' ? data.message : null;
+      if (served && served.trim()) servedReplies.push(served);
     } catch { /* recorded as absent, never guessed */ }
   });
 

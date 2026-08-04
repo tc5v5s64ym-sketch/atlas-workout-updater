@@ -12,7 +12,8 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
-  REHEARSAL_SESSION, REHEARSAL_STREAK_LENGTH, SERVER_SESSION_ID_RE,
+  REHEARSAL_SESSION, REHEARSAL_DEBUG, QUALIFYING_PURPOSE, isQualifyingPurpose,
+  REHEARSAL_STREAK_LENGTH, SERVER_SESSION_ID_RE,
   normalizePurpose, isRehearsalSessionNumber, mintIdentities,
   workoutIdentityRefusal, runIdentityRefusal,
   parseCanonicalRehearsalCount, evaluateRehearsalPreflight,
@@ -260,5 +261,131 @@ describe('purpose and session-number primitives', () => {
     assert.equal(isRehearsalSessionNumber(1), true);
     assert.equal(isRehearsalSessionNumber(5), true);
     for (const bad of [0, 6, 2.5, '3', null]) assert.equal(isRehearsalSessionNumber(bad), false);
+  });
+});
+
+
+// ── RUN PURPOSE: debug versus qualifying (owner instruction 2026-08-03) ────────
+// The authority defect this replaces: one scorecard condition conflated "is the
+// source tree clean and exact?" with "is this session legal at the canonical
+// count?", so at count 0/5 a Session 2 run failed no matter how the product
+// behaved — making a five-scenario sweep from exact main impossible — and the
+// practice that grew around it used an OFF-MAIN source failure as an accidental
+// mode switch. Purpose is now declared, never inferred from which check went red.
+
+const { scoreRehearsalRun } = require('../tests/e2e/gate/rehearsal-scorecard');
+
+// A preflight input that is valid in every respect EXCEPT the count question, so
+// each assertion below isolates the count rule.
+const CLEAN_PREFLIGHT = {
+  mode: 'model-up',
+  runId: 'fsb4b-s2-20260803T000000-ABC123',
+  git: {
+    branch: 'main',
+    head: 'a'.repeat(40),
+    originHead: 'a'.repeat(40),
+    clean: true,
+  },
+  originRefreshed: true,
+  sessionNumber: 2,
+  env: {
+    childCarriesWorkbookId: false,
+    childCarriesWorkoutSessionId: false,
+    rehearsalPostureDeclared: true,
+    declaredWorkbookIsSandbox: true,
+    nodeEnvProduction: false,
+    hasServiceAccountEmail: true,
+    hasPrivateKey: true,
+    hasProviderKey: true,
+  },
+};
+
+describe('run purpose — the count rule binds a qualifying run only', () => {
+  it('a QUALIFYING session 2 at count 0/5 REFUSES', () => {
+    const r = evaluateRehearsalPreflight({
+      ...CLEAN_PREFLIGHT, purpose: REHEARSAL_SESSION, priorRehearsalCount: 0,
+    });
+    assert.equal(r.ok, false, 'a qualifying out-of-order session must refuse');
+    assert.ok(r.refusals.some(x => /requires the canonical count to be 1\/5/.test(x)),
+      `expected the count refusal; got: ${JSON.stringify(r.refusals)}`);
+  });
+
+  it('a DEBUG session 2 at count 0/5 is ACCEPTED — this is the sweep that was impossible', () => {
+    const r = evaluateRehearsalPreflight({
+      ...CLEAN_PREFLIGHT, purpose: REHEARSAL_DEBUG, priorRehearsalCount: 0,
+    });
+    assert.equal(r.ok, true, `a debug run must not be ordered against the count; got: ${JSON.stringify(r.refusals)}`);
+  });
+
+  it('a debug run is still bound by EVERY other rule — the purpose relaxes the count only', () => {
+    for (const [label, patch] of [
+      ['off-main', { git: { ...CLEAN_PREFLIGHT.git, branch: 'feature/x' } }],
+      ['dirty worktree', { git: { ...CLEAN_PREFLIGHT.git, clean: false } }],
+      ['stale head', { git: { ...CLEAN_PREFLIGHT.git, originHead: 'b'.repeat(40) } }],
+      ['model-down', { mode: 'model-down' }],
+      ['no provider key', { env: { ...CLEAN_PREFLIGHT.env, hasProviderKey: false } }],
+      ['non-sandbox workbook', { env: { ...CLEAN_PREFLIGHT.env, declaredWorkbookIsSandbox: false } }],
+      ['pre-seeded workout id', { env: { ...CLEAN_PREFLIGHT.env, childCarriesWorkoutSessionId: true } }],
+    ]) {
+      const r = evaluateRehearsalPreflight({
+        ...CLEAN_PREFLIGHT, ...patch, purpose: REHEARSAL_DEBUG, priorRehearsalCount: 0,
+      });
+      assert.equal(r.ok, false, `a debug run must still refuse on ${label}`);
+    }
+  });
+
+  it('an undeclared or unknown purpose refuses outright — there is no default', () => {
+    for (const bad of [undefined, '', 'DEBUG', 'rehearsal', 'STAGE_A_SESSION']) {
+      const r = evaluateRehearsalPreflight({ ...CLEAN_PREFLIGHT, purpose: bad, priorRehearsalCount: 1 });
+      assert.equal(r.ok, false, `purpose ${JSON.stringify(bad)} must refuse`);
+      assert.ok(r.refusals.some(x => /declare a run purpose explicitly/.test(x)),
+        `expected the purpose refusal; got: ${JSON.stringify(r.refusals)}`);
+    }
+  });
+
+  it('isQualifyingPurpose fails closed on anything that is not the qualifying purpose', () => {
+    assert.equal(isQualifyingPurpose(QUALIFYING_PURPOSE), true);
+    for (const bad of [REHEARSAL_DEBUG, undefined, null, '', 'nonsense', 0, {}]) {
+      assert.equal(isQualifyingPurpose(bad), false, `${JSON.stringify(bad)} must not qualify`);
+    }
+  });
+});
+
+describe('run purpose — no debug result can advance the count', () => {
+  // A scorecard observation set that scores every condition PASS is not needed to
+  // prove this: eligibility gates on PURPOSE first, so a debug run is ineligible
+  // even in the best case. Assert exactly that, then assert the best case really is
+  // reachable for debug (the point of the purpose).
+  const observationsFor = (purpose) => ({ run_purpose: purpose, session_number: 2 });
+
+  it('a debug scorecard publishes rehearsal_eligible=false and says why', () => {
+    const card = scoreRehearsalRun(observationsFor(REHEARSAL_DEBUG));
+    assert.equal(card.rehearsal_eligible, false);
+    assert.equal(card.qualifying, false);
+    assert.equal(card.diagnostic, true);
+    assert.match(card.rehearsal_note, /DIAGNOSTIC RUN/);
+    assert.match(card.rehearsal_note, /never advance or authorize the rehearsal count/);
+  });
+
+  it('the scorecard reports the purpose it was GIVEN, never a constant', () => {
+    assert.equal(scoreRehearsalRun(observationsFor(REHEARSAL_DEBUG)).purpose, REHEARSAL_DEBUG);
+    assert.equal(scoreRehearsalRun(observationsFor(REHEARSAL_SESSION)).purpose, REHEARSAL_SESSION);
+    assert.equal(scoreRehearsalRun(observationsFor(undefined)).purpose, null);
+  });
+
+  it('an absent or unknown purpose is ineligible — eligibility fails closed', () => {
+    for (const bad of [undefined, null, '', 'REHEARSAL', 'DEBUG']) {
+      const card = scoreRehearsalRun(observationsFor(bad));
+      assert.equal(card.rehearsal_eligible, false, `purpose ${JSON.stringify(bad)} must be ineligible`);
+    }
+  });
+
+  it('the rendered markdown labels a diagnostic card as NON-COUNTING in its first line', () => {
+    const { renderMarkdown } = require('../tests/e2e/gate/rehearsal-scorecard');
+    const debugMd = renderMarkdown(scoreRehearsalRun(observationsFor(REHEARSAL_DEBUG)));
+    assert.match(debugMd.split('\n')[0], /DIAGNOSTIC \(NON-COUNTING\)/);
+    const qualMd = renderMarkdown(scoreRehearsalRun(observationsFor(REHEARSAL_SESSION)));
+    assert.match(qualMd.split('\n')[0], /QUALIFYING/);
+    assert.doesNotMatch(qualMd.split('\n')[0], /DIAGNOSTIC/);
   });
 });

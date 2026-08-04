@@ -22,8 +22,8 @@
 // shrinking the bar.
 
 const {
-  REHEARSAL_SESSION, REHEARSAL_STREAK_LENGTH,
-  normalizePurpose, isRehearsalSessionNumber,
+  REHEARSAL_SESSION, REHEARSAL_DEBUG, REHEARSAL_STREAK_LENGTH,
+  normalizePurpose, isQualifyingPurpose, isRehearsalSessionNumber,
   workoutIdentityRefusal, runIdentityRefusal,
 } = require('./rehearsal-run-purpose');
 const { sessionPlanSetsColumns } = require('../../../config/columns');
@@ -71,6 +71,153 @@ function classifyRepeatApprovalProbe(p) {
     && probe.dispatched === false) return 'refused-disabled-control';
   return 'no-op-unproven';
 }
+
+// ── independent remaining-work derivation ──────────────────────────────────────
+// Pure: derives the EXPECTED ordered remaining list and next-up lift from the FROZEN
+// scenario declaration plus the sets the scenario declares were logged. It never reads
+// client state, durable rows, or the visible reply.
+//
+// The defect it exists to prevent (owner instruction 2026-08-03): the remaining-work
+// proof read `window.remainingPlannedExercises()` and passed when the visible reply
+// repeated that same list. Client state and reply can AGREE and both still be wrong —
+// which is the exact corruption shape this rehearsal exists to catch. Evidence may not
+// define its own expectation, so the expectation comes from the declaration and both
+// observations are compared against it.
+//
+// declaration = {
+//   plan: [{ exercise, target_sets }, …]        // ordered, as accepted
+//   loggedNames: ['back squat', 'back squat', …] // one entry per declared logged SET
+//   replacement: { sourceName, replacementName } | null   // an ACCEPTED substitution
+// }
+// Returns { remaining: [names…], nextUp: name|null, complete: [names…] }.
+// Names are compared case- and separator-insensitively; the returned names keep the
+// declaration's own spelling so a failure message reads like the plan.
+function deriveExpectedRemaining(declaration) {
+  const d = declaration && typeof declaration === 'object' ? declaration : {};
+  const key = (v) => String(v == null ? '' : v).trim().toLowerCase().replace(/[-\s]+/g, ' ');
+  const plan = Array.isArray(d.plan) ? d.plan : [];
+  const loggedNames = (Array.isArray(d.loggedNames) ? d.loggedNames : []).map(key);
+  const rep = d.replacement && typeof d.replacement === 'object' ? d.replacement : null;
+
+  // An accepted substitution takes the source's SLOT and position — it is not an
+  // append (services/activeReplacement.js applyReplacement).
+  const items = plan.map((p) => {
+    const name = p && (p.exercise || p.name);
+    const isSource = rep && key(name) === key(rep.sourceName);
+    return {
+      name: isSource ? rep.replacementName : name,
+      sets: Number(p && p.target_sets) || 0,
+    };
+  });
+
+  // Count declared logged sets per lift, then spend them against the ordered plan.
+  const loggedCount = new Map();
+  for (const n of loggedNames) loggedCount.set(n, (loggedCount.get(n) || 0) + 1);
+
+  // A lift an ACCEPTED substitution removed from the plan is neither remaining nor
+  // complete — it is RETIRED, and naming it as outstanding work is its own failure.
+  // Without this the Session 3 corruption (a reply and a wrong client state agreeing
+  // that the substituted-away source still remains) would slip past both lists.
+  const retired = rep ? plan
+    .map((p) => p && (p.exercise || p.name))
+    .filter((n) => key(n) === key(rep.sourceName)) : [];
+
+  const remaining = [];
+  const complete = [];
+  for (const item of items) {
+    const k = key(item.name);
+    const done = loggedCount.get(k) || 0;
+    if (item.sets > 0 && done >= item.sets) complete.push(item.name);
+    else remaining.push(item.name);
+  }
+  return { remaining, nextUp: remaining.length ? remaining[0] : null, complete, retired };
+}
+
+// Compare an OBSERVED ordered list (client state) against the derived expectation.
+// Order matters: "what is left" and "what is next" are both order-dependent facts.
+// Returns { ok, problems }.
+function compareRemainingToExpectation(observedNames, expectation) {
+  const key = (v) => String(v == null ? '' : v).trim().toLowerCase().replace(/[-\s]+/g, ' ');
+  const problems = [];
+  const exp = (expectation && Array.isArray(expectation.remaining)) ? expectation.remaining : null;
+  if (!exp) return { ok: false, problems: ['no derived expectation was supplied'] };
+  const got = Array.isArray(observedNames) ? observedNames.map(key) : null;
+  if (!got) return { ok: false, problems: ['the observed remaining list was not an array'] };
+  const want = exp.map(key);
+  if (got.length !== want.length || got.some((n, i) => n !== want[i])) {
+    problems.push(`remaining work is [${observedNames.join(', ')}]; the declaration expects [${exp.join(', ')}]`);
+  }
+  return { ok: problems.length === 0, problems };
+}
+
+// Does the visible reply actually name the expected next-up lift, and does it avoid
+// naming anything the declaration says is already COMPLETE? A reply that repeats a
+// wrong client state fails against the declaration even when the two agree.
+function replyMatchesExpectation(replyText, expectation) {
+  const problems = [];
+  const text = String(replyText == null ? '' : replyText);
+  const exp = expectation && typeof expectation === 'object' ? expectation : {};
+  const mentions = (name) => {
+    const words = String(name || '').trim().split(/\s+/).filter(Boolean);
+    if (!words.length) return false;
+    // Match on the full phrase with flexible separators, not a single leading word:
+    // "Bench Press" and "Bench" must not be treated as interchangeable evidence.
+    const pattern = words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[\\s-]+');
+    return new RegExp(pattern, 'i').test(text);
+  };
+  for (const name of (Array.isArray(exp.remaining) ? exp.remaining : [])) {
+    if (!mentions(name)) problems.push(`the reply does not name remaining lift "${name}"`);
+  }
+  for (const name of (Array.isArray(exp.complete) ? exp.complete : [])) {
+    if (mentions(name)) problems.push(`the reply names "${name}", which the declaration says is already complete`);
+  }
+  for (const name of (Array.isArray(exp.retired) ? exp.retired : [])) {
+    if (mentions(name)) problems.push(`the reply names "${name}", which an accepted substitution removed from the plan`);
+  }
+  return { ok: problems.length === 0, problems };
+}
+
+// ── reply-settlement classification ────────────────────────────────────────────
+// Pure and bite-able: the spec OBSERVES (bubble text, served messages, how long the
+// text has been unchanged), this DECIDES whether the reply has finished rendering.
+//
+// The defect it exists to prevent (owner instruction 2026-08-03): the previous probe
+// accepted a reply once the observed text stopped changing for 750 ms. Text that has
+// stopped changing is not text that has FINISHED — `typeOut` renders character by
+// character, so a pause mid-render is indistinguishable from the end. Session 2
+// captured the trailing fragment "ve." while the server had served the complete reply
+// (message_len 167 and 321 in the coach-turn shadow).
+//
+// So stability alone can only settle a turn that served NO message. When a message was
+// served, the bubble must contain the whole of it: `served-complete` is the only
+// affirmative outcome, and a bubble that goes quiet while still shorter is
+// `partial-render` — refused, never settled.
+//
+// Whitespace is normalized on both sides because the DOM re-wraps text; nothing else
+// about the served message is relaxed.
+function classifySettlement(observation) {
+  const o = observation && typeof observation === 'object' ? observation : {};
+  const normalize = (t) => String(t == null ? '' : t).replace(/\s+/g, ' ').trim();
+  const text = normalize(o.text);
+  const served = (Array.isArray(o.servedMessages) ? o.servedMessages : [])
+    .map(normalize).filter((m) => m.length > 0);
+  const stableForMs = Number.isFinite(o.stableForMs) ? o.stableForMs : 0;
+  const stableThresholdMs = Number.isFinite(o.stableThresholdMs) ? o.stableThresholdMs : 750;
+  const thinkingMarker = normalize(o.thinkingMarker || 'Thinking…');
+
+  if (thinkingMarker && text.includes(thinkingMarker)) return 'thinking';
+  if (text.length === 0) return 'empty';
+  // Authoritative: the whole served reply is on screen. Timing is not consulted.
+  if (served.some((m) => text.includes(m))) return 'served-complete';
+  if (stableForMs < stableThresholdMs) return 'growing';
+  // Quiet, but a message WAS served and this is not all of it.
+  if (served.length > 0) return 'partial-render';
+  return 'stable-no-served-message';
+}
+
+// The two outcomes a caller may treat as settled.
+const SETTLED_OUTCOMES = Object.freeze(['served-complete', 'stable-no-served-message']);
+function isSettled(outcome) { return SETTLED_OUTCOMES.includes(outcome); }
 
 // ── the scenario-declared ledger multiset ──────────────────────────────────────
 // Compares the session's raw Session_Plan_Sets rows (arrays in the
@@ -251,9 +398,23 @@ function cellEquals(cell, expected) {
 // tolerate a completely absent observation branch and return ERROR.
 const CONDITIONS = Object.freeze([
   // (1) clean source main, exact SHA recorded — measured by the RUN, not asserted.
+  //
+  // This condition asks TWO questions that used to be welded together (owner
+  // instruction 2026-08-03):
+  //   a. is the source tree exact and clean? — asked under BOTH purposes, always;
+  //   b. is this session number legal at the canonical count? — a QUALIFYING rule only.
+  //
+  // Welding them made a five-scenario diagnostic sweep from exact main impossible: at
+  // count 0/5 a Session 2 run failed here no matter how the product behaved. The
+  // practice that grew around that — running from an OFF-MAIN tree so this condition
+  // failed for a different reason and the run quietly did not count — used a failure as
+  // a mode switch. Purpose is now declared, so (b) is applied to the runs it governs.
+  //
+  // A debug run still READS and RECORDS the count: evidence that cannot state the count
+  // it ran at is not honest evidence. It simply is not ordered against it.
   {
     id: 'source_tree_verified',
-    title: 'clean main equal to origin/main, exact SHA recorded, session number legal at the canonical count',
+    title: 'clean main equal to origin/main with the exact SHA recorded; a qualifying session is also legal at the canonical count',
     evaluate(obs) {
       const s = obs && obs.source;
       if (!s) return missing('the source tree');
@@ -263,10 +424,21 @@ const CONDITIONS = Object.freeze([
       if (s.head_sha !== s.origin_head_sha) return err(`HEAD ${str(s.head_sha).slice(0, 7)} != origin/main ${str(s.origin_head_sha).slice(0, 7)}`);
       const n = obs.session_number;
       if (!isRehearsalSessionNumber(n)) return err(`session number ${n} is not 1..${REHEARSAL_STREAK_LENGTH}`);
+
+      const purpose = normalizePurpose(obs.run_purpose);
+      if (purpose === null) return err('the run declared no recognized purpose, so count legality cannot be judged');
       const prior = s.prior_rehearsal_count;
-      if (!Number.isInteger(prior)) return err(`the canonical rehearsal count was unreadable (${s.prior_count_reason || 'no reason recorded'})`);
-      if (prior !== n - 1) return err(`session ${n} is legal only at count ${n - 1}/5; the plan recorded ${prior}/5`);
-      return pass(`main @ ${s.head_sha.slice(0, 12)} (= origin/main, clean); session ${n} at prior count ${prior}/5`);
+      if (!Number.isInteger(prior)) {
+        return err(`the canonical rehearsal count was unreadable (${s.prior_count_reason || 'no reason recorded'}); every run must record the count it ran at`);
+      }
+      const head = `main @ ${s.head_sha.slice(0, 12)} (= origin/main, clean)`;
+      if (!isQualifyingPurpose(purpose)) {
+        return pass(`${head}; DIAGNOSTIC (${purpose}) session ${n} ran at canonical count ${prior}/${REHEARSAL_STREAK_LENGTH} — not ordered against it, and cannot advance it`);
+      }
+      if (prior !== n - 1) {
+        return fail(`session ${n} is legal only at count ${n - 1}/${REHEARSAL_STREAK_LENGTH}; the plan recorded ${prior}/${REHEARSAL_STREAK_LENGTH}`);
+      }
+      return pass(`${head}; qualifying session ${n} at prior count ${prior}/${REHEARSAL_STREAK_LENGTH}`);
     },
   },
   // (2) fresh synthetic identities — run family + the INVERTED workout check.
@@ -274,8 +446,8 @@ const CONDITIONS = Object.freeze([
     id: 'fresh_identities',
     title: 'fresh run/athlete identities; the workout identity was SERVER-allocated, never pre-seeded',
     evaluate(obs) {
-      if (normalizePurpose(obs && obs.run_purpose) !== REHEARSAL_SESSION) {
-        return err(`the run declared no rehearsal purpose (got "${(obs && obs.run_purpose) || ''}")`);
+      if (normalizePurpose(obs && obs.run_purpose) === null) {
+        return err(`the run declared no recognized purpose (got "${(obs && obs.run_purpose) || ''}"); expected ${REHEARSAL_SESSION} or ${REHEARSAL_DEBUG}`);
       }
       const runRef = runIdentityRefusal({ sessionNumber: obs.session_number, runId: obs.run_id });
       if (runRef) return err(runRef);
@@ -640,27 +812,59 @@ function scoreRehearsalRun(observations) {
   for (const c of conditions) counts[c.status] += 1;
   const overall = counts.FAIL > 0 ? FAIL : (counts.ERROR > 0 ? ERROR : PASS);
 
-  const eligible = overall === PASS;
+  // ── ELIGIBILITY ─────────────────────────────────────────────────────────────
+  // TWO independent conditions, both required, evaluated in this order so the reason
+  // is always the honest one:
+  //   1. the run was DECLARED qualifying — a debug run is ineligible by construction,
+  //      no matter how well it scored;
+  //   2. every condition passed.
+  // A run whose purpose is absent, unknown, or malformed fails (1) and is ineligible:
+  // eligibility fails closed, and there is no override flag.
+  const purpose = normalizePurpose(obs.run_purpose);
+  const qualifying = isQualifyingPurpose(purpose);
+  const eligible = qualifying && overall === PASS;
+
+  let note;
+  if (!qualifying) {
+    note = purpose === null
+      ? 'this run declared no recognized purpose and can never advance the rehearsal streak'
+      : `DIAGNOSTIC RUN (${purpose}) — scenario evidence only. It can never advance or authorize the rehearsal count, and a full ${counts.PASS}/${conditions.length} score does not make it eligible.`;
+  } else if (eligible) {
+    note = `this run qualifies as rehearsal session ${obs.session_number} — record the count advance in a reviewed status PR`;
+  } else {
+    note = 'this run does NOT advance the rehearsal streak';
+  }
+
   return {
-    purpose: REHEARSAL_SESSION,
+    // The purpose actually DECLARED by the run, never a constant: a scorecard that
+    // always printed the qualifying purpose would misdescribe every debug artifact.
+    purpose: purpose || null,
+    qualifying,
+    diagnostic: !qualifying,
     session_number: obs.session_number ?? null,
     scenario: (obs.scenario && obs.scenario.id) || null,
     overall,
     counts,
     conditions,
     rehearsal_eligible: eligible,
-    rehearsal_note: eligible
-      ? `this run qualifies as rehearsal session ${obs.session_number} — record the count advance in the execution plan`
-      : 'this run does NOT advance the rehearsal streak',
+    rehearsal_note: note,
   };
 }
 
 function renderMarkdown(card) {
+  // Every artifact states its purpose in its FIRST line. A diagnostic scorecard that
+  // reads like a qualifying one is exactly how a non-counting run gets mistaken for a
+  // counted one weeks later.
+  const banner = card.qualifying
+    ? `# F-SB4B QUALIFYING rehearsal session ${card.session_number ?? '?'} — ${card.overall}`
+    : `# F-SB4B DIAGNOSTIC (NON-COUNTING) rehearsal session ${card.session_number ?? '?'} — ${card.overall}`;
   const lines = [
-    `# F-SB4B rehearsal session ${card.session_number ?? '?'} — ${card.overall}`,
+    banner,
     '',
+    `Purpose: ${card.purpose || '(none declared)'}${card.qualifying ? '' : ' — scenario evidence only; cannot advance or authorize the rehearsal count'}`,
     `Scenario: ${card.scenario || '(none)'} · PASS ${card.counts.PASS} · FAIL ${card.counts.FAIL} · ERROR ${card.counts.ERROR} · N/A ${card.counts.NOT_APPLICABLE}`,
     `rehearsal_eligible: ${card.rehearsal_eligible}`,
+    card.rehearsal_note,
     '',
     '| # | condition | status | detail |',
     '|---|---|---|---|',
@@ -671,4 +875,4 @@ function renderMarkdown(card) {
   return `${lines.join('\n')}\n`;
 }
 
-module.exports = { CONDITIONS, scoreRehearsalRun, renderMarkdown, compareLedgerToDeclaration, classifyRepeatApprovalProbe, PASS, FAIL, ERROR, NOT_APPLICABLE };
+module.exports = { CONDITIONS, scoreRehearsalRun, renderMarkdown, compareLedgerToDeclaration, classifyRepeatApprovalProbe, classifySettlement, isSettled, SETTLED_OUTCOMES, deriveExpectedRemaining, compareRemainingToExpectation, replyMatchesExpectation, PASS, FAIL, ERROR, NOT_APPLICABLE };
