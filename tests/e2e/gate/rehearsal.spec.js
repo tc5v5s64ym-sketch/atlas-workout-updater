@@ -41,7 +41,7 @@ const { markRunStarted, verifyRunStartMarker } = require('./rehearsal-run-start'
 const { pickNetworkPassthrough, assertNoWorkbookId, GATE_STARTUP_TIMEOUT_MS } = require('./rehearsal-child-env');
 const {
   OBSERVER_FLUSH_MS, bubbleObserverInitScript,
-  ingestLiveObservation, reconcileSweep, recordsToMessages,
+  ingestLiveObservation, reconcileSweep, recordsToMessages, makeBoundary,
 } = require('./rehearsal-bubble-observer');
 const { SANDBOX_SPREADSHEET_ID, SANDBOX_SPREADSHEET_ID_LAST6 } = require('../../../config/sandboxSheet');
 const { logCleanedColumns, effortColumns, sessionPlansColumns, sessionPlanSetsColumns } = require('../../../config/columns');
@@ -415,7 +415,7 @@ const DRIVERS = {
     h.setPhase('replacement');
     await page.locator('#thread-messages .replacement-approve-btn').last().click();
     await expect.poll(async () => (await planState(page)).names.some(n => /bench press/i.test(n)), { timeout: 20000 }).toBe(false);
-    h.markMutation();   // the source lift has provably left the plan — claims are earned from here
+    await h.markMutation();   // the source lift has provably left the plan — claims are earned from here
     const mutated = await planState(page);
     h.beat('replacement-mutated-plan', mutated.names.some(n => new RegExp(sub.name.split(/\s+/)[0], 'i').test(n)), `plan now: [${mutated.names.join(', ')}]`);
     const shorthand = `${sub.name.toLowerCase()} ${sub.weight} x ${sub.reps} @2`;
@@ -500,7 +500,7 @@ const DRIVERS = {
     h.setPhase('replacement');
     await h.say(SC.conversationalAccept);
     await expect.poll(async () => (await planState(page)).names.some(n => /bench press/i.test(n)), { timeout: 30000 }).toBe(false);
-    h.markMutation();
+    await h.markMutation();
     const mutated = await planState(page);
     h.beat('conversational-accept-one-mutation', mutated.names.some(n => new RegExp(sub.name.split(/\s+/)[0], 'i').test(n)),
       `plan after "Yes use that": [${mutated.names.join(', ')}]`);
@@ -552,7 +552,7 @@ const DRIVERS = {
     loggedSets.push(parseShorthand(SC.batchFirstLine));
     loggedSets.push({ ...parseShorthand(replacementLine), sub: true });
     await expect.poll(async () => (await planState(page)).names.some(n => /bench press/i.test(n)), { timeout: 20000 }).toBe(false);
-    h.markMutation();
+    await h.markMutation();
     const mutated = await planState(page);
     h.beat('batch-binds-replacement-to-source-slot',
       mutated.names.some(n => new RegExp(sub.name.split(/\s+/)[0], 'i').test(n)) && !mutated.names.some(n => /bench press/i.test(n)),
@@ -661,7 +661,7 @@ const DRIVERS = {
     h.setPhase('replacement');
     await page.locator('#thread-messages .replacement-approve-btn').last().click();
     await expect.poll(async () => (await planState(page)).names.some(n => /seated row/i.test(n)), { timeout: 20000 }).toBe(false);
-    h.markMutation();
+    await h.markMutation();
     const shorthand = `${sub.name.toLowerCase()} ${sub.weight} x ${sub.reps} @2`;
     logged += 1; await h.logSet(shorthand, logged); loggedSets.push({ ...parseShorthand(shorthand), sub: true });
     logged += 1; await h.logSet(shorthand, logged); loggedSets.push({ ...parseShorthand(shorthand), sub: true });
@@ -888,6 +888,10 @@ const coachCaptureFailures = { count: 0 };
 // the phase is bound at first observation — the turn that created the bubble — while
 // the text and timestamp track the FINAL rendered state.
 let bubbleRecords = {};
+// A Node-side counter incremented on every ingest, so a boundary can record where in the
+// report stream it was taken. That is what distinguishes "reported later because it
+// happened later" from "reported later because the flush was still pending".
+let bubbleIngestSeq = 0;
 
 // The page REPORTS its own text changes (see rehearsal-bubble-observer.js). Node stamps
 // each report on receipt, so the timestamp is on the same clock as `saveResponses` and
@@ -895,10 +899,27 @@ let bubbleRecords = {};
 function onBubblesObserved(batch) {
   const now = Date.now();
   for (const item of (Array.isArray(batch) ? batch : [])) {
+    bubbleIngestSeq += 1;
     ingestLiveObservation(bubbleRecords, item, {
-      phase: currentPhaseRef.value, nowMs: now, thinkingMarker: THINKING,
+      phase: currentPhaseRef.value, nowMs: now, ingestSeq: bubbleIngestSeq, thinkingMarker: THINKING,
     });
   }
+}
+
+// DRAIN, then stamp. Forcing the pending flush and AWAITING the exposed callback means
+// every change that had already happened is ingested before the boundary is taken, so a
+// pre-boundary claim can never be stamped after it. If the drain cannot run, the
+// boundary records `drained:false` and the claim decisions refuse to call anything
+// reported afterwards earned — correctness never depends on the drain succeeding
+// (owner P1, 2026-08-03).
+async function takeBoundary(page) {
+  let drained = false;
+  try {
+    await page.evaluate(() => (typeof window.__atlasBubbleFlush === 'function'
+      ? window.__atlasBubbleFlush() : null));
+    drained = true;
+  } catch { drained = false; }
+  return makeBoundary({ atMs: Date.now(), ingestSeq: bubbleIngestSeq, drained });
 }
 
 // A RECONCILER, not the collector. It can fill in a bubble the observer never reported,
@@ -927,10 +948,11 @@ const servedReplies = [];
 // sweep must now be a real observation (owner P1, 2026-08-03). Phase and timestamp come
 // from the harness, so a claim can be placed relative to the actual mutation.
 // Derived from bubbleRecords at read time — see sweepAtlasBubbles.
-// When the plan mutation actually became true, set by the driver at the moment the
-// source lift leaves the plan. null until then, and null for a scenario with no
-// substitution — both of which make ANY completed-mutation claim unsupported.
-let mutationAtMs = null;
+// The boundary at which the plan mutation actually became true, taken by the driver at
+// the moment the source lift leaves the plan — after an awaited observer drain. null
+// until then, and null for a scenario with no substitution, both of which make ANY
+// completed-mutation claim unsupported.
+let mutationBoundary = null;
 const norm = (t) => String(t == null ? '' : t).replace(/\s+/g, ' ').trim();
 
 async function settleReply(page, question) {
@@ -1171,6 +1193,8 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
     threadId: 'thread-messages',
     bubbleSelector: '.chat-bubble-atlas',
     callbackName: '__atlasBubbleObserved',
+    flushName: '__atlasBubbleFlush',
+    stateName: '__atlasBubbleState',
   });
   await page.goto(`${base}/app/`);
   await page.waitForLoadState('networkidle');
@@ -1203,7 +1227,9 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
   // ── 3–8. The scenario's DECLARED conversation flow (per-session driver) ───────
   const h = {
     setPhase: (p) => { currentPhase = p; currentPhaseRef.value = p; },
-    markMutation: () => { if (mutationAtMs === null) mutationAtMs = Date.now(); },
+    // Drained before stamping: any completed-mutation claim already visible is ingested
+    // first, so it cannot be inverted across this boundary.
+    markMutation: async () => { if (mutationBoundary === null) mutationBoundary = await takeBoundary(page); },
     beat, stateCheck, note,
     say: (t) => say(page, t),
     logSet: (t, n) => logSet(page, t, n),
@@ -1271,6 +1297,10 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
   const saveControl = page.locator('.review:not(.done) .rv-save');
   await expect(saveControl).toBeVisible({ timeout: 40000 });
   await snap(page, '07-preview.png');
+  // Drain BEFORE the click. Everything visible up to this instant is already ingested,
+  // and the live write's own response can only arrive afterwards — so a claim made
+  // before Save can never be stamped after the write.
+  const preSaveBoundary = await takeBoundary(page);
   await saveControl.click();
   await expect(page.locator('.review.done')).toBeVisible({ timeout: 300000 });
   const savedLabel = await page.locator('.review.done .rv-saved-txt').innerText().catch(() => '');
@@ -1418,8 +1448,8 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
   // save claim in the ORIGINAL thread vanish and condition 9 pass (owner P1,
   // 2026-08-03). Both claim verdicts are computed from evidence captured here; the
   // fresh session's thread is separate evidence and never a replacement carrier.
-  // Let any in-flight observer flush land before the snapshot.
-  await page.waitForTimeout(OBSERVER_FLUSH_MS * 3);
+  // Drain, so the snapshot carries every report the page had pending.
+  await takeBoundary(page);
   await sweepAtlasBubbles(page);
   const originalVisibleMessages = recordsToMessages(bubbleRecords);
 
@@ -1562,9 +1592,13 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
   }
 
   // The AUTHORITATIVE write boundary: when the one live write actually succeeded.
-  const liveWriteAt = (() => {
+  const liveWriteBoundary = (() => {
     const live = saveResponses.filter(r => r.capture_failed !== true && r.test_mode !== true && r.sheet_write === 'success');
-    return live.length ? live[0].at : null;
+    if (!live.length) return null;
+    // The write's own response time, carrying the pre-save drain's evidence: everything
+    // visible before Save was ingested at or before `preSaveBoundary.ingestSeq`, and the
+    // response necessarily arrived after the click.
+    return makeBoundary({ atMs: live[0].at, ingestSeq: preSaveBoundary.ingestSeq, drained: preSaveBoundary.drained });
   })();
   // THE CLAIM SWEEP — derived, never a constant. The previous value was a literal
   // `false` justified as "asserted per-beat pre-acceptance", but the per-beat checks
@@ -1572,19 +1606,19 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
   // Now every visible message this run settled is swept against the completed-mutation
   // patterns and placed relative to the moment the mutation actually became true
   // (owner P1, 2026-08-03). It fails closed on missing messages or missing timing.
-  const mutationSweep = detectUnsupportedMutationWording({ messages: originalVisibleMessages, mutationAtMs });
+  const mutationSweep = detectUnsupportedMutationWording({ messages: originalVisibleMessages, mutationBoundary });
   // Prose is not a clock. The old verdict scanned the thread up to the first literal
   // "done", and Session 4 deliberately says "I'm done for today" BEFORE the save — so
   // every later pre-write message was discarded and an unsupported save claim in that
   // window vanished (owner P1, 2026-08-03). Write claims are now timed against the live
   // write itself, and fail closed without it.
-  const writeSweep = detectUnsupportedWriteClaim({ messages: originalVisibleMessages, liveWriteAtMs: liveWriteAt });
+  const writeSweep = detectUnsupportedWriteClaim({ messages: originalVisibleMessages, liveWriteBoundary });
   const claims = {
     unsupported_mutation_wording: mutationSweep.unsupported,
     unsupported_write_claim: writeSweep.unsupported,
     detail: [mutationSweep.detail, writeSweep.detail].filter(Boolean).join(' | '),
   };
-  note('claim-sweep', `${originalVisibleMessages.length} visible messages; mutation ${mutationAtMs === null ? 'never' : 'recorded'}; live write ${liveWriteAt === null ? 'NOT observed' : 'observed'}; unsupported mutation=${mutationSweep.unsupported} write=${writeSweep.unsupported}; coach-capture failures ${coachCaptureFailures.count}`);
+  note('claim-sweep', `${originalVisibleMessages.length} visible messages; mutation ${mutationBoundary === null ? 'never' : `recorded (drained=${mutationBoundary.drained})`}; live write ${liveWriteBoundary === null ? 'NOT observed' : `observed (drained=${liveWriteBoundary.drained})`}; unsupported mutation=${mutationSweep.unsupported} write=${writeSweep.unsupported}; coach-capture failures ${coachCaptureFailures.count}`);
 
   const observations = {
     run_purpose: RUN_PURPOSE, session_number: SESSION_NUMBER, run_id: RUN_ID, athlete_id: ATHLETE_ID,

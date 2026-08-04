@@ -30,6 +30,10 @@ const { sessionPlanSetsColumns } = require('../../../config/columns');
 // The ENGINE's own fail-closed ledger selectors decide chain validity — the scorecard
 // never reimplements supersession rules, it asks the same authority the seal uses.
 const { parseRow: parseLedgerRow, effectivePlan: ledgerEffectivePlan } = require('../../../services/sessionPlanLedger');
+// The causal ordering primitive: a claim is only "earned" when it is provably after the
+// boundary. A report that arrived after an UNDRAINED boundary is `uncertain`, because the
+// coalescing flush window means it may describe a change that predates it.
+const { classifyClaimAgainstBoundary } = require('./rehearsal-bubble-observer');
 
 const PASS = 'PASS';
 const FAIL = 'FAIL';
@@ -212,7 +216,10 @@ function detectUnsupportedWriteClaim(input) {
   if (!messages) {
     return { unsupported: true, detail: 'no visible messages were captured, so a write claim cannot be ruled out', matches: [] };
   }
-  const writeAtMs = Number.isFinite(i.liveWriteAtMs) ? i.liveWriteAtMs : null;
+  const writeBoundary = i.liveWriteBoundary || i.liveWriteAtMs;
+  const writeAtMs = (writeBoundary && typeof writeBoundary === 'object')
+    ? (Number.isFinite(writeBoundary.atMs) ? writeBoundary.atMs : null)
+    : (Number.isFinite(i.liveWriteAtMs) ? i.liveWriteAtMs : null);
   // Same rule as the mutation sweep: a timestamp assigned by a later inspection cannot
   // place a claim before or after the write.
   const retro = messages.filter((m) => m && m.retroactive === true);
@@ -229,15 +236,16 @@ function detectUnsupportedWriteClaim(input) {
     if (!text) continue;
     if (!WRITE_CLAIM_PATTERNS.some((re) => re.test(text))) continue;
     const atMs = Number.isFinite(m && m.atMs) ? m.atMs : null;
-    const earned = writeAtMs !== null && atMs !== null && atMs >= writeAtMs;
-    if (!earned) {
+    const order = writeAtMs === null ? 'before' : classifyClaimAgainstBoundary(m, writeBoundary);
+    if (order !== 'after') {
       matches.push({
         phase: (m && m.phase) || 'unknown',
         atMs,
         excerpt: text.replace(/\s+/g, ' ').slice(0, 120),
         reason: writeAtMs === null ? 'no successful live write was observed in this run'
-          : atMs === null ? 'the message carried no timestamp, so the claim cannot be shown to be earned'
-            : 'the claim landed before the live write succeeded',
+          : order === 'untimed' ? 'the message carried no timestamp, so the claim cannot be shown to be earned'
+            : order === 'uncertain' ? 'the report reached the collector after the write boundary was taken without a drain, so the claim may have been visible first'
+              : 'the claim landed before the live write succeeded',
       });
     }
   }
@@ -288,7 +296,12 @@ function detectUnsupportedMutationWording(input) {
   if (!messages) {
     return { unsupported: true, detail: 'no visible messages were captured, so a completed-mutation claim cannot be ruled out', matches: [] };
   }
-  const mutationAtMs = Number.isFinite(i.mutationAtMs) ? i.mutationAtMs : null;
+  // A boundary object (preferred) or a bare timestamp. A bare number is treated as
+  // UNDRAINED, so it can never be used to call a late-reported claim earned.
+  const mutationBoundary = i.mutationBoundary || i.mutationAtMs;
+  const mutationAtMs = (mutationBoundary && typeof mutationBoundary === 'object')
+    ? (Number.isFinite(mutationBoundary.atMs) ? mutationBoundary.atMs : null)
+    : (Number.isFinite(i.mutationAtMs) ? i.mutationAtMs : null);
   // A record still holding the placeholder means the sweep never observed that bubble's
   // final render, so the claim evidence is INCOMPLETE. Fail closed rather than judge a
   // thread we did not finish reading (owner P1, 2026-08-03).
@@ -319,17 +332,18 @@ function detectUnsupportedMutationWording(input) {
     const pattern = COMPLETED_MUTATION_PATTERNS.find((re) => re.test(text));
     if (!pattern) continue;
     const atMs = Number.isFinite(m && m.atMs) ? m.atMs : null;
-    // Unsupported when the claim landed before the mutation, when no mutation ever
-    // happened, or when the claim's own timing is unknown (fail closed).
-    const earned = mutationAtMs !== null && atMs !== null && atMs >= mutationAtMs;
-    if (!earned) {
+    // Unsupported unless the claim is PROVABLY after the mutation. `uncertain` — a
+    // report that arrived after an undrained boundary — is refused, not assumed earned.
+    const order = mutationAtMs === null ? 'before' : classifyClaimAgainstBoundary(m, mutationBoundary);
+    if (order !== 'after') {
       matches.push({
         phase: (m && m.phase) || 'unknown',
         atMs,
         excerpt: text.replace(/\s+/g, ' ').slice(0, 120),
         reason: mutationAtMs === null ? 'no mutation occurred in this run'
-          : atMs === null ? 'the message carried no timestamp, so the claim cannot be shown to be earned'
-            : 'the claim landed before the mutation',
+          : order === 'untimed' ? 'the message carried no timestamp, so the claim cannot be shown to be earned'
+            : order === 'uncertain' ? 'the report reached the collector after the mutation boundary was taken without a drain, so the claim may have been visible first'
+              : 'the claim landed before the mutation',
       });
     }
   }
