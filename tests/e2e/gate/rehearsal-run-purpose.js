@@ -23,9 +23,40 @@
 //
 // Pure: no clock, no filesystem, no network, no process, no environment access.
 
+// ── RUN PURPOSE (F-SB4B corrective, owner instruction 2026-08-03) ──────────────
+// TWO purposes, both explicit, neither the default. The runner, the scenarios, the
+// browser, the provider, the sandbox, the durable evidence, the adjudicator, and the
+// privacy sweep are IDENTICAL under both — the only differences are recorded here.
+//
+//   REHEARSAL_SESSION (qualifying) — may advance the streak. Requires the canonical
+//     count to equal session_number - 1, exact clean main, and 25/25. It is the only
+//     purpose that can publish rehearsal_eligible=true.
+//
+//   REHEARSAL_DEBUG (diagnostic) — proves the SCENARIOS on exact clean main without
+//     touching the count. It does NOT require prior count == session_number - 1, it
+//     can score all 25 conditions PASS, and it ALWAYS publishes
+//     rehearsal_eligible=false. It can never advance or authorize a count.
+//
+// WHY THIS EXISTS. Before this, one scorecard condition (`source_tree_verified`)
+// conflated two unrelated questions: "is the source tree clean and exact?" and "is
+// this session number legal at the canonical count?". At count 0/5 a Session 2 run
+// therefore FAILED that condition no matter how the product behaved, which made a
+// five-scenario non-counting sweep from exact main impossible. The practice that grew
+// around it — running from an off-main tree so the source check failed for a
+// DIFFERENT reason and the run quietly did not count — used a failure as a mode
+// switch. That is the competing authority this replaces: purpose is now declared, not
+// inferred from which check happened to go red.
 const REHEARSAL_SESSION = 'REHEARSAL_SESSION';
-const RUN_PURPOSES = Object.freeze([REHEARSAL_SESSION]);
+const REHEARSAL_DEBUG = 'REHEARSAL_DEBUG';
+const RUN_PURPOSES = Object.freeze([REHEARSAL_SESSION, REHEARSAL_DEBUG]);
+const QUALIFYING_PURPOSE = REHEARSAL_SESSION;
 const REHEARSAL_STREAK_LENGTH = 5;
+
+// The single predicate every consumer asks. A purpose that is absent, unknown, or
+// malformed is NOT qualifying — eligibility fails closed.
+function isQualifyingPurpose(value) {
+  return normalizePurpose(value) === QUALIFYING_PURPOSE;
+}
 
 const SHA_RE = /^[0-9a-f]{40}$/;
 // The server allocator's shape (services/sessionId.js nextAvailableSessionId).
@@ -124,8 +155,10 @@ function evaluateRehearsalPreflight(input) {
   const refusals = [];
   const add = (r) => refusals.push(r);
 
-  if (normalizePurpose(i.purpose) !== REHEARSAL_SESSION) {
-    add(`this preflight governs REHEARSAL_SESSION runs only; got "${i.purpose || 'no purpose'}"`);
+  const purpose = normalizePurpose(i.purpose);
+  const qualifying = purpose === QUALIFYING_PURPOSE;
+  if (purpose === null) {
+    add(`declare a run purpose explicitly: ${RUN_PURPOSES.join(' or ')}; got "${i.purpose || 'no purpose'}"`);
   }
   // Model-up only: a deterministic-fallback session proves the machine path but not the
   // product the owner is about to trust with real workouts.
@@ -136,13 +169,20 @@ function evaluateRehearsalPreflight(input) {
   if (!isRehearsalSessionNumber(n)) {
     add(`--session must be an integer 1..${REHEARSAL_STREAK_LENGTH} (there is no default); got ${n === undefined ? 'nothing' : JSON.stringify(n)}`);
   }
-  // The canonical count decides which session number is next: session N is legal only
-  // at N-1 — this refuses a skipped, repeated, stale, or out-of-order session.
+  // THE COUNT RULE — qualifying only. Session N is legal only at N-1, which refuses a
+  // skipped, repeated, stale, or out-of-order qualifying session. A DEBUG run is not
+  // bound by it: it can never advance the count, so ordering it against the count
+  // would only forbid the diagnostic sweep this purpose exists to allow. The count is
+  // still READ under both purposes and recorded in the evidence, so a debug run's
+  // artifacts state the count they ran at.
   const prior = i.priorRehearsalCount;
-  if (!Number.isInteger(prior) || prior < 0 || prior > REHEARSAL_STREAK_LENGTH) {
-    add(`the canonical rehearsal count is unreadable (${i.priorCountReason || 'no count recorded'}); refusing to run`);
-  } else if (isRehearsalSessionNumber(n) && prior !== n - 1) {
-    add(`session ${n} requires the canonical count to be ${n - 1}/${REHEARSAL_STREAK_LENGTH}; the plan records ${prior}/${REHEARSAL_STREAK_LENGTH}`);
+  const countReadable = Number.isInteger(prior) && prior >= 0 && prior <= REHEARSAL_STREAK_LENGTH;
+  if (qualifying) {
+    if (!countReadable) {
+      add(`the canonical rehearsal count is unreadable (${i.priorCountReason || 'no count recorded'}); refusing to run`);
+    } else if (isRehearsalSessionNumber(n) && prior !== n - 1) {
+      add(`session ${n} requires the canonical count to be ${n - 1}/${REHEARSAL_STREAK_LENGTH}; the plan records ${prior}/${REHEARSAL_STREAK_LENGTH}`);
+    }
   }
 
   const git = i.git && typeof i.git === 'object' ? i.git : {};
@@ -192,6 +232,9 @@ function evaluateRehearsalPreflight(input) {
 
 module.exports = {
   REHEARSAL_SESSION,
+  REHEARSAL_DEBUG,
+  QUALIFYING_PURPOSE,
+  isQualifyingPurpose,
   RUN_PURPOSES,
   REHEARSAL_STREAK_LENGTH,
   SERVER_SESSION_ID_RE,

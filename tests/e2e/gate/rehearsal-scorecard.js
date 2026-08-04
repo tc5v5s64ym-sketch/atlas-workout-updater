@@ -22,14 +22,18 @@
 // shrinking the bar.
 
 const {
-  REHEARSAL_SESSION, REHEARSAL_STREAK_LENGTH,
-  normalizePurpose, isRehearsalSessionNumber,
+  REHEARSAL_SESSION, REHEARSAL_DEBUG, REHEARSAL_STREAK_LENGTH,
+  normalizePurpose, isQualifyingPurpose, isRehearsalSessionNumber,
   workoutIdentityRefusal, runIdentityRefusal,
 } = require('./rehearsal-run-purpose');
 const { sessionPlanSetsColumns } = require('../../../config/columns');
 // The ENGINE's own fail-closed ledger selectors decide chain validity — the scorecard
 // never reimplements supersession rules, it asks the same authority the seal uses.
 const { parseRow: parseLedgerRow, effectivePlan: ledgerEffectivePlan } = require('../../../services/sessionPlanLedger');
+// The causal ordering primitive: a claim is only "earned" when it is provably after the
+// boundary. A report that arrived after an UNDRAINED boundary is `uncertain`, because the
+// coalescing flush window means it may describe a change that predates it.
+const { classifyClaimAgainstBoundary } = require('./rehearsal-bubble-observer');
 
 const PASS = 'PASS';
 const FAIL = 'FAIL';
@@ -71,6 +75,520 @@ function classifyRepeatApprovalProbe(p) {
     && probe.dispatched === false) return 'refused-disabled-control';
   return 'no-op-unproven';
 }
+
+// ── replacement identity, captured independently of the durable rows ───────────
+// Pure: compares every durable surface against ONE independently-captured identity.
+//
+// The circularity this removes (owner instruction 2026-08-03): the spec identified the
+// substitute's Log_Cleaned rows partly by exclusion, weight and reps, derived
+// `subLogLiftCodes[0]` FROM those rows, and then used that derived code as the expected
+// `performed_lift_code` on the Session_Plans outcome and as the expected replacement
+// lift on the Session_Plan_Sets revisions. A consistently WRONG lift code across all
+// three surfaces satisfied every check, because the evidence under review defined its
+// own expectation.
+//
+// The expectation must therefore be captured BEFORE any durable read, from the accepted
+// pending proposal itself: the replacement lift code the engine resolved, and the source
+// slot the proposal retained. Durable rows are then compared to it and can never define
+// it.
+//
+// identity = { replacementLiftCode, sourceLiftCode, sourcePlanItemId }
+// durable  = { logLiftCodes: [], outcomePerformedLiftCode, outcomePlannedLiftCode,
+//              outcomePlanItemId, ledgerRevisionLiftCodes: [] }
+// Returns { ok, problems }. Fails CLOSED: a missing captured identity is a failure, not
+// a licence to fall back on the rows.
+function compareReplacementIdentity(identity, durable) {
+  const problems = [];
+  const up = (v) => String(v == null ? '' : v).trim().toUpperCase();
+  const id = identity && typeof identity === 'object' ? identity : {};
+  const d = durable && typeof durable === 'object' ? durable : {};
+
+  const expected = up(id.replacementLiftCode);
+  const source = up(id.sourceLiftCode);
+  if (!expected) {
+    return { ok: false, problems: ['no replacement lift code was captured from the accepted proposal — the durable rows may not supply one'] };
+  }
+  if (expected === source && source !== '') {
+    problems.push(`the captured replacement lift code ${expected} equals the source lift — that is not a replacement`);
+  }
+
+  const logCodes = [...new Set((Array.isArray(d.logLiftCodes) ? d.logLiftCodes : []).map(up).filter(Boolean))];
+  if (logCodes.length === 0) problems.push('the substitute performed no Log_Cleaned rows carrying a lift code');
+  else if (logCodes.length > 1) problems.push(`the substitute's Log_Cleaned rows span lift codes ${logCodes.join('/')}`);
+  else if (logCodes[0] !== expected) problems.push(`Log_Cleaned carries ${logCodes[0]}; the accepted proposal was ${expected}`);
+
+  const performed = up(d.outcomePerformedLiftCode);
+  if (!performed) problems.push('the substituted item_outcome carries no performed_lift_code');
+  else if (performed !== expected) problems.push(`the item_outcome performed ${performed}; the accepted proposal was ${expected}`);
+
+  if (source) {
+    const planned = up(d.outcomePlannedLiftCode);
+    if (planned !== source) problems.push(`the item_outcome planned ${planned || '(blank)'}; the proposal's source was ${source}`);
+  }
+  // The retained source slot. It must be CAPTURED from the live plan before mutation —
+  // deriving it from the accepted rows and then checking the outcome against it let a
+  // consistently wrong id satisfy itself, exactly like the lift code did (owner P1,
+  // 2026-08-03). Absent capture is a failure, not a licence to fall back on the rows.
+  const wantItem = String(id.sourcePlanItemId == null ? '' : id.sourcePlanItemId).trim();
+  if (!wantItem) {
+    problems.push('no source plan_item_id was captured from the live plan before mutation — the durable rows may not supply one');
+  } else {
+    const item = String(d.outcomePlanItemId == null ? '' : d.outcomePlanItemId).trim();
+    if (item !== wantItem) {
+      problems.push(`the item_outcome bound to plan item ${item || '(blank)'}; the live plan's source slot was ${wantItem}`);
+    }
+    const acceptedItems = [...new Set((Array.isArray(d.acceptedSourcePlanItemIds) ? d.acceptedSourcePlanItemIds : [])
+      .map((x) => String(x == null ? '' : x).trim()).filter(Boolean))];
+    if (acceptedItems.length === 0) problems.push('no accepted ledger rows carry the source slot id');
+    else if (acceptedItems.length > 1) problems.push(`the accepted ledger rows span source slots ${acceptedItems.join('/')}`);
+    else if (acceptedItems[0] !== wantItem) {
+      problems.push(`the accepted ledger rows bind source slot ${acceptedItems[0]}; the live plan's source slot was ${wantItem}`);
+    }
+    const revItems = [...new Set((Array.isArray(d.ledgerRevisionPlanItemIds) ? d.ledgerRevisionPlanItemIds : [])
+      .map((x) => String(x == null ? '' : x).trim()).filter(Boolean))];
+    if (revItems.length && (revItems.length > 1 || revItems[0] !== wantItem)) {
+      problems.push(`the ledger revisions bind plan item ${revItems.join('/')}; the live plan's source slot was ${wantItem}`);
+    }
+  }
+
+  const revCodes = [...new Set((Array.isArray(d.ledgerRevisionLiftCodes) ? d.ledgerRevisionLiftCodes : []).map(up).filter(Boolean))];
+  if (revCodes.length === 0) problems.push('no Session_Plan_Sets revision rows carry a lift code');
+  else if (revCodes.length > 1) problems.push(`the ledger revisions span lift codes ${revCodes.join('/')}`);
+  else if (revCodes[0] !== expected) problems.push(`the ledger revisions carry ${revCodes[0]}; the accepted proposal was ${expected}`);
+
+  return { ok: problems.length === 0, problems };
+}
+
+// ── coach-response capture classification ──────────────────────────────────────
+// Pure: decides what ONE coach response proves about the reply that turn served.
+//
+// The defect this replaces (owner P1, 2026-08-03): the listener counted a capture
+// failure only when JSON parsing threw or the body was not an object. An object-shaped
+// body with no usable message — `{source:'gemini'}`, `{message:null}`, `{message:''}`,
+// `{message:123}` — recorded neither a served message nor a failure, so settlement
+// granted `stable-no-served-message` and treated MISSING evidence as proof that the
+// path genuinely served none.
+//
+// A legitimate no-message path is now EXPLICIT and narrow: a non-2xx coach response is
+// the client's own outage/fallback lane, which renders locally and serves no message.
+// Every other missing, blank, or non-string `message` on a successful response is a
+// CAPTURE FAILURE, and settlement fails closed on it.
+function classifyCoachResponseCapture(observation) {
+  const o = observation && typeof observation === 'object' ? observation : {};
+  if (o.parseFailed === true) return { outcome: 'capture-failed', message: null, reason: 'the response body could not be parsed' };
+  const status = Number(o.status);
+  if (!Number.isFinite(status)) return { outcome: 'capture-failed', message: null, reason: 'the response carried no readable status' };
+  if (status < 200 || status > 299) {
+    return { outcome: 'no-message-path', message: null, reason: `the coach responded ${status}; the client renders its own fallback and no message is served` };
+  }
+  const body = o.body && typeof o.body === 'object' ? o.body : null;
+  if (!body) return { outcome: 'capture-failed', message: null, reason: 'a successful coach response carried no object body' };
+  const data = (body.data && typeof body.data === 'object') ? body.data : body;
+  const message = data && typeof data.message === 'string' ? data.message : null;
+  if (message === null) return { outcome: 'capture-failed', message: null, reason: 'a successful coach response carried no string `message`' };
+  if (message.trim() === '') return { outcome: 'capture-failed', message: null, reason: 'a successful coach response carried a blank `message`' };
+  return { outcome: 'served', message, reason: null };
+}
+
+// ── unsupported write-completion claim ─────────────────────────────────────────
+// Pure: decides whether any visible message claimed the workout was written before the
+// authoritative live write actually succeeded.
+//
+// The defect this replaces (owner P1, 2026-08-03): the verdict scanned
+// `threadFull.slice(0, threadFull.indexOf('done'))`. Prose is not a clock, and Session 4
+// deliberately says "I'm done for today" BEFORE the save — so the scan stopped at that
+// conversational text and discarded every later pre-write message. An unsupported
+// "saved to your sheet" claim made after the early-end statement but before the write
+// simply vanished.
+//
+// Timing now comes from the live write itself. Fails CLOSED: a write claim with no
+// authoritative write timestamp, or with no timestamp of its own, is unsupported.
+const WRITE_CLAIM_PATTERNS = Object.freeze([
+  /saved to (?:your|the) sheet/i,
+  /written to (?:your|the) (?:sheet|google sheets)/i,
+  /(?:workout|session|sets) (?:is |are |has been |have been )?(?:saved|written|logged to (?:your|the) sheet)/i,
+  /i(?:'ve| have) (?:saved|written) (?:it|that|your workout)/i,
+]);
+
+function detectUnsupportedWriteClaim(input) {
+  const i = input && typeof input === 'object' ? input : {};
+  const messages = Array.isArray(i.messages) ? i.messages : null;
+  if (!messages) {
+    return { unsupported: true, detail: 'no visible messages were captured, so a write claim cannot be ruled out', matches: [] };
+  }
+  const writeBoundary = i.liveWriteBoundary || i.liveWriteAtMs;
+  const writeAtMs = (writeBoundary && typeof writeBoundary === 'object')
+    ? (Number.isFinite(writeBoundary.atMs) ? writeBoundary.atMs : null)
+    : (Number.isFinite(i.liveWriteAtMs) ? i.liveWriteAtMs : null);
+  // Same rule as the mutation sweep: a timestamp assigned by a later inspection cannot
+  // place a claim before or after the write.
+  const retro = messages.filter((m) => m && m.retroactive === true);
+  if (retro.length) {
+    return {
+      unsupported: true,
+      detail: `${retro.length} visible message(s) were only observed by a later sweep, so their timing cannot be trusted against the live write`,
+      matches: [],
+    };
+  }
+  const matches = [];
+  for (const m of messages) {
+    const text = String((m && m.text) || '');
+    if (!text) continue;
+    if (!WRITE_CLAIM_PATTERNS.some((re) => re.test(text))) continue;
+    const atMs = Number.isFinite(m && m.atMs) ? m.atMs : null;
+    const order = writeAtMs === null ? 'before' : classifyClaimAgainstBoundary(m, writeBoundary);
+    if (order !== 'after') {
+      matches.push({
+        phase: (m && m.phase) || 'unknown',
+        atMs,
+        excerpt: text.replace(/\s+/g, ' ').slice(0, 120),
+        reason: writeAtMs === null ? 'no successful live write was observed in this run'
+          : order === 'untimed' ? 'the message carried no timestamp, so the claim cannot be shown to be earned'
+            : order === 'uncertain' ? 'the report reached the collector after the write boundary was taken without a drain, so the claim may have been visible first'
+              : 'the claim landed before the live write succeeded',
+      });
+    }
+  }
+  if (!matches.length) {
+    return {
+      unsupported: false,
+      detail: writeAtMs === null
+        ? `${messages.length} visible messages swept; no write-completion claim, and no live write occurred`
+        : `${messages.length} visible messages swept; every write-completion claim landed after the live write succeeded`,
+      matches: [],
+    };
+  }
+  return { unsupported: true, detail: matches.map((m) => `[${m.phase}] "${m.excerpt}" — ${m.reason}`).join('; '), matches };
+}
+
+// ── unsupported completed-mutation wording ─────────────────────────────────────
+// Pure: decides whether any VISIBLE message claimed a mutation had already happened at
+// a time when no mutation had yet occurred.
+//
+// The defect it exists to prevent (owner instruction 2026-08-03): the scorecard's
+// `no_unsupported_claims` condition trusted `claims.unsupported_mutation_wording`,
+// which the spec published as a literal `false` with the comment "asserted per-beat
+// pre-acceptance above". Per-beat checks covered only selected phrases in selected
+// phases; a constant is not evidence, and this is the same false-green class already
+// removed from the repeat-approval proof.
+//
+// Inputs are OBSERVED, not asserted:
+//   messages       — [{ text, atMs, phase }] every visible Atlas message, in order
+//   mutationAtMs   — when the plan mutation actually became true (null = never)
+// A message claiming completion BEFORE mutationAtMs (or at any time when no mutation
+// ever occurred) is unsupported. After the mutation the same wording is honest.
+//
+// Fails CLOSED: unreadable timing with completed-mutation wording present counts as
+// unsupported, because the run cannot show the claim was earned.
+const COMPLETED_MUTATION_PATTERNS = Object.freeze([
+  /i(?:'ve| have) (?:noted|recorded|logged|made|applied) (?:the |that )?(?:substitution|swap|replacement|change)/i,
+  /(?:has|have) been (?:swapped|replaced|substituted|changed)/i,
+  /(?:i(?:'ve| have) )?(?:swapped|replaced|substituted) (?:it|that|your|the)\b/i,
+  /you(?:'re| are) (?:now )?(?:substituting|swapping|doing) /i,
+  /(?:substitution|swap|replacement) (?:is )?(?:done|complete|applied|in place|locked in)/i,
+  /(?:updated|changed) your plan\b/i,
+  /(?:removed|dropped) .{0,30}from your plan\b/i,
+]);
+
+function detectUnsupportedMutationWording(input) {
+  const i = input && typeof input === 'object' ? input : {};
+  const messages = Array.isArray(i.messages) ? i.messages : null;
+  if (!messages) {
+    return { unsupported: true, detail: 'no visible messages were captured, so a completed-mutation claim cannot be ruled out', matches: [] };
+  }
+  // A boundary object (preferred) or a bare timestamp. A bare number is treated as
+  // UNDRAINED, so it can never be used to call a late-reported claim earned.
+  const mutationBoundary = i.mutationBoundary || i.mutationAtMs;
+  const mutationAtMs = (mutationBoundary && typeof mutationBoundary === 'object')
+    ? (Number.isFinite(mutationBoundary.atMs) ? mutationBoundary.atMs : null)
+    : (Number.isFinite(i.mutationAtMs) ? i.mutationAtMs : null);
+  // A record still holding the placeholder means the sweep never observed that bubble's
+  // final render, so the claim evidence is INCOMPLETE. Fail closed rather than judge a
+  // thread we did not finish reading (owner P1, 2026-08-03).
+  const unresolved = messages.filter((m) => m && m.placeholder === true);
+  if (unresolved.length) {
+    return {
+      unsupported: true,
+      detail: `${unresolved.length} visible message(s) were still rendering when the sweep ended, so the claim evidence is incomplete`,
+      matches: [],
+    };
+  }
+  // A RETROACTIVE record carries the time the harness inspected the text, not the time
+  // the text became visible, so it cannot place a claim relative to a mutation. Fail
+  // closed rather than judge on a timestamp that a later look assigned backwards
+  // (owner P1, 2026-08-03).
+  const retro = messages.filter((m) => m && m.retroactive === true);
+  if (retro.length) {
+    return {
+      unsupported: true,
+      detail: `${retro.length} visible message(s) were only observed by a later sweep, so their timing cannot be trusted to place a claim`,
+      matches: [],
+    };
+  }
+  const matches = [];
+  for (const m of messages) {
+    const text = String((m && m.text) || '');
+    if (!text) continue;
+    const pattern = COMPLETED_MUTATION_PATTERNS.find((re) => re.test(text));
+    if (!pattern) continue;
+    const atMs = Number.isFinite(m && m.atMs) ? m.atMs : null;
+    // Unsupported unless the claim is PROVABLY after the mutation. `uncertain` — a
+    // report that arrived after an undrained boundary — is refused, not assumed earned.
+    const order = mutationAtMs === null ? 'before' : classifyClaimAgainstBoundary(m, mutationBoundary);
+    if (order !== 'after') {
+      matches.push({
+        phase: (m && m.phase) || 'unknown',
+        atMs,
+        excerpt: text.replace(/\s+/g, ' ').slice(0, 120),
+        reason: mutationAtMs === null ? 'no mutation occurred in this run'
+          : order === 'untimed' ? 'the message carried no timestamp, so the claim cannot be shown to be earned'
+            : order === 'uncertain' ? 'the report reached the collector after the mutation boundary was taken without a drain, so the claim may have been visible first'
+              : 'the claim landed before the mutation',
+      });
+    }
+  }
+  if (!matches.length) {
+    return {
+      unsupported: false,
+      detail: mutationAtMs === null
+        ? `${messages.length} visible messages swept; no completed-mutation wording, and no mutation occurred`
+        : `${messages.length} visible messages swept; every completed-mutation claim landed after the mutation`,
+      matches: [],
+    };
+  }
+  return {
+    unsupported: true,
+    detail: matches.map((m) => `[${m.phase}] "${m.excerpt}" — ${m.reason}`).join('; '),
+    matches,
+  };
+}
+
+// ── independent remaining-work derivation ──────────────────────────────────────
+// Pure: derives the EXPECTED ordered remaining list and next-up lift from the FROZEN
+// scenario declaration plus the sets the scenario declares were logged. It never reads
+// client state, durable rows, or the visible reply.
+//
+// The defect it exists to prevent (owner instruction 2026-08-03): the remaining-work
+// proof read `window.remainingPlannedExercises()` and passed when the visible reply
+// repeated that same list. Client state and reply can AGREE and both still be wrong —
+// which is the exact corruption shape this rehearsal exists to catch. Evidence may not
+// define its own expectation, so the expectation comes from the declaration and both
+// observations are compared against it.
+//
+// declaration = {
+//   plan: [{ exercise, target_sets }, …]        // ordered, as accepted
+//   loggedNames: ['back squat', 'back squat', …] // one entry per declared logged SET
+//   replacement: { sourceName, replacementName } | null   // an ACCEPTED substitution
+// }
+// Returns { remaining: [names…], nextUp: name|null, complete: [names…] }.
+// Names are compared case- and separator-insensitively; the returned names keep the
+// declaration's own spelling so a failure message reads like the plan.
+function deriveExpectedRemaining(declaration) {
+  const d = declaration && typeof declaration === 'object' ? declaration : {};
+  const key = (v) => String(v == null ? '' : v).trim().toLowerCase().replace(/[-\s]+/g, ' ');
+  const plan = Array.isArray(d.plan) ? d.plan : [];
+  const loggedNames = (Array.isArray(d.loggedNames) ? d.loggedNames : []).map(key);
+  const rep = d.replacement && typeof d.replacement === 'object' ? d.replacement : null;
+
+  // An accepted substitution takes the source's SLOT and position — it is not an
+  // append (services/activeReplacement.js applyReplacement).
+  const items = plan.map((p) => {
+    const name = p && (p.exercise || p.name);
+    const isSource = rep && key(name) === key(rep.sourceName);
+    return {
+      name: isSource ? rep.replacementName : name,
+      sets: Number(p && p.target_sets) || 0,
+    };
+  });
+
+  // Count declared logged sets per lift, then spend them against the ordered plan.
+  const loggedCount = new Map();
+  for (const n of loggedNames) loggedCount.set(n, (loggedCount.get(n) || 0) + 1);
+
+  // A lift an ACCEPTED substitution removed from the plan is neither remaining nor
+  // complete — it is RETIRED, and naming it as outstanding work is its own failure.
+  // Without this the Session 3 corruption (a reply and a wrong client state agreeing
+  // that the substituted-away source still remains) would slip past both lists.
+  const retired = rep ? plan
+    .map((p) => p && (p.exercise || p.name))
+    .filter((n) => key(n) === key(rep.sourceName)) : [];
+
+  const remaining = [];
+  const complete = [];
+  for (const item of items) {
+    const k = key(item.name);
+    const done = loggedCount.get(k) || 0;
+    if (item.sets > 0 && done >= item.sets) complete.push(item.name);
+    else remaining.push(item.name);
+  }
+  return { remaining, nextUp: remaining.length ? remaining[0] : null, complete, retired };
+}
+
+// Compare an OBSERVED ordered list (client state) against the derived expectation.
+// Order matters: "what is left" and "what is next" are both order-dependent facts.
+// Returns { ok, problems }.
+function compareRemainingToExpectation(observedNames, expectation) {
+  const key = (v) => String(v == null ? '' : v).trim().toLowerCase().replace(/[-\s]+/g, ' ');
+  const problems = [];
+  const exp = (expectation && Array.isArray(expectation.remaining)) ? expectation.remaining : null;
+  if (!exp) return { ok: false, problems: ['no derived expectation was supplied'] };
+  const got = Array.isArray(observedNames) ? observedNames.map(key) : null;
+  if (!got) return { ok: false, problems: ['the observed remaining list was not an array'] };
+  const want = exp.map(key);
+  if (got.length !== want.length || got.some((n, i) => n !== want[i])) {
+    problems.push(`remaining work is [${observedNames.join(', ')}]; the declaration expects [${exp.join(', ')}]`);
+  }
+  return { ok: problems.length === 0, problems };
+}
+
+// Does the visible reply actually name the expected next-up lift, and does it avoid
+// naming anything the declaration says is already COMPLETE? A reply that repeats a
+// wrong client state fails against the declaration even when the two agree.
+// Where in `text` a lift name appears, or -1. Matches the FULL phrase with flexible
+// separators — "Bench" must never satisfy "Bench Press".
+function liftMentionIndex(text, name) {
+  const words = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return -1;
+  const pattern = words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[\\s-]+');
+  const m = new RegExp(pattern, 'i').exec(String(text));
+  return m ? m.index : -1;
+}
+
+// An EXPLICIT next-up claim in the reply — "next up is X", "you're on X next",
+// "then X". Returns the claimed lift text, or null when the reply makes no such claim.
+// Only an explicit claim is judged; a reply that simply lists remaining work makes none.
+const NEXT_UP_CLAIM_PATTERNS = Object.freeze([
+  /next up(?:\s+is)?[:,]?\s+([A-Za-z][A-Za-z \-]{1,40})/i,
+  /(?:you(?:'re| are)\s+)?(?:on|onto)\s+([A-Za-z][A-Za-z \-]{1,40})\s+next/i,
+  /next(?:\s+(?:lift|exercise|movement))?\s+is[:,]?\s+([A-Za-z][A-Za-z \-]{1,40})/i,
+  /(?:up next|first up)[:,]?\s+([A-Za-z][A-Za-z \-]{1,40})/i,
+]);
+function explicitNextUpClaim(text) {
+  for (const re of NEXT_UP_CLAIM_PATTERNS) {
+    const m = re.exec(String(text || ''));
+    if (m && m[1]) return m[1].replace(/[.,;!].*$/, '').trim();
+  }
+  return null;
+}
+
+// Does the visible reply agree with the declaration — in CONTENT and in ORDER, and on
+// any explicit next-up claim it chooses to make?
+//
+// The gap this closes (owner P1, 2026-08-03): proving every remaining lift is mentioned
+// and no completed/retired lift is, does not prove the reply told the truth about
+// SEQUENCE. A reply naming every correct lift in the wrong order, or explicitly naming
+// the wrong lift as next while mentioning the real next-up elsewhere, passed.
+function replyMatchesExpectation(replyText, expectation) {
+  const problems = [];
+  const text = String(replyText == null ? '' : replyText);
+  const exp = expectation && typeof expectation === 'object' ? expectation : {};
+  const remaining = Array.isArray(exp.remaining) ? exp.remaining : [];
+
+  const positions = [];
+  for (const name of remaining) {
+    const at = liftMentionIndex(text, name);
+    if (at < 0) problems.push(`the reply does not name remaining lift "${name}"`);
+    else positions.push({ name, at });
+  }
+  for (const name of (Array.isArray(exp.complete) ? exp.complete : [])) {
+    if (liftMentionIndex(text, name) >= 0) problems.push(`the reply names "${name}", which the declaration says is already complete`);
+  }
+  for (const name of (Array.isArray(exp.retired) ? exp.retired : [])) {
+    if (liftMentionIndex(text, name) >= 0) problems.push(`the reply names "${name}", which an accepted substitution removed from the plan`);
+  }
+
+  // ORDER: the remaining lifts must appear in the declared sequence.
+  if (positions.length === remaining.length && remaining.length > 1) {
+    const spoken = positions.slice().sort((a, b) => a.at - b.at).map((p) => p.name);
+    if (spoken.join('|') !== remaining.join('|')) {
+      problems.push(`the reply lists remaining work as [${spoken.join(', ')}]; the declaration order is [${remaining.join(', ')}]`);
+    }
+  }
+
+  // EXPLICIT next-up: judged only when the reply actually makes the claim.
+  const claimed = explicitNextUpClaim(text);
+  if (claimed !== null) {
+    // Fall back to the head of the remaining list when the caller supplied no explicit
+    // nextUp — an expectation with remaining work always has one.
+    const wanted = exp.nextUp || (remaining.length ? remaining[0] : null);
+    if (!wanted) problems.push(`the reply claims "${claimed}" is next, but the declaration expects no remaining work`);
+    else if (liftMentionIndex(claimed, wanted) < 0) {
+      // One-directional on purpose: the CLAIM must carry the full expected name.
+      // Accepting the reverse would let "Bench" satisfy "Bench Press", which is the
+      // partial-name match this module refuses everywhere else.
+      problems.push(`the reply claims "${claimed}" is next; the declaration expects "${wanted}"`);
+    }
+  }
+  return { ok: problems.length === 0, problems };
+}
+
+// The visible session pin must name the EXACT expected current lift and nothing retired
+// or completed. A blank pin, or a pin naming the wrong lift, is a failure — checking
+// only for a retired name let both pass (owner P1, 2026-08-03).
+function pinMatchesExpectation(pinText, expectation) {
+  const problems = [];
+  const text = String(pinText == null ? '' : pinText).replace(/\s+/g, ' ').trim();
+  const exp = expectation && typeof expectation === 'object' ? expectation : {};
+  if (!text) return { ok: false, problems: ['the session pin is blank, so it proves nothing about the current lift'] };
+  const wanted = exp.nextUp || null;
+  if (wanted && liftMentionIndex(text, wanted) < 0) {
+    problems.push(`the pin does not name the expected current lift "${wanted}"`);
+  }
+  for (const name of (Array.isArray(exp.retired) ? exp.retired : [])) {
+    if (liftMentionIndex(text, name) >= 0) problems.push(`the pin names "${name}", which an accepted substitution removed from the plan`);
+  }
+  for (const name of (Array.isArray(exp.complete) ? exp.complete : [])) {
+    if (liftMentionIndex(text, name) >= 0) problems.push(`the pin names "${name}", which the declaration says is already complete`);
+  }
+  return { ok: problems.length === 0, problems };
+}
+
+// ── reply-settlement classification ────────────────────────────────────────────
+// Pure and bite-able: the spec OBSERVES (bubble text, served messages, how long the
+// text has been unchanged), this DECIDES whether the reply has finished rendering.
+//
+// The defect it exists to prevent (owner instruction 2026-08-03): the previous probe
+// accepted a reply once the observed text stopped changing for 750 ms. Text that has
+// stopped changing is not text that has FINISHED — `typeOut` renders character by
+// character, so a pause mid-render is indistinguishable from the end. Session 2
+// captured the trailing fragment "ve." while the server had served the complete reply
+// (message_len 167 and 321 in the coach-turn shadow).
+//
+// So stability alone can only settle a turn that served NO message. When a message was
+// served, the bubble must contain the whole of it: `served-complete` is the only
+// affirmative outcome, and a bubble that goes quiet while still shorter is
+// `partial-render` — refused, never settled.
+//
+// Whitespace is normalized on both sides because the DOM re-wraps text; nothing else
+// about the served message is relaxed.
+function classifySettlement(observation) {
+  const o = observation && typeof observation === 'object' ? observation : {};
+  const normalize = (t) => String(t == null ? '' : t).replace(/\s+/g, ' ').trim();
+  const text = normalize(o.text);
+  const served = (Array.isArray(o.servedMessages) ? o.servedMessages : [])
+    .map(normalize).filter((m) => m.length > 0);
+  const stableForMs = Number.isFinite(o.stableForMs) ? o.stableForMs : 0;
+  const stableThresholdMs = Number.isFinite(o.stableThresholdMs) ? o.stableThresholdMs : 750;
+  const thinkingMarker = normalize(o.thinkingMarker || 'Thinking…');
+
+  if (thinkingMarker && text.includes(thinkingMarker)) return 'thinking';
+  if (text.length === 0) return 'empty';
+  // Authoritative: the whole served reply is on screen. Timing is not consulted.
+  if (served.some((m) => text.includes(m))) return 'served-complete';
+  if (stableForMs < stableThresholdMs) return 'growing';
+  // Quiet, but a message WAS served and this is not all of it.
+  if (served.length > 0) return 'partial-render';
+  // Quiet, no served message — but was that because the path genuinely serves none, or
+  // because the capture FAILED? Treating an unreadable coach response as "no message"
+  // reopens the partial-render false green exactly when the authoritative completion
+  // signal is missing (owner P1, 2026-08-03). Fail closed instead.
+  if (o.captureFailed === true) return 'capture-failed';
+  return 'stable-no-served-message';
+}
+
+// The two outcomes a caller may treat as settled.
+const SETTLED_OUTCOMES = Object.freeze(['served-complete', 'stable-no-served-message']);
+function isSettled(outcome) { return SETTLED_OUTCOMES.includes(outcome); }
 
 // ── the scenario-declared ledger multiset ──────────────────────────────────────
 // Compares the session's raw Session_Plan_Sets rows (arrays in the
@@ -251,9 +769,23 @@ function cellEquals(cell, expected) {
 // tolerate a completely absent observation branch and return ERROR.
 const CONDITIONS = Object.freeze([
   // (1) clean source main, exact SHA recorded — measured by the RUN, not asserted.
+  //
+  // This condition asks TWO questions that used to be welded together (owner
+  // instruction 2026-08-03):
+  //   a. is the source tree exact and clean? — asked under BOTH purposes, always;
+  //   b. is this session number legal at the canonical count? — a QUALIFYING rule only.
+  //
+  // Welding them made a five-scenario diagnostic sweep from exact main impossible: at
+  // count 0/5 a Session 2 run failed here no matter how the product behaved. The
+  // practice that grew around that — running from an OFF-MAIN tree so this condition
+  // failed for a different reason and the run quietly did not count — used a failure as
+  // a mode switch. Purpose is now declared, so (b) is applied to the runs it governs.
+  //
+  // A debug run still READS and RECORDS the count: evidence that cannot state the count
+  // it ran at is not honest evidence. It simply is not ordered against it.
   {
     id: 'source_tree_verified',
-    title: 'clean main equal to origin/main, exact SHA recorded, session number legal at the canonical count',
+    title: 'clean main equal to origin/main with the exact SHA recorded; a qualifying session is also legal at the canonical count',
     evaluate(obs) {
       const s = obs && obs.source;
       if (!s) return missing('the source tree');
@@ -263,10 +795,21 @@ const CONDITIONS = Object.freeze([
       if (s.head_sha !== s.origin_head_sha) return err(`HEAD ${str(s.head_sha).slice(0, 7)} != origin/main ${str(s.origin_head_sha).slice(0, 7)}`);
       const n = obs.session_number;
       if (!isRehearsalSessionNumber(n)) return err(`session number ${n} is not 1..${REHEARSAL_STREAK_LENGTH}`);
+
+      const purpose = normalizePurpose(obs.run_purpose);
+      if (purpose === null) return err('the run declared no recognized purpose, so count legality cannot be judged');
       const prior = s.prior_rehearsal_count;
-      if (!Number.isInteger(prior)) return err(`the canonical rehearsal count was unreadable (${s.prior_count_reason || 'no reason recorded'})`);
-      if (prior !== n - 1) return err(`session ${n} is legal only at count ${n - 1}/5; the plan recorded ${prior}/5`);
-      return pass(`main @ ${s.head_sha.slice(0, 12)} (= origin/main, clean); session ${n} at prior count ${prior}/5`);
+      if (!Number.isInteger(prior)) {
+        return err(`the canonical rehearsal count was unreadable (${s.prior_count_reason || 'no reason recorded'}); every run must record the count it ran at`);
+      }
+      const head = `main @ ${s.head_sha.slice(0, 12)} (= origin/main, clean)`;
+      if (!isQualifyingPurpose(purpose)) {
+        return pass(`${head}; DIAGNOSTIC (${purpose}) session ${n} ran at canonical count ${prior}/${REHEARSAL_STREAK_LENGTH} — not ordered against it, and cannot advance it`);
+      }
+      if (prior !== n - 1) {
+        return fail(`session ${n} is legal only at count ${n - 1}/${REHEARSAL_STREAK_LENGTH}; the plan recorded ${prior}/${REHEARSAL_STREAK_LENGTH}`);
+      }
+      return pass(`${head}; qualifying session ${n} at prior count ${prior}/${REHEARSAL_STREAK_LENGTH}`);
     },
   },
   // (2) fresh synthetic identities — run family + the INVERTED workout check.
@@ -274,8 +817,8 @@ const CONDITIONS = Object.freeze([
     id: 'fresh_identities',
     title: 'fresh run/athlete identities; the workout identity was SERVER-allocated, never pre-seeded',
     evaluate(obs) {
-      if (normalizePurpose(obs && obs.run_purpose) !== REHEARSAL_SESSION) {
-        return err(`the run declared no rehearsal purpose (got "${(obs && obs.run_purpose) || ''}")`);
+      if (normalizePurpose(obs && obs.run_purpose) === null) {
+        return err(`the run declared no recognized purpose (got "${(obs && obs.run_purpose) || ''}"); expected ${REHEARSAL_SESSION} or ${REHEARSAL_DEBUG}`);
       }
       const runRef = runIdentityRefusal({ sessionNumber: obs.session_number, runId: obs.run_id });
       if (runRef) return err(runRef);
@@ -640,27 +1183,59 @@ function scoreRehearsalRun(observations) {
   for (const c of conditions) counts[c.status] += 1;
   const overall = counts.FAIL > 0 ? FAIL : (counts.ERROR > 0 ? ERROR : PASS);
 
-  const eligible = overall === PASS;
+  // ── ELIGIBILITY ─────────────────────────────────────────────────────────────
+  // TWO independent conditions, both required, evaluated in this order so the reason
+  // is always the honest one:
+  //   1. the run was DECLARED qualifying — a debug run is ineligible by construction,
+  //      no matter how well it scored;
+  //   2. every condition passed.
+  // A run whose purpose is absent, unknown, or malformed fails (1) and is ineligible:
+  // eligibility fails closed, and there is no override flag.
+  const purpose = normalizePurpose(obs.run_purpose);
+  const qualifying = isQualifyingPurpose(purpose);
+  const eligible = qualifying && overall === PASS;
+
+  let note;
+  if (!qualifying) {
+    note = purpose === null
+      ? 'this run declared no recognized purpose and can never advance the rehearsal streak'
+      : `DIAGNOSTIC RUN (${purpose}) — scenario evidence only. It can never advance or authorize the rehearsal count, and a full ${counts.PASS}/${conditions.length} score does not make it eligible.`;
+  } else if (eligible) {
+    note = `this run qualifies as rehearsal session ${obs.session_number} — record the count advance in a reviewed status PR`;
+  } else {
+    note = 'this run does NOT advance the rehearsal streak';
+  }
+
   return {
-    purpose: REHEARSAL_SESSION,
+    // The purpose actually DECLARED by the run, never a constant: a scorecard that
+    // always printed the qualifying purpose would misdescribe every debug artifact.
+    purpose: purpose || null,
+    qualifying,
+    diagnostic: !qualifying,
     session_number: obs.session_number ?? null,
     scenario: (obs.scenario && obs.scenario.id) || null,
     overall,
     counts,
     conditions,
     rehearsal_eligible: eligible,
-    rehearsal_note: eligible
-      ? `this run qualifies as rehearsal session ${obs.session_number} — record the count advance in the execution plan`
-      : 'this run does NOT advance the rehearsal streak',
+    rehearsal_note: note,
   };
 }
 
 function renderMarkdown(card) {
+  // Every artifact states its purpose in its FIRST line. A diagnostic scorecard that
+  // reads like a qualifying one is exactly how a non-counting run gets mistaken for a
+  // counted one weeks later.
+  const banner = card.qualifying
+    ? `# F-SB4B QUALIFYING rehearsal session ${card.session_number ?? '?'} — ${card.overall}`
+    : `# F-SB4B DIAGNOSTIC (NON-COUNTING) rehearsal session ${card.session_number ?? '?'} — ${card.overall}`;
   const lines = [
-    `# F-SB4B rehearsal session ${card.session_number ?? '?'} — ${card.overall}`,
+    banner,
     '',
+    `Purpose: ${card.purpose || '(none declared)'}${card.qualifying ? '' : ' — scenario evidence only; cannot advance or authorize the rehearsal count'}`,
     `Scenario: ${card.scenario || '(none)'} · PASS ${card.counts.PASS} · FAIL ${card.counts.FAIL} · ERROR ${card.counts.ERROR} · N/A ${card.counts.NOT_APPLICABLE}`,
     `rehearsal_eligible: ${card.rehearsal_eligible}`,
+    card.rehearsal_note,
     '',
     '| # | condition | status | detail |',
     '|---|---|---|---|',
@@ -671,4 +1246,4 @@ function renderMarkdown(card) {
   return `${lines.join('\n')}\n`;
 }
 
-module.exports = { CONDITIONS, scoreRehearsalRun, renderMarkdown, compareLedgerToDeclaration, classifyRepeatApprovalProbe, PASS, FAIL, ERROR, NOT_APPLICABLE };
+module.exports = { CONDITIONS, scoreRehearsalRun, renderMarkdown, compareLedgerToDeclaration, classifyRepeatApprovalProbe, classifySettlement, isSettled, SETTLED_OUTCOMES, deriveExpectedRemaining, compareRemainingToExpectation, replyMatchesExpectation, pinMatchesExpectation, explicitNextUpClaim, detectUnsupportedMutationWording, COMPLETED_MUTATION_PATTERNS, compareReplacementIdentity, classifyCoachResponseCapture, detectUnsupportedWriteClaim, WRITE_CLAIM_PATTERNS, PASS, FAIL, ERROR, NOT_APPLICABLE };

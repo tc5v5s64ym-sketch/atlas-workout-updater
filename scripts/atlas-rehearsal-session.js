@@ -43,7 +43,7 @@ require('dotenv').config({ path: path.join(REPO_ROOT, '.env') });
 const { SANDBOX_SPREADSHEET_ID_LAST6, isSandboxSpreadsheetId, SANDBOX_SPREADSHEET_ID } = require('../config/sandboxSheet');
 const { pickNetworkPassthrough, assertNoWorkbookId } = require('../tests/e2e/gate/rehearsal-child-env');
 const {
-  REHEARSAL_SESSION, REHEARSAL_STREAK_LENGTH,
+  REHEARSAL_SESSION, REHEARSAL_DEBUG, REHEARSAL_STREAK_LENGTH,
   mintIdentities, evaluateRehearsalPreflight,
 } = require('../tests/e2e/gate/rehearsal-run-purpose');
 const { fetchOriginMain, measureSourceTree } = require('../tests/e2e/gate/rehearsal-source-facts');
@@ -72,6 +72,23 @@ if (!argv.includes('--model-up')) {
   fail('name the posture explicitly: --model-up (there is no default, and the rehearsal accepts no other posture).');
 }
 const MODE = 'model-up';
+
+// ── RUN PURPOSE — explicit, no default (owner instruction 2026-08-03) ──────────
+// `--qualifying` may advance the streak and requires the canonical count to equal
+// session_number - 1. `--debug` proves the scenarios on exact clean main, is NOT
+// ordered against the count, and can never advance or authorize one. Neither is the
+// default: a run that does not say which it is, is refused, because "which kind of run
+// was that?" must never be answered by reading which check happened to go red.
+const wantsDebug = argv.includes('--debug');
+const wantsQualifying = argv.includes('--qualifying');
+if (wantsDebug && wantsQualifying) {
+  fail('--debug and --qualifying are mutually exclusive; a run has exactly one purpose.');
+}
+if (!wantsDebug && !wantsQualifying) {
+  fail('declare the run purpose explicitly: --debug (diagnostic, never counts) or --qualifying (may advance the streak). There is no default.');
+}
+const RUN_PURPOSE = wantsQualifying ? REHEARSAL_SESSION : REHEARSAL_DEBUG;
+const IS_QUALIFYING = RUN_PURPOSE === REHEARSAL_SESSION;
 
 const sessionArg = argv.find((a) => a.startsWith('--session='));
 if (!sessionArg) {
@@ -105,7 +122,10 @@ const { run_id: RUN_ID, athlete_id: ATHLETE_ID } = identities;
 // Rehearsal artifacts live in their OWN ignored directory, outside `test-results/`
 // (which Playwright wipes at the start of every run). Evidence a later run can delete
 // is not preserved evidence.
-const ARTIFACT_DIR = path.join(REPO_ROOT, 'rehearsal-artifacts', `session-${SESSION_NUMBER}-${stamp}-${nonce}`);
+// The purpose is in the DIRECTORY NAME. Diagnostic artifacts must be identifiable as
+// diagnostic from the path alone, without opening a file.
+const ARTIFACT_DIR = path.join(REPO_ROOT, 'rehearsal-artifacts',
+  `${IS_QUALIFYING ? 'qualifying' : 'debug'}-session-${SESSION_NUMBER}-${stamp}-${nonce}`);
 
 // ── the child environment, constructed field by field ──────────────────────────
 // `...process.env` is deliberately absent: the ambient GOOGLE_SHEETS_ID must never
@@ -121,7 +141,7 @@ const childEnv = {
   PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH,
   PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: process.env.PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD,
   ATLAS_REHEARSAL_RUN: '1',
-  ATLAS_RUN_PURPOSE: REHEARSAL_SESSION,
+  ATLAS_RUN_PURPOSE: RUN_PURPOSE,
   ATLAS_REHEARSAL_SESSION_NUMBER: String(SESSION_NUMBER),
   ATLAS_REHEARSAL_RUN_ID: RUN_ID,
   ATLAS_REHEARSAL_ATHLETE_ID: ATHLETE_ID,
@@ -142,7 +162,7 @@ const childCarriesWorkoutSessionId = Object.keys(childEnv)
 
 // ── decide ─────────────────────────────────────────────────────────────────────
 const preflight = evaluateRehearsalPreflight({
-  purpose: REHEARSAL_SESSION,
+  purpose: RUN_PURPOSE,
   sessionNumber: SESSION_NUMBER,
   mode: MODE,
   runId: RUN_ID,
@@ -166,8 +186,14 @@ if (!preflight.ok) refuse(preflight.refusals);
 fs.mkdirSync(ARTIFACT_DIR, { recursive: true });
 
 const ambientLast6 = process.env.GOOGLE_SHEETS_ID ? String(process.env.GOOGLE_SHEETS_ID).slice(-6) : null;
-console.log(`[rehearsal-session] purpose  : ${REHEARSAL_SESSION} — session ${SESSION_NUMBER} of ${REHEARSAL_STREAK_LENGTH}`);
-console.log(`[rehearsal-session] prior    : canonical rehearsal count ${source.prior_rehearsal_count}/${REHEARSAL_STREAK_LENGTH} (from the execution plan)`);
+console.log(`[rehearsal-session] purpose  : ${RUN_PURPOSE} — session ${SESSION_NUMBER} of ${REHEARSAL_STREAK_LENGTH}`);
+if (!IS_QUALIFYING) {
+  console.log('[rehearsal-session] *** DIAGNOSTIC RUN — NON-COUNTING. It exercises the same browser, provider,');
+  console.log('[rehearsal-session] *** write, durable-evidence, adjudicator, privacy and scenario conditions as a');
+  console.log('[rehearsal-session] *** qualifying run, and can score every condition PASS, but it always publishes');
+  console.log('[rehearsal-session] *** rehearsal_eligible=false and can never advance or authorize the count.');
+}
+console.log(`[rehearsal-session] prior    : canonical rehearsal count ${source.prior_rehearsal_count}/${REHEARSAL_STREAK_LENGTH} (from the execution plan)${IS_QUALIFYING ? '' : ' — recorded, not enforced for a debug run'}`);
 console.log(`[rehearsal-session] source   : ${gitFacts.branch} @ ${gitFacts.head.slice(0, 12)} (clean, = origin/main)`);
 console.log(`[rehearsal-session] run      : ${RUN_ID}`);
 console.log(`[rehearsal-session] posture  : ${MODE} + combined sandbox-live/ledger (set by the spec's own gate-server spawn)`);
@@ -204,6 +230,20 @@ runner.on('exit', (code) => {
   }
   console.log(`[rehearsal-session] rehearsal_eligible: ${card.rehearsal_eligible}`);
   console.log(`[rehearsal-session] ${card.rehearsal_note}`);
+  // A DEBUG run's success criterion is the SCORECARD, not eligibility: it is expected
+  // to publish rehearsal_eligible=false, so exiting non-zero on that would report every
+  // clean diagnostic session as a failure. A QUALIFYING run must reach eligibility.
+  if (!IS_QUALIFYING) {
+    const clean = card.overall === 'PASS';
+    console.log(`[rehearsal-session] DIAGNOSTIC RESULT: ${clean ? 'CLEAN' : 'NOT CLEAN'} — the count is untouched either way.`);
+    if (card.rehearsal_eligible === true) {
+      // Structurally impossible (the scorecard gates on purpose), so if it ever
+      // happens the eligibility rule itself is broken and this must not exit 0.
+      console.error('[rehearsal-session] FATAL: a diagnostic run published rehearsal_eligible=true. Do not record a count.');
+      process.exit(1);
+    }
+    process.exit(code === 0 && clean ? 0 : 1);
+  }
   if (card.rehearsal_eligible !== true) {
     console.log('[rehearsal-session] This run does NOT advance the rehearsal streak.');
   }
