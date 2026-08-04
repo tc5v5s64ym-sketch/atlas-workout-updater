@@ -120,6 +120,9 @@ const SCENARIOS = {
       'bicep curl 35 x 15 @2', 'bicep curl 35 x 15 @2',
     ],
     effort: EFFORT_FIXTURE,
+    // The card's Session 2 requirement: stale, superseded, and cross-session proposal
+    // state must be unable to participate in the next session.
+    proveTeardown: true,
     expected: {
       session_plans_events: { plan_accepted: 6, item_outcome: 1, session_closeout: 1 },
       plan_set_rows: 14,
@@ -185,6 +188,9 @@ const SCENARIOS = {
     // NO Apple Watch / effort data this session: its ABSENCE must not fail the write,
     // and exactly zero Effort rows may land.
     effort: null,
+    // The card's Session 4 requirement: the next session cannot inherit this session's
+    // proposal, logs, or pending state.
+    proveTeardown: true,
     expected: {
       session_plans_events: { plan_accepted: 6, session_closeout: 1 },
       plan_set_rows: 12,
@@ -640,6 +646,95 @@ const DRIVERS = {
     return { logged, loggedSets, substitution: { ...sub, sourceLift: 'SR01', sourceName: 'Seated Row', sourceRegex: /seated row/i } };
   },
 };
+
+// ── cross-session teardown and inheritance (F-SB4 card; owner P1 2026-08-03) ────
+// The card requires Session 2 to prove stale/superseded/cross-session proposal state
+// cannot participate, and Session 4 to prove the next session cannot inherit logs,
+// proposal, or pending state. Neither was exercised: each scenario ended at its own
+// scorecard and the process was torn down, and a FRESH PROCESS proves harness
+// isolation, not product teardown.
+//
+// This proves the product's own teardown, in the SAME browser context, and performs NO
+// second workout write: the durable write already happened, and the transition below is
+// a reload plus one non-writing conversational turn.
+//
+// It adds NO scorecard. Every result routes through the existing state-agreement
+// (condition 10) and declared-conversation (condition 8) evidence.
+async function proveTeardownAndNoInheritance(page, h, { base }) {
+  const SNAPSHOT_KEY = 'atlas_session_snapshot_v1';   // src/app/store.js
+
+  // 1. The live store and the persisted snapshot, immediately after closeout.
+  const afterCloseout = await page.evaluate((key) => {
+    let snap = null;
+    try { const raw = localStorage.getItem(key); snap = raw ? JSON.parse(raw) : null; } catch { snap = 'unreadable'; }
+    return {
+      log: window.getSessionLog ? window.getSessionLog().length : -1,
+      completed: window.getSessionCompleted ? (window.getSessionCompleted() || []).length : -1,
+      plan: window.getActivePlannedSession ? Boolean(window.getActivePlannedSession()) : null,
+      writeIdentity: window.atlasCurrentWriteIdentity ? window.atlasCurrentWriteIdentity() : null,
+      snapshot: snap,
+    };
+  }, SNAPSHOT_KEY);
+  const snapAfter = afterCloseout.snapshot;
+  const snapshotCarriesSession = Boolean(snapAfter && snapAfter !== 'unreadable'
+    && ((Array.isArray(snapAfter.sessionLog) && snapAfter.sessionLog.length)
+      || snapAfter.activePlannedSession || snapAfter.pendingReplacement || snapAfter.pendingSetRevision));
+  h.stateCheck('closeout-clears-live-store',
+    afterCloseout.log === 0 && afterCloseout.completed === 0 && afterCloseout.plan === false,
+    `after closeout: ${afterCloseout.log} logged sets, ${afterCloseout.completed} completed, plan ${afterCloseout.plan ? 'still active' : 'cleared'}`);
+  h.stateCheck('closeout-clears-persisted-snapshot', !snapshotCarriesSession,
+    snapshotCarriesSession
+      ? `the persisted snapshot still carries ${(snapAfter.sessionLog || []).length} sets, plan ${Boolean(snapAfter.activePlannedSession)}, pendingReplacement ${Boolean(snapAfter.pendingReplacement)}, pendingSetRevision ${Boolean(snapAfter.pendingSetRevision)}`
+      : 'the persisted snapshot carries no logs, plan, or pending state');
+
+  // 2. ONE bounded fresh-session transition in the SAME browser context. A reload is
+  //    the product's real next-session entry point and writes nothing.
+  await page.goto(`${base}/app/`);
+  await page.waitForLoadState('networkidle');
+
+  const inherited = await page.evaluate((key) => {
+    let snap = null;
+    try { const raw = localStorage.getItem(key); snap = raw ? JSON.parse(raw) : null; } catch { snap = 'unreadable'; }
+    const thread = document.getElementById('thread-messages');
+    return {
+      log: window.getSessionLog ? window.getSessionLog().length : -1,
+      completed: window.getSessionCompleted ? (window.getSessionCompleted() || []).length : -1,
+      plan: window.getActivePlannedSession ? Boolean(window.getActivePlannedSession()) : null,
+      sessionIdField: (document.getElementById('log-session-id') || {}).value || '',
+      writeIdentity: window.atlasCurrentWriteIdentity ? window.atlasCurrentWriteIdentity() : null,
+      proposalControls: thread ? thread.querySelectorAll('.replacement-approve-btn').length : -1,
+      proposalLines: thread ? thread.querySelectorAll('.replacement-proposal-line').length : -1,
+      openReviewCards: thread ? thread.querySelectorAll('.review:not(.done)').length : -1,
+      closeoutCards: document.querySelectorAll('.closeout-confirm').length,
+      snapshotPendingReplacement: Boolean(snap && snap !== 'unreadable' && snap.pendingReplacement),
+      snapshotPendingSetRevision: Boolean(snap && snap !== 'unreadable' && snap.pendingSetRevision),
+    };
+  }, SNAPSHOT_KEY);
+
+  // 3. Nothing from the finished session may participate in the fresh one.
+  const checks = [
+    ['no-inherited-logs', inherited.log === 0, `${inherited.log} logged sets carried into the fresh session`],
+    ['no-inherited-completed-state', inherited.completed === 0, `${inherited.completed} completed entries carried over`],
+    ['no-inherited-plan', inherited.plan === false, `an active plan ${inherited.plan ? 'was' : 'was not'} inherited`],
+    ['no-inherited-workout-identity', inherited.sessionIdField === '', `#log-session-id reads "${inherited.sessionIdField}"`],
+    ['no-inherited-write-correlation', inherited.writeIdentity === null, `undo/write identity ${inherited.writeIdentity ? 'survived the transition' : 'did not survive'}`],
+    ['no-inherited-pending-replacement', inherited.snapshotPendingReplacement === false && inherited.proposalControls === 0,
+      `${inherited.proposalControls} approve control(s), snapshot pendingReplacement ${inherited.snapshotPendingReplacement}`],
+    ['no-inherited-pending-set-revision', inherited.snapshotPendingSetRevision === false,
+      `snapshot pendingSetRevision ${inherited.snapshotPendingSetRevision}`],
+    ['no-inherited-proposal-state', inherited.proposalLines === 0, `${inherited.proposalLines} proposal line(s) rendered in the fresh thread`],
+    ['no-inherited-preview-state', inherited.openReviewCards === 0 && inherited.closeoutCards === 0,
+      `${inherited.openReviewCards} open review card(s), ${inherited.closeoutCards} closeout card(s)`],
+  ];
+  for (const [id, ok, detail] of checks) h.stateCheck(id, ok, detail);
+
+  // 4. A single non-writing conversational turn, to prove the fresh session's own
+  //    coaching path does not resurrect the finished session's work. It never saves.
+  const opener = await settleReply(page, 'what should I train today?');
+  h.beat('fresh-session-conversation-is-clean', opener.length > 0,
+    `fresh-session opening reply (${opener.length} chars) — no workout write performed in this transition`);
+  h.note('teardown', `fresh-session transition complete: ${checks.filter(c => c[1]).length}/${checks.length} inheritance checks clean`);
+}
 
 let child = null;
 let base = null;
@@ -1208,6 +1303,14 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
     const textOverall = (overallLine.match(/\b(PASS|FAIL|UNKNOWN)\b/) || [])[1] || null;
     beat('review-text-json-agree', Boolean(reviewJson) && textOverall === reviewJson.overall,
       `text run says "${overallLine || '(no Overall line)'}" vs json overall ${reviewJson && reviewJson.overall}`);
+  }
+
+  // ── 13b. Cross-session teardown and inheritance (declared scenarios only) ────
+  // Runs AFTER every durable read for this session, so the reload cannot disturb the
+  // evidence above, and performs no second workout write.
+  if (SC.proveTeardown) {
+    currentPhase = 'teardown';
+    await proveTeardownAndNoInheritance(page, h, { base });
   }
 
   // ── 14. Assemble observations for the frozen scorecard ───────────────────────
