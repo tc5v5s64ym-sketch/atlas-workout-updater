@@ -56,7 +56,12 @@ Silence is not a pass. Every required signal needs positive evidence.
 | Merge card | Complete and current |
 | Scope | One concern authorized by the canonical plan or explicit owner instruction |
 
-An optional clean-context review may be used for confidence on higher-risk work. It is not a required marker, status, account, or merge condition.
+A clean-context review has two distinct uses, and only one of them is a merge condition.
+
+- **As an optional confidence device** on higher-risk work, it is not a required marker, status, account, or merge condition. Nothing changes here.
+- **As the performer of the Atlas Contract / Systems Review**, when a `CLAUDE.md` trigger fires, the recorded review is a merge-card condition — the same condition it would be had ChatGPT performed it. The obligation belongs to the lane, never to the performer.
+
+Neither use is ever a GitHub status, a required check, or a reviewer account.
 
 ## Merge authority
 
