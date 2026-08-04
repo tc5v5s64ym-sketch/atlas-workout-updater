@@ -639,6 +639,46 @@ describe('deriveExpectedRemaining — independent of client state and reply', ()
     assert.match(replyCmp.problems.join(' '), /accepted substitution removed from the plan/);
   });
 
+  // F-SB4B corrective 3. The substitute's set count belongs to the ENGINE, not to the
+  // scenario freeze: `applySessionSubstitution` puts the proposal's prescribed count on
+  // the slot. Session 1 declared 2 and the engine prescribed 3, so the expectation
+  // called the substitute complete after two sets while the product correctly still
+  // listed it — a harness defect scored against a correct product on two runs.
+  it('the substitute\'s set count comes from the STAGED prescription, not the declared plan', () => {
+    const loggedNames = logged('back squat', 'back squat', 'overhead press', 'overhead press',
+      'romanian deadlift', 'romanian deadlift', 'incline dumbbell press', 'incline dumbbell press');
+    // Declared 2 (the defect): two logged sets "complete" the substitute.
+    const declared = deriveExpectedRemaining({ plan: PLAN, loggedNames, replacement: SWAP });
+    assert.deepEqual(declared.remaining, ['Seated Row', 'Bicep Curl']);
+    // Staged 3 (the truth): two of three sets leave it outstanding, in its own position.
+    const staged = deriveExpectedRemaining({
+      plan: PLAN, loggedNames, replacement: { ...SWAP, sets: 3 },
+    });
+    assert.deepEqual(staged.remaining, ['Incline Dumbbell Press', 'Seated Row', 'Bicep Curl']);
+    assert.equal(staged.nextUp, 'Incline Dumbbell Press');
+    assert.ok(!staged.complete.includes('Incline Dumbbell Press'));
+  });
+
+  it('a staged set count applies ONLY to the substituted slot', () => {
+    const e = deriveExpectedRemaining({
+      plan: PLAN,
+      loggedNames: logged('back squat', 'back squat', 'incline dumbbell press', 'incline dumbbell press', 'incline dumbbell press'),
+      replacement: { ...SWAP, sets: 3 },
+    });
+    assert.deepEqual(e.complete, ['Back Squat', 'Incline Dumbbell Press'],
+      'the substitute completes at its own prescribed count; every other slot keeps the declared one');
+    assert.deepEqual(e.remaining, ['Overhead Press', 'Romanian Deadlift', 'Seated Row', 'Bicep Curl']);
+  });
+
+  it('an absent or unusable staged set count falls back to the source\'s declared count', () => {
+    const loggedNames = logged('incline dumbbell press', 'incline dumbbell press');
+    for (const sets of [null, undefined, 0, -1, 2.5, '3']) {
+      const e = deriveExpectedRemaining({ plan: PLAN, loggedNames, replacement: { ...SWAP, sets } });
+      assert.ok(e.complete.includes('Incline Dumbbell Press'),
+        `sets=${JSON.stringify(sets)} must fall back to the declared 2, never be treated as a real count`);
+    }
+  });
+
   it('order matters — the same set of lifts in the wrong order fails', () => {
     const e = deriveExpectedRemaining({ plan: PLAN, loggedNames: [], replacement: null });
     assert.equal(compareRemainingToExpectation(e.remaining.slice().reverse(), e).ok, false);
