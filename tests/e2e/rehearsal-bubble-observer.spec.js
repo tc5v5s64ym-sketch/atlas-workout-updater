@@ -33,8 +33,13 @@ const THINKING = 'Thinking…';
 // runner does — Node stamps each report on receipt.
 async function startCollector(page, phaseRef) {
   const records = {};
-  const state = { ingestSeq: 0, gate: null, rejectReports: false };
+  const state = { ingestSeq: 0, gate: null, rejectReports: false, signalEntered: null };
   await page.exposeFunction('__atlasBubbleObserved', async (batch) => {
+    // ENTERED HANDSHAKE. Signalled BEFORE the gate await, so a test can prove the
+    // callback was actually reached rather than assume it after a sleep. Reaching here
+    // is causal evidence that the flush already built the batch and ran `pending.clear()`
+    // — both happen before `await window[callbackName](batch)` in the collector.
+    if (state.signalEntered) { const signal = state.signalEntered; state.signalEntered = null; signal(); }
     // `gate` lets a test HOLD a report in flight, which is how the flush-window race is
     // reproduced: the boundary is taken while this report has not yet reached Node.
     if (state.gate) await state.gate;
@@ -83,6 +88,11 @@ async function takeBoundary(page, state) {
     if (st && Number.isFinite(st.changeSeq)) atChangeSeq = st.changeSeq;
   } catch { atChangeSeq = null; }
   return makeBoundary({ atMs: Date.now(), atChangeSeq, ingestSeq: state.ingestSeq, drained });
+}
+
+// Arm the entered handshake: resolves when the exposed callback is next reached.
+function armEnteredSignal(state) {
+  return new Promise((resolve) => { state.signalEntered = resolve; });
 }
 
 // Read the logical clock alone, as the response listener does at the write's instant.
@@ -488,13 +498,19 @@ test.describe('F-SB4B collector — a rejected batch keeps its original causal s
     await rewriteBubble(page, 0, 'All set — your workout is saved to your sheet.');
     const claimSeq = await readChangeSeq(page);
 
-    // 2. HOLD the delivery: the batch is built and `pending` is cleared, then the
-    //    callback blocks. The flush promise is deliberately NOT awaited yet.
+    // 2. HOLD the delivery. The flush promise is deliberately NOT awaited yet, and the
+    //    race position is OBSERVED rather than assumed: a sleep is not evidence that the
+    //    callback was entered, and under a delayed browser or IPC turn the unrelated
+    //    mutation could otherwise land BEFORE the batch was built — in which case
+    //    `markAll` alone preserves S and a broken re-queue still passes (owner P1,
+    //    2026-08-03). Awaiting the entered handshake is causal proof that the batch was
+    //    built and `pending.clear()` already ran.
+    const entered = armEnteredSignal(state);
     let release;
     state.gate = new Promise((r) => { release = r; });
     state.rejectReports = true;
     const flushPromise = page.evaluate(() => window.__atlasBubbleFlush());
-    await page.waitForTimeout(50);       // let the batch reach the held callback
+    await entered;
 
     // 3. WHILE the delivery is unresolved, an unrelated mutation runs markAll and puts
     //    this same index back into `pending` at S' > S.
