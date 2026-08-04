@@ -72,6 +72,79 @@ function classifyRepeatApprovalProbe(p) {
   return 'no-op-unproven';
 }
 
+// ── unsupported completed-mutation wording ─────────────────────────────────────
+// Pure: decides whether any VISIBLE message claimed a mutation had already happened at
+// a time when no mutation had yet occurred.
+//
+// The defect it exists to prevent (owner instruction 2026-08-03): the scorecard's
+// `no_unsupported_claims` condition trusted `claims.unsupported_mutation_wording`,
+// which the spec published as a literal `false` with the comment "asserted per-beat
+// pre-acceptance above". Per-beat checks covered only selected phrases in selected
+// phases; a constant is not evidence, and this is the same false-green class already
+// removed from the repeat-approval proof.
+//
+// Inputs are OBSERVED, not asserted:
+//   messages       — [{ text, atMs, phase }] every visible Atlas message, in order
+//   mutationAtMs   — when the plan mutation actually became true (null = never)
+// A message claiming completion BEFORE mutationAtMs (or at any time when no mutation
+// ever occurred) is unsupported. After the mutation the same wording is honest.
+//
+// Fails CLOSED: unreadable timing with completed-mutation wording present counts as
+// unsupported, because the run cannot show the claim was earned.
+const COMPLETED_MUTATION_PATTERNS = Object.freeze([
+  /i(?:'ve| have) (?:noted|recorded|logged|made|applied) (?:the |that )?(?:substitution|swap|replacement|change)/i,
+  /(?:has|have) been (?:swapped|replaced|substituted|changed)/i,
+  /(?:i(?:'ve| have) )?(?:swapped|replaced|substituted) (?:it|that|your|the)\b/i,
+  /you(?:'re| are) (?:now )?(?:substituting|swapping|doing) /i,
+  /(?:substitution|swap|replacement) (?:is )?(?:done|complete|applied|in place|locked in)/i,
+  /(?:updated|changed) your plan\b/i,
+  /(?:removed|dropped) .{0,30}from your plan\b/i,
+]);
+
+function detectUnsupportedMutationWording(input) {
+  const i = input && typeof input === 'object' ? input : {};
+  const messages = Array.isArray(i.messages) ? i.messages : null;
+  if (!messages) {
+    return { unsupported: true, detail: 'no visible messages were captured, so a completed-mutation claim cannot be ruled out', matches: [] };
+  }
+  const mutationAtMs = Number.isFinite(i.mutationAtMs) ? i.mutationAtMs : null;
+  const matches = [];
+  for (const m of messages) {
+    const text = String((m && m.text) || '');
+    if (!text) continue;
+    const pattern = COMPLETED_MUTATION_PATTERNS.find((re) => re.test(text));
+    if (!pattern) continue;
+    const atMs = Number.isFinite(m && m.atMs) ? m.atMs : null;
+    // Unsupported when the claim landed before the mutation, when no mutation ever
+    // happened, or when the claim's own timing is unknown (fail closed).
+    const earned = mutationAtMs !== null && atMs !== null && atMs >= mutationAtMs;
+    if (!earned) {
+      matches.push({
+        phase: (m && m.phase) || 'unknown',
+        atMs,
+        excerpt: text.replace(/\s+/g, ' ').slice(0, 120),
+        reason: mutationAtMs === null ? 'no mutation occurred in this run'
+          : atMs === null ? 'the message carried no timestamp, so the claim cannot be shown to be earned'
+            : 'the claim landed before the mutation',
+      });
+    }
+  }
+  if (!matches.length) {
+    return {
+      unsupported: false,
+      detail: mutationAtMs === null
+        ? `${messages.length} visible messages swept; no completed-mutation wording, and no mutation occurred`
+        : `${messages.length} visible messages swept; every completed-mutation claim landed after the mutation`,
+      matches: [],
+    };
+  }
+  return {
+    unsupported: true,
+    detail: matches.map((m) => `[${m.phase}] "${m.excerpt}" — ${m.reason}`).join('; '),
+    matches,
+  };
+}
+
 // ── independent remaining-work derivation ──────────────────────────────────────
 // Pure: derives the EXPECTED ordered remaining list and next-up lift from the FROZEN
 // scenario declaration plus the sets the scenario declares were logged. It never reads
@@ -875,4 +948,4 @@ function renderMarkdown(card) {
   return `${lines.join('\n')}\n`;
 }
 
-module.exports = { CONDITIONS, scoreRehearsalRun, renderMarkdown, compareLedgerToDeclaration, classifyRepeatApprovalProbe, classifySettlement, isSettled, SETTLED_OUTCOMES, deriveExpectedRemaining, compareRemainingToExpectation, replyMatchesExpectation, PASS, FAIL, ERROR, NOT_APPLICABLE };
+module.exports = { CONDITIONS, scoreRehearsalRun, renderMarkdown, compareLedgerToDeclaration, classifyRepeatApprovalProbe, classifySettlement, isSettled, SETTLED_OUTCOMES, deriveExpectedRemaining, compareRemainingToExpectation, replyMatchesExpectation, detectUnsupportedMutationWording, COMPLETED_MUTATION_PATTERNS, PASS, FAIL, ERROR, NOT_APPLICABLE };

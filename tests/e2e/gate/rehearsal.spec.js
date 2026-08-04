@@ -28,7 +28,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
-const { scoreRehearsalRun, renderMarkdown, compareLedgerToDeclaration, classifyRepeatApprovalProbe, classifySettlement, isSettled } = require('./rehearsal-scorecard');
+const {
+  scoreRehearsalRun, renderMarkdown, compareLedgerToDeclaration, classifyRepeatApprovalProbe,
+  classifySettlement, isSettled,
+  deriveExpectedRemaining, compareRemainingToExpectation, replyMatchesExpectation,
+  detectUnsupportedMutationWording,
+} = require('./rehearsal-scorecard');
 const { REHEARSAL_SESSION } = require('./rehearsal-run-purpose');
 const { measureSourceTree } = require('./rehearsal-source-facts');
 const { markRunStarted, verifyRunStartMarker } = require('./rehearsal-run-start');
@@ -241,6 +246,42 @@ function parseShorthand(s) {
   return { name: nameKey(m[1]), weight: Number(m[2]), reps: Number(m[3]), rir: Number(m[4]) };
 }
 
+// The INDEPENDENT remaining-work expectation for this point in the scenario, derived
+// from the FROZEN declaration plus the sets the driver has declared it logged — never
+// from client state, durable rows, or the visible reply (owner P1, 2026-08-03).
+// `loggedSets` entries carry the parsed shorthand name; a substitute set carries the
+// replacement's own name so it spends against the replaced slot.
+function expectedRemainingNow(SC, loggedSets, sub) {
+  return deriveExpectedRemaining({
+    plan: SC.plan,
+    loggedNames: loggedSets.map(x => x.name),
+    replacement: sub ? { sourceName: sub.sourceName, replacementName: sub.name } : null,
+  });
+}
+
+// Compare BOTH observations against that one expectation, and record each separately so
+// a failure names which surface lied. Client state and reply agreeing with each other
+// proves nothing — that agreement is the corruption shape this rehearsal exists to catch.
+async function proveRemainingWork(page, h, { SC, loggedSets, sub, reply, label }) {
+  const expectation = expectedRemainingNow(SC, loggedSets, sub);
+  const observed = await page.evaluate(() => (window.remainingPlannedExercises
+    ? window.remainingPlannedExercises().map(e => e.canonicalName || e.name || e) : null));
+  const stateCmp = compareRemainingToExpectation(observed, expectation);
+  h.stateCheck(`${label}-state-matches-declaration`, stateCmp.ok,
+    stateCmp.ok
+      ? `remaining [${expectation.remaining.join(', ')}], next up ${expectation.nextUp || '(none)'} — derived from the declaration`
+      : stateCmp.problems.join('; '));
+
+  if (typeof reply === 'string') {
+    const replyCmp = replyMatchesExpectation(reply, expectation);
+    h.beat(`${label}-reply-matches-declaration`, replyCmp.ok,
+      replyCmp.ok
+        ? `reply agrees with the declared remaining work [${expectation.remaining.join(', ')}]`
+        : `${replyCmp.problems.join('; ')} — reply: "${String(reply).slice(0, 160)}"`);
+  }
+  return expectation;
+}
+
 async function planState(page) {
   return page.evaluate(() => {
     const p = window.getActivePlannedSession();
@@ -329,6 +370,7 @@ const DRIVERS = {
     h.setPhase('replacement');
     await page.locator('#thread-messages .replacement-approve-btn').last().click();
     await expect.poll(async () => (await planState(page)).names.some(n => /bench press/i.test(n)), { timeout: 20000 }).toBe(false);
+    h.markMutation();   // the source lift has provably left the plan — claims are earned from here
     const mutated = await planState(page);
     h.beat('replacement-mutated-plan', mutated.names.some(n => new RegExp(sub.name.split(/\s+/)[0], 'i').test(n)), `plan now: [${mutated.names.join(', ')}]`);
     const shorthand = `${sub.name.toLowerCase()} ${sub.weight} x ${sub.reps} @2`;
@@ -339,7 +381,19 @@ const DRIVERS = {
       return !p.exercises.some((e, i) => i >= p.index && /bench press/i.test(e.canonicalName || e.name));
     });
     h.beat('bench-left-remaining-work', benchLeft, 'Bench Press no longer in remaining work');
-    h.stateCheck('pin-agrees-after-swap', true, 'canonical plan state read directly; visible pin derived from the same store');
+    // The former `stateCheck('pin-agrees-after-swap', true, …)` asserted a literal and
+    // proved nothing (owner P1, 2026-08-03). Both the canonical remaining list AND the
+    // visible session pin are now compared against the expectation derived from the
+    // frozen declaration, so a wrong store and a pin faithfully rendering it both fail.
+    const expectation = await proveRemainingWork(page, h, {
+      SC, loggedSets, sub: { ...sub, sourceName: 'Bench Press' }, label: 'post-swap',
+    });
+    const pinText = await page.locator('#session-pin').innerText().catch(() => '');
+    const pinCmp = replyMatchesExpectation(pinText, { remaining: [], complete: [], retired: expectation.retired });
+    h.stateCheck('pin-agrees-after-swap', pinCmp.ok,
+      pinCmp.ok
+        ? `the visible pin names no retired lift; next up ${expectation.nextUp || '(none)'}`
+        : `${pinCmp.problems.join('; ')} — pin: "${pinText.replace(/\s+/g, ' ').slice(0, 160)}"`);
 
     h.setPhase('eligible_question');
     const open = await h.settleReply('any tips for keeping my lower back safe on the remaining lifts?');
@@ -399,6 +453,7 @@ const DRIVERS = {
     h.setPhase('replacement');
     await h.say(SC.conversationalAccept);
     await expect.poll(async () => (await planState(page)).names.some(n => /bench press/i.test(n)), { timeout: 30000 }).toBe(false);
+    h.markMutation();
     const mutated = await planState(page);
     h.beat('conversational-accept-one-mutation', mutated.names.some(n => new RegExp(sub.name.split(/\s+/)[0], 'i').test(n)),
       `plan after "Yes use that": [${mutated.names.join(', ')}]`);
@@ -450,6 +505,7 @@ const DRIVERS = {
     loggedSets.push(parseShorthand(SC.batchFirstLine));
     loggedSets.push({ ...parseShorthand(replacementLine), sub: true });
     await expect.poll(async () => (await planState(page)).names.some(n => /bench press/i.test(n)), { timeout: 20000 }).toBe(false);
+    h.markMutation();
     const mutated = await planState(page);
     h.beat('batch-binds-replacement-to-source-slot',
       mutated.names.some(n => new RegExp(sub.name.split(/\s+/)[0], 'i').test(n)) && !mutated.names.some(n => /bench press/i.test(n)),
@@ -469,14 +525,24 @@ const DRIVERS = {
     logged += 1; await h.logSet(replacementLine, logged); loggedSets.push({ ...parseShorthand(replacementLine), sub: true });
 
     // Canonical remaining-work answer — state truth, not chat memory.
+    // Canonical remaining-work answer — state truth, not chat memory, and NOT the old
+    // circular check. That version read client state and passed when the reply repeated
+    // it, so a wrong state and a faithful reply agreed and both were wrong. Both are now
+    // compared against the expectation derived from the frozen declaration, and the
+    // exact next-up lift is asserted rather than left unchecked (owner P1, 2026-08-03).
     h.setPhase('remaining_question');
     const left = await h.settleReply(SC.remainingAsk);
-    const remaining = await page.evaluate(() => (window.remainingPlannedExercises ? window.remainingPlannedExercises().map(e => e.canonicalName || e.name || e) : []));
-    const namesRemaining = remaining.map(n => String(n).toLowerCase());
-    const answerReflectsState = namesRemaining.length > 0
-      && namesRemaining.every(n => new RegExp(n.split(/\s+/)[0], 'i').test(left));
-    h.beat('remaining-answer-canonical', answerReflectsState,
-      `canonical remaining: [${remaining.join(', ')}]; reply: "${left.slice(0, 160)}"`);
+    const expectation = await proveRemainingWork(page, h, {
+      SC, loggedSets, sub: { ...sub, sourceName: 'Bench Press' }, reply: left, label: 'remaining-answer',
+    });
+    const observedNext = await page.evaluate(() => {
+      const r = window.remainingPlannedExercises ? window.remainingPlannedExercises() : [];
+      const first = r[0];
+      return first ? (first.canonicalName || first.name || String(first)) : null;
+    });
+    const nk = (v) => String(v || '').trim().toLowerCase().replace(/[-\s]+/g, ' ');
+    h.stateCheck('next-up-exact', nk(observedNext) === nk(expectation.nextUp),
+      `next up is "${observedNext}"; the declaration expects "${expectation.nextUp}"`);
 
     h.setPhase('eligible_question');
     const open = await h.settleReply('any tips for keeping my grip strong through these last sets?');
@@ -548,6 +614,7 @@ const DRIVERS = {
     h.setPhase('replacement');
     await page.locator('#thread-messages .replacement-approve-btn').last().click();
     await expect.poll(async () => (await planState(page)).names.some(n => /seated row/i.test(n)), { timeout: 20000 }).toBe(false);
+    h.markMutation();
     const shorthand = `${sub.name.toLowerCase()} ${sub.weight} x ${sub.reps} @2`;
     logged += 1; await h.logSet(shorthand, logged); loggedSets.push({ ...parseShorthand(shorthand), sub: true });
     logged += 1; await h.logSet(shorthand, logged); loggedSets.push({ ...parseShorthand(shorthand), sub: true });
@@ -651,6 +718,9 @@ async function logSet(page, text, expectAfter) {
 // wait would convert a real product problem into a slow green. What changes is that a
 // timeout now reports WHY — still thinking, still typing, or served-but-unrendered —
 // so the next occurrence is diagnosable instead of opaque.
+// The phase the run is currently in, shared with the module-level helpers so a captured
+// message can be attributed to the beat that produced it.
+const currentPhaseRef = { value: 'setup' };
 const THINKING = 'Thinking…';
 const SETTLE_TIMEOUT_MS = 90000;
 const STABLE_MS = 750;
@@ -659,6 +729,15 @@ const STABLE_MS = 750;
 // listener installed in the test. Only the LENGTH and a normalized copy are used for
 // matching; nothing here reaches an artifact.
 const servedReplies = [];
+// EVERY visible Atlas message this run settled, with the phase it landed in and when.
+// This is the CLAIM SWEEP's input: condition 9 used to trust a literal `false`, so the
+// sweep must now be a real observation (owner P1, 2026-08-03). Phase and timestamp come
+// from the harness, so a claim can be placed relative to the actual mutation.
+const visibleMessages = [];
+// When the plan mutation actually became true, set by the driver at the moment the
+// source lift leaves the plan. null until then, and null for a scenario with no
+// substitution — both of which make ANY completed-mutation claim unsupported.
+let mutationAtMs = null;
 const norm = (t) => String(t == null ? '' : t).replace(/\s+/g, ' ').trim();
 
 async function settleReply(page, question) {
@@ -706,6 +785,7 @@ async function settleReply(page, question) {
     throw new Error(`rehearsal: reply never settled for "${String(question).slice(0, 60)}" after ${SETTLE_TIMEOUT_MS / 1000}s — ${lastDiagnosis}`);
   }
   note('settle', `mode=${mode} chars=${settled.length}`);
+  visibleMessages.push({ text: settled, atMs: Date.now(), phase: currentPhaseRef.value });
   return settled;
 }
 
@@ -807,6 +887,7 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
   // Coach-response capture for the live-provider proof (source === 'gemini' on the
   // eligible open turn is the only accepted marker).
   let currentPhase = 'setup';
+  currentPhaseRef.value = 'setup';
   // Client-side failures are EVIDENCE: a swallowed render exception can silently
   // eat a closeout preview. Captured to the artifact dir, never inferred.
   const pageErrors = [];
@@ -898,7 +979,8 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
 
   // ── 3–8. The scenario's DECLARED conversation flow (per-session driver) ───────
   const h = {
-    setPhase: (p) => { currentPhase = p; },
+    setPhase: (p) => { currentPhase = p; currentPhaseRef.value = p; },
+    markMutation: () => { if (mutationAtMs === null) mutationAtMs = Date.now(); },
     beat, stateCheck, note,
     say: (t) => say(page, t),
     logSet: (t, n) => logSet(page, t, n),
@@ -1213,11 +1295,19 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
   }
 
   const threadFull = await page.locator('#thread-messages').innerText();
+  // THE CLAIM SWEEP — derived, never a constant. The previous value was a literal
+  // `false` justified as "asserted per-beat pre-acceptance", but the per-beat checks
+  // covered only selected phrases in selected phases, so condition 9 could not fail.
+  // Now every visible message this run settled is swept against the completed-mutation
+  // patterns and placed relative to the moment the mutation actually became true
+  // (owner P1, 2026-08-03). It fails closed on missing messages or missing timing.
+  const mutationSweep = detectUnsupportedMutationWording({ messages: visibleMessages, mutationAtMs });
   const claims = {
-    unsupported_mutation_wording: false, // asserted per-beat pre-acceptance above
+    unsupported_mutation_wording: mutationSweep.unsupported,
     unsupported_write_claim: /saved to (your|the) sheet/i.test(threadFull.slice(0, threadFull.indexOf('done'))) === true,
-    detail: '',
+    detail: mutationSweep.detail,
   };
+  note('claim-sweep', `${visibleMessages.length} visible messages; mutation at ${mutationAtMs === null ? 'never' : 'recorded'}; unsupported=${mutationSweep.unsupported}`);
 
   const observations = {
     run_purpose: RUN_PURPOSE, session_number: SESSION_NUMBER, run_id: RUN_ID, athlete_id: ATHLETE_ID,

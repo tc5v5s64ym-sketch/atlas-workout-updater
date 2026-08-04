@@ -13,7 +13,10 @@ const assert = require('node:assert/strict');
 
 const {
   CONDITIONS, scoreRehearsalRun, renderMarkdown, compareLedgerToDeclaration, classifyRepeatApprovalProbe,
-  classifySettlement, isSettled, PASS, FAIL, ERROR,
+  classifySettlement, isSettled,
+  deriveExpectedRemaining, compareRemainingToExpectation, replyMatchesExpectation,
+  detectUnsupportedMutationWording,
+  PASS, FAIL, ERROR,
 } = require('../tests/e2e/gate/rehearsal-scorecard');
 const { sessionPlanSetsColumns } = require('../config/columns');
 
@@ -564,5 +567,173 @@ describe('classifySettlement — completion, not brief quiet', () => {
         assert.ok(bad && bad.text, 'only a real, quiet, unserved text may settle');
       }
     }
+  });
+});
+
+
+// ── remaining work: the declaration owns the expectation ─────────────────────
+// The Session 3 defect: the proof read client state and passed when the reply
+// repeated it, so a WRONG state and a FAITHFUL reply agreed and both were wrong.
+
+describe('deriveExpectedRemaining — independent of client state and reply', () => {
+  const PLAN = [
+    { exercise: 'Back Squat', target_sets: 2 },
+    { exercise: 'Overhead Press', target_sets: 2 },
+    { exercise: 'Romanian Deadlift', target_sets: 2 },
+    { exercise: 'Bench Press', target_sets: 2 },
+    { exercise: 'Seated Row', target_sets: 2 },
+    { exercise: 'Bicep Curl', target_sets: 2 },
+  ];
+  const SWAP = { sourceName: 'Bench Press', replacementName: 'Incline Dumbbell Press' };
+  const logged = (...names) => names;
+
+  it('an untouched plan leaves every lift remaining, in order', () => {
+    const e = deriveExpectedRemaining({ plan: PLAN, loggedNames: [], replacement: null });
+    assert.deepEqual(e.remaining, PLAN.map(p => p.exercise));
+    assert.equal(e.nextUp, 'Back Squat');
+    assert.deepEqual(e.complete, []);
+  });
+
+  it('a lift is complete only when its FULL declared set count is logged', () => {
+    const one = deriveExpectedRemaining({ plan: PLAN, loggedNames: logged('back squat'), replacement: null });
+    assert.equal(one.nextUp, 'Back Squat', 'one of two sets does not complete a lift');
+    const two = deriveExpectedRemaining({ plan: PLAN, loggedNames: logged('back squat', 'back squat'), replacement: null });
+    assert.equal(two.nextUp, 'Overhead Press');
+    assert.deepEqual(two.complete, ['Back Squat']);
+  });
+
+  it('an accepted substitution takes the source slot and POSITION, and retires the source', () => {
+    const e = deriveExpectedRemaining({ plan: PLAN, loggedNames: [], replacement: SWAP });
+    assert.deepEqual(e.remaining, ['Back Squat', 'Overhead Press', 'Romanian Deadlift', 'Incline Dumbbell Press', 'Seated Row', 'Bicep Curl'],
+      'the replacement must occupy the source position, not be appended');
+    assert.deepEqual(e.retired, ['Bench Press']);
+  });
+
+  // THE BITE the owner asked for: client state and the reply AGREE with each other and
+  // disagree with the declaration. Both must fail, on their own grounds.
+  it('BITE — a corrupt client state and a reply that faithfully repeats it BOTH fail', () => {
+    const e = deriveExpectedRemaining({
+      plan: PLAN,
+      loggedNames: logged('back squat', 'back squat', 'overhead press', 'overhead press',
+        'romanian deadlift', 'romanian deadlift', 'incline dumbbell press', 'incline dumbbell press'),
+      replacement: SWAP,
+    });
+    assert.deepEqual(e.remaining, ['Seated Row', 'Bicep Curl']);
+
+    // The corruption: the substituted-away Bench Press is still listed as remaining.
+    const corruptState = ['Bench Press', 'Seated Row', 'Bicep Curl'];
+    const stateCmp = compareRemainingToExpectation(corruptState, e);
+    assert.equal(stateCmp.ok, false, 'a wrong client state must fail against the declaration');
+
+    // The reply agrees with that wrong state — the exact false green being removed.
+    const faithfulReply = 'You still have Bench Press, Seated Row and Bicep Curl left.';
+    const replyCmp = replyMatchesExpectation(faithfulReply, e);
+    assert.equal(replyCmp.ok, false, 'a reply repeating a wrong state must fail against the declaration');
+    assert.match(replyCmp.problems.join(' '), /accepted substitution removed from the plan/);
+  });
+
+  it('order matters — the same set of lifts in the wrong order fails', () => {
+    const e = deriveExpectedRemaining({ plan: PLAN, loggedNames: [], replacement: null });
+    assert.equal(compareRemainingToExpectation(e.remaining.slice().reverse(), e).ok, false);
+    assert.equal(compareRemainingToExpectation(e.remaining, e).ok, true);
+  });
+
+  it('a reply omitting a genuinely remaining lift fails', () => {
+    const e = deriveExpectedRemaining({ plan: PLAN, loggedNames: [], replacement: null });
+    assert.equal(replyMatchesExpectation('You have Back Squat left.', e).ok, false);
+  });
+
+  it('a reply naming an already-complete lift fails', () => {
+    const e = deriveExpectedRemaining({
+      plan: PLAN, loggedNames: logged('back squat', 'back squat'), replacement: null,
+    });
+    assert.equal(replyMatchesExpectation(`Left: ${e.remaining.join(', ')}, and Back Squat.`, e).ok, false);
+  });
+
+  it('does not treat a shared first word as a match — "Bench" is not "Bench Press"', () => {
+    const e = { remaining: ['Bench Press'], complete: [], retired: [] };
+    assert.equal(replyMatchesExpectation('Next up: Bench.', e).ok, false,
+      'a partial name must not satisfy a full-name expectation');
+    assert.equal(replyMatchesExpectation('Next up: Bench Press.', e).ok, true);
+  });
+
+  it('fails closed on a missing or malformed observation', () => {
+    const e = deriveExpectedRemaining({ plan: PLAN, loggedNames: [], replacement: null });
+    for (const bad of [null, undefined, 'not-an-array', 42]) {
+      assert.equal(compareRemainingToExpectation(bad, e).ok, false);
+    }
+    assert.equal(compareRemainingToExpectation(['x'], null).ok, false);
+  });
+});
+
+// ── the claim sweep: no constant may stand in for evidence ───────────────────
+
+describe('detectUnsupportedMutationWording — derived, phase-bounded, fails closed', () => {
+  const claim = 'Done — I\'ve noted the substitution for you.';
+
+  it('BITE — completed-mutation wording BEFORE the mutation fails condition 9', () => {
+    const sweep = detectUnsupportedMutationWording({
+      messages: [{ text: claim, atMs: 100, phase: 'substitution_ask' }],
+      mutationAtMs: 500,
+    });
+    assert.equal(sweep.unsupported, true);
+    assert.match(sweep.detail, /before the mutation/);
+
+    // …and the scorecard condition it feeds actually turns red.
+    const obs = greenObservations();
+    obs.claims = { unsupported_mutation_wording: sweep.unsupported, unsupported_write_claim: false, detail: sweep.detail };
+    const card = scoreRehearsalRun(obs);
+    const cond = card.conditions.find(c => c.id === 'no_unsupported_claims');
+    assert.equal(cond.status, FAIL, 'condition 9 must fail on unsupported completed-mutation wording');
+    assert.equal(card.rehearsal_eligible, false);
+  });
+
+  it('the SAME wording after the mutation is honest and passes', () => {
+    const sweep = detectUnsupportedMutationWording({
+      messages: [{ text: claim, atMs: 900, phase: 'replacement' }],
+      mutationAtMs: 500,
+    });
+    assert.equal(sweep.unsupported, false);
+  });
+
+  it('a completed-mutation claim in a run where NO mutation happened is unsupported', () => {
+    const sweep = detectUnsupportedMutationWording({
+      messages: [{ text: 'Bench Press has been replaced.', atMs: 10, phase: 'x' }],
+      mutationAtMs: null,
+    });
+    assert.equal(sweep.unsupported, true);
+    assert.match(sweep.detail, /no mutation occurred/);
+  });
+
+  it('a clean thread — including the engine\'s own pre-acceptance wording — passes', () => {
+    const sweep = detectUnsupportedMutationWording({
+      messages: [
+        { text: 'Replace Bench Press with Incline Dumbbell Press — 185 lb 5 reps @ 2 RIR x 2 sets.', atMs: 10, phase: 'substitution_ask' },
+        { text: 'Approve the swap and I will set it.', atMs: 20, phase: 'prescription_question' },
+      ],
+      mutationAtMs: null,
+    });
+    assert.equal(sweep.unsupported, false, sweep.detail);
+  });
+
+  it('fails CLOSED when no messages were captured — a constant false is what this replaces', () => {
+    for (const messages of [null, undefined, 'nope']) {
+      assert.equal(detectUnsupportedMutationWording({ messages, mutationAtMs: 500 }).unsupported, true);
+    }
+  });
+
+  it('fails CLOSED when a claim carries no timestamp', () => {
+    const sweep = detectUnsupportedMutationWording({
+      messages: [{ text: claim, atMs: null, phase: 'x' }], mutationAtMs: 500,
+    });
+    assert.equal(sweep.unsupported, true);
+    assert.match(sweep.detail, /cannot be shown to be earned/);
+  });
+
+  it('records the phase of every unsupported claim so a failure names where it happened', () => {
+    const sweep = detectUnsupportedMutationWording({
+      messages: [{ text: claim, atMs: 1, phase: 'prescription_question' }], mutationAtMs: 500,
+    });
+    assert.equal(sweep.matches[0].phase, 'prescription_question');
   });
 });
