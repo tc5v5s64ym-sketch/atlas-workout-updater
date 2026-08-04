@@ -29,6 +29,7 @@ const brainShadow = require('../services/brainShadow');
 const coachShadowSheet = require('../services/coachShadowSheet');
 const coachResponseSheet = require('../services/coachResponseSheet');
 const { SYNTHETIC_ORIGINS, EVIDENCE_CLASSES } = require('../services/evidenceProvenance');
+const { silentClassifier, recordProviderCalls } = require('./helpers/noProviderCall');
 
 const SYNTHETIC = { evidence_class: EVIDENCE_CLASSES.SYNTHETIC, evidence_eligible: false, request_origin: 'playwright' };
 const OWNER = { evidence_class: EVIDENCE_CLASSES.ATHLETE_UI, evidence_eligible: true, request_origin: 'athlete_ui' };
@@ -42,9 +43,18 @@ process.env.ATLAS_BRAIN_SHADOW_PERSIST = '1';
 // The observe calls are fire-and-forget promise chains; drain the microtask queue.
 const drain = () => new Promise(r => setTimeout(r, 15));
 
+// HERMETIC. `classify` is stubbed alongside `append`: without it the REAL
+// classifyIntent runs, and on a machine carrying a GEMINI_API_KEY that is a live
+// network call to the provider, which outruns the 15 ms drain and makes these
+// assertions fail for a reason that has nothing to do with quota containment.
+// The stub returns null — exactly what the real classifier returns with no key —
+// so credential-free behavior is unchanged.
 async function intentAppends(evidence) {
   const rows = [];
-  intentShadow._resetForTesting({ append: async (tab, r) => { rows.push({ tab, r }); } });
+  intentShadow._resetForTesting({
+    classify: silentClassifier(),
+    append: async (tab, r) => { rows.push({ tab, r }); },
+  });
   intentShadow.observeChatMessage('bench press 135 8/2', { evidence });
   await drain();
   return rows;
@@ -136,13 +146,53 @@ test('2c-bis. a synthetic-CLASS row with a non-declared origin still persists, t
 });
 
 test('2d. the ring and console line are kept, so the debug endpoint and divergence tooling still see synthetic turns', async () => {
-  intentShadow._resetForTesting({ append: async () => {} });
+  intentShadow._resetForTesting({ classify: silentClassifier(), append: async () => {} });
   const count = () => intentShadow.getShadowLog().entries.length;
   const before = count();
   intentShadow.observeChatMessage('bench press 135 8/2', { evidence: SYNTHETIC });
   await drain();
   assert.equal(count(), before + 1,
     'the in-memory ring still records the synthetic turn — only the Sheet mirror is skipped');
+});
+
+// ── 2e. Hermeticity: these assertions never depend on an ambient credential ──
+// The stubs above would rot silently — remove them and credential-free CI stays
+// green while a credentialed machine quietly calls the provider again. This proves
+// the observation path issues NO outbound request, on the attempt, so it needs
+// neither network nor credential to bite.
+
+test('2e. the shadow observation path makes no provider call, with or without an ambient key', async () => {
+  const attempts = await recordProviderCalls(async () => {
+    await intentAppends(OWNER);
+    await intentAppends(SYNTHETIC);
+    await brainAppends(OWNER);
+  });
+  assert.deepEqual(attempts, [],
+    `a unit test must not reach a provider; attempted: ${attempts.join(', ')}`);
+});
+
+test('2e-bis. the tripwire really bites — the unstubbed classifier would call out when a key exists', async () => {
+  // Proves 2e is not vacuous. With a key present and NO classify stub, the real
+  // classifyIntent reaches for the provider. The key is fake and the tripwire
+  // rejects before any socket opens, so this never leaves the machine.
+  const hadKey = Object.prototype.hasOwnProperty.call(process.env, 'GEMINI_API_KEY');
+  const priorKey = process.env.GEMINI_API_KEY;
+  process.env.GEMINI_API_KEY = 'test-only-not-a-real-key';
+  try {
+    const attempts = await recordProviderCalls(async () => {
+      intentShadow._resetForTesting({ append: async () => {} });   // classify NOT stubbed
+      intentShadow.observeChatMessage('bench press 135 8/2', { evidence: OWNER });
+      await drain();
+    });
+    assert.ok(attempts.length > 0,
+      'the unstubbed classifier must attempt a provider call — otherwise test 2e proves nothing');
+    assert.ok(attempts.every(h => /googleapis\.com$/.test(h)),
+      `expected the provider host, saw: ${attempts.join(', ')}`);
+  } finally {
+    if (hadKey) process.env.GEMINI_API_KEY = priorKey;
+    else delete process.env.GEMINI_API_KEY;
+    intentShadow._resetForTesting({ classify: silentClassifier(), append: async () => {} });
+  }
 });
 
 // ── 3. The live-test runner still blocks every state-mutating write ─────────
