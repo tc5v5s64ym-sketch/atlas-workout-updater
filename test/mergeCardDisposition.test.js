@@ -200,6 +200,9 @@ describe('merge card — the Atlas Contract / Systems Review block', () => {
   // and that field alone must stop being reported — proving the check reads all three
   // rather than tripping once on something else.
   for (const [field, placeholder] of [
+    // The load-bearing one first: this is the verdict the CLAUDE.md merge gate turns
+    // on, and it is the field BOTH exact-head reviews of PR #1257 found unguarded.
+    ['Required', 'required (name the trigger) / not required (say why'],
     ['Exact reviewed head', 'full 40-character commit SHA, or n/a'],
     ['Reviewer', 'who or what performed the review, or n/a'],
     ['Findings and dispositions', 'each finding + fixed / non-issue / routed'],
@@ -211,6 +214,16 @@ describe('merge card — the Atlas Contract / Systems Review block', () => {
     });
   }
 
+  // The Required field is guarded by a PREFIX shared with the merge-card table row, so
+  // both carriers of the same verdict fail while unfilled. Proven separately from the
+  // bullet above, since the row and the bullet are different lines in the template.
+  it('catches the unfilled Required verdict in the merge-card table row too', () => {
+    const row = '| **Atlas Contract / Systems Review** | <!-- required (name the trigger) / not required (say why) — see the block below --> |';
+    const failure = check(`${CARD_OK}${row}\n`);
+    assert.ok(failure.includes('required (name the trigger) / not required (say why'),
+      `the table row's unfilled verdict must fail too; got: ${failure}`);
+  });
+
   it('passes once every field carries a real value', () => {
     const filled = [
       '### Atlas Contract / Systems Review',
@@ -219,6 +232,22 @@ describe('merge card — the Atlas Contract / Systems Review block', () => {
       '- Exact reviewed head: 50d75cbe1c59847ad91084bc75ae02b45330ed77',
       '- Reviewer: clean-context systems review',
       '- Findings and dispositions: one P1, fixed',
+      '',
+    ].join('\n');
+    assert.equal(check(`${CARD_OK}${filled}`), '');
+  });
+
+  // The other legitimate verdict: a PR that genuinely fired no trigger must be able to
+  // say so and pass. A guard that only accepted "required" would push PRs to claim a
+  // review they did not need.
+  it('passes an explicit not-required verdict with a reason', () => {
+    const filled = [
+      '### Atlas Contract / Systems Review',
+      '',
+      '- Required: not required — documentation only; no trigger in the list applies',
+      '- Exact reviewed head: n/a',
+      '- Reviewer: n/a',
+      '- Findings and dispositions: n/a',
       '',
     ].join('\n');
     assert.equal(check(`${CARD_OK}${filled}`), '');

@@ -88,11 +88,17 @@ Dale owns product direction, real production-data authorization, genuine gym/dev
 
 Dale may merge anything or revoke authority, but routine PRs do not wait for him to click merge.
 
-### ChatGPT — project decision desk
+### Project decision desk and the Atlas Contract / Systems Review
 
-ChatGPT helps Dale resolve genuinely non-derivable product/scope/trust forks and performs a risk-triggered Atlas Contract Review.
+The desk does two separate things. ChatGPT helps Dale resolve genuinely non-derivable product, scope, and trust forks. Separately, one review lane — the **Atlas Contract / Systems Review** — reads a triggered PR.
 
-It is not a routine merge gate and never authorizes a production write.
+**Use this one name everywhere.** The lane was formerly called the "ChatGPT Atlas Contract Review". Two names for one lane read as two lanes. There is one lane.
+
+ChatGPT may perform the review. So may a clean-context review by the implementation agent. The merge card records **who or what** performed it, so the performer is always visible.
+
+The review never authorizes a production write, and it is never a GitHub status, a required check, or a reviewer account.
+
+It is not a routine gate on every PR, but the trigger list below is deliberately wide, and most campaign work touches it. Treat "no trigger fired" as a claim that must survive reading the list, not as the default.
 
 #### When the Atlas Contract / Systems Review is required
 
@@ -179,7 +185,7 @@ Each drift guard is a CI check that fails the build — a rule that lives only i
 6. Run focused tests plus every applicable build/test/lint/wiring/secret/E2E/trust check.
 7. Inspect the diff, commits, secrets, and unrelated drift.
 8. Open one PR with the Atlas Merge Card and one primary risk label.
-9. Obtain ChatGPT Atlas Contract Review only when risk-triggered.
+9. Obtain the Atlas Contract / Systems Review when a trigger fires, and record it in the merge card.
 10. Address real in-scope advisory findings without expanding the PR.
 11. Merge the exact head after every hard gate passes and no owner authorization remains outstanding.
 12. Verify `main` and deployment, update the campaign card/completion record, and continue from a fresh branch.

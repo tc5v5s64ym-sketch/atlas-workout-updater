@@ -88,10 +88,18 @@ jobs:
               'exact commands/checks + results',
               'independent agent/optional clean review: fixed / non-issue / none',
               // The Atlas Contract / Systems Review block (owner instruction 2026-08-03).
-              // These replace the retired 'NON-BLOCKING / READY / BLOCKING / not
+              // These four replace the retired 'NON-BLOCKING / READY / BLOCKING / not
               // risk-triggered' sentinel: the template row it named no longer exists, so
               // it could only false-fail a body that quotes the old wording, while the
-              // four fields that replaced it were unguarded. Net coverage increases.
+              // fields that replaced it were unguarded. Net coverage increases.
+              //
+              // The first sentinel is the load-bearing one. It is a PREFIX shared by BOTH
+              // placeholders that carry the required/not-required verdict — the merge-card
+              // table row and the `- Required:` bullet — because that verdict is the field
+              // the merge gate in CLAUDE.md actually turns on. Guarding only the head, the
+              // reviewer, and the dispositions would let a PR leave "was a review required
+              // at all" blank and still go green.
+              'required (name the trigger) / not required (say why',
               'full 40-character commit SHA, or n/a',
               'who or what performed the review, or n/a',
               'each finding + fixed / non-issue / routed',
