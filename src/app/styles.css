@@ -1741,6 +1741,27 @@ a.lift-link:hover { text-decoration: underline; }
 .review.done .rv-note { display: none; }
 .review.done .rv-saved { display: flex; }
 
+/* Rows committed, plan-ledger seal unverified. NOT `done`: the retry is still the
+   right next tap, so `.rv-act` stays. The note carries the reassurance now, so it
+   must stop reading as faint fine print — at 0.66rem in --faint it was the least
+   legible line on the card, which is the wrong weight for "your sets are safe". */
+.review.rows-written .rv-note {
+  font-family: var(--disp);
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--ok);
+}
+
+/* A card built AFTER the commit: its own rows are NOT in the sheet, so this is not
+   an --ok state — it carries a caution and a reassurance at once, and must not be
+   mistaken at a glance for the saved state above. */
+.review.prior-rows-committed .rv-note {
+  font-family: var(--disp);
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--muted);
+}
+
 .session-item {
   background: var(--card);
   border: 1px solid var(--border);
