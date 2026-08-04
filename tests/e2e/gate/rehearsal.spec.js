@@ -32,7 +32,7 @@ const {
   scoreRehearsalRun, renderMarkdown, compareLedgerToDeclaration, classifyRepeatApprovalProbe,
   classifySettlement, isSettled,
   deriveExpectedRemaining, compareRemainingToExpectation, replyMatchesExpectation,
-  detectUnsupportedMutationWording, compareReplacementIdentity,
+  detectUnsupportedMutationWording, compareReplacementIdentity, pinMatchesExpectation,
 } = require('./rehearsal-scorecard');
 const { REHEARSAL_SESSION } = require('./rehearsal-run-purpose');
 const { measureSourceTree } = require('./rehearsal-source-facts');
@@ -310,7 +310,7 @@ function parseProposalLine(line) {
 
 // Assert the STAGED (unaccepted) proposal state: source lift still in the plan and
 // still current, no completed-mutation wording, and the parsed prescription present.
-async function assertStagedProposal(page, h, { threadBefore, sourceRegex }) {
+async function assertStagedProposal(page, h, { bubblesBefore, sourceRegex }) {
   await expect(page.locator('#thread-messages .replacement-proposal-line').last()).toBeVisible({ timeout: 60000 });
   const line = await page.locator('#thread-messages .replacement-proposal-line').last().innerText();
   const rx = parseProposalLine(line);
@@ -320,10 +320,21 @@ async function assertStagedProposal(page, h, { threadBefore, sourceRegex }) {
   const stillCurrent = sourceRegex.test(after.names[after.index] || '');
   h.beat('no-mutation-before-acceptance', after.names.some(n => sourceRegex.test(n)) && stillCurrent,
     `plan after ask: [${after.names.join(', ')}], current index ${after.index}`);
-  const delta = (await page.locator('#thread-messages').innerText()).slice(threadBefore.length);
-  const mutationWording = /i've noted the substitution|you're substituting|has been (swapped|replaced)/i.test(delta);
+  // P1-4: read the bubbles this ask produced BY ELEMENT, never
+  // `wholeThread.slice(before.length)`. That offset slice carries the same shrinking-
+  // prefix assumption that produced the "ve." fragment, so a pre-acceptance
+  // completed-mutation claim could be sliced away or missed entirely.
+  const askBubbles = page.locator('#thread-messages .chat-bubble-atlas');
+  const askTotal = await askBubbles.count();
+  const newTexts = [];
+  for (let i = Math.max(0, bubblesBefore); i < askTotal; i += 1) {
+    newTexts.push(String(await askBubbles.nth(i).innerText().catch(() => '')).replace(/\s+/g, ' ').trim());
+  }
+  const mutationWording = newTexts.some(t => /i've noted the substitution|you're substituting|has been (swapped|replaced)/i.test(t));
   h.beat('no-completed-mutation-wording', !mutationWording,
-    mutationWording ? 'completed-mutation wording appeared before acceptance' : 'clean');
+    mutationWording
+      ? `completed-mutation wording appeared before acceptance across ${newTexts.length} new bubble(s)`
+      : `clean across ${newTexts.length} new bubble(s) read by element`);
   // The INDEPENDENT replacement identity, captured HERE — while the proposal is staged
   // and before any durable row is read (owner P1, 2026-08-03). The engine resolves the
   // replacement's lift code and asks the read-only recommender for its prescription, so
@@ -331,11 +342,23 @@ async function assertStagedProposal(page, h, { threadBefore, sourceRegex }) {
   // later agree with.
   const staged = proposedReplacementLiftCodes.filter(c => c.phase === 'substitution_ask');
   const replacementLiftCode = staged.length ? staged[staged.length - 1].lift_code : '';
-  h.beat('replacement-identity-captured', Boolean(replacementLiftCode),
-    replacementLiftCode
-      ? `the accepted proposal resolves to lift code ${replacementLiftCode}, captured before any durable read`
-      : 'no engine prescription call was observed while the proposal was staged, so the replacement identity cannot be established independently');
-  return { line, ...rx, replacementLiftCode };
+  // P1-2: the RETAINED SOURCE SLOT, read off the live plan while the source lift is
+  // still in it and BEFORE any mutation or durable read. Deriving it from the accepted
+  // ledger rows and then checking the outcome against it let a consistently wrong id
+  // satisfy itself, exactly as the lift code did. app.js reads the same field
+  // (`exs[idx].plan_item_id`) when it emits the outcome.
+  const sourcePlanItemId = await page.evaluate((rx2) => {
+    const p = window.getActivePlannedSession();
+    if (!p || !Array.isArray(p.exercises)) return '';
+    const re = new RegExp(rx2, 'i');
+    const slot = p.exercises.find(e => re.test(e.canonicalName || e.name || ''));
+    return (slot && slot.plan_item_id) || '';
+  }, sourceRegex.source);
+  h.beat('replacement-identity-captured', Boolean(replacementLiftCode) && Boolean(sourcePlanItemId),
+    (replacementLiftCode && sourcePlanItemId)
+      ? `the accepted proposal resolves to lift code ${replacementLiftCode} on source slot ${sourcePlanItemId}, both captured before any mutation or durable read`
+      : `identity incomplete before mutation: lift code ${replacementLiftCode || '(none observed)'}, source slot ${sourcePlanItemId || '(none read from the live plan)'}`);
+  return { line, ...rx, replacementLiftCode, sourcePlanItemId };
 }
 
 // Assert the proposal-grounded prescription answer: carries the proposal's own
@@ -371,9 +394,9 @@ const DRIVERS = {
     await h.snap('03-source-current.png');
 
     h.setPhase('substitution_ask');
-    const threadBefore = await page.locator('#thread-messages').innerText();
+    const bubblesBefore = await page.locator('#thread-messages .chat-bubble-atlas').count();
     await h.say(SC.substitutionAsk);
-    const sub = await assertStagedProposal(page, h, { threadBefore, sourceRegex: /bench press/i });
+    const sub = await assertStagedProposal(page, h, { bubblesBefore, sourceRegex: /bench press/i });
     h.beat('substitution-lane', /replace bench press with/i.test(sub.line), `proposal: "${sub.line.slice(0, 160)}"`);
     const approveButtons = await page.locator('#thread-messages .replacement-approve-btn').count();
     h.stateCheck('one-bounded-proposal', approveButtons === 1, `${approveButtons} approve control(s) in the thread`);
@@ -406,10 +429,12 @@ const DRIVERS = {
       SC, loggedSets, sub: { ...sub, sourceName: 'Bench Press' }, label: 'post-swap',
     });
     const pinText = await page.locator('#session-pin').innerText().catch(() => '');
-    const pinCmp = replyMatchesExpectation(pinText, { remaining: [], complete: [], retired: expectation.retired });
+    // The pin must name the EXACT expected current lift. Checking only for a retired
+    // name let a blank pin, or a pin naming the wrong lift, pass (owner P1, 2026-08-03).
+    const pinCmp = pinMatchesExpectation(pinText, expectation);
     h.stateCheck('pin-agrees-after-swap', pinCmp.ok,
       pinCmp.ok
-        ? `the visible pin names no retired lift; next up ${expectation.nextUp || '(none)'}`
+        ? `the visible pin names the expected current lift "${expectation.nextUp}" and nothing retired or complete`
         : `${pinCmp.problems.join('; ')} — pin: "${pinText.replace(/\s+/g, ' ').slice(0, 160)}"`);
 
     h.setPhase('eligible_question');
@@ -455,9 +480,9 @@ const DRIVERS = {
     }
     // The unavailability statement the product's own clarify asks for stages the
     // ONE bounded proposal, which the corrections then KEEP.
-    const threadBefore = await page.locator('#thread-messages').innerText();
+    const bubblesBefore = await page.locator('#thread-messages .chat-bubble-atlas').count();
     await h.say(SC.unavailabilityStatement);
-    const sub = await assertStagedProposal(page, h, { threadBefore, sourceRegex: /bench press/i });
+    const sub = await assertStagedProposal(page, h, { bubblesBefore, sourceRegex: /bench press/i });
     h.beat('one-proposal-staged-and-kept', /replace bench press with/i.test(sub.line),
       `proposal after "${SC.unavailabilityStatement}": "${sub.line.slice(0, 140)}"`);
     await h.snap('04-corrected-proposal.png');
@@ -505,9 +530,9 @@ const DRIVERS = {
     h.beat('bench-current', /bench press/i.test(st.names[st.index] || ''), `current lift: "${st.names[st.index] || ''}"`);
 
     h.setPhase('substitution_ask');
-    const threadBefore = await page.locator('#thread-messages').innerText();
+    const bubblesBefore = await page.locator('#thread-messages .chat-bubble-atlas').count();
     await h.say(SC.substitutionAsk);
-    const sub = await assertStagedProposal(page, h, { threadBefore, sourceRegex: /bench press/i });
+    const sub = await assertStagedProposal(page, h, { bubblesBefore, sourceRegex: /bench press/i });
     h.beat('substitution-lane', /replace bench press with/i.test(sub.line), `proposal: "${sub.line.slice(0, 160)}"`);
     await h.snap('04-substitution-proposal.png');
 
@@ -615,9 +640,9 @@ const DRIVERS = {
       `current lift after the completed press: "${st.names[st.index] || ''}"`);
 
     h.setPhase('substitution_ask');
-    const threadBefore = await page.locator('#thread-messages').innerText();
+    const bubblesBefore = await page.locator('#thread-messages .chat-bubble-atlas').count();
     await h.say(SC.substitutionAsk);
-    const sub = await assertStagedProposal(page, h, { threadBefore, sourceRegex: /seated row/i });
+    const sub = await assertStagedProposal(page, h, { bubblesBefore, sourceRegex: /seated row/i });
     h.beat('substitution-lane', /replace seated row with/i.test(sub.line), `proposal: "${sub.line.slice(0, 160)}"`);
     await h.snap('04-substitution-proposal.png');
 
@@ -789,6 +814,10 @@ async function say(page, text) {
   }
   await page.locator('#preview-btn').click();
   note('say', text);
+  // P1-4: a turn that does not go through settleReply (the substitution ask, the
+  // unavailability statement, a logged set) still renders Atlas bubbles, and any
+  // completed-mutation claim in them must reach the sweep.
+  await sweepAtlasBubbles(page);
 }
 
 const loggedCount = (page) => page.evaluate(() => (window.getSessionLog ? window.getSessionLog().length : -1));
@@ -833,6 +862,29 @@ const currentPhaseRef = { value: 'setup' };
 // finding 2 requires: it is observed before any durable read, so Log_Cleaned,
 // Session_Plans and Session_Plan_Sets are compared to it and can never define it.
 const proposedReplacementLiftCodes = [];
+// P1-5: coach responses whose body could not be parsed into a message. A settle that
+// cannot see the served reply must FAIL CLOSED rather than fall back on stability —
+// treating unreadable capture as "no message was served" reopens the partial-render
+// false green precisely when the authoritative signal is missing.
+const coachCaptureFailures = { count: 0 };
+// P1-4: EVERY Atlas bubble this run rendered, swept by ELEMENT INDEX rather than by
+// slicing the whole thread. The old sweep only saw settleReply turns, so a bubble
+// produced by `say` (the substitution ask) never entered the claim sweep at all.
+const seenBubbles = { count: 0 };
+
+// Sweep any Atlas bubbles that appeared since the last sweep into the claim record.
+// Reads each bubble ELEMENT, so a shrinking prefix cannot shift the reading.
+async function sweepAtlasBubbles(page) {
+  const bubbles = page.locator('#thread-messages .chat-bubble-atlas');
+  const total = await bubbles.count().catch(() => seenBubbles.count);
+  for (let i = seenBubbles.count; i < total; i += 1) {
+    const text = await bubbles.nth(i).innerText().catch(() => '');
+    const clean = String(text).replace(/\s+/g, ' ').trim();
+    if (clean) visibleMessages.push({ text: clean, atMs: Date.now(), phase: currentPhaseRef.value, index: i });
+  }
+  seenBubbles.count = Math.max(seenBubbles.count, total);
+  return total;
+}
 const THINKING = 'Thinking…';
 const SETTLE_TIMEOUT_MS = 90000;
 const STABLE_MS = 750;
@@ -856,6 +908,7 @@ async function settleReply(page, question) {
   const bubbles = page.locator('#thread-messages .chat-bubble-atlas');
   const bubblesBefore = await bubbles.count();
   const servedBefore = servedReplies.length;
+  const captureFailuresBefore = coachCaptureFailures.count;
 
   await say(page, question);
 
@@ -875,6 +928,7 @@ async function settleReply(page, question) {
     empty: 'the bubble was empty — rendering had not begun',
     growing: 'the bubble text was still growing — typeOut had not finished',
     'partial-render': 'the bubble stopped changing while still shorter than the reply the server served — a partial render, not a settled one (this is the "ve." class)',
+    'capture-failed': 'a coach response for this turn could not be parsed, so the served reply is unknown; settlement fails closed rather than trusting quiet',
   };
   try {
     await expect.poll(async () => {
@@ -888,6 +942,9 @@ async function settleReply(page, question) {
         stableForMs: stableSince === null ? 0 : Date.now() - stableSince,
         stableThresholdMs: STABLE_MS,
         thinkingMarker: THINKING,
+        // P1-5: an unreadable coach response during THIS turn must not be mistaken for
+        // a path that genuinely serves no message.
+        captureFailed: coachCaptureFailures.count > captureFailuresBefore,
       });
       if (isSettled(outcome)) { settled = text; mode = outcome; return true; }
       lastDiagnosis = DIAGNOSIS[outcome] || `settlement refused (${outcome})`;
@@ -897,7 +954,7 @@ async function settleReply(page, question) {
     throw new Error(`rehearsal: reply never settled for "${String(question).slice(0, 60)}" after ${SETTLE_TIMEOUT_MS / 1000}s — ${lastDiagnosis}`);
   }
   note('settle', `mode=${mode} chars=${settled.length}`);
-  visibleMessages.push({ text: settled, atMs: Date.now(), phase: currentPhaseRef.value });
+  await sweepAtlasBubbles(page);   // P1-4: every bubble, by element identity
   return settled;
 }
 
@@ -1055,7 +1112,12 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
       // served for this turn. Held in memory only — never written to an artifact.
       const served = data && typeof data.message === 'string' ? data.message : null;
       if (served && served.trim()) servedReplies.push(served);
-    } catch { /* recorded as absent, never guessed */ }
+      else if (!data || typeof data !== 'object') coachCaptureFailures.count += 1;
+    } catch {
+      // P1-5: an unparseable coach response is MISSING EVIDENCE, not evidence of a
+      // path that serves no message. Recorded so settlement can fail closed.
+      coachCaptureFailures.count += 1;
+    }
   });
 
   // ── 1. Open the real built client; prove no pre-seeded identity ───────────────
@@ -1305,9 +1367,19 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
       `text run says "${overallLine || '(no Overall line)'}" vs json overall ${reviewJson && reviewJson.overall}`);
   }
 
+  // ── 13a. PRESERVE this session's visible evidence BEFORE any teardown ────────
+  // The teardown below reloads the app, which destroys the completed workout's thread.
+  // Deriving the write-claim verdict from the post-reload page would let an unsupported
+  // save claim in the ORIGINAL thread vanish and condition 9 pass (owner P1,
+  // 2026-08-03). Both claim verdicts are computed from evidence captured here; the
+  // fresh session's thread is separate evidence and never a replacement carrier.
+  await sweepAtlasBubbles(page);
+  const originalThreadText = await page.locator('#thread-messages').innerText();
+  const originalVisibleMessages = visibleMessages.slice();
+
   // ── 13b. Cross-session teardown and inheritance (declared scenarios only) ────
-  // Runs AFTER every durable read for this session, so the reload cannot disturb the
-  // evidence above, and performs no second workout write.
+  // Runs AFTER every durable read AND after the evidence above is preserved, and
+  // performs no second workout write.
   if (SC.proveTeardown) {
     currentPhase = 'teardown';
     await proveTeardownAndNoInheritance(page, h, { base });
@@ -1371,28 +1443,33 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
     // longer satisfy itself (owner P1, 2026-08-03).
     const revLiftIdx = sessionPlanSetsColumns.indexOf('planned_lift_code');
     const revSrcIdx = sessionPlanSetsColumns.indexOf('recommendation_source');
+    const revItemIdx = sessionPlanSetsColumns.indexOf('plan_item_id');
     const identityCmp = compareReplacementIdentity(
       {
         replacementLiftCode: sub.replacementLiftCode,
         sourceLiftCode: sub.sourceLift,
-        sourcePlanItemId: sourceItemIds.length === 1 ? sourceItemIds[0] : null,
+        // CAPTURED from the live plan before mutation — never `sourceItemIds`, which is
+        // derived from the very accepted rows this comparison is checking (owner P1).
+        sourcePlanItemId: sub.sourcePlanItemId,
       },
       {
         logLiftCodes: subLogLiftCodes,
         outcomePerformedLiftCode: String(oRow[spPerformedIdx] || '').trim(),
         outcomePlannedLiftCode: String(oRow[spPlannedIdx] || '').trim(),
         outcomePlanItemId: String(oRow[spItemIdx] || '').trim(),
+        acceptedSourcePlanItemIds: sourceItemIds,
         ledgerRevisionLiftCodes: spsRows
           .filter(r => String(r[revSrcIdx] || '').trim() !== 'accepted')
           .map(r => String(r[revLiftIdx] || '').trim()),
+        ledgerRevisionPlanItemIds: spsRows
+          .filter(r => String(r[revSrcIdx] || '').trim() !== 'accepted')
+          .map(r => String(r[revItemIdx] || '').trim()),
       },
     );
-    const outcomeBound = substitutedOutcomes.length === 1
-      && sourceItemIds.length === 1
-      && identityCmp.ok;
+    const outcomeBound = substitutedOutcomes.length === 1 && identityCmp.ok;
     beat('one-substituted-outcome', outcomeBound,
       outcomeBound
-        ? `one substituted item_outcome, bound to source slot ${sourceItemIds[0]}, every durable surface agreeing with the proposal's own lift code ${String(sub.replacementLiftCode).toUpperCase()}`
+        ? `one substituted item_outcome; every durable surface agrees with the identity captured before mutation (lift ${String(sub.replacementLiftCode).toUpperCase()}, slot ${sub.sourcePlanItemId})`
         : `${substitutedOutcomes.length} substituted item_outcome row(s); source slot ${sourceItemIds.join('/') || '(none)'}; ${identityCmp.problems.join('; ')}`);
   } else {
     beat('zero-substituted-outcomes', substitutedOutcomes.length === 0,
@@ -1438,20 +1515,21 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
     gemini = eligible.filter(r => r.source === 'gemini');
   }
 
-  const threadFull = await page.locator('#thread-messages').innerText();
+  // The ORIGINAL session's thread, captured before any teardown reload.
+  const threadFull = originalThreadText;
   // THE CLAIM SWEEP — derived, never a constant. The previous value was a literal
   // `false` justified as "asserted per-beat pre-acceptance", but the per-beat checks
   // covered only selected phrases in selected phases, so condition 9 could not fail.
   // Now every visible message this run settled is swept against the completed-mutation
   // patterns and placed relative to the moment the mutation actually became true
   // (owner P1, 2026-08-03). It fails closed on missing messages or missing timing.
-  const mutationSweep = detectUnsupportedMutationWording({ messages: visibleMessages, mutationAtMs });
+  const mutationSweep = detectUnsupportedMutationWording({ messages: originalVisibleMessages, mutationAtMs });
   const claims = {
     unsupported_mutation_wording: mutationSweep.unsupported,
     unsupported_write_claim: /saved to (your|the) sheet/i.test(threadFull.slice(0, threadFull.indexOf('done'))) === true,
     detail: mutationSweep.detail,
   };
-  note('claim-sweep', `${visibleMessages.length} visible messages; mutation at ${mutationAtMs === null ? 'never' : 'recorded'}; unsupported=${mutationSweep.unsupported}`);
+  note('claim-sweep', `${originalVisibleMessages.length} visible messages from the original session (of ${visibleMessages.length} total); mutation at ${mutationAtMs === null ? 'never' : 'recorded'}; unsupported=${mutationSweep.unsupported}; coach-capture failures ${coachCaptureFailures.count}`);
 
   const observations = {
     run_purpose: RUN_PURPOSE, session_number: SESSION_NUMBER, run_id: RUN_ID, athlete_id: ATHLETE_ID,

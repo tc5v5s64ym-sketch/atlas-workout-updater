@@ -121,10 +121,29 @@ function compareReplacementIdentity(identity, durable) {
     const planned = up(d.outcomePlannedLiftCode);
     if (planned !== source) problems.push(`the item_outcome planned ${planned || '(blank)'}; the proposal's source was ${source}`);
   }
-  if (id.sourcePlanItemId) {
+  // The retained source slot. It must be CAPTURED from the live plan before mutation —
+  // deriving it from the accepted rows and then checking the outcome against it let a
+  // consistently wrong id satisfy itself, exactly like the lift code did (owner P1,
+  // 2026-08-03). Absent capture is a failure, not a licence to fall back on the rows.
+  const wantItem = String(id.sourcePlanItemId == null ? '' : id.sourcePlanItemId).trim();
+  if (!wantItem) {
+    problems.push('no source plan_item_id was captured from the live plan before mutation — the durable rows may not supply one');
+  } else {
     const item = String(d.outcomePlanItemId == null ? '' : d.outcomePlanItemId).trim();
-    if (item !== String(id.sourcePlanItemId).trim()) {
-      problems.push(`the item_outcome bound to plan item ${item || '(blank)'}; the proposal retained ${id.sourcePlanItemId}`);
+    if (item !== wantItem) {
+      problems.push(`the item_outcome bound to plan item ${item || '(blank)'}; the live plan's source slot was ${wantItem}`);
+    }
+    const acceptedItems = [...new Set((Array.isArray(d.acceptedSourcePlanItemIds) ? d.acceptedSourcePlanItemIds : [])
+      .map((x) => String(x == null ? '' : x).trim()).filter(Boolean))];
+    if (acceptedItems.length === 0) problems.push('no accepted ledger rows carry the source slot id');
+    else if (acceptedItems.length > 1) problems.push(`the accepted ledger rows span source slots ${acceptedItems.join('/')}`);
+    else if (acceptedItems[0] !== wantItem) {
+      problems.push(`the accepted ledger rows bind source slot ${acceptedItems[0]}; the live plan's source slot was ${wantItem}`);
+    }
+    const revItems = [...new Set((Array.isArray(d.ledgerRevisionPlanItemIds) ? d.ledgerRevisionPlanItemIds : [])
+      .map((x) => String(x == null ? '' : x).trim()).filter(Boolean))];
+    if (revItems.length && (revItems.length > 1 || revItems[0] !== wantItem)) {
+      problems.push(`the ledger revisions bind plan item ${revItems.join('/')}; the live plan's source slot was ${wantItem}`);
     }
   }
 
@@ -290,26 +309,101 @@ function compareRemainingToExpectation(observedNames, expectation) {
 // Does the visible reply actually name the expected next-up lift, and does it avoid
 // naming anything the declaration says is already COMPLETE? A reply that repeats a
 // wrong client state fails against the declaration even when the two agree.
+// Where in `text` a lift name appears, or -1. Matches the FULL phrase with flexible
+// separators — "Bench" must never satisfy "Bench Press".
+function liftMentionIndex(text, name) {
+  const words = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return -1;
+  const pattern = words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[\\s-]+');
+  const m = new RegExp(pattern, 'i').exec(String(text));
+  return m ? m.index : -1;
+}
+
+// An EXPLICIT next-up claim in the reply — "next up is X", "you're on X next",
+// "then X". Returns the claimed lift text, or null when the reply makes no such claim.
+// Only an explicit claim is judged; a reply that simply lists remaining work makes none.
+const NEXT_UP_CLAIM_PATTERNS = Object.freeze([
+  /next up(?:\s+is)?[:,]?\s+([A-Za-z][A-Za-z \-]{1,40})/i,
+  /(?:you(?:'re| are)\s+)?(?:on|onto)\s+([A-Za-z][A-Za-z \-]{1,40})\s+next/i,
+  /next(?:\s+(?:lift|exercise|movement))?\s+is[:,]?\s+([A-Za-z][A-Za-z \-]{1,40})/i,
+  /(?:up next|first up)[:,]?\s+([A-Za-z][A-Za-z \-]{1,40})/i,
+]);
+function explicitNextUpClaim(text) {
+  for (const re of NEXT_UP_CLAIM_PATTERNS) {
+    const m = re.exec(String(text || ''));
+    if (m && m[1]) return m[1].replace(/[.,;!].*$/, '').trim();
+  }
+  return null;
+}
+
+// Does the visible reply agree with the declaration — in CONTENT and in ORDER, and on
+// any explicit next-up claim it chooses to make?
+//
+// The gap this closes (owner P1, 2026-08-03): proving every remaining lift is mentioned
+// and no completed/retired lift is, does not prove the reply told the truth about
+// SEQUENCE. A reply naming every correct lift in the wrong order, or explicitly naming
+// the wrong lift as next while mentioning the real next-up elsewhere, passed.
 function replyMatchesExpectation(replyText, expectation) {
   const problems = [];
   const text = String(replyText == null ? '' : replyText);
   const exp = expectation && typeof expectation === 'object' ? expectation : {};
-  const mentions = (name) => {
-    const words = String(name || '').trim().split(/\s+/).filter(Boolean);
-    if (!words.length) return false;
-    // Match on the full phrase with flexible separators, not a single leading word:
-    // "Bench Press" and "Bench" must not be treated as interchangeable evidence.
-    const pattern = words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[\\s-]+');
-    return new RegExp(pattern, 'i').test(text);
-  };
-  for (const name of (Array.isArray(exp.remaining) ? exp.remaining : [])) {
-    if (!mentions(name)) problems.push(`the reply does not name remaining lift "${name}"`);
+  const remaining = Array.isArray(exp.remaining) ? exp.remaining : [];
+
+  const positions = [];
+  for (const name of remaining) {
+    const at = liftMentionIndex(text, name);
+    if (at < 0) problems.push(`the reply does not name remaining lift "${name}"`);
+    else positions.push({ name, at });
   }
   for (const name of (Array.isArray(exp.complete) ? exp.complete : [])) {
-    if (mentions(name)) problems.push(`the reply names "${name}", which the declaration says is already complete`);
+    if (liftMentionIndex(text, name) >= 0) problems.push(`the reply names "${name}", which the declaration says is already complete`);
   }
   for (const name of (Array.isArray(exp.retired) ? exp.retired : [])) {
-    if (mentions(name)) problems.push(`the reply names "${name}", which an accepted substitution removed from the plan`);
+    if (liftMentionIndex(text, name) >= 0) problems.push(`the reply names "${name}", which an accepted substitution removed from the plan`);
+  }
+
+  // ORDER: the remaining lifts must appear in the declared sequence.
+  if (positions.length === remaining.length && remaining.length > 1) {
+    const spoken = positions.slice().sort((a, b) => a.at - b.at).map((p) => p.name);
+    if (spoken.join('|') !== remaining.join('|')) {
+      problems.push(`the reply lists remaining work as [${spoken.join(', ')}]; the declaration order is [${remaining.join(', ')}]`);
+    }
+  }
+
+  // EXPLICIT next-up: judged only when the reply actually makes the claim.
+  const claimed = explicitNextUpClaim(text);
+  if (claimed !== null) {
+    // Fall back to the head of the remaining list when the caller supplied no explicit
+    // nextUp — an expectation with remaining work always has one.
+    const wanted = exp.nextUp || (remaining.length ? remaining[0] : null);
+    if (!wanted) problems.push(`the reply claims "${claimed}" is next, but the declaration expects no remaining work`);
+    else if (liftMentionIndex(claimed, wanted) < 0) {
+      // One-directional on purpose: the CLAIM must carry the full expected name.
+      // Accepting the reverse would let "Bench" satisfy "Bench Press", which is the
+      // partial-name match this module refuses everywhere else.
+      problems.push(`the reply claims "${claimed}" is next; the declaration expects "${wanted}"`);
+    }
+  }
+  return { ok: problems.length === 0, problems };
+}
+
+// The visible session pin must name the EXACT expected current lift and nothing retired
+// or completed. A blank pin, or a pin naming the wrong lift, is a failure — checking
+// only for a retired name let both pass (owner P1, 2026-08-03).
+function pinMatchesExpectation(pinText, expectation) {
+  const problems = [];
+  const text = String(pinText == null ? '' : pinText).replace(/\s+/g, ' ').trim();
+  const exp = expectation && typeof expectation === 'object' ? expectation : {};
+  if (!text) return { ok: false, problems: ['the session pin is blank, so it proves nothing about the current lift'] };
+  const wanted = exp.nextUp || null;
+  if (wanted && liftMentionIndex(text, wanted) < 0) {
+    problems.push(`the pin does not name the expected current lift "${wanted}"`);
+  }
+  for (const name of (Array.isArray(exp.retired) ? exp.retired : [])) {
+    if (liftMentionIndex(text, name) >= 0) problems.push(`the pin names "${name}", which an accepted substitution removed from the plan`);
+  }
+  for (const name of (Array.isArray(exp.complete) ? exp.complete : [])) {
+    if (liftMentionIndex(text, name) >= 0) problems.push(`the pin names "${name}", which the declaration says is already complete`);
   }
   return { ok: problems.length === 0, problems };
 }
@@ -349,6 +443,11 @@ function classifySettlement(observation) {
   if (stableForMs < stableThresholdMs) return 'growing';
   // Quiet, but a message WAS served and this is not all of it.
   if (served.length > 0) return 'partial-render';
+  // Quiet, no served message — but was that because the path genuinely serves none, or
+  // because the capture FAILED? Treating an unreadable coach response as "no message"
+  // reopens the partial-render false green exactly when the authoritative completion
+  // signal is missing (owner P1, 2026-08-03). Fail closed instead.
+  if (o.captureFailed === true) return 'capture-failed';
   return 'stable-no-served-message';
 }
 
@@ -1012,4 +1111,4 @@ function renderMarkdown(card) {
   return `${lines.join('\n')}\n`;
 }
 
-module.exports = { CONDITIONS, scoreRehearsalRun, renderMarkdown, compareLedgerToDeclaration, classifyRepeatApprovalProbe, classifySettlement, isSettled, SETTLED_OUTCOMES, deriveExpectedRemaining, compareRemainingToExpectation, replyMatchesExpectation, detectUnsupportedMutationWording, COMPLETED_MUTATION_PATTERNS, compareReplacementIdentity, PASS, FAIL, ERROR, NOT_APPLICABLE };
+module.exports = { CONDITIONS, scoreRehearsalRun, renderMarkdown, compareLedgerToDeclaration, classifyRepeatApprovalProbe, classifySettlement, isSettled, SETTLED_OUTCOMES, deriveExpectedRemaining, compareRemainingToExpectation, replyMatchesExpectation, pinMatchesExpectation, explicitNextUpClaim, detectUnsupportedMutationWording, COMPLETED_MUTATION_PATTERNS, compareReplacementIdentity, PASS, FAIL, ERROR, NOT_APPLICABLE };

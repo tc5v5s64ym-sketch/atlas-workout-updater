@@ -16,6 +16,7 @@ const {
   classifySettlement, isSettled,
   deriveExpectedRemaining, compareRemainingToExpectation, replyMatchesExpectation,
   detectUnsupportedMutationWording, compareReplacementIdentity,
+  pinMatchesExpectation, explicitNextUpClaim,
   PASS, FAIL, ERROR,
 } = require('../tests/e2e/gate/rehearsal-scorecard');
 const { sessionPlanSetsColumns } = require('../config/columns');
@@ -746,12 +747,16 @@ describe('detectUnsupportedMutationWording — derived, phase-bounded, fails clo
 
 describe('compareReplacementIdentity — captured before the durable read', () => {
   const IDENTITY = { replacementLiftCode: 'INCDB01', sourceLiftCode: 'BEN01', sourcePlanItemId: 'item-bench-4' };
+  // The full durable surface, including the slot ids the captured identity is now
+  // measured against (P1-2 from the exact-head review of 3893c1d).
   const honest = () => ({
     logLiftCodes: ['INCDB01', 'INCDB01'],
     outcomePerformedLiftCode: 'INCDB01',
     outcomePlannedLiftCode: 'BEN01',
     outcomePlanItemId: 'item-bench-4',
+    acceptedSourcePlanItemIds: ['item-bench-4'],
     ledgerRevisionLiftCodes: ['INCDB01', 'INCDB01'],
+    ledgerRevisionPlanItemIds: ['item-bench-4'],
   });
 
   it('passes when every durable surface agrees with the captured proposal', () => {
@@ -761,10 +766,9 @@ describe('compareReplacementIdentity — captured before the durable read', () =
   // THE BITE the owner asked for.
   it('BITE — every durable surface carrying the SAME wrong lift code still fails', () => {
     const wrong = {
+      ...honest(),
       logLiftCodes: ['WRONG9', 'WRONG9'],
       outcomePerformedLiftCode: 'WRONG9',
-      outcomePlannedLiftCode: 'BEN01',
-      outcomePlanItemId: 'item-bench-4',
       ledgerRevisionLiftCodes: ['WRONG9', 'WRONG9'],
     };
     const cmp = compareReplacementIdentity(IDENTITY, wrong);
@@ -818,5 +822,115 @@ describe('compareReplacementIdentity — captured before the durable read', () =
       ...honest(), logLiftCodes: [' incdb01 '], outcomePerformedLiftCode: 'incdb01',
       ledgerRevisionLiftCodes: ['IncDb01'],
     }).ok, true);
+  });
+});
+
+
+// ── P1 corrections from the exact-head review of 3893c1d ──────────────────────
+
+describe('P1-1 — the reply must be right about ORDER and about what is next', () => {
+  const EXP = { remaining: ['Seated Row', 'Bicep Curl'], complete: ['Back Squat'], retired: ['Bench Press'], nextUp: 'Seated Row' };
+
+  it('BITE — every correct lift named in the WRONG order fails', () => {
+    const cmp = replyMatchesExpectation('You have Bicep Curl and then Seated Row left.', EXP);
+    assert.equal(cmp.ok, false, 'naming the right lifts in the wrong order must not pass');
+    assert.match(cmp.problems.join(' '), /declaration order/);
+  });
+
+  it('BITE — an explicit WRONG next-up claim fails even when the real next-up is mentioned', () => {
+    const cmp = replyMatchesExpectation('Next up is Bicep Curl. Seated Row is still on the list too.', EXP);
+    assert.equal(cmp.ok, false);
+    assert.match(cmp.problems.join(' '), /claims "Bicep Curl" is next/);
+  });
+
+  it('accepts the correct order and the correct explicit next-up', () => {
+    assert.equal(replyMatchesExpectation('Next up is Seated Row, then Bicep Curl.', EXP).ok, true);
+  });
+
+  it('makes no next-up demand of a reply that claims none', () => {
+    assert.equal(replyMatchesExpectation('Left to do: Seated Row, Bicep Curl.', EXP).ok, true);
+  });
+
+  it('recognizes the explicit-claim phrasings and ignores prose that makes no claim', () => {
+    assert.equal(explicitNextUpClaim('Next up is Seated Row.'), 'Seated Row');
+    assert.equal(explicitNextUpClaim('You are on Seated Row next'), 'Seated Row');
+    assert.equal(explicitNextUpClaim('Up next: Seated Row'), 'Seated Row');
+    assert.equal(explicitNextUpClaim('You still have Seated Row and Bicep Curl.'), null);
+  });
+
+  it('BITE — a BLANK pin fails, and so does a pin naming the wrong lift', () => {
+    assert.equal(pinMatchesExpectation('', EXP).ok, false);
+    assert.equal(pinMatchesExpectation('   ', EXP).ok, false);
+    const wrong = pinMatchesExpectation('Current: Bicep Curl · 35x15', EXP);
+    assert.equal(wrong.ok, false, 'a non-retired but WRONG pin must fail');
+    assert.match(wrong.problems.join(' '), /does not name the expected current lift/);
+  });
+
+  it('a pin naming a retired or completed lift fails; the correct pin passes', () => {
+    assert.equal(pinMatchesExpectation('Current: Bench Press', EXP).ok, false);
+    assert.equal(pinMatchesExpectation('Seated Row · Back Squat done', EXP).ok, false);
+    assert.equal(pinMatchesExpectation('Current: Seated Row · 205x10 @2', EXP).ok, true);
+  });
+});
+
+describe('P1-2 — the retained source slot is captured, not derived', () => {
+  const ID = { replacementLiftCode: 'INCDB01', sourceLiftCode: 'BEN01', sourcePlanItemId: 'pi_bench_4' };
+  const honest = () => ({
+    logLiftCodes: ['INCDB01'], outcomePerformedLiftCode: 'INCDB01', outcomePlannedLiftCode: 'BEN01',
+    outcomePlanItemId: 'pi_bench_4', acceptedSourcePlanItemIds: ['pi_bench_4'],
+    ledgerRevisionLiftCodes: ['INCDB01'], ledgerRevisionPlanItemIds: ['pi_bench_4'],
+  });
+
+  it('passes when every surface agrees with the captured slot', () => {
+    assert.deepEqual(compareReplacementIdentity(ID, honest()), { ok: true, problems: [] });
+  });
+
+  it('BITE — the SAME wrong plan_item_id on every durable surface still fails', () => {
+    const wrong = {
+      ...honest(), outcomePlanItemId: 'pi_WRONG', acceptedSourcePlanItemIds: ['pi_WRONG'], ledgerRevisionPlanItemIds: ['pi_WRONG'],
+    };
+    const cmp = compareReplacementIdentity(ID, wrong);
+    assert.equal(cmp.ok, false, 'self-consistent slot ids must not satisfy a captured identity');
+    assert.equal(cmp.problems.length, 3, cmp.problems.join('; '));
+    assert.ok(cmp.problems.every(p => /pi_bench_4/.test(p)), cmp.problems.join('; '));
+  });
+
+  it('fails CLOSED when no source slot was captured before mutation', () => {
+    for (const missing of [null, undefined, '', '   ']) {
+      const cmp = compareReplacementIdentity({ ...ID, sourcePlanItemId: missing }, honest());
+      assert.equal(cmp.ok, false);
+      assert.match(cmp.problems.join(' '), /may not supply one/);
+    }
+  });
+
+  it('catches each slot surface diverging alone', () => {
+    for (const patch of [
+      { outcomePlanItemId: 'pi_other' },
+      { acceptedSourcePlanItemIds: ['pi_other'] },
+      { acceptedSourcePlanItemIds: [] },
+      { acceptedSourcePlanItemIds: ['pi_bench_4', 'pi_other'] },
+      { ledgerRevisionPlanItemIds: ['pi_other'] },
+    ]) {
+      assert.equal(compareReplacementIdentity(ID, { ...honest(), ...patch }).ok, false, JSON.stringify(patch));
+    }
+  });
+});
+
+describe('P1-5 — failed capture is missing evidence, not a no-message path', () => {
+  it('BITE — a partial bubble goes quiet while response capture FAILED: refused', () => {
+    const outcome = classifySettlement({ text: 've.', servedMessages: [], stableForMs: 99999, captureFailed: true });
+    assert.equal(outcome, 'capture-failed');
+    assert.equal(isSettled(outcome), false, 'stability must not settle a turn whose served reply is unknown');
+  });
+
+  it('a genuine no-message path still settles on stability', () => {
+    const outcome = classifySettlement({ text: 'Noted.', servedMessages: [], stableForMs: 99999, captureFailed: false });
+    assert.equal(outcome, 'stable-no-served-message');
+    assert.equal(isSettled(outcome), true);
+  });
+
+  it('a successful capture is unaffected by the flag', () => {
+    const full = 'Go with 185 lb for 5 reps.';
+    assert.equal(classifySettlement({ text: full, servedMessages: [full], stableForMs: 0, captureFailed: true }), 'served-complete');
   });
 });
