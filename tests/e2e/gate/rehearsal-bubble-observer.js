@@ -76,8 +76,26 @@ const OBSERVER_FLUSH_MS = 100;
 // fresh-session transition too. It reports `{ index, text }` per changed bubble and
 // takes NO timestamp of its own — timing belongs to the receiving side.
 function bubbleObserverInitScript({ flushMs, threadId, bubbleSelector, callbackName, flushName, stateName }) {
-  // index -> the changeSeq of that bubble's most recent observed change.
+  // index -> the EARLIEST UNDELIVERED changeSeq for that bubble.
+  //
+  // Earliest, not latest, and the difference is load-bearing (owner P1, 2026-08-03).
+  // A batch is built from `pending` and cleared before the delivery is awaited, so a
+  // rejected delivery must re-queue its entries. If an unrelated thread mutation ran
+  // while that batch was in flight, `markAll` had already re-added the same index with a
+  // NEWER sequence, and the re-queue skipped it — so the retry reported an OLD
+  // pre-boundary claim carrying a LATER unrelated sequence, and a boundary between the
+  // two could class it `after`. That defeats the point of assigning logical time when
+  // the DOM changed.
+  //
+  // Keeping the earliest undelivered sequence is also the fail-closed direction: a
+  // report labelled earlier than reality can only make a claim look like it happened
+  // BEFORE a boundary, never after. Once a delivery succeeds the slot is cleared, so a
+  // genuine later transition of the same bubble carries its own later sequence.
   const pending = new Map();
+  const markPending = (index, seq) => {
+    const prior = pending.get(index);
+    pending.set(index, prior === undefined ? seq : Math.min(prior, seq));
+  };
   let observer = null;
   let timer = null;
   let changeSeq = 0;      // the logical clock: every observed DOM change
@@ -122,9 +140,7 @@ function bubbleObserverInitScript({ flushMs, threadId, bubbleSelector, callbackN
         // evidence permanently, and a lost claim is exactly what this collector exists
         // to prevent. The change keeps its ORIGINAL changeSeq, so a retry cannot make a
         // pre-boundary change look post-boundary.
-        for (const [index, seq] of sent) {
-          if (!pending.has(index)) pending.set(index, seq);
-        }
+        for (const [index, seq] of sent) markPending(index, seq);
         schedule();
         return { ok: false, reason: `report callback rejected: ${e && e.message}`, changeSeq, flushedSeq, pending: true };
       }
@@ -138,7 +154,7 @@ function bubbleObserverInitScript({ flushMs, threadId, bubbleSelector, callbackN
   const markAll = (thread) => {
     changeSeq += 1;
     const bubbles = thread.querySelectorAll(bubbleSelector);
-    for (let i = 0; i < bubbles.length; i += 1) pending.set(i, changeSeq);
+    for (let i = 0; i < bubbles.length; i += 1) markPending(i, changeSeq);
     schedule();
   };
 

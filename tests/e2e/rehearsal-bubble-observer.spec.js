@@ -463,3 +463,101 @@ test.describe('F-SB4B boundary — no transplanted certificate, no unproven drai
     expect(sweep.detail).toMatch(/without a drain/);
   });
 });
+
+
+// ── the retry may not relabel an old claim with a later unrelated sequence ────
+// The interleaving the final review named: a pre-boundary claim is sent with sequence
+// S; the delivery is held and rejects; meanwhile an unrelated thread mutation runs
+// markAll and stamps that same bubble with a newer sequence S'; the re-queue skips the
+// index because it is already pending; the retry then reports the OLD claim carrying
+// S'. A boundary taken between S and S' would classify it `after`.
+
+test.describe('F-SB4B collector — a rejected batch keeps its original causal sequence', () => {
+  test('BITE: an unrelated mutation during an in-flight rejected delivery cannot relabel the claim', async ({ page }) => {
+    const phaseRef = { value: 'closeout' };
+    const { records, state } = await startCollector(page, phaseRef);
+
+    await appendBubble(page, THINKING);
+    await settle(page);
+
+    // 1. The unsupported pre-boundary claim appears. Capture the sequence it is
+    //    assigned, which is the sequence the retry must still be carrying at the end.
+    state.rejectReports = true;
+    await rewriteBubble(page, 0, 'All set — your workout is saved to your sheet.');
+    const claimSeq = await readChangeSeq(page);
+
+    // 2. Start the delivery and let it reject.
+    await page.evaluate(() => window.__atlasBubbleFlush());
+
+    // 3. An UNRELATED thread mutation runs markAll and bumps every bubble's sequence.
+    await appendBubble(page, 'an unrelated later bubble');
+    const afterUnrelatedSeq = await readChangeSeq(page);
+    expect(afterUnrelatedSeq, 'the unrelated mutation really did advance the clock')
+      .toBeGreaterThan(claimSeq);
+
+    // 4. THE BOUNDARY sits between the two sequences.
+    const boundary = makeBoundary({ atMs: Date.now(), atChangeSeq: claimSeq });
+
+    // 5. Delivery recovers and the batch is retried.
+    state.rejectReports = false;
+    await settle(page);
+
+    const messages = recordsToMessages(records);
+    const claim = messages.find((m) => /saved to your sheet/.test(m.text));
+    expect(claim, 'the re-queued claim must eventually be delivered').toBeTruthy();
+    expect(claim.changeSeq, 'the retry must keep the claim\'s ORIGINAL pre-boundary sequence')
+      .toBeLessThanOrEqual(claimSeq);
+
+    const sweep = detectUnsupportedWriteClaim({ messages, liveWriteBoundary: boundary });
+    expect(sweep.unsupported,
+      `a pre-boundary claim may not be relabelled past the boundary by an unrelated mutation: ${sweep.detail}`)
+      .toBe(true);
+  });
+
+  test('a genuine LATER transition of the same bubble still carries its own later sequence', async ({ page }) => {
+    const phaseRef = { value: 'closeout' };
+    const { records } = await startCollector(page, phaseRef);
+
+    await appendBubble(page, 'first text');
+    await settle(page);
+    const firstSeq = recordsToMessages(records)[0].changeSeq;
+
+    // A successful delivery clears the slot, so the next change is judged on its own.
+    await rewriteBubble(page, 0, 'All set — saved to your sheet.');
+    await settle(page);
+
+    const claim = recordsToMessages(records)[0];
+    expect(claim.text).toMatch(/saved to your sheet/);
+    expect(claim.changeSeq, 'a delivered slot does not pin later changes to the old sequence')
+      .toBeGreaterThan(firstSeq);
+
+    // A boundary before that later change: the claim is genuinely after it.
+    const boundary = makeBoundary({ atMs: Date.now(), atChangeSeq: firstSeq });
+    const sweep = detectUnsupportedWriteClaim({ messages: [claim], liveWriteBoundary: boundary });
+    expect(sweep.unsupported, `an honest post-boundary claim must pass: ${sweep.detail}`).toBe(false);
+  });
+
+  test('several unrelated mutations while held cannot advance a held claim', async ({ page }) => {
+    const phaseRef = { value: 'closeout' };
+    const { records, state } = await startCollector(page, phaseRef);
+    await appendBubble(page, THINKING);
+    await settle(page);
+
+    state.rejectReports = true;
+    await rewriteBubble(page, 0, 'All set — saved to your sheet.');
+    const claimSeq = await readChangeSeq(page);
+    await page.evaluate(() => window.__atlasBubbleFlush());
+
+    for (let i = 0; i < 3; i += 1) {
+      await appendBubble(page, `unrelated ${i}`);
+      await page.evaluate(() => window.__atlasBubbleFlush()).catch(() => {});
+    }
+
+    state.rejectReports = false;
+    await settle(page);
+
+    const claim = recordsToMessages(records).find((m) => /saved to your sheet/.test(m.text));
+    expect(claim.changeSeq, 'repeated unrelated mutations must not drag the claim forward')
+      .toBeLessThanOrEqual(claimSeq);
+  });
+});
