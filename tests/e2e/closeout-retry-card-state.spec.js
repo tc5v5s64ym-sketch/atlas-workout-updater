@@ -220,6 +220,63 @@ test('unverified closeout: a successful retry completes the card, and appends no
   expect(capture.writeRequests[1].write_id).not.toBe(capture.writeRequests[0].write_id);
 });
 
+// P1 from review of 6800f99. The retry state is deliberately non-`done`, which keeps
+// the card's Edit button live — and `handlePreviewReady` replaces any
+// `.review:not(.done)` with a freshly built card. So editing and re-previewing from
+// the retry state handed the owner a brand-new card reading "Nothing's saved yet"
+// over rows that were already committed: the exact false claim this PR removes,
+// restored one tap later.
+//
+// The fix holds the fact at session scope, not card scope. This drives the real
+// re-preview through the real app.
+test('unverified closeout: a re-preview cannot resurrect the "nothing saved yet" claim', async ({ page }) => {
+  const capture = {};
+  await openApp(page, capture);
+  await logAndSave(page);
+
+  await expect(page.locator('.review').last()).toHaveClass(/rows-written/);
+
+  // Re-preview exactly as the owner would after tapping Edit: change the rows and
+  // send them again. handlePreviewReady tears the card down and rebuilds it.
+  await page.locator('#workout-text').fill('bench 235 5/2 x3');
+  await page.locator('#preview-btn').click();
+  await expect(page.locator('#thread-messages .readback').last()).toBeVisible();
+  await page.locator('#workout-text').fill('done');
+  await page.locator('#preview-btn').click();
+
+  // The REBUILT card. The rows from the first save are still in the sheet, so the
+  // claim it must not make is still the same claim.
+  const rebuilt = page.locator('.review').last();
+  await expect(rebuilt).toBeVisible();
+  await expect(rebuilt).toHaveClass(/rows-written/);
+  await expect(rebuilt.locator('.rv-note')).not.toContainText('Nothing');
+  await expect(rebuilt.locator('.rv-note')).toContainText('saved to the sheet');
+});
+
+// The other direction, and the reason the fact is cleared rather than latched
+// forever: a NEW session has committed nothing. Leaking the flag across a reset
+// would tell the owner his new sets were already saved before he had saved them —
+// the same lie, inverted.
+test('a new session starts clean: the committed-rows state never leaks forward', async ({ page }) => {
+  const capture = {};
+  await openApp(page, capture);
+  await logAndSave(page);
+  await expect(page.locator('.review').last()).toHaveClass(/rows-written/);
+
+  await page.evaluate(() => document.dispatchEvent(new CustomEvent('atlas:session-reset')));
+
+  await page.locator('#workout-text').fill('bench 245 5/2 x3');
+  await page.locator('#preview-btn').click();
+  await expect(page.locator('#thread-messages .readback').last()).toBeVisible();
+  await page.locator('#workout-text').fill('done');
+  await page.locator('#preview-btn').click();
+
+  const fresh = page.locator('.review').last();
+  await expect(fresh).toBeVisible();
+  await expect(fresh).not.toHaveClass(/rows-written/);
+  await expect(fresh.locator('.rv-note')).toContainText('Nothing');
+});
+
 // THE BITE for keying off the state attribute rather than the `warn` kind.
 //
 // app.js emits `warn` for at least eleven different outcomes — a parse failure, an

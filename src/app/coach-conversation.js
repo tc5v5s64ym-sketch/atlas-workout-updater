@@ -198,6 +198,18 @@ import {
   /* ===== End-of-session review card (reskins the existing approve/write/undo) ===== */
 
   let currentReview = null;
+  // "The rows for this session are committed, and the plan-ledger seal is not yet
+  // verified" is a fact about the SESSION, not about one card instance. It has to
+  // outlive the card, because the card is destructible: `handlePreviewReady` removes
+  // any `.review:not(.done)` and rebuilds it, and this state is deliberately NOT
+  // `done` (the retry must stay reachable). So an Edit-and-re-preview from the retry
+  // state used to replace the honest card with a fresh one whose note read
+  // "Nothing's saved yet" again — restoring the exact false claim this whole change
+  // removes, while the rows sat committed in the sheet.
+  //
+  // Held here and re-applied to every rebuilt card until the fact stops being true:
+  // a verified save, an undo, or a new session.
+  let rowsCommittedUnverified = false;
   const approveBtn = document.getElementById('approve-btn');
   const loggerStatusEl = document.getElementById('logger-status');
 
@@ -426,6 +438,10 @@ import {
 
     const review = { card, saveBtn, done: false, rowsWritten: false, identity: null };
     currentReview = review;
+    // A card built while the rows are already committed inherits that fact. Without
+    // this, an Edit-and-re-preview from the retry state hands the owner a brand-new
+    // card reading "Nothing's saved yet" over rows that are in the sheet.
+    if (rowsCommittedUnverified) applyRowsWrittenState(review);
     return card;
   }
 
@@ -443,6 +459,9 @@ import {
   function markReviewSaved() {
     if (!currentReview || currentReview.done) return;
     currentReview.done = true;
+    // The seal verified, so the rows-committed-but-unverified fact stops being true
+    // and must not be inherited by a later session's card.
+    rowsCommittedUnverified = false;
     currentReview.card.classList.add('done');
     // Bind the identity of the write this card represents so its Undo can be
     // refused after a later write, then retire every older card's Undo affordance.
@@ -466,16 +485,29 @@ import {
   // next tap, so `.rv-act` has to stay visible and a later successful retry must
   // still be able to reach markReviewSaved(). Only the note is rewritten, to the two
   // facts that are actually true — the sets are saved, and one check needs a retry.
+  // Paint one card with the committed-rows state. Shared by the live transition and
+  // by every card rebuilt while the fact still holds, so the two can never drift into
+  // saying different things about the same session.
+  const ROWS_WRITTEN_NOTE = '✓ Your sets are saved to the sheet · only the plan-ledger check needs a retry';
+  function applyRowsWrittenState(review) {
+    if (!review || review.done || review.rowsWritten) return;
+    review.rowsWritten = true;
+    review.card.classList.add('rows-written');
+    const note = review.card.querySelector('.rv-note');
+    if (note) note.textContent = ROWS_WRITTEN_NOTE;
+  }
+
   function markReviewRowsWrittenLedgerUnverified() {
-    if (!currentReview || currentReview.done || currentReview.rowsWritten) return;
-    currentReview.rowsWritten = true;
-    currentReview.card.classList.add('rows-written');
-    const note = currentReview.card.querySelector('.rv-note');
-    if (note) note.textContent = '✓ Your sets are saved to the sheet · only the plan-ledger check needs a retry';
+    if (!currentReview) return;
+    // Latch the SESSION fact first, so it survives this card being replaced.
+    rowsCommittedUnverified = true;
+    applyRowsWrittenState(currentReview);
   }
 
   function markReviewUndone() {
     if (!currentReview) return;
+    // The rows were deleted, so nothing is committed any more.
+    rowsCommittedUnverified = false;
     const txt = currentReview.card.querySelector('.rv-saved-txt');
     if (txt) txt.textContent = '↩ Undone · nothing saved';
     const undo = currentReview.card.querySelector('.rv-undo');
@@ -1370,6 +1402,10 @@ import {
     closeoutAnnounced = false;
     // F10S5: a fresh session may legitimately repeat a substitution note.
     acknowledgedSubs.clear();
+    // A new session has committed nothing yet. Carrying the previous session's
+    // committed-rows fact forward would tell the owner his NEW sets were already in
+    // the sheet before he had saved anything — the same false claim, inverted.
+    rowsCommittedUnverified = false;
   });
 
   // Build the composer placeholder for the next planned lift from the ACTIVE PLAN
