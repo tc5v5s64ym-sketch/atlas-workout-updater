@@ -1752,6 +1752,16 @@ a.lift-link:hover { text-decoration: underline; }
   color: var(--ok);
 }
 
+/* A card built AFTER the commit: its own rows are NOT in the sheet, so this is not
+   an --ok state — it carries a caution and a reassurance at once, and must not be
+   mistaken at a glance for the saved state above. */
+.review.prior-rows-committed .rv-note {
+  font-family: var(--disp);
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--muted);
+}
+
 .session-item {
   background: var(--card);
   border: 1px solid var(--border);

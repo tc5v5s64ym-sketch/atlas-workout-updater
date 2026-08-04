@@ -198,18 +198,36 @@ import {
   /* ===== End-of-session review card (reskins the existing approve/write/undo) ===== */
 
   let currentReview = null;
-  // "The rows for this session are committed, and the plan-ledger seal is not yet
-  // verified" is a fact about the SESSION, not about one card instance. It has to
-  // outlive the card, because the card is destructible: `handlePreviewReady` removes
-  // any `.review:not(.done)` and rebuilds it, and this state is deliberately NOT
-  // `done` (the retry must stay reachable). So an Edit-and-re-preview from the retry
-  // state used to replace the honest card with a fresh one whose note read
-  // "Nothing's saved yet" again — restoring the exact false claim this whole change
-  // removes, while the rows sat committed in the sheet.
+
+  // ── Two different facts, and a card may only claim the one it owns ────────────
   //
-  // Held here and re-applied to every rebuilt card until the fact stops being true:
-  // a verified save, an undo, or a new session.
-  let rowsCommittedUnverified = false;
+  // After a committed-rows / unverified-seal closeout there are THREE honest states
+  // a review card can be in, and collapsing any two of them produces a false claim
+  // about the owner's data:
+  //
+  //   1. rows-written          — the rows THIS card stages are the ones in the sheet.
+  //   2. prior-rows-committed  — earlier rows from this session are in the sheet, but
+  //                              the rows THIS card stages are not.
+  //   3. (default)             — nothing from this session is in the sheet.
+  //
+  // Both wrong answers here were shipped and caught in review, one each way. Binding
+  // the fact to the card instance let a rebuilt card fall back to (3) and say
+  // "Nothing's saved yet" over committed rows. Binding it to the whole session let a
+  // rebuilt card claim (1) — so editing 225 → 235 and re-previewing produced a card
+  // for the 235 preview reading "Your sets are saved to the sheet" when only the 225
+  // rows had landed. The second is the worse of the two: it invites the owner to walk
+  // away from work that was never written.
+  //
+  // THE CONTRACT, stated rather than left to fall out of the code: only the card
+  // instance that was live at the moment of the commit may claim (1). Every card
+  // rebuilt afterwards gets (2) for as long as the session fact holds.
+  //
+  // This deliberately declines the weaker option of re-claiming (1) whenever the
+  // rebuilt rows happen to match the committed ones. A re-preview stages a NEW write
+  // in app.js regardless of what the rows say, so matching text would be describing
+  // provenance it cannot establish — and (2) is true in that case anyway, so the
+  // stricter rule costs nothing and can never overclaim.
+  let priorRowsCommitted = false;
   const approveBtn = document.getElementById('approve-btn');
   const loggerStatusEl = document.getElementById('logger-status');
 
@@ -436,12 +454,12 @@ import {
     saved.appendChild(undo);
     card.appendChild(saved);
 
-    const review = { card, saveBtn, done: false, rowsWritten: false, identity: null };
+    const review = { card, saveBtn, done: false, rowsWritten: false, priorRows: false, identity: null };
     currentReview = review;
-    // A card built while the rows are already committed inherits that fact. Without
-    // this, an Edit-and-re-preview from the retry state hands the owner a brand-new
-    // card reading "Nothing's saved yet" over rows that are in the sheet.
-    if (rowsCommittedUnverified) applyRowsWrittenState(review);
+    // A card built AFTER the commit stages rows that are not in the sheet, so it may
+    // never claim they are — but it also may not fall back to "Nothing's saved yet",
+    // because earlier rows from this session did land. It gets the middle state.
+    if (priorRowsCommitted) applyPriorRowsCommittedState(review);
     return card;
   }
 
@@ -459,9 +477,9 @@ import {
   function markReviewSaved() {
     if (!currentReview || currentReview.done) return;
     currentReview.done = true;
-    // The seal verified, so the rows-committed-but-unverified fact stops being true
-    // and must not be inherited by a later session's card.
-    rowsCommittedUnverified = false;
+    // The seal verified, so the committed-but-unverified fact stops being true and
+    // must not be inherited by a later card.
+    priorRowsCommitted = false;
     currentReview.card.classList.add('done');
     // Bind the identity of the write this card represents so its Undo can be
     // refused after a later write, then retire every older card's Undo affordance.
@@ -483,11 +501,10 @@ import {
   //
   // The card must NOT go `done`: the retry is still available and still the right
   // next tap, so `.rv-act` has to stay visible and a later successful retry must
-  // still be able to reach markReviewSaved(). Only the note is rewritten, to the two
-  // facts that are actually true — the sets are saved, and one check needs a retry.
-  // Paint one card with the committed-rows state. Shared by the live transition and
-  // by every card rebuilt while the fact still holds, so the two can never drift into
-  // saying different things about the same session.
+  // still be able to reach markReviewSaved().
+  //
+  // State (1) — claimable ONLY by the card that was live at the commit. Its own rows
+  // are the ones in the sheet.
   const ROWS_WRITTEN_NOTE = '✓ Your sets are saved to the sheet · only the plan-ledger check needs a retry';
   function applyRowsWrittenState(review) {
     if (!review || review.done || review.rowsWritten) return;
@@ -497,17 +514,33 @@ import {
     if (note) note.textContent = ROWS_WRITTEN_NOTE;
   }
 
+  // State (2) — for every card built after the commit. It separates the two subjects
+  // the single note used to conflate: what THIS card would save, and what is already
+  // in the sheet. Saying only the first ("Nothing's saved yet") hides committed rows;
+  // saying only the second ("Your sets are saved") claims these rows landed when they
+  // did not. Both were shipped, and both were caught in review.
+  const PRIOR_ROWS_NOTE = 'These edited sets are not saved yet · your earlier sets from this session are already in the sheet';
+  function applyPriorRowsCommittedState(review) {
+    if (!review || review.done || review.rowsWritten || review.priorRows) return;
+    review.priorRows = true;
+    review.card.classList.add('prior-rows-committed');
+    const note = review.card.querySelector('.rv-note');
+    if (note) note.textContent = PRIOR_ROWS_NOTE;
+  }
+
   function markReviewRowsWrittenLedgerUnverified() {
     if (!currentReview) return;
-    // Latch the SESSION fact first, so it survives this card being replaced.
-    rowsCommittedUnverified = true;
+    // Latch the SESSION fact first, so it survives this card being replaced — but as
+    // the weaker claim (2). Only this card, the one whose rows actually landed, gets
+    // to make claim (1).
+    priorRowsCommitted = true;
     applyRowsWrittenState(currentReview);
   }
 
   function markReviewUndone() {
     if (!currentReview) return;
     // The rows were deleted, so nothing is committed any more.
-    rowsCommittedUnverified = false;
+    priorRowsCommitted = false;
     const txt = currentReview.card.querySelector('.rv-saved-txt');
     if (txt) txt.textContent = '↩ Undone · nothing saved';
     const undo = currentReview.card.querySelector('.rv-undo');
@@ -1403,9 +1436,9 @@ import {
     // F10S5: a fresh session may legitimately repeat a substitution note.
     acknowledgedSubs.clear();
     // A new session has committed nothing yet. Carrying the previous session's
-    // committed-rows fact forward would tell the owner his NEW sets were already in
-    // the sheet before he had saved anything — the same false claim, inverted.
-    rowsCommittedUnverified = false;
+    // committed-rows fact forward would tell the owner rows from this session were
+    // already in the sheet before he had saved anything.
+    priorRowsCommitted = false;
   });
 
   // Build the composer placeholder for the next planned lift from the ACTIVE PLAN

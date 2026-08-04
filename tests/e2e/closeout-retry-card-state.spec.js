@@ -220,37 +220,72 @@ test('unverified closeout: a successful retry completes the card, and appends no
   expect(capture.writeRequests[1].write_id).not.toBe(capture.writeRequests[0].write_id);
 });
 
-// P1 from review of 6800f99. The retry state is deliberately non-`done`, which keeps
-// the card's Edit button live — and `handlePreviewReady` replaces any
-// `.review:not(.done)` with a freshly built card. So editing and re-previewing from
-// the retry state handed the owner a brand-new card reading "Nothing's saved yet"
-// over rows that were already committed: the exact false claim this PR removes,
-// restored one tap later.
+// Two P1s, one from each direction, both on this same rebuild path.
 //
-// The fix holds the fact at session scope, not card scope. This drives the real
-// re-preview through the real app.
-test('unverified closeout: a re-preview cannot resurrect the "nothing saved yet" claim', async ({ page }) => {
+// Codex on 6800f99: the retry state is non-`done`, so Edit stays live, and
+// `handlePreviewReady` replaces any `.review:not(.done)` with a fresh card — which
+// restored "Nothing's saved yet" over committed rows.
+//
+// Systems Review on 89c12e9: the first repair latched the fact to the whole session
+// and reapplied claim (1) to that rebuilt card — so editing 225 → 235 produced a card
+// for the 235 preview reading "Your sets are saved to the sheet" when only the 225
+// rows had landed. That is the worse error of the two: it invites the owner to walk
+// away from work that was never written.
+//
+// A rebuilt card owns neither claim. It gets the third state, which separates the two
+// subjects: what THIS card would save, and what is already in the sheet.
+test('unverified closeout: an EDITED re-preview claims neither "nothing saved" nor "your sets are saved"', async ({ page }) => {
   const capture = {};
   await openApp(page, capture);
   await logAndSave(page);
-
   await expect(page.locator('.review').last()).toHaveClass(/rows-written/);
 
-  // Re-preview exactly as the owner would after tapping Edit: change the rows and
-  // send them again. handlePreviewReady tears the card down and rebuilds it.
+  // Exactly what the owner does after tapping Edit: change the load and send again.
   await page.locator('#workout-text').fill('bench 235 5/2 x3');
   await page.locator('#preview-btn').click();
   await expect(page.locator('#thread-messages .readback').last()).toBeVisible();
   await page.locator('#workout-text').fill('done');
   await page.locator('#preview-btn').click();
 
-  // The REBUILT card. The rows from the first save are still in the sheet, so the
-  // claim it must not make is still the same claim.
   const rebuilt = page.locator('.review').last();
   await expect(rebuilt).toBeVisible();
-  await expect(rebuilt).toHaveClass(/rows-written/);
-  await expect(rebuilt.locator('.rv-note')).not.toContainText('Nothing');
-  await expect(rebuilt.locator('.rv-note')).toContainText('saved to the sheet');
+  const note = rebuilt.locator('.rv-note');
+
+  // Not claim (1). Only the 225 rows are in the sheet; these 235 sets are not.
+  await expect(rebuilt).not.toHaveClass(/rows-written/);
+  await expect(note).not.toContainText('Your sets are saved');
+  // Not claim (3) either. Rows from this session DID land.
+  await expect(note).not.toContainText('Nothing');
+  // The truthful middle: both subjects named, and kept apart.
+  await expect(rebuilt).toHaveClass(/prior-rows-committed/);
+  await expect(note).toContainText('not saved yet');
+  await expect(note).toContainText('already in the sheet');
+
+  expect(capture.writeRequests).toHaveLength(1);   // the edit wrote nothing
+});
+
+// The contract is "only the card live at the commit may claim (1)" — NOT "the rows
+// look the same, so it must be the same write". Retyping the identical workout stages
+// a brand-new write in app.js; matching text is not provenance. This pins that the
+// stricter rule is what is implemented, so nobody later "optimizes" it into a content
+// comparison that would let coincidence fabricate a saved claim.
+test('returning to the IDENTICAL payload still does not re-claim the saved state', async ({ page }) => {
+  const capture = {};
+  await openApp(page, capture);
+  await logAndSave(page);
+  await expect(page.locator('.review').last()).toHaveClass(/rows-written/);
+
+  // Byte-identical to the committed workout.
+  await page.locator('#workout-text').fill('bench 225 5/2 x3');
+  await page.locator('#preview-btn').click();
+  await expect(page.locator('#thread-messages .readback').last()).toBeVisible();
+  await page.locator('#workout-text').fill('done');
+  await page.locator('#preview-btn').click();
+
+  const rebuilt = page.locator('.review').last();
+  await expect(rebuilt).not.toHaveClass(/rows-written/);
+  await expect(rebuilt).toHaveClass(/prior-rows-committed/);
+  await expect(rebuilt.locator('.rv-note')).not.toContainText('Your sets are saved');
 });
 
 // The other direction, and the reason the fact is cleared rather than latched
@@ -274,6 +309,7 @@ test('a new session starts clean: the committed-rows state never leaks forward',
   const fresh = page.locator('.review').last();
   await expect(fresh).toBeVisible();
   await expect(fresh).not.toHaveClass(/rows-written/);
+  await expect(fresh).not.toHaveClass(/prior-rows-committed/);
   await expect(fresh.locator('.rv-note')).toContainText('Nothing');
 });
 
