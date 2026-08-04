@@ -33,7 +33,7 @@ const {
   classifySettlement, isSettled,
   deriveExpectedRemaining, compareRemainingToExpectation, replyMatchesExpectation,
   detectUnsupportedMutationWording, compareReplacementIdentity, pinMatchesExpectation,
-  classifyCoachResponseCapture, detectUnsupportedWriteClaim,
+  classifyCoachResponseCapture, detectUnsupportedWriteClaim, liftMentionIndex,
 } = require('./rehearsal-scorecard');
 const { REHEARSAL_SESSION } = require('./rehearsal-run-purpose');
 const { measureSourceTree } = require('./rehearsal-source-facts');
@@ -359,7 +359,14 @@ async function assertStagedProposal(page, h, { sourceRegex }) {
   // The visible line must AGREE with the observation. Before, the line WAS the
   // evidence, so a line that named the wrong lift or the wrong load agreed with
   // itself. Now a proposal card that contradicts the staged proposal fails.
-  const namesReplacement = new RegExp(prescription.name.split(/\s+/)[0] || '(?!)', 'i').test(line);
+  //
+  // The FULL replacement name, through the scorecard's one lift-mention matcher.
+  // A first-word test was too weak for an agreement check (Codex P2, this PR): a card
+  // reading "Replace Bench Press with Incline Bench Press" would satisfy a staged
+  // "Incline Dumbbell Press", so the visible mismatch this beat exists to catch would
+  // pass. `liftMentionIndex` matches the whole phrase with flexible separators and is
+  // already the authority for "does this text name this lift" everywhere else.
+  const namesReplacement = Boolean(prescription.name) && liftMentionIndex(line, prescription.name) >= 0;
   const carriesNumbers = prescription.weight != null && prescription.reps != null
     && new RegExp(`\\b${prescription.weight}\\b`).test(line) && new RegExp(`\\b${prescription.reps}\\b`).test(line);
   h.beat('proposal-carries-prescription', namesReplacement && carriesNumbers,

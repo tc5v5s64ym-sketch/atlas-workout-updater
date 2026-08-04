@@ -23,6 +23,7 @@ const {
   assertObservationComplete, observationToIdentity, observationToPrescription,
   latestStagedObservation, stagedProposalObserverScript, STAGED_PROPOSALS_KEY,
 } = require('../tests/e2e/gate/rehearsal-staged-proposal');
+const { liftMentionIndex } = require('../tests/e2e/gate/rehearsal-scorecard');
 
 const REHEARSAL_SPEC = path.join(__dirname, '..', 'tests', 'e2e', 'gate', 'rehearsal.spec.js');
 const rehearsalSrc = fs.readFileSync(REHEARSAL_SPEC, 'utf8');
@@ -212,5 +213,25 @@ describe('the rehearsal spec consumes the one authority and keeps the losers del
   it('the proposal LINE is no longer parsed for identity or prescription', () => {
     assert.ok(!/function parseProposalLine/.test(rehearsalSrc),
       'provenance may not be derived from visible prose');
+  });
+
+  // The line is now checked for AGREEMENT with the observation, so that check must be
+  // as strict as the authority it defends. A first-word test was not (Codex P2, this
+  // PR): "Incline Bench Press" shares its first word with "Incline Dumbbell Press".
+  it('the visible-line agreement check matches the FULL replacement name', () => {
+    assert.match(rehearsalSrc, /liftMentionIndex\(line, prescription\.name\) >= 0/);
+    assert.ok(!/prescription\.name\.split\(/.test(rehearsalSrc),
+      'a first-word match is too weak to prove the card names the staged replacement');
+
+    const staged = 'Incline Dumbbell Press';
+    assert.equal(
+      liftMentionIndex('Replace Bench Press with Incline Bench Press — 90 lb 10 reps.', staged) >= 0,
+      false, 'a different lift sharing the first word must NOT satisfy the staged proposal');
+    assert.equal(
+      liftMentionIndex('Replace Bench Press with Incline Dumbbell Press — 90 lb 10 reps.', staged) >= 0,
+      true, 'the genuine card still agrees');
+    assert.equal(
+      liftMentionIndex('Replace Bench Press with Incline-Dumbbell  Press — 90 lb.', staged) >= 0,
+      true, 'separator variation is still the same lift');
   });
 });

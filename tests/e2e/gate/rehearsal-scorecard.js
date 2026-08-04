@@ -1264,4 +1264,4 @@ function renderMarkdown(card) {
   return `${lines.join('\n')}\n`;
 }
 
-module.exports = { CONDITIONS, scoreRehearsalRun, renderMarkdown, compareLedgerToDeclaration, classifyRepeatApprovalProbe, classifySettlement, isSettled, SETTLED_OUTCOMES, deriveExpectedRemaining, compareRemainingToExpectation, replyMatchesExpectation, pinMatchesExpectation, explicitNextUpClaim, detectUnsupportedMutationWording, COMPLETED_MUTATION_PATTERNS, compareReplacementIdentity, classifyCoachResponseCapture, detectUnsupportedWriteClaim, WRITE_CLAIM_PATTERNS, PASS, FAIL, ERROR, NOT_APPLICABLE };
+module.exports = { CONDITIONS, scoreRehearsalRun, renderMarkdown, compareLedgerToDeclaration, classifyRepeatApprovalProbe, classifySettlement, isSettled, SETTLED_OUTCOMES, deriveExpectedRemaining, compareRemainingToExpectation, replyMatchesExpectation, pinMatchesExpectation, explicitNextUpClaim, liftMentionIndex, detectUnsupportedMutationWording, COMPLETED_MUTATION_PATTERNS, compareReplacementIdentity, classifyCoachResponseCapture, detectUnsupportedWriteClaim, WRITE_CLAIM_PATTERNS, PASS, FAIL, ERROR, NOT_APPLICABLE };
