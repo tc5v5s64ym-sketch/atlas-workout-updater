@@ -424,7 +424,7 @@ import {
     saved.appendChild(undo);
     card.appendChild(saved);
 
-    const review = { card, saveBtn, done: false, identity: null };
+    const review = { card, saveBtn, done: false, rowsWritten: false, identity: null };
     currentReview = review;
     return card;
   }
@@ -451,6 +451,29 @@ import {
     stripStaleUndoLinks(currentReview.card);
   }
 
+  // The rows are committed to the sheet; only the plan-ledger seal is unverified.
+  //
+  // This state was previously invisible on the card. app.js emitted its `warn` and
+  // re-enabled the gate, but the observer above matched only `.ok` and `.error`, so
+  // the card kept its pre-save body — including the note "Nothing's saved yet · this
+  // is the only save". That sentence was now FALSE, and it is the exact reading that
+  // made a real session look lost: the owner saw a card saying nothing had been saved
+  // and a button asking him to act, with nothing anywhere telling him his sets were
+  // already safe. (F-SB1-B fixed the other half of that report — the button label —
+  // by mirroring 'Retry ledger seal' from #approve-btn. The note was left behind.)
+  //
+  // The card must NOT go `done`: the retry is still available and still the right
+  // next tap, so `.rv-act` has to stay visible and a later successful retry must
+  // still be able to reach markReviewSaved(). Only the note is rewritten, to the two
+  // facts that are actually true — the sets are saved, and one check needs a retry.
+  function markReviewRowsWrittenLedgerUnverified() {
+    if (!currentReview || currentReview.done || currentReview.rowsWritten) return;
+    currentReview.rowsWritten = true;
+    currentReview.card.classList.add('rows-written');
+    const note = currentReview.card.querySelector('.rv-note');
+    if (note) note.textContent = '✓ Your sets are saved to the sheet · only the plan-ledger check needs a retry';
+  }
+
   function markReviewUndone() {
     if (!currentReview) return;
     const txt = currentReview.card.querySelector('.rv-saved-txt');
@@ -460,17 +483,29 @@ import {
   }
 
   // app.js writes the result into #logger-status: `.status-msg.ok` on a write or
-  // an undo (text "undone"), `.status-msg.error` on failure. Reflect that onto
-  // the review card — no change to the approve/undo handlers.
+  // an undo (text "undone"), `.status-msg.error` on failure, and — for the one
+  // outcome where the ROWS COMMITTED but the plan-ledger seal did not verify — a
+  // `.status-msg.warn` carrying `data-atlas-state="rows-written-ledger-unverified"`.
+  // Reflect that onto the review card — no change to the approve/undo handlers.
+  //
+  // That third case is matched on the STATE ATTRIBUTE, never on the message text.
+  // `warn` is also how app.js reports a parse failure, an unrecognized exercise, and
+  // an unreadable screenshot — all of which happen BEFORE any write, where the card's
+  // "Nothing's saved yet" note is true and must stay. Only the marked one means the
+  // sets are already in the sheet.
+  const ROWS_WRITTEN_STATE = '[data-atlas-state="rows-written-ledger-unverified"]';
   if (loggerStatusEl) {
     new MutationObserver(() => {
       if (!currentReview) return;
       const ok = loggerStatusEl.querySelector('.status-msg.ok');
       const err = loggerStatusEl.querySelector('.status-msg.error');
+      const rowsWritten = loggerStatusEl.querySelector(`.status-msg.warn${ROWS_WRITTEN_STATE}`);
       if (ok && /undone/i.test(ok.textContent || '')) {
         markReviewUndone();
       } else if (ok && !currentReview.done) {
         markReviewSaved();
+      } else if (rowsWritten && !currentReview.done) {
+        markReviewRowsWrittenLedgerUnverified();
       } else if (err && !currentReview.done) {
         currentReview.saveBtn.textContent = 'Save workout';
         currentReview.saveBtn.disabled = approveBtn ? approveBtn.disabled : false;

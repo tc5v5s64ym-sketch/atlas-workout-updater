@@ -23,9 +23,23 @@ export function renderTable(headers, rows) {
   return el('table', {}, [thead, tbody]);
 }
 
-export function setStatus(container, message, kind) {
+// `state` is an OPTIONAL machine-readable marker written as `data-atlas-state`.
+//
+// It exists because `kind` is too coarse for a consumer that must act on ONE
+// specific outcome. `warn` covers a parse failure, an unrecognized exercise, an
+// unreadable screenshot, and the retryable ledger-seal outcome — and only the last
+// of those means "the workout rows are committed". A consumer that needs to tell
+// them apart would otherwise have to match the message PROSE, which silently breaks
+// the first time the wording is improved. The marker names the state itself, so the
+// wording stays free to change.
+//
+// Purely additive: callers that omit it produce byte-identical markup to before.
+export function setStatus(container, message, kind, state) {
   container.innerHTML = '';
-  if (message) container.appendChild(el('div', { class: `status-msg ${kind}`, text: message }));
+  if (!message) return;
+  const attrs = { class: `status-msg ${kind}`, text: message };
+  if (state) attrs['data-atlas-state'] = state;
+  container.appendChild(el('div', attrs));
 }
 
 // "Session quality: X / 100" with a tappable circled-i that reveals the

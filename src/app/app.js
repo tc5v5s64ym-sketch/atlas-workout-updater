@@ -8452,6 +8452,10 @@ function closeoutSealIsRetryable(writeData) {
   return !(Boolean(seal) && seal.no_ledger === true && seal.sealed_ok === true && eventOk);
 }
 const CLOSEOUT_RETRY_MSG = 'Workout written to Google Sheets ✓ — but the plan-ledger record could not be verified. Your sets are safe; tap Save again to re-verify (no rows will duplicate).';
+// The machine-readable name for that outcome. The review card in
+// coach-conversation.js keys off THIS, not off the sentence above — the wording must
+// stay free to change without silently stranding the card in a false state.
+const CLOSEOUT_RETRY_STATE = 'rows-written-ledger-unverified';
 const CLOSEOUT_NO_LEDGER_MSG = 'Plan tracking incomplete — this session had no plan-ledger rows to seal. Your sets are saved; there is nothing to retry.';
 // Appended UNDER the completed save's own message, the same way the readback verdict is
 // — the save really did succeed, and this names the one thing that did not.
@@ -8609,7 +8613,7 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
       }
       approveBtn.disabled = false;
       approveBtn.textContent = 'Retry ledger seal';
-      setStatus(loggerStatus, CLOSEOUT_RETRY_MSG, 'warn');
+      setStatus(loggerStatus, CLOSEOUT_RETRY_MSG, 'warn', CLOSEOUT_RETRY_STATE);
       return;
     }
     invalidatePreview();
