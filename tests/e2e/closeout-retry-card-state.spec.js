@@ -139,6 +139,11 @@ async function mockAtlasApis(page, capture) {
   });
 }
 
+// Any wording that would assert the staged payload differs from the committed one.
+// The middle state is shared by the edited and the identical re-preview, and the code
+// cannot tell them apart by design, so no carrier of it may make this claim.
+const CHANGED_PAYLOAD_CLAIM = /edit|chang|revis|updat|modif|differ|new sets/i;
+
 async function openApp(page, capture) {
   await mockAtlasApis(page, capture);
   await page.addInitScript(key => localStorage.setItem('atlas_api_key', key), TEST_KEY);
@@ -258,8 +263,11 @@ test('unverified closeout: an EDITED re-preview claims neither "nothing saved" n
   await expect(note).not.toContainText('Nothing');
   // The truthful middle: both subjects named, and kept apart.
   await expect(rebuilt).toHaveClass(/prior-rows-committed/);
-  await expect(note).toContainText('not saved yet');
+  await expect(note).toContainText('isn’t saved yet');
   await expect(note).toContainText('already in the sheet');
+  // …and it does not describe the payload, even here where it HAS changed. The state
+  // is shared with the identical-payload path, so the wording must be true of both.
+  await expect(note).not.toHaveText(CHANGED_PAYLOAD_CLAIM);
 
   expect(capture.writeRequests).toHaveLength(1);   // the edit wrote nothing
 });
@@ -285,7 +293,16 @@ test('returning to the IDENTICAL payload still does not re-claim the saved state
   const rebuilt = page.locator('.review').last();
   await expect(rebuilt).not.toHaveClass(/rows-written/);
   await expect(rebuilt).toHaveClass(/prior-rows-committed/);
-  await expect(rebuilt.locator('.rv-note')).not.toContainText('Your sets are saved');
+  const note = rebuilt.locator('.rv-note');
+  await expect(note).not.toContainText('Your sets are saved');
+
+  // THE BITE for provenance-neutral wording. Nothing was edited on this path, and the
+  // code deliberately refuses to compare payloads — so it cannot know whether anything
+  // was. A note claiming a change would be asserting a fact the system has chosen not
+  // to establish, which is the same failure as the two overclaims above, in prose.
+  await expect(note).not.toHaveText(CHANGED_PAYLOAD_CLAIM);
+  await expect(note).toContainText('isn’t saved yet');
+  await expect(note).toContainText('already in the sheet');
 });
 
 // The other direction, and the reason the fact is cleared rather than latched

@@ -519,7 +519,15 @@ import {
   // in the sheet. Saying only the first ("Nothing's saved yet") hides committed rows;
   // saying only the second ("Your sets are saved") claims these rows landed when they
   // did not. Both were shipped, and both were caught in review.
-  const PRIOR_ROWS_NOTE = 'These edited sets are not saved yet · your earlier sets from this session are already in the sheet';
+  //
+  // The wording is PROVENANCE-NEUTRAL, and that is load-bearing. An earlier version
+  // read "These edited sets…" — but this state is applied to every rebuilt card,
+  // including one whose rows are byte-identical to the committed ones, where nothing
+  // was edited. The contract above deliberately refuses to compare payloads, so the
+  // note may not assert a difference the code has chosen not to establish. It says
+  // only what is true of every carrier of this state: this preview has not been
+  // saved, and earlier rows from the session have.
+  const PRIOR_ROWS_NOTE = 'This preview isn’t saved yet · earlier sets from this session are already in the sheet';
   function applyPriorRowsCommittedState(review) {
     if (!review || review.done || review.rowsWritten || review.priorRows) return;
     review.priorRows = true;
