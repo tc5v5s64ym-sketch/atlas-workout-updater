@@ -1386,7 +1386,6 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
   // 2026-08-03). Both claim verdicts are computed from evidence captured here; the
   // fresh session's thread is separate evidence and never a replacement carrier.
   await sweepAtlasBubbles(page);
-  const originalThreadText = await page.locator('#thread-messages').innerText();
   const originalVisibleMessages = bubbleRecordsToMessages(bubbleRecords);
 
   // ── 13b. Cross-session teardown and inheritance (declared scenarios only) ────
@@ -1527,9 +1526,6 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
     gemini = eligible.filter(r => r.source === 'gemini');
   }
 
-  // The ORIGINAL session's thread, captured before any teardown reload. Retained for
-  // the artifact record only — the write-claim verdict below no longer scans it.
-  const threadFull = originalThreadText;
   // The AUTHORITATIVE write boundary: when the one live write actually succeeded.
   const liveWriteAt = (() => {
     const live = saveResponses.filter(r => r.capture_failed !== true && r.test_mode !== true && r.sheet_write === 'success');
