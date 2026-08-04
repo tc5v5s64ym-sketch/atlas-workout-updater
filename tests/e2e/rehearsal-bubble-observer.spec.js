@@ -33,11 +33,14 @@ const THINKING = 'Thinking…';
 // runner does — Node stamps each report on receipt.
 async function startCollector(page, phaseRef) {
   const records = {};
-  const state = { ingestSeq: 0, gate: null };
+  const state = { ingestSeq: 0, gate: null, rejectReports: false };
   await page.exposeFunction('__atlasBubbleObserved', async (batch) => {
     // `gate` lets a test HOLD a report in flight, which is how the flush-window race is
     // reproduced: the boundary is taken while this report has not yet reached Node.
     if (state.gate) await state.gate;
+    // A rejecting handler is how "the report did not land" is reproduced: the flush must
+    // report ok:false rather than swallow it.
+    if (state.rejectReports) throw new Error('report handler rejected');
     const now = Date.now();
     for (const item of (Array.isArray(batch) ? batch : [])) {
       state.ingestSeq += 1;
@@ -64,15 +67,27 @@ async function startCollector(page, phaseRef) {
   return { records, state };
 }
 
-// The runner's own barrier: drain, then stamp.
+// The runner's own boundary: attempt a drain (proving its postcondition), and READ THE
+// PAGE'S LOGICAL CLOCK at this instant. Ordering comes from the clock, never the drain.
 async function takeBoundary(page, state) {
   let drained = false;
+  let atChangeSeq = null;
   try {
-    await page.evaluate(() => (typeof window.__atlasBubbleFlush === 'function' ? window.__atlasBubbleFlush() : null));
-    drained = true;
+    const flushed = await page.evaluate(() => (typeof window.__atlasBubbleFlush === 'function'
+      ? window.__atlasBubbleFlush() : null));
+    drained = Boolean(flushed && flushed.ok === true && flushed.pending === false);
   } catch { drained = false; }
-  return makeBoundary({ atMs: Date.now(), ingestSeq: state.ingestSeq, drained });
+  try {
+    const st = await page.evaluate(() => (typeof window.__atlasBubbleState === 'function'
+      ? window.__atlasBubbleState() : null));
+    if (st && Number.isFinite(st.changeSeq)) atChangeSeq = st.changeSeq;
+  } catch { atChangeSeq = null; }
+  return makeBoundary({ atMs: Date.now(), atChangeSeq, ingestSeq: state.ingestSeq, drained });
 }
+
+// Read the logical clock alone, as the response listener does at the write's instant.
+const readChangeSeq = (page) => page.evaluate(() => (typeof window.__atlasBubbleState === 'function'
+  ? window.__atlasBubbleState().changeSeq : null));
 
 const appendBubble = (page, text) => page.evaluate((t) => {
   const b = document.createElement('div');
@@ -304,5 +319,147 @@ test.describe('F-SB4B collector — a pending report cannot be inverted across a
 
     const sweep = detectUnsupportedWriteClaim({ messages: recordsToMessages(records), liveWriteBoundary: boundary });
     expect(sweep.unsupported, `a claim made after a drained write boundary is earned: ${sweep.detail}`).toBe(false);
+  });
+});
+
+
+// ── the boundary must carry evidence valid at ITS OWN instant ────────────────
+// The transplant defect: the write boundary took `atMs` from the successful response
+// but its drain certificate from the pre-click instant. A claim rendered after the
+// click and before the response, still pending when the response was stamped, was then
+// classified `after` on a certificate that proved nothing about that moment.
+
+test.describe('F-SB4B boundary — no transplanted certificate, no unproven drain', () => {
+  test('BITE: a claim rendered post-click / pre-response, held until after it, FAILS', async ({ page }) => {
+    const phaseRef = { value: 'closeout' };
+    const { records, state } = await startCollector(page, phaseRef);
+    await appendBubble(page, THINKING);
+    await settle(page);
+
+    // The pre-click drain succeeds and proves the collector is empty AT THIS INSTANT.
+    const preClick = await takeBoundary(page, state);
+    expect(preClick.drained, 'the pre-click drain really did succeed').toBe(true);
+
+    // Save is clicked. The bubble becomes a save claim BEFORE the response arrives, and
+    // its report is held so it cannot reach Node yet.
+    let release;
+    state.gate = new Promise((r) => { release = r; });
+    await rewriteBubble(page, 0, 'All set — your workout is saved to your sheet.');
+    await page.waitForTimeout(OBSERVER_FLUSH_MS * 3);
+
+    // The successful write response is observed: read the clock at THIS instant.
+    const liveWriteAtMs = Date.now();
+    const atChangeSeq = await readChangeSeq(page);
+
+    release();
+    state.gate = null;
+    await page.waitForTimeout(OBSERVER_FLUSH_MS * 3);
+
+    const messages = recordsToMessages(records);
+    expect(messages[0].text).toMatch(/saved to your sheet/);
+
+    // The honest boundary: response time plus the clock read at that time.
+    const honest = detectUnsupportedWriteClaim({
+      messages, liveWriteBoundary: makeBoundary({ atMs: liveWriteAtMs, atChangeSeq }),
+    });
+    expect(honest.unsupported, `the claim was visible before the response: ${honest.detail}`).toBe(true);
+
+    // And the TRANSPLANT — the pre-click certificate carried onto the response time —
+    // must not rescue it either.
+    const transplanted = detectUnsupportedWriteClaim({
+      messages,
+      liveWriteBoundary: makeBoundary({ atMs: liveWriteAtMs, ingestSeq: preClick.ingestSeq, drained: preClick.drained }),
+    });
+    expect(transplanted.unsupported,
+      'a drain certificate from the pre-click instant may not authorize a later boundary').toBe(true);
+    expect(transplanted.detail).toMatch(/without a drain/);
+  });
+
+  test('a claim rendered genuinely AFTER the response instant is earned', async ({ page }) => {
+    const phaseRef = { value: 'closeout' };
+    const { records, state } = await startCollector(page, phaseRef);
+    await appendBubble(page, THINKING);
+    await settle(page);
+
+    const liveWriteAtMs = Date.now();
+    const atChangeSeq = await readChangeSeq(page);      // clock read at the response
+
+    await rewriteBubble(page, 0, 'All set — your workout is saved to your sheet.');
+    await settle(page);
+
+    const sweep = detectUnsupportedWriteClaim({
+      messages: recordsToMessages(records), liveWriteBoundary: makeBoundary({ atMs: liveWriteAtMs, atChangeSeq }),
+    });
+    expect(sweep.unsupported, `an honest post-write claim must pass: ${sweep.detail}`).toBe(false);
+    expect(state.ingestSeq).toBeGreaterThan(0);
+  });
+
+  test('BITE: a MISSING flush function cannot be recorded as a successful drain', async ({ page }) => {
+    const phaseRef = { value: 'closeout' };
+    const { records, state } = await startCollector(page, phaseRef);
+    await appendBubble(page, THINKING);
+    await settle(page);
+    await page.evaluate(() => { delete window.__atlasBubbleFlush; });
+
+    // The claim is rendered; the normal timer will deliver it later.
+    await rewriteBubble(page, 0, 'All set — your workout is saved to your sheet.');
+    const boundary = await takeBoundary(page, state);
+    expect(boundary.drained, 'a missing flush function is not a drain').toBe(false);
+
+    await settle(page);
+    const sweep = detectUnsupportedWriteClaim({
+      messages: recordsToMessages(records),
+      liveWriteBoundary: makeBoundary({ atMs: boundary.atMs, ingestSeq: boundary.ingestSeq, drained: boundary.drained }),
+    });
+    expect(sweep.unsupported, 'a pre-boundary claim must stay unsupported').toBe(true);
+  });
+
+  test('BITE: a REJECTED report callback cannot be recorded as a successful drain', async ({ page }) => {
+    const phaseRef = { value: 'closeout' };
+    const { records, state } = await startCollector(page, phaseRef);
+    await appendBubble(page, THINKING);
+    await settle(page);
+
+    state.rejectReports = true;
+    await rewriteBubble(page, 0, 'All set — your workout is saved to your sheet.');
+    const boundary = await takeBoundary(page, state);
+    expect(boundary.drained, 'a rejected callback is not a delivered report').toBe(false);
+
+    // The re-queued report lands once the handler recovers — a failed delivery must not
+    // DROP the evidence.
+    state.rejectReports = false;
+    await settle(page);
+    expect(recordsToMessages(records)[0].text, 'the rejected batch was retried, not lost')
+      .toMatch(/saved to your sheet/);
+
+    const sweep = detectUnsupportedWriteClaim({
+      messages: recordsToMessages(records),
+      liveWriteBoundary: makeBoundary({ atMs: boundary.atMs, ingestSeq: boundary.ingestSeq, drained: boundary.drained }),
+    });
+    expect(sweep.unsupported, 'an unproven drain may not authorize anything').toBe(true);
+  });
+
+  test('a genuine drain proves its postcondition', async ({ page }) => {
+    const phaseRef = { value: 'closeout' };
+    const { records, state } = await startCollector(page, phaseRef);
+    await appendBubble(page, 'a real reply');
+    const boundary = await takeBoundary(page, state);
+    expect(boundary.drained).toBe(true);
+    expect(boundary.atChangeSeq, 'the boundary carries the clock read at its own instant').not.toBeNull();
+    expect(recordsToMessages(records)[0].text, 'the drain delivered the pending report').toBe('a real reply');
+  });
+
+  test('BITE: a bare-number boundary cannot authorize a collector record', async ({ page }) => {
+    const phaseRef = { value: 'closeout' };
+    const { records } = await startCollector(page, phaseRef);
+    await appendBubble(page, 'All set — saved to your sheet.');
+    await settle(page);
+    const messages = recordsToMessages(records);
+    expect(Number.isFinite(messages[0].changeSeq), 'the record carries collector causality').toBe(true);
+
+    // A bare timestamp carries no clock read and no drain proof.
+    const sweep = detectUnsupportedWriteClaim({ messages, liveWriteAtMs: messages[0].atMs - 10 });
+    expect(sweep.unsupported, 'a bare number must not disable the ordering question').toBe(true);
+    expect(sweep.detail).toMatch(/without a drain/);
   });
 });

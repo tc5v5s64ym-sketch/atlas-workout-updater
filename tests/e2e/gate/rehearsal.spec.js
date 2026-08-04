@@ -906,21 +906,32 @@ function onBubblesObserved(batch) {
   }
 }
 
-// DRAIN, then stamp. Forcing the pending flush and AWAITING the exposed callback means
-// every change that had already happened is ingested before the boundary is taken, so a
-// pre-boundary claim can never be stamped after it. If the drain cannot run, the
-// boundary records `drained:false` and the claim decisions refuse to call anything
-// reported afterwards earned — correctness never depends on the drain succeeding
-// (owner P1, 2026-08-03).
+// A boundary READS the page's logical clock at its OWN instant. That value — not a
+// wall-clock time and not a drain certificate taken elsewhere — is what orders a DOM
+// change against the boundary. A drain is attempted first purely to reduce pending
+// work, and its success must be PROVEN by the postcondition the flush returns: a
+// missing function, a rejected callback, or an unverified state leaves `drained:false`
+// (owner P1, 2026-08-03). Ordering never depends on it.
 async function takeBoundary(page) {
   let drained = false;
+  let atChangeSeq = null;
   try {
-    await page.evaluate(() => (typeof window.__atlasBubbleFlush === 'function'
+    const flushed = await page.evaluate(() => (typeof window.__atlasBubbleFlush === 'function'
       ? window.__atlasBubbleFlush() : null));
-    drained = true;
+    drained = Boolean(flushed && flushed.ok === true && flushed.pending === false);
   } catch { drained = false; }
-  return makeBoundary({ atMs: Date.now(), ingestSeq: bubbleIngestSeq, drained });
+  try {
+    const state = await page.evaluate(() => (typeof window.__atlasBubbleState === 'function'
+      ? window.__atlasBubbleState() : null));
+    if (state && Number.isFinite(state.changeSeq)) atChangeSeq = state.changeSeq;
+  } catch { atChangeSeq = null; }
+  return makeBoundary({ atMs: Date.now(), atChangeSeq, ingestSeq: bubbleIngestSeq, drained });
 }
+
+// The logical clock AT THE INSTANT a live write response is observed. Read inside the
+// response listener so the boundary carries evidence valid at its own moment, instead of
+// borrowing a certificate from the pre-click drain.
+let liveWriteChangeSeq = null;
 
 // A RECONCILER, not the collector. It can fill in a bubble the observer never reported,
 // and such a record is marked retroactive so the claim decisions fail closed on it. It
@@ -1138,7 +1149,7 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
         const layers = [body, body && body.data, body && body.data && body.data.data]
           .filter(l => l && typeof l === 'object');
         const data = layers.find(l => 'test_mode' in l || 'sheet_write' in l || 'sheet_written' in l) || null;
-        saveResponses.push({
+        const record = {
           phase,
           at: Date.now(),
           endpoint,
@@ -1148,7 +1159,20 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
           no_write_confirmed: data ? data.no_write_confirmed : undefined,
           sheet_write: data ? data.sheet_write : undefined,
           capture_failed: data ? false : true,
-        });
+        };
+        saveResponses.push(record);
+        // THE WRITE BOUNDARY'S OWN INSTANT. Read the page's logical clock here, as the
+        // successful live write is observed — not before the click and not after the
+        // save settles. A certificate from either of those instants would be a
+        // transplant (owner P1, 2026-08-03).
+        if (record.capture_failed !== true && record.test_mode !== true
+          && record.sheet_write === 'success' && liveWriteChangeSeq === null) {
+          try {
+            const st = await page.evaluate(() => (typeof window.__atlasBubbleState === 'function'
+              ? window.__atlasBubbleState() : null));
+            if (st && Number.isFinite(st.changeSeq)) liveWriteChangeSeq = st.changeSeq;
+          } catch { liveWriteChangeSeq = null; }
+        }
       } catch {
         saveResponses.push({ phase, at: Date.now(), endpoint, status: null, capture_failed: true });
       }
@@ -1297,10 +1321,11 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
   const saveControl = page.locator('.review:not(.done) .rv-save');
   await expect(saveControl).toBeVisible({ timeout: 40000 });
   await snap(page, '07-preview.png');
-  // Drain BEFORE the click. Everything visible up to this instant is already ingested,
-  // and the live write's own response can only arrive afterwards — so a claim made
-  // before Save can never be stamped after the write.
-  const preSaveBoundary = await takeBoundary(page);
+  // Drain before the click purely to shrink the pending set. It is NOT the write
+  // boundary's evidence: that is read inside the response listener at the write's own
+  // instant, because a drain certificate from this instant cannot be transplanted onto
+  // a later one (owner P1, 2026-08-03).
+  await takeBoundary(page);
   await saveControl.click();
   await expect(page.locator('.review.done')).toBeVisible({ timeout: 300000 });
   const savedLabel = await page.locator('.review.done .rv-saved-txt').innerText().catch(() => '');
@@ -1595,10 +1620,10 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
   const liveWriteBoundary = (() => {
     const live = saveResponses.filter(r => r.capture_failed !== true && r.test_mode !== true && r.sheet_write === 'success');
     if (!live.length) return null;
-    // The write's own response time, carrying the pre-save drain's evidence: everything
-    // visible before Save was ingested at or before `preSaveBoundary.ingestSeq`, and the
-    // response necessarily arrived after the click.
-    return makeBoundary({ atMs: live[0].at, ingestSeq: preSaveBoundary.ingestSeq, drained: preSaveBoundary.drained });
+    // The response time AND the logical clock read at that same instant. When the clock
+    // read failed, `atChangeSeq` is null and every collector claim at or after the write
+    // is `uncertain` — fail closed, never a borrowed certificate.
+    return makeBoundary({ atMs: live[0].at, atChangeSeq: liveWriteChangeSeq, drained: false });
   })();
   // THE CLAIM SWEEP — derived, never a constant. The previous value was a literal
   // `false` justified as "asserted per-beat pre-acceptance", but the per-beat checks
