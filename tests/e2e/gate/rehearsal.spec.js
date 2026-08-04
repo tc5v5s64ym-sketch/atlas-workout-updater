@@ -32,7 +32,7 @@ const {
   scoreRehearsalRun, renderMarkdown, compareLedgerToDeclaration, classifyRepeatApprovalProbe,
   classifySettlement, isSettled,
   deriveExpectedRemaining, compareRemainingToExpectation, replyMatchesExpectation,
-  detectUnsupportedMutationWording,
+  detectUnsupportedMutationWording, compareReplacementIdentity,
 } = require('./rehearsal-scorecard');
 const { REHEARSAL_SESSION } = require('./rehearsal-run-purpose');
 const { measureSourceTree } = require('./rehearsal-source-facts');
@@ -318,7 +318,18 @@ async function assertStagedProposal(page, h, { threadBefore, sourceRegex }) {
   const mutationWording = /i've noted the substitution|you're substituting|has been (swapped|replaced)/i.test(delta);
   h.beat('no-completed-mutation-wording', !mutationWording,
     mutationWording ? 'completed-mutation wording appeared before acceptance' : 'clean');
-  return { line, ...rx };
+  // The INDEPENDENT replacement identity, captured HERE — while the proposal is staged
+  // and before any durable row is read (owner P1, 2026-08-03). The engine resolves the
+  // replacement's lift code and asks the read-only recommender for its prescription, so
+  // the last such call during proposal staging names the code the durable surfaces must
+  // later agree with.
+  const staged = proposedReplacementLiftCodes.filter(c => c.phase === 'substitution_ask');
+  const replacementLiftCode = staged.length ? staged[staged.length - 1].lift_code : '';
+  h.beat('replacement-identity-captured', Boolean(replacementLiftCode),
+    replacementLiftCode
+      ? `the accepted proposal resolves to lift code ${replacementLiftCode}, captured before any durable read`
+      : 'no engine prescription call was observed while the proposal was staged, so the replacement identity cannot be established independently');
+  return { line, ...rx, replacementLiftCode };
 }
 
 // Assert the proposal-grounded prescription answer: carries the proposal's own
@@ -721,6 +732,12 @@ async function logSet(page, text, expectAfter) {
 // The phase the run is currently in, shared with the module-level helpers so a captured
 // message can be attributed to the beat that produced it.
 const currentPhaseRef = { value: 'setup' };
+// The replacement lift codes the ENGINE resolved while staging a proposal, captured from
+// the proposal's own authoritative prescription call (`GET /api/recommend/next/<code>`,
+// src/app/app.js tryApplyImplicitSubstitution). This is the INDEPENDENT identity
+// finding 2 requires: it is observed before any durable read, so Log_Cleaned,
+// Session_Plans and Session_Plan_Sets are compared to it and can never define it.
+const proposedReplacementLiftCodes = [];
 const THINKING = 'Thinking…';
 const SETTLE_TIMEOUT_MS = 90000;
 const STABLE_MS = 750;
@@ -904,6 +921,10 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
   // A body that cannot be parsed is recorded as capture_failed — distinguishable
   // from "no request", and never counted as a proven write (fail-closed).
   const saveResponses = [];
+  page.on('request', (req) => {
+    const m = /\/api\/recommend\/next\/([^/?#]+)/.exec(req.url());
+    if (m) proposedReplacementLiftCodes.push({ phase: currentPhase, lift_code: decodeURIComponent(m[1]).toUpperCase(), at: Date.now() });
+  });
   page.on('response', async (res) => {
     const phase = currentPhase;
     const url = res.url();
@@ -1241,15 +1262,35 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
       .filter(r => String(r[spsPlannedIdx] || '').trim().toUpperCase() === sub.sourceLift)
       .map(r => String(r[spsIdx.item] || '').trim()))];
     const oRow = substitutedOutcomes[0] || [];
-    const oPerformed = String(oRow[spPerformedIdx] || '').trim().toUpperCase();
+    // IDENTITY, not agreement. Every durable surface is compared against the identity
+    // captured from the accepted proposal BEFORE these rows were read, so a wrong lift
+    // code repeated consistently across Log_Cleaned, the outcome and the ledger can no
+    // longer satisfy itself (owner P1, 2026-08-03).
+    const revLiftIdx = sessionPlanSetsColumns.indexOf('planned_lift_code');
+    const revSrcIdx = sessionPlanSetsColumns.indexOf('recommendation_source');
+    const identityCmp = compareReplacementIdentity(
+      {
+        replacementLiftCode: sub.replacementLiftCode,
+        sourceLiftCode: sub.sourceLift,
+        sourcePlanItemId: sourceItemIds.length === 1 ? sourceItemIds[0] : null,
+      },
+      {
+        logLiftCodes: subLogLiftCodes,
+        outcomePerformedLiftCode: String(oRow[spPerformedIdx] || '').trim(),
+        outcomePlannedLiftCode: String(oRow[spPlannedIdx] || '').trim(),
+        outcomePlanItemId: String(oRow[spItemIdx] || '').trim(),
+        ledgerRevisionLiftCodes: spsRows
+          .filter(r => String(r[revSrcIdx] || '').trim() !== 'accepted')
+          .map(r => String(r[revLiftIdx] || '').trim()),
+      },
+    );
     const outcomeBound = substitutedOutcomes.length === 1
       && sourceItemIds.length === 1
-      && String(oRow[spItemIdx] || '').trim() === sourceItemIds[0]
-      && String(oRow[spPlannedIdx] || '').trim().toUpperCase() === sub.sourceLift
-      && oPerformed !== '' && oPerformed !== sub.sourceLift
-      && subLogLiftCodes.length === 1 && subLogLiftCodes[0] === oPerformed;
+      && identityCmp.ok;
     beat('one-substituted-outcome', outcomeBound,
-      `${substitutedOutcomes.length} substituted item_outcome row(s); source slot ${sourceItemIds.join('/') || '(none)'} vs outcome slot ${String(oRow[spItemIdx] || '(none)')}; performed ${oPerformed || '(blank)'} vs substitute log lift ${subLogLiftCodes.join('/') || '(none)'}`);
+      outcomeBound
+        ? `one substituted item_outcome, bound to source slot ${sourceItemIds[0]}, every durable surface agreeing with the proposal's own lift code ${String(sub.replacementLiftCode).toUpperCase()}`
+        : `${substitutedOutcomes.length} substituted item_outcome row(s); source slot ${sourceItemIds.join('/') || '(none)'}; ${identityCmp.problems.join('; ')}`);
   } else {
     beat('zero-substituted-outcomes', substitutedOutcomes.length === 0,
       `${substitutedOutcomes.length} substituted item_outcome row(s) for a scenario declaring none`);
@@ -1353,7 +1394,9 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
           })),
           revisions: !sub ? null : {
             source_lift: sub.sourceLift,
-            replacement_lift: subLogLiftCodes[0] || '',
+            // The captured proposal identity, NOT a code derived from the durable rows
+            // this comparison is checking (owner P1, 2026-08-03).
+            replacement_lift: String(sub.replacementLiftCode || '').toUpperCase(),
             rows: 2, set_indexes: [1, 2],
             source: 'live_revision', plan_version: 2,
             weight: subWeight, reps: subReps,

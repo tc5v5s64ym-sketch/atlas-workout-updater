@@ -15,7 +15,7 @@ const {
   CONDITIONS, scoreRehearsalRun, renderMarkdown, compareLedgerToDeclaration, classifyRepeatApprovalProbe,
   classifySettlement, isSettled,
   deriveExpectedRemaining, compareRemainingToExpectation, replyMatchesExpectation,
-  detectUnsupportedMutationWording,
+  detectUnsupportedMutationWording, compareReplacementIdentity,
   PASS, FAIL, ERROR,
 } = require('../tests/e2e/gate/rehearsal-scorecard');
 const { sessionPlanSetsColumns } = require('../config/columns');
@@ -735,5 +735,88 @@ describe('detectUnsupportedMutationWording — derived, phase-bounded, fails clo
       messages: [{ text: claim, atMs: 1, phase: 'prescription_question' }], mutationAtMs: 500,
     });
     assert.equal(sweep.matches[0].phase, 'prescription_question');
+  });
+});
+
+
+// ── replacement identity: the durable rows may not define their own expectation ──
+// The circularity removed: the spec derived the expected lift code FROM the
+// substitute's Log_Cleaned rows, then checked the outcome and the ledger against that
+// derived code. A consistently wrong code across all three satisfied every check.
+
+describe('compareReplacementIdentity — captured before the durable read', () => {
+  const IDENTITY = { replacementLiftCode: 'INCDB01', sourceLiftCode: 'BEN01', sourcePlanItemId: 'item-bench-4' };
+  const honest = () => ({
+    logLiftCodes: ['INCDB01', 'INCDB01'],
+    outcomePerformedLiftCode: 'INCDB01',
+    outcomePlannedLiftCode: 'BEN01',
+    outcomePlanItemId: 'item-bench-4',
+    ledgerRevisionLiftCodes: ['INCDB01', 'INCDB01'],
+  });
+
+  it('passes when every durable surface agrees with the captured proposal', () => {
+    assert.deepEqual(compareReplacementIdentity(IDENTITY, honest()), { ok: true, problems: [] });
+  });
+
+  // THE BITE the owner asked for.
+  it('BITE — every durable surface carrying the SAME wrong lift code still fails', () => {
+    const wrong = {
+      logLiftCodes: ['WRONG9', 'WRONG9'],
+      outcomePerformedLiftCode: 'WRONG9',
+      outcomePlannedLiftCode: 'BEN01',
+      outcomePlanItemId: 'item-bench-4',
+      ledgerRevisionLiftCodes: ['WRONG9', 'WRONG9'],
+    };
+    const cmp = compareReplacementIdentity(IDENTITY, wrong);
+    assert.equal(cmp.ok, false, 'self-consistent durable rows must not satisfy an independent identity');
+    // All three surfaces are named, so the failure cannot be mistaken for one bad row.
+    assert.equal(cmp.problems.length, 3, cmp.problems.join('; '));
+    assert.ok(cmp.problems.some(p => /Log_Cleaned carries WRONG9/.test(p)));
+    assert.ok(cmp.problems.some(p => /item_outcome performed WRONG9/.test(p)));
+    assert.ok(cmp.problems.some(p => /ledger revisions carry WRONG9/.test(p)));
+  });
+
+  it('fails CLOSED when no identity was captured — the rows may not supply one', () => {
+    for (const missing of [{}, { replacementLiftCode: '' }, { replacementLiftCode: null }]) {
+      const cmp = compareReplacementIdentity(missing, honest());
+      assert.equal(cmp.ok, false);
+      assert.match(cmp.problems.join(' '), /may not supply one/);
+    }
+  });
+
+  it('catches each surface diverging on its own', () => {
+    for (const [label, patch] of [
+      ['log', { logLiftCodes: ['OTHER1'] }],
+      ['outcome performed', { outcomePerformedLiftCode: 'OTHER1' }],
+      ['ledger revisions', { ledgerRevisionLiftCodes: ['OTHER1'] }],
+      ['outcome planned (wrong source)', { outcomePlannedLiftCode: 'SQ01' }],
+      ['outcome bound to the wrong slot', { outcomePlanItemId: 'item-squat-1' }],
+    ]) {
+      const cmp = compareReplacementIdentity(IDENTITY, { ...honest(), ...patch });
+      assert.equal(cmp.ok, false, `${label} divergence must fail`);
+    }
+  });
+
+  it('refuses a replacement that collapses to the source — that is not a replacement', () => {
+    const cmp = compareReplacementIdentity(
+      { replacementLiftCode: 'BEN01', sourceLiftCode: 'BEN01', sourcePlanItemId: 'item-bench-4' },
+      { ...honest(), logLiftCodes: ['BEN01'], outcomePerformedLiftCode: 'BEN01', ledgerRevisionLiftCodes: ['BEN01'] },
+    );
+    assert.equal(cmp.ok, false);
+    assert.match(cmp.problems.join(' '), /not a replacement/);
+  });
+
+  it('refuses split or missing evidence on any surface', () => {
+    assert.equal(compareReplacementIdentity(IDENTITY, { ...honest(), logLiftCodes: [] }).ok, false);
+    assert.equal(compareReplacementIdentity(IDENTITY, { ...honest(), logLiftCodes: ['INCDB01', 'OTHER1'] }).ok, false);
+    assert.equal(compareReplacementIdentity(IDENTITY, { ...honest(), ledgerRevisionLiftCodes: [] }).ok, false);
+    assert.equal(compareReplacementIdentity(IDENTITY, { ...honest(), outcomePerformedLiftCode: '' }).ok, false);
+  });
+
+  it('normalizes case and padding but nothing else', () => {
+    assert.equal(compareReplacementIdentity(IDENTITY, {
+      ...honest(), logLiftCodes: [' incdb01 '], outcomePerformedLiftCode: 'incdb01',
+      ledgerRevisionLiftCodes: ['IncDb01'],
+    }).ok, true);
   });
 });

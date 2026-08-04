@@ -72,6 +72,70 @@ function classifyRepeatApprovalProbe(p) {
   return 'no-op-unproven';
 }
 
+// ── replacement identity, captured independently of the durable rows ───────────
+// Pure: compares every durable surface against ONE independently-captured identity.
+//
+// The circularity this removes (owner instruction 2026-08-03): the spec identified the
+// substitute's Log_Cleaned rows partly by exclusion, weight and reps, derived
+// `subLogLiftCodes[0]` FROM those rows, and then used that derived code as the expected
+// `performed_lift_code` on the Session_Plans outcome and as the expected replacement
+// lift on the Session_Plan_Sets revisions. A consistently WRONG lift code across all
+// three surfaces satisfied every check, because the evidence under review defined its
+// own expectation.
+//
+// The expectation must therefore be captured BEFORE any durable read, from the accepted
+// pending proposal itself: the replacement lift code the engine resolved, and the source
+// slot the proposal retained. Durable rows are then compared to it and can never define
+// it.
+//
+// identity = { replacementLiftCode, sourceLiftCode, sourcePlanItemId }
+// durable  = { logLiftCodes: [], outcomePerformedLiftCode, outcomePlannedLiftCode,
+//              outcomePlanItemId, ledgerRevisionLiftCodes: [] }
+// Returns { ok, problems }. Fails CLOSED: a missing captured identity is a failure, not
+// a licence to fall back on the rows.
+function compareReplacementIdentity(identity, durable) {
+  const problems = [];
+  const up = (v) => String(v == null ? '' : v).trim().toUpperCase();
+  const id = identity && typeof identity === 'object' ? identity : {};
+  const d = durable && typeof durable === 'object' ? durable : {};
+
+  const expected = up(id.replacementLiftCode);
+  const source = up(id.sourceLiftCode);
+  if (!expected) {
+    return { ok: false, problems: ['no replacement lift code was captured from the accepted proposal — the durable rows may not supply one'] };
+  }
+  if (expected === source && source !== '') {
+    problems.push(`the captured replacement lift code ${expected} equals the source lift — that is not a replacement`);
+  }
+
+  const logCodes = [...new Set((Array.isArray(d.logLiftCodes) ? d.logLiftCodes : []).map(up).filter(Boolean))];
+  if (logCodes.length === 0) problems.push('the substitute performed no Log_Cleaned rows carrying a lift code');
+  else if (logCodes.length > 1) problems.push(`the substitute's Log_Cleaned rows span lift codes ${logCodes.join('/')}`);
+  else if (logCodes[0] !== expected) problems.push(`Log_Cleaned carries ${logCodes[0]}; the accepted proposal was ${expected}`);
+
+  const performed = up(d.outcomePerformedLiftCode);
+  if (!performed) problems.push('the substituted item_outcome carries no performed_lift_code');
+  else if (performed !== expected) problems.push(`the item_outcome performed ${performed}; the accepted proposal was ${expected}`);
+
+  if (source) {
+    const planned = up(d.outcomePlannedLiftCode);
+    if (planned !== source) problems.push(`the item_outcome planned ${planned || '(blank)'}; the proposal's source was ${source}`);
+  }
+  if (id.sourcePlanItemId) {
+    const item = String(d.outcomePlanItemId == null ? '' : d.outcomePlanItemId).trim();
+    if (item !== String(id.sourcePlanItemId).trim()) {
+      problems.push(`the item_outcome bound to plan item ${item || '(blank)'}; the proposal retained ${id.sourcePlanItemId}`);
+    }
+  }
+
+  const revCodes = [...new Set((Array.isArray(d.ledgerRevisionLiftCodes) ? d.ledgerRevisionLiftCodes : []).map(up).filter(Boolean))];
+  if (revCodes.length === 0) problems.push('no Session_Plan_Sets revision rows carry a lift code');
+  else if (revCodes.length > 1) problems.push(`the ledger revisions span lift codes ${revCodes.join('/')}`);
+  else if (revCodes[0] !== expected) problems.push(`the ledger revisions carry ${revCodes[0]}; the accepted proposal was ${expected}`);
+
+  return { ok: problems.length === 0, problems };
+}
+
 // ── unsupported completed-mutation wording ─────────────────────────────────────
 // Pure: decides whether any VISIBLE message claimed a mutation had already happened at
 // a time when no mutation had yet occurred.
@@ -948,4 +1012,4 @@ function renderMarkdown(card) {
   return `${lines.join('\n')}\n`;
 }
 
-module.exports = { CONDITIONS, scoreRehearsalRun, renderMarkdown, compareLedgerToDeclaration, classifyRepeatApprovalProbe, classifySettlement, isSettled, SETTLED_OUTCOMES, deriveExpectedRemaining, compareRemainingToExpectation, replyMatchesExpectation, detectUnsupportedMutationWording, COMPLETED_MUTATION_PATTERNS, PASS, FAIL, ERROR, NOT_APPLICABLE };
+module.exports = { CONDITIONS, scoreRehearsalRun, renderMarkdown, compareLedgerToDeclaration, classifyRepeatApprovalProbe, classifySettlement, isSettled, SETTLED_OUTCOMES, deriveExpectedRemaining, compareRemainingToExpectation, replyMatchesExpectation, detectUnsupportedMutationWording, COMPLETED_MUTATION_PATTERNS, compareReplacementIdentity, PASS, FAIL, ERROR, NOT_APPLICABLE };
