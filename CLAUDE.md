@@ -88,11 +88,61 @@ Dale owns product direction, real production-data authorization, genuine gym/dev
 
 Dale may merge anything or revoke authority, but routine PRs do not wait for him to click merge.
 
-### ChatGPT — project decision desk
+### Project decision desk and the Atlas Contract / Systems Review
 
-ChatGPT helps Dale resolve genuinely non-derivable product/scope/trust forks and performs a risk-triggered Atlas Contract Review for phase transitions, roadmap changes, product/trust-contract changes, write/schema/security/promotion/destructive work, or genuine ambiguity.
+The desk does two separate things. ChatGPT helps Dale resolve genuinely non-derivable product, scope, and trust forks. Separately, one review lane — the **Atlas Contract / Systems Review** — reads a triggered PR.
 
-It is not a routine merge gate and never authorizes a production write.
+**Use this one name everywhere.** The lane was formerly called the "ChatGPT Atlas Contract Review". Two names for one lane read as two lanes. There is one lane.
+
+**ChatGPT performs the required review.** This is an authority boundary, not a preference (owner ruling 2026-08-03, recorded in the execution plan). The implementation agent may not satisfy its own architecture gate: a clean context is not an independent authority — it is still the implementation agent, and it reproduces the same model and system blind spots. Naming the performer creates observability, not separation of authority.
+
+A clean-context review by the implementation agent stays **optional advisory confidence**. Record it under advisory findings. It never satisfies the required gate.
+
+The merge card still records **who** performed the required review, so a review that did not come from the ChatGPT lane is visible as one.
+
+The review never authorizes a production write, and it is never a GitHub status, a required check, or a reviewer account.
+
+It is not a routine gate on every PR, but the trigger list below is deliberately wide, and most campaign work touches it. Treat "no trigger fired" as a claim that must survive reading the list, not as the default.
+
+#### When the Atlas Contract / Systems Review is required
+
+**Owner instruction 2026-08-03, recorded in [`docs/ATLAS_V1_EXECUTION_PLAN.md`](docs/ATLAS_V1_EXECUTION_PLAN.md).** The existing review lane covers more triggers. This creates **no second review system**, no new account, no new marker, and no new CI check. It is the same manual lane, recorded in the merge card.
+
+The review is required when a PR touches any of these:
+
+- campaign gates;
+- scorecards and counters;
+- adjudicators;
+- rehearsal and test runners;
+- evidence collectors;
+- identity and correlation machinery;
+- phase or count advancement;
+- trust-sensitive write, schema, security, promotion, or destructive changes.
+
+The earlier triggers stay in force: phase transitions, roadmap changes, product or trust-contract changes, and genuine ambiguity.
+
+The review reads the **exact head** in a clean context. A review of an earlier commit does not cover a later head.
+
+#### What the review must ask
+
+1. Does this hold in the next legitimate repository state, not only the current fixture?
+2. Can missing, no-op, defaulted, circular, or hardcoded evidence produce a false green?
+3. Does the proof establish identity, content, order, and authority — not cardinality alone?
+4. Does it remain correct when historical records coexist with current state?
+5. What authority wins, what loses, what bridge remains, and when is it removed?
+6. Could this falsely advance a count or phase?
+7. What temporary machinery must be deleted?
+
+#### What the merge card must record
+
+The merge card's **Atlas Contract / Systems Review** block records four fields:
+
+- **required / not required** — with the trigger that fired, or the reason none fired;
+- **exact reviewed head** — the full commit SHA the reviewer read;
+- **reviewer** — who performed the required review;
+- **findings and dispositions** — every finding, and fixed / non-issue / routed for each.
+
+A review is a manual merge-card record. Never create a CI status, a required check, or a review account from it.
 
 ### Claude Code — implementation and merge operator
 
@@ -139,7 +189,7 @@ Each drift guard is a CI check that fails the build — a rule that lives only i
 6. Run focused tests plus every applicable build/test/lint/wiring/secret/E2E/trust check.
 7. Inspect the diff, commits, secrets, and unrelated drift.
 8. Open one PR with the Atlas Merge Card and one primary risk label.
-9. Obtain ChatGPT Atlas Contract Review only when risk-triggered.
+9. Obtain the Atlas Contract / Systems Review when a trigger fires, and record it in the merge card.
 10. Address real in-scope advisory findings without expanding the PR.
 11. Merge the exact head after every hard gate passes and no owner authorization remains outstanding.
 12. Verify `main` and deployment, update the campaign card/completion record, and continue from a fresh branch.
@@ -206,6 +256,7 @@ Claude merges when:
 - no genuine P0/P1, invariant, trust-loop, schema, security, secret, or write-safety problem remains;
 - real advisory findings are addressed;
 - one-concern scope, branch hygiene, risk label, Vision Alignment Check, and merge card are complete;
+- the Atlas Contract / Systems Review is recorded in the merge card when a trigger above fires, and it read the exact merged head;
 - the PR is authorized by the campaign or explicit owner instruction; and
 - no owner-reserved authorization remains outstanding.
 

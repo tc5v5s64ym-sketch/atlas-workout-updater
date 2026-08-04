@@ -79,7 +79,7 @@ Dale is **not** required to click merge on a clean routine PR.
 - Deterministic GitHub CI checks are hard gates.
 - Codex comments are advisory. Claude fixes real, in-scope findings and records false alarms as such.
 - A clean-context review may be used for additional confidence on higher-risk work, but it is not a required status, marker, or human sign-off.
-- ChatGPT Atlas Contract Review is risk-triggered for roadmap, product, trust-contract, write/schema, security, promotion, destructive, or genuinely ambiguous changes; it is not a routine merge gate.
+- The Atlas Contract / Systems Review is trigger-based, not a status check. `CLAUDE.md` holds the one trigger list and the merge-card fields; this kernel does not restate them.
 
 ## Compact decision record
 

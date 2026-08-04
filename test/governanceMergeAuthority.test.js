@@ -10,11 +10,19 @@ function read(relPath) {
 }
 
 // Models the owner-ratified Atlas contract:
-// deterministic hard gates + advisory findings + risk-triggered ChatGPT review.
-// Builder identity is not a merge input.
+// deterministic hard gates + advisory findings + the trigger-based Atlas Contract /
+// Systems Review. Builder identity is not a merge input.
+//
+// The trigger set below is a FIXTURE, deliberately not a second copy of the rule:
+// `CLAUDE.md` holds the one authoritative trigger list (expanded 2026-08-03 to cover
+// campaign gates, scorecards and counters, adjudicators, rehearsal and test runners,
+// evidence collectors, identity and correlation machinery, and phase or count
+// advancement). This model reads no document and gates no real PR — it exists to pin
+// the SHAPE of the merge decision: a fired trigger without a recorded review blocks.
+// Do not read it as the trigger list.
 function evaluateMergeAuthority(pr) {
   const blockers = [];
-  const chatgptRequired = Boolean(
+  const reviewRequired = Boolean(
     pr.phaseTransition ||
     pr.campaignChange ||
     pr.productDirection ||
@@ -33,14 +41,14 @@ function evaluateMergeAuthority(pr) {
   if (pr.realAdvisoryFindingsOpen > 0) blockers.push('advisory-findings');
   if (!pr.riskScopeBranchMergeCardComplete) blockers.push('risk-scope-branch-merge-card');
   if (!pr.branchCurrent || !pr.mergeable) blockers.push('branch-current-mergeable');
-  if (chatgptRequired && pr.chatgptReview !== 'pass') blockers.push('chatgpt-risk-review');
+  if (reviewRequired && pr.contractReview !== 'pass') blockers.push('contract-systems-review');
   if (pr.ownerAuthorizationOutstanding) blockers.push('owner-authorization');
 
   const canMerge = blockers.length === 0;
 
   return {
     canMerge,
-    chatgptRequired,
+    reviewRequired,
     blockers,
     postMergeContinuation: canMerge
       ? ['verify-main', 'confirm-deployment-when-applicable', 'update-campaign-card', 'fresh-branch', 'continue-next-card']
@@ -57,13 +65,13 @@ const GREEN_ROUTINE_PR = {
   branchCurrent: true,
   mergeable: true,
   ownerAuthorizationOutstanding: false,
-  chatgptReview: 'not-required',
+  contractReview: 'not-required',
 };
 
 test('routine green PRs are merge-authorized by the active builder without owner handoff', () => {
   const result = evaluateMergeAuthority(GREEN_ROUTINE_PR);
   assert.equal(result.canMerge, true);
-  assert.equal(result.chatgptRequired, false);
+  assert.equal(result.reviewRequired, false);
   assert.deepEqual(result.blockers, []);
 });
 
@@ -76,21 +84,21 @@ test('owner authorization remains required only when a reserved decision is outs
   assert.deepEqual(result.blockers, ['owner-authorization']);
 });
 
-test('campaign transitions and trust changes require ChatGPT Contract Review', () => {
+test('campaign transitions and trust changes require the Atlas Contract / Systems Review', () => {
   const withoutReview = evaluateMergeAuthority({
     ...GREEN_ROUTINE_PR,
     campaignChange: true,
-    chatgptReview: 'missing',
+    contractReview: 'missing',
   });
   const withReview = evaluateMergeAuthority({
     ...GREEN_ROUTINE_PR,
     phaseTransition: true,
-    chatgptReview: 'pass',
+    contractReview: 'pass',
   });
 
-  assert.equal(withoutReview.chatgptRequired, true);
+  assert.equal(withoutReview.reviewRequired, true);
   assert.equal(withoutReview.canMerge, false);
-  assert.ok(withoutReview.blockers.includes('chatgpt-risk-review'));
+  assert.ok(withoutReview.blockers.includes('contract-systems-review'));
   assert.equal(withReview.canMerge, true);
 });
 

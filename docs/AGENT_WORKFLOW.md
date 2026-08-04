@@ -24,7 +24,7 @@ Owns product direction, real production-data authorization, owner-only gym/devic
 
 ### ChatGPT
 
-Acts as Atlas's project decision desk. It resolves genuinely non-derivable product/scope/trust forks with Dale and performs an Atlas Contract Review when a change is roadmap/phase-transition, product, trust-contract, write/schema, security, promotion, destructive, or genuinely ambiguous.
+Acts as Atlas's project decision desk. It resolves genuinely non-derivable product/scope/trust forks with Dale, and it performs the required Atlas Contract / Systems Review. A clean-context review by the implementation agent is advisory only and never satisfies that gate. `CLAUDE.md` holds the one trigger list.
 
 ### Active implementation agent — Claude Code or Codex
 
@@ -47,7 +47,7 @@ Independent agent review—Codex reviewing Claude, Claude reviewing Codex, or an
 5. Run focused tests, the full applicable suite, lint/build/wiring/secret checks, and the live path or closest integration path.
 6. Inspect the diff, commits, secrets, and unrelated drift.
 7. Push and open one PR with the Atlas Merge Card and one primary risk label.
-8. Obtain ChatGPT Atlas Contract Review only when risk-triggered.
+8. Obtain the Atlas Contract / Systems Review when a trigger in `CLAUDE.md` fires, and record it in the merge card.
 9. Address real in-scope advisory findings. Do not widen the PR.
 10. When every required deterministic check passes and no genuine blocker remains, merge the exact head. Do not stop merely to say it is merge-ready.
 11. Verify `main` and deployment when applicable, update the campaign card/completion record, and continue from a fresh branch.

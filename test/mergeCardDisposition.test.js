@@ -44,7 +44,19 @@ function check(body) {
   return failure;
 }
 
-const CARD = '## 🟦 Atlas Merge Card\n\n';
+// Owner instruction 2026-08-03 — every body must now carry the review section, so the
+// shared fixtures below include a satisfied one. Its own presence/content rules are
+// exercised in the dedicated suite at the bottom of this file.
+const REVIEW_OK = [
+  '### Atlas Contract / Systems Review',
+  '',
+  '- Required: not required — no trigger applies',
+  '- Exact reviewed head: n/a',
+  '- Reviewer: n/a',
+  '- Findings and dispositions: n/a',
+  '',
+].join('\n');
+const CARD = `## 🟦 Atlas Merge Card\n\n${REVIEW_OK}`;
 const findings = (lines) => `${CARD}### Additional findings\n\n${lines}\n\n### Post-merge\n\nx\n`;
 
 describe('merge card — Additional findings dispositions', () => {
@@ -170,5 +182,122 @@ describe('merge card — the shipped template satisfies its own check', () => {
     const failure = check(`${CARD}${template.slice(heading.index)}`);
     assert.ok(!/Additional findings/.test(failure), failure);
     assert.ok(!/ADDED TO BOUNDED BACKLOG requires/.test(failure), failure);
+  });
+});
+
+// Owner instruction 2026-08-03 — the Atlas Contract / Systems Review block. The four
+// fields exist so a review names what it read. An unfilled block must fail the check,
+// or a risk-triggered PR could claim a review it never had while the gate stayed green
+// (Codex P1, PR #1257). These run the REAL workflow source, like every test above.
+describe('merge card — the Atlas Contract / Systems Review block', () => {
+  const REVIEW_BLOCK = fs.readFileSync(TEMPLATE, 'utf8')
+    .split(/^### Atlas Contract \/ Systems Review$/m)[1];
+  // A card whose OTHER required section is already satisfied, so each assertion below
+  // measures the review block alone.
+  const CARD_OK = `## 🟦 Atlas Merge Card\n\n### Additional findings\n\n- None\n\n`;
+
+  it('fails when the review section is deleted outright', () => {
+    const failure = check('## 🟦 Atlas Merge Card\n\n### Additional findings\n\n- None\n');
+    assert.match(failure, /missing the "Atlas Contract \/ Systems Review" section/,
+      'a deleted review section must fail — sentinels catch retained placeholders, not removed ones');
+  });
+
+  it('the template actually ships the block', () => {
+    assert.ok(REVIEW_BLOCK, 'the PR template must carry an "### Atlas Contract / Systems Review" heading');
+    for (const field of ['Required:', 'Exact reviewed head:', 'Reviewer:', 'Findings and dispositions:']) {
+      assert.ok(REVIEW_BLOCK.includes(field), `${field} missing from the review block`);
+    }
+  });
+
+  it('rejects the block left exactly as the template ships it', () => {
+    const failure = check(`${CARD_OK}### Atlas Contract / Systems Review${REVIEW_BLOCK.split(/^### /m)[0]}`);
+    assert.match(failure, /template placeholder/, 'an untouched review block must fail the check');
+  });
+
+  // The bite: each sentinel is load-bearing on its own. Remove one field's placeholder
+  // and that field alone must stop being reported — proving the check reads all three
+  // rather than tripping once on something else.
+  // Placeholders are READ FROM THE SHIPPED TEMPLATE, never retyped. Hardcoding them
+  // would let a template rewording silently un-guard a field while this suite stayed
+  // green — the exact hardcoded-evidence false green the review lane exists to catch
+  // (exact-head review of PR #1257, F4). Derived here, every field's real placeholder
+  // must be bitten by some sentinel.
+  const FIELD_PLACEHOLDERS = (() => {
+    const out = [];
+    for (const line of REVIEW_BLOCK.split('\n')) {
+      const m = /^[ \t]*-[ \t]*([^:]+):[ \t]*<!--[ \t]*(.+?)[ \t]*-->[ \t]*$/.exec(line);
+      if (m) out.push([m[1].trim(), m[2].trim()]);
+    }
+    return out;
+  })();
+
+  it('every review field in the template carries a placeholder this suite can bite', () => {
+    assert.equal(FIELD_PLACEHOLDERS.length, 4,
+      `expected 4 placeholder-carrying review fields, found ${FIELD_PLACEHOLDERS.length}: ${JSON.stringify(FIELD_PLACEHOLDERS)}`);
+  });
+
+  for (const [field, placeholder] of FIELD_PLACEHOLDERS) {
+    it(`catches the unfilled "${field}" placeholder specifically`, () => {
+      const failure = check(`${CARD_OK}### Atlas Contract / Systems Review\n\n- x: <!-- ${placeholder} -->\n`);
+      assert.match(failure, /template placeholder/,
+        `the template's own "${field}" placeholder must trip a sentinel; got: ${failure || '(passed)'}`);
+    });
+  }
+
+  // The Required verdict has TWO carriers: this bullet and the merge-card table row.
+  // The row is READ FROM THE TEMPLATE for the same reason the bullets are — retyping it
+  // would let a row rewording silently kill that sentinel while this suite stayed green
+  // (exact-head review of PR #1257, F4/C).
+  const TABLE_ROW = (() => {
+    const line = fs.readFileSync(TEMPLATE, 'utf8').split('\n')
+      .find((l) => /^\|.*Atlas Contract \/ Systems Review.*\|/.test(l));
+    return line || null;
+  })();
+
+  it('the template ships a merge-card row for the review, carrying a placeholder', () => {
+    assert.ok(TABLE_ROW, 'the merge-card table must carry an Atlas Contract / Systems Review row');
+    assert.match(TABLE_ROW, /<!--.*-->/, 'that row must ship an unfilled placeholder to guard');
+  });
+
+  it('catches the unfilled Required verdict in the merge-card table row too', () => {
+    const failure = check(`${CARD_OK}${TABLE_ROW}\n`);
+    assert.match(failure, /template placeholder/,
+      `the table row's unfilled verdict must fail too; got: ${failure || '(passed)'}`);
+  });
+
+  it('passes once every field carries a real value', () => {
+    const filled = [
+      '### Atlas Contract / Systems Review',
+      '',
+      '- Required: required — the PR changes a scorecard',
+      '- Exact reviewed head: 50d75cbe1c59847ad91084bc75ae02b45330ed77',
+      '- Reviewer: clean-context systems review',
+      '- Findings and dispositions: one P1, fixed',
+      '',
+    ].join('\n');
+    assert.equal(check(`${CARD_OK}${filled}`), '');
+  });
+
+  // The other legitimate verdict: a PR that genuinely fired no trigger must be able to
+  // say so and pass. A guard that only accepted "required" would push PRs to claim a
+  // review they did not need.
+  it('passes an explicit not-required verdict with a reason', () => {
+    const filled = [
+      '### Atlas Contract / Systems Review',
+      '',
+      '- Required: not required — documentation only; no trigger in the list applies',
+      '- Exact reviewed head: n/a',
+      '- Reviewer: n/a',
+      '- Findings and dispositions: n/a',
+      '',
+    ].join('\n');
+    assert.equal(check(`${CARD_OK}${filled}`), '');
+  });
+
+  // The retired row must not come back: its template field no longer exists, so the
+  // sentinel could only false-fail a body that quotes the old wording.
+  it('no longer trips on a body quoting the retired status wording', () => {
+    const failure = check(`${CARD_OK}${REVIEW_OK}The old row allowed NON-BLOCKING / READY / BLOCKING / not risk-triggered.\n`);
+    assert.equal(failure, '', 'quoting the retired wording is prose, not an unfilled field');
   });
 });

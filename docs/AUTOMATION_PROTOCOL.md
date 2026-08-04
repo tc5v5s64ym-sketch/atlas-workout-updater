@@ -31,11 +31,13 @@ Claude:
 - records false alarms as non-issues; and
 - never turns bot wording, reactions, or identity into a synthetic trust status.
 
-### ChatGPT — decision desk and contract review
+### Decision desk and the Atlas Contract / Systems Review
 
-ChatGPT helps Dale resolve genuinely non-derivable product/scope/trust decisions and reviews risk-triggered roadmap, phase-transition, product, trust-contract, write/schema, security, promotion, destructive, or ambiguous changes.
+ChatGPT helps Dale resolve genuinely non-derivable product/scope/trust decisions. Separately, one review lane — the Atlas Contract / Systems Review — reads a triggered PR.
 
-This review does not authorize production writes and is not required for routine campaign implementation.
+**`CLAUDE.md` holds the one trigger list, the seven review questions, and the four merge-card fields.** This protocol does not restate them, because a second copy drifts.
+
+This review does not authorize production writes and is never a GitHub status or a required check.
 
 ### Dale — owner-reserved authority
 
@@ -49,12 +51,12 @@ Silence is not a pass. Every required signal needs positive evidence.
 |---|---|
 | Required CI | Applicable jobs conclude successfully on the current head |
 | Advisory findings | Real in-scope findings fixed; false alarms explicitly dispositioned |
-| ChatGPT Contract Review | Explicit non-blocking/ready verdict when risk-triggered |
+| Atlas Contract / Systems Review | Recorded in the merge card when a `CLAUDE.md` trigger fires: required or not, exact reviewed head, reviewer, findings and dispositions |
 | Risk classification | Exactly one primary risk label |
 | Merge card | Complete and current |
 | Scope | One concern authorized by the canonical plan or explicit owner instruction |
 
-An optional clean-context review may be used for confidence on higher-risk work. It is not a required marker, status, account, or merge condition.
+An optional clean-context review may be used for confidence on higher-risk work. It is not a required marker, status, account, or merge condition, and it never satisfies the Atlas Contract / Systems Review — **ChatGPT performs that lane**, and the implementation agent may not satisfy its own architecture gate (owner ruling 2026-08-03).
 
 ## Merge authority
 
