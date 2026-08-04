@@ -118,7 +118,10 @@ Required when this PR touches: campaign gates · scorecards and counters · adju
 rehearsal or test runners · evidence collectors · identity and correlation machinery · phase or
 count advancement · trust-sensitive write, schema, security, promotion, or destructive changes.
 Also required for phase transitions, roadmap changes, product/trust-contract changes, and genuine
-ambiguity. The reviewer reads the EXACT head in a clean context; an earlier commit does not count.
+ambiguity. ChatGPT performs this review (owner ruling 2026-08-03) — an implementation agent may
+not satisfy its own architecture gate, so a clean-context agent review goes under "Advisory
+disposition" and never here. The reviewer reads the EXACT head; an earlier commit does not count,
+so a push after the review means the review must be repeated.
 
 The review asks: (1) does this hold in the next legitimate repository state, not only the current
 fixture? (2) can missing, no-op, defaulted, circular, or hardcoded evidence produce a false green?
@@ -130,7 +133,7 @@ count or phase? (7) what temporary machinery must be deleted?
 
 - Required: <!-- required (name the trigger) / not required (say why no trigger fired) -->
 - Exact reviewed head: <!-- full 40-character commit SHA, or n/a -->
-- Reviewer: <!-- who or what performed the review, or n/a -->
+- Reviewer: <!-- who performed the required review, or n/a -->
 - Findings and dispositions: <!-- each finding + fixed / non-issue / routed, or "none", or n/a -->
 
 ### Advisory disposition

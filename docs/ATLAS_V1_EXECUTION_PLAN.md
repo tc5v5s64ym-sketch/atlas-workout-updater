@@ -310,7 +310,17 @@ The review is **required** when a PR touches: campaign gates; scorecards and cou
 
 The reviewer reads the **exact head** in a clean context. A review of an earlier commit does not cover a later head. The merge card records four fields: required or not required with the trigger that fired; the exact reviewed head as a full commit SHA; the reviewer; and every finding with its disposition.
 
-**Who may perform it (recorded, because it widens the lane).** The owner instruction requires "an exact-head clean-context systems review". ChatGPT may perform it. A clean-context review by the implementation agent may perform it instead. Before this instruction the lane was ChatGPT's, and a clean-context review was an optional confidence device only, so this is a genuine widening and is recorded here rather than left to `CLAUDE.md` alone. Two controls bound it: the review must run in a **clean context**, so it is not the implementing context grading itself, and the merge card names **who or what** performed it, so a self-performed review is always visible as one. This does not make a clean-context review a required status, a marker, or a human sign-off; `CLAUDE.md` and `docs/DECISION_KERNEL.md` keep that rule unchanged.
+**Who performs it — OWNER RULING 2026-08-03, governing.** **ChatGPT performs the required Atlas Contract / Systems Review.** The lane's owner is unchanged; the owner instruction broadened the **existing ChatGPT lane's trigger**, not who owns that lane.
+
+An implementation agent may not satisfy its own architecture gate. A clean-context review by the implementation agent is valuable advisory evidence and is recorded under advisory findings, but it never satisfies the required review. The reasoning is recorded so it is not relitigated:
+
+- a clean context is **not an independent authority** — it is still the implementation agent, and it reproduces the same model and system blind spots;
+- naming the performer creates **observability, not separation of authority**;
+- letting the builder satisfy its own architecture gate creates a **competing authority** and weakens the project-decision-desk contract.
+
+Authority record: current and intended sole authority — **ChatGPT**. Competing authority removed — the implementation-agent clean-context review as a substitute gate satisfier. Bridge — implementation-agent clean-context reviews stay optional and advisory. Sunset — none; this is the permanent authority boundary. Net complexity — decreases, one reviewer authority instead of two.
+
+An earlier draft of this insertion recorded the opposite and was corrected by this ruling before merge.
 
 This insertion selects no work, starts no phase, adds no drift guard, and changes no count. Every streak keeps the value the active `CAMPAIGN STATE:` line records, Phase 5 stays unauthorized, and `SESSION_PLAN_SETS_WRITE_ENABLED` stays untouched. This paragraph deliberately states **no streak numerals**: `parseCanonicalRehearsalCount` (`tests/e2e/gate/rehearsal-run-purpose.js`) reads the canonical rehearsal count out of this document, and a second copy of that count written in the marker's own format would be one careless edit away from either a false red (two current markers) or a false green (a stale copy read as current). One count lives in one place.
 

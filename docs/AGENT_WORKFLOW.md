@@ -24,7 +24,7 @@ Owns product direction, real production-data authorization, owner-only gym/devic
 
 ### ChatGPT
 
-Acts as Atlas's project decision desk. It resolves genuinely non-derivable product/scope/trust forks with Dale, and it may perform the Atlas Contract / Systems Review. A clean-context review by the implementation agent may perform it instead; the merge card records who or what did. `CLAUDE.md` holds the one trigger list.
+Acts as Atlas's project decision desk. It resolves genuinely non-derivable product/scope/trust forks with Dale, and it performs the required Atlas Contract / Systems Review. A clean-context review by the implementation agent is advisory only and never satisfies that gate. `CLAUDE.md` holds the one trigger list.
 
 ### Active implementation agent — Claude Code or Codex
 

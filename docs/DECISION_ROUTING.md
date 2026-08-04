@@ -48,7 +48,7 @@ The review lane reads a PR for:
 - whether the original failure is actually fixed; and
 - live-path or closest-integration proof.
 
-ChatGPT may perform it. So may a clean-context review by the implementation agent. The merge card records who or what performed it.
+ChatGPT performs the required review. A clean-context review by the implementation agent is optional advisory confidence and never satisfies the gate — the builder may not satisfy its own architecture gate. The merge card records who performed it.
 
 **`CLAUDE.md` holds the one trigger list, the seven review questions, and the four merge-card fields.** Read it there. This document does not restate the trigger list, because two copies drift and the expanded list of 2026-08-03 is exactly the drift that produced.
 

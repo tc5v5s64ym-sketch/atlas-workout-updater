@@ -94,7 +94,11 @@ The desk does two separate things. ChatGPT helps Dale resolve genuinely non-deri
 
 **Use this one name everywhere.** The lane was formerly called the "ChatGPT Atlas Contract Review". Two names for one lane read as two lanes. There is one lane.
 
-ChatGPT may perform the review. So may a clean-context review by the implementation agent. The merge card records **who or what** performed it, so the performer is always visible.
+**ChatGPT performs the required review.** This is an authority boundary, not a preference (owner ruling 2026-08-03, recorded in the execution plan). The implementation agent may not satisfy its own architecture gate: a clean context is not an independent authority — it is still the implementation agent, and it reproduces the same model and system blind spots. Naming the performer creates observability, not separation of authority.
+
+A clean-context review by the implementation agent stays **optional advisory confidence**. Record it under advisory findings. It never satisfies the required gate.
+
+The merge card still records **who** performed the required review, so a review that did not come from the ChatGPT lane is visible as one.
 
 The review never authorizes a production write, and it is never a GitHub status, a required check, or a reviewer account.
 
@@ -135,7 +139,7 @@ The merge card's **Atlas Contract / Systems Review** block records four fields:
 
 - **required / not required** — with the trigger that fired, or the reason none fired;
 - **exact reviewed head** — the full commit SHA the reviewer read;
-- **reviewer** — who or what performed the review;
+- **reviewer** — who performed the required review;
 - **findings and dispositions** — every finding, and fixed / non-issue / routed for each.
 
 A review is a manual merge-card record. Never create a CI status, a required check, or a review account from it.

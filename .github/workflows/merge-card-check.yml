@@ -111,7 +111,7 @@ jobs:
               // at all" blank and still go green.
               'required (name the trigger) / not required (say why',
               'full 40-character commit SHA, or n/a',
-              'who or what performed the review, or n/a',
+              'who performed the required review, or n/a',
               'each finding + fixed / non-issue / routed',
               'No, or exact reserved category and status',
               'evidence/script needed, or n/a',
