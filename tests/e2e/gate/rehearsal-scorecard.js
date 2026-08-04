@@ -155,6 +155,141 @@ function compareReplacementIdentity(identity, durable) {
   return { ok: problems.length === 0, problems };
 }
 
+// ── per-bubble lifecycle record ────────────────────────────────────────────────
+// Pure: folds successive observations of the thread's Atlas bubbles into ONE record
+// per bubble, keeping the FINAL rendered text.
+//
+// The defect this replaces (owner P1, 2026-08-03): the sweep recorded each bubble index
+// once and advanced past it. `say()` sweeps immediately after submitting, so a bubble
+// created asynchronously was routinely captured while it still read `Thinking…`; when
+// that same element later became the real reply, every later sweep SKIPPED it because
+// its index was already marked seen. The final visible message never entered the claim
+// record, its timestamp described the placeholder, and a completed-mutation claim
+// rendered before acceptance could be missing entirely from the sweep.
+//
+// The phase is bound at FIRST observation — the turn that created the bubble — while
+// the text and timestamp track the final rendered state.
+//
+// records : Map-like plain object keyed by bubble index (mutated and returned)
+// texts   : the current innerText of every Atlas bubble, in DOM order
+function foldBubbleObservations(records, texts, { phase, nowMs, thinkingMarker = 'Thinking…' } = {}) {
+  const out = records && typeof records === 'object' ? records : {};
+  const list = Array.isArray(texts) ? texts : [];
+  for (let i = 0; i < list.length; i += 1) {
+    const text = String(list[i] == null ? '' : list[i]).replace(/\s+/g, ' ').trim();
+    const prior = out[i];
+    if (!prior) {
+      out[i] = { index: i, text, atMs: nowMs, phase, placeholder: text.includes(thinkingMarker) };
+      continue;
+    }
+    // Same element, later observation: keep the originating phase, take the newer text.
+    if (text !== prior.text) {
+      prior.text = text;
+      prior.atMs = nowMs;
+      prior.placeholder = text.includes(thinkingMarker);
+    }
+  }
+  return out;
+}
+
+// The claim-sweep input: every recorded bubble, in DOM order.
+function bubbleRecordsToMessages(records) {
+  const out = records && typeof records === 'object' ? records : {};
+  return Object.keys(out)
+    .map((k) => Number(k))
+    .filter((k) => Number.isInteger(k))
+    .sort((a, b) => a - b)
+    .map((k) => out[k]);
+}
+
+// ── coach-response capture classification ──────────────────────────────────────
+// Pure: decides what ONE coach response proves about the reply that turn served.
+//
+// The defect this replaces (owner P1, 2026-08-03): the listener counted a capture
+// failure only when JSON parsing threw or the body was not an object. An object-shaped
+// body with no usable message — `{source:'gemini'}`, `{message:null}`, `{message:''}`,
+// `{message:123}` — recorded neither a served message nor a failure, so settlement
+// granted `stable-no-served-message` and treated MISSING evidence as proof that the
+// path genuinely served none.
+//
+// A legitimate no-message path is now EXPLICIT and narrow: a non-2xx coach response is
+// the client's own outage/fallback lane, which renders locally and serves no message.
+// Every other missing, blank, or non-string `message` on a successful response is a
+// CAPTURE FAILURE, and settlement fails closed on it.
+function classifyCoachResponseCapture(observation) {
+  const o = observation && typeof observation === 'object' ? observation : {};
+  if (o.parseFailed === true) return { outcome: 'capture-failed', message: null, reason: 'the response body could not be parsed' };
+  const status = Number(o.status);
+  if (!Number.isFinite(status)) return { outcome: 'capture-failed', message: null, reason: 'the response carried no readable status' };
+  if (status < 200 || status > 299) {
+    return { outcome: 'no-message-path', message: null, reason: `the coach responded ${status}; the client renders its own fallback and no message is served` };
+  }
+  const body = o.body && typeof o.body === 'object' ? o.body : null;
+  if (!body) return { outcome: 'capture-failed', message: null, reason: 'a successful coach response carried no object body' };
+  const data = (body.data && typeof body.data === 'object') ? body.data : body;
+  const message = data && typeof data.message === 'string' ? data.message : null;
+  if (message === null) return { outcome: 'capture-failed', message: null, reason: 'a successful coach response carried no string `message`' };
+  if (message.trim() === '') return { outcome: 'capture-failed', message: null, reason: 'a successful coach response carried a blank `message`' };
+  return { outcome: 'served', message, reason: null };
+}
+
+// ── unsupported write-completion claim ─────────────────────────────────────────
+// Pure: decides whether any visible message claimed the workout was written before the
+// authoritative live write actually succeeded.
+//
+// The defect this replaces (owner P1, 2026-08-03): the verdict scanned
+// `threadFull.slice(0, threadFull.indexOf('done'))`. Prose is not a clock, and Session 4
+// deliberately says "I'm done for today" BEFORE the save — so the scan stopped at that
+// conversational text and discarded every later pre-write message. An unsupported
+// "saved to your sheet" claim made after the early-end statement but before the write
+// simply vanished.
+//
+// Timing now comes from the live write itself. Fails CLOSED: a write claim with no
+// authoritative write timestamp, or with no timestamp of its own, is unsupported.
+const WRITE_CLAIM_PATTERNS = Object.freeze([
+  /saved to (?:your|the) sheet/i,
+  /written to (?:your|the) (?:sheet|google sheets)/i,
+  /(?:workout|session|sets) (?:is |are |has been |have been )?(?:saved|written|logged to (?:your|the) sheet)/i,
+  /i(?:'ve| have) (?:saved|written) (?:it|that|your workout)/i,
+]);
+
+function detectUnsupportedWriteClaim(input) {
+  const i = input && typeof input === 'object' ? input : {};
+  const messages = Array.isArray(i.messages) ? i.messages : null;
+  if (!messages) {
+    return { unsupported: true, detail: 'no visible messages were captured, so a write claim cannot be ruled out', matches: [] };
+  }
+  const writeAtMs = Number.isFinite(i.liveWriteAtMs) ? i.liveWriteAtMs : null;
+  const matches = [];
+  for (const m of messages) {
+    const text = String((m && m.text) || '');
+    if (!text) continue;
+    if (!WRITE_CLAIM_PATTERNS.some((re) => re.test(text))) continue;
+    const atMs = Number.isFinite(m && m.atMs) ? m.atMs : null;
+    const earned = writeAtMs !== null && atMs !== null && atMs >= writeAtMs;
+    if (!earned) {
+      matches.push({
+        phase: (m && m.phase) || 'unknown',
+        atMs,
+        excerpt: text.replace(/\s+/g, ' ').slice(0, 120),
+        reason: writeAtMs === null ? 'no successful live write was observed in this run'
+          : atMs === null ? 'the message carried no timestamp, so the claim cannot be shown to be earned'
+            : 'the claim landed before the live write succeeded',
+      });
+    }
+  }
+  if (!matches.length) {
+    return {
+      unsupported: false,
+      detail: writeAtMs === null
+        ? `${messages.length} visible messages swept; no write-completion claim, and no live write occurred`
+        : `${messages.length} visible messages swept; every write-completion claim landed after the live write succeeded`,
+      matches: [],
+    };
+  }
+  return { unsupported: true, detail: matches.map((m) => `[${m.phase}] "${m.excerpt}" — ${m.reason}`).join('; '), matches };
+}
+
 // ── unsupported completed-mutation wording ─────────────────────────────────────
 // Pure: decides whether any VISIBLE message claimed a mutation had already happened at
 // a time when no mutation had yet occurred.
@@ -191,6 +326,17 @@ function detectUnsupportedMutationWording(input) {
     return { unsupported: true, detail: 'no visible messages were captured, so a completed-mutation claim cannot be ruled out', matches: [] };
   }
   const mutationAtMs = Number.isFinite(i.mutationAtMs) ? i.mutationAtMs : null;
+  // A record still holding the placeholder means the sweep never observed that bubble's
+  // final render, so the claim evidence is INCOMPLETE. Fail closed rather than judge a
+  // thread we did not finish reading (owner P1, 2026-08-03).
+  const unresolved = messages.filter((m) => m && m.placeholder === true);
+  if (unresolved.length) {
+    return {
+      unsupported: true,
+      detail: `${unresolved.length} visible message(s) were still rendering when the sweep ended, so the claim evidence is incomplete`,
+      matches: [],
+    };
+  }
   const matches = [];
   for (const m of messages) {
     const text = String((m && m.text) || '');
@@ -1111,4 +1257,4 @@ function renderMarkdown(card) {
   return `${lines.join('\n')}\n`;
 }
 
-module.exports = { CONDITIONS, scoreRehearsalRun, renderMarkdown, compareLedgerToDeclaration, classifyRepeatApprovalProbe, classifySettlement, isSettled, SETTLED_OUTCOMES, deriveExpectedRemaining, compareRemainingToExpectation, replyMatchesExpectation, pinMatchesExpectation, explicitNextUpClaim, detectUnsupportedMutationWording, COMPLETED_MUTATION_PATTERNS, compareReplacementIdentity, PASS, FAIL, ERROR, NOT_APPLICABLE };
+module.exports = { CONDITIONS, scoreRehearsalRun, renderMarkdown, compareLedgerToDeclaration, classifyRepeatApprovalProbe, classifySettlement, isSettled, SETTLED_OUTCOMES, deriveExpectedRemaining, compareRemainingToExpectation, replyMatchesExpectation, pinMatchesExpectation, explicitNextUpClaim, detectUnsupportedMutationWording, COMPLETED_MUTATION_PATTERNS, compareReplacementIdentity, foldBubbleObservations, bubbleRecordsToMessages, classifyCoachResponseCapture, detectUnsupportedWriteClaim, WRITE_CLAIM_PATTERNS, PASS, FAIL, ERROR, NOT_APPLICABLE };

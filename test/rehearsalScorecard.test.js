@@ -17,6 +17,8 @@ const {
   deriveExpectedRemaining, compareRemainingToExpectation, replyMatchesExpectation,
   detectUnsupportedMutationWording, compareReplacementIdentity,
   pinMatchesExpectation, explicitNextUpClaim,
+  foldBubbleObservations, bubbleRecordsToMessages, classifyCoachResponseCapture,
+  detectUnsupportedWriteClaim,
   PASS, FAIL, ERROR,
 } = require('../tests/e2e/gate/rehearsal-scorecard');
 const { sessionPlanSetsColumns } = require('../config/columns');
@@ -932,5 +934,178 @@ describe('P1-5 — failed capture is missing evidence, not a no-message path', (
   it('a successful capture is unaffected by the flag', () => {
     const full = 'Go with 185 lb for 5 reps.';
     assert.equal(classifySettlement({ text: full, servedMessages: [full], stableForMs: 0, captureFailed: true }), 'served-complete');
+  });
+});
+
+
+// ── P1 corrections from the final exact-head review of b3b5db1 ────────────────
+
+describe('P1-A — a bubble frozen at Thinking… must not hide its final text', () => {
+  // The exact sequence the review specifies: say() sweeps and sees the placeholder,
+  // the SAME element later becomes unsupported wording, and condition 9 must fail.
+  function replaySweeps() {
+    const records = {};
+    // 1. say() clicks and sweeps immediately — the bubble exists but is still thinking.
+    foldBubbleObservations(records, ['Thinking…'], { phase: 'substitution_ask', nowMs: 100 });
+    // 2. The same element resolves to a completed-mutation claim, before any mutation.
+    foldBubbleObservations(records, ["Done — I've noted the substitution."], { phase: 'prescription_question', nowMs: 400 });
+    return records;
+  }
+
+  it('the later sweep UPDATES the same index instead of skipping it', () => {
+    const msgs = bubbleRecordsToMessages(replaySweeps());
+    assert.equal(msgs.length, 1, 'one bubble, one record');
+    assert.match(msgs[0].text, /noted the substitution/, 'the final text must replace the placeholder');
+    assert.equal(msgs[0].placeholder, false);
+    assert.equal(msgs[0].atMs, 400, 'the timestamp must describe the final render, not the placeholder');
+    assert.equal(msgs[0].phase, 'substitution_ask', 'the phase stays bound to the turn that created the bubble');
+  });
+
+  it('BITE — condition 9 FAILS on wording that only appeared after the first sweep', () => {
+    const sweep = detectUnsupportedMutationWording({
+      messages: bubbleRecordsToMessages(replaySweeps()),
+      mutationAtMs: 900,           // the mutation happens later — the claim is unearned
+    });
+    assert.equal(sweep.unsupported, true, sweep.detail);
+
+    const obs = greenObservations();
+    obs.claims = { unsupported_mutation_wording: sweep.unsupported, unsupported_write_claim: false, detail: sweep.detail };
+    const card = scoreRehearsalRun(obs);
+    assert.equal(card.conditions.find(c => c.id === 'no_unsupported_claims').status, FAIL);
+    assert.equal(card.rehearsal_eligible, false);
+  });
+
+  it('a record still holding the placeholder at the end fails CLOSED', () => {
+    const records = {};
+    foldBubbleObservations(records, ['Thinking…'], { phase: 'x', nowMs: 100 });
+    const sweep = detectUnsupportedMutationWording({ messages: bubbleRecordsToMessages(records), mutationAtMs: 900 });
+    assert.equal(sweep.unsupported, true, 'an unfinished render means the evidence is incomplete');
+    assert.match(sweep.detail, /still rendering/);
+  });
+
+  it('growing text across several sweeps keeps only the final state', () => {
+    const records = {};
+    foldBubbleObservations(records, ['Go with'], { phase: 'p', nowMs: 10 });
+    foldBubbleObservations(records, ['Go with 185 lb'], { phase: 'p', nowMs: 20 });
+    foldBubbleObservations(records, ['Go with 185 lb for 5 reps.'], { phase: 'p', nowMs: 30 });
+    const msgs = bubbleRecordsToMessages(records);
+    assert.equal(msgs.length, 1);
+    assert.equal(msgs[0].text, 'Go with 185 lb for 5 reps.');
+    assert.equal(msgs[0].atMs, 30);
+  });
+
+  it('keeps one record per bubble as the thread grows, in DOM order', () => {
+    const records = {};
+    foldBubbleObservations(records, ['a'], { phase: 'p1', nowMs: 10 });
+    foldBubbleObservations(records, ['a', 'b'], { phase: 'p2', nowMs: 20 });
+    foldBubbleObservations(records, ['a', 'b', 'c'], { phase: 'p3', nowMs: 30 });
+    const msgs = bubbleRecordsToMessages(records);
+    assert.deepEqual(msgs.map(m => m.text), ['a', 'b', 'c']);
+    assert.deepEqual(msgs.map(m => m.phase), ['p1', 'p2', 'p3'], 'each bubble keeps its originating phase');
+  });
+});
+
+describe('P1-B — an object body with no usable message is a capture FAILURE', () => {
+  // Drives the REAL listener classification, not a hand-set captureFailed flag.
+  const shapes = [
+    ['{ source, model } with no message', { source: 'gemini', model: 'x' }],
+    ['message: null', { message: null }],
+    ['message: ""', { message: '' }],
+    ['message: "   "', { message: '   ' }],
+    ['message: 123', { message: 123 }],
+    ['nested data with no message', { data: { source: 'gemini' } }],
+  ];
+
+  for (const [label, body] of shapes) {
+    it(`BITE — ${label} → capture-failed, and a quiet partial bubble does NOT settle`, () => {
+      const capture = classifyCoachResponseCapture({ status: 200, body, parseFailed: false });
+      assert.equal(capture.outcome, 'capture-failed', `${label} must be a capture failure: ${capture.reason}`);
+
+      // The integration the review asked for: that classification feeds settlement.
+      const outcome = classifySettlement({
+        text: 've.',
+        servedMessages: capture.outcome === 'served' ? [capture.message] : [],
+        stableForMs: 99999,
+        captureFailed: capture.outcome === 'capture-failed',
+      });
+      assert.equal(isSettled(outcome), false, `${label} must not permit stability-only settlement`);
+      assert.equal(outcome, 'capture-failed');
+    });
+  }
+
+  it('a real served message classifies as served and settles when wholly rendered', () => {
+    const full = 'Go with 185 lb for 5 reps at RIR 2.';
+    const capture = classifyCoachResponseCapture({ status: 200, body: { data: { message: full } }, parseFailed: false });
+    assert.equal(capture.outcome, 'served');
+    assert.equal(capture.message, full);
+    assert.equal(classifySettlement({ text: full, servedMessages: [full], stableForMs: 0 }), 'served-complete');
+  });
+
+  it('a non-2xx coach response is the EXPLICIT no-message path — the client renders its own fallback', () => {
+    for (const status of [500, 503, 429, 404]) {
+      const capture = classifyCoachResponseCapture({ status, body: { error: 'x' }, parseFailed: false });
+      assert.equal(capture.outcome, 'no-message-path', `HTTP ${status}`);
+    }
+    const outcome = classifySettlement({ text: 'Let us keep it simple today.', servedMessages: [], stableForMs: 99999, captureFailed: false });
+    assert.equal(isSettled(outcome), true, 'the fallback lane may still settle on stability');
+  });
+
+  it('an unparseable body or an unreadable status fails closed', () => {
+    assert.equal(classifyCoachResponseCapture({ status: 200, parseFailed: true }).outcome, 'capture-failed');
+    assert.equal(classifyCoachResponseCapture({ body: { message: 'x' } }).outcome, 'capture-failed');
+    assert.equal(classifyCoachResponseCapture(null).outcome, 'capture-failed');
+  });
+});
+
+describe('P1-C — write claims are timed against the live write, not the word "done"', () => {
+  // Session 4's shape: the athlete says "I'm done for today" BEFORE the save. The old
+  // verdict sliced the thread at that literal and discarded everything after it.
+  const SESSION_4 = () => ([
+    { text: 'How is the session feeling so far?', atMs: 100, phase: 'eligible_question' },
+    { text: "Understood — I'm done for today, then. Bicep Curl remains in the plan.", atMs: 200, phase: 'closeout' },
+    // The unsupported claim: after the early-end phrase, BEFORE the live write.
+    { text: 'All set — your workout is saved to your sheet.', atMs: 300, phase: 'closeout' },
+  ]);
+
+  it('BITE — an unsupported save claim after "done" but before the write FAILS', () => {
+    const sweep = detectUnsupportedWriteClaim({ messages: SESSION_4(), liveWriteAtMs: 500 });
+    assert.equal(sweep.unsupported, true, 'the claim landed before the live write and must fail');
+    assert.match(sweep.detail, /before the live write succeeded/);
+
+    const obs = greenObservations();
+    obs.claims = { unsupported_mutation_wording: false, unsupported_write_claim: sweep.unsupported, detail: sweep.detail };
+    const card = scoreRehearsalRun(obs);
+    assert.equal(card.conditions.find(c => c.id === 'no_unsupported_claims').status, FAIL);
+    assert.equal(card.rehearsal_eligible, false);
+  });
+
+  it('the old prose-clock would have missed it — the literal "done" appears before the claim', () => {
+    const thread = SESSION_4().map(m => m.text).join('\n');
+    const slicedAtDone = thread.slice(0, thread.indexOf('done'));
+    assert.equal(/saved to (your|the) sheet/i.test(slicedAtDone), false,
+      'this is exactly the false green being removed: the old scan could not see the claim');
+    assert.equal(detectUnsupportedWriteClaim({ messages: SESSION_4(), liveWriteAtMs: 500 }).unsupported, true);
+  });
+
+  it('the same claim AFTER the live write is honest', () => {
+    const sweep = detectUnsupportedWriteClaim({ messages: SESSION_4(), liveWriteAtMs: 250 });
+    assert.equal(sweep.unsupported, false, sweep.detail);
+  });
+
+  it('a write claim with NO observed live write is unsupported', () => {
+    assert.equal(detectUnsupportedWriteClaim({ messages: SESSION_4(), liveWriteAtMs: null }).unsupported, true);
+  });
+
+  it('fails closed on missing messages or an untimed claim', () => {
+    assert.equal(detectUnsupportedWriteClaim({ messages: null, liveWriteAtMs: 500 }).unsupported, true);
+    assert.equal(detectUnsupportedWriteClaim({
+      messages: [{ text: 'saved to your sheet', atMs: null, phase: 'x' }], liveWriteAtMs: 500,
+    }).unsupported, true);
+  });
+
+  it('a clean thread with no write claim passes', () => {
+    assert.equal(detectUnsupportedWriteClaim({
+      messages: [{ text: 'Nice work today.', atMs: 10, phase: 'closeout' }], liveWriteAtMs: 500,
+    }).unsupported, false);
   });
 });

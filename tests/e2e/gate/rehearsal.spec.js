@@ -33,6 +33,8 @@ const {
   classifySettlement, isSettled,
   deriveExpectedRemaining, compareRemainingToExpectation, replyMatchesExpectation,
   detectUnsupportedMutationWording, compareReplacementIdentity, pinMatchesExpectation,
+  foldBubbleObservations, bubbleRecordsToMessages, classifyCoachResponseCapture,
+  detectUnsupportedWriteClaim,
 } = require('./rehearsal-scorecard');
 const { REHEARSAL_SESSION } = require('./rehearsal-run-purpose');
 const { measureSourceTree } = require('./rehearsal-source-facts');
@@ -867,22 +869,26 @@ const proposedReplacementLiftCodes = [];
 // treating unreadable capture as "no message was served" reopens the partial-render
 // false green precisely when the authoritative signal is missing.
 const coachCaptureFailures = { count: 0 };
-// P1-4: EVERY Atlas bubble this run rendered, swept by ELEMENT INDEX rather than by
-// slicing the whole thread. The old sweep only saw settleReply turns, so a bubble
-// produced by `say` (the substitution ask) never entered the claim sweep at all.
-const seenBubbles = { count: 0 };
+// EVERY Atlas bubble this run rendered, as a per-element LIFECYCLE record.
+//
+// The earlier sweep recorded each index once and advanced past it. `say()` sweeps
+// immediately after submitting, so a bubble created asynchronously was routinely
+// captured while it still read `Thinking…`; when that element later became the real
+// reply, every later sweep SKIPPED it, and the final visible message never entered the
+// claim record at all (owner P1, 2026-08-03). Records are now re-read on every sweep:
+// the phase is bound at first observation — the turn that created the bubble — while
+// the text and timestamp track the FINAL rendered state.
+const bubbleRecords = {};
 
-// Sweep any Atlas bubbles that appeared since the last sweep into the claim record.
-// Reads each bubble ELEMENT, so a shrinking prefix cannot shift the reading.
 async function sweepAtlasBubbles(page) {
   const bubbles = page.locator('#thread-messages .chat-bubble-atlas');
-  const total = await bubbles.count().catch(() => seenBubbles.count);
-  for (let i = seenBubbles.count; i < total; i += 1) {
-    const text = await bubbles.nth(i).innerText().catch(() => '');
-    const clean = String(text).replace(/\s+/g, ' ').trim();
-    if (clean) visibleMessages.push({ text: clean, atMs: Date.now(), phase: currentPhaseRef.value, index: i });
-  }
-  seenBubbles.count = Math.max(seenBubbles.count, total);
+  const total = await bubbles.count().catch(() => 0);
+  const texts = [];
+  for (let i = 0; i < total; i += 1) texts.push(await bubbles.nth(i).innerText().catch(() => ''));
+  // The FOLD is the scorecard module's pure, unit-bitten function.
+  foldBubbleObservations(bubbleRecords, texts, {
+    phase: currentPhaseRef.value, nowMs: Date.now(), thinkingMarker: THINKING,
+  });
   return total;
 }
 const THINKING = 'Thinking…';
@@ -897,7 +903,7 @@ const servedReplies = [];
 // This is the CLAIM SWEEP's input: condition 9 used to trust a literal `false`, so the
 // sweep must now be a real observation (owner P1, 2026-08-03). Phase and timestamp come
 // from the harness, so a claim can be placed relative to the actual mutation.
-const visibleMessages = [];
+// Derived from bubbleRecords at read time — see sweepAtlasBubbles.
 // When the plan mutation actually became true, set by the driver at the moment the
 // source lift leaves the plan. null until then, and null for a scenario with no
 // substitution — both of which make ANY completed-mutation claim unsupported.
@@ -1104,19 +1110,25 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
       return;
     }
     if (!/\/api\/coach\/(chat|ask|message)\b/.test(url)) return;
-    try {
-      const body = await res.json();
-      const data = body && body.data && typeof body.data === 'object' ? body.data : body;
-      coachResponses.push({ phase, source: data && typeof data.source === 'string' ? data.source : null, model: data && typeof data.model === 'string' ? data.model : null });
-      // The AUTHORITATIVE completion signal for settleReply: what the server actually
-      // served for this turn. Held in memory only — never written to an artifact.
-      const served = data && typeof data.message === 'string' ? data.message : null;
-      if (served && served.trim()) servedReplies.push(served);
-      else if (!data || typeof data !== 'object') coachCaptureFailures.count += 1;
-    } catch {
-      // P1-5: an unparseable coach response is MISSING EVIDENCE, not evidence of a
-      // path that serves no message. Recorded so settlement can fail closed.
+    // EVERY coach response is classified through the scorecard's pure, unit-bitten
+    // function. An object-shaped body with no usable message — {source:'gemini'},
+    // {message:null}, {message:''}, {message:123} — previously recorded neither a served
+    // message nor a failure, so settlement granted stability and treated MISSING
+    // evidence as proof the path served none (owner P1, 2026-08-03).
+    let parsed = null;
+    let parseFailed = false;
+    try { parsed = await res.json(); } catch { parseFailed = true; }
+    const data = (parsed && parsed.data && typeof parsed.data === 'object') ? parsed.data : parsed;
+    coachResponses.push({
+      phase,
+      source: data && typeof data.source === 'string' ? data.source : null,
+      model: data && typeof data.model === 'string' ? data.model : null,
+    });
+    const capture = classifyCoachResponseCapture({ status: res.status(), body: parsed, parseFailed });
+    if (capture.outcome === 'served') servedReplies.push(capture.message);
+    else if (capture.outcome === 'capture-failed') {
       coachCaptureFailures.count += 1;
+      note('coach-capture-failed', capture.reason);
     }
   });
 
@@ -1375,7 +1387,7 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
   // fresh session's thread is separate evidence and never a replacement carrier.
   await sweepAtlasBubbles(page);
   const originalThreadText = await page.locator('#thread-messages').innerText();
-  const originalVisibleMessages = visibleMessages.slice();
+  const originalVisibleMessages = bubbleRecordsToMessages(bubbleRecords);
 
   // ── 13b. Cross-session teardown and inheritance (declared scenarios only) ────
   // Runs AFTER every durable read AND after the evidence above is preserved, and
@@ -1515,8 +1527,14 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
     gemini = eligible.filter(r => r.source === 'gemini');
   }
 
-  // The ORIGINAL session's thread, captured before any teardown reload.
+  // The ORIGINAL session's thread, captured before any teardown reload. Retained for
+  // the artifact record only — the write-claim verdict below no longer scans it.
   const threadFull = originalThreadText;
+  // The AUTHORITATIVE write boundary: when the one live write actually succeeded.
+  const liveWriteAt = (() => {
+    const live = saveResponses.filter(r => r.capture_failed !== true && r.test_mode !== true && r.sheet_write === 'success');
+    return live.length ? live[0].at : null;
+  })();
   // THE CLAIM SWEEP — derived, never a constant. The previous value was a literal
   // `false` justified as "asserted per-beat pre-acceptance", but the per-beat checks
   // covered only selected phrases in selected phases, so condition 9 could not fail.
@@ -1524,12 +1542,18 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
   // patterns and placed relative to the moment the mutation actually became true
   // (owner P1, 2026-08-03). It fails closed on missing messages or missing timing.
   const mutationSweep = detectUnsupportedMutationWording({ messages: originalVisibleMessages, mutationAtMs });
+  // Prose is not a clock. The old verdict scanned the thread up to the first literal
+  // "done", and Session 4 deliberately says "I'm done for today" BEFORE the save — so
+  // every later pre-write message was discarded and an unsupported save claim in that
+  // window vanished (owner P1, 2026-08-03). Write claims are now timed against the live
+  // write itself, and fail closed without it.
+  const writeSweep = detectUnsupportedWriteClaim({ messages: originalVisibleMessages, liveWriteAtMs: liveWriteAt });
   const claims = {
     unsupported_mutation_wording: mutationSweep.unsupported,
-    unsupported_write_claim: /saved to (your|the) sheet/i.test(threadFull.slice(0, threadFull.indexOf('done'))) === true,
-    detail: mutationSweep.detail,
+    unsupported_write_claim: writeSweep.unsupported,
+    detail: [mutationSweep.detail, writeSweep.detail].filter(Boolean).join(' | '),
   };
-  note('claim-sweep', `${originalVisibleMessages.length} visible messages from the original session (of ${visibleMessages.length} total); mutation at ${mutationAtMs === null ? 'never' : 'recorded'}; unsupported=${mutationSweep.unsupported}; coach-capture failures ${coachCaptureFailures.count}`);
+  note('claim-sweep', `${originalVisibleMessages.length} visible messages; mutation ${mutationAtMs === null ? 'never' : 'recorded'}; live write ${liveWriteAt === null ? 'NOT observed' : 'observed'}; unsupported mutation=${mutationSweep.unsupported} write=${writeSweep.unsupported}; coach-capture failures ${coachCaptureFailures.count}`);
 
   const observations = {
     run_purpose: RUN_PURPOSE, session_number: SESSION_NUMBER, run_id: RUN_ID, athlete_id: ATHLETE_ID,
