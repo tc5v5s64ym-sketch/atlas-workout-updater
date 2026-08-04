@@ -66,14 +66,15 @@ async function validateHeader() {
   try {
     rows = await sheets.readRange(HEADER_RANGE);
   } catch (e) {
-    // Ask the ONE read-failure authority (sheets.classifySheetsReadError) what the
-    // failure means. This used to report EVERY read failure as `tab_missing`, which
-    // told the owner to run a schema migration when Google had merely rate-limited
-    // us. `tab_missing` is a durable fact about the spreadsheet; a transient or
-    // permanent read failure is `error` — a non-capture outcome either way, so the
-    // write still never proceeds on a guess.
-    return sheets.isTabMissingError(e)
-      ? { ok: false, status: 'tab_missing', reason: 'Session_Plans tab does not exist' }
+    // Ask the ONE read-failure authority. This used to report EVERY read failure as
+    // `tab_missing`, which told the owner to run a schema migration when Google had
+    // merely rate-limited us. `tab_missing` is a durable schema fact and is claimed
+    // only when `confirmTabMissing` has independently established it — the metadata
+    // read succeeded AND this tab is genuinely absent. A malformed range, an
+    // unreadable spreadsheet, or any other failure is `error`: a non-capture outcome
+    // either way, so the write never proceeds on a guess in either direction.
+    return (await sheets.confirmTabMissing(e, SESSION_PLANS_TAB))
+      ? { ok: false, status: 'tab_missing', reason: 'Session_Plans tab confirmed absent' }
       : { ok: false, status: 'error', reason: `Session_Plans header unreadable (${e.message})` };
   }
   const header = Array.isArray(rows) && Array.isArray(rows[0]) ? rows[0] : [];

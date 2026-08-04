@@ -120,17 +120,22 @@ async function retryWithBackoff(operation, options = {}) {
 // VERIFIED-empty ledger. A missing tab is a durable schema fact the owner must fix;
 // a transient outage is a retry. They must never collapse into each other.
 //
-// Three kinds, and only three:
-//   'tab_missing' — the spreadsheet opened but the named tab is not in it. Google
-//                   answers a range read for an absent tab with HTTP 400 and
-//                   "Unable to parse range: <Tab>!A1". A 404 is NOT this: it means
-//                   the SPREADSHEET is missing or the id is wrong, which must never
-//                   read as "that tab is empty".
+// Three kinds, and only three — and NONE of them is "the tab is missing", because a
+// single error object cannot prove that:
+//   'range_unresolved' — Google could not resolve the requested range: HTTP 400,
+//                   "Unable to parse range: <Tab>!A1". That wording has TWO causes —
+//                   the tab is genuinely absent, OR the A1 range itself is malformed
+//                   (a caller bug, an unescaped tab name, a bad column letter). The
+//                   classifier cannot tell them apart, so it does not try. Absence is
+//                   a DURABLE SCHEMA FACT and is established only by
+//                   `confirmTabMissing` below, never inferred from wording. A 404 is
+//                   not this either: it means the SPREADSHEET is missing or the id is
+//                   wrong, which must never read as "that tab is empty".
 //   'transient'   — the request did not complete for a reason unrelated to what the
 //                   spreadsheet contains: rate limit, backend error, timeout, or a
 //                   dropped socket. Bounded retry is safe and correct.
-//   'permanent'   — anything else: bad credentials, revoked access, a malformed
-//                   range, a missing spreadsheet. Retrying cannot help; fail closed.
+//   'permanent'   — anything else: bad credentials, revoked access, a missing
+//                   spreadsheet. Retrying cannot help; fail closed.
 // 408 is here and NOT in the append guard, and that is the whole point of keeping the
 // two separate: a request timeout means the server gave up waiting for the request,
 // which is safe to repeat for an idempotent read and ambiguous for an append.
@@ -170,14 +175,17 @@ function classifySheetsReadError(error) {
     message,
   ].filter(Boolean).map(String);
 
-  // A missing tab is identified by Google's own range-parse rejection, never by a
-  // loose "not found" match — "not found" is also how a missing SPREADSHEET and a
-  // revoked permission read, and treating either as an absent tab would report a
-  // misconfigured deployment as an empty ledger.
+  // Google's own range-parse rejection, matched narrowly — never a loose "not found",
+  // which is also how a missing SPREADSHEET and a revoked permission read. This says
+  // only that the range did not resolve. It does NOT say the tab is absent: the same
+  // wording is returned for a malformed A1 range, and `readRange` accepts arbitrary
+  // A1 from its callers. Claiming absence here would let a caller bug produce
+  // `tab_missing`, which is a member of VERIFIED_EMPTY_SEAL_REASONS — a malformed
+  // range could then present a ledger as verified-empty. Use `confirmTabMissing`.
   const RANGE_PARSE = /unable to parse range/i;
   if (RANGE_PARSE.test(message) || RANGE_PARSE.test(apiMessage)
     || nested.some(e => e && RANGE_PARSE.test(String(e.message || '')))) {
-    return 'tab_missing';
+    return 'range_unresolved';
   }
 
   if (TRANSIENT_READ_STATUSES.has(status)) return 'transient';
@@ -202,8 +210,45 @@ function isTransientReadError(error) {
   return classifySheetsReadError(error) === 'transient';
 }
 
-function isTabMissingError(error) {
-  return classifySheetsReadError(error) === 'tab_missing';
+// ── The only way to establish that a tab is absent ────────────────────────────
+//
+// `tab_missing` is a DURABLE SCHEMA FACT: it tells the owner to create a tab, and
+// it is one of only two reasons that let a closeout be read as a VERIFIED-empty
+// ledger (VERIFIED_EMPTY_SEAL_REASONS, services/turnWriteArtifact.js). A fact that
+// consequential may not be inferred from an error message.
+//
+// The wording alone is not proof. Google returns "Unable to parse range" both when
+// the tab is genuinely absent AND when the A1 range is malformed — an unescaped tab
+// name, a bad column letter, a caller passing arbitrary A1 to `readRange`. Treating
+// the message as absence would let a programming error present a ledger as
+// verified-empty.
+//
+// So absence requires TWO independent things, both confirmed here:
+//   1. the spreadsheet metadata was READABLE — we successfully looked; and
+//   2. the specifically requested tab is NOT in it.
+//
+// Everything else answers false, and the caller reports an ordinary read error:
+// a malformed range against a tab that DOES exist, a metadata read that failed, a
+// caller with no tab name to confirm, or an error that never mentioned the range.
+// Fail closed in every direction — the cost of a false `error` is a retry, and the
+// cost of a false `tab_missing` is an unverified ledger presented as verified.
+//
+// `opts.listTabs` is injectable for the same reason `retryWithBackoff` takes a
+// `sleep`: a test must be able to drive this without a live spreadsheet. Production
+// callers pass nothing and get the real, bounded-retry metadata read.
+async function confirmTabMissing(error, tabName, opts = {}) {
+  if (classifySheetsReadError(error) !== 'range_unresolved') return false;
+  const name = String(tabName == null ? '' : tabName).trim();
+  if (!name) return false; // nothing to confirm against ⇒ never claim absence
+  const listTabs = opts.listTabs || getSpreadsheetTabs;
+  let tabs;
+  try {
+    tabs = await listTabs();
+  } catch (_) {
+    return false; // could not look ⇒ not evidence of absence
+  }
+  if (!Array.isArray(tabs)) return false;
+  return !tabs.includes(name);
 }
 
 // Bounded, read-only retry. Shorter and shallower than the append profile: a read
@@ -534,7 +579,7 @@ module.exports = {
   retryWithBackoff,
   classifySheetsReadError,
   isTransientReadError,
-  isTabMissingError,
+  confirmTabMissing,
   readWithRetry,
   logSheetName,
   effortSheetName

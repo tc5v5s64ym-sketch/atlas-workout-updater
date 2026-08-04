@@ -19,11 +19,14 @@ const { sessionPlansColumns } = require('../config/columns');
 // fake must never carry its own copy: a second classifier in the test fixture would
 // let the production one drift while these tests stayed green, which is the exact
 // authority defect this layer was fixed to remove.
-const { isTabMissingError, classifySheetsReadError } = require('../sheets');
+const { confirmTabMissing, classifySheetsReadError } = require('../sheets');
 
-// Google answers a range read for an absent tab with this exact wording; a transient
-// backend failure is a gaxios error carrying an HTTP status and no such message.
+// Google answers a range read for an absent tab with this exact wording — and answers
+// a MALFORMED A1 range with the same wording, which is why absence has to be confirmed
+// against the tab list rather than read off the message. A transient backend failure
+// is a gaxios error carrying an HTTP status and no such message.
 const rangeParseError = () => new Error('Unable to parse range: Session_Plans!A1:M1');
+const malformedRangeError = () => new Error('Unable to parse range: Session_Plans!A1:%%');
 const transientError = () => Object.assign(new Error('The service is currently unavailable.'), { status: 503 });
 
 const state = {
@@ -56,7 +59,12 @@ const fakeSheets = {
     if (!state.tabs.some(t => String(range).startsWith(t))) throw rangeParseError();
     return state.header.length ? [state.header.slice()] : [];
   },
-  isTabMissingError,
+  // The REAL confirmation, driven by this fixture's own tab list. Binding `listTabs`
+  // rather than reimplementing the check is deliberate: a fixture copy of "is the tab
+  // absent" could stay green while production drifted.
+  confirmTabMissing: (e, tab) => confirmTabMissing(e, tab, {
+    listTabs: async () => { if (state.readError) throw state.readError; return state.tabs.slice(); },
+  }),
   classifySheetsReadError,
 };
 const sheetsPath = require.resolve('../sheets');
@@ -144,6 +152,49 @@ test('a TRANSIENT read failure is error, never tab_missing — and still writes 
     assert.equal(r.captured, false);
     assert.equal(state.appends.length, 0, 'fails closed either way — no write on an unreadable header');
   });
+});
+
+// BITE — a MALFORMED RANGE is not evidence that the tab is absent, even though Google
+// reports it with the identical "Unable to parse range" wording. The tab list here
+// still contains Session_Plans, so absence is refuted. Inferring `tab_missing` from
+// the message would let a caller bug (an unescaped tab name, a bad column letter)
+// manufacture a durable schema fact — and in the sets capture, a verified-empty seal.
+// Reverting confirmTabMissing to a message test fails this and leaves the two below
+// passing, which is exactly the false green it exists to prevent.
+test('a MALFORMED RANGE against an existing tab is error, never tab_missing', async () => {
+  reset({ tabs: ['Session_Plans'], readError: malformedRangeError() });
+  await withFlag('1', async () => {
+    const r = await capture.captureAccept(SESSION, ITEMS);
+    assert.equal(r.status, 'error', 'the tab is right there in the tab list — this is a bad range, not an absent tab');
+    assert.notEqual(r.status, 'tab_missing');
+    assert.equal(r.captured, false);
+    assert.equal(state.appends.length, 0);
+  });
+});
+
+// The metadata read is what establishes absence, so a metadata read that FAILS
+// establishes nothing. Fail closed: never claim absence from a failure to look.
+test('a range error whose METADATA CONFIRMATION also fails is error, never tab_missing', async () => {
+  reset({ tabs: [] });
+  // The header read rejects with the range wording; the confirming tab-list read then
+  // fails too, so nothing was ever confirmed.
+  state.readError = rangeParseError();
+  const listFailure = Object.assign(new Error('Backend Error'), { status: 503 });
+  const original = fakeSheets.confirmTabMissing;
+  fakeSheets.confirmTabMissing = (e, tab) => confirmTabMissing(e, tab, {
+    listTabs: async () => { throw listFailure; },
+  });
+  try {
+    await withFlag('1', async () => {
+      const r = await capture.captureAccept(SESSION, ITEMS);
+      assert.equal(r.status, 'error', 'could not look ⇒ not evidence of absence');
+      assert.notEqual(r.status, 'tab_missing');
+      assert.equal(r.captured, false);
+      assert.equal(state.appends.length, 0);
+    });
+  } finally {
+    fakeSheets.confirmTabMissing = original;
+  }
 });
 
 // The other half of the same distinction: a PERMANENT failure (revoked credentials,

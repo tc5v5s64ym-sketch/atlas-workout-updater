@@ -19,11 +19,13 @@
 //    disagreement directly — collapsing them into one shared predicate is the obvious
 //    "simplification" that would silently reintroduce the double-append.
 //
-// 2. `tab_missing` must be provable, not guessed. It is a member of
-//    VERIFIED_EMPTY_SEAL_REASONS (services/turnWriteArtifact.js), so a transient
-//    outage misread as a missing tab can present an unverified closeout as a
-//    VERIFIED-empty ledger. Only Google's own range-parse rejection may produce it —
-//    never a loose "not found", which is also how a missing SPREADSHEET reads.
+// 2. `tab_missing` must be PROVEN, not guessed — and no error object can prove it.
+//    It is a member of VERIFIED_EMPTY_SEAL_REASONS (services/turnWriteArtifact.js),
+//    so a failure misread as a missing tab can present an unverified closeout as a
+//    VERIFIED-empty ledger. Google returns "Unable to parse range" both for an absent
+//    tab AND for a malformed A1 range, so the classifier answers only the honest
+//    `range_unresolved`; absence is established solely by `confirmTabMissing`, which
+//    requires that the metadata read SUCCEEDED and that this tab is absent from it.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -77,7 +79,7 @@ require.cache[googleapisPath] = {
 };
 
 const sheets = require('../sheets');
-const { classifySheetsReadError, isTransientReadError, isTabMissingError } = sheets;
+const { classifySheetsReadError, isTransientReadError, confirmTabMissing } = sheets;
 
 test.beforeEach(() => {
   calls.valuesGet.length = 0;
@@ -95,36 +97,89 @@ const gaxios = (status, message, extra = {}) => Object.assign(new Error(message)
 });
 const transport = (code, message) => Object.assign(new Error(message), { code });
 
-// ── tab_missing: only Google's range-parse rejection ──────────────────────────
+// ── range_unresolved: what the classifier may say, and what it may not ────────
 
-test('a range-parse rejection is tab_missing — the wording Google actually returns', () => {
-  assert.equal(classifySheetsReadError(new Error('Unable to parse range: Session_Plans!A1:M1')), 'tab_missing');
-  assert.equal(isTabMissingError(new Error('Unable to parse range: Session_Plans!A1:M1')), true);
+test('a range-parse rejection is range_unresolved — NOT a claim that the tab is absent', () => {
+  const e = new Error('Unable to parse range: Session_Plans!A1:M1');
+  assert.equal(classifySheetsReadError(e), 'range_unresolved');
+  // The classifier never emits tab_missing at all. Absence is not a property of an
+  // error object; it is a property of the spreadsheet, established by a second read.
+  assert.notEqual(classifySheetsReadError(e), 'tab_missing');
 });
 
-test('tab_missing is recognized when the wording is nested in the API error body, not the JS message', () => {
+test('range_unresolved is recognized when the wording is nested in the API error body, not the JS message', () => {
   const e = Object.assign(new Error('Request failed with status code 400'), {
     status: 400,
     response: { status: 400, data: { error: { status: 'INVALID_ARGUMENT', message: 'Unable to parse range: Ghost_Tab!A1' } } }
   });
-  assert.equal(classifySheetsReadError(e), 'tab_missing');
+  assert.equal(classifySheetsReadError(e), 'range_unresolved');
 });
 
-// The dangerous false positive. `tab_missing` is a VERIFIED_EMPTY_SEAL_REASON, so
-// every one of these must stay OUT of it: each means the deployment is wrong, not
+// The dangerous false positive. Every one of these means the deployment is wrong, not
 // that one optional tab is absent. The regex this replaced matched "not found" and
 // "does not exist" and therefore mislabelled all three.
-test('a missing SPREADSHEET, a revoked account, and a wrong id are NEVER tab_missing', () => {
-  const notTabMissing = [
+test('a missing SPREADSHEET, a revoked account, and a wrong id are NEVER range_unresolved', () => {
+  const notRangeErrors = [
     gaxios(404, 'Requested entity was not found.'),
     gaxios(403, 'The caller does not have permission'),
     gaxios(401, 'Request had invalid authentication credentials'),
     new Error('Sheet does not exist'),
     new Error('no such spreadsheet'),
   ];
-  for (const e of notTabMissing) {
-    assert.notEqual(classifySheetsReadError(e), 'tab_missing', `must not read as tab_missing: ${e.message}`);
+  for (const e of notRangeErrors) {
+    assert.equal(classifySheetsReadError(e), 'permanent', `must be permanent: ${e.message}`);
   }
+});
+
+// ── confirmTabMissing: absence is proven or it is not claimed ─────────────────
+//
+// The review that caught this was exact: "Unable to parse range" is also what Google
+// returns for a MALFORMED A1 range, and `readRange` takes arbitrary A1 from callers.
+// Reading absence off that wording would let a programming error manufacture
+// `tab_missing`, which is a VERIFIED_EMPTY_SEAL_REASON — so a bad range could present
+// a ledger as verified-empty. Absence now requires both halves: the metadata read
+// SUCCEEDED, and the requested tab is not in it.
+
+const RANGE_ERROR = () => new Error('Unable to parse range: Session_Plans!A1:M1');
+
+test('confirmTabMissing is TRUE only when the metadata read succeeded AND the tab is absent', async () => {
+  const listTabs = async () => ['Log_Cleaned', 'Effort'];
+  assert.equal(await confirmTabMissing(RANGE_ERROR(), 'Session_Plans', { listTabs }), true);
+});
+
+test('confirmTabMissing is FALSE when the tab is PRESENT — a malformed range is not absence', async () => {
+  // Same error wording, same code path; the only difference is that the spreadsheet
+  // actually contains the tab, so the range itself must have been the problem.
+  const listTabs = async () => ['Log_Cleaned', 'Session_Plans'];
+  const malformed = new Error('Unable to parse range: Session_Plans!A1:%%');
+  assert.equal(await confirmTabMissing(malformed, 'Session_Plans', { listTabs }), false);
+  assert.equal(await confirmTabMissing(RANGE_ERROR(), 'Session_Plans', { listTabs }), false);
+});
+
+test('confirmTabMissing FAILS CLOSED when the metadata read itself fails', async () => {
+  for (const boom of [gaxios(503, 'Backend Error'), gaxios(403, 'The caller does not have permission'), new Error('socket hang up')]) {
+    const listTabs = async () => { throw boom; };
+    assert.equal(await confirmTabMissing(RANGE_ERROR(), 'Session_Plans', { listTabs }), false,
+      `could not look ⇒ not evidence of absence: ${boom.message}`);
+  }
+  // A non-array answer is not a confirmed list either.
+  assert.equal(await confirmTabMissing(RANGE_ERROR(), 'Session_Plans', { listTabs: async () => null }), false);
+});
+
+test('confirmTabMissing is FALSE without a tab name to confirm against', async () => {
+  const listTabs = async () => [];
+  for (const name of [undefined, null, '', '   ']) {
+    assert.equal(await confirmTabMissing(RANGE_ERROR(), name, { listTabs }), false);
+  }
+});
+
+test('confirmTabMissing never even looks unless the error was a range failure', async () => {
+  let looked = 0;
+  const listTabs = async () => { looked += 1; return []; };
+  for (const e of [gaxios(503, 'Backend Error'), gaxios(404, 'Requested entity was not found.'), gaxios(429, 'rate'), null]) {
+    assert.equal(await confirmTabMissing(e, 'Session_Plans', { listTabs }), false);
+  }
+  assert.equal(looked, 0, 'a transient or permanent failure must not trigger a metadata probe');
 });
 
 // ── transient vs permanent ────────────────────────────────────────────────────
@@ -258,7 +313,7 @@ test('a PERMANENT failure is not retried at all — one attempt, then the truthf
   assert.equal(calls.valuesGet.length, 1);
 });
 
-test('a MISSING TAB is not retried either — it is a durable fact, not an outage', async () => {
+test('an UNRESOLVED RANGE is not retried either — repeating it returns the same answer', async () => {
   valuesGetPlan = [new Error('Unable to parse range: Ghost!A:Z')];
   await assert.rejects(() => sheets.getRecentRows('Ghost', 10), /Unable to parse range/);
   assert.equal(calls.valuesGet.length, 1);
@@ -317,7 +372,7 @@ test('the exported read surface is exactly the set proven to retry', () => {
     'appendRows', 'updateColumnCells', 'deleteRowsByRange', 'ensureSheetTab',
     'validateConfig', 'getSafeSpreadsheetConfig',
     'isTransientAppendError', 'retryWithBackoff',
-    'classifySheetsReadError', 'isTransientReadError', 'isTabMissingError', 'readWithRetry',
+    'classifySheetsReadError', 'isTransientReadError', 'confirmTabMissing', 'readWithRetry',
     'logSheetName', 'effortSheetName',
   ];
   assert.deepEqual(

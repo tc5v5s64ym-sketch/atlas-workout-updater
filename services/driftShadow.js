@@ -86,14 +86,19 @@ async function _loadInputs() {
       result = { ok: true, reason: null, history, sessions_considered: history.length, deloadState };
     }
   } catch (e) {
-    // The ONE read-failure authority decides this, not a local message regex. The
-    // regex this replaced also matched "not found" and "does not exist", so a missing
-    // SPREADSHEET or a revoked service account was reported as `tab_missing` — a
-    // deployment misconfiguration presented as an absent optional tab. Both outcomes
-    // are still fail-closed (`ok:false` ⇒ evaluated:false, no fabricated signal); the
-    // difference is whether the diagnostic tells the owner the truth.
-    const reason = sheetsLib.isTabMissingError(e) ? 'tab_missing' : 'read_error';
-    result = { ok: false, reason, history: [], sessions_considered: 0, deloadState: null };
+    // A thrown read is `read_error`, full stop. The local regex this replaced claimed
+    // `tab_missing` from the message, and that claim was never provable here: the
+    // wording it matched ("not found", "does not exist") is also how a missing
+    // SPREADSHEET and a revoked service account read, and even Google's exact
+    // "Unable to parse range" covers a malformed range as well as an absent tab.
+    // Confirming absence needs a second, uncached metadata read, which this dark path
+    // deliberately does not make — its whole design is a bounded read budget.
+    //
+    // Nothing is lost. `tab_missing` is still reported on the branch above that can
+    // actually prove it: the read SUCCEEDED and returned no header. Both outcomes are
+    // `ok:false` ⇒ evaluated:false with no fabricated drift signal, so the only
+    // difference is whether the diagnostic states a fact this module can support.
+    result = { ok: false, reason: 'read_error', history: [], sessions_considered: 0, deloadState: null };
   }
   _cache.set(CACHE_KEY, result);
   return result;

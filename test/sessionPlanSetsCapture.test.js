@@ -12,11 +12,14 @@ const { sessionPlanSetsColumns } = require('../config/columns');
 
 // The REAL classifier, captured before the fake replaces the module — the fixture
 // must never carry a second copy of it (see test/sessionPlanCapture.test.js).
-const { isTabMissingError, classifySheetsReadError } = require('../sheets');
+const { confirmTabMissing, classifySheetsReadError } = require('../sheets');
 
-// Google's actual wording for a range read against an absent tab, vs a transient
-// backend failure, which carries an HTTP status and no range-parse message.
+// Google's wording for a range read against an absent tab — and the IDENTICAL wording
+// for a malformed A1 range, which is why absence is confirmed against the tab list
+// instead of read off the message. A transient backend failure carries an HTTP status
+// and no range-parse message.
 const rangeParseError = () => new Error('Unable to parse range: Session_Plan_Sets!A1:P1');
+const malformedRangeError = () => new Error('Unable to parse range: Session_Plan_Sets!A1:%%');
 const transientError = () => Object.assign(new Error('Backend Error'), { status: 503 });
 
 const state = { tabs: ['Session_Plan_Sets'], rows: [], header: [[...sessionPlanSetsColumns]], calls: 0, appendThrows: null, appendShort: false, readError: null };
@@ -44,7 +47,11 @@ const fakeSheets = {
     if (!state.tabs.includes('Session_Plan_Sets')) throw rangeParseError();
     return state.header;
   },
-  isTabMissingError,
+  // The REAL confirmation bound to this fixture's tab list — never a fixture copy of
+  // the absence check, which could stay green while production drifted.
+  confirmTabMissing: (e, tab) => confirmTabMissing(e, tab, {
+    listTabs: async () => { if (state.readError) throw state.readError; return state.tabs.slice(); },
+  }),
   classifySheetsReadError,
 };
 const sheetsPath = require.resolve('../sheets');
@@ -112,6 +119,41 @@ test('live: a TRANSIENT read failure is error, NEVER tab_missing (it must not re
   assert.equal(env.captured, false);
   assert.equal(env.status, 'error');
   assert.notEqual(env.status, 'tab_missing', 'a 503 is not evidence the ledger tab is absent');
+});
+
+// BITE — the trust-critical case the exact-head review caught. Google reports a
+// MALFORMED A1 range with the same "Unable to parse range" wording as an absent tab,
+// so inferring absence from the message would let a caller bug (an unescaped tab name,
+// a bad column letter) produce `tab_missing` — which is a VERIFIED_EMPTY_SEAL_REASON.
+// A programming error could then present a ledger as verified-empty while real rows
+// sat unstamped. Here the tab list still contains Session_Plan_Sets, so absence is
+// refuted and the outcome must be `error`.
+test('live: a MALFORMED RANGE against an existing tab is error — a caller bug can never earn a verified-empty seal', async () => {
+  reset({ tabs: ['Session_Plan_Sets'], readError: malformedRangeError() });
+  const cap = loadCapture({ writeEnabled: true });
+  const env = await cap.captureAcceptedPlan(SESSION, ITEMS);
+  assert.equal(env.captured, false);
+  assert.equal(env.status, 'error');
+  assert.notEqual(env.status, 'tab_missing', 'the tab is present — this is a bad range, not an absent ledger');
+});
+
+// Absence is established by the metadata read, so a metadata read that FAILS
+// establishes nothing at all. Never claim absence from a failure to look.
+test('live: a range error whose METADATA CONFIRMATION also fails is error, never tab_missing', async () => {
+  reset({ tabs: [], readError: rangeParseError() });
+  const original = fakeSheets.confirmTabMissing;
+  fakeSheets.confirmTabMissing = (e, tab) => confirmTabMissing(e, tab, {
+    listTabs: async () => { throw Object.assign(new Error('Backend Error'), { status: 503 }); },
+  });
+  try {
+    const cap = loadCapture({ writeEnabled: true });
+    const env = await cap.captureAcceptedPlan(SESSION, ITEMS);
+    assert.equal(env.captured, false);
+    assert.equal(env.status, 'error');
+    assert.notEqual(env.status, 'tab_missing');
+  } finally {
+    fakeSheets.confirmTabMissing = original;
+  }
 });
 
 test('live: an unconfirmed append (no range / short row count) FAILS CLOSED — never a false captured', async () => {
