@@ -100,6 +100,114 @@ async function retryWithBackoff(operation, options = {}) {
   }
 }
 
+// ── The one authority for what a FAILED Sheets READ means ─────────────────────
+//
+// A read is IDEMPOTENT. That single fact is why this classifier exists beside
+// `isTransientAppendError` rather than reusing it: the append guard deliberately
+// refuses to retry a 500/503/timeout because the row may already be committed and
+// a retry would silently double-write (WRITE-5 above). A read carries no such
+// hazard, so the ambiguous-upstream statuses that are FATAL for an append are
+// exactly the ones that are SAFE to retry for a read. Sharing one predicate across
+// both would force one of the two to be wrong.
+//
+// Before this existed, every read helper below was a bare API call that threw an
+// unclassified error, so five callers each invented their own meaning for it:
+// `driftShadow` message-matched, `sessionPlanCapture` / `sessionPlanSetsCapture` /
+// `sessionPlanStore` read ANY failure as "the tab does not exist", and every
+// `routes/reads.js` handler read ANY failure as a hard 500. The capture guess was
+// the dangerous one — `tab_missing` is a member of `VERIFIED_EMPTY_SEAL_REASONS`
+// (services/turnWriteArtifact.js), so a momentary Google outage could present as a
+// VERIFIED-empty ledger. A missing tab is a durable schema fact the owner must fix;
+// a transient outage is a retry. They must never collapse into each other.
+//
+// Three kinds, and only three:
+//   'tab_missing' — the spreadsheet opened but the named tab is not in it. Google
+//                   answers a range read for an absent tab with HTTP 400 and
+//                   "Unable to parse range: <Tab>!A1". A 404 is NOT this: it means
+//                   the SPREADSHEET is missing or the id is wrong, which must never
+//                   read as "that tab is empty".
+//   'transient'   — the request did not complete for a reason unrelated to what the
+//                   spreadsheet contains: rate limit, backend error, timeout, or a
+//                   dropped socket. Bounded retry is safe and correct.
+//   'permanent'   — anything else: bad credentials, revoked access, a malformed
+//                   range, a missing spreadsheet. Retrying cannot help; fail closed.
+const TRANSIENT_READ_STATUSES = new Set([429, 500, 502, 503, 504]);
+const TRANSIENT_TRANSPORT_CODES = new Set([
+  'ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'ECONNABORTED',
+  'EAI_AGAIN', 'ENOTFOUND', 'EPIPE', 'EHOSTUNREACH', 'ENETUNREACH', 'ERR_SOCKET_CONNECTION_TIMEOUT',
+]);
+
+function classifySheetsReadError(error) {
+  if (!error) return 'permanent';
+  // Same status-before-code ordering as isTransientAppendError, and for the same
+  // reason: on a gaxios error `.code` is the transport cause, not the HTTP status.
+  const status = Number(
+    error.status != null ? error.status
+      : (error.response && error.response.status != null) ? error.response.status
+        : NaN
+  );
+  const message = String((error && error.message) || '');
+  const apiMessage = String(
+    (error.response && error.response.data && error.response.data.error
+      && error.response.data.error.message) || ''
+  );
+  const reason = String(
+    (error.errors && error.errors[0] && error.errors[0].reason)
+    || (error.response && error.response.data && error.response.data.error
+      && error.response.data.error.status)
+    || ''
+  );
+
+  // A missing tab is identified by Google's own range-parse rejection, never by a
+  // loose "not found" match — "not found" is also how a missing SPREADSHEET and a
+  // revoked permission read, and treating either as an absent tab would report a
+  // misconfigured deployment as an empty ledger.
+  if (/unable to parse range/i.test(message) || /unable to parse range/i.test(apiMessage)) {
+    return 'tab_missing';
+  }
+
+  if (TRANSIENT_READ_STATUSES.has(status)) return 'transient';
+  // A 403 is transient ONLY when Google names rate limiting or quota; a 403 for a
+  // revoked service account is permanent and must not be retried four times.
+  if (status === 403) return /rateLimit|quota|RESOURCE_EXHAUSTED/i.test(reason || apiMessage) ? 'transient' : 'permanent';
+  // Any other explicit HTTP status is a decision the server made about this exact
+  // request; repeating it produces the same answer.
+  if (Number.isFinite(status)) return 'permanent';
+
+  // No HTTP status at all — the request never got an answer. Now the transport code
+  // is the signal, and a bare socket failure is retryable.
+  const code = String((error && error.code) || '');
+  if (TRANSIENT_TRANSPORT_CODES.has(code)) return 'transient';
+  if (/socket hang up|network|timeout|timed out|ECONNRESET|EAI_AGAIN/i.test(message)) return 'transient';
+  return 'permanent';
+}
+
+function isTransientReadError(error) {
+  return classifySheetsReadError(error) === 'transient';
+}
+
+function isTabMissingError(error) {
+  return classifySheetsReadError(error) === 'tab_missing';
+}
+
+// Bounded, read-only retry. Shorter and shallower than the append profile: a read
+// sits in front of a user-facing request, so the worst case here is 3 attempts and
+// ~0.9s of added latency, not a 3.5s stall. `options` exists so a test can inject
+// its own `sleep` and prove the policy without waiting on the wall clock; the
+// helpers below always call it with the default profile.
+const READ_RETRY_DEFAULTS = { maxAttempts: 3, baseDelayMs: 300 };
+
+function readWithRetry(label, operation, options = {}) {
+  return retryWithBackoff(operation, {
+    ...READ_RETRY_DEFAULTS,
+    ...options,
+    isRetryable: isTransientReadError,
+    onRetry: (error, attempt, delay) => {
+      console.warn(`[sheets.js] Transient read error on ${label} (attempt ${attempt}): ${error.message}. Retrying in ${delay}ms`);
+    }
+  });
+}
+
 async function getSheetsClient() {
   const auth = new google.auth.GoogleAuth({
     credentials: {
@@ -152,11 +260,11 @@ async function getColumnValues(tabName, column) {
   const range = `${tabName}!${column}:${column}`;
   console.log(`[sheets.js] Fetching column ${column} from ${tabName}`);
 
-  const response = await sheets.spreadsheets.values.get({
+  const response = await readWithRetry(range, () => sheets.spreadsheets.values.get({
     spreadsheetId,
     range,
     majorDimension: 'COLUMNS'
-  });
+  }));
 
   return response.data.values?.[0] || [];
 }
@@ -166,10 +274,10 @@ async function getExerciseCatalog() {
   const range = `Exercise_Catalog!A:Z`;
   console.log(`[sheets.js] Fetching Exercise_Catalog from range ${range}`);
 
-  const response = await sheets.spreadsheets.values.get({
+  const response = await readWithRetry(range, () => sheets.spreadsheets.values.get({
     spreadsheetId,
     range
-  });
+  }));
 
   return response.data.values || [];
 }
@@ -179,10 +287,10 @@ async function getRecentRows(tabName, maxRows = 100) {
   const range = `${tabName}!A:Z`;
   console.log(`[sheets.js] Fetching recent rows from ${tabName} range ${range}`);
 
-  const response = await sheets.spreadsheets.values.get({
+  const response = await readWithRetry(range, () => sheets.spreadsheets.values.get({
     spreadsheetId,
     range
-  });
+  }));
 
   const rows = response.data.values || [];
   if (rows.length <= 1) return [];
@@ -196,10 +304,10 @@ async function getSheetRows(tabName, maxRows = Infinity) {
   const range = `${tabName}!A:Z`;
   console.log(`[sheets.js] Fetching rows from ${tabName} range ${range}`);
 
-  const response = await sheets.spreadsheets.values.get({
+  const response = await readWithRetry(range, () => sheets.spreadsheets.values.get({
     spreadsheetId,
     range
-  });
+  }));
 
   const rows = response.data.values || [];
   if (rows.length <= 1) return [];
@@ -212,23 +320,28 @@ async function getHeaderRow(tabName) {
   const range = `${tabName}!1:1`;
   console.log(`[sheets.js] Fetching header row from ${tabName}`);
 
-  const response = await sheets.spreadsheets.values.get({
+  const response = await readWithRetry(range, () => sheets.spreadsheets.values.get({
     spreadsheetId,
     range
-  });
+  }));
 
   return response.data.values?.[0] || [];
 }
 
 async function getSpreadsheetTabs() {
   const sheets = await getSheetsClient();
-  const response = await sheets.spreadsheets.get({
+  const response = await readWithRetry('spreadsheet metadata', () => sheets.spreadsheets.get({
     spreadsheetId,
     fields: 'sheets.properties'
-  });
+  }));
   return (response.data.sheets || []).map(sheet => String(sheet.properties.title || ''));
 }
 
+// NOT wrapped in readWithRetry, deliberately. This helper CREATES a tab: its reads
+// are the probe that decides whether to run a schema mutation, so retrying them
+// changes when a tab gets created, not merely how a read is reported. It is a
+// write-path helper that happens to read, and it stays outside the read-robustness
+// change. test/sheetsReadFailureAuthority.test.js pins that exclusion.
 async function ensureSheetTab(tabName, headerRow = []) {
   const sheets = await getSheetsClient();
   const meta = await sheets.spreadsheets.get({
@@ -285,10 +398,10 @@ async function getLogCompositeKeys() {
   const range = `${logSheetName}!B:G`;
   console.log(`[sheets.js] Fetching composite-key columns from ${logSheetName} range ${range}`);
 
-  const response = await sheets.spreadsheets.values.get({
+  const response = await readWithRetry(range, () => sheets.spreadsheets.values.get({
     spreadsheetId,
     range
-  });
+  }));
   const rows = response.data.values || [];
 
   const keys = [];
@@ -307,10 +420,10 @@ async function getLogCompositeKeys() {
 async function readRange(rangeA1) {
   const sheets = await getSheetsClient();
   console.log(`[sheets.js] Reading range ${rangeA1}`);
-  const response = await sheets.spreadsheets.values.get({
+  const response = await readWithRetry(rangeA1, () => sheets.spreadsheets.values.get({
     spreadsheetId,
     range: rangeA1
-  });
+  }));
   return response.data.values || [];
 }
 
@@ -403,6 +516,10 @@ module.exports = {
   getSafeSpreadsheetConfig,
   isTransientAppendError,
   retryWithBackoff,
+  classifySheetsReadError,
+  isTransientReadError,
+  isTabMissingError,
+  readWithRetry,
   logSheetName,
   effortSheetName
 };

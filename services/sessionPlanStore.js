@@ -44,13 +44,16 @@ function _nowIso() {
   return new Date().toISOString();
 }
 
+// CONFIRMED presence only. This used to answer `false` when the metadata read threw,
+// which reported "the tab does not exist" — a durable schema fact the owner must act
+// on — for what may have been a momentary Google outage. An unreadable spreadsheet is
+// not evidence of absence, so the failure now propagates; the capture layer above is
+// failure-isolated (services/sessionPlanCapture.js `_capture`) and turns it into an
+// `error` envelope with `captured:false`, so no write proceeds either way and no
+// caller can throw.
 async function _tabExists() {
-  try {
-    const tabs = await sheets.getSpreadsheetTabs();
-    return Array.isArray(tabs) && tabs.includes(SESSION_PLANS_TAB);
-  } catch (_) {
-    return false;
-  }
+  const tabs = await sheets.getSpreadsheetTabs();
+  return Array.isArray(tabs) && tabs.includes(SESSION_PLANS_TAB);
 }
 
 // Read existing rows keyed by idempotency_key (data rows only; the header is stripped

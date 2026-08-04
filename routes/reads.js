@@ -14,7 +14,7 @@
 
 const express = require('express');
 const { success: standardSuccess, error: standardError } = require('../response');
-const { getRecentRows, getExerciseCatalog, logSheetName, effortSheetName } = require('../sheets');
+const { getRecentRows, getExerciseCatalog, logSheetName, effortSheetName, classifySheetsReadError } = require('../sheets');
 const {
   computeExerciseProgress,
   computeMuscleGroupVolume,
@@ -26,6 +26,35 @@ const trainingStore = require('../services/trainingStore');
 const { createTtlCache } = require('../services/cache');
 
 const catalogCache = createTtlCache(60 * 1000);
+
+// ── One truthful terminal status for a failed read ────────────────────────────
+//
+// Every handler in this router used to answer ANY thrown error with a hard 500 —
+// "Failed to build weekly summary", details, done. A 500 tells the client the
+// SERVER is broken and there is nothing to try again; that is the correct answer
+// for a bug in this code and the WRONG answer for Google rate-limiting us, which
+// is exactly the failure the owner hit on `GET /api/summary/weekly`. The client
+// then had no way to distinguish "Atlas is broken" from "try again in a moment".
+//
+// The read layer now retries the transient case in-request (sheets.js
+// `readWithRetry`, 3 bounded attempts). Reaching here with a transient error means
+// that bounded retry was EXHAUSTED — so this is the fail-closed terminal state, not
+// a place to retry again. It reports 503 + `retryable:true`, which is the honest
+// description of an upstream data source that is temporarily unavailable.
+//
+// This never touches a write path: this router is read-only, so a retry here can
+// never duplicate a workout row.
+function readFailure(req, res, message, error) {
+  const kind = classifySheetsReadError(error);
+  if (kind === 'transient') {
+    return standardError(req, res, `${message} — the workout data source is temporarily unavailable`, {
+      reason: 'upstream_read_unavailable',
+      retryable: true,
+      detail: error && error.message,
+    }, 503);
+  }
+  return standardError(req, res, message, error && error.message, 500);
+}
 
 function buildExerciseCatalogEntries(rows) {
   if (!rows.length) return [];
@@ -135,7 +164,7 @@ module.exports = function registerReadRoutes({ getSheetRows }) {
 
       return res.json({ status: 'ok', data: { recent_sessions, recent_sets, recent_effort } });
     } catch (error) {
-      return standardError(req, res, 'Failed to fetch history', error.message, 500);
+      return readFailure(req, res, 'Failed to fetch history', error);
     }
   });
 
@@ -178,7 +207,7 @@ module.exports = function registerReadRoutes({ getSheetRows }) {
         sets
       });
     } catch (error) {
-      return standardError(req, res, 'Failed to fetch last session', error.message, 500);
+      return readFailure(req, res, 'Failed to fetch last session', error);
     }
   });
 
@@ -243,7 +272,7 @@ module.exports = function registerReadRoutes({ getSheetRows }) {
         recentWorkingSets
       } });
     } catch (error) {
-      return standardError(req, res, 'Failed to fetch exercise detail', error.message, 500);
+      return readFailure(req, res, 'Failed to fetch exercise detail', error);
     }
   });
 
@@ -259,7 +288,7 @@ module.exports = function registerReadRoutes({ getSheetRows }) {
       const progress = computeExerciseProgress(allLog, liftCode);
       return standardSuccess(req, res, 'Exercise progress', progress);
     } catch (error) {
-      return standardError(req, res, 'Failed to fetch exercise progress', error.message, 500);
+      return readFailure(req, res, 'Failed to fetch exercise progress', error);
     }
   });
 
@@ -273,7 +302,7 @@ module.exports = function registerReadRoutes({ getSheetRows }) {
       const detail = await trainingStore.getExerciseDetail(liftCode, { rowLimit: 1000 });
       return standardSuccess(req, res, 'Exercise detail', detail);
     } catch (error) {
-      return standardError(req, res, 'Failed to fetch exercise detail', error.message, 500);
+      return readFailure(req, res, 'Failed to fetch exercise detail', error);
     }
   });
 
@@ -289,7 +318,7 @@ module.exports = function registerReadRoutes({ getSheetRows }) {
       const groups = computeMuscleGroupVolume(allLog, days);
       return standardSuccess(req, res, 'Muscle group volume summary', { days, groups });
     } catch (error) {
-      return standardError(req, res, 'Failed to fetch muscle group volume', error.message, 500);
+      return readFailure(req, res, 'Failed to fetch muscle group volume', error);
     }
   });
 
@@ -308,7 +337,7 @@ module.exports = function registerReadRoutes({ getSheetRows }) {
       const result = searchSessions(allLog, filters);
       return standardSuccess(req, res, 'Session search results', result);
     } catch (error) {
-      return standardError(req, res, 'Failed to search sessions', error.message, 500);
+      return readFailure(req, res, 'Failed to search sessions', error);
     }
   });
 
@@ -322,7 +351,7 @@ module.exports = function registerReadRoutes({ getSheetRows }) {
       const exercises = buildExerciseCatalogEntries(rows);
       return standardSuccess(req, res, 'Exercise catalog entries', { exercises });
     } catch (error) {
-      return standardError(req, res, 'Failed to read Exercise_Catalog', error.message, 500);
+      return readFailure(req, res, 'Failed to read Exercise_Catalog', error);
     }
   });
 
@@ -347,7 +376,7 @@ module.exports = function registerReadRoutes({ getSheetRows }) {
       });
       return standardSuccess(req, res, 'Catalog search results', { query, results });
     } catch (error) {
-      return standardError(req, res, 'Failed to search Exercise_Catalog', error.message, 500);
+      return readFailure(req, res, 'Failed to search Exercise_Catalog', error);
     }
   });
 
@@ -358,7 +387,10 @@ module.exports = function registerReadRoutes({ getSheetRows }) {
       const result = await trainingStore.getRecentSessions({ limit });
       return standardSuccess(req, res, 'Recent sessions', result);
     } catch (err) {
-      return standardError(req, res, 'Failed to load recent sessions', err);
+      // This site was worse than the fifteen 500s: it passed the Error OBJECT as
+      // `details` (which JSON-serializes to `{}`) and fell through to the default
+      // 400, reporting an upstream read failure as the CLIENT's bad request.
+      return readFailure(req, res, 'Failed to load recent sessions', err);
     }
   });
 
@@ -394,7 +426,7 @@ module.exports = function registerReadRoutes({ getSheetRows }) {
         rows
       });
     } catch (error) {
-      return standardError(req, res, 'Failed to fetch session', error.message, 500);
+      return readFailure(req, res, 'Failed to fetch session', error);
     }
   });
 
@@ -477,7 +509,7 @@ module.exports = function registerReadRoutes({ getSheetRows }) {
         highlights
       });
     } catch (error) {
-      return standardError(req, res, 'Failed to build weekly summary', error.message, 500);
+      return readFailure(req, res, 'Failed to build weekly summary', error);
     }
   });
 
@@ -487,7 +519,7 @@ module.exports = function registerReadRoutes({ getSheetRows }) {
       const summary = await trainingStore.getProgressSummary();
       return standardSuccess(req, res, 'Progress summary', summary);
     } catch (error) {
-      return standardError(req, res, 'Failed to build progress summary', error.message, 500);
+      return readFailure(req, res, 'Failed to build progress summary', error);
     }
   });
 
@@ -504,7 +536,7 @@ module.exports = function registerReadRoutes({ getSheetRows }) {
       const report = await trainingStore.getWeeklyReportData({ days: rawDays, rowLimit: 1000 });
       return standardSuccess(req, res, 'Weekly report', report);
     } catch (error) {
-      return standardError(req, res, 'Failed to build weekly report', error.message, 500);
+      return readFailure(req, res, 'Failed to build weekly report', error);
     }
   });
 
@@ -516,7 +548,7 @@ module.exports = function registerReadRoutes({ getSheetRows }) {
       const prs = detectRecentPrs(allLog);
       return standardSuccess(req, res, 'Recent PRs', { prs });
     } catch (error) {
-      return standardError(req, res, 'Failed to fetch recent PRs', error.message, 500);
+      return readFailure(req, res, 'Failed to fetch recent PRs', error);
     }
   });
 
@@ -532,7 +564,7 @@ module.exports = function registerReadRoutes({ getSheetRows }) {
       const stalls = detectStalls(allLog, minSessions);
       return standardSuccess(req, res, 'Stall detection', { stalls, minSessions });
     } catch (error) {
-      return standardError(req, res, 'Failed to detect stalls', error.message, 500);
+      return readFailure(req, res, 'Failed to detect stalls', error);
     }
   });
 

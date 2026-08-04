@@ -86,8 +86,13 @@ async function _loadInputs() {
       result = { ok: true, reason: null, history, sessions_considered: history.length, deloadState };
     }
   } catch (e) {
-    const msg = String((e && e.message) || '');
-    const reason = /unable to parse range|not found|no grid|does not exist|no such/i.test(msg) ? 'tab_missing' : 'read_error';
+    // The ONE read-failure authority decides this, not a local message regex. The
+    // regex this replaced also matched "not found" and "does not exist", so a missing
+    // SPREADSHEET or a revoked service account was reported as `tab_missing` — a
+    // deployment misconfiguration presented as an absent optional tab. Both outcomes
+    // are still fail-closed (`ok:false` ⇒ evaluated:false, no fabricated signal); the
+    // difference is whether the diagnostic tells the owner the truth.
+    const reason = sheetsLib.isTabMissingError(e) ? 'tab_missing' : 'read_error';
     result = { ok: false, reason, history: [], sessions_considered: 0, deloadState: null };
   }
   _cache.set(CACHE_KEY, result);

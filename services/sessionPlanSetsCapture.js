@@ -52,7 +52,15 @@ async function validateHeader() {
   try {
     rows = await sheets.readRange(HEADER_RANGE);
   } catch (e) {
-    return { ok: false, status: 'tab_missing', reason: `Session_Plan_Sets header unreadable (${e.message})` };
+    // Same one authority as sessionPlanCapture: only a CONFIRMED-absent tab may be
+    // reported as `tab_missing`. That distinction is trust-critical here — the seal
+    // artifact treats `tab_missing` as a VERIFIED-empty ledger
+    // (services/turnWriteArtifact.js VERIFIED_EMPTY_SEAL_REASONS), so a transient
+    // outage reported as a missing tab would claim a closeout was verified while
+    // real rows may sit unstamped.
+    return sheets.isTabMissingError(e)
+      ? { ok: false, status: 'tab_missing', reason: 'Session_Plan_Sets tab does not exist' }
+      : { ok: false, status: 'error', reason: `Session_Plan_Sets header unreadable (${e.message})` };
   }
   const header = Array.isArray(rows) && Array.isArray(rows[0]) ? rows[0] : [];
   if (header.length === 0) return { ok: false, status: 'tab_missing', reason: 'Session_Plan_Sets tab has no header row' };
