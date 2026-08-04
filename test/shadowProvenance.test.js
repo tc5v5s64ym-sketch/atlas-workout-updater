@@ -12,12 +12,22 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const brainShadow = require('../services/brainShadow');
 const intentShadow = require('../services/intentShadow');
+const { silentClassifier, recordProviderCalls } = require('./helpers/noProviderCall');
 
 const HYBRID = 'hybrid';
 const flush = () => new Promise(r => setImmediate(r));
 
 function brainReset(appendImpl) { brainShadow._resetForTesting(appendImpl ? { append: appendImpl } : {}); }
-function intentReset(appendImpl) { intentShadow._resetForTesting(appendImpl ? { append: appendImpl } : {}); }
+// `classify` is ALWAYS stubbed. Without it the real classifyIntent runs, and on a
+// machine carrying a GEMINI_API_KEY that is a live provider call whose latency
+// outruns this file's flush() — these provenance assertions would then fail for a
+// reason unrelated to provenance. The stub returns null, exactly what the real
+// classifier returns with no key, so credential-free behavior is unchanged.
+function intentReset(appendImpl) {
+  intentShadow._resetForTesting(appendImpl
+    ? { classify: silentClassifier(), append: appendImpl }
+    : { classify: silentClassifier() });
+}
 
 // ── Brain_Shadow ─────────────────────────────────────────────────────────────
 
@@ -234,4 +244,23 @@ test('no raw/secret content reaches the provenance cells — request_origin is a
     assert.ok(!/sk-live|Bearer/i.test(String(row[18])), 'a secret-looking request_origin is never persisted verbatim');
     assert.ok(String(row[18]).length <= 32, 'request_origin is a bounded token');
   } finally { delete process.env.ATLAS_BRAIN_SHADOW_PERSIST; }
+});
+
+// ── Hermeticity ───────────────────────────────────────────────────────────────
+// The stub above would rot silently: remove it and credential-free CI stays green
+// while a credentialed machine calls the provider again. This proves the provenance
+// observation path issues no outbound request. It trips on the ATTEMPT, so it needs
+// neither network nor credential to bite.
+
+test('provenance observation reaches no provider, with or without an ambient key', async () => {
+  const attempts = await recordProviderCalls(async () => {
+    intentReset(async () => {});
+    intentShadow.observeChatMessage('skip leg extension today', {
+      route: 'composer', source: 'chat',
+      evidence: { evidence_class: 'athlete_ui', evidence_eligible: true, request_origin: 'athlete_ui' },
+    });
+    await flush();
+  });
+  assert.deepEqual(attempts, [],
+    `a unit test must not reach a provider; attempted: ${attempts.join(', ')}`);
 });
