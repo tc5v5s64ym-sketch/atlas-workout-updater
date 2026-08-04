@@ -37,9 +37,9 @@ The response is one of:
 
 An incomplete or ambiguous answer is not approval.
 
-## Atlas Contract Review
+## Atlas Contract / Systems Review
 
-ChatGPT may review a PR for:
+The review lane reads a PR for:
 
 - canonical-plan and product fit;
 - one-concern scope and accidental future work;
@@ -48,9 +48,11 @@ ChatGPT may review a PR for:
 - whether the original failure is actually fixed; and
 - live-path or closest-integration proof.
 
-The verdict is `BLOCKING`, `NON-BLOCKING`, or `READY`.
+ChatGPT may perform it. So may a clean-context review by the implementation agent. The merge card records who or what performed it.
 
-This review is risk-triggered for phase transitions, roadmap/campaign changes, product/trust-contract changes, write/schema/security/promotion/destructive work, or genuine ambiguity. It is not required for routine implementation already settled by the canonical plan, and it does not replace deterministic CI or authorize production writes.
+**`CLAUDE.md` holds the one trigger list, the seven review questions, and the four merge-card fields.** Read it there. This document does not restate the trigger list, because two copies drift and the expanded list of 2026-08-03 is exactly the drift that produced.
+
+The review does not replace deterministic CI and never authorizes a production write.
 
 ## Route to Dale
 

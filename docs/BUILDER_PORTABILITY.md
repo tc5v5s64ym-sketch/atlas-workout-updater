@@ -62,7 +62,7 @@ GitHub Actions and deterministic checks are the hard gates. Agent reviews are us
 - A builder must not manufacture a required review status from its own identity, wording, reaction, or comment.
 - A missing optional agent review does not block an otherwise authorized routine PR.
 - Real P0/P1 or in-scope findings do block until fixed or truthfully dispositioned.
-- Risk-triggered ChatGPT Atlas Contract Review and owner-reserved authorizations remain unchanged.
+- The trigger-based Atlas Contract / Systems Review and owner-reserved authorizations remain unchanged.
 
 ## Standard launcher
 

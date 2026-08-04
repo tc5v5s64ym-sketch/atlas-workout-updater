@@ -44,7 +44,19 @@ function check(body) {
   return failure;
 }
 
-const CARD = '## 🟦 Atlas Merge Card\n\n';
+// Owner instruction 2026-08-03 — every body must now carry the review section, so the
+// shared fixtures below include a satisfied one. Its own presence/content rules are
+// exercised in the dedicated suite at the bottom of this file.
+const REVIEW_OK = [
+  '### Atlas Contract / Systems Review',
+  '',
+  '- Required: not required — no trigger applies',
+  '- Exact reviewed head: n/a',
+  '- Reviewer: n/a',
+  '- Findings and dispositions: n/a',
+  '',
+].join('\n');
+const CARD = `## 🟦 Atlas Merge Card\n\n${REVIEW_OK}`;
 const findings = (lines) => `${CARD}### Additional findings\n\n${lines}\n\n### Post-merge\n\nx\n`;
 
 describe('merge card — Additional findings dispositions', () => {
@@ -182,7 +194,13 @@ describe('merge card — the Atlas Contract / Systems Review block', () => {
     .split(/^### Atlas Contract \/ Systems Review$/m)[1];
   // A card whose OTHER required section is already satisfied, so each assertion below
   // measures the review block alone.
-  const CARD_OK = `${CARD}### Additional findings\n\n- None\n\n`;
+  const CARD_OK = `## 🟦 Atlas Merge Card\n\n### Additional findings\n\n- None\n\n`;
+
+  it('fails when the review section is deleted outright', () => {
+    const failure = check('## 🟦 Atlas Merge Card\n\n### Additional findings\n\n- None\n');
+    assert.match(failure, /missing the "Atlas Contract \/ Systems Review" section/,
+      'a deleted review section must fail — sentinels catch retained placeholders, not removed ones');
+  });
 
   it('the template actually ships the block', () => {
     assert.ok(REVIEW_BLOCK, 'the PR template must carry an "### Atlas Contract / Systems Review" heading');
@@ -199,18 +217,30 @@ describe('merge card — the Atlas Contract / Systems Review block', () => {
   // The bite: each sentinel is load-bearing on its own. Remove one field's placeholder
   // and that field alone must stop being reported — proving the check reads all three
   // rather than tripping once on something else.
-  for (const [field, placeholder] of [
-    // The load-bearing one first: this is the verdict the CLAUDE.md merge gate turns
-    // on, and it is the field BOTH exact-head reviews of PR #1257 found unguarded.
-    ['Required', 'required (name the trigger) / not required (say why'],
-    ['Exact reviewed head', 'full 40-character commit SHA, or n/a'],
-    ['Reviewer', 'who or what performed the review, or n/a'],
-    ['Findings and dispositions', 'each finding + fixed / non-issue / routed'],
-  ]) {
-    it(`catches an unfilled "${field}" placeholder specifically`, () => {
+  // Placeholders are READ FROM THE SHIPPED TEMPLATE, never retyped. Hardcoding them
+  // would let a template rewording silently un-guard a field while this suite stayed
+  // green — the exact hardcoded-evidence false green the review lane exists to catch
+  // (exact-head review of PR #1257, F4). Derived here, every field's real placeholder
+  // must be bitten by some sentinel.
+  const FIELD_PLACEHOLDERS = (() => {
+    const out = [];
+    for (const line of REVIEW_BLOCK.split('\n')) {
+      const m = /^[ \t]*-[ \t]*([^:]+):[ \t]*<!--[ \t]*(.+?)[ \t]*-->[ \t]*$/.exec(line);
+      if (m) out.push([m[1].trim(), m[2].trim()]);
+    }
+    return out;
+  })();
+
+  it('every review field in the template carries a placeholder this suite can bite', () => {
+    assert.equal(FIELD_PLACEHOLDERS.length, 4,
+      `expected 4 placeholder-carrying review fields, found ${FIELD_PLACEHOLDERS.length}: ${JSON.stringify(FIELD_PLACEHOLDERS)}`);
+  });
+
+  for (const [field, placeholder] of FIELD_PLACEHOLDERS) {
+    it(`catches the unfilled "${field}" placeholder specifically`, () => {
       const failure = check(`${CARD_OK}### Atlas Contract / Systems Review\n\n- x: <!-- ${placeholder} -->\n`);
-      assert.ok(failure.includes(placeholder),
-        `the check must name the unfilled "${field}" placeholder; got: ${failure}`);
+      assert.match(failure, /template placeholder/,
+        `the template's own "${field}" placeholder must trip a sentinel; got: ${failure || '(passed)'}`);
     });
   }
 
@@ -256,7 +286,7 @@ describe('merge card — the Atlas Contract / Systems Review block', () => {
   // The retired row must not come back: its template field no longer exists, so the
   // sentinel could only false-fail a body that quotes the old wording.
   it('no longer trips on a body quoting the retired status wording', () => {
-    const failure = check(`${CARD_OK}The old row allowed NON-BLOCKING / READY / BLOCKING / not risk-triggered.\n`);
+    const failure = check(`${CARD_OK}${REVIEW_OK}The old row allowed NON-BLOCKING / READY / BLOCKING / not risk-triggered.\n`);
     assert.equal(failure, '', 'quoting the retired wording is prose, not an unfilled field');
   });
 });

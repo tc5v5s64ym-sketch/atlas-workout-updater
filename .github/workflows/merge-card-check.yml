@@ -33,6 +33,16 @@ jobs:
             // to pay for it, and the resulting counts — BACKLOG.md has fixed capacity. Drift
             // Guard 7 checks the numbers; exact-head review checks that the removal was honest.
             //
+            // Owner instruction 2026-08-03 — the Atlas Contract / Systems Review block must be
+            // PRESENT, not merely unfilled. The sentinel list below catches a RETAINED
+            // placeholder; it cannot catch a DELETED section, and CLAUDE.md now makes the
+            // recorded review a merge-gate condition. Anchored on the heading for the same
+            // reason as "Additional findings" below: prose mentioning the phrase is not the
+            // section. The block's four fields are then checked by the sentinels.
+            if (!/^[ \t]*#{2,4}[ \t]*Atlas Contract \/ Systems Review[ \t]*$/im.test(body)) {
+              problems.push('PR body is missing the "Atlas Contract / Systems Review" section (Required / Exact reviewed head / Reviewer / Findings and dispositions). Say "not required" and why when no trigger fired.');
+            }
+
             // Anchor on the HEADING, not on any mention of the phrase: a body that discusses
             // "Additional findings" in prose before the section would otherwise capture the
             // wrong span and false-fail.
