@@ -33,7 +33,7 @@ const {
   classifySettlement, isSettled,
   deriveExpectedRemaining, compareRemainingToExpectation, replyMatchesExpectation,
   detectUnsupportedMutationWording, compareReplacementIdentity, pinMatchesExpectation,
-  classifyCoachResponseCapture, detectUnsupportedWriteClaim,
+  classifyCoachResponseCapture, detectUnsupportedWriteClaim, liftMentionIndex,
 } = require('./rehearsal-scorecard');
 const { REHEARSAL_SESSION } = require('./rehearsal-run-purpose');
 const { measureSourceTree } = require('./rehearsal-source-facts');
@@ -46,6 +46,11 @@ const {
   NEW_BUBBLE_SELECTOR,
   markExistingBubblesScript,
 } = require('./rehearsal-bubble-observer');
+const {
+  STAGED_PROPOSALS_KEY, stagedProposalObserverScript, readStagedProposals,
+  latestStagedObservation, assertObservationComplete, observationToIdentity,
+  observationToPrescription,
+} = require('./rehearsal-staged-proposal');
 const { SANDBOX_SPREADSHEET_ID, SANDBOX_SPREADSHEET_ID_LAST6 } = require('../../../config/sandboxSheet');
 const { logCleanedColumns, effortColumns, sessionPlansColumns, sessionPlanSetsColumns } = require('../../../config/columns');
 
@@ -96,7 +101,6 @@ const SCENARIOS = {
     expected: {
       session_plans_events: { plan_accepted: 6, item_outcome: 1, session_closeout: 1 },
       plan_set_rows: 14,
-      accepted_grain: { per_item_sets: 2, items: 6 },
       log_rows: 12,
       effort_supplied: true,
       closeout_fully_verified: true,
@@ -134,7 +138,6 @@ const SCENARIOS = {
     expected: {
       session_plans_events: { plan_accepted: 6, item_outcome: 1, session_closeout: 1 },
       plan_set_rows: 14,
-      accepted_grain: { per_item_sets: 2, items: 6 },
       log_rows: 12,
       effort_supplied: true,
       closeout_fully_verified: true,
@@ -167,7 +170,6 @@ const SCENARIOS = {
     expected: {
       session_plans_events: { plan_accepted: 6, item_outcome: 1, session_closeout: 1 },
       plan_set_rows: 14,
-      accepted_grain: { per_item_sets: 2, items: 6 },
       // 6 pre-Bench + batch (1 seated row + 1 replacement) + 1 off-plan + 1
       // replacement + 1 seated row + 2 bicep curl.
       log_rows: 13,
@@ -202,7 +204,6 @@ const SCENARIOS = {
     expected: {
       session_plans_events: { plan_accepted: 6, session_closeout: 1 },
       plan_set_rows: 12,
-      accepted_grain: { per_item_sets: 2, items: 6 },
       log_rows: 10,
       effort_supplied: false,
       closeout_fully_verified: true,
@@ -245,7 +246,6 @@ const SCENARIOS = {
     expected: {
       session_plans_events: { plan_accepted: 6, item_outcome: 1, session_closeout: 1 },
       plan_set_rows: 14,
-      accepted_grain: { per_item_sets: 2, items: 6 },
       log_rows: 12,
       effort_supplied: true,
       closeout_fully_verified: true,
@@ -265,11 +265,15 @@ function parseShorthand(s) {
 // from client state, durable rows, or the visible reply (owner P1, 2026-08-03).
 // `loggedSets` entries carry the parsed shorthand name; a substitute set carries the
 // replacement's own name so it spends against the replaced slot.
+//
+// The substitute's SET COUNT comes from the staged proposal, never from the frozen
+// plan: the engine prescribes it, and Session 1 proved a declared 2 against a
+// prescribed 3 (F-SB4B corrective 3).
 function expectedRemainingNow(SC, loggedSets, sub) {
   return deriveExpectedRemaining({
     plan: SC.plan,
     loggedNames: loggedSets.map(x => x.name),
-    replacement: sub ? { sourceName: sub.sourceName, replacementName: sub.name } : null,
+    replacement: sub ? { sourceName: sub.sourceName, replacementName: sub.name, sets: sub.sets } : null,
   });
 }
 
@@ -303,27 +307,17 @@ async function planState(page) {
   });
 }
 
-// Parse the engine's proposal line ("Replace <src> with <name> — <w> lb <r> reps @
-// <rir> RIR × <s> sets.") into the prescription this run will log — engine-owned
-// numbers, never invented here.
-function parseProposalLine(line) {
-  const m = line.match(/with\s+(.+?)\s+—\s*([\d.]+)\s*lbs?\s+(\d+)\s*reps/i)
-    || line.match(/with\s+([A-Za-z .-]+)/i);
-  return {
-    name: m ? m[1].trim() : '',
-    weight: m && m[2] ? Number(m[2]) : null,
-    reps: m && m[3] ? Number(m[3]) : null,
-  };
-}
-
 // Assert the STAGED (unaccepted) proposal state: source lift still in the plan and
-// still current, no completed-mutation wording, and the parsed prescription present.
+// still current, no completed-mutation wording, and the complete staged-proposal
+// observation captured at the moment the proposal was staged.
+//
+// The proposal LINE is no longer parsed for the prescription (F-SB4B corrective 3).
+// Prose was the only carrier of the substitute's name and numbers, which made the
+// visible text both the claim and its own evidence. The observation is the authority;
+// the line is now checked for AGREEMENT with it, which is the stronger question.
 async function assertStagedProposal(page, h, { sourceRegex }) {
   await expect(page.locator('#thread-messages .replacement-proposal-line').last()).toBeVisible({ timeout: 60000 });
   const line = await page.locator('#thread-messages .replacement-proposal-line').last().innerText();
-  const rx = parseProposalLine(line);
-  h.beat('proposal-carries-prescription', Boolean(rx.name) && rx.weight != null && rx.reps != null,
-    `substitute "${rx.name}" ${rx.weight}×${rx.reps} from: "${line.slice(0, 140)}"`);
   const after = await planState(page);
   const stillCurrent = sourceRegex.test(after.names[after.index] || '');
   h.beat('no-mutation-before-acceptance', after.names.some(n => sourceRegex.test(n)) && stillCurrent,
@@ -343,30 +337,50 @@ async function assertStagedProposal(page, h, { sourceRegex }) {
     mutationWording
       ? `completed-mutation wording appeared before acceptance across ${newTexts.length} new bubble(s)`
       : `clean across ${newTexts.length} new bubble(s) read by element`);
-  // The INDEPENDENT replacement identity, captured HERE — while the proposal is staged
-  // and before any durable row is read (owner P1, 2026-08-03). The engine resolves the
-  // replacement's lift code and asks the read-only recommender for its prescription, so
-  // the last such call during proposal staging names the code the durable surfaces must
-  // later agree with.
-  const staged = proposedReplacementLiftCodes.filter(c => c.phase === 'substitution_ask');
-  const replacementLiftCode = staged.length ? staged[staged.length - 1].lift_code : '';
-  // P1-2: the RETAINED SOURCE SLOT, read off the live plan while the source lift is
-  // still in it and BEFORE any mutation or durable read. Deriving it from the accepted
-  // ledger rows and then checking the outcome against it let a consistently wrong id
-  // satisfy itself, exactly as the lift code did. app.js reads the same field
-  // (`exs[idx].plan_item_id`) when it emits the outcome.
-  const sourcePlanItemId = await page.evaluate((rx2) => {
-    const p = window.getActivePlannedSession();
-    if (!p || !Array.isArray(p.exercises)) return '';
-    const re = new RegExp(rx2, 'i');
-    const slot = p.exercises.find(e => re.test(e.canonicalName || e.name || ''));
-    return (slot && slot.plan_item_id) || '';
-  }, sourceRegex.source);
-  h.beat('replacement-identity-captured', Boolean(replacementLiftCode) && Boolean(sourcePlanItemId),
-    (replacementLiftCode && sourcePlanItemId)
-      ? `the accepted proposal resolves to lift code ${replacementLiftCode} on source slot ${sourcePlanItemId}, both captured before any mutation or durable read`
-      : `identity incomplete before mutation: lift code ${replacementLiftCode || '(none observed)'}, source slot ${sourcePlanItemId || '(none read from the live plan)'}`);
-  return { line, ...rx, replacementLiftCode, sourcePlanItemId };
+  // THE ONE STAGED-PROPOSAL OBSERVATION — recorded by the page-side observer at the
+  // instant `renderReplacementProposal` announced the proposal, which is after
+  // `setPendingReplacement` and before any approval, mutation, or durable read. It
+  // carries the replacement lift code and name, the source lift, its lift code and its
+  // immutable plan_item_id, and the engine's whole prescription including the set
+  // count. Identity, binding, and the expected substitute set count all read THIS.
+  //
+  // It replaces the phase-window `recommend/next` inference, which was empty by
+  // construction on the constraint lane: that lane takes its substitute and
+  // prescription from `/api/suggest-substitute` and never asks `recommend/next` for
+  // the replacement, so no request ever fell inside the window to be captured.
+  const observation = latestStagedObservation(await readStagedProposals(page, STAGED_PROPOSALS_KEY));
+  const complete = assertObservationComplete(observation);
+  const identity = observationToIdentity(observation);
+  const prescription = observationToPrescription(observation);
+  h.beat('replacement-identity-captured', complete.ok,
+    complete.ok
+      ? `the staged proposal ${observation.proposal_id} resolves to lift code ${identity.replacementLiftCode} on source slot ${identity.sourcePlanItemId}, with ${prescription.weight}×${prescription.reps}${prescription.sets != null ? ` × ${prescription.sets} sets` : ''}, all captured at staging before any mutation or durable read`
+      : `staged-proposal observation incomplete: ${complete.problems.join('; ')}`);
+  // The visible line must AGREE with the observation. Before, the line WAS the
+  // evidence, so a line that named the wrong lift or the wrong load agreed with
+  // itself. Now a proposal card that contradicts the staged proposal fails.
+  //
+  // The FULL replacement name, through the scorecard's one lift-mention matcher.
+  // A first-word test was too weak for an agreement check (Codex P2, this PR): a card
+  // reading "Replace Bench Press with Incline Bench Press" would satisfy a staged
+  // "Incline Dumbbell Press", so the visible mismatch this beat exists to catch would
+  // pass. `liftMentionIndex` matches the whole phrase with flexible separators and is
+  // already the authority for "does this text name this lift" everywhere else.
+  const namesReplacement = Boolean(prescription.name) && liftMentionIndex(line, prescription.name) >= 0;
+  const carriesNumbers = prescription.weight != null && prescription.reps != null
+    && new RegExp(`\\b${prescription.weight}\\b`).test(line) && new RegExp(`\\b${prescription.reps}\\b`).test(line);
+  h.beat('proposal-carries-prescription', namesReplacement && carriesNumbers,
+    `visible line vs the staged proposal (${prescription.name} ${prescription.weight}×${prescription.reps}): "${line.slice(0, 140)}"`);
+  return {
+    line,
+    name: prescription.name,
+    weight: prescription.weight,
+    reps: prescription.reps,
+    sets: prescription.sets,
+    replacementLiftCode: identity.replacementLiftCode,
+    sourcePlanItemId: identity.sourcePlanItemId,
+    observation,
+  };
 }
 
 // Assert the proposal-grounded prescription answer: carries the proposal's own
@@ -870,12 +884,6 @@ async function logSet(page, text, expectAfter) {
 // The phase the run is currently in, shared with the module-level helpers so a captured
 // message can be attributed to the beat that produced it.
 const currentPhaseRef = { value: 'setup' };
-// The replacement lift codes the ENGINE resolved while staging a proposal, captured from
-// the proposal's own authoritative prescription call (`GET /api/recommend/next/<code>`,
-// src/app/app.js tryApplyImplicitSubstitution). This is the INDEPENDENT identity
-// finding 2 requires: it is observed before any durable read, so Log_Cleaned,
-// Session_Plans and Session_Plan_Sets are compared to it and can never define it.
-const proposedReplacementLiftCodes = [];
 // P1-5: coach responses whose body could not be parsed into a message. A settle that
 // cannot see the served reply must FAIL CLOSED rather than fall back on stability —
 // treating unreadable capture as "no message was served" reopens the partial-render
@@ -1154,10 +1162,6 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
   // A body that cannot be parsed is recorded as capture_failed — distinguishable
   // from "no request", and never counted as a proven write (fail-closed).
   const saveResponses = [];
-  page.on('request', (req) => {
-    const m = /\/api\/recommend\/next\/([^/?#]+)/.exec(req.url());
-    if (m) proposedReplacementLiftCodes.push({ phase: currentPhase, lift_code: decodeURIComponent(m[1]).toUpperCase(), at: Date.now() });
-  });
   page.on('response', async (res) => {
     const phase = currentPhase;
     const url = res.url();
@@ -1239,6 +1243,10 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
     flushName: '__atlasBubbleFlush',
     stateName: '__atlasBubbleState',
   });
+  // The staged-proposal observer, installed on the same terms: before any application
+  // script and on every navigation, so the ONE proposal each scenario stages is
+  // recorded complete at the instant it is staged.
+  await page.addInitScript(stagedProposalObserverScript, STAGED_PROPOSALS_KEY);
   await page.goto(`${base}/app/`);
   await page.waitForLoadState('networkidle');
   await snap(page, '01-client-open.png');
@@ -1519,8 +1527,20 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
   const seals = [...new Set(spsRows.map(r => String(r[spsIdx.seal] || '').trim()))];
   const acceptedRows = spsRows.filter(r => String(r[spsIdx.src] || '') === 'accepted');
   const acceptedItems = [...new Set(acceptedRows.map(r => String(r[spsIdx.item] || '')))];
-  const grainOk = acceptedItems.length === SC.expected.accepted_grain.items
-    && acceptedRows.every(r => Number(r[spsIdx.count]) === SC.expected.accepted_grain.per_item_sets);
+  // The accepted grain is the DECLARED PLAN's, per item. Each scenario used to repeat
+  // the plan's item count and its one shared set count as a separate literal pair in
+  // `expected`, which restated `SC.plan` in a second place, flattened every slot to a
+  // single number, and could drift from the plan it was copied from. `SC.plan` is the
+  // one authority, and matching each accepted item against ITS OWN declared count is
+  // strictly stronger than matching every item against one literal (F-SB4B
+  // corrective 3).
+  const acceptedLiftIdx = sessionPlanSetsColumns.indexOf('planned_lift_code');
+  const declaredSetCount = new Map(SC.plan.map(p => [String(p.lift_code).toUpperCase(), p.target_sets]));
+  const grainOk = acceptedItems.length === SC.plan.length
+    && acceptedRows.every((r) => {
+      const want = declaredSetCount.get(String(r[acceptedLiftIdx] || '').trim().toUpperCase());
+      return want != null && Number(r[spsIdx.count]) === want;
+    });
   const logSidIdx = logCleanedColumns.indexOf('session_id');
   const effSidIdx = effortColumns.indexOf('session_id');
   const foreignRows = d.log_cleaned.rows.filter(r => String(r[logSidIdx]).trim() !== workoutId).length
@@ -1725,7 +1745,12 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
           row_count: spsRows.length, distinct_seals: seals.filter(s => s !== '').length,
           blank_seals: spsRows.filter(r => String(r[spsIdx.seal] || '').trim() === '').length,
           accepted_grain_ok: grainOk,
-          grain_detail: `items ${acceptedItems.length}, counts ${[...new Set(acceptedRows.map(r => String(r[spsIdx.count])))].join('/')}`,
+          grain_detail: `${acceptedItems.length} accepted items of ${SC.plan.length} declared; ${SC.plan.map((p) => {
+            const got = [...new Set(acceptedRows
+              .filter(r => String(r[acceptedLiftIdx] || '').trim().toUpperCase() === String(p.lift_code).toUpperCase())
+              .map(r => String(r[spsIdx.count])))].join('/') || '(no rows)';
+            return `${p.lift_code} declared ${p.target_sets} got ${got}`;
+          }).join('; ')}`,
           declared_multiset_ok: cmp.ok,
           multiset_detail: cmp.ok ? '' : cmp.problems.slice(0, 6).join('; '),
         };

@@ -27,121 +27,61 @@ const { test, expect } = require('@playwright/test');
 // This spec drives the whole A–E lifecycle end to end and asserts the ledger sidecar the
 // coach prose is supposed to agree with.
 
+// The route table, the acceptance boundary and the submit helper are the SHARED
+// coach-lane plumbing (tests/e2e/support/coach-lane-harness.js) — this spec supplies
+// only its own fixture, so the accepted-session shape has one home rather than one
+// copy per spec.
+const {
+  installCoachLaneMocks, submit, acceptPlanByLogging, outcomePosts,
+} = require('./support/coach-lane-harness');
+
 const TEST_KEY = 'playwright-test-key';
 const ROW_SETS = [{ weight: 200, reps: 10, rir: 1 }, { weight: 200, reps: 10, rir: 1 }];
 const IDB_SETS = [{ weight: 90, reps: 10, rir: 2 }];
 
-function json(body, status = 200) {
-  return { status, contentType: 'application/json; charset=utf-8', body: JSON.stringify(body) };
-}
+const FIXTURE = {
+  plan: {
+    label: 'Push', focus: 'Press + row', recommended_label: 'Push',
+    recommended_reason: 'Press focus today.',
+    exercises: [
+      { exercise: 'Seated Row', lift_code: 'SR01', target_weight: 200, target_reps: 10, target_sets: 2, target_rir: 1 },
+      { exercise: 'Bench Press', lift_code: 'BEN01', target_weight: 185, target_reps: 8, target_sets: 2, target_rir: 2 },
+    ],
+  },
+  catalog: [
+    { canonical_name: 'Seated Row', lift_code: 'SR01' },
+    { canonical_name: 'Bench Press', lift_code: 'BEN01' },
+    { canonical_name: 'Incline Dumbbell Press', lift_code: 'IDB01' },
+  ],
+  // The DETERMINISTIC substitute recommender's answer. It owns the substitute AND its
+  // prescription — the model owns neither.
+  substitute: {
+    recommendation: 'Incline Dumbbell Press', quality: 'excellent',
+    reason: 'Same horizontal press pattern with dumbbells',
+    next_target: { weight: 90, reps: 10, sets: 2, rir: 2 },
+  },
+  parses: [
+    { match: /incline.*\d+\s*\/\s*\d+/i,
+      parsed: { intent: 'log_sets', raw_name: 'incline db press', canonical_name: 'Incline Dumbbell Press', exercise: 'Incline Dumbbell Press', sets: IDB_SETS } },
+    { match: /\d+\s*\/\s*\d+/,
+      parsed: { intent: 'log_sets', raw_name: 'seated row', canonical_name: 'Seated Row', exercise: 'Seated Row', sets: ROW_SETS } },
+  ],
+  logPreview: [['2026-08-01', 'PW', 'Seated Row', 'Seated Row', 'Back', 'SR01', 1, 200, 10, 1, '', 2000]],
+  chatMessage: "Understood. You're substituting Bench Press with Incline Dumbbell Press.",
+};
 
 async function mockApis(page, capture) {
-  capture.posts = [];
-  capture.chatCalls = [];
-  capture.substituteCalls = [];
-  capture.planRequests = 0;
-
-  await page.route('**/health', route => route.fulfill(json({ status: 'ok' })));
-
-  await page.route('**/api/**', async route => {
-    const req = route.request();
-    const path = new URL(req.url()).pathname;
-    const method = req.method();
-    const body = method === 'POST' && req.postData() ? req.postDataJSON() : null;
-
-    if (path.startsWith('/api/session-plans/')) {
-      capture.posts.push({ path, body });
-      // /accept reports the identity the acceptance was written under — the server
-      // allocates one when the client (correctly) sends none, and the client adopts it.
-      const data = { session_plans: { captured: true, status: 'written' } };
-      if (path === '/api/session-plans/accept') data.session_id = (body && body.session_id) || '20260612-PM-01';
-      return route.fulfill(json({ status: 'ok', data }));
-    }
-    if (path.startsWith('/api/session-plan-sets/')) {
-      capture.posts.push({ path, body });
-      return route.fulfill(json({ status: 'ok', data: {} }));
-    }
-
-    if (path === '/api/plan/intent-recommendation') {
-      capture.planRequests += 1;
-      return route.fulfill(json({ status: 'success', data: {
-        todays_read: { recommended_label: 'Push', recommended_reason: 'Press focus today.' },
-        intents: [{ label: 'Push', focus: 'Press + row', recommended: true, why_today: ['Fresh'],
-          exercises: [
-            { exercise: 'Seated Row', lift_code: 'SR01', target_weight: 200, target_reps: 10, target_sets: 2, target_rir: 1 },
-            { exercise: 'Bench Press', lift_code: 'BEN01', target_weight: 185, target_reps: 8, target_sets: 2, target_rir: 2 },
-          ] }] } }));
-    }
-
-    if (path === '/api/catalog/exercises') {
-      return route.fulfill(json({ status: 'success', data: { exercises: [
-        { canonical_name: 'Seated Row', lift_code: 'SR01' },
-        { canonical_name: 'Bench Press', lift_code: 'BEN01' },
-        { canonical_name: 'Incline Dumbbell Press', lift_code: 'IDB01' },
-      ] } }));
-    }
-
-    // The DETERMINISTIC substitute recommender (read-only). It owns the substitute AND its
-    // prescription — the model owns neither.
-    if (path === '/api/suggest-substitute') {
-      capture.substituteCalls.push(body);
-      return route.fulfill(json({ status: 'success', data: { recommendation: {
-        recommendation: 'Incline Dumbbell Press', quality: 'excellent',
-        reason: 'Same horizontal press pattern with dumbbells',
-        next_target: { weight: 90, reps: 10, sets: 2, rir: 2 },
-      } } }));
-    }
-
-    if (path === '/api/parse-workout-text') {
-      const text = (body && (body.text || body.workout_text)) || '';
-      if (/incline/i.test(text) && /\d+\s*\/\s*\d+/.test(text)) {
-        return route.fulfill(json({ status: 'success', data: { test_mode: true, sheet_written: false, no_write_confirmed: true, warnings: [],
-          parsed: { intent: 'log_sets', raw_name: 'incline db press', canonical_name: 'Incline Dumbbell Press', exercise: 'Incline Dumbbell Press', sets: IDB_SETS } } }));
-      }
-      if (/\d+\s*\/\s*\d+/.test(text)) {
-        return route.fulfill(json({ status: 'success', data: { test_mode: true, sheet_written: false, no_write_confirmed: true, warnings: [],
-          parsed: { intent: 'log_sets', raw_name: 'seated row', canonical_name: 'Seated Row', exercise: 'Seated Row', sets: ROW_SETS } } }));
-      }
-      return route.fulfill(json({ status: 'success', data: { test_mode: true, sheet_written: false, no_write_confirmed: true, warnings: [],
-        parsed: { intent: 'needs_clarification', message: 'no sets' } } }));
-    }
-
-    if (path === '/api/log-workout' && method === 'POST') {
-      capture.posts.push({ path, body });
-      return route.fulfill(json({ status: 'success', data: { test_mode: true, sheet_write: 'skipped', sheet_written: false, no_write_confirmed: true,
-        warnings: [], auto_matches: [], pending_exercises: [], rule_flags: [],
-        log_rows_preview: [['2026-08-01', 'PW', 'Seated Row', 'Seated Row', 'Back', 'SR01', 1, 200, 10, 1, '', 2000]] } }));
-    }
-
-    // The coach chat lane must NEVER be reached for the deterministic substitution or its
-    // follow-ups — record any call so the test can prove the swap never leaked to the model.
-    if (path === '/api/coach/chat') {
-      capture.chatCalls.push(body);
-      return route.fulfill(json({ status: 'success', data: {
-        message: "Understood. You're substituting Bench Press with Incline Dumbbell Press.", configured: true } }));
-    }
-    if (path === '/api/coach/message') return route.fulfill(json({ status: 'success', data: { message: null, configured: false } }));
-    return route.fulfill(json({ status: 'success', data: {} }));
-  });
-}
-
-async function submit(page, text) {
-  await page.locator('#workout-text').fill(text);
-  await page.locator('#preview-btn').click();
+  await installCoachLaneMocks(page, capture, FIXTURE);
 }
 
 const lastProposal = page => page.locator('#thread-messages .replacement-proposal-line').last();
 const lastAtlas = page => page.locator('#thread-messages .chat-bubble-atlas').last();
-const outcomes = capture => capture.posts.filter(p => p.path === '/api/session-plans/outcome');
+const outcomes = capture => outcomePosts(capture);
 
-// Accept the plan the same way production does — by logging the first lift from the
-// displayed pick, which mints the plan identity (pv_/pi_) the ledger addresses.
 async function acceptPlanByLoggingSeatedRow(page, capture) {
-  await submit(page, 'What are we doing today?');
-  await expect(page.locator('#thread-messages .chat-bubble-atlas').first().locator('.workout-plan-name').first()).toHaveText('Seated Row');
-  await submit(page, 'seated row 200 10/1 x2');
-  await expect.poll(() => capture.posts.filter(p => p.path === '/api/session-plans/accept').length).toBeGreaterThan(0);
-  const accept = capture.posts.find(p => p.path === '/api/session-plans/accept').body;
+  const accept = await acceptPlanByLogging(page, capture, {
+    ask: 'What are we doing today?', firstLiftName: 'Seated Row', firstSetText: 'seated row 200 10/1 x2',
+  });
   const benchItem = accept.items.find(it => String(it.planned_lift_code).toUpperCase() === 'BEN01');
   expect(benchItem, 'the accepted plan carries Bench Press with an immutable item id').toBeTruthy();
   return benchItem.plan_item_id;

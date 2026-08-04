@@ -375,10 +375,25 @@ function detectUnsupportedMutationWording(input) {
 // define its own expectation, so the expectation comes from the declaration and both
 // observations are compared against it.
 //
+// THE SUBSTITUTE'S SET COUNT IS NOT DECLARABLE (owner instruction, F-SB4B corrective
+// 3). A scenario freezes the plan it accepts, so every ACCEPTED slot's set count is
+// the declaration's to state. The substitute's is not: the engine prescribes it when
+// it stages the proposal, and `applySessionSubstitution` puts that prescribed count on
+// the slot (`sets: p.sets != null ? p.sets : originalSetCount`). Session 1 declared 2
+// and the engine prescribed 3, so the expectation called the substitute complete after
+// two sets while the product correctly still listed it — a harness defect scored
+// against a correct product on both preserved runs.
+//
+// `replacement.sets` therefore carries the STAGED prescription's own count, captured
+// from the proposal at the moment it was staged (gate/rehearsal-staged-proposal.js).
+// When the proposal prescribed none, the slot keeps the source's declared count, and
+// that fallback is expressed HERE — the one place the expectation is computed — rather
+// than mirrored into the observer or recovered from durable rows.
+//
 // declaration = {
 //   plan: [{ exercise, target_sets }, …]        // ordered, as accepted
 //   loggedNames: ['back squat', 'back squat', …] // one entry per declared logged SET
-//   replacement: { sourceName, replacementName } | null   // an ACCEPTED substitution
+//   replacement: { sourceName, replacementName, sets } | null  // an ACCEPTED substitution
 // }
 // Returns { remaining: [names…], nextUp: name|null, complete: [names…] }.
 // Names are compared case- and separator-insensitively; the returned names keep the
@@ -389,15 +404,18 @@ function deriveExpectedRemaining(declaration) {
   const plan = Array.isArray(d.plan) ? d.plan : [];
   const loggedNames = (Array.isArray(d.loggedNames) ? d.loggedNames : []).map(key);
   const rep = d.replacement && typeof d.replacement === 'object' ? d.replacement : null;
+  const stagedSets = (rep && Number.isInteger(rep.sets) && rep.sets > 0) ? rep.sets : null;
 
   // An accepted substitution takes the source's SLOT and position — it is not an
-  // append (services/activeReplacement.js applyReplacement).
+  // append (services/activeReplacement.js applyReplacement) — but it carries the
+  // ENGINE's prescribed set count, not the source's declared one.
   const items = plan.map((p) => {
     const name = p && (p.exercise || p.name);
     const isSource = rep && key(name) === key(rep.sourceName);
+    const declaredSets = Number(p && p.target_sets) || 0;
     return {
       name: isSource ? rep.replacementName : name,
-      sets: Number(p && p.target_sets) || 0,
+      sets: (isSource && stagedSets !== null) ? stagedSets : declaredSets,
     };
   });
 
@@ -1246,4 +1264,4 @@ function renderMarkdown(card) {
   return `${lines.join('\n')}\n`;
 }
 
-module.exports = { CONDITIONS, scoreRehearsalRun, renderMarkdown, compareLedgerToDeclaration, classifyRepeatApprovalProbe, classifySettlement, isSettled, SETTLED_OUTCOMES, deriveExpectedRemaining, compareRemainingToExpectation, replyMatchesExpectation, pinMatchesExpectation, explicitNextUpClaim, detectUnsupportedMutationWording, COMPLETED_MUTATION_PATTERNS, compareReplacementIdentity, classifyCoachResponseCapture, detectUnsupportedWriteClaim, WRITE_CLAIM_PATTERNS, PASS, FAIL, ERROR, NOT_APPLICABLE };
+module.exports = { CONDITIONS, scoreRehearsalRun, renderMarkdown, compareLedgerToDeclaration, classifyRepeatApprovalProbe, classifySettlement, isSettled, SETTLED_OUTCOMES, deriveExpectedRemaining, compareRemainingToExpectation, replyMatchesExpectation, pinMatchesExpectation, explicitNextUpClaim, liftMentionIndex, detectUnsupportedMutationWording, COMPLETED_MUTATION_PATTERNS, compareReplacementIdentity, classifyCoachResponseCapture, detectUnsupportedWriteClaim, WRITE_CLAIM_PATTERNS, PASS, FAIL, ERROR, NOT_APPLICABLE };
