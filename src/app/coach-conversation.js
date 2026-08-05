@@ -2348,8 +2348,14 @@ import {
   // `history` is the PRIOR turns only — the current message is sent separately as
   // `message`, so the caller must not have appended it to chatTurns yet (else the
   // backend would see the current turn twice).
+  // A turn that served no coach reply. The lane words it deterministically
+  // (chatFallback); it is never a message the coach actually served.
+  const noChatReply = () => ({
+    message: null, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
+  });
+
   async function getChatReply(message, history, context, responseTicket) {
-    if (typeof api !== 'function' || (typeof isConnected === 'function' && !isConnected())) return { message: null, propose_edit: null, propose_note: null, propose_plan_edit: null };
+    if (typeof api !== 'function' || (typeof isConnected === 'function' && !isConnected())) return noChatReply();
 
     // P0 — Active Session Context Integrity: during an active workout, short
     // workout-state questions ("RIR?", "reps?", "how much", "what next") must be
@@ -2439,41 +2445,65 @@ import {
       }
     } catch { /* fall through to the Gemini coach */ }
 
-    // The chat round-trip is heavier than a set reaction (4 Sheets reads + context
-    // build + up to an 8s Gemini call) AND, when Gemini is down, the server returns
-    // a deterministic engine answer only after that attempt. Give it more room than
-    // the 9s reaction budget so that fallback actually reaches the lifter instead of
-    // the generic "Coach is unavailable" line firing first.
-    const CHAT_REPLY_TIMEOUT_MS = 15000;
+    // The chat round-trip is heavier than a set reaction: 4 Sheets reads, a context
+    // build, and up to a 12s Gemini call (COACH_CHAT_TIMEOUT_MS, routes/coachOps.js).
+    // When Gemini is down the server still answers — deterministically, from the engine —
+    // but only after that attempt, so this lane must wait for the SERVER'S answer.
+    //
+    // THE DEFECT THIS REPLACES (qualifying rehearsal Session 1, 2026-08-05). This was a
+    // `Promise.race` against a 15s timer that cancelled nothing. At 15s the client
+    // stopped listening and rendered `chatFallback`'s outage line; the request — still
+    // alive — returned a complete 200 coach reply 1.7s later that nothing consumed. The
+    // lifter read a generic nudge while the coach's real answer was discarded, and the
+    // reply the client showed was one the server never served. A successful turn can
+    // legitimately outlast 15s, because the server's 12s provider bound sits ON TOP OF
+    // its Sheets reads and context build.
+    //
+    // ONE ANSWER AUTHORITY: the response this turn is served. `chatFallback` is an
+    // OUTAGE line and may appear only when the turn genuinely served nothing, so the
+    // bubble holds its "Thinking…" state until the request concludes. The bound below is
+    // a HUNG-TRANSPORT BACKSTOP, not a patience budget: it ABORTS the request (api()
+    // already honors `signal` and never retries a caller abort), so an expired bound can
+    // never orphan a served reply behind a fabricated answer. It sits an order of
+    // magnitude above the server's own budget, so it is never why a real reply is missed.
+    const CHAT_REQUEST_ABORT_MS = 60000;
     let chatHeaders = null;
-    const timeout = new Promise(resolve => setTimeout(() => resolve({
-      selected: false,
-      value: { message: null, propose_edit: null, propose_note: null, propose_plan_edit: null },
-    }), CHAT_REPLY_TIMEOUT_MS));
-    const request = api('/api/coach/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        message,
-        history: history.slice(-8),
-        context: context || {},
-        ...(correlationSessionId ? { session_id: correlationSessionId } : {}),
-      }),
-      ...(responseTicket ? {
-        responseHeaders: responseHeaders => { chatHeaders = responseHeaders; },
-      } : {}),
-    }).then(res => ({
-      message: (res && res.data && res.data.message) || null,
-      propose_edit: (res && res.data && res.data.propose_edit) || null,
-      propose_note: (res && res.data && res.data.propose_note) || null,
-      propose_constraint: (res && res.data && res.data.propose_constraint) || null,
-      propose_plan_edit: (res && res.data && res.data.propose_plan_edit) || null
-    })).then(value => ({ selected: true, value }));
-    const winner = await Promise.race([request, timeout]);
-    if (winner.selected && responseTicket && typeof completeTurnResponse === 'function') {
-      completeTurnResponse(responseTicket, chatHeaders);
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const abortTimer = controller ? setTimeout(() => controller.abort(), CHAT_REQUEST_ABORT_MS) : null;
+    try {
+      const res = await api('/api/coach/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message,
+          history: history.slice(-8),
+          context: context || {},
+          ...(correlationSessionId ? { session_id: correlationSessionId } : {}),
+        }),
+        ...(controller ? { signal: controller.signal } : {}),
+        ...(responseTicket ? {
+          responseHeaders: responseHeaders => { chatHeaders = responseHeaders; },
+        } : {}),
+      });
+      // This response supplied the visible coaching, so it is the one that commits the
+      // correlation headers — unchanged, and still fail-closed for a revoked ticket.
+      if (responseTicket && typeof completeTurnResponse === 'function') {
+        completeTurnResponse(responseTicket, chatHeaders);
+      }
+      return {
+        message: (res && res.data && res.data.message) || null,
+        propose_edit: (res && res.data && res.data.propose_edit) || null,
+        propose_note: (res && res.data && res.data.propose_note) || null,
+        propose_constraint: (res && res.data && res.data.propose_constraint) || null,
+        propose_plan_edit: (res && res.data && res.data.propose_plan_edit) || null
+      };
+    } catch {
+      // A failed, refused, or aborted request served nothing, so the caller's
+      // deterministic line is TRUE rather than a stand-in for an answer in flight.
+      return noChatReply();
+    } finally {
+      if (abortTimer) clearTimeout(abortTimer);
     }
-    return winner.value;
   }
 
   // Show a "Save this note?" prompt under Atlas's bubble. Calls POST /api/coaching-notes

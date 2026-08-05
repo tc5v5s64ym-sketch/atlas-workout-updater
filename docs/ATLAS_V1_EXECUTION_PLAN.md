@@ -513,6 +513,36 @@ The card also forbids the escape hatches: *"No authorized `N/A` may hide a seam 
 
 **Counting unchanged:** Rehearsal (F-SB4): 0/5 · Stage A: 5/5 COMPLETE · Stage B: 0/5 OPEN · Phase 5 unauthorized · `SESSION_PLAN_SETS_WRITE_ENABLED` untouched (the rehearsal's ledger writes are the harness posture against the sandbox workbook only, never a production flag change).
 
+### F-SB4B — QUALIFYING SESSION 1 FAILED 2026-08-05 (partial render). Streak stays 0/5.
+
+Run `qualifying-session-1-20260805T011738-B63559`, from clean `main` `61601b73`. The session failed
+before scoring, at the open-question turn: `POST /api/coach/chat` returned 200 in ~16.7 s carrying a
+complete 386-character Gemini message, the turn's own bubble stopped changing while shorter than it,
+and `settleReply` refused after its full 90 s. **The harness was right to refuse.**
+
+**Classified: product-side defect — the client discarded the served reply.** `getChatReply`
+(`src/app/coach-conversation.js`) raced the request against a 15 s timer that cancelled nothing. At
+15 s the client stopped listening and rendered `chatFallback`'s outage line; the request stayed alive
+and returned the real answer 1.7 s later, and nothing consumed it. Nothing truncated — the bubble
+held a complete line the server never served. The budget was also below the server's own worst case:
+its provider bound is 12 s (`COACH_CHAT_TIMEOUT_MS`) **on top of** four Sheets reads and the context
+build.
+
+**Authority.** Two things decided one turn's visible wording. Winner: the response the turn was
+served. Loser, removed: the timeout's power to answer — it produces no result, and the deterministic
+line may appear only when the turn genuinely served nothing. No bridge. The renderer, `settleReply`,
+the collector correctives (#1263–#1266), and the Sheets quota conditions are excluded by
+reproduction, not by inspection.
+
+**Proof.** Credential-free browser reproduction against the real built client, red 3/3 at the live
+16.7 s latency and green at 0 s / 2 s / 14 s, past the eviction cap and after a reused preview
+bubble; regression test with a mutation bite; full unit, e2e, lint, syntax, secret and drift gates.
+Evidence:
+[`docs/verification/QUALIFYING_SESSION_1_PARTIAL_RENDER_2026-08-05.md`](verification/QUALIFYING_SESSION_1_PARTIAL_RENDER_2026-08-05.md).
+
+**Next:** re-attempt Session 1 from refreshed `main` with fresh synthetic identities after the
+corrective merges and deployment is verified. No count moves.
+
 ### Final verdict
 
 Return exactly one of:
