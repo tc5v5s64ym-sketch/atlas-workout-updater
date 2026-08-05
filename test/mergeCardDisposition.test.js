@@ -34,14 +34,19 @@ function extractScript() {
 
 const SCRIPT = extractScript();
 
-/** Run the real check against a PR body; returns the failure message, or '' when it passed. */
-function check(body) {
+/** Run a check source against a PR body; returns the failure message, or '' when it passed. */
+function checkWith(source, body) {
   let failure = '';
   const core = { setFailed: (m) => { failure = m; }, info: () => {} };
   const context = { payload: { pull_request: { body } } };
   // eslint-disable-next-line no-new-func
-  new Function('core', 'context', SCRIPT)(core, context);
+  new Function('core', 'context', source)(core, context);
   return failure;
+}
+
+/** Run the real check against a PR body; returns the failure message, or '' when it passed. */
+function check(body) {
+  return checkWith(SCRIPT, body);
 }
 
 // Owner instruction 2026-08-03 — every body must now carry the review section, so the
@@ -394,6 +399,61 @@ describe('merge card — attribution fields', () => {
       'Primary builder model': 'the surface withholds the model identity; none is displayed',
       'Architecture / dispatch authority': 'ChatGPT (no supporting authority — none delegated)',
     }))), '');
+  });
+
+  // The scoped-None rule must not collide with the honesty rule it sits beside: CLAUDE.md
+  // says a model identity is REPORTED, never guessed, so a surface that withholds it must
+  // be able to say so plainly and pass. A guard that rejected a withheld-model declaration
+  // would push this PR's own card into either a guess or a workaround.
+  it('accepts an honestly reported withheld model identity', () => {
+    for (const written of [
+      'Withheld by this surface',
+      "Withheld by this session's configuration — reported to the owner, never guessed here",
+      'The surface does not display a model identity',
+    ]) {
+      assert.equal(check(card(rows({ 'Primary builder model': written }))), '',
+        `a withheld-model declaration must pass: ${JSON.stringify(written)}`);
+    }
+  });
+
+  // MUTATION BITE, in-suite and deterministic. The four mutations recorded in the PR body
+  // are run by hand; this one is run by CI on every commit, in the style of the drift-guard
+  // self-tests (test/completionLadderGuard.test.js, test/packetTraceGuard.test.js). It
+  // removes the field-specific restriction from the REAL workflow source and proves the
+  // forbidden values go green again — so a future edit that quietly drops the rule cannot
+  // leave this suite passing.
+  describe('mutation — removing the field-specific None restriction', () => {
+    const ANCHOR = '!noneAllowed && ';
+    const MUTATED = SCRIPT.replace(ANCHOR, 'false && ');
+
+    it('the anchor this mutation depends on still exists exactly once', () => {
+      assert.equal(SCRIPT.split(ANCHOR).length - 1, 1,
+        `the guard must carry exactly one "${ANCHOR}" condition for this bite to be meaningful`);
+      assert.notEqual(MUTATED, SCRIPT, 'the mutation must actually change the source');
+    });
+
+    for (const field of NONE_FORBIDDEN) {
+      it(`"${field}: None" goes green once the restriction is removed`, () => {
+        assert.match(check(card(rows({ [field]: 'None' }))),
+          new RegExp(`attribution field "${field.replace('/', '\\/')}" may not be None`),
+          'the real guard must reject this value');
+        assert.equal(checkWith(MUTATED, card(rows({ [field]: 'None' }))), '',
+          'the mutated guard must accept it — otherwise something other than the restriction is failing these cases');
+      });
+    }
+
+    it('the mutation changes nothing else: every other case behaves identically', () => {
+      const unaffected = [
+        card(rows({ 'Supporting / explore models': 'None' })),
+        card(rows({ 'Builder surface': 'Cursor', 'Primary builder model': 'Withheld by this surface' })),
+        card(rows({ 'Builder surface': '' })),
+        card(FIELDS.filter((f) => f !== 'Builder surface').map((f) => `| **${f}** | x |`).join('\n')),
+      ];
+      for (const body of unaffected) {
+        assert.equal(checkWith(MUTATED, body), check(body),
+          'the bite must isolate the None restriction alone');
+      }
+    });
   });
 
   it('accepts the bullet shape as well as the table row', () => {
