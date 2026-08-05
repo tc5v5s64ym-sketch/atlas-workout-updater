@@ -162,7 +162,7 @@ test('the active builder continues the canonical campaign after merge', () => {
   ]);
 });
 
-test('CLAUDE.md stays canonical while AGENTS and CODEX provide the same portability mapping', () => {
+test('CLAUDE.md stays canonical, AGENTS.md is the entrypoint, and CODEX.md is only a pointer', () => {
   const claude = read('CLAUDE.md');
   const agents = read('AGENTS.md');
   const codex = read('CODEX.md');
@@ -170,18 +170,144 @@ test('CLAUDE.md stays canonical while AGENTS and CODEX provide the same portabil
 
   assert.match(claude, /# Atlas — Canonical Agent Brief/);
   assert.match(claude, /docs\/ATLAS_V1_EXECUTION_PLAN\.md/);
+  // One canonical brief under its historical filename. A second one would be a second authority.
+  assert.ok(!fs.existsSync(path.join(ROOT, 'ATLAS.md')), 'no second canonical brief may exist');
+  assert.match(agents, /no second canonical brief/i);
 
+  assert.match(agents, /universal entrypoint/i);
   for (const [name, body] of [['AGENTS.md', agents], ['CODEX.md', codex]]) {
-    assert.match(body, /compatibility adapter/i, name);
     assert.match(body, /CLAUDE\.md/, name);
-    assert.match(body, /BUILDER_PORTABILITY\.md/, name);
-    assert.match(body, /active implementation agent|primary implementation and merge agent/i, name);
-    assert.match(body, /no independent product, safety, branch, merge, or sequencing rules/i, name);
+    assert.match(body, /approved active implementation agent/i, name);
   }
+  assert.match(agents, /BUILDER_PORTABILITY\.md/);
+  assert.match(agents, /defines no independent product, safety, branch, merge, or sequencing rules/i);
+  // CODEX.md is a pointer: it carries no authority and no competing workflow.
+  assert.match(codex, /AGENTS\.md/);
+  assert.match(codex, /carries no implementation authority/i);
+  assert.match(codex, /defines no product, safety, branch, merge, sequencing, or review rule/i);
 
-  assert.match(portability, /Claude Code or Codex as the active implementation agent/i);
+  assert.match(portability, /approved active implementation agent/i);
   assert.match(portability, /does not select work/i);
   assert.match(portability, /sole active work-selection authority/i);
+});
+
+// The authority correction (owner instruction 2026-08-05). Atlas work is implemented by a
+// ROLE, not by a product name. These tests pin the role's canonical definition, its reach
+// across surfaces, and — the load-bearing part — that no ACTIVE governance surface still
+// grants that role exclusively to a named tool.
+test('the approved-active-agent definition is canonical, in CLAUDE.md, and stated once', () => {
+  const claude = read('CLAUDE.md');
+
+  assert.match(claude, /\*\*Definition \(canonical; every other document points here\)\.\*\*/,
+    'CLAUDE.md must carry the one canonical definition');
+  assert.match(claude, /\*\*approved active implementation agent\*\* is the one agent Dale has approved/i);
+  assert.match(claude, /It is a role, not a product name/i);
+  assert.match(claude, /Claude Code, Codex, Cursor, or another owner-approved implementation surface/i);
+  assert.match(claude, /Two agents never hold the role for the same concern at the same time/i);
+
+  // Every other surface points at the definition rather than restating it, so there is
+  // exactly one place to change if the role changes.
+  for (const rel of ['AGENTS.md', 'docs/BUILDER_PORTABILITY.md', 'docs/AGENT_WORKFLOW.md']) {
+    const body = read(rel);
+    assert.match(body, /approved active implementation agent/i, rel);
+    assert.match(body, /CLAUDE\.md/, `${rel} must point at the canonical definition`);
+    assert.doesNotMatch(body, /\*\*Definition \(canonical/i, `${rel} must not carry a second canonical definition`);
+  }
+});
+
+test('a Cursor agent is covered by the same workflow, with no second Cursor authority', () => {
+  const claude = read('CLAUDE.md');
+  const agents = read('AGENTS.md');
+  const portability = read('docs/BUILDER_PORTABILITY.md');
+  const workflow = read('docs/AGENT_WORKFLOW.md');
+
+  for (const [rel, body] of [['CLAUDE.md', claude], ['AGENTS.md', agents],
+    ['docs/BUILDER_PORTABILITY.md', portability], ['docs/AGENT_WORKFLOW.md', workflow]]) {
+    assert.match(body, /Cursor/, `${rel} must name Cursor as a covered surface`);
+  }
+  assert.match(claude, /do not change branch rules, one-concern discipline[^.]*merge authority/i);
+
+  // A Cursor pointer may exist, but only as a pointer. Anything that defines Atlas rules
+  // inside .cursor would be a second governance authority — the exact thing being removed.
+  const cursorDir = path.join(ROOT, '.cursor');
+  if (fs.existsSync(cursorDir)) {
+    const files = [];
+    const walk = (dir) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else files.push(full);
+      }
+    };
+    walk(cursorDir);
+    assert.ok(files.length <= 1, `.cursor may hold at most one pointer file, found ${files.length}`);
+    for (const file of files) {
+      const body = fs.readFileSync(file, 'utf8');
+      assert.match(body, /AGENTS\.md/, `${file} must point at AGENTS.md`);
+      assert.ok(body.split('\n').filter((l) => l.trim()).length <= 10,
+        `${file} must stay a pointer, not a governance system`);
+      // A pointer never restates a rule it cannot own.
+      for (const forbidden of [/merge (?:the exact|when)/i, /owner-reserved/i, /test_mode/i, /preview → approve/i]) {
+        assert.doesNotMatch(body, forbidden, `${file} must not duplicate Atlas governance`);
+      }
+    }
+  }
+});
+
+test('no active governance surface grants implementation authority to a named tool alone', () => {
+  // ACTIVE authority surfaces only. Historical records, dated evidence, and the execution
+  // plan's own history legitimately name the agent that did the work; rewriting those would
+  // falsify the record. What must not survive is a LIVE rule that reads "Claude implements"
+  // or "Codex implements" as though the tool name were the authority.
+  const ACTIVE = [
+    'CLAUDE.md',
+    'AGENTS.md',
+    'CODEX.md',
+    'README.md',
+    'docs/AGENT_WORKFLOW.md',
+    'docs/BUILDER_PORTABILITY.md',
+    'docs/DECISION_KERNEL.md',
+    'docs/AUTOMATION_PROTOCOL.md',
+    'docs/OWNER_CHECKIN_RULES.md',
+    'docs/DOCS_INDEX.md',
+    'docs/CODEX_SESSION_STARTER.md',
+    'docs/CONTROLLED_TECHNICAL_WRITING.md',
+    '.github/PULL_REQUEST_TEMPLATE.md',
+  ];
+  const EXCLUSIVE = [
+    // "Claude merges", "Claude Code merges", "Codex merges" — the tool as merge operator.
+    /\b(?:Claude(?: Code)?|Codex)\s+(?:merges|selects|implements|opens and completes)\b/i,
+    // "Claude Code and Codex are both approved" / "Claude Code or Codex as the active agent"
+    /Claude Code (?:and|or|↔) Codex/i,
+    /both approved Atlas implementation agents/i,
+    // A two-tool closed set stated as the rule.
+    /Never run Claude and Codex/i,
+    /Never have Claude and Codex/i,
+  ];
+
+  for (const rel of ACTIVE) {
+    const body = read(rel);
+    for (const pattern of EXCLUSIVE) {
+      assert.doesNotMatch(body, pattern,
+        `${rel} still grants implementation authority to a named tool: ${pattern}`);
+    }
+  }
+});
+
+test('historical and compatibility references may name a tool without becoming authority', () => {
+  // The legacy map must SURVIVE. Deleting it would strand every historical `claude/*`
+  // branch, `.claude/rules/*` path, and CLAUDE.md reference with nothing explaining them.
+  const portability = read('docs/BUILDER_PORTABILITY.md');
+  const agents = read('AGENTS.md');
+
+  assert.match(portability, /Legacy wording map/i);
+  assert.match(portability, /`claude\/<concern>` branches\*\* remain valid historical branches/i);
+  assert.match(portability, /`\.claude\/rules\/\*`\*\* are retained filenames/i);
+  assert.match(portability, /keeps its historical filename/i);
+  assert.match(agents, /Legacy wording map/i);
+
+  // The map is a bridge, not an authority: it explicitly carries none.
+  assert.match(portability, /carry no implementation authority/i);
 });
 
 test('one canonical plan selects work', () => {
@@ -225,9 +351,9 @@ test('builder identity is portable without weakening data-safety owner gates', (
   const agents = read('AGENTS.md');
   const portability = read('docs/BUILDER_PORTABILITY.md');
 
-  assert.match(agents, /Claude Code and Codex are both approved Atlas implementation agents/i);
+  assert.match(agents, /Claude Code, Codex, Cursor, and any other owner-approved implementation surface may hold it/i);
   assert.match(portability, /same responsibilities and standing authority/i);
-  assert.match(portability, /Tool identity never changes production-write, schema, security, invariant, promotion, or owner-evidence gates/i);
+  assert.match(portability, /Surface identity and model identity never change production-write, schema, security, invariant, promotion, or owner-evidence gates/i);
 
   assert.match(claude, /No real Google Sheets write without explicit owner authorization/i);
   assert.match(claude, /schema, migration, deletion, credentials, or security-sensitive infrastructure/i);
@@ -237,11 +363,102 @@ test('builder identity is portable without weakening data-safety owner gates', (
 });
 
 test('new work uses tool-neutral agent branches and prevents duplicate parallel implementation', () => {
+  const claude = read('CLAUDE.md');
   const workflow = read('docs/AGENT_WORKFLOW.md');
   const portability = read('docs/BUILDER_PORTABILITY.md');
 
   assert.match(workflow, /fresh `agent\/<concern>` branch/);
-  assert.match(workflow, /Never run Claude and Codex on the same concern in parallel/i);
+  assert.match(workflow, /Never run two implementation agents on the same concern in parallel/i);
   assert.match(portability, /New branches use \*\*`agent\/<concern>`\*\*/);
-  assert.match(portability, /Never have Claude and Codex independently implement the same concern/i);
+  assert.match(portability, /Two agents never implement the same concern/i);
+  // The canonical brief agrees: new work is `agent/<concern>` on every surface.
+  assert.match(claude, /Create a fresh `agent\/<concern>` branch from current `main`/);
+  assert.match(claude, /New work uses `agent\/<concern>` from current `main`/);
+});
+
+test('one compact launcher exists, it is tool-neutral, and it selects only plan work', () => {
+  const agents = read('AGENTS.md');
+
+  const launcher = /> Read `AGENTS\.md` and execute the first eligible unfinished Atlas concern as the approved active implementation agent\. Use a fresh `agent\/<concern>` branch\. Stop only for an owner-reserved gate or required external review\./;
+  assert.match(agents, launcher, 'AGENTS.md must carry the one compact launcher');
+  assert.match(agents, /This is the one implementation launcher\. Do not write a second one\./);
+
+  // Tool-neutral: the launcher itself names no tool and no model.
+  const quoted = launcher.exec(agents)[0];
+  for (const tool of [/Claude/i, /Codex/i, /Cursor/i, /Opus/i, /GPT/i]) {
+    assert.doesNotMatch(quoted, tool, `the launcher must name no tool or model: ${tool}`);
+  }
+
+  // It must not license backlog, retired-plan, or chat-history work selection.
+  assert.match(agents, /Never select work from `BACKLOG\.md`, a retired plan, an audit, a proposal, a standalone issue, Git history, or a chat transcript/i);
+
+  // Every other surface points here instead of carrying a competing launcher.
+  for (const rel of ['CLAUDE.md', 'docs/AGENT_WORKFLOW.md', 'docs/BUILDER_PORTABILITY.md', 'docs/CODEX_SESSION_STARTER.md']) {
+    const body = read(rel);
+    assert.match(body, /one compact (?:implementation )?launcher|carries the one compact launcher/i, rel);
+    assert.doesNotMatch(body, /Act as the active Atlas implementation agent\. Verify current state/i,
+      `${rel} must not carry a second launcher`);
+  }
+});
+
+test('the fresh-agent cold-start acceptance trial is documented, bounded, and unclaimed', () => {
+  const portability = read('docs/BUILDER_PORTABILITY.md');
+  const agents = read('AGENTS.md');
+
+  assert.match(portability, /## Fresh-agent cold-start acceptance trial/);
+  assert.match(agents, /cold-start acceptance trial/i, 'the entrypoint must reach the trial');
+
+  // The launcher a human copies to run it later.
+  const trialLauncher = /> Read `AGENTS\.md` and perform the documented Atlas fresh-agent cold-start acceptance trial\. Make no edits and invoke no live service\. Report the required evidence and stop\./;
+  assert.match(portability, trialLauncher);
+  assert.match(agents, trialLauncher);
+
+  // All ten required report items.
+  const REQUIRED = [
+    /current `main` SHA/i,
+    /whether local `main` equals `origin\/main`/i,
+    /open PR state/i,
+    /current campaign and count state/i,
+    /the first eligible action, or the exact blocker/i,
+    /every owner-reserved stop relevant to that action/i,
+    /the required branch form/i,
+    /status, unit, lint, guard, secret-scan, and browser-test commands/i,
+    /whether the Atlas Contract \/ Systems Review would be required/i,
+    /what it is explicitly forbidden to do next/i,
+  ];
+  for (const item of REQUIRED) {
+    assert.match(portability, item, `cold-start checklist is missing: ${item}`);
+  }
+
+  // Bounds: read-only, no live service, no rehearsal, no configuration change.
+  for (const bound of [
+    /makes no file edit/i,
+    /creates no branch/i,
+    /makes no provider call/i,
+    /makes no Google Sheets request/i,
+    /runs no qualifying rehearsal session/i,
+    /changes no deployment and no configuration/i,
+  ]) {
+    assert.match(portability, bound, `cold-start bound is missing: ${bound}`);
+  }
+
+  // No PASS may be claimed from repository structure alone.
+  assert.match(portability, /Structural readiness in the repository is not a PASS/i);
+  assert.match(portability, /only after a real fresh agent on a new surface performs the trial/i);
+});
+
+test('the merge card is the sole attribution authority and names all four fields', () => {
+  const claude = read('CLAUDE.md');
+  const template = read('.github/PULL_REQUEST_TEMPLATE.md');
+
+  assert.match(claude, /## Merge-card attribution/);
+  assert.match(claude, /The card is the sole attribution authority/i);
+  assert.match(claude, /declared evidence\*\*, not cryptographic proof/i);
+  assert.match(claude, /Never guess a model identity/i);
+  assert.match(claude, /grants no authority/i);
+
+  for (const field of ['Builder surface', 'Primary builder model', 'Supporting / explore models', 'Architecture / dispatch authority']) {
+    assert.ok(claude.includes(field), `CLAUDE.md must name the "${field}" field`);
+    assert.ok(template.includes(field), `the PR template must ship the "${field}" row`);
+  }
 });

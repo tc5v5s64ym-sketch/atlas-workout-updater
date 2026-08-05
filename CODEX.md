@@ -1,11 +1,9 @@
-# Atlas Codex Compatibility Adapter
+# Atlas Codex Pointer
 
-Codex may operate as Atlas's primary implementation and merge agent under the same standing authority as Claude Code.
+This file is a retained filename and a pointer. It carries no implementation authority of its own.
 
-Read [`AGENTS.md`](AGENTS.md), [`CLAUDE.md`](CLAUDE.md), [`docs/BUILDER_PORTABILITY.md`](docs/BUILDER_PORTABILITY.md), and the sole active campaign in [`docs/ATLAS_V1_EXECUTION_PLAN.md`](docs/ATLAS_V1_EXECUTION_PLAN.md) before selecting work.
+Start at [`AGENTS.md`](AGENTS.md). It is the universal entrypoint for every surface, and it names the approved active implementation agent role, the read order, the branch form, the compact launcher, and the merge-card attribution rule.
 
-Codex writes plans, reviews, failure reports, handoffs, and implementation summaries under the same standard as Claude Code: [`docs/CONTROLLED_TECHNICAL_WRITING.md`](docs/CONTROLLED_TECHNICAL_WRITING.md), required by `CLAUDE.md`. That file holds the rules; this adapter does not repeat them.
+Codex may hold the approved active implementation agent role when Dale approves it, exactly as any other owner-approved surface may. Codex holds no authority that another approved surface lacks, and it loses none when another surface is active. When Codex is not the active builder, its comments are independent agent review: advisory, never a required status.
 
-Compatibility rule: Claude-specific implementation/merge wording in the canonical brief means the active implementation agent, including Codex. Codex-specific review wording means independent advisory review when Codex is not the builder. It is never a reason for Codex to stop at review-only work when Dale assigned Codex as the builder.
-
-This file defines no independent product, safety, branch, merge, or sequencing rules. Use `agent/<concern>` for new work, run the same deterministic gates, merge the exact passing head under standing authority, update campaign state when required, refresh `main`, and continue until an owner-reserved gate.
+This file defines no product, safety, branch, merge, sequencing, or review rule. If it ever appears to conflict with [`AGENTS.md`](AGENTS.md) or [`CLAUDE.md`](CLAUDE.md), those files govern.

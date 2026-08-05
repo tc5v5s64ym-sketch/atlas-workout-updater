@@ -144,28 +144,35 @@ The merge card's **Atlas Contract / Systems Review** block records four fields:
 
 A review is a manual merge-card record. Never create a CI status, a required check, or a review account from it.
 
-### Claude Code — implementation and merge operator
+### The approved active implementation agent — implementation and merge operator
 
-Claude:
+**Definition (canonical; every other document points here).** The **approved active implementation agent** is the one agent Dale has approved to implement Atlas work at a given time. It is a role, not a product name. The role is held by whichever agent the owner approves, on whichever surface it runs — Claude Code, Codex, Cursor, or another owner-approved implementation surface — and whichever model that surface runs.
+
+The surface and the model change nothing. They do not change branch rules, one-concern discipline, the Current-State Verification Gate, testing requirements, trust contracts, owner-reserved stops, the exact-head Atlas Contract / Systems Review, or merge authority. Any agent that holds the role holds the same authority; no agent holds it because of its name.
+
+Two agents never hold the role for the same concern at the same time.
+
+The approved active implementation agent:
 
 - selects the first eligible unfinished campaign card;
 - verifies current state before editing;
 - implements one concern on a fresh branch;
 - tests the live path or closest integration path;
 - opens and completes the PR;
+- declares its builder surface and model in the merge card (see "Merge-card attribution");
 - handles real in-scope advisory findings;
 - merges the exact passing head under standing authority;
 - updates campaign state, refreshes `main`, and continues.
 
 Do not stop merely to report that a routine PR is merge-ready.
 
-### GitHub Actions and Codex
+### GitHub Actions and independent agent review
 
 GitHub Actions supplies deterministic hard gates. Required checks that are missing, stale, skipped, errored, timed out, cancelled, incomplete, or failed are failures.
 
-Codex comments are advisory only. Fix real confident in-scope findings; route genuinely ambiguous ones; record false alarms as non-issues. Never create a synthetic review status from bot wording, reactions, or identity.
+Independent agent review — Codex, or any other agent that is not the active builder — is advisory only. Fix real confident in-scope findings; route genuinely ambiguous ones; record false alarms as non-issues. Never create a synthetic review status from bot wording, reactions, or identity.
 
-An optional clean-context review may be used for confidence on higher-risk work. It is not a required status, account, marker, or human sign-off.
+An optional clean-context review may be used for confidence on higher-risk work. It is not a required status, account, marker, or human sign-off, and it never satisfies the Atlas Contract / Systems Review.
 
 ### Drift guards (CI, grow-only)
 
@@ -184,7 +191,7 @@ Each drift guard is a CI check that fails the build — a rule that lives only i
 1. Verify current `main`, a clean worktree, prerequisites, and deployment when relevant.
 2. Read the first eligible unfinished card in `docs/ATLAS_V1_EXECUTION_PLAN.md`.
 3. Run the Current-State Verification Gate.
-4. Create a fresh `claude/<concern>` or `agent/<concern>` branch from current `main`.
+4. Create a fresh `agent/<concern>` branch from current `main`.
 5. Implement one concern only.
 6. Run focused tests plus every applicable build/test/lint/wiring/secret/E2E/trust check.
 7. Inspect the diff, commits, secrets, and unrelated drift.
@@ -218,7 +225,7 @@ For a `BUG-…` item, check `docs/BUG_TRIAGE_LEDGER.md` before implementation be
 
 ## Branch and scope rules
 
-- New work uses `claude/*` or `agent/*` from current `main`.
+- New work uses `agent/<concern>` from current `main`. Existing `claude/*` branches stay valid historical branches; they are not the form for new work.
 - One PR equals one concern.
 - Never stack later campaign work on an open or merged feature branch.
 - Stage only intended files; never include `.env`, credentials, production IDs, private evidence, or unrelated changes.
@@ -246,11 +253,26 @@ Advisory findings do not automatically become work.
 
 ### High-risk files
 
-`index.js`, `src/app/app.js`, and `services/workoutTextParser.js` carry extra rules, including the app.js session-state freeze. The full rule is in [`.claude/rules/high-risk-files.md`](.claude/rules/high-risk-files.md) and loads automatically when one of those files is opened.
+`index.js`, `src/app/app.js`, and `services/workoutTextParser.js` carry extra rules, including the app.js session-state freeze. The full rule is in [`.claude/rules/high-risk-files.md`](.claude/rules/high-risk-files.md). That path is a retained filename, and the file auto-loads only on a surface that reads `.claude/rules`. The rule binds every approved active implementation agent: if your surface does not auto-load it, read it before you touch one of those three files.
+
+## Merge-card attribution
+
+Every PR declares who performed the work, in the existing Atlas Merge Card. The card is the sole attribution authority. Do not add a commit trailer, a model registry, a label taxonomy, or a tracking database beside it.
+
+Four required fields:
+
+- **Builder surface** — the tool the work ran on, for example `Claude Code`, `Codex`, or `Cursor`;
+- **Primary builder model** — the exact model name the surface displays;
+- **Supporting / explore models** — every other model used, with what it did, or `None`;
+- **Architecture / dispatch authority** — who dispatched and architecturally owns the work, normally `ChatGPT`.
+
+Record the exact displayed model name when it is known. Never guess a model identity: report what the surface shows, or state plainly that the surface withholds it. Attribution is **declared evidence**, not cryptographic proof, and it grants no authority — it records who acted.
+
+The merge-card completeness check fails a PR when any of the four fields is absent, blank, or still a template placeholder. `None` is a valid value for **Supporting / explore models** only; the other three name a real surface, model, or authority.
 
 ## Merge gate
 
-Claude merges when:
+The approved active implementation agent merges when:
 
 - every applicable required GitHub check passed on the exact current head;
 - no genuine P0/P1, invariant, trust-loop, schema, security, secret, or write-safety problem remains;
@@ -316,7 +338,7 @@ Never change these semantics without explicit owner approval:
 
 ## Sheet schemas
 
-No columns may be added, removed, or reordered without a migration and explicit owner approval. `config/columns.js` and the relevant sheet contract are authoritative. The per-tab column layouts (`Log_Cleaned`, `Effort`, `Constraints`, `Deload_State`, `Session_Plans`) are in [`.claude/rules/sheet-schemas.md`](.claude/rules/sheet-schemas.md) and load automatically when a file that defines, writes, or validates a Sheet row is opened.
+No columns may be added, removed, or reordered without a migration and explicit owner approval. `config/columns.js` and the relevant sheet contract are authoritative. The per-tab column layouts (`Log_Cleaned`, `Effort`, `Constraints`, `Deload_State`, `Session_Plans`) are in [`.claude/rules/sheet-schemas.md`](.claude/rules/sheet-schemas.md). That path is a retained filename, and the file auto-loads only on a surface that reads `.claude/rules`. If your surface does not auto-load it, read it before you define, write, or validate a Sheet row.
 
 ## Coach/LLM boundary
 
@@ -380,13 +402,13 @@ Finish the campaign, prove V1, stabilize, then decide what observed use justifie
 
 ## Builder model and optional tooling
 
-Dale's standing Claude builder preference is Opus 4.8. That is a working preference, not a branch-protection rule, required status, or merge gate, and it does not change Atlas's application LLM.
+Dale selects the builder surface and the builder model; that selection is owner-reserved. His standing preference names a Claude Opus 4.8 builder. A preference is not an authority grant: it is not a branch-protection rule, a required status, or a merge gate, it does not restrict which owner-approved agent may hold the implementation role, and it does not change Atlas's application LLM.
 
 Optional tools such as gstack may improve investigation/review quality when available. They never replace Atlas governance or create a required paid review lane.
 
 ## Fresh-session launcher
 
-> Read `CLAUDE.md` and `docs/ATLAS_V1_EXECUTION_PLAN.md`. Execute the first eligible unfinished card. Verify before editing, use one concern per PR, merge the exact passing head under standing authority, update campaign state, refresh `main`, and continue. Stop only for an explicit owner-reserved gate.
+[`AGENTS.md`](AGENTS.md) carries the one compact launcher for every surface. Do not write a second one.
 
 Before implementation, report only:
 

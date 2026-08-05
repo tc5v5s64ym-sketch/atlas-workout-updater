@@ -5,7 +5,7 @@ This index tells agents which documents have authority and prevents old plans fr
 ## Read first
 
 1. [`CLAUDE.md`](../CLAUDE.md) — canonical agent operating brief: safety, roles, branches, review, merge, and execution rules.
-2. [`docs/BUILDER_PORTABILITY.md`](./BUILDER_PORTABILITY.md) — tool-neutral compatibility and handoff mapping so Claude Code and Codex can serve as the active implementation agent under the same rules. It selects no work.
+2. [`docs/BUILDER_PORTABILITY.md`](./BUILDER_PORTABILITY.md) — surface-neutral compatibility and handoff mapping so any owner-approved agent can serve as the approved active implementation agent under the same rules. It also carries the fresh-agent cold-start acceptance trial. It selects no work.
 3. [`docs/ATLAS_V1_EXECUTION_PLAN.md`](./ATLAS_V1_EXECUTION_PLAN.md) — **the sole active execution queue and work-selection authority** through V1 stabilization. It currently carries the **Atlas Recovery Campaign (Issue #1073)** as the active controlling owner insertion; that campaign lives inside the plan, never beside it.
 4. [`docs/DECISION_KERNEL.md`](./DECISION_KERNEL.md) — durable principles for routine decisions.
 5. [`BACKLOG.md`](../BACKLOG.md) — **bounded evidence ledger of deferred work** (owner ruling 2026-07-30, final form 2026-07-31). Fixed capacity: items, lines, and the cap never grow. Preserves proven findings; never a competing queue. A new finding is fixed now, rejected, added here under the fixed-capacity rule, or escalated to the owner.
@@ -27,9 +27,9 @@ These govern direction and constraints. They do not independently select the nex
 
 - [`docs/ATLAS_V1_EXECUTION_PLAN.md`](./ATLAS_V1_EXECUTION_PLAN.md) — milestones M0–M6, executable cards F01–F12, five-session proving run, stabilization, the parallel One-Brain evidence lane, and the embedded **Atlas Recovery Campaign (Phases 1–7, Issue #1073)** — the active controlling insertion that freezes M2/F10E until its Phase 1 owner gate passes.
 - [`docs/AGENT_WORKFLOW.md`](./AGENT_WORKFLOW.md) — Current-State Verification Gate, branch hygiene, PR loop, and compact-prompt rules for the active implementation agent.
-- [`docs/BUILDER_PORTABILITY.md`](./BUILDER_PORTABILITY.md) — Claude Code/Codex role equivalence, repository-state handoff, and the shared launcher. A compatibility contract, not a plan.
+- [`docs/BUILDER_PORTABILITY.md`](./BUILDER_PORTABILITY.md) — role equivalence across approved surfaces, repository-state handoff, and the cold-start acceptance trial. A compatibility contract, not a plan.
 - [`docs/CONTROLLED_TECHNICAL_WRITING.md`](./CONTROLLED_TECHNICAL_WRITING.md) — the single writing standard for agent-authored plans, reviews, failure reports, handoffs, implementation summaries, PR bodies, and commit messages. Controlled technical writing inspired by ASD-STE100; no formal ASD-STE100 compliance is claimed. Required by `CLAUDE.md` and pointed to by both adapters. A writing standard, not a work-selection authority, and not the user-facing coaching voice (`docs/COACHING_NOTE_VOICE.md`).
-- [`docs/CODEX_SESSION_STARTER.md`](./CODEX_SESSION_STARTER.md) — retained filename containing the common Claude Code/Codex fresh-session launcher. It selects no work.
+- [`docs/CODEX_SESSION_STARTER.md`](./CODEX_SESSION_STARTER.md) — retained filename that points at the one launcher in `AGENTS.md`. It selects no work.
 - [`docs/AUTOMATION_PROTOCOL.md`](./AUTOMATION_PROTOCOL.md) — deterministic hard gates and standing merge authority.
 - [`docs/ATLAS_OPERATIONS_CONTRACT.md`](./ATLAS_OPERATIONS_CONTRACT.md) — the agent-first status surface (`npm run atlas:status` and the public `GET /.well-known/atlas-status.json`). A status contract, not a work-selection plan.
 - [`docs/ATLAS_SYSTEM_AUTHORITY.md`](./ATLAS_SYSTEM_AUTHORITY.md) — **the ownership authority.** The current-state authority map: for each major concept, the current live authority, the intended sole authority, any competing authority, status (`SOLE LIVE AUTHORITY` / `TRANSITIONAL` / `DUPLICATED` / `CONTRACT ONLY` / `TEST/OBSERVABILITY ONLY`), the exact production consumer, any compatibility bridge, and its exact sunset condition. A concept is promoted only on current production evidence — a contract, import, test, or passing suite is never promoted to authority. It records authority; it selects no work and authorizes no change.
@@ -40,7 +40,7 @@ These govern direction and constraints. They do not independently select the nex
 - [`docs/RISK_LABELS.md`](./RISK_LABELS.md) — primary risk labels.
 - [`.github/PULL_REQUEST_TEMPLATE.md`](../.github/PULL_REQUEST_TEMPLATE.md) — merge-card evidence format.
 
-`AGENTS.md` and `CODEX.md` are compatibility adapters to `CLAUDE.md` plus `docs/BUILDER_PORTABILITY.md`; they define no independent product, safety, branch, merge, or sequencing process.
+`AGENTS.md` is the universal entrypoint. `CODEX.md` and any surface pointer file are pointers to it; they define no independent product, safety, branch, merge, or sequencing process.
 
 ## Evidence and operational ledgers
 

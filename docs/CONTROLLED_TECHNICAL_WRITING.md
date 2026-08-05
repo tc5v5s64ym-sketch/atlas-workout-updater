@@ -1,6 +1,6 @@
 # Atlas Controlled Technical Writing
 
-This is the single canonical writing standard for text that an Atlas agent writes. Every implementation agent — Claude Code or Codex — follows it.
+This is the single canonical writing standard for text that an Atlas agent writes. Every implementation agent follows it, on every surface.
 
 ## Honest naming
 

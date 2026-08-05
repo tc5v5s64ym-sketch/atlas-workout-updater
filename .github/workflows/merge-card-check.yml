@@ -43,6 +43,42 @@ jobs:
               problems.push('PR body is missing the "Atlas Contract / Systems Review" section (Required / Exact reviewed head / Reviewer / Findings and dispositions). Say "not required" and why when no trigger fired.');
             }
 
+            // Merge-card attribution (owner instruction 2026-08-05 — surface and model
+            // neutrality). Atlas work may be implemented by any owner-approved agent on any
+            // approved surface, so every PR DECLARES which surface and model performed it.
+            // The four fields are declared evidence, not cryptographic proof, and they grant
+            // no authority — they record who acted.
+            //
+            // The check is LITERAL, never semantic. It cannot tell a true model name from a
+            // false one; it can only tell a claim from a blank. A field is satisfied when its
+            // row exists and carries a value that is not merely the shipped HTML-comment
+            // placeholder. `None` is a real value, so a PR that used no supporting model must
+            // still SAY `None` rather than leave the row empty — an empty row is silence, and
+            // silence is what this check exists to fail. Both the merge-card table row and a
+            // `- Label:` bullet are accepted, because a body may carry either shape.
+            const ATTRIBUTION = [
+              ['Builder surface', 'Builder surface'],
+              ['Primary builder model', 'Primary builder model'],
+              ['Supporting / explore models', 'Supporting[ \\t]*/[ \\t]*explore models'],
+              ['Architecture / dispatch authority', 'Architecture[ \\t]*/[ \\t]*dispatch authority'],
+            ];
+
+            for (const [label, pattern] of ATTRIBUTION) {
+              const row = new RegExp(`^[ \\t]*\\|[ \\t]*\\*{0,2}${pattern}\\*{0,2}[ \\t]*\\|(.*)$`, 'im').exec(body);
+              const bullet = new RegExp(`^[ \\t]*[-*][ \\t]*\\*{0,2}${pattern}\\*{0,2}[ \\t]*:(.*)$`, 'im').exec(body);
+              const match = row || bullet;
+              if (!match) {
+                problems.push(`Merge card is missing the required attribution field "${label}". Declare the surface, the exact displayed model name, supporting models (or None), and the dispatch authority.`);
+                continue;
+              }
+              // A table row ends in a closing pipe; strip it before reading the value. Then
+              // strip HTML comments, so the shipped placeholder reads as the blank it is.
+              const raw = row ? match[1].replace(/\|[ \t]*$/, '') : match[1];
+              if (raw.replace(/<!--[\s\S]*?-->/g, '').trim() === '') {
+                problems.push(`Merge card attribution field "${label}" is blank or still a template placeholder. Record the real value; use None only for Supporting / explore models, and never guess a model identity.`);
+              }
+            }
+
             // Anchor on the HEADING, not on any mention of the phrase: a body that discusses
             // "Additional findings" in prose before the section would otherwise capture the
             // wrong span and false-fail.

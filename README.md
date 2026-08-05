@@ -2,7 +2,7 @@
 
 Atlas is Dale's conversation-first personal strength coach and workout logger. It parses natural gym language, maintains session truth, previews the exact rows that would be saved, and writes to Google Sheets only after explicit approval.
 
-> **Current source of truth (2026-07-22).** Atlas is running the **Atlas Recovery Campaign (Issue #1073)**, embedded in [`docs/ATLAS_V1_EXECUTION_PLAN.md`](docs/ATLAS_V1_EXECUTION_PLAN.md). That plan and [`CLAUDE.md`](CLAUDE.md) govern; [`docs/BUILDER_PORTABILITY.md`](docs/BUILDER_PORTABILITY.md) maps the canonical brief's legacy tool-specific wording so Claude Code and Codex can operate as interchangeable builders. Some documents linked below predate the campaign and may be stale. Start from [`docs/DOCS_INDEX.md`](docs/DOCS_INDEX.md) for the authority map.
+> **Current source of truth (2026-07-22).** Atlas is running the **Atlas Recovery Campaign (Issue #1073)**, embedded in [`docs/ATLAS_V1_EXECUTION_PLAN.md`](docs/ATLAS_V1_EXECUTION_PLAN.md). That plan and [`CLAUDE.md`](CLAUDE.md) govern; [`docs/BUILDER_PORTABILITY.md`](docs/BUILDER_PORTABILITY.md) maps the canonical brief's legacy tool-specific wording so any owner-approved implementation agent can operate under one contract. Some documents linked below predate the campaign and may be stale. Start from [`docs/DOCS_INDEX.md`](docs/DOCS_INDEX.md) for the authority map.
 
 ## Production
 
@@ -23,9 +23,9 @@ Atlas is Dale's conversation-first personal strength coach and workout logger. I
 
 ## Start here
 
-- [AGENTS.md](AGENTS.md) — tool-neutral entrypoint for implementation agents.
+- [AGENTS.md](AGENTS.md) — the universal entrypoint for implementation agents, on every surface. Start here.
 - [CLAUDE.md](CLAUDE.md) — canonical detailed operating and safety brief.
-- [docs/BUILDER_PORTABILITY.md](docs/BUILDER_PORTABILITY.md) — Claude Code ↔ Codex authority mapping and handoff protocol.
+- [docs/BUILDER_PORTABILITY.md](docs/BUILDER_PORTABILITY.md) — surface-neutral authority mapping, handoff protocol, and the fresh-agent cold-start acceptance trial.
 - [docs/ATLAS_V1_EXECUTION_PLAN.md](docs/ATLAS_V1_EXECUTION_PLAN.md) — sole active execution campaign.
 - [docs/DECISION_KERNEL.md](docs/DECISION_KERNEL.md) — durable product/trust principles.
 - [docs/DOCS_INDEX.md](docs/DOCS_INDEX.md) — documentation authority map.
@@ -42,9 +42,9 @@ Historical plans and compatibility pointers do not select work.
 
 ## For implementation agents
 
-Claude Code and Codex use the same launcher and the same authority. Read `AGENTS.md`, `CLAUDE.md`, `docs/BUILDER_PORTABILITY.md`, and `docs/ATLAS_V1_EXECUTION_PLAN.md`; verify current state and open PRs before editing; execute one concern on a fresh `agent/<concern>` branch; run deterministic hard gates; merge the exact passing head under standing authority; update campaign state when required; refresh `main`; and continue.
+Every owner-approved implementation agent uses the same launcher and the same authority, on every surface — Claude Code, Codex, Cursor, or another the owner approves. Start at [`AGENTS.md`](AGENTS.md); it carries the one compact launcher. Verify current state and open PRs before editing; execute one concern on a fresh `agent/<concern>` branch; run deterministic hard gates; declare your builder surface and model in the merge card; merge the exact passing head under standing authority; update campaign state when required; refresh `main`; and continue.
 
-`AGENTS.md` and `CODEX.md` are compatibility adapters only. They do not create a second process or execution queue.
+`CODEX.md` and any surface pointer file are pointers only. They do not create a second process, a second authority, or a second execution queue.
 
 ## Local setup and checks
 

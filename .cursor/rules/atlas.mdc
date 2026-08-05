@@ -1,0 +1,7 @@
+---
+description: Atlas repository entrypoint
+alwaysApply: true
+---
+
+Begin at `AGENTS.md`. It is the universal entrypoint and it carries the read order,
+the branch form, the launcher, and the authority map. This file adds no rule of its own.

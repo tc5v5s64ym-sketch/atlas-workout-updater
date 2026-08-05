@@ -2,7 +2,7 @@
 
 > **Status:** Active. `CLAUDE.md` is canonical; `docs/ATLAS_V1_EXECUTION_PLAN.md` selects work.
 
-Claude is the implementation and routine merge operator. ChatGPT is the product decision desk. Dale owns the narrow categories that require human authority or real-world evidence.
+The approved active implementation agent is the implementation and routine merge operator. ChatGPT is the product decision desk. Dale owns the narrow categories that require human authority or real-world evidence.
 
 ## Consult first
 
@@ -14,7 +14,7 @@ Before escalating, consult:
 4. `docs/ATLAS_PRODUCT_VISION.md`, `docs/CONSTITUTION.md`, and `docs/INVARIANTS.md` when the decision reaches those layers
 5. relevant accepted behavior, specs, tests, and evidence
 
-Claude decides derivable implementation details: root cause, smallest safe fix, PR sizing, tests, regression strategy, refactors, and wording/rendering that expresses already-authoritative facts.
+The implementation agent decides derivable implementation details: root cause, smallest safe fix, PR sizing, tests, regression strategy, refactors, and wording/rendering that expresses already-authoritative facts.
 
 A genuinely non-derivable product/scope/trust fork goes to ChatGPT's Atlas Decision Desk.
 
@@ -47,11 +47,11 @@ Dale is not required for routine implementation, tests, derivable UI/wording, ad
 - Agents never manually append, edit, or delete Sheet rows.
 - No secrets, credentials, production Sheet IDs, private payloads, Render env values, or workout evidence in commits/PRs.
 - No schema migration, approval-gate weakening, proof-field change, or historical rewrite without Dale.
-- ChatGPT review, Codex comments, CI, or Claude's merge authority never authorizes a production write.
+- ChatGPT review, independent agent comments, CI, or the implementation agent's merge authority never authorizes a production write.
 
 ## Merge boundary
 
-Claude merges an authorized routine PR after the deterministic hard gates pass, real in-scope advisory findings are addressed, scope/risk/merge-card evidence is complete, and no owner-reserved authorization remains.
+The implementation agent merges an authorized routine PR after the deterministic hard gates pass, real in-scope advisory findings are addressed, scope/risk/merge-card evidence is complete, and no owner-reserved authorization remains.
 
 There is no required owner merge step and no required separate-reviewer account, review status, or marker. Dale may still merge anything directly or revoke standing authority.
 
