@@ -22,7 +22,7 @@
 
 const { test, expect } = require('@playwright/test');
 const {
-  OBSERVER_FLUSH_MS, bubbleObserverInitScript,
+  OBSERVER_FLUSH_MS, bubbleObserverInitScript, BUBBLE_ID_ATTR, BUBBLE_SEQ_ATTR,
   ingestLiveObservation, reconcileSweep, recordsToMessages, makeBoundary,
 } = require('./gate/rehearsal-bubble-observer');
 const { detectUnsupportedWriteClaim, detectUnsupportedMutationWording } = require('./gate/rehearsal-scorecard');
@@ -31,6 +31,13 @@ const {
 } = require('./gate/rehearsal-bubble-observer');
 
 const THINKING = 'Thinking…';
+
+// The reconciling sweep's input, read through the collector's OWN stamping authority so
+// each bubble carries the identity the observer would have given it (F-SB4B corrective
+// 5). Positional text lists are gone: after an eviction they reconcile one bubble's text
+// onto another bubble's record.
+const readObserved = (page) => page.evaluate(() => (typeof window.__atlasBubbleRead === 'function'
+  ? window.__atlasBubbleRead() : [])).catch(() => []);
 
 // Install the real observer over a minimal thread, and collect reports exactly as the
 // runner does — Node stamps each report on receipt.
@@ -64,6 +71,9 @@ async function startCollector(page, phaseRef) {
     callbackName: '__atlasBubbleObserved',
     flushName: '__atlasBubbleFlush',
     stateName: '__atlasBubbleState',
+    readName: '__atlasBubbleRead',
+    idAttr: BUBBLE_ID_ATTR,
+    seqAttr: BUBBLE_SEQ_ATTR,
   });
   // A bare page carrying only the thread container the observer watches.
   //
@@ -125,7 +135,7 @@ test.describe('F-SB4B bubble collector — truthful timing without a sweep', () 
     // Step 1–2: the turn is submitted; the immediate sweep sees a placeholder only.
     await appendBubble(page, THINKING);
     await settle(page);
-    reconcileSweep(records, [THINKING], { phase: phaseRef.value, nowMs: Date.now(), thinkingMarker: THINKING });
+    reconcileSweep(records, await readObserved(page), { phase: phaseRef.value, nowMs: Date.now(), thinkingMarker: THINKING });
     expect(recordsToMessages(records)[0].placeholder, 'the immediate sweep sees no final claim').toBe(true);
 
     // Step 3: the bubble becomes an unsupported save claim. NO sweep runs here.
@@ -137,8 +147,7 @@ test.describe('F-SB4B bubble collector — truthful timing without a sweep', () 
 
     // Step 4: the first sweep since step 1, well after the write.
     await page.waitForTimeout(150);
-    const texts = await page.locator('#thread-messages .chat-bubble-atlas')
-      .allInnerTexts().catch(() => []);
+    const texts = await readObserved(page);
     reconcileSweep(records, texts, { phase: 'teardown', nowMs: Date.now(), thinkingMarker: THINKING });
 
     const messages = recordsToMessages(records);
@@ -165,7 +174,7 @@ test.describe('F-SB4B bubble collector — truthful timing without a sweep', () 
 
     const mutationAtMs = Date.now();          // the mutation happens AFTER the claim
     await page.waitForTimeout(150);
-    const texts = await page.locator('#thread-messages .chat-bubble-atlas').allInnerTexts().catch(() => []);
+    const texts = await readObserved(page);
     reconcileSweep(records, texts, { phase: 'replacement', nowMs: Date.now(), thinkingMarker: THINKING });
 
     const messages = recordsToMessages(records);
@@ -187,7 +196,7 @@ test.describe('F-SB4B bubble collector — truthful timing without a sweep', () 
     await settle(page);
 
     const liveWriteAtMs = Date.now() - 1000;   // the write already happened
-    const texts = await page.locator('#thread-messages .chat-bubble-atlas').allInnerTexts().catch(() => []);
+    const texts = await readObserved(page);
     reconcileSweep(records, texts, { phase: 'teardown', nowMs: Date.now(), thinkingMarker: THINKING });
 
     const messages = recordsToMessages(records);
@@ -205,7 +214,7 @@ test.describe('F-SB4B bubble collector — truthful timing without a sweep', () 
     const liveAt = recordsToMessages(records)[0].atMs;
 
     await page.waitForTimeout(200);
-    const texts = await page.locator('#thread-messages .chat-bubble-atlas').allInnerTexts().catch(() => []);
+    const texts = await readObserved(page);
     reconcileSweep(records, texts, { phase: 'teardown', nowMs: Date.now(), thinkingMarker: THINKING });
 
     const after = recordsToMessages(records)[0];
@@ -261,7 +270,7 @@ test.describe('F-SB4B collector — a pending report cannot be inverted across a
     release();
     state.gate = null;
     await page.waitForTimeout(OBSERVER_FLUSH_MS * 3);
-    const texts = await page.locator('#thread-messages .chat-bubble-atlas').allInnerTexts().catch(() => []);
+    const texts = await readObserved(page);
     reconcileSweep(records, texts, { phase: 'teardown', nowMs: Date.now(), thinkingMarker: THINKING });
 
     const messages = recordsToMessages(records);
@@ -744,15 +753,14 @@ test.describe('F-SB4B sweep — a pending report is not a missed one', () => {
       try {
         flushed = typeof window.__atlasBubbleFlush === 'function' ? await window.__atlasBubbleFlush() : null;
       } catch { flushed = null; }
-      const texts = Array.from(document.querySelectorAll('#thread-messages .chat-bubble-atlas'))
-        .map(e => String(e.innerText || ''));
+      const observed = typeof window.__atlasBubbleRead === 'function' ? window.__atlasBubbleRead() : [];
       let state = null;
       try {
         state = typeof window.__atlasBubbleState === 'function' ? window.__atlasBubbleState() : null;
       } catch { state = null; }
-      return { texts, quiet: Boolean(flushed && flushed.ok === true) && Boolean(state) && state.pending === false };
-    }).catch(() => ({ texts: [], quiet: false }));
-    reconcileSweep(records, swept.texts, {
+      return { observed, quiet: Boolean(flushed && flushed.ok === true) && Boolean(state) && state.pending === false };
+    }).catch(() => ({ observed: [], quiet: false }));
+    reconcileSweep(records, swept.observed, {
       phase, nowMs: Date.now(), thinkingMarker: THINKING, collectorQuiet: swept.quiet,
     });
     return swept;
@@ -765,20 +773,19 @@ test.describe('F-SB4B sweep — a pending report is not a missed one', () => {
     const { records } = await startCollector(page, phaseRef);
     await appendBubble(page, THINKING);
     await settle(page);
-    expect(records[0].retroactive).toBe(false);
+    expect(recordsToMessages(records)[0].retroactive).toBe(false);
 
     // The bubble becomes the real reply; the old sweep looks immediately, without a drain.
     await rewriteBubble(page, 0, REPLY);
-    const texts = await page.evaluate(() => Array.from(
-      document.querySelectorAll('#thread-messages .chat-bubble-atlas')).map(e => String(e.innerText || '')));
-    reconcileSweep(records, texts, { phase: 'substitution_ask', nowMs: Date.now(), thinkingMarker: THINKING });
-    expect(records[0].retroactive, 'the undrained sweep marks it').toBe(true);
+    reconcileSweep(records, await readObserved(page), { phase: 'substitution_ask', nowMs: Date.now(), thinkingMarker: THINKING });
+    expect(recordsToMessages(records)[0].retroactive, 'the undrained sweep marks it').toBe(true);
 
     // The observer's OWN live report for that very change now lands — and cannot help,
     // because the sweep already wrote the text it would have differed from.
     await settle(page);
-    expect(records[0].text).toContain('Incline Dumbbell Press');
-    expect(records[0].retroactive, 'this is the defect: permanently untrustworthy though observed live').toBe(true);
+    const poisoned = recordsToMessages(records)[0];
+    expect(poisoned.text).toContain('Incline Dumbbell Press');
+    expect(poisoned.retroactive, 'this is the defect: permanently untrustworthy though observed live').toBe(true);
   });
 
   test('the drained sweep leaves the in-flight record alone, and the live report keeps it trusted', async ({ page }) => {
@@ -789,14 +796,15 @@ test.describe('F-SB4B sweep — a pending report is not a missed one', () => {
 
     await rewriteBubble(page, 0, REPLY);
     const swept = await sweepLikeRunner(page, records, 'substitution_ask');
-    expect(swept.texts[0]).toContain('Incline Dumbbell Press');
+    expect(swept.observed[0].text).toContain('Incline Dumbbell Press');
 
     // Either the drain delivered the change (so the record is live and current) or the
     // collector was not quiet (so the sweep declined to downgrade it). Both end trusted.
     await settle(page);
-    expect(records[0].text).toContain('Incline Dumbbell Press');
-    expect(records[0].retroactive, 'a change the observer saw is never reported as sweep-only').toBe(false);
-    expect(Number.isFinite(records[0].changeSeq), 'it keeps the change\'s own logical time').toBe(true);
+    const kept = recordsToMessages(records)[0];
+    expect(kept.text).toContain('Incline Dumbbell Press');
+    expect(kept.retroactive, 'a change the observer saw is never reported as sweep-only').toBe(false);
+    expect(Number.isFinite(kept.changeSeq), 'it keeps the change\'s own logical time').toBe(true);
   });
 
   test('a bubble the observer never reported is STILL filled in and STILL marked retroactive', async ({ page }) => {
@@ -807,11 +815,12 @@ test.describe('F-SB4B sweep — a pending report is not a missed one', () => {
     state.rejectReports = true;
     await appendBubble(page, 'a bubble no report will ever describe');
     await settle(page);
-    expect(records[0], 'nothing was ingested').toBeUndefined();
+    expect(recordsToMessages(records), 'nothing was ingested').toHaveLength(0);
 
     await sweepLikeRunner(page, records, 'teardown');
-    expect(records[0], 'the sweep still fills it in').toBeTruthy();
-    expect(records[0].retroactive, 'and an unobserved bubble is never silently trusted').toBe(true);
+    const filled = recordsToMessages(records)[0];
+    expect(filled, 'the sweep still fills it in').toBeTruthy();
+    expect(filled.retroactive, 'and an unobserved bubble is never silently trusted').toBe(true);
   });
 
   test('a genuinely missed TRANSITION is still marked when the collector is quiet', async ({ page }) => {
@@ -819,7 +828,7 @@ test.describe('F-SB4B sweep — a pending report is not a missed one', () => {
     const { records, state } = await startCollector(page, phaseRef);
     await appendBubble(page, THINKING);
     await settle(page);
-    expect(records[0].retroactive).toBe(false);
+    expect(recordsToMessages(records)[0].retroactive).toBe(false);
 
     // The observer stops being able to deliver, so the transition is truly lost. The
     // drain cannot prove its postcondition, so the sweep declines to downgrade — and the
@@ -828,12 +837,65 @@ test.describe('F-SB4B sweep — a pending report is not a missed one', () => {
     await rewriteBubble(page, 0, REPLY);
     const swept = await sweepLikeRunner(page, records, 'substitution_ask');
     expect(swept.quiet, 'a failed drain is never quiet').toBe(false);
-    expect(records[0].text, 'an unbacked claim is not written into a trusted record').toBe(THINKING);
+    expect(recordsToMessages(records)[0].text, 'an unbacked claim is not written into a trusted record').toBe(THINKING);
 
     // Once delivery works again the observer reports it, and the record is honest.
     state.rejectReports = false;
     await settle(page);
-    expect(records[0].text).toContain('Incline Dumbbell Press');
-    expect(records[0].retroactive).toBe(false);
+    const recovered = recordsToMessages(records)[0];
+    expect(recovered.text).toContain('Incline Dumbbell Press');
+    expect(recovered.retroactive).toBe(false);
+  });
+});
+
+// ── F-SB4B corrective 5: the collector's own record identity ───────────────────
+//
+// THE DEFECT. The collector addresses bubbles POSITIONALLY — `bubbles[index]` in the
+// flush, `pending` keyed by index, `bubbleRecords` keyed by index — while `chat.js`
+// front-evicts (`while (thread.children.length > MAX_BUBBLES) thread.removeChild(
+// thread.firstChild)`, cap 12, evicting USER and ATLAS bubbles alike). One eviction
+// shifts every atlas index down by one, so index i now names a different bubble.
+//
+// `ingestLiveObservation` binds a record's PHASE at the first observation of an index.
+// After a shift, that phase belongs to a bubble that is no longer there, and the text
+// arriving at that index belongs to a bubble whose own phase was never recorded. The
+// claim decisions report `[phase] "excerpt"` — so a claim can be attributed to the wrong
+// turn entirely. PR #1262 replaced positional addressing on the DRIVER side; the
+// COLLECTOR was left indexed.
+test.describe('F-SB4B collector — a record belongs to a bubble, not to a position', () => {
+  test('BITE: an eviction must not move a record onto a different bubble', async ({ page }) => {
+    const phaseRef = { value: 'logging' };
+    const { records } = await startCollector(page, phaseRef);
+    for (const t of ['atlas 1', 'atlas 2', 'atlas 3']) await appendBubble(page, t);
+    await settle(page);
+
+    // A new turn, in its own phase, whose bubble arrives with an eviction.
+    phaseRef.value = 'substitution_ask';
+    await evictOldestAndAppend(page, 'THE PROPOSAL — Replace Bench Press with Incline Dumbbell Press.');
+    await settle(page);
+
+    const all = recordsToMessages(records);
+    // Every surviving bubble's text must appear exactly once across the records, and the
+    // record carrying a text must carry the phase that text was rendered in.
+    const proposal = all.find(r => /THE PROPOSAL/.test(r.text || ''));
+    expect(proposal, 'the proposal has a record of its own').toBeTruthy();
+    expect(proposal.phase, 'and it carries the phase it was actually rendered in').toBe('substitution_ask');
+
+    // The evicted bubble KEEPS its own record — a claim rendered in a bubble the thread
+    // later pruned still happened, and dropping it would lose exactly the evidence this
+    // collector exists to preserve. What must never happen is that record acquiring a
+    // DIFFERENT bubble's text, which is what positional keying did.
+    const evicted = all.filter(r => /atlas 1/.test(r.text || ''));
+    expect(evicted, 'the evicted bubble keeps its own record').toHaveLength(1);
+    expect(evicted[0].phase, 'with the phase it was rendered in').toBe('logging');
+    // One record per bubble the run has ever seen: 3 originals + the proposal.
+    expect(all).toHaveLength(4);
+    expect(new Set(all.map(r => r.id)).size, 'identities are unique and never reused').toBe(4);
+    // The survivors keep their own text and their own original phase.
+    for (const t of ['atlas 2', 'atlas 3']) {
+      const rec = all.find(r => new RegExp(t).test(r.text || ''));
+      expect(rec, `${t} still has its record`).toBeTruthy();
+      expect(rec.phase, `${t} keeps the phase it was rendered in`).toBe('logging');
+    }
   });
 });

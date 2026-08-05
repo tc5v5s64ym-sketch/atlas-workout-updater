@@ -71,6 +71,13 @@
 
 const OBSERVER_FLUSH_MS = 100;
 
+// The collector's own bubble identity (F-SB4B corrective 5). Inert: no application code
+// reads or writes either attribute, and both are set only by the observer's stamping
+// authority. `BUBBLE_SEQ_ATTR` lives on the thread container so the counter cannot fall
+// when a bubble is evicted, which is what makes an id unique for the whole run.
+const BUBBLE_ID_ATTR = 'data-rehearsal-bubble-id';
+const BUBBLE_SEQ_ATTR = 'data-rehearsal-bubble-seq';
+
 // ── Turn-own-bubble identity (F-SB4B corrective 2, sweep Session 1) ────────────
 //
 // THE DEFECT THIS REPLACES. The driver identified a turn's own reply POSITIONALLY:
@@ -118,14 +125,47 @@ function markExistingBubblesScript(attr) {
 // runs before any application script on every navigation, so it is installed for the
 // fresh-session transition too. It reports `{ index, text }` per changed bubble and
 // takes NO timestamp of its own — timing belongs to the receiving side.
-function bubbleObserverInitScript({ flushMs, threadId, bubbleSelector, callbackName, flushName, stateName }) {
-  // index -> the EARLIEST UNDELIVERED changeSeq for that bubble.
+function bubbleObserverInitScript({ flushMs, threadId, bubbleSelector, callbackName, flushName, stateName, readName, idAttr, seqAttr }) {
+  // THE ONE BUBBLE IDENTITY (F-SB4B corrective 5). Every bubble the collector has ever
+  // seen carries a stable id, assigned once and never reused, and the monotonic counter
+  // lives on the THREAD element so a bubble's id is independent of anything that has
+  // been evicted. `stampAndRead` is the sole assigner; the observer and the reconciling
+  // sweep both go through it, so there is no second identity to reconcile.
+  //
+  // THE DEFECT THIS REPLACES. `pending` and the Node-side records were keyed by
+  // POSITION, while `chat.js` front-evicts (cap 12, evicting user AND atlas bubbles), so
+  // one eviction shifted every atlas index down by one and index i began naming a
+  // different bubble. `ingestLiveObservation` binds a record's PHASE at the first
+  // observation of a key, so after a shift the phase belonged to a bubble that was gone
+  // and the arriving text belonged to a bubble whose own phase was never recorded — and
+  // the claim decisions report `[phase] "excerpt"`, so a claim could be attributed to
+  // the wrong turn. PR #1262 replaced positional addressing on the DRIVER side; this
+  // replaces it in the COLLECTOR. The positional path is deleted, not kept alongside.
+  const stampAndRead = () => {
+    const thread = document.getElementById(threadId);
+    if (!thread) return [];
+    let seq = Number(thread.getAttribute(seqAttr) || '0');
+    if (!Number.isFinite(seq) || seq < 0) seq = 0;
+    const out = [];
+    const nodes = thread.querySelectorAll(bubbleSelector);
+    for (const el of nodes) {
+      let id = el.getAttribute(idAttr);
+      if (!id) { seq += 1; id = String(seq); el.setAttribute(idAttr, id); }
+      out.push({ id, text: String(el.innerText || '').replace(/\s+/g, ' ').trim() });
+    }
+    // The counter lives on the container, so an eviction can never lower it and an id
+    // can never be handed to a second bubble.
+    thread.setAttribute(seqAttr, String(seq));
+    return out;
+  };
+
+  // bubble id -> the EARLIEST UNDELIVERED changeSeq for that bubble.
   //
   // Earliest, not latest, and the difference is load-bearing (owner P1, 2026-08-03).
   // A batch is built from `pending` and cleared before the delivery is awaited, so a
   // rejected delivery must re-queue its entries. If an unrelated thread mutation ran
-  // while that batch was in flight, `markAll` had already re-added the same index with a
-  // NEWER sequence, and the re-queue skipped it — so the retry reported an OLD
+  // while that batch was in flight, `markAll` had already re-added the same bubble with
+  // a NEWER sequence, and the re-queue skipped it — so the retry reported an OLD
   // pre-boundary claim carrying a LATER unrelated sequence, and a boundary between the
   // two could class it `after`. That defeats the point of assigning logical time when
   // the DOM changed.
@@ -135,9 +175,9 @@ function bubbleObserverInitScript({ flushMs, threadId, bubbleSelector, callbackN
   // BEFORE a boundary, never after. Once a delivery succeeds the slot is cleared, so a
   // genuine later transition of the same bubble carries its own later sequence.
   const pending = new Map();
-  const markPending = (index, seq) => {
-    const prior = pending.get(index);
-    pending.set(index, prior === undefined ? seq : Math.min(prior, seq));
+  const markPending = (id, seq) => {
+    const prior = pending.get(id);
+    pending.set(id, prior === undefined ? seq : Math.min(prior, seq));
   };
   let observer = null;
   let timer = null;
@@ -156,7 +196,7 @@ function bubbleObserverInitScript({ flushMs, threadId, bubbleSelector, callbackN
     // decides what to send.
     if (observer && thread0) {
       const outstanding = observer.takeRecords();
-      if (outstanding && outstanding.length) markAll(thread0);
+      if (outstanding && outstanding.length) markAll();
     }
     const seqAtFlush = changeSeq;
     const thread = document.getElementById(threadId);
@@ -164,14 +204,17 @@ function bubbleObserverInitScript({ flushMs, threadId, bubbleSelector, callbackN
     if (typeof window[callbackName] !== 'function') {
       return { ok: false, reason: 'report callback missing', changeSeq, flushedSeq, pending: changeSeq !== flushedSeq };
     }
-    const bubbles = thread.querySelectorAll(bubbleSelector);
     const batch = [];
     const sent = new Map();
-    for (const [index, seq] of pending) {
-      const el = bubbles[index];
+    for (const [id, seq] of pending) {
+      // BY IDENTITY, never by position: an eviction shifts every later bubble down, so a
+      // positional read would report one bubble's text under another bubble's record.
+      // A bubble that is genuinely gone (evicted) has nothing left to read and is
+      // dropped — its record keeps whatever the collector last saw of it.
+      const el = thread.querySelector(`[${idAttr}="${id}"]`);
       if (!el) continue;
-      batch.push({ index, changeSeq: seq, text: String(el.innerText || '').replace(/\s+/g, ' ').trim() });
-      sent.set(index, seq);
+      batch.push({ id, changeSeq: seq, text: String(el.innerText || '').replace(/\s+/g, ' ').trim() });
+      sent.set(id, seq);
     }
     pending.clear();
     if (batch.length) {
@@ -183,7 +226,7 @@ function bubbleObserverInitScript({ flushMs, threadId, bubbleSelector, callbackN
         // evidence permanently, and a lost claim is exactly what this collector exists
         // to prevent. The change keeps its ORIGINAL changeSeq, so a retry cannot make a
         // pre-boundary change look post-boundary.
-        for (const [index, seq] of sent) markPending(index, seq);
+        for (const [id, seq] of sent) markPending(id, seq);
         schedule();
         return { ok: false, reason: `report callback rejected: ${e && e.message}`, changeSeq, flushedSeq, pending: true };
       }
@@ -194,24 +237,26 @@ function bubbleObserverInitScript({ flushMs, threadId, bubbleSelector, callbackN
 
   const schedule = () => { if (timer === null) timer = setTimeout(() => { flush(); }, flushMs); };
 
-  const markAll = (thread) => {
+  const markAll = () => {
     changeSeq += 1;
-    const bubbles = thread.querySelectorAll(bubbleSelector);
-    for (let i = 0; i < bubbles.length; i += 1) markPending(i, changeSeq);
+    for (const b of stampAndRead()) markPending(b.id, changeSeq);
     schedule();
   };
 
   window[flushName] = () => flush();
+  // The reconciling sweep reads through the SAME stamping authority, so a bubble it
+  // fills in carries the id the observer would have given it.
+  window[readName] = () => stampAndRead();
   window[stateName] = () => ({ changeSeq, flushedSeq, pending: changeSeq !== flushedSeq });
 
   const attach = () => {
     const thread = document.getElementById(threadId);
     if (!thread) return false;
-    // Any subtree change can add a bubble or rewrite one's text, and indexes shift when
-    // a bubble is inserted, so every mutation re-reads the whole (small) list.
-    observer = new MutationObserver(() => markAll(thread));
+    // Any subtree change can add a bubble or rewrite one's text, so every mutation
+    // re-reads (and stamps) the whole small list.
+    observer = new MutationObserver(() => markAll());
     observer.observe(thread, { childList: true, subtree: true, characterData: true });
-    markAll(thread);
+    markAll();
     return true;
   };
 
@@ -247,16 +292,19 @@ const normalize = (t) => String(t == null ? '' : t).replace(/\s+/g, ' ').trim();
 function ingestLiveObservation(records, observation, { phase, nowMs, ingestSeq = 0, thinkingMarker = 'Thinking…' } = {}) {
   const out = records && typeof records === 'object' ? records : {};
   const o = observation && typeof observation === 'object' ? observation : {};
-  const index = Number(o.index);
-  if (!Number.isInteger(index) || index < 0) return out;
+  // KEYED BY THE BUBBLE'S OWN ID, never by its position in the thread. A report with no
+  // identity is dropped rather than guessed at — an unattributable observation must not
+  // land on some other bubble's record.
+  const id = String(o.id == null ? '' : o.id).trim();
+  if (!id) return out;
   const text = normalize(o.text);
   // The LOGICAL time of the change, assigned in the page when the DOM changed — not
   // when this report was delivered. This is what flush latency cannot distort.
   const changeSeq = Number.isFinite(o.changeSeq) ? o.changeSeq : null;
-  const prior = out[index];
+  const prior = out[id];
   if (!prior) {
-    out[index] = {
-      index, text, atMs: nowMs, phase, ingestSeq, changeSeq,
+    out[id] = {
+      id, text, atMs: nowMs, phase, ingestSeq, changeSeq,
       placeholder: text.includes(thinkingMarker), retroactive: false,
     };
     return out;
@@ -368,14 +416,20 @@ function classifyClaimAgainstBoundary(record, boundary) {
 // FAIL-CLOSED is unchanged in the direction that matters. A bubble with NO record at all
 // is still filled in and still marked `retroactive`, whatever the collector's state —
 // an unobserved bubble is never silently trusted.
-function reconcileSweep(records, texts, { phase, nowMs, thinkingMarker = 'Thinking…', collectorQuiet = true } = {}) {
+function reconcileSweep(records, observed, { phase, nowMs, thinkingMarker = 'Thinking…', collectorQuiet = true } = {}) {
   const out = records && typeof records === 'object' ? records : {};
-  const list = Array.isArray(texts) ? texts : [];
-  for (let i = 0; i < list.length; i += 1) {
-    const text = normalize(list[i]);
-    const prior = out[i];
+  // `observed` is [{ id, text }] read through the observer's own stamping authority, so
+  // a swept bubble carries the identity the observer would have given it. A positional
+  // list cannot be accepted here: after an eviction it would reconcile one bubble's text
+  // onto another bubble's record.
+  const list = Array.isArray(observed) ? observed : [];
+  for (const entry of list) {
+    const id = String((entry && entry.id) == null ? '' : entry.id).trim();
+    if (!id) continue;
+    const text = normalize(entry && entry.text);
+    const prior = out[id];
     if (!prior) {
-      out[i] = { index: i, text, atMs: nowMs, phase, placeholder: text.includes(thinkingMarker), retroactive: true };
+      out[id] = { id, text, atMs: nowMs, phase, placeholder: text.includes(thinkingMarker), retroactive: true };
       continue;
     }
     if (text !== prior.text) {
@@ -391,17 +445,21 @@ function reconcileSweep(records, texts, { phase, nowMs, thinkingMarker = 'Thinki
   return out;
 }
 
+// Ordered by bubble IDENTITY, which is assignment order: ids are handed out in DOM
+// order as bubbles are first seen and never reused, so this is the order the thread
+// actually rendered — a fact position stops carrying the moment anything is evicted.
 function recordsToMessages(records) {
   const out = records && typeof records === 'object' ? records : {};
   return Object.keys(out)
-    .map((k) => Number(k))
-    .filter((k) => Number.isInteger(k))
-    .sort((a, b) => a - b)
+    .filter((k) => Number.isFinite(Number(k)))
+    .sort((a, b) => Number(a) - Number(b))
     .map((k) => out[k]);
 }
 
 module.exports = {
   OBSERVER_FLUSH_MS,
+  BUBBLE_ID_ATTR,
+  BUBBLE_SEQ_ATTR,
   SEEN_ATTR,
   NEW_BUBBLE_SELECTOR,
   markExistingBubblesScript,
