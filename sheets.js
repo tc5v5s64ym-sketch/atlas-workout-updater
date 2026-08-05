@@ -362,6 +362,10 @@ async function getSheetsClient() {
 // a read-after-write in the same request can never be served a pre-write value.
 const readContextStorage = new AsyncLocalStorage();
 
+// Sentinel key for the spreadsheet-metadata read. Not an A1 range, so it can never
+// collide with one, and `tabOfRange` maps it to itself.
+const METADATA_KEY = '\u0000spreadsheet-metadata';
+
 /** Key a range so a COLUMNS-major read is never confused with a ROWS-major one. */
 function cacheKey(range, majorDimension) {
   return majorDimension === 'COLUMNS' ? `${range}#COLUMNS` : range;
@@ -677,14 +681,39 @@ async function getHeaderRow(tabName) {
 
 async function getSpreadsheetTabs() {
   const sheets = await getSheetsClient();
-  // Logged because `spreadsheets.get` is metered against the read quota exactly like
-  // `values.get`, and scripts/reconstruct-session-reads.js counts what it can see.
-  console.log('[sheets.js] Reading spreadsheet metadata');
-  const response = await readWithRetry('spreadsheet metadata', () => sheets.spreadsheets.get({
-    spreadsheetId,
-    fields: 'sheets.properties'
-  }));
-  return (response.data.sheets || []).map(sheet => String(sheet.properties.title || ''));
+  // Request-scoped like every other read, and for the same reason: a session asks "which
+  // tabs exist?" repeatedly inside ONE request — closeoutFinality, sessionPlanStore's tab
+  // probe, sessionPlanSetsStore's, and every `confirmTabMissing` — and each ask used to be
+  // its own metered `spreadsheets.get`. Seven per session in the qualifying posture. Tab
+  // existence cannot change inside a request except through `ensureSheetTab`, which
+  // invalidates this entry, so the answer is identical and only the request count falls.
+  // Nothing is cached across requests: a tab created between requests is seen immediately.
+  const ctx = currentReadContext();
+  if (ctx && ctx.values.has(METADATA_KEY)) return ctx.values.get(METADATA_KEY).slice();
+  const pending = ctx && ctx.inflight.get(METADATA_KEY);
+  if (pending) return (await pending).slice();
+
+  const fetch = (async () => {
+    // Logged because `spreadsheets.get` is metered against the read quota exactly like
+    // `values.get`, and scripts/reconstruct-session-reads.js counts what it can see.
+    console.log('[sheets.js] Reading spreadsheet metadata');
+    const response = await readWithRetry('spreadsheet metadata', () => sheets.spreadsheets.get({
+      spreadsheetId,
+      fields: 'sheets.properties'
+    }));
+    return (response.data.sheets || []).map(sheet => String(sheet.properties.title || ''));
+  })();
+
+  if (!ctx) return fetch;
+  ctx.inflight.set(METADATA_KEY, fetch);
+  fetch.catch(() => {});
+  try {
+    const tabs = await fetch;
+    ctx.values.set(METADATA_KEY, tabs);
+    return tabs.slice();
+  } finally {
+    ctx.inflight.delete(METADATA_KEY);
+  }
 }
 
 // NOT wrapped in readWithRetry, deliberately. This helper CREATES a tab: its reads
@@ -694,6 +723,10 @@ async function getSpreadsheetTabs() {
 // change. test/sheetsReadFailureAuthority.test.js pins that exclusion.
 async function ensureSheetTab(tabName, headerRow = []) {
   const sheets = await getSheetsClient();
+  // This helper can CREATE a tab, so any request-scoped answer to "which tabs exist?" is
+  // stale the moment it returns. Drop it.
+  const createCtx = currentReadContext();
+  if (createCtx) { createCtx.values.delete(METADATA_KEY); createCtx.inflight.delete(METADATA_KEY); }
   console.log('[sheets.js] Reading spreadsheet metadata');
   const meta = await sheets.spreadsheets.get({
     spreadsheetId,

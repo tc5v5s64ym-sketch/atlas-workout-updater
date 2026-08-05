@@ -33,6 +33,11 @@
 //   • The REAL `sheets.js` and the REAL Express app run. Only `googleapis` is faked, so
 //     the batching, the request context, the catalog cache and every handler in the
 //     chain are the production ones.
+//   • It runs the QUALIFYING LEDGER POSTURE — ATLAS_SESSION_PLANS_WRITE=1 and
+//     SESSION_PLAN_SETS_WRITE_ENABLED=1, the two flags the combined rehearsal sets. With
+//     them off the session has no plan capture, no checkpoint writes and a dry-run seal:
+//     47 reads become 41, and the budget would describe a cheaper session than the one
+//     that failed. A posture bite refuses that.
 //   • The request sequence is the LITERAL sequence of API calls from the failed run's
 //     server log, in order (static asset and health requests dropped — they reach no
 //     handler that reads). It is not a representative sample; it is that session —
@@ -50,14 +55,18 @@
 //     failure. If this sequence ever stops genuinely exercising the read paths, those
 //     tests stop failing-as-required and this file goes red.
 //
-// MEASURED, on this sequence:
-//     batching + cache   41   ← the shipped behaviour, against a budget of 50
-//     batching only      55   ← catalog cache removed
-//     cache only         88   ← batching removed
-//     neither           102   ← the complete pre-change counterfactual. Compare against
+// MEASURED, on this sequence, in the qualifying ledger posture:
+//     batching + cache   47   ← the shipped behaviour, against a budget of 50
+//     batching only      61   ← catalog cache removed
+//     cache only        103   ← batching removed
+//     neither           117   ← the complete pre-change counterfactual. Compare against
 //                               THIS, not the archived 78 (a values-read lower bound from
 //                               the old logging surface; the live run was also cut short
 //                               by the quota it had already exhausted).
+//
+// The margin is THREE reads. That is deliberate headroom against Google's real 60/min
+// limit, not slack: the measurement is deterministic (47 on every run), so a change that
+// adds even a few requests to a session turns this file red — which is the point.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -88,15 +97,41 @@ process.env.ATLAS_WRITE_RATE_LIMIT_MAX = '1000000';
 // `assertSequenceGenuine` fails on any Save that did not really write.
 process.env.ATLAS_IDEMPOTENCY_FILE = require('node:path').join(
   require('node:os').tmpdir(), 'atlas-session-read-budget-idempotency.json');
+// THE QUALIFYING LEDGER POSTURE. F-SB4B qualifying runs the combined rehearsal
+// (`ATLAS_GATE_SANDBOX_LIVE=1` + `ATLAS_GATE_LEDGER_SANDBOX=1`), and in that posture
+// `tests/e2e/gate/gate-server.js` sets BOTH of these (:142-143). They are two separate
+// gates: ATLAS_SESSION_PLANS_WRITE controls the Session_Plans event capture,
+// SESSION_PLAN_SETS_WRITE_ENABLED controls the Session_Plan_Sets checkpoint/seal lane.
+//
+// Measuring with them off measures a CHEAPER session than the one whose quota failure
+// this budget exists to prevent: no capture, no checkpoint writes, a dry-run seal, and
+// fewer reads. So they are on here.
+//
+// This is not a production-write authorization and changes no owner-frozen configuration.
+// googleapis is fully faked in this file — no Google client is reachable — and the same
+// pattern is already used by the gate harness and by test/sessionPlanSetsCapture.js.
+// SESSION_PLAN_SETS_WRITE_ENABLED is captured at MODULE LOAD, so it must be set before
+// index.js / sessionPlanCapture / sessionPlanSetsStore are required.
+process.env.ATLAS_SESSION_PLANS_WRITE = '1';
+process.env.SESSION_PLAN_SETS_WRITE_ENABLED = '1';
 
 // ── Sheet fixture ────────────────────────────────────────────────────────────
 // Column layouts follow .claude/rules/sheet-schemas.md exactly, so the handlers parse
 // real rows rather than shapes that happen to survive.
-const LOG_HEADER = ['date_clean', 'session_id', 'exercise', 'canonical_exercise', 'muscle_group', 'lift_code', 'set_number', 'weight', 'reps', 'rir', 'notes', 'volume_calc'];
-const EFFORT_HEADER = ['date', 'session_id', 'duration', 'active_calories', 'total_calories', 'average_hr', 'peak_hr', 'location', 'notes'];
-const DELOAD_HEADER = ['updated_at', 'training_state', 'deload_protocol', 'deload_reason', 'deload_start_date', 'deload_sessions_remaining', 'deload_exit_criteria'];
-const PLANS_HEADER = ['idempotency_key', 'session_id', 'session_date', 'plan_version', 'event_type', 'plan_item_id', 'planned_order', 'planned_lift_code', 'movement_pattern', 'outcome', 'performed_lift_code', 'closeout_status', 'recorded_at'];
-const PLAN_SETS_HEADER = ['idempotency_key', 'session_id', 'session_date', 'plan_version', 'plan_item_id', 'set_number', 'planned_lift_code', 'planned_weight', 'planned_reps', 'planned_rir', 'source', 'endorsement', 'performed_weight', 'performed_reps', 'performed_rir', 'recorded_at'];
+// Headers are taken from `config/columns.js`, the schema authority, rather than copied.
+// A hand-written Session_Plan_Sets header in an earlier head was simply WRONG — invented
+// column names that the real capture layer would never produce — and a fixture that does
+// not match the contract cannot prove a ledger write.
+const {
+  logCleanedColumns, effortColumns, deloadStateColumns,
+  sessionPlansColumns, sessionPlanSetsColumns, constraintsColumns,
+} = require('../config/columns');
+
+const LOG_HEADER = [...logCleanedColumns];
+const EFFORT_HEADER = [...effortColumns];
+const DELOAD_HEADER = [...deloadStateColumns];
+const PLANS_HEADER = [...sessionPlansColumns];
+const PLAN_SETS_HEADER = [...sessionPlanSetsColumns];
 
 const CATALOG = [
   ['Exercise', 'Canonical_Name', 'Muscle_Group', 'Lift_Code'],
@@ -133,7 +168,7 @@ function resetSheet() {
     Session_Plans: [PLANS_HEADER],
     Session_Plan_Sets: [PLAN_SETS_HEADER],
     Exercise_Catalog: CATALOG,
-    Constraints: [['date', 'kind', 'target', 'rule', 'note']],
+    Constraints: [[...constraintsColumns]],
     Coaching_Notes: [['date', 'note']],
   };
 }
@@ -216,7 +251,28 @@ const fakeSheetsClient = {
         return { data: { updates: { updatedRows: requestBody.values.length, updatedRange: `${tab}!A2:Z2` } } };
       },
       update: async () => ({ data: {} }),
-      batchUpdate: async () => ({ data: { totalUpdatedCells: 1 } }),
+      // Truthfully APPLIES the update and reports the real cell count. A fake that always
+      // answered `totalUpdatedCells: 1` made the closeout seal fail `seal_proof_mismatch`
+      // (expected 13, got 1) — a fixture defect that would have read as a product defect,
+      // and the seal's proof field is exactly what must not be faked.
+      batchUpdate: async ({ requestBody }) => {
+        let totalUpdatedCells = 0;
+        for (const entry of requestBody?.data || []) {
+          const [tab, spec] = String(entry.range).split('!');
+          const m = /^([A-Z]+)(\d+):([A-Z]+)(\d+)$/.exec(spec || '');
+          const rows = SHEET[tab];
+          if (!m || !rows) continue;
+          const col = m[1].split('').reduce((n, ch) => n * 26 + (ch.charCodeAt(0) - 64), 0) - 1;
+          const firstRow = Number(m[2]);
+          (entry.values || []).forEach((rowValues, i) => {
+            const sheetRow = rows[firstRow - 1 + i];
+            if (!sheetRow) return;
+            rowValues.forEach((value, j) => { sheetRow[col + j] = String(value == null ? '' : value); });
+            totalUpdatedCells += rowValues.length;
+          });
+        }
+        return { data: { totalUpdatedCells } };
+      },
     }
   }
 };
@@ -450,31 +506,26 @@ function assertCloseoutGenuine(results) {
   const seal = data.ledger_seal;
   assert.ok(seal, 'sealCloseout must have run — its absence means the closeout branch was skipped');
   assert.equal(seal.sealed_ok, true, `the ledger seal must succeed: ${JSON.stringify(seal)}`);
-  // Verified against the CURRENT write posture. SESSION_PLAN_SETS_WRITE_ENABLED is 0 by
-  // owner gate until Phase 4, so the seal is a dry run — and a dry run has its own
-  // positive proof obligation under Invariants W1–W3. If the posture is ever enabled the
-  // other branch applies, so this cannot silently pass by changing posture.
-  if (seal.dry_run === true) {
-    assert.equal(seal.sheet_written, false, 'a dry-run seal must prove it wrote nothing');
-    assert.equal(seal.no_write_confirmed, true, 'a dry-run seal must carry no_write_confirmed');
-  } else {
-    assert.equal(seal.sheet_written, true, 'a live seal must prove it wrote');
-  }
+  // The qualifying posture has SESSION_PLAN_SETS_WRITE_ENABLED=1, so this is a LIVE seal
+  // and must carry live-write proof. A dry-run seal here means the harness dropped back to
+  // the cheaper posture and the measured budget no longer describes the qualifying session.
+  assert.notEqual(seal.dry_run, true,
+    `the qualifying posture enables the set-ledger lane — a dry-run seal means this harness ` +
+    `is measuring a cheaper session than F-SB4B qualifying: ${JSON.stringify(seal)}`);
+  assert.equal(seal.sheet_written, true, `a live seal must prove it wrote: ${JSON.stringify(seal)}`);
 
   const plans = data.session_plans_closeout;
   assert.ok(plans, 'recordCloseoutEvent must have run');
+  // The QUALIFYING posture has ATLAS_SESSION_PLANS_WRITE=1, so the closeout event must be
+  // genuinely CAPTURED. Accepting `status: 'disabled'` here would let the budget be
+  // measured on a cheaper dry-run session than the one that actually failed.
+  assert.notEqual(plans.status, 'disabled',
+    'the qualifying posture enables ATLAS_SESSION_PLANS_WRITE — a disabled capture means ' +
+    'this harness is measuring a cheaper session than F-SB4B qualifying');
   assert.notEqual(plans.status, 'error',
     `the Session_Plans closeout event must not error: ${JSON.stringify(plans)}`);
-  if (plans.status === 'disabled') {
-    // Cleanly disabled by the same owner-frozen write posture — NOT a failure, but it must
-    // be clean: a disabled capture carrying a reason is a failure wearing a disabled label.
-    assert.equal(plans.captured, false, 'a disabled capture cannot claim it captured');
-    assert.equal(plans.reason, null,
-      `a disabled capture must be clean, not carrying a failure reason: ${JSON.stringify(plans)}`);
-  } else {
-    assert.equal(plans.captured, true,
-      `an enabled Session_Plans closeout must capture: ${JSON.stringify(plans)}`);
-  }
+  assert.equal(plans.captured, true,
+    `the Session_Plans closeout event must be captured: ${JSON.stringify(plans)}`);
 }
 
 /** Where the reads went — printed on a budget failure so the cause is visible, not guessed. */
@@ -732,10 +783,14 @@ test('MUTATION: a failed closeout settlement makes the guard red', async () => {
   const failures = [
     ['the settlement verdict is false', { closeout_fully_verified: false }],
     ['the ledger seal failed', { ledger_seal: { sealed_ok: false, dry_run: true, sheet_written: false, no_write_confirmed: true } }],
-    ['a dry-run seal claims no proof', { ledger_seal: { sealed_ok: true, dry_run: true, sheet_written: false, no_write_confirmed: false } }],
-    ['the Session_Plans capture errored', { session_plans_closeout: { status: 'error', captured: false, reason: 'boom' } }],
-    ['a disabled capture carries a failure reason', { session_plans_closeout: { status: 'disabled', captured: false, reason: 'boom' } }],
-    ['an enabled capture did not capture', { session_plans_closeout: { status: 'ok', captured: false, reason: null } }],
+    ['the seal did not write', { ledger_seal: { sealed_ok: true, sheet_written: false } }],
+    ['the Session_Plans capture errored', { session_plans_closeout: { status: 'error', captured: true, reason: 'boom' } }],
+    // The POSTURE bite: a `disabled` capture or a dry-run seal means the harness dropped
+    // back to the cheaper non-qualifying posture. Accepting either would let the budget be
+    // measured on a session that performs fewer reads than the one that actually failed.
+    ['the Session_Plans capture was disabled', { session_plans_closeout: { status: 'disabled', captured: false, reason: null } }],
+    ['the capture did not capture', { session_plans_closeout: { status: 'written', captured: false, reason: null } }],
+    ['the set-ledger seal ran dry', { ledger_seal: { sealed_ok: true, dry_run: true, sheet_written: false, no_write_confirmed: true } }],
   ];
   for (const [label, patch] of failures) {
     assert.throws(() => assertCloseoutGenuine(mutate(patch)), Error,
@@ -781,6 +836,36 @@ test('a transient refresh failure after expiry reaches the catalog route as a re
   assert.match(payload, /"retryable":true/, 'the response must declare itself retryable');
   assert.equal(out.list.length, 0, 'a failed refresh must not be answered with stale catalog data');
   failNextReadOf = null;
+});
+
+// ── 4g. POSTURE BITE — the budget must be measured on the QUALIFYING posture ──
+//
+// F-SB4B qualifying runs the combined rehearsal, where `tests/e2e/gate/gate-server.js`
+// sets ATLAS_SESSION_PLANS_WRITE=1 and SESSION_PLAN_SETS_WRITE_ENABLED=1. An earlier head
+// of this file set neither, so it measured a session with no plan capture, no checkpoint
+// writes and a dry-run seal — 41 reads for a session that actually costs 47. This proves
+// the guard now refuses that cheaper posture instead of quietly measuring it.
+test('POSTURE: turning off the Session_Plans write gate makes the qualifying guard fail', async () => {
+  const previous = process.env.ATLAS_SESSION_PLANS_WRITE;
+  let disabled;
+  // Read per call by sessionPlanCapture, so it can be flipped for one run.
+  delete process.env.ATLAS_SESSION_PLANS_WRITE;
+  try {
+    disabled = await runSession();
+  } finally {
+    if (previous === undefined) delete process.env.ATLAS_SESSION_PLANS_WRITE;
+    else process.env.ATLAS_SESSION_PLANS_WRITE = previous;
+  }
+
+  assertSequenceGenuine(disabled.results);   // the cheaper session still answers 2xx…
+  assert.throws(() => assertCloseoutGenuine(disabled.results), /disabled|captured/i,
+    '…but the guard must refuse it: a disabled capture is not the qualifying posture');
+
+  // And it IS cheaper — which is exactly why accepting it would understate the budget.
+  const qualifying = await runSession();
+  assertCloseoutGenuine(qualifying.results);
+  assert.ok(qualifying.peak > disabled.peak,
+    `the qualifying posture must cost more than the disabled one; got ${qualifying.peak} vs ${disabled.peak}`);
 });
 
 // ── 5. Deload_State is never served stale ────────────────────────────────────

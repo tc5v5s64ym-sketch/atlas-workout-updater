@@ -169,6 +169,12 @@ failing in the gym.
 
 ### 1. Request-scoped `values.batchGet` (primary)
 
+Spreadsheet **metadata** (`spreadsheets.get`, behind `getSpreadsheetTabs`) is
+request-scoped too. A session asks "which tabs exist?" repeatedly inside one request —
+`closeoutFinality`, both ledger tab probes, every `confirmTabMissing` — and each ask used
+to be its own metered request. Tab existence cannot change inside a request except through
+`ensureSheetTab`, which invalidates the entry. Nothing is cached across requests.
+
 `sheets.js` opens a read context per HTTP request (`runWithReadContext`). A route
 declares the ranges it needs (`services/sessionReadBatch.js`), and the **first read the
 handler actually performs** issues them as one `batchGet`. Repeat reads of the same range
@@ -216,18 +222,28 @@ and a stale copy would corrupt a decision.
 
 Against the failed run's own request sequence, replayed through the real handlers:
 
+Measured in the **qualifying ledger posture** — `ATLAS_SESSION_PLANS_WRITE=1` and
+`SESSION_PLAN_SETS_WRITE_ENABLED=1`, the two flags the combined rehearsal sets
+(`tests/e2e/gate/gate-server.js`). With them off the session has no plan capture, no
+checkpoint writes and a dry-run seal, and costs 41 rather than 47 — a cheaper session than
+the one that failed.
+
 | Configuration | Peak rolling-60s reads |
 |---|---|
-| batching + catalog cache (shipped) | **41** |
-| batching only | 55 |
-| catalog cache only | 88 |
-| neither (pre-change) | 102 |
+| batching + catalog cache (shipped) | **47** |
+| batching only | 61 |
+| catalog cache only | 103 |
+| neither (pre-change) | 117 |
 
-The 102 is the complete pre-change counterfactual, and it is the number to compare
-against: it counts every metered method through the real handlers. The archived run's 78
-is a values-read lower bound from the old logging surface (see above) and is consistent
-with it — the live session was also cut short by the quota it had already exhausted. What
-makes the 41 meaningful is the 102, not the 78.
+The 117 is the complete pre-change counterfactual, and it is the number to compare
+against: it counts every metered method through the real handlers, in the posture the
+qualifying session runs. The archived run's 78 is a values-read lower bound from the old
+logging surface (see above) and is consistent with it — the live session was also cut short
+by the quota it had already exhausted. What makes the 47 meaningful is the 117, not the 78.
+
+The margin is **three reads**. The measurement is deterministic (47 on every run), so that
+is headroom against Google's real 60/minute limit rather than slack: a change that adds a
+few requests to a session turns the guard red.
 
 ## The guard
 
@@ -246,10 +262,10 @@ real `sheets.js` and the real Express app, faking only `googleapis`, and asserts
 - restoring individual range requests **breaks** the budget;
 - restoring per-request catalog reads **breaks** the budget;
 - both disabled **reproduces** the original quota failure;
-- the closeout **settled**: `closeout_fully_verified === true`, the ledger seal succeeded
-  with the proof its posture requires (a dry run must carry `sheet_written:false` +
-  `no_write_confirmed:true`), and the Session_Plans closeout event either captured or was
-  cleanly disabled — never errored, and never disabled-with-a-reason;
+- the closeout **settled** in the qualifying posture: `closeout_fully_verified === true`,
+  a **live** set-ledger seal with `sheet_written: true`, and a Session_Plans closeout event
+  that is genuinely `captured: true` — a `disabled` capture or a dry-run seal fails the
+  guard, because either means a cheaper session is being measured;
 - a `Deload_State` change is visible to the next recommendation — the budget may never be
   bought with a cached training state;
 - the catalog **route** never serves a snapshot older than one TTL; a **transient** refresh

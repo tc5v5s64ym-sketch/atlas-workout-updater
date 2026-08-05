@@ -82,13 +82,16 @@ const DECLARATIONS = [
 
   // The Save path. Dedup evidence and header guards travel together; the ledger ranges
   // ride along because a save that binds to an accepted plan reads them in the same turn.
+  // The closeout arrives on this route, so the FULL ledger set rides along: the closeout
+  // event and the set-ledger seal read both tabs' rows, header-existence probes and
+  // headers. Declaring only the rows left five of those as separate requests.
   {
     method: 'POST', pattern: /^\/api\/log-workout$/,
-    ranges: [LOG_KEYS, LOG_HEADER, EFFORT_SESSION_IDS, EFFORT_HEADER, PLANS_ROWS, PLAN_SETS_ROWS]
+    ranges: [LOG_KEYS, LOG_HEADER, EFFORT_SESSION_IDS, EFFORT_HEADER, ...PLANS_LEDGER, ...PLAN_SETS_LEDGER]
   },
   {
     method: 'POST', pattern: /^\/api\/complete-workout$/,
-    ranges: [LOG_KEYS, LOG_HEADER, EFFORT_SESSION_IDS, EFFORT_HEADER, PLANS_ROWS, PLAN_SETS_ROWS]
+    ranges: [LOG_KEYS, LOG_HEADER, EFFORT_SESSION_IDS, EFFORT_HEADER, ...PLANS_LEDGER, ...PLAN_SETS_LEDGER]
   },
 
   { method: 'POST', pattern: /^\/api\/coach\/message$/, ranges: [LOG_ROWS, LOG_KEYS, DELOAD_ROWS] },
@@ -97,6 +100,7 @@ const DECLARATIONS = [
   { method: 'POST', pattern: /^\/api\/session-plans\/accept$/, ranges: PLANS_LEDGER },
   { method: 'POST', pattern: /^\/api\/session-plans\/outcome$/, ranges: PLANS_LEDGER },
   { method: 'POST', pattern: /^\/api\/session-plan-sets\/accept$/, ranges: PLAN_SETS_LEDGER },
+  { method: 'POST', pattern: /^\/api\/session-plan-sets\/revision$/, ranges: PLAN_SETS_LEDGER },
 
   // The intent-observe debug lane reads the widest set — it correlates a turn against
   // every identity column at once. One batch is the whole point here.
