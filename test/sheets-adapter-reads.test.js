@@ -72,7 +72,12 @@ require.cache[googleapisPath] = {
 
 const sheets = require('../sheets');
 
-test.beforeEach(() => resetFake());
+test.beforeEach(() => {
+  resetFake();
+  // getExerciseCatalog holds a bounded cross-request cache, so a catalog read in one
+  // test would otherwise satisfy the next one without touching the fake client.
+  sheets._resetExerciseCatalogCache();
+});
 
 // ---------------------------------------------------------------------------
 // getHeaderRow — `${tab}!1:1`, first row or []
@@ -116,6 +121,7 @@ test('getExerciseCatalog reads Exercise_Catalog!A:Z and returns all rows verbati
   assert.deepEqual(out, [['Canonical_Name', 'Lift_Code'], ['Bench Press', 'BP01']]);
 
   resetFake();
+  sheets._resetExerciseCatalogCache();
   assert.deepEqual(await sheets.getExerciseCatalog(), []); // default empty -> []
 });
 

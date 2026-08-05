@@ -129,3 +129,105 @@ helper (e.g. `getLogCompositeKeys` going back to per-column fetches: 1→3 trips
 budget). They do **not** catch a new redundant read added in the handler itself
 (e.g. a second `getLogCompositeKeys` call) unless the read sequence here is updated
 to match. Keep this list in sync with the handler's reads.
+
+---
+
+# Session Google Sheets Read Budget
+
+**Status:** reference. The budget above is **per Save**. This section adds the budget
+that Google's quota actually meters — reads per **rolling 60 seconds across a complete
+session** — and records the mechanisms that hold it. The guard is
+`test/sessionReadBudget.test.js`.
+
+## Why a per-Save budget was not enough
+
+F-SB4B qualifying session 1 (2026-08-05, run `fsb4b-s1-20260805T122822-04E1C5`)
+exhausted its own read quota mid-session and died at closeout. Every individual Save
+was inside the per-Save budget. The session was not:
+`scripts/reconstruct-session-reads.js` over that run's server log measures **78 read
+attempts, 0 of them retries, peak rolling-60s window 78** — the whole session inside one
+minute against a 60/minute quota. Retry amplification was a consequence, not the cause.
+
+A per-Save budget cannot express "a session must fit in a minute", and a guard that
+counts `sheets.js` helper calls cannot see that one `batchGet` now carries what used to
+be six requests. So the session budget is measured at the **googleapis boundary**:
+every `values.get` and every `values.batchGet` the process issues.
+
+## The budget
+
+**Peak rolling-60s Sheets read requests, across a complete owner-pattern session: ≤ 50.**
+
+Fifty, not sixty, so a session that drifts has room to be caught before it starts
+failing in the gym.
+
+## The two mechanisms
+
+### 1. Request-scoped `values.batchGet` (primary)
+
+`sheets.js` opens a read context per HTTP request (`runWithReadContext`). A route
+declares the ranges it needs (`services/sessionReadBatch.js`), and the **first read the
+handler actually performs** issues them as one `batchGet`. Repeat reads of the same range
+inside the request are served from that one call.
+
+Three properties make it safe:
+
+- **The batch never outlives the request.** It is not a cross-request snapshot. Dedup
+  keys, Effort session ids, `Deload_State`, header rows and the `Session_Plans` /
+  `Session_Plan_Sets` ledger are still read fresh on every request that consumes them.
+  Batching changes how many API calls carry a range, never how old the values are.
+- **A write invalidates its tab** in the request context, so a read-after-write in the
+  same request cannot be served a pre-write value.
+- **It transports only.** Every existing helper still parses its own range.
+
+The declaration is lazy on purpose. An eager prefetch charges a batch to a request that
+then reads nothing — measured at +6 reads across one session — which is what makes a
+declaration broader than one code path genuinely free.
+
+Known limit: `batchGet` rejects the whole batch when a range names an absent tab. On a
+spreadsheet missing an optional tab the batch fails `range_unresolved` and each range
+falls back to its individual read — today's behaviour exactly, never worse, but the
+budget is not achieved on such a sheet.
+
+### 2. The `Exercise_Catalog` cache (the only approved cross-request cache)
+
+Reference data the athlete's writes never touch, and the single most-read range of the
+failed session (14 of 78). Server-owned; TTL ≤ 60 s; single-flight; expiry is explicit
+(an expired entry is discarded where it expires); **no stale-after-expiry fallback** — a
+failed refresh throws, carrying its `readWithRetry` class so the truthful 503 from
+PR #1270 still applies; an empty result is never cached and `[]` is never synthesized
+from an error.
+
+No other range is cached across requests. Every one of them is write-sensitive evidence,
+and a stale copy would corrupt a decision.
+
+## Measured
+
+Against the failed run's own request sequence, replayed through the real handlers:
+
+| Configuration | Peak rolling-60s reads |
+|---|---|
+| batching + catalog cache (shipped) | **36** |
+| batching only | 58 |
+| catalog cache only | 53 |
+| neither (pre-change) | 76 |
+
+The 76 reproduces the original failure (the live run measured 78), which is what makes
+the 36 meaningful.
+
+## The guard
+
+`test/sessionReadBudget.test.js` drives the complete owner-pattern sequence against the
+real `sheets.js` and the real Express app, faking only `googleapis`, and asserts:
+
+- peak rolling-60s reads **≤ 50**;
+- `Exercise_Catalog` costs **exactly one** request for the window;
+- **every** request answers 2xx — a 4xx performs no reads, and a sequence of early
+  rejections would produce a meaningless budget;
+- restoring individual range requests **breaks** the budget;
+- restoring per-request catalog reads **breaks** the budget;
+- both disabled **reproduces** the original quota failure;
+- a `Deload_State` change is visible to the next recommendation — the budget may never be
+  bought with a cached training state.
+
+The counterfactuals are the anti-false-green: if the sequence ever stops genuinely
+exercising the read paths, they stop failing-as-required and the file goes red.

@@ -20,9 +20,18 @@
 
 const fs = require('fs');
 
+// One entry per API REQUEST, which is what Google's quota meters.
+//
+// Since the F-SB4B read-batching change, `sheets.js` logs a line only when it actually
+// issues a request: a range served from the request-scoped batch, or from the
+// Exercise_Catalog cache, prints nothing and costs nothing. The per-helper lines below
+// ('Fetching rows from …', 'Fetching composite-key columns …', …) are the PRE-change
+// wording and are kept so this script still reads the qualifying-session-1 log and any
+// other archived log truthfully. A post-change log uses the first two patterns.
 const READ_PATTERNS = [
   // label, regex capturing the range
-  [/^\[sheets\.js\] Reading range (.+)$/, 'readRange'],
+  [/^\[sheets\.js\] Reading range (.+)$/, 'readValues'],
+  [/^\[sheets\.js\] Batch reading \d+ range\(s\): (.+)$/, 'prefetchRanges'],
   [/^\[sheets\.js\] Fetching Exercise_Catalog from range (.+)$/, 'getExerciseCatalog'],
   [/^\[sheets\.js\] Fetching composite-key columns from Log_Cleaned range (.+)$/, 'getLogCompositeKeys'],
   [/^\[sheets\.js\] Fetching recent rows from \S+ range (.+)$/, 'getRecentRows'],

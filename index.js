@@ -81,6 +81,7 @@ const {
   requireApiKey: requireApiKeyMiddleware,
   timingSafeStringEqual
 } = require('./middleware');
+const { createSessionReadBatchMiddleware } = require('./services/sessionReadBatch');
 const { success: standardSuccess, error: standardError } = require('./response');
 const sessionModule = require('./services/session');
 const { createTtlCache } = require('./services/cache');
@@ -264,6 +265,11 @@ function requestLogger(req, res, next) {
 }
 
 app.use(requestLogger);
+// F-SB4B session read budget. Opens a per-request Sheets read context and issues this
+// route's declared ranges as ONE values.batchGet. Transport only: it changes how many
+// API calls carry a range, never how fresh the values are, and every helper still parses
+// its own range. Declarations live in services/sessionReadBatch.js.
+app.use(createSessionReadBatchMiddleware());
 // Read-only + approve-before-save web UI. Static assets are public; every
 // data call the UI makes still goes through /api and requires the API key.
 app.use('/app', express.static(path.join(__dirname, 'public')));

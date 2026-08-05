@@ -37,9 +37,10 @@ process.env.GOOGLE_PRIVATE_KEY = 'KEYLINE1\\nKEYLINE2\\n';
 
 // ── Fake googleapis: `valuesGetPlan` is a queue of outcomes, one per call, so a
 // test can spell out "fail, fail, then succeed" and then COUNT the calls. ────────
-const calls = { valuesGet: [], spreadsheetsGet: [] };
+const calls = { valuesGet: [], spreadsheetsGet: [], valuesBatchGet: [] };
 let valuesGetPlan = [];
 let spreadsheetsGetPlan = [];
+let valuesBatchGetPlan = [];
 
 function nextFrom(plan, fallback) {
   const step = plan.length ? plan.shift() : fallback;
@@ -58,6 +59,12 @@ const fakeSheetsClient = {
       get: async (args) => {
         calls.valuesGet.push(args);
         return nextFrom(valuesGetPlan, { data: { values: [] } });
+      },
+      batchGet: async (args) => {
+        calls.valuesBatchGet.push(args);
+        return nextFrom(valuesBatchGetPlan, {
+          data: { valueRanges: (args.ranges || []).map(range => ({ range, values: [] })) }
+        });
       },
       append: async () => ({ data: { updates: {} } }),
       update: async () => ({ data: {} })
@@ -84,8 +91,14 @@ const { classifySheetsReadError, isTransientReadError, confirmTabMissing } = she
 test.beforeEach(() => {
   calls.valuesGet.length = 0;
   calls.spreadsheetsGet.length = 0;
+  calls.valuesBatchGet.length = 0;
   valuesGetPlan = [];
   spreadsheetsGetPlan = [];
+  valuesBatchGetPlan = [];
+  // getExerciseCatalog now holds a bounded cross-request cache. Without this reset a
+  // cached catalog from an earlier test would serve the next one WITHOUT a read, and
+  // the retry assertions below would silently stop exercising the read path.
+  sheets._resetExerciseCatalogCache();
 });
 
 // Realistic error shapes. gaxios (googleapis) puts the HTTP status on `.status` and
@@ -331,16 +344,28 @@ test('EVERY read helper retries a transient failure', async () => {
     ['getEffortSessionIds', () => sheets.getEffortSessionIds(), 'valuesGet'],
     ['getLogCompositeKeys', () => sheets.getLogCompositeKeys(), 'valuesGet'],
     ['getSpreadsheetTabs', () => sheets.getSpreadsheetTabs(), 'spreadsheetsGet'],
+    // The batch read is issued by the first read inside a request that declared ranges.
+    // It reaches the same API through the same wrapper, so a transient failure must cost
+    // it a retry and not a request.
+    ['batched read', () => sheets.runWithReadContext(async () => {
+      sheets.declareRequestRanges(['Tab!A:Z', 'Other!A:Z']);
+      // The batch defers its failure to the read that needs the range, so the value has
+      // to be ASKED for before the ladder's outcome is observable.
+      await sheets.readRange('Tab!A:Z');
+    }), 'valuesBatchGet'],
   ];
   for (const [name, invoke, counter] of cases) {
     calls.valuesGet.length = 0;
     calls.spreadsheetsGet.length = 0;
+    calls.valuesBatchGet.length = 0;
     valuesGetPlan = [];
     spreadsheetsGetPlan = [];
-    const plan = counter === 'valuesGet' ? 'valuesGetPlan' : 'spreadsheetsGetPlan';
-    const success = counter === 'valuesGet' ? { data: { values: [] } } : { data: { sheets: [] } };
-    if (plan === 'valuesGetPlan') valuesGetPlan = [gaxios(503, 'Backend Error'), success];
-    else spreadsheetsGetPlan = [gaxios(503, 'Backend Error'), success];
+    valuesBatchGetPlan = [];
+    sheets._resetExerciseCatalogCache();
+    if (counter === 'valuesGet') valuesGetPlan = [gaxios(503, 'Backend Error'), { data: { values: [] } }];
+    else if (counter === 'spreadsheetsGet') spreadsheetsGetPlan = [gaxios(503, 'Backend Error'), { data: { sheets: [] } }];
+    else valuesBatchGetPlan = [gaxios(503, 'Backend Error'),
+      { data: { valueRanges: [{ range: 'Tab!A:Z', values: [] }, { range: 'Other!A:Z', values: [] }] } }];
     await invoke();
     assert.equal(calls[counter].length, 2, `${name} must retry a transient read failure`);
   }
@@ -370,6 +395,15 @@ test('the exported read surface is exactly the set proven to retry', () => {
   ];
   const NON_READ_EXPORTS = [
     'appendRows', 'updateColumnCells', 'deleteRowsByRange', 'ensureSheetTab',
+    // Request-scoped read batching. None of these reaches the network: the first
+    // establishes the per-request context, the second drops cached values for a tab
+    // after a write, and the last three are the catalog cache's constant and its
+    // test-only reset/inspection.
+    // `declareRequestRanges` only RECORDS what a route expects to need; the batchGet it
+    // enables is issued by the read helpers above and is covered by the 'batched read'
+    // case in the retry test.
+    'runWithReadContext', 'declareRequestRanges', 'invalidateTabCache',
+    'CATALOG_CACHE_TTL_MS', '_resetExerciseCatalogCache', '_exerciseCatalogCacheStats',
     'validateConfig', 'getSafeSpreadsheetConfig',
     'isTransientAppendError', 'retryWithBackoff',
     'classifySheetsReadError', 'isTransientReadError', 'confirmTabMissing', 'readWithRetry',

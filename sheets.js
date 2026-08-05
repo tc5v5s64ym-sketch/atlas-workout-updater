@@ -1,4 +1,5 @@
 const { google } = require('googleapis');
+const { AsyncLocalStorage } = require('node:async_hooks');
 
 const spreadsheetId = process.env.GOOGLE_SHEETS_ID;
 const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
@@ -336,6 +337,209 @@ async function getSheetsClient() {
   return google.sheets({ version: 'v4', auth: authClient });
 }
 
+// ───────────────────────────────────────────────────────────────────────────────
+// Request-scoped read batching (F-SB4B session read budget).
+//
+// WHY. Qualifying session 1 spent 78 Sheets reads inside one rolling minute against
+// a 60/minute quota and starved itself. `docs/READ_BUDGET.md` budgets reads PER SAVE,
+// so it could not see that. The reconstruction (scripts/reconstruct-session-reads.js)
+// shows the demand is not one expensive read — it is MANY separate `values.get` calls,
+// several of them the SAME range inside the SAME HTTP request.
+//
+// The mechanism is `spreadsheets.values.batchGet`: N ranges needed by one request cost
+// ONE quota unit instead of N. Two rules keep it honest, and they are the whole design:
+//
+//   1. A batch lives for exactly ONE HTTP request. It is never a cross-request snapshot
+//      of write-sensitive evidence. Log_Cleaned dedup keys, Effort session ids,
+//      Deload_State, header-drift rows and the Session_Plans / Session_Plan_Sets ledger
+//      are read FRESH on every request that consumes them — batching changes only how
+//      many API calls carry them, never how old they are.
+//   2. This adapter TRANSPORTS values. It parses nothing. Every helper below keeps its
+//      own parsing and normalization, so the authority for interpreting a range is
+//      unchanged whether the values arrived in a batch or in a single read.
+//
+// A write inside the request invalidates the written tab (see `invalidateTabCache`), so
+// a read-after-write in the same request can never be served a pre-write value.
+const readContextStorage = new AsyncLocalStorage();
+
+/** Key a range so a COLUMNS-major read is never confused with a ROWS-major one. */
+function cacheKey(range, majorDimension) {
+  return majorDimension === 'COLUMNS' ? `${range}#COLUMNS` : range;
+}
+
+/** The tab a range belongs to. `Log_Cleaned!B:G` → `Log_Cleaned`; a bare tab name → itself. */
+function tabOfRange(range) {
+  const text = String(range || '');
+  const bang = text.indexOf('!');
+  return (bang === -1 ? text : text.slice(0, bang)).replace(/^'|'$/g, '');
+}
+
+/**
+ * Run `fn` with a fresh request-scoped read context. Every read issued inside it is
+ * deduplicated by range, and ranges declared through `declareRequestRanges` are fetched
+ * in a single `values.batchGet` when the first of them is actually read. Outside a context every helper behaves exactly as before —
+ * one read, one API call — so scripts and tests are unaffected.
+ */
+function runWithReadContext(fn) {
+  return readContextStorage.run({ values: new Map(), inflight: new Map(), declared: null }, fn);
+}
+
+function currentReadContext() {
+  return readContextStorage.getStore() || null;
+}
+
+/**
+ * Declare the ranges this request is expected to need. Records the declaration; it
+ * issues NOTHING by itself.
+ *
+ * Laziness is the load-bearing part, not an optimisation. An eager prefetch charges a
+ * request for a batch even when the handler goes on to read nothing, so a route whose
+ * declaration is broader than the path it actually takes would COST a read it never used
+ * to make — measured at +6 reads across one session before this was made lazy. Deferring
+ * to the first real read means the batch is paid for only by a request that was going to
+ * read anyway, which is what makes an over-broad declaration genuinely free.
+ *
+ * No-op outside a request context.
+ */
+function declareRequestRanges(ranges) {
+  const ctx = currentReadContext();
+  if (!ctx) return;
+  const wanted = [...new Set((Array.isArray(ranges) ? ranges : []).map(r => String(r || '')).filter(Boolean))];
+  if (wanted.length) ctx.declared = wanted;
+}
+
+/**
+ * Issue the declared ranges (plus `alsoNeeded`, the range that triggered this) as ONE
+ * batchGet, and register each range's slice as in-flight.
+ *
+ * Failure is DEFERRED, deliberately: the rejection is only raised by a helper that
+ * actually asks for one of these ranges. A declaration is allowed to be broader than a
+ * given code path, so a range this request never reads must not be able to fail it. A
+ * range the batch could not resolve falls back to an individual read, which preserves the
+ * per-range `range_unresolved` handling callers already depend on (an optional tab such
+ * as Deload_State is simply absent, not an error).
+ */
+function flushDeclaredRanges(ctx, alsoNeeded) {
+  const declared = ctx.declared || [];
+  ctx.declared = null;
+  const wanted = [...new Set([alsoNeeded, ...declared])]
+    .filter(range => !ctx.values.has(range) && !ctx.inflight.has(range));
+  if (wanted.length < 2) return false;   // one range is a plain get; a batch would cost the same
+
+  const label = `batchGet(${wanted.length} ranges)`;
+  const promise = (async () => {
+    const sheets = await getSheetsClient();
+    console.log(`[sheets.js] Batch reading ${wanted.length} range(s): ${wanted.join(', ')}`);
+    const response = await readWithRetry(label, () => sheets.spreadsheets.values.batchGet({
+      spreadsheetId,
+      ranges: wanted
+    }));
+    const valueRanges = response.data.valueRanges || [];
+    // batchGet returns valueRanges positionally, in the order the ranges were requested.
+    // The `range` field it echoes is the RESOLVED A1 (`Log_Cleaned!B1:G997`), not the
+    // requested string, so position is the only sound mapping. If the count ever fails to
+    // match, refuse to guess: mapping the wrong values onto a range would hand a caller
+    // another tab's data, which is worse than an extra read.
+    if (valueRanges.length !== wanted.length) {
+      throw new Error(`batchGet returned ${valueRanges.length} ranges for ${wanted.length} requested`);
+    }
+    const byRange = new Map();
+    wanted.forEach((range, index) => byRange.set(range, valueRanges[index].values || []));
+    return byRange;
+  })();
+  // Swallow here only so an unawaited rejection cannot crash the process; the error is
+  // re-raised by `readValues` for the range that actually needs it.
+  promise.catch(() => {});
+
+  for (const range of wanted) {
+    const slice = (async () => {
+      const byRange = await promise;
+      const values = byRange.get(range) || [];
+      ctx.values.set(range, values);
+      return values;
+    })();
+    slice.catch(() => {});
+    ctx.inflight.set(range, slice);
+  }
+  return true;
+}
+
+/**
+ * The single funnel every read helper below uses. Serves a request-scoped hit when one
+ * exists, joins an in-flight fetch for the same range rather than issuing a second, and
+ * otherwise performs exactly the `values.get` the helper used to perform itself.
+ */
+async function readValues(range, { majorDimension } = {}) {
+  const key = cacheKey(range, majorDimension);
+  const ctx = currentReadContext();
+
+  if (ctx) {
+    if (ctx.values.has(key)) return ctx.values.get(key);
+    // First read of the request: collapse this range and everything the route declared
+    // into one batchGet. A COLUMNS-major read stays out — batchGet carries one
+    // majorDimension for the whole call, so mixing them would reshape the values.
+    if (ctx.declared && !majorDimension) flushDeclaredRanges(ctx, key);
+    const pending = ctx.inflight.get(key);
+    if (pending) {
+      try {
+        return await pending;
+      } catch (error) {
+        // The batch that carried this range failed. A structural failure (a range that
+        // does not resolve) degrades to the individual read this helper would have made,
+        // so nothing about optional-tab handling changes. A transient or permanent
+        // failure is the answer: it is exactly what a single read would have returned,
+        // and it keeps the PR #1270 read-failure class intact for the 503 path.
+        if (sheetsReadFailureClass(error) !== 'range_unresolved') throw error;
+        ctx.inflight.delete(key);
+      }
+    }
+  }
+
+  const fetch = (async () => {
+    const sheets = await getSheetsClient();
+    console.log(`[sheets.js] Reading range ${range}`);
+    const response = await readWithRetry(range, () => sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range,
+      ...(majorDimension ? { majorDimension } : {})
+    }));
+    return response.data.values || [];
+  })();
+
+  if (!ctx) return fetch;
+
+  ctx.inflight.set(key, fetch);
+  fetch.catch(() => {});
+  try {
+    const values = await fetch;
+    ctx.values.set(key, values);
+    return values;
+  } finally {
+    ctx.inflight.delete(key);
+  }
+}
+
+/**
+ * Drop every request-scoped value for one tab. Called by each write primitive so a
+ * read-after-write inside the same request re-reads the sheet instead of replaying a
+ * value captured before the write. Deload_State depends on this: begin/advance/resolve
+ * append a row, and the state read after that append must see it.
+ */
+function invalidateTabCache(tabName) {
+  const ctx = currentReadContext();
+  if (!ctx) return;
+  const tab = tabOfRange(tabName);
+  for (const map of [ctx.values, ctx.inflight]) {
+    for (const key of [...map.keys()]) {
+      if (tabOfRange(key) === tab) map.delete(key);
+    }
+  }
+  if (ctx.declared) {
+    const kept = ctx.declared.filter(range => tabOfRange(range) !== tab);
+    ctx.declared = kept.length ? kept : null;
+  }
+}
+
 async function appendRows(tabName, rows) {
   if (!Array.isArray(rows) || rows.length === 0) {
     throw new Error('Rows must be a non-empty array.');
@@ -366,47 +570,91 @@ async function appendRows(tabName, rows) {
   );
 
   console.log(`[sheets.js] Appended to "${tabName}": ${response.data.updates?.updatedRows} row(s) at ${response.data.updates?.updatedRange}`);
+  invalidateTabCache(tabName);
   return response;
 }
 
 async function getColumnValues(tabName, column) {
-  const sheets = await getSheetsClient();
   const range = `${tabName}!${column}:${column}`;
-  console.log(`[sheets.js] Fetching column ${column} from ${tabName}`);
-
-  const response = await readWithRetry(range, () => sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range,
-    majorDimension: 'COLUMNS'
-  }));
-
-  return response.data.values?.[0] || [];
+  const values = await readValues(range, { majorDimension: 'COLUMNS' });
+  return (values[0] || []).slice();
 }
 
-async function getExerciseCatalog() {
-  const sheets = await getSheetsClient();
+/**
+ * Exercise_Catalog — the ONE approved cross-request cache.
+ *
+ * It qualifies where no other range does: it is reference data the athlete's own writes
+ * never touch on the Save path, and it was the single most-read range of the failed
+ * session (14 of 78 reads). Every other range in this file stays uncached, because a
+ * dedup key, an Effort session id, a Deload_State row, a header row or a ledger record is
+ * write-sensitive evidence and a stale copy of it would corrupt a decision.
+ *
+ * The contract, and the reason for each clause:
+ *   • server-owned — the value is read from the sheet, never supplied by a client;
+ *   • bounded TTL, at most 60 s — a catalog edit is visible within one minute;
+ *   • single-flight — simultaneous misses join ONE request instead of stampeding;
+ *   • explicit expiry — an expired entry is DISCARDED at the point it expires, so no
+ *     later branch can serve it;
+ *   • no stale-after-expiry fallback — a failed refresh THROWS. It never returns the
+ *     previous value, because a silently-frozen catalog is how a wrong lift_code gets
+ *     written to the permanent record;
+ *   • failure propagates — the error keeps the `readWithRetry` stamp, so the truthful
+ *     503 classification from PR #1270 still applies to it;
+ *   • never fabricates — an empty result is never cached and `[]` is never synthesized
+ *     from an error. A caller that sees an empty catalog is seeing the sheet.
+ */
+const CATALOG_CACHE_TTL_MS = 60_000;
+let catalogCacheEntry = null;     // { values, expiresAt }
+let catalogCacheInflight = null;  // single-flight
+const catalogCacheStats = { hits: 0, fetches: 0 };
+
+async function getExerciseCatalog({ now = Date.now } = {}) {
+  if (catalogCacheEntry) {
+    if (now() < catalogCacheEntry.expiresAt) {
+      catalogCacheStats.hits += 1;
+      return catalogCacheEntry.values.slice();
+    }
+    // Explicit expiry: drop it here so no path below can fall back to it.
+    catalogCacheEntry = null;
+  }
+  if (catalogCacheInflight) return catalogCacheInflight;
+
   const range = `Exercise_Catalog!A:Z`;
-  console.log(`[sheets.js] Fetching Exercise_Catalog from range ${range}`);
+  catalogCacheStats.fetches += 1;
+  catalogCacheInflight = (async () => {
+    const sheets = await getSheetsClient();
+    console.log(`[sheets.js] Fetching Exercise_Catalog from range ${range}`);
+    const response = await readWithRetry(range, () => sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range
+    }));
+    // Outer-array copy for the same reason as readRange, and it matters more here: this
+    // array outlives the request, so one caller's mutation would reach every later one.
+    const values = (response.data.values || []).slice();
+    // An empty catalog is never cached. It is far more likely to be a transient read of a
+    // sheet mid-edit than the truth, and caching it would blind enrichment for a minute.
+    if (values.length > 0) catalogCacheEntry = { values, expiresAt: now() + CATALOG_CACHE_TTL_MS };
+    return values;
+  })();
 
-  const response = await readWithRetry(range, () => sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range
-  }));
+  try {
+    return await catalogCacheInflight;
+  } finally {
+    catalogCacheInflight = null;
+  }
+}
 
-  return response.data.values || [];
+/** Test-only: forget the catalog cache so a test starts from a cold, honest state. */
+function _resetExerciseCatalogCache() {
+  catalogCacheEntry = null;
+  catalogCacheInflight = null;
+  catalogCacheStats.hits = 0;
+  catalogCacheStats.fetches = 0;
 }
 
 async function getRecentRows(tabName, maxRows = 100) {
-  const sheets = await getSheetsClient();
   const range = `${tabName}!A:Z`;
-  console.log(`[sheets.js] Fetching recent rows from ${tabName} range ${range}`);
-
-  const response = await readWithRetry(range, () => sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range
-  }));
-
-  const rows = response.data.values || [];
+  const rows = await readValues(range);
   if (rows.length <= 1) return [];
   // exclude header row
   const dataRows = rows.slice(1).map(row => row.map(cell => (cell === undefined ? '' : cell)));
@@ -414,32 +662,17 @@ async function getRecentRows(tabName, maxRows = 100) {
 }
 
 async function getSheetRows(tabName, maxRows = Infinity) {
-  const sheets = await getSheetsClient();
   const range = `${tabName}!A:Z`;
-  console.log(`[sheets.js] Fetching rows from ${tabName} range ${range}`);
-
-  const response = await readWithRetry(range, () => sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range
-  }));
-
-  const rows = response.data.values || [];
+  const rows = await readValues(range);
   if (rows.length <= 1) return [];
   const dataRows = rows.slice(1).map(row => row.map(cell => (cell === undefined ? '' : cell)));
   return Number.isFinite(maxRows) ? dataRows.slice(0, maxRows) : dataRows;
 }
 
 async function getHeaderRow(tabName) {
-  const sheets = await getSheetsClient();
   const range = `${tabName}!1:1`;
-  console.log(`[sheets.js] Fetching header row from ${tabName}`);
-
-  const response = await readWithRetry(range, () => sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range
-  }));
-
-  return response.data.values?.[0] || [];
+  const values = await readValues(range);
+  return (values[0] || []).slice();
 }
 
 async function getSpreadsheetTabs() {
@@ -508,15 +741,8 @@ async function getLogCompositeKeys() {
   // request; during a gym session's burst of Saves that is real quota saved.
   // Result is identical: within each row, index 0 is B, 1 is C, 5 is G; a row
   // missing any of the three, or a header row, is skipped exactly as before.
-  const sheets = await getSheetsClient();
   const range = `${logSheetName}!B:G`;
-  console.log(`[sheets.js] Fetching composite-key columns from ${logSheetName} range ${range}`);
-
-  const response = await readWithRetry(range, () => sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range
-  }));
-  const rows = response.data.values || [];
+  const rows = await readValues(range);
 
   const keys = [];
   for (const row of rows) {
@@ -532,13 +758,9 @@ async function getLogCompositeKeys() {
 }
 
 async function readRange(rangeA1) {
-  const sheets = await getSheetsClient();
-  console.log(`[sheets.js] Reading range ${rangeA1}`);
-  const response = await readWithRetry(rangeA1, () => sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: rangeA1
-  }));
-  return response.data.values || [];
+  // Outer-array copy: a request-scoped hit hands back the SAME array to every caller in
+  // the request, so returning it raw would let one caller's mutation reach the next.
+  return (await readValues(rangeA1)).slice();
 }
 
 // F10D closeout seal — a BOUNDED batch update of ONE column's cells. cells is
@@ -586,6 +808,7 @@ async function updateColumnCells(tabName, columnLetter, cells) {
     }
   });
   console.log(`[sheets.js] Updated ${response.data.totalUpdatedCells} cell(s) in "${tabName}"`);
+  invalidateTabCache(tabName);
   return response;
 }
 
@@ -611,6 +834,7 @@ async function deleteRowsByRange(tabName, startIndex, endIndex) {
       }]
     }
   });
+  invalidateTabCache(tabName);
 }
 
 module.exports = {
@@ -636,5 +860,12 @@ module.exports = {
   confirmTabMissing,
   readWithRetry,
   logSheetName,
-  effortSheetName
+  effortSheetName,
+  // Request-scoped read batching (F-SB4B session read budget).
+  runWithReadContext,
+  declareRequestRanges,
+  invalidateTabCache,
+  CATALOG_CACHE_TTL_MS,
+  _resetExerciseCatalogCache,
+  _exerciseCatalogCacheStats: () => ({ ...catalogCacheStats })
 };
