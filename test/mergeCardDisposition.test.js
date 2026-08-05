@@ -34,14 +34,19 @@ function extractScript() {
 
 const SCRIPT = extractScript();
 
-/** Run the real check against a PR body; returns the failure message, or '' when it passed. */
-function check(body) {
+/** Run a check source against a PR body; returns the failure message, or '' when it passed. */
+function checkWith(source, body) {
   let failure = '';
   const core = { setFailed: (m) => { failure = m; }, info: () => {} };
   const context = { payload: { pull_request: { body } } };
   // eslint-disable-next-line no-new-func
-  new Function('core', 'context', SCRIPT)(core, context);
+  new Function('core', 'context', source)(core, context);
   return failure;
+}
+
+/** Run the real check against a PR body; returns the failure message, or '' when it passed. */
+function check(body) {
+  return checkWith(SCRIPT, body);
 }
 
 // Owner instruction 2026-08-03 — every body must now carry the review section, so the
@@ -56,7 +61,17 @@ const REVIEW_OK = [
   '- Findings and dispositions: n/a',
   '',
 ].join('\n');
-const CARD = `## 🟦 Atlas Merge Card\n\n${REVIEW_OK}`;
+// Owner instruction 2026-08-05 — every body must now also declare who performed the
+// work, so the shared fixture carries a satisfied attribution block. Its own rules are
+// exercised in the dedicated suite at the bottom of this file.
+const ATTRIBUTION_OK = [
+  '| **Builder surface** | Cursor |',
+  '| **Primary builder model** | Kimi K3 |',
+  '| **Supporting / explore models** | None |',
+  '| **Architecture / dispatch authority** | ChatGPT |',
+  '',
+].join('\n');
+const CARD = `## 🟦 Atlas Merge Card\n\n${ATTRIBUTION_OK}\n${REVIEW_OK}`;
 const findings = (lines) => `${CARD}### Additional findings\n\n${lines}\n\n### Post-merge\n\nx\n`;
 
 describe('merge card — Additional findings dispositions', () => {
@@ -194,10 +209,10 @@ describe('merge card — the Atlas Contract / Systems Review block', () => {
     .split(/^### Atlas Contract \/ Systems Review$/m)[1];
   // A card whose OTHER required section is already satisfied, so each assertion below
   // measures the review block alone.
-  const CARD_OK = `## 🟦 Atlas Merge Card\n\n### Additional findings\n\n- None\n\n`;
+  const CARD_OK = `## 🟦 Atlas Merge Card\n\n${ATTRIBUTION_OK}\n### Additional findings\n\n- None\n\n`;
 
   it('fails when the review section is deleted outright', () => {
-    const failure = check('## 🟦 Atlas Merge Card\n\n### Additional findings\n\n- None\n');
+    const failure = check(`## 🟦 Atlas Merge Card\n\n${ATTRIBUTION_OK}\n### Additional findings\n\n- None\n`);
     assert.match(failure, /missing the "Atlas Contract \/ Systems Review" section/,
       'a deleted review section must fail — sentinels catch retained placeholders, not removed ones');
   });
@@ -299,5 +314,208 @@ describe('merge card — the Atlas Contract / Systems Review block', () => {
   it('no longer trips on a body quoting the retired status wording', () => {
     const failure = check(`${CARD_OK}${REVIEW_OK}The old row allowed NON-BLOCKING / READY / BLOCKING / not risk-triggered.\n`);
     assert.equal(failure, '', 'quoting the retired wording is prose, not an unfilled field');
+  });
+});
+
+// Owner instruction 2026-08-05 — merge-card attribution (surface and model neutrality).
+// Atlas work may be implemented by any owner-approved agent on any approved surface, so
+// every PR declares which surface and model performed it. These run the REAL workflow
+// source, like every test above.
+//
+// The fields are DECLARED EVIDENCE. This check cannot tell a true model name from a false
+// one; it can only tell a claim from a blank, which is exactly the false green it exists
+// to close — a PR that silently omits its surface would otherwise go green.
+describe('merge card — attribution fields', () => {
+  const TEMPLATE_BODY = fs.readFileSync(TEMPLATE, 'utf8');
+  const FIELDS = [
+    'Builder surface',
+    'Primary builder model',
+    'Supporting / explore models',
+    'Architecture / dispatch authority',
+  ];
+  const rows = (overrides = {}) => FIELDS
+    .map((f) => `| **${f}** | ${Object.prototype.hasOwnProperty.call(overrides, f) ? overrides[f] : 'x'} |`)
+    .join('\n');
+  const card = (attribution) => `## 🟦 Atlas Merge Card\n\n${attribution}\n\n${REVIEW_OK}### Additional findings\n\n- None\n\n### Post-merge\n\nx\n`;
+
+  it('accepts a fully declared attribution block', () => {
+    assert.equal(check(card(rows({
+      'Builder surface': 'Cursor',
+      'Primary builder model': 'Kimi K3',
+      'Supporting / explore models': 'Grok 4.5 — repository investigation only',
+      'Architecture / dispatch authority': 'ChatGPT',
+    }))), '');
+  });
+
+  it('accepts None for Supporting / explore models', () => {
+    assert.equal(check(card(rows({ 'Supporting / explore models': 'None' }))), '');
+  });
+
+  // MUTATION 4 — `None` in a field that must name a real actor (exact-head review of PR
+  // #1268, P1). A non-empty check alone let `Builder surface: None` satisfy the required
+  // check while declaring none of the attribution it exists to require. `None` is the one
+  // value whose permitted scope CLAUDE.md defines exactly, so it is the one this literal
+  // check can enforce.
+  const NONE_FORBIDDEN = FIELDS.filter((f) => f !== 'Supporting / explore models');
+
+  for (const field of NONE_FORBIDDEN) {
+    for (const written of ['None', 'none', 'NONE', 'None.', '  None  ', '**None**']) {
+      it(`fails when "${field}" is ${JSON.stringify(written)}, and names only that field`, () => {
+        const failure = check(card(rows({ [field]: written })));
+        assert.match(failure, new RegExp(`attribution field "${field.replace('/', '\\/')}" may not be None`));
+        for (const other of FIELDS) {
+          if (other === field) continue;
+          assert.ok(!failure.includes(`"${other}"`), `${other} must not be reported: ${failure}`);
+        }
+      });
+    }
+  }
+
+  it('fails every forbidden None at once, naming each field', () => {
+    const failure = check(card(rows(Object.fromEntries(NONE_FORBIDDEN.map((f) => [f, 'None'])))));
+    for (const field of NONE_FORBIDDEN) {
+      assert.ok(failure.includes(`"${field}" may not be None`), `${field} not reported: ${failure}`);
+    }
+    assert.ok(!failure.includes('"Supporting / explore models"'), failure);
+  });
+
+  it('accepts None for Supporting / explore models in every casing', () => {
+    for (const written of ['None', 'none', 'NONE', 'None.', '**None**']) {
+      assert.equal(check(card(rows({ 'Supporting / explore models': written }))), '',
+        `Supporting / explore models must still accept ${JSON.stringify(written)}`);
+    }
+  });
+
+  it('rejects None in the bullet shape too, not only the table row', () => {
+    const bullets = FIELDS.map((f) => `- ${f}: ${f === 'Builder surface' ? 'None' : 'x'}`).join('\n');
+    assert.match(check(card(bullets)), /attribution field "Builder surface" may not be None/);
+  });
+
+  // The bite must be NARROW: a real value that merely contains the word must pass, or the
+  // guard would push a truthful declaration into a workaround.
+  it('does not trip on a real value that merely contains the word "none"', () => {
+    assert.equal(check(card(rows({
+      'Builder surface': 'Claude Code',
+      'Primary builder model': 'the surface withholds the model identity; none is displayed',
+      'Architecture / dispatch authority': 'ChatGPT (no supporting authority — none delegated)',
+    }))), '');
+  });
+
+  // The scoped-None rule must not collide with the honesty rule it sits beside: CLAUDE.md
+  // says a model identity is REPORTED, never guessed, so a surface that withholds it must
+  // be able to say so plainly and pass. A guard that rejected a withheld-model declaration
+  // would push this PR's own card into either a guess or a workaround.
+  it('accepts an honestly reported withheld model identity', () => {
+    for (const written of [
+      'Withheld by this surface',
+      "Withheld by this session's configuration — reported to the owner, never guessed here",
+      'The surface does not display a model identity',
+    ]) {
+      assert.equal(check(card(rows({ 'Primary builder model': written }))), '',
+        `a withheld-model declaration must pass: ${JSON.stringify(written)}`);
+    }
+  });
+
+  // MUTATION BITE, in-suite and deterministic. The four mutations recorded in the PR body
+  // are run by hand; this one is run by CI on every commit, in the style of the drift-guard
+  // self-tests (test/completionLadderGuard.test.js, test/packetTraceGuard.test.js). It
+  // removes the field-specific restriction from the REAL workflow source and proves the
+  // forbidden values go green again — so a future edit that quietly drops the rule cannot
+  // leave this suite passing.
+  describe('mutation — removing the field-specific None restriction', () => {
+    const ANCHOR = '!noneAllowed && ';
+    const MUTATED = SCRIPT.replace(ANCHOR, 'false && ');
+
+    it('the anchor this mutation depends on still exists exactly once', () => {
+      assert.equal(SCRIPT.split(ANCHOR).length - 1, 1,
+        `the guard must carry exactly one "${ANCHOR}" condition for this bite to be meaningful`);
+      assert.notEqual(MUTATED, SCRIPT, 'the mutation must actually change the source');
+    });
+
+    for (const field of NONE_FORBIDDEN) {
+      it(`"${field}: None" goes green once the restriction is removed`, () => {
+        assert.match(check(card(rows({ [field]: 'None' }))),
+          new RegExp(`attribution field "${field.replace('/', '\\/')}" may not be None`),
+          'the real guard must reject this value');
+        assert.equal(checkWith(MUTATED, card(rows({ [field]: 'None' }))), '',
+          'the mutated guard must accept it — otherwise something other than the restriction is failing these cases');
+      });
+    }
+
+    it('the mutation changes nothing else: every other case behaves identically', () => {
+      const unaffected = [
+        card(rows({ 'Supporting / explore models': 'None' })),
+        card(rows({ 'Builder surface': 'Cursor', 'Primary builder model': 'Withheld by this surface' })),
+        card(rows({ 'Builder surface': '' })),
+        card(FIELDS.filter((f) => f !== 'Builder surface').map((f) => `| **${f}** | x |`).join('\n')),
+      ];
+      for (const body of unaffected) {
+        assert.equal(checkWith(MUTATED, body), check(body),
+          'the bite must isolate the None restriction alone');
+      }
+    });
+  });
+
+  it('accepts the bullet shape as well as the table row', () => {
+    const bullets = FIELDS.map((f) => `- ${f}: x`).join('\n');
+    assert.equal(check(card(bullets)), '');
+  });
+
+  // MUTATION 1 — a missing field. Each of the four is load-bearing on its own: dropping
+  // one must name that field and no other, which proves the check reads all four rather
+  // than tripping once on something else.
+  for (const missing of FIELDS) {
+    it(`fails when "${missing}" is absent, and names only that field`, () => {
+      const kept = FIELDS.filter((f) => f !== missing).map((f) => `| **${f}** | x |`).join('\n');
+      const failure = check(card(kept));
+      assert.match(failure, new RegExp(`missing the required attribution field "${missing.replace('/', '\\/')}"`));
+      for (const other of FIELDS) {
+        if (other === missing) continue;
+        assert.ok(!failure.includes(`"${other}"`), `${other} must not be reported: ${failure}`);
+      }
+    });
+  }
+
+  // MUTATION 2 — a blank value. Silence is not a declaration.
+  for (const blanked of FIELDS) {
+    it(`fails when "${blanked}" is blank`, () => {
+      const failure = check(card(rows({ [blanked]: '' })));
+      assert.match(failure, new RegExp(`attribution field "${blanked.replace('/', '\\/')}" is blank`));
+    });
+  }
+
+  // MUTATION 3 — a retained template placeholder. Placeholders are READ FROM THE SHIPPED
+  // TEMPLATE, never retyped: hardcoding them would let a template rewording silently
+  // un-guard a field while this suite stayed green.
+  const TEMPLATE_PLACEHOLDERS = (() => {
+    const out = [];
+    for (const line of TEMPLATE_BODY.split('\n')) {
+      const m = /^[ \t]*\|[ \t]*\*{2}([^*|]+)\*{2}[ \t]*\|[ \t]*(<!--[\s\S]*?-->)[ \t]*\|[ \t]*$/.exec(line);
+      if (m && FIELDS.includes(m[1].trim())) out.push([m[1].trim(), m[2]]);
+    }
+    return out;
+  })();
+
+  it('the template ships all four attribution rows, each with a placeholder this suite can bite', () => {
+    assert.equal(TEMPLATE_PLACEHOLDERS.length, 4,
+      `expected 4 placeholder-carrying attribution rows, found ${TEMPLATE_PLACEHOLDERS.length}: ${JSON.stringify(TEMPLATE_PLACEHOLDERS)}`);
+  });
+
+  for (const [field, placeholder] of TEMPLATE_PLACEHOLDERS) {
+    it(`fails when "${field}" is left as the shipped placeholder`, () => {
+      const failure = check(card(rows({ [field]: placeholder })));
+      assert.match(failure, new RegExp(`attribution field "${field.replace('/', '\\/')}" is blank or still a template placeholder`));
+    });
+  }
+
+  it('accepts a real value that keeps the placeholder comment beside it', () => {
+    const [field, placeholder] = TEMPLATE_PLACEHOLDERS[0];
+    assert.equal(check(card(rows({ [field]: `Cursor ${placeholder}` }))), '');
+  });
+
+  it('the shipped template carries the attribution guidance, not a second attribution system', () => {
+    assert.match(TEMPLATE_BODY, /sole attribution authority/i);
+    assert.match(TEMPLATE_BODY, /[Nn]ever guess a model identity/);
+    assert.match(TEMPLATE_BODY, /do not add a commit trailer,\s+model registry,\s+label taxonomy,\s+or tracking database/i);
   });
 });

@@ -3,6 +3,13 @@ Atlas Merge Card — complete every field. Missing, stale, skipped, errored,
 unavailable, or incomplete required GitHub checks are failures. Independent agent
 review comments are advisory; no separate review status, reviewer account, marker,
 or owner merge click is required for a routine authorized PR.
+
+ATTRIBUTION (four rows below the current-state verdict). They record WHO performed
+the work, and they grant no authority. Declared evidence, not cryptographic proof.
+Record the exact model name the surface displays. Never guess a model identity: if
+the surface withholds it, say so. `None` is valid for Supporting / explore models
+only. This card is the sole attribution authority — do not add a commit trailer,
+model registry, label taxonomy, or tracking database beside it.
 -->
 
 ## 🟦 Atlas Merge Card
@@ -15,6 +22,10 @@ or owner merge click is required for a routine authorized PR.
 | **Primary risk** | <!-- one label + low/medium/high --> |
 | **Files / categories touched** | <!-- concise --> |
 | **Current-state verdict** | <!-- STILL BROKEN / ALREADY FIXED / PARTIALLY FIXED / FIXED BUT UNTESTED / STALE-SUPERSEDED / NEEDS OWNER APP-TEST --> |
+| **Builder surface** | <!-- the tool this work ran on, e.g. Claude Code / Codex / Cursor --> |
+| **Primary builder model** | <!-- the exact model name the surface displays; never guessed --> |
+| **Supporting / explore models** | <!-- each other model and what it did, or None --> |
+| **Architecture / dispatch authority** | <!-- who dispatched and architecturally owns this work, normally ChatGPT --> |
 | **Tests / hard gates** | <!-- exact commands/checks + results --> |
 | **Advisory findings** | <!-- independent agent/optional clean review: fixed / non-issue / none --> |
 | **Atlas Contract / Systems Review** | <!-- required (name the trigger) / not required (say why) — see the block below --> |

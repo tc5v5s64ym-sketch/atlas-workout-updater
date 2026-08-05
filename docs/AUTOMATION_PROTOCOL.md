@@ -6,7 +6,7 @@ This protocol defines positive evidence, review roles, merge authority, and safe
 
 ## Roles
 
-### Claude — implementation and merge operator
+### The approved active implementation agent — implementation and merge operator
 
 - Runs the Current-State Verification Gate.
 - Implements one canonical-plan concern per fresh branch and PR.
@@ -20,11 +20,11 @@ Applicable required checks include build, tests, lint, wiring, secret scan, merg
 
 A required check that is missing, stale, skipped, errored, timed out, cancelled, incomplete, or failed is a failure. An agent's claim is not a substitute for a workflow conclusion.
 
-### Codex — advisory review
+### Independent agent review — advisory
 
-Codex may comment on PRs. Its comments are advisory, not a required status or human approval.
+Any agent that is not the active builder may comment on PRs. Its comments are advisory, not a required status or human approval.
 
-Claude:
+The active builder:
 
 - fixes real, confident, in-scope findings;
 - routes a genuine non-derivable fork appropriately;
@@ -41,7 +41,7 @@ This review does not authorize production writes and is never a GitHub status or
 
 ### Dale — owner-reserved authority
 
-Dale owns product direction, owner-only gym/device evidence, production-data authorization, schema/destructive/security decisions, Constitution/Invariant changes, and promotion decisions. Dale may merge or revoke Claude's authority, but routine clean PRs never wait for an owner merge click.
+Dale owns product direction, owner-only gym/device evidence, production-data authorization, schema/destructive/security decisions, Constitution/Invariant changes, and promotion decisions. Dale may merge or revoke the implementation agent's authority, but routine clean PRs never wait for an owner merge click.
 
 ## Positive-evidence principle
 
@@ -60,11 +60,11 @@ An optional clean-context review may be used for confidence on higher-risk work.
 
 ## Merge authority
 
-Claude merges when all of the following hold:
+The approved active implementation agent merges when all of the following hold:
 
 1. Every applicable required GitHub check passed on the exact current head.
 2. No genuine P0/P1, invariant, trust-loop, schema, security, secret, or write-safety problem remains.
-3. Real Codex/advisory findings are addressed.
+3. Real independent/advisory findings are addressed.
 4. One primary risk label, the merge card, and the Vision Alignment Check are complete.
 5. The branch is current, clean, mergeable, and contains one concern.
 6. The concern is authorized by `docs/ATLAS_V1_EXECUTION_PLAN.md` or an explicit owner instruction.
@@ -95,7 +95,7 @@ Dale is required for:
 6. One-Brain or other promotion decisions;
 7. genuine unresolved principle conflicts and explicit owner holds.
 
-Routine implementation, tests, derivable wording/UX, and clean merges remain Claude authority.
+Routine implementation, tests, derivable wording/UX, and clean merges remain implementation-agent authority.
 
 ## Absolute safety
 

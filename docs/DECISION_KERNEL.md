@@ -32,7 +32,7 @@
 - **Smallest safe slice.** One concern per PR; split work that spreads.
 - **Engine first, wording second.** Deterministic behavior precedes narration.
 - **Future discoveries go to `BACKLOG.md`.** Do not carry them in chat or expand the current PR.
-- **Finish the loop.** After hard gates pass and real advisory findings are handled, Claude merges the exact head, refreshes `main`, updates campaign state, and continues.
+- **Finish the loop.** After hard gates pass and real advisory findings are handled, the approved active implementation agent merges the exact head, refreshes `main`, updates campaign state, and continues.
 
 ## Routine read order
 
@@ -77,7 +77,7 @@ Dale is **not** required to click merge on a clean routine PR.
 ## Risk and review
 
 - Deterministic GitHub CI checks are hard gates.
-- Codex comments are advisory. Claude fixes real, in-scope findings and records false alarms as such.
+- Independent agent review is advisory. The approved active implementation agent fixes real, in-scope findings and records false alarms as such.
 - A clean-context review may be used for additional confidence on higher-risk work, but it is not a required status, marker, or human sign-off.
 - The Atlas Contract / Systems Review is trigger-based, not a status check. `CLAUDE.md` holds the one trigger list and the merge-card fields; this kernel does not restate them.
 
