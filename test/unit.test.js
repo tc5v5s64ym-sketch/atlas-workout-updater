@@ -2609,7 +2609,11 @@ test('LO-2: complete-workout validation 400s gate error.message behind NODE_ENV 
   // …and each now uses the NODE_ENV-gated standardError pattern.
   assert.match(indexSource, /standardError\(req, res, 'log_rows_json is not valid JSON', process\.env\.NODE_ENV === 'production' \? null : err\.message, 400\)/);
   assert.match(indexSource, /standardError\(req, res, 'Parsed metrics validation failed', process\.env\.NODE_ENV === 'production' \? null : error\.message, 400\)/);
-  assert.match(indexSource, /standardError\(req, res, 'Log rows validation\/enrichment failed', process\.env\.NODE_ENV === 'production' \? null : error\.message, 400\)/);
+  // The enrichment failure's STATUS is now classified rather than fixed: this block
+  // spans a Sheets read, and a quota exhaustion returned as 400 told the owner their
+  // valid workout was invalid (F-SB4B session 1, 2026-08-05). The status varies; the
+  // no-raw-leak contract this test exists for does not, and is still asserted verbatim.
+  assert.match(indexSource, /standardError\(req, res, 'Log rows validation\/enrichment failed', process\.env\.NODE_ENV === 'production' \? null : error\.message, saveFailureStatus\(error\)\)/);
 });
 
 test('route_definitions_include_last_session', () => {
