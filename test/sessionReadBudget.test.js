@@ -9,6 +9,11 @@
 // session inside ONE minute against a 60/minute quota. The session was over budget on
 // its own demand, not on retry amplification.
 //
+// That 78 is a LOWER BOUND, not a total. It is a values-read count from the old logging
+// surface, which emitted no line for `spreadsheets.get`; the archived log cannot contain
+// those calls and re-parsing it can never recover them. The complete pre-change figure is
+// this harness's 102, measured through the real handlers with every metered method counted.
+//
 // WHY THE EXISTING GUARD COULD NOT SEE IT. `docs/READ_BUDGET.md` and
 // `test/sheets-adapter-reads.test.js` budget reads PER SAVE and count sheets.js helper
 // calls. A per-save budget cannot express "a complete session must fit in a minute", and
@@ -49,8 +54,10 @@
 //     batching + cache   41   ← the shipped behaviour, against a budget of 50
 //     batching only      55   ← catalog cache removed
 //     cache only         88   ← batching removed
-//     neither           102   ← the pre-change behaviour (the live run measured 78 before
-//                               it was cut short by the quota it had already exhausted)
+//     neither           102   ← the complete pre-change counterfactual. Compare against
+//                               THIS, not the archived 78 (a values-read lower bound from
+//                               the old logging surface; the live run was also cut short
+//                               by the quota it had already exhausted).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -158,6 +165,11 @@ function valuesForRange(range) {
 // ── Fake googleapis: the measurement point ───────────────────────────────────
 const reads = [];   // { at, kind, ranges }
 let countingOn = false;
+// Fails EVERY read of a range prefix until cleared, so a route can be driven against a
+// realistic upstream outage. It must persist across attempts: `readWithRetry` retries a
+// transient failure, so a one-shot injection is simply recovered from — correctly — and
+// never reaches the route.
+let failNextReadOf = null;
 
 function recordRead(kind, ranges) {
   if (countingOn) reads.push({ at: Date.now(), kind, ranges });
@@ -179,6 +191,9 @@ const fakeSheetsClient = {
     values: {
       get: async ({ range }) => {
         recordRead('get', [range]);
+        if (failNextReadOf && String(range).startsWith(failNextReadOf.rangePrefix)) {
+          throw failNextReadOf.error;
+        }
         const out = valuesForRange(range);
         if (out.error) throw out.error;
         return { data: { values: out.values } };
@@ -424,10 +439,42 @@ function assertCloseoutGenuine(results) {
   assert.equal(closeout.status, 200, JSON.stringify(closeout.body));
   const data = closeout.body?.data ?? closeout.body ?? {};
   assert.equal(data.sheet_write, 'success', 'the closeout must be a real approved write');
-  assert.ok(data.ledger_seal, 'sealCloseout must have run — its absence means the closeout branch was skipped');
-  assert.ok(data.session_plans_closeout, 'recordCloseoutEvent must have run');
-  assert.ok(Object.prototype.hasOwnProperty.call(data, 'closeout_fully_verified'),
-    'the closeout verification verdict must be reported');
+
+  // POSITIVE outcomes, not field presence. Requiring only that `ledger_seal` and
+  // `session_plans_closeout` are truthy and that `closeout_fully_verified` EXISTS would
+  // pass on `sealed_ok: false`, `status: 'error'` and `closeout_fully_verified: false` —
+  // i.e. on the exact settlement failure this is supposed to catch.
+  assert.equal(data.closeout_fully_verified, true,
+    'the closeout must be positively verified, not merely reported on');
+
+  const seal = data.ledger_seal;
+  assert.ok(seal, 'sealCloseout must have run — its absence means the closeout branch was skipped');
+  assert.equal(seal.sealed_ok, true, `the ledger seal must succeed: ${JSON.stringify(seal)}`);
+  // Verified against the CURRENT write posture. SESSION_PLAN_SETS_WRITE_ENABLED is 0 by
+  // owner gate until Phase 4, so the seal is a dry run — and a dry run has its own
+  // positive proof obligation under Invariants W1–W3. If the posture is ever enabled the
+  // other branch applies, so this cannot silently pass by changing posture.
+  if (seal.dry_run === true) {
+    assert.equal(seal.sheet_written, false, 'a dry-run seal must prove it wrote nothing');
+    assert.equal(seal.no_write_confirmed, true, 'a dry-run seal must carry no_write_confirmed');
+  } else {
+    assert.equal(seal.sheet_written, true, 'a live seal must prove it wrote');
+  }
+
+  const plans = data.session_plans_closeout;
+  assert.ok(plans, 'recordCloseoutEvent must have run');
+  assert.notEqual(plans.status, 'error',
+    `the Session_Plans closeout event must not error: ${JSON.stringify(plans)}`);
+  if (plans.status === 'disabled') {
+    // Cleanly disabled by the same owner-frozen write posture — NOT a failure, but it must
+    // be clean: a disabled capture carrying a reason is a failure wearing a disabled label.
+    assert.equal(plans.captured, false, 'a disabled capture cannot claim it captured');
+    assert.equal(plans.reason, null,
+      `a disabled capture must be clean, not carrying a failure reason: ${JSON.stringify(plans)}`);
+  } else {
+    assert.equal(plans.captured, true,
+      `an enabled Session_Plans closeout must capture: ${JSON.stringify(plans)}`);
+  }
 }
 
 /** Where the reads went — printed on a budget failure so the cause is visible, not guessed. */
@@ -664,6 +711,76 @@ test('a failed catalog refresh reaches the route as a classified failure, not st
   } finally {
     SHEET.Exercise_Catalog = good;
   }
+});
+
+// ── 4e. the closeout guard must bite on a FAILED settlement ──────────────────
+//
+// The previous head asserted that `ledger_seal` and `session_plans_closeout` were truthy
+// and that `closeout_fully_verified` merely EXISTED. A seal reporting `sealed_ok: false`, a
+// capture reporting `status: 'error'`, and `closeout_fully_verified: false` all passed —
+// the exact settlement failures the guard is for. Each is now flipped individually.
+test('MUTATION: a failed closeout settlement makes the guard red', async () => {
+  const run = await runSession();
+  assertCloseoutGenuine(run.results);   // the real one settles
+
+  const mutate = (patch) => {
+    const clone = run.results.map(r => ({ ...r, body: JSON.parse(JSON.stringify(r.body)) }));
+    Object.assign(clone[clone.length - 1].body.data, patch);
+    return clone;
+  };
+
+  const failures = [
+    ['the settlement verdict is false', { closeout_fully_verified: false }],
+    ['the ledger seal failed', { ledger_seal: { sealed_ok: false, dry_run: true, sheet_written: false, no_write_confirmed: true } }],
+    ['a dry-run seal claims no proof', { ledger_seal: { sealed_ok: true, dry_run: true, sheet_written: false, no_write_confirmed: false } }],
+    ['the Session_Plans capture errored', { session_plans_closeout: { status: 'error', captured: false, reason: 'boom' } }],
+    ['a disabled capture carries a failure reason', { session_plans_closeout: { status: 'disabled', captured: false, reason: 'boom' } }],
+    ['an enabled capture did not capture', { session_plans_closeout: { status: 'ok', captured: false, reason: null } }],
+  ];
+  for (const [label, patch] of failures) {
+    assert.throws(() => assertCloseoutGenuine(mutate(patch)), Error,
+      `the guard must go red when ${label}`);
+  }
+});
+
+// ── 4f. a transient refresh failure reaches the catalog route as a 503 ───────
+//
+// The PR claims the catalog cache's failure "propagates through the truthful 503
+// classification from PR #1270". Deleting the fixture proves only the permanent /
+// range_unresolved path. The class that actually took qualifying session 1 down was
+// TRANSIENT — a read-quota rejection — so that is the one worth pinning.
+test('a transient refresh failure after expiry reaches the catalog route as a retryable 503', async () => {
+  resetSheet();
+  sheets._resetExerciseCatalogCache();
+
+  const names = async () => {
+    const r = await call('GET', '/api/catalog/exercises');
+    return { status: r.status, body: r.body, list: (r.body?.data?.exercises ?? []).map(e => e.canonical_name) };
+  };
+  assert.ok((await names()).list.includes('Back Squat'), 'precondition: warm the cache through the route');
+
+  // Expire it, then hit the refresh with the REAL shape of a Sheets per-user read-quota
+  // rejection: HTTP 403, PERMISSION_DENIED at the top level, userRateLimitExceeded nested.
+  sheets._resetExerciseCatalogCache();
+  failNextReadOf = {
+    rangePrefix: 'Exercise_Catalog',
+    error: Object.assign(new Error("Quota exceeded for quota metric 'Read requests' and limit 'Read requests per minute per user'"), {
+      status: 403,
+      response: { status: 403, data: { error: { status: 'PERMISSION_DENIED', errors: [{ reason: 'userRateLimitExceeded' }] } } },
+    }),
+  };
+
+  // The retry ladder runs first and exhausts — that is the contract: bounded retry, then
+  // the truthful class. `sleep` is not injectable through the route, so this costs the
+  // real backoff, which is the price of proving the live path rather than a helper.
+  const out = await names();
+  assert.equal(out.status, 503,
+    `a transient upstream read failure must be the retryable 503 from PR #1270, not a generic 4xx/5xx; got ${out.status}`);
+  const payload = JSON.stringify(out.body);
+  assert.match(payload, /upstream_read_unavailable/, 'the response must carry the upstream-read-unavailable reason');
+  assert.match(payload, /"retryable":true/, 'the response must declare itself retryable');
+  assert.equal(out.list.length, 0, 'a failed refresh must not be answered with stale catalog data');
+  failNextReadOf = null;
 });
 
 // ── 5. Deload_State is never served stale ────────────────────────────────────

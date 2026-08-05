@@ -223,9 +223,11 @@ Against the failed run's own request sequence, replayed through the real handler
 | catalog cache only | 88 |
 | neither (pre-change) | 102 |
 
-The 102 reproduces the original failure and then some — the live run measured 78 before
-the quota it had already exhausted cut the session short. That is what makes the 41
-meaningful.
+The 102 is the complete pre-change counterfactual, and it is the number to compare
+against: it counts every metered method through the real handlers. The archived run's 78
+is a values-read lower bound from the old logging surface (see above) and is consistent
+with it — the live session was also cut short by the quota it had already exhausted. What
+makes the 41 meaningful is the 102, not the 78.
 
 ## The guard
 
@@ -244,14 +246,21 @@ real `sheets.js` and the real Express app, faking only `googleapis`, and asserts
 - restoring individual range requests **breaks** the budget;
 - restoring per-request catalog reads **breaks** the budget;
 - both disabled **reproduces** the original quota failure;
+- the closeout **settled**: `closeout_fully_verified === true`, the ledger seal succeeded
+  with the proof its posture requires (a dry run must carry `sheet_written:false` +
+  `no_write_confirmed:true`), and the Session_Plans closeout event either captured or was
+  cleanly disabled — never errored, and never disabled-with-a-reason;
 - a `Deload_State` change is visible to the next recommendation — the budget may never be
   bought with a cached training state;
-- the catalog **route** never serves a snapshot older than one TTL, and a failed refresh
-  reaches the route as a classified failure rather than stale data.
+- the catalog **route** never serves a snapshot older than one TTL; a **transient** refresh
+  failure after expiry reaches it as the retryable **503** from PR #1270 with
+  `upstream_read_unavailable`, carrying no stale data.
 
-Two mutation bites keep the measurement honest, because both of these omissions were live
-in an earlier head and neither turned the file red: dropping metadata reads from the count
-must change the answer, and dropping the closeout Save must fail the guard.
+Three mutation bites keep the measurement honest, because each of these was live in an
+earlier head and none turned the file red: dropping metadata reads from the count must
+change the answer, dropping the closeout Save must fail the guard, and flipping any single
+closeout settlement outcome to failure — the verdict, the seal, or the capture — must make
+the guard red.
 
 The counterfactuals are the anti-false-green: if the sequence ever stops genuinely
 exercising the read paths, they stop failing-as-required and the file goes red.

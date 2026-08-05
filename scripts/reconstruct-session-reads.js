@@ -13,8 +13,16 @@
 // as it is issued, and the request logger logs a request when it COMPLETES. So a read
 // belongs to the next completed request logged after it. Under concurrency that can
 // misattribute a read between two overlapping requests — it never loses or invents one,
-// so per-request counts are approximate while TOTALS are exact. Totals are what the
-// budget is written against.
+// so per-request counts are approximate while TOTALS are exact for what the log records.
+//
+// SECOND BOUND, and it matters for the archived logs. This tool can only count lines that
+// were written. Builds before the F-SB4B read-budget change emitted no line for
+// `spreadsheets.get`, so a total taken from one of those logs — including the preserved
+// qualifying-session-1 log's 78 — is a VALUES-READ LOWER BOUND, not a complete read total,
+// and re-running this parser cannot retroactively recover the missing metadata calls. The
+// pattern below makes logs from the current build complete; it does not repair old ones.
+// For a complete pre-change figure use the real-handler harness in
+// test/sessionReadBudget.test.js, which counts every metered method at the API boundary.
 //
 // Read-only: parses a text file, contacts nothing, writes nothing but its own report.
 
