@@ -38,6 +38,8 @@ A fresh agent with no prior chat history proves it can start from repository sta
 
 > Read `AGENTS.md` and perform the documented Atlas fresh-agent cold-start acceptance trial. Make no edits and invoke no live service. Report the required evidence and stop.
 
+**The trial is deferred, and it blocks nothing.** It runs when Dale elects to switch surfaces or explicitly requests it. A missing trial does not block implementation, testing, PRs, merges, or any campaign work. Do not perform or simulate it on your own initiative. Portability is structurally ready and not live-proven; no PASS may be claimed until the trial actually runs.
+
 ## At a glance
 
 Run `npm run atlas:status` (`-- --json` for machine output). The same bounded, redacted status is available at `GET /.well-known/atlas-status.json`; see [`docs/ATLAS_OPERATIONS_CONTRACT.md`](docs/ATLAS_OPERATIONS_CONTRACT.md). No Sheet ID or tab names need to be supplied. For the newest genuine owner app session, run `npm run atlas:review-live` (`-- --json`).

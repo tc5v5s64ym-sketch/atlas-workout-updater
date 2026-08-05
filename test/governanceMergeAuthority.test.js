@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
+const { describe, it } = require('node:test');
 
 const ROOT = path.resolve(__dirname, '..');
 
@@ -445,6 +446,96 @@ test('the fresh-agent cold-start acceptance trial is documented, bounded, and un
   // No PASS may be claimed from repository structure alone.
   assert.match(portability, /Structural readiness in the repository is not a PASS/i);
   assert.match(portability, /only after a real fresh agent on a new surface performs the trial/i);
+});
+
+// Owner clarification 2026-08-05 — sequencing correction. PR #1268 was completed on the
+// reading that the cold-start trial was the next step and that F-SB4B waited for it. It is
+// not, and it does not. These tests hold the corrected sequencing in repository state, so a
+// fresh agent reads the timing off the repository rather than inferring it from a merged PR
+// body — which is the same handoff principle the portability work exists to serve.
+describe('the portability trial is deferred and blocks nothing', () => {
+  const plan = () => read('docs/ATLAS_V1_EXECUTION_PLAN.md');
+  const portability = () => read('docs/BUILDER_PORTABILITY.md');
+  const agents = () => read('AGENTS.md');
+
+  it('the plan records the owner clarification, which is where an owner instruction governs', () => {
+    const body = plan();
+    assert.match(body, /Owner clarification 2026-08-05 — the portability trial is deferred, not a prerequisite/,
+      'the clarification must live in the sole work-selection authority, not only in a document that restates it');
+    assert.match(body, /Claude remains the approved active implementation agent/i);
+    assert.match(body, /2026-08-17/, 'the clarification must record the date the role is held until');
+  });
+
+  it('every surface that mentions the trial states it is deferred and non-blocking', () => {
+    for (const [rel, body] of [['docs/BUILDER_PORTABILITY.md', portability()], ['AGENTS.md', agents()]]) {
+      assert.match(body, /deferred/i, `${rel} must state the trial is deferred`);
+      assert.match(body, /when Dale elects to switch surfaces|explicitly requests it/i,
+        `${rel} must state what actually triggers the trial`);
+      assert.match(body, /blocks nothing|does not block/i, `${rel} must state the trial blocks nothing`);
+    }
+  });
+
+  it('structural readiness is stated as readiness, never as proof', () => {
+    for (const [rel, body] of [['the plan', plan()], ['the portability contract', portability()], ['AGENTS.md', agents()]]) {
+      assert.match(body, /structurally ready and not live-proven|structurally ready, and it is not live-proven/i,
+        `${rel} must say portability is ready but unproven`);
+    }
+  });
+
+  it('no agent may perform or simulate the trial on its own initiative', () => {
+    assert.match(portability(), /may perform or simulate this trial on its own initiative/i);
+    assert.match(portability(), /fabricated proof/i, 'the reason must be stated, not just the rule');
+    assert.match(agents(), /Do not perform or simulate it on your own initiative/i);
+  });
+
+  // THE BITE. This is the assertion the correction exists to make, and the one a future
+  // edit could quietly undo. It reads every ACTIVE governance surface — not a fixture — and
+  // fails if any of them reinstates the sequencing defect in any of its known phrasings.
+  // A historical/archive file is excluded on purpose: those record what was believed then.
+  const ACTIVE_SURFACES = [
+    'CLAUDE.md',
+    'AGENTS.md',
+    'CODEX.md',
+    'README.md',
+    'docs/ATLAS_V1_EXECUTION_PLAN.md',
+    'docs/BUILDER_PORTABILITY.md',
+    'docs/AGENT_WORKFLOW.md',
+    'docs/AUTOMATION_PROTOCOL.md',
+    'docs/DECISION_KERNEL.md',
+    'docs/DOCS_INDEX.md',
+    'docs/OWNER_CHECKIN_RULES.md',
+    'docs/CODEX_SESSION_STARTER.md',
+  ];
+
+  // Each pattern is a way of saying "campaign work waits for the trial". They are matched
+  // against the surface with the ONE sentence that is allowed to name the void reading
+  // removed first — the clarification has to be able to quote the defect in order to void it.
+  const BLOCKING = [
+    /qualifying (?:rehearsal |session )?[^.\n]{0,40}resumes only after/i,
+    /(?:F-SB4B|qualifying Session 1)[^.\n]{0,80}(?:waits? for|blocked by|only after|depends on)[^.\n]{0,60}trial/i,
+    /trial[^.\n]{0,80}(?:before|prerequisite (?:to|for))[^.\n]{0,60}(?:F-SB4B|qualifying)/i,
+    /resumes only after that trial/i,
+  ];
+
+  for (const rel of ACTIVE_SURFACES) {
+    it(`${rel} does not make campaign work wait for the trial`, () => {
+      // The clarification's own void-statement quotes the defect to retire it. Drop that one
+      // sentence before scanning, or the correction would fail its own guard.
+      const body = read(rel).replace(
+        /Any statement that F-SB4B or qualifying Session 1 waits for the trial is void[^.]*\./i,
+        '',
+      );
+      for (const pattern of BLOCKING) {
+        assert.doesNotMatch(body, pattern,
+          `${rel} reinstates the sequencing defect: campaign work must never wait for the portability trial`);
+      }
+    });
+  }
+
+  it('the void-statement the scan excludes is actually present, so the exclusion is not a blind spot', () => {
+    assert.match(plan(), /Any statement that F-SB4B or qualifying Session 1 waits for the trial is void/i,
+      'the exclusion above must correspond to a real sentence; otherwise it silently widens');
+  });
 });
 
 test('the merge card is the sole attribution authority and names all four fields', () => {
