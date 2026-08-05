@@ -59,6 +59,17 @@ A new agent should not need a custom history dump from Dale. If repository state
 
 This trial proves the claim above. A fresh agent, on a surface Atlas has not used before, with no prior chat history and no handoff prompt, opens the repository, reads `AGENTS.md`, and reports the state of the work. If it cannot, the repository is the defect.
 
+### When it runs — deferred, and it blocks nothing
+
+The trial is a **deferred portability acceptance proof**. It runs when Dale elects to switch surfaces, or when Dale explicitly requests it. It is not scheduled, no card depends on it, and it is not a prerequisite to any campaign work.
+
+- Claude is the current approved active implementation agent. Portability means the role *can* move on an owner instruction, not that it *has* moved.
+- Cursor portability is structurally ready and not live-proven.
+- A missing trial blocks nothing: not implementation, not testing, not opening a PR, not merging under standing authority, and not F-SB4B, qualifying Session 1, or any other campaign work.
+- No portability PASS may be claimed until the trial actually runs.
+
+The owner clarification recording this is in [`docs/ATLAS_V1_EXECUTION_PLAN.md`](./ATLAS_V1_EXECUTION_PLAN.md), which is where an owner instruction governs. This section restates the timing only; it creates no second authority.
+
 Launch it with exactly this prompt:
 
 > Read `AGENTS.md` and perform the documented Atlas fresh-agent cold-start acceptance trial. Make no edits and invoke no live service. Report the required evidence and stop.
@@ -92,6 +103,8 @@ The trial:
 ### Verdict
 
 A PASS is claimed only after a real fresh agent on a new surface performs the trial and reports all ten items correctly. Structural readiness in the repository is not a PASS. A missing or wrong item is a documentation defect: fix the smallest relevant document, then run the trial again.
+
+No agent may perform or simulate this trial on its own initiative. An agent that reports the ten items from its own session is not a fresh agent on a new surface, and recording that as a PASS would be a fabricated proof.
 
 ## Review and merge
 
