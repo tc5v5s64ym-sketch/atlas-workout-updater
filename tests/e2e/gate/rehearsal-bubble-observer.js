@@ -123,7 +123,7 @@ function markExistingBubblesScript(attr) {
 
 // The in-page installer, as a function Playwright serializes into an init script. It
 // runs before any application script on every navigation, so it is installed for the
-// fresh-session transition too. It reports `{ index, text }` per changed bubble and
+// fresh-session transition too. It reports `{ id, text }` per changed bubble and
 // takes NO timestamp of its own — timing belongs to the receiving side.
 function bubbleObserverInitScript({ flushMs, threadId, bubbleSelector, callbackName, flushName, stateName, readName, idAttr, seqAttr }) {
   // THE ONE BUBBLE IDENTITY (F-SB4B corrective 5). Every bubble the collector has ever
@@ -316,6 +316,34 @@ function ingestLiveObservation(records, observation, { phase, nowMs, ingestSeq =
     prior.changeSeq = changeSeq;
     prior.placeholder = text.includes(thinkingMarker);
     prior.retroactive = false;   // a live report supersedes any retroactive fill-in
+    return out;
+  }
+  // SAME TEXT, and the record was CREATED BY A SWEEP (F-SB4B corrective 6).
+  //
+  // The sweep may have raced the observer's very FIRST report for this bubble: it found
+  // a bubble with no record, created one, and marked it `retroactive`. The report then
+  // arrives describing the same text, so the branch above cannot fire and the record
+  // stays untrustworthy forever — the residual sweep-only record qualifying Session 1
+  // failed condition 9 on, against a product that completed correctly.
+  //
+  // The live report stays the timing authority, and redemption requires SEQUENCE PROOF:
+  // this report describes a change that ALREADY EXISTED when the sweep inspected the
+  // DOM. Only then is it the report the sweep raced, and only then may the record take
+  // its live timing.
+  //
+  // A report with a LATER sequence describes a LATER change; stamping its instant onto
+  // an earlier claim is precisely what makes an unsupported write claim look earned, so
+  // it may not redeem. A missing or non-finite sequence on either side proves nothing.
+  // A different bubble is a different record entirely — identity keying (corrective 5)
+  // already guarantees that, since `prior` is looked up by id.
+  if (prior.retroactive === true
+    && Number.isFinite(changeSeq)
+    && Number.isFinite(prior.sweptAtChangeSeq)
+    && changeSeq <= prior.sweptAtChangeSeq) {
+    prior.atMs = nowMs;
+    prior.ingestSeq = ingestSeq;
+    prior.changeSeq = changeSeq;
+    prior.retroactive = false;
   }
   return out;
 }
@@ -416,7 +444,7 @@ function classifyClaimAgainstBoundary(record, boundary) {
 // FAIL-CLOSED is unchanged in the direction that matters. A bubble with NO record at all
 // is still filled in and still marked `retroactive`, whatever the collector's state —
 // an unobserved bubble is never silently trusted.
-function reconcileSweep(records, observed, { phase, nowMs, thinkingMarker = 'Thinking…', collectorQuiet = true } = {}) {
+function reconcileSweep(records, observed, { phase, nowMs, thinkingMarker = 'Thinking…', collectorQuiet = true, sweptAtChangeSeq = null } = {}) {
   const out = records && typeof records === 'object' ? records : {};
   // `observed` is [{ id, text }] read through the observer's own stamping authority, so
   // a swept bubble carries the identity the observer would have given it. A positional
@@ -429,7 +457,14 @@ function reconcileSweep(records, observed, { phase, nowMs, thinkingMarker = 'Thi
     const text = normalize(entry && entry.text);
     const prior = out[id];
     if (!prior) {
-      out[id] = { id, text, atMs: nowMs, phase, placeholder: text.includes(thinkingMarker), retroactive: true };
+      // A record the sweep CREATED carries the collector clock read at that instant, so
+      // a later live report can be tested for causality rather than guessed at. Without
+      // it the record can never be redeemed — which is the fail-closed direction, and
+      // exactly what the old unconditional create did (F-SB4B corrective 6).
+      out[id] = {
+        id, text, atMs: nowMs, phase, placeholder: text.includes(thinkingMarker), retroactive: true,
+        sweptAtChangeSeq: Number.isFinite(sweptAtChangeSeq) ? sweptAtChangeSeq : null,
+      };
       continue;
     }
     if (text !== prior.text) {

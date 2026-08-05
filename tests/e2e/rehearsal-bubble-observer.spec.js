@@ -758,10 +758,15 @@ test.describe('F-SB4B sweep — a pending report is not a missed one', () => {
       try {
         state = typeof window.__atlasBubbleState === 'function' ? window.__atlasBubbleState() : null;
       } catch { state = null; }
-      return { observed, quiet: Boolean(flushed && flushed.ok === true) && Boolean(state) && state.pending === false };
-    }).catch(() => ({ observed: [], quiet: false }));
+      return {
+        observed,
+        quiet: Boolean(flushed && flushed.ok === true) && Boolean(state) && state.pending === false,
+        atChangeSeq: (state && Number.isFinite(state.changeSeq)) ? state.changeSeq : null,
+      };
+    }).catch(() => ({ observed: [], quiet: false, atChangeSeq: null }));
     reconcileSweep(records, swept.observed, {
       phase, nowMs: Date.now(), thinkingMarker: THINKING, collectorQuiet: swept.quiet,
+      sweptAtChangeSeq: swept.atChangeSeq,
     });
     return swept;
   };
@@ -897,5 +902,89 @@ test.describe('F-SB4B collector — a record belongs to a bubble, not to a posit
       expect(rec, `${t} still has its record`).toBeTruthy();
       expect(rec.phase, `${t} keeps the phase it was rendered in`).toBe('logging');
     }
+  });
+});
+
+
+// ── F-SB4B corrective 6: the CREATE-path sweep race, in the real browser ───────
+//
+// #1264 gated the UPDATE path and live sweep-only records fell from 7 to 1. The residual
+// one is a bubble whose FIRST report the sweep beat: the sweep creates the record
+// `retroactive`, the report then arrives with the same text, and the text-difference
+// branch cannot clear it. Redemption requires sequence proof — the report must describe
+// a change that already existed when the sweep looked.
+test.describe('F-SB4B sweep — a sweep-created record is redeemed only by sequence proof', () => {
+  const sweepCreating = async (page, records, phase, opts = {}) => {
+    const swept = await page.evaluate(async (drain) => {
+      if (drain && typeof window.__atlasBubbleFlush === 'function') {
+        try { await window.__atlasBubbleFlush(); } catch { /* the drain's failure is the point */ }
+      }
+      const observed = typeof window.__atlasBubbleRead === 'function' ? window.__atlasBubbleRead() : [];
+      const state = typeof window.__atlasBubbleState === 'function' ? window.__atlasBubbleState() : null;
+      return { observed, atChangeSeq: (state && Number.isFinite(state.changeSeq)) ? state.changeSeq : null };
+    }, opts.drain === true);
+    reconcileSweep(records, swept.observed, {
+      phase, nowMs: Date.now(), thinkingMarker: THINKING,
+      collectorQuiet: false, sweptAtChangeSeq: opts.withSeq === false ? null : swept.atChangeSeq,
+    });
+    return swept;
+  };
+
+  const CLAIM = 'All set — saved to your sheet.';
+
+  test('BITE: WITHOUT the captured sequence the record can never be redeemed', async ({ page }) => {
+    const { records } = await startCollector(page, { value: 'closeout' });
+    // The bubble appears and the sweep beats the observer's first report.
+    await appendBubble(page, CLAIM);
+    await sweepCreating(page, records, 'closeout', { withSeq: false });
+    expect(recordsToMessages(records)[0].retroactive, 'the sweep created it').toBe(true);
+
+    // The observer's own first report for that bubble now lands, same text.
+    await settle(page);
+    expect(recordsToMessages(records)[0].retroactive,
+      'this is the defect: an observed bubble stays permanently untrustworthy').toBe(true);
+  });
+
+  test('WITH the captured sequence, the observer\'s own first report redeems it', async ({ page }) => {
+    const { records } = await startCollector(page, { value: 'closeout' });
+    await appendBubble(page, CLAIM);
+    const swept = await sweepCreating(page, records, 'closeout');
+    const created = recordsToMessages(records)[0];
+    expect(created.retroactive).toBe(true);
+    expect(created.sweptAtChangeSeq, 'the sweep captured the collector clock').toBe(swept.atChangeSeq);
+
+    await settle(page);
+    const redeemed = recordsToMessages(records)[0];
+    expect(redeemed.retroactive, 'the change already existed when the sweep looked').toBe(false);
+    expect(Number.isFinite(redeemed.changeSeq)).toBe(true);
+    expect(redeemed.changeSeq).toBeLessThanOrEqual(created.sweptAtChangeSeq);
+  });
+
+  test('a LATER change does not redeem an earlier sweep-created record', async ({ page }) => {
+    const { records } = await startCollector(page, { value: 'closeout' });
+    await appendBubble(page, CLAIM);
+    await settle(page);                       // the observer reports it normally
+    // A second, unrelated bubble the sweep creates AFTER that — its own later report
+    // must not be able to vouch for anything earlier, and vice versa.
+    await appendBubble(page, 'a later, unrelated bubble');
+    await sweepCreating(page, records, 'teardown');
+    const before = recordsToMessages(records);
+    expect(before).toHaveLength(2);
+    expect(before[0].retroactive, 'the first bubble was observed live all along').toBe(false);
+    await settle(page);
+    const after = recordsToMessages(records);
+    expect(after[0].retroactive, 'and it is still its own live observation').toBe(false);
+  });
+
+  test('a bubble the observer can never report stays retroactive', async ({ page }) => {
+    const { records, state } = await startCollector(page, { value: 'closeout' });
+    state.rejectReports = true;               // no report will ever land
+    await appendBubble(page, CLAIM);
+    await sweepCreating(page, records, 'closeout');
+    await settle(page);
+    const m = recordsToMessages(records)[0];
+    expect(m.retroactive, 'genuinely sweep-only evidence is never redeemed').toBe(true);
+    expect(detectUnsupportedWriteClaim({ messages: [m], liveWriteAtMs: Date.now() + 1000 }).unsupported)
+      .toBe(true);
   });
 });
