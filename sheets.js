@@ -258,15 +258,68 @@ async function confirmTabMissing(error, tabName, opts = {}) {
 // helpers below always call it with the default profile.
 const READ_RETRY_DEFAULTS = { maxAttempts: 3, baseDelayMs: 300 };
 
-function readWithRetry(label, operation, options = {}) {
-  return retryWithBackoff(operation, {
-    ...READ_RETRY_DEFAULTS,
-    ...options,
-    isRetryable: isTransientReadError,
-    onRetry: (error, attempt, delay) => {
-      console.warn(`[sheets.js] Transient read error on ${label} (attempt ${attempt}): ${error.message}. Retrying in ${delay}ms`);
-    }
-  });
+// ── Provenance stamp: "this error came from a Sheets READ, and here is its class" ──
+//
+// A route that catches an exception around a read cannot otherwise tell an INPUT
+// failure from an INFRASTRUCTURE failure. Both are plain Errors, and asking
+// `classifySheetsReadError` directly does not answer it: that function classifies
+// what a Sheets failure MEANS, and answers 'permanent' for anything it is handed —
+// including a validation Error that never touched Google. Reading it as a provenance
+// test would turn every genuine input rejection into a server fault.
+//
+// So the read path stamps its own escaping errors, HERE, where provenance is a fact
+// rather than a guess. `classifySheetsReadError` stays the single authority for the
+// class; this only records what it already decided, at the boundary that knows the
+// error came from a read. Callers ask `sheetsReadFailureClass(error)` and get null
+// for everything else — no message matching, and no second classifier.
+//
+// Symbol.for + non-enumerable: it must not serialize into a response body, must not
+// appear in logs that spread the error, and must survive a module identity split
+// under the suite's require.cache injection.
+const SHEETS_READ_FAILURE = Symbol.for('atlas.sheetsReadFailure');
+
+function stampSheetsReadFailure(error, label) {
+  if (!error || typeof error !== 'object') return error;
+  // First stamp wins: the innermost read that actually failed owns the class. A
+  // caller that catches and rethrows must never be able to relabel it.
+  if (!error[SHEETS_READ_FAILURE]) {
+    Object.defineProperty(error, SHEETS_READ_FAILURE, {
+      value: { class: classifySheetsReadError(error), range: label },
+      enumerable: false,
+      configurable: true,
+      writable: false,
+    });
+  }
+  return error;
+}
+
+/**
+ * The read-failure class of an error that escaped a Sheets read, or null when the
+ * error did not come from one. Null means "not infrastructure" — the caller keeps
+ * whatever handling it already had.
+ * @returns {'transient'|'permanent'|'range_unresolved'|null}
+ */
+function sheetsReadFailureClass(error) {
+  const stamp = error && typeof error === 'object' ? error[SHEETS_READ_FAILURE] : null;
+  return stamp ? stamp.class : null;
+}
+
+async function readWithRetry(label, operation, options = {}) {
+  try {
+    return await retryWithBackoff(operation, {
+      ...READ_RETRY_DEFAULTS,
+      ...options,
+      isRetryable: isTransientReadError,
+      onRetry: (error, attempt, delay) => {
+        console.warn(`[sheets.js] Transient read error on ${label} (attempt ${attempt}): ${error.message}. Retrying in ${delay}ms`);
+      }
+    });
+  } catch (error) {
+    // Every read helper below funnels through here, so stamping once covers them all
+    // — including a retry ladder that exhausted on quota, which is the exact case the
+    // Save path was reporting to the owner as invalid input.
+    throw stampSheetsReadFailure(error, label);
+  }
 }
 
 async function getSheetsClient() {
@@ -579,6 +632,7 @@ module.exports = {
   retryWithBackoff,
   classifySheetsReadError,
   isTransientReadError,
+  sheetsReadFailureClass,
   confirmTabMissing,
   readWithRetry,
   logSheetName,

@@ -373,6 +373,11 @@ test('the exported read surface is exactly the set proven to retry', () => {
     'validateConfig', 'getSafeSpreadsheetConfig',
     'isTransientAppendError', 'retryWithBackoff',
     'classifySheetsReadError', 'isTransientReadError', 'confirmTabMissing', 'readWithRetry',
+    // Reads the provenance stamp `readWithRetry` puts on its own escaping errors, so a
+    // route can tell an infrastructure failure from an input failure. It performs no
+    // read and reaches no network — it reports what `classifySheetsReadError` already
+    // decided, so it needs no retry coverage.
+    'sheetsReadFailureClass',
     'logSheetName', 'effortSheetName',
   ];
   assert.deepEqual(

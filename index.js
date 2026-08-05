@@ -18,6 +18,9 @@ const {
   getHeaderRow,
   getSpreadsheetTabs,
   getSafeSpreadsheetConfig = () => ({ canVerify: false, source: 'GOOGLE_SHEETS_ID' }),
+  // Default to "no Sheets provenance" so a test that injects a partial sheets.js stub
+  // keeps exactly today's behaviour instead of crashing on an absent export.
+  sheetsReadFailureClass = () => null,
   logSheetName,
   effortSheetName
 } = require('./sheets');
@@ -904,6 +907,32 @@ const EMPTY_EFFORT_METRICS = Object.freeze({
 // logged sets are still saved.
 const SCREENSHOT_UNREADABLE_MESSAGE =
   "I couldn't read effort from the screenshot. I can still save the workout without effort data.";
+
+// ── What HTTP status a failed Save actually deserves ──────────────────────────
+//
+// One question, asked once: did this failure come from the owner's payload, or from
+// Google? sheets.js answers it — `sheetsReadFailureClass` returns null for anything
+// that did not escape a Sheets read, and otherwise the class its own classifier
+// already decided. There is no message matching and no second classifier here.
+//
+// The distinction is not cosmetic. 400 is terminal and tells the client the input is
+// wrong, so a client that trusts it discards a perfectly valid workout. 503 says the
+// same request may succeed later, which is the truth about a quota exhaustion.
+//
+//   null              → the row/effort validation genuinely rejected the input   → 400
+//   'transient'       → quota, rate limit, timeout, 5xx upstream — retryable     → 503
+//   'permanent'       → revoked credentials, missing spreadsheet, config fault   → 500
+//   'range_unresolved'→ a malformed range this server asked for — server bug     → 500
+//
+// Permanent and range_unresolved are server-side faults, never the owner's input.
+function saveFailureStatus(error) {
+  switch (sheetsReadFailureClass(error)) {
+    case 'transient': return 503;
+    case 'permanent':
+    case 'range_unresolved': return 500;
+    default: return 400;
+  }
+}
 
 async function enrichAndFormatLogRows(logRows, topLevelSessionId, topLevelDate, catalogMap = null) {
   // Hard bounds before anything else — including the catalog fetch. A 2250-lb
@@ -2557,7 +2586,10 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         }
       } catch (error) {
         if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
-        return standardError(req, res, 'Log rows validation/enrichment failed', process.env.NODE_ENV === 'production' ? null : error.message, 400);
+        // The screenshot/effort Save is the OTHER Save path in the same read budget
+        // (`docs/READ_BUDGET.md`), enriches through the same catalog read, and carried
+        // the same blanket 400. Classified on the same authority, for the same reason.
+        return standardError(req, res, 'Log rows validation/enrichment failed', process.env.NODE_ENV === 'production' ? null : error.message, saveFailureStatus(error));
       }
     }
 
@@ -3159,7 +3191,16 @@ app.post('/api/log-workout', async (req, res) => {
     enrichedRowObjects = logResult.enrichedRowObjects || [];
     ruleFlags = evaluateSessionSafety(enrichedRowObjects, payload.notes || '');
   } catch (error) {
-    return standardError(req, res, error.message, null, 400);
+    // This block spans BOTH row validation and a Sheets read (`enrichAndFormatLogRows`
+    // fetches Exercise_Catalog). A blanket 400 told the owner their input was invalid
+    // when the truth was that Google was unreachable — and 400 is terminal, so the
+    // client never retried and the Save was simply lost. F-SB4B qualifying session 1
+    // (2026-08-05) died exactly here: a read-quota exhaustion returned 400 and closeout
+    // never confirmed.
+    //
+    // sheets.js stamps its own escaping read errors, so provenance is a fact here, not
+    // a guess at the message. Null ⇒ the failure came from validation, which keeps 400.
+    return standardError(req, res, error.message, null, saveFailureStatus(error));
   }
 
   let formattedEffortRow = null;
