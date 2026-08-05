@@ -990,9 +990,9 @@ describe('P1-A — a bubble frozen at Thinking… must not hide its final text',
   function replaySweeps() {
     const records = {};
     // 1. The bubble is created and first reported while it is still thinking.
-    ingestLiveObservation(records, { index: 0, text: 'Thinking…' }, { phase: 'substitution_ask', nowMs: 100 });
+    ingestLiveObservation(records, { id: '1', text: 'Thinking…' }, { phase: 'substitution_ask', nowMs: 100 });
     // 2. The SAME element resolves to a completed-mutation claim, before any mutation.
-    ingestLiveObservation(records, { index: 0, text: "Done — I've noted the substitution." }, { phase: 'prescription_question', nowMs: 400 });
+    ingestLiveObservation(records, { id: '1', text: "Done — I've noted the substitution." }, { phase: 'prescription_question', nowMs: 400 });
     return records;
   }
 
@@ -1021,7 +1021,7 @@ describe('P1-A — a bubble frozen at Thinking… must not hide its final text',
 
   it('a record still holding the placeholder at the end fails CLOSED', () => {
     const records = {};
-    ingestLiveObservation(records, { index: 0, text: 'Thinking…' }, { phase: 'x', nowMs: 100 });
+    ingestLiveObservation(records, { id: '1', text: 'Thinking…' }, { phase: 'x', nowMs: 100 });
     const sweep = detectUnsupportedMutationWording({ messages: recordsToMessages(records), mutationAtMs: 900 });
     assert.equal(sweep.unsupported, true, 'an unfinished render means the evidence is incomplete');
     assert.match(sweep.detail, /still rendering/);
@@ -1029,9 +1029,9 @@ describe('P1-A — a bubble frozen at Thinking… must not hide its final text',
 
   it('growing text across several sweeps keeps only the final state', () => {
     const records = {};
-    ingestLiveObservation(records, { index: 0, text: 'Go with' }, { phase: 'p', nowMs: 10 });
-    ingestLiveObservation(records, { index: 0, text: 'Go with 185 lb' }, { phase: 'p', nowMs: 20 });
-    ingestLiveObservation(records, { index: 0, text: 'Go with 185 lb for 5 reps.' }, { phase: 'p', nowMs: 30 });
+    ingestLiveObservation(records, { id: '1', text: 'Go with' }, { phase: 'p', nowMs: 10 });
+    ingestLiveObservation(records, { id: '1', text: 'Go with 185 lb' }, { phase: 'p', nowMs: 20 });
+    ingestLiveObservation(records, { id: '1', text: 'Go with 185 lb for 5 reps.' }, { phase: 'p', nowMs: 30 });
     const msgs = recordsToMessages(records);
     assert.equal(msgs.length, 1);
     assert.equal(msgs[0].text, 'Go with 185 lb for 5 reps.');
@@ -1040,9 +1040,9 @@ describe('P1-A — a bubble frozen at Thinking… must not hide its final text',
 
   it('keeps one record per bubble as the thread grows, in DOM order', () => {
     const records = {};
-    ingestLiveObservation(records, { index: 0, text: 'a' }, { phase: 'p1', nowMs: 10 });
-    ingestLiveObservation(records, { index: 1, text: 'b' }, { phase: 'p2', nowMs: 20 });
-    ingestLiveObservation(records, { index: 2, text: 'c' }, { phase: 'p3', nowMs: 30 });
+    ingestLiveObservation(records, { id: '1', text: 'a' }, { phase: 'p1', nowMs: 10 });
+    ingestLiveObservation(records, { id: '2', text: 'b' }, { phase: 'p2', nowMs: 20 });
+    ingestLiveObservation(records, { id: '3', text: 'c' }, { phase: 'p3', nowMs: 30 });
     const msgs = recordsToMessages(records);
     assert.deepEqual(msgs.map(m => m.text), ['a', 'b', 'c']);
     assert.deepEqual(msgs.map(m => m.phase), ['p1', 'p2', 'p3'], 'each bubble keeps its originating phase');
@@ -1167,11 +1167,81 @@ describe('P1-C — write claims are timed against the live write, not the word "
 // swept before its report landed — and the mark could never be cleared afterwards,
 // because `ingestLiveObservation` only resets `retroactive` when the text DIFFERS and the
 // sweep had already written that very text. Session 1 lost seven messages to this.
+// F-SB4B corrective 5 — the collector's record identity. `pending` and the records were
+// keyed by POSITION while chat.js front-evicts, so one eviction shifted every atlas
+// index down and index i began naming a different bubble. A record's phase is bound at
+// the first observation of its key, so after a shift the phase belonged to a bubble that
+// was gone and the arriving text to a bubble whose phase was never recorded — and the
+// claim decisions report `[phase] "excerpt"`.
+describe('collector records are keyed by bubble identity, not position', () => {
+  it('MUTATION — the old positional keying attributes a claim to the WRONG phase', () => {
+    // Three bubbles, then an eviction: what WAS index 2 is now index 1, and so on. Under
+    // positional keying the new turn's bubble lands on a key already bound to an older
+    // phase. Modelled directly, because the defect is in the KEY, not the transport.
+    const positional = {};
+    ingestLiveObservation(positional, { index: 0, text: 'atlas 1' }, { phase: 'logging', nowMs: 100 });
+    ingestLiveObservation(positional, { index: 1, text: 'atlas 2' }, { phase: 'logging', nowMs: 101 });
+    ingestLiveObservation(positional, { index: 2, text: 'atlas 3' }, { phase: 'logging', nowMs: 102 });
+    // After the eviction the SAME indexes carry shifted content, and the new reply is
+    // reported at index 2 — a key already bound to 'logging'.
+    ingestLiveObservation(positional, { index: 0, text: 'atlas 2' }, { phase: 'substitution_ask', nowMs: 200 });
+    ingestLiveObservation(positional, { index: 1, text: 'atlas 3' }, { phase: 'substitution_ask', nowMs: 201 });
+    ingestLiveObservation(positional, { index: 2, text: 'THE PROPOSAL' }, { phase: 'substitution_ask', nowMs: 202 });
+    const wrong = recordsToMessages(positional).find((r) => r.text === 'THE PROPOSAL');
+    // The positional keys are not identities, so nothing is ingested under them at all
+    // now — which is itself the point: a positional report can no longer land anywhere.
+    assert.equal(wrong, undefined, 'a report carrying no bubble identity is refused, never guessed at');
+    assert.equal(recordsToMessages(positional).length, 0);
+  });
+
+  it('identity survives an eviction: each record keeps its own text and its own phase', () => {
+    const records = {};
+    ingestLiveObservation(records, { id: '1', text: 'atlas 1' }, { phase: 'logging', nowMs: 100 });
+    ingestLiveObservation(records, { id: '2', text: 'atlas 2' }, { phase: 'logging', nowMs: 101 });
+    ingestLiveObservation(records, { id: '3', text: 'atlas 3' }, { phase: 'logging', nowMs: 102 });
+    // The eviction changes positions, never identities. The new turn's bubble is a NEW id.
+    ingestLiveObservation(records, { id: '4', text: 'THE PROPOSAL' }, { phase: 'substitution_ask', nowMs: 200 });
+    const all = recordsToMessages(records);
+    assert.deepEqual(all.map((r) => r.text), ['atlas 1', 'atlas 2', 'atlas 3', 'THE PROPOSAL']);
+    assert.deepEqual(all.map((r) => r.phase), ['logging', 'logging', 'logging', 'substitution_ask']);
+    assert.equal(new Set(all.map((r) => r.id)).size, 4, 'identities are unique');
+  });
+
+  it('an observation with NO identity is dropped, never landed on another record', () => {
+    const records = {};
+    ingestLiveObservation(records, { id: '1', text: 'a real bubble' }, { phase: 'logging', nowMs: 100 });
+    for (const bad of [{ text: 'orphan' }, { id: '', text: 'orphan' }, { id: '   ', text: 'orphan' }]) {
+      ingestLiveObservation(records, bad, { phase: 'teardown', nowMs: 200 });
+    }
+    const all = recordsToMessages(records);
+    assert.equal(all.length, 1);
+    assert.equal(all[0].text, 'a real bubble', 'no orphan text was written onto an existing record');
+  });
+
+  it('a sweep entry with no identity is dropped too', () => {
+    const records = {};
+    reconcileSweep(records, [{ text: 'no id' }, { id: '7', text: 'has an id' }],
+      { phase: 'teardown', nowMs: 900 });
+    const all = recordsToMessages(records);
+    assert.deepEqual(all.map((r) => r.text), ['has an id']);
+  });
+
+  it('messages are ordered by identity — assignment order, which eviction cannot disturb', () => {
+    const records = {};
+    // Reported out of order; ids are what fix the sequence.
+    ingestLiveObservation(records, { id: '12', text: 'twelfth' }, { phase: 'p', nowMs: 300 });
+    ingestLiveObservation(records, { id: '2', text: 'second' }, { phase: 'p', nowMs: 100 });
+    ingestLiveObservation(records, { id: '9', text: 'ninth' }, { phase: 'p', nowMs: 200 });
+    assert.deepEqual(recordsToMessages(records).map((r) => r.text), ['second', 'ninth', 'twelfth'],
+      'numeric identity order, not string order and not arrival order');
+  });
+});
+
 describe('reconcileSweep — a pending report is not a missed one', () => {
   it('a sweep facing a NON-QUIET collector does not downgrade an existing live record', () => {
     const records = {};
-    ingestLiveObservation(records, { index: 0, text: 'Thinking…', changeSeq: 1 }, { phase: 'ask', nowMs: 100 });
-    reconcileSweep(records, ['Replace Bench Press with Incline Dumbbell Press.'],
+    ingestLiveObservation(records, { id: '1', text: 'Thinking…', changeSeq: 1 }, { phase: 'ask', nowMs: 100 });
+    reconcileSweep(records, [{ id: '1', text: 'Replace Bench Press with Incline Dumbbell Press.' }],
       { phase: 'ask', nowMs: 150, collectorQuiet: false });
     const m = recordsToMessages(records)[0];
     assert.equal(m.retroactive, false, 'a report still in flight is not a missed observation');
@@ -1179,7 +1249,7 @@ describe('reconcileSweep — a pending report is not a missed one', () => {
     assert.equal(m.atMs, 100, 'the live timing is untouched');
 
     // The in-flight report then lands and the record is honest, with its own logical time.
-    ingestLiveObservation(records, { index: 0, text: 'Replace Bench Press with Incline Dumbbell Press.', changeSeq: 2 },
+    ingestLiveObservation(records, { id: '1', text: 'Replace Bench Press with Incline Dumbbell Press.', changeSeq: 2 },
       { phase: 'ask', nowMs: 200 });
     const after = recordsToMessages(records)[0];
     assert.equal(after.retroactive, false);
@@ -1189,7 +1259,7 @@ describe('reconcileSweep — a pending report is not a missed one', () => {
 
   it('a NON-QUIET sweep still fills in a bubble with NO record, still retroactive', () => {
     const records = {};
-    reconcileSweep(records, ['a bubble nothing ever reported'],
+    reconcileSweep(records, [{ id: '1', text: 'a bubble nothing ever reported' }],
       { phase: 'teardown', nowMs: 900, collectorQuiet: false });
     const m = recordsToMessages(records)[0];
     assert.equal(m.retroactive, true, 'an unobserved bubble is never silently trusted');
@@ -1198,8 +1268,8 @@ describe('reconcileSweep — a pending report is not a missed one', () => {
 
   it('a QUIET sweep still marks a genuinely missed transition', () => {
     const records = {};
-    ingestLiveObservation(records, { index: 0, text: 'Thinking…', changeSeq: 1 }, { phase: 'ask', nowMs: 100 });
-    reconcileSweep(records, ['saved to your sheet'], { phase: 'teardown', nowMs: 900, collectorQuiet: true });
+    ingestLiveObservation(records, { id: '1', text: 'Thinking…', changeSeq: 1 }, { phase: 'ask', nowMs: 100 });
+    reconcileSweep(records, [{ id: '1', text: 'saved to your sheet' }], { phase: 'teardown', nowMs: 900, collectorQuiet: true });
     const m = recordsToMessages(records)[0];
     assert.equal(m.retroactive, true, 'the observer had its say and still never reported this');
     assert.equal(m.text, 'saved to your sheet');
@@ -1207,8 +1277,8 @@ describe('reconcileSweep — a pending report is not a missed one', () => {
 
   it('quiet is the DEFAULT, so an existing caller keeps the old fail-closed behavior', () => {
     const records = {};
-    ingestLiveObservation(records, { index: 0, text: 'Thinking…' }, { phase: 'ask', nowMs: 100 });
-    reconcileSweep(records, ['saved to your sheet'], { phase: 'teardown', nowMs: 900 });
+    ingestLiveObservation(records, { id: '1', text: 'Thinking…' }, { phase: 'ask', nowMs: 100 });
+    reconcileSweep(records, [{ id: '1', text: 'saved to your sheet' }], { phase: 'teardown', nowMs: 900 });
     assert.equal(recordsToMessages(records)[0].retroactive, true);
   });
 });
@@ -1216,8 +1286,8 @@ describe('reconcileSweep — a pending report is not a missed one', () => {
 describe('reconcileSweep — a later look cannot rewrite when a claim became visible', () => {
   it('BITE — a live claim keeps its own timestamp when a later sweep sees the same text', () => {
     const records = {};
-    ingestLiveObservation(records, { index: 0, text: 'saved to your sheet' }, { phase: 'closeout', nowMs: 300 });
-    reconcileSweep(records, ['saved to your sheet'], { phase: 'teardown', nowMs: 900 });
+    ingestLiveObservation(records, { id: '1', text: 'saved to your sheet' }, { phase: 'closeout', nowMs: 300 });
+    reconcileSweep(records, [{ id: '1', text: 'saved to your sheet' }], { phase: 'teardown', nowMs: 900 });
     const m = recordsToMessages(records)[0];
     assert.equal(m.atMs, 300, 'the sweep must not restamp a live observation');
     assert.equal(m.retroactive, false);
@@ -1227,7 +1297,7 @@ describe('reconcileSweep — a later look cannot rewrite when a claim became vis
 
   it('BITE — a bubble the observer never reported is retroactive and fails closed', () => {
     const records = {};
-    reconcileSweep(records, ['saved to your sheet'], { phase: 'teardown', nowMs: 900 });
+    reconcileSweep(records, [{ id: '1', text: 'saved to your sheet' }], { phase: 'teardown', nowMs: 900 });
     const m = recordsToMessages(records)[0];
     assert.equal(m.retroactive, true);
     for (const sweep of [
@@ -1241,17 +1311,17 @@ describe('reconcileSweep — a later look cannot rewrite when a claim became vis
 
   it('a sweep that finds text the observer never reported marks the record retroactive', () => {
     const records = {};
-    ingestLiveObservation(records, { index: 0, text: 'Thinking…' }, { phase: 'closeout', nowMs: 100 });
-    reconcileSweep(records, ['saved to your sheet'], { phase: 'teardown', nowMs: 900 });
+    ingestLiveObservation(records, { id: '1', text: 'Thinking…' }, { phase: 'closeout', nowMs: 100 });
+    reconcileSweep(records, [{ id: '1', text: 'saved to your sheet' }], { phase: 'teardown', nowMs: 900 });
     assert.equal(recordsToMessages(records)[0].retroactive, true,
       'the observer missed this transition, so its timing is not trustworthy');
   });
 
   it('a later LIVE report clears a retroactive mark', () => {
     const records = {};
-    reconcileSweep(records, ['Thinking…'], { phase: 'x', nowMs: 100 });
+    reconcileSweep(records, [{ id: '1', text: 'Thinking…' }], { phase: 'x', nowMs: 100 });
     assert.equal(recordsToMessages(records)[0].retroactive, true);
-    ingestLiveObservation(records, { index: 0, text: 'the real reply' }, { phase: 'x', nowMs: 200 });
+    ingestLiveObservation(records, { id: '1', text: 'the real reply' }, { phase: 'x', nowMs: 200 });
     const m = recordsToMessages(records)[0];
     assert.equal(m.retroactive, false);
     assert.equal(m.atMs, 200);

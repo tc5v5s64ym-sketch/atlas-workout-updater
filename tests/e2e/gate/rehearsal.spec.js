@@ -40,7 +40,7 @@ const { measureSourceTree } = require('./rehearsal-source-facts');
 const { markRunStarted, verifyRunStartMarker } = require('./rehearsal-run-start');
 const { pickNetworkPassthrough, assertNoWorkbookId, GATE_STARTUP_TIMEOUT_MS } = require('./rehearsal-child-env');
 const {
-  OBSERVER_FLUSH_MS, bubbleObserverInitScript,
+  OBSERVER_FLUSH_MS, bubbleObserverInitScript, BUBBLE_ID_ATTR, BUBBLE_SEQ_ATTR,
   ingestLiveObservation, reconcileSweep, recordsToMessages, makeBoundary,
   SEEN_ATTR,
   NEW_BUBBLE_SELECTOR,
@@ -965,25 +965,33 @@ async function sweepAtlasBubbles(page) {
     try {
       flushed = typeof window.__atlasBubbleFlush === 'function' ? await window.__atlasBubbleFlush() : null;
     } catch { flushed = null; }
-    // Read the text SYNCHRONOUSLY after the flush resolves, then the collector's state,
-    // so `pending` and the text describe the same instant.
-    const texts = Array.from(document.querySelectorAll('#thread-messages .chat-bubble-atlas'))
-      .map(e => String(e.innerText || ''));
+    // Read SYNCHRONOUSLY after the flush resolves, through the collector's own stamping
+    // authority (F-SB4B corrective 5), so each swept bubble carries the identity the
+    // observer would have given it — never its position, which shifts on every eviction.
+    if (typeof window.__atlasBubbleRead !== 'function') return { observed: null, quiet: false };
+    const observed = window.__atlasBubbleRead();
     let state = null;
     try {
       state = typeof window.__atlasBubbleState === 'function' ? window.__atlasBubbleState() : null;
     } catch { state = null; }
     return {
-      texts,
+      observed,
       quiet: Boolean(flushed && flushed.ok === true) && Boolean(state) && state.pending === false,
     };
-  }).catch(() => ({ texts: [], quiet: false }));
-  reconcileSweep(bubbleRecords, swept.texts, {
+  }).catch(() => ({ observed: null, quiet: false }));
+  // A sweep that cannot reach the collector is a BROKEN HARNESS, not an empty thread.
+  // Recording nothing would leave the claim sweep with no messages, and "no messages"
+  // reads as "no unsupported claims" — a false green precisely when the evidence path
+  // has failed. Refuse loudly instead.
+  if (!Array.isArray(swept.observed)) {
+    throw new Error('rehearsal: the bubble collector\'s read hook is unavailable — the claim sweep cannot observe anything, so this run cannot be scored');
+  }
+  reconcileSweep(bubbleRecords, swept.observed, {
     phase: currentPhaseRef.value, nowMs: Date.now(), thinkingMarker: THINKING,
     collectorQuiet: swept.quiet,
   });
-  if (!swept.quiet) note('sweep', `collector not quiet at sweep — existing live records left for their pending reports (${swept.texts.length} bubble(s))`);
-  return swept.texts.length;
+  if (!swept.quiet) note('sweep', `collector not quiet at sweep — existing live records left for their pending reports (${swept.observed.length} bubble(s))`);
+  return swept.observed.length;
 }
 const THINKING = 'Thinking…';
 const SETTLE_TIMEOUT_MS = 90000;
@@ -1270,6 +1278,9 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
     callbackName: '__atlasBubbleObserved',
     flushName: '__atlasBubbleFlush',
     stateName: '__atlasBubbleState',
+    readName: '__atlasBubbleRead',
+    idAttr: BUBBLE_ID_ATTR,
+    seqAttr: BUBBLE_SEQ_ATTR,
   });
   // The staged-proposal observer, installed on the same terms: before any application
   // script and on every navigation, so the ONE proposal each scenario stages is
