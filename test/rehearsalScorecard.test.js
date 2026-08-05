@@ -1237,6 +1237,114 @@ describe('collector records are keyed by bubble identity, not position', () => {
   });
 });
 
+// F-SB4B corrective 6 — the CREATE-path sweep race.
+//
+// #1264 gated reconcileSweep's UPDATE path on `collectorQuiet`, and sweep-only records
+// in the live rehearsal fell from 7 to 1. The residual one is the CREATE path, which is
+// still unconditional: a bubble first seen by a sweep that raced the observer's FIRST
+// report is born `retroactive`, and `ingestLiveObservation` can only clear that mark
+// inside `if (text !== prior.text)` — so the observer's own report for the same bubble
+// and the same text never redeems it. Qualifying Session 1
+// (fsb4b-s1-20260805T003120-A18A1D, 23/25) failed condition 9 on exactly one such record
+// against a product that completed correctly.
+//
+// THE RULE. The live observer report stays the timing authority. A sweep-created record
+// is redeemed ONLY when sequence evidence proves the later live report describes a
+// change that ALREADY EXISTED when the sweep inspected it — report.changeSeq <= the
+// collector changeSeq captured at the sweep instant. Anything later, missing, invalid,
+// or belonging to another bubble cannot redeem it, because a report describing a LATER
+// change carries a LATER instant, and stamping that onto an earlier claim is what makes
+// an unsupported write claim look earned.
+describe('reconcileSweep CREATE path — redemption requires sequence proof', () => {
+  const swept = (records, entries, opts) => reconcileSweep(records, entries,
+    { phase: 'ask', nowMs: 500, thinkingMarker: 'Thinking…', ...opts });
+
+  it('BITE — the OLD create path leaves a same-text live report unable to redeem the record', () => {
+    // Modelled on the old behavior: a sweep-created record with NO captured sequence.
+    const records = {};
+    swept(records, [{ id: '1', text: 'saved to your sheet' }], { sweptAtChangeSeq: undefined });
+    assert.equal(recordsToMessages(records)[0].retroactive, true);
+    // The observer's own first report for that bubble now lands, same text.
+    ingestLiveObservation(records, { id: '1', text: 'saved to your sheet', changeSeq: 3 },
+      { phase: 'ask', nowMs: 600, ingestSeq: 1 });
+    assert.equal(recordsToMessages(records)[0].retroactive, true,
+      'with no sequence captured at the sweep, nothing can prove the report is the one the sweep raced');
+  });
+
+  it('a sequence-PROVEN live report redeems a sweep-created record', () => {
+    const records = {};
+    swept(records, [{ id: '1', text: 'saved to your sheet' }], { sweptAtChangeSeq: 7 });
+    const created = recordsToMessages(records)[0];
+    assert.equal(created.retroactive, true);
+    assert.equal(created.sweptAtChangeSeq, 7, 'the sweep records the collector clock it read');
+
+    ingestLiveObservation(records, { id: '1', text: 'saved to your sheet', changeSeq: 5 },
+      { phase: 'ask', nowMs: 600, ingestSeq: 2 });
+    const m = recordsToMessages(records)[0];
+    assert.equal(m.retroactive, false, 'the change already existed when the sweep looked');
+    assert.equal(m.atMs, 600, 'and the record adopts the live timing');
+    assert.equal(m.changeSeq, 5);
+    assert.equal(m.ingestSeq, 2);
+  });
+
+  it('an equal sequence redeems (the change existed at the sweep instant)', () => {
+    const records = {};
+    swept(records, [{ id: '1', text: 'claim' }], { sweptAtChangeSeq: 4 });
+    ingestLiveObservation(records, { id: '1', text: 'claim', changeSeq: 4 }, { phase: 'ask', nowMs: 600 });
+    assert.equal(recordsToMessages(records)[0].retroactive, false);
+  });
+
+  it('a LATER sequence does NOT redeem — it describes a different, later change', () => {
+    const records = {};
+    swept(records, [{ id: '1', text: 'claim' }], { sweptAtChangeSeq: 4 });
+    ingestLiveObservation(records, { id: '1', text: 'claim', changeSeq: 9 }, { phase: 'ask', nowMs: 600 });
+    const m = recordsToMessages(records)[0];
+    assert.equal(m.retroactive, true, 'a later report cannot vouch for an earlier claim');
+    assert.equal(m.atMs, 500, 'and it must not restamp the record with its own later instant');
+  });
+
+  it('a MISSING or invalid sequence on either side does NOT redeem', () => {
+    for (const [sweptSeq, reportSeq] of [[undefined, 3], [4, undefined], [4, null], [null, null], [4, NaN], ['4', 3], [4, '3']]) {
+      const records = {};
+      swept(records, [{ id: '1', text: 'claim' }], { sweptAtChangeSeq: sweptSeq });
+      ingestLiveObservation(records, { id: '1', text: 'claim', changeSeq: reportSeq }, { phase: 'ask', nowMs: 600 });
+      assert.equal(recordsToMessages(records)[0].retroactive, true,
+        `sweep=${JSON.stringify(sweptSeq)} report=${JSON.stringify(reportSeq)} must not redeem`);
+    }
+  });
+
+  it('a DIFFERENT bubble identity cannot redeem another record', () => {
+    const records = {};
+    swept(records, [{ id: '1', text: 'claim' }], { sweptAtChangeSeq: 9 });
+    ingestLiveObservation(records, { id: '2', text: 'claim', changeSeq: 3 }, { phase: 'ask', nowMs: 600 });
+    const all = recordsToMessages(records);
+    assert.equal(all.find((r) => r.id === '1').retroactive, true, 'record 1 is untouched');
+    assert.equal(all.find((r) => r.id === '2').retroactive, false, 'record 2 is its own live observation');
+  });
+
+  it('genuinely sweep-only evidence stays retroactive when no report ever arrives', () => {
+    const records = {};
+    swept(records, [{ id: '1', text: 'saved to your sheet' }], { sweptAtChangeSeq: 7 });
+    const m = recordsToMessages(records)[0];
+    assert.equal(m.retroactive, true);
+    assert.equal(detectUnsupportedWriteClaim({ messages: [m], liveWriteAtMs: 100 }).unsupported, true,
+      'an unredeemed sweep-only claim still fails closed');
+  });
+
+  it('a genuinely LATER different-text transition keeps its existing safe behavior', () => {
+    const records = {};
+    ingestLiveObservation(records, { id: '1', text: 'Thinking…', changeSeq: 1 }, { phase: 'ask', nowMs: 100 });
+    // A quiet sweep finds text the observer never reported: still marked, as before.
+    swept(records, [{ id: '1', text: 'saved to your sheet' }], { sweptAtChangeSeq: 9, collectorQuiet: true });
+    assert.equal(recordsToMessages(records)[0].retroactive, true);
+    // And a genuinely later live transition still clears it through the text branch.
+    ingestLiveObservation(records, { id: '1', text: 'something newer', changeSeq: 12 }, { phase: 'ask', nowMs: 700 });
+    const m = recordsToMessages(records)[0];
+    assert.equal(m.retroactive, false);
+    assert.equal(m.atMs, 700);
+  });
+});
+
 describe('reconcileSweep — a pending report is not a missed one', () => {
   it('a sweep facing a NON-QUIET collector does not downgrade an existing live record', () => {
     const records = {};

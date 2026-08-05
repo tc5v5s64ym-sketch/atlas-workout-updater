@@ -977,8 +977,12 @@ async function sweepAtlasBubbles(page) {
     return {
       observed,
       quiet: Boolean(flushed && flushed.ok === true) && Boolean(state) && state.pending === false,
+      // The collector clock AT THIS SWEEP'S OWN INSTANT. A record this sweep creates
+      // carries it, so a later live report can be tested for causality: a report whose
+      // change already existed here is the one this sweep raced (F-SB4B corrective 6).
+      atChangeSeq: (state && Number.isFinite(state.changeSeq)) ? state.changeSeq : null,
     };
-  }).catch(() => ({ observed: null, quiet: false }));
+  }).catch(() => ({ observed: null, quiet: false, atChangeSeq: null }));
   // A sweep that cannot reach the collector is a BROKEN HARNESS, not an empty thread.
   // Recording nothing would leave the claim sweep with no messages, and "no messages"
   // reads as "no unsupported claims" — a false green precisely when the evidence path
@@ -988,7 +992,7 @@ async function sweepAtlasBubbles(page) {
   }
   reconcileSweep(bubbleRecords, swept.observed, {
     phase: currentPhaseRef.value, nowMs: Date.now(), thinkingMarker: THINKING,
-    collectorQuiet: swept.quiet,
+    collectorQuiet: swept.quiet, sweptAtChangeSeq: swept.atChangeSeq,
   });
   if (!swept.quiet) note('sweep', `collector not quiet at sweep — existing live records left for their pending reports (${swept.observed.length} bubble(s))`);
   return swept.observed.length;
