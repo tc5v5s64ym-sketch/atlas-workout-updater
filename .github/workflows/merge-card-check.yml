@@ -56,14 +56,24 @@ jobs:
             // still SAY `None` rather than leave the row empty — an empty row is silence, and
             // silence is what this check exists to fail. Both the merge-card table row and a
             // `- Label:` bullet are accepted, because a body may carry either shape.
+            //
+            // `None` is scoped, not universal (exact-head review of PR #1268, P1). CLAUDE.md
+            // permits it for Supporting / explore models ALONE; the other three name a real
+            // surface, a real displayed model name (or a plain report that the surface
+            // withholds it), and a real dispatch authority. Without the third column below,
+            // `Builder surface: None` satisfied this required check while declaring none of
+            // the attribution the check exists to require — a false green in merge governance.
+            // `None` is the one value whose permitted scope the contract defines exactly, so
+            // it is the one this LITERAL check can enforce; every other wrong-but-nonblank
+            // value stays exact-head review's job.
             const ATTRIBUTION = [
-              ['Builder surface', 'Builder surface'],
-              ['Primary builder model', 'Primary builder model'],
-              ['Supporting / explore models', 'Supporting[ \\t]*/[ \\t]*explore models'],
-              ['Architecture / dispatch authority', 'Architecture[ \\t]*/[ \\t]*dispatch authority'],
+              ['Builder surface', 'Builder surface', false],
+              ['Primary builder model', 'Primary builder model', false],
+              ['Supporting / explore models', 'Supporting[ \\t]*/[ \\t]*explore models', true],
+              ['Architecture / dispatch authority', 'Architecture[ \\t]*/[ \\t]*dispatch authority', false],
             ];
 
-            for (const [label, pattern] of ATTRIBUTION) {
+            for (const [label, pattern, noneAllowed] of ATTRIBUTION) {
               const row = new RegExp(`^[ \\t]*\\|[ \\t]*\\*{0,2}${pattern}\\*{0,2}[ \\t]*\\|(.*)$`, 'im').exec(body);
               const bullet = new RegExp(`^[ \\t]*[-*][ \\t]*\\*{0,2}${pattern}\\*{0,2}[ \\t]*:(.*)$`, 'im').exec(body);
               const match = row || bullet;
@@ -74,8 +84,11 @@ jobs:
               // A table row ends in a closing pipe; strip it before reading the value. Then
               // strip HTML comments, so the shipped placeholder reads as the blank it is.
               const raw = row ? match[1].replace(/\|[ \t]*$/, '') : match[1];
-              if (raw.replace(/<!--[\s\S]*?-->/g, '').trim() === '') {
+              const value = raw.replace(/<!--[\s\S]*?-->/g, '').replace(/\*/g, '').trim();
+              if (value === '') {
                 problems.push(`Merge card attribution field "${label}" is blank or still a template placeholder. Record the real value; use None only for Supporting / explore models, and never guess a model identity.`);
+              } else if (!noneAllowed && /^none\.?$/i.test(value)) {
+                problems.push(`Merge card attribution field "${label}" may not be None. None is valid only for Supporting / explore models; name the real surface, the exact displayed model name (or say plainly that the surface withholds it), and the dispatch authority.`);
               }
             }
 

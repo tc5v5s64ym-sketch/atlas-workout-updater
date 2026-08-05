@@ -346,6 +346,56 @@ describe('merge card — attribution fields', () => {
     assert.equal(check(card(rows({ 'Supporting / explore models': 'None' }))), '');
   });
 
+  // MUTATION 4 — `None` in a field that must name a real actor (exact-head review of PR
+  // #1268, P1). A non-empty check alone let `Builder surface: None` satisfy the required
+  // check while declaring none of the attribution it exists to require. `None` is the one
+  // value whose permitted scope CLAUDE.md defines exactly, so it is the one this literal
+  // check can enforce.
+  const NONE_FORBIDDEN = FIELDS.filter((f) => f !== 'Supporting / explore models');
+
+  for (const field of NONE_FORBIDDEN) {
+    for (const written of ['None', 'none', 'NONE', 'None.', '  None  ', '**None**']) {
+      it(`fails when "${field}" is ${JSON.stringify(written)}, and names only that field`, () => {
+        const failure = check(card(rows({ [field]: written })));
+        assert.match(failure, new RegExp(`attribution field "${field.replace('/', '\\/')}" may not be None`));
+        for (const other of FIELDS) {
+          if (other === field) continue;
+          assert.ok(!failure.includes(`"${other}"`), `${other} must not be reported: ${failure}`);
+        }
+      });
+    }
+  }
+
+  it('fails every forbidden None at once, naming each field', () => {
+    const failure = check(card(rows(Object.fromEntries(NONE_FORBIDDEN.map((f) => [f, 'None'])))));
+    for (const field of NONE_FORBIDDEN) {
+      assert.ok(failure.includes(`"${field}" may not be None`), `${field} not reported: ${failure}`);
+    }
+    assert.ok(!failure.includes('"Supporting / explore models"'), failure);
+  });
+
+  it('accepts None for Supporting / explore models in every casing', () => {
+    for (const written of ['None', 'none', 'NONE', 'None.', '**None**']) {
+      assert.equal(check(card(rows({ 'Supporting / explore models': written }))), '',
+        `Supporting / explore models must still accept ${JSON.stringify(written)}`);
+    }
+  });
+
+  it('rejects None in the bullet shape too, not only the table row', () => {
+    const bullets = FIELDS.map((f) => `- ${f}: ${f === 'Builder surface' ? 'None' : 'x'}`).join('\n');
+    assert.match(check(card(bullets)), /attribution field "Builder surface" may not be None/);
+  });
+
+  // The bite must be NARROW: a real value that merely contains the word must pass, or the
+  // guard would push a truthful declaration into a workaround.
+  it('does not trip on a real value that merely contains the word "none"', () => {
+    assert.equal(check(card(rows({
+      'Builder surface': 'Claude Code',
+      'Primary builder model': 'the surface withholds the model identity; none is displayed',
+      'Architecture / dispatch authority': 'ChatGPT (no supporting authority — none delegated)',
+    }))), '');
+  });
+
   it('accepts the bullet shape as well as the table row', () => {
     const bullets = FIELDS.map((f) => `- ${f}: x`).join('\n');
     assert.equal(check(card(bullets)), '');
