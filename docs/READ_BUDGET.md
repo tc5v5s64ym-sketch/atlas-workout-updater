@@ -225,25 +225,25 @@ Against the failed run's own request sequence, replayed through the real handler
 Measured in the **qualifying ledger posture** — `ATLAS_SESSION_PLANS_WRITE=1` and
 `SESSION_PLAN_SETS_WRITE_ENABLED=1`, the two flags the combined rehearsal sets
 (`tests/e2e/gate/gate-server.js`). With them off the session has no plan capture, no
-checkpoint writes and a dry-run seal, and costs 41 rather than 47 — a cheaper session than
-the one that failed.
+checkpoint writes and a dry-run seal — a materially cheaper session than the one that
+failed.
 
 | Configuration | Peak rolling-60s reads |
 |---|---|
-| batching + catalog cache (shipped) | **47** |
-| batching only | 61 |
-| catalog cache only | 103 |
-| neither (pre-change) | 117 |
+| batching + catalog cache (shipped) | **46** |
+| batching only | 60 |
+| catalog cache only | 106 |
+| neither (pre-change) | 120 |
 
-The 117 is the complete pre-change counterfactual, and it is the number to compare
+The 120 is the complete pre-change counterfactual, and it is the number to compare
 against: it counts every metered method through the real handlers, in the posture the
 qualifying session runs. The archived run's 78 is a values-read lower bound from the old
 logging surface (see above) and is consistent with it — the live session was also cut short
-by the quota it had already exhausted. What makes the 47 meaningful is the 117, not the 78.
+by the quota it had already exhausted. What makes the 46 meaningful is the 120, not the 78.
 
-The margin is **three reads**. The measurement is deterministic (47 on every run), so that
-is headroom against Google's real 60/minute limit rather than slack: a change that adds a
-few requests to a session turns the guard red.
+The margin is **four reads**. The measurement is deterministic, so that is headroom against
+Google's real 60/minute limit rather than slack: a change that adds a few requests to a
+session turns the guard red.
 
 ## The guard
 
@@ -262,6 +262,9 @@ real `sheets.js` and the real Express app, faking only `googleapis`, and asserts
 - restoring individual range requests **breaks** the budget;
 - restoring per-request catalog reads **breaks** the budget;
 - both disabled **reproduces** the original quota failure;
+- **every ledger operation genuinely captured** — these routes answer HTTP 200 while
+  reporting `status: 'error', captured: false` in the body, so an all-2xx sequence proves
+  nothing about them, and one really was failing that way;
 - the closeout **settled** in the qualifying posture: `closeout_fully_verified === true`,
   a **live** set-ledger seal with `sheet_written: true`, and a Session_Plans closeout event
   that is genuinely `captured: true` — a `disabled` capture or a dry-run seal fails the

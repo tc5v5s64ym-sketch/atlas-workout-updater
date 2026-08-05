@@ -35,9 +35,12 @@
 //     chain are the production ones.
 //   • It runs the QUALIFYING LEDGER POSTURE — ATLAS_SESSION_PLANS_WRITE=1 and
 //     SESSION_PLAN_SETS_WRITE_ENABLED=1, the two flags the combined rehearsal sets. With
-//     them off the session has no plan capture, no checkpoint writes and a dry-run seal:
-//     47 reads become 41, and the budget would describe a cheaper session than the one
-//     that failed. A posture bite refuses that.
+//     them off the session has no plan capture, no checkpoint writes and a dry-run seal —
+//     a materially cheaper session than the one that failed, so the budget would describe
+//     the wrong thing. Two posture bites refuse it.
+//   • Every LEDGER operation must have genuinely captured. These routes answer HTTP 200
+//     while reporting `status: 'error', captured: false` in the BODY, so an all-2xx
+//     sequence proves nothing about them — and one really was failing that way.
 //   • The request sequence is the LITERAL sequence of API calls from the failed run's
 //     server log, in order (static asset and health requests dropped — they reach no
 //     handler that reads). It is not a representative sample; it is that session —
@@ -56,17 +59,17 @@
 //     tests stop failing-as-required and this file goes red.
 //
 // MEASURED, on this sequence, in the qualifying ledger posture:
-//     batching + cache   47   ← the shipped behaviour, against a budget of 50
-//     batching only      61   ← catalog cache removed
-//     cache only        103   ← batching removed
-//     neither           117   ← the complete pre-change counterfactual. Compare against
+//     batching + cache   46   ← the shipped behaviour, against a budget of 50
+//     batching only      60   ← catalog cache removed
+//     cache only        106   ← batching removed
+//     neither           120   ← the complete pre-change counterfactual. Compare against
 //                               THIS, not the archived 78 (a values-read lower bound from
 //                               the old logging surface; the live run was also cut short
 //                               by the quota it had already exhausted).
 //
-// The margin is THREE reads. That is deliberate headroom against Google's real 60/min
-// limit, not slack: the measurement is deterministic (47 on every run), so a change that
-// adds even a few requests to a session turns this file red — which is the point.
+// The margin is FOUR reads. That is deliberate headroom against Google's real 60/min
+// limit, not slack: the measurement is deterministic, so a change that adds even a few
+// requests to a session turns this file red — which is the point.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -410,7 +413,11 @@ function ownerPatternSequence({ omitCloseout = false } = {}) {
         ...sessionRef,
         item: {
           plan_item_id: planItems[index].plan_item_id, outcome: 'completed',
-          planned_lift_code: LIFTS[index].code, performed_lift_code: LIFTS[index].code,
+          planned_lift_code: LIFTS[index].code,
+          // No performed_lift_code: the ledger accepts it only for a `substituted`
+          // outcome. Sending it returned HTTP 200 carrying status:'error' — a ledger
+          // operation failing silently inside a 2xx, which `assertLedgerGenuine` below
+          // now refuses outright.
         },
       }]);
       steps.push(['POST', '/api/session-plan-sets/revision', {
@@ -481,6 +488,46 @@ function assertSequenceGenuine(results) {
     `${notWritten.length} of ${liveSaves.length} live Saves did not write (${
       [...new Set(notWritten.map(r => r.body?.data?.sheet_write))].join(', ')
     }) — a skipped Save performs far fewer reads and would understate the budget`);
+}
+
+/**
+ * Every ledger operation in the sequence must have genuinely captured.
+ *
+ * These routes answer HTTP 200 while reporting `status: 'error', captured: false` in the
+ * body, so an all-2xx sequence proves nothing about them. One really was failing that way
+ * — `/api/session-plans/outcome` rejecting a `performed_lift_code` on a `completed`
+ * outcome — and the budget was being measured on a session whose plan events never landed.
+ *
+ * This covers the qualifying outcomes the ledger must show: acceptance events captured,
+ * Session_Plan_Sets checkpoints written live (never `dry_run`), and revisions captured.
+ */
+function assertLedgerGenuine(results) {
+  const LEDGER_ROUTES = [
+    '/api/session-plans/accept', '/api/session-plans/outcome',
+    '/api/session-plan-sets/accept', '/api/session-plan-sets/revision',
+  ];
+  const seen = [];
+  for (const result of results) {
+    if (!LEDGER_ROUTES.includes(result.path)) continue;
+    const data = result.body?.data ?? {};
+    const report = data.session_plans || data.session_plan_sets;
+    assert.ok(report, `${result.path} returned no ledger report: ${JSON.stringify(data).slice(0, 200)}`);
+    assert.notEqual(report.status, 'error',
+      `${result.path} failed inside a 200: ${JSON.stringify(report)}`);
+    assert.notEqual(report.status, 'disabled',
+      `${result.path} was disabled — the qualifying posture enables both ledger flags: ${JSON.stringify(report)}`);
+    assert.equal(report.captured, true, `${result.path} did not capture: ${JSON.stringify(report)}`);
+    assert.ok(Number(report.written) > 0, `${result.path} wrote no rows: ${JSON.stringify(report)}`);
+    // The set-ledger lane must be LIVE, not a dry run — that is SESSION_PLAN_SETS_WRITE_ENABLED.
+    if (data.session_plan_sets) {
+      assert.notEqual(report.dry_run, true,
+        `${result.path} ran dry — the qualifying posture enables the set-ledger lane: ${JSON.stringify(report)}`);
+    }
+    seen.push(result.path);
+  }
+  for (const route of LEDGER_ROUTES) {
+    assert.ok(seen.includes(route), `the sequence must drive ${route}`);
+  }
 }
 
 /**
@@ -598,6 +645,7 @@ async function runSession({ coldCatalogPerRequest = false, omitCloseout = false 
 test('a complete owner-pattern session fits inside the session read budget', async () => {
   const run = await runSession();
   assertSequenceGenuine(run.results);
+  assertLedgerGenuine(run.results);
   assertCloseoutGenuine(run.results);
   assert.ok(run.total > 0, 'the sequence must actually read the sheet');
   assert.ok(run.peak <= BUDGET,
@@ -772,6 +820,7 @@ test('a failed catalog refresh reaches the route as a classified failure, not st
 // the exact settlement failures the guard is for. Each is now flipped individually.
 test('MUTATION: a failed closeout settlement makes the guard red', async () => {
   const run = await runSession();
+  assertLedgerGenuine(run.results);
   assertCloseoutGenuine(run.results);   // the real one settles
 
   const mutate = (patch) => {
@@ -863,9 +912,71 @@ test('POSTURE: turning off the Session_Plans write gate makes the qualifying gua
 
   // And it IS cheaper — which is exactly why accepting it would understate the budget.
   const qualifying = await runSession();
+  assertLedgerGenuine(qualifying.results);
   assertCloseoutGenuine(qualifying.results);
   assert.ok(qualifying.peak > disabled.peak,
     `the qualifying posture must cost more than the disabled one; got ${qualifying.peak} vs ${disabled.peak}`);
+});
+
+// ── 4h. POSTURE BITE — the set-ledger flag ───────────────────────────────────
+//
+// SESSION_PLAN_SETS_WRITE_ENABLED is captured at MODULE LOAD
+// (`services/sessionPlanSetsStore.js:31`), so it cannot be flipped mid-process for the
+// already-loaded app. The bite is therefore in two halves, and neither half is a
+// hand-made shape: first take the REAL envelope the capture layer produces with the flag
+// off — reloading the module exactly as `test/sessionPlanSetsCapture.test.js` does — then
+// feed that real envelope to the guards and require them to go red.
+test('POSTURE: the shape SESSION_PLAN_SETS_WRITE_ENABLED=0 produces fails the qualifying guard', async () => {
+  const storePath = require.resolve('../services/sessionPlanSetsStore');
+  const capturePath = require.resolve('../services/sessionPlanSetsCapture');
+  const savedStore = require.cache[storePath];
+  const savedCapture = require.cache[capturePath];
+  const previous = process.env.SESSION_PLAN_SETS_WRITE_ENABLED;
+
+  let disabledEnvelope;
+  try {
+    delete require.cache[storePath];
+    delete require.cache[capturePath];
+    delete process.env.SESSION_PLAN_SETS_WRITE_ENABLED;
+    const capture = require('../services/sessionPlanSetsCapture');
+    disabledEnvelope = await capture.captureAcceptedPlan(
+      { session_id: SESSION_ID, session_date: SESSION_DATE, plan_version: PLAN_VERSION },
+      [{ plan_item_id: 'pi_sq01', planned_lift_code: 'SQ01', target_set_count: 2, target_weight: 225, target_reps: 5, target_rir: 2 }],
+    );
+  } finally {
+    // Restore BOTH the env and the module registry, or every later test in this file
+    // silently runs the disabled posture.
+    if (previous === undefined) delete process.env.SESSION_PLAN_SETS_WRITE_ENABLED;
+    else process.env.SESSION_PLAN_SETS_WRITE_ENABLED = previous;
+    if (savedStore) require.cache[storePath] = savedStore; else delete require.cache[storePath];
+    if (savedCapture) require.cache[capturePath] = savedCapture; else delete require.cache[capturePath];
+  }
+
+  // This is what the flag being off actually looks like — not an invented object.
+  assert.equal(disabledEnvelope.captured, false, 'precondition: the disabled flag does not capture');
+  assert.equal(disabledEnvelope.dry_run, true, 'precondition: the disabled flag runs dry');
+
+  // Now require the guards to refuse it, on both the ledger routes and the closeout.
+  const run = await runSession();
+  assertLedgerGenuine(run.results);
+  assertCloseoutGenuine(run.results);
+
+  const withEnvelope = (path, envelope) => {
+    const clone = run.results.map(r => ({ ...r, body: JSON.parse(JSON.stringify(r.body)) }));
+    const target = clone.filter(r => r.path === path).pop();
+    target.body.data.session_plan_sets = envelope;
+    return clone;
+  };
+  assert.throws(() => assertLedgerGenuine(withEnvelope('/api/session-plan-sets/accept', disabledEnvelope)),
+    /dry|captur|written/i,
+    'a real disabled-flag envelope on a ledger route must fail the qualifying guard');
+
+  const closeoutClone = run.results.map(r => ({ ...r, body: JSON.parse(JSON.stringify(r.body)) }));
+  closeoutClone[closeoutClone.length - 1].body.data.ledger_seal = {
+    sealed_ok: true, dry_run: true, sheet_written: false, no_write_confirmed: true,
+  };
+  assert.throws(() => assertCloseoutGenuine(closeoutClone), /dry-run|qualifying/i,
+    'a dry-run seal — what the disabled flag produces at closeout — must fail the guard');
 });
 
 // ── 5. Deload_State is never served stale ────────────────────────────────────

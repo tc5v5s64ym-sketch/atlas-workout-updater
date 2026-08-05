@@ -77,7 +77,7 @@ const DECLARATIONS = [
   // request's batch alongside the log and constraint rows it is needed with.
   { method: 'GET', pattern: /^\/api\/recommend\/next\/[^/]+$/, ranges: [LOG_ROWS, DELOAD_ROWS, CONSTRAINTS_ROWS] },
   { method: 'GET', pattern: /^\/api\/recommendation\/preview$/, ranges: [LOG_ROWS, DELOAD_ROWS, CONSTRAINTS_ROWS] },
-  { method: 'GET', pattern: /^\/api\/plan\/intent-recommendation$/, ranges: [LOG_ROWS, DELOAD_ROWS, CONSTRAINTS_ROWS] },
+  { method: 'GET', pattern: /^\/api\/plan\/intent-recommendation$/, ranges: [LOG_ROWS, EFFORT_ROWS, DELOAD_ROWS, CONSTRAINTS_ROWS] },
   { method: 'GET', pattern: /^\/api\/plan\/today$/, ranges: [LOG_ROWS, DELOAD_ROWS, CONSTRAINTS_ROWS] },
 
   // The Save path. Dedup evidence and header guards travel together; the ledger ranges
@@ -116,7 +116,9 @@ const DECLARATIONS = [
   // costs nothing extra and stops the opening burst from spending a request each.
   { method: 'GET', pattern: /^\/api\/prs\/recent$/, ranges: [LOG_ROWS] },
   { method: 'GET', pattern: /^\/api\/summary\/weekly$/, ranges: [EFFORT_ROWS] },
-  { method: 'GET', pattern: /^\/api\/history\/recent$/, ranges: [LOG_ROWS] },
+  // Reads Effort as well as the log; declaring only the log left BOTH as separate
+  // requests, because a single declared range is a plain get rather than a batch.
+  { method: 'GET', pattern: /^\/api\/history\/recent$/, ranges: [LOG_ROWS, EFFORT_ROWS] },
   { method: 'GET', pattern: /^\/api\/report\/weekly$/, ranges: [LOG_ROWS, EFFORT_ROWS] },
   { method: 'GET', pattern: /^\/api\/progress\/summary$/, ranges: [LOG_ROWS, EFFORT_ROWS] },
   { method: 'GET', pattern: /^\/api\/stalls$/, ranges: [LOG_ROWS] },
