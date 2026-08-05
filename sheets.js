@@ -677,6 +677,9 @@ async function getHeaderRow(tabName) {
 
 async function getSpreadsheetTabs() {
   const sheets = await getSheetsClient();
+  // Logged because `spreadsheets.get` is metered against the read quota exactly like
+  // `values.get`, and scripts/reconstruct-session-reads.js counts what it can see.
+  console.log('[sheets.js] Reading spreadsheet metadata');
   const response = await readWithRetry('spreadsheet metadata', () => sheets.spreadsheets.get({
     spreadsheetId,
     fields: 'sheets.properties'
@@ -691,6 +694,7 @@ async function getSpreadsheetTabs() {
 // change. test/sheetsReadFailureAuthority.test.js pins that exclusion.
 async function ensureSheetTab(tabName, headerRow = []) {
   const sheets = await getSheetsClient();
+  console.log('[sheets.js] Reading spreadsheet metadata');
   const meta = await sheets.spreadsheets.get({
     spreadsheetId,
     fields: 'sheets.properties'
@@ -815,6 +819,7 @@ async function updateColumnCells(tabName, columnLetter, cells) {
 async function deleteRowsByRange(tabName, startIndex, endIndex) {
   // startIndex: 0-based inclusive. endIndex: 0-based exclusive.
   const sheets = await getSheetsClient();
+  console.log('[sheets.js] Reading spreadsheet metadata');
   const meta = await sheets.spreadsheets.get({
     spreadsheetId,
     fields: 'sheets.properties'

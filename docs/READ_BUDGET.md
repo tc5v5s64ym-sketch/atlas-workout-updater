@@ -151,7 +151,12 @@ minute against a 60/minute quota. Retry amplification was a consequence, not the
 A per-Save budget cannot express "a session must fit in a minute", and a guard that
 counts `sheets.js` helper calls cannot see that one `batchGet` now carries what used to
 be six requests. So the session budget is measured at the **googleapis boundary**:
-every `values.get` and every `values.batchGet` the process issues.
+every `values.get`, every `values.batchGet` **and** every `spreadsheets.get`.
+
+All three are metered. `spreadsheets.get` is not a diagnostic detail — `getSpreadsheetTabs`
+backs `closeoutFinality.isSessionFinalized`, `sessionPlanStore._tabExists` and
+`sessionPlanSetsStore._probeTab`, and `confirmTabMissing` issues one per unresolved range.
+Counting only the values methods reports a values-read total as if it were the read total.
 
 ## The budget
 
@@ -190,6 +195,13 @@ budget is not achieved on such a sheet.
 
 ### 2. The `Exercise_Catalog` cache (the only approved cross-request cache)
 
+There is exactly **one** catalog cache, in `sheets.js`. `routes/reads.js` used to own a
+second 60 s TTL cache in front of it; two caches in series do not give one TTL. A route
+entry filled at t=59 from a 59-second-old sheets entry served the same source snapshot
+until t≈119, past the approved bound, without attempting the refresh whose failure the
+contract requires be surfaced. The loser was deleted; the routes now always call
+`getExerciseCatalog()` and only transform its result.
+
 Reference data the athlete's writes never touch, and the single most-read range of the
 failed session (14 of 78). Server-owned; TTL ≤ 60 s; single-flight; expiry is explicit
 (an expired entry is discarded where it expires); **no stale-after-expiry fallback** — a
@@ -206,13 +218,14 @@ Against the failed run's own request sequence, replayed through the real handler
 
 | Configuration | Peak rolling-60s reads |
 |---|---|
-| batching + catalog cache (shipped) | **36** |
-| batching only | 58 |
-| catalog cache only | 53 |
-| neither (pre-change) | 76 |
+| batching + catalog cache (shipped) | **41** |
+| batching only | 55 |
+| catalog cache only | 88 |
+| neither (pre-change) | 102 |
 
-The 76 reproduces the original failure (the live run measured 78), which is what makes
-the 36 meaningful.
+The 102 reproduces the original failure and then some — the live run measured 78 before
+the quota it had already exhausted cut the session short. That is what makes the 41
+meaningful.
 
 ## The guard
 
@@ -221,13 +234,24 @@ real `sheets.js` and the real Express app, faking only `googleapis`, and asserts
 
 - peak rolling-60s reads **≤ 50**;
 - `Exercise_Catalog` costs **exactly one** request for the window;
-- **every** request answers 2xx — a 4xx performs no reads, and a sequence of early
-  rejections would produce a meaningless budget;
+- **every** request answers 2xx **and every live Save really wrote** — a 4xx performs no
+  reads, and a Save answering 200 as a duplicate skips its append and most of its reads.
+  A stale on-disk idempotency store alone moved the reported budget from 53 to 27, so the
+  harness redirects that store and asserts `sheet_write: 'success'` on every live Save;
+- the **final closeout Save** carrying the production `closeout_context` is driven and
+  must actually seal — that branch is what died live, and nothing else reaches
+  `recordCloseoutEvent` / `sealCloseout`;
 - restoring individual range requests **breaks** the budget;
 - restoring per-request catalog reads **breaks** the budget;
 - both disabled **reproduces** the original quota failure;
 - a `Deload_State` change is visible to the next recommendation — the budget may never be
-  bought with a cached training state.
+  bought with a cached training state;
+- the catalog **route** never serves a snapshot older than one TTL, and a failed refresh
+  reaches the route as a classified failure rather than stale data.
+
+Two mutation bites keep the measurement honest, because both of these omissions were live
+in an earlier head and neither turned the file red: dropping metadata reads from the count
+must change the answer, and dropping the closeout Save must fail the guard.
 
 The counterfactuals are the anti-false-green: if the sequence ever stops genuinely
 exercising the read paths, they stop failing-as-required and the file goes red.

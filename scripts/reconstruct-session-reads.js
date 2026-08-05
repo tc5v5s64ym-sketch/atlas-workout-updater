@@ -31,6 +31,10 @@ const fs = require('fs');
 const READ_PATTERNS = [
   // label, regex capturing the range
   [/^\[sheets\.js\] Reading range (.+)$/, 'readValues'],
+  // `spreadsheets.get` is metered like any other read. sheets.js labels it
+  // 'spreadsheet metadata' through readWithRetry; without this pattern the TOTAL below
+  // would be a values-read count presented as a read count.
+  [/^\[sheets\.js\] Reading (spreadsheet metadata)$/, 'getSpreadsheetTabs'],
   [/^\[sheets\.js\] Batch reading \d+ range\(s\): (.+)$/, 'prefetchRanges'],
   [/^\[sheets\.js\] Fetching Exercise_Catalog from range (.+)$/, 'getExerciseCatalog'],
   [/^\[sheets\.js\] Fetching composite-key columns from Log_Cleaned range (.+)$/, 'getLogCompositeKeys'],

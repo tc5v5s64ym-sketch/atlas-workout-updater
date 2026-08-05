@@ -18,29 +18,39 @@
 // owner-pattern session**.
 //
 // HOW IT IS MEASURED, AND WHY THAT IS HONEST.
-//   • The count is taken at the googleapis boundary — every `values.get` and every
-//     `values.batchGet` the process issues. Nothing above that layer can under-report:
-//     a helper that starts reading tomorrow is counted whether or not anyone lists it.
+//   • The count is taken at the googleapis boundary — every `values.get`, every
+//     `values.batchGet` AND every `spreadsheets.get`. All three are metered against the
+//     read quota, and `spreadsheets.get` is on live session paths (getSpreadsheetTabs
+//     backs closeoutFinality / sessionPlanStore / sessionPlanSetsStore; confirmTabMissing
+//     issues one per unresolved range). Counting only the values methods reported a
+//     values-read total as if it were the read total. Nothing above this layer can
+//     under-report: a helper that starts reading tomorrow is counted regardless.
 //   • The REAL `sheets.js` and the REAL Express app run. Only `googleapis` is faked, so
 //     the batching, the request context, the catalog cache and every handler in the
 //     chain are the production ones.
 //   • The request sequence is the LITERAL sequence of API calls from the failed run's
 //     server log, in order (static asset and health requests dropped — they reach no
-//     handler that reads). It is not a representative sample; it is that session.
-//   • EVERY request must answer 2xx. A request that 400s early performs no reads, and a
-//     sequence of early rejections would produce a beautiful, meaningless budget.
-//     `assertSequenceGenuine` refuses that.
+//     handler that reads). It is not a representative sample; it is that session —
+//     including twelve real set-log Saves and the FINAL CLOSEOUT Save carrying the
+//     production `closeout_context`, which is the branch that actually died live and the
+//     only one that reaches recordCloseoutEvent / sealCloseout.
+//   • EVERY request must answer 2xx AND every live Save must really have written. A
+//     request that 400s early performs no reads, and a Save answering 200 as a duplicate
+//     skips its append and most of its reads — a stale on-disk idempotency store alone
+//     moved the reported budget from 53 to 27. `assertSequenceGenuine` refuses both, and
+//     `assertCloseoutGenuine` refuses a closeout that did not seal.
 //   • The counterfactual tests are the real anti-false-green. The same sequence is re-run
 //     with batching disabled, with the catalog cache disabled, and with both disabled;
 //     each must BREAK the budget, and the both-disabled run must reproduce the original
 //     failure. If this sequence ever stops genuinely exercising the read paths, those
 //     tests stop failing-as-required and this file goes red.
 //
-// MEASURED, on this sequence (see the calibration test below):
-//     batching + cache   36   ← the shipped behaviour, against a budget of 50
-//     batching only      58   ← catalog cache removed
-//     cache only         53   ← batching removed
-//     neither            76   ← the pre-change behaviour; the failed run measured 78
+// MEASURED, on this sequence:
+//     batching + cache   41   ← the shipped behaviour, against a budget of 50
+//     batching only      55   ← catalog cache removed
+//     cache only         88   ← batching removed
+//     neither           102   ← the pre-change behaviour (the live run measured 78 before
+//                               it was cut short by the quota it had already exhausted)
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -62,6 +72,15 @@ process.env.ATLAS_COACH_ENGINE = 'hybrid';
 // lifted here. Nothing else about the request path is altered.
 process.env.ATLAS_API_RATE_LIMIT_MAX = '1000000';
 process.env.ATLAS_WRITE_RATE_LIMIT_MAX = '1000000';
+// The write_id idempotency store PERSISTS TO DISK and rehydrates on first use — correct
+// production behaviour (a restart must not re-run a committed write), and a trap for this
+// harness. A write_id left on the real store by an earlier process makes every Save answer
+// `skipped_duplicate`, which reads FAR fewer ranges and reports a budget of 27 for a
+// session that actually costs 53. That is the same false green the closeout omission
+// produced. So the store is redirected to a scratch file and reset before every run, and
+// `assertSequenceGenuine` fails on any Save that did not really write.
+process.env.ATLAS_IDEMPOTENCY_FILE = require('node:path').join(
+  require('node:os').tmpdir(), 'atlas-session-read-budget-idempotency.json');
 
 // ── Sheet fixture ────────────────────────────────────────────────────────────
 // Column layouts follow .claude/rules/sheet-schemas.md exactly, so the handlers parse
@@ -146,7 +165,16 @@ function recordRead(kind, ranges) {
 
 const fakeSheetsClient = {
   spreadsheets: {
-    get: async () => ({ data: { sheets: Object.keys(SHEET).map(title => ({ properties: { title, sheetId: 1 } })) } }),
+    // COUNTED. `spreadsheets.get` retrieves spreadsheet data, so Google meters it against
+    // the same read quota as `values.get` — and it is on live session paths, not just
+    // diagnostics: `getSpreadsheetTabs()` backs closeoutFinality.isSessionFinalized,
+    // sessionPlanStore/_tabExists, sessionPlanSetsStore/_probeTab and the schema probes,
+    // and `confirmTabMissing` issues one on every unresolved range. Counting only the
+    // values methods would report a values-read total as if it were the read total.
+    get: async () => {
+      recordRead('metadata', ['spreadsheet metadata']);
+      return { data: { sheets: Object.keys(SHEET).map(title => ({ properties: { title, sheetId: 1 } })) } };
+    },
     batchUpdate: async () => ({ data: {} }),
     values: {
       get: async ({ range }) => {
@@ -191,6 +219,7 @@ require.cache[require.resolve('../services/vision')] = {
 };
 
 const sheets = require('../sheets');
+const { resetIdempotencyStore } = require('../services/idempotency');
 const { app } = require('../index');
 
 let server; let baseUrl;
@@ -242,7 +271,14 @@ const setRows = (lift, set) => [{ exercise: lift.name, set_number: set, weight: 
  * version of it measured 47 reads with batching disabled — under budget — which would
  * have let test 1 pass on a session that never reproduced the failure.
  */
-function ownerPatternSequence() {
+// The write_id idempotency store is process-level and deliberately survives a request,
+// so replaying the sequence with the SAME ids would make every live write after the first
+// run a `skipped_duplicate` — which reads FEWER ranges and would quietly understate the
+// counterfactuals. Each run gets its own ids so every run performs real writes.
+let runSeq = 0;
+
+function ownerPatternSequence({ omitCloseout = false } = {}) {
+  const runId = `r${runSeq}`;
   const steps = [
     // App open: the client's opening fan-out.
     ['GET', '/api/session/status'],
@@ -268,15 +304,13 @@ function ownerPatternSequence() {
   ];
   LIFTS.forEach((lift, index) => {
     for (const set of [1, 2]) {
-      // Save is preview-then-write, and each half is its OWN HTTP request with its own
-      // reads (docs/READ_BUDGET.md). Measuring only the preview would understate every
-      // logged set by a whole request.
-      steps.push(['POST', '/api/log-workout', {
-        date: SESSION_DATE, session_id: SESSION_ID, test_mode: true, log_rows: setRows(lift, set),
-      }]);
+      // ONE Save per logged set — twelve across the session, matching the failed run's
+      // own log (`POST /api/log-workout` appears once per set, not twice). Each carries a
+      // distinct write_id and performs a real append; the preview-then-write pair belongs
+      // to the closeout, which is where the client actually renders a review card.
       steps.push(['POST', '/api/log-workout', {
         date: SESSION_DATE, session_id: SESSION_ID, log_rows: setRows(lift, set),
-        write_id: `w_${lift.code}_${set}`,   // idempotency key the live half requires
+        write_id: `w_${runId}_${lift.code}_${set}`,
       }]);
       steps.push(['GET', `/api/recommend/next/${lift.code}?intentId=work_day&w=${lift.w}&reps=${lift.reps}&rir=2`]);
       steps.push(['POST', '/api/coach/message', {
@@ -320,7 +354,38 @@ function ownerPatternSequence() {
       steps.push(['POST', '/api/coach/chat', { message: 'how am I tracking today?' }]);
     }
   });
+  // THE CLOSEOUT. The failed session died here, and this is the only branch that
+  // reaches it: `/api/log-workout` activates `recordCloseoutEvent` + `sealCloseout` on
+  // the PRESENCE of `closeout_context` (index.js:3292, :3456, :3602), which pulls in the
+  // Session_Plans / Session_Plan_Sets metadata and ledger reads. Doubling ordinary set
+  // previews does not exercise it. Shape follows the client's own payload
+  // (src/app/app.js:7927 + closeoutContextItems).
+  const closeoutContext = {
+    plan_version: PLAN_VERSION,
+    items: LIFTS.map((lift, i) => ({
+      plan_item_id: planItems[i].plan_item_id,
+      planned_lift_code: lift.code,
+      performed_lift_code: lift.code,
+      outcome: 'completed',
+    })),
+  };
+  if (omitCloseout) return steps;
+  // Preview first, then the approved write — the closeout is a Save like any other, and
+  // the client sends the context on BOTH halves (test/closeoutConfirmWiring.test.js).
+  steps.push(['POST', '/api/log-workout', {
+    date: SESSION_DATE, session_id: SESSION_ID, test_mode: true,
+    log_rows: setRows(LIFTS[LIFTS.length - 1], 3), closeout_context: closeoutContext,
+  }]);
+  steps.push(['POST', '/api/log-workout', {
+    date: SESSION_DATE, session_id: SESSION_ID, write_id: `w_${runId}_closeout`,
+    log_rows: setRows(LIFTS[LIFTS.length - 1], 3), closeout_context: closeoutContext,
+  }]);
   return steps;
+}
+
+/** The final approved closeout Save in a run's results — the request that failed live. */
+function closeoutResult(results) {
+  return results[results.length - 1];
 }
 
 function assertSequenceGenuine(results) {
@@ -335,6 +400,34 @@ function assertSequenceGenuine(results) {
   assert.equal(failures.length, 0,
     `a request that never reached its handler makes the budget meaningless — ${
       JSON.stringify(failures.slice(0, 3).map(f => ({ path: f.path, status: f.status, body: f.body })), null, 2)}`);
+
+  // A 2xx Save is not proof of a Save. A duplicate write_id answers 200 while skipping the
+  // append and most of its reads, so a stale idempotency store would report a fraction of
+  // the real demand as if it were the budget. Every live Save must have actually written.
+  const liveSaves = results.filter(r => r.path === '/api/log-workout' && !r.body?.data?.test_mode);
+  const notWritten = liveSaves.filter(r => r.body?.data?.sheet_write !== 'success');
+  assert.equal(notWritten.length, 0,
+    `${notWritten.length} of ${liveSaves.length} live Saves did not write (${
+      [...new Set(notWritten.map(r => r.body?.data?.sheet_write))].join(', ')
+    }) — a skipped Save performs far fewer reads and would understate the budget`);
+}
+
+/**
+ * The closeout must have actually CLOSED OUT. A generic 2xx is not enough: the branch is
+ * presence-gated on `closeout_context`, so a payload that lost the field would still
+ * answer 200 as an ordinary Save while skipping every read the closeout performs — the
+ * exact false green this sequence exists to prevent.
+ */
+function assertCloseoutGenuine(results) {
+  const closeout = closeoutResult(results);
+  assert.equal(closeout.path, '/api/log-workout', 'the sequence must end on the closeout Save');
+  assert.equal(closeout.status, 200, JSON.stringify(closeout.body));
+  const data = closeout.body?.data ?? closeout.body ?? {};
+  assert.equal(data.sheet_write, 'success', 'the closeout must be a real approved write');
+  assert.ok(data.ledger_seal, 'sealCloseout must have run — its absence means the closeout branch was skipped');
+  assert.ok(data.session_plans_closeout, 'recordCloseoutEvent must have run');
+  assert.ok(Object.prototype.hasOwnProperty.call(data, 'closeout_fully_verified'),
+    'the closeout verification verdict must be reported');
 }
 
 /** Where the reads went — printed on a budget failure so the cause is visible, not guessed. */
@@ -379,13 +472,15 @@ async function settle({ quietMs = 600, maxMs = 15_000 } = {}) {
  * require time — patching the module property would leave them on the real one and the
  * counterfactual would quietly measure nothing.
  */
-async function runSession({ coldCatalogPerRequest = false } = {}) {
+async function runSession({ coldCatalogPerRequest = false, omitCloseout = false } = {}) {
+  runSeq += 1;
+  resetIdempotencyStore();
   resetSheet();
   sheets._resetExerciseCatalogCache();
   reads.length = 0;
   countingOn = true;
   const results = [];
-  for (const [method, path, body] of ownerPatternSequence()) {
+  for (const [method, path, body] of ownerPatternSequence({ omitCloseout })) {
     if (coldCatalogPerRequest) sheets._resetExerciseCatalogCache();
     results.push(await call(method, path, body));
   }
@@ -405,6 +500,7 @@ async function runSession({ coldCatalogPerRequest = false } = {}) {
 test('a complete owner-pattern session fits inside the session read budget', async () => {
   const run = await runSession();
   assertSequenceGenuine(run.results);
+  assertCloseoutGenuine(run.results);
   assert.ok(run.total > 0, 'the sequence must actually read the sheet');
   assert.ok(run.peak <= BUDGET,
     `peak rolling-60s reads ${run.peak} exceeds the ${BUDGET} budget (total ${run.total}); ` +
@@ -467,6 +563,106 @@ test('with both mechanisms disabled the sequence reproduces the original quota f
       `at 78; this harness measured ${run.peak}\n  ${run.breakdown}`);
   } finally {
     sheets.declareRequestRanges = realDeclare;
+  }
+});
+
+// ── 4c. MUTATION BITES — the guard must fail when the measurement is weakened ──
+//
+// Both of these omissions were live in an earlier head of this PR and neither turned the
+// file red. A guard that cannot fail on its own blind spots is not a guard.
+
+test('MUTATION: dropping metadata reads from the count understates the session', async () => {
+  const run = await runSession();
+  assertSequenceGenuine(run.results);
+
+  const metadata = reads.filter(r => r.kind === 'metadata');
+  assert.ok(metadata.length > 0,
+    'spreadsheets.get must be OBSERVED and counted. It is metered against the same read ' +
+    'quota as values.get and it is on live session paths — getSpreadsheetTabs backs ' +
+    'closeoutFinality/sessionPlanStore/sessionPlanSetsStore, and confirmTabMissing issues ' +
+    'one per unresolved range. Counting only the values methods reports a values-read ' +
+    'total as if it were the read total.');
+
+  // …and they are not decorative: excluding them measurably lowers the reported peak.
+  const withoutMetadata = peakRollingMinute(reads.filter(r => r.kind !== 'metadata'));
+  assert.ok(withoutMetadata < run.peak,
+    `omitting metadata reads must change the answer, but the peak stayed at ${run.peak}`);
+});
+
+test('MUTATION: dropping the closeout Save makes the guard fail', async () => {
+  // The branch that actually failed live is presence-gated on `closeout_context`. A
+  // sequence without it still answers 2xx everywhere and still fits the budget — which is
+  // exactly why the budget alone cannot be the whole proof.
+  const run = await runSession({ omitCloseout: true });
+  assertSequenceGenuine(run.results);   // still all-2xx: the weakened sequence looks fine
+  assert.throws(() => assertCloseoutGenuine(run.results),
+    /must end on the closeout Save|ledger_seal|closeout/i,
+    'a sequence that never drives the closeout must FAIL the guard, not pass it quietly');
+
+  // And the omission is material: the closeout costs real reads.
+  const complete = await runSession();
+  assert.ok(complete.peak > run.peak,
+    `the closeout must cost measurable reads, but the peak was ${complete.peak} with it ` +
+    `and ${run.peak} without`);
+});
+
+// ── 4d. ONE catalog cache authority, proven at the ROUTE ─────────────────────
+//
+// `routes/reads.js` used to own a SECOND 60 s TTL cache in front of
+// `getExerciseCatalog()`. Two caches in series do not give one TTL: a route entry filled
+// at t=59 from a 59-second-old sheets entry served the SAME source snapshot until t≈119,
+// past the approved bound, and never attempted the refresh whose failure the contract
+// requires be surfaced. The helper-level cache tests could not see that path, so the
+// proof has to run through the live route.
+
+test('the catalog ROUTE never serves a source snapshot older than one TTL', async () => {
+  resetSheet();
+  sheets._resetExerciseCatalogCache();
+
+  const nameAt = async () => {
+    const res = await call('GET', '/api/catalog/exercises');
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    const list = res.body?.data?.exercises ?? res.body?.exercises ?? [];
+    return list.map(e => e.canonical_name);
+  };
+
+  assert.ok((await nameAt()).includes('Back Squat'), 'precondition: the route serves the catalog');
+
+  // Replace the sheet's catalog, then age the sheets-layer cache past its TTL. With one
+  // authority the very next route call must show the new source. With the route cache in
+  // place this assertion failed: it kept serving the old snapshot well past 60 s.
+  SHEET.Exercise_Catalog = [
+    ['Exercise', 'Canonical_Name', 'Muscle_Group', 'Lift_Code'],
+    ['Front Squat', 'Front Squat', 'Legs', 'FSQ01'],
+  ];
+  sheets._resetExerciseCatalogCache();   // stands in for the TTL expiring
+
+  const after = await nameAt();
+  assert.ok(after.includes('Front Squat'),
+    'the route served a catalog snapshot the sheets-layer cache had already expired — ' +
+    'a second route-level cache is extending the approved TTL');
+  assert.ok(!after.includes('Back Squat'), 'the stale snapshot must be gone entirely');
+});
+
+test('a failed catalog refresh reaches the route as a classified failure, not stale data', async () => {
+  resetSheet();
+  sheets._resetExerciseCatalogCache();
+  assert.ok((await (async () => {
+    const r = await call('GET', '/api/catalog/exercises');
+    return (r.body?.data?.exercises ?? []).map(e => e.canonical_name);
+  })()).includes('Back Squat'), 'precondition: warm the cache through the route');
+
+  // Expire it, then break the source. With no stale-after-expiry fallback anywhere in the
+  // chain, the route must surface the upstream failure rather than replay what it had.
+  sheets._resetExerciseCatalogCache();
+  const good = SHEET.Exercise_Catalog;
+  delete SHEET.Exercise_Catalog;
+  try {
+    const res = await call('GET', '/api/catalog/exercises');
+    assert.ok(res.status >= 400,
+      `a failed refresh must not be answered with stale catalog data; got ${res.status} ${JSON.stringify(res.body).slice(0, 200)}`);
+  } finally {
+    SHEET.Exercise_Catalog = good;
   }
 });
 
