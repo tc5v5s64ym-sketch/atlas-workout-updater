@@ -3522,9 +3522,11 @@ test('server allocation preserves turn correlation: correlate on the provisional
 test('multi-session/day: a saved session clears #log-session-id so the next upload is a new session', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const anchor = "getElementById('approve-btn').addEventListener('click'";
+  // Widened from 11200: the write-verification authority change (C3) added a field to
+  // pendingLastWrite, and the old window ended one character short of this assertion.
   const approveSection = appSource.slice(
     appSource.indexOf(anchor),
-    appSource.indexOf(anchor) + 11200
+    appSource.indexOf(anchor) + 12400
   );
   // After a confirmed write the session is concluded, so its id must be cleared from the
   // field — otherwise the next effort upload re-sends the just-written id and collides.
@@ -3741,19 +3743,42 @@ test('readback: verifyWrittenRange function exists and fails quietly', () => {
   assert.match(fn, /verified.*true/, 'must check verified: true in response');
 });
 
-test('readback: approve handler fires verifyWrittenRange after write, before reaction fetch', () => {
+// C3 retargeted this test. The approve handler no longer calls verifyWrittenRange itself:
+// verification moved into `reportWriteVerification`, which picks the ONE authority — the
+// adjudicated append receipt, or the read-back only when the server published no verdict.
+// The property this test has always guarded is unchanged and still checked here:
+// verification fires after the undo button is attached and before the reaction fetch.
+test('readback: approve handler reports write verification after write, before reaction fetch', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 13600);
-  assert.match(handler, /verifyWrittenRange/, 'must call verifyWrittenRange in success path');
-  assert.match(handler, /Verified in Sheet/, 'must show Verified in Sheet note');
-  assert.match(handler, /readback verification unavailable/, 'must show unavailable note on failure');
-  // undo button must come before verify call
+  assert.match(handler, /reportWriteVerification\(loggerStatus, pendingLastWrite\)/,
+    'must report write verification in the success path');
   const undoIdx = handler.indexOf('undo-write-btn');
-  const verifyIdx = handler.indexOf('verifyWrittenRange');
+  const verifyIdx = handler.indexOf('reportWriteVerification');
   const reactionIdx = handler.indexOf('fetchReaction');
-  assert.ok(undoIdx < verifyIdx, 'undo button must be appended before verify fires');
-  assert.ok(verifyIdx < reactionIdx, 'verify must fire before reaction fetch');
+  assert.ok(undoIdx < verifyIdx, 'undo button must be appended before verification is reported');
+  assert.ok(verifyIdx < reactionIdx, 'verification must be reported before reaction fetch');
+});
+
+// The verification reporter itself: which authority it uses, and that the read-back is
+// reachable ONLY when the server published no verdict at all. A verdict of `false` is a
+// real negative answer and must not be re-asked of the weaker source.
+test('readback: reportWriteVerification uses the append receipt, and falls back only when there is no verdict', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const start = appSource.indexOf('function reportWriteVerification(');
+  assert.ok(start !== -1, 'reportWriteVerification must exist');
+  const fn = appSource.slice(start, start + 1200);
+  assert.match(fn, /log_write_verification/, 'must read the adjudicated verdict');
+  assert.match(fn, /Verified in Sheet/, 'must show Verified in Sheet note');
+  assert.match(fn, /verification was inconclusive/, 'must report an unverified verdict honestly');
+  assert.match(fn, /readback verification unavailable/, 'fallback must keep its unavailable note');
+  // The verdict branch returns before the fallback can be reached.
+  const verdictIdx = fn.indexOf('log_write_verification');
+  const returnIdx = fn.indexOf('return;', verdictIdx);
+  const fallbackIdx = fn.indexOf('verifyWrittenRange(');
+  assert.ok(returnIdx !== -1 && returnIdx < fallbackIdx,
+    'a published verdict must return before the read-back fallback is reachable');
 });
 
 test('readback: verification failure cannot affect write success — no throw, no await block', () => {

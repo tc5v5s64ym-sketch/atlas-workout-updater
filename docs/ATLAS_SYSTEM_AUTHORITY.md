@@ -56,6 +56,7 @@ These levels are distinct and are never collapsed. They are the same rungs the c
 | 9 | Preview approval | `/api/log-workout` + client approve path | unchanged — already single | SOLE LIVE AUTHORITY |
 | 10 | Turn/write correlation | `turnCorrelation` | `turnCorrelation` | SOLE LIVE AUTHORITY |
 | 11 | Durable Sheet write | `sheets.js` | `sheets.js` | SOLE LIVE AUTHORITY |
+| 11b | Write verification (did the log rows land) | `services/appendWriteProof.js` over the append receipt | same | **SOLE LIVE AUTHORITY** |
 | 12 | Closeout and seal | `/api/complete-workout` + closeout lane + `ledger_seal` | one CloseoutTransaction | TRANSITIONAL |
 | 13 | InteractionTrace / turn-write proof | `interactionTraceShadow`, `turnCorrelation` (flag-gated) | same, graduated to live | TEST/OBSERVABILITY ONLY |
 | 14 | Deload | `deloadEngine`, `deloadProtocols`, `deloadState`, `deloadStateMachine`, `deloadPolicy` | one `DeloadLifecycle` | DUPLICATED |
@@ -214,6 +215,42 @@ These levels are distinct and are never collapsed. They are the same rungs the c
 - **Sunset condition.** None for `sheets.js`. The shadow appenders retire with concept 16.
 - **Phase 4 relevance.** Untouchable — no schema change without a migration and the owner.
 - **Evidence.** The structural guarantee is that read-only tools build their own `spreadsheets.readonly` client and never import these helpers.
+
+## 11b. Write verification (did the log rows land)
+
+- **Current live authority.** `services/appendWriteProof.js`, adjudicating the `updates`
+  envelope that `spreadsheets.values.append` returns, published by `POST /api/log-workout`
+  as `log_write_verification`.
+- **Intended sole authority.** The same.
+- **Competing authority.** `GET /api/log-workout/verify-range` — a separate, later read of
+  the appended range, checking the row count and the session_id column. It decided the same
+  concept and cost one metered Sheets read per successful Save, spent at closeout: the exact
+  moment the 2026-08-05 qualifying session exhausted its 60-read minute. The receipt wins
+  because it is produced by the operation that performed the write, contemporaneously with
+  it, and it establishes the same two facts plus the exact range at no quota cost.
+- **Status.** **SOLE LIVE AUTHORITY** on the normal Save path; the read-back survives only
+  as the named fallback below.
+- **Exact production consumer.** `src/app/app.js`, the approve handler: it reads
+  `log_write_verification` and renders the verification note from it. The branches are
+  exclusive — the fallback is unreachable when a verdict is present, including when the
+  verdict is `verified: false`, so a negative answer from the authority can never be
+  laundered by re-asking the weaker source.
+- **Compatibility bridge.** `GET /api/log-workout/verify-range` and the client's `else`
+  branch, reached ONLY when the server returned no verdict at all — a deployment older than
+  this field. The route itself is unchanged and still enforces its Log_Cleaned-only,
+  row-span and session-ownership checks.
+- **Sunset condition.** Delete the route, `verifyWrittenRange`, and the client's fallback
+  branch once no deployment reachable by this client omits `log_write_verification` —
+  concretely, when `POST /api/log-workout` has published it for a full campaign phase and no
+  qualifying session's evidence records a fallback invocation.
+- **Phase 4 relevance.** Indirect: it is a read-budget corrective, not a trust-contract
+  change. Preview → approve → write is untouched, `test_mode` semantics are untouched, and
+  the W1–W3 proof fields are untouched — `log_write_verification` is added beside them and
+  replaces nothing they assert.
+- **Evidence.** `test/appendWriteProof.test.js` (the adjudicator's every insufficiency, and
+  a real Save whose verdict is compared against what the append reported at the googleapis
+  boundary); `tests/e2e/write-verification-authority.spec.js` (the browser makes exactly one
+  verification request per Save, and with a verdict present that number is zero).
 
 ## 12. Closeout and seal
 

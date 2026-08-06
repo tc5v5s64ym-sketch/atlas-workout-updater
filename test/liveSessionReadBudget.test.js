@@ -20,6 +20,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const BUDGET = 50;              // peak reads per rolling 60s. Google's real limit is 60.
 const GOOGLE_LIMIT = 60;
@@ -52,7 +54,9 @@ const PLANS_HEADER = [...sessionPlansColumns];
 const PLAN_SETS_HEADER = [...sessionPlanSetsColumns];
 
 const harness = require('./helpers/liveSessionHarness');
-const { LIFTS, SESSION_ID, liveSessionSequence, manifestEndpointCounts, MANIFEST } = harness;
+const {
+  LIFTS, SESSION_ID, liveSessionSequence, manifestEndpointCounts, correctionLedger, MANIFEST,
+} = harness;
 
 const CATALOG = [
   ['Exercise', 'Canonical_Name', 'Muscle_Group', 'Lift_Code'],
@@ -227,7 +231,7 @@ function breakdown(records) {
 }
 
 let runSeq = 0;
-async function runLiveSession({ requestContext = true, coldCatalogPerRequest = false } = {}) {
+async function runLiveSession({ requestContext = true, coldCatalogPerRequest = false, corrected = false } = {}) {
   runSeq += 1;
   resetIdempotencyStore();
   resetSheet();
@@ -240,7 +244,7 @@ async function runLiveSession({ requestContext = true, coldCatalogPerRequest = f
   const realRunWithReadContext = sheets.runWithReadContext;
   if (!requestContext) sheets.runWithReadContext = (fn) => fn();
   try {
-    for (const [method, url, body] of liveSessionSequence({ runId: `r${runSeq}` })) {
+    for (const [method, url, body] of liveSessionSequence({ runId: `r${runSeq}`, corrected })) {
       if (coldCatalogPerRequest) sheets._resetExerciseCatalogCache();
       results.push(await call(method, url, body));
     }
@@ -324,6 +328,60 @@ test('the live manifest is measured, and the measurement is moving toward the bu
     `NOT YET AT BUDGET — measured ${run.peak}, target <= ${BUDGET}. When this assertion ` +
     'starts failing, the remaining reductions have landed and this test must be replaced ' +
     `by the real guard (peak <= ${BUDGET}).\n  ${run.breakdown}`);
+});
+
+// ── the CORRECTED client ─────────────────────────────────────────────────────
+//
+// The budget is spent by the client that will actually run, and the corrective's whole
+// point is that it must ASK FOR LESS. The captured manifest is the client BEFORE the
+// corrections; the corrected sequence is that same manifest with each proven client change
+// applied — see CLIENT_CORRECTIONS in the harness.
+//
+// The corrected list cannot be captured: running another live debug session is not
+// authorized. It is derived instead, and the derivation is guarded — every correction must
+// remove a request the captured manifest really contains, and must name the test that
+// proves the client no longer issues it. Nothing is dropped because "the fixture reads
+// nothing there".
+test('every client correction removes a real captured request and names its guard', () => {
+  const ledger = correctionLedger();
+  assert.ok(ledger.length > 0, 'the corrected client must differ from the captured one');
+  for (const correction of ledger) {
+    assert.ok(correction.removed.length > 0,
+      `${correction.id} removes nothing from the captured manifest — a correction that ` +
+      'matches no real request is a comment, not a reduction');
+    assert.ok(correction.why && correction.why.length > 20, `${correction.id} must say why`);
+    assert.ok(correction.guards && correction.guards.length > 0,
+      `${correction.id} must name the test(s) proving the client no longer issues it`);
+    for (const guard of correction.guards) {
+      assert.ok(fs.existsSync(path.join(__dirname, '..', guard)),
+        `${correction.id} names guard ${guard}, which does not exist`);
+    }
+  }
+
+  // The corrected sequence differs from the captured one ONLY by those removals.
+  const captured = liveSessionSequence();
+  const corrected = liveSessionSequence({ corrected: true });
+  const removedCount = ledger.reduce((n, c) => n + c.removed.length, 0);
+  assert.equal(corrected.length, captured.length - removedCount,
+    'the corrected sequence may differ from the captured manifest only by the ledger');
+  const removedPaths = new Set(ledger.flatMap(c => c.removed.map(r => r.split(' ')[1])));
+  const capturedKept = captured.filter(([, url]) => !removedPaths.has(url.split('?')[0]));
+  assert.deepEqual(corrected.map(([m, u]) => `${m} ${u}`), capturedKept.map(([m, u]) => `${m} ${u}`),
+    'order and multiplicity of every surviving request must be untouched');
+});
+
+// PROGRESS MARKER, not the final guard — same role as the one above, for the corrected
+// client. It pins the number actually measured so a checkpoint can never claim more than it
+// achieved, and it becomes `peak <= BUDGET` when the remaining reductions land.
+test('the corrected client is measured, and the measurement is moving toward the budget', async () => {
+  const run = await runLiveSession({ corrected: true });
+  assert.ok(run.total > 0, 'the sequence must actually read the sheet');
+  assert.ok(run.peak > BUDGET,
+    `NOT YET AT BUDGET — corrected client measured ${run.peak}, target <= ${BUDGET}. When ` +
+    'this assertion starts failing, the remaining reductions have landed and this test must ' +
+    `be replaced by the real guard (peak <= ${BUDGET}).\n  ${run.breakdown}`);
+  assert.ok(run.peak <= 53,
+    `the corrections must not regress: last measured 53, now ${run.peak}\n  ${run.breakdown}`);
 });
 
 // ── the observe-only route must stay observe-only ────────────────────────────

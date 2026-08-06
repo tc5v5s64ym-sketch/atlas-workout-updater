@@ -6494,6 +6494,48 @@ async function attachVerdictContext(rec, liftCode, sessionId) {
   return rec;
 }
 
+// WRITE VERIFICATION — one authority, one path, never both.
+//
+// WINNER: the append receipt the server adjudicated in the write response
+// (`log_write_verification`, services/appendWriteProof.js). It carries the exact appended
+// range, the exact row count and session ownership, produced by the append itself, and it
+// costs no Sheets read. The read-back it replaces cost one metered read at closeout — the
+// instant the 2026-08-05 qualifying session hit its 429s.
+//
+// FALLBACK: `GET /api/log-workout/verify-range`, reached ONLY when the server returned no
+// verdict at all — a deployment older than that field. It is NOT reached when the verdict
+// says false: that is a real negative answer from the authority, and re-asking a weaker
+// source would launder it.
+//
+// The branches are exclusive by construction, so one successful Save produces exactly one
+// verification from exactly one authority. `tests/e2e/write-verification-authority.spec.js`
+// counts the requests the browser actually makes; `test/appendWriteProof.test.js` proves
+// the verdict describes the append that happened.
+//
+// SUNSET for the fallback and for the route: delete both once no deployment reachable by
+// this client omits `log_write_verification` — concretely, when `POST /api/log-workout` has
+// published it for a full campaign phase and no qualifying session's evidence records a
+// fallback invocation. Recorded in docs/ATLAS_SYSTEM_AUTHORITY.md (concept 11b).
+function reportWriteVerification(statusEl, lastWriteDetails) {
+  if (!lastWriteDetails) return;
+  const note = text => statusEl.appendChild(el('div', { class: 'parser-status', text }));
+  const verdict = lastWriteDetails.log_write_verification;
+  if (verdict) {
+    note(verdict.verified === true
+      ? 'Verified in Sheet ✓'
+      : `Write succeeded, but verification was inconclusive (${verdict.reason || 'unknown'})`);
+    return;
+  }
+  if (!lastWriteDetails.log_appended_range) return;
+  verifyWrittenRange(
+    lastWriteDetails.log_appended_range,
+    lastWriteDetails.session_id,
+    lastWriteDetails.log_rows_written
+  ).then(ok => {
+    note(ok ? 'Verified in Sheet ✓' : 'Write succeeded, but readback verification unavailable');
+  });
+}
+
 async function verifyWrittenRange(range, sessionId, expectedRows) {
   if (!range || !sessionId || !isConnected()) return false;
   try {
@@ -8589,7 +8631,9 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
           log_appended_range: writeData.logAppendedRange,
           // Server-reported identity first: it may have allocated one for a blank payload.
           session_id: writeData.session_id || realPayload.session_id,
-          log_rows_written: writeData.log_rows_written
+          log_rows_written: writeData.log_rows_written,
+          // Carried verbatim — the client never derives or upgrades a verdict.
+          log_write_verification: writeData.log_write_verification || null
         };
       }
       // Step 385: mark that this deload session had a confirmed live write so
@@ -8675,17 +8719,7 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
       undoBtn.addEventListener('click', () => handleUndoLastWrite());
       loggerStatus.appendChild(undoBtn);
     }
-    if (pendingLastWrite?.log_appended_range) {
-      verifyWrittenRange(
-        pendingLastWrite.log_appended_range,
-        pendingLastWrite.session_id,
-        pendingLastWrite.log_rows_written
-      ).then(ok => {
-        loggerStatus.appendChild(el('div', { class: 'parser-status', text: ok
-          ? 'Verified in Sheet ✓'
-          : 'Write succeeded, but readback verification unavailable' }));
-      });
-    }
+    reportWriteVerification(loggerStatus, pendingLastWrite);
     if (reactionLiftCodes.length) {
       fetchReaction(reactionLiftCodes[0]).then(async rec => {
         if (!rec) return;

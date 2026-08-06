@@ -427,6 +427,8 @@ const { routeDefinitions } = require('./config/routes');
 const { logCleanedColumns, logRowFieldAliases, effortColumns, exerciseCatalogColumns, effortRowFieldAliases, modalityLogColumns } = require('./config/columns');
 // eslint-disable-next-line no-unused-vars -- requiredSheetTabs, optionalSheetTabs unused here; used in startup health-check via buildSheetContractStatus
 const { requiredSheetTabs, optionalSheetTabs, buildSheetContractStatus, validateHeaderRow } = require('./config/sheetContract');
+const { verifyAppendReceipt } = require('./services/appendWriteProof');
+const LOG_SESSION_ID_COLUMN = logCleanedColumns.indexOf('session_id');
 
 // --- Header-drift guard (trust-critical write protection) --------------------
 // Atlas appends rows to Google Sheets purely by column position. If the owner
@@ -3627,6 +3629,21 @@ app.post('/api/log-workout', async (req, res) => {
       test_mode: false,
       sheet_write: 'success'
     };
+    // The append's own receipt, adjudicated. This is the write-verification AUTHORITY:
+    // it establishes the exact appended range, the exact row count and session ownership
+    // from the operation that performed the write, so the client no longer spends a
+    // metered read on `GET /api/log-workout/verify-range` at closeout. The verdict is
+    // derived — a missing or self-contradicting receipt yields verified:false with an
+    // exact reason, never a fabricated confirmation. See services/appendWriteProof.js.
+    if (rowsToWrite.length > 0) {
+      responseBody.log_write_verification = verifyAppendReceipt({
+        receipt: logResponse?.data?.updates,
+        tab: logSheetName,
+        sessionId: session_id,
+        rowsSubmitted: rowsToWrite,
+        sessionIdColumnIndex: LOG_SESSION_ID_COLUMN,
+      });
+    }
     if (ledgerSeal) {
       responseBody.ledger_seal = ledgerSeal;
       if (sessionPlansCloseout) responseBody.session_plans_closeout = sessionPlansCloseout;

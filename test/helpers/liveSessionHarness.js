@@ -162,16 +162,62 @@ const SAVE_INDEXES = MANIFEST.requests
 const LAST_SAVE_OCCURRENCE = SAVE_INDEXES.length - 1;
 const LAST_SAVE_INDEX = LAST_SAVE_OCCURRENCE;
 
+// CLIENT CORRECTIONS ─────────────────────────────────────────────────────────
+//
+// The manifest is the CAPTURED client: what the deployed app actually asked for on
+// 2026-08-05. The corrective's whole point is that the real client must ASK FOR LESS, so
+// the budget has to be measured against the CORRECTED client — and the corrected client's
+// request list cannot be captured, because running another live debug session is not
+// authorized.
+//
+// It is therefore DERIVED, one proven removal at a time. Each entry below removes requests
+// from the captured manifest and must carry:
+//   • the exact manifest requests it removes (never a route "that reads nothing anyway" —
+//     that omission is forbidden, and `correctionLedger()` proves each removal matched);
+//   • WHY the corrected client no longer issues them;
+//   • the guard tests that prove the client change, independently of this file.
+//
+// Nothing here compresses repeats, substitutes a representative call, or drops a route for
+// convenience. A correction with no matching request in the captured manifest fails
+// `test/liveSessionReadBudget.test.js`.
+const CLIENT_CORRECTIONS = [
+  {
+    id: 'C3-verify-range-retired',
+    match: (entry) => entry.path === '/api/log-workout/verify-range',
+    why: 'The append receipt adjudicated in the write response (log_write_verification) is '
+      + 'now the write-verification authority, so the client no longer spends a metered '
+      + 'read re-reading the range it was just told about.',
+    guards: [
+      // the server publishes an adjudicated receipt on a real Save
+      'test/appendWriteProof.test.js',
+      // the client takes exactly one verification path, and it is not this route
+      'tests/e2e/write-verification-authority.spec.js',
+    ],
+  },
+];
+
 /**
  * The manifest as a driveable sequence: [method, url, body] in the captured order, with
  * placeholders substituted. Repeated requests are NOT compressed and no request is
  * dropped — that compression is exactly what made the previous harness wrong.
+ *
+ * `corrected: true` applies CLIENT_CORRECTIONS, giving the request list the corrected
+ * client issues. Everything else — order, multiplicity, bodies — is identical.
  */
-function liveSessionSequence({ runId = 'r1', appendedRange = 'Log_Cleaned!A2:L13' } = {}) {
+function liveSessionSequence({ runId = 'r1', appendedRange = 'Log_Cleaned!A2:L13', corrected = false } = {}) {
+  // Occurrence numbers come from the FULL manifest, never from the filtered list, so a
+  // correction that removes SOME occurrences of a path cannot silently renumber the rest
+  // and hand a later request an earlier request's body.
   const occurrence = new Map();
-  return MANIFEST.requests.map((entry) => {
+  const numbered = MANIFEST.requests.map((entry) => {
     const n = occurrence.get(entry.path) || 0;
     occurrence.set(entry.path, n + 1);
+    return { entry, n };
+  });
+  const requests = corrected
+    ? numbered.filter(({ entry }) => !CLIENT_CORRECTIONS.some(c => c.match(entry)))
+    : numbered;
+  return requests.map(({ entry, n }) => {
     const query = entry.query
       ? entry.query
         .replace('{SESSION_ID}', encodeURIComponent(SESSION_ID))
@@ -196,6 +242,22 @@ function manifestEndpointCounts() {
   return counts;
 }
 
+/**
+ * What each correction actually removed from the captured manifest. The budget test asserts
+ * every correction removed at least one REAL captured request, so a correction can never be
+ * a comment that quietly excuses an omission.
+ */
+function correctionLedger() {
+  return CLIENT_CORRECTIONS.map(correction => ({
+    id: correction.id,
+    why: correction.why,
+    guards: correction.guards,
+    removed: MANIFEST.requests
+      .filter(entry => correction.match(entry))
+      .map(entry => `${entry.method} ${entry.path}`),
+  }));
+}
+
 module.exports = {
   MANIFEST,
   SESSION_DATE,
@@ -208,5 +270,7 @@ module.exports = {
   CLOSEOUT_CONTEXT,
   liveSessionSequence,
   manifestEndpointCounts,
+  correctionLedger,
+  CLIENT_CORRECTIONS,
   SAVE_INDEXES,
 };
