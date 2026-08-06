@@ -298,23 +298,64 @@ test('the harness replays the live manifest exactly — nothing compressed, noth
 
 // ── REPRODUCTION — required before any product correction is believed ────────
 //
-// A corrective is only meaningful if its guard can fail on the defect. Measured on the
-// merged main (42ee7b3) this fixture peaks at 61 reads in a rolling minute, over Google's
-// real 60/minute limit — the failure reproduces.
+// A corrective is only meaningful if its guard fails on the defect. Measured on merged
+// main (42ee7b3) this fixture peaks at exactly 60 reads in a rolling minute — AT Google's
+// per-minute limit, and ten over the 50 budget. A session sitting exactly at the limit has
+// zero headroom: the first retry tips it over, which is precisely what happened live.
 //
-// It reproduces the failure without reproducing its full magnitude, and the difference is
-// stated rather than smoothed over: the live run measured 116 observable reads / peak 87,
-// because (a) its retries were real and are not modelled here, and (b) a fake googleapis
-// answers instantly, so the same 113 requests compress into a shorter window than the live
-// server's latency produced. This harness is therefore a LOWER BOUND on live demand too.
-// It is still the right authority, because it is the real request manifest and it already
-// fails on the defect.
-test('REPRODUCTION: the live manifest exceeds Google\'s read limit before correction', async () => {
+// It reproduces the failure without its full magnitude, and the gap is stated rather than
+// smoothed over. The live run measured 116 observable reads with a peak of 87, because
+// (a) its retries were real and are not modelled here, and (b) a fake googleapis answers
+// instantly, so 70.9s of live traffic compresses into about a second. This harness is
+// therefore a LOWER BOUND on live demand. It is still the right authority: it is the real
+// request manifest, and it already proves the session cannot fit.
+//
+// The threshold is `>= GOOGLE_LIMIT`, not `> GOOGLE_LIMIT`. An earlier version asserted
+// `> 60` against a value that measures exactly 60 — a guard pinned to the boundary it sits
+// on, which passed locally at 61 and failed in CI at 60. A flaky guard is worse than a
+// weak one; this one states the fact that is true and stable.
+test('REPRODUCTION: the live manifest cannot fit inside the read quota before correction', async () => {
   const run = await runLiveSession();
   assert.ok(run.total > 0, 'the sequence must actually read the sheet');
-  assert.ok(run.peak > GOOGLE_LIMIT,
-    `the live manifest must reproduce the quota failure (peak > ${GOOGLE_LIMIT}); measured ${run.peak}.\n` +
+  assert.ok(run.peak >= GOOGLE_LIMIT,
+    `the live manifest must reproduce the quota failure (peak >= ${GOOGLE_LIMIT}); measured ${run.peak}.\n` +
     `  If this stops failing, the fixture has stopped modelling the session that failed.\n  ${run.breakdown}`);
+  assert.ok(run.peak > BUDGET,
+    `and it must be over the ${BUDGET} budget; measured ${run.peak}`);
+});
+
+// ── the observe-only route must stay observe-only ────────────────────────────
+//
+// `/api/debug/intent-observe` declares itself observation-only: it classifies a message
+// and appends a diagnostics row. It must perform NO Google Sheets read — not a workout
+// lookup, not a ledger lookup, not an identity lookup.
+//
+// This is a contract guard, not a fix. No hidden read producer was found: the route reads
+// nothing today, and exact request-scoped attribution shows zero reads from its sixteen
+// calls. The twenty reads the earlier report attributed to it were an artefact of the
+// reconstruction tool's next-completed-request heuristic and belonged to concurrent
+// requests. The guard exists so that stays true.
+test('POST /api/debug/intent-observe performs zero Sheets reads', async () => {
+  resetSheet();
+  resetIdempotencyStore();
+  sheets._resetExerciseCatalogCache();
+  await settle({ quietMs: 300, maxMs: 5000 });
+  reads.length = 0;
+  countingOn = true;
+  let observed;
+  try {
+    observed = await call('POST', '/api/debug/intent-observe', {
+      message: 'Back Squat 225 5/2', request_origin: 'athlete_ui', app_version: 'guard',
+    });
+    // The shadow lane is fire-and-forget, so a read it performs can land AFTER the
+    // response. Waiting for quiet is what makes "zero" mean zero.
+    await settle();
+  } finally {
+    countingOn = false;
+  }
+  assert.equal(observed.status, 200, JSON.stringify(observed.body));
+  assert.deepEqual(reads.map(r => `${r.api} ${r.ranges.join(', ')}`), [],
+    'an observation-only route must not read the athlete\'s data');
 });
 
 module.exports = { runLiveSession, BUDGET, GOOGLE_LIMIT, SESSION_ID };

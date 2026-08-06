@@ -102,15 +102,19 @@ const DECLARATIONS = [
   { method: 'POST', pattern: /^\/api\/session-plan-sets\/accept$/, ranges: PLAN_SETS_LEDGER },
   { method: 'POST', pattern: /^\/api\/session-plan-sets\/revision$/, ranges: PLAN_SETS_LEDGER },
 
-  // The intent-observe debug lane reads the widest set — it correlates a turn against
-  // every identity column at once. One batch is the whole point here.
-  {
-    method: 'POST', pattern: /^\/api\/debug\/intent-observe$/,
-    ranges: [
-      LOG_ROWS, LOG_SESSION_IDS, EFFORT_SESSION_IDS, DELOAD_ROWS,
-      PLANS_HEADER, PLANS_SESSION_IDS, PLAN_SETS_HEADER, PLAN_SETS_SESSION_IDS
-    ]
-  },
+  // NO DECLARATION for /api/debug/intent-observe, deliberately.
+  //
+  // PR #1271 declared eight ranges here on the belief that the route "reads the widest
+  // set". It does not read at all: the handler builds evidence provenance (no network)
+  // and hands off to `observeChatMessage`, which classifies and APPENDS. Exact
+  // request-scoped attribution confirms zero reads from this route. The twenty reads
+  // previously attributed to it came from the reconstruction tool's
+  // next-completed-request heuristic and belonged to concurrent requests.
+  //
+  // The declaration was therefore not merely dead — it was latent amplification. A
+  // declaration only fires on a route's FIRST read, so the day any code added one read
+  // here, that single read would have pulled an eight-range batch onto an observe-only
+  // route. `test/liveSessionReadBudget.test.js` pins the zero-read contract instead.
 
   // The app-open fan-out. Each of these reads one or two whole tabs; declaring them
   // costs nothing extra and stops the opening burst from spending a request each.
