@@ -45,6 +45,21 @@ process.env.ATLAS_IDEMPOTENCY_FILE = require('node:path').join(
 process.env.ATLAS_SESSION_PLANS_WRITE = '1';
 process.env.SESSION_PLAN_SETS_WRITE_ENABLED = '1';
 
+// THE COACH LLM IS PINNED, and that is part of the measurement, not a convenience.
+//
+// `/api/coach/chat` branches on whether a Gemini key is configured: configured, it grounds
+// the reply with ONE batchGet over Coaching_Notes + Constraints + Log_Cleaned; unconfigured,
+// it answers from client context and reads nothing. Production runs configured — and the
+// captured session came from production — so the configured branch is the one the budget
+// must model, and it is the more expensive of the two.
+//
+// Before this, the branch was decided by whatever `GEMINI_API_KEY` happened to be in the
+// runner's environment: 46 reads with a key present, 45 without, and a real network call to
+// Gemini on any machine that had one. Installed BEFORE index.js so the app never sees the
+// ambient value. See test/helpers/fakeCoachLlm.js.
+const { installFakeCoachLlm, geminiCallCount } = require('./helpers/fakeCoachLlm');
+installFakeCoachLlm();
+
 const {
   logCleanedColumns, effortColumns, deloadStateColumns,
   sessionPlansColumns, sessionPlanSetsColumns, constraintsColumns,
@@ -592,6 +607,39 @@ test('every request in the session answers as expected, and takes the branch it 
   // And every single driven request, not just one per distinct outcome.
   const unexpected = run.outcomes.filter(o => !EXPECTED_OUTCOMES.includes(o));
   assert.deepEqual(unexpected, [], 'every driven request must match a pinned outcome');
+});
+
+// THE ENVIRONMENT IS PART OF THE MEASUREMENT — so it is asserted, not assumed.
+//
+// The costly coach branch is reached only when the coach is configured. If that ever
+// silently stops being true, every outcome above still passes except the one chat line, and
+// the total quietly drops by one read — a budget that looks BETTER because it measured less.
+// This pins the branch directly: the pinned model really answered, and the route really took
+// the grounding path.
+test('the session drives the CONFIGURED coach branch — the expensive one production runs', async () => {
+  const coach = require('../services/coach');
+  assert.equal(coach.isConfigured(), true,
+    'the harness must present a configured coach; unconfigured, /api/coach/chat skips its ' +
+    'grounding read and the budget measures a cheaper session than production runs');
+
+  const before = geminiCallCount();
+  const run = await runLiveSession({ corrected: true });
+  assert.ok(geminiCallCount() > before,
+    'no model call was served — the chat turn fell to the unconfigured path, so the ' +
+    'grounding batchGet was never counted');
+
+  assert.ok(run.outcomes.includes('POST /api/coach/chat -> 200 served:yes'),
+    'the configured chat turn must answer with a message');
+
+  // And the grounding read itself, by its exact ranges — the one read the two branches
+  // disagree about.
+  const grounding = reads.filter(r => r.ranges.length === 3
+    && r.ranges.some(x => String(x).startsWith('Coaching_Notes'))
+    && r.ranges.some(x => String(x).startsWith('Constraints'))
+    && r.ranges.some(x => String(x).startsWith('Log_Cleaned')));
+  assert.ok(grounding.length > 0,
+    'the configured chat turn must perform its Coaching_Notes + Constraints + Log_Cleaned ' +
+    'grounding read; without it the measurement is the unconfigured session');
 });
 
 // THE GUARD, and exactly what it does and does not establish.

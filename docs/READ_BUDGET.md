@@ -324,6 +324,31 @@ checkpoint writes and a dry-run seal — a materially cheaper session than the o
 The captured client is kept measured on purpose: it must still overrun the budget, which is
 what proves the corrections closed the gap rather than the fixture having been made easier.
 
+### The coach LLM is configured, and that is part of the measurement
+
+`/api/coach/chat` branches on whether a Gemini key is configured. Configured, it grounds the
+reply with one `batchGet` over `Coaching_Notes` + `Constraints` + `Log_Cleaned`;
+unconfigured, it answers from client context and reads nothing at all. **Production runs
+configured, and the captured session came from production**, so the configured branch is the
+one this table measures — and it is the more expensive of the two, which is the correct
+direction for a lower bound to err.
+
+That branch is now pinned by the harness (`test/helpers/fakeCoachLlm.js`), which sets a fake
+key in every environment and answers the model call from memory. Before that pinning the
+branch was decided by whatever `GEMINI_API_KEY` happened to be in the runner's environment,
+which made every figure here environment-dependent and made each local run place a real
+network call to Gemini:
+
+| Coach | Captured client | Corrected client |
+|---|---|---|
+| **configured — production, and what this table reports** | **55** | **46** |
+| unconfigured — no key present | 54 | 45 |
+
+The published 46 and 55 are unchanged by the pinning: they were always the configured
+figures. What changed is that they are now reproducible off-network on any machine, and a
+silent fall back to the cheaper unconfigured branch fails the suite instead of quietly
+improving the budget by one read.
+
 **This harness is a LOWER BOUND on live demand, and the gap is stated rather than smoothed
 over.** The live run measured 116 attempts with a peak of 87 because (a) its retries were
 real and are not modelled here, and (b) a fake `googleapis` answers instantly, so 70.9 s of
