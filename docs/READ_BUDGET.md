@@ -137,26 +137,51 @@ to match. Keep this list in sync with the handler's reads.
 **Status:** reference. The budget above is **per Save**. This section adds the budget
 that Google's quota actually meters — reads per **rolling 60 seconds across a complete
 session** — and records the mechanisms that hold it. The guard is
-`test/sessionReadBudget.test.js`.
+`test/liveSessionReadBudget.test.js`.
 
 ## Why a per-Save budget was not enough
 
 F-SB4B qualifying session 1 (2026-08-05, run `fsb4b-s1-20260805T122822-04E1C5`)
 exhausted its own read quota mid-session and died at closeout. Every individual Save
-was inside the per-Save budget. The session was not:
-`scripts/reconstruct-session-reads.js` over that run's server log measures **78 read
-attempts, 0 of them retries, peak rolling-60s window 78** — the whole session inside one
-minute against a 60/minute quota. Retry amplification was a consequence, not the cause.
+was inside the per-Save budget. The session was not.
 
 A per-Save budget cannot express "a session must fit in a minute", and a guard that
 counts `sheets.js` helper calls cannot see that one `batchGet` now carries what used to
 be six requests. So the session budget is measured at the **googleapis boundary**:
 every `values.get`, every `values.batchGet` **and** every `spreadsheets.get`.
 
-All three are metered. `spreadsheets.get` is not a diagnostic detail — `getSpreadsheetTabs`
-backs `closeoutFinality.isSessionFinalized`, `sessionPlanStore._tabExists` and
-`sessionPlanSetsStore._probeTab`, and `confirmTabMissing` issues one per unresolved range.
-Counting only the values methods reports a values-read total as if it were the read total.
+All three are metered, and Google meters **attempts** — a retried read costs two.
+`spreadsheets.get` is not a diagnostic detail either: `getSpreadsheetTabs` backs
+`closeoutFinality.isSessionFinalized` and the ledger stores, and `confirmTabMissing` issues
+one per unresolved range. Counting only the values methods, or only logical reads, reports a
+smaller number as if it were the read total.
+
+## The measurement authority — and the one it replaces
+
+> **The 46-read acceptance figure PR #1271 merged on is INVALIDATED.** It was measured
+> against a hand-authored `ownerPatternSequence` — a plausible reconstruction of a session,
+> not the session. The mechanism it shipped worked; the sequence it was accepted against
+> under-modelled production, so the number was never a measurement of the real client.
+
+PR #1271 merged as `42ee7b3` and deployed. The authorized non-counting debug run against
+that deployment then measured **116 observable read attempts with a rolling-60s peak of 87**,
+and threw 429s. Both figures are **lower bounds**, not totals: the captured artifact does not
+carry complete retry evidence, and the run was cut short by the quota it had already spent.
+`scripts/reconstruct-session-reads.js` now reports `total_is: lower_bound` and
+`retry_attempts: null` rather than `0` when a log cannot prove otherwise — reporting "retry
+attempts: 0" for evidence that simply was not captured is what made the earlier artifact
+read as complete.
+
+The archived 78-attempt figure from that run's server log is likewise a values-read lower
+bound from the older logging surface, not a session total.
+
+**The authority is now the exact deployed request manifest from that failed run**,
+`test/fixtures/liveSessionManifest.json`: 113 `/api` requests over 70.9 s, in order, with
+their real multiplicity, scrubbed of session ids and appended ranges. Repeated requests are
+not compressed, no request is dropped, and no representative call stands in for several —
+that compression is precisely what made the previous sequence wrong. The old
+`ownerPatternSequence` survives in `test/sessionReadBudget.test.js` as a smaller unit
+scenario and **authorizes nothing**.
 
 ## The budget
 
@@ -165,20 +190,16 @@ Counting only the values methods reports a values-read total as if it were the r
 Fifty, not sixty, so a session that drifts has room to be caught before it starts
 failing in the gym.
 
-## The two mechanisms
+## The two server mechanisms
 
 ### 1. Request-scoped `values.batchGet` (primary)
 
-Spreadsheet **metadata** (`spreadsheets.get`, behind `getSpreadsheetTabs`) is
-request-scoped too. A session asks "which tabs exist?" repeatedly inside one request —
-`closeoutFinality`, both ledger tab probes, every `confirmTabMissing` — and each ask used
-to be its own metered request. Tab existence cannot change inside a request except through
-`ensureSheetTab`, which invalidates the entry. Nothing is cached across requests.
-
-`sheets.js` opens a read context per HTTP request (`runWithReadContext`). A route
-declares the ranges it needs (`services/sessionReadBatch.js`), and the **first read the
-handler actually performs** issues them as one `batchGet`. Repeat reads of the same range
-inside the request are served from that one call.
+`sheets.js` opens a read context per HTTP request (`runWithReadContext`). A route declares
+the ranges it needs (`services/sessionReadBatch.js`), and the **first read the handler
+actually performs** issues them as one `batchGet`. Repeat reads of the same range inside the
+request are served from that one call. Spreadsheet **metadata** is request-scoped the same
+way — a session asks "which tabs exist?" repeatedly inside one request, and each ask used to
+be its own metered request.
 
 Three properties make it safe:
 
@@ -202,96 +223,137 @@ budget is not achieved on such a sheet.
 ### 2. The `Exercise_Catalog` cache (the only approved cross-request cache)
 
 There is exactly **one** catalog cache, in `sheets.js`. `routes/reads.js` used to own a
-second 60 s TTL cache in front of it; two caches in series do not give one TTL. A route
-entry filled at t=59 from a 59-second-old sheets entry served the same source snapshot
-until t≈119, past the approved bound, without attempting the refresh whose failure the
-contract requires be surfaced. The loser was deleted; the routes now always call
-`getExerciseCatalog()` and only transform its result.
+second 60 s TTL cache in front of it; two caches in series do not give one TTL. The loser
+was deleted; the routes now always call `getExerciseCatalog()` and only transform its result.
 
 Reference data the athlete's writes never touch, and the single most-read range of the
-failed session (14 of 78). Server-owned; TTL ≤ 60 s; single-flight; expiry is explicit
-(an expired entry is discarded where it expires); **no stale-after-expiry fallback** — a
-failed refresh throws, carrying its `readWithRetry` class so the truthful 503 from
-PR #1270 still applies; an empty result is never cached and `[]` is never synthesized
-from an error.
+failed session. Server-owned; TTL ≤ 60 s; single-flight; expiry is explicit (an expired
+entry is discarded where it expires); **no stale-after-expiry fallback** — a failed refresh
+throws, carrying its `readWithRetry` class so the truthful 503 from PR #1270 still applies;
+an empty result is never cached and `[]` is never synthesized from an error.
 
-No other range is cached across requests **by this read layer**, and `sheets.js` holds no
-other cross-request cache: every other range it serves is write-sensitive evidence, and a
-stale copy would corrupt a decision.
+No other range is cached across requests by this read layer.
 
-Scope note, so the claim is not read wider than it is: `index.js` has a separate,
-pre-existing 30-second `Log_Cleaned` / `Effort` full-row cache that every successful live
-write invalidates (`invalidateSheetRowsCache`). It predates this work, is untouched by it,
-and is out of scope here — the statement above is about the `sheets.js` read layer and the
-catalog authority, not about the process as a whole.
+### The `Log_Cleaned` / `Effort` row cache — scope corrected
+
+`index.js` has a separate, pre-existing 30-second full-row cache for those two tabs, which
+every successful live write invalidates. Its lifetime is unchanged, and it is still
+write-invalidated; what changed is **what it drops**. Every caller now names the tabs it
+wrote, so a Save with no effort row leaves the cached Effort rows alone, and writes to tabs
+this cache never holds (`Coaching_Notes`, `Constraints`, `Modality_Log`) stop clearing both.
+
+The no-argument call still clears everything. The two directions are not symmetric:
+under-eviction serves a stale read after a write and is a trust bug, while over-eviction
+costs one read — so a caller that does not say what it wrote fails safe.
+
+## The client must ask for less
+
+Batching alone could not close the gap. A one-range `batchGet` still costs one quota
+request, so the number of requests the real client causes is the primary term. Four
+client-side corrections, each proved by a browser-level test that counts the requests
+actually issued:
+
+| # | What was removed | Why it cannot change an answer |
+|---|---|---|
+| C1 | *(nothing removed)* | `/api/debug/intent-observe` was already read-free; the twenty reads once attributed to it were an artefact of the reconstruction tool's next-completed-request heuristic. Its dead range declaration — latent amplification the day the route added a read — is gone, and a zero-read guard replaces it. |
+| C2 | the second `/api/plan/intent-recommendation`, `/api/coaching/insights` and `/api/prs/recent` of each pair | Two surfaces asking the same question 0.4–0.9 s apart. The second now **joins the first in flight**; nothing is remembered once a response arrives, and any non-GET clears the in-flight map when it settles. |
+| C3 | `GET /api/log-workout/verify-range` on the normal Save path | The append's own receipt is the write-verification authority now — see below. |
+| C4 | the second `/api/recommend/next/{code}` of each lift's pair | Identical parameters (all in the URL), and the only tabs the engine also reads were untouched between the two asks. |
+
+C4's rule is the one with a real proof obligation, and it is met before the reuse:
+`currentInputsEpoch()` steps whenever the client did anything that might have changed
+`Log_Cleaned`, `Deload_State` or `Constraints`. It is pessimistic — **every** non-GET steps
+it, with two ways out: the response carries the W1–W3 dry-run proof (`no_write_confirmed`
+and `sheet_written: false`), or the path is one of two observation-only writers.
+`test/recommendationInputWrites.test.js` replays the whole captured session against the real
+app and records, per request, every tab actually written; in that entire session exactly one
+request wrote a tab a recommendation reads — the live Save. A `test_mode` preview writes
+nothing at all, anywhere.
+
+None of this suppresses a legitimate call after a newly written set: the live Save steps the
+epoch, and the next set changes the URL.
+
+## Write verification no longer costs a read
+
+`GET /api/log-workout/verify-range` used to re-read the appended range after every
+successful Save — one metered read at closeout, the exact minute the failed session ran out
+of quota. It decided the same thing the append's own `updates` receipt already reported.
+
+The receipt wins: it is produced by the operation that performed the write, contemporaneously
+with it, and it establishes the exact appended range, the exact row count and session
+ownership at no quota cost. `services/appendWriteProof.js` adjudicates it and
+`POST /api/log-workout` publishes `log_write_verification`. The verdict is derived, never
+asserted — a missing or self-contradicting receipt yields `verified: false` with an exact
+reason, so the caller has no proof rather than a fabricated one.
+
+`verify-range` survives only as a fallback, reached when the server published no verdict at
+all (a deployment older than the field) and never when the verdict says false. Winner,
+bridge and exact sunset condition are recorded in
+[`docs/ATLAS_SYSTEM_AUTHORITY.md`](ATLAS_SYSTEM_AUTHORITY.md) as concept 11b.
 
 ## Measured
 
-Against the failed run's own request sequence, replayed through the real handlers:
-
-Measured in the **qualifying ledger posture** — `ATLAS_SESSION_PLANS_WRITE=1` and
+Against the failed run's own request manifest, replayed through the real handlers, in the
+**qualifying ledger posture** — `ATLAS_SESSION_PLANS_WRITE=1` and
 `SESSION_PLAN_SETS_WRITE_ENABLED=1`, the two flags the combined rehearsal sets
 (`tests/e2e/gate/gate-server.js`). With them off the session has no plan capture, no
-checkpoint writes and a dry-run seal — a materially cheaper session than the one that
-failed.
+checkpoint writes and a dry-run seal — a materially cheaper session than the one that failed.
 
-| Configuration | Peak rolling-60s reads |
+| Client | Peak rolling-60s reads |
 |---|---|
-"Request context" means the WHOLE request-scoped mechanism — declared `batchGet`,
-same-range dedup, and request-scoped spreadsheet metadata — not just the declarations.
+| merged `main` (42ee7b3), captured manifest | 60 — **at Google's limit** |
+| this branch's server, captured (pre-correction) client | 55 |
+| this branch, **corrected** client (**shipped**) | **46** |
 
-| Configuration | Peak rolling-60s reads |
-|---|---|
-| request context + catalog cache (**shipped**) | **46** |
-| request context, cold catalog | 60 |
-| no request context + catalog cache | 123 |
-| neither (pre-change) | 137 |
+The captured client is kept measured on purpose: it must still overrun the budget, which is
+what proves the corrections closed the gap rather than the fixture having been made easier.
 
-The 137 is the complete pre-change counterfactual, and it is the number to compare
-against: it counts every metered method through the real handlers, in the posture the
-qualifying session runs. The archived run's 78 is a values-read lower bound from the old
-logging surface (see above) and is consistent with it — the live session was also cut short
-by the quota it had already exhausted. What makes the 46 meaningful is the 137, not the 78.
+**This harness is a LOWER BOUND on live demand, and the gap is stated rather than smoothed
+over.** The live run measured 116 attempts with a peak of 87 because (a) its retries were
+real and are not modelled here, and (b) a fake `googleapis` answers instantly, so 70.9 s of
+traffic compresses into about a second. That same compression means the 30-second row cache
+never expires here while it expires repeatedly across a real session — so it also
+under-states what C2's duplicate removals save, and no part of the 46 is claimed on the
+strength of a cache lifetime.
 
-The margin is **four reads**. The measurement is deterministic, so that is headroom against
-Google's real 60/minute limit rather than slack: a change that adds a few requests to a
-session turns the guard red.
+With 46 against 50 there is genuine headroom, so no single correction is load-bearing on the
+budget line — restoring one leaves 47. They are load-bearing together: restoring all of them
+measures 54.
 
 ## The guard
 
-`test/sessionReadBudget.test.js` drives the complete owner-pattern sequence against the
-real `sheets.js` and the real Express app, faking only `googleapis`, and asserts:
+`test/liveSessionReadBudget.test.js` is the session-budget authority. It drives the manifest
+against the real `sheets.js` and the real Express app, faking only `googleapis`, and asserts:
 
-- peak rolling-60s reads **≤ 50**;
-- `Exercise_Catalog` costs **exactly one** request for the window;
-- **every** request answers 2xx **and every live Save really wrote** — a 4xx performs no
-  reads, and a Save answering 200 as a duplicate skips its append and most of its reads.
-  A stale on-disk idempotency store alone moved the reported budget from 53 to 27, so the
-  harness redirects that store and asserts `sheet_write: 'success'` on every live Save;
-- the **final closeout Save** carrying the production `closeout_context` is driven and
-  must actually seal — that branch is what died live, and nothing else reaches
-  `recordCloseoutEvent` / `sealCloseout`;
-- restoring individual range requests **breaks** the budget;
-- restoring per-request catalog reads **breaks** the budget;
-- both disabled **reproduces** the original quota failure;
-- **every ledger operation genuinely captured** — these routes answer HTTP 200 while
-  reporting `status: 'error', captured: false` in the body, so an all-2xx sequence proves
-  nothing about them, and one really was failing that way;
-- the closeout **settled** in the qualifying posture: `closeout_fully_verified === true`,
-  a **live** set-ledger seal with `sheet_written: true`, and a Session_Plans closeout event
-  that is genuinely `captured: true` — a `disabled` capture or a dry-run seal fails the
-  guard, because either means a cheaper session is being measured;
-- a `Deload_State` change is visible to the next recommendation — the budget may never be
-  bought with a cached training state;
-- the catalog **route** never serves a snapshot older than one TTL; a **transient** refresh
-  failure after expiry reaches it as the retryable **503** from PR #1270 with
-  `upstream_read_unavailable`, carrying no stale data.
+- the **fixture still holds the captured session** — total request count, span and
+  per-endpoint counts, transcribed as literals. A count derived from the manifest agrees
+  with the manifest whatever it says, so only an independent expectation can catch a deleted
+  request;
+- the harness **replays** the manifest — nothing compressed, nothing dropped, thirteen
+  previews and one twelve-row closeout write;
+- the **captured** client still overruns 50;
+- the **corrected** client fits 50, with all fourteen Saves answering 200 and twelve rows of
+  the session genuinely on the sheet — a budget met by failing requests would be no
+  achievement;
+- **every client correction removes a request the captured manifest really contains** and
+  names the test that proves the client no longer issues it. A correction matching nothing is
+  a comment, not a reduction;
+- the budget meters **attempts**: a read made to fail transiently once must appear twice;
+- `/api/debug/intent-observe` performs **zero** reads, measured from a cold row cache — the
+  boundary count cannot see a read the 30-second cache answered, so the guard primes a live
+  Save first.
 
-Three mutation bites keep the measurement honest, because each of these was live in an
-earlier head and none turned the file red: dropping metadata reads from the count must
-change the answer, dropping the closeout Save must fail the guard, and flipping any single
-closeout settlement outcome to failure — the verdict, the seal, or the capture — must make
-the guard red.
+`test/sessionReadBudget.test.js` keeps the unit-level contracts the old sequence still proves
+honestly — the catalog cache and route contracts, `Deload_State` freshness, the ledger
+posture, and durable closeout settlement — and no longer budgets the session.
 
-The counterfactuals are the anti-false-green: if the sequence ever stops genuinely
-exercising the read paths, they stop failing-as-required and the file goes red.
+Six mutation bites keep all of this from passing for the wrong reason, each run and reverted:
+making `intent-observe` read fails the zero-read guard; restoring the duplicate client
+requests fails the budget at 54; globally invalidating `Effort` on a log-only write fails the
+cache-invalidation test; restoring the per-Save verification read fails the
+write-verification spec; metering logical reads instead of attempts fails both the retry
+guard and the reproduction; and removing any request from the live manifest fails fixture
+integrity.
+
+Two of those bites found guards that could not fail, and both are fixed above: fixture
+integrity was self-referential, and the zero-read guard was satisfiable from a warm cache.
