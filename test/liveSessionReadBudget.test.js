@@ -54,6 +54,7 @@ const PLANS_HEADER = [...sessionPlansColumns];
 const PLAN_SETS_HEADER = [...sessionPlanSetsColumns];
 
 const harness = require('./helpers/liveSessionHarness');
+const { SESSION_DATE } = harness;
 const {
   LIFTS, SESSION_ID, liveSessionSequence, manifestEndpointCounts, correctionLedger, MANIFEST,
 } = harness;
@@ -116,6 +117,18 @@ function recordRead(api, ranges) {
   if (countingOn) reads.push({ at: Date.now(), api, ranges });
 }
 
+// Failure injection, used only by the retry-accounting guard below. `failNextReads` is the
+// number of upcoming read calls that must fail transiently before the fake starts answering.
+let failNextReads = 0;
+function maybeFail() {
+  if (failNextReads <= 0) return;
+  failNextReads -= 1;
+  const error = new Error('The service is currently unavailable.');
+  error.code = 503;
+  error.response = { status: 503 };
+  throw error;
+}
+
 const fakeSheetsClient = {
   spreadsheets: {
     get: async () => {
@@ -126,12 +139,14 @@ const fakeSheetsClient = {
     values: {
       get: async ({ range }) => {
         recordRead('values.get', [range]);
+        maybeFail();
         const out = valuesForRange(range);
         if (out.error) throw out.error;
         return { data: { values: out.values } };
       },
       batchGet: async ({ ranges }) => {
         recordRead('values.batchGet', ranges);
+        maybeFail();
         const valueRanges = [];
         for (const range of ranges) {
           const out = valuesForRange(range);
@@ -270,6 +285,62 @@ async function runLiveSession({ requestContext = true, coldCatalogPerRequest = f
 }
 
 // ── fixture integrity: the manifest must be replayed, not summarised ─────────
+//
+// THE CAPTURED EVIDENCE, written out as literals. This is deliberately a SECOND copy of the
+// same facts, because `manifestEndpointCounts()` reads the manifest itself: derived from the
+// fixture, it agrees with the fixture no matter what the fixture says, so deleting a request
+// from the JSON would change both sides together and pass. Only an independent expectation
+// can catch that, so the counts below come from the captured run and are transcribed here.
+// Editing the fixture without editing this table is what fails.
+const CAPTURED_TOTAL_REQUESTS = 113;
+const CAPTURED_SPAN_MS = 70945;
+const CAPTURED_ENDPOINT_COUNTS = [
+  ['GET /api/catalog/exercises', 1],
+  ['GET /api/coaching/insights', 3],
+  ['GET /api/exercises/last-session', 6],
+  ['GET /api/flight/recent', 1],
+  ['GET /api/history/recent', 2],
+  ['GET /api/log-workout/verify-range', 1],
+  ['GET /api/plan/intent-recommendation', 3],
+  ['GET /api/plan/today', 2],
+  ['GET /api/progress/summary', 2],
+  ['GET /api/prs/recent', 3],
+  ['GET /api/recommend/next/BC01', 3],
+  ['GET /api/recommend/next/IDB01', 3],
+  ['GET /api/recommend/next/OHP01', 3],
+  ['GET /api/recommend/next/RDL01', 3],
+  ['GET /api/recommend/next/SQ01', 4],
+  ['GET /api/recommend/next/SR01', 3],
+  ['GET /api/report/weekly', 1],
+  ['GET /api/session/status', 1],
+  ['GET /api/stalls', 3],
+  ['GET /api/summary/weekly', 3],
+  ['POST /api/coach/ask', 1],
+  ['POST /api/coach/chat', 1],
+  ['POST /api/coach/message', 7],
+  ['POST /api/debug/intent-observe', 16],
+  ['POST /api/log-modality', 1],
+  ['POST /api/log-workout', 14],
+  ['POST /api/parse-workout-text', 15],
+  ['POST /api/session-plan-sets/accept', 1],
+  ['POST /api/session-plan-sets/revision', 2],
+  ['POST /api/session-plans/accept', 1],
+  ['POST /api/session-plans/outcome', 1],
+  ['POST /api/suggest-substitute', 2],
+];
+
+test('the fixture still holds the captured session — no request added, removed or renamed', () => {
+  assert.equal(MANIFEST.requests.length, CAPTURED_TOTAL_REQUESTS,
+    'the captured run made exactly this many /api requests');
+  assert.equal(MANIFEST.span_ms, CAPTURED_SPAN_MS, 'the captured run spanned exactly this long');
+  assert.deepEqual(
+    [...manifestEndpointCounts().entries()].sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0)),
+    CAPTURED_ENDPOINT_COUNTS,
+    'the fixture no longer matches the captured evidence — every difference must be a ' +
+    'correction to what was captured, made deliberately, with the table above updated to match'
+  );
+});
+
 test('the harness replays the live manifest exactly — nothing compressed, nothing dropped', () => {
   const sequence = liveSessionSequence();
   assert.equal(sequence.length, MANIFEST.requests.length,
@@ -300,34 +371,34 @@ test('the harness replays the live manifest exactly — nothing compressed, noth
   assert.ok(live[0][2].closeout_context, 'the live write is the closeout');
 });
 
-// ── MEASURED STATE — the budget this PR must reach ──────────────────────────
+// ── MEASURED STATE ──────────────────────────────────────────────────────────
 //
 // PRE-CORRECTION EVIDENCE, recorded because the code that produced it no longer exists.
 // On merged main (42ee7b3) this same fixture measured a rolling-60s peak of 60 — AT
 // Google's per-minute limit, ten over the 50 budget, with zero headroom, which is why the
 // first retry tipped the live session over. That measurement is reproducible at commit
-// ce26c20 of this branch and was independently confirmed by CI there. Every reduction
-// below is measured against it.
+// ce26c20 of this branch and was independently confirmed by CI there.
 //
 // The fixture reproduces the failure without its full magnitude, and the gap is stated
 // rather than smoothed over: the live run measured 116 observable reads with a peak of 87,
 // because (a) its retries were real and are not modelled here, and (b) a fake googleapis
-// answers instantly, so 70.9 s of live traffic compresses into about a second. This
-// harness is therefore a LOWER BOUND on live demand.
+// answers instantly, so 70.9 s of live traffic compresses into about a second. This harness
+// is therefore a LOWER BOUND on live demand — including on what the corrections save, since
+// the same compression means the server's 30-second row cache never expires here while it
+// expires repeatedly across a real 71-second session.
 //
-// PROGRESS MARKER, not the final guard. While reductions are still landing this asserts
-// the direction of travel and pins the number actually measured, so a checkpoint can never
-// silently claim more than it achieved. It becomes `peak <= BUDGET` when the remaining
-// client-side reductions land.
-test('the live manifest is measured, and the measurement is moving toward the budget', async () => {
+// THE CAPTURED CLIENT still overruns the budget. That is the point of keeping it measured:
+// it is what proves the corrections closed the gap, rather than the fixture having been
+// made easier.
+test('the captured client — the one that failed — still overruns the budget', async () => {
   const run = await runLiveSession();
   assert.ok(run.total > 0, 'the sequence must actually read the sheet');
-  assert.ok(run.peak < 60,
-    `the ledger-probe reduction must hold: pre-correction was 60, measured ${run.peak}\n  ${run.breakdown}`);
   assert.ok(run.peak > BUDGET,
-    `NOT YET AT BUDGET — measured ${run.peak}, target <= ${BUDGET}. When this assertion ` +
-    'starts failing, the remaining reductions have landed and this test must be replaced ' +
-    `by the real guard (peak <= ${BUDGET}).\n  ${run.breakdown}`);
+    `the captured client must still overrun ${BUDGET}, else this fixture no longer ` +
+    `reproduces anything: measured ${run.peak}\n  ${run.breakdown}`);
+  assert.ok(run.peak < GOOGLE_LIMIT,
+    'the server-side reductions already merged must hold: pre-correction was 60 at ' +
+    `Google's limit, measured ${run.peak}\n  ${run.breakdown}`);
 });
 
 // ── the CORRECTED client ─────────────────────────────────────────────────────
@@ -339,8 +410,8 @@ test('the live manifest is measured, and the measurement is moving toward the bu
 //
 // The corrected list cannot be captured: running another live debug session is not
 // authorized. It is derived instead, and the derivation is guarded — every correction must
-// remove a request the captured manifest really contains, and must name the test that
-// proves the client no longer issues it. Nothing is dropped because "the fixture reads
+// remove a request the captured manifest really contains, and must name the tests that
+// prove the client no longer issues it. Nothing is dropped because "the fixture reads
 // nothing there".
 test('every client correction removes a real captured request and names its guard', () => {
   const ledger = correctionLedger();
@@ -369,10 +440,10 @@ test('every client correction removes a real captured request and names its guar
 
   const seen = new Map();
   const expected = captured.filter(([method, url]) => {
-    const path = url.split('?')[0];
-    const n = seen.get(path) || 0;
-    seen.set(path, n + 1);
-    return !removedKeys.has(`${method} ${path} #${n}`);
+    const p = url.split('?')[0];
+    const n = seen.get(p) || 0;
+    seen.set(p, n + 1);
+    return !removedKeys.has(`${method} ${p} #${n}`);
   });
   assert.equal(corrected.length, captured.length - removedKeys.size,
     'the corrected sequence may differ from the captured manifest only by the ledger');
@@ -380,18 +451,33 @@ test('every client correction removes a real captured request and names its guar
     'order and multiplicity of every surviving request must be untouched');
 });
 
-// PROGRESS MARKER, not the final guard — same role as the one above, for the corrected
-// client. It pins the number actually measured so a checkpoint can never claim more than it
-// achieved, and it becomes `peak <= BUDGET` when the remaining reductions land.
-test('the corrected client is measured, and the measurement is moving toward the budget', async () => {
+// THE GUARD. Every read counted at the googleapis boundary — first attempts and retries
+// alike, `values.get`, `values.batchGet` and `spreadsheets.get` — for the complete session
+// the corrected client issues.
+test(`the corrected client fits the budget: peak <= ${BUDGET} reads per rolling minute`, async () => {
   const run = await runLiveSession({ corrected: true });
   assert.ok(run.total > 0, 'the sequence must actually read the sheet');
-  assert.ok(run.peak > BUDGET,
-    `NOT YET AT BUDGET — corrected client measured ${run.peak}, target <= ${BUDGET}. When ` +
-    'this assertion starts failing, the remaining reductions have landed and this test must ' +
-    `be replaced by the real guard (peak <= ${BUDGET}).\n  ${run.breakdown}`);
-  assert.ok(run.peak <= 52,
-    `the corrections must not regress: last measured 52, now ${run.peak}\n  ${run.breakdown}`);
+  assert.ok(run.peak <= BUDGET,
+    `OVER BUDGET — corrected client measured ${run.peak}, budget ${BUDGET}, ` +
+    `Google's limit ${GOOGLE_LIMIT}\n  ${run.breakdown}`);
+
+  // The whole session, not just its worst minute: with a fake googleapis the session
+  // compresses into about a second, so peak and total coincide here and a regression that
+  // moved reads around rather than removing them could not hide in the difference.
+  assert.equal(run.peak, run.total,
+    'this fixture compresses the session, so peak and total must agree — if they do not, ' +
+    'the timing model changed and the peak figure needs re-deriving');
+
+  // Every Save the manifest contains actually happened, and the closeout really wrote.
+  // A budget met by failing requests would be no achievement at all.
+  const saves = run.results.filter(r => r.path === '/api/log-workout');
+  assert.equal(saves.length, 14, 'all fourteen Saves must have been driven');
+  assert.deepEqual([...new Set(saves.map(r => r.status))], [200],
+    `every Save must have succeeded: ${JSON.stringify(saves.filter(r => r.status !== 200))}`);
+  // Twelve rows for THIS session — the sheet also holds the seeded history, so counting
+  // rows alone would pass on the wrong evidence.
+  const written = run.ledgerRows.log.slice(1).filter(row => row[1] === SESSION_ID);
+  assert.equal(written.length, 12, 'the closeout wrote all twelve rows of this session');
 });
 
 // ── the observe-only route must stay observe-only ────────────────────────────
@@ -409,6 +495,16 @@ test('POST /api/debug/intent-observe performs zero Sheets reads', async () => {
   resetSheet();
   resetIdempotencyStore();
   sheets._resetExerciseCatalogCache();
+  // START FROM A COLD ROW CACHE. index.js caches the full Log_Cleaned / Effort reads for 30
+  // seconds, and counting at the googleapis boundary cannot see a read that a warm cache
+  // answered — so with the cache warm this guard would pass even if the route DID read.
+  // A live Save is the public way to invalidate it: after this, any read the route performs
+  // must reach the API to be answered, and the count below means what it says.
+  const priming = await call('POST', '/api/log-workout', {
+    date: SESSION_DATE, session_id: 'GUARD-COLD-CACHE', write_id: `w_guard_cold_${runSeq}_x`,
+    log_rows: [{ exercise: LIFTS[0].name, set_number: 1, weight: 100, reps: 5, rir: 2 }],
+  });
+  assert.equal(priming.status, 200, JSON.stringify(priming.body));
   await settle({ quietMs: 300, maxMs: 5000 });
   reads.length = 0;
   countingOn = true;
@@ -426,6 +522,51 @@ test('POST /api/debug/intent-observe performs zero Sheets reads', async () => {
   assert.equal(observed.status, 200, JSON.stringify(observed.body));
   assert.deepEqual(reads.map(r => `${r.api} ${r.ranges.join(', ')}`), [],
     'an observation-only route must not read the athlete\'s data');
+});
+
+// ── the budget counts ATTEMPTS, not logical reads ───────────────────────────
+//
+// Google meters every request that reaches it, so a retried read costs two. The 2026-08-05
+// session did not merely ask too often — its retries after the first 429 are part of why it
+// measured 116 attempts. A budget that counted logical reads would understate exactly the
+// traffic that broke it.
+//
+// The harness counts inside the fake googleapis client, so retries are counted by
+// construction. This is what proves it: a read is made to fail transiently once, and BOTH
+// the failed attempt and the successful retry must appear in the measurement.
+test('a retried read is counted twice — the budget meters attempts', async () => {
+  resetSheet();
+  resetIdempotencyStore();
+  sheets._resetExerciseCatalogCache();
+  await settle({ quietMs: 250, maxMs: 4000 });
+
+  reads.length = 0;
+  countingOn = true;
+  let response;
+  try {
+    failNextReads = 1;           // the first read this request makes fails transiently
+    response = await call('GET', '/api/plan/today');
+    await settle();
+  } finally {
+    failNextReads = 0;
+    countingOn = false;
+  }
+
+  assert.equal(response.status, 200,
+    `the retry ladder must have recovered: ${JSON.stringify(response.body)}`);
+  assert.ok(reads.length >= 2,
+    `a failed attempt AND its retry must both be counted, saw ${reads.length}: ` +
+    JSON.stringify(reads.map(r => `${r.api} ${r.ranges.join(',')}`)));
+
+  // The same range twice — the retry, not two different reads that happen to sum to two.
+  const byRange = new Map();
+  for (const read of reads) {
+    const key = `${read.api} ${read.ranges.join('|')}`;
+    byRange.set(key, (byRange.get(key) || 0) + 1);
+  }
+  assert.ok([...byRange.values()].some(n => n >= 2),
+    'one read must appear twice — the attempt and its retry:\n  ' +
+    [...byRange.entries()].map(([k, n]) => `${n} × ${k}`).join('\n  '));
 });
 
 module.exports = { runLiveSession, BUDGET, GOOGLE_LIMIT, SESSION_ID };

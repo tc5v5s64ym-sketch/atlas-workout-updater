@@ -10,7 +10,7 @@
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-import { API_KEY_STORAGE, api, authState, coalescedGet, friendlyTransportMessage, getApiKey, isConnected, refreshSessionStatus, sessionLogin, sessionLogout } from './api.js';
+import { API_KEY_STORAGE, api, authState, coalescedGet, currentInputsEpoch, friendlyTransportMessage, getApiKey, isConnected, refreshSessionStatus, sessionLogin, sessionLogout } from './api.js';
 import { BUG_REPORT_ACTION_LIMIT, BUG_REPORT_ERROR_LIMIT, BUG_REPORT_RECENT_API_LIMIT, BUG_REPORT_REDACTED, BUG_REPORT_SECRET_VALUE_PATTERNS, BUG_REPORT_SIZE_BUDGET, BUG_REPORT_STORAGE_KEY_RE, atlasActionLog, atlasRecentApiRequests, atlasRecentErrors, recordAtlasAction, recordAtlasError } from './bugReport.js';
 import { el, loadExerciseDatalist, renderTable, setStatus, svgBarChart, svgLineChart } from './dom.js';
 import { loadHistory, loadSessions } from './historyView.js';
@@ -4467,6 +4467,9 @@ let planTodayByNameCache = null;
 function clearLiveHintCaches() {
   lastTimeCache.clear();
   planTodayByNameCache = null;
+  // Belt and braces beside the epoch: a confirmed write already steps it, and a session
+  // reset means the next session's questions are new ones anyway.
+  reactionCache.clear();
 }
 
 async function getPlanTodayByName() {
@@ -6409,10 +6412,48 @@ async function fetchReaction(liftCode, justLoggedSet) {
     }
     const qs = params.toString();
     const path = `/api/recommend/next/${encodeURIComponent(liftCode)}${qs ? `?${qs}` : ''}`;
+
+    // REUSE AN ANSWER THAT CANNOT HAVE CHANGED.
+    //
+    // The captured manifest shows this exact request issued TWICE for every lift — 1.9 s to
+    // 12 s apart, identical parameters — because both sets of a pair were logged at the same
+    // load, so the second set produced the same question. Six reads, against a 60-per-minute
+    // quota, for six answers already on screen.
+    //
+    // Every input is accounted for. The lift code, the plan intent and the just-logged
+    // w/reps/rir are all IN THE URL, so a different set is a different key and is never
+    // reused. The only other inputs are the three tabs the engine reads — Log_Cleaned,
+    // Deload_State, Constraints — and `currentInputsEpoch()` steps whenever this client did
+    // anything that might have changed them (see api.js: pessimistic by default, and a
+    // test_mode preview is excused only by the W1–W3 dry-run proof that it wrote nothing).
+    //
+    // So a legitimate call after a newly written set always goes to the server: the live Save
+    // steps the epoch, and the next set changes the URL anyway. Only a repeat of the same
+    // question, with provably unchanged inputs, is answered from what we already have.
+    const cached = reactionCache.get(path);
+    if (cached && cached.epoch === currentInputsEpoch()) return cached.data;
+
+    const epochAtRequest = currentInputsEpoch();
     const res = await api(path);
-    return res.data || null;
+    const data = res.data || null;
+    // If something changed WHILE this was in flight, the answer may already be stale — keep
+    // it for this caller, but never hand it to a later one.
+    if (currentInputsEpoch() === epochAtRequest) rememberReaction(path, epochAtRequest, data);
+    return data;
   } catch {
     return null;
+  }
+}
+
+// Bounded on purpose: one entry per distinct question, oldest dropped first. A session asks
+// a handful; the cap means a long one can never grow this without limit.
+const REACTION_CACHE_MAX = 32;
+const reactionCache = new Map();
+function rememberReaction(path, epoch, data) {
+  reactionCache.delete(path);
+  reactionCache.set(path, { epoch, data });
+  while (reactionCache.size > REACTION_CACHE_MAX) {
+    reactionCache.delete(reactionCache.keys().next().value);
   }
 }
 

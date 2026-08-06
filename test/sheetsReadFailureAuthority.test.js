@@ -402,7 +402,9 @@ test('the exported read surface is exactly the set proven to retry', () => {
     // `declareRequestRanges` only RECORDS what a route expects to need; the batchGet it
     // enables is issued by the read helpers above and is covered by the 'batched read'
     // case in the retry test.
-    'runWithReadContext', 'declareRequestRanges', 'invalidateTabCache',
+    // `currentRequestIdentity` only reads the async-context store — read ACCOUNTING, never a
+    // read: it names the HTTP request a read or write belongs to, and reaches no network.
+    'runWithReadContext', 'declareRequestRanges', 'invalidateTabCache', 'currentRequestIdentity',
     'CATALOG_CACHE_TTL_MS', '_resetExerciseCatalogCache', '_exerciseCatalogCacheStats',
     'validateConfig', 'getSafeSpreadsheetConfig',
     'isTransientAppendError', 'retryWithBackoff',

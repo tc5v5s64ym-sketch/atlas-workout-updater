@@ -162,6 +162,38 @@ const SAVE_INDEXES = MANIFEST.requests
 const LAST_SAVE_OCCURRENCE = SAVE_INDEXES.length - 1;
 const LAST_SAVE_INDEX = LAST_SAVE_OCCURRENCE;
 
+// The manifest index of the session's ONE live write: the last `/api/log-workout`. Every
+// earlier occurrence is a `test_mode` preview, which writes nothing anywhere —
+// `test/recommendationInputWrites.test.js` replays the whole session and proves it.
+const LIVE_SAVE_MANIFEST_INDEX = MANIFEST.requests
+  .map((entry, index) => ({ entry, index }))
+  .filter(({ entry }) => entry.path === '/api/log-workout')
+  .map(({ index }) => index)
+  .pop();
+
+/**
+ * Manifest indexes of recommendation requests that repeat an EARLIER identical question with
+ * nothing between them that could change the answer.
+ *
+ * Derived by rule rather than listed, so it cannot drift from the manifest and cannot be
+ * quietly widened. "Identical" means the same path AND the same query — the lift code, the
+ * plan intent and the just-logged w/reps/rir all live there, so a different set is a
+ * different key. "Nothing between" means both asks fall before the session's one live write:
+ * that write is the only thing in the whole session that touches a tab the engine reads.
+ */
+const REPEATED_RECOMMENDATIONS = (() => {
+  const firstAsk = new Map();
+  const repeats = new Set();
+  MANIFEST.requests.forEach((entry, index) => {
+    if (!entry.path.startsWith('/api/recommend/next/')) return;
+    const key = `${entry.path}?${entry.query || ''}`;
+    const earlier = firstAsk.get(key);
+    if (earlier === undefined) { firstAsk.set(key, index); return; }
+    if (earlier < LIVE_SAVE_MANIFEST_INDEX && index < LIVE_SAVE_MANIFEST_INDEX) repeats.add(index);
+  });
+  return repeats;
+})();
+
 // CLIENT CORRECTIONS ─────────────────────────────────────────────────────────
 //
 // The manifest is the CAPTURED client: what the deployed app actually asked for on
@@ -181,9 +213,9 @@ const LAST_SAVE_INDEX = LAST_SAVE_OCCURRENCE;
 // convenience. A correction with no matching request in the captured manifest fails
 // `test/liveSessionReadBudget.test.js`.
 //
-// A correction matches on (entry, occurrence) — the occurrence number of that path in the
-// FULL manifest — so a duplicate can be named exactly. Removing "the second
-// /api/coaching/insights" must never be expressible as "all of them".
+// A correction matches on (entry, occurrence, index) — the occurrence number of that path in
+// the FULL manifest, and the manifest index — so a duplicate can be named exactly. Removing
+// "the second /api/coaching/insights" must never be expressible as "all of them".
 const CLIENT_CORRECTIONS = [
   {
     id: 'C3-verify-range-retired',
@@ -231,6 +263,24 @@ const CLIENT_CORRECTIONS = [
       + '0.8 s apart and after the same write; the second joins the first in flight.',
     guards: ['tests/e2e/duplicate-read-coalescing.spec.js'],
   },
+
+  // C4 — the same recommendation asked twice per lift, because both sets of a pair were
+  // logged at the same load. Only a repeat of an IDENTICAL question with provably unchanged
+  // inputs is removed; the six-lift bare sweep before closeout and the post-Save ask are
+  // different questions and stay.
+  {
+    id: 'C4-repeated-recommendation',
+    match: (entry, occurrence, index) => REPEATED_RECOMMENDATIONS.has(index),
+    why: 'the lift code, plan intent and just-logged w/reps/rir are all in the URL, and the '
+      + 'only tabs the engine also reads are untouched between the two asks — the session\'s '
+      + 'one live write comes later — so the second ask cannot have a different answer.',
+    guards: [
+      // the client asks once for the same set, and asks again for a different set or a Save
+      'tests/e2e/recommendation-request-reuse.spec.js',
+      // nothing else in the session writes a tab a recommendation reads
+      'test/recommendationInputWrites.test.js',
+    ],
+  },
 ];
 
 /**
@@ -246,13 +296,13 @@ function liveSessionSequence({ runId = 'r1', appendedRange = 'Log_Cleaned!A2:L13
   // correction that removes SOME occurrences of a path cannot silently renumber the rest
   // and hand a later request an earlier request's body.
   const occurrence = new Map();
-  const numbered = MANIFEST.requests.map((entry) => {
+  const numbered = MANIFEST.requests.map((entry, index) => {
     const n = occurrence.get(entry.path) || 0;
     occurrence.set(entry.path, n + 1);
-    return { entry, n };
+    return { entry, n, index };
   });
   const requests = corrected
-    ? numbered.filter(({ entry, n }) => !CLIENT_CORRECTIONS.some(c => c.match(entry, n)))
+    ? numbered.filter(({ entry, n, index }) => !CLIENT_CORRECTIONS.some(c => c.match(entry, n, index)))
     : numbered;
   return requests.map(({ entry, n }) => {
     const query = entry.query
@@ -279,13 +329,13 @@ function manifestEndpointCounts() {
   return counts;
 }
 
-/** The manifest with each request's per-path occurrence number attached. */
+/** The manifest with each request's per-path occurrence number and manifest index attached. */
 function numberManifest() {
   const seen = new Map();
-  return MANIFEST.requests.map((entry) => {
+  return MANIFEST.requests.map((entry, index) => {
     const n = seen.get(entry.path) || 0;
     seen.set(entry.path, n + 1);
-    return { entry, n };
+    return { entry, n, index };
   });
 }
 
@@ -300,7 +350,7 @@ function correctionLedger() {
     why: correction.why,
     guards: correction.guards,
     removed: numberManifest()
-      .filter(({ entry, n }) => correction.match(entry, n))
+      .filter(({ entry, n, index }) => correction.match(entry, n, index))
       .map(({ entry, n }) => `${entry.method} ${entry.path} #${n}`),
   }));
 }

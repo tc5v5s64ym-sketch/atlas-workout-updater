@@ -165,6 +165,42 @@ export function dropCoalescedReads() {
   inflightReads.clear();
 }
 
+// ── When could a read's answer have changed? ────────────────────────────────
+//
+// A monotonic counter that steps whenever this client did something that MIGHT have changed
+// what the server would answer. A caller can therefore prove an answer is still current by
+// comparing epochs, instead of guessing from a clock.
+//
+// It is deliberately PESSIMISTIC. Every non-GET steps it, and there are exactly two ways out:
+//
+//   1. the response carries the dry-run proof (`no_write_confirmed: true` AND
+//      `sheet_written: false`) — Invariants W1–W3, the same proof the write path itself
+//      relies on. A test_mode preview writes nothing anywhere, so nothing can have changed;
+//   2. the path is one of the two observation-only writers below.
+//
+// A new write route therefore invalidates by default — it has to be added here deliberately,
+// with evidence, to stop doing so.
+//
+// The two exceptions are not assumptions. `test/recommendationInputWrites.test.js` replays
+// the whole captured session against the real app and records every tab each request wrote:
+// /api/coach/message and /api/debug/intent-observe write only their observation tabs, and in
+// that entire session the ONLY request that wrote a tab a recommendation reads was the live
+// POST /api/log-workout. That test fails if either route starts writing one.
+let inputsEpoch = 0;
+const OBSERVATION_ONLY_WRITERS = new Set(['/api/coach/message', '/api/debug/intent-observe']);
+
+export function currentInputsEpoch() {
+  return inputsEpoch;
+}
+
+function noteMaybeChangedInputs(path, method, json) {
+  if (method === 'GET') return;
+  if (OBSERVATION_ONLY_WRITERS.has(String(path).split('?')[0])) return;
+  const data = json && json.data ? json.data : json;
+  if (data && data.no_write_confirmed === true && data.sheet_written === false) return;
+  inputsEpoch += 1;
+}
+
 function copyOf(body) {
   try {
     return typeof structuredClone === 'function' ? structuredClone(body) : JSON.parse(JSON.stringify(body));
@@ -268,6 +304,7 @@ export async function api(path, options = {}) {
     // settles may attach to one that started before it. Doing it here — rather than at each
     // write site — means a new write route cannot forget to. See coalescedGet above.
     if (method !== 'GET') dropCoalescedReads();
+    noteMaybeChangedInputs(path, method, json);
     atlasRecentApiRequests.push({
       at: new Date().toISOString(),
       method,

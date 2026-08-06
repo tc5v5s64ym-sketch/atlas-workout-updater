@@ -3240,9 +3240,11 @@ test('listTabs returns empty array when spreadsheet has no sheets data', async (
 test('reaction layer: fetchReaction exists and fails quietly', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   assert.match(appSource, /async function fetchReaction\(/, 'fetchReaction must exist');
+  // Widened from 1200: C4 added the reuse rule (and the comment stating which inputs it
+  // accounts for) between the URL construction and the catch. The assertions are unchanged.
   const fetchFn = appSource.slice(
     appSource.indexOf('async function fetchReaction('),
-    appSource.indexOf('async function fetchReaction(') + 1200
+    appSource.indexOf('async function fetchReaction(') + 3200
   );
   assert.match(fetchFn, /return null/, 'must return null on unavailable data');
   assert.match(fetchFn, /catch/, 'must catch errors silently');

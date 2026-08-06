@@ -982,6 +982,14 @@ module.exports = {
   effortSheetName,
   // Request-scoped read batching (F-SB4B session read budget).
   runWithReadContext,
+  // The HTTP request this async context belongs to, or null outside one. Read accounting
+  // only — nothing decides on it. Exported so a test can attribute a FIRE-AND-FORGET write
+  // (a shadow append that lands after the response) to the request that caused it, instead
+  // of to whichever request happened to be in flight when it completed.
+  currentRequestIdentity: () => {
+    const ctx = currentReadContext();
+    return ctx && ctx.request ? { ...ctx.request } : null;
+  },
   declareRequestRanges,
   invalidateTabCache,
   CATALOG_CACHE_TTL_MS,
