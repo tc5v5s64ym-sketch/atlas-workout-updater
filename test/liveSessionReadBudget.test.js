@@ -23,7 +23,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const BUDGET = 50;              // peak reads per rolling 60s. Google's real limit is 60.
+// The acceptance bound for the TRACE-DERIVED measurement below. Google's real limit is 60;
+// 50 leaves room for a session that drifts. Meeting it is not production proof — see the
+// guard's own comment, and docs/READ_BUDGET.md.
+const BUDGET = 50;
 const GOOGLE_LIMIT = 60;
 
 process.env.ATLAS_API_KEY = 'test-api-key';
@@ -216,6 +219,46 @@ async function call(method, url, body) {
   return { method, url, path: url.split('?')[0], status: res.status, body: await res.json().catch(() => null) };
 }
 
+// WHICH BRANCH DID THE ROUTE TAKE?
+//
+// A status alone does not say. `/api/suggest-substitute` answers 200 both when it reads
+// history to recommend a swap AND when it early-returns "not a constraint message" — and
+// the reconstructed body used to take the cheap branch, so the session was measured against
+// a request it never made. A bounded signature makes the branch itself an assertion.
+//
+// Each entry extracts 1–3 STABLE facts from the response. Never a whole body (that would
+// pin wording and churn), never nothing (that would pin only cardinality).
+const BRANCH_SIGNATURE = {
+  '/api/suggest-substitute': d => `recommendation:${d && d.recommendation ? 'present' : 'null'}`,
+  '/api/parse-workout-text': d => `intent:${d && d.parsed ? (d.parsed.intent || 'none') : 'no-parse'}` +
+    `|sets:${d && d.parsed && Array.isArray(d.parsed.sets) ? (d.parsed.sets.length > 0 ? 'some' : 'none') : 'none'}` +
+    `|no_write:${d ? d.no_write_confirmed === true : false}`,
+  '/api/log-workout': d => (d && d.test_mode === true
+    ? `preview|no_write_confirmed:${d.no_write_confirmed === true}|wrote_nothing:${d.sheet_written === false}`
+    : `live|sheet_write:${d && d.sheet_write}|verified:${d && d.log_write_verification && d.log_write_verification.verified}`),
+  // `kind` echoes the branch the route took, `note_tier` the deterministic gate's verdict.
+  // A body sending kind 'set' (as the reconstruction used to) reports a different kind here.
+  '/api/coach/message': d => `kind:${(d && d.kind) || 'none'}|tier:${(d && d.note_tier) || 'none'}`,
+  '/api/coach/chat': d => `served:${d && d.message ? 'yes' : 'no'}`,
+  '/api/coach/ask': d => `depth:${(d && d.depth) || 'none'}`,
+  '/api/debug/intent-observe': d => `observed:${d && d.observed !== false ? 'yes' : 'no'}`,
+  '/api/log-modality': d => `no_write:${d ? d.no_write_confirmed === true : false}`,
+  '/api/session-plans/accept': d => `captured:${d && d.session_plans && d.session_plans.captured}`,
+  '/api/session-plans/outcome': d => `captured:${d && d.session_plans && d.session_plans.captured}`,
+  '/api/session-plan-sets/accept': d => `captured:${d && d.session_plan_sets && d.session_plan_sets.captured}`,
+  '/api/session-plan-sets/revision': d => `captured:${d && d.session_plan_sets && d.session_plan_sets.captured}`,
+  '/api/log-workout/verify-range': d => `verified:${d && d.verified}`,
+};
+
+/** `STATUS signature` for one driven request, or `STATUS` where no signature is defined. */
+function outcomeOf(result) {
+  const sign = BRANCH_SIGNATURE[result.path];
+  if (!sign) return String(result.status);
+  let signature;
+  try { signature = sign((result.body && result.body.data) || null); } catch (_) { signature = 'signature-threw'; }
+  return `${result.status} ${signature}`;
+}
+
 /** Wait until no new read has been recorded for `quietMs` — deferred reads must be counted. */
 async function settle({ quietMs = 500, maxMs = 15_000 } = {}) {
   const deadline = Date.now() + maxMs;
@@ -271,6 +314,7 @@ async function runLiveSession({ requestContext = true, coldCatalogPerRequest = f
 
   return {
     results,
+    outcomes: results.map(r => `${r.method} ${r.path} -> ${outcomeOf(r)}`),
     total: reads.length,
     peak: peakRollingMinute(reads),
     breakdown: breakdown(reads),
@@ -493,15 +537,81 @@ test('every client correction removes a real captured request and names its guar
     'order and multiplicity of every surviving request must be untouched');
 });
 
-// THE GUARD. Every read counted at the googleapis boundary — first attempts and retries
-// alike, `values.get`, `values.batchGet` and `spreadsheets.get` — for the complete session
-// the corrected client issues.
-test(`the corrected client fits the budget: peak <= ${BUDGET} reads per rolling minute`, async () => {
+// EVERY REQUEST'S STATUS AND BRANCH, pinned.
+//
+// The exact-head review found the reconstructed `/api/suggest-substitute` body taking a
+// cheap early-return instead of the history-reading branch — invisible, because the route
+// answers 200 either way and only `/api/log-workout` was ever asserted. These are the
+// outcomes each route must produce, and a body that stops reaching its real branch changes
+// one of them.
+const EXPECTED_OUTCOMES = [
+  'GET /api/catalog/exercises -> 200',
+  'GET /api/coaching/insights -> 200',
+  'GET /api/exercises/last-session -> 200',
+  'GET /api/flight/recent -> 200',
+  'GET /api/history/recent -> 200',
+  'GET /api/plan/intent-recommendation -> 200',
+  'GET /api/plan/today -> 200',
+  'GET /api/progress/summary -> 200',
+  'GET /api/prs/recent -> 200',
+  'GET /api/recommend/next/BC01 -> 200',
+  'GET /api/recommend/next/IDB01 -> 200',
+  'GET /api/recommend/next/OHP01 -> 200',
+  'GET /api/recommend/next/RDL01 -> 200',
+  'GET /api/recommend/next/SQ01 -> 200',
+  'GET /api/recommend/next/SR01 -> 200',
+  'GET /api/report/weekly -> 200',
+  'GET /api/session/status -> 200',
+  'GET /api/stalls -> 200',
+  'GET /api/summary/weekly -> 200',
+  'POST /api/coach/ask -> 200 depth:coach_brief',
+  'POST /api/coach/chat -> 200 served:yes',
+  // kind 'block' is what the in-session client sends; the reconstruction used to send
+  // 'set', which this line would report differently.
+  'POST /api/coach/message -> 200 kind:block|tier:ack_only',
+  'POST /api/debug/intent-observe -> 200 observed:yes',
+  'POST /api/log-modality -> 200 no_write:true',
+  'POST /api/log-workout -> 200 live|sheet_write:success|verified:true',
+  'POST /api/log-workout -> 200 preview|no_write_confirmed:true|wrote_nothing:true',
+  'POST /api/parse-workout-text -> 200 intent:log_sets|sets:some|no_write:true',
+  'POST /api/session-plan-sets/accept -> 200 captured:true',
+  'POST /api/session-plan-sets/revision -> 200 captured:true',
+  'POST /api/session-plans/accept -> 200 captured:true',
+  'POST /api/session-plans/outcome -> 200 captured:true',
+  // The history-reading branch, not the early return. See the harness's body comment.
+  'POST /api/suggest-substitute -> 200 recommendation:present',
+];
+
+test('every request in the session answers as expected, and takes the branch it should', async () => {
+  const run = await runLiveSession({ corrected: true });
+  assert.deepEqual([...new Set(run.outcomes)].sort(), EXPECTED_OUTCOMES,
+    'a route answered differently, or took a different branch, than the session requires. ' +
+    'A reconstructed request body that stops reaching its real branch shows up here — that ' +
+    'is what this exists for.');
+
+  // And every single driven request, not just one per distinct outcome.
+  const unexpected = run.outcomes.filter(o => !EXPECTED_OUTCOMES.includes(o));
+  assert.deepEqual(unexpected, [], 'every driven request must match a pinned outcome');
+});
+
+// THE GUARD, and exactly what it does and does not establish.
+//
+// It measures a TRACE-DERIVED LOWER BOUND, not production. The session's 70.9 s of traffic
+// is replayed against a fake `googleapis` that answers instantly, so it compresses into
+// about a second: the server's 30-second row cache never expires here, and the live run's
+// retries — which Google meters like any other request — are not modelled at all. Both make
+// the real number HIGHER than this one.
+//
+// So passing this proves the corrected client is under 50 IN THIS HARNESS. It does not
+// prove production fits its quota. The production verdict is the post-deploy non-counting
+// debug run, and nothing here substitutes for it.
+test(`corrected trace-derived lower bound <= ${BUDGET}; production budget not yet proven`, async () => {
   const run = await runLiveSession({ corrected: true });
   assert.ok(run.total > 0, 'the sequence must actually read the sheet');
   assert.ok(run.peak <= BUDGET,
-    `OVER BUDGET — corrected client measured ${run.peak}, budget ${BUDGET}, ` +
-    `Google's limit ${GOOGLE_LIMIT}\n  ${run.breakdown}`);
+    `OVER the trace-derived lower bound — corrected client measured ${run.peak}, bound ` +
+    `${BUDGET}, Google's limit ${GOOGLE_LIMIT}. This is a lower bound, so exceeding it here ` +
+    `means production certainly exceeds it too.\n  ${run.breakdown}`);
 
   // The whole session, not just its worst minute: with a fake googleapis the session
   // compresses into about a second, so peak and total coincide here and a regression that

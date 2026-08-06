@@ -192,10 +192,13 @@ scenario and **authorizes nothing**.
 
 ## The budget
 
-**Peak rolling-60s Sheets read requests, across a complete owner-pattern session: ≤ 50.**
+**Peak rolling-60s Sheets read requests, across a complete owner-pattern session: ≤ 50**,
+measured as a **trace-derived lower bound**.
 
-Fifty, not sixty, so a session that drifts has room to be caught before it starts
-failing in the gym.
+Fifty, not sixty, so a session that drifts has room to be caught before it starts failing in
+the gym. Meeting the bound is a necessary condition, never a sufficient one: the harness
+measures a floor, and only the post-deploy non-counting debug run can say what production
+spends.
 
 ## The two server mechanisms
 
@@ -306,11 +309,17 @@ Against the failed run's own request manifest, replayed through the real handler
 (`tests/e2e/gate/gate-server.js`). With them off the session has no plan capture, no
 checkpoint writes and a dry-run seal — a materially cheaper session than the one that failed.
 
-| Client | Peak rolling-60s reads |
+| Client | Peak rolling-60s reads (trace-derived **lower bound**) |
 |---|---|
 | merged `main` (42ee7b3), captured manifest | 60 — **at Google's limit** |
 | this branch's server, captured (pre-correction) client | 55 |
 | this branch, **corrected** client (**shipped**) | **46** |
+
+> **46 is a corrected trace-derived lower bound ≤ 50. The production budget is NOT yet
+> proven.** Every figure in this table is measured in a harness that compresses 70.9 s into
+> about a second and models no retries, so each is a floor on what production will spend, not
+> a prediction of it. The production verdict remains the post-deploy non-counting debug run.
+> Campaign status stays 0/5 until that run passes.
 
 The captured client is kept measured on purpose: it must still overrun the budget, which is
 what proves the corrections closed the gap rather than the fixture having been made easier.

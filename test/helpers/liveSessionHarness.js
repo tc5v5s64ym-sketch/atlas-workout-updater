@@ -68,11 +68,62 @@ const CLOSEOUT_CONTEXT = {
 
 const sessionRef = { session_id: SESSION_ID, session_date: SESSION_DATE, plan_version: PLAN_VERSION };
 
+// THE CLIENT BODY CONTRACT, and why this table exists.
+//
+// The captured manifest records methods, paths, query strings and timing — never bodies, so
+// no owner data is stored. That privacy choice has a cost the exact-head review caught: a
+// reconstructed body is a SECOND authority beside the manifest, and a wrong one silently
+// measures the wrong branch. `/api/suggest-substitute` was reconstructed as
+// `{ exercise, reason }` when the client sends `{ message, current_exercise }`, so the route
+// early-returned "not a constraint message" instead of reading history — a cheaper request
+// than the one the session really made.
+//
+// Every entry below names the EXACT client producer it is copied from, file and line, and
+// `test/liveSessionManifestContract.test.js` reads those producers' source and fails when a
+// body here stops matching the keys the client actually sends. The manifest plus these
+// branch-defining inputs are the acceptance authority together; neither alone is.
+// `keys` — every top-level field the client sends.
+// `shape` — how the client builds it, which decides what can be checked and how:
+//    'inline'     the body literal sits beside the `api(...)` call, so the declared keys are
+//                 verifiable against the client's own source text;
+//    'assembled'  the body is a variable built elsewhere (`pendingWrite.payload`, or a
+//                 payload composed by a service), so a text check beside the call would
+//                 find nothing. Those are verified instead by the branch-outcome assertion
+//                 in test/liveSessionReadBudget.test.js, which fails if the request stops
+//                 producing the response the real one produced — stronger evidence than a
+//                 string match, and the reason this distinction is recorded rather than
+//                 quietly exempted.
+const CLIENT_BODY_PRODUCERS = {
+  // src/app/app.js — the intent-observe fetch
+  '/api/debug/intent-observe': { keys: ['message', 'app_version', 'request_origin'], shape: 'inline' },
+  // src/app/app.js — parseWorkoutTextWithBackend
+  '/api/parse-workout-text': { keys: ['text', 'context', 'test_mode'], shape: 'inline' },
+  // src/app/app.js — approve handler; body is `pendingWrite.payload` with test_mode deleted
+  '/api/log-workout': {
+    keys: ['date', 'session_id', 'test_mode', 'log_rows', 'write_id', 'closeout_context'],
+    shape: 'assembled',
+  },
+  // src/app/coach-conversation.js — getLlmCoachingMessage (kind 'block' in session)
+  '/api/coach/message': { keys: ['facts', 'kind'], shape: 'inline' },
+  // src/app/coach-conversation.js — getChatReply
+  '/api/coach/chat': { keys: ['message', 'history', 'context'], shape: 'inline' },
+  // src/app/coach-conversation.js — the SME lane
+  '/api/coach/ask': { keys: ['message'], shape: 'inline' },
+  // src/app/app.js — checkAndSuggestSubstitute
+  '/api/suggest-substitute': { keys: ['message', 'current_exercise'], shape: 'inline' },
+  // src/app/app.js — modality preview (previewPayload)
+  '/api/log-modality': { keys: ['text', 'session_id', 'date', 'test_mode'], shape: 'assembled' },
+  // src/app/app.js — postAccept / postLedgerCheckpoint / postOutcome; payloads composed by
+  // runAcceptance and runOutcome, so only the revision body is a literal beside its call.
+  '/api/session-plans/accept': { keys: ['session_id', 'session_date', 'plan_version', 'items'], shape: 'assembled' },
+  '/api/session-plans/outcome': { keys: ['session_id', 'session_date', 'plan_version', 'item'], shape: 'assembled' },
+  '/api/session-plan-sets/accept': { keys: ['session_id', 'session_date', 'plan_version', 'items'], shape: 'assembled' },
+  '/api/session-plan-sets/revision': { keys: ['session_id', 'session_date', 'plan_version', 'revision'], shape: 'inline' },
+};
+
 /**
- * Bodies for the manifest's POSTs.
+ * Bodies for the manifest's POSTs, each copied from the producer named above.
  *
- * The manifest records methods, paths, query strings and timing — never bodies, so no
- * owner data is stored. The bodies are reconstructed here from the session's own shape.
  * `index` is that path's occurrence number (0-based), so a route whose body legitimately
  * changes across the session (the Saves) gets the right one.
  */
@@ -82,7 +133,17 @@ function bodyFor(pathname, index, runId) {
       return { message: `${LIFTS[index % LIFTS.length].name} set logged`, request_origin: 'athlete_ui', app_version: 'live-manifest' };
 
     case '/api/parse-workout-text':
-      return { text: `${LIFTS[index % LIFTS.length].w} ${LIFTS[index % LIFTS.length].reps}/2`, test_mode: true };
+      // `context.activeExercise` is BRANCH-DEFINING: without it a bare set sequence has no
+      // lift to attach to and the parser asks for clarification instead of parsing.
+      return {
+        text: `${LIFTS[index % LIFTS.length].w} ${LIFTS[index % LIFTS.length].reps}/2`,
+        context: {
+          activeExercise: LIFTS[index % LIFTS.length].name,
+          activeSessionType: null,
+          todayPlan: null,
+        },
+        test_mode: true,
+      };
 
     case '/api/log-workout': {
       // THIRTEEN previews, then the ONE live closeout write of all twelve rows. This is
@@ -100,20 +161,37 @@ function bodyFor(pathname, index, runId) {
     }
 
     case '/api/coach/message': {
+      // kind 'block', not 'set'. The in-session per-exercise reaction is what this session
+      // fired, and the kind selects the voice AND the coachNoteTier gate on the server.
       const lift = LIFTS[index % LIFTS.length];
       return {
-        kind: 'set',
+        kind: 'block',
         facts: { exercise: lift.name, lift_code: lift.code, weight: lift.w, reps: lift.reps, rir: 2, set_number: 1 },
       };
     }
 
     case '/api/coach/chat':
-      return { message: 'how am I tracking today?' };
+      // `history` and `context` are branch-defining for the grounding the route assembles.
+      return { message: 'how am I tracking today?', history: [], context: {} };
     case '/api/coach/ask':
       return { message: 'should I add weight?' };
 
     case '/api/suggest-substitute':
-      return { exercise: 'RDL', reason: 'equipment' };
+      // CORRECTED (exact-head review). Was `{ exercise, reason }` — field names the route
+      // does not read, so `current_exercise` was undefined and it returned early without
+      // ever reaching the history-reading recommendation branch. The client sends the
+      // athlete's own words plus the lift they are on.
+      //
+      // WHICH BRANCH, and how that is chosen. The route has three outcomes, all HTTP 200:
+      // no constraint keyword (no read), a constraint with no known substitute (no read),
+      // and a constraint WITH a substitute — which then reads Log_Cleaned for the
+      // replacement's prescription. The manifest records only the status, so it cannot
+      // prove which the live call took. This drives the READING branch deliberately: it is
+      // the most expensive of the three, so the budget is measured against the worst case
+      // the session could have caused rather than a cheaper guess. Back Squat has a known
+      // substitute (Leg Press); the RDL used before this correction has none, which is why
+      // even the corrected field names still stopped one branch short.
+      return { message: 'squat rack is busy', current_exercise: LIFTS[0].name };
 
     case '/api/log-modality':
       return { text: '20 min bike intervals', session_id: SESSION_ID, date: SESSION_DATE, test_mode: true };
@@ -367,6 +445,8 @@ module.exports = {
   CLOSEOUT_CONTEXT,
   liveSessionSequence,
   manifestEndpointCounts,
+  CLIENT_BODY_PRODUCERS,
+  bodyFor,
   correctionLedger,
   CLIENT_CORRECTIONS,
   SAVE_INDEXES,

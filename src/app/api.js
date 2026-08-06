@@ -193,6 +193,30 @@ export function currentInputsEpoch() {
   return inputsEpoch;
 }
 
+// ── …and while one is still in the air? ─────────────────────────────────────
+//
+// The epoch steps when a non-GET SETTLES, which leaves a race the exact-head review caught:
+// between issuing a Save and its response, the epoch still reads pre-write, so a reuse
+// keyed only on the epoch could hand back an answer computed before the write the athlete
+// just made. The window is exactly as long as the request takes — the worst moment to be
+// serving a stale prescription.
+//
+// So a potentially-mutating request also makes itself known WHILE IT IS UNRESOLVED. During
+// flight nothing can be proven about it: the dry-run proof arrives with the response, so the
+// pessimistic reading is the only honest one and every non-GET counts. Once it settles, the
+// proof is available and the epoch rule takes over — which is what preserves reuse across a
+// `test_mode` preview.
+//
+// The two observation-only writers are exempt here for the same audited reason they are
+// exempt from the epoch, and for no other: `test/recommendationInputWrites.test.js` replays
+// the whole captured session and shows they write only their observation tabs. The allowlist
+// is not widened for this.
+let pendingMutations = 0;
+
+export function mutationsInFlight() {
+  return pendingMutations > 0;
+}
+
 function noteMaybeChangedInputs(path, method, json) {
   if (method === 'GET') return;
   if (OBSERVATION_ONLY_WRITERS.has(String(path).split('?')[0])) return;
@@ -235,6 +259,8 @@ export async function api(path, options = {}) {
   const key = getApiKey();
   if (key) headers['x-atlas-api-key'] = key;
   const method = fetchOptions.method || 'GET';
+  const mutationCandidate = method !== 'GET' && !OBSERVATION_ONLY_WRITERS.has(String(path).split('?')[0]);
+  if (mutationCandidate) pendingMutations += 1;
   const startedAt = Date.now();
   let res = null;
   let json = null;
@@ -305,6 +331,9 @@ export async function api(path, options = {}) {
     // write site — means a new write route cannot forget to. See coalescedGet above.
     if (method !== 'GET') dropCoalescedReads();
     noteMaybeChangedInputs(path, method, json);
+    // Released only after the epoch has been updated, so there is no instant where the
+    // request is neither in flight nor accounted for.
+    if (mutationCandidate) pendingMutations = Math.max(0, pendingMutations - 1);
     atlasRecentApiRequests.push({
       at: new Date().toISOString(),
       method,

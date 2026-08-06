@@ -10,7 +10,7 @@
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-import { API_KEY_STORAGE, api, authState, coalescedGet, currentInputsEpoch, friendlyTransportMessage, getApiKey, isConnected, refreshSessionStatus, sessionLogin, sessionLogout } from './api.js';
+import { API_KEY_STORAGE, api, authState, coalescedGet, currentInputsEpoch, mutationsInFlight, friendlyTransportMessage, getApiKey, isConnected, refreshSessionStatus, sessionLogin, sessionLogout } from './api.js';
 import { BUG_REPORT_ACTION_LIMIT, BUG_REPORT_ERROR_LIMIT, BUG_REPORT_RECENT_API_LIMIT, BUG_REPORT_REDACTED, BUG_REPORT_SECRET_VALUE_PATTERNS, BUG_REPORT_SIZE_BUDGET, BUG_REPORT_STORAGE_KEY_RE, atlasActionLog, atlasRecentApiRequests, atlasRecentErrors, recordAtlasAction, recordAtlasError } from './bugReport.js';
 import { el, loadExerciseDatalist, renderTable, setStatus, svgBarChart, svgLineChart } from './dom.js';
 import { loadHistory, loadSessions } from './historyView.js';
@@ -6430,15 +6430,35 @@ async function fetchReaction(liftCode, justLoggedSet) {
     // So a legitimate call after a newly written set always goes to the server: the live Save
     // steps the epoch, and the next set changes the URL anyway. Only a repeat of the same
     // question, with provably unchanged inputs, is answered from what we already have.
-    const cached = reactionCache.get(path);
-    if (cached && cached.epoch === currentInputsEpoch()) return cached.data;
+    // THE CACHE IDENTITY, and the two things the exact-head review found missing from it.
+    //
+    // (1) THE OWNER'S DAY. `recommendNextSet` decides staleness against the effective
+    //     current day, so the same URL asked either side of midnight is a different
+    //     question. The day is part of the key, which means a rollover cannot be survived
+    //     by any entry — no expiry timer to get wrong, and no entry that outlives the day
+    //     it was computed in.
+    // (2) A MUTATION STILL IN THE AIR. The epoch only steps once a non-GET SETTLES, so
+    //     between issuing a Save and its response the epoch still reads pre-write. A hit in
+    //     that window would serve an answer computed before the athlete's own write. While
+    //     anything that might mutate is unresolved there is no reuse at all.
+    //
+    // Neither weakens the reuse a preview must survive: a `test_mode` request settles with
+    // the W1–W3 dry-run proof, the epoch does not step, and the next identical question is
+    // still answered from what we have.
+    const cacheKey = `${getLocalDateString()}|${path}`;
+    const cached = reactionCache.get(cacheKey);
+    if (cached && cached.epoch === currentInputsEpoch() && !mutationsInFlight()) return cached.data;
 
     const epochAtRequest = currentInputsEpoch();
+    const mutatingAtRequest = mutationsInFlight();
     const res = await api(path);
     const data = res.data || null;
-    // If something changed WHILE this was in flight, the answer may already be stale — keep
-    // it for this caller, but never hand it to a later one.
-    if (currentInputsEpoch() === epochAtRequest) rememberReaction(path, epochAtRequest, data);
+    // Never REMEMBER an answer that could already be stale: something changed while it was
+    // in flight, or a mutation was unresolved at either end of it. This caller still gets
+    // the answer it asked for; no later caller inherits the doubt.
+    if (currentInputsEpoch() === epochAtRequest && !mutatingAtRequest && !mutationsInFlight()) {
+      rememberReaction(cacheKey, epochAtRequest, data);
+    }
     return data;
   } catch {
     return null;
@@ -6449,9 +6469,9 @@ async function fetchReaction(liftCode, justLoggedSet) {
 // a handful; the cap means a long one can never grow this without limit.
 const REACTION_CACHE_MAX = 32;
 const reactionCache = new Map();
-function rememberReaction(path, epoch, data) {
-  reactionCache.delete(path);
-  reactionCache.set(path, { epoch, data });
+function rememberReaction(cacheKey, epoch, data) {
+  reactionCache.delete(cacheKey);
+  reactionCache.set(cacheKey, { epoch, data });
   while (reactionCache.size > REACTION_CACHE_MAX) {
     reactionCache.delete(reactionCache.keys().next().value);
   }
