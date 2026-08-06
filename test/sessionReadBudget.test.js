@@ -213,14 +213,9 @@ let countingOn = false;
 // transient failure, so a one-shot injection is simply recovered from — correctly — and
 // never reaches the route.
 let failNextReadOf = null;
-// Identifies the request a read belongs to, so "the same range twice inside ONE request"
-// is distinguishable from "the same range in two different requests" — the first is what
-// the request context removes, the second is correct and must remain.
-let currentRequestKey = '(none)';
-let requestCounter = 0;
 
 function recordRead(kind, ranges) {
-  if (countingOn) reads.push({ at: Date.now(), kind, ranges, path: currentRequestKey });
+  if (countingOn) reads.push({ at: Date.now(), kind, ranges });
 }
 
 const fakeSheetsClient = {
@@ -327,8 +322,6 @@ const LIFTS = [
 ];
 
 const call = async (method, path, body) => {
-  requestCounter += 1;
-  currentRequestKey = `${requestCounter} ${method} ${path.split('?')[0]}`;
   const res = await fetch(`${baseUrl}${path}`, {
     method,
     headers: { 'Content-Type': 'application/json', 'x-atlas-api-key': 'test-api-key' },
@@ -341,6 +334,12 @@ const sessionRef = { session_id: SESSION_ID, session_date: SESSION_DATE, plan_ve
 const planItems = LIFTS.map((lift, i) => ({
   plan_item_id: `pi_${lift.code.toLowerCase()}`, planned_lift_code: lift.code, planned_order: i + 1,
 }));
+// The version the ACCEPTED checkpoints carry, and the exact identity the one revision
+// declares. Both are properties of the sequence below, and the durable proof checks the
+// rows against them rather than against "some row somewhere".
+const ACCEPTED_PLAN_VERSION = 1;
+const REVISION_IDENTITY = { plan_item_id: 'pi_idb01', set_index: 2, plan_version: 2 };
+
 const observe = (message) => ['POST', '/api/debug/intent-observe', { message, request_origin: 'athlete_ui', app_version: 'test' }];
 const setRows = (lift, set) => [{ exercise: lift.name, set_number: set, weight: lift.w, reps: lift.reps, rir: 2 }];
 
@@ -604,6 +603,8 @@ function assertCloseoutGenuine(results) {
     `the Session_Plans closeout event must not error: ${JSON.stringify(plans)}`);
   assert.equal(plans.captured, true,
     `the Session_Plans closeout event must be captured: ${JSON.stringify(plans)}`);
+  assert.equal(Number(plans.written), 1,
+    `the closeout must write exactly one Session_Plans event, got ${plans.written}: ${JSON.stringify(plans)}`);
 }
 
 /**
@@ -613,16 +614,17 @@ function assertCloseoutGenuine(results) {
  * landed in the sheet, under the identities the sequence declared, and checks that the
  * seal stamped every ledger row with the closeout's write id.
  */
-function assertLedgerRowsGenuine(results) {
+function assertLedgerRowsGenuine(run) {
+  const { results, ledgerRows } = run;
   const closeoutWriteId = closeoutResult(results).body?.data?.write_id;
   assert.ok(closeoutWriteId, 'the closeout must report the write id it sealed under');
 
-  const planRows = SHEET.Session_Plans.slice(1);
+  // ── Session_Plans ──────────────────────────────────────────────────────────
+  const planRows = ledgerRows.plans.slice(1);
   const col = (row, name) => row[PLANS_HEADER.indexOf(name)];
   const accepted = planRows.filter(r => col(r, 'event_type') === 'plan_accepted');
   assert.equal(accepted.length, LEDGER_WRITES['/api/session-plans/accept'],
     `expected ${LEDGER_WRITES['/api/session-plans/accept']} plan_accepted rows, got ${accepted.length}`);
-  // Each accepted identity present exactly once, under this session and plan version.
   const acceptedIds = accepted.map(r => col(r, 'plan_item_id'));
   assert.deepEqual([...acceptedIds].sort(), planItems.map(i => i.plan_item_id).sort(),
     'the accepted plan identities must be exactly the six the sequence accepted');
@@ -637,26 +639,66 @@ function assertLedgerRowsGenuine(results) {
   assert.equal(col(closeoutEvents[0], 'session_id'), SESSION_ID);
   assert.equal(col(closeoutEvents[0], 'plan_version'), PLAN_VERSION);
 
-  const setRows = SHEET.Session_Plan_Sets.slice(1);
+  // ── Session_Plan_Sets ──────────────────────────────────────────────────────
+  //
+  // Split by the SOURCE authority rather than counting the sheet as one population. The
+  // revision deliberately re-uses one accepted (item, set) key, so a presence check over
+  // all rows together could be satisfied by the revision while an accepted checkpoint was
+  // missing — or by a revision attached to the wrong item, set or version.
+  const setRows = ledgerRows.sets.slice(1);
   const setCol = (row, name) => row[PLAN_SETS_HEADER.indexOf(name)];
   assert.equal(setRows.length, SEAL_CELLS,
     `expected ${SEAL_CELLS} ledger rows (12 accepted + 1 revision), got ${setRows.length}`);
-  // Every accepted item/set identity present.
-  const expected = new Set();
-  for (const item of planItems) for (const setIndex of [1, 2]) expected.add(`${item.plan_item_id}#${setIndex}`);
-  const present = new Set(setRows.map(r => `${setCol(r, 'plan_item_id')}#${setCol(r, 'set_index')}`));
-  for (const key of expected) {
-    assert.ok(present.has(key), `missing ledger checkpoint for ${key}`);
-  }
-  assert.ok(setRows.some(r => setCol(r, 'recommendation_source') === 'live_revision'),
-    'the revision checkpoint must be present');
-  for (const row of setRows) {
+
+  const acceptedSets = setRows.filter(r => setCol(r, 'recommendation_source') === 'accepted');
+  const revisionSets = setRows.filter(r => setCol(r, 'recommendation_source') === 'live_revision');
+  assert.equal(acceptedSets.length + revisionSets.length, setRows.length,
+    'every ledger row must be either an accepted checkpoint or a revision');
+
+  // Exactly the twelve accepted identities, each exactly once, at the accepted version.
+  assert.equal(acceptedSets.length, LEDGER_WRITES['/api/session-plan-sets/accept'],
+    `expected ${LEDGER_WRITES['/api/session-plan-sets/accept']} accepted checkpoints, got ${acceptedSets.length}`);
+  const expectedAccepted = planItems.flatMap(item => [1, 2].map(setIx => `${item.plan_item_id}#${setIx}`));
+  const actualAccepted = acceptedSets.map(r => `${setCol(r, 'plan_item_id')}#${setCol(r, 'set_index')}`);
+  assert.deepEqual([...actualAccepted].sort(), [...expectedAccepted].sort(),
+    'the accepted checkpoints must be exactly the twelve declared item/set identities');
+  assert.equal(new Set(actualAccepted).size, actualAccepted.length,
+    'no accepted item/set identity may be checkpointed twice');
+  for (const row of acceptedSets) {
     assert.equal(setCol(row, 'session_id'), SESSION_ID);
-    // The seal stamps EVERY ledger row with the closeout write id. A row left unstamped is
-    // a ledger the closeout did not actually finish.
+    assert.equal(String(setCol(row, 'plan_version')), String(ACCEPTED_PLAN_VERSION),
+      `an accepted checkpoint must carry the accepted plan version: ${JSON.stringify(row)}`);
+  }
+
+  // Exactly one revision, under the identity the revision request declared.
+  assert.equal(revisionSets.length, LEDGER_WRITES['/api/session-plan-sets/revision'],
+    `expected exactly one revision row, got ${revisionSets.length}`);
+  const revision = revisionSets[0];
+  assert.equal(setCol(revision, 'session_id'), SESSION_ID);
+  assert.equal(setCol(revision, 'plan_item_id'), REVISION_IDENTITY.plan_item_id,
+    `the revision is attached to the wrong plan item: ${JSON.stringify(revision)}`);
+  assert.equal(String(setCol(revision, 'set_index')), String(REVISION_IDENTITY.set_index),
+    `the revision is attached to the wrong set: ${JSON.stringify(revision)}`);
+  assert.equal(String(setCol(revision, 'plan_version')), String(REVISION_IDENTITY.plan_version),
+    `the revision must carry the revised plan version: ${JSON.stringify(revision)}`);
+  // A revision supersedes the checkpoint it replaces; the contract supplies that key.
+  assert.ok(String(setCol(revision, 'supersedes_key') || '').trim(),
+    `a revision must record the checkpoint it supersedes: ${JSON.stringify(revision)}`);
+
+  // The seal stamps EVERY ledger row with the closeout write id. A row left unstamped, or
+  // stamped under a different id, is a ledger the closeout did not actually finish.
+  for (const row of setRows) {
     assert.equal(setCol(row, 'closeout_write_id'), closeoutWriteId,
       `a ledger row was not sealed under the closeout write id: ${JSON.stringify(row)}`);
   }
+}
+
+/** Every guard a published configuration must satisfy before its read count is believed. */
+function assertQualifyingRunGenuine(run) {
+  assertSequenceGenuine(run.results);
+  assertLedgerGenuine(run.results);
+  assertLedgerRowsGenuine(run);
+  assertCloseoutGenuine(run.results);
 }
 
 /** Where the reads went — printed on a budget failure so the cause is visible, not guessed. */
@@ -737,33 +779,24 @@ async function runSession({ coldCatalogPerRequest = false, omitCloseout = false,
     sheets.runWithReadContext = realRunWithReadContext;
   }
   countingOn = false;
-  const duplicateRangeReads = (() => {
-    const seen = new Map();
-    let repeats = 0;
-    for (const record of reads) {
-      if (record.kind !== 'get') continue;
-      const key = `${record.path}::${record.ranges[0]}`;
-      const count = (seen.get(key) || 0) + 1;
-      seen.set(key, count);
-      if (count > 1) repeats += 1;
-    }
-    return repeats;
-  })();
   return {
+    // The durable ledger AS THIS RUN LEFT IT. Snapshotted rather than read live, because
+    // a later run resets the fixture — asserting run N's ledger against the sheet after
+    // run N+1 compared mismatched state and failed for the wrong reason.
+    ledgerRows: {
+      plans: SHEET.Session_Plans.map(row => [...row]),
+      sets: SHEET.Session_Plan_Sets.map(row => [...row]),
+    },
     results, total: reads.length, peak: peakRollingMinute(reads),
     catalog: catalogReads(), breakdown: breakdown(reads),
     metadataReads: reads.filter(r => r.kind === 'metadata').length,
-    duplicateRangeReads,
   };
 }
 
 // ── 1. the budget holds on the complete session ──────────────────────────────
 test('a complete owner-pattern session fits inside the session read budget', async () => {
   const run = await runSession();
-  assertSequenceGenuine(run.results);
-  assertLedgerGenuine(run.results);
-  assertLedgerRowsGenuine(run.results);
-  assertCloseoutGenuine(run.results);
+  assertQualifyingRunGenuine(run);
   assert.ok(run.total > 0, 'the sequence must actually read the sheet');
   assert.ok(run.peak <= BUDGET,
     `peak rolling-60s reads ${run.peak} exceeds the ${BUDGET} budget (total ${run.total}); ` +
@@ -792,8 +825,11 @@ test('restoring individual range requests breaks the session budget', async () =
   // transport. Disabling only declarations left dedup and metadata reuse running and
   // mislabelled this configuration.
   const run = await runSession({ requestContext: false });
-  assertSequenceGenuine(run.results);
-  assertLedgerGenuine(run.results);
+  // The full guard set: the four published numbers must all come from sessions that
+  // achieved the SAME workout and ledger outcome, differing only in read posture. A
+  // ledger route can fail inside an HTTP 200 — this PR found exactly that — so a cheaper
+  // failed session could otherwise be reported as a counterfactual read count.
+  assertQualifyingRunGenuine(run);
   assert.ok(run.peak > BUDGET,
     `without the request context the session must exceed the ${BUDGET} budget, but peaked at ${run.peak}. ` +
     'Either the sequence stopped exercising the read paths, or the request context is no longer what keeps it under.' +
@@ -802,25 +838,71 @@ test('restoring individual range requests breaks the session budget', async () =
 
 // The mutation must genuinely BITE: without the request context the same range really is
 // requested more than once inside a request, and the metadata read really does repeat.
-test('the no-context run restores repeated same-range and repeated metadata requests', async () => {
+/**
+ * Prove the request context actually removes a SAME-REQUEST duplicate read.
+ *
+ * This drives ONE request in isolation — nothing else in flight, the read stream quiesced
+ * before and after — so every recorded read provably belongs to that request. An earlier
+ * version attributed reads with a process-global label set client-side just before
+ * `fetch`; because some reads are deferred past the response, a late read from an earlier
+ * request could be counted under the next one. A global mutable label is not an authority
+ * for "same request", so it is gone.
+ */
+async function readsForOneRequest(method, path, { requestContext }) {
+  resetSheet();
+  resetIdempotencyStore();
+  sheets._resetExerciseCatalogCache();
+  await settle({ quietMs: 300, maxMs: 5000 });   // quiesce anything still in flight
+  reads.length = 0;
+  countingOn = true;
+  const real = sheets.runWithReadContext;
+  if (!requestContext) sheets.runWithReadContext = (fn) => fn();
+  try {
+    const result = await call(method, path);
+    await settle({ quietMs: 400, maxMs: 8000 });
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+  } finally {
+    sheets.runWithReadContext = real;
+    countingOn = false;
+  }
+  const perRange = new Map();
+  for (const record of reads) {
+    if (record.kind === 'batchGet') continue;
+    const key = record.kind === 'metadata' ? 'spreadsheet metadata' : record.ranges[0];
+    perRange.set(key, (perRange.get(key) || 0) + 1);
+  }
+  return perRange;
+}
+
+test('the request context removes a duplicate read issued twice by ONE request', async () => {
+  // `/api/plan/today` reads Deload_State twice on its own: once for the plan and once
+  // through the state snapshot. That is the duplication the request context collapses.
+  const RANGE = 'Deload_State!A:Z';
+  const without = await readsForOneRequest('GET', '/api/plan/today', { requestContext: false });
+  const with_ = await readsForOneRequest('GET', '/api/plan/today', { requestContext: true });
+
+  assert.equal(without.get(RANGE), 2,
+    `without the request context ONE request must issue ${RANGE} twice; got ${without.get(RANGE)}`);
+  assert.ok(!with_.get(RANGE),
+    `with the request context that request must not issue ${RANGE} on its own at all ` +
+    `(it rides in the batch); got ${with_.get(RANGE)}`);
+});
+
+test('the no-context run restores repeated metadata requests across the session', async () => {
   const withContext = await runSession();
   const withoutContext = await runSession({ requestContext: false });
-
+  assertQualifyingRunGenuine(withContext);
+  assertQualifyingRunGenuine(withoutContext);
   assert.ok(withoutContext.metadataReads > withContext.metadataReads,
-    `disabling the request context must restore repeated spreadsheets.get calls; ` +
+    'disabling the request context must restore repeated spreadsheets.get calls; ' +
     `got ${withoutContext.metadataReads} without vs ${withContext.metadataReads} with`);
-  assert.ok(withoutContext.duplicateRangeReads > withContext.duplicateRangeReads,
-    `disabling the request context must restore repeated same-range value reads; ` +
-    `got ${withoutContext.duplicateRangeReads} without vs ${withContext.duplicateRangeReads} with`);
-  assert.equal(withContext.duplicateRangeReads, 0,
-    'with the request context, no range is requested twice inside one request');
 });
 
 // ── 4. counterfactual: per-request catalog reads break the budget ────────────
 test('restoring per-request Exercise_Catalog reads breaks the session budget', async () => {
   // Request context ON, catalog cache OFF — the catalog-cache-only counterfactual.
   const run = await runSession({ coldCatalogPerRequest: true });
-  assertSequenceGenuine(run.results);
+  assertQualifyingRunGenuine(run);
   assert.ok(run.catalog > CATALOG_REQUESTS,
     'precondition: a cold cache per request must actually re-read the catalog');
   assert.ok(run.peak > BUDGET,
@@ -837,8 +919,7 @@ test('with both mechanisms disabled the sequence reproduces the original quota f
   // Neither mechanism: no request context at all, and a cold catalog on every request.
   // This is the genuine pre-change transport.
   const run = await runSession({ requestContext: false, coldCatalogPerRequest: true });
-  assertSequenceGenuine(run.results);
-  assertLedgerGenuine(run.results);
+  assertQualifyingRunGenuine(run);
   assert.ok(run.peak > 60,
     `the pre-change behaviour must exceed Google's 60/min read limit, as the live session did ` +
     `before its exhausted quota cut it short; this harness measured ${run.peak}\n  ${run.breakdown}`);
@@ -952,9 +1033,7 @@ test('a failed catalog refresh reaches the route as a classified failure, not st
 // the exact settlement failures the guard is for. Each is now flipped individually.
 test('MUTATION: a failed closeout settlement makes the guard red', async () => {
   const run = await runSession();
-  assertLedgerGenuine(run.results);
-  assertLedgerRowsGenuine(run.results);
-  assertCloseoutGenuine(run.results);   // the real one settles
+  assertQualifyingRunGenuine(run);   // the real one settles
 
   const mutate = (patch) => {
     const clone = run.results.map(r => ({ ...r, body: JSON.parse(JSON.stringify(r.body)) }));
@@ -1048,8 +1127,7 @@ test('POSTURE: turning off the Session_Plans write gate makes the qualifying gua
 
   // And it IS cheaper — which is exactly why accepting it would understate the budget.
   const qualifying = await runSession();
-  assertLedgerGenuine(qualifying.results);
-  assertCloseoutGenuine(qualifying.results);
+  assertQualifyingRunGenuine(qualifying);
   assert.ok(qualifying.peak > disabled.peak,
     `the qualifying posture must cost more than the disabled one; got ${qualifying.peak} vs ${disabled.peak}`);
 });
@@ -1095,8 +1173,7 @@ test('POSTURE: the shape SESSION_PLAN_SETS_WRITE_ENABLED=0 produces fails the qu
   // Now require the guards to refuse it, on both the ledger routes and the closeout.
   const run = await runSession();
   assertLedgerGenuine(run.results);
-  assertLedgerRowsGenuine(run.results);
-  assertCloseoutGenuine(run.results);
+  assertQualifyingRunGenuine(run);
 
   const withEnvelope = (path, envelope) => {
     const clone = run.results.map(r => ({ ...r, body: JSON.parse(JSON.stringify(r.body)) }));
@@ -1126,48 +1203,93 @@ test('POSTURE: the shape SESSION_PLAN_SETS_WRITE_ENABLED=0 produces fails the qu
 // never stamped. These drop exactly one thing each and require the guard to notice.
 test('MUTATION: an incomplete durable ledger makes the qualifying guard red', async () => {
   const run = await runSession();
-  assertLedgerRowsGenuine(run.results);   // the real ledger is complete
+  assertLedgerRowsGenuine(run);   // the real ledger is complete
 
   const planIndex = (name) => PLANS_HEADER.indexOf(name);
   const setIndex = (name) => PLAN_SETS_HEADER.indexOf(name);
   const snapshot = {
-    plans: SHEET.Session_Plans.map(r => [...r]),
-    sets: SHEET.Session_Plan_Sets.map(r => [...r]),
+    plans: run.ledgerRows.plans.map(r => [...r]),
+    sets: run.ledgerRows.sets.map(r => [...r]),
   };
   const restore = () => {
-    SHEET.Session_Plans = snapshot.plans.map(r => [...r]);
-    SHEET.Session_Plan_Sets = snapshot.sets.map(r => [...r]);
+    run.ledgerRows.plans = snapshot.plans.map(r => [...r]);
+    run.ledgerRows.sets = snapshot.sets.map(r => [...r]);
   };
 
   const mutations = [
     ['one acceptance event is missing', () => {
-      const i = SHEET.Session_Plans.findIndex(r => r[planIndex('event_type')] === 'plan_accepted');
-      SHEET.Session_Plans.splice(i, 1);
+      const i = run.ledgerRows.plans.findIndex(
+        (r, index) => index > 0 && r[planIndex('event_type')] === 'plan_accepted');
+      assert.ok(i > 0, 'the mutation must target a data row, never the header');
+      run.ledgerRows.plans.splice(i, 1);
     }],
     ['the Session_Plans closeout event is missing', () => {
-      const i = SHEET.Session_Plans.findIndex(r => r[planIndex('event_type')] === 'session_closeout');
-      SHEET.Session_Plans.splice(i, 1);
+      const i = run.ledgerRows.plans.findIndex(
+        (r, index) => index > 0 && r[planIndex('event_type')] === 'session_closeout');
+      assert.ok(i > 0, 'the mutation must target a data row, never the header');
+      run.ledgerRows.plans.splice(i, 1);
     }],
-    ['one set checkpoint is missing', () => {
-      const i = SHEET.Session_Plan_Sets.findIndex(r => r[setIndex('recommendation_source')] !== 'live_revision' && r[0]);
-      SHEET.Session_Plan_Sets.splice(i, 1);
+    ['one accepted set checkpoint is missing', () => {
+      // Search DATA rows only. The previous version searched from index 0, and the header
+      // row satisfied both conditions (`idempotency_key` is truthy, and its
+      // recommendation-source cell holds the column NAME, not 'live_revision'), so it
+      // deleted the header and went red for the wrong reason.
+      const i = run.ledgerRows.sets.findIndex(
+        (r, index) => index > 0 && r[setIndex('recommendation_source')] === 'accepted');
+      assert.ok(i > 0, 'the mutation must target a data row, never the header');
+      run.ledgerRows.sets.splice(i, 1);
+    }],
+    ['the revision is attached to the wrong plan item', () => {
+      const i = run.ledgerRows.sets.findIndex(
+        (r, index) => index > 0 && r[setIndex('recommendation_source')] === 'live_revision');
+      run.ledgerRows.sets[i][setIndex('plan_item_id')] = 'pi_sq01';
+    }],
+    ['the revision is attached to the wrong set', () => {
+      const i = run.ledgerRows.sets.findIndex(
+        (r, index) => index > 0 && r[setIndex('recommendation_source')] === 'live_revision');
+      run.ledgerRows.sets[i][setIndex('set_index')] = '1';
+    }],
+    ['the revision carries the accepted version instead of the revised one', () => {
+      const i = run.ledgerRows.sets.findIndex(
+        (r, index) => index > 0 && r[setIndex('recommendation_source')] === 'live_revision');
+      run.ledgerRows.sets[i][setIndex('plan_version')] = String(ACCEPTED_PLAN_VERSION);
+    }],
+    ['the revision records no superseded checkpoint', () => {
+      const i = run.ledgerRows.sets.findIndex(
+        (r, index) => index > 0 && r[setIndex('recommendation_source')] === 'live_revision');
+      run.ledgerRows.sets[i][setIndex('supersedes_key')] = '';
+    }],
+    ['an accepted checkpoint carries the wrong plan version', () => {
+      const i = run.ledgerRows.sets.findIndex(
+        (r, index) => index > 0 && r[setIndex('recommendation_source')] === 'accepted');
+      run.ledgerRows.sets[i][setIndex('plan_version')] = '99';
+    }],
+    ['an accepted checkpoint is duplicated in place of another', () => {
+      // The population is still 13 rows and every declared key still APPEARS — only the
+      // split by source and the uniqueness check can catch this.
+      const rows = run.ledgerRows.sets;
+      const a = rows.findIndex((r, index) => index > 0 && r[setIndex('recommendation_source')] === 'accepted');
+      const b = rows.findIndex((r, index) => index > a + 1 && r[setIndex('recommendation_source')] === 'accepted');
+      rows[b][setIndex('plan_item_id')] = rows[a][setIndex('plan_item_id')];
+      rows[b][setIndex('set_index')] = rows[a][setIndex('set_index')];
     }],
     ['the revision checkpoint is missing', () => {
-      const i = SHEET.Session_Plan_Sets.findIndex(r => r[setIndex('recommendation_source')] === 'live_revision');
-      SHEET.Session_Plan_Sets.splice(i, 1);
+      const i = run.ledgerRows.sets.findIndex(
+        (r, index) => index > 0 && r[setIndex('recommendation_source')] === 'live_revision');
+      run.ledgerRows.sets.splice(i, 1);
     }],
     ['one ledger row was never sealed', () => {
-      SHEET.Session_Plan_Sets[1][setIndex('closeout_write_id')] = '';
+      run.ledgerRows.sets[1][setIndex('closeout_write_id')] = '';
     }],
     ['a row was sealed under a different write id', () => {
-      SHEET.Session_Plan_Sets[1][setIndex('closeout_write_id')] = 'w_someone_else';
+      run.ledgerRows.sets[1][setIndex('closeout_write_id')] = 'w_someone_else';
     }],
   ];
 
   for (const [label, mutate] of mutations) {
     restore();
     mutate();
-    assert.throws(() => assertLedgerRowsGenuine(run.results), Error,
+    assert.throws(() => assertLedgerRowsGenuine(run), Error,
       `the guard must go red when ${label}`);
   }
   restore();
