@@ -592,4 +592,59 @@ test('a retried read is counted twice — the budget meters attempts', async () 
     [...byRange.entries()].map(([k, n]) => `${n} × ${k}`).join('\n  '));
 });
 
+// ── the evidence the server emits must be readable by the tool that reads it ─
+//
+// `sheets.js` writes one `[sheets-read]` line per metered attempt;
+// `scripts/reconstruct-session-reads.js` is what turns those lines back into a session's
+// read demand. Both were changed in this corrective, and each was tested only against
+// hand-written input — so an emitter/parser mismatch could pass on both sides while the
+// evidence pipeline produced nothing. This drives a REAL request and feeds the REAL lines it
+// emitted to the REAL parser.
+test('the lines sheets.js emits parse, and carry the timestamp the peak is computed from', async () => {
+  const { reconstruct, peakRollingMinute } = require('../scripts/reconstruct-session-reads');
+
+  resetSheet();
+  resetIdempotencyStore();
+  sheets._resetExerciseCatalogCache();
+  await settle({ quietMs: 250, maxMs: 4000 });
+
+  const captured = [];
+  const realLog = console.log;
+  console.log = (...args) => { captured.push(args.join(' ')); realLog(...args); };
+  let response;
+  try {
+    response = await call('GET', '/api/plan/today');
+    await settle();
+  } finally {
+    console.log = realLog;
+  }
+  assert.equal(response.status, 200, JSON.stringify(response.body));
+
+  const emitted = captured.filter(line => line.includes('[sheets-read]'));
+  assert.ok(emitted.length > 0, 'the request must have emitted read evidence at all');
+
+  const result = reconstruct(emitted.join('\n'));
+  assert.equal(result.mode, 'structured',
+    `the parser must read what the emitter wrote — it fell back to legacy on:\n  ${emitted[0]}`);
+  assert.equal(result.attempts.length, emitted.length,
+    'every emitted attempt must survive parsing');
+
+  const rolling = peakRollingMinute(result.attempts);
+  assert.equal(rolling.unstamped, 0,
+    'an unstamped attempt is excluded from the rolling-60s peak, so the quota evidence ' +
+    `would silently read as zero. Emitted line:\n  ${emitted[0]}`);
+  assert.ok(rolling.peak > 0, 'and the peak must be a real number');
+
+  // The attribution the corrective depends on: each attempt names the request that caused it.
+  for (const attempt of result.attempts) {
+    assert.equal(attempt.endpoint, 'GET /api/plan/today', JSON.stringify(attempt));
+    assert.ok(attempt.request_id, 'each attempt must carry the request id that caused it');
+  }
+
+  // And the same line survives the harness prefix a gate run adds.
+  const prefixed = reconstruct(emitted.map(line => `[gate-server] ${line}`).join('\n'));
+  assert.equal(prefixed.mode, 'structured', 'a gate-server-prefixed log must parse identically');
+  assert.equal(prefixed.attempts.length, result.attempts.length);
+});
+
 module.exports = { runLiveSession, BUDGET, GOOGLE_LIMIT, SESSION_ID };

@@ -49,6 +49,10 @@ function resetSheet() {
 }
 resetSheet();
 
+// Tabs whose append must throw, so a PARTIAL write can be driven: rows land in one tab and
+// the next append fails.
+const failAppendsTo = new Set();
+
 // Every range the API was asked for, in order. A tab is "re-read" when its name appears
 // again after a write — whether it travelled alone or inside a batch.
 const rangesRead = [];
@@ -77,6 +81,7 @@ const fake = {
       },
       append: async ({ range, requestBody }) => {
         const tab = String(range).split('!')[0];
+        if (failAppendsTo.has(tab)) throw new Error(`append to ${tab} refused by the test`);
         if (!SHEET[tab]) SHEET[tab] = [];
         for (const row of requestBody.values) SHEET[tab].push(row.map(v => (v == null ? '' : String(v))));
         const n = requestBody.values.length;
@@ -218,6 +223,44 @@ test('an undo evicts Log_Cleaned — the rows it deleted must not be served agai
   await call('GET', '/api/prs/recent');
   assert.ok(readsOf('Log_Cleaned', after) > 0,
     'deleted rows must never be served from cache');
+});
+
+// A PARTIAL write is where under-eviction hides. `/api/complete-workout` appends the log
+// rows and then the effort row; when the second throws, the first is already on the sheet.
+// Every branch after that throw — including the one reached when idempotency is off, which
+// used to invalidate nothing at all — must drop what actually landed.
+test('a partial complete-workout write still evicts the tab whose rows landed', async () => {
+  await warmCaches();
+
+  failAppendsTo.add('Effort');
+  let response;
+  try {
+    const form = new FormData();
+    form.append('session_id', 'S-PARTIAL');
+    form.append('write_id', 'w_partial_1');
+    form.append('date', '2026-08-06');
+    form.append('log_rows_json', JSON.stringify([
+      { exercise: 'Back Squat', set_number: 1, weight: 245, reps: 5, rir: 2 },
+    ]));
+    form.append('effort_json', JSON.stringify({
+      duration: '42', activeCalories: 410, totalCalories: 520, averageHR: 148, peakHR: 171,
+    }));
+    response = await fetch(`${baseUrl}/api/complete-workout`, {
+      method: 'POST', headers: { 'x-atlas-api-key': 'test-api-key' }, body: form,
+    });
+  } finally {
+    failAppendsTo.delete('Effort');
+  }
+
+  // The request fails — that is the point. What must NOT fail with it is the cache.
+  assert.ok(response.status >= 400, `the effort append was refused, so this must fail: ${response.status}`);
+  assert.ok(SHEET.Log_Cleaned.some(row => row[1] === 'S-PARTIAL'),
+    'the log rows really did land before the throw');
+
+  const after = rangesRead.length;
+  await call('GET', '/api/prs/recent');
+  assert.ok(readsOf('Log_Cleaned', after) > 0,
+    'rows that landed before a partial failure must never be served from a pre-write cache');
 });
 
 // The safety default. A call site that does not say what it wrote must still be correct,

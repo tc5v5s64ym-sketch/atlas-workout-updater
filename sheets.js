@@ -328,6 +328,10 @@ function recordReadAttempt(record) {
     const ctx = currentReadContext();
     const request = (ctx && ctx.request) || null;
     console.log(`${READ_ATTEMPT_TAG} ${JSON.stringify({
+      // The rolling-60s window is computed from this. Without it every structured attempt
+      // is unstamped, `peakRollingMinute` excludes it, and the peak reads as zero — the
+      // quota evidence's whole point, silently absent.
+      at: new Date().toISOString(),
       request_id: request ? request.requestId : null,
       http_method: request ? request.method : null,
       http_path: request ? request.path : null,
@@ -336,6 +340,36 @@ function recordReadAttempt(record) {
   } catch (_) {
     // Accounting must never break a read. A line we could not write is a line the
     // reconstruction reports as missing, which is the honest outcome.
+  }
+}
+
+/**
+ * Meter one call that deliberately runs OUTSIDE `readWithRetry` — the two `spreadsheets.get`
+ * probes that precede a schema mutation, and `ensureSheetTab`'s header read.
+ *
+ * The outcome is derived AFTER the call settles. Recording `ok` before awaiting logged a
+ * failed or quota-rejected request as a success, which is the one thing read accounting must
+ * never do: a quota rejection reported as `ok` is evidence that the storm did not happen.
+ */
+async function meterUnretried(api, ranges, operation) {
+  let attempt;
+  try {
+    const result = await operation();
+    attempt = { api, ranges, attempt: 1, outcome: 'ok', unretried: true };
+    return result;
+  } catch (error) {
+    attempt = {
+      api,
+      ranges,
+      attempt: 1,
+      outcome: classifySheetsReadError(error),
+      status: readErrorStatus(error),
+      quota_rejection: isQuotaRejection(error),
+      unretried: true,
+    };
+    throw error;
+  } finally {
+    recordReadAttempt(attempt);
   }
 }
 
@@ -808,11 +842,11 @@ async function ensureSheetTab(tabName, headerRow = []) {
   if (createCtx) { createCtx.values.delete(METADATA_KEY); createCtx.inflight.delete(METADATA_KEY); }
   // Metered like any other read even though this helper is deliberately outside
   // readWithRetry (it probes before a schema mutation), so it is accounted for here.
-  recordReadAttempt({ api: 'spreadsheets.get', ranges: ['spreadsheet metadata'], attempt: 1, outcome: 'ok', unretried: true });
-  const meta = await sheets.spreadsheets.get({
-    spreadsheetId,
-    fields: 'sheets.properties'
-  });
+  const meta = await meterUnretried('spreadsheets.get', ['spreadsheet metadata'], () =>
+    sheets.spreadsheets.get({
+      spreadsheetId,
+      fields: 'sheets.properties'
+    }));
   const existing = (meta.data.sheets || []).find(sheet => sheet.properties.title === tabName);
   if (!existing) {
     await sheets.spreadsheets.batchUpdate({
@@ -828,10 +862,13 @@ async function ensureSheetTab(tabName, headerRow = []) {
   }
 
   if (Array.isArray(headerRow) && headerRow.length) {
-    const current = await sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: `${tabName}!1:1`
-    });
+    // A SECOND metered read on this path. It went unaccounted for, so a header-seeding
+    // ensureSheetTab reported half the quota it actually spent.
+    const current = await meterUnretried('values.get', [`${tabName}!1:1`], () =>
+      sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: `${tabName}!1:1`
+      }));
     if (!current.data.values || !current.data.values.length) {
       await sheets.spreadsheets.values.update({
         spreadsheetId,
@@ -933,11 +970,11 @@ async function updateColumnCells(tabName, columnLetter, cells) {
 async function deleteRowsByRange(tabName, startIndex, endIndex) {
   // startIndex: 0-based inclusive. endIndex: 0-based exclusive.
   const sheets = await getSheetsClient();
-  recordReadAttempt({ api: 'spreadsheets.get', ranges: ['spreadsheet metadata'], attempt: 1, outcome: 'ok', unretried: true });
-  const meta = await sheets.spreadsheets.get({
-    spreadsheetId,
-    fields: 'sheets.properties'
-  });
+  const meta = await meterUnretried('spreadsheets.get', ['spreadsheet metadata'], () =>
+    sheets.spreadsheets.get({
+      spreadsheetId,
+      fields: 'sheets.properties'
+    }));
   const sheet = (meta.data.sheets || []).find(s => s.properties.title === tabName);
   if (!sheet) {
     throw new Error(`Sheet tab "${tabName}" not found in spreadsheet.`);

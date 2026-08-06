@@ -37,9 +37,16 @@
 
 const fs = require('fs');
 
-// Strip any harness prefix before matching. `[gate-server] [sheets.js] …` and
-// `[gate-server] [sheets-read] {…}` must parse exactly like their unprefixed forms.
-const PREFIX_RE = /^(?:\[[a-z0-9_-]+\]\s+)*/i;
+// Strip the OUTER harness prefix before matching, and only that. `[gate-server] [sheets.js] …`
+// and `[gate-server] [sheets-read] {…}` must parse exactly like their unprefixed forms.
+//
+// The negative lookahead is the whole point. This pattern used to strip every leading
+// bracketed tag, which ate the SEMANTIC tag as well — `[sheets-read]` and `[sheets.js]` are
+// what the patterns below match on, so a current-build log parsed as legacy mode with zero
+// attempts and an archived log parsed as nothing at all. A tool that reports "0 read
+// attempts" for a log full of reads is the exact false green this whole corrective exists to
+// prevent, so `test/reconstructSessionReads.test.js` now pins both forms.
+const PREFIX_RE = /^(?:\[(?!sheets-read\]|sheets\.js\])[^\]]+\]\s+)*/;
 
 const STRUCTURED_RE = /^\[sheets-read\]\s+(\{.*\})$/;
 

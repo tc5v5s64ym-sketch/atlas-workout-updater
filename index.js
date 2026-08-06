@@ -2763,13 +2763,21 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         invalidateSheetRowsCache(rowsToWrite.length > 0 ? logSheetName : null, effortSheetName);
       } catch (error) {
         if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
+        // WHATEVER LANDED BEFORE THE THROW IS ON THE SHEET, so the cache holding a pre-write
+        // copy of it must go — before any branch below, and whether or not idempotency is
+        // enabled. Both facts matter: the throw is usually the Effort append, but it can also
+        // come from a later step with BOTH appends already done, and the recovery branch
+        // below only runs when idempotency is on. Keyed on what actually landed, so this
+        // stays honest rather than reverting to a flush.
+        invalidateSheetRowsCache(
+          logRowsWritten > 0 ? logSheetName : null,
+          effortWritten ? effortSheetName : null
+        );
         if (idempotency.enabled && writeCommitted) {
           // The log rows are already on the sheet but the effort append (or a
           // later step) threw. Record the write as completed with a partial body
           // so a retried write_id replays this state instead of re-appending the
           // log rows. Mirrors /api/log-workout's partial-write contract.
-          // Only the log rows landed — the Effort append is what threw.
-          invalidateSheetRowsCache(logSheetName);
           const partialData = {
             session_id: sessionId,
             date: dateValue,
