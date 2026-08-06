@@ -215,8 +215,15 @@ failed refresh throws, carrying its `readWithRetry` class so the truthful 503 fr
 PR #1270 still applies; an empty result is never cached and `[]` is never synthesized
 from an error.
 
-No other range is cached across requests. Every one of them is write-sensitive evidence,
-and a stale copy would corrupt a decision.
+No other range is cached across requests **by this read layer**, and `sheets.js` holds no
+other cross-request cache: every other range it serves is write-sensitive evidence, and a
+stale copy would corrupt a decision.
+
+Scope note, so the claim is not read wider than it is: `index.js` has a separate,
+pre-existing 30-second `Log_Cleaned` / `Effort` full-row cache that every successful live
+write invalidates (`invalidateSheetRowsCache`). It predates this work, is untouched by it,
+and is out of scope here — the statement above is about the `sheets.js` read layer and the
+catalog authority, not about the process as a whole.
 
 ## Measured
 
@@ -230,16 +237,21 @@ failed.
 
 | Configuration | Peak rolling-60s reads |
 |---|---|
-| batching + catalog cache (shipped) | **46** |
-| batching only | 60 |
-| catalog cache only | 106 |
-| neither (pre-change) | 120 |
+"Request context" means the WHOLE request-scoped mechanism — declared `batchGet`,
+same-range dedup, and request-scoped spreadsheet metadata — not just the declarations.
 
-The 120 is the complete pre-change counterfactual, and it is the number to compare
+| Configuration | Peak rolling-60s reads |
+|---|---|
+| request context + catalog cache (**shipped**) | **46** |
+| request context, cold catalog | 60 |
+| no request context + catalog cache | 123 |
+| neither (pre-change) | 137 |
+
+The 137 is the complete pre-change counterfactual, and it is the number to compare
 against: it counts every metered method through the real handlers, in the posture the
 qualifying session runs. The archived run's 78 is a values-read lower bound from the old
 logging surface (see above) and is consistent with it — the live session was also cut short
-by the quota it had already exhausted. What makes the 46 meaningful is the 120, not the 78.
+by the quota it had already exhausted. What makes the 46 meaningful is the 137, not the 78.
 
 The margin is **four reads**. The measurement is deterministic, so that is headroom against
 Google's real 60/minute limit rather than slack: a change that adds a few requests to a

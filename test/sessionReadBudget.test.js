@@ -12,7 +12,8 @@
 // That 78 is a LOWER BOUND, not a total. It is a values-read count from the old logging
 // surface, which emitted no line for `spreadsheets.get`; the archived log cannot contain
 // those calls and re-parsing it can never recover them. The complete pre-change figure is
-// this harness's 102, measured through the real handlers with every metered method counted.
+// this harness's 137, measured through the real handlers in the qualifying ledger posture,
+// with every metered method counted and the request-scoped mechanism fully disabled.
 //
 // WHY THE EXISTING GUARD COULD NOT SEE IT. `docs/READ_BUDGET.md` and
 // `test/sheets-adapter-reads.test.js` budget reads PER SAVE and count sheets.js helper
@@ -52,20 +53,24 @@
 //     skips its append and most of its reads — a stale on-disk idempotency store alone
 //     moved the reported budget from 53 to 27. `assertSequenceGenuine` refuses both, and
 //     `assertCloseoutGenuine` refuses a closeout that did not seal.
-//   • The counterfactual tests are the real anti-false-green. The same sequence is re-run
-//     with batching disabled, with the catalog cache disabled, and with both disabled;
-//     each must BREAK the budget, and the both-disabled run must reproduce the original
-//     failure. If this sequence ever stops genuinely exercising the read paths, those
-//     tests stop failing-as-required and this file goes red.
+//   • The counterfactual tests are the real anti-false-green, and they disable the
+//     COMPLETE request-scoped mechanism, not merely the declarations. Disabling only
+//     `declareRequestRanges` left same-range dedup and request-scoped metadata running, so
+//     "cache only" was not cache-only and "neither" was not neither. A separate test
+//     proves the no-context run genuinely restores repeated metadata and repeated
+//     same-range requests, so the mutation is known to bite.
 //
-// MEASURED, on this sequence, in the qualifying ledger posture:
-//     batching + cache   46   ← the shipped behaviour, against a budget of 50
-//     batching only      60   ← catalog cache removed
-//     cache only        106   ← batching removed
-//     neither           120   ← the complete pre-change counterfactual. Compare against
-//                               THIS, not the archived 78 (a values-read lower bound from
-//                               the old logging surface; the live run was also cut short
-//                               by the quota it had already exhausted).
+// MEASURED, on this sequence, in the qualifying ledger posture. "Request context" means
+// the WHOLE request-scoped mechanism — declared batchGet, same-range dedup, and
+// request-scoped spreadsheet metadata — not just the declarations:
+//     request context + catalog cache   46   ← shipped, against a budget of 50
+//     request context, cold catalog     60   ← catalog cache removed
+//     no request context + cache       123   ← request context removed
+//     neither                          137   ← the complete pre-change counterfactual.
+//                                              Compare against THIS, not the archived 78
+//                                              (a values-read lower bound from the old
+//                                              logging surface; the live run was also cut
+//                                              short by the quota it had exhausted).
 //
 // The margin is FOUR reads. That is deliberate headroom against Google's real 60/min
 // limit, not slack: the measurement is deterministic, so a change that adds even a few
@@ -208,9 +213,14 @@ let countingOn = false;
 // transient failure, so a one-shot injection is simply recovered from — correctly — and
 // never reaches the route.
 let failNextReadOf = null;
+// Identifies the request a read belongs to, so "the same range twice inside ONE request"
+// is distinguishable from "the same range in two different requests" — the first is what
+// the request context removes, the second is correct and must remain.
+let currentRequestKey = '(none)';
+let requestCounter = 0;
 
 function recordRead(kind, ranges) {
-  if (countingOn) reads.push({ at: Date.now(), kind, ranges });
+  if (countingOn) reads.push({ at: Date.now(), kind, ranges, path: currentRequestKey });
 }
 
 const fakeSheetsClient = {
@@ -317,6 +327,8 @@ const LIFTS = [
 ];
 
 const call = async (method, path, body) => {
+  requestCounter += 1;
+  currentRequestKey = `${requestCounter} ${method} ${path.split('?')[0]}`;
   const res = await fetch(`${baseUrl}${path}`, {
     method,
     headers: { 'Content-Type': 'application/json', 'x-atlas-api-key': 'test-api-key' },
@@ -342,8 +354,8 @@ const setRows = (lift, set) => [{ exercise: lift.name, set_number: set, weight: 
  * next-completed-request attribution of concurrent API reads, not reads that route made.
  *
  * This is deliberately the WHOLE sequence, not a representative slice. A compressed
- * version of it measured 47 reads with batching disabled — under budget — which would
- * have let test 1 pass on a session that never reproduced the failure.
+ * version of it measured under budget even with the mechanisms disabled, which would have
+ * let the budget test pass on a session that never reproduced the failure.
  */
 // The write_id idempotency store is process-level and deliberately survives a request,
 // so replaying the sequence with the SAME ids would make every live write after the first
@@ -501,11 +513,19 @@ function assertSequenceGenuine(results) {
  * This covers the qualifying outcomes the ledger must show: acceptance events captured,
  * Session_Plan_Sets checkpoints written live (never `dry_run`), and revisions captured.
  */
+// Exactly what this sequence must write, per route. Derived from the sequence itself:
+// six plan items accepted, twelve checkpoints (six items × two sets), one revision, one
+// item outcome.
+const LEDGER_WRITES = {
+  '/api/session-plans/accept': 6,
+  '/api/session-plans/outcome': 1,
+  '/api/session-plan-sets/accept': 12,
+  '/api/session-plan-sets/revision': 1,
+};
+const SEAL_CELLS = 13;   // twelve accepted checkpoints + one revision
+
 function assertLedgerGenuine(results) {
-  const LEDGER_ROUTES = [
-    '/api/session-plans/accept', '/api/session-plans/outcome',
-    '/api/session-plan-sets/accept', '/api/session-plan-sets/revision',
-  ];
+  const LEDGER_ROUTES = Object.keys(LEDGER_WRITES);
   const seen = [];
   for (const result of results) {
     if (!LEDGER_ROUTES.includes(result.path)) continue;
@@ -517,7 +537,12 @@ function assertLedgerGenuine(results) {
     assert.notEqual(report.status, 'disabled',
       `${result.path} was disabled — the qualifying posture enables both ledger flags: ${JSON.stringify(report)}`);
     assert.equal(report.captured, true, `${result.path} did not capture: ${JSON.stringify(report)}`);
-    assert.ok(Number(report.written) > 0, `${result.path} wrote no rows: ${JSON.stringify(report)}`);
+    // EXACT cardinality for this declared sequence. `written > 0` accepted one acceptance
+    // event instead of six, or one checkpoint instead of twelve — "some rows", not the
+    // qualifying ledger. These counts are properties of the sequence above: six plan
+    // items, twelve checkpoints (six items × two sets), one revision, one outcome.
+    assert.equal(Number(report.written), LEDGER_WRITES[result.path],
+      `${result.path} wrote ${report.written} rows, expected ${LEDGER_WRITES[result.path]}: ${JSON.stringify(report)}`);
     // The set-ledger lane must be LIVE, not a dry run — that is SESSION_PLAN_SETS_WRITE_ENABLED.
     if (data.session_plan_sets) {
       assert.notEqual(report.dry_run, true,
@@ -553,6 +578,12 @@ function assertCloseoutGenuine(results) {
   const seal = data.ledger_seal;
   assert.ok(seal, 'sealCloseout must have run — its absence means the closeout branch was skipped');
   assert.equal(seal.sealed_ok, true, `the ledger seal must succeed: ${JSON.stringify(seal)}`);
+  // EXACT seal cardinality. "a successful live seal" passed while sealing fewer rows than
+  // the ledger holds — the merge card claims 13 cells, so the guard must establish 13.
+  assert.equal(Number(seal.sealed), SEAL_CELLS,
+    `the seal must stamp all ${SEAL_CELLS} ledger rows, got ${seal.sealed}: ${JSON.stringify(seal)}`);
+  assert.equal(Number(seal.already_sealed), 0,
+    `nothing may be pre-sealed on a first closeout: ${JSON.stringify(seal)}`);
   // The qualifying posture has SESSION_PLAN_SETS_WRITE_ENABLED=1, so this is a LIVE seal
   // and must carry live-write proof. A dry-run seal here means the harness dropped back to
   // the cheaper posture and the measured budget no longer describes the qualifying session.
@@ -573,6 +604,59 @@ function assertCloseoutGenuine(results) {
     `the Session_Plans closeout event must not error: ${JSON.stringify(plans)}`);
   assert.equal(plans.captured, true,
     `the Session_Plans closeout event must be captured: ${JSON.stringify(plans)}`);
+}
+
+/**
+ * The DURABLE rows, not the response envelopes.
+ *
+ * A response saying "written: 12" is the server's own claim. This reads what actually
+ * landed in the sheet, under the identities the sequence declared, and checks that the
+ * seal stamped every ledger row with the closeout's write id.
+ */
+function assertLedgerRowsGenuine(results) {
+  const closeoutWriteId = closeoutResult(results).body?.data?.write_id;
+  assert.ok(closeoutWriteId, 'the closeout must report the write id it sealed under');
+
+  const planRows = SHEET.Session_Plans.slice(1);
+  const col = (row, name) => row[PLANS_HEADER.indexOf(name)];
+  const accepted = planRows.filter(r => col(r, 'event_type') === 'plan_accepted');
+  assert.equal(accepted.length, LEDGER_WRITES['/api/session-plans/accept'],
+    `expected ${LEDGER_WRITES['/api/session-plans/accept']} plan_accepted rows, got ${accepted.length}`);
+  // Each accepted identity present exactly once, under this session and plan version.
+  const acceptedIds = accepted.map(r => col(r, 'plan_item_id'));
+  assert.deepEqual([...acceptedIds].sort(), planItems.map(i => i.plan_item_id).sort(),
+    'the accepted plan identities must be exactly the six the sequence accepted');
+  assert.equal(new Set(acceptedIds).size, acceptedIds.length, 'no accepted identity may appear twice');
+  for (const row of accepted) {
+    assert.equal(col(row, 'session_id'), SESSION_ID);
+    assert.equal(col(row, 'plan_version'), PLAN_VERSION);
+  }
+
+  const closeoutEvents = planRows.filter(r => col(r, 'event_type') === 'session_closeout');
+  assert.equal(closeoutEvents.length, 1, 'exactly one Session_Plans closeout event');
+  assert.equal(col(closeoutEvents[0], 'session_id'), SESSION_ID);
+  assert.equal(col(closeoutEvents[0], 'plan_version'), PLAN_VERSION);
+
+  const setRows = SHEET.Session_Plan_Sets.slice(1);
+  const setCol = (row, name) => row[PLAN_SETS_HEADER.indexOf(name)];
+  assert.equal(setRows.length, SEAL_CELLS,
+    `expected ${SEAL_CELLS} ledger rows (12 accepted + 1 revision), got ${setRows.length}`);
+  // Every accepted item/set identity present.
+  const expected = new Set();
+  for (const item of planItems) for (const setIndex of [1, 2]) expected.add(`${item.plan_item_id}#${setIndex}`);
+  const present = new Set(setRows.map(r => `${setCol(r, 'plan_item_id')}#${setCol(r, 'set_index')}`));
+  for (const key of expected) {
+    assert.ok(present.has(key), `missing ledger checkpoint for ${key}`);
+  }
+  assert.ok(setRows.some(r => setCol(r, 'recommendation_source') === 'live_revision'),
+    'the revision checkpoint must be present');
+  for (const row of setRows) {
+    assert.equal(setCol(row, 'session_id'), SESSION_ID);
+    // The seal stamps EVERY ledger row with the closeout write id. A row left unstamped is
+    // a ledger the closeout did not actually finish.
+    assert.equal(setCol(row, 'closeout_write_id'), closeoutWriteId,
+      `a ledger row was not sealed under the closeout write id: ${JSON.stringify(row)}`);
+  }
 }
 
 /** Where the reads went — printed on a budget failure so the cause is visible, not guessed. */
@@ -617,7 +701,21 @@ async function settle({ quietMs = 600, maxMs = 15_000 } = {}) {
  * require time — patching the module property would leave them on the real one and the
  * counterfactual would quietly measure nothing.
  */
-async function runSession({ coldCatalogPerRequest = false, omitCloseout = false } = {}) {
+/**
+ * Run the sequence.
+ *
+ * `requestContext: false` disables the COMPLETE request-scoped mechanism, not just the
+ * declarations. That distinction was wrong in an earlier head and it mislabelled every
+ * counterfactual: `runWithReadContext` also deduplicates repeated same-range value reads
+ * and reuses `getSpreadsheetTabs()` metadata for the life of the request, so disabling
+ * only `declareRequestRanges` left both of those running. "cache only" was not
+ * cache-only and "neither" was not neither.
+ *
+ * The middleware looks the function up on the module object at call time, so replacing it
+ * with a pass-through is enough — `currentReadContext()` then returns null everywhere and
+ * every read goes out on its own, exactly as it did before this PR. No production flag.
+ */
+async function runSession({ coldCatalogPerRequest = false, omitCloseout = false, requestContext = true } = {}) {
   runSeq += 1;
   resetIdempotencyStore();
   resetSheet();
@@ -625,19 +723,37 @@ async function runSession({ coldCatalogPerRequest = false, omitCloseout = false 
   reads.length = 0;
   countingOn = true;
   const results = [];
-  for (const [method, path, body] of ownerPatternSequence({ omitCloseout })) {
-    if (coldCatalogPerRequest) sheets._resetExerciseCatalogCache();
-    results.push(await call(method, path, body));
+  const realRunWithReadContext = sheets.runWithReadContext;
+  if (!requestContext) sheets.runWithReadContext = (fn) => fn();
+  try {
+    for (const [method, path, body] of ownerPatternSequence({ omitCloseout })) {
+      if (coldCatalogPerRequest) sheets._resetExerciseCatalogCache();
+      results.push(await call(method, path, body));
+    }
+    // Deferred reads (intent-observe) must land INSIDE the same posture, or a
+    // no-context run would quietly finish under the context it was meant to be without.
+    await settle();
+  } finally {
+    sheets.runWithReadContext = realRunWithReadContext;
   }
-  // Intent-observe is fire-and-forget: its reads are issued AFTER the response, and the
-  // shadow classifier takes ~500 ms. A fixed drain silently drops them — and a budget
-  // that omits a read source is exactly the false green this file exists to prevent — so
-  // wait until the read stream has genuinely gone quiet.
-  await settle();
   countingOn = false;
+  const duplicateRangeReads = (() => {
+    const seen = new Map();
+    let repeats = 0;
+    for (const record of reads) {
+      if (record.kind !== 'get') continue;
+      const key = `${record.path}::${record.ranges[0]}`;
+      const count = (seen.get(key) || 0) + 1;
+      seen.set(key, count);
+      if (count > 1) repeats += 1;
+    }
+    return repeats;
+  })();
   return {
     results, total: reads.length, peak: peakRollingMinute(reads),
     catalog: catalogReads(), breakdown: breakdown(reads),
+    metadataReads: reads.filter(r => r.kind === 'metadata').length,
+    duplicateRangeReads,
   };
 }
 
@@ -646,11 +762,14 @@ test('a complete owner-pattern session fits inside the session read budget', asy
   const run = await runSession();
   assertSequenceGenuine(run.results);
   assertLedgerGenuine(run.results);
+  assertLedgerRowsGenuine(run.results);
   assertCloseoutGenuine(run.results);
   assert.ok(run.total > 0, 'the sequence must actually read the sheet');
   assert.ok(run.peak <= BUDGET,
     `peak rolling-60s reads ${run.peak} exceeds the ${BUDGET} budget (total ${run.total}); ` +
-    `the failed session measured 78 — see scripts/reconstruct-session-reads.js\n  ${run.breakdown}`);
+    `the pre-change counterfactual is 137 — see scripts/reconstruct-session-reads.js for the ` +
+    `archived run's 78, which is a values-read lower bound, not the complete total` +
+    `\n  ${run.breakdown}`);
 });
 
 // ── 2. Exercise_Catalog is ONE request for the whole window ──────────────────
@@ -668,22 +787,38 @@ test('Exercise_Catalog costs exactly one request across the measured session', a
 // pre-change shape — and the session must go OVER budget. If it does not, the sequence
 // is not exercising the read paths and test 1 proved nothing.
 test('restoring individual range requests breaks the session budget', async () => {
-  const realDeclare = sheets.declareRequestRanges;
-  sheets.declareRequestRanges = () => {};   // no declaration ⇒ no batch ⇒ one request per range
-  try {
-    const run = await runSession();
-    assertSequenceGenuine(run.results);
-    assert.ok(run.peak > BUDGET,
-      `without batching the session must exceed the ${BUDGET} budget, but peaked at ${run.peak}. ` +
-      'Either the sequence stopped exercising the read paths, or batching is no longer what keeps it under.' +
-      `\n  ${run.breakdown}`);
-  } finally {
-    sheets.declareRequestRanges = realDeclare;
-  }
+  // The COMPLETE request-scoped mechanism is disabled, not just the declarations: no
+  // batch, no same-range dedup, no request-scoped metadata. That is the pre-change
+  // transport. Disabling only declarations left dedup and metadata reuse running and
+  // mislabelled this configuration.
+  const run = await runSession({ requestContext: false });
+  assertSequenceGenuine(run.results);
+  assertLedgerGenuine(run.results);
+  assert.ok(run.peak > BUDGET,
+    `without the request context the session must exceed the ${BUDGET} budget, but peaked at ${run.peak}. ` +
+    'Either the sequence stopped exercising the read paths, or the request context is no longer what keeps it under.' +
+    `\n  ${run.breakdown}`);
+});
+
+// The mutation must genuinely BITE: without the request context the same range really is
+// requested more than once inside a request, and the metadata read really does repeat.
+test('the no-context run restores repeated same-range and repeated metadata requests', async () => {
+  const withContext = await runSession();
+  const withoutContext = await runSession({ requestContext: false });
+
+  assert.ok(withoutContext.metadataReads > withContext.metadataReads,
+    `disabling the request context must restore repeated spreadsheets.get calls; ` +
+    `got ${withoutContext.metadataReads} without vs ${withContext.metadataReads} with`);
+  assert.ok(withoutContext.duplicateRangeReads > withContext.duplicateRangeReads,
+    `disabling the request context must restore repeated same-range value reads; ` +
+    `got ${withoutContext.duplicateRangeReads} without vs ${withContext.duplicateRangeReads} with`);
+  assert.equal(withContext.duplicateRangeReads, 0,
+    'with the request context, no range is requested twice inside one request');
 });
 
 // ── 4. counterfactual: per-request catalog reads break the budget ────────────
 test('restoring per-request Exercise_Catalog reads breaks the session budget', async () => {
+  // Request context ON, catalog cache OFF — the catalog-cache-only counterfactual.
   const run = await runSession({ coldCatalogPerRequest: true });
   assertSequenceGenuine(run.results);
   assert.ok(run.catalog > CATALOG_REQUESTS,
@@ -699,17 +834,14 @@ test('restoring per-request Exercise_Catalog reads breaks the session budget', a
 // mechanisms off it must land where the failed session landed — over Google's actual
 // 60/minute read limit. A sequence that cannot reproduce the outage cannot prove it fixed.
 test('with both mechanisms disabled the sequence reproduces the original quota failure', async () => {
-  const realDeclare = sheets.declareRequestRanges;
-  sheets.declareRequestRanges = () => {};
-  try {
-    const run = await runSession({ coldCatalogPerRequest: true });
-    assertSequenceGenuine(run.results);
-    assert.ok(run.peak > 60,
-      `the pre-change behaviour must exceed Google's 60/min read limit, as the failed session did ` +
-      `at 78; this harness measured ${run.peak}\n  ${run.breakdown}`);
-  } finally {
-    sheets.declareRequestRanges = realDeclare;
-  }
+  // Neither mechanism: no request context at all, and a cold catalog on every request.
+  // This is the genuine pre-change transport.
+  const run = await runSession({ requestContext: false, coldCatalogPerRequest: true });
+  assertSequenceGenuine(run.results);
+  assertLedgerGenuine(run.results);
+  assert.ok(run.peak > 60,
+    `the pre-change behaviour must exceed Google's 60/min read limit, as the live session did ` +
+    `before its exhausted quota cut it short; this harness measured ${run.peak}\n  ${run.breakdown}`);
 });
 
 // ── 4c. MUTATION BITES — the guard must fail when the measurement is weakened ──
@@ -821,6 +953,7 @@ test('a failed catalog refresh reaches the route as a classified failure, not st
 test('MUTATION: a failed closeout settlement makes the guard red', async () => {
   const run = await runSession();
   assertLedgerGenuine(run.results);
+  assertLedgerRowsGenuine(run.results);
   assertCloseoutGenuine(run.results);   // the real one settles
 
   const mutate = (patch) => {
@@ -829,17 +962,20 @@ test('MUTATION: a failed closeout settlement makes the guard red', async () => {
     return clone;
   };
 
+  const sealOk = { sealed_ok: true, sealed: SEAL_CELLS, already_sealed: 0, sheet_written: true };
   const failures = [
     ['the settlement verdict is false', { closeout_fully_verified: false }],
-    ['the ledger seal failed', { ledger_seal: { sealed_ok: false, dry_run: true, sheet_written: false, no_write_confirmed: true } }],
-    ['the seal did not write', { ledger_seal: { sealed_ok: true, sheet_written: false } }],
+    ['the ledger seal failed', { ledger_seal: { ...sealOk, sealed_ok: false } }],
+    ['the seal did not write', { ledger_seal: { ...sealOk, sheet_written: false } }],
+    ['the seal stamped fewer rows than the ledger holds', { ledger_seal: { ...sealOk, sealed: SEAL_CELLS - 1 } }],
+    ['rows were already sealed', { ledger_seal: { ...sealOk, already_sealed: 1 } }],
     ['the Session_Plans capture errored', { session_plans_closeout: { status: 'error', captured: true, reason: 'boom' } }],
     // The POSTURE bite: a `disabled` capture or a dry-run seal means the harness dropped
     // back to the cheaper non-qualifying posture. Accepting either would let the budget be
     // measured on a session that performs fewer reads than the one that actually failed.
     ['the Session_Plans capture was disabled', { session_plans_closeout: { status: 'disabled', captured: false, reason: null } }],
     ['the capture did not capture', { session_plans_closeout: { status: 'written', captured: false, reason: null } }],
-    ['the set-ledger seal ran dry', { ledger_seal: { sealed_ok: true, dry_run: true, sheet_written: false, no_write_confirmed: true } }],
+    ['the set-ledger seal ran dry', { ledger_seal: { ...sealOk, dry_run: true, sheet_written: false } }],
   ];
   for (const [label, patch] of failures) {
     assert.throws(() => assertCloseoutGenuine(mutate(patch)), Error,
@@ -892,8 +1028,8 @@ test('a transient refresh failure after expiry reaches the catalog route as a re
 // F-SB4B qualifying runs the combined rehearsal, where `tests/e2e/gate/gate-server.js`
 // sets ATLAS_SESSION_PLANS_WRITE=1 and SESSION_PLAN_SETS_WRITE_ENABLED=1. An earlier head
 // of this file set neither, so it measured a session with no plan capture, no checkpoint
-// writes and a dry-run seal — 41 reads for a session that actually costs 47. This proves
-// the guard now refuses that cheaper posture instead of quietly measuring it.
+// writes and a dry-run seal — a materially cheaper session than the one that failed. This
+// proves the guard now refuses that posture instead of quietly measuring it.
 test('POSTURE: turning off the Session_Plans write gate makes the qualifying guard fail', async () => {
   const previous = process.env.ATLAS_SESSION_PLANS_WRITE;
   let disabled;
@@ -959,6 +1095,7 @@ test('POSTURE: the shape SESSION_PLAN_SETS_WRITE_ENABLED=0 produces fails the qu
   // Now require the guards to refuse it, on both the ledger routes and the closeout.
   const run = await runSession();
   assertLedgerGenuine(run.results);
+  assertLedgerRowsGenuine(run.results);
   assertCloseoutGenuine(run.results);
 
   const withEnvelope = (path, envelope) => {
@@ -972,11 +1109,68 @@ test('POSTURE: the shape SESSION_PLAN_SETS_WRITE_ENABLED=0 produces fails the qu
     'a real disabled-flag envelope on a ledger route must fail the qualifying guard');
 
   const closeoutClone = run.results.map(r => ({ ...r, body: JSON.parse(JSON.stringify(r.body)) }));
+  // Cardinality kept valid so ONLY the dry-run/live-write assertions can fire — otherwise
+  // the seal-count guard trips first and this would not be testing the posture.
   closeoutClone[closeoutClone.length - 1].body.data.ledger_seal = {
-    sealed_ok: true, dry_run: true, sheet_written: false, no_write_confirmed: true,
+    sealed_ok: true, sealed: SEAL_CELLS, already_sealed: 0,
+    dry_run: true, sheet_written: false, no_write_confirmed: true,
   };
   assert.throws(() => assertCloseoutGenuine(closeoutClone), /dry-run|qualifying/i,
     'a dry-run seal — what the disabled flag produces at closeout — must fail the guard');
+});
+
+// ── 4i. MUTATION — the DURABLE ledger must be complete, not merely non-empty ──
+//
+// `written > 0` and "a successful live seal" passed while the ledger held one acceptance
+// row instead of six, one checkpoint instead of twelve, no revision, or a row the seal
+// never stamped. These drop exactly one thing each and require the guard to notice.
+test('MUTATION: an incomplete durable ledger makes the qualifying guard red', async () => {
+  const run = await runSession();
+  assertLedgerRowsGenuine(run.results);   // the real ledger is complete
+
+  const planIndex = (name) => PLANS_HEADER.indexOf(name);
+  const setIndex = (name) => PLAN_SETS_HEADER.indexOf(name);
+  const snapshot = {
+    plans: SHEET.Session_Plans.map(r => [...r]),
+    sets: SHEET.Session_Plan_Sets.map(r => [...r]),
+  };
+  const restore = () => {
+    SHEET.Session_Plans = snapshot.plans.map(r => [...r]);
+    SHEET.Session_Plan_Sets = snapshot.sets.map(r => [...r]);
+  };
+
+  const mutations = [
+    ['one acceptance event is missing', () => {
+      const i = SHEET.Session_Plans.findIndex(r => r[planIndex('event_type')] === 'plan_accepted');
+      SHEET.Session_Plans.splice(i, 1);
+    }],
+    ['the Session_Plans closeout event is missing', () => {
+      const i = SHEET.Session_Plans.findIndex(r => r[planIndex('event_type')] === 'session_closeout');
+      SHEET.Session_Plans.splice(i, 1);
+    }],
+    ['one set checkpoint is missing', () => {
+      const i = SHEET.Session_Plan_Sets.findIndex(r => r[setIndex('recommendation_source')] !== 'live_revision' && r[0]);
+      SHEET.Session_Plan_Sets.splice(i, 1);
+    }],
+    ['the revision checkpoint is missing', () => {
+      const i = SHEET.Session_Plan_Sets.findIndex(r => r[setIndex('recommendation_source')] === 'live_revision');
+      SHEET.Session_Plan_Sets.splice(i, 1);
+    }],
+    ['one ledger row was never sealed', () => {
+      SHEET.Session_Plan_Sets[1][setIndex('closeout_write_id')] = '';
+    }],
+    ['a row was sealed under a different write id', () => {
+      SHEET.Session_Plan_Sets[1][setIndex('closeout_write_id')] = 'w_someone_else';
+    }],
+  ];
+
+  for (const [label, mutate] of mutations) {
+    restore();
+    mutate();
+    assert.throws(() => assertLedgerRowsGenuine(run.results), Error,
+      `the guard must go red when ${label}`);
+  }
+  restore();
 });
 
 // ── 5. Deload_State is never served stale ────────────────────────────────────
