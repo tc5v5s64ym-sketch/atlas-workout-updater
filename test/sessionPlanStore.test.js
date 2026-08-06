@@ -12,13 +12,31 @@ const assert = require('node:assert/strict');
 const { sessionPlansColumns } = require('../config/columns');
 
 // ── fake sheets (stateful; reset per test) ────────────────────────────────────
-const state = { tabs: ['Session_Plans'], rows: [], appends: [], a1: [['idempotency_key']] };
-function reset({ tabs = ['Session_Plans'], rows = [], a1 = [['idempotency_key']] } = {}) {
+const state = { tabs: ['Session_Plans'], rows: [], appends: [], a1: [['idempotency_key']], readError: null, listTabsFails: false };
+function reset({ tabs = ['Session_Plans'], rows = [], a1 = [['idempotency_key']], readError = null, listTabsFails = false } = {}) {
   state.tabs = tabs; state.rows = rows.slice(); state.appends = []; state.a1 = a1;
+  state.readError = readError; state.listTabsFails = listTabsFails;
 }
+// The fake models the REAL failure shapes, because the store now proves tab existence
+// from the rows read itself rather than from a separate metadata probe. A genuinely
+// missing tab makes Google reject the range ("Unable to parse range"), and only
+// `confirmTabMissing` — which must successfully list the tabs — may conclude absence.
+// A fake that threw a generic Error would let the store's ambiguity handling go untested.
+const RANGE_UNRESOLVED = (tab) => new Error(`Unable to parse range: ${tab}!A:Z`);
 const fakeSheets = {
   getSpreadsheetTabs: async () => state.tabs.slice(),
-  getSheetRows: async (tab) => { if (!state.tabs.includes(tab)) throw new Error('tab missing'); return state.rows.slice(); },
+  getSheetRows: async (tab) => {
+    if (state.readError) throw state.readError;
+    if (!state.tabs.includes(tab)) throw RANGE_UNRESOLVED(tab);
+    return state.rows.slice();
+  },
+  // The real classifier's contract: absence requires an unresolved range AND a successful
+  // tab listing that does not contain the tab.
+  confirmTabMissing: async (error, tab) => {
+    if (!/Unable to parse range/i.test(String(error && error.message))) return false;
+    if (state.listTabsFails) return false;   // could not look ⇒ never evidence of absence
+    return !state.tabs.includes(tab);
+  },
   appendRows: async (tab, rows) => { state.appends.push({ tab, rows }); if (tab === 'Session_Plans') state.rows.push(...rows); },
   readRange: async () => state.a1,
 };
@@ -41,6 +59,22 @@ test('tab missing → 503/no-op: nothing is written, tab_missing reported', asyn
   assert.equal(r.tab_missing, true);
   assert.equal(r.written, 0);
   assert.equal(state.appends.length, 0);
+});
+
+// An OUTAGE is not absence. `tab_missing` is a VERIFIED_EMPTY_SEAL_REASON, so a transient
+// read failure — or an unresolved range that could not be confirmed because the tab listing
+// itself failed — must never present as a missing tab.
+test('a transient read failure is NOT reported as a missing tab', async () => {
+  reset({ readError: Object.assign(new Error('Backend Error'), { status: 503 }) });
+  const r = await store.writePlanAccepted(SESSION, ITEMS, { recordedAt: 't' });
+  assert.equal(r.tab_missing, false, 'an outage must never read as a durable schema fact');
+  assert.equal(r.written, 2, 'the append still proceeds under its own idempotency guard');
+});
+
+test('an unresolved range that cannot be CONFIRMED absent is not reported as missing', async () => {
+  reset({ tabs: [], listTabsFails: true });
+  const r = await store.writePlanAccepted(SESSION, ITEMS, { recordedAt: 't' });
+  assert.equal(r.tab_missing, false, 'could not look ⇒ never evidence of absence');
 });
 
 // ── append + idempotency ──────────────────────────────────────────────────────

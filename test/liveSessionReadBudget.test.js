@@ -296,32 +296,34 @@ test('the harness replays the live manifest exactly — nothing compressed, noth
   assert.ok(live[0][2].closeout_context, 'the live write is the closeout');
 });
 
-// ── REPRODUCTION — required before any product correction is believed ────────
+// ── MEASURED STATE — the budget this PR must reach ──────────────────────────
 //
-// A corrective is only meaningful if its guard fails on the defect. Measured on merged
-// main (42ee7b3) this fixture peaks at exactly 60 reads in a rolling minute — AT Google's
-// per-minute limit, and ten over the 50 budget. A session sitting exactly at the limit has
-// zero headroom: the first retry tips it over, which is precisely what happened live.
+// PRE-CORRECTION EVIDENCE, recorded because the code that produced it no longer exists.
+// On merged main (42ee7b3) this same fixture measured a rolling-60s peak of 60 — AT
+// Google's per-minute limit, ten over the 50 budget, with zero headroom, which is why the
+// first retry tipped the live session over. That measurement is reproducible at commit
+// ce26c20 of this branch and was independently confirmed by CI there. Every reduction
+// below is measured against it.
 //
-// It reproduces the failure without its full magnitude, and the gap is stated rather than
-// smoothed over. The live run measured 116 observable reads with a peak of 87, because
-// (a) its retries were real and are not modelled here, and (b) a fake googleapis answers
-// instantly, so 70.9s of live traffic compresses into about a second. This harness is
-// therefore a LOWER BOUND on live demand. It is still the right authority: it is the real
-// request manifest, and it already proves the session cannot fit.
+// The fixture reproduces the failure without its full magnitude, and the gap is stated
+// rather than smoothed over: the live run measured 116 observable reads with a peak of 87,
+// because (a) its retries were real and are not modelled here, and (b) a fake googleapis
+// answers instantly, so 70.9 s of live traffic compresses into about a second. This
+// harness is therefore a LOWER BOUND on live demand.
 //
-// The threshold is `>= GOOGLE_LIMIT`, not `> GOOGLE_LIMIT`. An earlier version asserted
-// `> 60` against a value that measures exactly 60 — a guard pinned to the boundary it sits
-// on, which passed locally at 61 and failed in CI at 60. A flaky guard is worse than a
-// weak one; this one states the fact that is true and stable.
-test('REPRODUCTION: the live manifest cannot fit inside the read quota before correction', async () => {
+// PROGRESS MARKER, not the final guard. While reductions are still landing this asserts
+// the direction of travel and pins the number actually measured, so a checkpoint can never
+// silently claim more than it achieved. It becomes `peak <= BUDGET` when the remaining
+// client-side reductions land.
+test('the live manifest is measured, and the measurement is moving toward the budget', async () => {
   const run = await runLiveSession();
   assert.ok(run.total > 0, 'the sequence must actually read the sheet');
-  assert.ok(run.peak >= GOOGLE_LIMIT,
-    `the live manifest must reproduce the quota failure (peak >= ${GOOGLE_LIMIT}); measured ${run.peak}.\n` +
-    `  If this stops failing, the fixture has stopped modelling the session that failed.\n  ${run.breakdown}`);
+  assert.ok(run.peak < 60,
+    `the ledger-probe reduction must hold: pre-correction was 60, measured ${run.peak}\n  ${run.breakdown}`);
   assert.ok(run.peak > BUDGET,
-    `and it must be over the ${BUDGET} budget; measured ${run.peak}`);
+    `NOT YET AT BUDGET — measured ${run.peak}, target <= ${BUDGET}. When this assertion ` +
+    'starts failing, the remaining reductions have landed and this test must be replaced ' +
+    `by the real guard (peak <= ${BUDGET}).\n  ${run.breakdown}`);
 });
 
 // ── the observe-only route must stay observe-only ────────────────────────────

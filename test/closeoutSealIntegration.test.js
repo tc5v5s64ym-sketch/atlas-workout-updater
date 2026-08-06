@@ -39,7 +39,7 @@ const state = {
   updates: [],           // every updateColumnCells call
   updateCellsResult: null, // force a seal-proof mismatch when set
   failEffortAppend: false,
-  failTabsProbe: false,    // metadata outage — the seal must fail closed
+  failTabsProbe: false,    // ledger read outage — the seal must fail closed
   logCompositeKeys: [],
 };
 
@@ -75,6 +75,13 @@ const fakeSheets = {
   getLogCompositeKeys: async () => [...state.logCompositeKeys],
   getRecentRows: async () => [],
   getSheetRows: async tab => {
+    // The ledger stores now prove tab presence from THIS read rather than from a separate
+    // metadata probe, so a ledger read outage is injected here. `failTabsProbe` keeps its
+    // name and its meaning — "the ledger could not be read" — at the layer that now
+    // carries it.
+    if (state.failTabsProbe && (tab === 'Session_Plan_Sets' || tab === 'Session_Plans')) {
+      throw new Error('metadata outage');
+    }
     if (tab === 'Session_Plan_Sets') return state.planSetRows.map(r => [...r]);
     // Serve appended Session_Plans rows back, so the capture layer's read-before-
     // append idempotency works exactly as against the real sheet.

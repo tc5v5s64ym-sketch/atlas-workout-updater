@@ -44,29 +44,11 @@ function _nowIso() {
   return new Date().toISOString();
 }
 
-// CONFIRMED presence only. This used to answer `false` when the metadata read threw,
-// which reported "the tab does not exist" — a durable schema fact the owner must act
-// on — for what may have been a momentary Google outage. An unreadable spreadsheet is
-// not evidence of absence, so the failure now propagates; the capture layer above is
-// failure-isolated (services/sessionPlanCapture.js `_capture`) and turns it into an
-// `error` envelope with `captured:false`, so no write proceeds either way and no
-// caller can throw.
-async function _tabExists() {
-  const tabs = await sheets.getSpreadsheetTabs();
-  return Array.isArray(tabs) && tabs.includes(SESSION_PLANS_TAB);
-}
-
-// Read existing rows keyed by idempotency_key (data rows only; the header is stripped
-// by sheets.getSheetRows). A read failure is treated as "no prior rows" — the append
-// still guards within its own batch, and a genuinely missing tab was already gated.
-async function _existingByKey() {
+// Index already-read rows by idempotency_key (data rows only; the header is stripped by
+// sheets.getSheetRows). Pure — the read itself now happens in `_append`, because that read
+// is also what proves the tab exists.
+function _existingByKey(rows) {
   const byKey = new Map();
-  let rows;
-  try {
-    rows = await sheets.getSheetRows(SESSION_PLANS_TAB);
-  } catch (_) {
-    return byKey;
-  }
   for (const row of Array.isArray(rows) ? rows : []) {
     const arr = Array.isArray(row) ? row : [];
     const key = String(arr[KEY_IDX] == null ? '' : arr[KEY_IDX]).trim();
@@ -97,9 +79,33 @@ async function _ensureHeaderRow() {
 async function _append(rows) {
   const out = { written: 0, skipped: 0, tab_missing: false };
   if (!rows.length) return out;
-  if (!(await _tabExists())) { out.tab_missing = true; return out; }
 
-  const existing = await _existingByKey();
+  // EXISTENCE IS PROVEN BY THE READ WE ALREADY NEED, not by a separate probe.
+  //
+  // This used to call `spreadsheets.get` first, purely to ask "does the tab exist?", and
+  // then read the rows anyway — two metered requests to answer one question, on every
+  // ledger append. A SUCCESSFUL rows read is strictly better evidence than the metadata
+  // probe was: it is more current (nothing can happen between the probe and the read) and
+  // it costs nothing extra.
+  //
+  // Absence is still PROVEN, never inferred. Only a `range_unresolved` failure can mean
+  // "missing", and only `confirmTabMissing` — the one authority for that fact, which
+  // requires its own metadata read to SUCCEED — may conclude it. Every other read failure
+  // keeps the previous behaviour exactly: treat it as "no prior rows" and let the append's
+  // own idempotency guard apply. `tab_missing` is a VERIFIED_EMPTY_SEAL_REASON, so it must
+  // never be reachable from an outage.
+  let rowsRead = [];
+  try {
+    rowsRead = await sheets.getSheetRows(SESSION_PLANS_TAB);
+  } catch (error) {
+    if (await sheets.confirmTabMissing(error, SESSION_PLANS_TAB)) {
+      out.tab_missing = true;
+      return out;
+    }
+    rowsRead = [];
+  }
+
+  const existing = _existingByKey(rowsRead);
   const seen = new Map(); // within-batch dedup / collision detection
   const toAppend = [];
 
