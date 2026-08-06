@@ -1,6 +1,6 @@
 'use strict';
 
-// LIVE SESSION READ BUDGET — the trace-derived guard.
+// LIVE SESSION READ BUDGET — the compressed stress simulation over the captured manifest.
 //
 // This replaces `test/sessionReadBudget.test.js` as the AUTHORITY for the session read
 // budget. That file's hand-authored `ownerPatternSequence` measured 46 reads for a
@@ -23,9 +23,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-// The acceptance bound for the TRACE-DERIVED measurement below. Google's real limit is 60;
-// 50 leaves room for a session that drifts. Meeting it is not production proof — see the
-// guard's own comment, and docs/READ_BUDGET.md.
+// The acceptance bound for the COMPRESSED SIMULATION below. Google's real limit is 60; 50
+// leaves room for a session that drifts. Meeting it is not a rolling-minute verdict on
+// production — see the guard's own comment, and docs/READ_BUDGET.md.
 const BUDGET = 50;
 const GOOGLE_LIMIT = 60;
 
@@ -126,6 +126,33 @@ function valuesForRange(range) {
   const first = r1 ? Number(r1) - 1 : 0;
   const last = r2 ? Number(r2) : rows.length;
   return { values: rows.slice(first, last).map(row => row.slice(col(c1), col(c2) + 1)) };
+}
+
+// ── the VIRTUAL CLOCK ────────────────────────────────────────────────────────
+//
+// The captured session ran for 70.945 s. Driving its 113 requests back to back — as this
+// harness used to — is not the same session: every request lands inside ONE rolling minute
+// that live timing spread across seventy seconds, and the server's 30-second row cache never
+// expires, where a real session expires it twice over. The first inflates the peak, the
+// second deflates the total, and neither is the captured run.
+//
+// So the ORIGINAL timing is replayed, on a clock the test owns. `Date.now()` reports the
+// current request's captured `offset_ms`; the suite still finishes in about a second because
+// nothing actually waits. The row cache reads `Date.now()` (`services/cache.js`), so it
+// expires exactly where it would have during the captured session, and every read attempt is
+// stamped with its simulated time so `peakRollingMinute` measures a real rolling minute.
+//
+// `REAL_NOW` is the untouched clock, kept for anything that must measure wall time — the
+// `settle()` deadline above would never expire against a clock that only moves when a
+// request is dispatched.
+const REAL_NOW = Date.now;
+let virtualNow = REAL_NOW();
+let virtualClockOn = false;
+Date.now = () => (virtualClockOn ? virtualNow : REAL_NOW());
+
+/** Move the simulated clock to `offsetMs` into the session. Never moves backwards. */
+function setVirtualOffset(baseMs, offsetMs) {
+  virtualNow = baseMs + offsetMs;
 }
 
 // ── the measurement point ────────────────────────────────────────────────────
@@ -276,9 +303,9 @@ function outcomeOf(result) {
 
 /** Wait until no new read has been recorded for `quietMs` — deferred reads must be counted. */
 async function settle({ quietMs = 500, maxMs = 15_000 } = {}) {
-  const deadline = Date.now() + maxMs;
+  const deadline = REAL_NOW() + maxMs;
   let seen = -1;
-  while (reads.length !== seen && Date.now() < deadline) {
+  while (reads.length !== seen && REAL_NOW() < deadline) {
     seen = reads.length;
     await new Promise(resolve => setTimeout(resolve, quietMs));
   }
@@ -304,7 +331,14 @@ function breakdown(records) {
 }
 
 let runSeq = 0;
-async function runLiveSession({ requestContext = true, coldCatalogPerRequest = false, corrected = false } = {}) {
+/**
+ * @param opts.compressed  Drive every request at offset 0 — the OLD behaviour, kept only so
+ *   a guard can prove that compressing the timeline changes the answer. It is never the
+ *   measurement.
+ */
+async function runLiveSession({
+  requestContext = true, coldCatalogPerRequest = false, corrected = false, compressed = false,
+} = {}) {
   runSeq += 1;
   resetIdempotencyStore();
   resetSheet();
@@ -316,13 +350,24 @@ async function runLiveSession({ requestContext = true, coldCatalogPerRequest = f
   const results = [];
   const realRunWithReadContext = sheets.runWithReadContext;
   if (!requestContext) sheets.runWithReadContext = (fn) => fn();
+  // A fresh base each run, so one run's cache entries can never be live in the next.
+  const base = REAL_NOW() + runSeq * 10 * 60_000;
+  setVirtualOffset(base, 0);
+  virtualClockOn = true;
   try {
-    for (const [method, url, body] of liveSessionSequence({ runId: `r${runSeq}`, corrected })) {
+    for (const [method, url, body, meta] of liveSessionSequence({ runId: `r${runSeq}`, corrected })) {
+      // The request is dispatched AT its captured offset. Deferred work it triggers (the
+      // fire-and-forget shadow appends) settles at that same simulated instant, which is
+      // where the live run's own deferred work landed too — within milliseconds of its
+      // request.
+      setVirtualOffset(base, compressed ? 0 : (meta && meta.offsetMs) || 0);
       if (coldCatalogPerRequest) sheets._resetExerciseCatalogCache();
       results.push(await call(method, url, body));
     }
+    // Anything still in flight settles at the end of the captured session, not beyond it.
     await settle();
   } finally {
+    virtualClockOn = false;
     sheets.runWithReadContext = realRunWithReadContext;
     countingOn = false;
   }
@@ -432,32 +477,75 @@ test('the harness replays the live manifest exactly — nothing compressed, noth
 
 // ── MEASURED STATE ──────────────────────────────────────────────────────────
 //
-// PRE-CORRECTION EVIDENCE, recorded because the code that produced it no longer exists.
-// On merged main (42ee7b3) this same fixture measured a rolling-60s peak of 60 — AT
-// Google's per-minute limit, ten over the 50 budget, with zero headroom, which is why the
-// first retry tipped the live session over. That measurement is reproducible at commit
-// ce26c20 of this branch and was independently confirmed by CI there.
+// WHAT REPLAYING THE REAL TIMING COST THIS CLAIM — stated plainly, because it retires one.
 //
-// The fixture reproduces the failure without its full magnitude, and the gap is stated
-// rather than smoothed over: the live run measured 116 observable reads with a peak of 87,
-// because (a) its retries were real and are not modelled here, and (b) a fake googleapis
-// answers instantly, so 70.9 s of live traffic compresses into about a second. This harness
-// is therefore a LOWER BOUND on live demand — including on what the corrections save, since
-// the same compression means the server's 30-second row cache never expires here while it
-// expires repeatedly across a real 71-second session.
+// Under the collapsed timeline this harness used to run, the captured client measured a peak
+// of 55 and the guard below asserted it "still overruns the budget of 50". Replaying the
+// captured offsets, the captured client peaks at 46 — UNDER the budget. The overrun was an
+// artefact of driving seventy seconds of traffic inside one rolling minute.
 //
-// THE CAPTURED CLIENT still overruns the budget. That is the point of keeping it measured:
-// it is what proves the corrections closed the gap, rather than the fixture having been
-// made easier.
-test('the captured client — the one that failed — still overruns the budget', async () => {
-  const run = await runLiveSession();
-  assert.ok(run.total > 0, 'the sequence must actually read the sheet');
-  assert.ok(run.peak > BUDGET,
-    `the captured client must still overrun ${BUDGET}, else this fixture no longer ` +
-    `reproduces anything: measured ${run.peak}\n  ${run.breakdown}`);
-  assert.ok(run.peak < GOOGLE_LIMIT,
-    'the server-side reductions already merged must hold: pre-correction was 60 at ' +
-    `Google's limit, measured ${run.peak}\n  ${run.breakdown}`);
+// SO THIS FIXTURE NO LONGER REPRODUCES THE LIVE FAILURE, and it is not made to. The live run
+// measured 116 attempts with a peak of 87; the gap is the retries, which Google meters like
+// any other request and which this harness does not model. Once the timeline is honest, the
+// captured client's unretried demand simply is not over the limit — the quota storm was the
+// retries compounding on top of it.
+//
+// What the captured client is still good for is the comparison, and that is what this guard
+// keeps: the same requests, the same timing, the same server, with and without the client
+// corrections. That difference is caused by the corrections and nothing else.
+test('the captured client costs measurably more than the corrected one, same timing', async () => {
+  const captured = await runLiveSession();
+  const corrected = await runLiveSession({ corrected: true });
+  assert.ok(captured.total > 0, 'the sequence must actually read the sheet');
+
+  assert.equal(captured.peak, 46,
+    `the published captured peak is 46; measured ${captured.peak}\n  ${captured.breakdown}`);
+  assert.equal(captured.total, 56,
+    `the published captured total is 56; measured ${captured.total}`);
+
+  assert.ok(captured.peak > corrected.peak,
+    `the corrections must reduce the worst minute: captured ${captured.peak}, corrected ` +
+    `${corrected.peak}. Equal figures mean the corrections stopped removing requests.`);
+  assert.ok(captured.total > corrected.total,
+    `and the whole session: captured ${captured.total}, corrected ${corrected.total}`);
+
+  // Both are below Google's limit here, and that is expected once retries are excluded —
+  // asserted so nobody reads a passing suite as "the failing session now fits".
+  assert.ok(captured.peak < GOOGLE_LIMIT,
+    `unretried, the captured client is under Google's ${GOOGLE_LIMIT} — the live overrun was ` +
+    `driven by retries this harness does not model, measured ${captured.peak}`);
+});
+
+// COMPRESSION IS NOT THE MEASUREMENT — and this proves it, rather than asserting it.
+//
+// The whole defect this replay fixes is that a collapsed timeline answers a different
+// question. So the collapsed model is kept runnable for exactly one purpose: to show that it
+// disagrees, and that the figures it produces would not be accepted.
+test('collapsing the captured timing into one instant changes the answer and fails acceptance', async () => {
+  const timed = await runLiveSession({ corrected: true });
+  const collapsed = await runLiveSession({ corrected: true, compressed: true });
+
+  // It changes the answer.
+  assert.notEqual(collapsed.peak, timed.peak,
+    'collapsing 70.9 s into one instant must change the rolling-minute peak; if it does ' +
+    'not, the offsets are no longer being replayed and neither figure means anything');
+  assert.ok(collapsed.peak > timed.peak,
+    `collapsing inflates the peak by putting every request in one minute: collapsed ` +
+    `${collapsed.peak} vs replayed ${timed.peak}`);
+
+  // Its structural signature: every read inside one rolling minute, so peak IS total.
+  assert.equal(collapsed.peak, collapsed.total,
+    'a collapsed session has all its reads in one rolling minute, so peak equals total');
+
+  // And it fails acceptance: the published figures are the replayed ones, so a collapsed
+  // measurement cannot satisfy the guard that pins them. This is the assertion that bites
+  // if the replay is ever removed — the acceptance test pins 39/48, and collapsed is 47/47.
+  assert.notEqual(collapsed.peak, 39,
+    'the acceptance guard pins the replayed peak of 39; a collapsed run must not be able ' +
+    'to satisfy it');
+  assert.ok(collapsed.total < timed.total,
+    `collapsing also hides real reads — the 30-second row cache never expires inside one ` +
+    `instant: collapsed total ${collapsed.total} vs replayed ${timed.total}`);
 });
 
 // ── the CORRECTED client ─────────────────────────────────────────────────────
@@ -644,15 +732,16 @@ test('the session drives the CONFIGURED coach branch — the expensive one produ
 
 // THE GUARD, and exactly what it does and does not establish.
 //
-// It measures a TRACE-DERIVED LOWER BOUND, not production. The session's 70.9 s of traffic
-// is replayed against a fake `googleapis` that answers instantly, so it compresses into
-// about a second: the server's 30-second row cache never expires here, and the live run's
-// retries — which Google meters like any other request — are not modelled at all. Both make
-// the real number HIGHER than this one.
+// It measures a TRACE-DERIVED LOWER BOUND, not production. The session's captured timing is
+// replayed on the virtual clock, so the rolling minute here is the session's real rolling
+// minute and the 30-second row cache expires where it really would. What is still missing is
+// the live run's RETRIES — Google meters them like any other request, and this harness does
+// not model them at all. That omission only ever ADDS to the real number, which is what makes
+// this figure a floor rather than a guess.
 //
-// So passing this proves the corrected client is under 50 IN THIS HARNESS. It does not
-// prove production fits its quota. The production verdict is the post-deploy non-counting
-// debug run, and nothing here substitutes for it.
+// So passing this proves the corrected client's worst captured minute costs 39 reads with
+// retries excluded. It does not prove production fits its quota. The production verdict is
+// the post-deploy non-counting debug run, and nothing here substitutes for it.
 test(`corrected trace-derived lower bound <= ${BUDGET}; production budget not yet proven`, async () => {
   const run = await runLiveSession({ corrected: true });
   assert.ok(run.total > 0, 'the sequence must actually read the sheet');
@@ -661,12 +750,23 @@ test(`corrected trace-derived lower bound <= ${BUDGET}; production budget not ye
     `${BUDGET}, Google's limit ${GOOGLE_LIMIT}. This is a lower bound, so exceeding it here ` +
     `means production certainly exceeds it too.\n  ${run.breakdown}`);
 
-  // The whole session, not just its worst minute: with a fake googleapis the session
-  // compresses into about a second, so peak and total coincide here and a regression that
-  // moved reads around rather than removing them could not hide in the difference.
-  assert.equal(run.peak, run.total,
-    'this fixture compresses the session, so peak and total must agree — if they do not, ' +
-    'the timing model changed and the peak figure needs re-deriving');
+  // THE EXACT PUBLISHED FIGURES, pinned. Every number in docs/READ_BUDGET.md and the merge
+  // card is one of these two, and both depend on the captured timing being replayed: drive
+  // the same requests back to back instead and the peak reads 47, not 39. Pinning them is
+  // what makes a silent return to a collapsed timeline fail here rather than quietly
+  // re-publish a figure nobody re-derived.
+  assert.equal(run.peak, 39,
+    `the published corrected peak is 39; measured ${run.peak}. If this changed legitimately, ` +
+    'every figure in docs/READ_BUDGET.md and the merge card must be re-derived and updated ' +
+    'in the same change.');
+  assert.equal(run.total, 48,
+    `the published corrected total is 48; measured ${run.total}`);
+
+  // The timeline really is spread. A session whose peak equals its total is one where every
+  // request landed inside a single rolling minute — the collapsed model this replaced.
+  assert.ok(run.peak < run.total,
+    `peak (${run.peak}) must be strictly below total (${run.total}) once the captured 70.9 s ` +
+    'of timing is replayed; equality means the offsets stopped being applied');
 
   // Every Save the manifest contains actually happened, and the closeout really wrote.
   // A budget met by failing requests would be no achievement at all.

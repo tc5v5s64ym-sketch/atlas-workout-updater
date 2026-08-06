@@ -41,10 +41,17 @@ function setsFromText(text) {
  *                        "mutation in flight" window can be observed rather than raced.
  *   control.failWrite  — when true, the live Save answers 500 (a mutation that did not settle
  *                        cleanly must not leave reuse enabled on a maybe-written sheet).
+ *   control.abortLiveWrite   — when true, the live Save fails at TRANSPORT (no HTTP status).
+ *                        A live write is never retried, so this is the ambiguous case: it
+ *                        must still invalidate.
+ *   control.abortFirstPreview — when true, the FIRST preview attempt fails at transport. The
+ *                        client retries a `test_mode` preview exactly once, and the retry
+ *                        carries the dry-run proof, so the reuse must survive.
  */
 async function openApp(page, capture, control = {}) {
   capture.recommendUrls = [];
   capture.writes = [];
+  capture.previewAttempts = 0;
   capture.releaseWrite = null;
 
   await page.route('**/health', r => r.fulfill(json({ status: 'ok' })));
@@ -79,6 +86,10 @@ async function openApp(page, capture, control = {}) {
     }
     if (path === '/api/log-workout' && req.method() === 'POST') {
       if (body?.test_mode === true || body?.test_mode === 'true') {
+        capture.previewAttempts += 1;
+        // A TRANSPORT failure — aborted, so the client sees no HTTP status at all. That is
+        // the only failure shape the client retries, and it retries a preview exactly once.
+        if (control.abortFirstPreview && capture.previewAttempts === 1) return route.abort('failed');
         const preview = (body.log_rows || []).map(r => [
           r.date_clean || '2026-06-12', r.session_id || SESSION, r.exercise, r.exercise,
           'Chest', 'BEN01', r.set_number, r.weight, r.reps, r.rir, r.notes, '',
@@ -97,6 +108,7 @@ async function openApp(page, capture, control = {}) {
       if (control.holdWrite) {
         await new Promise(resolve => { capture.releaseWrite = resolve; });
       }
+      if (control.abortLiveWrite) return route.abort('failed');
       if (control.failWrite) {
         return route.fulfill(json({ status: 'error', message: 'sheet unavailable' }, 500));
       }
@@ -238,6 +250,57 @@ test('an answer does not survive the owner-day rollover', async ({ page }) => {
   await page.evaluate(() => window.__advanceDay());
   await logSet(page, 'bench 225 5/2');
   await expect.poll(() => asked(capture), { timeout: 10_000 }).toBe(2);
+});
+
+// ── C. one settlement verdict per logical request ───────────────────────────
+//
+// The client retries a `test_mode` preview once when it fails at TRANSPORT (the live
+// cold-start case: the instance is waking, mobile Safari kills the hanging fetch with no
+// HTTP status). That retry re-enters `api()`, and the attempt that handed off must not
+// settle the epoch a second time from its own empty result — the attempt that actually got
+// an answer owns the verdict. Otherwise a proven no-write is thrown away and the reuse C4
+// depends on is invalidated by a network hiccup.
+test('a transport-retried preview keeps its dry-run proof, and the reuse survives', async ({ page }) => {
+  const capture = {};
+  await openApp(page, capture, { abortFirstPreview: true });
+
+  await logSet(page, 'bench 225 5/2');
+  await expect.poll(() => asked(capture), { timeout: 10_000 }).toBe(1);
+
+  // Build the review WITHOUT saving. This is the `test_mode` dry-run preview of
+  // /api/log-workout — the only client call that carries `retryTransport`. Its first
+  // attempt is aborted at transport, so reaching the review panel at all proves the retry
+  // ran and succeeded. The 1.5 s backoff is why this waits longer than the others.
+  await page.locator('#workout-text').fill('done');
+  await page.locator('#preview-btn').click();
+  await expect(page.locator('.review')).toBeVisible({ timeout: 25_000 });
+  expect(capture.previewAttempts, 'the aborted attempt and its retry').toBeGreaterThan(1);
+
+  // Two transport attempts, ONE logical request, and the answer it finally got carried the
+  // W1–W3 dry-run proof — so nothing a recommendation reads can have changed. Before the
+  // fix the outer attempt settled a second time with its own empty result and stepped the
+  // epoch anyway, so this identical question went back to the server for nothing.
+  await logSet(page, 'bench 225 5/2');
+  await page.waitForTimeout(1500);
+  expect(asked(capture)).toBe(1);
+  expect(capture.writes.length, 'nothing was saved live').toBe(0);
+});
+
+test('an AMBIGUOUS live write — failed at transport, never retried — still invalidates', async ({ page }) => {
+  const capture = {};
+  await openApp(page, capture, { abortLiveWrite: true });
+
+  await logSet(page, 'bench 225 5/2');
+  await expect.poll(() => asked(capture), { timeout: 10_000 }).toBe(1);
+
+  await startSave(page);
+  await expect.poll(() => capture.writes.length, { timeout: 10_000 }).toBe(1);
+
+  // A live write is never transport-retried, so this settles with no response at all. It
+  // proves nothing about whether rows landed, and the pessimistic reading is the only
+  // honest one: the next identical question must reach the server.
+  await logSet(page, 'bench 225 5/2');
+  await expect.poll(() => asked(capture), { timeout: 15_000 }).toBe(2);
 });
 
 // ── the reuse that must NOT be lost ─────────────────────────────────────────

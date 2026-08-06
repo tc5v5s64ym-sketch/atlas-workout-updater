@@ -187,10 +187,16 @@ function bodyFor(pathname, index, runId) {
       // and a constraint WITH a substitute — which then reads Log_Cleaned for the
       // replacement's prescription. The manifest records only the status, so it cannot
       // prove which the live call took. This drives the READING branch deliberately: it is
-      // the most expensive of the three, so the budget is measured against the worst case
-      // the session could have caused rather than a cheaper guess. Back Squat has a known
+      // the most expensive of the three, so the simulation stresses the worst case the
+      // session could have caused rather than a cheaper guess. Back Squat has a known
       // substitute (Leg Press); the RDL used before this correction has none, which is why
       // even the corrected field names still stopped one branch short.
+      //
+      // SO THIS VALUE IS A STRESS CHOICE, NOT TRACE-DERIVED EVIDENCE. The manifest fixes the
+      // route, the method and the timing; it does not fix the lift, and the producer
+      // contract test checks field NAMES against the client, not the values that selected
+      // the live branch. This can therefore over-count relative to the live run — one more
+      // reason the figures here are a compressed simulation and not a production verdict.
       return { message: 'squat rack is busy', current_exercise: LIFTS[0].name };
 
     case '/api/log-modality':
@@ -392,7 +398,12 @@ function liveSessionSequence({ runId = 'r1', appendedRange = 'Log_Cleaned!A2:L13
       entry.method,
       entry.path + (query ? `?${query}` : ''),
       entry.method === 'POST' ? bodyFor(entry.path, n, runId) : undefined,
-      { path: entry.path, occurrence: n, expectedStatus: entry.status },
+      // `offsetMs` is the request's captured position in the live session, carried so a
+      // caller can replay the ORIGINAL 70.9-second timing on a virtual clock instead of
+      // driving everything back to back. Without it the 30-second row cache never expires
+      // and every request falls inside one rolling minute — neither of which is the
+      // session that was captured.
+      { path: entry.path, occurrence: n, expectedStatus: entry.status, offsetMs: entry.offset_ms },
     ];
   });
 }

@@ -309,20 +309,56 @@ Against the failed run's own request manifest, replayed through the real handler
 (`tests/e2e/gate/gate-server.js`). With them off the session has no plan capture, no
 checkpoint writes and a dry-run seal — a materially cheaper session than the one that failed.
 
-| Client | Peak rolling-60s reads (trace-derived **lower bound**) |
-|---|---|
-| merged `main` (42ee7b3), captured manifest | 60 — **at Google's limit** |
-| this branch's server, captured (pre-correction) client | 55 |
-| this branch, **corrected** client (**shipped**) | **46** |
+### The captured timing is replayed, not collapsed
 
-> **46 is a corrected trace-derived lower bound ≤ 50. The production budget is NOT yet
-> proven.** Every figure in this table is measured in a harness that compresses 70.9 s into
-> about a second and models no retries, so each is a floor on what production will spend, not
-> a prediction of it. The production verdict remains the post-deploy non-counting debug run.
-> Campaign status stays 0/5 until that run passes.
+The manifest records each request's `offset_ms`, and the harness now **replays them on a
+virtual clock**: `Date.now()` reports the current request's captured offset, so the session's
+real 70.945-second shape is preserved while the suite still finishes in about a second
+because nothing actually waits. Two consequences, and both are the point:
 
-The captured client is kept measured on purpose: it must still overrun the budget, which is
-what proves the corrections closed the gap rather than the fixture having been made easier.
+- the rolling minute is the **session's** rolling minute, not an artefact of driving
+  everything into one instant;
+- the server's 30-second `Log_Cleaned`/`Effort` row cache **expires where it really would**
+  — twice over a 71-second session — instead of staying warm throughout.
+
+`test/liveSessionReadBudget.test.js` keeps the collapsed model runnable for exactly one
+purpose: a guard proves that collapsing the timeline changes the answer and cannot satisfy
+the acceptance figures. Removing the replay fails three tests.
+
+| Client | Session total | **Peak rolling-60s** (trace-derived lower bound) |
+|---|---|---|
+| merged `main` (42ee7b3), captured manifest | 62 | **51 — over the 50 budget** |
+| this branch's server, captured (pre-correction) client | 56 | 46 |
+| this branch, **corrected** client (**shipped**) | 48 | **39** |
+
+> **39 is a corrected trace-derived lower bound ≤ 50. The production budget is NOT yet
+> proven.** The timing is now honest, so the one thing still missing is the live run's
+> **retries** — Google meters them like any other request, and this harness does not model
+> them at all. That omission only ever adds, which is what makes 39 a floor rather than a
+> guess. The production verdict remains the post-deploy non-counting debug run. Campaign
+> status stays 0/5 until that run passes.
+
+**These figures replaced an earlier set, and the earlier set was wrong.** Under the collapsed
+timeline this document previously published 60 / 55 / 46. Every one of those was measured
+with all 113 requests inside a single rolling minute and with a row cache that never expired.
+Replaying the captured timing moves each of them, and in both directions at once — totals
+rise as the cache expires, peaks fall as the requests spread out.
+
+### What replaying the timing retired: the fixture no longer reproduces the live failure
+
+The old harness reported the captured client at a peak of 55 and the test asserted it "still
+overruns the budget of 50". **Replayed, the captured client peaks at 46 — under the budget.**
+The overrun was an artefact of the collapsed timeline.
+
+So this fixture no longer reproduces the live failure, and it is not made to. The live run
+measured 116 attempts with a peak of 87; the gap is the retries. Once the timeline is honest,
+the captured client's *unretried* demand simply is not over Google's limit — the quota storm
+was the retries compounding on top of it. What the captured client is still good for is the
+**comparison**, which is what the guard now keeps: same requests, same timing, same server,
+with and without the client corrections.
+
+Merged `main` is the exception that still shows a breach: at 51 it is over the 50 budget
+before a single retry, which is why the first retry tipped the live session over.
 
 ### The coach LLM is configured, and that is part of the measurement
 
@@ -330,8 +366,8 @@ what proves the corrections closed the gap rather than the fixture having been m
 reply with one `batchGet` over `Coaching_Notes` + `Constraints` + `Log_Cleaned`;
 unconfigured, it answers from client context and reads nothing at all. **Production runs
 configured, and the captured session came from production**, so the configured branch is the
-one this table measures — and it is the more expensive of the two, which is the correct
-direction for a lower bound to err.
+one this table measures — and it is the more expensive of the two, so the simulation
+stresses the costlier branch rather than a cheaper one.
 
 That branch is now pinned by the harness (`test/helpers/fakeCoachLlm.js`), which sets a fake
 key in every environment and answers the model call from memory. Before that pinning the
@@ -339,41 +375,47 @@ branch was decided by whatever `GEMINI_API_KEY` happened to be in the runner's e
 which made every figure here environment-dependent and made each local run place a real
 network call to Gemini:
 
-| Coach | Captured client | Corrected client |
-|---|---|---|
-| **configured — production, and what this table reports** | **55** | **46** |
-| unconfigured — no key present | 54 | 45 |
-
-The published 46 and 55 are unchanged by the pinning: they were always the configured
-figures. What changed is that they are now reproducible off-network on any machine, and a
+The configured branch costs exactly **one** extra read per session — the grounding
+`batchGet`. Pinning it means the figures are reproducible off-network on any machine, and a
 silent fall back to the cheaper unconfigured branch fails the suite instead of quietly
 improving the budget by one read.
 
-**This harness is a LOWER BOUND on live demand, and the gap is stated rather than smoothed
-over.** The live run measured 116 attempts with a peak of 87 because (a) its retries were
-real and are not modelled here, and (b) a fake `googleapis` answers instantly, so 70.9 s of
-traffic compresses into about a second. That same compression means the 30-second row cache
-never expires here while it expires repeatedly across a real session — so it also
-under-states what C2's duplicate removals save, and no part of the 46 is claimed on the
-strength of a cache lifetime.
+**The remaining gap to live demand is the retries, and it runs one way.** The live run
+measured 116 attempts with a peak of 87. This harness does not model retries at all, and
+Google meters them like any other request — so the live number can only be higher than this
+one on that account. With the timing now replayed, retries are the whole of the modelling
+gap; the collapsed-timeline distortion that used to cut the other way is gone.
+
+One input is still chosen rather than captured, and it can over-count: the
+`/api/suggest-substitute` body deliberately names a lift with a known substitute so the route
+takes its history-reading branch. The manifest records no bodies, so the live branch is not
+knowable, and this is a stress choice stated plainly rather than trace-derived evidence.
 
 **What each correction is actually worth**, measured one at a time by disabling exactly one
 and re-running:
 
-| Correction disabled | Peak |
-|---|---|
-| C4 — repeated recommendation | **52 — over budget on its own** |
-| C3 — verify-range retired | 47 |
-| C2 — intent-recommendation duplicate | 47 |
-| C2 — coaching/insights duplicate | 46 |
-| C2 — prs/recent duplicate | 46 |
-| all five disabled | 54 |
+| Correction disabled | Session total | Peak rolling-60s |
+|---|---|---|
+| C4 — repeated recommendation | 54 | **45** |
+| C2 — intent-recommendation duplicate | 49 | 40 |
+| C3 — verify-range retired | 49 | 39 |
+| C2 — coaching/insights duplicate | 48 | 39 |
+| C2 — prs/recent duplicate | 48 | 39 |
+| *(none disabled — shipped)* | 48 | **39** |
+| all five disabled (the captured client) | 56 | 46 |
 
-So **C4 alone is load-bearing**: without it the session does not fit. C3 and one of the C2
-removals each buy a single read of headroom, and the other two C2 removals cost nothing *in
-this harness* — for the reason given above, not because they do nothing live: the compressed
-timeline keeps the 30-second row cache warm throughout, where a real 71-second session
-expires it repeatedly.
+**The earlier "C4 alone is load-bearing" claim is withdrawn.** Under the collapsed timeline
+C4 measured 52 against a budget of 50, and this document said the session did not fit without
+it. Replayed, C4 disabled peaks at 45 — still inside the budget. **No single correction is
+load-bearing once the timing is honest**; the previous conclusion was an artefact of the same
+collapse that inflated every other figure.
+
+What the table does show is where the weight sits. C4 is worth 6 reads in the worst minute
+and 6 across the session — far more than anything else. C2's intent-recommendation duplicate
+is worth 1 in the peak. C3 and the other two C2 removals do not move the peak at all, and C3
+still removes a real request from the session total; they buy total headroom and cache
+pressure rather than peak headroom. All five together are worth 7 in the peak and 8 in the
+total.
 
 ## The guard
 
@@ -386,7 +428,14 @@ against the real `sheets.js` and the real Express app, faking only `googleapis`,
   request;
 - the harness **replays** the manifest — nothing compressed, nothing dropped, thirteen
   previews and one twelve-row closeout write;
-- the **captured** client still overruns 50;
+- the captured **timing** is replayed too: the corrected peak is pinned at 39 and its total at
+  48, and the peak must be strictly below the total, which is only true of a session spread
+  across more than one rolling minute;
+- **collapsing the timeline changes the answer and cannot pass** — a guard runs the collapsed
+  model deliberately and proves it disagrees (47 vs 39), that its peak equals its total, and
+  that it cannot satisfy the pinned acceptance figures;
+- the **captured** client costs measurably more than the corrected one under identical
+  timing — 46 against 39 in the peak, 56 against 48 across the session;
 - the **corrected** client fits 50, with all fourteen Saves answering 200 and twelve rows of
   the session genuinely on the sheet — a budget met by failing requests would be no
   achievement;
