@@ -413,6 +413,26 @@ test('the captured client — the one that failed — still overruns the budget'
 // remove a request the captured manifest really contains, and must name the tests that
 // prove the client no longer issues it. Nothing is dropped because "the fixture reads
 // nothing there".
+// EXACTLY what the corrected client no longer asks for, pinned as literals.
+//
+// Without this, the ledger check below is weaker than it looks: it proves a correction
+// removes SOMETHING real and names a file that EXISTS, so a correction claiming to remove
+// `/api/coach/message` — seven requests the client certainly still issues — would pass, and
+// the budget would only get easier. A pinned list makes any change to what is removed fail
+// until it is written down here, in front of the reviewer.
+const REMOVED_BY_CORRECTIONS = [
+  'GET /api/coaching/insights #1',
+  'GET /api/log-workout/verify-range #0',
+  'GET /api/plan/intent-recommendation #1',
+  'GET /api/prs/recent #2',
+  'GET /api/recommend/next/BC01 #1',
+  'GET /api/recommend/next/IDB01 #1',
+  'GET /api/recommend/next/OHP01 #1',
+  'GET /api/recommend/next/RDL01 #1',
+  'GET /api/recommend/next/SQ01 #1',
+  'GET /api/recommend/next/SR01 #1',
+];
+
 test('every client correction removes a real captured request and names its guard', () => {
   const ledger = correctionLedger();
   assert.ok(ledger.length > 0, 'the corrected client must differ from the captured one');
@@ -423,11 +443,33 @@ test('every client correction removes a real captured request and names its guar
     assert.ok(correction.why && correction.why.length > 20, `${correction.id} must say why`);
     assert.ok(correction.guards && correction.guards.length > 0,
       `${correction.id} must name the test(s) proving the client no longer issues it`);
-    for (const guard of correction.guards) {
-      assert.ok(fs.existsSync(path.join(__dirname, '..', guard)),
-        `${correction.id} names guard ${guard}, which does not exist`);
+
+    // The guard must actually be ABOUT the request it excuses. A filename that merely exists
+    // proves nothing; a guard that never mentions the path it is cited for is not evidence
+    // that the client stopped issuing it.
+    const guardText = correction.guards.map(guard => {
+      const full = path.join(__dirname, '..', guard);
+      assert.ok(fs.existsSync(full), `${correction.id} names guard ${guard}, which does not exist`);
+      return fs.readFileSync(full, 'utf8');
+    }).join('\n');
+    for (const removed of correction.removed) {
+      const removedPath = removed.split(' ')[1].split(' #')[0];
+      // The exact path, or its ROUTE FAMILY. `/api/recommend/next/{code}` is one rule proved
+      // once — the lift code is just part of the URL key — so a guard that exercises BEN01
+      // covers OHP01. Anything looser than the route would stop being a link at all.
+      const family = removedPath.slice(0, removedPath.lastIndexOf('/') + 1);
+      assert.ok(guardText.includes(removedPath) || guardText.includes(family),
+        `${correction.id} removes ${removedPath}, but none of its guards ` +
+        `(${correction.guards.join(', ')}) mentions that path or its route ${family} — ` +
+        'the citation is not evidence');
     }
   }
+
+  // And exactly these requests, no others.
+  assert.deepEqual(ledger.flatMap(c => c.removed).sort(), REMOVED_BY_CORRECTIONS,
+    'the set of removed requests changed. Every entry here is a request the live client made ' +
+    'and the corrected client provably does not — update this list deliberately, or the ' +
+    'budget below is measuring a session the client would still cause.');
 
   // The corrected sequence differs from the captured one ONLY by those removals — checked
   // by rebuilding it independently from the ledger's exact "METHOD path #occurrence" keys,
