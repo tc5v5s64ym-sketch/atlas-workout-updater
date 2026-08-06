@@ -167,6 +167,13 @@ PR #1271 merged as `42ee7b3` and deployed. The authorized non-counting debug run
 that deployment then measured **116 observable read attempts with a rolling-60s peak of 87**,
 and threw 429s. Both figures are **lower bounds**, not totals: the captured artifact does not
 carry complete retry evidence, and the run was cut short by the quota it had already spent.
+
+**Provenance, stated so the figures are not read as more than they are.** They were measured
+from that run's server log during this corrective. The log is owner evidence and is not
+committed, so the numbers cannot be re-derived from this repository — they are recorded here
+as a measurement that was taken, not as a result this branch reproduces. What this branch
+does reproduce is the request manifest below, which comes from the log's request lines and is
+committed as a privacy-safe fixture.
 `scripts/reconstruct-session-reads.js` now reports `total_is: lower_bound` and
 `retry_attempts: null` rather than `0` when a log cannot prove otherwise — reporting "retry
 attempts: 0" for evidence that simply was not captured is what made the earlier artifact
