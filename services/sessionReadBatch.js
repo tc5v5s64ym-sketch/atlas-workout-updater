@@ -45,7 +45,6 @@ const EFFORT = process.env.EFFORT_SHEET_NAME || 'Effort';
 const LOG_ROWS = `${LOG}!A:Z`;          // getSheetRows — full history
 const LOG_KEYS = `${LOG}!B:G`;          // getLogCompositeKeys — row-level dedup
 const LOG_HEADER = `${LOG}!1:1`;        // header-drift guard
-const LOG_SESSION_IDS = `${LOG}!B:B`;   // session-id column
 const EFFORT_ROWS = `${EFFORT}!A:Z`;
 const EFFORT_HEADER = `${EFFORT}!1:1`;
 const EFFORT_SESSION_IDS = `${EFFORT}!B:B`;
@@ -55,11 +54,9 @@ const COACHING_NOTES_ROWS = 'Coaching_Notes!A:Z';
 const PLANS_ROWS = 'Session_Plans!A:Z';
 const PLANS_HEADER_PROBE = 'Session_Plans!A1:A1';
 const PLANS_HEADER = 'Session_Plans!A1:M1';
-const PLANS_SESSION_IDS = 'Session_Plans!B:B';
 const PLAN_SETS_ROWS = 'Session_Plan_Sets!A:Z';
 const PLAN_SETS_HEADER_PROBE = 'Session_Plan_Sets!A1:A1';
 const PLAN_SETS_HEADER = 'Session_Plan_Sets!A1:P1';
-const PLAN_SETS_SESSION_IDS = 'Session_Plan_Sets!B:B';
 
 // The ledger tabs are read as a set by anything that binds a plan to a performed set:
 // the rows, the header-existence probe and the header itself.
