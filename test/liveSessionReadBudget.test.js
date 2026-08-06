@@ -478,6 +478,29 @@ test(`the corrected client fits the budget: peak <= ${BUDGET} reads per rolling 
   // rows alone would pass on the wrong evidence.
   const written = run.ledgerRows.log.slice(1).filter(row => row[1] === SESSION_ID);
   assert.equal(written.length, 12, 'the closeout wrote all twelve rows of this session');
+
+  // THE CLOSEOUT REALLY SETTLED. This is the branch that died live, and it is also the
+  // cheapest thing to accidentally stop measuring: a closeout that captured nothing, or
+  // sealed as a dry run, is a materially cheaper session than the one that failed — so a
+  // budget measured against it would be measuring the wrong session. Every field here is
+  // the server's own verdict, not a re-derivation.
+  const closeout = saves[saves.length - 1].body.data;
+  assert.equal(closeout.closeout_fully_verified, true, JSON.stringify(closeout));
+  assert.equal(closeout.ledger_seal.sealed_ok, true, 'the set ledger must have sealed');
+  assert.equal(closeout.ledger_seal.sheet_written, true,
+    'a LIVE seal — a dry-run seal would mean a cheaper session was measured');
+  assert.ok(closeout.ledger_seal.sealed >= 12,
+    `every accepted set must be sealed, saw ${closeout.ledger_seal.sealed}`);
+  assert.equal(closeout.session_plans_closeout.captured, true,
+    'the Session_Plans closeout event must be genuinely captured, not disabled');
+  assert.equal(closeout.session_plans_closeout.status, 'written');
+
+  // And the write-verification authority answered on the real Save, describing the real
+  // append — so the budget number and the verification claim come from ONE outcome.
+  assert.equal(closeout.log_write_verification.verified, true, JSON.stringify(closeout.log_write_verification));
+  assert.equal(closeout.log_write_verification.authority, 'append_receipt');
+  assert.equal(closeout.log_write_verification.range, closeout.logAppendedRange);
+  assert.equal(closeout.log_write_verification.rows_written, 12);
 });
 
 // ── the observe-only route must stay observe-only ────────────────────────────
