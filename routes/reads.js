@@ -10,7 +10,14 @@
 //
 // The shared sheet-rows cache is INJECTED (`getSheetRows`) so a write in index.js
 // still invalidates the rows these reads see — the router must never build its own.
-// `catalogCache` + `buildExerciseCatalogEntries` are slice-exclusive and live here.
+// `buildExerciseCatalogEntries` is slice-exclusive and lives here.
+//
+// This router does NOT cache the Exercise_Catalog. `sheets.getExerciseCatalog` is the one
+// server-owned catalog cache (60 s TTL, single-flight, no stale-after-expiry fallback).
+// A second TTL cache used to live here, and two caches in series do not give one TTL: a
+// route entry populated at t=59 from a 59-second-old sheets entry served the SAME source
+// snapshot until t≈119, past the approved bound, without ever attempting the refresh whose
+// failure the contract requires be surfaced. One authority; the loser is deleted.
 
 const express = require('express');
 const { success: standardSuccess, error: standardError } = require('../response');
@@ -23,9 +30,6 @@ const {
   detectStalls,
 } = require('../services/analytics');
 const trainingStore = require('../services/trainingStore');
-const { createTtlCache } = require('../services/cache');
-
-const catalogCache = createTtlCache(60 * 1000);
 
 // ── One truthful terminal status for a failed read ────────────────────────────
 //
@@ -345,10 +349,7 @@ module.exports = function registerReadRoutes({ getSheetRows }) {
   router.get('/api/catalog/exercises', async (req, res) => {
 
     try {
-      const cached = catalogCache.get('catalog:rows');
-      const rows = cached || await getExerciseCatalog();
-      if (!cached) catalogCache.set('catalog:rows', rows);
-      const exercises = buildExerciseCatalogEntries(rows);
+      const exercises = buildExerciseCatalogEntries(await getExerciseCatalog());
       return standardSuccess(req, res, 'Exercise catalog entries', { exercises });
     } catch (error) {
       return readFailure(req, res, 'Failed to read Exercise_Catalog', error);
@@ -364,10 +365,7 @@ module.exports = function registerReadRoutes({ getSheetRows }) {
     }
 
     try {
-      const cached = catalogCache.get('catalog:rows');
-      const rows = cached || await getExerciseCatalog();
-      if (!cached) catalogCache.set('catalog:rows', rows);
-      const exercises = buildExerciseCatalogEntries(rows);
+      const exercises = buildExerciseCatalogEntries(await getExerciseCatalog());
       const lowerQuery = query.toLowerCase();
       const results = exercises.filter(entry => {
         return entry.canonical_name.toLowerCase().includes(lowerQuery)

@@ -129,3 +129,169 @@ helper (e.g. `getLogCompositeKeys` going back to per-column fetches: 1→3 trips
 budget). They do **not** catch a new redundant read added in the handler itself
 (e.g. a second `getLogCompositeKeys` call) unless the read sequence here is updated
 to match. Keep this list in sync with the handler's reads.
+
+---
+
+# Session Google Sheets Read Budget
+
+**Status:** reference. The budget above is **per Save**. This section adds the budget
+that Google's quota actually meters — reads per **rolling 60 seconds across a complete
+session** — and records the mechanisms that hold it. The guard is
+`test/sessionReadBudget.test.js`.
+
+## Why a per-Save budget was not enough
+
+F-SB4B qualifying session 1 (2026-08-05, run `fsb4b-s1-20260805T122822-04E1C5`)
+exhausted its own read quota mid-session and died at closeout. Every individual Save
+was inside the per-Save budget. The session was not:
+`scripts/reconstruct-session-reads.js` over that run's server log measures **78 read
+attempts, 0 of them retries, peak rolling-60s window 78** — the whole session inside one
+minute against a 60/minute quota. Retry amplification was a consequence, not the cause.
+
+A per-Save budget cannot express "a session must fit in a minute", and a guard that
+counts `sheets.js` helper calls cannot see that one `batchGet` now carries what used to
+be six requests. So the session budget is measured at the **googleapis boundary**:
+every `values.get`, every `values.batchGet` **and** every `spreadsheets.get`.
+
+All three are metered. `spreadsheets.get` is not a diagnostic detail — `getSpreadsheetTabs`
+backs `closeoutFinality.isSessionFinalized`, `sessionPlanStore._tabExists` and
+`sessionPlanSetsStore._probeTab`, and `confirmTabMissing` issues one per unresolved range.
+Counting only the values methods reports a values-read total as if it were the read total.
+
+## The budget
+
+**Peak rolling-60s Sheets read requests, across a complete owner-pattern session: ≤ 50.**
+
+Fifty, not sixty, so a session that drifts has room to be caught before it starts
+failing in the gym.
+
+## The two mechanisms
+
+### 1. Request-scoped `values.batchGet` (primary)
+
+Spreadsheet **metadata** (`spreadsheets.get`, behind `getSpreadsheetTabs`) is
+request-scoped too. A session asks "which tabs exist?" repeatedly inside one request —
+`closeoutFinality`, both ledger tab probes, every `confirmTabMissing` — and each ask used
+to be its own metered request. Tab existence cannot change inside a request except through
+`ensureSheetTab`, which invalidates the entry. Nothing is cached across requests.
+
+`sheets.js` opens a read context per HTTP request (`runWithReadContext`). A route
+declares the ranges it needs (`services/sessionReadBatch.js`), and the **first read the
+handler actually performs** issues them as one `batchGet`. Repeat reads of the same range
+inside the request are served from that one call.
+
+Three properties make it safe:
+
+- **The batch never outlives the request.** It is not a cross-request snapshot. Dedup
+  keys, Effort session ids, `Deload_State`, header rows and the `Session_Plans` /
+  `Session_Plan_Sets` ledger are still read fresh on every request that consumes them.
+  Batching changes how many API calls carry a range, never how old the values are.
+- **A write invalidates its tab** in the request context, so a read-after-write in the
+  same request cannot be served a pre-write value.
+- **It transports only.** Every existing helper still parses its own range.
+
+The declaration is lazy on purpose. An eager prefetch charges a batch to a request that
+then reads nothing — measured at +6 reads across one session — which is what makes a
+declaration broader than one code path genuinely free.
+
+Known limit: `batchGet` rejects the whole batch when a range names an absent tab. On a
+spreadsheet missing an optional tab the batch fails `range_unresolved` and each range
+falls back to its individual read — today's behaviour exactly, never worse, but the
+budget is not achieved on such a sheet.
+
+### 2. The `Exercise_Catalog` cache (the only approved cross-request cache)
+
+There is exactly **one** catalog cache, in `sheets.js`. `routes/reads.js` used to own a
+second 60 s TTL cache in front of it; two caches in series do not give one TTL. A route
+entry filled at t=59 from a 59-second-old sheets entry served the same source snapshot
+until t≈119, past the approved bound, without attempting the refresh whose failure the
+contract requires be surfaced. The loser was deleted; the routes now always call
+`getExerciseCatalog()` and only transform its result.
+
+Reference data the athlete's writes never touch, and the single most-read range of the
+failed session (14 of 78). Server-owned; TTL ≤ 60 s; single-flight; expiry is explicit
+(an expired entry is discarded where it expires); **no stale-after-expiry fallback** — a
+failed refresh throws, carrying its `readWithRetry` class so the truthful 503 from
+PR #1270 still applies; an empty result is never cached and `[]` is never synthesized
+from an error.
+
+No other range is cached across requests **by this read layer**, and `sheets.js` holds no
+other cross-request cache: every other range it serves is write-sensitive evidence, and a
+stale copy would corrupt a decision.
+
+Scope note, so the claim is not read wider than it is: `index.js` has a separate,
+pre-existing 30-second `Log_Cleaned` / `Effort` full-row cache that every successful live
+write invalidates (`invalidateSheetRowsCache`). It predates this work, is untouched by it,
+and is out of scope here — the statement above is about the `sheets.js` read layer and the
+catalog authority, not about the process as a whole.
+
+## Measured
+
+Against the failed run's own request sequence, replayed through the real handlers:
+
+Measured in the **qualifying ledger posture** — `ATLAS_SESSION_PLANS_WRITE=1` and
+`SESSION_PLAN_SETS_WRITE_ENABLED=1`, the two flags the combined rehearsal sets
+(`tests/e2e/gate/gate-server.js`). With them off the session has no plan capture, no
+checkpoint writes and a dry-run seal — a materially cheaper session than the one that
+failed.
+
+| Configuration | Peak rolling-60s reads |
+|---|---|
+"Request context" means the WHOLE request-scoped mechanism — declared `batchGet`,
+same-range dedup, and request-scoped spreadsheet metadata — not just the declarations.
+
+| Configuration | Peak rolling-60s reads |
+|---|---|
+| request context + catalog cache (**shipped**) | **46** |
+| request context, cold catalog | 60 |
+| no request context + catalog cache | 123 |
+| neither (pre-change) | 137 |
+
+The 137 is the complete pre-change counterfactual, and it is the number to compare
+against: it counts every metered method through the real handlers, in the posture the
+qualifying session runs. The archived run's 78 is a values-read lower bound from the old
+logging surface (see above) and is consistent with it — the live session was also cut short
+by the quota it had already exhausted. What makes the 46 meaningful is the 137, not the 78.
+
+The margin is **four reads**. The measurement is deterministic, so that is headroom against
+Google's real 60/minute limit rather than slack: a change that adds a few requests to a
+session turns the guard red.
+
+## The guard
+
+`test/sessionReadBudget.test.js` drives the complete owner-pattern sequence against the
+real `sheets.js` and the real Express app, faking only `googleapis`, and asserts:
+
+- peak rolling-60s reads **≤ 50**;
+- `Exercise_Catalog` costs **exactly one** request for the window;
+- **every** request answers 2xx **and every live Save really wrote** — a 4xx performs no
+  reads, and a Save answering 200 as a duplicate skips its append and most of its reads.
+  A stale on-disk idempotency store alone moved the reported budget from 53 to 27, so the
+  harness redirects that store and asserts `sheet_write: 'success'` on every live Save;
+- the **final closeout Save** carrying the production `closeout_context` is driven and
+  must actually seal — that branch is what died live, and nothing else reaches
+  `recordCloseoutEvent` / `sealCloseout`;
+- restoring individual range requests **breaks** the budget;
+- restoring per-request catalog reads **breaks** the budget;
+- both disabled **reproduces** the original quota failure;
+- **every ledger operation genuinely captured** — these routes answer HTTP 200 while
+  reporting `status: 'error', captured: false` in the body, so an all-2xx sequence proves
+  nothing about them, and one really was failing that way;
+- the closeout **settled** in the qualifying posture: `closeout_fully_verified === true`,
+  a **live** set-ledger seal with `sheet_written: true`, and a Session_Plans closeout event
+  that is genuinely `captured: true` — a `disabled` capture or a dry-run seal fails the
+  guard, because either means a cheaper session is being measured;
+- a `Deload_State` change is visible to the next recommendation — the budget may never be
+  bought with a cached training state;
+- the catalog **route** never serves a snapshot older than one TTL; a **transient** refresh
+  failure after expiry reaches it as the retryable **503** from PR #1270 with
+  `upstream_read_unavailable`, carrying no stale data.
+
+Three mutation bites keep the measurement honest, because each of these was live in an
+earlier head and none turned the file red: dropping metadata reads from the count must
+change the answer, dropping the closeout Save must fail the guard, and flipping any single
+closeout settlement outcome to failure — the verdict, the seal, or the capture — must make
+the guard red.
+
+The counterfactuals are the anti-false-green: if the sequence ever stops genuinely
+exercising the read paths, they stop failing-as-required and the file goes red.
