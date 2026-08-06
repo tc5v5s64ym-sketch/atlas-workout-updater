@@ -323,9 +323,23 @@ never expires here while it expires repeatedly across a real session — so it a
 under-states what C2's duplicate removals save, and no part of the 46 is claimed on the
 strength of a cache lifetime.
 
-With 46 against 50 there is genuine headroom, so no single correction is load-bearing on the
-budget line — restoring one leaves 47. They are load-bearing together: restoring all of them
-measures 54.
+**What each correction is actually worth**, measured one at a time by disabling exactly one
+and re-running:
+
+| Correction disabled | Peak |
+|---|---|
+| C4 — repeated recommendation | **52 — over budget on its own** |
+| C3 — verify-range retired | 47 |
+| C2 — intent-recommendation duplicate | 47 |
+| C2 — coaching/insights duplicate | 46 |
+| C2 — prs/recent duplicate | 46 |
+| all five disabled | 54 |
+
+So **C4 alone is load-bearing**: without it the session does not fit. C3 and one of the C2
+removals each buy a single read of headroom, and the other two C2 removals cost nothing *in
+this harness* — for the reason given above, not because they do nothing live: the compressed
+timeline keeps the 30-second row cache warm throughout, where a real 71-second session
+expires it repeatedly.
 
 ## The guard
 
