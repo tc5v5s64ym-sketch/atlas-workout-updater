@@ -123,6 +123,36 @@ test('the adjudicator never mutates its inputs', () => {
   assert.equal(JSON.stringify({ receipt, rows }), frozen);
 });
 
+// A Save whose rows were ALL skipped as duplicates appends nothing. There is no receipt to
+// adjudicate, so there must be no verdict — an "everything was already there" Save must not
+// be able to present itself as a verified write.
+test('no rows submitted is not proof, whatever the receipt says', () => {
+  const verdict = verifyAppendReceipt({
+    receipt: { updatedRange: 'Log_Cleaned!A200:L201', updatedRows: 2 },
+    tab: 'Log_Cleaned',
+    sessionId: SESSION,
+    rowsSubmitted: [],
+    sessionIdColumnIndex: SESSION_ID_COL,
+  });
+  assert.equal(verdict.verified, false);
+  assert.equal(verdict.reason, 'no_rows_submitted');
+  assert.equal(verdict.rows_submitted, 0);
+});
+
+test('a non-array rowsSubmitted is treated as none, never as unchecked', () => {
+  for (const rowsSubmitted of [undefined, null, 'two', 2, {}]) {
+    const verdict = verifyAppendReceipt({
+      receipt: { updatedRange: 'Log_Cleaned!A200:L201', updatedRows: 2 },
+      tab: 'Log_Cleaned',
+      sessionId: SESSION,
+      rowsSubmitted,
+      sessionIdColumnIndex: SESSION_ID_COL,
+    });
+    assert.equal(verdict.verified, false, `rowsSubmitted=${JSON.stringify(rowsSubmitted)}`);
+    assert.equal(verdict.reason, 'no_rows_submitted');
+  }
+});
+
 // ── the live path ───────────────────────────────────────────────────────────
 //
 // The real app, the real sheets.js, only `googleapis` faked — so the receipt under test is
