@@ -6709,24 +6709,54 @@ async function liveEffortWrite(sessionId) {
   return requestMultipart('/api/complete-workout', form);
 }
 
-test('read-path cache: analytics reads are cached within the TTL and a live write invalidates them', async () => {
+// RETARGETED by C2 of the read-budget corrective. This test used to prove that an
+// EFFORT-only write made the next Log_Cleaned read fresh — which was true only because
+// every write cleared both cached tabs indiscriminately. It never was the contract: an
+// effort-only write appends nothing to Log_Cleaned, so the cached log rows are still
+// exactly what the sheet holds, and re-reading them spends a Sheets read for nothing.
+//
+// The contract this now proves is the one that matters: a write always makes ITS OWN tab
+// fresh to the next read, and never evicts a tab it did not touch.
+test('read-path cache: analytics reads are cached within the TTL and a live write invalidates its own tab', async () => {
   fakeSheetsState.allowAppend = true;
   try {
     await withMutedConsoleLog(async () => {
-      // Start from a known-empty cache: a live write clears anything earlier tests left.
+      // Start from a known-empty cache: a no-argument invalidation clears everything.
       await liveEffortWrite('CACHE-RESET-01');
+      await requestJson('/api/plan/today');
+      await requestJson('/api/plan/intent-recommendation');
 
       // Both endpoints read Log_Cleaned through index.js's cached getSheetRows.
       fakeSheetsState.reads = {};
-      await requestJson('/api/plan/today');            // cache miss → reads Log_Cleaned once
-      await requestJson('/api/stalls?minSessions=3');  // cache hit  → no further read
-      assert.equal(fakeSheetsState.reads['Log_Cleaned'], 1, 'second analytics read should be served from cache');
+      await requestJson('/api/plan/today');            // warm
+      await requestJson('/api/stalls?minSessions=3');  // cache hit — no further read
+      assert.equal(fakeSheetsState.reads['Log_Cleaned'] || 0, 0,
+        'analytics reads should be served from cache');
 
-      // A live write must invalidate, so the next read hits the sheet again.
+      // An EFFORT-only write must make the Effort rows fresh...
       await liveEffortWrite('CACHE-RESET-02');
       fakeSheetsState.reads = {};
+      await requestJson('/api/plan/intent-recommendation');
+      assert.equal(fakeSheetsState.reads['Effort'], 1,
+        'the tab the write appended to must be re-read — a write is always visible');
+      // ...and must NOT throw away log rows it did not touch.
+      assert.equal(fakeSheetsState.reads['Log_Cleaned'] || 0, 0,
+        'an effort-only write must not evict Log_Cleaned');
+
+      // A LOG write is the mirror image.
+      fakeSheetsState.reads = {};
+      const { response } = await requestJson('/api/log-workout', {
+        method: 'POST',
+        body: JSON.stringify({
+          date: '2026-06-11', session_id: 'CACHE-RESET-03', write_id: 'live-log-CACHE-RESET-03',
+          log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 225, reps: 5, rir: 2 }],
+        }),
+      });
+      assert.equal(response.status, 200);
+      fakeSheetsState.reads = {};
       await requestJson('/api/plan/today');
-      assert.equal(fakeSheetsState.reads['Log_Cleaned'], 1, 'read after a write must be fresh, not cached');
+      assert.equal(fakeSheetsState.reads['Log_Cleaned'], 1,
+        'a log read after a log write must be fresh, not cached');
     });
   } finally {
     fakeSheetsState.allowAppend = false;

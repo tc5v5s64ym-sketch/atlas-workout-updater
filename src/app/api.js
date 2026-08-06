@@ -126,6 +126,53 @@ export function friendlyTransportMessage(err) {
   return null;
 }
 
+// ── Coalesced reads ─────────────────────────────────────────────────────────
+//
+// The app opens by fanning out across several cards, and more than one card needs the SAME
+// read. `loadDashboard` and `loadCoachPlan` both want /api/plan/intent-recommendation;
+// `loadDashboard` and `loadWeeklyCoach` both want /api/coaching/insights; after a Save the
+// dashboard refresh and the verdict strip both want /api/prs/recent. The 2026-08-05
+// qualifying session's request manifest shows each of those pairs issued 0.4–0.9 s apart,
+// against a 60-read-per-minute quota.
+//
+// This coalesces only requests that OVERLAP IN TIME: a second caller joins a request that
+// is still in flight. It is not a cache. Nothing is remembered after the response arrives,
+// so a later call always goes to the server, and no response is ever served past the
+// instant it was fetched.
+//
+// WHY THAT IS SAFE ACROSS A WRITE. Any non-GET request clears the in-flight map when it
+// settles (see below), so a read STARTED after a write completed can never attach to a read
+// that started before it — it issues its own request and sees the post-write state. A read
+// that was already in flight when the write began could equally have raced it without this,
+// so nothing new is suppressed. Legitimate calls after newly written sets keep going to the
+// server; only genuinely simultaneous, identical requests share one.
+//
+// Each caller gets its OWN copy of the body, so one card cannot mutate another's data.
+const inflightReads = new Map();
+
+export function coalescedGet(path) {
+  const existing = inflightReads.get(path);
+  if (existing) return existing.then(body => copyOf(body));
+  const request = api(path).finally(() => {
+    if (inflightReads.get(path) === request) inflightReads.delete(path);
+  });
+  inflightReads.set(path, request);
+  return request.then(body => copyOf(body));
+}
+
+/** Forget every in-flight read. Called whenever a write settles. */
+export function dropCoalescedReads() {
+  inflightReads.clear();
+}
+
+function copyOf(body) {
+  try {
+    return typeof structuredClone === 'function' ? structuredClone(body) : JSON.parse(JSON.stringify(body));
+  } catch (_) {
+    return body;   // a body that cannot be copied is still better than no body
+  }
+}
+
 export async function api(path, options = {}) {
   // Internal, header-only response seam used by the bounded turn-correlation protocol.
   // Strip it before fetch so it can never become a wire option or enter response bodies,
@@ -217,6 +264,10 @@ export async function api(path, options = {}) {
     }
     throw err;
   } finally {
+    // A write may change what any read would answer, so no read started AFTER this write
+    // settles may attach to one that started before it. Doing it here — rather than at each
+    // write site — means a new write route cannot forget to. See coalescedGet above.
+    if (method !== 'GET') dropCoalescedReads();
     atlasRecentApiRequests.push({
       at: new Date().toISOString(),
       method,

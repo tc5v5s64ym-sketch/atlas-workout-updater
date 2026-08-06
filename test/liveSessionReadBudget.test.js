@@ -358,15 +358,25 @@ test('every client correction removes a real captured request and names its guar
     }
   }
 
-  // The corrected sequence differs from the captured one ONLY by those removals.
+  // The corrected sequence differs from the captured one ONLY by those removals — checked
+  // by rebuilding it independently from the ledger's exact "METHOD path #occurrence" keys,
+  // not by trusting the same filter the harness used.
   const captured = liveSessionSequence();
   const corrected = liveSessionSequence({ corrected: true });
-  const removedCount = ledger.reduce((n, c) => n + c.removed.length, 0);
-  assert.equal(corrected.length, captured.length - removedCount,
+  const removedKeys = new Set(ledger.flatMap(c => c.removed));
+  assert.equal(removedKeys.size, ledger.reduce((n, c) => n + c.removed.length, 0),
+    'two corrections must not claim the same request');
+
+  const seen = new Map();
+  const expected = captured.filter(([method, url]) => {
+    const path = url.split('?')[0];
+    const n = seen.get(path) || 0;
+    seen.set(path, n + 1);
+    return !removedKeys.has(`${method} ${path} #${n}`);
+  });
+  assert.equal(corrected.length, captured.length - removedKeys.size,
     'the corrected sequence may differ from the captured manifest only by the ledger');
-  const removedPaths = new Set(ledger.flatMap(c => c.removed.map(r => r.split(' ')[1])));
-  const capturedKept = captured.filter(([, url]) => !removedPaths.has(url.split('?')[0]));
-  assert.deepEqual(corrected.map(([m, u]) => `${m} ${u}`), capturedKept.map(([m, u]) => `${m} ${u}`),
+  assert.deepEqual(corrected.map(([m, u]) => `${m} ${u}`), expected.map(([m, u]) => `${m} ${u}`),
     'order and multiplicity of every surviving request must be untouched');
 });
 
@@ -380,8 +390,8 @@ test('the corrected client is measured, and the measurement is moving toward the
     `NOT YET AT BUDGET — corrected client measured ${run.peak}, target <= ${BUDGET}. When ` +
     'this assertion starts failing, the remaining reductions have landed and this test must ' +
     `be replaced by the real guard (peak <= ${BUDGET}).\n  ${run.breakdown}`);
-  assert.ok(run.peak <= 53,
-    `the corrections must not regress: last measured 53, now ${run.peak}\n  ${run.breakdown}`);
+  assert.ok(run.peak <= 52,
+    `the corrections must not regress: last measured 52, now ${run.peak}\n  ${run.breakdown}`);
 });
 
 // ── the observe-only route must stay observe-only ────────────────────────────

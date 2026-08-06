@@ -180,6 +180,10 @@ const LAST_SAVE_INDEX = LAST_SAVE_OCCURRENCE;
 // Nothing here compresses repeats, substitutes a representative call, or drops a route for
 // convenience. A correction with no matching request in the captured manifest fails
 // `test/liveSessionReadBudget.test.js`.
+//
+// A correction matches on (entry, occurrence) — the occurrence number of that path in the
+// FULL manifest — so a duplicate can be named exactly. Removing "the second
+// /api/coaching/insights" must never be expressible as "all of them".
 const CLIENT_CORRECTIONS = [
   {
     id: 'C3-verify-range-retired',
@@ -193,6 +197,39 @@ const CLIENT_CORRECTIONS = [
       // the client takes exactly one verification path, and it is not this route
       'tests/e2e/write-verification-authority.spec.js',
     ],
+  },
+
+  // C2 — three reads the app asked for TWICE at the same moment, with nothing written
+  // between them. Each pair is two cards wanting the same answer; the second now joins the
+  // first while it is still in flight. Only the SECOND of each pair is removed: the first
+  // is the real request, and the later post-Save fan-out is a new question at a new moment
+  // and stays.
+  {
+    id: 'C2-intent-recommendation-duplicate',
+    // occurrence 1 = the 2.6 s call, 0.4 s after loadDashboard's. loadCoachPlan's.
+    match: (entry, occurrence) => entry.path === '/api/plan/intent-recommendation' && occurrence === 1,
+    why: 'loadDashboard and loadCoachPlan both open with this read, 0.4 s apart with nothing '
+      + 'written between; the second now joins the first in flight.',
+    guards: ['tests/e2e/duplicate-read-coalescing.spec.js'],
+  },
+  {
+    id: 'C2-coaching-insights-duplicate',
+    // occurrence 1 = the 2.6 s call. loadCoaching's, after loadWeeklyCoach's at 1.7 s.
+    match: (entry, occurrence) => entry.path === '/api/coaching/insights' && occurrence === 1,
+    why: 'loadWeeklyCoach and loadCoaching both open with this read, 0.9 s apart; starting '
+      + "loadDashboard's below-fold group in the same tick makes them share one request "
+      + 'deterministically rather than by timing luck.',
+    guards: ['tests/e2e/duplicate-read-coalescing.spec.js'],
+  },
+  {
+    id: 'C2-prs-recent-duplicate',
+    // occurrence 2 = the 66.5 s call. The verdict strip's, 0.8 s after the post-Save
+    // dashboard refresh asked the same thing. Occurrence 0 (app open) and occurrence 1
+    // (the refresh itself) are genuinely different moments and both stay.
+    match: (entry, occurrence) => entry.path === '/api/prs/recent' && occurrence === 2,
+    why: 'after a Save the dashboard refresh and the verdict strip both want the PR list, '
+      + '0.8 s apart and after the same write; the second joins the first in flight.',
+    guards: ['tests/e2e/duplicate-read-coalescing.spec.js'],
   },
 ];
 
@@ -215,7 +252,7 @@ function liveSessionSequence({ runId = 'r1', appendedRange = 'Log_Cleaned!A2:L13
     return { entry, n };
   });
   const requests = corrected
-    ? numbered.filter(({ entry }) => !CLIENT_CORRECTIONS.some(c => c.match(entry)))
+    ? numbered.filter(({ entry, n }) => !CLIENT_CORRECTIONS.some(c => c.match(entry, n)))
     : numbered;
   return requests.map(({ entry, n }) => {
     const query = entry.query
@@ -242,6 +279,16 @@ function manifestEndpointCounts() {
   return counts;
 }
 
+/** The manifest with each request's per-path occurrence number attached. */
+function numberManifest() {
+  const seen = new Map();
+  return MANIFEST.requests.map((entry) => {
+    const n = seen.get(entry.path) || 0;
+    seen.set(entry.path, n + 1);
+    return { entry, n };
+  });
+}
+
 /**
  * What each correction actually removed from the captured manifest. The budget test asserts
  * every correction removed at least one REAL captured request, so a correction can never be
@@ -252,9 +299,9 @@ function correctionLedger() {
     id: correction.id,
     why: correction.why,
     guards: correction.guards,
-    removed: MANIFEST.requests
-      .filter(entry => correction.match(entry))
-      .map(entry => `${entry.method} ${entry.path}`),
+    removed: numberManifest()
+      .filter(({ entry, n }) => correction.match(entry, n))
+      .map(({ entry, n }) => `${entry.method} ${entry.path} #${n}`),
   }));
 }
 

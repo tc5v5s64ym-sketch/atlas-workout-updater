@@ -10,7 +10,7 @@
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-import { API_KEY_STORAGE, api, authState, friendlyTransportMessage, getApiKey, isConnected, refreshSessionStatus, sessionLogin, sessionLogout } from './api.js';
+import { API_KEY_STORAGE, api, authState, coalescedGet, friendlyTransportMessage, getApiKey, isConnected, refreshSessionStatus, sessionLogin, sessionLogout } from './api.js';
 import { BUG_REPORT_ACTION_LIMIT, BUG_REPORT_ERROR_LIMIT, BUG_REPORT_RECENT_API_LIMIT, BUG_REPORT_REDACTED, BUG_REPORT_SECRET_VALUE_PATTERNS, BUG_REPORT_SIZE_BUDGET, BUG_REPORT_STORAGE_KEY_RE, atlasActionLog, atlasRecentApiRequests, atlasRecentErrors, recordAtlasAction, recordAtlasError } from './bugReport.js';
 import { el, loadExerciseDatalist, renderTable, setStatus, svgBarChart, svgLineChart } from './dom.js';
 import { loadHistory, loadSessions } from './historyView.js';
@@ -800,9 +800,18 @@ async function loadDashboard() {
   // synchronous flag — isConnected() is false only after a real 401 / negative status.
   if (!isConnected()) { renderDashboardConnectPrompt(); return; }
 
+  // Below-fold sources, started in the SAME TICK as the above-fold pair rather than after
+  // the await — they never depended on it, and starting them now is what makes the shared
+  // reads coalesce deterministically instead of by timing luck (see coalescedGet in api.js).
+  loadCoaching();
+  loadWeeklySummary();
+  loadRecentHistory();
+  loadRecentPrs();
+  loadStalls();
+
   // Fire intent-recommendation + progress/summary first — they feed the above-fold region.
   const [intentResult, summaryResult] = await Promise.allSettled([
-    api('/api/plan/intent-recommendation'),
+    coalescedGet('/api/plan/intent-recommendation'),   // shared with loadCoachPlan
     api('/api/progress/summary')
   ]);
 
@@ -847,13 +856,6 @@ async function loadDashboard() {
   // the guide box; it degrades to the default tagline when the engine named no
   // session (cold start / offline / no key).
   emitGlanceReady(intentData);
-
-  // Below-fold sources load independently; each fills its own glance card.
-  loadCoaching();
-  loadWeeklySummary();
-  loadRecentHistory();
-  loadRecentPrs();
-  loadStalls();
 }
 
 // Coach-first home opener (owner 2026-07-03, PR-1): the hero speaks a coaching
@@ -987,7 +989,7 @@ async function loadCoachPlan() {
   if (!isConnected()) { card.hidden = true; return; }
 
   const [intentResult, planResult] = await Promise.allSettled([
-    api('/api/plan/intent-recommendation'),
+    coalescedGet('/api/plan/intent-recommendation'),   // shared with loadDashboard
     api('/api/plan/today')
   ]);
 
@@ -1057,7 +1059,7 @@ async function loadWeeklyCoach() {
 
   const [reportResult, insightsResult] = await Promise.allSettled([
     api('/api/report/weekly'),
-    api('/api/coaching/insights')
+    coalescedGet('/api/coaching/insights')   // shared with loadCoaching
   ]);
 
   // report/weekly is the core source — without it there's nothing to show.
@@ -3879,7 +3881,7 @@ function setGlanceHint(id, text) {
 async function loadCoaching() {
   const box = document.getElementById('coaching');
   try {
-    const res = await api('/api/coaching/insights');
+    const res = await coalescedGet('/api/coaching/insights');   // shared with loadWeeklyCoach
     const data = res.data || {};
     box.innerHTML = '';
 
@@ -3968,7 +3970,8 @@ async function loadRecentHistory() {
 async function loadRecentPrs() {
   const box = document.getElementById('recent-prs');
   try {
-    const res = await api('/api/prs/recent');
+    // Coalesced with fetchSessionPrLabel — both fire after the same Save.
+    const res = await coalescedGet('/api/prs/recent');
     const prs = res.data?.prs || [];
     box.innerHTML = '';
     setGlanceHint('recent-prs-hint', prs.length ? `${prs.length} personal best${prs.length === 1 ? '' : 's'} 🎉` : 'Your bests will land here');
@@ -6454,7 +6457,8 @@ async function checkAndSuggestSubstitute(text) {
 async function fetchSessionPrLabel(liftCode, sessionId) {
   if (!liftCode || !sessionId || !isConnected()) return '';
   try {
-    const res = await api('/api/prs/recent');
+    // Coalesced with the dashboard refresh — both fire after the same Save.
+    const res = await coalescedGet('/api/prs/recent');
     const prs = res.data?.prs || [];
     const code = String(liftCode).toUpperCase();
     const pr = prs.find(p => String(p.liftCode || '').toUpperCase() === code);

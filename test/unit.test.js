@@ -4855,9 +4855,12 @@ test('scoreIntents: intent-recommendation route is GET and read-only', () => {
 
 test('intent dashboard: loadDashboard calls intent-recommendation and renders results', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  // Widened from 1400: C2 moved loadDashboard's below-fold group above the await so the
+  // shared reads coalesce in the same tick, which pushed the render calls past the old
+  // window. The assertions themselves are unchanged.
   const dashFn = appSource.slice(
     appSource.indexOf('async function loadDashboard('),
-    appSource.indexOf('async function loadDashboard(') + 1400
+    appSource.indexOf('async function loadDashboard(') + 2000
   );
   assert.match(dashFn, /\/api\/plan\/intent-recommendation/, 'must call intent-recommendation endpoint');
   assert.match(dashFn, /renderTodaysRead/, 'must call renderTodaysRead');
@@ -6392,7 +6395,8 @@ test('polish: renderCoachReadStrip renders compact dots and pick text', () => {
 
 test('polish: loadDashboard calls renderCoachReadStrip', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
-  const fn = appSource.slice(appSource.indexOf('async function loadDashboard('), appSource.indexOf('async function loadDashboard(') + 1400);
+  // Widened from 1400 — see the intent-dashboard test above.
+  const fn = appSource.slice(appSource.indexOf('async function loadDashboard('), appSource.indexOf('async function loadDashboard(') + 2000);
   assert.match(fn, /renderCoachReadStrip/, 'loadDashboard must call renderCoachReadStrip');
 });
 
