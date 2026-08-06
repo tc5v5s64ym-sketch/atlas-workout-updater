@@ -1,47 +1,53 @@
 'use strict';
 
-// Reconstruct every Google Sheets READ ATTEMPT from a rehearsal/gate server log, and
-// attribute each one to the HTTP request that issued it.
+// Reconstruct every Google Sheets READ ATTEMPT from a rehearsal/gate server log.
 //
-// Why this exists: F-SB4B qualifying session 1 (2026-08-05) exhausted its own Sheets
-// read quota mid-session. `docs/READ_BUDGET.md` budgets reads PER SAVE and its guard
-// counts sheets.js helpers — neither can see what a COMPLETE owner-pattern session
-// actually demands in one rolling minute. This script measures the real thing from a
-// real log, so the session budget is set from evidence rather than estimated.
+// Why this exists: F-SB4B qualifying session 1 (2026-08-05) exhausted its own Sheets read
+// quota mid-session, and the corrective merged as PR #1271 on the strength of a harness
+// that measured 46 reads for a complete session. The authorized non-counting debug run on
+// 2026-08-06 then measured 116 observable reads with a rolling-60s peak of 87 — over
+// Google's 60/minute limit — and threw 429s. This tool is how that was established, and
+// its honesty is therefore load-bearing.
 //
-// Attribution model, stated plainly because it bounds the result: sheets.js logs a read
-// as it is issued, and the request logger logs a request when it COMPLETES. So a read
-// belongs to the next completed request logged after it. Under concurrency that can
-// misattribute a read between two overlapping requests — it never loses or invents one,
-// so per-request counts are approximate while TOTALS are exact for what the log records.
+// TWO EVIDENCE MODES, and the difference matters.
 //
-// SECOND BOUND, and it matters for the archived logs. This tool can only count lines that
-// were written. Builds before the F-SB4B read-budget change emitted no line for
-// `spreadsheets.get`, so a total taken from one of those logs — including the preserved
-// qualifying-session-1 log's 78 — is a VALUES-READ LOWER BOUND, not a complete read total,
-// and re-running this parser cannot retroactively recover the missing metadata calls. The
-// pattern below makes logs from the current build complete; it does not repair old ones.
-// For a complete pre-change figure use the real-handler harness in
-// test/sessionReadBudget.test.js, which counts every metered method at the API boundary.
+// 1. STRUCTURED (current builds). `sheets.js` emits one `[sheets-read] {json}` line per
+//    quota-metered ATTEMPT — first try and every retry — carrying the request id, the HTTP
+//    method and path that caused it, the API method, the ranges, the attempt number, and
+//    the outcome. Counts are exact, attribution is exact, and retries are counted.
+//
+// 2. LEGACY (archived logs). Older builds emitted one human line per logical read and
+//    printed retries only through `console.warn`; builds before the F-SB4B read-budget
+//    change also emitted nothing at all for `spreadsheets.get`. What is missing differs by
+//    build, so the tool DETECTS per log which classes are absent and names them, rather
+//    than assuming. A total missing any class is a LOWER BOUND, and no amount of
+//    re-parsing recovers what was never written.
+//
+// The report says which mode it used and never presents a lower bound as a total. In
+// particular it reports retries as **not observable** rather than as `0` when the log
+// carries no retry evidence: the debug run's own artifact showed "retry attempts: 0" while
+// the console had shown a 429 storm, because the retry lines went to a stream the file did
+// not capture. Zero-because-none-happened and zero-because-unobservable are different
+// facts and this tool no longer collapses them.
+//
+// Line prefixes are tolerated. The gate harness prefixes captured server output with
+// `[gate-server] `, and an anchored pattern silently matched nothing.
 //
 // Read-only: parses a text file, contacts nothing, writes nothing but its own report.
 
 const fs = require('fs');
 
-// One entry per API REQUEST, which is what Google's quota meters.
-//
-// Since the F-SB4B read-batching change, `sheets.js` logs a line only when it actually
-// issues a request: a range served from the request-scoped batch, or from the
-// Exercise_Catalog cache, prints nothing and costs nothing. The per-helper lines below
-// ('Fetching rows from …', 'Fetching composite-key columns …', …) are the PRE-change
-// wording and are kept so this script still reads the qualifying-session-1 log and any
-// other archived log truthfully. A post-change log uses the first two patterns.
-const READ_PATTERNS = [
-  // label, regex capturing the range
+// Strip any harness prefix before matching. `[gate-server] [sheets.js] …` and
+// `[gate-server] [sheets-read] {…}` must parse exactly like their unprefixed forms.
+const PREFIX_RE = /^(?:\[[a-z0-9_-]+\]\s+)*/i;
+
+const STRUCTURED_RE = /^\[sheets-read\]\s+(\{.*\})$/;
+
+// LEGACY patterns — one entry per API REQUEST as older builds logged it. Kept so archived
+// logs (including the preserved qualifying-session-1 artifact) still parse, and never used
+// when structured lines are present.
+const LEGACY_READ_PATTERNS = [
   [/^\[sheets\.js\] Reading range (.+)$/, 'readValues'],
-  // `spreadsheets.get` is metered like any other read. sheets.js labels it
-  // 'spreadsheet metadata' through readWithRetry; without this pattern the TOTAL below
-  // would be a values-read count presented as a read count.
   [/^\[sheets\.js\] Reading (spreadsheet metadata)$/, 'getSpreadsheetTabs'],
   [/^\[sheets\.js\] Batch reading \d+ range\(s\): (.+)$/, 'prefetchRanges'],
   [/^\[sheets\.js\] Fetching Exercise_Catalog from range (.+)$/, 'getExerciseCatalog'],
@@ -50,62 +56,121 @@ const READ_PATTERNS = [
   [/^\[sheets\.js\] Fetching rows from \S+ range (.+)$/, 'getSheetRows'],
   [/^\[sheets\.js\] Fetching header row from (.+)$/, 'getHeaderRow'],
 ];
-const RETRY_RE = /^\[sheets\.js\] Transient read error on (.+?) \(attempt (\d+)\)/;
-const REQ_RE = /^\{"timestamp":"([^"]+)","method":"([^"]+)","path":"([^"]+)","status":(\d+)[^}]*"duration_ms":(\d+)/;
+const LEGACY_RETRY_RE = /^\[sheets\.js\] Transient read error on (.+?) \(attempt (\d+)\)/;
+const REQ_RE = /^(\{"timestamp":.*"duration_ms":\d+.*\})$/;
 
 function reconstruct(logText) {
-  const attempts = [];   // every read ATTEMPT, including retries
-  const retries = [];
-  let pending = [];      // reads seen since the last completed request
+  const attempts = [];
+  const requests = [];
+  const legacyRetries = [];
+  let pending = [];          // legacy mode only: reads seen since the last completed request
+  let structuredSeen = false;
+  let legacyRetryLineSeen = false;
+  let quotaTextSeen = false;
+  let metadataLineSeen = false;
 
   for (const raw of logText.split('\n')) {
-    const line = raw.trim();
+    const line = raw.trim().replace(PREFIX_RE, '');
     if (!line) continue;
 
-    const retry = RETRY_RE.exec(line);
-    if (retry) {
-      retries.push({ range: retry[1], attempt: Number(retry[2]) });
-      // A logged retry means the PREVIOUS attempt failed and another is being issued.
-      pending.push({ caller: 'retry', range: retry[1], retry: true, attemptNo: Number(retry[2]) + 1 });
+    if (/Quota exceeded|RESOURCE_EXHAUSTED/i.test(line)) quotaTextSeen = true;
+
+    // ── structured ──────────────────────────────────────────────────────────
+    const structured = STRUCTURED_RE.exec(line);
+    if (structured) {
+      let record;
+      try { record = JSON.parse(structured[1]); } catch { record = null; }
+      if (record) {
+        structuredSeen = true;
+        attempts.push({
+          mode: 'structured',
+          request_id: record.request_id || null,
+          endpoint: record.http_method && record.http_path
+            ? `${record.http_method} ${record.http_path}` : '(no request context)',
+          api: record.api || 'unknown',
+          ranges: Array.isArray(record.ranges) ? record.ranges : [String(record.ranges || '')],
+          attempt: Number(record.attempt) || 1,
+          retry: (Number(record.attempt) || 1) > 1,
+          outcome: record.outcome || null,
+          quota_rejection: Boolean(record.quota_rejection),
+          timestamp: record.at || null,
+        });
+        continue;
+      }
+    }
+
+    // ── legacy ──────────────────────────────────────────────────────────────
+    const legacyRetry = LEGACY_RETRY_RE.exec(line);
+    if (legacyRetry) {
+      legacyRetryLineSeen = true;
+      legacyRetries.push({ range: legacyRetry[1], attempt: Number(legacyRetry[2]) });
+      pending.push({ mode: 'legacy', caller: 'retry', ranges: [legacyRetry[1]], retry: true, attempt: Number(legacyRetry[2]) + 1 });
       continue;
     }
 
     let matched = false;
-    for (const [re, caller] of READ_PATTERNS) {
+    for (const [re, caller] of LEGACY_READ_PATTERNS) {
       const m = re.exec(line);
-      if (m) { pending.push({ caller, range: m[1], retry: false, attemptNo: 1 }); matched = true; break; }
+      if (m) {
+        if (caller === 'getSpreadsheetTabs') metadataLineSeen = true;
+        pending.push({ mode: 'legacy', caller, ranges: m[1].split(', '), retry: false, attempt: 1 });
+        matched = true;
+        break;
+      }
     }
     if (matched) continue;
 
     const req = REQ_RE.exec(line);
     if (req) {
-      const [, timestamp, method, path, status, duration] = req;
+      let parsed;
+      try { parsed = JSON.parse(req[1]); } catch { parsed = null; }
+      if (!parsed) continue;
+      requests.push(parsed);
+      const endpoint = `${parsed.method} ${String(parsed.path || '').split('?')[0]}`;
       for (const p of pending) {
-        attempts.push({ ...p, timestamp, endpoint: `${method} ${path}`, status: Number(status), duration_ms: Number(duration) });
+        attempts.push({ ...p, timestamp: parsed.timestamp, endpoint, request_id: parsed.requestId || null });
       }
       pending = [];
     }
   }
-  // Reads issued before any request completed (server boot / preflight) or left dangling
-  // by a request that never logged: keep them, attributed honestly as unattributed.
-  for (const p of pending) attempts.push({ ...p, timestamp: null, endpoint: '(unattributed)', status: null, duration_ms: null });
-  return { attempts, retries };
+
+  for (const p of pending) {
+    attempts.push({ ...p, timestamp: null, endpoint: '(unattributed)', request_id: null });
+  }
+
+  // In structured mode the legacy pending-attribution is meaningless; drop it so the two
+  // modes are never mixed into one total.
+  const structuredAttempts = attempts.filter(a => a.mode === 'structured');
+  const usedStructured = structuredSeen && structuredAttempts.length > 0;
+
+  return {
+    mode: usedStructured ? 'structured' : 'legacy',
+    attempts: usedStructured ? structuredAttempts : attempts.filter(a => a.mode === 'legacy'),
+    requests,
+    legacyRetries,
+    retriesObservable: usedStructured || legacyRetryLineSeen,
+    // `spreadsheets.get` was unlogged before the F-SB4B read-budget change, so a legacy
+    // log that carries no metadata line is missing that whole class of metered read.
+    metadataObservable: usedStructured || metadataLineSeen,
+    quotaTextSeen,
+  };
 }
 
 function summarize(attempts) {
   const byEndpoint = new Map();
-  const byRange = new Map();
-  const byCaller = new Map();
+  const byRanges = new Map();
+  const byApi = new Map();
   for (const a of attempts) {
     byEndpoint.set(a.endpoint, (byEndpoint.get(a.endpoint) || 0) + 1);
-    byRange.set(a.range, (byRange.get(a.range) || 0) + 1);
-    byCaller.set(a.caller, (byCaller.get(a.caller) || 0) + 1);
+    const key = (a.ranges || []).join(', ');
+    byRanges.set(key, (byRanges.get(key) || 0) + 1);
+    byApi.set(a.api || a.caller || 'unknown', (byApi.get(a.api || a.caller || 'unknown') || 0) + 1);
   }
   const sortDesc = (m) => [...m.entries()].sort((x, y) => y[1] - x[1]);
-  return { byEndpoint: sortDesc(byEndpoint), byRange: sortDesc(byRange), byCaller: sortDesc(byCaller) };
+  return { byEndpoint: sortDesc(byEndpoint), byRanges: sortDesc(byRanges), byApi: sortDesc(byApi) };
 }
 
-/** Worst rolling-60s window of read ATTEMPTS — the number Google's quota actually meters. */
+/** Worst rolling-60s window of read ATTEMPTS — the number Google's quota meters. */
 function peakRollingMinute(attempts) {
   const stamped = attempts.filter(a => a.timestamp).map(a => Date.parse(a.timestamp)).sort((a, b) => a - b);
   let peak = 0; let start = 0; let peakAt = null;
@@ -114,7 +179,18 @@ function peakRollingMinute(attempts) {
     const count = end - start + 1;
     if (count > peak) { peak = count; peakAt = new Date(stamped[start]).toISOString(); }
   }
-  return { peak, window_start: peakAt, stamped_total: stamped.length };
+  return { peak, window_start: peakAt, stamped_total: stamped.length, unstamped: attempts.length - stamped.length };
+}
+
+/** The endpoint call manifest — how many times the CLIENT called each path. */
+function requestManifest(requests) {
+  const byEndpoint = new Map();
+  for (const r of requests) {
+    if (!String(r.path || '').startsWith('/api/')) continue;
+    const key = `${r.method} ${String(r.path).split('?')[0]}`;
+    byEndpoint.set(key, (byEndpoint.get(key) || 0) + 1);
+  }
+  return [...byEndpoint.entries()].sort((a, b) => b[1] - a[1]);
 }
 
 function main() {
@@ -123,40 +199,69 @@ function main() {
     console.error('usage: node scripts/reconstruct-session-reads.js <server-log.txt> [--json]');
     process.exit(2);
   }
-  const { attempts, retries } = reconstruct(fs.readFileSync(file, 'utf8'));
+  const result = reconstruct(fs.readFileSync(file, 'utf8'));
+  const { attempts, mode, retriesObservable, metadataObservable, quotaTextSeen, requests } = result;
   const s = summarize(attempts);
   const rolling = peakRollingMinute(attempts);
   const retryAttempts = attempts.filter(a => a.retry).length;
+  const quotaRejections = attempts.filter(a => a.quota_rejection).length;
 
   const report = {
+    evidence_mode: mode,
+    // A legacy log records neither retries nor `spreadsheets.get`, so its total is a
+    // values-read LOWER BOUND. Naming that here stops the number being quoted as a total.
+    total_is: (mode === 'structured' || (retriesObservable && metadataObservable))
+      ? 'complete_attempt_count' : 'lower_bound',
+    metadata_reads_observable: metadataObservable,
     total_read_attempts: attempts.length,
-    retry_attempts: retryAttempts,
-    // The demand that would exist with a healthy quota: attempts MINUS the extra
-    // attempts retries added. This is the number a budget must be written against,
-    // because retry amplification is a CONSEQUENCE of exceeding it, not a cause.
-    counterfactual_no_quota_attempts: attempts.length - retryAttempts,
+    retry_attempts: retriesObservable ? retryAttempts : null,
+    retry_attempts_observable: retriesObservable,
+    quota_rejections: mode === 'structured' ? quotaRejections : null,
+    quota_text_seen_in_log: quotaTextSeen,
     peak_rolling_minute: rolling,
-    unattributed: attempts.filter(a => a.endpoint === '(unattributed)').length,
+    http_requests_captured: requests.length,
+    request_manifest: requestManifest(requests),
     by_endpoint: s.byEndpoint,
-    by_range: s.byRange,
-    by_caller: s.byCaller,
-    retries_observed: retries,
+    by_ranges: s.byRanges,
+    by_api: s.byApi,
   };
 
   if (process.argv.includes('--json')) { console.log(JSON.stringify(report, null, 2)); return; }
 
-  console.log(`Read attempts total          : ${report.total_read_attempts}`);
-  console.log(`  of which retry attempts    : ${report.retry_attempts}`);
-  console.log(`Counterfactual (no quota)    : ${report.counterfactual_no_quota_attempts}`);
+  console.log(`Evidence mode                : ${mode}`);
+  if (mode !== 'structured') {
+    const missing = [];
+    if (!metadataObservable) missing.push('spreadsheets.get (metadata) reads');
+    if (!retriesObservable) missing.push('retry attempts');
+    console.log('  ⚠ legacy log — one line per logical read, not per metered attempt.');
+    console.log(missing.length
+      ? `    NOT RECORDED by this log: ${missing.join('; ')}. The total below is a LOWER BOUND;`
+        + '\n    re-parsing cannot recover what was never written.'
+      : '    Metadata reads and retries ARE present in this log.');
+  }
+  console.log(`Read attempts (${report.total_is === 'complete_attempt_count' ? 'exact' : 'lower bound'})  : ${report.total_read_attempts}`);
+  if (retriesObservable) {
+    console.log(`  of which retry attempts    : ${retryAttempts}`);
+  } else {
+    console.log('  of which retry attempts    : NOT OBSERVABLE — this log carries no retry evidence.');
+    if (quotaTextSeen) {
+      console.log('    ⚠ but quota-rejection text IS present, so retries almost certainly occurred and are UNCOUNTED.');
+    }
+  }
+  if (mode === 'structured') console.log(`Quota rejections             : ${quotaRejections}`);
   console.log(`Peak rolling 60s window      : ${rolling.peak} attempts (from ${rolling.window_start})`);
-  console.log(`Unattributed (pre-request)   : ${report.unattributed}`);
-  console.log('\nBy range:');
-  for (const [range, n] of s.byRange) console.log(`  ${String(n).padStart(3)}  ${range}`);
-  console.log('\nBy caller:');
-  for (const [caller, n] of s.byCaller) console.log(`  ${String(n).padStart(3)}  ${caller}`);
-  console.log('\nBy endpoint:');
+  if (rolling.unstamped) console.log(`  unstamped (excluded)       : ${rolling.unstamped}`);
+  console.log(`HTTP requests captured       : ${requests.length}`);
+
+  console.log('\nClient request manifest (how many times each endpoint was CALLED):');
+  for (const [ep, n] of report.request_manifest) console.log(`  ${String(n).padStart(3)}  ${ep}`);
+  console.log('\nReads by API method:');
+  for (const [api, n] of s.byApi) console.log(`  ${String(n).padStart(3)}  ${api}`);
+  console.log('\nReads by ranges:');
+  for (const [ranges, n] of s.byRanges.slice(0, 20)) console.log(`  ${String(n).padStart(3)}  ${ranges}`);
+  console.log('\nReads by endpoint:');
   for (const [ep, n] of s.byEndpoint) console.log(`  ${String(n).padStart(3)}  ${ep}`);
 }
 
 if (require.main === module) main();
-module.exports = { reconstruct, summarize, peakRollingMinute };
+module.exports = { reconstruct, summarize, peakRollingMinute, requestManifest };

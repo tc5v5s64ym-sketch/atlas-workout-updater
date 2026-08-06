@@ -1,0 +1,801 @@
+{
+ "source_run": "debug-session-1-20260806T035948-38F290",
+ "source_purpose": "REHEARSAL_DEBUG (non-counting)",
+ "captured_at": "2026-08-06T04:00:04.987Z",
+ "span_ms": 70945,
+ "note": "Exact client request manifest. Paths, methods, query strings, relative timing and observed status only. No bodies, no session ids, no workout data. Session ids and concrete appended ranges are replaced with {SESSION_ID} / {APPENDED_RANGE} placeholders the harness substitutes.",
+ "request_count": 113,
+ "requests": [
+  {
+   "method": "GET",
+   "path": "/api/session/status",
+   "query": null,
+   "offset_ms": 0,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/flight/recent",
+   "query": null,
+   "offset_ms": 1,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/catalog/exercises",
+   "query": null,
+   "offset_ms": 841,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/progress/summary",
+   "query": null,
+   "offset_ms": 1197,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/report/weekly",
+   "query": null,
+   "offset_ms": 1331,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/coaching/insights",
+   "query": null,
+   "offset_ms": 1677,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/plan/intent-recommendation",
+   "query": null,
+   "offset_ms": 2223,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/plan/intent-recommendation",
+   "query": null,
+   "offset_ms": 2587,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/coaching/insights",
+   "query": null,
+   "offset_ms": 2648,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/prs/recent",
+   "query": null,
+   "offset_ms": 2674,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/stalls",
+   "query": "minSessions=3",
+   "offset_ms": 2692,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/plan/today",
+   "query": null,
+   "offset_ms": 3018,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/history/recent",
+   "query": "limit=10",
+   "offset_ms": 3667,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/summary/weekly",
+   "query": null,
+   "offset_ms": 3769,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/session-plans/accept",
+   "query": null,
+   "offset_ms": 5976,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/debug/intent-observe",
+   "query": null,
+   "offset_ms": 6187,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/parse-workout-text",
+   "query": null,
+   "offset_ms": 6208,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/exercises/last-session",
+   "query": "exercise=Back%20Squat",
+   "offset_ms": 6243,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/plan/today",
+   "query": null,
+   "offset_ms": 6596,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/log-workout",
+   "query": null,
+   "offset_ms": 7180,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/session-plan-sets/accept",
+   "query": null,
+   "offset_ms": 7766,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/recommend/next/SQ01",
+   "query": "intentId=work_day&w=225&reps=5&rir=2",
+   "offset_ms": 8201,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/debug/intent-observe",
+   "query": null,
+   "offset_ms": 8203,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/parse-workout-text",
+   "query": null,
+   "offset_ms": 8207,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/coach/message",
+   "query": null,
+   "offset_ms": 8947,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/log-workout",
+   "query": null,
+   "offset_ms": 9032,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/debug/intent-observe",
+   "query": null,
+   "offset_ms": 9164,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/parse-workout-text",
+   "query": null,
+   "offset_ms": 9168,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/exercises/last-session",
+   "query": "exercise=Overhead%20Press",
+   "offset_ms": 9179,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/log-workout",
+   "query": null,
+   "offset_ms": 9758,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/recommend/next/SQ01",
+   "query": "intentId=work_day&w=225&reps=5&rir=2",
+   "offset_ms": 10067,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/debug/intent-observe",
+   "query": null,
+   "offset_ms": 10148,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/parse-workout-text",
+   "query": null,
+   "offset_ms": 10151,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/recommend/next/OHP01",
+   "query": "intentId=work_day&w=110&reps=6&rir=2",
+   "offset_ms": 10713,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/coach/message",
+   "query": null,
+   "offset_ms": 10816,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/log-workout",
+   "query": null,
+   "offset_ms": 10853,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/debug/intent-observe",
+   "query": null,
+   "offset_ms": 11096,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/parse-workout-text",
+   "query": null,
+   "offset_ms": 11098,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/exercises/last-session",
+   "query": "exercise=RDL",
+   "offset_ms": 11122,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/recommend/next/OHP01",
+   "query": "intentId=work_day&w=110&reps=6&rir=2",
+   "offset_ms": 11756,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/coach/message",
+   "query": null,
+   "offset_ms": 11869,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/log-workout",
+   "query": null,
+   "offset_ms": 12209,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/debug/intent-observe",
+   "query": null,
+   "offset_ms": 13046,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/parse-workout-text",
+   "query": null,
+   "offset_ms": 13048,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/recommend/next/RDL01",
+   "query": "intentId=work_day&w=235&reps=5&rir=2",
+   "offset_ms": 13129,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/coach/message",
+   "query": null,
+   "offset_ms": 13232,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/log-workout",
+   "query": null,
+   "offset_ms": 13883,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/debug/intent-observe",
+   "query": null,
+   "offset_ms": 14044,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/parse-workout-text",
+   "query": null,
+   "offset_ms": 14055,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/log-modality",
+   "query": null,
+   "offset_ms": 14078,
+   "status": 422
+  },
+  {
+   "method": "POST",
+   "path": "/api/suggest-substitute",
+   "query": null,
+   "offset_ms": 14110,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/debug/intent-observe",
+   "query": null,
+   "offset_ms": 14361,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/parse-workout-text",
+   "query": null,
+   "offset_ms": 14367,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/recommend/next/RDL01",
+   "query": "intentId=work_day&w=235&reps=5&rir=2",
+   "offset_ms": 14821,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/debug/intent-observe",
+   "query": null,
+   "offset_ms": 15346,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/parse-workout-text",
+   "query": null,
+   "offset_ms": 15348,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/exercises/last-session",
+   "query": "exercise=Incline%20DB%20Press",
+   "offset_ms": 15357,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/log-workout",
+   "query": null,
+   "offset_ms": 16206,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/debug/intent-observe",
+   "query": null,
+   "offset_ms": 16294,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/parse-workout-text",
+   "query": null,
+   "offset_ms": 16297,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/session-plan-sets/revision",
+   "query": null,
+   "offset_ms": 16684,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/session-plan-sets/revision",
+   "query": null,
+   "offset_ms": 16712,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/session-plans/outcome",
+   "query": null,
+   "offset_ms": 16947,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/recommend/next/IDB01",
+   "query": "intentId=work_day&w=55&reps=8&rir=2",
+   "offset_ms": 17145,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/coach/message",
+   "query": null,
+   "offset_ms": 17271,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/log-workout",
+   "query": null,
+   "offset_ms": 17611,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/debug/intent-observe",
+   "query": null,
+   "offset_ms": 18263,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/parse-workout-text",
+   "query": null,
+   "offset_ms": 18266,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/suggest-substitute",
+   "query": null,
+   "offset_ms": 18279,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/coach/ask",
+   "query": null,
+   "offset_ms": 18295,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/recommend/next/IDB01",
+   "query": "intentId=work_day&w=55&reps=8&rir=2",
+   "offset_ms": 18557,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/coach/chat",
+   "query": null,
+   "offset_ms": 20795,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/debug/intent-observe",
+   "query": null,
+   "offset_ms": 23029,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/parse-workout-text",
+   "query": null,
+   "offset_ms": 23032,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/exercises/last-session",
+   "query": "exercise=Seated%20Row",
+   "offset_ms": 23068,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/log-workout",
+   "query": null,
+   "offset_ms": 24031,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/debug/intent-observe",
+   "query": null,
+   "offset_ms": 24994,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/parse-workout-text",
+   "query": null,
+   "offset_ms": 24996,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/recommend/next/SR01",
+   "query": "intentId=work_day&w=205&reps=10&rir=2",
+   "offset_ms": 25357,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/coach/message",
+   "query": null,
+   "offset_ms": 25490,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/log-workout",
+   "query": null,
+   "offset_ms": 25988,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/debug/intent-observe",
+   "query": null,
+   "offset_ms": 26945,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/parse-workout-text",
+   "query": null,
+   "offset_ms": 26947,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/exercises/last-session",
+   "query": "exercise=Bicep%20Curl",
+   "offset_ms": 26956,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/recommend/next/SR01",
+   "query": "intentId=work_day&w=205&reps=10&rir=2",
+   "offset_ms": 37455,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/log-workout",
+   "query": null,
+   "offset_ms": 37725,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/debug/intent-observe",
+   "query": null,
+   "offset_ms": 37944,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/parse-workout-text",
+   "query": null,
+   "offset_ms": 37946,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/recommend/next/BC01",
+   "query": "intentId=work_day&w=35&reps=15&rir=2",
+   "offset_ms": 48263,
+   "status": 500
+  },
+  {
+   "method": "POST",
+   "path": "/api/log-workout",
+   "query": null,
+   "offset_ms": 49389,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/recommend/next/BC01",
+   "query": "intentId=work_day&w=35&reps=15&rir=2",
+   "offset_ms": 55392,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/coach/message",
+   "query": null,
+   "offset_ms": 55525,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/debug/intent-observe",
+   "query": null,
+   "offset_ms": 58593,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/log-workout",
+   "query": null,
+   "offset_ms": 59634,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/recommend/next/SQ01",
+   "query": "intentId=work_day",
+   "offset_ms": 60627,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/recommend/next/SR01",
+   "query": "intentId=work_day",
+   "offset_ms": 60904,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/recommend/next/OHP01",
+   "query": "intentId=work_day",
+   "offset_ms": 60969,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/recommend/next/BC01",
+   "query": "intentId=work_day",
+   "offset_ms": 61003,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/recommend/next/IDB01",
+   "query": "intentId=work_day",
+   "offset_ms": 61023,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/recommend/next/RDL01",
+   "query": "intentId=work_day",
+   "offset_ms": 61120,
+   "status": 200
+  },
+  {
+   "method": "POST",
+   "path": "/api/log-workout",
+   "query": null,
+   "offset_ms": 64228,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/log-workout/verify-range",
+   "query": "range={APPENDED_RANGE}&session_id={SESSION_ID}&expected_rows=12",
+   "offset_ms": 64717,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/progress/summary",
+   "query": null,
+   "offset_ms": 65037,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/plan/intent-recommendation",
+   "query": null,
+   "offset_ms": 65657,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/coaching/insights",
+   "query": null,
+   "offset_ms": 65724,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/prs/recent",
+   "query": null,
+   "offset_ms": 65744,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/stalls",
+   "query": "minSessions=3",
+   "offset_ms": 65758,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/summary/weekly",
+   "query": null,
+   "offset_ms": 66423,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/history/recent",
+   "query": "limit=10",
+   "offset_ms": 66460,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/recommend/next/SQ01",
+   "query": null,
+   "offset_ms": 66507,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/prs/recent",
+   "query": null,
+   "offset_ms": 66521,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/stalls",
+   "query": null,
+   "offset_ms": 66530,
+   "status": 200
+  },
+  {
+   "method": "GET",
+   "path": "/api/summary/weekly",
+   "query": null,
+   "offset_ms": 70945,
+   "status": 200
+  }
+ ]
+}

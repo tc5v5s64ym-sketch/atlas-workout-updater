@@ -155,13 +155,20 @@ function createSessionReadBatchMiddleware(sheets = require('../sheets')) {
     // implements only the helpers a test needs must not be turned into a 500. Batching is
     // an optimisation: without it every read simply happens the way it always did.
     if (typeof sheets.runWithReadContext !== 'function') return next();
+    // The request identity travels with the context so every read attempt can name the
+    // HTTP request that caused it. Read accounting only; nothing decides on it.
+    const identity = {
+      requestId: req.requestId || null,
+      method: req.method,
+      path: (req.originalUrl || req.url || '').split('?')[0],
+    };
     sheets.runWithReadContext(() => {
       const ranges = rangesFor(req.method, req.originalUrl || req.url || '');
       if (ranges.length && typeof sheets.declareRequestRanges === 'function') {
         sheets.declareRequestRanges(ranges);
       }
       next();
-    });
+    }, identity);
   };
 }
 
