@@ -388,15 +388,22 @@ revisions, item outcomes, and closeout and write receipts.
 - **Reads and writes move together at PR S4.** PR S3 moves neither. An earlier plan moved
   reads at PR S3, which let reads lead writes and could serve a silently incomplete workout;
   owner ruling D5 (2026-08-07) removed that window.
-- **Sunset condition.** PR S4 deletes all four bridge components, drops
-  `atlas.migration_divergences`, and deletes the Sheets hot-path reads for these seven
-  concepts, the backfill script, the read-budget machinery
+- **Sunset condition.** PR S4 deletes every **consumer and writer** of the four bridge
+  components — leaving the `atlas.migration_divergences` **table** inert rather than dropped,
+  because a restored PR S3 build queries it through the rollback window — and deletes the
+  Sheets hot-path reads for these seven concepts, the backfill script, the read-budget
+  machinery
   (`services/sessionReadBatch.js`, the request-scoped `batchGet` context in `sheets.js` for
   the migrated ranges, the `Log_Cleaned` / `Effort` 30-second row cache in `index.js`,
   `test/liveSessionReadBudget.test.js`, `test/sessionReadBudget.test.js`,
   `test/sheets-adapter-reads.test.js`, `test/fixtures/liveSessionManifest.json`,
-  `scripts/reconstruct-session-reads.js`, `docs/READ_BUDGET.md`), and **the file-backed
-  idempotency store** — and verifies their absence. **Nothing on that list survives PR S4.**
+  `scripts/reconstruct-session-reads.js`, `docs/READ_BUDGET.md`), **the file-backed
+  idempotency store**, and **the PR S3 receipt migration seam** — and verifies their absence.
+  **Nothing on that list survives PR S4**, with one deliberate exception whose exact terms are
+  recorded: the divergence **table** is dropped by an owner-run artifact
+  (`supabase/operations/drop_migration_divergences.sql`, deliberately outside
+  `supabase/migrations/` so no migration run can apply it early) once the PR S4 rollback window
+  closes. **This migration is not closed until that execution.**
   Under owner ruling D4 (2026-08-07) all seven current `beginWrite` callers move to
   `atlas.write_receipts`, so PR S4 must also prove no caller of the file store remains. An
   item on that list that survives PR S4 is an open loop and needs a named consumer plus its
