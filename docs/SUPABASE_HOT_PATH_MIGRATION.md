@@ -1566,17 +1566,23 @@ entirely, and removes the need to serve any athlete read from an inert shadow.
    | 1 | `supabase/operations/drop_migration_divergences.sql`, owner-run | `Atlas Production` |
    | 2 | the same statement added to `supabase/migrations/` as a normal versioned file, `DROP TABLE IF EXISTS` | the repository's reproducible schema — a fresh replay ends **without** the table, and production is a **no-op** because step 1 already dropped it |
 
-   Step 2 is honestly **a fifth repository change**, and it is named here rather than
-   discovered later. It is **not** the case ruling D6 refused: D6 was asked to approve a fifth
-   PR to *retain* code with no surviving consumer, while this one *removes* a table, and its
-   trigger — the rollback window closing — is a future event that cannot be pulled into `S4`
-   without recreating the exact defect review 13 found. The **four-PR chain still carries the
-   whole authority migration**; step 2 carries no authority and moves no data.
+   **Step 2 is a fifth repository change, and that CONTRADICTS OWNER RULING D6 AS WRITTEN.**
+   *Required review of `eae382e`.* The previous version argued its way around D6 — "not the
+   case D6 refused" — and deferred the difference to "owner acknowledgement at the `S4` gate",
+   as though a builder's reading had already superseded an owner ruling. It has not. D6 says
+   the chain stays four PRs and **"no fifth PR is required"**, and a versioned migration
+   commit is an ordinary repository change under the branch, PR and exact-head review
+   contract — not an unnamed later edit. Under `CLAUDE.md` a positive open-loop change needs an
+   **explicit owner-approved reason**, which this does not yet have.
 
-   **The migration is not closed until both steps land.** `S4` merging is not closure, and
-   executing the operations file alone is not closure either. `S4`'s merge card records both
-   steps, their trigger, and the fact that the loop is still open. Owner acknowledgement of
-   step 2 belongs at the `S4` gate, not here.
+   **This is recorded as decision D8 (§9) and is OWNER DECISION REQUIRED. Nothing proceeds on
+   the repository topology until Dale rules.** The distinction the previous text relied on is
+   still worth stating — D6 refused a fifth PR to *retain* code with no surviving consumer,
+   while this one *removes* a table on a trigger that cannot be pulled into `S4` — but that is
+   an **argument for the owner to weigh, not a ruling the builder may apply.**
+
+   **The migration is not closed until both steps land**, under either option D8 selects.
+   `S4` merging is not closure, and executing the operations file alone is not closure either.
 
 **A guarantee may not be deleted along with its mechanism.**
 `test/idempotencyPersistence.test.js` proves eleven behaviours of the receipt store. Some are
@@ -2216,9 +2222,12 @@ without the file store from the start, and the deletion is an ordinary part of t
 (§5.4, ruling D4).
 
 **A revert restores source, not a database. The rollback winner is stated here.** *Required
-review of `310b01b`.* `S4` also changes the database — it drops `atlas.migration_divergences`,
-which the restored `S3` build's shadow lane, sweep and repair worker call **continuously**. A
-Git revert would put back code that queries a table that no longer exists.
+review of `310b01b`.* `S4` also changes the database, and the divergence table is the reason:
+the restored `S3` build's shadow lane, sweep and repair worker call
+`atlas.migration_divergences` **continuously**, so a Git revert against a database that had
+already dropped it would put back code querying a table that no longer exists. *The earlier
+wording here said `S4` "drops" that table, which the two-step closure of §5.4 step 5 replaced —
+`S4` drops nothing; the owner does, after this window.*
 
 The winner is **(a): the post-`S4` schema stays backward-compatible with the `S3` build for the
 whole rollback window**, rather than a reverse schema transition executed under pressure.
@@ -2228,9 +2237,11 @@ whole rollback window**, rather than a reverse schema transition executed under 
   `supabase/migrations/`**, so the `S4` cutover push cannot apply it in the same operation and
   destroy the compatibility this bullet depends on (§5.4 step 5). The owner executes it as
   `atlas_migrate` after the rollback window closes — the same owner gate that already governs
-  every schema application in this chain (§9, owner-reserved gates). This costs no extra PR:
-  executing SQL was never a merge, and `S4`'s merge card records the pending operation and its
-  exact trigger.
+  every schema application in this chain (§9, owner-reserved gates). **Executing that file costs
+  no merge** — applying SQL never did — but it is only **step 1 of two**: the repository's
+  reproducible schema converges through a later versioned migration, whose topology is **open
+  decision D8** (§5.4 step 5, §9). `S4`'s merge card records both steps, the trigger, and the
+  fact that the loop stays open.
 - **During the window the table exists and is unused.** The `S4` build has no writer for it
   (P7c0 proves no permanent mechanism writes it), so it sits inert; a restored `S3` build finds
   it present and its sweep, divergence lane and repair worker run exactly as they did.
@@ -2297,7 +2308,7 @@ operation. No lower rung substitutes for a higher one.
 | P7 | A divergence is proven **not** closable without `closure_proof`, and proven not closable by a lapsed lease or a timer. |
 | P7a | **The shadow transaction is proven ordered and atomic on the session parent.** A shadow Save inserts its `workout_sessions` parent before its child rows in one transaction; a child can never commit without its session parent; a failure mid-transaction leaves neither; and a second Save for the same session does not duplicate or overwrite the parent. Proven against an **empty** schema, which is the state `S2` actually starts from. |
 | P7d | **No receipt is mirrored during `S2`/`S3`**, proven by assertion on an empty `write_receipts` after a shadow Save, and `logged_sets.write_id` / `session_effort.write_id` carry **no foreign key** at this stage. A repaired child row is proven to carry `write_id = NULL` rather than a fabricated value. |
-| P7c0 | **No permanent mechanism writes to `migration_divergences`.** Proven by search across the exporter, the catalog sync and every post-`S4` path: the only writers are the `S2`/`S3` shadow lane and sweep, both of which the same PR deletes. A permanent mechanism writing to a dropped table is a defect that only appears after cutover. |
+| P7c0 | **No permanent mechanism writes to `migration_divergences`.** Proven by search across the exporter, the catalog sync and every post-`S4` path. The complete writer set is **three**, all temporary and all deleted by `S4`: the `S2`/`S3` **inline shadow lane**, the **reconciliation sweep**, and the **repair worker**, which writes the `open → repairing → closed` transitions (§3.8). *Corrected by the required review of `eae382e`: this gate named only two, so a proof of a "complete" writer set was checking an incomplete one.* The invariant under test is that **no permanent or post-`S4` mechanism writes it** — the enumeration must be complete for that proof to mean anything. A permanent mechanism writing to a dropped table is a defect that only appears after cutover. |
 | P7b1 | **A legitimate catalog edit synchronises; it never fails.** Change one valid row in the Sheets catalog and prove a **new verified generation** appears, currency advances, no failure is recorded, and the Save path stays continuously serviceable. Separately prove each genuine failure mode — read failure, empty source, materially shrunken source, verification failure, swap-transaction failure — **does** record `status='failed'` and leaves the prior generation current. A test that only exercises failure cannot tell the two apart. |
 | P7b | **The catalog mirror is proven fail-closed.** A generation older than `CATALOG_MIRROR_MAX_AGE` is proven **not served** — the Save fails closed with an explicit reason, exactly as the expired cache does today. A failed sync is proven not to advance currency. An empty or materially shrunken source is proven refused. A content mismatch is proven to open an `exercise_catalog` divergence. A test that only shows a fresh mirror is served does not discharge this. |
 | P7c | **Least privilege is proven, not claimed.** `atlas_app` is refused a DDL statement and refused a `DELETE` on a table outside its grant list (§8.2). Every statement the design specifies — the claim, the `session_id` persist, `completeWrite`, `failWrite`, the export-state updates — is executed **as its real role** and proven to succeed. Three grant/SQL mismatches have already reached review; a statement proven only as superuser proves nothing about the deployed system. |
@@ -2392,7 +2403,7 @@ Everything in §6.2, re-run after the cutover, plus:
 |---|---|---|
 | `S2` | Disable the shadow write by its flag; revert the PR. | None. Sheets never stopped being the authority. Supabase holds a copy that nothing reads. |
 | `S3` | Revert the PR. | None. No read and no write moved. Sheets remains both authorities throughout. |
-| `S4` | Revert the PR — which restores the previously merged `S3` build and with it the legacy receipt implementation **and the migration seam** — then restore the committed receipt rows from `atlas.write_receipts` into every live old process **through the seam** (§5.5a reverse transfer), **and** re-import any session written to Supabase after the cutover into Sheets. The post-`S4` schema stays `S3`-compatible for the whole window, because the `migration_divergences` drop is applied only after the window closes (§5.5, gate P19i). | Real. The only irreversible step, which is why it needs an owner gate, a verified backup, and the receipt rows in `atlas.write_receipts` as its rollback source. **Rollback is not unconditional:** if those rows cannot be read and verified, the code may be restored but the seven writes **stay frozen** (P19d). |
+| `S4` | Revert the PR — which restores the previously merged `S3` build and with it the legacy receipt implementation **and the migration seam** — then **prove exactly one live restored old process** by the §5.3 invariant and restore the committed receipt rows from `atlas.write_receipts` into **that** process through the seam (§5.5a reverse transfer). Then re-import any session written to Supabase after the cutover into Sheets. **If the single-process invariant is not satisfied, writes do not reopen.** *Corrected by the required review of `eae382e`: this row still said "every live old process", the unaddressable collector shape review 13 removed.* The post-`S4` schema stays `S3`-compatible for the whole window, because the `migration_divergences` drop is applied only after the window closes (§5.5, gate P19i). | Real. The only irreversible step, which is why it needs an owner gate, a verified backup, and the receipt rows in `atlas.write_receipts` as its rollback source. **Rollback is not unconditional:** if those rows cannot be read and verified, the code may be restored but the seven writes **stay frozen** (P19d). |
 
 Ruling D5 concentrates all the risk into one step and leaves the two steps before it fully
 reversible. That is the point of it.
@@ -2404,10 +2415,13 @@ Before `S4` merges, record:
 1. a verified Supabase backup and a proven restore (§8.4);
 2. the exact export command that reproduces a Sheets row set from Supabase;
 3. a stated rollback window — the period during which a revert is a supported operation
-   rather than a data-recovery exercise. **The window's close is the trigger for the one
-   deferred operation:** the owner executes
-   `supabase/operations/drop_migration_divergences.sql` against `Atlas Production` as
-   `atlas_migrate`. It is **not** a pending migration and no `db push` can apply it early
+   rather than a data-recovery exercise. **The window's close is the trigger for BOTH deferred
+   closure steps, not one.** *Corrected by the required review of `eae382e`.* **Step 1:** the
+   owner executes `supabase/operations/drop_migration_divergences.sql` against
+   `Atlas Production` as `atlas_migrate`, converging production. **Step 2:** the same statement
+   enters `supabase/migrations/` as a normal versioned file so a fresh replay converges too —
+   whose repository topology is **open decision D8** (§5.4 step 5, §9). Step 1's file is
+   **not** a pending migration and no `db push` can apply it early
    (§5.4 step 5). Until it runs the table stays, inert, so a restored `S3` build works
    (§5.5, gate P19i).
 
@@ -2456,7 +2470,13 @@ session pooler too.
 **The scoped roles are unchanged (§8.2), and each gets its own pooler connection.**
 Supavisor authenticates the role through the pooler username, so role separation survives
 pooling — it is not collapsed into one shared identity. Each role's pooler connection string
-is a separate secret, and `S2` proves each one connects as the intended role.
+is a separate secret. **Proving that each one authenticates as its intended role through the
+pooler is NOT an `S2` merge gate** — `S2` may not apply schema to `Atlas Production` and its
+from-empty Postgres database has no Supavisor, so `S2` proves the roles and grants locally
+(P7c) and the hosted session-pooler authentication and advisory-lock proof is the **owner-gated
+checkpoint between `S2` and `S3`** (§6.1 P8b). *Corrected by the required review of `eae382e`,
+which found this security section restoring the impossible `S2` gate that P8b had just
+removed.*
 
 **Atlas does not use the Supabase Data API, the service-role key, or the anon key.**
 
@@ -2685,6 +2705,40 @@ consumer, and no fifth PR is required. `S4` deletes the store, its env var, its 
 six test references exactly as ruling D4 always said, and the gate split introduced for the
 two-stage form is withdrawn with it (P16, P17).
 
+**D8 — the schema-history closure needs a fifth repository change, and that contradicts D6:
+OPEN, OWNER DECISION REQUIRED (2026-08-07).** Raised by the required review of `eae382e`.
+
+The facts are settled and not in dispute. `S4` cannot drop `atlas.migration_divergences`,
+because a restored `S3` build queries it through the rollback window. An owner-run operations
+file converges `Atlas Production` after that window. But it sits **outside migration history**,
+so every fresh database built by replaying `supabase/migrations/` recreates the bridge table
+forever — production right, repository permanently wrong. The statement must therefore also
+land as a **normal versioned migration**, and that is a repository change with a branch, a PR
+and an exact-head review.
+
+**What is undecided is only the topology, and it is Dale's to decide**, because ruling **D6**
+says the chain stays four PRs and "no fifth PR is required", and because `CLAUDE.md` requires
+an explicit owner-approved reason for a positive open-loop change. The builder may not
+reinterpret an owner ruling, and the previous head's "owner acknowledgement at the `S4` gate"
+wording did exactly that. It is withdrawn.
+
+The two truthful options:
+
+- **(a) Amend D6 narrowly — recommended, and it is the review's recommendation too.** Permit
+  **exactly one** post-window cleanup PR whose sole concern is adding
+  `DROP TABLE IF EXISTS atlas.migration_divergences` as a versioned migration once the
+  rollback window closes. It moves **no authority and no workout data**, and it gets its own
+  branch, PR, exact-head review and closure record like any other change. D6's substance
+  survives: no PR retains code with no surviving consumer.
+- **(b) Keep D6 literally four-PR-only** and redesign the schema-history closure so no fifth
+  repository change is needed. No such design is proposed here, because every candidate either
+  drops the table before the rollback window closes — the defect review 13 found — or leaves
+  migration history permanently unconverged, which is the defect review 14 found.
+
+**Nothing proceeds on this until Dale rules.** Everything else in this document is specified
+independently of the outcome: the two closure *steps* are required under either option, and
+only the repository shape of step 2 changes.
+
 **D7 — the write freeze is PROPOSED permanent, not a bridge: OPEN, owner confirmation at the
 `S3` gate.** It is a proposal until Dale rules; it is not owner-approved permanent authority,
 and no other section may treat it as settled. §5.3 specifies one bounded control — a single row in `atlas.write_freeze`, `SELECT`-only
@@ -2745,8 +2799,11 @@ Each line is a cleanup obligation of the PR named, not of `S1`.
   open**; the design proposes permanence and states why, and Dale rules at the `S3` gate.
 - It does not claim the migration closes at `S4`'s merge. Two steps follow it: the owner-run
   drop against `Atlas Production`, and a post-window versioned migration so a fresh replay of
-  `supabase/migrations/` converges. **The second is a fifth repository change**, named in
-  §5.4 step 5 and awaiting owner acknowledgement at the `S4` gate.
+  `supabase/migrations/` converges.
+- **It does not claim the repository topology for that second step is settled.** It is a fifth
+  repository change, it contradicts ruling D6 as written, and it is **open decision D8** —
+  `OWNER DECISION REQUIRED`. This document records the options and a recommendation; it does
+  not choose, and no wording here supersedes D6.
 - It does not claim a revert alone restores a runnable `S3` posture. The post-`S4` schema
   is `S3`-compatible only because the `migration_divergences` drop is deferred past the
   rollback window, and that compatibility is a gate (P19i), not an assumption.
