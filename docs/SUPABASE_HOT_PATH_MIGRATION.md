@@ -613,7 +613,7 @@ It is **migration-control machinery, not product data**. It is dropped by `S4`.
 | `session_id` | `text` | Nullable — an orphan row may not resolve to a session. |
 | `write_id` | `text` | Nullable. Present when an inline shadow write caused the divergence. |
 | `route` | `text` | Nullable. The route whose shadow write diverged. |
-| `reason` | `text` | `CHECK (reason IN ('shadow_write_failed','missing_in_supabase','missing_in_sheets','content_mismatch'))`. |
+| `reason` | `text` | `CHECK (reason IN ('shadow_write_failed','missing_in_supabase','missing_in_sheets','content_mismatch','mirror_range_occupied'))`. `mirror_range_occupied` is the export's pre-write refusal (§5.4). |
 | `detected_by` | `text` | `CHECK (detected_by IN ('inline_shadow','sweep'))`. |
 | `detected_at` | `timestamptz` | |
 | `state` | `text` | `CHECK (state IN ('open','repairing','closed'))`. |
@@ -972,6 +972,8 @@ entirely, and removes the need to serve any athlete read from an inert shadow.
    - the `Log_Cleaned` / `Effort` 30-second row cache in `index.js`;
    - `GET /api/log-workout/verify-range` and the client fallback branch — its sunset
      condition in `docs/ATLAS_SYSTEM_AUTHORITY.md` concept 11b is satisfied by this cutover;
+   - **`deleteRowsByRange` for every mirrored tab** — a row-shifting delete is incompatible
+     with durable allocations (§5.6);
    - the read-budget harnesses and fixtures for the migrated path:
      `test/liveSessionReadBudget.test.js`, `test/sessionReadBudget.test.js`,
      `test/sheets-adapter-reads.test.js`, `test/fixtures/liveSessionManifest.json`,
@@ -1041,6 +1043,22 @@ Three mechanisms, all required.
    - The grid is extended to cover the allocation before the write, so an update that lands
      past the current row count cannot fail for want of rows.
 
+   **Row positions are VERIFIED before every write, never assumed.** *Added by the advisory
+   review of `7057b31`.* Writing by absolute address makes correctness depend on a durable
+   row block still holding what the allocator believes it holds. That is a materially
+   stronger assumption than anything Atlas makes today, and the design must not rest on it
+   silently — see §5.6.
+
+   Immediately before the `values.update`, and inside the same claim, the worker reads its
+   allocated range and proceeds **only** if every row in it is either blank or already
+   carries **this session's** identity keys. Anything else — another session's identity, an
+   unexpected value, a short read — is a **refusal**: the worker writes nothing, opens a
+   `mirror_range_occupied` divergence, and leaves `sheets_exported_at` unset.
+
+   This converts the failure mode from *silent overwrite, detected later* into *refusal,
+   detected now*. It costs nothing extra: the whole-tab read of mechanism 3 already contains
+   the allocated range, so the check is derived from a read the export was making anyway.
+
    This is safe only because **Atlas is the sole writer of these tabs once they are export
    mirrors**. That is exactly what `S4` establishes, and it is why deterministic destinations
    are available here and were not available while Sheets was the live write authority.
@@ -1094,6 +1112,76 @@ Three mechanisms, all required.
 session, so a stalled mirror is visible rather than silent.
 
 ---
+
+### 5.6 Row-position stability, undo, and re-export
+
+*Added by the advisory review of `7057b31`. The three gaps below were unaddressed.*
+
+#### The assumption the design was making without saying so
+
+The deterministic-destination model persists `start_row` **durably and indefinitely** and
+reuses it on every later export and retry. Its correctness therefore depends on absolute row
+positions in a mirrored tab staying stable for the lifetime of the mirror.
+
+**Atlas makes no such assumption today, and the one place it writes by position is careful
+not to.** `sessionPlanSetsStore.sealCloseout` reads the ledger fresh, locates this session's
+rows by index in *that* read, computes `sheet row = i + 2`, and stamps immediately
+(`services/sessionPlanSetsStore.js`). It **re-derives** positions inside a single operation
+and never persists one, so row drift between operations cannot hurt it. The allocator does
+the opposite. That difference is the whole risk, and it is why §5.4 now verifies the range
+rather than trusting it.
+
+Three concrete ways positions drift:
+
+1. **A row deletion shifts everything below it up.** `deleteRowsByRange` issues
+   `deleteDimension` (`sheets.js:970-993`), which is a shift, not a blanking. Every
+   allocation whose `start_row` is above the deleted range then points at the wrong rows.
+2. **An owner edit.** The mirror exists to be human-readable, and the owner already edits
+   this workbook by hand — the `Session_Plans` and `Session_Plan_Sets` tabs were created that
+   way (execution plan, 2026-08-03). One inserted or deleted row produces the same shift.
+   "Atlas is the sole writer" is a statement about Atlas; it is not a statement about Dale,
+   and a mirror nobody may touch is not a human-readable mirror.
+3. **A partially applied grid extension** or any structural edit that changes row indices.
+
+**Detection alone was not sufficient**, which is why §5.4 adds refusal. The whole-tab verifier
+counts identities, so a shift produces no duplicate and passes; the damage would surface only
+on the *next* export, after that session's rows had already been overwritten. Detection after
+destruction is not a control.
+
+#### Undo, post-cutover
+
+`POST /api/log-workout/undo-last` retracts in Supabase (`DELETE FROM atlas.logged_sets WHERE
+session_id = $1 AND write_id = $2`). Its effect on the mirror is now defined:
+
+- **`deleteRowsByRange` is removed from every mirrored tab at `S4`** and added to the §5.4
+  deletion list. A row-shifting delete is incompatible with durable allocations, and the
+  export already may not delete mirror rows.
+- **The session is marked for re-export** (below). The export rewrites the session's own
+  allocated block with the reduced row set and **blanks the tail of that block**. Everything
+  stays inside the session's own reservation, so no other session is touched and the cursor
+  never moves backwards.
+- An undone session whose rows stayed in the mirror would be a false record of the athlete's
+  training. Retraction reaching the mirror is a correctness requirement, not housekeeping.
+
+#### Re-export after any post-export change
+
+`sheets_exported_at` was set once with nothing to unset it, so a session whose Supabase data
+changed after export stayed permanently stale in the mirror — invisible to the derived queue,
+which only finds `sheets_exported_at IS NULL`, and invisible to the sweep. That is reachable
+today by undo, and by the seal: `closeout_write_id` is explicitly the one mutable column.
+
+**The invalidation reuses the queue rather than adding machinery.** Any mutation of a
+session's exported data sets `sheets_exported_at = NULL`. The session re-enters the derived
+queue by the same predicate that found it the first time. No dirty flag, no outbox, no second
+queue — and no new table.
+
+#### Allocation covers only tabs the session actually has rows for
+
+`row_count >= 1` and allocation is per `(tab, session_id)`. A session with **no `Effort` row**
+— routine; the owner frequently supplies no watch data — must therefore receive **no `Effort`
+allocation** at all. Reserving a block for a tab that will never be written would strand blank
+rows in the mirror permanently and advance that tab's cursor for nothing. The all-or-nothing
+rule of §3.9 applies to the tabs a session *has*, not to the full tab list.
 
 ### 5.5 The `S4` handover protocol
 
@@ -1194,6 +1282,10 @@ Everything in §6.2, re-run after the cutover, plus:
 | P14a | **The mirror write is idempotent under a late external write**, proven on the race no lock can prevent: **drop worker A's Postgres connection while its Sheets `values.update` is in flight**, let B acquire the lock and complete the export, then **let A's original request commit late**. Exactly one mirror identity must result. Two further cases: a slow or timed-out write whose outcome is ambiguous, and a replacement worker after a real death. A test that only proves a live lock blocks a simultaneous claim does **not** discharge P14a — the lock is not the mechanism under test; the deterministic destination is. |
 | P14b | **The allocation is stable, single-valued, and collision-free across different sessions.** (a) Two workers exporting the **same** session read the same allocation, and a re-export never reallocates. (b) **Two different sessions allocating concurrently receive disjoint ranges** — the case a per-session column could not serialise. (c) A failed allocation **reserves nothing**: it cannot leave one tab reserved and another not. (d) The exclusion constraint is proven to reject a deliberately overlapping insert. |
 | P14c | **Verification spans the whole tab.** Seed one duplicate identity **outside** the allocated range and prove acknowledgement is **refused** and the defect surfaced as a divergence. A verifier that reads only its own block cannot pass this. |
+| P14d | **The export refuses rather than overwrites when its range is not what it expects.** Shift a mirrored tab under a live allocation — delete a row above the block, then export — and prove the worker **writes nothing**, opens a `mirror_range_occupied` divergence, and leaves `sheets_exported_at` unset. Repeat with another session's rows seeded into the block. A test that only proves a clean range is written does not discharge P14d. |
+| P14e | **Undo reaches the mirror.** Undo a Save on an already-exported session and prove: the session re-enters the export queue; the rewrite stays **inside its own allocated block**, blanking the tail; no other session's rows are touched; and the cursor does not move backwards. Separately prove `deleteRowsByRange` is **absent** for every mirrored tab. |
+| P14f | **Any post-export mutation re-enters the queue.** Mutate an exported session's Supabase data — including a `closeout_write_id` seal — and prove `sheets_exported_at` is cleared and the session is re-exported. A session that changed and stayed exported is a stale mirror. |
+| P14g | **A session with no `Effort` row receives no `Effort` allocation**, and the `Effort` cursor does not advance for it. |
 | P15 | **The open-divergence count is zero** and every `atlas.migration_divergences` row is `closed`. If not, `S4` does not merge. |
 | P16 | **No caller of the file-backed idempotency store remains**, proven by search, and the store, its env var, and its file are absent. |
 | P17 | The deletion list of §5.4 is verified absent, including the dropped `atlas.migration_divergences` table. |

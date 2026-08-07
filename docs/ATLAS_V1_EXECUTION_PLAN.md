@@ -202,6 +202,28 @@ New proof gates: **P14b** (concurrent different-session allocation is disjoint; 
 
 **No counter changed and no authorization was granted by this review.** Campaign 0/5, Phase 5 unauthorized, no schema applied, no deployment.
 
+### ADVISORY REVIEW 2026-08-07 (fifth) — clean-context review of `7057b31b12b1406acd2c8994b22cf560453bed63`
+
+**This is ADVISORY, not the required gate.** `CLAUDE.md` is explicit: ChatGPT performs the required Atlas Contract / Systems Review, and a clean-context review by the implementation agent "never satisfies the required gate". This entry is recorded under advisory findings. The four BLOCKING reviews above came from the owner and did satisfy the gate; **`7057b31` still awaits its required review.**
+
+**Scope limit, stated rather than worked around.** PR S1 contains **zero code** — eight markdown files, no `.js`, no `.sql`, no migration, no adapter, no test. The allocator, cursor, exclusion constraint, freeze, drain, verifier and eleven tables exist **only as specification**. Concurrency, crash, deadlock, constraint-validation and failure-injection properties therefore **cannot be executed against them**, and no such execution is claimed. What was verified: every code citation the design makes about **existing production code**, and the specification's internal consistency attacked at mechanism level.
+
+**Citation audit — all correct.** `sheets.js:738-739` (explicit cache expiry, no stale fallback), `sheets.js:754-756` (empty catalog never cached), `sheets.js:52-76` (ambiguous append non-retryable), `services/idempotency.js:18` and `:178-181`, the seven `beginWrite` call sites, `config/columns.js` column counts and the absence of `write_id`, `getLogCompositeKeys` producing `sid||ex||setn` fully lower-cased, `services/sessionId.js`, `services/sessionPlanEvents.js`, `services/sessionPlanLedger.js`, `services/closeoutFinality.js`. No miscitation found; the design is not built on a false premise about existing code.
+
+**Three specification defects found, all corrected in the design.**
+
+1. **P1 — row-position stability was assumed, never established, and the failure was detected only after destruction.** The allocator persists `start_row` **durably and indefinitely**; correctness then depends on absolute row positions never drifting. Atlas makes no such assumption today: `sessionPlanSetsStore.sealCloseout` — the one place production writes by position — **re-derives** positions from a fresh read inside a single operation (`sheet row = i + 2`) and never persists one. Three drift paths were open: `deleteRowsByRange` issues `deleteDimension` (`sheets.js:970-993`), which **shifts** every row below it; an owner edit to a workbook the owner already edits by hand; and any structural change. The whole-tab verifier could not catch it — a shift creates no duplicate — so the next export would have **overwritten another session's workout**, discovered only afterwards. Corrected: the export **verifies its allocated range immediately before writing** and refuses on anything that is not blank or its own identities, opening a `mirror_range_occupied` divergence. The check is free — the whole-tab read already covers the range. Recorded in design §5.4 and §5.6.
+2. **P1 — undo had no defined effect on the mirror.** Post-cutover undo retracts in Supabase only. Either `deleteRowsByRange` stayed live on a mirrored tab and silently invalidated every allocation above it, or an undone session's sets remained in the human-readable record permanently — a false record of the athlete's training. Corrected: `deleteRowsByRange` is deleted for every mirrored tab at `S4` and added to the deletion list; undo marks the session for re-export; the rewrite stays **inside the session's own allocated block**, blanking its tail, so the cursor never moves backwards and no other session is touched.
+3. **P2 — no re-export path after any post-export change.** `sheets_exported_at` was set once with nothing to unset it, and the derived queue only finds `IS NULL`, so a session mutated after export stayed permanently stale — reachable by undo and by the `closeout_write_id` seal, the one mutable column. Corrected by **reusing the existing queue**: any mutation of exported data sets `sheets_exported_at = NULL` and the session re-enters by the same predicate. No dirty flag, no outbox, no new table.
+
+Also corrected: allocation must cover **only the tabs a session actually has rows for**, since a session with no `Effort` row is routine and would otherwise strand blank reserved rows and advance that tab's cursor for nothing.
+
+New proof gates **P14d–P14g**. Net new schema: **zero** — every correction reuses existing structure, and one production capability (`deleteRowsByRange` on mirrored tabs) is scheduled for deletion.
+
+**Convergence note, for the owner.** The deterministic-destination export has now failed adversarial review twice on the same property — concurrent overlap (fourth review) and positional drift (this one) — each time through a different door. The corrections are sound, but the pattern is worth weighing at the next required review: this mechanism buys idempotency at the cost of an invariant Sheets does not naturally provide.
+
+**No counter changed and no authorization was granted by this review.** Campaign 0/5, Phase 5 unauthorized, no schema applied, no deployment.
+
 ### Owner rulings D1–D5, all resolved (2026-08-07)
 
 1. **D1 — `Exercise_Catalog`.** Add the read-only mirror needed to remove the final athlete-facing Sheets quota dependency. Sheets remains its editing authority; Supabase is the Save-path read mirror.
