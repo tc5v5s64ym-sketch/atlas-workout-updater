@@ -166,11 +166,12 @@ Holds session identity, its allocation, and the Sheets-export state of that sess
 - **Unique:** `(session_date, period, slot)`.
 - **Index:** the PK, plus `(session_date DESC)`, plus a partial index on
   `(session_id) WHERE sheets_exported_at IS NULL` — the export worker's queue scan.
-- **Mutability:** insert-only for identity. Exactly four columns are updatable —
-  `sheets_exported_at`, `sheets_export_attempts`, `sheets_export_error`, and
-  `export_claim_token` — and only the `S4` export worker updates them. They are unused before
-  `S4`. The export **destination** is not among them: it lives in
-  `atlas.sheets_mirror_allocations` (§3.9).
+- **Mutability:** insert-only for identity. Exactly **six** columns are updatable —
+  `sheets_exported_at`, `sheets_export_attempts`, `sheets_export_error`,
+  `sheets_export_state`, `sheets_export_next_attempt_at`, and `export_claim_token` — and only
+  the `S4` export worker and the §5.7 rebuild update them. They are unused before `S4`. The
+  export **destination** is not among them: it lives in `atlas.sheets_mirror_allocations`
+  (§3.9).
 - **Transaction boundary for allocation:** one statement.
   `INSERT … ON CONFLICT DO NOTHING RETURNING session_id`, retried on the next free slot.
   Slot exhaustion at 99 still fails closed with `SESSION_SLOTS_EXHAUSTED`.
@@ -397,6 +398,7 @@ Replaces the idempotency store in `services/idempotency.js` — **for all seven 
 - **Transaction boundary — a compare-and-set, never `DO NOTHING`.** The claim is one
   statement:
   ```sql
+  -- The caller MUST already hold pg_try_advisory_lock(hashtext($1)) — see "liveness" below.
   INSERT INTO atlas.write_receipts (write_id, route, status, attempt, attempt_token,
                                     created_at, attempt_started_at, expires_at)
   VALUES ($1, $2, 'in_progress', 1, gen_random_uuid(),
@@ -412,6 +414,10 @@ Replaces the idempotency store in `services/idempotency.js` — **for all seven 
          attempt_token      = gen_random_uuid(),
          attempt_started_at = now(),
          expires_at         = now() + interval '24 hours',  -- every newly-owned attempt
+         -- WRITE-2: a LIVE retry must still see the prior attempt's minted session_id.
+         -- An EXPIRED reclaim is a new logical record and starts clean.
+         session_id         = CASE WHEN atlas.write_receipts.expires_at <= now()
+                                   THEN NULL ELSE atlas.write_receipts.session_id END,
          response_body      = NULL,
          rows_written       = NULL,
          appended_range     = NULL,
@@ -420,8 +426,32 @@ Replaces the idempotency store in `services/idempotency.js` — **for all seven 
       OR (atlas.write_receipts.status = 'in_progress'
           AND atlas.write_receipts.attempt_started_at < now() - interval '5 minutes')
       OR atlas.write_receipts.expires_at <= now()   -- expired: reclaimable at ANY status
-  RETURNING attempt_token, attempt;
+  RETURNING attempt_token, attempt, session_id;
   ```
+
+  **Liveness, not a timer — restoring the WRITE-3 condition the SQL had dropped.**
+  *Owner review of `c22ce02`.* The file store retries an aged `in_progress` record **only when
+  it was rehydrated from a prior process**; an in-process `in_progress` record may still be
+  running and stays a duplicate (`services/idempotency.js:159-177`). The SQL above, on its
+  own, reclaims **any** `in_progress` older than five minutes — which can start a **second
+  live attempt while the first is still running**. The attempt token stops the stale attempt
+  *acknowledging*; it does nothing to stop it performing **external effects**. For the four
+  D4 routes, whose rows still append to Google Sheets, that is a duplicate append with no
+  Supabase constraint to catch it. A slow request is not a dead one.
+
+  The executable equivalent of "rehydrated from a dead process" is a **session-scoped
+  advisory lock**, the same primitive the exporter uses:
+
+  - Every claimer first takes `pg_try_advisory_lock(hashtext(write_id))` and **holds it for
+    the life of the attempt**. Supavisor session mode (§8.1) is what makes this work.
+  - If the lock cannot be taken, **another attempt is genuinely still live** — its connection
+    is open — so this caller is a duplicate and refuses. That is a fact about the other
+    process, not a guess from elapsed time.
+  - If the owning process dies or its connection drops, Postgres **releases the lock**, which
+    is exactly the "prior process died" evidence WRITE-3 relies on.
+
+  The five-minute window is retained as a secondary bound, but **the lock is the authority**.
+  A stale-looking row whose lock is still held is refused.
 
   **Three corrections from the owner review of `0e324ac`, all in this one statement.**
 
@@ -473,7 +503,29 @@ metadata is shared safety infrastructure, not a second workout-data migration:
 
 Only the **receipt** moves for the last four. Their rows keep going to their Sheets tabs.
 `S4` deletes the file-backed store, `ATLAS_IDEMPOTENCY_FILE`, and
-`/tmp/atlas-idempotency.json`, and **proves no caller of the file store remains**.
+`/tmp/atlas-idempotency.json`, and **proves no caller of the file store remains** — but only
+**as its last action** (§5.5 step 9), after the §5.5a carry-over is verified. Until then the
+file store is the rollback source and must remain intact.
+
+**`session_id` is persisted when it is minted, or WRITE-2 cannot work.** *Owner review of
+`c22ce02`.* The schema carried a `session_id` column and the text promised `peekWrite` would
+recover the **server-minted** id, but the claim SQL never wrote one — so `peekWrite` had
+nothing to return and P16b could not have passed. The live consumer reads
+`record.metadata.session_id` **before** minting a new id on retry (`index.js:2511`), so the
+value must already be there.
+
+The adapter therefore records it **at the moment the server mints it**, in its own statement,
+guarded by the attempt token so an obsolete attempt cannot overwrite a newer one:
+
+```sql
+UPDATE atlas.write_receipts
+   SET session_id = $3
+ WHERE write_id = $1 AND attempt_token = $2 AND session_id IS NULL;
+```
+
+`completeWrite` persists `response_body` under the same token guard. A **live retry preserves**
+`session_id` (that is the whole point of WRITE-2); an **expired reclaim clears it**, because
+that row is a new logical record. Both are in the claim's `CASE` above.
 
 **Four operations, not three.** *Added by the advisory review of `7057b31`, which found
 `peekWrite` live at `index.js:2511` and absent from this specification.* `peekWrite` is a
@@ -560,6 +612,18 @@ during `S2` or `S3`:
   perform.
 - **A child row repaired by the sweep gets `write_id = NULL`**, because the sweep genuinely
   cannot know it. It never fabricates one.
+- **`S4` HANDS OVER the live receipt state; it does not discard it.** *Owner review of
+  `c22ce02`, correcting this document's claim that there is "no receipt data to migrate — only
+  a decider to change". **That was false as a cutover property.*** Immediately before cutover
+  the file store can hold up to **24 hours of unexpired live safety state**: completed replay
+  records with their response bodies, `failed` records that are still retryable, fresh and
+  rehydrated `in_progress` records, and the **server-minted `session_id`** WRITE-2 depends on.
+  Pointing seven callers at an **empty** `atlas.write_receipts` and deleting the file store
+  destroys all of it, and a **lost-response retry straddling the cutover then looks brand
+  new** — which for a server-minted workout can mint a *second* session identity, and for the
+  four D4 routes (whose rows still append to Sheets) can permit a *second* append with no
+  Supabase constraint able to catch it. See §5.5a for the handover.
+
 - **`S4` adds the foreign key and makes Supabase the receipt authority in the same step.**
   `beginWrite` starts claiming in Supabase, the §3.6 state machine goes live, and the
   migration adds `logged_sets.write_id REFERENCES atlas.write_receipts(write_id)` and the
@@ -1090,8 +1154,10 @@ entirely, and removes the need to serve any athlete read from an inert shadow.
      `scripts/reconstruct-session-reads.js`, and `docs/READ_BUDGET.md`;
    - **the file-backed idempotency store**, `ATLAS_IDEMPOTENCY_FILE`, and
      `/tmp/atlas-idempotency.json` — with a proof that **no caller of it remains** (ruling
-     D4). `ATLAS_IDEMPOTENCY_FILE` is read by **six** test files, not only the two named
-     above; `S4` removes every reference.
+     D4), and **only after the §5.5a receipt carry-over is verified** (§5.5 step 9). It is the
+     rollback source until then, so deleting it earlier would strip the cutover of its
+     reverse path. `ATLAS_IDEMPOTENCY_FILE` is read by **six** test files, not only the two
+     named above; `S4` removes every reference.
 4. Verify the deleted machinery is genuinely absent, and record the count.
 
 **A guarantee may not be deleted along with its mechanism.**
@@ -1143,10 +1209,13 @@ Three mechanisms, all required.
      `blocked`. Only the §5.7 rebuild clears them. They leave the queue immediately, consume
      **zero** further Sheets reads, and stay visible in `npm run atlas:status` as owner
      action required. Durable, visible, and **not retried**.
-   - **Transient** — an API error, a timeout, a rate limit. These are `retry_backoff` with an
-     explicit bounded cadence: `sheets_export_next_attempt_at` is set by exponential backoff,
-     capped, and after a declared attempt ceiling the session becomes `blocked` rather than
-     retrying forever.
+   - **Transient** — an API error, a timeout, a rate limit. These are `retry_backoff` on
+     **one deterministic policy**, declared here so P14i has something exact to prove:
+     `sheets_export_next_attempt_at = now() + least(2 ^ sheets_export_attempts, 60) minutes`
+     — that is **2, 4, 8, 16, 32, 60, 60 …** minutes — and at
+     `sheets_export_attempts >= 8` the session becomes **`blocked`** rather than retrying
+     forever. One formula, one cap (60 minutes), one ceiling (8 attempts). No jitter, so the
+     schedule is reproducible in a test.
 
    The rebuild clears the structural error, returns the session to `queued`, and the derived
    queue picks it up by the same predicate. **P14i** proves a structural refusal generates no
@@ -1219,9 +1288,11 @@ Three mechanisms, all required.
    are available here and were not available while Sheets was the live write authority.
 
    **Reconciliation still tolerates a duplicate rather than assuming one is impossible.** The
-   verify step counts rows per identity key, and more than one opens a divergence instead of
-   passing silently. A mechanism that is believed to be idempotent, and a mechanism that is
-   checked, are not the same thing.
+   verify step counts rows per identity key, and more than one records
+   `sheets_export_error = 'mirror_duplicate_identity'` with `sheets_export_state = 'blocked'`
+   instead of passing silently — **not** a `migration_divergences` row, which does not exist
+   after `S4` (gate P7c0). A mechanism that is believed to be idempotent, and a mechanism that
+   is checked, are not the same thing.
 
    The advisory lock is **kept, with an honest job**: it stops two workers doing redundant
    work at the same time, which is a throughput and quota concern, not a correctness one.
@@ -1254,8 +1325,8 @@ Three mechanisms, all required.
    cells, verifies, and acknowledges.
 
    **A count greater than one is a defect, not a tidy-up.** It records
-   `sheets_export_error = 'mirror_duplicate_identity'`, the session is **not** marked
-   exported, and the design does not delete Sheets rows to correct itself. Recovery is the
+   `sheets_export_error = 'mirror_duplicate_identity'` and `sheets_export_state = 'blocked'`,
+   the session is **not** marked exported, and the design does not delete Sheets rows to correct itself. Recovery is the
    owner-only rebuild of §5.7, never an automatic deletion.
 
    **The cost, stated rather than hidden.** A whole-tab read per completed session is more
@@ -1372,10 +1443,27 @@ way out.
 **One owner-only procedure recovers, and it is the only one.** It never touches Supabase
 workout data — Supabase is the authority and is by definition already correct.
 
-1. **Pause the export worker.** No session is claimed or written while a rebuild runs.
-2. **Reconstruct the four generated tabs from Supabase.** The projection is regenerated whole
-   rather than patched: Supabase already holds every row, so the mirror is rebuilt, not
-   repaired.
+1. **Pause the export worker, and prove the pause.** Setting a flag is not a drain. No
+   session may be claimed **and no in-flight Sheets write may survive into the allocation
+   reset**, so the rebuild proceeds only once every export claim is released — proven the same
+   way §5.5 step 2 proves its drain: a positive assertion (no held export advisory lock, no
+   claimed-but-unacknowledged session), never an elapsed timer.
+2. **Reconstruct the CLOSED-SESSION projection from a fixed snapshot.** Two boundaries, both
+   required, and both missing from the first version of this procedure.
+
+   - **Same scope as the normal exporter: closed sessions only.** The export queue is
+     closeout-derived, so the projection the mirror owns is exactly the set of sessions
+     carrying a `session_closeout` event. Rebuilding from *every* row would project an
+     **open** workout's partial rows and mint an immutable allocation whose `row_count` is too
+     small for that session's eventual closeout state — permanently unexportable. Open
+     sessions are simply not in the projection; they export normally, with fresh allocations,
+     once they close.
+   - **A fixed snapshot, so the target cannot move under the rebuild.** The whole
+     reconstruction and its verification run against one `REPEATABLE READ` snapshot taken at
+     the start. Without it an athlete's writes change Supabase while the projection is being
+     regenerated and verified, and the verification describes a state that no longer exists.
+     Sessions that close after the cutoff are outside this rebuild and export normally
+     afterwards.
 3. **Re-establish the mirror metadata safely.** `atlas.sheets_mirror_allocations` is cleared
    and reissued to match the rebuilt layout, and each `atlas.sheets_mirror_cursor.next_row` is
    set past the new true tail with `base_established_at` re-stamped — the same handshake as
@@ -1383,13 +1471,68 @@ workout data — Supabase is the authority and is by definition already correct.
    writing.
 4. **Verify the whole projection** — every session, every identity key, exactly once per tab —
    before anything resumes. A rebuild that has not been verified is not complete.
-5. **Clear `sheets_export_error` and resume**, letting the derived queue drain normally.
+5. **Reset the whole export-state tuple, atomically, and resume.** Clearing
+   `sheets_export_error` alone would leave every repaired session `sheets_export_state =
+   'blocked'` — and the queue predicate excludes `blocked`, so the sessions would stay
+   permanently unexportable while the procedure claimed success. *That contradiction between
+   the procedure and its own proof was found in the owner review of `c22ce02`.* The rebuild
+   sets, in one statement per session:
+   `sheets_export_state = 'queued'`, `sheets_export_error = NULL`,
+   `sheets_export_next_attempt_at = NULL`, `sheets_export_attempts = 0`,
+   `sheets_exported_at = NULL`, `export_claim_token = NULL`. Then the derived queue drains
+   normally.
 
 - **Owner-gated.** It rewrites a durable owner-visible surface, so it is owner-reserved like
   any other destructive Sheets operation. No agent runs it unprompted.
 - **Never touches Supabase workout authority.** It only writes Sheets and mirror metadata.
 - **Proof (§6.3 P14h).** One structural-drift case must reach refusal and then recover through
   exactly this procedure, ending with the projection verified and the session exported.
+
+### 5.5a The receipt authority handover
+
+*Added by the owner review of `c22ce02`. This is an **authority-transfer** defect, not a
+widening of workout-data migration.*
+
+The receipt store is not only a code path. At cutover it holds live safety state, and ruling
+D4 transfers receipt authority for **all seven `beginWrite` callers** — not just the migrated
+workout routes. Two consequences the handover protocol had missed.
+
+**The freeze and drain must cover all seven callers, not four.** §5.5 steps 1–2 freeze and
+drain the *migrated workout routes*. But `POST /api/coaching-notes`, `POST /api/constraints`,
+`POST /api/log-modality` and the bodyweight write also change decider at `S4`. Leaving them
+live would have **two deciders answering "is this a duplicate?" at the same moment** — the old
+build asking the file store, the new build asking Supabase. The receipt freeze therefore
+covers **all seven**, and the drain proves no in-flight attempt remains on any of them.
+
+**Every still-live receipt is carried over before the new decider opens.** Inside the frozen
+window, and before step 6 of §5.5:
+
+1. Read the file store's **unexpired** records (`expires_at > now()`; expired ones are
+   already absent by definition and are skipped).
+2. Insert each into `atlas.write_receipts`, preserving `write_id`, terminal `status`,
+   `response_body`, **`session_id`** (from `metadata`, for WRITE-2), `created_at`, `attempt`
+   and `expires_at`. `attempt_token` is null — these are decided outcomes, not live claims,
+   exactly as §3.6 already specifies for a non-claimed row.
+3. **Verify the carry-over** — count and identity, not count alone — before anything opens.
+4. **The old authority is not deleted until the carry-over is proven.** Deleting the file
+   store is the *last* action of `S4`, after step 7's evidence checks pass, never before.
+
+**Rollback is symmetric, and this is the part that bites.** Once writes reopen (step 8), new
+receipts exist **only** in Supabase. A rollback that simply restores the previous build would
+reopen Sheets writes while discarding that state — reintroducing the same lost-response
+duplicate in the opposite direction.
+
+- **Rollback before step 8** (writes still frozen) is clean: no new receipts exist, the file
+  store is intact and untouched, and nothing needs carrying back.
+- **Rollback after step 8** requires the reverse carry: export every unexpired
+  `atlas.write_receipts` row created since cutover back into the file store, verify it, and
+  only then reopen Sheets writes. Until that completes, writes stay frozen.
+
+**Proof (§6.3 P19a).** A **lost-response retry across the cutover boundary** is replayed from
+the carried-over receipt rather than treated as new — proven for a **server-minted workout**
+(WRITE-2: the retry recovers the prior `session_id` and does not mint a second) **and for at
+least one non-workout D4 route** (no second Sheets append). The same scenario is then proven
+**across a rollback**. A handover proven only forwards is proven half.
 
 ### 5.5 The `S4` handover protocol
 
@@ -1404,16 +1547,17 @@ unsafe, because a late append can land after the allocator has recorded its tail
 The handover is eight ordered steps. Each one must complete and be verified before the next
 begins.
 
-1. **Freeze the affected writes.** A write-freeze flag makes every migrated write route **fail
-   closed** with an explicit "migration in progress" response. The trust loop is suspended,
+1. **Freeze the affected writes — all seven `beginWrite` callers, not only the migrated
+   four (§5.5a).** A write-freeze flag makes every affected write route **fail closed** with an explicit "migration in progress" response. The trust loop is suspended,
    never weakened: an athlete gets a clear refusal, never a silent drop and never an
    unverified success. **The freeze ships as its own earlier deploy**, so that every running
    instance — old and new — is already honouring it before the cutover deploy begins. A freeze
    that only the new build knows about would not stop the old one.
 2. **Drain, and prove the drain.** After the freeze is live on all instances, wait longer than
-   the maximum request duration, then prove **no in-flight Sheets hot-path write remains**:
-   zero `in_progress` write receipts, and zero in-flight requests on the migrated write
-   routes. The proof is a positive assertion, not an elapsed timer.
+   the maximum request duration, then prove **no in-flight write remains on any of the seven
+   routes**: zero `in_progress` write receipts, and zero in-flight requests. The proof is a
+   positive assertion, not an elapsed timer.
+2a. **Carry over the live receipt state (§5.5a)** and verify it, before any new decider opens.
 3. **Run a final complete sweep** and require **zero open divergences**. It runs after the
    drain, so nothing can be written behind it.
 4. **Establish and record the export mirror's per-tab base.** Read each mirrored tab's true
@@ -1421,12 +1565,15 @@ begins.
    `base_established_at`. This is only safe because step 2 proved no further append can land.
 5. **Apply the `S4` schema and receipt transition.** Add the `write_id` foreign keys — which
    validate because `S2`/`S3` always stored null (§3.6) — and make Supabase the receipt
-   authority.
+   authority. **The file store is not deleted here.**
 6. **Deploy the cutover build** and switch the sole runtime authority.
 7. **Run the non-counting proof workout** and the exact evidence checks of §6.3.
 8. **Reopen writes**, and only after step 7 passes.
+9. **Delete the old receipt authority last.** The file store, `ATLAS_IDEMPOTENCY_FILE` and
+   `/tmp/atlas-idempotency.json` are removed only once the carry-over is proven and step 7's
+   evidence checks pass — never before. Until then it is the rollback source (§5.5a).
 
-**Abort and rollback.** Steps 1–4 are reversible by lifting the freeze: nothing has moved. If
+**Abort and rollback.** Steps 1–4 are reversible by lifting the freeze: nothing has moved, and the file store is still intact. **Rollback after step 8 requires the reverse receipt carry of §5.5a before writes reopen.** If
 any check fails at step 5, 6 or 7, the cutover aborts, the freeze stays on, and the previous
 build is restored — writes reopen on Sheets. Before reopening at step 8, **re-verify each
 tab's tail against `base_established_at`**; a tail that moved means an old-authority write
@@ -1497,16 +1644,18 @@ Everything in §6.2, re-run after the cutover, plus:
 | P14c | **Verification spans the whole tab.** Seed one duplicate identity **outside** the allocated range and prove acknowledgement is **refused**, `sheets_export_error` records `mirror_duplicate_identity`, and `sheets_exported_at` stays null. A verifier that reads only its own block cannot pass this. **No `migration_divergences` row is written** — that table is gone by `S4`. |
 | P14d | **The export refuses rather than overwrites when its range is not what it expects.** Shift a mirrored tab under a live allocation — delete a row above the block, then export — and prove the worker **writes nothing**, records `sheets_export_error = 'mirror_range_occupied'`, and leaves `sheets_exported_at` unset. Repeat with another session's rows seeded into the block. Prove **the workout itself is unaffected** and that **no post-`S4` path touches `migration_divergences`**. A test that only proves a clean range is written does not discharge P14d. |
 | P14i | **A structural refusal does not loop.** Drive a session to `mirror_range_occupied`, then run the export worker repeatedly and prove: the session is **not claimed**, **no whole-tab read is issued for it**, and it stays visible in `atlas:status` as owner action required. Separately prove a transient failure retries only on its bounded backoff and becomes `blocked` at the attempt ceiling rather than retrying forever. Measured in Sheets reads, not in intent. |
-| P14h | **Refusal recovers, and only through §5.7, executed as the real principal.** Drive one structural-drift case to refusal, then run the owner-only mirror rebuild **as `atlas_rebuild` under its actual grants** and prove: the export pauses; the four tabs are reconstructed from Supabase; allocations and cursors are reissued past the new tail; the whole projection verifies; the error clears and `sheets_export_state` returns to `queued`; the session exports. Prove `atlas_rebuild` is **refused** any write to `logged_sets`, `session_effort`, `session_plan_events`, `session_plan_set_recommendations` and `write_receipts` — the grant, not the procedure, is what protects workout authority. A refusal with no proven recovery is a permanent stall, and a recovery no principal may execute is not one either. |
+| P14h | **Refusal recovers, and only through §5.7, executed as the real principal.** The rebuild must additionally be proven to (a) reset the **whole export-state tuple** so the session actually returns to `queued` rather than staying `blocked`, (b) rebuild only the **closed-session** projection — an **open** workout present during the rebuild must not be projected and must export normally after it closes — and (c) run against a **fixed snapshot**, proven by mutating Supabase mid-rebuild and showing the verification is unaffected and the late session exports afterwards. Beyond that: Drive one structural-drift case to refusal, then run the owner-only mirror rebuild **as `atlas_rebuild` under its actual grants** and prove: the export pauses; the four tabs are reconstructed from Supabase; allocations and cursors are reissued past the new tail; the whole projection verifies; the error clears and `sheets_export_state` returns to `queued`; the session exports. Prove `atlas_rebuild` is **refused** any write to `logged_sets`, `session_effort`, `session_plan_events`, `session_plan_set_recommendations` and `write_receipts` — the grant, not the procedure, is what protects workout authority. A refusal with no proven recovery is a permanent stall, and a recovery no principal may execute is not one either. |
 | P14e | **Undo reaches the mirror.** Undo a Save on an already-exported session and prove: the session re-enters the export queue; the rewrite stays **inside its own allocated block**, blanking the tail; no other session's rows are touched; and the cursor does not move backwards. Separately prove `deleteRowsByRange` is **absent** for every mirrored tab. |
 | P14f | **Any post-export mutation re-enters the queue.** Mutate an exported session's Supabase data — including a `closeout_write_id` seal — and prove `sheets_exported_at` is cleared and the session is re-exported. A session that changed and stayed exported is a stale mirror. |
 | P14g | **A session with no `Effort` row receives no `Effort` allocation**, and the `Effort` cursor does not advance for it. |
-| P16a | **The five authority guarantees of `test/idempotencyPersistence.test.js` are re-proven against Supabase** — restart replay, stale-`in_progress` retryability, recent-`in_progress` duplicate blocking, the WRITE-3 rehydrated downgrade, and WRITE-2's `peekWrite` recovery of the server-minted `session_id` — **before** that suite is deleted. A deleted suite whose guarantees were not re-proven is a lost proof, not a cleanup. |
-| P16b | **`peekWrite` has a working Supabase implementation with its live consumer (`index.js:2511`) exercised**, and an expired row is proven to read as absent. |
+| P16a | **The five authority guarantees of `test/idempotencyPersistence.test.js` are re-proven against Supabase**, including **WRITE-3 by its actual mechanism**: an `in_progress` row whose owner is **still live** (advisory lock held) must be **refused** even when older than five minutes, and reclaimable only once that connection drops. A test that reclaims on elapsed time alone proves the opposite of WRITE-3. Also — restart replay, stale-`in_progress` retryability, recent-`in_progress` duplicate blocking, the WRITE-3 rehydrated downgrade, and WRITE-2's `peekWrite` recovery of the server-minted `session_id` — **before** that suite is deleted. A deleted suite whose guarantees were not re-proven is a lost proof, not a cleanup. |
+| P16b | **`peekWrite` has a working Supabase implementation with its live consumer (`index.js:2511`) exercised**, and an expired row is proven to read as absent. It must return a **non-null server-minted `session_id`** for a prior attempt — proving the adapter actually persisted it (§3.6) — and an obsolete attempt must be proven unable to overwrite a newer attempt's value. |
 | P15 | **The open-divergence count is zero** and every `atlas.migration_divergences` row is `closed`. If not, `S4` does not merge. |
 | P16 | **No caller of the file-backed idempotency store remains**, proven by search, and the store, its env var, and its file are absent. |
 | P17 | The deletion list of §5.4 is verified absent, including the dropped `atlas.migration_divergences` table. |
 | P18 | A second non-counting deployed debug workout, after the cutover. |
+| P19a | **The receipt authority is handed over, not discarded, in both directions.** Seed the file store with unexpired live state — a completed replay record with a body, a retryable `failed` record, and a server-minted `session_id` — then run the §5.5a handover and prove a **lost-response retry across the cutover** is replayed from the carried receipt rather than treated as new. Prove it for a **server-minted workout** (the retry recovers the prior `session_id`; **no second identity is minted**) **and for at least one non-workout D4 route** (**no second Sheets append**). Then prove the same scenario **across a rollback after writes reopened**. Prove the file store is **still present** until the carry-over is verified. A handover proven only forwards is proven half. |
+| P19b | **The receipt freeze covers all seven callers.** Prove each of the seven `beginWrite` routes fails closed during the freeze, and that no route is left deciding duplicates against the old store while another decides against Supabase. |
 | P19 | **The handover protocol of §5.5 is executed and its failure case exercised.** An old-authority write attempting to complete after the cutover boundary is **refused or detected before writes reopen**. Separately: the freeze is proven to fail closed with an explicit refusal rather than a silent drop; the drain is proven by positive assertion (zero `in_progress` receipts, zero in-flight migrated writes) rather than by an elapsed timer; and the per-tab base is proven to be recorded only after the drain passed. |
 | P20 | **The `write_id` foreign keys validate on the real pre-cutover data**, because `S2`/`S3` stored null throughout (§3.6). Proven by adding the constraint against a database carrying genuine shadow rows, not an empty one. |
 
