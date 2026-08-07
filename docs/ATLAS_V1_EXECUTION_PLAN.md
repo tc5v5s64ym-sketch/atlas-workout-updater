@@ -153,7 +153,7 @@ This is the single active, executable campaign. It is embedded here — not besi
 
 [`docs/SUPABASE_HOT_PATH_MIGRATION.md`](SUPABASE_HOT_PATH_MIGRATION.md) holds the minimum schema, the field-by-field Sheet-column mapping, the four-PR closure chain, the exact proof required before each cutover, the failure and rollback rules, the security design, and the data-ownership record. It is a design specification. It selects no work; this block does.
 
-### OWNER REVIEW 2026-08-07 — Atlas Contract / Systems Review of `b38de8b8e7da55f4e28b1c71ebe1bae97b5ca710`: BLOCKING
+### ATLAS CONTRACT / SYSTEMS REVIEW 2026-08-07 — exact head `b38de8b8e7da55f4e28b1c71ebe1bae97b5ca710`: BLOCKING
 
 The owner performed the required review on the exact head and returned **BLOCKING**, approving the direction and refusing that head. Four P1 architecture defects could still have produced a false-safe cutover, and one current-state statement was stale. All are corrected in the design document, and the rulings below govern.
 
@@ -164,7 +164,7 @@ The owner performed the required review on the exact head and returned **BLOCKIN
 
 **Current-state correction.** D3 is no longer open. The owner created and selected the Free-tier project **Atlas Production**, independently verified healthy and empty, `us-west-2`, zero public tables, zero migrations. Any statement that no project was provisioned, or that its state is unknown, is stale. The project reference and every credential stay out of the repository.
 
-### OWNER REVIEW 2026-08-07 (second) — Atlas Contract / Systems Review of `5f42d3c42993b8ae295bf711655a2f0448f5ec9d`: BLOCKING
+### ATLAS CONTRACT / SYSTEMS REVIEW 2026-08-07 (second) — exact head `5f42d3c42993b8ae295bf711655a2f0448f5ec9d`: BLOCKING
 
 The four blockers above were confirmed closed and rulings D1–D5 confirmed applied consistently. That head still could not pass: **the replacement design introduced four new load-bearing gaps.** All four are corrected in the design document.
 
@@ -175,7 +175,7 @@ The four blockers above were confirmed closed and rulings D1–D5 confirmed appl
 
 **No counter changed and no authorization was granted by this review.** Campaign 0/5, Phase 5 unauthorized, no schema applied, no deployment.
 
-### OWNER REVIEW 2026-08-07 (third) — Atlas Contract / Systems Review of `2ce7be3b31e7ff3ab7a25bbe4bcf98bd1e5cdc39`: BLOCKING
+### ATLAS CONTRACT / SYSTEMS REVIEW 2026-08-07 (third) — exact head `2ce7be3b31e7ff3ab7a25bbe4bcf98bd1e5cdc39`: BLOCKING
 
 The second review's four defects were confirmed materially addressed and all CI on that head was green. **Five load-bearing gaps remained**, four of them in mechanisms the previous corrections introduced. All five are corrected in the design document.
 
@@ -187,7 +187,7 @@ The second review's four defects were confirmed materially addressed and all CI 
 
 **No counter changed and no authorization was granted by this review.** Campaign 0/5, Phase 5 unauthorized, no schema applied, no deployment.
 
-### OWNER REVIEW 2026-08-07 (fourth) — Atlas Contract / Systems Review of `0878f6164378cc7a17784934451a244ec63d347d`: BLOCKING
+### ATLAS CONTRACT / SYSTEMS REVIEW 2026-08-07 (fourth) — exact head `0878f6164378cc7a17784934451a244ec63d347d`: BLOCKING
 
 The third review's five findings were confirmed closed, and the replacement design confirmed materially better. **Four load-bearing gaps remained**, plus five documentation corrections. All are addressed in the design document.
 
@@ -226,7 +226,7 @@ New proof gates **P14d–P14g**, **P16a**, **P16b**. Net new schema: **zero** �
 
 **No counter changed and no authorization was granted by this review.** Campaign 0/5, Phase 5 unauthorized, no schema applied, no deployment.
 
-### OWNER REVIEW 2026-08-07 (fifth required) — Atlas Contract / Systems Review of `771ff83df6d489a25395e1d8fba860776e16be18`: BLOCKING
+### ATLAS CONTRACT / SYSTEMS REVIEW 2026-08-07 (fifth required) — exact head `771ff83df6d489a25395e1d8fba860776e16be18`: BLOCKING
 
 The owner confirmed the PR is documentation-only, the head exact, CI green, and **the overnight advisory findings real — they are not reopened**. Four further P1 gaps, all corrected.
 
@@ -237,7 +237,7 @@ The owner confirmed the PR is documentation-only, the head exact, CI green, and 
 
 **No counter changed and no authorization was granted by this review.** Campaign 0/5, Phase 5 unauthorized, no schema applied, no deployment.
 
-### OWNER REVIEW 2026-08-07 (sixth required) — Atlas Contract / Systems Review of `0e324ac9b34d89acdacb2472727fec8c2df7e0ee`: BLOCKING
+### ATLAS CONTRACT / SYSTEMS REVIEW 2026-08-07 (sixth required) — exact head `0e324ac9b34d89acdacb2472727fec8c2df7e0ee`: BLOCKING
 
 Current-state gate passed: PR open, mergeable, documentation-only, base still `862a23b5`, exact-head checks green. Review 5's four findings confirmed materially addressed, and **the exporter architecture is explicitly not reopened** — deterministic destinations plus generated/read-only migrated tabs remain the selected design. Four P1 specification defects remained; all corrected.
 
@@ -248,7 +248,7 @@ Current-state gate passed: PR open, mergeable, documentation-only, base still `8
 
 **No counter changed and no authorization was granted by this review.** Campaign 0/5, Phase 5 unauthorized, no schema applied, no deployment.
 
-### OWNER REVIEW 2026-08-07 (seventh required) — Atlas Contract / Systems Review of `c22ce02d20ad23867d51bc3b092578a602d8835e`: BLOCKING
+### ATLAS CONTRACT / SYSTEMS REVIEW 2026-08-07 (seventh required) — exact head `c22ce02d20ad23867d51bc3b092578a602d8835e`: BLOCKING
 
 Current-state gate passed; the exporter architecture is again **not reopened**. Five P1 defects plus four consistency corrections; all addressed.
 
@@ -262,7 +262,7 @@ Current-state gate passed; the exporter architecture is again **not reopened**. 
 
 **No counter changed and no authorization was granted by this review.** Campaign 0/5, Phase 5 unauthorized, no schema applied, no deployment.
 
-### OWNER REVIEW 2026-08-07 (eighth required) — Atlas Contract / Systems Review of `60f27b3e29dce94f130e174fb732d9114d584ab9`: BLOCKING
+### ATLAS CONTRACT / SYSTEMS REVIEW 2026-08-07 (eighth required) — exact head `60f27b3e29dce94f130e174fb732d9114d584ab9`: BLOCKING
 
 Current-state gate passed; the exporter architecture is again **not reopened**. **Six** P1 defects (the review body's "five" was corrected to six by the owner in a follow-up), all in the replacement receipt-handover, liveness and rebuild mechanisms, plus two consistency corrections. All addressed.
 
@@ -277,7 +277,7 @@ Current-state gate passed; the exporter architecture is again **not reopened**. 
 
 **No counter changed and no authorization was granted by this review.** Campaign 0/5, Phase 5 unauthorized, no schema applied, no deployment.
 
-### OWNER REVIEW 2026-08-07 (ninth required) — Atlas Contract / Systems Review of `4647ee2cb6aab571a821c3a92d433f706a01b771`: BLOCKING
+### ATLAS CONTRACT / SYSTEMS REVIEW 2026-08-07 (ninth required) — exact head `4647ee2cb6aab571a821c3a92d433f706a01b771`: BLOCKING
 
 Current-state gate passed; review 8's six findings confirmed closed; the exporter architecture again **not reopened**. Six P1 authority/state-machine defects, all in the receipt handover. All corrected.
 
@@ -292,7 +292,7 @@ Current-state gate passed; review 8's six findings confirmed closed; the exporte
 
 **No counter changed and no authorization was granted by this review.** Campaign 0/5, Phase 5 unauthorized, no schema applied, no deployment.
 
-### OWNER REVIEW 2026-08-07 (tenth required) — Atlas Contract / Systems Review of `fcafa7513501a104385215365e2678cf0da4076a`: BLOCKING
+### ATLAS CONTRACT / SYSTEMS REVIEW 2026-08-07 (tenth required) — exact head `fcafa7513501a104385215365e2678cf0da4076a`: BLOCKING
 
 Review 9's six findings confirmed closed; the exporter architecture again **not reopened**. Six P1 sequencing/topology defects. Five corrected; **one is an OWNER DECISION and is not taken.**
 
@@ -307,7 +307,7 @@ Review 9's six findings confirmed closed; the exporter architecture again **not 
 
 **One further instance found while applying finding 2, and corrected in the same head.** The **`Exercise_Catalog` sync** had the identical defect in a second place: it is a **permanent** mechanism (the mirror and its sync table outlive the migration) and it also opened `migration_divergences` rows on a content mismatch — a table `S4` drops. Post-`S4` a mismatch now records itself in permanent catalog state (`exercise_catalog_sync.status = 'failed'` with `last_error`), which does not advance currency, so the mirror ages toward `CATALOG_MIRROR_MAX_AGE` and fails Saves closed if unresolved. New gate **P7c0** proves by search that **no permanent mechanism writes to `migration_divergences`** — the class of defect, not just its two instances.
 
-### OWNER REVIEW 2026-08-07 (eleventh required) — Atlas Contract / Systems Review of `4f8e18027dccee49a7fc32e263b7afa35f41344a`: BLOCKING
+### ATLAS CONTRACT / SYSTEMS REVIEW 2026-08-07 (eleventh required) — exact head `4f8e18027dccee49a7fc32e263b7afa35f41344a`: BLOCKING
 
 Review 10's five corrected findings confirmed closed; the exporter architecture again **not reopened**. **One owner ruling** (D6 withdrawn) and **five** P1 defects, plus consistency corrections. All applied.
 
@@ -323,6 +323,25 @@ Review 10's five corrected findings confirmed closed; the exporter architecture 
 
 **No counter changed and no authorization was granted by this review.** Campaign 0/5, Phase 5 unauthorized, no schema applied, no deployment.
 
+### ATLAS CONTRACT / SYSTEMS REVIEW 2026-08-07 (twelfth required) — exact head `310b01b395561272518ab1792e61fe293742c3e4`: BLOCKING
+
+Review 11's simplification confirmed materially applied — D6 withdrawn, the four-PR chain intact, the exporter architecture again **not reopened**. **Six** P1 defects, all in the new write-freeze, receipt-handover and rollback specification, plus three trust-record corrections. All applied.
+
+1. **The write freeze could still fail OPEN in the exact race it exists to close.** The rule was "the effective state is the last value read successfully", forbidding only `frozen → open` on a read failure. That left this legal: an instance reads `frozen = false`; the owner freezes; the instance's next freeze read fails; the retained `open` value authorizes a write the owner has already forbidden. Corrected: **only a successful current-request read returning exactly one row saying `frozen = false` authorizes a write.** A query error, timeout, missing row, malformed row, multiple rows or empty result is **frozen for that request**; a prior `frozen = true` may be retained, a prior `frozen = false` may not. The accepted cost is restated honestly and is larger than claimed — **from the `S3` deploy, an affected write depends on a successful Supabase freeze read on that request**, not merely at cold start — with its exact scope (the seven routes only), window (`S3` deploy to `S4` cutover) and shape (one indexed single-row read on a pooled connection). P11 gains the missing mutation: last-successful-open → owner freezes → read fails → the write is still refused with zero side effect.
+2. **The `S2`/`S3` schema gates were impossible for a table `S3` alone creates.** §6.1 P1 demanded `S2` prove "every constraint of §3" while §3.10 is explicitly not created until `S3`, and a grant written in `S2` proves nothing about a table that does not exist. Corrected: `S2`'s constraint gate is scoped to **§3.1–§3.9**, and `S3` gains **P8a** (the table exists, the single-row constraint bites, the row is seeded, `atlas_app` can `SELECT` and is refused every mutation, executed as the real role) and **P8b** (the `S3` migration must be applied to `Atlas Production` by the owner before any deployed-system freeze evidence counts). §5.3's "blocked on: nothing owner-reserved" is corrected to name that gate. The authority sentence is narrowed too: D5 still holds that **no workout-data read or write authority moves in `S3`**, but "`S3` moves nothing" is no longer honest — `S3` introduces a live write-admission control and a Supabase availability dependency on the seven routes.
+3. **Neither direction of the handover had an executable seam into the live receipt authority.** Verified against the module: `services/idempotency.js:300-307` exports only `beginWrite`, `peekWrite`, `completeWrite`, `failWrite`, `normalizeWriteId` and `resetIdempotencyStore`; `writeRecords` (`:20`) and `persistDisabled` (`:22`) are private; and `ensureLoaded` (`:117-125`) sets `loaded` **before** reading, so the disk is read once per process and writing `/tmp` after the old process is live does **not** restore its map. Corrected: `S3` ships a narrowly-scoped **receipt migration seam** — `exportLiveReceipts()` and `importReceipts()`, reached by two owner-only routes that **refuse unless the freeze is active** and require an owner migration token not configured in normal runtime. Because a rolling replacement runs several processes each holding a private map, the runbook must cover **every** live process, abort if the live set cannot be enumerated deterministically, and abort on two snapshots holding one `write_id` with different content. Exact sunset: `S4` deletes the seam with the store, and P16's absence proof covers both routes and both functions. New `S3` gate **P13**; P19a and P19d must exercise the real seam, including `persistDisabled`.
+4. **The forward carry was not crash-atomic, so `atlas.write_receipts` could not be its own verified capture.** The design named the destination but never the write that fills it, so a death after a proper subset had been written left physical rows indistinguishable from a verified carry — presence is not verification. Corrected: the carry is **one Postgres transaction** — materialize the closed source set, upsert the mapped rows, verify identity and content **inside the same transaction**, and commit only if verification passes. **The commit is the durable fact that verification passed**, which is what makes the resumption rule decidable at all, and it is decidable only because P7d already proves nothing else writes that table before cutover. Principal named (`atlas_migrate`, not `atlas_app`) and the retry converges by `ON CONFLICT`. New gate **P19g** kills the carry mid-transaction and proves no partial set survives to authorize a cutover.
+5. **Carry verification proved source ⊆ destination, which is not authority transfer.** It required every source record to be present but never that no extra live destination receipt exists. An extra unexpired `completed` row that the pre-cutover winner does not hold would make a genuinely new `write_id` replay as a duplicate after cutover — a **lost write**. Corrected to **exact set equality** over unexpired identities and mapped content: any unexpired destination row not in the source set **aborts the transaction** rather than being removed or merged, because before cutover nothing legitimate writes that table, so an unexplained extra is evidence to preserve rather than delete. Expired rows may remain, and only because every correctness path already excludes them by TTL. New gate **P19h** seeds the extra receipt and proves it cannot become authority.
+6. **Reverting `S4` restored source, not a runnable `S3` database posture.** `S4` drops `atlas.migration_divergences`, which the restored `S3` build's shadow lane, sweep and repair worker call continuously — a Git revert would put back code querying a table that no longer exists. One rollback winner is now named: **the post-`S4` schema stays `S3`-compatible for the whole rollback window.** The drop ships in the `S4` PR but is **applied by the owner only after the window closes**, which costs no extra PR because applying schema was never a merge; the rest of the `S4` schema is additive and the `write_id` foreign keys accept the nulls `S3` writes. New gate **P19i** proves the `S3` build runs against the post-`S4` schema and **fails** once the table is dropped, which is what makes the sequencing load-bearing. The rollback's new fail-closed case is stated too: if Supabase is unreachable or its receipt rows cannot be read and verified, rollback **may restore code but must not reopen the seven writes**, and a backup older than the newest receipts does not discharge it (**P19d**).
+
+**Trust-record corrections applied.**
+
+1. **Review attribution was wrong, and it was wrong in the load-bearing direction.** The merge card and every plan heading said these required reviews were "performed by the owner", reviewer Dale. `CLAUDE.md` is explicit that **ChatGPT performs the required Atlas Contract / Systems Review**, and that naming the performer is an authority boundary rather than a formality — recording the owner as the reviewer erases exactly the separation the rule exists to create. All eleven plan headings are renamed to `ATLAS CONTRACT / SYSTEMS REVIEW`, the design's 45 "owner review of `<sha>`" references become "required review of `<sha>`" under a stated definition, and the merge card is corrected. **No verdict, finding or disposition was changed** — only who performed the lane. Owner **rulings**, **instructions** and **gates** remain Dale's and are still named as his.
+2. **`atlas_migrate` was described as "DDL only" while the design assigned it DML in two places** — the `atlas.write_freeze` seed and, now, the cutover receipt carry. Restated as **migration-only: DDL plus exactly two declared DML operations**, each scoped and each proven as the real role by P7c.
+3. **D7 was written as settled where it is open.** Every surface that called the write freeze "permanent" now says **proposed permanent, pending open decision D7**, and the table inventory reads ten permanent, one proposed permanent, one temporary. If Dale declines permanence the control still ships — `S4` is not executable without it — and the open question becomes when it is removed, which `S4` cannot answer for itself because its own reverse transfer needs the freeze.
+
+**No counter changed and no authorization was granted by this review.** Campaign 0/5, Phase 5 unauthorized, no schema applied, no deployment.
+
 ### Owner rulings D1–D5, all resolved (2026-08-07)
 
 1. **D1 — `Exercise_Catalog`.** Add the read-only mirror needed to remove the final athlete-facing Sheets quota dependency. Sheets remains its editing authority; Supabase is the Save-path read mirror.
@@ -335,8 +354,8 @@ Review 10's five corrected findings confirmed closed; the exporter architecture 
 
 1. **PR S1 — governance, authority and schema design.** Record this instruction and this review; correct every document that states Sheets is permanently the only V1 store; record the authority move in [`docs/ATLAS_SYSTEM_AUTHORITY.md`](ATLAS_SYSTEM_AUTHORITY.md) as concept 18; publish the design document. No code, no dependency, no migration file, no adapter, no schema application, no deployment.
 2. **PR S2 — migration files, Supabase adapter, shadow write, divergence lane, sweep, repair worker.** Sheets remains the live authority for every read and every write. No cutover.
-3. **PR S3 — backfill, continuous parity, repair, and cutover-readiness proof only.** Moves no read and no write. Drives the open-divergence count to zero.
-4. **PR S4 — the cutover.** Reads and writes move to Supabase together. Completed sessions export to Sheets asynchronously. The same PR removes the obsolete Sheets hot-path reads, the read-budget harness authority, the probes, the caches, the whole bridge including the divergence table, and the file-backed idempotency store, and verifies their absence.
+3. **PR S3 — backfill, continuous parity, repair, cutover-readiness proof, the write freeze and the receipt migration seam.** Moves no workout-data read or write authority. Drives the open-divergence count to zero. **It is not authority-free in every sense:** it introduces a live write-admission control over the seven `beginWrite` routes and a Supabase availability dependency on them, and its deployed-system freeze evidence is gated on the owner applying the `S3` migration to `Atlas Production`.
+4. **PR S4 — the cutover.** Reads and writes move to Supabase together. Completed sessions export to Sheets asynchronously. The same PR removes the obsolete Sheets hot-path reads, the read-budget harness authority, the probes, the caches, the whole bridge, the file-backed idempotency store and the receipt migration seam, and verifies their absence. **One operation is deliberately deferred rather than deleted:** the `DROP TABLE atlas.migration_divergences` migration ships in this PR but is applied by the owner only after the rollback window closes, because a restored `S3` build queries that table. Deferring a schema application is not a fifth PR.
 
 **A foundation PR is progress, not completion.** The chain is open until `S4` verifies the deleted machinery is gone. **Nothing on the `S4` deletion list survives `S4`.**
 

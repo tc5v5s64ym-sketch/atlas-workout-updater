@@ -358,10 +358,11 @@ revisions, item outcomes, and closeout and write receipts.
 - **Current live authority.** Google Sheets via `sheets.js`, across `Log_Cleaned`, `Effort`,
   `Session_Plans` and `Session_Plan_Sets`, plus the file-backed idempotency store in
   `services/idempotency.js` (`/tmp/atlas-idempotency.json`, `services/idempotency.js:18`).
-- **Intended sole authority.** Supabase, in the eleven permanent tables of
-  [`docs/SUPABASE_HOT_PATH_MIGRATION.md`](./SUPABASE_HOT_PATH_MIGRATION.md) §3 — ten that
-  hold the record, plus `atlas.write_freeze` (§3.10), the owner-controlled write-freeze
-  control `PR S3` builds and no PR deletes (decision D7). Google Sheets
+- **Intended sole authority.** Supabase, in the ten permanent record tables of
+  [`docs/SUPABASE_HOT_PATH_MIGRATION.md`](./SUPABASE_HOT_PATH_MIGRATION.md) §3.1–§3.9.
+  Alongside them `PR S3` builds `atlas.write_freeze` (§3.10), an owner-controlled
+  write-admission control that holds no record and moves no authority; whether it survives the
+  migration is **open decision D7**, for the owner at the `S3` gate. Google Sheets
   becomes a human-readable export mirror for these concepts, and is never required for an
   active workout to read, save, verify, or close out.
 - **Competing authority.** **None today.** Nothing has migrated: this repository holds no
