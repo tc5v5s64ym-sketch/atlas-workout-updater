@@ -453,6 +453,30 @@ Replaces the idempotency store in `services/idempotency.js` — **for all seven 
   The five-minute window is retained as a secondary bound, but **the lock is the authority**.
   A stale-looking row whose lock is still held is refused.
 
+  **The normal-release contract — without it the lock leaks and inverts its own meaning.**
+  *Owner review of `60f27b3`.* A session-scoped lock does **not** end at transaction commit,
+  and returning a pooled client does **not** necessarily close the database session. The
+  previous text specified acquisition and process-death release and never specified the
+  ordinary path. Three rules close it:
+
+  1. **The connection is pinned.** The same checked-out session is held across
+     claim → external effect → `completeWrite`/`failWrite` → unlock. The attempt may not
+     migrate to another backend mid-flight, or the lock and the work end up on different
+     sessions.
+  2. **`pg_advisory_unlock` runs unconditionally on every normal exit** — success, failure,
+     duplicate, refusal, and thrown error alike — in a `finally`. A lock released only on the
+     happy path is a lock that leaks on precisely the paths that matter.
+  3. **A leaked lock is worse than a missing one**, which is why this is a P1 and not
+     housekeeping: a later request may be falsely refused as a duplicate, and if it lands on
+     the *same* backend session, advisory-lock **reentrancy** would let it acquire a lock it
+     does not exclusively own — inverting "lock acquired proves no other owner is live" into
+     a false negative. Reentrancy is why pinning is stated as a requirement rather than an
+     optimisation.
+
+  **P16a proves all three**: a successful attempt, a failed attempt and a thrown route each
+  release the lock **before the connection returns to the pool**, while a genuinely dropped
+  connection releases it automatically.
+
   **Three corrections from the owner review of `0e324ac`, all in this one statement.**
 
   1. **The initial insert now sets `expires_at`.** It did not, and the column has no default,
@@ -514,18 +538,40 @@ nothing to return and P16b could not have passed. The live consumer reads
 `record.metadata.session_id` **before** minting a new id on retry (`index.js:2511`), so the
 value must already be there.
 
-The adapter therefore records it **at the moment the server mints it**, in its own statement,
-guarded by the attempt token so an obsolete attempt cannot overwrite a newer one:
+**The route ordering must change at `S4`, and that is a behaviour change, not a storage
+swap.** *Owner review of `60f27b3`.* The live flow is `peekWrite` → **mint** → work →
+`beginWrite` (`index.js:2506-2530`, `:2683`), so at the moment the id is minted **no Supabase
+attempt is owned and no attempt token exists** to guard the update. The previous wording —
+"persist it at the moment the server mints it, guarded by the attempt token" — described an
+ordering that cannot happen.
 
-```sql
-UPDATE atlas.write_receipts
-   SET session_id = $3
- WHERE write_id = $1 AND attempt_token = $2 AND session_id IS NULL;
-```
+One executable ordering is specified, and it is strictly stronger than today's: **it becomes
+impossible to mint a server id without first owning the write attempt.**
+
+1. **Claim first.** `beginWrite` runs before any minting, takes the advisory lock (below), and
+   its `RETURNING` includes `session_id`.
+2. **Completed-replay is unaffected**, because the claim refuses a `completed` row — it
+   returns no row, the caller reads it and replays, and **never reaches the mint**. This is
+   exactly the behaviour `index.js:2513-2519` documents today.
+3. **Reuse or mint.** A returned non-null `session_id` on a non-completed row is reused. Only
+   if it is null does the allocator mint.
+4. **Persist under the token**, immediately after minting and before the workout write:
+   ```sql
+   UPDATE atlas.write_receipts
+      SET session_id = $3
+    WHERE write_id = $1 AND attempt_token = $2 AND session_id IS NULL;
+   ```
+   The token guard means an obsolete attempt cannot overwrite a newer one, and `IS NULL` means
+   a reused id is never rewritten.
 
 `completeWrite` persists `response_body` under the same token guard. A **live retry preserves**
-`session_id` (that is the whole point of WRITE-2); an **expired reclaim clears it**, because
-that row is a new logical record. Both are in the claim's `CASE` above.
+`session_id` — the point of WRITE-2 — while an **expired reclaim clears it**, because that row
+is a new logical record; both are in the claim's `CASE` above. `peekWrite` remains for
+read-only inspection and for consumers that are not claiming.
+
+**P16b must exercise this ordering**, including **process death after mint-and-persist and
+before the workout write**, and prove the retry recovers **exactly that id** rather than
+minting a second.
 
 **Four operations, not three.** *Added by the advisory review of `7057b31`, which found
 `peekWrite` live at `index.js:2511` and absent from this specification.* `peekWrite` is a
@@ -628,7 +674,7 @@ during `S2` or `S3`:
   `beginWrite` starts claiming in Supabase, the §3.6 state machine goes live, and the
   migration adds `logged_sets.write_id REFERENCES atlas.write_receipts(write_id)` and the
   same on `session_effort`. Historical and backfilled rows keep `write_id = NULL`, which the
-  foreign key permits. There is no receipt data to migrate — only a decider to change.
+  foreign key permits.
 - **Undo is unaffected.** `DELETE … WHERE session_id = $1 AND write_id = $2` operates on the
   Save just performed, which after `S4` always carries a `write_id`. A pre-cutover row with a
   null `write_id` was never undoable by that path.
@@ -1507,14 +1553,35 @@ covers **all seven**, and the drain proves no in-flight attempt remains on any o
 **Every still-live receipt is carried over before the new decider opens.** Inside the frozen
 window, and before step 6 of §5.5:
 
-1. Read the file store's **unexpired** records (`expires_at > now()`; expired ones are
-   already absent by definition and are skipped).
-2. Insert each into `atlas.write_receipts`, preserving `write_id`, terminal `status`,
-   `response_body`, **`session_id`** (from `metadata`, for WRITE-2), `created_at`, `attempt`
-   and `expires_at`. `attempt_token` is null — these are decided outcomes, not live claims,
-   exactly as §3.6 already specifies for a non-claimed row.
-3. **Verify the carry-over** — count and identity, not count alone — before anything opens.
-4. **The old authority is not deleted until the carry-over is proven.** Deleting the file
+1. Read the file store's **unexpired** records. *Corrected by the owner review of `60f27b3`:
+   the previous version filtered on `expires_at > now()`, and the file store **has no
+   `expires_at` field**. Its TTL authority is `created_at_ms + DEFAULT_TTL_MS`
+   (`services/idempotency.js`). A design that cannot enumerate the records it must preserve
+   is not executable.* Unexpired means `now - created_at_ms <= DEFAULT_TTL_MS`.
+2. Map each record by this **exact forward mapping**, from the real persisted JSON shape —
+   not from a schema-shaped idealisation of it:
+
+   | File-store field | `atlas.write_receipts` | Rule |
+   |---|---|---|
+   | map key / `write_id` | `write_id` | verbatim |
+   | `status` | `status` | verbatim (`in_progress` / `completed` / `failed`) |
+   | `created_at_ms` | `created_at` | `to_timestamp(created_at_ms / 1000.0)` |
+   | `created_at_ms` | `expires_at` | `to_timestamp((created_at_ms + DEFAULT_TTL_MS) / 1000.0)` — **derived**, since the source has no expiry field |
+   | **`response`** | **`response_body`** | the payload is named `response` in the file, not `response_body` |
+   | `metadata.session_id` | `session_id` | the WRITE-2 value |
+   | `metadata.endpoint` | `route` | |
+   | *(absent)* | `attempt` | **`1`** — the file store keeps no attempt counter, so every carried record is attempt 1 |
+   | *(not carried)* | `attempt_token` | **null** — these are decided outcomes, not live claims (§3.6) |
+   | `rehydrated`, `token`, `failed_at*` | *(dropped)* | process-local; `token` is replaced by `attempt_token`, and liveness is now the advisory lock |
+
+3. **The reverse mapping is the same table read right-to-left**, and it is what rollback
+   writes back into the file: `created_at_ms = extract(epoch from created_at) * 1000`,
+   `response_body → response`, `session_id → metadata.session_id`, `route →
+   metadata.endpoint`, `rehydrated` omitted, `token` null. `attempt` and `expires_at` have no
+   file representation and are dropped — safe, because `expires_at` is recomputed from
+   `created_at_ms` and the file store never had an attempt counter.
+4. **Verify the carry-over** — count and identity, not count alone — before anything opens.
+5. **The old authority is not deleted until the carry-over is proven.** Deleting the file
    store is the *last* action of `S4`, after step 7's evidence checks pass, never before.
 
 **Rollback is symmetric, and this is the part that bites.** Once writes reopen (step 8), new
@@ -1524,9 +1591,24 @@ duplicate in the opposite direction.
 
 - **Rollback before step 8** (writes still frozen) is clean: no new receipts exist, the file
   store is intact and untouched, and nothing needs carrying back.
-- **Rollback after step 8** requires the reverse carry: export every unexpired
-  `atlas.write_receipts` row created since cutover back into the file store, verify it, and
-  only then reopen Sheets writes. Until that completes, writes stay frozen.
+- **Rollback after step 8 is its own ordered authority transfer, not a copy step.** *Owner
+  review of `60f27b3`.* The previous wording said only "carry back, then reopen" — but once
+  writes are open, a **new Supabase receipt can be created after the reverse read and before
+  the old build resumes**, and it then vanishes from the restored file authority. That is
+  exactly the lost-response boundary this mechanism exists to close, reintroduced by the
+  rollback. The reverse transfer therefore mirrors the forward one, in order:
+
+  1. **Freeze all seven callers** again — on the build that is currently live.
+  2. **Positive drain**, proven as in step 2: no in-flight attempt on any of the seven, no
+     held receipt advisory lock.
+  3. **Fixed snapshot**, then carry back every unexpired receipt by the reverse mapping of
+     §5.5a. The snapshot is what makes the set closed — nothing can be appended behind it.
+  4. **Verify by identity and content**, not count.
+  5. **Restore the old build and decider.**
+  6. **Reopen writes**, last.
+
+  **P19a must inject a receipt concurrent with the rollback** and prove it cannot fall through
+  the boundary.
 
 **Proof (§6.3 P19a).** A **lost-response retry across the cutover boundary** is replayed from
 the carried-over receipt rather than treated as new — proven for a **server-minted workout**
@@ -1544,8 +1626,9 @@ instance is already reading and writing Supabase. That recreates the exact ackno
 omission this migration exists to eliminate. It also makes the export's initial per-tab base
 unsafe, because a late append can land after the allocator has recorded its tail.
 
-The handover is eight ordered steps. Each one must complete and be verified before the next
-begins.
+The handover is **ten ordered steps** — 1, 2, 2a, 3, 4, 5, 6, 7, 8, 9. *The heading previously
+said eight while the list contained `2a` and `9`; a runbook that miscounts its own steps
+invites one to be skipped.* Each step must complete and be verified before the next begins.
 
 1. **Freeze the affected writes — all seven `beginWrite` callers, not only the migrated
    four (§5.5a).** A write-freeze flag makes every affected write route **fail closed** with an explicit "migration in progress" response. The trust loop is suspended,
@@ -1607,7 +1690,7 @@ operation. No lower rung substitutes for a higher one.
 | P7c0 | **No permanent mechanism writes to `migration_divergences`.** Proven by search across the exporter, the catalog sync and every post-`S4` path: the only writers are the `S2`/`S3` shadow lane and sweep, both of which the same PR deletes. A permanent mechanism writing to a dropped table is a defect that only appears after cutover. |
 | P7b1 | **A legitimate catalog edit synchronises; it never fails.** Change one valid row in the Sheets catalog and prove a **new verified generation** appears, currency advances, no failure is recorded, and the Save path stays continuously serviceable. Separately prove each genuine failure mode — read failure, empty source, materially shrunken source, verification failure, swap-transaction failure — **does** record `status='failed'` and leaves the prior generation current. A test that only exercises failure cannot tell the two apart. |
 | P7b | **The catalog mirror is proven fail-closed.** A generation older than `CATALOG_MIRROR_MAX_AGE` is proven **not served** — the Save fails closed with an explicit reason, exactly as the expired cache does today. A failed sync is proven not to advance currency. An empty or materially shrunken source is proven refused. A content mismatch is proven to open an `exercise_catalog` divergence. A test that only shows a fresh mirror is served does not discharge this. |
-| P7c | **Least privilege is proven, not claimed.** `atlas_app` is refused a DDL statement and refused a `DELETE` on a table outside its grant list (§8.2). |
+| P7c | **Least privilege is proven, not claimed.** `atlas_app` is refused a DDL statement and refused a `DELETE` on a table outside its grant list (§8.2). Every statement the design specifies — the claim, the `session_id` persist, `completeWrite`, `failWrite`, the export-state updates — is executed **as its real role** and proven to succeed. Three grant/SQL mismatches have already reached review; a statement proven only as superuser proves nothing about the deployed system. |
 | P8 | The `write_receipts` state machine is proven on all four transitions of §3.6, including that a **`failed` attempt does not consume the `write_id`** and that a superseded attempt's late `completeWrite` is discarded. |
 | P8a0 | **The receipt claim is executable and self-contained.** A brand-new receipt is proven to carry a **non-null `expires_at`** and to be immediately visible to `peekWrite`. An **expired `completed`** row is proven **atomically reclaimable in the claim statement** — no housekeeping job runs during the test — with `attempt` and `created_at` reset, matching prune-then-insert. The claim is proven to execute **as `atlas_app` under its actual grants**, not as a superuser. |
 | P8a | **The receipt TTL epoch resets on retry.** Seed a retryable receipt just under 24 hours old; claim a new attempt; complete it; advance the clock past the **original** expiry but inside 24 hours of the retry; and prove `peekWrite` and duplicate replay still succeed. A retry that inherits the first attempt's expiry fails this. |
@@ -1654,7 +1737,7 @@ Everything in §6.2, re-run after the cutover, plus:
 | P16 | **No caller of the file-backed idempotency store remains**, proven by search, and the store, its env var, and its file are absent. |
 | P17 | The deletion list of §5.4 is verified absent, including the dropped `atlas.migration_divergences` table. |
 | P18 | A second non-counting deployed debug workout, after the cutover. |
-| P19a | **The receipt authority is handed over, not discarded, in both directions.** Seed the file store with unexpired live state — a completed replay record with a body, a retryable `failed` record, and a server-minted `session_id` — then run the §5.5a handover and prove a **lost-response retry across the cutover** is replayed from the carried receipt rather than treated as new. Prove it for a **server-minted workout** (the retry recovers the prior `session_id`; **no second identity is minted**) **and for at least one non-workout D4 route** (**no second Sheets append**). Then prove the same scenario **across a rollback after writes reopened**. Prove the file store is **still present** until the carry-over is verified. A handover proven only forwards is proven half. |
+| P19a | **The receipt authority is handed over, not discarded, in both directions — against the REAL file shape.** The fixture must be the actual persisted JSON (`created_at_ms`, `response`, `metadata`, no `expires_at`, no `attempt`), never a schema-shaped stand-in, and must exercise the forward **and reverse** mappings of §5.5a. Additionally: **inject a new receipt concurrent with the rollback** and prove it cannot fall through the reverse freeze/drain/snapshot boundary. Seed the file store with unexpired live state — a completed replay record with a body, a retryable `failed` record, and a server-minted `session_id` — then run the §5.5a handover and prove a **lost-response retry across the cutover** is replayed from the carried receipt rather than treated as new. Prove it for a **server-minted workout** (the retry recovers the prior `session_id`; **no second identity is minted**) **and for at least one non-workout D4 route** (**no second Sheets append**). Then prove the same scenario **across a rollback after writes reopened**. Prove the file store is **still present** until the carry-over is verified. A handover proven only forwards is proven half. |
 | P19b | **The receipt freeze covers all seven callers.** Prove each of the seven `beginWrite` routes fails closed during the freeze, and that no route is left deciding duplicates against the old store while another decides against Supabase. |
 | P19 | **The handover protocol of §5.5 is executed and its failure case exercised.** An old-authority write attempting to complete after the cutover boundary is **refused or detected before writes reopen**. Separately: the freeze is proven to fail closed with an explicit refusal rather than a silent drop; the drain is proven by positive assertion (zero `in_progress` receipts, zero in-flight migrated writes) rather than by an elapsed timer; and the per-tab base is proven to be recorded only after the drain passed. |
 | P20 | **The `write_id` foreign keys validate on the real pre-cutover data**, because `S2`/`S3` stored null throughout (§3.6). Proven by adding the constraint against a database carrying genuine shadow rows, not an empty one. |
@@ -1775,7 +1858,7 @@ Four distinct database roles, each with its own credential: three for the applic
 |---|---|
 | `SELECT` | every table in `atlas` |
 | `INSERT` | every table in `atlas` |
-| `UPDATE` (column-scoped) | `closeout_write_id` on `session_plan_set_recommendations`; `status`, `attempt`, `attempt_token`, `attempt_started_at`, **`created_at`**, **`expires_at`**, `response_body`, `rows_written`, `appended_range`, `completed_at` on `write_receipts`; `sheets_exported_at`, `sheets_export_attempts`, `sheets_export_error`, **`sheets_export_state`**, **`sheets_export_next_attempt_at`**, `export_claim_token` on `workout_sessions`; `next_row`, `base_established_at` on `sheets_mirror_cursor`; `status`, `verified_at`, `last_error` on `exercise_catalog_sync`; the state columns on `migration_divergences` while it exists |
+| `UPDATE` (column-scoped) | `closeout_write_id` on `session_plan_set_recommendations`; `status`, `attempt`, `attempt_token`, `attempt_started_at`, **`created_at`**, **`expires_at`**, **`session_id`**, `response_body`, `rows_written`, `appended_range`, `completed_at` on `write_receipts`; `sheets_exported_at`, `sheets_export_attempts`, `sheets_export_error`, **`sheets_export_state`**, **`sheets_export_next_attempt_at`**, `export_claim_token` on `workout_sessions`; `next_row`, `base_established_at` on `sheets_mirror_cursor`; `status`, `verified_at`, `last_error` on `exercise_catalog_sync`; the state columns on `migration_divergences` while it exists |
 
 *`created_at` and `expires_at` were missing from this list while the retry claim updated both — the claim was permission-denied under its own security model. Corrected from the owner review of `0e324ac`.*
 | `DELETE` | `logged_sets` (undo), `exercise_catalog_mirror` (the §3.7 generation swap), and `migration_divergences` while it exists. **Never on a Sheets tab** — the export does not delete mirror rows to correct itself (§5.4). |
@@ -1803,7 +1886,7 @@ credential may execute is not a recovery path.*
 | `SELECT` | every table in `atlas` |
 | `DELETE`, `INSERT` | `sheets_mirror_allocations` — clear and reissue |
 | `UPDATE` | `next_row`, `base_established_at` on `sheets_mirror_cursor` |
-| `UPDATE` | `sheets_export_state`, `sheets_export_error`, `sheets_export_next_attempt_at`, `sheets_exported_at` on `workout_sessions` |
+| `UPDATE` | `sheets_export_state`, `sheets_export_error`, `sheets_export_next_attempt_at`, `sheets_exported_at`, **`sheets_export_attempts`**, **`export_claim_token`** on `workout_sessions` — the **complete** tuple §5.7 step 5 resets. A rebuild that may reset four of six columns is permission-denied on the other two. |
 
 It holds **no** grant on `logged_sets`, `session_effort`, `session_plan_events`,
 `session_plan_set_recommendations` or `write_receipts` beyond `SELECT` — so the rebuild
