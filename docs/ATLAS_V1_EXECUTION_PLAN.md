@@ -127,6 +127,60 @@ This is the single active, executable campaign. It is embedded here — not besi
 
 **F-SB1-C: substitution misrouting.** Diagnosed and fixed above (PR #1238). F-SB1 is closed.
 
+**OWNER INSTRUCTION 2026-08-07 — the workout hot path migrates to Supabase.** Recorded in full in the section immediately below. It changes the storage authority; it changes no counter. **Rehearsal (F-SB4): 0/5 · Stage A: 5/5 COMPLETE · Stage B: 0/5 OPEN · Phase 5 unauthorized · `SESSION_PLAN_SETS_WRITE_ENABLED` untouched.**
+
+---
+
+## OWNER INSTRUCTION 2026-08-07 — SUPABASE HOT-PATH MIGRATION
+
+**This instruction is the owner authorization. It governs because it is recorded here, not because it was said in a session.** Dale instructs that Atlas migrates its workout hot path from Google Sheets to Supabase.
+
+**It supersedes further attempts to make Google Sheets satisfy the live workout read budget.** The read-quota work of PR #1271 and PR #1272 stands as merged code and as an honest measurement. It is no longer the path. Do not open another PR whose purpose is to fit a session inside the Google Sheets read quota.
+
+**What this instruction does not do.** It changes no counter and no phase. **Rehearsal (F-SB4): 0/5 · Stage A: 5/5 COMPLETE · Stage B: 0/5 OPEN.** Phase 5 stays unauthorized. `SESSION_PLAN_SETS_WRITE_ENABLED` stays `0`. It authorizes no product-behaviour change, no live Supabase project, no schema application, and no deployment. It is not a second campaign, roadmap, or plan — it is one insertion inside this plan, executed as one closed chain of four PRs.
+
+### Architecture ruling
+
+- **Current authority.** Google Sheets is the runtime and permanent record for all workout data.
+- **Intended sole authority.** Supabase, for exactly seven concepts: workout sessions; logged sets; Effort; accepted session plans; session plan sets and revisions; item outcomes; closeout and write receipts.
+- **Google Sheets becomes**, for those seven concepts only: a human-readable export and mirror, never required for an active workout to read, save, verify, or close out. Every other tab is unchanged.
+- **Competing authority to remove.** The direct Google Sheets runtime reads and writes for the seven migrated concepts.
+- **Temporary bridge.** A bounded shadow / dual-write comparison during the migration. The athlete-facing write succeeds or fails from the **current authority only**. Atlas never reconciles two authorities silently. Every bridge carries an exact sunset condition.
+
+**Classification: authority defect.** The standing rule applies — select one winner, remove the loser, add no permanent reconciliation logic.
+
+### The design document
+
+[`docs/SUPABASE_HOT_PATH_MIGRATION.md`](SUPABASE_HOT_PATH_MIGRATION.md) holds the minimum schema, the field-by-field Sheet-column mapping, the four-PR closure chain, the exact proof required before each cutover, the failure and rollback rules, the security design, and the data-ownership record. It is a design specification. It selects no work; this block does.
+
+### The closure chain — four PRs, one concern each
+
+1. **PR S1 — governance, authority and schema design.** Record this instruction; correct every document that states Sheets is permanently the only V1 store; record the authority move in [`docs/ATLAS_SYSTEM_AUTHORITY.md`](ATLAS_SYSTEM_AUTHORITY.md) as concept 18; publish the design document. No code, no dependency, no migration file, no adapter, no deployment.
+2. **PR S2 — migration files, Supabase adapter, shadow-write path.** Sheets remains the live authority for every read and every write. No production cutover.
+3. **PR S3 — move active-workout reads to Supabase**, after backfill and parity proof. Sheets remains a mirror. A Sheets read fallback is added only on explicit owner approval.
+4. **PR S4 — Supabase becomes the approved-write authority.** Completed sessions export to Sheets asynchronously. The same PR removes the obsolete Sheets hot-path reads, the read-budget harness authority, the probes, the caches, and the compatibility bridge, and verifies their absence.
+
+**A foundation PR is progress, not completion.** The chain is open until `S4` verifies the deleted machinery is gone.
+
+### Owner-reserved gates inside this chain
+
+These are gates, never merge approvals. Each one stops the chain until Dale acts.
+
+1. **Creating the Supabase project** and **applying any schema to it**. `S2` checks migration files into the repository and applies them to a disposable CI database only.
+2. **The `docs/CONSTITUTION.md` amendment.** Lines 14 and 55 state that Google Sheets is the permanent record and that there is no secondary database. `S3` makes "the app reads from it" false and `S4` makes "Sheets wins" false. A Constitution amendment is owner-reserved. Dale dictates the text; it merges before `S3`. No agent writes it.
+3. **Owner decision D1 — `Exercise_Catalog`.** It is read on the Save path to enrich every logged row, and a failed refresh throws. While it is read from Sheets, a Sheets quota error can still fail a Save, so "no athlete-facing dependency on Sheets quota" cannot be claimed without qualification. The options and the recommendation are in the design document, §9.
+4. **The `S4` cutover itself**, because it is the first irreversible step. It requires a verified backup, a proven restore, and a stated rollback window.
+
+### Proof standard
+
+The exact per-gate proof is in the design document, §6. The standing requirements: deterministic tests; integration tests against a **real disposable Supabase database, never a fake**; backfill reconciliation on identity and content, not on row counts alone; one **non-counting** deployed debug workout per cutover; `preview → approve → write` preserved; idempotent repeated approval; exact set, plan, ledger and closeout evidence declared before the run; and no athlete-facing dependency on the Sheets quota, stated with its exact residual rather than as an unqualified zero.
+
+**A non-counting debug workout is never owner evidence, LT evidence, or a GATE A eligible event, and it never advances Stage A, Stage B, or the rehearsal streak.**
+
+### Restraint
+
+Do not add an unused database abstraction or a generic persistence framework. Every proposed module names its immediate production consumer. Do not add a speculative table or a speculative feature. There is exactly one Supabase adapter module, in the same way there is exactly one `sheets.js`.
+
 ---
 
 **STAGE B — WORKOUT 1 RERUN: MISS (2026-08-02). Streak stays 0/5.** Owner verdict: **failed**. Flight Recorder `FR-20260802003433-ekvc9w8r`, 00:34:33→00:39:54Z, on a single build (`0b3967d`, deployed 00:25:04Z) with **no deploy or restart inside the session window** — the first Stage B evidence free of the split-build contaminant.
@@ -870,7 +924,7 @@ At plan installation:
 - PR #1011 fixed the visible set/block response so signal-carrying engine modes are not collapsed into the generic acknowledgment.
 - Therefore M1 begins as an **evidence/closeout task, not another Soul build**, unless the live re-validation proves a remaining defect.
 - One-Brain GATE A remains a parallel evidence clock and never promotes automatically.
-- Atlas stays Sheets-primary for V1. No Supabase/Postgres migration is part of this campaign.
+- Atlas was Sheets-primary at plan installation, and no Supabase/Postgres migration was part of this campaign. **Superseded 2026-08-07** by the owner instruction recorded above: the workout hot path migrates to Supabase. Sheets stays the sole runtime authority until PR S3 moves the reads.
 
 ## 6. Milestone M1 — Close Soul
 
@@ -1916,7 +1970,7 @@ Crossing a numerical threshold never flips a flag automatically. Promotion, burn
 
 Do not add these while this plan is active unless Dale explicitly changes direction:
 
-- Supabase/Postgres/SQLite or any second permanent store;
+- any second permanent store, **except** the Supabase hot-path migration the owner authorized on 2026-08-07 and recorded above. That migration is bounded to seven named concepts and to four PRs. It authorizes no other store, and no widening of its own scope;
 - multi-user/public-product architecture;
 - nutrition tracking;
 - broad wearable-vendor expansion;

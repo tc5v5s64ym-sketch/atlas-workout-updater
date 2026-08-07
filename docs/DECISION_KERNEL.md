@@ -23,7 +23,7 @@
 - **Conversation is the product.** Other surfaces support the conversation rather than compete with it.
 - **Trust over cleverness.** Predictable, truthful behavior beats sophistication.
 - **Depth before breadth.** Finish and prove the existing owner-operated coaching product before adding capabilities.
-- **Sheets-primary V1.** No second permanent database, public multi-user system, nutrition product, or broad platform expansion during the V1 campaign.
+- **Storage authority is transitional.** Google Sheets is the sole live authority today. The owner authorized one bounded migration on 2026-08-07: the workout hot path moves to Supabase, and Sheets becomes an export mirror for those concepts only. It is recorded in `docs/ATLAS_V1_EXECUTION_PLAN.md` and designed in `docs/SUPABASE_HOT_PATH_MIGRATION.md`. No other second permanent database, public multi-user system, nutrition product, or broad platform expansion belongs in the V1 campaign.
 
 ### Execution
 

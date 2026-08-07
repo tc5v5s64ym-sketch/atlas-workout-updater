@@ -1,6 +1,6 @@
 # Atlas System Authority
 
-**Current as of:** 2026-07-31 · **Basis:** Atlas Recovery Campaign (Issue #1073), Phase 4 · **Status:** current-state authority map, refreshed as authority moves.
+**Current as of:** 2026-08-07 · **Basis:** Atlas Recovery Campaign (Issue #1073), Phase 4 · **Status:** current-state authority map, refreshed as authority moves.
 
 This document answers one question per concept: **what actually decides this in production today, and what is intended to decide it.**
 
@@ -64,6 +64,7 @@ These levels are distinct and are never collapsed. They are the same rungs the c
 | 16a | Observational shadows | `coachTurnPacketShadow`, `brainShadow`, `intentShadow`, `driftShadow`, `coachShadowSheet`, `coachResponseSheet` | none — all retire | TEST/OBSERVABILITY ONLY |
 | 16b | `legacyBridge` (live browser bridge) | `src/app/legacyBridge.js`, imported on every page load | none — deleted, not promoted | TRANSITIONAL |
 | 17 | Athlete context (profile, level, equipment, readiness) | `ATLAS_PROFILE_GOAL` env var only; other fields have no live source | one layered `AthleteContext` | CONTRACT ONLY |
+| 18 | Workout hot-path durable record (sessions, logged sets, Effort, accepted plans, plan sets and revisions, item outcomes, closeout and write receipts) | Google Sheets via `sheets.js`, plus the file-backed `services/idempotency.js` store | Supabase; Sheets becomes an export mirror | SOLE LIVE AUTHORITY (Sheets) — migration authorized, not started |
 
 ---
 
@@ -212,7 +213,11 @@ These levels are distinct and are never collapsed. They are the same rungs the c
 - **Status.** **SOLE LIVE AUTHORITY** (transport).
 - **Exact production consumer.** Every write route plus the shadow/telemetry appenders.
 - **Compatibility bridge.** None.
-- **Sunset condition.** None for `sheets.js`. The shadow appenders retire with concept 16.
+- **Sunset condition.** None for `sheets.js` as a transport. **Amended 2026-08-07:** for the
+  seven hot-path concepts listed under concept 18, `sheets.js` stops being the runtime write
+  authority at PR S4 of the authorized Supabase migration, and becomes the transport for the
+  asynchronous export only. Every other tab keeps `sheets.js` as its sole authority. The
+  shadow appenders retire with concept 16.
 - **Phase 4 relevance.** Untouchable — no schema change without a migration and the owner.
 - **Evidence.** The structural guarantee is that read-only tools build their own `spreadsheets.readonly` client and never import these helpers.
 
@@ -242,7 +247,9 @@ These levels are distinct and are never collapsed. They are the same rungs the c
 - **Sunset condition.** Delete the route, `verifyWrittenRange`, and the client's fallback
   branch once no deployment reachable by this client omits `log_write_verification` —
   concretely, when `POST /api/log-workout` has published it for a full campaign phase and no
-  qualifying session's evidence records a fallback invocation.
+  qualifying session's evidence records a fallback invocation. **Amended 2026-08-07:** PR S4
+  of the authorized Supabase migration satisfies this condition earlier, because it deletes
+  the Sheets hot-path read the fallback performs. Whichever comes first closes it.
 - **Phase 4 relevance.** Indirect: it is a read-budget corrective, not a trust-contract
   change. Preview → approve → write is untouched, `test_mode` semantics are untouched, and
   the W1–W3 proof fields are untouched — `log_write_verification` is added beside them and
@@ -341,6 +348,54 @@ The remaining fields below apply to **16a**.
 - **Phase 4 relevance.** Bounded. Phase 4 must not claim `packet.athlete` is authoritative beyond `profile_goal`, and Drift Guard 5 already fails an embedded-presence overclaim.
 - **Later phase.** Phase 5e — "plumb training level, equipment profile, and readiness from their defined sources; close Issue #914. Finishes H-07."
 - **Evidence.** `services/athleteContext.js:79-80` (nullable fields); `services/profileGoal.js:14` (the env-var source); the requirer list above.
+
+## 18. Workout hot-path durable record
+
+Seven concepts share one entry because one owner instruction moves all seven together:
+workout sessions, logged sets, Effort, accepted session plans, session plan sets and
+revisions, item outcomes, and closeout and write receipts.
+
+- **Current live authority.** Google Sheets via `sheets.js`, across `Log_Cleaned`, `Effort`,
+  `Session_Plans` and `Session_Plan_Sets`, plus the file-backed idempotency store in
+  `services/idempotency.js` (`/tmp/atlas-idempotency.json`, `services/idempotency.js:18`).
+- **Intended sole authority.** Supabase, in the six tables of
+  [`docs/SUPABASE_HOT_PATH_MIGRATION.md`](./SUPABASE_HOT_PATH_MIGRATION.md) §3. Google Sheets
+  becomes a human-readable export mirror for these concepts, and is never required for an
+  active workout to read, save, verify, or close out.
+- **Competing authority.** **None today.** Nothing has migrated: no Supabase project exists,
+  no migration file exists, and no adapter exists. The competing authority appears when PR S2
+  adds the shadow write, and it is removed by PR S4.
+- **Status.** **SOLE LIVE AUTHORITY** (Google Sheets). The migration is **authorized and not
+  started**. This entry records an authorized intent, not a promotion — the honesty rule
+  above forbids promoting Supabase on a design document.
+- **Exact production consumer.** `POST /api/log-workout`, `POST /api/complete-workout`,
+  `POST /api/log-workout/undo-last`, `POST /api/session-plans/accept`,
+  `POST /api/session-plans/outcome`, `POST /api/session-plan-sets/accept`,
+  `POST /api/session-plan-sets/revision`, `POST /api/session-plans/closeout`, and every
+  `Log_Cleaned` / `Effort` read in `routes/reads.js` and `routes/coachOps.js`.
+- **Compatibility bridge.** The bounded shadow / dual-write comparison introduced by PR S2.
+  It is live in PR S2 and PR S3 only. The athlete-facing write succeeds or fails from the
+  current authority alone; the shadow write never changes a response, a status code, a proof
+  field, or a visible claim.
+- **Sunset condition.** PR S4 deletes the shadow write, the Sheets hot-path reads for these
+  seven concepts, the backfill script, the read-budget machinery
+  (`services/sessionReadBatch.js`, the request-scoped `batchGet` context in `sheets.js` for
+  the migrated ranges, the `Log_Cleaned` / `Effort` 30-second row cache in `index.js`,
+  `test/liveSessionReadBudget.test.js`, `test/sessionReadBudget.test.js`,
+  `test/sheets-adapter-reads.test.js`, `test/fixtures/liveSessionManifest.json`,
+  `scripts/reconstruct-session-reads.js`, `docs/READ_BUDGET.md`), and the file-backed
+  idempotency store — and verifies their absence. An item on that list that survives PR S4 is
+  an open loop and needs a named consumer plus its own sunset condition.
+- **Owner-reserved gates.** Creating the Supabase project; applying any schema; the
+  `docs/CONSTITUTION.md` amendment (lines 14 and 55 assert Sheets permanence, which PR S3 and
+  PR S4 falsify); Owner decision D1 on `Exercise_Catalog`; and the PR S4 cutover itself.
+- **Phase 4 relevance.** None yet. The migration changes where the record lives. It changes
+  no engine, no decision, no packet, and no trace. `preview → approve → write`, `test_mode`
+  semantics, and the W1–W3 proof fields are untouched.
+- **Evidence.** The owner instruction of 2026-08-07, recorded in
+  [`docs/ATLAS_V1_EXECUTION_PLAN.md`](./ATLAS_V1_EXECUTION_PLAN.md). The current authority is
+  the code cited above; the intended authority has no code yet, which is why the status stays
+  where it is.
 
 ---
 
