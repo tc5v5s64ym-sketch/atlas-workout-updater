@@ -504,6 +504,25 @@ Replaces the idempotency store in `services/idempotency.js` — **for all seven 
   store passes a token: a **stale attempt must not overwrite a newer one**. Both are
   `UPDATE … WHERE write_id = $1 AND attempt_token = $2`. A superseded attempt matches zero
   rows and its late completion is discarded rather than applied.
+
+- **`failWrite` INVALIDATES the token in the same statement.** *Owner review of `4647ee2`.*
+  The live store sets `token: null` on failure with the comment that this stops a stale
+  `completeWrite` resurrecting the released attempt (`services/idempotency.js:249-255`). The
+  design omitted it, which left this sequence legal: attempt A owns token T → `failWrite(A,T)`
+  sets `failed` → **before any retry replaces T**, a late `completeWrite(A,T)` arrives → T
+  still matches → the failed attempt becomes `completed`. That resurrects a write the system
+  had released, and it contradicts P8's own promise. The transition is therefore:
+
+  ```sql
+  UPDATE atlas.write_receipts
+     SET status = 'failed', attempt_token = NULL, completed_at = NULL
+   WHERE write_id = $1 AND attempt_token = $2;
+  ```
+
+  Nulling the token in the same guarded update makes the resurrection unrepresentable rather
+  than merely unlikely — a later `completeWrite` carrying T matches zero rows. **P8c** is the
+  direct bite: fail, then late-complete with the *same* token **before any retry**, and prove
+  it is refused.
 - **Why `ON CONFLICT DO NOTHING` is wrong here, stated so it is not reintroduced.** It would
   read a `failed` row as a duplicate. One transient failure would then consume the
   `write_id` permanently, and the athlete's retry of a Save that never committed would be
@@ -1553,12 +1572,44 @@ covers **all seven**, and the drain proves no in-flight attempt remains on any o
 **Every still-live receipt is carried over before the new decider opens.** Inside the frozen
 window, and before step 6 of §5.5:
 
-1. Read the file store's **unexpired** records. *Corrected by the owner review of `60f27b3`:
+0. **Normalize abandoned `in_progress` records first, or the drain can never reach zero.**
+   *Owner review of `4647ee2`.* The current authority downgrades a rehydrated `in_progress`
+   record **lazily, inside `beginWrite`** (`services/idempotency.js:165-177`) — there is no
+   background timer. Once all seven routes are frozen, `beginWrite` is unreachable, so a
+   record that was four minutes old at the freeze becomes stale and stays physically
+   `in_progress` **forever**, and §5.5 step 2's "zero `in_progress`" can never be satisfied.
+   The frozen drain therefore performs that transition itself, using the current authority's
+   exact semantics: a `rehydrated` record older than `STALE_IN_PROGRESS_MS` becomes `failed`
+   with its token invalidated. **Nothing `in_progress` is transferred**, which is what makes
+   every carried row genuinely a decided outcome.
+
+1. **Extract from the LIVE authority, not from the file alone.** *Owner review of `4647ee2`.*
+   Persistence is **best-effort**: after a write failure the module sets `persistDisabled`
+   (`services/idempotency.js:141`) and keeps serving `beginWrite` / `completeWrite` from the
+   in-memory `writeRecords` map (`:128-130`). **The file can therefore be stale or missing
+   while the live process still holds a completed replay record, a retryable `failed` record,
+   or a server-minted `session_id` that Atlas will honour.** Reading only the persisted JSON
+   loses exactly those receipts, and the loss is invisible because the mapping itself is
+   field-correct.
+
+   The extraction authority is therefore, in order:
+
+   - **The live in-memory map of the frozen old process**, read while it is still running.
+     This is the actual authority and it is correct even when persistence is degraded.
+   - **The persisted JSON only when no live process remains** — and then only after recording
+     that persistence health could not be verified, because the set may be incomplete.
+   - Whichever source is used, the transfer records **`persistDisabled` and a disk-vs-map
+     comparison** as evidence. Accepting the JSON without that check is accepting an unknown.
+
+   **P19a must inject the persistence-failure fallback** and prove a memory-only receipt still
+   crosses the boundary. A disk-only fixture does not discharge it.
+
+2. Read the **unexpired** records. *Corrected by the owner review of `60f27b3`:
    the previous version filtered on `expires_at > now()`, and the file store **has no
    `expires_at` field**. Its TTL authority is `created_at_ms + DEFAULT_TTL_MS`
    (`services/idempotency.js`). A design that cannot enumerate the records it must preserve
    is not executable.* Unexpired means `now - created_at_ms <= DEFAULT_TTL_MS`.
-2. Map each record by this **exact forward mapping**, from the real persisted JSON shape —
+3. Map each record by this **exact forward mapping**, from the real persisted JSON shape —
    not from a schema-shaped idealisation of it:
 
    | File-store field | `atlas.write_receipts` | Rule |
@@ -1571,17 +1622,33 @@ window, and before step 6 of §5.5:
    | `metadata.session_id` | `session_id` | the WRITE-2 value |
    | `metadata.endpoint` | `route` | |
    | *(absent)* | `attempt` | **`1`** — the file store keeps no attempt counter, so every carried record is attempt 1 |
-   | *(not carried)* | `attempt_token` | **null** — these are decided outcomes, not live claims (§3.6) |
+   | *(not carried)* | `attempt_token` | **null** — every carried row is a **decided outcome**, never a live claim: step 0 normalized abandoned `in_progress` records and the drain requires zero, so `in_progress` is not a transferable state (§3.6) |
    | `rehydrated`, `token`, `failed_at*` | *(dropped)* | process-local; `token` is replaced by `attempt_token`, and liveness is now the advisory lock |
 
-3. **The reverse mapping is the same table read right-to-left**, and it is what rollback
-   writes back into the file: `created_at_ms = extract(epoch from created_at) * 1000`,
-   `response_body → response`, `session_id → metadata.session_id`, `route →
-   metadata.endpoint`, `rehydrated` omitted, `token` null. `attempt` and `expires_at` have no
-   file representation and are dropped — safe, because `expires_at` is recomputed from
-   `created_at_ms` and the file store never had an attempt counter.
-4. **Verify the carry-over** — count and identity, not count alone — before anything opens.
-5. **The old authority is not deleted until the carry-over is proven.** Deleting the file
+4. **The reverse mapping carries the ACTIVE TTL epoch, not provenance.** *Owner review of
+   `4647ee2`.* The previous version reconstructed `created_at_ms` from Supabase `created_at`
+   and called dropping `expires_at` safe. It is not, because §3.6 deliberately separates the
+   two clocks: `created_at` is immutable provenance while `expires_at` is refreshed on every
+   newly-owned attempt. Concretely — a receipt first seen 23 hours ago, retried and completed
+   now, has an old `created_at` and a fresh `expires_at` 24 hours out. Roll back two hours
+   later and the old mapping writes a `created_at_ms` that is **25 hours old**, so the file
+   store **prunes on load a receipt Supabase still owed for 22 more hours**, silently losing
+   duplicate-replay and WRITE-2 protection across the rollback.
+
+   The file store's TTL authority is `created_at_ms + DEFAULT_TTL_MS`, so `created_at_ms`
+   must carry the **current lifetime clock**:
+
+   `created_at_ms = extract(epoch from (expires_at - interval '24 hours')) * 1000`
+   — equivalently `attempt_started_at`, which is the same instant by construction.
+
+   Provenance is discarded, which costs nothing: the file store has no provenance concept and
+   never had one. The rest of the reverse table is unchanged — `response_body → response`,
+   `session_id → metadata.session_id`, `route → metadata.endpoint`, `rehydrated` omitted,
+   `token` null; `attempt` is dropped because the file store has no counter. **P19a proves a
+   retried receipt whose original `created_at` is already older than 24 hours but whose
+   refreshed `expires_at` is still live survives the rollback.**
+5. **Verify the carry-over** — count and identity, not count alone — before anything opens.
+6. **The old authority is not deleted until the carry-over is proven.** Deleting the file
    store is the *last* action of `S4`, after step 7's evidence checks pass, never before.
 
 **Rollback is symmetric, and this is the part that bites.** Once writes reopen (step 8), new
@@ -1626,12 +1693,33 @@ instance is already reading and writing Supabase. That recreates the exact ackno
 omission this migration exists to eliminate. It also makes the export's initial per-tab base
 unsafe, because a late append can land after the allocator has recorded its tail.
 
-The handover is **ten ordered steps** — 1, 2, 2a, 3, 4, 5, 6, 7, 8, 9. *The heading previously
+The handover is **ten ordered steps** — 1, 2, 2a, 3, 4, 5, 6, 7, 8, 9 — spanning **two builds**: `S4a` performs 1–8, `S4b` performs 9 (see step 9). *The heading previously
 said eight while the list contained `2a` and `9`; a runbook that miscounts its own steps
 invites one to be skipped.* Each step must complete and be verified before the next begins.
 
 1. **Freeze the affected writes — all seven `beginWrite` callers, not only the migrated
-   four (§5.5a).** A write-freeze flag makes every affected write route **fail closed** with an explicit "migration in progress" response. The trust loop is suspended,
+   four (§5.5a) — WITHOUT a restart that destroys the source.** *Owner review of `4647ee2`.*
+   The previous protocol shipped the freeze as an **earlier deploy**, then carried the receipt
+   state at step 2a. But `/tmp/atlas-idempotency.json` is process-adjacent and **may be gone
+   after a restart** — this document says so itself — so a deploy at step 1 could destroy the
+   very state step 2a exists to preserve. **The handover was creating its own
+   authority-loss window**, and "the file remains the rollback source until step 9" does not
+   help if step 1 already removed it.
+
+   Two rules close it:
+
+   - **The freeze capability ships dormant in `S3`'s already-deployed build**, so activating
+     it at `S4` requires **no new deploy** and no restart. `S3` moves no authority, so
+     carrying an inert flag is free there.
+   - **If activation cannot avoid a restart on this platform** — a Render environment change
+     itself redeploys, which this campaign has already recorded — then the **live receipt
+     state is durably captured and verified BEFORE the restart**, and that capture becomes the
+     transfer source. Capture first, restart second, never the reverse.
+
+   **P19 must inject loss of the old process and its filesystem at the freeze boundary** and
+   prove the receipt set is still available for transfer.
+
+   A write-freeze flag makes every affected write route **fail closed** with an explicit "migration in progress" response. The trust loop is suspended,
    never weakened: an athlete gets a clear refusal, never a silent drop and never an
    unverified success. **The freeze ships as its own earlier deploy**, so that every running
    instance — old and new — is already honouring it before the cutover deploy begins. A freeze
@@ -1652,9 +1740,28 @@ invites one to be skipped.* Each step must complete and be verified before the n
 6. **Deploy the cutover build** and switch the sole runtime authority.
 7. **Run the non-counting proof workout** and the exact evidence checks of §6.3.
 8. **Reopen writes**, and only after step 7 passes.
-9. **Delete the old receipt authority last.** The file store, `ATLAS_IDEMPOTENCY_FILE` and
-   `/tmp/atlas-idempotency.json` are removed only once the carry-over is proven and step 7's
-   evidence checks pass — never before. Until then it is the rollback source (§5.5a).
+9. **Delete the old receipt authority last — and that requires a SECOND BUILD.** *Owner
+   review of `4647ee2`.* Source deletion is not a runtime state transition. One immutable
+   deployed commit **cannot** both retain the file-store implementation through steps 6–8, so
+   it stays the declared rollback source, **and** have it absent at step 9. The runbook was
+   hiding a second deploy inside a numbered step while claiming one `S4` build did both jobs.
+
+   `S4` is therefore **two review heads and two deploys**, named rather than implied:
+
+   - **`S4a` — the cutover build.** It performs steps 1–8 and **retains the file store,
+     inert**: no caller reaches it, and it exists solely as the rollback source. Its
+     merge card records the retention and its exact removal condition.
+   - **`S4b` — the removal build.** After step 7's evidence passes and the rollback window
+     closes, `S4b` deletes the file store, `ATLAS_IDEMPOTENCY_FILE` and
+     `/tmp/atlas-idempotency.json`, proves **no caller remains**, and verifies absence.
+
+   **`S4b` is its own exact-head required review before closure** — the deletion head must be
+   reviewed like any other, not inherited from `S4a`'s approval. The migration is not closed
+   until `S4b` merges and its absence proof passes.
+
+   *This refines `S4`'s deploy topology; it does not add a fifth card. The owner instruction's
+   four-PR chain is unchanged in substance — `S4` simply cannot be one immutable build, and
+   saying otherwise was not executable.*
 
 **Abort and rollback.** Steps 1–4 are reversible by lifting the freeze: nothing has moved, and the file store is still intact. **Rollback after step 8 requires the reverse receipt carry of §5.5a before writes reopen.** If
 any check fails at step 5, 6 or 7, the cutover aborts, the freeze stays on, and the previous
@@ -1692,6 +1799,7 @@ operation. No lower rung substitutes for a higher one.
 | P7b | **The catalog mirror is proven fail-closed.** A generation older than `CATALOG_MIRROR_MAX_AGE` is proven **not served** — the Save fails closed with an explicit reason, exactly as the expired cache does today. A failed sync is proven not to advance currency. An empty or materially shrunken source is proven refused. A content mismatch is proven to open an `exercise_catalog` divergence. A test that only shows a fresh mirror is served does not discharge this. |
 | P7c | **Least privilege is proven, not claimed.** `atlas_app` is refused a DDL statement and refused a `DELETE` on a table outside its grant list (§8.2). Every statement the design specifies — the claim, the `session_id` persist, `completeWrite`, `failWrite`, the export-state updates — is executed **as its real role** and proven to succeed. Three grant/SQL mismatches have already reached review; a statement proven only as superuser proves nothing about the deployed system. |
 | P8 | The `write_receipts` state machine is proven on all four transitions of §3.6, including that a **`failed` attempt does not consume the `write_id`** and that a superseded attempt's late `completeWrite` is discarded. |
+| P8c | **`failWrite` invalidates the token.** Fail an attempt, then send a late `completeWrite` carrying the **same** token **before any retry occurs**, and prove it is refused. The failed attempt must not become `completed`. |
 | P8a0 | **The receipt claim is executable and self-contained.** A brand-new receipt is proven to carry a **non-null `expires_at`** and to be immediately visible to `peekWrite`. An **expired `completed`** row is proven **atomically reclaimable in the claim statement** — no housekeeping job runs during the test — with `attempt` and `created_at` reset, matching prune-then-insert. The claim is proven to execute **as `atlas_app` under its actual grants**, not as a superuser. |
 | P8a | **The receipt TTL epoch resets on retry.** Seed a retryable receipt just under 24 hours old; claim a new attempt; complete it; advance the clock past the **original** expiry but inside 24 hours of the retry; and prove `peekWrite` and duplicate replay still succeed. A retry that inherits the first attempt's expiry fails this. |
 | P8b | **The real Render-compatible connection path works.** Open a **Supavisor session-mode** connection as **each of the four roles** — including the owner-only `atlas_rebuild`, which needs a working connection when a rebuild runs — run a multi-statement transaction, and prove a **session-level advisory lock survives across statements** — the exact behaviour the exporter depends on and the exact behaviour transaction mode would silently break. Prove each pooler connection authenticates as its intended role. Assumed IPv6 reachability does not count as proof. |
@@ -1737,8 +1845,9 @@ Everything in §6.2, re-run after the cutover, plus:
 | P16 | **No caller of the file-backed idempotency store remains**, proven by search, and the store, its env var, and its file are absent. |
 | P17 | The deletion list of §5.4 is verified absent, including the dropped `atlas.migration_divergences` table. |
 | P18 | A second non-counting deployed debug workout, after the cutover. |
-| P19a | **The receipt authority is handed over, not discarded, in both directions — against the REAL file shape.** The fixture must be the actual persisted JSON (`created_at_ms`, `response`, `metadata`, no `expires_at`, no `attempt`), never a schema-shaped stand-in, and must exercise the forward **and reverse** mappings of §5.5a. Additionally: **inject a new receipt concurrent with the rollback** and prove it cannot fall through the reverse freeze/drain/snapshot boundary. Seed the file store with unexpired live state — a completed replay record with a body, a retryable `failed` record, and a server-minted `session_id` — then run the §5.5a handover and prove a **lost-response retry across the cutover** is replayed from the carried receipt rather than treated as new. Prove it for a **server-minted workout** (the retry recovers the prior `session_id`; **no second identity is minted**) **and for at least one non-workout D4 route** (**no second Sheets append**). Then prove the same scenario **across a rollback after writes reopened**. Prove the file store is **still present** until the carry-over is verified. A handover proven only forwards is proven half. |
+| P19a | **The receipt authority is handed over, not discarded, in both directions — against the REAL file shape and the REAL live authority.** Must additionally: **inject the `persistDisabled` persistence-failure fallback** and prove a memory-only receipt crosses the boundary (a disk-only fixture does not discharge this); prove a **retried receipt whose original `created_at` is older than 24 hours but whose refreshed `expires_at` is still live** survives the rollback un-pruned; and exercise the **fresh-at-freeze → stale-after-freeze** `in_progress` record, proving step 0's normalization lets the drain reach zero. The fixture must be the actual persisted JSON (`created_at_ms`, `response`, `metadata`, no `expires_at`, no `attempt`), never a schema-shaped stand-in, and must exercise the forward **and reverse** mappings of §5.5a. Additionally: **inject a new receipt concurrent with the rollback** and prove it cannot fall through the reverse freeze/drain/snapshot boundary. Seed the file store with unexpired live state — a completed replay record with a body, a retryable `failed` record, and a server-minted `session_id` — then run the §5.5a handover and prove a **lost-response retry across the cutover** is replayed from the carried receipt rather than treated as new. Prove it for a **server-minted workout** (the retry recovers the prior `session_id`; **no second identity is minted**) **and for at least one non-workout D4 route** (**no second Sheets append**). Then prove the same scenario **across a rollback after writes reopened**. Prove the file store is **still present** until the carry-over is verified. A handover proven only forwards is proven half. |
 | P19b | **The receipt freeze covers all seven callers.** Prove each of the seven `beginWrite` routes fails closed during the freeze, and that no route is left deciding duplicates against the old store while another decides against Supabase. |
+| P19c | **The freeze cannot destroy the transfer source.** Inject loss of the old process and its filesystem at the freeze boundary and prove the receipt set is still available for transfer — either because the freeze activated without a restart, or because the live state was durably captured and verified first. |
 | P19 | **The handover protocol of §5.5 is executed and its failure case exercised.** An old-authority write attempting to complete after the cutover boundary is **refused or detected before writes reopen**. Separately: the freeze is proven to fail closed with an explicit refusal rather than a silent drop; the drain is proven by positive assertion (zero `in_progress` receipts, zero in-flight migrated writes) rather than by an elapsed timer; and the per-tab base is proven to be recorded only after the drain passed. |
 | P20 | **The `write_id` foreign keys validate on the real pre-cutover data**, because `S2`/`S3` stored null throughout (§3.6). Proven by adding the constraint against a database carrying genuine shadow rows, not an empty one. |
 
