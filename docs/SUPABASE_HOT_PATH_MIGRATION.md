@@ -370,7 +370,8 @@ Replaces the idempotency store in `services/idempotency.js` — **for all seven 
 | `response_body` | `jsonb` | The exact body replayed to a duplicate retry. |
 | `rows_written` | `integer` | |
 | `appended_range` | `text` | Kept while the Sheets mirror exists; null afterwards. |
-| `created_at` | `timestamptz` | |
+| `created_at` | `timestamptz` | Immutable provenance — when the `write_id` was first seen. **Not** the TTL clock. |
+| `expires_at` | `timestamptz` | **The TTL authority.** `attempt_started_at + 24 hours`, refreshed on every newly-owned attempt. Every read filters on it; the prune deletes on it. |
 | `attempt_started_at` | `timestamptz` | Start of the **current** attempt. The staleness clock reads this, not `created_at`. |
 | `completed_at` | `timestamptz` | Nullable. |
 
@@ -402,6 +403,7 @@ Replaces the idempotency store in `services/idempotency.js` — **for all seven 
          attempt = atlas.write_receipts.attempt + 1,
          attempt_token = gen_random_uuid(),
          attempt_started_at = now(),
+         expires_at = now() + interval '24 hours',   -- the retry earns a FULL lifetime
          completed_at = NULL
    WHERE atlas.write_receipts.status = 'failed'
       OR (atlas.write_receipts.status = 'in_progress'
@@ -446,15 +448,27 @@ Only the **receipt** moves for the last four. Their rows keep going to their She
 record — including the **server-minted `session_id`** the earlier attempt allocated
 (`test/idempotencyPersistence.test.js`, WRITE-2). Moving the store without specifying it would
 leave a live caller with no replacement. In Supabase it is a plain
-`SELECT … WHERE write_id = $1 AND created_at > now() - interval '24 hours'`; an expired row
-reads as absent, exactly as today.
+`SELECT … WHERE write_id = $1 AND expires_at > now()`; an expired row reads as absent,
+exactly as today.
 
 **The 24-hour TTL becomes a predicate plus a job, not an on-load prune.** The file store prunes
 when it loads from disk. Postgres has no load, so the same rule is expressed twice: every read
-filters on `created_at > now() - interval '24 hours'` so an expired row is never returned, and
-a periodic job deletes expired rows so the table does not grow without bound. The **behaviour**
-is unchanged; only the mechanism is. Saying "the TTL keeps its current meaning" without saying
-this specified nothing.
+filters on `expires_at > now()` so an expired row is never returned, and a periodic job
+deletes rows whose `expires_at` has passed so the table does not grow without bound. The
+**behaviour** is unchanged; only the mechanism is. Saying "the TTL keeps its current meaning"
+without saying this specified nothing.
+
+**The TTL epoch resets on every newly-owned retry — a correction from the owner review of
+`771ff83`.** The earlier SQL filtered on `created_at` and never refreshed it, while the
+`failed → in_progress` and stale-`in_progress` transitions advanced only `attempt_started_at`.
+That silently lost time the file store gives: it starts a **clean record** on a retry, so the
+new attempt gets a fresh 24-hour lifetime. Under the old predicate a write first attempted at
+23h59m could retry successfully and then vanish from `peekWrite` and duplicate replay **a
+minute later**, inheriting the original attempt's expiry.
+
+`expires_at` is the single winner and it is refreshed to `now() + 24 hours` by the claim
+above. `created_at` stays immutable provenance and decides nothing. §6.1 P8a is the boundary
+proof.
 
 **One safety property is deliberately reversed at `S4`, and that is recorded rather than
 implied.** Today persistence is best-effort: *"a disk failure NEVER fails a workout write; the
@@ -595,11 +609,24 @@ the current generation is the newest `status = 'verified'` row.
    `sheets.js:754-756` — *"An empty catalog is never cached"*. A source row count that drops
    by more than a declared fraction fails the sync rather than replacing a good catalog with
    a truncated one.
-6. **A content mismatch is a divergence, not a silent overwrite.** The reconciliation sweep
-   recomputes `content_hash` from Sheets and compares it against the current generation. A
-   mismatch that a sync has not already resolved opens a `migration_divergences` row on
-   concept `exercise_catalog`, which blocks the cutover exactly as any other open divergence
-   does.
+6. **A content mismatch is recorded, never a silent overwrite — and where it is recorded
+   depends on whether the divergence table still exists.** The check is the same in both
+   eras: recompute `content_hash` from Sheets and compare it against the current generation.
+
+   - **During `S2`/`S3`**, a mismatch a sync has not already resolved opens a
+     `migration_divergences` row on concept `exercise_catalog`, and blocks the cutover
+     exactly as any other open divergence does.
+   - **After `S4`**, `migration_divergences` **is dropped**, and this table is **permanent** —
+     the sync runs forever. A mismatch therefore records itself in **permanent catalog
+     state**: `exercise_catalog_sync.status = 'failed'` with `last_error`, which does not
+     advance currency (rule 4). The mirror then ages toward `CATALOG_MIRROR_MAX_AGE` and, if
+     still unresolved, the Save **fails closed** — the same escalation as any other stale
+     catalog.
+
+   *Caught while auditing the owner review of `771ff83`.* That review found the **exporter**
+   writing to a table `S4` drops; the catalog sync had the identical defect in a second
+   place, and it would have been a permanent mechanism writing to a dropped table. **No
+   permanent mechanism depends on `migration_divergences`.**
 7. `npm run atlas:status` reports the current generation's age, its `content_hash`, and the
    last failure. Staleness is visible before it is fatal.
 
@@ -631,6 +658,18 @@ divergence reason, no repair state, no comparison result, and no closure proof.
 
 It is **migration-control machinery, not product data**. It is dropped by `S4`.
 
+**Nothing that outlives `S4` may write to it — a correction from the owner review of
+`771ff83`.** An earlier version had the post-cutover exporter open a `mirror_range_occupied`
+divergence here, and route whole-tab duplicate detection here too. Both are **permanent**
+mechanisms; this table and its sweep and repair worker are **temporary**. After `S4` there
+would have been no table to write to and no consumer to read it.
+
+The ruling is that this stays temporary and that **no generic permanent divergence subsystem
+is kept alive just to serve the mirror**. Post-cutover mirror failures are **mirror state**,
+and they live in the permanent, session-addressable export columns on
+`atlas.workout_sessions` — `sheets_export_error` plus an unacknowledged `sheets_exported_at`
+— surfaced by `npm run atlas:status` (§5.4). This table serves `S2` and `S3` only.
+
 | Column | Type | Notes |
 |---|---|---|
 | `id` | `bigint` | **PK**, `GENERATED ALWAYS AS IDENTITY`. |
@@ -639,7 +678,7 @@ It is **migration-control machinery, not product data**. It is dropped by `S4`.
 | `session_id` | `text` | Nullable — an orphan row may not resolve to a session. |
 | `write_id` | `text` | Nullable. Present when an inline shadow write caused the divergence. |
 | `route` | `text` | Nullable. The route whose shadow write diverged. |
-| `reason` | `text` | `CHECK (reason IN ('shadow_write_failed','missing_in_supabase','missing_in_sheets','content_mismatch','mirror_range_occupied'))`. `mirror_range_occupied` is the export's pre-write refusal (§5.4). |
+| `reason` | `text` | `CHECK (reason IN ('shadow_write_failed','missing_in_supabase','missing_in_sheets','content_mismatch'))`. **No exporter reason appears here** — the exporter is post-`S4` and this table is gone by then (see the scope note below). |
 | `detected_by` | `text` | `CHECK (detected_by IN ('inline_shadow','sweep'))`. |
 | `detected_at` | `timestamptz` | |
 | `state` | `text` | `CHECK (state IN ('open','repairing','closed'))`. |
@@ -1089,12 +1128,22 @@ Three mechanisms, all required.
    Immediately before the `values.update`, and inside the same claim, the worker reads its
    allocated range and proceeds **only** if every row in it is either blank or already
    carries **this session's** identity keys. Anything else — another session's identity, an
-   unexpected value, a short read — is a **refusal**: the worker writes nothing, opens a
-   `mirror_range_occupied` divergence, and leaves `sheets_exported_at` unset.
+   unexpected value, a short read — is a **refusal**: the worker writes nothing, records
+   `sheets_export_error = 'mirror_range_occupied'` on `atlas.workout_sessions`, and leaves
+   `sheets_exported_at` unset.
 
    This converts the failure mode from *silent overwrite, detected later* into *refusal,
    detected now*. It costs nothing extra: the whole-tab read of mechanism 3 already contains
    the allocated range, so the check is derived from a read the export was making anyway.
+
+   **The exporter fails its own acknowledgement; it never fails the workout.** *Corrected in
+   the owner review of `771ff83`, which found the exporter writing to `migration_divergences`
+   — a table `S4` drops.* Every post-cutover mirror failure is **session-addressable mirror
+   state**: `sheets_export_error` carries the reason, `sheets_exported_at` stays null so the
+   session remains in the derived queue, and `npm run atlas:status` reports the backlog and
+   the oldest unacknowledged session. **No post-`S4` path depends on `migration_divergences`,
+   and no permanent divergence subsystem is kept alive to serve the mirror.** The athlete's
+   workout is already committed in Supabase and is unaffected by any of this.
 
    This is safe only because **Atlas is the sole writer of these tabs once they are export
    mirrors**. That is exactly what `S4` establishes, and it is why deterministic destinations
@@ -1135,8 +1184,10 @@ Three mechanisms, all required.
    acknowledgement is safe — the restart re-claims, rewrites the same values into the same
    cells, verifies, and acknowledges.
 
-   **A count greater than one is a defect, not a tidy-up.** It opens a divergence, the session
-   is **not** marked exported, and the design does not delete Sheets rows to correct itself.
+   **A count greater than one is a defect, not a tidy-up.** It records
+   `sheets_export_error = 'mirror_duplicate_identity'`, the session is **not** marked
+   exported, and the design does not delete Sheets rows to correct itself. Recovery is the
+   owner-only rebuild of §5.7, never an automatic deletion.
 
    **The cost, stated rather than hidden.** A whole-tab read per completed session is more
    expensive than a block read, and `Log_Cleaned` grows. It is deliberately **off the athlete
@@ -1173,17 +1224,38 @@ Three concrete ways positions drift:
 1. **A row deletion shifts everything below it up.** `deleteRowsByRange` issues
    `deleteDimension` (`sheets.js:970-993`), which is a shift, not a blanking. Every
    allocation whose `start_row` is above the deleted range then points at the wrong rows.
-2. **An owner edit.** The mirror exists to be human-readable, and the owner already edits
-   this workbook by hand — the `Session_Plans` and `Session_Plan_Sets` tabs were created that
-   way (execution plan, 2026-08-03). One inserted or deleted row produces the same shift.
-   "Atlas is the sole writer" is a statement about Atlas; it is not a statement about Dale,
-   and a mirror nobody may touch is not a human-readable mirror.
+2. **A structural edit by hand.** The owner has edited this workbook by hand before — the
+   `Session_Plans` and `Session_Plan_Sets` tabs were created that way (execution plan,
+   2026-08-03). One inserted or deleted row produces the same shift.
+
+   **Correction, from the owner review of `771ff83`.** An earlier version of this section
+   argued that "a mirror nobody may touch is not a human-readable mirror". **That is wrong,
+   and it is withdrawn. Human-readable does not mean human-editable.** The owner ruling is
+   below.
 3. **A partially applied grid extension** or any structural edit that changes row indices.
 
 **Detection alone was not sufficient**, which is why §5.4 adds refusal. The whole-tab verifier
 counts identities, so a shift produces no duplicate and passes; the damage would surface only
 on the *next* export, after that session's rows had already been overwritten. Detection after
 destruction is not a control.
+
+#### The mirror contract after `S4` (owner ruling, 2026-08-07)
+
+- The four migrated tabs — `Log_Cleaned`, `Effort`, `Session_Plans`, `Session_Plan_Sets` —
+  become **generated export surfaces**. They are read by humans and written only by Atlas.
+- **Supabase is the sole editing authority for migrated workout data.** A correction to a
+  workout is made in Atlas and reaches the mirror by re-export. Editing the tab does not
+  change the record; it only desynchronises the projection.
+- **`Exercise_Catalog` is unchanged and is the opposite case** — Sheets remains its editing
+  authority under ruling D1, and Supabase mirrors it.
+- **Structural inserts and deletes on the four generated tabs are unsupported after
+  cutover**, and are removed from the normal operating model. **Atlas itself must not shift
+  rows there either**, which is why `deleteRowsByRange` is deleted for those tabs (below).
+- This contract belongs in the D2 Constitution amendment alongside the authority ruling, so
+  the editing boundary is stated where the storage boundary is.
+
+The pre-write range check (§5.4) is retained as a **fail-safe for accidental drift**, not as
+permission to edit.
 
 #### Undo, post-cutover
 
@@ -1219,6 +1291,36 @@ queue — and no new table.
 allocation** at all. Reserving a block for a tab that will never be written would strand blank
 rows in the mirror permanently and advance that tab's cursor for nothing. The all-or-nothing
 rule of §3.9 applies to the tabs a session *has*, not to the full tab list.
+
+### 5.7 Mirror rebuild — the one recovery from structural drift
+
+*Added by the owner review of `771ff83`.* The pre-write range check turns a silent overwrite
+into a refusal, which is the right trade. But refusal alone **stalls permanently**:
+allocations are immutable, the cursor never moves backwards, and after `S4` there is no repair
+worker and no divergence table. A session that refuses would stay unexported forever with no
+way out.
+
+**One owner-only procedure recovers, and it is the only one.** It never touches Supabase
+workout data — Supabase is the authority and is by definition already correct.
+
+1. **Pause the export worker.** No session is claimed or written while a rebuild runs.
+2. **Reconstruct the four generated tabs from Supabase.** The projection is regenerated whole
+   rather than patched: Supabase already holds every row, so the mirror is rebuilt, not
+   repaired.
+3. **Re-establish the mirror metadata safely.** `atlas.sheets_mirror_allocations` is cleared
+   and reissued to match the rebuilt layout, and each `atlas.sheets_mirror_cursor.next_row` is
+   set past the new true tail with `base_established_at` re-stamped — the same handshake as
+   §5.5 step 4, and safe for the same reason: the export is paused, so nothing else is
+   writing.
+4. **Verify the whole projection** — every session, every identity key, exactly once per tab —
+   before anything resumes. A rebuild that has not been verified is not complete.
+5. **Clear `sheets_export_error` and resume**, letting the derived queue drain normally.
+
+- **Owner-gated.** It rewrites a durable owner-visible surface, so it is owner-reserved like
+  any other destructive Sheets operation. No agent runs it unprompted.
+- **Never touches Supabase workout authority.** It only writes Sheets and mirror metadata.
+- **Proof (§6.3 P14h).** One structural-drift case must reach refusal and then recover through
+  exactly this procedure, ending with the projection verified and the session exported.
 
 ### 5.5 The `S4` handover protocol
 
@@ -1286,9 +1388,12 @@ operation. No lower rung substitutes for a higher one.
 | P7 | A divergence is proven **not** closable without `closure_proof`, and proven not closable by a lapsed lease or a timer. |
 | P7a | **The shadow transaction is proven ordered and atomic on the session parent.** A shadow Save inserts its `workout_sessions` parent before its child rows in one transaction; a child can never commit without its session parent; a failure mid-transaction leaves neither; and a second Save for the same session does not duplicate or overwrite the parent. Proven against an **empty** schema, which is the state `S2` actually starts from. |
 | P7d | **No receipt is mirrored during `S2`/`S3`**, proven by assertion on an empty `write_receipts` after a shadow Save, and `logged_sets.write_id` / `session_effort.write_id` carry **no foreign key** at this stage. A repaired child row is proven to carry `write_id = NULL` rather than a fabricated value. |
+| P7c0 | **No permanent mechanism writes to `migration_divergences`.** Proven by search across the exporter, the catalog sync and every post-`S4` path: the only writers are the `S2`/`S3` shadow lane and sweep, both of which the same PR deletes. A permanent mechanism writing to a dropped table is a defect that only appears after cutover. |
 | P7b | **The catalog mirror is proven fail-closed.** A generation older than `CATALOG_MIRROR_MAX_AGE` is proven **not served** — the Save fails closed with an explicit reason, exactly as the expired cache does today. A failed sync is proven not to advance currency. An empty or materially shrunken source is proven refused. A content mismatch is proven to open an `exercise_catalog` divergence. A test that only shows a fresh mirror is served does not discharge this. |
 | P7c | **Least privilege is proven, not claimed.** `atlas_app` is refused a DDL statement and refused a `DELETE` on a table outside its grant list (§8.2). |
 | P8 | The `write_receipts` state machine is proven on all four transitions of §3.6, including that a **`failed` attempt does not consume the `write_id`** and that a superseded attempt's late `completeWrite` is discarded. |
+| P8a | **The receipt TTL epoch resets on retry.** Seed a retryable receipt just under 24 hours old; claim a new attempt; complete it; advance the clock past the **original** expiry but inside 24 hours of the retry; and prove `peekWrite` and duplicate replay still succeed. A retry that inherits the first attempt's expiry fails this. |
+| P8b | **The real Render-compatible connection path works.** Open a **Supavisor session-mode** connection as each of the three roles, run a multi-statement transaction, and prove a **session-level advisory lock survives across statements** — the exact behaviour the exporter depends on and the exact behaviour transaction mode would silently break. Prove each pooler connection authenticates as its intended role. Assumed IPv6 reachability does not count as proof. |
 | P9 | Every drift and authority guard passes. `npm test`, the Playwright suite, lint, syntax, and the secret scan pass. |
 
 ### 6.2 Gate for `S3` (backfill, parity and readiness — no cutover)
@@ -1318,8 +1423,9 @@ Everything in §6.2, re-run after the cutover, plus:
 | P14 | **The export is durable AND idempotent.** Kill the process **after the Sheets `values.update` and before the Supabase acknowledgement**; restart; and prove the mirror contains **exactly one copy, by identity and by content** — not merely that an export eventually occurred. |
 | P14a | **The mirror write is idempotent under a late external write**, proven on the race no lock can prevent: **drop worker A's Postgres connection while its Sheets `values.update` is in flight**, let B acquire the lock and complete the export, then **let A's original request commit late**. Exactly one mirror identity must result. Two further cases: a slow or timed-out write whose outcome is ambiguous, and a replacement worker after a real death. A test that only proves a live lock blocks a simultaneous claim does **not** discharge P14a — the lock is not the mechanism under test; the deterministic destination is. |
 | P14b | **The allocation is stable, single-valued, and collision-free across different sessions.** (a) Two workers exporting the **same** session read the same allocation, and a re-export never reallocates. (b) **Two different sessions allocating concurrently receive disjoint ranges** — the case a per-session column could not serialise. (c) A failed allocation **reserves nothing**: it cannot leave one tab reserved and another not. (d) The exclusion constraint is proven to reject a deliberately overlapping insert. |
-| P14c | **Verification spans the whole tab.** Seed one duplicate identity **outside** the allocated range and prove acknowledgement is **refused** and the defect surfaced as a divergence. A verifier that reads only its own block cannot pass this. |
-| P14d | **The export refuses rather than overwrites when its range is not what it expects.** Shift a mirrored tab under a live allocation — delete a row above the block, then export — and prove the worker **writes nothing**, opens a `mirror_range_occupied` divergence, and leaves `sheets_exported_at` unset. Repeat with another session's rows seeded into the block. A test that only proves a clean range is written does not discharge P14d. |
+| P14c | **Verification spans the whole tab.** Seed one duplicate identity **outside** the allocated range and prove acknowledgement is **refused**, `sheets_export_error` records `mirror_duplicate_identity`, and `sheets_exported_at` stays null. A verifier that reads only its own block cannot pass this. **No `migration_divergences` row is written** — that table is gone by `S4`. |
+| P14d | **The export refuses rather than overwrites when its range is not what it expects.** Shift a mirrored tab under a live allocation — delete a row above the block, then export — and prove the worker **writes nothing**, records `sheets_export_error = 'mirror_range_occupied'`, and leaves `sheets_exported_at` unset. Repeat with another session's rows seeded into the block. Prove **the workout itself is unaffected** and that **no post-`S4` path touches `migration_divergences`**. A test that only proves a clean range is written does not discharge P14d. |
+| P14h | **Refusal recovers, and only through §5.7.** Drive one structural-drift case to refusal, then run the owner-only mirror rebuild and prove: the export pauses; the four tabs are reconstructed from Supabase; allocations and cursors are reissued past the new tail; the whole projection verifies; `sheets_export_error` clears; the session exports. Prove the rebuild **never writes Supabase workout data**. A refusal with no proven recovery is a permanent stall. |
 | P14e | **Undo reaches the mirror.** Undo a Save on an already-exported session and prove: the session re-enters the export queue; the rewrite stays **inside its own allocated block**, blanking the tail; no other session's rows are touched; and the cursor does not move backwards. Separately prove `deleteRowsByRange` is **absent** for every mirrored tab. |
 | P14f | **Any post-export mutation re-enters the queue.** Mutate an exported session's Supabase data — including a `closeout_write_id` seal — and prove `sheets_exported_at` is cleared and the session is re-exported. A session that changed and stayed exported is a stale mirror. |
 | P14g | **A session with no `Effort` row receives no `Effort` allocation**, and the `Effort` cursor does not advance for it. |
@@ -1375,7 +1481,7 @@ If any of the three is missing, `S4` does not merge.
 
 ## 8. Security design
 
-### 8.1 The access model — direct Postgres with scoped roles
+### 8.1 The access model — Supavisor session mode, with scoped roles
 
 **Correction, from the owner review of `5f42d3c`.** An earlier version of this section
 specified a single service-role key **and** separate least-privilege roles **and** `DELETE`
@@ -1385,11 +1491,40 @@ as three distinct database roles, and the stated grants could not perform the de
 operations. The model below is the one executable choice, and the grants match what the
 design actually does.
 
-**Atlas connects to Supabase as Postgres, over a direct connection, with explicit scoped
-database roles. It does not use the Supabase Data API, the service-role key, or the anon
-key.**
+**Second correction, from the owner review of `771ff83`. "Direct Postgres" was not executable
+on this deployment.** Supabase's direct database endpoint is **IPv6** on the Free plan, and
+Supabase's own IPv4/IPv6 troubleshooting page lists **Render** among IPv4-only hosts. The
+IPv4 add-on is a paid feature and so conflicts with the owner's Free-tier ruling. A design
+that specifies a connection Render cannot open has specified nothing.
 
-Why this and not the Data API:
+**Owner ruling (2026-08-07): Atlas runtime connects through Supavisor in SESSION MODE
+(port 5432).** Not the direct endpoint, and **not transaction mode**.
+
+- References: [connecting to Postgres](https://supabase.com/docs/guides/database/connecting-to-postgres) ·
+  [IPv4/IPv6 compatibility](https://supabase.com/docs/guides/troubleshooting/supabase--your-network-ipv4-and-ipv6-compatibility-cHe3BP).
+- **No paid IPv4 add-on.**
+
+**Why session mode specifically, and why transaction mode would break this design.** Supavisor
+transaction mode returns a different backend connection per transaction, so anything scoped to
+a *session* rather than a transaction does not survive. This design has exactly such a
+dependency: the export's `pg_try_advisory_lock` is a **session-level** lock held across
+read-back, write, verify and acknowledge (§5.4). Under transaction mode that lock would be
+taken and released on a connection the next statement may not even be using — it would appear
+to work and hold nothing. Session mode preserves the semantics the adapter needs.
+
+**Migration and read-only tooling.** They may use the direct endpoint **only from an
+environment whose IPv6 reachability is actually proven**, not assumed. GitHub Actions is also
+IPv4-only, so CI uses the session pooler. Where reachability is not proven, tooling uses the
+session pooler too.
+
+**The three scoped roles are unchanged (§8.2), and each gets its own pooler connection.**
+Supavisor authenticates the role through the pooler username, so role separation survives
+pooling — it is not collapsed into one shared identity. Each role's pooler connection string
+is a separate secret, and `S2` proves each one connects as the intended role.
+
+**Atlas does not use the Supabase Data API, the service-role key, or the anon key.**
+
+Why not the Data API:
 
 - The design needs **multi-statement transactions** (the Save, the seal, the catalog swap).
 - It needs **session-level advisory locks** to serialise export workers (§5.4) — for
@@ -1401,8 +1536,8 @@ Consequences, stated plainly:
 
 - **There is no service-role key and no anon key in the runtime path**, so the entire class
   of key-leak and RLS-bypass exposure that comes with them does not arise here.
-- Credentials are Postgres connection strings, one per role, read from environment variables
-  on the server only.
+- Credentials are Supavisor session-mode connection strings, one per role, read from
+  environment variables on the server only.
 - The connection is held by one module — the adapter of §5.2 — exactly as the read-write
   Sheets client is held only by `sheets.js`.
 - **No Supabase credential of any kind appears in browser code.** `src/app/` never imports a
@@ -1492,7 +1627,12 @@ rulings, not as questions.
 bounds rather than eliminates the background dependency, in the wording P4 adopts. Sheets remains its
 editing authority; Supabase is the Save-path read mirror.
 
-**D2 — Constitution amendment: RESOLVED, content dictated.** Amend `docs/CONSTITUTION.md`
+**D2 — Constitution amendment: RESOLVED, content dictated (extended 2026-08-07).** The
+amendment additionally carries the **mirror editing contract** of §5.6: after cutover the four
+migrated tabs are generated export surfaces, Supabase is the sole editing authority for
+migrated workout data, `Exercise_Catalog` remains Sheets-edited, and structural edits to the
+generated tabs are unsupported. The editing boundary belongs where the storage boundary is
+stated. Amend `docs/CONSTITUTION.md`
 before the cutover so that **Supabase wins for migrated hot-path concepts**, **Sheets wins
 for unmigrated concepts**, and **Sheets is the export mirror for migrated concepts**. Lines
 14 and 55 carry the current claim. The amendment lands before the `S4` cutover — not before
