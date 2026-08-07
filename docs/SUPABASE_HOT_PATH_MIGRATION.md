@@ -46,9 +46,9 @@ an active workout must read, save, verify, or close out:
 Two additions come from the owner review, and neither widens the migrated **workout data**:
 
 - **`Exercise_Catalog`, as a read-only mirror (ruling D1).** Sheets stays its editing
-  authority. Supabase holds a synchronised read copy for the Save path. This is the last
-  athlete-facing Sheets quota dependency, and removing it is what makes proof criterion P4
-  a true statement rather than a qualified one.
+  authority. Supabase holds a synchronised read copy for the Save path. It removes the last
+  **in-request** Sheets read from the migrated Save path. It does **not** make Save
+  availability independent of the Sheets quota — §3.7 and §6.2 P4 state the residual exactly.
 - **All seven `beginWrite` callers, not three (ruling D4).** Receipt metadata is shared
   safety infrastructure, not workout data. One receipt authority replaces two.
 
@@ -157,7 +157,8 @@ Holds session identity, its allocation, and the Sheets-export state of that sess
 | `sheets_exported_at` | `timestamptz` | Nullable. Set only after the export is **verified**. Mirror state, not closeout state. |
 | `sheets_export_attempts` | `integer` | `NOT NULL DEFAULT 0`. |
 | `sheets_export_error` | `text` | Nullable. The last export failure reason. |
-| `export_claim_token` | `uuid` | Nullable. **Acknowledgement guard only** — see §5.4. Mutual exclusion is a Postgres advisory lock, not this column. |
+| `export_claim_token` | `uuid` | Nullable. **Acknowledgement guard only** — see §5.4. Not fencing, and not mutual exclusion. |
+| `sheets_row_start` | `jsonb` | Nullable. The **deterministic destination** allocated once per session per mirrored tab, e.g. `{"Log_Cleaned": 1677, "Effort": 412}`. Allocated in the claiming transaction and never changed. This is what makes the mirror write idempotent (§5.4). |
 
 - **Unique:** `(session_date, period, slot)`.
 - **Index:** the PK, plus `(session_date DESC)`, plus a partial index on
@@ -201,7 +202,7 @@ Replaces `Log_Cleaned`.
 | `rir` | `numeric` | |
 | `notes` | `text` | |
 | `volume_calc` | `numeric` | |
-| `write_id` | `text` | The `write_id` of the append that created the row. `REFERENCES atlas.write_receipts(write_id)`. |
+| `write_id` | `text` | Nullable. The `write_id` of the write that created the row. **No foreign key until `S4`** — see §3.6. Null on backfilled rows and on any row the sweep repaired. |
 | `created_at` | `timestamptz` | |
 
 - **Unique (idempotency):** `(lower(session_id), lower(exercise), set_number)`.
@@ -238,7 +239,7 @@ Replaces `Effort`.
 | `peak_hr` | `numeric` | |
 | `location` | `text` | |
 | `notes` | `text` | |
-| `write_id` | `text` | `REFERENCES atlas.write_receipts(write_id)`. |
+| `write_id` | `text` | Nullable. **No foreign key until `S4`** — see §3.6. Null on backfilled rows and on any row the sweep repaired. |
 | `created_at` | `timestamptz` | |
 
 - **Unique (idempotency), and the export identity key:** the primary key. One Effort row per
@@ -361,7 +362,7 @@ Replaces the idempotency store in `services/idempotency.js` — **for all seven 
 | `route` | `text` | One of the seven routes below. |
 | `session_id` | `text` | Nullable — a claim is made before the id is known on some paths, and three routes have no session at all. |
 | `status` | `text` | `CHECK (status IN ('in_progress','completed','failed'))`. |
-| `attempt_token` | `uuid` | Nullable. The current attempt's token, regenerated on every new attempt. **Null on a receipt mirrored during `S2`/`S3`**, where the file store held the attempt and Supabase records only its terminal outcome. |
+| `attempt_token` | `uuid` | Nullable. The current attempt's token, regenerated on every new attempt. Null only where no Supabase attempt was ever claimed. |
 | `attempt` | `integer` | `NOT NULL DEFAULT 1`. Increments on each retry of the same `write_id`. |
 | `response_body` | `jsonb` | The exact body replayed to a duplicate retry. |
 | `rows_written` | `integer` | |
@@ -436,43 +437,53 @@ Only the **receipt** moves for the last four. Their rows keep going to their She
 `S4` deletes the file-backed store, `ATLAS_IDEMPOTENCY_FILE`, and
 `/tmp/atlas-idempotency.json`, and **proves no caller of the file store remains**.
 
-#### `S2` must mirror the receipt before its child rows
+#### `S2` and `S3` do not mirror receipts at all
 
-**Correction, from the owner review of `5f42d3c`.** `logged_sets.write_id` and
-`session_effort.write_id` both reference this table. But ruling D4 moves the receipt
-*authority* at `S4`, not `S2` — so as written, every `S2` shadow Save had **no parent
-receipt row to satisfy its foreign key**, and would either violate the constraint or silently
-drop the `write_id`. A foreign key with no specified parent is not a shadow; it is a broken
-write.
+**Correction, from the owner review of `2ce7be3`, replacing the mechanism the review of
+`5f42d3c` prompted.** The previous version had `S2` mirror each decided file-backed receipt
+into Supabase, parent-first, with `ON CONFLICT (write_id) DO NOTHING`. The third review
+showed that mechanism cannot work, for two independent reasons:
 
-The order and the atomic boundary are now specified.
+1. **The sweep cannot reconstruct a receipt lost in the death window.** `Log_Cleaned` and
+   `Effort` carry **no `write_id` column** — `config/columns.js` defines 12 and 9 columns and
+   neither includes it; the mapping in §4.1 and §4.2 marks `write_id` as *new*, added only in
+   Supabase. So if the process dies after the Sheets Save and before the shadow transaction,
+   the authoritative Sheets rows prove the child data exists but **cannot reveal the missing
+   receipt's `write_id`**, route, response body, or attempt. The file store is
+   process-adjacent `/tmp` state with a TTL and may be gone after the same restart. A
+   divergence keyed on an unknown `write_id` cannot be opened, so the parent-first repair was
+   not implementable from the declared completeness authority. **That reintroduced the first
+   review's process-death defect one level down.**
+2. **`ON CONFLICT DO NOTHING` cannot mirror a retryable transition.** The file store permits
+   `failed → new attempt → completed` (`services/idempotency.js:178-181`). If a `failed`
+   outcome mirrored first and the retry then succeeded, the `completed` outcome would be
+   discarded and Supabase would stay permanently `failed`. Out-of-order mirror work had no
+   source attempt or version to say which terminal state was newer.
 
-1. **The file store stays the receipt authority through `S2` and `S3`.** It decides duplicate
-   or not, and it decides the response. Nothing about that changes.
-2. **The shadow transaction mirrors the decided receipt first.** Inside the single shadow
-   transaction, and before any child row:
-   ```sql
-   INSERT INTO atlas.write_receipts (write_id, route, session_id, status, attempt,
-                                     attempt_token, response_body, rows_written,
-                                     appended_range, created_at, completed_at)
-   VALUES (…, 'completed', 1, NULL, …)
-   ON CONFLICT (write_id) DO NOTHING;
-   ```
-   The mirrored row is a **record of an outcome the file store already reached**, not a live
-   claim, so `attempt_token` is null and `status` is terminal. Then the `logged_sets` and
-   `session_effort` rows insert in the same transaction. Parent before child, one commit,
-   so a child can never exist without its parent and a partial mirror is impossible.
-3. **A missing parent is a divergence like any other.** The sweep covers `write_receipts` as
-   its own concept, keyed on `write_id`. A child row whose parent is absent, or a Sheets Save
-   whose receipt never mirrored, opens a `missing_in_supabase` divergence, and the repair
-   re-drives the receipt and then its children in the same parent-before-child order.
-4. **The `S4` transition is a change of decider, not a data migration.** At cutover
-   `beginWrite` starts claiming in Supabase and the state machine above goes live. Rows
-   mirrored during `S2`/`S3` are terminal `completed` or `failed`, so the claim upsert's
-   `WHERE` clause — which matches only `failed` or stale `in_progress` — treats a mirrored
-   `completed` row exactly as it treats any completed row: a duplicate to refuse or replay.
-   Historical rows and live rows therefore coexist with no special case, which is what makes
-   the transition clean rather than a cutover of the receipt data itself.
+**The correction removes the mechanism rather than patching it.** Receipts are not mirrored
+during `S2` or `S3`:
+
+- **`logged_sets.write_id` and `session_effort.write_id` are nullable and carry NO foreign
+  key until `S4`.** The `S2` shadow records the `write_id` when it happens to have one, for
+  observability only. Nothing depends on it, and nothing claims it is complete.
+- **The file store remains the sole receipt authority through `S2` and `S3`**, unmirrored and
+  uncross-checked. There is no Supabase receipt to be wrong.
+- **`write_receipts` is not a sweep concept.** Sheets cannot be its completeness authority,
+  because Sheets never stores a `write_id`. The design does not claim a check it cannot
+  perform.
+- **A child row repaired by the sweep gets `write_id = NULL`**, because the sweep genuinely
+  cannot know it. It never fabricates one.
+- **`S4` adds the foreign key and makes Supabase the receipt authority in the same step.**
+  `beginWrite` starts claiming in Supabase, the §3.6 state machine goes live, and the
+  migration adds `logged_sets.write_id REFERENCES atlas.write_receipts(write_id)` and the
+  same on `session_effort`. Historical and backfilled rows keep `write_id = NULL`, which the
+  foreign key permits. There is no receipt data to migrate — only a decider to change.
+- **Undo is unaffected.** `DELETE … WHERE session_id = $1 AND write_id = $2` operates on the
+  Save just performed, which after `S4` always carries a `write_id`. A pre-cutover row with a
+  null `write_id` was never undoable by that path.
+
+This also removes the retryable-transition problem entirely: with nothing mirrored, there is
+no terminal state to overwrite out of order.
 
 **This resolves a contradiction the owner review found.** An earlier version of this design
 said the file store deliberately survives `S4` for four routes, while
@@ -583,8 +594,8 @@ It is **migration-control machinery, not product data**. It is dropped by `S4`.
 | Column | Type | Notes |
 |---|---|---|
 | `id` | `bigint` | **PK**, `GENERATED ALWAYS AS IDENTITY`. |
-| `concept` | `text` | `CHECK (concept IN ('logged_sets','session_effort','session_plan_events','session_plan_set_recommendations','write_receipts','exercise_catalog'))`. |
-| `identity_key` | `text` | The diverged row's identity: the export identity key for the four migrated tabs (§3.2–§3.5), `write_id` for `write_receipts`, and the sync generation's `content_hash` for `exercise_catalog`. |
+| `concept` | `text` | `CHECK (concept IN ('logged_sets','session_effort','session_plan_events','session_plan_set_recommendations','exercise_catalog'))`. **`write_receipts` is deliberately absent** — Sheets stores no `write_id`, so it cannot be that concept's completeness authority (§3.6). The design does not declare a check it cannot perform. |
+| `identity_key` | `text` | The diverged row's identity: the export identity key for the four migrated tabs (§3.2–§3.5), and the sync generation's `content_hash` for `exercise_catalog`. |
 | `session_id` | `text` | Nullable — an orphan row may not resolve to a session. |
 | `write_id` | `text` | Nullable. Present when an inline shadow write caused the divergence. |
 | `route` | `text` | Nullable. The route whose shadow write diverged. |
@@ -767,6 +778,30 @@ One concern per PR. Each PR names what it closes and what it must not do.
   no query builder abstraction.**
 - Wire the shadow write, the divergence lane, the reconciliation sweep, and the repair
   worker.
+
+**Every shadow transaction inserts its `workout_sessions` parent first.** *Correction, from
+the owner review of `2ce7be3`.* Every migrated child table references
+`atlas.workout_sessions(session_id)`. `S2` enables shadow writes against an **empty** schema
+and the backfill does not run until `S3`. Nothing in the previous design inserted or
+backfilled `workout_sessions` before the children arrived, so **the first `S2` shadow write
+for a real session would have violated the session foreign key.**
+
+The parent is derivable, so no extra source is needed: `session_id` carries its own
+`YYYYMMDD-{AM|PM}-NN` structure (`services/sessionId.js`), which yields `session_date`,
+`period`, and `slot` by parsing alone. Every shadow transaction therefore begins:
+
+```sql
+INSERT INTO atlas.workout_sessions (session_id, session_date, period, slot)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (session_id) DO NOTHING;
+```
+
+and then inserts its children, all in the **same transaction**, so a child can never commit
+without its session parent and a failure leaves neither. `ON CONFLICT DO NOTHING` is correct
+here and carries none of the hazard it carried for receipts (§3.6): `workout_sessions` is
+**insert-only for identity**, so there is no later state transition for it to discard. The
+`S3` backfill uses the same conflict clause, so a session a shadow write already created is
+neither duplicated nor overwritten.
 - **Sheets remains the live authority for every read and every write.** The shadow write
   runs after the response has been decided. It never changes a response, a status code, a
   proof field, or a visible claim. A shadow failure is never surfaced to the athlete.
@@ -880,52 +915,78 @@ Three mechanisms, all required.
    authority appears. This is why no outbox table is added: an outbox row can itself fail to
    be written, whereas the closeout event that creates the obligation is the same row that
    proves the session closed.
-2. **A Postgres advisory lock serialises the append. A time-based lease cannot.**
+2. **The mirror write is idempotent by destination. No lock can fence an external append.**
 
-   **Correction, from the owner review of `5f42d3c`.** The earlier design used only
-   `export_claim_token` + `export_claim_expires_at`, and the owner review showed that guards
-   the wrong end. The token gates the final Supabase acknowledgement; it does not gate the
-   **Google Sheets append**, which is an external system that cannot check a Supabase token.
-   Once worker A's lease expires — because A is slow, its append timed out, or its append is
-   still in flight — worker B claims the session, reads the rows as missing, and appends them
-   too. A can no longer acknowledge, but **A can still write**. Duplicate mirror rows, from a
-   mechanism that looked like mutual exclusion and was not.
+   **Correction, from the owner review of `2ce7be3`, replacing the mechanism the review of
+   `5f42d3c` prompted.** The previous version claimed a session-level Postgres advisory lock
+   fences the append, and that a worker whose lock is gone "abandons without appending rather
+   than appending late". **The client cannot guarantee that**, and the repository already
+   says so. `isTransientAppendError` (`sheets.js:52-76`) refuses to retry any ambiguous
+   non-429 failure precisely because *the append may have committed before the backend failed
+   to respond*. An HTTP request already sent cannot be recalled. So:
 
-   The fix removes the expiry race rather than tuning it. The export holds a **session-level
-   Postgres advisory lock** keyed on the `session_id`, taken with `pg_try_advisory_lock` on a
-   dedicated connection and held across read-back, append, verify, and acknowledgement:
+   - Worker A sends the append.
+   - A's Postgres connection drops. Postgres releases the advisory lock **immediately**,
+     while A's Sheets request is still in flight.
+   - B acquires the lock, reads the rows as missing, and appends them.
+   - A's original request commits late.
 
-   - It is **not time-based**, so there is no window in which two workers both believe they
-     hold it. A second worker's `pg_try_advisory_lock` returns false and it does not append.
-   - It is **released by the database** when the holding connection ends, including when the
-     worker crashes or its process is killed. No lease timer has to guess whether A is dead.
-   - The append is additionally given a **hard timeout**, and a worker that cannot prove it
-     still holds the lock **abandons without appending** rather than appending late.
+   Two copies, and no lock anywhere in that sequence was violated. **Mutual exclusion in
+   Postgres cannot make a Google Sheets append exclusive**, because the two systems share no
+   transaction and Sheets cannot evaluate a Postgres predicate.
 
-   `export_claim_token` is kept, and its job is narrowed and stated honestly: it is the
-   **acknowledgement guard only**, so a worker that lost and regained work cannot stamp
-   `sheets_exported_at` for a generation it did not verify. It is not the mutual-exclusion
-   mechanism and must never be described as one.
+   The fix is to stop needing exclusivity: **make the mirror write idempotent by giving every
+   row a deterministic destination.**
+
+   - `atlas.workout_sessions.sheets_row_start` is allocated **once per session per tab**, in
+     Supabase, in the claiming transaction, and never changes. Allocation is a single
+     transactional statement, so two workers receive the same allocation rather than two.
+   - The export writes with `spreadsheets.values.update` into the **exact allocated range**,
+     not with `values.append`. The same session always writes the same values into the same
+     cells.
+   - A late duplicate from a superseded worker therefore **overwrites its own identical
+     values in its own cells**. It cannot create a second copy, because it has nowhere else
+     to write. Ordering between A and B stops mattering, which is what makes this immune to
+     the race above rather than merely unlikely to hit it.
+   - The grid is extended to cover the allocation before the write, so an update that lands
+     past the current row count cannot fail for want of rows.
+
+   This is safe only because **Atlas is the sole writer of these tabs once they are export
+   mirrors**. That is exactly what `S4` establishes, and it is why deterministic destinations
+   are available here and were not available while Sheets was the live write authority.
+
+   **Reconciliation still tolerates a duplicate rather than assuming one is impossible.** The
+   verify step counts rows per identity key, and more than one opens a divergence instead of
+   passing silently. A mechanism that is believed to be idempotent, and a mechanism that is
+   checked, are not the same thing.
+
+   The advisory lock is **kept, with an honest job**: it stops two workers doing redundant
+   work at the same time, which is a throughput and quota concern, not a correctness one.
+   `export_claim_token` likewise remains the **acknowledgement guard only**. Neither may be
+   described as fencing again.
 
    **The trade-off, stated rather than hidden.** A worker that hangs without dying keeps the
-   lock and the export stalls. That is deliberate: a visible stall is better than duplicate
-   rows in the athlete's permanent record, and `npm run atlas:status` surfaces the oldest
-   session owing an export precisely so the stall is seen.
-3. **The export is identity-idempotent, which survives an ambiguous Sheets response.** Every
-   migrated table has an **export identity key** — `(lower(session_id), lower(exercise),
-   set_number)` for sets, `session_id` for effort, and `idempotency_key` for both ledgers.
-   The worker reads back the session's existing Sheets rows, computes which identity keys are
-   already present, and appends **only the missing ones**. It then re-reads and verifies
-   exactly one row per identity key before setting `sheets_exported_at` with its claim token.
+   lock and the export stalls. That is deliberate: a visible stall is better than churn, and
+   `npm run atlas:status` surfaces the oldest session owing an export precisely so the stall
+   is seen. Correctness no longer depends on that lock being held.
+3. **Identity verification confirms the result, and never has to repair it.** Every migrated
+   table has an **export identity key** — `(lower(session_id), lower(exercise), set_number)`
+   for sets, `session_id` for effort, and `idempotency_key` for both ledgers. After writing
+   its allocated range, the worker re-reads that range and verifies **exactly one row per
+   identity key** before setting `sheets_exported_at` with its claim token.
 
-   A death after the append and before the acknowledgement is therefore safe: the restart
-   re-claims, reads back, finds the rows present, appends nothing, verifies, and
-   acknowledges. An ambiguous append response is resolved the same way — by looking, not by
-   guessing.
+   Because the destination is deterministic (mechanism 2), verification is a confirmation
+   rather than a reconciliation: there is no "which rows are already present, append the
+   rest" step whose answer could change between two workers. A death after the write and
+   before the acknowledgement is safe — the restart re-claims, rewrites the same values into
+   the same cells, verifies, and acknowledges.
 
-   The read-back is a Sheets read, and it is deliberately **off the athlete path**: it runs
-   in the asynchronous export worker after closeout, so it does not reintroduce an
-   athlete-facing quota dependency.
+   **A count greater than one is a defect, not a tidy-up.** It opens a divergence and the
+   session is not marked exported. The design does not delete Sheets rows to correct itself.
+
+   The verification read is a Sheets read, and it is deliberately **off the athlete path**:
+   it runs in the asynchronous export worker after closeout, so it adds no in-request Sheets
+   read to a Save.
 
 `npm run atlas:status` reports the count of sessions owing an export and the oldest such
 session, so a stalled mirror is visible rather than silent.
@@ -947,9 +1008,10 @@ operation. No lower rung substitutes for a higher one.
 | P3 | The shadow write is proven inert: a browser-level test shows the athlete-facing response is byte-identical with the shadow write enabled and disabled. |
 | P4 | A shadow write that throws is proven not to fail a Save. |
 | P5 | **Process death in the exact window is proven detectable.** Kill the process after the Sheets append returns success and before the shadow write; restart; run the sweep; assert the omission is found, repaired, and closed with a passing re-comparison. |
-| P6 | The sweep is proven complete on all six concepts: a seeded omission, a seeded content mismatch, and a seeded Supabase-only orphan are each detected and classified with the correct `reason`. Includes a **missing parent receipt** (`write_receipts`) and a **catalog content mismatch** (`exercise_catalog`). |
+| P6 | The sweep is proven complete on all five declared concepts: a seeded omission, a seeded content mismatch, and a seeded Supabase-only orphan are each detected and classified with the correct `reason`. Includes a **catalog content mismatch** (`exercise_catalog`). |
 | P7 | A divergence is proven **not** closable without `closure_proof`, and proven not closable by a lapsed lease or a timer. |
-| P7a | **The `S2` receipt mirror is proven ordered and atomic.** A shadow Save writes its parent receipt before its child rows in one transaction; a child row can never commit without its parent; and a failure mid-transaction leaves neither. Separately, a Save whose receipt never mirrored is proven to open a `write_receipts` divergence and to be repaired parent-first. |
+| P7a | **The shadow transaction is proven ordered and atomic on the session parent.** A shadow Save inserts its `workout_sessions` parent before its child rows in one transaction; a child can never commit without its session parent; a failure mid-transaction leaves neither; and a second Save for the same session does not duplicate or overwrite the parent. Proven against an **empty** schema, which is the state `S2` actually starts from. |
+| P7d | **No receipt is mirrored during `S2`/`S3`**, proven by assertion on an empty `write_receipts` after a shadow Save, and `logged_sets.write_id` / `session_effort.write_id` carry **no foreign key** at this stage. A repaired child row is proven to carry `write_id = NULL` rather than a fabricated value. |
 | P7b | **The catalog mirror is proven fail-closed.** A generation older than `CATALOG_MIRROR_MAX_AGE` is proven **not served** — the Save fails closed with an explicit reason, exactly as the expired cache does today. A failed sync is proven not to advance currency. An empty or materially shrunken source is proven refused. A content mismatch is proven to open an `exercise_catalog` divergence. A test that only shows a fresh mirror is served does not discharge this. |
 | P7c | **Least privilege is proven, not claimed.** `atlas_app` is refused a DDL statement and refused a `DELETE` on a table outside its grant list (§8.2). |
 | P8 | The `write_receipts` state machine is proven on all four transitions of §3.6, including that a **`failed` attempt does not consume the `write_id`** and that a superseded attempt's late `completeWrite` is discarded. |
@@ -962,7 +1024,7 @@ operation. No lower rung substitutes for a higher one.
 | P1 | Deterministic tests for every read path the `S4` cutover will move. |
 | P2 | Integration tests against a real disposable Supabase database. |
 | P3 | **Backfill reconciliation.** For each of the four tabs: equal row counts; every row matched by its export identity key; and a field-by-field comparison reporting zero differences after the §4.7 blank/null rule is applied. A count match alone is not reconciliation — identity and content must both be proven. The reconciliation report is committed as evidence, with workout values redacted. |
-| P4 | **No athlete-facing dependency on the Sheets quota** for the migrated concepts. Measured, not asserted: replay `test/fixtures/liveSessionManifest.json` against the prospective read path and record the residual Sheets read count per range. With the `Exercise_Catalog` mirror in place (ruling D1) the expected residual on the Save path is zero; the measurement, not this sentence, is the proof. |
+| P4 | **No in-request Sheets read on the migrated Save path, plus a measured and bounded background dependency.** *Renamed from "No athlete-facing dependency on the Sheets quota" after the owner review of `2ce7be3`: a session replay can prove zero in-request reads, and it cannot prove that Save availability is independent of the Sheets quota over the mirror-age window.* Two parts, both required. **(a)** Measured, not asserted: replay `test/fixtures/liveSessionManifest.json` against the prospective read path and record the residual in-request Sheets read count per range. Expected zero on the migrated Save path; the measurement is the proof. **(b)** State and gate the background dependency the catalog mirror introduces: the sync interval, `CATALOG_MIRROR_MAX_AGE`, the fail-closed behaviour past that age, and the exact residual — how long a total Sheets outage may last before a Save fails. **Do not certify unqualified quota independence.** |
 | P5 | **Cutover readiness.** Every read `S4` will move returns, against the backfilled database, what the Sheets read returns today. |
 | P6 | The open-divergence count reaches **zero** and the sweep that established it ran to completion. |
 | P7 | The repair path is proven to close a divergence only on a passing re-comparison. |
@@ -980,7 +1042,8 @@ Everything in §6.2, re-run after the cutover, plus:
 | P12 | A write failure is proven atomic: no partial session is left behind. |
 | P13 | Undo is proven exact: `DELETE` by `(session_id, write_id)` removes exactly the rows of that Save and nothing else, and the fail-closed contract of `services/closeoutFinality.js` still refuses an undo of a finalized session. |
 | P14 | **The export is durable AND idempotent.** Kill the process **after the Sheets append and before the Supabase acknowledgement**; restart; and prove the mirror contains **exactly one copy, by identity and by content** — not merely that an export eventually occurred. |
-| P14a | **The append is fenced, proven under the race the lease could not survive.** Three cases, each ending in exactly one row per identity: (a) **lease expiry with a live worker** — worker A is still running past what any lease would have granted; worker B attempts the session; B is refused the advisory lock and **performs no append**. (b) **A slow or timed-out append** — A's append exceeds its timeout; A abandons without appending rather than appending late, and cannot acknowledge. (c) **A replacement worker after a real death** — A is killed after its append; the database releases the lock; B acquires it, reads back, finds the rows, appends nothing, verifies, and acknowledges. A test that only proves a *live* lease blocks a simultaneous claim does not discharge P14a. |
+| P14a | **The mirror write is idempotent under a late external append**, proven on the race no lock can prevent: **drop worker A's Postgres connection while its Sheets request is in flight**, let B acquire the lock and complete the export, then **let A's original request commit late**. Exactly one mirror identity must result. Two further cases: a slow or timed-out append whose outcome is ambiguous, and a replacement worker after a real death. A test that only proves a live lock blocks a simultaneous claim does **not** discharge P14a — the lock is not the mechanism under test; the deterministic destination is. |
+| P14b | **The destination allocation is stable and single-valued.** Two workers claiming the same session receive the same `sheets_row_start`, and a re-export never reallocates. Separately, the verify step is proven to **open a divergence** when it counts more than one row for an identity key, rather than passing silently. |
 | P15 | **The open-divergence count is zero** and every `atlas.migration_divergences` row is `closed`. If not, `S4` does not merge. |
 | P16 | **No caller of the file-backed idempotency store remains**, proven by search, and the store, its env var, and its file are absent. |
 | P17 | The deletion list of §5.4 is verified absent, including the dropped `atlas.migration_divergences` table. |
@@ -1046,8 +1109,8 @@ key.**
 Why this and not the Data API:
 
 - The design needs **multi-statement transactions** (the Save, the seal, the catalog swap).
-- It needs **session-level advisory locks** for export fencing (§5.4). The Data API has no
-  equivalent.
+- It needs **session-level advisory locks** to serialise export workers (§5.4) — for
+  throughput, not for correctness. The Data API has no equivalent.
 - It needs **real role separation**. A service-role key is one identity that bypasses RLS;
   it cannot express "this connection may not run DDL".
 
@@ -1073,8 +1136,8 @@ Three distinct database roles, each with its own credential.
 |---|---|
 | `SELECT` | every table in `atlas` |
 | `INSERT` | every table in `atlas` |
-| `UPDATE` (column-scoped) | `closeout_write_id` on `session_plan_set_recommendations`; `status`, `attempt`, `attempt_token`, `attempt_started_at`, `response_body`, `rows_written`, `appended_range`, `completed_at` on `write_receipts`; `sheets_exported_at`, `sheets_export_attempts`, `sheets_export_error`, `export_claim_token` on `workout_sessions`; `status`, `verified_at`, `last_error` on `exercise_catalog_sync`; the state columns on `migration_divergences` while it exists |
-| `DELETE` | `logged_sets` (undo), `exercise_catalog_mirror` (the §3.7 generation swap), and `migration_divergences` while it exists |
+| `UPDATE` (column-scoped) | `closeout_write_id` on `session_plan_set_recommendations`; `status`, `attempt`, `attempt_token`, `attempt_started_at`, `response_body`, `rows_written`, `appended_range`, `completed_at` on `write_receipts`; `sheets_exported_at`, `sheets_export_attempts`, `sheets_export_error`, `export_claim_token`, `sheets_row_start` on `workout_sessions`; `status`, `verified_at`, `last_error` on `exercise_catalog_sync`; the state columns on `migration_divergences` while it exists |
+| `DELETE` | `logged_sets` (undo), `exercise_catalog_mirror` (the §3.7 generation swap), and `migration_divergences` while it exists. **Never on a Sheets tab** — the export does not delete mirror rows to correct itself (§5.4). |
 | `EXECUTE` | `pg_try_advisory_lock` / `pg_advisory_unlock` (available to any role; named here because the export depends on it) |
 
 It holds **no** `DROP`, `ALTER`, `TRUNCATE`, or other DDL grant. The catalog swap uses
