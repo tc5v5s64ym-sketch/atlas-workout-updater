@@ -113,10 +113,15 @@ Holds session identity and its allocation. Nothing else.
 | `period` | `text` | `AM` or `PM`. `CHECK (period IN ('AM','PM'))`. |
 | `slot` | `smallint` | `CHECK (slot BETWEEN 1 AND 99)`. |
 | `created_at` | `timestamptz` | |
+| `sheets_exported_at` | `timestamptz` | Nullable. Set by the `S4` export worker. Mirror state, not closeout state. |
+| `sheets_export_attempts` | `integer` | `NOT NULL DEFAULT 0`. |
+| `sheets_export_error` | `text` | Nullable. The last export failure reason. |
 
 - **Unique:** `(session_date, period, slot)`.
-- **Index:** the PK, plus `(session_date DESC)`.
-- **Mutability:** insert-only. No column is ever updated.
+- **Index:** the PK, plus `(session_date DESC)`, plus a partial index on
+  `(session_id) WHERE sheets_exported_at IS NULL` — the export worker's queue scan.
+- **Mutability:** insert-only for identity. The three `sheets_export_*` columns are the only
+  updatable ones, and only the `S4` export worker updates them. They are unused before `S4`.
 - **Transaction boundary:** one statement.
   `INSERT … ON CONFLICT DO NOTHING RETURNING session_id`, retried on the next free slot.
   Slot exhaustion at 99 still fails closed with `SESSION_SLOTS_EXHAUSTED`.
@@ -310,17 +315,65 @@ Replaces the idempotency store in `services/idempotency.js`. Concept 7's receipt
 | `route` | `text` | `/api/log-workout`, `/api/complete-workout`, `/api/log-workout/undo-last`. |
 | `session_id` | `text` | Nullable — a claim is made before the id is known on some paths. |
 | `status` | `text` | `CHECK (status IN ('in_progress','completed','failed'))`. |
+| `attempt_token` | `uuid` | The current attempt's token. Regenerated on every new attempt. |
+| `attempt` | `integer` | `NOT NULL DEFAULT 1`. Increments on each retry of the same `write_id`. |
 | `response_body` | `jsonb` | The exact body replayed to a duplicate retry. |
 | `rows_written` | `integer` | |
 | `appended_range` | `text` | Kept while the Sheets mirror exists; null afterwards. |
 | `created_at` | `timestamptz` | |
+| `attempt_started_at` | `timestamptz` | Start of the **current** attempt. The staleness clock reads this, not `created_at`. |
 | `completed_at` | `timestamptz` | Nullable. |
 
-- **Mutability:** one insert and one update. `in_progress` moves to `completed` or `failed`
-  exactly once.
-- **Transaction boundary:** the claim is
-  `INSERT … ON CONFLICT (write_id) DO NOTHING RETURNING write_id`. Zero rows returned means
-  the id is already claimed, which is the duplicate branch.
+- **Mutability:** mutable, and deliberately so. The row is a **state machine**, not a
+  single insert plus a single terminal update. A `write_id` is **not** consumed by a failed
+  attempt.
+
+**The state machine, stated exactly, because getting it wrong loses a retry.**
+`beginWrite` (`services/idempotency.js:147-192`) permits three transitions that a naive
+`ON CONFLICT DO NOTHING` claim would destroy:
+
+1. **No row** → insert `in_progress`, `attempt = 1`, a fresh `attempt_token`.
+2. **Row is `failed`** → **retryable.** The code says so: *"A 'failed' record is retryable: a
+   prior attempt released without committing, so fall through and start a clean attempt."*
+   The row moves back to `in_progress` with `attempt + 1` and a **new** `attempt_token`.
+3. **Row is `in_progress` and stale** — older than `STALE_IN_PROGRESS_MS` (5 minutes) and
+   rehydrated from a crashed process — → treated as abandoned and retryable, exactly as (2).
+4. **Row is `in_progress` and fresh**, or **`completed`** → genuine duplicate. Refuse, or
+   replay `response_body`.
+
+- **Transaction boundary — a compare-and-set, never `DO NOTHING`.** The claim is one
+  statement:
+  ```sql
+  INSERT INTO atlas.write_receipts (write_id, route, status, attempt, attempt_token,
+                                    attempt_started_at)
+  VALUES ($1, $2, 'in_progress', 1, gen_random_uuid(), now())
+  ON CONFLICT (write_id) DO UPDATE
+     SET status = 'in_progress',
+         attempt = atlas.write_receipts.attempt + 1,
+         attempt_token = gen_random_uuid(),
+         attempt_started_at = now(),
+         completed_at = NULL
+   WHERE atlas.write_receipts.status = 'failed'
+      OR (atlas.write_receipts.status = 'in_progress'
+          AND atlas.write_receipts.attempt_started_at < now() - interval '5 minutes')
+  RETURNING attempt_token, attempt;
+  ```
+  Returning a row means this caller holds the attempt. Returning **no** row means the
+  `WHERE` refused the update, which is exactly case (4) — a genuine duplicate. The caller
+  then reads the row and refuses or replays.
+- **`completeWrite` and `failWrite` are token-guarded**, for the same reason the in-process
+  store passes a token: a **stale attempt must not overwrite a newer one**. Both are
+  `UPDATE … WHERE write_id = $1 AND attempt_token = $2`. A superseded attempt matches zero
+  rows and its late completion is discarded rather than applied.
+- **Why `ON CONFLICT DO NOTHING` is wrong here, stated so it is not reintroduced.** It would
+  read a `failed` row as a duplicate. One transient failure would then consume the
+  `write_id` permanently, and the athlete's retry of a Save that never committed would be
+  refused as a duplicate. That is a lost workout, not a protected one. **This corrects an
+  earlier version of this section, which specified `ON CONFLICT (write_id) DO NOTHING` and
+  "one insert and one update".** Both were wrong.
+- **What this does not change.** The 24-hour TTL prune and the 5-minute staleness window
+  keep their current meanings. `write_id` remains client-supplied. The duplicate-write
+  shield's *decisions* are unchanged; only its storage and its atomicity change.
 - **Observed fact, and the defect this closes.** The current store is a JSON file at
   `/tmp/atlas-idempotency.json` (`services/idempotency.js:18`). A Render container
   replacement loses it, so the duplicate-write shield does not survive one. The 5-minute
@@ -330,6 +383,21 @@ Replaces the idempotency store in `services/idempotency.js`. Concept 7's receipt
 - **Immediate production consumer:** `beginWrite`, `completeWrite`, `failWrite` in
   `services/idempotency.js`, called from `POST /api/log-workout`,
   `POST /api/complete-workout`, and `POST /api/log-workout/undo-last`.
+
+**`services/idempotency.js` has four callers this table does NOT serve.** `beginWrite` is
+also called by `POST /api/coaching-notes` (`index.js:1296`), `POST /api/constraints`
+(`index.js:1382`), `POST /api/log-modality` (`index.js:1501`), and the bodyweight write
+(`index.js:2107`). All four write tabs that stay in Google Sheets, and all four are outside
+the seven migrated concepts.
+
+**Consequence, stated so `S4` cannot delete their protection by accident.** The file-backed
+store is **not** deleted wholesale at `S4`. `S4` routes only the three migrated write routes
+to `atlas.write_receipts`; the four routes above keep the existing store, unchanged. The
+store therefore **survives `S4`** as a named remaining artifact. Its sunset condition is
+**Owner decision D4** (§9): either those four routes also move to `atlas.write_receipts` —
+which widens the authorized scope and so needs the owner — or the file store keeps them and
+its known weakness (it does not survive a container replacement) is accepted and recorded
+for them. `S4` must not silently pick either one.
 
 **Not migrated with it.** `services/appendWriteProof.js` stays pure and unchanged in `S2`
 and `S3` — it adjudicates the Google `updates` envelope. At `S4` the Supabase equivalent of
@@ -480,8 +548,16 @@ One concern per PR. Each PR names what it closes and what it must not do.
   payload is written to Supabase, and the two are compared.
 - **Sheets remains the live authority for every read and every write.** The shadow write
   runs after the response has been decided. It never changes a response, a status code, a
-  proof field, or a visible claim. A shadow failure is logged and is never surfaced to the
-  athlete.
+  proof field, or a visible claim. A shadow failure is never surfaced to the athlete.
+- **A shadow failure is inert to the athlete, and durable to the system.** These are not the
+  same thing, and conflating them is how a silently incomplete Supabase gets read from later.
+  Every shadow write that fails, partially applies, or diverges from Sheets records a durable
+  **divergence row** naming the `session_id`, the `write_id`, the route, and the reason. The
+  divergence record is the one thing about a shadow failure that is **not** allowed to be
+  best-effort: if the divergence cannot be recorded, the shadow lane marks that session
+  diverged by the safest available means and reports it, rather than forgetting it.
+- `npm run atlas:status` reports the count of open divergences. A non-zero count is visible,
+  not silent.
 - **Must not:** move any read, change any response, or deploy a cutover.
 - **Immediate consumer of the adapter:** the shadow-write call sites in `index.js` and
   `routes/sessionPlans.js`. The adapter has a consumer in the PR that adds it.
@@ -500,14 +576,69 @@ One concern per PR. Each PR names what it closes and what it must not do.
 - **Blocked on:** Owner decision D2 (§9), the Constitution amendment.
 - **Bridge introduced:** none new. The `S2` shadow write continues.
 
+#### The read cutover cannot outrun the write it reads
+
+**This is the sharpest hazard in the whole chain, and an earlier version of this design did
+not close it.** At `S3` the write authority is still Sheets and the Supabase write is still
+the inert shadow. A shadow write that fails therefore returns success to the athlete —
+correctly, from the current authority — while Supabase silently lacks those sets. If reads
+have already moved, the next read serves an incomplete workout, and nothing in the athlete's
+experience says so. Acknowledged sets, plan events, or closeout state could be missing
+indefinitely.
+
+Three rules close it. All three are required; none alone is sufficient.
+
+1. **A session's reads move only when that session has no open divergence.** The read path is
+   gated per `session_id`, not globally. A session carrying an open divergence row is not
+   served from Supabase.
+2. **A gated read fails closed.** If the owner has not approved a Sheets read fallback, a
+   read for a diverged session returns an explicit "state not established" error. It never
+   returns a partial workout as if it were complete. If the owner has approved the fallback,
+   that read — and only that read — goes to Sheets, and the fallback invocation is recorded.
+3. **A repair path exists and runs.** A divergence is re-driven into Supabase from the Sheets
+   record, and the divergence row closes only when a re-comparison passes. Divergences are
+   repaired, never aged out, and never closed by a timer.
+
+**Acceptance for `S3` therefore includes a live zero.** The cutover is permitted when the
+open-divergence count is zero across the backfilled history **and** across the debug workout,
+with the gate proven to bite: a test induces a shadow-write failure, asserts the session is
+gated, asserts the read does not serve a partial workout, runs the repair, and asserts the
+gate opens only after the re-comparison passes.
+
+**The alternative, recorded rather than hidden.** If the owner prefers, `S3`'s read cutover
+can be deferred into `S4`, so reads and writes move together and no window exists in which
+reads lead writes. That is simpler and strictly safer. It is **not** the default here only
+because the owner's instruction specifies reads move at `S3` "after backfill and parity
+proof" — the three rules above are what make that parity proof continuous rather than a
+one-time snapshot. **Owner decision D5** (§9) records the choice.
+
 ### 5.4 PR S4 — Supabase becomes the write authority, then delete
 
 1. Make Supabase the approved-write authority. `preview → approve → write` is unchanged;
    the write lands in a Supabase transaction.
 2. Export a completed session to Google Sheets **asynchronously**, after closeout. The
    export writes the same columns in the same owner-approved order. An export failure never
-   fails a workout and never changes a visible claim; it is retried and reported by
-   `npm run atlas:status`.
+   fails a workout and never changes a visible claim.
+
+   **The pending export must survive a process death, and it does so without an outbox.**
+   A worker that is merely *started* in-process after the closeout commit is lost if the
+   process exits between the two, and nothing would then record that the export is owed.
+   The work item is therefore **derived, never enqueued**: a session owes an export when a
+   `session_closeout` event exists for it in `atlas.session_plan_events` and
+   `atlas.workout_sessions.sheets_exported_at IS NULL`. That query is the queue.
+
+   This is deliberately **not** a durable outbox table, and it is stronger than one. An
+   outbox row can fail to be written; a derived work item cannot be missed, because the
+   closeout event that creates the obligation is the same row that proves the session
+   closed. Nothing extra is written at closeout, so nothing extra can be lost, and no
+   second closeout authority appears.
+
+   The worker claims a session with a conditional update, increments
+   `sheets_export_attempts`, records `sheets_export_error` on failure, and sets
+   `sheets_exported_at` only after the export is verified. A crash mid-export leaves the
+   session in the queue and it is retried. `npm run atlas:status` reports the count of
+   sessions owing an export and the oldest such session, so a stalled mirror is visible
+   rather than silent.
 3. Delete, in the same PR:
    - the Sheets hot-path reads for the seven concepts;
    - the shadow write and its comparison;
@@ -520,9 +651,20 @@ One concern per PR. Each PR names what it closes and what it must not do.
    - the read-budget harnesses and fixtures for the migrated path:
      `test/liveSessionReadBudget.test.js`, `test/sessionReadBudget.test.js`,
      `test/sheets-adapter-reads.test.js`, `test/fixtures/liveSessionManifest.json`,
-     `scripts/reconstruct-session-reads.js`, and `docs/READ_BUDGET.md`;
-   - the file-backed idempotency store and `ATLAS_IDEMPOTENCY_FILE`.
+     `scripts/reconstruct-session-reads.js`, and `docs/READ_BUDGET.md`.
 4. Verify the deleted machinery is genuinely absent, and record the count.
+
+**Two things `S4` does NOT delete, named so their survival is deliberate rather than missed.**
+
+- **The file-backed idempotency store.** Four write routes outside the seven migrated
+  concepts still use it — `POST /api/coaching-notes`, `POST /api/constraints`,
+  `POST /api/log-modality`, and the bodyweight write. Deleting the store would silently
+  remove their duplicate-write protection. `S4` re-points only the three migrated routes.
+  The store survives with a named sunset condition: **Owner decision D4** (§9).
+- **The `S2` divergence records and repair path**, if any divergence is still open. `S4`
+  requires the open-divergence count to be **zero** before the write authority moves. If it
+  is not zero, `S4` does not merge. Only at zero are the divergence lane and the shadow
+  write deleted together.
 
 **Anything in that list which cannot be deleted at `S4` is an open loop.** It must then
 carry a named consumer and an exact sunset condition, or `S4` is not complete.
@@ -543,7 +685,9 @@ operation. No lower rung substitutes for a higher one.
 | P2 | Integration tests against a **real disposable Supabase/Postgres database**, created and destroyed per CI run. A fake, an in-memory stub, or a mocked client does not satisfy this. |
 | P3 | The shadow write is proven inert: a browser-level test shows the athlete-facing response is byte-identical with the shadow write enabled and disabled. |
 | P4 | A shadow write that throws is proven not to fail a Save. |
-| P5 | Every drift and authority guard passes. `npm test`, the Playwright suite, lint, syntax, and the secret scan pass. |
+| P5 | A shadow write that throws is proven to leave a **durable divergence record**. Inert to the athlete and durable to the system are proven separately, because they are different properties. |
+| P6 | The `write_receipts` state machine is proven on all four transitions of §3.6, including that a **`failed` attempt does not consume the `write_id`** and that a superseded attempt's late `completeWrite` is discarded. |
+| P7 | Every drift and authority guard passes. `npm test`, the Playwright suite, lint, syntax, and the secret scan pass. |
 
 ### 6.2 Gate for `S3` (move the reads)
 
@@ -557,7 +701,8 @@ operation. No lower rung substitutes for a higher one.
 | P6 | `preview → approve → write` preserved. Proven by the existing trust-loop and browser tests, unchanged. |
 | P7 | **Idempotent repeated approval.** A repeated approval writes zero additional rows. Proven at the database, by row count and by identity. |
 | P8 | **Exact set, plan, ledger and closeout evidence.** The debug workout's rows are compared against a declared expectation written **before** the run: exact sets, exact plan events, exact ledger rows, exact seal, exact closeout status. A "rows appeared" standard does not qualify. |
-| P9 | The shadow comparison from `S2` reports zero divergences across the debug workout. |
+| P9 | The shadow comparison from `S2` reports zero divergences across the debug workout **and** across the backfilled history. |
+| P10 | **The divergence gate bites.** A test induces a shadow-write failure and proves, in order: the session is gated; the read does not serve a partial workout; the repair re-drives the write; and the gate opens only after a re-comparison passes. A gate that has never been shown to close is not a gate. |
 
 ### 6.3 Gate for `S4` (move the write authority)
 
@@ -565,11 +710,13 @@ Everything in §6.2, re-run after the cutover, plus:
 
 | # | Requirement |
 |---|---|
-| P10 | A write failure is proven atomic: no partial session is left behind. |
-| P11 | Undo is proven exact: `DELETE` by `(session_id, write_id)` removes exactly the rows of that Save and nothing else, and the fail-closed contract of `services/closeoutFinality.js` still refuses an undo of a finalized session. |
-| P12 | The asynchronous Sheets export is proven to produce the same columns in the same owner-approved order, and proven not to fail a workout when it fails. |
-| P13 | The deletion list of §5.4 is verified absent. |
-| P14 | A second non-counting deployed debug workout, after the cutover. |
+| P11 | A write failure is proven atomic: no partial session is left behind. |
+| P12 | Undo is proven exact: `DELETE` by `(session_id, write_id)` removes exactly the rows of that Save and nothing else, and the fail-closed contract of `services/closeoutFinality.js` still refuses an undo of a finalized session. |
+| P13 | The asynchronous Sheets export is proven to produce the same columns in the same owner-approved order, and proven not to fail a workout when it fails. |
+| P14 | **The export survives a process death.** A test kills the process between the closeout commit and the export, restarts, and proves the session is still found by the derived queue and is exported. An export that is only ever tested in one continuous process is not proven durable. |
+| P15 | **The open-divergence count is zero.** If it is not, `S4` does not merge. |
+| P16 | The deletion list of §5.4 is verified absent, and the two deliberate survivors are verified **present** with their sunset conditions recorded. |
+| P17 | A second non-counting deployed debug workout, after the cutover. |
 
 ---
 
@@ -593,7 +740,7 @@ Everything in §6.2, re-run after the cutover, plus:
 | Step | Rollback | Data risk |
 |---|---|---|
 | `S2` | Disable the shadow write by its flag; revert the PR. | None. Sheets never stopped being the authority. Supabase holds a copy that nothing reads. |
-| `S3` | Revert the PR. Reads return to Sheets. | None for durable data — no write moved. A read cutover cannot lose a row. |
+| `S3` | Revert the PR. Reads return to Sheets. | None for durable data — no write moved, and Sheets still holds every row. A read cutover cannot lose a row. It **can** show an incomplete one, which is what the §5.3 divergence gate exists to prevent; reverting restores the complete view immediately. |
 | `S4` | Revert the PR **and** re-import any session written to Supabase after the cutover into Sheets, using the same export as §5.4. | Real. This is the only irreversible step, and it is why `S4` needs an owner gate and a verified backup. |
 
 ### 7.3 The `S4` rollback window
@@ -668,8 +815,8 @@ The record below is the summary. The per-concept record is
 | **Intended winner** | Supabase, for all seven concepts. Sheets becomes an export mirror. |
 | **Bridge** | The bounded shadow write and comparison of `S2`. Live in `S2` and `S3` only. |
 | **Exact sunset** | `PR S4` deletes the bridge, the Sheets hot-path reads, the read-budget machinery, and the file-backed idempotency store, and verifies their absence. |
-| **Code and tests deleted at closure** | The list in §5.4 step 3. |
-| **Net complexity after migration** | Expected **negative**. Removed: the per-request `batchGet` read context, the route range declarations, the 30-second row cache, the session read-budget harness and its fixture, the reconstruction script, the read-budget document, the verify-range route and its client fallback, and the file-backed idempotency store. Added: six tables, one adapter module, and the asynchronous export. This expectation is **not yet measured**; `S4` must report the actual net line and module change. |
+| **Code and tests deleted at closure** | The list in §5.4 step 3. The two deliberate survivors — the file-backed idempotency store for four out-of-scope routes, and the divergence lane until its count is zero — are named in §5.4 with their sunset conditions. |
+| **Net complexity after migration** | Expected **negative**. Removed: the per-request `batchGet` read context, the route range declarations, the 30-second row cache, the session read-budget harness and its fixture, the reconstruction script, the read-budget document, and the verify-range route and its client fallback. Added: six tables, one adapter module, the asynchronous export worker, and — during `S2` and `S3` only — the shadow write, the divergence record, and the repair path. The file-backed idempotency store is **not** removed; it survives for four out-of-scope routes pending Owner decision D4. This expectation is **not yet measured**; `S4` must report the actual net line and module change. |
 
 ### Open decisions requiring the owner
 
@@ -712,6 +859,36 @@ reports a `Supabase Preview` check naming a project. *Not established.* Whether 
 exists in a usable state, who created it, what it contains, and whether this migration should
 use it or a new one. *Proposed action.* Dale states which project the migration uses, or
 directs that a new one is created. No agent provisions, inspects, or connects to either.
+
+**D4 — the four write routes that share the idempotency store but are out of scope.**
+
+- *Observed fact.* `beginWrite` is called by `POST /api/coaching-notes` (`index.js:1296`),
+  `POST /api/constraints` (`index.js:1382`), `POST /api/log-modality` (`index.js:1501`), and
+  the bodyweight write (`index.js:2107`), in addition to the three migrated routes.
+- *Supported conclusion.* `S4` cannot delete the file-backed store without removing those
+  four routes' duplicate-write protection, and it cannot move them to
+  `atlas.write_receipts` without writing out-of-scope data to Supabase.
+- *Proposed action, needing the owner.* Either (a) extend `atlas.write_receipts` to those
+  four routes, which consolidates on one store but widens the authorized scope; or (b) keep
+  the file-backed store for them and accept, on the record, that their shield does not
+  survive a container replacement.
+- *Recommendation.* (a), because two idempotency stores is the same authority defect this
+  migration exists to remove, and receipt metadata is not workout data. It is **not** taken
+  here, because it widens the scope the owner set.
+
+**D5 — whether the read cutover stays at `S3` or moves into `S4`.**
+
+- *Observed fact.* The owner's instruction places the read cutover at `S3`, while the write
+  authority moves at `S4`. Between them, reads lead writes.
+- *Supported conclusion.* That window is safe only with the per-session divergence gate,
+  fail-closed reads, and the repair path specified in §5.3. Without all three, a failed
+  shadow write yields a silently incomplete read.
+- *Proposed action.* Either (a) keep the cutover at `S3` with the three rules enforced and
+  proven to bite; or (b) defer the read cutover into `S4` so reads and writes move together
+  and the window does not exist.
+- *Recommendation.* (a) as specified, because it matches the instruction and the three rules
+  make the parity proof continuous. (b) is simpler and strictly safer, and it remains
+  available at no cost to the rest of the design.
 
 ---
 
