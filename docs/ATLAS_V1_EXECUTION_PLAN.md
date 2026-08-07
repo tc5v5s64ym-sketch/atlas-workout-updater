@@ -164,6 +164,17 @@ The owner performed the required review on the exact head and returned **BLOCKIN
 
 **Current-state correction.** D3 is no longer open. The owner created and selected the Free-tier project **Atlas Production**, independently verified healthy and empty, `us-west-2`, zero public tables, zero migrations. Any statement that no project was provisioned, or that its state is unknown, is stale. The project reference and every credential stay out of the repository.
 
+### OWNER REVIEW 2026-08-07 (second) — Atlas Contract / Systems Review of `5f42d3c42993b8ae295bf711655a2f0448f5ec9d`: BLOCKING
+
+The four blockers above were confirmed closed and rulings D1–D5 confirmed applied consistently. That head still could not pass: **the replacement design introduced four new load-bearing gaps.** All four are corrected in the design document.
+
+1. **The `Exercise_Catalog` mirror had no freshness authority.** The design said a failed sync leaves the previous mirror in place, and called that the same behaviour as the existing 60-second cache. It is not: `sheets.js:738-739` drops the cache entry at expiry — *"Explicit expiry: drop it here so no path below can fall back to it"* — and a failed refresh throws. The live path is **fail-closed**; the proposed mirror was **fail-open** and could enrich Saves indefinitely from content that silently disagreed with the Sheets editing authority. Corrected: a separate `atlas.exercise_catalog_sync` freshness authority, a `CATALOG_MIRROR_MAX_AGE` bound past which the Save **fails closed**, a failed sync that never advances currency, refusal of an empty or materially shrunken source, and a catalog content mismatch that opens a divergence.
+2. **The export lease was not a fencing mechanism.** `export_claim_token` guarded only the Supabase acknowledgement, and a Google Sheets append cannot check a Supabase token. Once worker A's lease expired — slow, timed out, or still in flight — worker B could claim, read the rows as missing, and append them too. A could no longer acknowledge but **could still write**. Corrected: a **session-level Postgres advisory lock** serialises read-back, append, verify and acknowledgement. It is not time-based, so no two-holders window exists, and the database releases it when the holding connection dies. The token is narrowed to an acknowledgement guard and may never again be described as mutual exclusion.
+3. **The stated security model could not perform the design.** It specified one service-role key **and** separate least-privilege roles **and** `DELETE` on `logged_sets` only — while the catalog swap needs `DELETE` on the mirror. One key does not authenticate as three database roles. Corrected: **direct Postgres connections with three explicitly scoped roles** (`atlas_app`, `atlas_migrate`, `atlas_readonly`), no Data API, no service-role key and no anon key in the runtime path, and a grant table that matches what the design actually does. Least privilege is now proven by a test, not claimed.
+4. **`S2` child rows referenced a receipt row `S2` never created.** `logged_sets.write_id` and `session_effort.write_id` reference `atlas.write_receipts`, but ruling D4 moves the receipt authority at `S4`. Every `S2` shadow Save would have violated the foreign key or silently dropped the `write_id`. Corrected: `S2` mirrors the decided file-backed receipt into Supabase **inside the same shadow transaction, parent before child**, with `attempt_token` null and a terminal status; a missing parent is a `write_receipts` divergence repaired parent-first; and at `S4` the mirrored terminal rows need no special case, because the claim upsert already treats a `completed` row as a duplicate.
+
+**No counter changed and no authorization was granted by this review.** Campaign 0/5, Phase 5 unauthorized, no schema applied, no deployment.
+
 ### Owner rulings D1–D5, all resolved (2026-08-07)
 
 1. **D1 — `Exercise_Catalog`.** Add the read-only mirror needed to remove the final athlete-facing Sheets quota dependency. Sheets remains its editing authority; Supabase is the Save-path read mirror.
@@ -201,7 +212,7 @@ Three proofs come directly from the owner review and are not optional. **Process
 
 Do not add an unused database abstraction or a generic persistence framework. Every proposed module names its immediate production consumer. Do not add a speculative table or a speculative feature. There is exactly one Supabase adapter module, in the same way there is exactly one `sheets.js`.
 
-The schema is **eight tables: seven permanent and one temporary**. The eighth, `atlas.migration_divergences`, is migration-control machinery rather than product data, and `S4` drops it. Two tables were added by owner ruling, not by scope drift: the `Exercise_Catalog` read mirror (D1) and the divergence table the owner review required (defect 1). Neither widens the migrated workout data.
+The schema is **nine tables: eight permanent and one temporary**. The ninth, `atlas.migration_divergences`, is migration-control machinery rather than product data, and `S4` drops it. Three tables were added by owner ruling or owner review, not by scope drift: the `Exercise_Catalog` read mirror and its separate freshness authority `exercise_catalog_sync` (D1, split by the second review), and the divergence table the first review required. None widens the migrated workout data.
 
 ---
 
