@@ -403,7 +403,10 @@ revisions, item outcomes, and closeout and write receipts.
   recorded: the divergence **table** is dropped by an owner-run artifact
   (`supabase/operations/drop_migration_divergences.sql`, deliberately outside
   `supabase/migrations/` so no migration run can apply it early) once the PR S4 rollback window
-  closes. **This migration is not closed until that execution.**
+  closes — **and then a post-window versioned migration**, so a fresh replay of
+  `supabase/migrations/` also ends without the table. **This migration is not closed until
+  both land:** an out-of-band drop converges production only, while every fresh environment
+  replaying migration history would recreate the bridge table.
   Under owner ruling D4 (2026-08-07) all seven current `beginWrite` callers move to
   `atlas.write_receipts`, so PR S4 must also prove no caller of the file store remains. An
   item on that list that survives PR S4 is an open loop and needs a named consumer plus its
