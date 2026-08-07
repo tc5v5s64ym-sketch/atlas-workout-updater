@@ -112,9 +112,10 @@ live write, and the W1–W3 proof fields are unchanged.
 
 ## 3. Minimum Supabase schema
 
-**Eleven tables: ten permanent, one temporary.** Each names its immediate production
-consumer. There is no generic persistence framework, no repository abstraction, and no table
-without a consumer in this chain.
+**Twelve tables: eleven permanent, one temporary.** Eleven are created by `S2`; the twelfth,
+`atlas.write_freeze`, is created by `S3` because that is the PR that builds the control it
+carries. Each names its immediate production consumer. There is no generic persistence
+framework, no repository abstraction, and no table without a consumer in this chain.
 
 | # | Table | Lifetime |
 |---|---|---|
@@ -128,6 +129,7 @@ without a consumer in this chain.
 | 3.7 | `atlas.exercise_catalog_sync` | permanent — the mirror's freshness authority |
 | 3.8 | `atlas.migration_divergences` | **TEMPORARY — dropped by `S4`** |
 | 3.9 | `atlas.sheets_mirror_cursor` + `atlas.sheets_mirror_allocations` | permanent — the export destination authority |
+| 3.10 | `atlas.write_freeze` | permanent — created by `S3`, not `S2` (decision D7) |
 
 The catalog is two tables, not one: content and freshness are separate concerns, and the
 owner review of `5f42d3c` found that collapsing them left the mirror with no freshness
@@ -546,9 +548,10 @@ metadata is shared safety infrastructure, not a second workout-data migration:
 
 Only the **receipt** moves for the last four. Their rows keep going to their Sheets tabs.
 `S4` deletes the file-backed store, `ATLAS_IDEMPOTENCY_FILE`, and
-`/tmp/atlas-idempotency.json`, and **proves no caller of the file store remains** — but only
-**as its last action** (§5.5 step 9), after the §5.5a carry-over is verified. Until then the
-file store is the rollback source and must remain intact.
+`/tmp/atlas-idempotency.json`, and **proves no caller of the file store remains**, in the same
+build. The **data** it held is carried into `atlas.write_receipts` and verified at §5.5 step 2a
+before any new decider opens; that verified set, not the file, is what a rollback restores
+(ruling D6, withdrawn).
 
 **`session_id` is persisted when it is minted, or WRITE-2 cannot work.** *Owner review of
 `c22ce02`.* The schema carried a `session_id` column and the text promised `peekWrite` would
@@ -946,6 +949,35 @@ One transaction, covering **every** mirrored tab for the session:
 - **Lifetime:** permanent. It is the mirror's address book, not migration machinery, so `S4`
   keeps it. `base_established_at` records the one-time cutover handshake of §5.4 step 4.
 
+### 3.10 `atlas.write_freeze`
+
+*Added by the owner review of `4f8e180`, which found §5.5 step 1 depending on an
+"owner-controlled runtime switch" that no section defined.*
+
+```sql
+CREATE TABLE atlas.write_freeze (
+  id       boolean     PRIMARY KEY DEFAULT true CHECK (id),
+  frozen   boolean     NOT NULL,
+  reason   text        NOT NULL,
+  set_by   text        NOT NULL,
+  set_at   timestamptz NOT NULL DEFAULT now()
+);
+```
+
+The `CHECK (id)` single-row idiom means the table can hold exactly one row, which is the point:
+it carries **one control with one meaning** — are the seven `beginWrite` write routes open?
+
+- **Immediate production consumer:** every one of the seven `beginWrite` write routes, which
+  read it before any side effect; and §5.5 step 1, which is not executable without it.
+- **Mutability:** `frozen`, `reason`, `set_by` and `set_at` are updated by the Supabase project
+  owner only. The runtime holds `SELECT` and nothing else (§8.2).
+- **Lifetime:** permanent, and deliberately not a bridge. The full lifecycle, owner
+  authentication, failure posture, accepted cost and the reasoning for having no sunset are in
+  §5.3; the decision record is **D7** (§9).
+- **Created by `S3`**, in an ordinary migration file under `supabase/migrations/`, applied to
+  the disposable CI database like every other. The migration seeds the single dormant row
+  (`frozen = false`), which is the one DML statement in `atlas_migrate`'s grant list.
+
 ---
 
 ## 4. Field-by-field mapping
@@ -1089,8 +1121,9 @@ One concern per PR. Each PR names what it closes and what it must not do.
 
 ### 5.2 PR S2 — migrations, adapter, shadow write, divergence lane
 
-- Add the repository migration files for the eleven tables of §3, as plain SQL under
-  `supabase/migrations/`. The files are checked in and applied to a **disposable**
+- Add the repository migration files for the eleven tables of §3.1–§3.9, as plain SQL under
+  `supabase/migrations/`. `atlas.write_freeze` (§3.10) is **not** one of them — `S3` creates
+  it, alongside the control that reads it. The files are checked in and applied to a **disposable**
   database in CI. Applying them to `Atlas Production` is a separate owner action.
 - Add one Supabase adapter module. It is the only module that holds a Supabase client, in
   the same way `sheets.js` is the only module that holds a read-write Sheets client. It
@@ -1181,16 +1214,80 @@ the cutover in `S4` is safe.
 - Prove the repair path closes a divergence only on a passing re-comparison.
 - Prove cutover readiness: every read the `S4` cutover will move is proven, against the
   backfilled database, to return what the Sheets read returns today.
-- **Ship and prove the dormant write freeze.** *Owner review of `fcafa75`: `S4` depended on
-  freeze code `S3` was not obligated to contain.* `S3` builds the owner-controlled freeze
-  across **all seven `beginWrite` callers**, dormant by default, and proves (a) each route
-  fails closed when it is active, (b) activation and deactivation require **no deploy and no
-  restart**, and (c) dormant is byte-identical to today. This is the one capability `S3` adds,
-  and it moves no authority — which is why it belongs here rather than in the cutover build.
+- **Ship and prove the dormant write freeze**, specified immediately below. `S3` builds the
+  owner-controlled freeze across **all seven `beginWrite` callers**, dormant by default, and
+  proves it (§6.2 P8–P12). This is the one capability `S3` adds, and it moves no authority —
+  which is why it belongs here rather than in the cutover build.
 - **Must not:** move any athlete-facing read or write. Sheets stays the authority for both.
 - **Blocked on:** nothing owner-reserved. Ruling D2's Constitution amendment is required
   before the `S4` cutover, not before this PR, because `S3` changes no authority.
 - **Bridge introduced:** none new. The `S2` bridge continues.
+
+#### The write freeze — one bounded control authority
+
+*Added by the owner review of `4f8e180`.* `S4` step 1 required an "owner-controlled runtime
+switch" that no section defined. A control with no named authority, no lifecycle and no
+failure posture is a hope, not a mechanism, and the step that depends on it is not executable.
+
+**What it is — one row, one meaning.** The table is `atlas.write_freeze` (§3.10): one row,
+enforced by a `CHECK (id)` single-row primary key, carrying `frozen`, `reason`, `set_by` and
+`set_at`. It carries **one control with one meaning**: are the seven `beginWrite` write routes
+open? It is **not** a key/value flag store. It has no name column, no per-feature rows, and no second controlled
+behaviour. Adding one is outside this migration and needs its own authorization. That bound is
+the reason this is a table with a fixed shape rather than a general flag service.
+
+**Owner authentication — no new surface.** `atlas_app` is granted `SELECT` and nothing else
+(§8.2). No application role and **no HTTP route** can change it. The owner sets and lifts the
+freeze by executing an `UPDATE` in the Supabase SQL editor, or through `psql` as the project
+owner role. Authentication is therefore the Supabase project credential that §8.1 already
+treats as owner-only, so the control adds **no new endpoint, no new key and no new auth
+surface** — which is exactly why it is a row rather than an admin route.
+
+**How a running instance sees it.** Each of the seven write routes reads the row at the start
+of the request, before any Sheets or Supabase side effect. **There is no cache**, so an owner
+`UPDATE` takes effect on the **next request of every running instance**, old and new, with no
+deploy and no restart. That is what makes §5.5 step 1 executable. One indexed single-row read
+per write request is affordable: these routes run a handful of times per session.
+
+**Failure posture — monotonic toward frozen.**
+
+- The effective state is the **last value read successfully**.
+- **Before any successful read the state is `frozen`.** A process that has never reached
+  Supabase refuses the affected routes, so a replacement instance started during a freeze
+  starts frozen.
+- **A read failure never moves `frozen → open`.** Losing control of the row can fail to lift a
+  freeze; it can never silently reopen writes.
+- A frozen route returns an **explicit refusal** — HTTP 503 with a stated reason — never a
+  silent drop and never an unverified success. The trust loop is suspended, not weakened.
+- There is **no local override**. An environment variable or file that could open writes would
+  be a second authority over the same question, which §2 forbids.
+
+**The accepted cost, stated exactly.** From `S2` the runtime already holds a Supabase
+connection, but "no successful read yet ⇒ frozen" means an instance that **cold-starts while
+Supabase is unreachable** refuses the seven write routes even though Sheets is still the
+authority. That is a real new availability dependency and it is bounded to exactly that case:
+a long-running instance keeps its last read value across a Supabase blip. Failing **open** on a
+read error would be worse in the way that matters — a blip inside the cutover window would
+reopen writes with no operator knowing. The cost disappears at `S4`, where a Supabase outage
+fails the write in any case.
+
+**Lifecycle.** Created and shipped **dormant** (`frozen = false`) in `S3`, which proves it
+(§6.2 P8–P12). Activated by the owner at §5.5 step 1, lifted at step 8, and used again by the
+reverse transfer of §5.5a if a rollback happens.
+
+**Sunset: none, because it is not a bridge.** Two exact reasons.
+
+1. **`S4` cannot delete it.** The `S4` reverse transfer freezes **the build that is currently
+   live**, which is the `S4` build. An `S4` that removed the freeze would have no way to roll
+   itself back.
+2. **It has a named permanent consumer.** `CLAUDE.md` already carries the standing rule *"Any
+   production data-integrity anomaly freezes writes immediately"* — and Atlas has **no
+   mechanism for it today**; freezing means a deploy or a manual scramble. That standing rule
+   is the consumer, and it outlives the migration.
+
+Recorded as **D7** (§9). This is **not** the retained-dead-code case that ruling D6 was
+withdrawn over: this code has a live consumer after closure, and the legacy receipt store did
+not.
 
 **Why this is strictly safer than the earlier shape.** Moving reads at `S3` while writes
 stayed on Sheets created a window in which reads led writes, so a failed shadow write could
@@ -1208,10 +1305,12 @@ entirely, and removes the need to serve any athlete read from an inert shadow.
 2. **Export a completed session to Google Sheets asynchronously**, after closeout. The
    export writes the same columns in the same owner-approved order. An export failure never
    fails a workout and never changes a visible claim.
-3. Delete — **`S4a` deletes everything below EXCEPT the receipt rollback source; `S4b`
-   deletes that.** *Owner review of `fcafa75`: the list said "delete, in the same PR" and
-   "nothing survives S4", while `S4a` deliberately retains the store — leaving `S4a` no
-   truthful passing state, since P16/P17 demanded absence.*
+3. Delete, **in the same PR**. *The `S4a` / `S4b` two-build split that the owner review of
+   `fcafa75` introduced here was **withdrawn by owner ruling on 2026-08-07** (decision D6,
+   §9): the durable-capture correction had already removed its premise, because the rollback
+   **data** is the verified receipt rows in `atlas.write_receipts` and the rollback **code**
+   is the previously merged `S3` build, which a revert restores. `S4` therefore never needed
+   to carry an implementation with no surviving consumer.*
    - the Sheets hot-path reads for the migrated concepts;
    - the shadow write, `atlas.migration_divergences` (dropped), the sweep, the repair worker;
    - the backfill script;
@@ -1228,9 +1327,11 @@ entirely, and removes the need to serve any athlete read from an inert shadow.
      `scripts/reconstruct-session-reads.js`, and `docs/READ_BUDGET.md`;
    - **the file-backed idempotency store**, `ATLAS_IDEMPOTENCY_FILE`, and
      `/tmp/atlas-idempotency.json` — with a proof that **no caller of it remains** (ruling
-     D4), and **only after the §5.5a receipt carry-over is verified** (§5.5 step 9). It is the
-     rollback source until then, so deleting it earlier would strip the cutover of its
-     reverse path. `ATLAS_IDEMPOTENCY_FILE` is read by **six** test files, not only the two
+     D4). Removing it in this build is safe because the rollback needs neither piece from it:
+     the rollback **data** is the verified receipt rows in `atlas.write_receipts`, written at
+     §5.5 step 2a and independent of any deploy, and the rollback **code** is the previously
+     merged `S3` build, which a revert restores and which still contains the legacy
+     implementation. `ATLAS_IDEMPOTENCY_FILE` is read by **six** test files, not only the two
      named above; `S4` removes every reference.
 4. Verify the deleted machinery is genuinely absent, and record the count.
 
@@ -1244,20 +1345,14 @@ blocks a retry after a restart; WRITE-3's rehydrated downgrade; and WRITE-2's re
 server-minted `session_id` through `peekWrite`. Deleting the suite with the store would
 silently drop the proofs for properties the new authority still owes.
 
-**Nothing survives `S4` as a whole — but `S4a` and `S4b` have different truthful end states,
-and the gates are split to match.**
+**Nothing on this list survives `S4`.** One build, one merge, one exact-head review. Ruling D4
+holds unchanged: the file store does not survive the migration, and it is not retained inert in
+any build. The one thing `S4` does **not** delete is `atlas.write_freeze` and its route check,
+which is permanent rather than a bridge and carries a named permanent consumer (§5.3,
+decision D7).
 
-| | `S4a` (cutover) must prove | `S4b` (removal) must prove |
-|---|---|---|
-| Authority | receipt authority transferred; **no runtime caller reaches the legacy store** | — |
-| Retained artifact | the legacy store is present but **inert**, with its exact sunset recorded | rollback window **closed** |
-| Removal | everything else on the deletion list is absent | store, `ATLAS_IDEMPOTENCY_FILE`, `/tmp` file and its six test references removed; **no caller remains**; absence verified |
-| Review | its own exact-head required review | **its own exact-head required review** |
-
-Ruling D4 still holds: the file store does not survive the migration. It survives `S4a`, by
-design, as the rollback source — which is a stage, not the end state. If any item on the list above cannot be deleted at `S4`, that is an open
-loop, and it must carry a named consumer and an exact sunset condition, or `S4` is not
-complete.
+If any item on the list above cannot be deleted at `S4`, that is an open loop, and it must
+carry a named consumer and an exact sunset condition, or `S4` is not complete.
 
 #### The export must be durable AND idempotent
 
@@ -1591,8 +1686,8 @@ covers **all seven**, and the drain proves no in-flight attempt remains on any o
 **Every still-live receipt is carried over before the new decider opens.** Inside the frozen
 window, and before step 6 of §5.5:
 
-**Normalization is NOT a step of this section.** *Owner review of `fcafa75`.* The previous
-version put it here as "step 0" — but this whole section runs at §5.5 **step 2a**, after step
+**Normalization is NOT a step of this section.** *Owner review of `fcafa75`.* An earlier
+version put it here as a "step 0" — but this whole section runs at §5.5 **step 2a**, after step
 2 has already demanded zero `in_progress`. The normalization that unblocks the gate sat
 **behind** it, so the deadlock it was written to fix survived intact. It now lives **inside
 the drain**, at §5.5 step 2, before that step's zero assertion. **Nothing `in_progress` is
@@ -1611,16 +1706,19 @@ transferred**, which is what makes every carried row genuinely a decided outcome
 
    - **The live in-memory map of the frozen old process**, read while it is still running.
      This is the actual authority and it is correct even when persistence is degraded.
-   - **A previously verified durable capture**, when the live process is gone. *Owner review
-     of `fcafa75`: the previous version allowed the persisted JSON here "after recording that
-     completeness could not be verified". **Recording uncertainty is not a safety mechanism.**
-     A field-correct import from a known-incomplete candidate still loses a completed replay
-     or a WRITE-2 `session_id` — it just loses it with a note attached.*
+   - **The receipt rows already written and verified into `atlas.write_receipts` by step 4
+     below**, when the live process is gone. This is the resumption case: a transfer that was
+     interrupted after its rows landed and verified does not re-read anything, because the
+     destination table already **is** the durable carried state. *Owner review of `fcafa75`:
+     the previous version allowed the persisted JSON here "after recording that completeness
+     could not be verified". **Recording uncertainty is not a safety mechanism.** A
+     field-correct import from a known-incomplete candidate still loses a completed replay or
+     a WRITE-2 `session_id` — it just loses it with a note attached.*
    - **Nothing else. The transfer FAILS CLOSED.** A stale or unverifiable
      `/tmp/atlas-idempotency.json` is **diagnostic evidence only and may not authorize a
-     cutover**. If neither the live map nor a verified capture is available, **the cutover
-     aborts** — the freeze stays on, the old decider stays authoritative, and no new decider
-     opens.
+     cutover**. If neither the live map nor verified rows in `atlas.write_receipts` are
+     available, **the cutover aborts** — the freeze stays on, the old decider stays
+     authoritative, and no new decider opens.
    - Whichever source is used, the transfer records **`persistDisabled` and a disk-vs-map
      comparison** as evidence of completeness, not as an excuse for its absence.
 
@@ -1645,7 +1743,7 @@ transferred**, which is what makes every carried row genuinely a decided outcome
    | `metadata.session_id` | `session_id` | the WRITE-2 value |
    | `metadata.endpoint` | `route` | |
    | *(absent)* | `attempt` | **`1`** — the file store keeps no attempt counter, so every carried record is attempt 1 |
-   | *(not carried)* | `attempt_token` | **null** — every carried row is a **decided outcome**, never a live claim: step 0 normalized abandoned `in_progress` records and the drain requires zero, so `in_progress` is not a transferable state (§3.6) |
+   | *(not carried)* | `attempt_token` | **null** — every carried row is a **decided outcome**, never a live claim: the drain (§5.5 step 2) normalizes abandoned `in_progress` records and then requires zero of them, so `in_progress` is not a transferable state (§3.6) |
    | `rehydrated`, `token`, `failed_at*` | *(dropped)* | process-local; `token` is replaced by `attempt_token`, and liveness is now the advisory lock |
 
 4. **The reverse mapping carries the ACTIVE TTL epoch, not provenance.** *Owner review of
@@ -1670,9 +1768,35 @@ transferred**, which is what makes every carried row genuinely a decided outcome
    `token` null; `attempt` is dropped because the file store has no counter. **P19a proves a
    retried receipt whose original `created_at` is already older than 24 hours but whose
    refreshed `expires_at` is still live survives the rollback.**
-5. **Verify the carry-over** — count and identity, not count alone — before anything opens.
-6. **The old authority is not deleted until the carry-over is proven.** Deleting the file
-   store is the *last* action of `S4`, after step 7's evidence checks pass, never before.
+5. **Verify the carry-over — and that verified set IS the rollback source.** Verification is
+   by identity **and** content, never by count: every unexpired record of the extraction
+   source must be present in `atlas.write_receipts` by `write_id`, with `status`,
+   `response_body`, `session_id`, `route`, `created_at` and `expires_at` each compared
+   field-by-field against the forward mapping above. A count match is not verification.
+
+   Once that check passes, **`atlas.write_receipts` is the durable carried state** — there is
+   no second artifact, no export file, and no "capture" object. *Owner review of `4f8e180`:
+   the design had made a "verified durable capture" load-bearing in five places without ever
+   saying what it was, which is an unnamed authority bridge.* Reusing the destination table
+   settles every question the term left open:
+
+   | Question | Answer |
+   |---|---|
+   | Where does it live | `atlas.write_receipts`, in Supabase Postgres — durable, deploy-independent, covered by the §8.4 backup and restore proof |
+   | What is its source and shape | the live in-memory map of the frozen old process, mapped by the forward table above |
+   | What closes it against concurrent writes | §5.5 step 1's freeze on all seven callers plus step 2's positive drain, both of which precede this section; nothing can be appended behind it |
+   | How is it verified | this step — identity and field-by-field content |
+   | Who may read it | `atlas_app` under its existing grants (§8.2); the owner through the Supabase console. **No new role and no new grant.** |
+   | Privacy | `response_body` carries athlete-facing payloads, so it is covered by the existing rule: never exported to an evidence file, a PR body or a commit (§8.4) |
+   | Retention and sunset | the existing `expires_at` TTL prunes it. The table is **permanent** — it is the post-cutover receipt authority — so it needs no sunset, which is the whole reason to reuse it |
+   | How is it restored | the reverse mapping below, at reverse-transfer step 6, into the live old process |
+
+6. **The old authority's state is abandoned only after the carry-over is verified; its code is
+   deleted by the `S4` build itself.** The earlier text conflated the two and made the file
+   store "the rollback source", which forced a second build to remove it. It is not the
+   rollback source: the **data** is the verified rows above, and the **code** a rollback needs
+   is the previously merged `S3` build, which a revert restores. `S4` therefore deletes the
+   file store outright (ruling D4), and **no build ships it inert** (ruling D6, withdrawn).
 
 **Rollback is symmetric, and this is the part that bites.** Once writes reopen (step 8), new
 receipts exist **only** in Supabase. A rollback that simply restores the previous build would
@@ -1691,13 +1815,15 @@ duplicate in the opposite direction.
   1. **Freeze all seven callers** again — on the build that is currently live.
   2. **Positive drain**, proven as in step 2: no in-flight attempt on any of the seven, no
      held receipt advisory lock.
-  3. **Fixed snapshot**, then carry back every unexpired receipt by the reverse mapping of
-     §5.5a. The snapshot is what makes the set closed — nothing can be appended behind it.
+  3. **Fixed snapshot — which is `atlas.write_receipts` itself**, closed by steps 1–2: the
+     freeze and the positive drain mean nothing can be appended behind it. There is no
+     separate snapshot artifact. Carry back every unexpired receipt by the reverse mapping of
+     §5.5a.
   4. **Verify by identity and content**, not count.
   5. **Restore the old build and decider**, and wait until that process is **live**.
-  6. **Restore the captured receipts into the now-live old process**, from the verified
-     durable capture — not from any `/tmp` file written before the restart, which the restart
-     may have discarded.
+  6. **Restore the receipts into the now-live old process**, read from
+     `atlas.write_receipts` — never from a `/tmp` file written before the restart, which the
+     restart may have discarded.
   7. **Reopen writes**, last.
 
   **P19a must inject a receipt concurrent with the rollback** and prove it cannot fall through
@@ -1719,9 +1845,11 @@ instance is already reading and writing Supabase. That recreates the exact ackno
 omission this migration exists to eliminate. It also makes the export's initial per-tab base
 unsafe, because a late append can land after the allocator has recorded its tail.
 
-The handover is **ten ordered steps** — 1, 2, 2a, 3, 4, 5, 6, 7, 8, 9 — spanning **two builds**: `S4a` performs 1–8, `S4b` performs 9 (see step 9). *The heading previously
-said eight while the list contained `2a` and `9`; a runbook that miscounts its own steps
-invites one to be skipped.* Each step must complete and be verified before the next begins.
+The handover is **nine ordered steps** — 1, 2, 2a, 3, 4, 5, 6, 7, 8 — inside **one build**.
+*The heading once said eight while the list contained `2a` and a step 9; the miscount is fixed
+and step 9 is gone, because the source deletion it described is performed by the `S4` build
+itself rather than by a second one (ruling D6, withdrawn).* Each step must complete and be
+verified before the next begins.
 
 1. **Freeze the affected writes — all seven `beginWrite` callers, not only the migrated
    four (§5.5a) — WITHOUT a restart that destroys the source.** *Owner review of `4647ee2`.*
@@ -1740,15 +1868,19 @@ invites one to be skipped.* Each step must complete and be verified before the n
    exists to close.* The winner:
 
    - **The freeze capability ships dormant in `S3`'s already-deployed build**, and `S3` is
-     **obligated to build and prove it** (§5.3). Activating it at `S4` requires **no new
-     deploy and no restart**: it is an owner-controlled runtime switch, not an environment
-     variable, precisely because a Render environment change itself redeploys.
-   - **`S3` must prove restart-free activation on all seven callers.** If that proof fails,
-     it is an `S3` blocker to resolve there — **not** a standing alternative carried into
-     `S4`. The design offers no second mechanism to fall back on.
+     **obligated to build and prove it** (§5.3, which specifies the control in full).
+     Activating it at `S4` requires **no new deploy and no restart**, because the control is a
+     single owner-written row in `atlas.write_freeze` that every running instance reads on
+     each affected request — not an environment variable, precisely because a Render
+     environment change itself redeploys.
+   - **`S3` must prove restart-free activation on all seven callers** (§6.2 P8–P12). If that
+     proof fails, it is an `S3` blocker to resolve there — **not** a standing alternative
+     carried into `S4`. The design offers no second mechanism to fall back on.
 
-   **P19 must inject loss of the old process and its filesystem at the freeze boundary** and
-   prove the receipt set is still available for transfer.
+   **P19c proves activation is restart-free**, and that an unrelated loss of the old process
+   and its filesystem at this boundary **aborts the cutover** rather than proceeding on an
+   incomplete set. It does not claim the receipts survive that loss: no set is closed before
+   the freeze, so none can be made durable earlier (§11).
 
    A write-freeze flag makes every affected write route **fail closed** with an explicit "migration in progress" response. The trust loop is suspended,
    never weakened: an athlete gets a clear refusal, never a silent drop and never an
@@ -1758,7 +1890,7 @@ invites one to be skipped.* Each step must complete and be verified before the n
 2. **Drain — normalize, THEN assert zero.** After the freeze is live on all instances, wait
    longer than the maximum request duration, then, **in this order**:
 
-   a. **Normalize abandoned records until none remain.** The current authority downgrades a
+   i. **Normalize abandoned records until none remain.** The current authority downgrades a
       rehydrated `in_progress` record **lazily, inside `beginWrite`**
       (`services/idempotency.js:165-177`), with no background timer — so once the routes are
       frozen, `beginWrite` is unreachable and a record that was four minutes old at the freeze
@@ -1767,11 +1899,12 @@ invites one to be skipped.* Each step must complete and be verified before the n
       `STALE_IN_PROGRESS_MS` becomes `failed` with its token invalidated — and **repeats until
       no abandoned record remains**, because a record can cross the threshold *during* the
       drain.
-   b. **Then prove zero**: zero `in_progress` write receipts and zero in-flight requests
+   ii. **Then prove zero**: zero `in_progress` write receipts and zero in-flight requests
       across all seven routes. A positive assertion, never an elapsed timer.
 
    *Ordering matters and was wrong before: the normalization used to live in §5.5a, which runs
-   at step 2a — behind the gate it exists to unblock.*
+   at step 2a — behind the gate it exists to unblock. The sub-steps are numbered i/ii rather
+   than a/b so that "step 2a" can only mean the carry-over step below.*
 2a. **Carry over the live receipt state (§5.5a)** and verify it, before any new decider opens.
 3. **Run a final complete sweep** and require **zero open divergences**. It runs after the
    drain, so nothing can be written behind it.
@@ -1780,63 +1913,42 @@ invites one to be skipped.* Each step must complete and be verified before the n
    `base_established_at`. This is only safe because step 2 proved no further append can land.
 5. **Apply the `S4` schema and receipt transition.** Add the `write_id` foreign keys — which
    validate because `S2`/`S3` always stored null (§3.6) — and make Supabase the receipt
-   authority. **The file store is not deleted here.**
+   authority. The foreign keys validate even though step 2a has just populated
+   `atlas.write_receipts` for the first time, because every existing child row still carries a
+   null `write_id`. **The file store is still present in the running `S3` build at this point**;
+   it disappears with the deploy at step 6, and its data was carried at step 2a.
 6. **Deploy the cutover build** and switch the sole runtime authority.
 7. **Run the non-counting proof workout** and the exact evidence checks of §6.3.
 8. **Reopen writes**, and only after step 7 passes.
-9. **Delete the old receipt authority last — and that requires a SECOND BUILD.** *Owner
-   review of `4647ee2`.* Source deletion is not a runtime state transition. One immutable
-   deployed commit **cannot** both retain the file-store implementation through steps 6–8, so
-   it stays the declared rollback source, **and** have it absent at step 9. The runbook was
-   hiding a second deploy inside a numbered step while claiming one `S4` build did both jobs.
 
-   `S4` is therefore **two review heads and two deploys**, named rather than implied:
-
-   - **`S4a` — the cutover build.** It performs steps 1–8 and **retains the file store,
-     inert**: no caller reaches it, and it exists solely as the rollback source. Its
-     merge card records the retention and its exact removal condition.
-   - **`S4b` — the removal build.** After step 7's evidence passes and the rollback window
-     closes, `S4b` deletes the file store, `ATLAS_IDEMPOTENCY_FILE` and
-     `/tmp/atlas-idempotency.json`, proves **no caller remains**, and verifies absence.
-
-   **`S4b` is its own exact-head required review before closure** — the deletion head must be
-   reviewed like any other, not inherited from `S4a`'s approval. The migration is not closed
-   until `S4b` merges and its absence proof passes.
-
-   **OWNER DECISION REQUIRED — the repository topology, not just the deploy topology.**
-   *Owner review of `fcafa75`.* The previous version claimed this "does not add a fifth card".
-   **That claim does not survive contact with GitHub: a pull request has one merge.** Once the
-   `S4a` head merges and deploys, deleting the retained store is another **source change**, and
-   therefore another PR — the only alternative being an unmerged production-branch deploy,
-   which Atlas governance does not authorize. Calling it one card does not make the repository
-   operation exist.
-
-   The honest options, for Dale:
-
-   - **(a) Five PRs — recommended.** `S1 → S2 → S3 → S4a → S4b`, with `S4a` and `S4b` both
-     under the single **S4 migration stage**. This changes the owner-approved implementation
-     chain from four PRs to five and **therefore needs Dale's approval**.
-   - **(b) A genuinely one-PR mechanism** that can remove the code later without another
-     source change. None is proposed here, because none is known that does not amount to
-     shipping dead code permanently or deploying an unmerged branch.
-
-   **Nothing proceeds on this until Dale rules.** The design below specifies the `S4a` / `S4b`
-   split because the *gate* split is required either way — a build that retains the rollback
-   source cannot also prove its absence — but the **PR count is not decided here.**
+**There is no step 9, and `S4` is one build.** *Owner ruling 2026-08-07, withdrawing decision
+D6.* An earlier version made the file store the rollback source, which forced it to survive
+steps 6–8 and therefore forced a second build to remove it. The durable-capture correction had
+already removed that premise. The rollback needs two things and neither is the retained file
+store: the **data** is the verified receipt rows in `atlas.write_receipts`, written at step 2a
+and deploy-independent, and the **code** is the previously merged `S3` build, which a revert
+restores and which already contains the legacy implementation. The `S4` build therefore ships
+without the file store from the start, and the deletion is an ordinary part of the same PR
+(§5.4, ruling D4).
 
 **Abort and rollback.** Steps 1–4 are reversible by lifting the freeze: nothing has moved.
 
-**The rollback source is the verified durable capture, never `/tmp`.** *Owner review of
-`fcafa75`.* The previous text called the file store "still intact" after step 6 — but step 6
-**deploys**, and this design records that `/tmp/atlas-idempotency.json` may not survive a
-Render restart. **Retaining the code does not retain the data.** The reverse path had the same
-hole: it carried receipts back into `/tmp` and *then* restored the old build, whose own restart
-could erase the file before the old decider ever read it.
+**The rollback source is `atlas.write_receipts`, never `/tmp`.** *Owner review of `fcafa75`,
+made concrete by the owner review of `4f8e180`.* The previous text called the file store
+"still intact" after step 6 — but step 6 **deploys**, and this design records that
+`/tmp/atlas-idempotency.json` may not survive a Render restart. **Retaining the code does not
+retain the data.** The reverse path had the same hole: it carried receipts back into `/tmp` and
+*then* restored the old build, whose own restart could erase the file before the old decider
+ever read it.
 
-So the rollback authority is the **capture taken and verified at step 2a**, which is durable
-and deploy-independent. Restoration happens **after the old process is live and before writes
-reopen** — never into a filesystem that a pending restart may discard. **P19d** proves both
-loss cases: the cutover deploy destroying `/tmp`, and the rollback deploy destroying it. If
+So the rollback authority is **the receipt rows written and verified into
+`atlas.write_receipts` at step 2a**. There is no separate "capture" artifact: the destination
+of the forward transfer **is** the durable carried state, it is a permanent table this
+migration already builds, it needs no new consumer and no new sunset, and its existing
+`expires_at` TTL is its retention rule. Restoration happens **after the old process is live and
+before writes reopen** — never into a filesystem that a pending restart may discard. **P19d**
+proves both loss cases: the cutover deploy destroying `/tmp`, and the rollback deploy
+destroying it. If
 any check fails at step 5, 6 or 7, the cutover aborts, the freeze stays on, and the previous
 build is restored — writes reopen on Sheets. Before reopening at step 8, **re-verify each
 tab's tail against `base_established_at`**; a tail that moved means an old-authority write
@@ -1889,6 +2001,11 @@ operation. No lower rung substitutes for a higher one.
 | P5 | **Cutover readiness.** Every read `S4` will move returns, against the backfilled database, what the Sheets read returns today. |
 | P6 | The open-divergence count reaches **zero** and the sweep that established it ran to completion. |
 | P7 | The repair path is proven to close a divergence only on a passing re-comparison. |
+| P8 | **The freeze activates without a restart.** Update `atlas.write_freeze` while an instance is serving and prove **that same process** — proven by process start identity, not by behaviour alone — refuses the affected routes on its next request. Prove a receipt minted before activation is still decided by the same in-memory map afterwards. An activation demonstrated only across a restart proves the opposite of what §5.5 step 1 needs. |
+| P9 | **A replacement instance starts frozen.** Start a new instance while the row says frozen and prove it refuses the affected routes on its **first** request, with no window in which it serves them. |
+| P10 | **All seven `beginWrite` routes fail closed**, each with an explicit refusal and **no side effect** — no Sheets append, no shadow write, no receipt claimed. Proven per route, not on one representative route. |
+| P11 | **Control loss cannot reopen writes.** With the freeze active, make the freeze read fail — drop the connection, then delete the row — and prove the routes stay refused. Separately prove an instance that has never read the row successfully refuses. Separately prove **no environment variable and no file** can open writes while the row says frozen; a local override would be a second authority. |
+| P12 | **Dormant is byte-identical to today.** With `frozen = false`, the athlete-facing responses of all seven routes are unchanged from the pre-`S3` build. |
 
 ### 6.3 Gate for `S4` (the cutover)
 
@@ -1915,15 +2032,15 @@ Everything in §6.2, re-run after the cutover, plus:
 | P16a | **The five authority guarantees of `test/idempotencyPersistence.test.js` are re-proven against Supabase**, including **WRITE-3 by its actual mechanism**: an `in_progress` row whose owner is **still live** (advisory lock held) must be **refused** even when older than five minutes, and reclaimable only once that connection drops. A test that reclaims on elapsed time alone proves the opposite of WRITE-3. Also — restart replay, stale-`in_progress` retryability, recent-`in_progress` duplicate blocking, the WRITE-3 rehydrated downgrade, and WRITE-2's `peekWrite` recovery of the server-minted `session_id` — **before** that suite is deleted. A deleted suite whose guarantees were not re-proven is a lost proof, not a cleanup. |
 | P16b | **`peekWrite` has a working Supabase implementation with its live consumer (`index.js:2511`) exercised**, and an expired row is proven to read as absent. It must return a **non-null server-minted `session_id`** for a prior attempt — proving the adapter actually persisted it (§3.6) — and an obsolete attempt must be proven unable to overwrite a newer attempt's value. |
 | P15 | **The open-divergence count is zero** and every `atlas.migration_divergences` row is `closed`. If not, `S4` does not merge. |
-| P16 | **Split by stage.** **`S4a`:** no *runtime caller* reaches the legacy store, and the retained store is proven **inert** with its sunset recorded — absence is **not** asserted, because it is the rollback source. **`S4b`:** the store, `ATLAS_IDEMPOTENCY_FILE`, the `/tmp` file and all six test references are **absent**, no caller remains, proven by search. Asserting absence at `S4a` would require deleting the rollback source before the window closes. |
-| P17 | The deletion list of §5.4 is verified absent at **`S4a`**, *excluding* the retained receipt rollback source, and including the dropped `atlas.migration_divergences` table. The exclusion is verified **complete at `S4b`**. |
+| P16 | **The legacy receipt store is absent.** The file store, `ATLAS_IDEMPOTENCY_FILE`, `/tmp/atlas-idempotency.json` and all six test references are gone, and **no caller remains**, proven by search. *The two-stage `S4a` / `S4b` form of this gate was withdrawn with ruling D6: the `S4` build never needed to carry the legacy implementation, because a rollback restores the previously merged `S3` build, which already contains it, and the rollback data comes from `atlas.write_receipts`.* |
+| P17 | The deletion list of §5.4 is verified absent at `S4`, including the dropped `atlas.migration_divergences` table. **Nothing on the list is excluded.** `atlas.write_freeze` and its route check are not on the list — they are permanent, not a bridge (§5.3, D7). |
 | P18 | A second non-counting deployed debug workout, after the cutover. |
-| P19a | **The receipt authority is handed over, not discarded, in both directions — against the REAL file shape and the REAL live authority.** Must additionally: **inject the `persistDisabled` persistence-failure fallback** and prove a memory-only receipt crosses the boundary (a disk-only fixture does not discharge this); prove a **retried receipt whose original `created_at` is older than 24 hours but whose refreshed `expires_at` is still live** survives the rollback un-pruned; and exercise the **fresh-at-freeze → stale-after-freeze** `in_progress` record, proving step 0's normalization lets the drain reach zero. The fixture must be the actual persisted JSON (`created_at_ms`, `response`, `metadata`, no `expires_at`, no `attempt`), never a schema-shaped stand-in, and must exercise the forward **and reverse** mappings of §5.5a. Additionally: **inject a new receipt concurrent with the rollback** and prove it cannot fall through the reverse freeze/drain/snapshot boundary. Seed the file store with unexpired live state — a completed replay record with a body, a retryable `failed` record, and a server-minted `session_id` — then run the §5.5a handover and prove a **lost-response retry across the cutover** is replayed from the carried receipt rather than treated as new. Prove it for a **server-minted workout** (the retry recovers the prior `session_id`; **no second identity is minted**) **and for at least one non-workout D4 route** (**no second Sheets append**). Then prove the same scenario **across a rollback after writes reopened**. Prove the file store is **still present** until the carry-over is verified. A handover proven only forwards is proven half. |
+| P19a | **The receipt authority is handed over, not discarded, in both directions — against the REAL file shape and the REAL live authority.** Must additionally: **inject the `persistDisabled` persistence-failure fallback** and prove a memory-only receipt crosses the boundary (a disk-only fixture does not discharge this); prove a **retried receipt whose original `created_at` is older than 24 hours but whose refreshed `expires_at` is still live** survives the rollback un-pruned; and exercise the **fresh-at-freeze → stale-after-freeze** `in_progress` record, proving the drain's own normalization (§5.5 step 2 sub-step i) lets the drain reach zero. The fixture must be the actual persisted JSON (`created_at_ms`, `response`, `metadata`, no `expires_at`, no `attempt`), never a schema-shaped stand-in, and must exercise the forward **and reverse** mappings of §5.5a. Additionally: **inject a new receipt concurrent with the rollback** and prove it cannot fall through the reverse freeze/drain/snapshot boundary. Seed the file store with unexpired live state — a completed replay record with a body, a retryable `failed` record, and a server-minted `session_id` — then run the §5.5a handover and prove a **lost-response retry across the cutover** is replayed from the carried receipt rather than treated as new. Prove it for a **server-minted workout** (the retry recovers the prior `session_id`; **no second identity is minted**) **and for at least one non-workout D4 route** (**no second Sheets append**). Then prove the same scenario **across a rollback after writes reopened**. Prove the transfer reads the **live authority** rather than the file alone, and that the carried rows are verified in `atlas.write_receipts` **before** any new decider opens. A handover proven only forwards is proven half. |
 | P19b | **The receipt freeze covers all seven callers.** Prove each of the seven `beginWrite` routes fails closed during the freeze, and that no route is left deciding duplicates against the old store while another decides against Supabase. |
-| P19d | **The rollback source survives every deploy boundary.** Prove both losses: the **cutover deploy** destroying `/tmp` after step 6, and the **rollback deploy** destroying a `/tmp` file written before the old build restarted. In both, the verified durable capture must still restore the receipts into the live old process **before writes reopen**. Never assert an ephemeral file is "intact" across a deploy. |
-| P19e | **The cutover aborts when no complete source exists.** With the live map gone and no verified durable capture, prove the transfer **fails closed**: the freeze stays on, the old decider stays authoritative, no new decider opens, and a stale `/tmp` file does **not** authorize continuing. |
-| P19c | **The freeze cannot destroy the transfer source.** Inject loss of the old process and its filesystem at the freeze boundary and prove the receipt set is still available for transfer — either because the freeze activated without a restart, or because the live state was durably captured and verified first. |
-| P19f | **The drain normalizes before it asserts.** Seed a `rehydrated` `in_progress` record **just under** `STALE_IN_PROGRESS_MS` at the moment of freeze, then run the drain and prove it crosses the threshold, is normalized to `failed` **by the drain itself**, and the zero assertion succeeds. Prove the normalization repeats until no abandoned record remains. A drain that asserts before normalizing deadlocks here. |
+| P19d | **The rollback source survives every deploy boundary.** Prove both losses: the **cutover deploy** destroying `/tmp` after step 6, and the **rollback deploy** destroying a `/tmp` file written before the old build restarted. In both, the receipt rows written and verified into `atlas.write_receipts` at step 2a must still restore into the live old process **before writes reopen**. Never assert an ephemeral file is "intact" across a deploy. |
+| P19e | **The cutover aborts when no complete source exists.** With the live map gone and no verified rows in `atlas.write_receipts`, prove the transfer **fails closed**: the freeze stays on, the old decider stays authoritative, no new decider opens, and a stale `/tmp` file does **not** authorize continuing. |
+| P19c | **The freeze does not itself destroy the transfer source, and an unrelated loss at that boundary aborts rather than proceeds.** *Narrowed by the owner review of `4f8e180`: the earlier wording demanded the receipt set survive a process-and-filesystem loss **at** the freeze boundary, which this design cannot provide — the durable set does not exist until step 2a, and no set is closed before the freeze, so none can be made durable earlier.* Two parts. **(a)** Activation is **restart-free**: the process serving before activation is the same process after it (process start identity), and a receipt minted before activation is still decided by it afterwards. The freeze is therefore not itself a loss event. **(b)** If the old process and its filesystem are lost at that boundary anyway, the transfer finds neither a live map nor verified rows in `atlas.write_receipts`, and the cutover **fails closed** by P19e — the freeze stays on, the old decider stays authoritative, no new decider opens, and a surviving `/tmp` file does not authorize continuing. The design claims no mechanism that preserves receipts across that loss (§11). |
+| P19f | **The drain normalizes before it asserts** (§5.5 step 2, sub-step i before sub-step ii). Seed a `rehydrated` `in_progress` record **just under** `STALE_IN_PROGRESS_MS` at the moment of freeze, then run the drain and prove it crosses the threshold, is normalized to `failed` **by the drain itself**, and the zero assertion succeeds. Prove the normalization repeats until no abandoned record remains. A drain that asserts before normalizing deadlocks here. |
 | P19 | **The handover protocol of §5.5 is executed and its failure case exercised.** An old-authority write attempting to complete after the cutover boundary is **refused or detected before writes reopen**. Separately: the freeze is proven to fail closed with an explicit refusal rather than a silent drop; the drain is proven by positive assertion (zero `in_progress` receipts, zero in-flight migrated writes) rather than by an elapsed timer; and the per-tab base is proven to be recorded only after the drain passed. |
 | P20 | **The `write_id` foreign keys validate on the real pre-cutover data**, because `S2`/`S3` stored null throughout (§3.6). Proven by adding the constraint against a database carrying genuine shadow rows, not an empty one. |
 
@@ -1950,8 +2067,7 @@ Everything in §6.2, re-run after the cutover, plus:
 |---|---|---|
 | `S2` | Disable the shadow write by its flag; revert the PR. | None. Sheets never stopped being the authority. Supabase holds a copy that nothing reads. |
 | `S3` | Revert the PR. | None. No read and no write moved. Sheets remains both authorities throughout. |
-| `S4a` | Revert the PR, restore the captured receipts into the live old process (§5.5a reverse transfer), **and** re-import any session written to Supabase after the cutover into Sheets. | Real. The only irreversible step, which is why it needs an owner gate, a verified backup, and the verified durable capture as its rollback source. |
-| `S4b` | Revert the PR. | **None for data** — `S4b` removes source only, after the rollback window has closed. If the window is still open, `S4b` may not merge. |
+| `S4` | Revert the PR — which restores the previously merged `S3` build and with it the legacy receipt implementation — then restore the verified receipt rows from `atlas.write_receipts` into the now-live old process (§5.5a reverse transfer), **and** re-import any session written to Supabase after the cutover into Sheets. | Real. The only irreversible step, which is why it needs an owner gate, a verified backup, and the receipt rows in `atlas.write_receipts` as its rollback source. |
 
 Ruling D5 concentrates all the risk into one step and leaves the two steps before it fully
 reversible. That is the point of it.
@@ -2043,7 +2159,7 @@ Four distinct database roles, each with its own credential: three for the applic
 | Grant | Objects |
 |---|---|
 | `SELECT` | every table in `atlas` |
-| `INSERT` | every table in `atlas` |
+| `INSERT` | every table in `atlas` **except `write_freeze`** |
 | `UPDATE` (column-scoped) | `closeout_write_id` on `session_plan_set_recommendations`; `status`, `attempt`, `attempt_token`, `attempt_started_at`, **`created_at`**, **`expires_at`**, **`session_id`**, `response_body`, `rows_written`, `appended_range`, `completed_at` on `write_receipts`; `sheets_exported_at`, `sheets_export_attempts`, `sheets_export_error`, **`sheets_export_state`**, **`sheets_export_next_attempt_at`**, `export_claim_token` on `workout_sessions`; `next_row`, `base_established_at` on `sheets_mirror_cursor`; `status`, `verified_at`, `last_error` on `exercise_catalog_sync`; the state columns on `migration_divergences` while it exists |
 
 *`created_at` and `expires_at` were missing from this list while the retry claim updated both — the claim was permission-denied under its own security model. Corrected from the owner review of `0e324ac`.*
@@ -2053,6 +2169,13 @@ Four distinct database roles, each with its own credential: three for the applic
 It holds **no** `DROP`, `ALTER`, `TRUNCATE`, or other DDL grant. The catalog swap uses
 `DELETE` inside a transaction rather than `TRUNCATE` precisely so the runtime role needs no
 DDL privilege.
+
+**`atlas.write_freeze` is `SELECT`-only for `atlas_app`** — no `INSERT`, no `UPDATE`, no
+`DELETE`. The runtime reads the freeze; it can never lift it. `atlas_migrate` holds one scoped
+`INSERT` on that table, used once by the `S3` migration to seed the single dormant row.
+**`UPDATE` on it is granted to no role in this list**: it is executed by the Supabase project
+owner role, which is the owner-authentication boundary §5.3 relies on. P11 proves the runtime
+cannot open writes by any local means.
 
 **`atlas_migrate`** — DDL only. Used by migration runs in CI and by the owner-run
 application to `Atlas Production`. Never used by the server at runtime.
@@ -2128,9 +2251,9 @@ The record below is the summary. The per-concept record is
 | **Current winner** | Google Sheets, through `sheets.js`, for all seven concepts, plus the file-backed store in `services/idempotency.js` for write receipts. |
 | **Intended winner** | Supabase. Sheets becomes an export mirror for the migrated concepts, and stays the editing authority for `Exercise_Catalog`. |
 | **Bridge** | The shadow write, `atlas.migration_divergences`, the reconciliation sweep, and the repair worker. Live in `S2` and `S3` only. |
-| **Exact sunset** | **`PR S4a`** deletes all four bridge components, drops `atlas.migration_divergences`, and deletes the Sheets hot-path reads, the read-budget machinery, the backfill script and the verify-range route — **retaining the file-backed idempotency store, inert, as the rollback source**. **`PR S4b`** deletes that store, its env var, its file and its six test references once the rollback window closes, proves no caller remains, and verifies absence. **Both heads require their own exact-head review.** The PR topology this implies is **OWNER DECISION REQUIRED** (§9). |
+| **Exact sunset** | **`PR S4`** deletes all four bridge components, drops `atlas.migration_divergences`, and deletes the Sheets hot-path reads, the read-budget machinery, the backfill script, the verify-range route, and the file-backed idempotency store with its env var, its file and its six test references — proving no caller remains. **One PR, one merge, one exact-head review.** The one thing `S4` does not delete is `atlas.write_freeze` and its route check, which is permanent rather than a bridge and carries a named permanent consumer (§5.3, decision D7). |
 | **Code and tests deleted at closure** | The list in §5.4 step 3. **Nothing on it survives `S4`.** |
-| **Net complexity after migration** | Expected **negative**. Removed: the per-request `batchGet` read context, the route range declarations, the 30-second row cache, the session read-budget harness and its fixture, the reconstruction script, the read-budget document, the verify-range route and its client fallback, and the file-backed idempotency store. Added: ten permanent tables, one adapter module, the `Exercise_Catalog` sync, and the asynchronous export worker. The eleventh table and the whole bridge are temporary and are dropped. This expectation is **not yet measured**; `S4` must report the actual net line and module change. |
+| **Net complexity after migration** | Expected **negative**. Removed: the per-request `batchGet` read context, the route range declarations, the 30-second row cache, the session read-budget harness and its fixture, the reconstruction script, the read-budget document, the verify-range route and its client fallback, and the file-backed idempotency store. Added: eleven permanent tables — including `atlas.write_freeze` and its per-route check — one adapter module, the `Exercise_Catalog` sync, and the asynchronous export worker. The twelfth table, `atlas.migration_divergences`, and the whole bridge are temporary and are dropped. This expectation is **not yet measured**; `S4` must report the actual net line and module change. |
 
 ### Owner rulings — D1 through D5, all resolved
 
@@ -2159,16 +2282,30 @@ Production**, verified healthy and empty, `us-west-2`, zero public tables, zero 
 No identifier and no credential is committed. Applying a schema to it remains a separate
 owner action.
 
-**D6 — the `S4` repository topology: OPEN, OWNER DECISION REQUIRED (2026-08-07).** `S4` cannot
-be one immutable build: the cutover head must retain the legacy receipt store as its rollback
-source, and removing it is a further source change — therefore a further merge. A pull request
-has one merge, so the options are **(a) five PRs** (`S1 → S2 → S3 → S4a → S4b`, both under the
-single S4 migration stage, changing the owner-approved chain from four to five and needing
-Dale's approval) or **(b)** a genuinely one-PR mechanism that removes the code later without
-another source change — none is proposed, because none is known that does not amount to
-permanently shipping dead code or deploying an unmerged branch. **Recommendation: (a).**
-Nothing proceeds on this until Dale rules. The **gate** split (§5.4) is specified regardless,
-because a build that retains the rollback source cannot also prove its absence.
+**D6 — the `S4` repository topology: WITHDRAWN by owner ruling (2026-08-07).** The chain stays
+the owner-approved **four** PRs, `S1 → S2 → S3 → S4`, and the `S4a` / `S4b` topology is deleted
+from this design. D6 assumed the cutover build had to retain the legacy receipt store as its
+rollback source. The durable-capture correction of review 10 had already removed that premise:
+the rollback **data** is the verified receipt rows in `atlas.write_receipts`, and the rollback
+**code** is the previously merged `S3` build, which a revert restores and which already
+contains the legacy implementation. `S4` therefore never needed to ship code with no surviving
+consumer, and no fifth PR is required. `S4` deletes the store, its env var, its file and its
+six test references exactly as ruling D4 always said, and the gate split introduced for the
+two-stage form is withdrawn with it (P16, P17).
+
+**D7 — the write freeze is permanent, not a bridge: RECORDED, owner confirmation at the `S3`
+gate.** §5.3 specifies one bounded control — a single row in `atlas.write_freeze`, `SELECT`-only
+to the runtime, written only by the Supabase project owner, read per request with no cache,
+and monotonic toward frozen on any read failure. It carries **no sunset**, for two exact
+reasons: `S4` cannot delete it, because the `S4` reverse transfer freezes the `S4` build
+itself; and it has a named permanent consumer in `CLAUDE.md`'s standing rule *"Any production
+data-integrity anomaly freezes writes immediately"*, which Atlas today has **no** mechanism to
+execute. Retaining it is therefore not the retained-dead-code case D6 was withdrawn over. It is
+one control with one meaning and **not** a feature-flag framework: the table has a fixed shape,
+no name column and no second controlled behaviour, and adding one is outside this migration.
+Because permanence is a scope statement rather than a derivable detail, it is recorded for
+**owner confirmation at the `S3` gate**, when the capability is actually built. It blocks
+nothing in `S1`.
 
 **D4 — one receipt authority: RESOLVED.** All seven current `beginWrite` callers move to
 `atlas.write_receipts` (§3.6). Receipt metadata is shared safety infrastructure, not a second
@@ -2211,5 +2348,9 @@ Each line is a cleanup obligation of the PR named, not of `S1`.
 - It does not amend the Constitution, and it writes no amended wording. Ruling D2 states the
   substance; Dale writes the text.
 - It does not claim Row Level Security is configured.
+- It does not claim that write receipts survive an unrelated loss of the old process **and**
+  its filesystem before §5.5 step 2a. No receipt set is closed before the freeze, so none can
+  be made durable earlier; that case **aborts** the cutover (P19c, P19e) rather than being
+  recovered.
 - It is not a roadmap, a campaign, or a second execution plan. The execution plan's
   2026-08-07 owner-instruction block is the sole work-selection authority for this chain.
