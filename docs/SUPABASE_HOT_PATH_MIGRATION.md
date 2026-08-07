@@ -112,7 +112,7 @@ live write, and the W1–W3 proof fields are unchanged.
 
 ## 3. Minimum Supabase schema
 
-**Nine tables: eight permanent, one temporary.** Each names its immediate production
+**Eleven tables: ten permanent, one temporary.** Each names its immediate production
 consumer. There is no generic persistence framework, no repository abstraction, and no table
 without a consumer in this chain.
 
@@ -127,6 +127,7 @@ without a consumer in this chain.
 | 3.7 | `atlas.exercise_catalog_mirror` | permanent (ruling D1) |
 | 3.7 | `atlas.exercise_catalog_sync` | permanent — the mirror's freshness authority |
 | 3.8 | `atlas.migration_divergences` | **TEMPORARY — dropped by `S4`** |
+| 3.9 | `atlas.sheets_mirror_cursor` + `atlas.sheets_mirror_allocations` | permanent — the export destination authority |
 
 The catalog is two tables, not one: content and freshness are separate concerns, and the
 owner review of `5f42d3c` found that collapsing them left the mirror with no freshness
@@ -158,14 +159,16 @@ Holds session identity, its allocation, and the Sheets-export state of that sess
 | `sheets_export_attempts` | `integer` | `NOT NULL DEFAULT 0`. |
 | `sheets_export_error` | `text` | Nullable. The last export failure reason. |
 | `export_claim_token` | `uuid` | Nullable. **Acknowledgement guard only** — see §5.4. Not fencing, and not mutual exclusion. |
-| `sheets_row_start` | `jsonb` | Nullable. The **deterministic destination** allocated once per session per mirrored tab, e.g. `{"Log_Cleaned": 1677, "Effort": 412}`. Allocated in the claiming transaction and never changed. This is what makes the mirror write idempotent (§5.4). |
+*(The export's destination is **not** stored here. It lives in `atlas.sheets_mirror_allocations` (§3.9), because a per-session column cannot serialise two different sessions competing for the same rows.)*
 
 - **Unique:** `(session_date, period, slot)`.
 - **Index:** the PK, plus `(session_date DESC)`, plus a partial index on
   `(session_id) WHERE sheets_exported_at IS NULL` — the export worker's queue scan.
-- **Mutability:** insert-only for identity. The four `sheets_export_*` / `export_claim_token`
-  columns are the only updatable ones, and only the `S4` export worker updates them. They
-  are unused before `S4`.
+- **Mutability:** insert-only for identity. Exactly four columns are updatable —
+  `sheets_exported_at`, `sheets_export_attempts`, `sheets_export_error`, and
+  `export_claim_token` — and only the `S4` export worker updates them. They are unused before
+  `S4`. The export **destination** is not among them: it lives in
+  `atlas.sheets_mirror_allocations` (§3.9).
 - **Transaction boundary for allocation:** one statement.
   `INSERT … ON CONFLICT DO NOTHING RETURNING session_id`, retried on the next free slot.
   Slot exhaustion at 99 still fails closed with `SESSION_SLOTS_EXHAUSTED`.
@@ -464,8 +467,19 @@ showed that mechanism cannot work, for two independent reasons:
 during `S2` or `S3`:
 
 - **`logged_sets.write_id` and `session_effort.write_id` are nullable and carry NO foreign
-  key until `S4`.** The `S2` shadow records the `write_id` when it happens to have one, for
-  observability only. Nothing depends on it, and nothing claims it is complete.
+  key until `S4`.** **`S2` and `S3` always store `write_id = NULL`** — never an
+  observability-only value.
+
+  *Correction, from the owner review of `0878f61`.* The previous wording let the shadow
+  record a `write_id` "when it happens to have one". Those non-null values would have had **no
+  parent row**, because `S2`/`S3` mirror no receipts — so the `S4` migration adding
+  `REFERENCES atlas.write_receipts(write_id)` would have **failed validation on the existing
+  shadow rows**, before the new receipt authority could start. A column that is always null
+  makes the constraint addable by construction; a column that is sometimes populated from an
+  authority that does not exist yet does not.
+
+  Only **post-cutover** writes carry a non-null `write_id`, and each is backed by a receipt
+  created in the same authority path, in the same transaction.
 - **The file store remains the sole receipt authority through `S2` and `S3`**, unmirrored and
   uncross-checked. There is no Supabase receipt to be wrong.
 - **`write_receipts` is not a sweep concept.** Sheets cannot be its completeness authority,
@@ -626,6 +640,73 @@ It is **migration-control machinery, not product data**. It is dropped by `S4`.
   sweep, and the repair worker, and verifies all four are absent. `S4` does not merge while
   any row is not `closed` (§6.3 P15).
 
+### 3.9 `atlas.sheets_mirror_cursor` and `atlas.sheets_mirror_allocations`
+
+**The export destination authority.** Added by the owner review of `0878f61`.
+
+**The defect this replaces.** The previous design put the destination in
+`workout_sessions.sheets_row_start` and proved only that two workers claiming the **same
+session** read the same value. It never defined how two **different** sessions reserve
+non-overlapping blocks on the same tab. Two sessions could inspect the same tail, allocate
+the same start row, and then `values.update` would have one session **overwrite the other** —
+a silent loss of an athlete's workout from the mirror. A single transactional statement over
+two different `workout_sessions` rows serialises nothing, and the session-level advisory lock
+deliberately does not serialise different sessions.
+
+**`atlas.sheets_mirror_cursor`** — one row per mirrored tab. The single point of
+serialisation.
+
+| Column | Type | Notes |
+|---|---|---|
+| `tab` | `text` | **PK**. `Log_Cleaned`, `Effort`, `Session_Plans`, `Session_Plan_Sets`. |
+| `next_row` | `integer` | The next unreserved row. `CHECK (next_row >= 2)` — row 1 is the header. |
+| `base_established_at` | `timestamptz` | When the cutover recorded this tab's safe base (§5.4 step 4). |
+
+**`atlas.sheets_mirror_allocations`** — the durable reservation.
+
+| Column | Type | Notes |
+|---|---|---|
+| `tab` | `text` | **PK part 1.** `REFERENCES atlas.sheets_mirror_cursor(tab)`. |
+| `session_id` | `text` | **PK part 2.** `REFERENCES atlas.workout_sessions(session_id)`. |
+| `start_row` | `integer` | First reserved row, inclusive. |
+| `row_count` | `integer` | `CHECK (row_count >= 1)`. |
+| `end_row` | `integer` | `GENERATED ALWAYS AS (start_row + row_count - 1) STORED`. |
+| `allocated_at` | `timestamptz` | |
+
+- **Primary key `(tab, session_id)`** — this is what preserves the same allocation across
+  retries. A re-export finds its existing reservation instead of taking a new one.
+- **`EXCLUDE USING gist (tab WITH =, int4range(start_row, end_row + 1) WITH &&)`** (needs
+  `btree_gist`). **Two allocations on one tab cannot overlap, structurally.** This is the
+  constraint that makes the previous defect unrepresentable rather than merely unlikely.
+
+#### The allocation protocol
+
+One transaction, covering **every** mirrored tab for the session:
+
+1. `SELECT … FROM atlas.sheets_mirror_allocations WHERE session_id = $1 FOR UPDATE` — if a
+   complete set of allocations already exists, **use it and take nothing new**. This is the
+   retry path, and it consumes no cursor.
+2. Otherwise, for each tab, atomically fetch-and-add against the cursor:
+   ```sql
+   UPDATE atlas.sheets_mirror_cursor
+      SET next_row = next_row + $n
+    WHERE tab = $1
+   RETURNING next_row - $n AS start_row;
+   ```
+   The row lock on the cursor row serialises **every** session competing for that tab. Two
+   concurrent different sessions are ordered by the database, and the second sees the first's
+   advanced cursor.
+3. Insert the allocation rows. The exclusion constraint is the backstop: if anything ever
+   produced an overlap, the insert fails rather than corrupting the mirror.
+4. **All tabs, or none.** The whole allocation is one transaction, so a failure cannot leave
+   one tab reserved and another not.
+
+- **Immediate production consumer:** the `S4` export worker, before it writes.
+- **Mutability:** `next_row` advances monotonically and never decreases. An allocation row is
+  never updated after insert.
+- **Lifetime:** permanent. It is the mirror's address book, not migration machinery, so `S4`
+  keeps it. `base_established_at` records the one-time cutover handshake of §5.4 step 4.
+
 ---
 
 ## 4. Field-by-field mapping
@@ -769,7 +850,7 @@ One concern per PR. Each PR names what it closes and what it must not do.
 
 ### 5.2 PR S2 — migrations, adapter, shadow write, divergence lane
 
-- Add the repository migration files for the nine tables of §3, as plain SQL under
+- Add the repository migration files for the eleven tables of §3, as plain SQL under
   `supabase/migrations/`. The files are checked in and applied to a **disposable**
   database in CI. Applying them to `Atlas Production` is a separate owner action.
 - Add one Supabase adapter module. It is the only module that holds a Supabase client, in
@@ -849,7 +930,12 @@ this.
 **Ruling D5 removed the read cutover from this PR.** `S3` moves nothing. It establishes that
 the cutover in `S4` is safe.
 
-- Backfill the eight permanent tables from the current workbook. The backfill is a one-way script that
+- Backfill from the current workbook the tables the workbook can source: `workout_sessions`,
+  `logged_sets`, `session_effort`, `session_plan_events`, `session_plan_set_recommendations`,
+  and `exercise_catalog_mirror` with its first `exercise_catalog_sync` generation.
+  **`write_receipts` is deliberately not backfilled** — the workbook stores no `write_id`
+  (§3.6) — and `sheets_mirror_cursor` takes its base at cutover (§5.5 step 4), not from the
+  backfill. The backfill is a one-way script that
   is run once per environment and is deleted in `S4`.
 - Prove reconciliation (§6.2 P3).
 - Run the sweep continuously, and drive the open-divergence count to zero.
@@ -868,9 +954,12 @@ entirely, and removes the need to serve any athlete read from an inert shadow.
 
 ### 5.4 PR S4 — the cutover, then delete
 
-1. **Move reads and writes together.** Supabase becomes the approved-write authority and the
-   read authority for the migrated concepts in one step.
+1. **Move reads and writes together, by the handover protocol in §5.5.** Supabase becomes the
+   approved-write authority and the read authority for the migrated concepts.
    `preview → approve → write` is unchanged; the write lands in a Supabase transaction.
+
+   **"Together" is a required result, not a mechanism.** A PR merge and a Render deploy are
+   not an atomic authority transfer, and §5.5 is the sequence that makes the result true.
 2. **Export a completed session to Google Sheets asynchronously**, after closeout. The
    export writes the same columns in the same owner-approved order. An export failure never
    fails a workout and never changes a visible claim.
@@ -938,9 +1027,10 @@ Three mechanisms, all required.
    The fix is to stop needing exclusivity: **make the mirror write idempotent by giving every
    row a deterministic destination.**
 
-   - `atlas.workout_sessions.sheets_row_start` is allocated **once per session per tab**, in
-     Supabase, in the claiming transaction, and never changes. Allocation is a single
-     transactional statement, so two workers receive the same allocation rather than two.
+   - The destination is allocated **once per session per tab** by
+     `atlas.sheets_mirror_allocations` (§3.9), whose per-tab cursor serialises **different**
+     sessions and whose exclusion constraint makes two overlapping blocks unrepresentable.
+     A retry reuses the existing reservation rather than taking a new one.
    - The export writes with `spreadsheets.values.update` into the **exact allocated range**,
      not with `values.append`. The same session always writes the same values into the same
      cells.
@@ -969,27 +1059,86 @@ Three mechanisms, all required.
    lock and the export stalls. That is deliberate: a visible stall is better than churn, and
    `npm run atlas:status` surfaces the oldest session owing an export precisely so the stall
    is seen. Correctness no longer depends on that lock being held.
-3. **Identity verification confirms the result, and never has to repair it.** Every migrated
-   table has an **export identity key** — `(lower(session_id), lower(exercise), set_number)`
-   for sets, `session_id` for effort, and `idempotency_key` for both ledgers. After writing
-   its allocated range, the worker re-reads that range and verifies **exactly one row per
-   identity key** before setting `sheets_exported_at` with its claim token.
+3. **Identity verification spans the whole tab, not only the allocated block.** Every
+   migrated table has an **export identity key** — `(lower(session_id), lower(exercise),
+   set_number)` for sets, `session_id` for effort, and `idempotency_key` for both ledgers.
+
+   *Correction, from the owner review of `0878f61`.* The previous version re-read only the
+   worker's **allocated range** while claiming to detect duplicates. A duplicate outside that
+   block was invisible to it, so a session could be marked exported while another copy of the
+   same identity sat elsewhere in the tab — reachable during the cutover, after a manual or
+   structural Sheet edit, or after any stray legacy append. A verifier that can only see
+   inside its own reservation cannot make a statement about the tab.
+
+   The verifier therefore reads **the whole relevant tab** and asserts **exactly one row per
+   identity key across the entire tab**, not merely inside the reserved block. Only then is
+   `sheets_exported_at` set, and only with a matching claim token.
 
    Because the destination is deterministic (mechanism 2), verification is a confirmation
-   rather than a reconciliation: there is no "which rows are already present, append the
-   rest" step whose answer could change between two workers. A death after the write and
-   before the acknowledgement is safe — the restart re-claims, rewrites the same values into
-   the same cells, verifies, and acknowledges.
+   rather than a reconciliation: there is no "which rows are already present, write the rest"
+   step whose answer could change between two workers. A death after the write and before the
+   acknowledgement is safe — the restart re-claims, rewrites the same values into the same
+   cells, verifies, and acknowledges.
 
-   **A count greater than one is a defect, not a tidy-up.** It opens a divergence and the
-   session is not marked exported. The design does not delete Sheets rows to correct itself.
+   **A count greater than one is a defect, not a tidy-up.** It opens a divergence, the session
+   is **not** marked exported, and the design does not delete Sheets rows to correct itself.
 
-   The verification read is a Sheets read, and it is deliberately **off the athlete path**:
-   it runs in the asynchronous export worker after closeout, so it adds no in-request Sheets
-   read to a Save.
+   **The cost, stated rather than hidden.** A whole-tab read per completed session is more
+   expensive than a block read, and `Log_Cleaned` grows. It is deliberately **off the athlete
+   path** — it runs in the asynchronous export worker after closeout, so it adds no in-request
+   Sheets read to a Save — and it is the only check that can support the claim being made. A
+   cheaper verifier that cannot see the whole tab would have to stop claiming duplicate
+   detection.
 
 `npm run atlas:status` reports the count of sessions owing an export and the oldest such
 session, so a stalled mirror is visible rather than silent.
+
+---
+
+### 5.5 The `S4` handover protocol
+
+**Added by the owner review of `0878f61`.** The design previously said reads and writes "move
+together" and left it there. A merge plus a deploy is a rolling replacement, not an atomic
+authority transfer, and without a protocol an old instance — or a request already in flight on
+one — can complete an **acknowledged Sheets write** after the final `S3` sweep, while a new
+instance is already reading and writing Supabase. That recreates the exact acknowledged-write
+omission this migration exists to eliminate. It also makes the export's initial per-tab base
+unsafe, because a late append can land after the allocator has recorded its tail.
+
+The handover is eight ordered steps. Each one must complete and be verified before the next
+begins.
+
+1. **Freeze the affected writes.** A write-freeze flag makes every migrated write route **fail
+   closed** with an explicit "migration in progress" response. The trust loop is suspended,
+   never weakened: an athlete gets a clear refusal, never a silent drop and never an
+   unverified success. **The freeze ships as its own earlier deploy**, so that every running
+   instance — old and new — is already honouring it before the cutover deploy begins. A freeze
+   that only the new build knows about would not stop the old one.
+2. **Drain, and prove the drain.** After the freeze is live on all instances, wait longer than
+   the maximum request duration, then prove **no in-flight Sheets hot-path write remains**:
+   zero `in_progress` write receipts, and zero in-flight requests on the migrated write
+   routes. The proof is a positive assertion, not an elapsed timer.
+3. **Run a final complete sweep** and require **zero open divergences**. It runs after the
+   drain, so nothing can be written behind it.
+4. **Establish and record the export mirror's per-tab base.** Read each mirrored tab's true
+   tail and set `atlas.sheets_mirror_cursor.next_row` past it, stamping
+   `base_established_at`. This is only safe because step 2 proved no further append can land.
+5. **Apply the `S4` schema and receipt transition.** Add the `write_id` foreign keys — which
+   validate because `S2`/`S3` always stored null (§3.6) — and make Supabase the receipt
+   authority.
+6. **Deploy the cutover build** and switch the sole runtime authority.
+7. **Run the non-counting proof workout** and the exact evidence checks of §6.3.
+8. **Reopen writes**, and only after step 7 passes.
+
+**Abort and rollback.** Steps 1–4 are reversible by lifting the freeze: nothing has moved. If
+any check fails at step 5, 6 or 7, the cutover aborts, the freeze stays on, and the previous
+build is restored — writes reopen on Sheets. Before reopening at step 8, **re-verify each
+tab's tail against `base_established_at`**; a tail that moved means an old-authority write
+landed after the base was recorded, and the cutover aborts rather than writing over it.
+
+**Required proof (§6.3 P19).** An old-authority write attempting to complete after the
+cutover boundary is **refused or detected before writes reopen**. A protocol whose failure
+case has never been exercised is a plan, not a control.
 
 ---
 
@@ -1041,13 +1190,16 @@ Everything in §6.2, re-run after the cutover, plus:
 | P11 | **Exact set, plan, ledger and closeout evidence.** The debug workout's rows are compared against a declared expectation written **before** the run: exact sets, exact plan events, exact ledger rows, exact seal, exact closeout status. A "rows appeared" standard does not qualify. |
 | P12 | A write failure is proven atomic: no partial session is left behind. |
 | P13 | Undo is proven exact: `DELETE` by `(session_id, write_id)` removes exactly the rows of that Save and nothing else, and the fail-closed contract of `services/closeoutFinality.js` still refuses an undo of a finalized session. |
-| P14 | **The export is durable AND idempotent.** Kill the process **after the Sheets append and before the Supabase acknowledgement**; restart; and prove the mirror contains **exactly one copy, by identity and by content** — not merely that an export eventually occurred. |
-| P14a | **The mirror write is idempotent under a late external append**, proven on the race no lock can prevent: **drop worker A's Postgres connection while its Sheets request is in flight**, let B acquire the lock and complete the export, then **let A's original request commit late**. Exactly one mirror identity must result. Two further cases: a slow or timed-out append whose outcome is ambiguous, and a replacement worker after a real death. A test that only proves a live lock blocks a simultaneous claim does **not** discharge P14a — the lock is not the mechanism under test; the deterministic destination is. |
-| P14b | **The destination allocation is stable and single-valued.** Two workers claiming the same session receive the same `sheets_row_start`, and a re-export never reallocates. Separately, the verify step is proven to **open a divergence** when it counts more than one row for an identity key, rather than passing silently. |
+| P14 | **The export is durable AND idempotent.** Kill the process **after the Sheets `values.update` and before the Supabase acknowledgement**; restart; and prove the mirror contains **exactly one copy, by identity and by content** — not merely that an export eventually occurred. |
+| P14a | **The mirror write is idempotent under a late external write**, proven on the race no lock can prevent: **drop worker A's Postgres connection while its Sheets `values.update` is in flight**, let B acquire the lock and complete the export, then **let A's original request commit late**. Exactly one mirror identity must result. Two further cases: a slow or timed-out write whose outcome is ambiguous, and a replacement worker after a real death. A test that only proves a live lock blocks a simultaneous claim does **not** discharge P14a — the lock is not the mechanism under test; the deterministic destination is. |
+| P14b | **The allocation is stable, single-valued, and collision-free across different sessions.** (a) Two workers exporting the **same** session read the same allocation, and a re-export never reallocates. (b) **Two different sessions allocating concurrently receive disjoint ranges** — the case a per-session column could not serialise. (c) A failed allocation **reserves nothing**: it cannot leave one tab reserved and another not. (d) The exclusion constraint is proven to reject a deliberately overlapping insert. |
+| P14c | **Verification spans the whole tab.** Seed one duplicate identity **outside** the allocated range and prove acknowledgement is **refused** and the defect surfaced as a divergence. A verifier that reads only its own block cannot pass this. |
 | P15 | **The open-divergence count is zero** and every `atlas.migration_divergences` row is `closed`. If not, `S4` does not merge. |
 | P16 | **No caller of the file-backed idempotency store remains**, proven by search, and the store, its env var, and its file are absent. |
 | P17 | The deletion list of §5.4 is verified absent, including the dropped `atlas.migration_divergences` table. |
 | P18 | A second non-counting deployed debug workout, after the cutover. |
+| P19 | **The handover protocol of §5.5 is executed and its failure case exercised.** An old-authority write attempting to complete after the cutover boundary is **refused or detected before writes reopen**. Separately: the freeze is proven to fail closed with an explicit refusal rather than a silent drop; the drain is proven by positive assertion (zero `in_progress` receipts, zero in-flight migrated writes) rather than by an elapsed timer; and the per-tab base is proven to be recorded only after the drain passed. |
+| P20 | **The `write_id` foreign keys validate on the real pre-cutover data**, because `S2`/`S3` stored null throughout (§3.6). Proven by adding the constraint against a database carrying genuine shadow rows, not an empty one. |
 
 ---
 
@@ -1136,7 +1288,7 @@ Three distinct database roles, each with its own credential.
 |---|---|
 | `SELECT` | every table in `atlas` |
 | `INSERT` | every table in `atlas` |
-| `UPDATE` (column-scoped) | `closeout_write_id` on `session_plan_set_recommendations`; `status`, `attempt`, `attempt_token`, `attempt_started_at`, `response_body`, `rows_written`, `appended_range`, `completed_at` on `write_receipts`; `sheets_exported_at`, `sheets_export_attempts`, `sheets_export_error`, `export_claim_token`, `sheets_row_start` on `workout_sessions`; `status`, `verified_at`, `last_error` on `exercise_catalog_sync`; the state columns on `migration_divergences` while it exists |
+| `UPDATE` (column-scoped) | `closeout_write_id` on `session_plan_set_recommendations`; `status`, `attempt`, `attempt_token`, `attempt_started_at`, `response_body`, `rows_written`, `appended_range`, `completed_at` on `write_receipts`; `sheets_exported_at`, `sheets_export_attempts`, `sheets_export_error`, `export_claim_token` on `workout_sessions`; `next_row`, `base_established_at` on `sheets_mirror_cursor`; `status`, `verified_at`, `last_error` on `exercise_catalog_sync`; the state columns on `migration_divergences` while it exists |
 | `DELETE` | `logged_sets` (undo), `exercise_catalog_mirror` (the §3.7 generation swap), and `migration_divergences` while it exists. **Never on a Sheets tab** — the export does not delete mirror rows to correct itself (§5.4). |
 | `EXECUTE` | `pg_try_advisory_lock` / `pg_advisory_unlock` (available to any role; named here because the export depends on it) |
 
@@ -1197,7 +1349,7 @@ The record below is the summary. The per-concept record is
 | **Bridge** | The shadow write, `atlas.migration_divergences`, the reconciliation sweep, and the repair worker. Live in `S2` and `S3` only. |
 | **Exact sunset** | `PR S4` deletes all four bridge components, drops `atlas.migration_divergences`, deletes the Sheets hot-path reads, the read-budget machinery, the backfill script, the verify-range route, **and the file-backed idempotency store**, and verifies their absence. |
 | **Code and tests deleted at closure** | The list in §5.4 step 3. **Nothing on it survives `S4`.** |
-| **Net complexity after migration** | Expected **negative**. Removed: the per-request `batchGet` read context, the route range declarations, the 30-second row cache, the session read-budget harness and its fixture, the reconstruction script, the read-budget document, the verify-range route and its client fallback, and the file-backed idempotency store. Added: eight permanent tables, one adapter module, the `Exercise_Catalog` sync, and the asynchronous export worker. The ninth table and the whole bridge are temporary and are dropped. This expectation is **not yet measured**; `S4` must report the actual net line and module change. |
+| **Net complexity after migration** | Expected **negative**. Removed: the per-request `batchGet` read context, the route range declarations, the 30-second row cache, the session read-budget harness and its fixture, the reconstruction script, the read-budget document, the verify-range route and its client fallback, and the file-backed idempotency store. Added: ten permanent tables, one adapter module, the `Exercise_Catalog` sync, and the asynchronous export worker. The eleventh table and the whole bridge are temporary and are dropped. This expectation is **not yet measured**; `S4` must report the actual net line and module change. |
 
 ### Owner rulings — D1 through D5, all resolved
 
@@ -1205,7 +1357,8 @@ The owner review of `b38de8b` resolved every open decision. They are recorded he
 rulings, not as questions.
 
 **D1 — `Exercise_Catalog` mirror: RESOLVED, build it.** Add the read-only mirror
-(§3.7) needed to remove the final athlete-facing Sheets quota dependency. Sheets remains its
+(§3.7) needed to remove the last **in-request** Sheets read from the migrated Save path. It
+bounds rather than eliminates the background dependency, in the wording P4 adopts. Sheets remains its
 editing authority; Supabase is the Save-path read mirror.
 
 **D2 — Constitution amendment: RESOLVED, content dictated.** Amend `docs/CONSTITUTION.md`
