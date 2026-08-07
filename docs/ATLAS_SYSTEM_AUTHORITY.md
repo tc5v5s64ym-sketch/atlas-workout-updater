@@ -362,9 +362,11 @@ revisions, item outcomes, and closeout and write receipts.
   [`docs/SUPABASE_HOT_PATH_MIGRATION.md`](./SUPABASE_HOT_PATH_MIGRATION.md) §3. Google Sheets
   becomes a human-readable export mirror for these concepts, and is never required for an
   active workout to read, save, verify, or close out.
-- **Competing authority.** **None today.** Nothing has migrated: no Supabase project exists,
-  no migration file exists, and no adapter exists. The competing authority appears when PR S2
-  adds the shadow write, and it is removed by PR S4.
+- **Competing authority.** **None today.** Nothing has migrated: this repository holds no
+  Supabase code, dependency, migration file, or adapter. A Supabase GitHub integration is
+  installed on the repository and reports a `Supabase Preview` check, but no code reaches it
+  and its project state is not established. The competing authority appears when PR S2 adds
+  the shadow write, and it is removed by PR S4.
 - **Status.** **SOLE LIVE AUTHORITY** (Google Sheets). The migration is **authorized and not
   started**. This entry records an authorized intent, not a promotion — the honesty rule
   above forbids promoting Supabase on a design document.

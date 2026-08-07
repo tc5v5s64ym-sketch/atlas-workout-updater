@@ -166,7 +166,7 @@ This is the single active, executable campaign. It is embedded here — not besi
 
 These are gates, never merge approvals. Each one stops the chain until Dale acts.
 
-1. **Creating the Supabase project** and **applying any schema to it**. `S2` checks migration files into the repository and applies them to a disposable CI database only.
+1. **Provisioning the Supabase project** and **applying any schema to it**. `S2` checks migration files into the repository and applies them to a disposable CI database only. **Observed fact:** a Supabase GitHub integration is already installed on this repository and reports a `Supabase Preview` check naming a project. Whether that project is usable, and whether this migration uses it or a new one, is **not established** and is Dale's to state. No agent provisions, inspects, or connects to it.
 2. **The `docs/CONSTITUTION.md` amendment.** Lines 14 and 55 state that Google Sheets is the permanent record and that there is no secondary database. `S3` makes "the app reads from it" false and `S4` makes "Sheets wins" false. A Constitution amendment is owner-reserved. Dale dictates the text; it merges before `S3`. No agent writes it.
 3. **Owner decision D1 — `Exercise_Catalog`.** It is read on the Save path to enrich every logged row, and a failed refresh throws. While it is read from Sheets, a Sheets quota error can still fail a Save, so "no athlete-facing dependency on Sheets quota" cannot be claimed without qualification. The options and the recommendation are in the design document, §9.
 4. **The `S4` cutover itself**, because it is the first irreversible step. It requires a verified backup, a proven restore, and a stated rollback window.

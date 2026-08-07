@@ -8,8 +8,17 @@
 > It defines the schema, the mapping, the closure chain, the proof, the rollback rules,
 > the security posture, and the data-ownership record for that instruction.
 
-**Nothing in this document is applied.** No Supabase project exists. No schema is applied.
-No product behaviour changes. `PR S1` is paper only.
+**Nothing in this document is applied.** No Supabase code, dependency, migration file, or
+adapter exists in this repository. No schema is applied. No product behaviour changes.
+`PR S1` is paper only.
+
+**Observed fact, recorded rather than assumed.** A Supabase GitHub integration is installed
+on this repository: it reports a `Supabase Preview` check on a pull request, and that check
+names a project. This document does **not** claim to know whether that project is
+provisioned, empty, owner-created, or unrelated to this migration. Establishing its state,
+and deciding whether the migration uses it, is part of owner-reserved gate D3 (§9) and is
+not established here. The project reference is not transcribed into this repository, for the
+reason given in §8.4.
 
 ---
 
@@ -693,10 +702,16 @@ The record below is the summary. The per-concept record is
 - *Proposed action.* Dale dictates the amended text. It merges before `S3`. This document
   proposes no wording.
 
-**D3 — Creating the Supabase project, and applying any schema, is owner-reserved.**
+**D3 — Provisioning the Supabase project, and applying any schema, is owner-reserved.**
 
 Both are schema and credentials work. `S2` checks migration files into the repository and
 applies them to a disposable CI database only.
+
+*Observed fact.* A Supabase GitHub integration is already installed on this repository and
+reports a `Supabase Preview` check naming a project. *Not established.* Whether that project
+exists in a usable state, who created it, what it contains, and whether this migration should
+use it or a new one. *Proposed action.* Dale states which project the migration uses, or
+directs that a new one is created. No agent provisions, inspects, or connects to either.
 
 ---
 
@@ -722,7 +737,8 @@ Each line is a cleanup obligation of the PR named, not of `S1`.
 
 ## 11. What this document does not claim
 
-- It does not claim any Supabase table exists. None does.
+- It does not claim any Supabase table exists, and it does not claim to know the state of the
+  project the repository's `Supabase Preview` check names.
 - It does not claim a measurement. The net-complexity expectation in §9 and the residual
   read count in §6.2 P4 are both unmeasured, and both are marked as such.
 - It does not authorize creating a Supabase project, applying a schema, or deploying.
