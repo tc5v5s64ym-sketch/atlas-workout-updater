@@ -137,15 +137,15 @@ This is the single active, executable campaign. It is embedded here — not besi
 
 **It supersedes further attempts to make Google Sheets satisfy the live workout read budget.** The read-quota work of PR #1271 and PR #1272 stands as merged code and as an honest measurement. It is no longer the path. Do not open another PR whose purpose is to fit a session inside the Google Sheets read quota.
 
-**What this instruction does not do.** It changes no counter and no phase. **Rehearsal (F-SB4): 0/5 · Stage A: 5/5 COMPLETE · Stage B: 0/5 OPEN.** Phase 5 stays unauthorized. `SESSION_PLAN_SETS_WRITE_ENABLED` stays `0`. It authorizes no product-behaviour change, no live Supabase project, no schema application, and no deployment. It is not a second campaign, roadmap, or plan — it is one insertion inside this plan, executed as one closed chain of four PRs.
+**What this instruction does not do.** It changes no counter and no phase. **Rehearsal (F-SB4): 0/5 · Stage A: 5/5 COMPLETE · Stage B: 0/5 OPEN.** Phase 5 stays unauthorized. `SESSION_PLAN_SETS_WRITE_ENABLED` stays `0`. It authorizes no product-behaviour change, no schema application, and no deployment. It is not a second campaign, roadmap, or plan — it is one insertion inside this plan, executed as one closed chain of four PRs.
 
 ### Architecture ruling
 
-- **Current authority.** Google Sheets is the runtime and permanent record for all workout data.
+- **Current authority.** Google Sheets is the runtime and permanent record for all workout data, plus the file-backed store in `services/idempotency.js` for write receipts.
 - **Intended sole authority.** Supabase, for exactly seven concepts: workout sessions; logged sets; Effort; accepted session plans; session plan sets and revisions; item outcomes; closeout and write receipts.
-- **Google Sheets becomes**, for those seven concepts only: a human-readable export and mirror, never required for an active workout to read, save, verify, or close out. Every other tab is unchanged.
-- **Competing authority to remove.** The direct Google Sheets runtime reads and writes for the seven migrated concepts.
-- **Temporary bridge.** A bounded shadow / dual-write comparison during the migration. The athlete-facing write succeeds or fails from the **current authority only**. Atlas never reconciles two authorities silently. Every bridge carries an exact sunset condition.
+- **Google Sheets becomes**, for those seven concepts only: a human-readable export and mirror, never required for an active workout to read, save, verify, or close out. Every other tab is unchanged, and Sheets stays the **editing** authority for `Exercise_Catalog`.
+- **Competing authority to remove.** The direct Google Sheets runtime reads and writes for the seven migrated concepts, and the file-backed receipt store.
+- **Temporary bridge.** A bounded shadow write, a durable divergence record, a reconciliation sweep, and a repair worker. The athlete-facing write succeeds or fails from the **current authority only**. Atlas never reconciles two authorities silently. Every bridge carries an exact sunset condition.
 
 **Classification: authority defect.** The standing rule applies — select one winner, remove the loser, add no permanent reconciliation logic.
 
@@ -153,35 +153,55 @@ This is the single active, executable campaign. It is embedded here — not besi
 
 [`docs/SUPABASE_HOT_PATH_MIGRATION.md`](SUPABASE_HOT_PATH_MIGRATION.md) holds the minimum schema, the field-by-field Sheet-column mapping, the four-PR closure chain, the exact proof required before each cutover, the failure and rollback rules, the security design, and the data-ownership record. It is a design specification. It selects no work; this block does.
 
+### OWNER REVIEW 2026-08-07 — Atlas Contract / Systems Review of `b38de8b8e7da55f4e28b1c71ebe1bae97b5ca710`: BLOCKING
+
+The owner performed the required review on the exact head and returned **BLOCKING**, approving the direction and refusing that head. Four P1 architecture defects could still have produced a false-safe cutover, and one current-state statement was stale. All are corrected in the design document, and the rulings below govern.
+
+1. **The durable divergence authority did not exist in the schema.** `S2` required a divergence record, `S3` required its count to reach zero, and `S4` gated on it — but §3 declared six tables and defined no such record, and `write_receipts` cannot carry one. **A required gate cannot depend on an unnamed record.** Corrected: `atlas.migration_divergences` is declared as an explicitly temporary migration-control table, dropped by `S4`.
+2. **`S2` could lose both the shadow write and the evidence that it was missed.** A process death after the Sheets write and before the shadow write left Supabase short of rows while the open-divergence count still read zero. Corrected: the **reconciliation sweep** — not the inline record — is the completeness authority, because Sheets holds every committed row and the sweep depends on nothing a dying process was meant to write. The phrase "safest available means" is withdrawn; it was neither an authority nor a proof.
+3. **The Sheets export was durable but not idempotent.** The derived queue survived a crash but permitted a re-export after a death between the append and the acknowledgement, and two workers could claim one session. Corrected: a claim lease plus an export identity key per table, with read-back-and-append-only-what-is-missing.
+4. **The file-backed idempotency store carried two incompatible sunset rulings** — deleted by `S4` in the authority map, surviving `S4` in the design, and both in the ownership table. Corrected by ruling D4 below.
+
+**Current-state correction.** D3 is no longer open. The owner created and selected the Free-tier project **Atlas Production**, independently verified healthy and empty, `us-west-2`, zero public tables, zero migrations. Any statement that no project was provisioned, or that its state is unknown, is stale. The project reference and every credential stay out of the repository.
+
+### Owner rulings D1–D5, all resolved (2026-08-07)
+
+1. **D1 — `Exercise_Catalog`.** Add the read-only mirror needed to remove the final athlete-facing Sheets quota dependency. Sheets remains its editing authority; Supabase is the Save-path read mirror.
+2. **D2 — the Constitution.** Amend `docs/CONSTITUTION.md` before the cutover so **Supabase wins for migrated hot-path concepts**, **Sheets wins for unmigrated concepts**, and **Sheets is the export mirror for migrated concepts**. Dale writes the text; no agent writes Constitution wording. It merges before the `S4` cutover.
+3. **D3 — the project.** Use the owner-created Free-tier **Atlas Production** project. No identifier and no credential is committed.
+4. **D4 — one receipt authority.** All seven current `beginWrite` callers move to the one Supabase `write_receipts` authority. Receipt metadata is shared safety infrastructure, not a second workout-data migration. `S4` deletes the file-backed store and proves no caller remains.
+5. **D5 — the read cutover.** Defer it into `S4` so reads and writes move together. `S3` becomes backfill, continuous parity, repair, and cutover-readiness proof only. This removes the unsafe reads-leading-writes window and the need to serve athlete reads from an inert shadow.
+
 ### The closure chain — four PRs, one concern each
 
-1. **PR S1 — governance, authority and schema design.** Record this instruction; correct every document that states Sheets is permanently the only V1 store; record the authority move in [`docs/ATLAS_SYSTEM_AUTHORITY.md`](ATLAS_SYSTEM_AUTHORITY.md) as concept 18; publish the design document. No code, no dependency, no migration file, no adapter, no deployment.
-2. **PR S2 — migration files, Supabase adapter, shadow-write path.** Sheets remains the live authority for every read and every write. No production cutover.
-3. **PR S3 — move active-workout reads to Supabase**, after backfill and parity proof. Sheets remains a mirror. A Sheets read fallback is added only on explicit owner approval.
-4. **PR S4 — Supabase becomes the approved-write authority.** Completed sessions export to Sheets asynchronously. The same PR removes the obsolete Sheets hot-path reads, the read-budget harness authority, the probes, the caches, and the compatibility bridge, and verifies their absence.
+1. **PR S1 — governance, authority and schema design.** Record this instruction and this review; correct every document that states Sheets is permanently the only V1 store; record the authority move in [`docs/ATLAS_SYSTEM_AUTHORITY.md`](ATLAS_SYSTEM_AUTHORITY.md) as concept 18; publish the design document. No code, no dependency, no migration file, no adapter, no schema application, no deployment.
+2. **PR S2 — migration files, Supabase adapter, shadow write, divergence lane, sweep, repair worker.** Sheets remains the live authority for every read and every write. No cutover.
+3. **PR S3 — backfill, continuous parity, repair, and cutover-readiness proof only.** Moves no read and no write. Drives the open-divergence count to zero.
+4. **PR S4 — the cutover.** Reads and writes move to Supabase together. Completed sessions export to Sheets asynchronously. The same PR removes the obsolete Sheets hot-path reads, the read-budget harness authority, the probes, the caches, the whole bridge including the divergence table, and the file-backed idempotency store, and verifies their absence.
 
-**A foundation PR is progress, not completion.** The chain is open until `S4` verifies the deleted machinery is gone.
+**A foundation PR is progress, not completion.** The chain is open until `S4` verifies the deleted machinery is gone. **Nothing on the `S4` deletion list survives `S4`.**
 
 ### Owner-reserved gates inside this chain
 
 These are gates, never merge approvals. Each one stops the chain until Dale acts.
 
-1. **Provisioning the Supabase project** and **applying any schema to it**. `S2` checks migration files into the repository and applies them to a disposable CI database only. **Observed fact:** a Supabase GitHub integration is already installed on this repository and reports a `Supabase Preview` check naming a project. Whether that project is usable, and whether this migration uses it or a new one, is **not established** and is Dale's to state. No agent provisions, inspects, or connects to it.
-2. **The `docs/CONSTITUTION.md` amendment.** Lines 14 and 55 state that Google Sheets is the permanent record and that there is no secondary database. `S3` makes "the app reads from it" false and `S4` makes "Sheets wins" false. A Constitution amendment is owner-reserved. Dale dictates the text; it merges before `S3`. No agent writes it.
-3. **Owner decision D1 — `Exercise_Catalog`.** It is read on the Save path to enrich every logged row, and a failed refresh throws. While it is read from Sheets, a Sheets quota error can still fail a Save, so "no athlete-facing dependency on Sheets quota" cannot be claimed without qualification. The options and the recommendation are in the design document, §9.
-4. **The `S4` cutover itself**, because it is the first irreversible step. It requires a verified backup, a proven restore, a stated rollback window, and an **open-divergence count of zero**.
-5. **Owner decision D4 — the shared idempotency store.** Four write routes outside the seven migrated concepts call `beginWrite`: `POST /api/coaching-notes`, `POST /api/constraints`, `POST /api/log-modality`, and the bodyweight write. `S4` may neither delete their duplicate-write protection nor move their data into Supabase on its own authority. Dale chooses: extend the receipts table to them, or keep the file store for them on the record.
-6. **Owner decision D5 — where the read cutover lands.** This instruction places it at `S3`, one PR ahead of the write authority. That window is safe only with the per-session divergence gate, fail-closed reads, and a repair path, all specified in the design document §5.3 and all proven to bite. Dale may instead defer the read cutover into `S4` so reads and writes move together. Deferring is simpler and strictly safer.
+1. **Applying any schema to `Atlas Production`.** `S2` checks migration files into the repository and applies them to a disposable CI database only. Project provisioning is done (D3); schema application is not.
+2. **The `docs/CONSTITUTION.md` amendment (D2).** Its content is dictated above. Dale writes the text; it merges before the `S4` cutover — not before `S3`, because ruling D5 means `S3` moves no authority.
+3. **The `S4` cutover itself**, because it is the first irreversible step. It requires a verified backup, a proven restore, a stated rollback window, an **open-divergence count of zero**, and proof that no caller of the file-backed store remains.
 
 ### Proof standard
 
-The exact per-gate proof is in the design document, §6. The standing requirements: deterministic tests; integration tests against a **real disposable Supabase database, never a fake**; backfill reconciliation on identity and content, not on row counts alone; one **non-counting** deployed debug workout per cutover; `preview → approve → write` preserved; idempotent repeated approval; exact set, plan, ledger and closeout evidence declared before the run; and no athlete-facing dependency on the Sheets quota, stated with its exact residual rather than as an unqualified zero.
+The exact per-gate proof is in the design document, §6. The standing requirements: deterministic tests; integration tests against a **real disposable Supabase database, never a fake**; backfill reconciliation on identity and content, not on row counts alone; one **non-counting** deployed debug workout per cutover; `preview → approve → write` preserved; idempotent repeated approval; exact set, plan, ledger and closeout evidence declared before the run; and no athlete-facing dependency on the Sheets quota, measured rather than asserted.
+
+Three proofs come directly from the owner review and are not optional. **Process death must be exercised, not reasoned about.** `S2` must kill the process after the Sheets append and before the shadow write, restart, and show the omission is found by the sweep. `S4` must kill the process after the Sheets append and before the Supabase acknowledgement, restart, and show the mirror holds **exactly one copy by identity and content** — not merely that an export eventually occurred. `S4` must also prove two concurrent export workers cannot both claim one session.
 
 **A non-counting debug workout is never owner evidence, LT evidence, or a GATE A eligible event, and it never advances Stage A, Stage B, or the rehearsal streak.**
 
 ### Restraint
 
 Do not add an unused database abstraction or a generic persistence framework. Every proposed module names its immediate production consumer. Do not add a speculative table or a speculative feature. There is exactly one Supabase adapter module, in the same way there is exactly one `sheets.js`.
+
+The schema is **eight tables: seven permanent and one temporary**. The eighth, `atlas.migration_divergences`, is migration-control machinery rather than product data, and `S4` drops it. Two tables were added by owner ruling, not by scope drift: the `Exercise_Catalog` read mirror (D1) and the divergence table the owner review required (defect 1). Neither widens the migrated workout data.
 
 ---
 

@@ -358,15 +358,15 @@ revisions, item outcomes, and closeout and write receipts.
 - **Current live authority.** Google Sheets via `sheets.js`, across `Log_Cleaned`, `Effort`,
   `Session_Plans` and `Session_Plan_Sets`, plus the file-backed idempotency store in
   `services/idempotency.js` (`/tmp/atlas-idempotency.json`, `services/idempotency.js:18`).
-- **Intended sole authority.** Supabase, in the six tables of
+- **Intended sole authority.** Supabase, in the seven permanent tables of
   [`docs/SUPABASE_HOT_PATH_MIGRATION.md`](./SUPABASE_HOT_PATH_MIGRATION.md) §3. Google Sheets
   becomes a human-readable export mirror for these concepts, and is never required for an
   active workout to read, save, verify, or close out.
 - **Competing authority.** **None today.** Nothing has migrated: this repository holds no
-  Supabase code, dependency, migration file, or adapter. A Supabase GitHub integration is
-  installed on the repository and reports a `Supabase Preview` check, but no code reaches it
-  and its project state is not established. The competing authority appears when PR S2 adds
-  the shadow write, and it is removed by PR S4.
+  Supabase code, dependency, migration file, or adapter. The owner has created the Free-tier
+  project **Atlas Production** (verified healthy and empty, `us-west-2`, zero public tables,
+  zero migrations), but no code reaches it and no schema is applied. The competing authority
+  appears when PR S2 adds the shadow write, and it is removed by PR S4.
 - **Status.** **SOLE LIVE AUTHORITY** (Google Sheets). The migration is **authorized and not
   started**. This entry records an authorized intent, not a promotion — the honesty rule
   above forbids promoting Supabase on a design document.
@@ -375,22 +375,35 @@ revisions, item outcomes, and closeout and write receipts.
   `POST /api/session-plans/outcome`, `POST /api/session-plan-sets/accept`,
   `POST /api/session-plan-sets/revision`, `POST /api/session-plans/closeout`, and every
   `Log_Cleaned` / `Effort` read in `routes/reads.js` and `routes/coachOps.js`.
-- **Compatibility bridge.** The bounded shadow / dual-write comparison introduced by PR S2.
-  It is live in PR S2 and PR S3 only. The athlete-facing write succeeds or fails from the
-  current authority alone; the shadow write never changes a response, a status code, a proof
-  field, or a visible claim.
-- **Sunset condition.** PR S4 deletes the shadow write, the Sheets hot-path reads for these
-  seven concepts, the backfill script, the read-budget machinery
+- **Compatibility bridge.** Four components introduced by PR S2: the bounded shadow write,
+  the durable divergence record (`atlas.migration_divergences`), the reconciliation sweep,
+  and the repair worker. All four are live in PR S2 and PR S3 only. The athlete-facing write
+  succeeds or fails from the current authority alone; the shadow write never changes a
+  response, a status code, a proof field, or a visible claim. The **sweep**, not the inline
+  record, is the completeness authority, because it depends on nothing an interrupted
+  process was meant to write.
+- **Reads and writes move together at PR S4.** PR S3 moves neither. An earlier plan moved
+  reads at PR S3, which let reads lead writes and could serve a silently incomplete workout;
+  owner ruling D5 (2026-08-07) removed that window.
+- **Sunset condition.** PR S4 deletes all four bridge components, drops
+  `atlas.migration_divergences`, and deletes the Sheets hot-path reads for these seven
+  concepts, the backfill script, the read-budget machinery
   (`services/sessionReadBatch.js`, the request-scoped `batchGet` context in `sheets.js` for
   the migrated ranges, the `Log_Cleaned` / `Effort` 30-second row cache in `index.js`,
   `test/liveSessionReadBudget.test.js`, `test/sessionReadBudget.test.js`,
   `test/sheets-adapter-reads.test.js`, `test/fixtures/liveSessionManifest.json`,
-  `scripts/reconstruct-session-reads.js`, `docs/READ_BUDGET.md`), and the file-backed
-  idempotency store — and verifies their absence. An item on that list that survives PR S4 is
-  an open loop and needs a named consumer plus its own sunset condition.
-- **Owner-reserved gates.** Creating the Supabase project; applying any schema; the
-  `docs/CONSTITUTION.md` amendment (lines 14 and 55 assert Sheets permanence, which PR S3 and
-  PR S4 falsify); Owner decision D1 on `Exercise_Catalog`; and the PR S4 cutover itself.
+  `scripts/reconstruct-session-reads.js`, `docs/READ_BUDGET.md`), and **the file-backed
+  idempotency store** — and verifies their absence. **Nothing on that list survives PR S4.**
+  Under owner ruling D4 (2026-08-07) all seven current `beginWrite` callers move to
+  `atlas.write_receipts`, so PR S4 must also prove no caller of the file store remains. An
+  item on that list that survives PR S4 is an open loop and needs a named consumer plus its
+  own sunset condition.
+- **Owner-reserved gates.** Applying any schema to `Atlas Production`; the
+  `docs/CONSTITUTION.md` amendment (lines 14 and 55 assert Sheets permanence, which PR S4
+  falsifies — its content is dictated by owner ruling D2 and Dale writes the text); and the
+  PR S4 cutover itself, which additionally requires a verified backup, a proven restore, a
+  stated rollback window, and an open-divergence count of zero. Decisions D1, D3, D4 and D5
+  are **resolved** by the owner review of 2026-08-07.
 - **Phase 4 relevance.** None yet. The migration changes where the record lives. It changes
   no engine, no decision, no packet, and no trace. `preview → approve → write`, `test_mode`
   semantics, and the W1–W3 proof fields are untouched.
