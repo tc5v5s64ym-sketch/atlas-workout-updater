@@ -1,6 +1,24 @@
 'use strict';
 
-// SESSION READ BUDGET — the outcome test for F-SB4B.
+// SESSION READ BUDGET — DEMOTED to unit scenarios. NOT the budget authority.
+//
+// This file's hand-authored `ownerPatternSequence` measured 46 reads for a complete
+// session and PR #1271 merged on it. The authorized non-counting debug run then measured
+// 116 observable reads with a rolling-60s peak of 87 and threw 429s. The sequence was a
+// plausible reconstruction of the session, not the session.
+//
+// Under the 2026-08-06 measurement-authority ruling the sole authority is now
+// `test/liveSessionReadBudget.test.js`, which replays the exact captured client request
+// manifest. Every session-budget assertion — the peak, the counterfactuals, the
+// reproduction — has been REMOVED from this file rather than left to compete. What remains
+// is the set of genuine unit and contract scenarios that never depended on the sequence
+// being faithful: the catalog cache and catalog route contracts, Deload_State freshness,
+// the qualifying ledger posture, and the durable closeout settlement guards.
+//
+// Nothing here authorizes a budget. If a test in this file starts asserting a session read
+// count again, it is competing with the live manifest and one of the two is wrong.
+//
+// ── original header, for the contracts still exercised below ─────────────────
 //
 // WHAT FAILED. Qualifying session 1 (2026-08-05, run fsb4b-s1-20260805T122822-04E1C5)
 // exhausted its own Google Sheets read quota mid-session and died at closeout.
@@ -79,8 +97,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const BUDGET = 50;           // peak reads per rolling 60s. Google's limit is 60/min.
-const CATALOG_REQUESTS = 1;  // Exercise_Catalog, for the whole measured window.
 
 process.env.ATLAS_API_KEY = 'test-api-key';
 process.env.GOOGLE_SHEETS_ID = 'test-spreadsheet-id';
@@ -793,49 +809,6 @@ async function runSession({ coldCatalogPerRequest = false, omitCloseout = false,
   };
 }
 
-// ── 1. the budget holds on the complete session ──────────────────────────────
-test('a complete owner-pattern session fits inside the session read budget', async () => {
-  const run = await runSession();
-  assertQualifyingRunGenuine(run);
-  assert.ok(run.total > 0, 'the sequence must actually read the sheet');
-  assert.ok(run.peak <= BUDGET,
-    `peak rolling-60s reads ${run.peak} exceeds the ${BUDGET} budget (total ${run.total}); ` +
-    `the pre-change counterfactual is 137 — see scripts/reconstruct-session-reads.js for the ` +
-    `archived run's 78, which is a values-read lower bound, not the complete total` +
-    `\n  ${run.breakdown}`);
-});
-
-// ── 2. Exercise_Catalog is ONE request for the whole window ──────────────────
-test('Exercise_Catalog costs exactly one request across the measured session', async () => {
-  const run = await runSession();
-  assertSequenceGenuine(run.results);
-  assert.equal(run.catalog, CATALOG_REQUESTS,
-    `Exercise_Catalog must be read once per TTL window, got ${run.catalog}`);
-});
-
-// ── 3. counterfactual: individual range requests break the budget ────────────
-//
-// This is the test that stops the budget from being satisfied by a weak sequence. With
-// the batch disabled every declared range costs its own request again — exactly the
-// pre-change shape — and the session must go OVER budget. If it does not, the sequence
-// is not exercising the read paths and test 1 proved nothing.
-test('restoring individual range requests breaks the session budget', async () => {
-  // The COMPLETE request-scoped mechanism is disabled, not just the declarations: no
-  // batch, no same-range dedup, no request-scoped metadata. That is the pre-change
-  // transport. Disabling only declarations left dedup and metadata reuse running and
-  // mislabelled this configuration.
-  const run = await runSession({ requestContext: false });
-  // The full guard set: the four published numbers must all come from sessions that
-  // achieved the SAME workout and ledger outcome, differing only in read posture. A
-  // ledger route can fail inside an HTTP 200 — this PR found exactly that — so a cheaper
-  // failed session could otherwise be reported as a counterfactual read count.
-  assertQualifyingRunGenuine(run);
-  assert.ok(run.peak > BUDGET,
-    `without the request context the session must exceed the ${BUDGET} budget, but peaked at ${run.peak}. ` +
-    'Either the sequence stopped exercising the read paths, or the request context is no longer what keeps it under.' +
-    `\n  ${run.breakdown}`);
-});
-
 // The mutation must genuinely BITE: without the request context the same range really is
 // requested more than once inside a request, and the metadata read really does repeat.
 /**
@@ -886,83 +859,6 @@ test('the request context removes a duplicate read issued twice by ONE request',
   assert.ok(!with_.get(RANGE),
     `with the request context that request must not issue ${RANGE} on its own at all ` +
     `(it rides in the batch); got ${with_.get(RANGE)}`);
-});
-
-test('the no-context run restores repeated metadata requests across the session', async () => {
-  const withContext = await runSession();
-  const withoutContext = await runSession({ requestContext: false });
-  assertQualifyingRunGenuine(withContext);
-  assertQualifyingRunGenuine(withoutContext);
-  assert.ok(withoutContext.metadataReads > withContext.metadataReads,
-    'disabling the request context must restore repeated spreadsheets.get calls; ' +
-    `got ${withoutContext.metadataReads} without vs ${withContext.metadataReads} with`);
-});
-
-// ── 4. counterfactual: per-request catalog reads break the budget ────────────
-test('restoring per-request Exercise_Catalog reads breaks the session budget', async () => {
-  // Request context ON, catalog cache OFF — the catalog-cache-only counterfactual.
-  const run = await runSession({ coldCatalogPerRequest: true });
-  assertQualifyingRunGenuine(run);
-  assert.ok(run.catalog > CATALOG_REQUESTS,
-    'precondition: a cold cache per request must actually re-read the catalog');
-  assert.ok(run.peak > BUDGET,
-    `without the catalog cache the session must exceed the ${BUDGET} budget, but peaked at ${run.peak}` +
-    `\n  ${run.breakdown}`);
-});
-
-// ── 4b. the harness reproduces the original failure ──────────────────────────
-//
-// The strongest available check that this sequence is the real thing: with BOTH
-// mechanisms off it must land where the failed session landed — over Google's actual
-// 60/minute read limit. A sequence that cannot reproduce the outage cannot prove it fixed.
-test('with both mechanisms disabled the sequence reproduces the original quota failure', async () => {
-  // Neither mechanism: no request context at all, and a cold catalog on every request.
-  // This is the genuine pre-change transport.
-  const run = await runSession({ requestContext: false, coldCatalogPerRequest: true });
-  assertQualifyingRunGenuine(run);
-  assert.ok(run.peak > 60,
-    `the pre-change behaviour must exceed Google's 60/min read limit, as the live session did ` +
-    `before its exhausted quota cut it short; this harness measured ${run.peak}\n  ${run.breakdown}`);
-});
-
-// ── 4c. MUTATION BITES — the guard must fail when the measurement is weakened ──
-//
-// Both of these omissions were live in an earlier head of this PR and neither turned the
-// file red. A guard that cannot fail on its own blind spots is not a guard.
-
-test('MUTATION: dropping metadata reads from the count understates the session', async () => {
-  const run = await runSession();
-  assertSequenceGenuine(run.results);
-
-  const metadata = reads.filter(r => r.kind === 'metadata');
-  assert.ok(metadata.length > 0,
-    'spreadsheets.get must be OBSERVED and counted. It is metered against the same read ' +
-    'quota as values.get and it is on live session paths — getSpreadsheetTabs backs ' +
-    'closeoutFinality/sessionPlanStore/sessionPlanSetsStore, and confirmTabMissing issues ' +
-    'one per unresolved range. Counting only the values methods reports a values-read ' +
-    'total as if it were the read total.');
-
-  // …and they are not decorative: excluding them measurably lowers the reported peak.
-  const withoutMetadata = peakRollingMinute(reads.filter(r => r.kind !== 'metadata'));
-  assert.ok(withoutMetadata < run.peak,
-    `omitting metadata reads must change the answer, but the peak stayed at ${run.peak}`);
-});
-
-test('MUTATION: dropping the closeout Save makes the guard fail', async () => {
-  // The branch that actually failed live is presence-gated on `closeout_context`. A
-  // sequence without it still answers 2xx everywhere and still fits the budget — which is
-  // exactly why the budget alone cannot be the whole proof.
-  const run = await runSession({ omitCloseout: true });
-  assertSequenceGenuine(run.results);   // still all-2xx: the weakened sequence looks fine
-  assert.throws(() => assertCloseoutGenuine(run.results),
-    /must end on the closeout Save|ledger_seal|closeout/i,
-    'a sequence that never drives the closeout must FAIL the guard, not pass it quietly');
-
-  // And the omission is material: the closeout costs real reads.
-  const complete = await runSession();
-  assert.ok(complete.peak > run.peak,
-    `the closeout must cost measurable reads, but the peak was ${complete.peak} with it ` +
-    `and ${run.peak} without`);
 });
 
 // ── 4d. ONE catalog cache authority, proven at the ROUTE ─────────────────────

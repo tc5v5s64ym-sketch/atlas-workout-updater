@@ -305,14 +305,119 @@ function sheetsReadFailureClass(error) {
   return stamp ? stamp.class : null;
 }
 
-async function readWithRetry(label, operation, options = {}) {
+// ── Read accounting: one line per QUOTA-METERED ATTEMPT ───────────────────────
+//
+// Google meters ATTEMPTS, not logical reads: a first try and each of its retries are
+// separate requests against the per-minute quota, and so is the attempt that finally
+// returns 429. The previous logging emitted one human line per logical read and printed
+// retries only through `console.warn`, so a captured log could show a session's reads
+// while silently omitting the retry amplification on top of them — which is exactly how
+// the F-SB4B debug run's own artifact came to report "retry attempts: 0" while the
+// console had shown a 429 storm.
+//
+// This emits ONE machine-readable line per attempt, at the lowest boundary every read
+// passes through, carrying the HTTP request that caused it. `scripts/reconstruct-session-reads.js`
+// consumes it; nothing infers a count from anything else.
+//
+// Privacy: ranges are A1 notation and tab names. No cell contents, no session ids, no
+// workout data ever reaches this line.
+const READ_ATTEMPT_TAG = '[sheets-read]';
+
+function recordReadAttempt(record) {
   try {
-    return await retryWithBackoff(operation, {
+    const ctx = currentReadContext();
+    const request = (ctx && ctx.request) || null;
+    console.log(`${READ_ATTEMPT_TAG} ${JSON.stringify({
+      // The rolling-60s window is computed from this. Without it every structured attempt
+      // is unstamped, `peakRollingMinute` excludes it, and the peak reads as zero — the
+      // quota evidence's whole point, silently absent.
+      at: new Date().toISOString(),
+      request_id: request ? request.requestId : null,
+      http_method: request ? request.method : null,
+      http_path: request ? request.path : null,
+      ...record,
+    })}`);
+  } catch (_) {
+    // Accounting must never break a read. A line we could not write is a line the
+    // reconstruction reports as missing, which is the honest outcome.
+  }
+}
+
+/**
+ * Meter one call that deliberately runs OUTSIDE `readWithRetry` — the two `spreadsheets.get`
+ * probes that precede a schema mutation, and `ensureSheetTab`'s header read.
+ *
+ * The outcome is derived AFTER the call settles. Recording `ok` before awaiting logged a
+ * failed or quota-rejected request as a success, which is the one thing read accounting must
+ * never do: a quota rejection reported as `ok` is evidence that the storm did not happen.
+ */
+async function meterUnretried(api, ranges, operation) {
+  let attempt;
+  try {
+    const result = await operation();
+    attempt = { api, ranges, attempt: 1, outcome: 'ok', unretried: true };
+    return result;
+  } catch (error) {
+    attempt = {
+      api,
+      ranges,
+      attempt: 1,
+      outcome: classifySheetsReadError(error),
+      status: readErrorStatus(error),
+      quota_rejection: isQuotaRejection(error),
+      unretried: true,
+    };
+    throw error;
+  } finally {
+    recordReadAttempt(attempt);
+  }
+}
+
+/** The HTTP status Google returned, where there is one. */
+function readErrorStatus(error) {
+  const status = Number(
+    error && error.status != null ? error.status
+      : (error && error.response && error.response.status != null) ? error.response.status : NaN
+  );
+  return Number.isFinite(status) ? status : null;
+}
+
+/**
+ * @param {string} label            human label, used for the failure stamp
+ * @param {Function} operation      the googleapis call
+ * @param {object} options          retry overrides, plus `meta` = { api, ranges }
+ */
+async function readWithRetry(label, operation, options = {}) {
+  const { meta = {}, ...retryOptions } = options;
+  const api = meta.api || 'unknown';
+  const ranges = meta.ranges || [label];
+  let attempt = 0;
+  try {
+    return await retryWithBackoff(async () => {
+      attempt += 1;
+      try {
+        const response = await operation();
+        recordReadAttempt({ api, ranges, attempt, outcome: 'ok' });
+        return response;
+      } catch (error) {
+        const status = readErrorStatus(error);
+        recordReadAttempt({
+          api,
+          ranges,
+          attempt,
+          // The classifier's own verdict — never a second opinion invented here.
+          outcome: classifySheetsReadError(error),
+          http_status: status,
+          quota_rejection: isQuotaRejection(error),
+        });
+        throw error;
+      }
+    }, {
       ...READ_RETRY_DEFAULTS,
-      ...options,
+      ...retryOptions,
       isRetryable: isTransientReadError,
-      onRetry: (error, attempt, delay) => {
-        console.warn(`[sheets.js] Transient read error on ${label} (attempt ${attempt}): ${error.message}. Retrying in ${delay}ms`);
+      onRetry: (error, retryNumber, delay) => {
+        console.warn(`[sheets.js] Transient read error on ${label} (attempt ${retryNumber}): ${error.message}. Retrying in ${delay}ms`);
       }
     });
   } catch (error) {
@@ -321,6 +426,18 @@ async function readWithRetry(label, operation, options = {}) {
     // Save path was reporting to the owner as invalid input.
     throw stampSheetsReadFailure(error, label);
   }
+}
+
+/** True when Google rejected this read for exceeding the read quota. */
+function isQuotaRejection(error) {
+  if (!error) return false;
+  const status = readErrorStatus(error);
+  if (status !== 429 && status !== 403) return false;
+  const reason = (error.errors && error.errors[0] && error.errors[0].reason)
+    || (error.response && error.response.data && error.response.data.error
+      && (error.response.data.error.status || error.response.data.error.message))
+    || error.message || '';
+  return /rateLimit|quota|RESOURCE_EXHAUSTED/i.test(String(reason));
 }
 
 async function getSheetsClient() {
@@ -384,8 +501,10 @@ function tabOfRange(range) {
  * in a single `values.batchGet` when the first of them is actually read. Outside a context every helper behaves exactly as before —
  * one read, one API call — so scripts and tests are unaffected.
  */
-function runWithReadContext(fn) {
-  return readContextStorage.run({ values: new Map(), inflight: new Map(), declared: null }, fn);
+function runWithReadContext(fn, request = null) {
+  // `request` is {requestId, method, path} — carried only so every read attempt can name
+  // the HTTP request that caused it. It is never used to decide anything.
+  return readContextStorage.run({ values: new Map(), inflight: new Map(), declared: null, request }, fn);
 }
 
 function currentReadContext() {
@@ -433,11 +552,10 @@ function flushDeclaredRanges(ctx, alsoNeeded) {
   const label = `batchGet(${wanted.length} ranges)`;
   const promise = (async () => {
     const sheets = await getSheetsClient();
-    console.log(`[sheets.js] Batch reading ${wanted.length} range(s): ${wanted.join(', ')}`);
     const response = await readWithRetry(label, () => sheets.spreadsheets.values.batchGet({
       spreadsheetId,
       ranges: wanted
-    }));
+    }), { meta: { api: 'values.batchGet', ranges: wanted } });
     const valueRanges = response.data.valueRanges || [];
     // batchGet returns valueRanges positionally, in the order the ranges were requested.
     // The `range` field it echoes is the RESOLVED A1 (`Log_Cleaned!B1:G997`), not the
@@ -501,12 +619,11 @@ async function readValues(range, { majorDimension } = {}) {
 
   const fetch = (async () => {
     const sheets = await getSheetsClient();
-    console.log(`[sheets.js] Reading range ${range}`);
     const response = await readWithRetry(range, () => sheets.spreadsheets.values.get({
       spreadsheetId,
       range,
       ...(majorDimension ? { majorDimension } : {})
-    }));
+    }), { meta: { api: 'values.get', ranges: [range] } });
     return response.data.values || [];
   })();
 
@@ -627,11 +744,10 @@ async function getExerciseCatalog({ now = Date.now } = {}) {
   catalogCacheStats.fetches += 1;
   catalogCacheInflight = (async () => {
     const sheets = await getSheetsClient();
-    console.log(`[sheets.js] Fetching Exercise_Catalog from range ${range}`);
     const response = await readWithRetry(range, () => sheets.spreadsheets.values.get({
       spreadsheetId,
       range
-    }));
+    }), { meta: { api: 'values.get', ranges: [range] } });
     // Outer-array copy for the same reason as readRange, and it matters more here: this
     // array outlives the request, so one caller's mutation would reach every later one.
     const values = (response.data.values || []).slice();
@@ -694,13 +810,10 @@ async function getSpreadsheetTabs() {
   if (pending) return (await pending).slice();
 
   const fetch = (async () => {
-    // Logged because `spreadsheets.get` is metered against the read quota exactly like
-    // `values.get`, and scripts/reconstruct-session-reads.js counts what it can see.
-    console.log('[sheets.js] Reading spreadsheet metadata');
     const response = await readWithRetry('spreadsheet metadata', () => sheets.spreadsheets.get({
       spreadsheetId,
       fields: 'sheets.properties'
-    }));
+    }), { meta: { api: 'spreadsheets.get', ranges: ['spreadsheet metadata'] } });
     return (response.data.sheets || []).map(sheet => String(sheet.properties.title || ''));
   })();
 
@@ -727,11 +840,13 @@ async function ensureSheetTab(tabName, headerRow = []) {
   // stale the moment it returns. Drop it.
   const createCtx = currentReadContext();
   if (createCtx) { createCtx.values.delete(METADATA_KEY); createCtx.inflight.delete(METADATA_KEY); }
-  console.log('[sheets.js] Reading spreadsheet metadata');
-  const meta = await sheets.spreadsheets.get({
-    spreadsheetId,
-    fields: 'sheets.properties'
-  });
+  // Metered like any other read even though this helper is deliberately outside
+  // readWithRetry (it probes before a schema mutation), so it is accounted for here.
+  const meta = await meterUnretried('spreadsheets.get', ['spreadsheet metadata'], () =>
+    sheets.spreadsheets.get({
+      spreadsheetId,
+      fields: 'sheets.properties'
+    }));
   const existing = (meta.data.sheets || []).find(sheet => sheet.properties.title === tabName);
   if (!existing) {
     await sheets.spreadsheets.batchUpdate({
@@ -747,10 +862,13 @@ async function ensureSheetTab(tabName, headerRow = []) {
   }
 
   if (Array.isArray(headerRow) && headerRow.length) {
-    const current = await sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: `${tabName}!1:1`
-    });
+    // A SECOND metered read on this path. It went unaccounted for, so a header-seeding
+    // ensureSheetTab reported half the quota it actually spent.
+    const current = await meterUnretried('values.get', [`${tabName}!1:1`], () =>
+      sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: `${tabName}!1:1`
+      }));
     if (!current.data.values || !current.data.values.length) {
       await sheets.spreadsheets.values.update({
         spreadsheetId,
@@ -852,11 +970,11 @@ async function updateColumnCells(tabName, columnLetter, cells) {
 async function deleteRowsByRange(tabName, startIndex, endIndex) {
   // startIndex: 0-based inclusive. endIndex: 0-based exclusive.
   const sheets = await getSheetsClient();
-  console.log('[sheets.js] Reading spreadsheet metadata');
-  const meta = await sheets.spreadsheets.get({
-    spreadsheetId,
-    fields: 'sheets.properties'
-  });
+  const meta = await meterUnretried('spreadsheets.get', ['spreadsheet metadata'], () =>
+    sheets.spreadsheets.get({
+      spreadsheetId,
+      fields: 'sheets.properties'
+    }));
   const sheet = (meta.data.sheets || []).find(s => s.properties.title === tabName);
   if (!sheet) {
     throw new Error(`Sheet tab "${tabName}" not found in spreadsheet.`);
@@ -901,6 +1019,14 @@ module.exports = {
   effortSheetName,
   // Request-scoped read batching (F-SB4B session read budget).
   runWithReadContext,
+  // The HTTP request this async context belongs to, or null outside one. Read accounting
+  // only — nothing decides on it. Exported so a test can attribute a FIRE-AND-FORGET write
+  // (a shadow append that lands after the response) to the request that caused it, instead
+  // of to whichever request happened to be in flight when it completed.
+  currentRequestIdentity: () => {
+    const ctx = currentReadContext();
+    return ctx && ctx.request ? { ...ctx.request } : null;
+  },
   declareRequestRanges,
   invalidateTabCache,
   CATALOG_CACHE_TTL_MS,

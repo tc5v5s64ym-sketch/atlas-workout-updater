@@ -405,10 +405,33 @@ async function getSheetRows(tabName) {
   return rows;
 }
 
-function invalidateSheetRowsCache() {
-  // A fresh cache instance is the simplest correct clear — createTtlCache closes
-  // over a private Map, so swapping the reference drops every entry at once.
-  sheetRowsCache = createTtlCache(SHEET_ROWS_TTL_MS);
+/**
+ * Drop what a write just made stale — and only that.
+ *
+ * Every caller names the tabs it wrote. A write to Log_Cleaned makes the Effort rows no
+ * less true, so evicting them spends a Sheets read on the next dashboard for nothing;
+ * writes to tabs this cache never holds (Coaching_Notes, Constraints, Modality_Log) used
+ * to evict BOTH cached tabs while making neither stale.
+ *
+ * The no-argument call keeps the old behaviour — evict everything — so a caller that does
+ * not say what it wrote still fails SAFE. Under-eviction would serve a stale read after a
+ * write, which is a trust bug; over-eviction only costs a read. That asymmetry is why the
+ * default is the pessimistic one.
+ *
+ * This changes only WHAT is dropped. It does not lengthen any lifetime, add a stale-serving
+ * path, or make the cache time-only: the 30-second TTL and write-invalidation are both
+ * unchanged.
+ */
+function invalidateSheetRowsCache(...tabsWritten) {
+  if (tabsWritten.length === 0) {
+    // A fresh cache instance is the simplest correct clear — createTtlCache closes
+    // over a private Map, so swapping the reference drops every entry at once.
+    sheetRowsCache = createTtlCache(SHEET_ROWS_TTL_MS);
+    return;
+  }
+  for (const tab of tabsWritten.flat()) {
+    if (tab) sheetRowsCache.delete(tab);
+  }
 }
 
 // Read/analytics routes (Remediation PR-16) — extracted verbatim into an Express
@@ -427,6 +450,8 @@ const { routeDefinitions } = require('./config/routes');
 const { logCleanedColumns, logRowFieldAliases, effortColumns, exerciseCatalogColumns, effortRowFieldAliases, modalityLogColumns } = require('./config/columns');
 // eslint-disable-next-line no-unused-vars -- requiredSheetTabs, optionalSheetTabs unused here; used in startup health-check via buildSheetContractStatus
 const { requiredSheetTabs, optionalSheetTabs, buildSheetContractStatus, validateHeaderRow } = require('./config/sheetContract');
+const { verifyAppendReceipt } = require('./services/appendWriteProof');
+const LOG_SESSION_ID_COLUMN = logCleanedColumns.indexOf('session_id');
 
 // --- Header-drift guard (trust-critical write protection) --------------------
 // Atlas appends rows to Google Sheets purely by column position. If the owner
@@ -1292,7 +1317,7 @@ app.post('/api/coaching-notes', async (req, res) => {
   const dateStr = localTodayIso();
   try {
     await appendRows('Coaching_Notes', [[dateStr, note.slice(0, 200)]]);
-    invalidateSheetRowsCache();
+    invalidateSheetRowsCache('Coaching_Notes');
     const responseBody = { sheet_written: true, note_written: true, date: dateStr, note: note.slice(0, 200) };
     if (idempotency.enabled) {
       responseBody.write_id = idempotency.write_id;
@@ -1379,7 +1404,7 @@ app.post('/api/constraints', async (req, res) => {
   const cleanNote = note.slice(0, 200);
   try {
     await appendRows('Constraints', [[dateStr, kind, cleanTarget, rule, cleanNote]]);
-    invalidateSheetRowsCache();
+    invalidateSheetRowsCache('Constraints');
     const responseBody = {
       sheet_written: true,
       constraint_written: true,
@@ -1494,7 +1519,7 @@ app.post('/api/log-modality', async (req, res) => {
 
   try {
     const appendResponse = await appendRows('Modality_Log', [row]);
-    invalidateSheetRowsCache();
+    invalidateSheetRowsCache('Modality_Log');
     const responseBody = {
       message: 'Modality logged successfully.',
       test_mode: false,
@@ -2734,15 +2759,25 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         effortRowsWritten = Number(effortResponse?.data?.updates?.updatedRows || 0);
         effortWritten = true;
         writeCommitted = true;
-        invalidateSheetRowsCache();
+        // Both appends succeeded on this path (the log one only when there were rows).
+        invalidateSheetRowsCache(rowsToWrite.length > 0 ? logSheetName : null, effortSheetName);
       } catch (error) {
         if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
+        // WHATEVER LANDED BEFORE THE THROW IS ON THE SHEET, so the cache holding a pre-write
+        // copy of it must go — before any branch below, and whether or not idempotency is
+        // enabled. Both facts matter: the throw is usually the Effort append, but it can also
+        // come from a later step with BOTH appends already done, and the recovery branch
+        // below only runs when idempotency is on. Keyed on what actually landed, so this
+        // stays honest rather than reverting to a flush.
+        invalidateSheetRowsCache(
+          logRowsWritten > 0 ? logSheetName : null,
+          effortWritten ? effortSheetName : null
+        );
         if (idempotency.enabled && writeCommitted) {
           // The log rows are already on the sheet but the effort append (or a
           // later step) threw. Record the write as completed with a partial body
           // so a retried write_id replays this state instead of re-appending the
           // log rows. Mirrors /api/log-workout's partial-write contract.
-          invalidateSheetRowsCache();
           const partialData = {
             session_id: sessionId,
             date: dateValue,
@@ -3554,7 +3589,9 @@ app.post('/api/log-workout', async (req, res) => {
       }));
     } catch (error) {
       console.error('❌ Effort append failed:', error);
-      invalidateSheetRowsCache();
+      // The log rows are on the sheet; the Effort append is what failed, so the Effort
+      // rows this cache holds are still exactly what the sheet holds.
+      invalidateSheetRowsCache(logSheetName);
       const logRowsWritten = Number(logResponse?.data?.updates?.updatedRows || 0);
       const partialBody = {
         message: logRowsWritten > 0
@@ -3611,7 +3648,13 @@ app.post('/api/log-workout', async (req, res) => {
   }
 
   try {
-    invalidateSheetRowsCache();
+    // Exactly the tabs this request appended to. A Save with no effort row leaves the
+    // cached Effort rows true, so evicting them would spend the next dashboard's read
+    // re-reading data that did not change.
+    invalidateSheetRowsCache(
+      rowsToWrite.length > 0 ? logSheetName : null,
+      formattedEffortRow ? effortSheetName : null
+    );
 
     const responseBody = {
       message: 'Workout data appended successfully.',
@@ -3627,6 +3670,21 @@ app.post('/api/log-workout', async (req, res) => {
       test_mode: false,
       sheet_write: 'success'
     };
+    // The append's own receipt, adjudicated. This is the write-verification AUTHORITY:
+    // it establishes the exact appended range, the exact row count and session ownership
+    // from the operation that performed the write, so the client no longer spends a
+    // metered read on `GET /api/log-workout/verify-range` at closeout. The verdict is
+    // derived — a missing or self-contradicting receipt yields verified:false with an
+    // exact reason, never a fabricated confirmation. See services/appendWriteProof.js.
+    if (rowsToWrite.length > 0) {
+      responseBody.log_write_verification = verifyAppendReceipt({
+        receipt: logResponse?.data?.updates,
+        tab: logSheetName,
+        sessionId: session_id,
+        rowsSubmitted: rowsToWrite,
+        sessionIdColumnIndex: LOG_SESSION_ID_COLUMN,
+      });
+    }
     if (ledgerSeal) {
       responseBody.ledger_seal = ledgerSeal;
       if (sessionPlansCloseout) responseBody.session_plans_closeout = sessionPlansCloseout;
@@ -3815,7 +3873,8 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
     const startIndex = startRow - 1; // 0-based inclusive
     const endIndex = endRow;         // 0-based exclusive
     await deleteRowsByRange(logSheetName, startIndex, endIndex);
-    invalidateSheetRowsCache();
+    // Undo removes Log_Cleaned rows only; it never touches Effort.
+    invalidateSheetRowsCache(logSheetName);
   } catch (error) {
     if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
     return standardError(req, res, 'Failed to delete rows from sheet.', null, 500);

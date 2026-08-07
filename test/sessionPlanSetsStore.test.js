@@ -19,9 +19,20 @@ const state = { tabs: ['Session_Plan_Sets'], rows: [], appends: [], updates: [],
 function reset({ tabs = ['Session_Plan_Sets'], rows = [], a1 = [['idempotency_key']] } = {}) {
   state.tabs = tabs; state.rows = rows.slice(); state.appends = []; state.updates = []; state.a1 = a1; state.calls = 0; state.updateCellsResult = null; state.failGetTabs = false; state.failGetRows = false;
 }
+// The fake models the REAL failure shapes. The store no longer probes `spreadsheets.get`
+// before reading: a successful rows read proves presence, and only `confirmTabMissing` —
+// which needs its own successful tab listing — may conclude absence. So a missing tab
+// must surface as Google's unresolved-range rejection, and `failGetTabs` now models the
+// listing being unavailable, which must mean "could not confirm", never "absent".
+const RANGE_UNRESOLVED = (tab) => new Error(`Unable to parse range: ${tab}!A:Z`);
 const fakeSheets = {
   getSpreadsheetTabs: async () => { state.calls += 1; if (state.failGetTabs) throw new Error('metadata outage'); return state.tabs.slice(); },
-  getSheetRows: async (tab) => { state.calls += 1; if (state.failGetRows) throw new Error('read outage'); if (!state.tabs.includes(tab)) throw new Error('tab missing'); return state.rows.slice(); },
+  getSheetRows: async (tab) => { state.calls += 1; if (state.failGetRows) throw new Error('read outage'); if (!state.tabs.includes(tab)) throw RANGE_UNRESOLVED(tab); return state.rows.slice(); },
+  confirmTabMissing: async (error, tab) => {
+    if (!/Unable to parse range/i.test(String(error && error.message))) return false;
+    if (state.failGetTabs) return false;         // could not look ⇒ never evidence of absence
+    return !state.tabs.includes(tab);
+  },
   // Mirror the REAL sheets.appendRows return shape: the raw Google API response
   // object, whose authoritative write-proof is data.updates.{updatedRange,updatedRows}.
   appendRows: async (tab, rows) => {
@@ -306,14 +317,19 @@ test('F10D seal: mixed already-sealed + blank rows stamps only the blanks', asyn
 // read) is a ledger failure and must fail closed — closeout_fully_verified hangs
 // off sealed_ok, so a transient Sheets outage must never claim verification.
 
-test('F10D seal: a metadata-probe failure fails CLOSED (ledger_read_failed), never a verified no_ledger', async () => {
-  reset({ rows: ledgerRowsFor('S1') });
-  state.failGetTabs = true;
+// Retargeted from "a metadata-probe failure". Presence is now proven by the rows read
+// itself, so there is no probe to fail on the happy path. The GUARANTEE is unchanged and
+// this is now the case that carries it: the range does not resolve, but the tab listing is
+// unavailable so absence CANNOT be confirmed. That is unreadable, not empty — and
+// `no_ledger` is a verified-empty seal reason, so it must never be reachable this way.
+test('F10D seal: an unresolved range that cannot be CONFIRMED absent fails CLOSED, never a verified no_ledger', async () => {
+  reset({ tabs: [], rows: [] });
+  state.failGetTabs = true;                 // the listing confirmTabMissing needs is down
   const store = loadStore({ writeEnabled: true });
   const r = await store.sealCloseout(SESSION, 'w-close-1');
   assert.equal(r.sealed_ok, false);
   assert.equal(r.reason, 'ledger_read_failed');
-  assert.equal(r.no_ledger, undefined, 'an outage is NOT "no ledger"');
+  assert.equal(r.no_ledger, undefined, 'could not confirm absence is NOT "no ledger"');
   assert.equal((state.updates || []).length, 0);
 });
 
@@ -327,9 +343,18 @@ test('F10D seal: a row-read failure (tab present) fails CLOSED, never a verified
   assert.equal((state.updates || []).length, 0);
 });
 
-test('F10D readLedgerRows: a metadata-probe failure returns null (read-failed), not [] (no rows)', async () => {
-  reset({ rows: ledgerRowsFor('S1') });
+test('F10D readLedgerRows: an unconfirmable unresolved range returns null (read-failed), not [] (no rows)', async () => {
+  reset({ tabs: [], rows: [] });
   state.failGetTabs = true;
   const store = loadStore({ writeEnabled: false });
-  assert.equal(await store.readLedgerRows('S1'), null);
+  assert.equal(await store.readLedgerRows('S1'), null,
+    'unreadable must be null; [] would claim the session genuinely has no ledger rows');
+});
+
+// And the other side of the same contract: when absence IS confirmable, it is reported as
+// a genuine empty ledger rather than as a failure.
+test('F10D readLedgerRows: a CONFIRMED absent tab returns [] (no ledger), not null', async () => {
+  reset({ tabs: [], rows: [] });
+  const store = loadStore({ writeEnabled: false });
+  assert.deepEqual(await store.readLedgerRows('S1'), []);
 });

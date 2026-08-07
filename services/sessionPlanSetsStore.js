@@ -51,23 +51,9 @@ function _dryRunResult(rows, reason) {
   };
 }
 
-async function _tabExists() {
-  try {
-    const tabs = await sheets.getSpreadsheetTabs();
-    return Array.isArray(tabs) && tabs.includes(SESSION_PLAN_SETS_TAB);
-  } catch (_) {
-    return false;
-  }
-}
-
-async function _existingByKey() {
+// Pure: the read now happens in `_readLedger`, because that read also proves presence.
+function _existingByKey(rows) {
   const byKey = new Map();
-  let rows;
-  try {
-    rows = await sheets.getSheetRows(SESSION_PLAN_SETS_TAB);
-  } catch (_) {
-    return byKey;
-  }
   for (const row of Array.isArray(rows) ? rows : []) {
     const arr = Array.isArray(row) ? row : [];
     const key = String(arr[KEY_IDX] == null ? '' : arr[KEY_IDX]).trim();
@@ -105,12 +91,20 @@ async function _append(rows, opts = {}) {
   if (!list.length) {
     return { sheet_written: false, no_write_confirmed: true, written: 0, skipped: 0, tab_missing: false, reason: 'empty' };
   }
-  if (!(await _tabExists())) {
+  // Presence is proven by the read this append already needs (see `_readLedger`), not by
+  // a separate metadata probe. `null` means unreadable, which is NOT absence: the previous
+  // `_tabExists()` swallowed every failure into `false` and so reported a momentary outage
+  // as "the owner has not created the tab yet". It now fails closed with its own reason.
+  const ledger = await _readLedger();
+  if (ledger === null) {
+    return { sheet_written: false, no_write_confirmed: true, written: 0, skipped: 0, tab_missing: false, reason: 'ledger_read_failed' };
+  }
+  if (!ledger.present) {
     // Live enabled but the owner has not created the tab yet → 503-style no-op.
     return { sheet_written: false, no_write_confirmed: true, written: 0, skipped: 0, tab_missing: true, reason: 'tab_missing' };
   }
 
-  const existing = await _existingByKey();
+  const existing = _existingByKey(ledger.rows);
   const seen = new Map();
   const toAppend = [];
   for (const row of list) {
@@ -209,11 +203,26 @@ const SEAL_COL_LETTER = _colLetter(SEAL_IDX + 1);
 // exist" — the seal fails closed on it, and the summary flags it.
 //   → { present: boolean }  when the metadata call succeeded
 //   → null                  when the metadata call itself failed
-async function _probeTab() {
+// Read the ledger rows AND report which of the three outcomes occurred, in ONE metered
+// request instead of two.
+//
+// This used to be a `spreadsheets.get` probe followed by the rows read — two requests to
+// answer one question, on every ledger operation. A SUCCESSFUL rows read is strictly
+// better evidence of presence than the probe was: more current, and free. The three
+// outcomes are unchanged and each still means exactly what it meant:
+//   { present: true, rows }  — the tab is there and these are its rows
+//   { present: false }       — CONFIRMED absent by `confirmTabMissing`, which is the one
+//                              authority for that fact and needs its own successful tab
+//                              listing to say so. A verified empty ledger.
+//   null                     — unreadable. Fails closed; never a verified empty seal.
+async function _readLedger() {
   try {
-    const tabs = await sheets.getSpreadsheetTabs();
-    return { present: Array.isArray(tabs) && tabs.includes(SESSION_PLAN_SETS_TAB) };
-  } catch (_) {
+    const rows = await sheets.getSheetRows(SESSION_PLAN_SETS_TAB);
+    return { present: true, rows: Array.isArray(rows) ? rows : [] };
+  } catch (error) {
+    try {
+      if (await sheets.confirmTabMissing(error, SESSION_PLAN_SETS_TAB)) return { present: false, rows: [] };
+    } catch (_) { /* could not confirm ⇒ not evidence of absence ⇒ unreadable */ }
     return null;
   }
 }
@@ -221,16 +230,10 @@ async function _probeTab() {
 async function readLedgerRows(sessionId) {
   const sid = String(sessionId == null ? '' : sessionId).trim();
   if (!sid) return [];
-  const probe = await _probeTab();
-  if (probe === null) return null;      // unreadable — the caller must flag it
-  if (!probe.present) return [];        // confirmed absent — a legacy/no-ledger session
-  let rows;
-  try {
-    rows = await sheets.getSheetRows(SESSION_PLAN_SETS_TAB);
-  } catch (_) {
-    return null;
-  }
-  return (Array.isArray(rows) ? rows : []).filter(r =>
+  const ledger = await _readLedger();
+  if (ledger === null) return null;      // unreadable — the caller must flag it
+  if (!ledger.present) return [];        // confirmed absent — a legacy/no-ledger session
+  return (Array.isArray(ledger.rows) ? ledger.rows : []).filter(r =>
     Array.isArray(r) && String(r[SID_IDX] == null ? '' : r[SID_IDX]).trim() === sid);
 }
 
@@ -251,15 +254,15 @@ async function sealCloseout(session, closeoutWriteId, opts = {}) {
   // ledger (metadata or row read failed) is a ledger failure and FAILS CLOSED
   // (Codex P1, PR #1068): a transient outage must never claim a verified closeout
   // while real rows may sit unstamped.
-  const probe = await _probeTab();
-  if (probe === null) {
+  const ledger = await _readLedger();
+  if (ledger === null) {
     const failed = { sealed: 0, already_sealed: 0, sealed_ok: false, reason: 'ledger_read_failed' };
     return dryRun
       ? { ...dryProof, would_seal: null, read_failed: true, ...failed }
       : { sheet_written: false, no_write_confirmed: true, ...failed };
   }
-  if (!probe.present) {
-    // `sealed_ok:true` on BOTH paths: the probe SUCCEEDED and confirmed there is nothing to
+  if (!ledger.present) {
+    // `sealed_ok:true` on BOTH paths: absence was CONFIRMED and there is nothing to
     // stamp, which is a verified outcome regardless of whether the lane may write. Omitting it
     // on the dry path did not make the dry run safer — the artifact consumer reads an absent
     // field as UNKNOWN, so the omission reported a verified empty seal as `indeterminate` and
@@ -269,15 +272,9 @@ async function sealCloseout(session, closeoutWriteId, opts = {}) {
       ? { ...dryProof, would_seal: 0, already_sealed: 0, sealed_ok: true, no_ledger: true }
       : { sheet_written: false, no_write_confirmed: true, sealed: 0, already_sealed: 0, sealed_ok: true, no_ledger: true, reason: 'tab_missing' };
   }
-  let allRows;
-  try {
-    allRows = await sheets.getSheetRows(SESSION_PLAN_SETS_TAB);
-  } catch (_) {
-    const failed = { sealed: 0, already_sealed: 0, sealed_ok: false, reason: 'ledger_read_failed' };
-    return dryRun
-      ? { ...dryProof, would_seal: null, read_failed: true, ...failed }
-      : { sheet_written: false, no_write_confirmed: true, ...failed };
-  }
+  // Already in hand from the single ledger read above — the separate re-read this
+  // replaced was the second of the two metered requests.
+  const allRows = ledger.rows;
 
   const mine = [];
   allRows.forEach((row, i) => {

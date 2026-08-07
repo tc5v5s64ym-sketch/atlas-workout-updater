@@ -45,7 +45,6 @@ const EFFORT = process.env.EFFORT_SHEET_NAME || 'Effort';
 const LOG_ROWS = `${LOG}!A:Z`;          // getSheetRows — full history
 const LOG_KEYS = `${LOG}!B:G`;          // getLogCompositeKeys — row-level dedup
 const LOG_HEADER = `${LOG}!1:1`;        // header-drift guard
-const LOG_SESSION_IDS = `${LOG}!B:B`;   // session-id column
 const EFFORT_ROWS = `${EFFORT}!A:Z`;
 const EFFORT_HEADER = `${EFFORT}!1:1`;
 const EFFORT_SESSION_IDS = `${EFFORT}!B:B`;
@@ -55,11 +54,9 @@ const COACHING_NOTES_ROWS = 'Coaching_Notes!A:Z';
 const PLANS_ROWS = 'Session_Plans!A:Z';
 const PLANS_HEADER_PROBE = 'Session_Plans!A1:A1';
 const PLANS_HEADER = 'Session_Plans!A1:M1';
-const PLANS_SESSION_IDS = 'Session_Plans!B:B';
 const PLAN_SETS_ROWS = 'Session_Plan_Sets!A:Z';
 const PLAN_SETS_HEADER_PROBE = 'Session_Plan_Sets!A1:A1';
 const PLAN_SETS_HEADER = 'Session_Plan_Sets!A1:P1';
-const PLAN_SETS_SESSION_IDS = 'Session_Plan_Sets!B:B';
 
 // The ledger tabs are read as a set by anything that binds a plan to a performed set:
 // the rows, the header-existence probe and the header itself.
@@ -102,15 +99,19 @@ const DECLARATIONS = [
   { method: 'POST', pattern: /^\/api\/session-plan-sets\/accept$/, ranges: PLAN_SETS_LEDGER },
   { method: 'POST', pattern: /^\/api\/session-plan-sets\/revision$/, ranges: PLAN_SETS_LEDGER },
 
-  // The intent-observe debug lane reads the widest set — it correlates a turn against
-  // every identity column at once. One batch is the whole point here.
-  {
-    method: 'POST', pattern: /^\/api\/debug\/intent-observe$/,
-    ranges: [
-      LOG_ROWS, LOG_SESSION_IDS, EFFORT_SESSION_IDS, DELOAD_ROWS,
-      PLANS_HEADER, PLANS_SESSION_IDS, PLAN_SETS_HEADER, PLAN_SETS_SESSION_IDS
-    ]
-  },
+  // NO DECLARATION for /api/debug/intent-observe, deliberately.
+  //
+  // PR #1271 declared eight ranges here on the belief that the route "reads the widest
+  // set". It does not read at all: the handler builds evidence provenance (no network)
+  // and hands off to `observeChatMessage`, which classifies and APPENDS. Exact
+  // request-scoped attribution confirms zero reads from this route. The twenty reads
+  // previously attributed to it came from the reconstruction tool's
+  // next-completed-request heuristic and belonged to concurrent requests.
+  //
+  // The declaration was therefore not merely dead — it was latent amplification. A
+  // declaration only fires on a route's FIRST read, so the day any code added one read
+  // here, that single read would have pulled an eight-range batch onto an observe-only
+  // route. `test/liveSessionReadBudget.test.js` pins the zero-read contract instead.
 
   // The app-open fan-out. Each of these reads one or two whole tabs; declaring them
   // costs nothing extra and stops the opening burst from spending a request each.
@@ -155,13 +156,20 @@ function createSessionReadBatchMiddleware(sheets = require('../sheets')) {
     // implements only the helpers a test needs must not be turned into a 500. Batching is
     // an optimisation: without it every read simply happens the way it always did.
     if (typeof sheets.runWithReadContext !== 'function') return next();
+    // The request identity travels with the context so every read attempt can name the
+    // HTTP request that caused it. Read accounting only; nothing decides on it.
+    const identity = {
+      requestId: req.requestId || null,
+      method: req.method,
+      path: (req.originalUrl || req.url || '').split('?')[0],
+    };
     sheets.runWithReadContext(() => {
       const ranges = rangesFor(req.method, req.originalUrl || req.url || '');
       if (ranges.length && typeof sheets.declareRequestRanges === 'function') {
         sheets.declareRequestRanges(ranges);
       }
       next();
-    });
+    }, identity);
   };
 }
 

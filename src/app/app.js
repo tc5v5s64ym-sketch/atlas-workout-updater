@@ -10,7 +10,7 @@
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-import { API_KEY_STORAGE, api, authState, friendlyTransportMessage, getApiKey, isConnected, refreshSessionStatus, sessionLogin, sessionLogout } from './api.js';
+import { API_KEY_STORAGE, api, authState, coalescedGet, currentInputsEpoch, mutationsInFlight, friendlyTransportMessage, getApiKey, isConnected, refreshSessionStatus, sessionLogin, sessionLogout } from './api.js';
 import { BUG_REPORT_ACTION_LIMIT, BUG_REPORT_ERROR_LIMIT, BUG_REPORT_RECENT_API_LIMIT, BUG_REPORT_REDACTED, BUG_REPORT_SECRET_VALUE_PATTERNS, BUG_REPORT_SIZE_BUDGET, BUG_REPORT_STORAGE_KEY_RE, atlasActionLog, atlasRecentApiRequests, atlasRecentErrors, recordAtlasAction, recordAtlasError } from './bugReport.js';
 import { el, loadExerciseDatalist, renderTable, setStatus, svgBarChart, svgLineChart } from './dom.js';
 import { loadHistory, loadSessions } from './historyView.js';
@@ -800,9 +800,18 @@ async function loadDashboard() {
   // synchronous flag — isConnected() is false only after a real 401 / negative status.
   if (!isConnected()) { renderDashboardConnectPrompt(); return; }
 
+  // Below-fold sources, started in the SAME TICK as the above-fold pair rather than after
+  // the await — they never depended on it, and starting them now is what makes the shared
+  // reads coalesce deterministically instead of by timing luck (see coalescedGet in api.js).
+  loadCoaching();
+  loadWeeklySummary();
+  loadRecentHistory();
+  loadRecentPrs();
+  loadStalls();
+
   // Fire intent-recommendation + progress/summary first — they feed the above-fold region.
   const [intentResult, summaryResult] = await Promise.allSettled([
-    api('/api/plan/intent-recommendation'),
+    coalescedGet('/api/plan/intent-recommendation'),   // shared with loadCoachPlan
     api('/api/progress/summary')
   ]);
 
@@ -847,13 +856,6 @@ async function loadDashboard() {
   // the guide box; it degrades to the default tagline when the engine named no
   // session (cold start / offline / no key).
   emitGlanceReady(intentData);
-
-  // Below-fold sources load independently; each fills its own glance card.
-  loadCoaching();
-  loadWeeklySummary();
-  loadRecentHistory();
-  loadRecentPrs();
-  loadStalls();
 }
 
 // Coach-first home opener (owner 2026-07-03, PR-1): the hero speaks a coaching
@@ -987,7 +989,7 @@ async function loadCoachPlan() {
   if (!isConnected()) { card.hidden = true; return; }
 
   const [intentResult, planResult] = await Promise.allSettled([
-    api('/api/plan/intent-recommendation'),
+    coalescedGet('/api/plan/intent-recommendation'),   // shared with loadDashboard
     api('/api/plan/today')
   ]);
 
@@ -1057,7 +1059,7 @@ async function loadWeeklyCoach() {
 
   const [reportResult, insightsResult] = await Promise.allSettled([
     api('/api/report/weekly'),
-    api('/api/coaching/insights')
+    coalescedGet('/api/coaching/insights')   // shared with loadCoaching
   ]);
 
   // report/weekly is the core source — without it there's nothing to show.
@@ -3879,7 +3881,7 @@ function setGlanceHint(id, text) {
 async function loadCoaching() {
   const box = document.getElementById('coaching');
   try {
-    const res = await api('/api/coaching/insights');
+    const res = await coalescedGet('/api/coaching/insights');   // shared with loadWeeklyCoach
     const data = res.data || {};
     box.innerHTML = '';
 
@@ -3968,7 +3970,8 @@ async function loadRecentHistory() {
 async function loadRecentPrs() {
   const box = document.getElementById('recent-prs');
   try {
-    const res = await api('/api/prs/recent');
+    // Coalesced with fetchSessionPrLabel — both fire after the same Save.
+    const res = await coalescedGet('/api/prs/recent');
     const prs = res.data?.prs || [];
     box.innerHTML = '';
     setGlanceHint('recent-prs-hint', prs.length ? `${prs.length} personal best${prs.length === 1 ? '' : 's'} 🎉` : 'Your bests will land here');
@@ -4464,6 +4467,9 @@ let planTodayByNameCache = null;
 function clearLiveHintCaches() {
   lastTimeCache.clear();
   planTodayByNameCache = null;
+  // Belt and braces beside the epoch: a confirmed write already steps it, and a session
+  // reset means the next session's questions are new ones anyway.
+  reactionCache.clear();
 }
 
 async function getPlanTodayByName() {
@@ -6406,10 +6412,68 @@ async function fetchReaction(liftCode, justLoggedSet) {
     }
     const qs = params.toString();
     const path = `/api/recommend/next/${encodeURIComponent(liftCode)}${qs ? `?${qs}` : ''}`;
+
+    // REUSE AN ANSWER THAT CANNOT HAVE CHANGED.
+    //
+    // The captured manifest shows this exact request issued TWICE for every lift — 1.9 s to
+    // 12 s apart, identical parameters — because both sets of a pair were logged at the same
+    // load, so the second set produced the same question. Six reads, against a 60-per-minute
+    // quota, for six answers already on screen.
+    //
+    // Every input is accounted for. The lift code, the plan intent and the just-logged
+    // w/reps/rir are all IN THE URL, so a different set is a different key and is never
+    // reused. The only other inputs are the three tabs the engine reads — Log_Cleaned,
+    // Deload_State, Constraints — and `currentInputsEpoch()` steps whenever this client did
+    // anything that might have changed them (see api.js: pessimistic by default, and a
+    // test_mode preview is excused only by the W1–W3 dry-run proof that it wrote nothing).
+    //
+    // So a legitimate call after a newly written set always goes to the server: the live Save
+    // steps the epoch, and the next set changes the URL anyway. Only a repeat of the same
+    // question, with provably unchanged inputs, is answered from what we already have.
+    // THE CACHE IDENTITY, and the two things the exact-head review found missing from it.
+    //
+    // (1) THE OWNER'S DAY. `recommendNextSet` decides staleness against the effective
+    //     current day, so the same URL asked either side of midnight is a different
+    //     question. The day is part of the key, which means a rollover cannot be survived
+    //     by any entry — no expiry timer to get wrong, and no entry that outlives the day
+    //     it was computed in.
+    // (2) A MUTATION STILL IN THE AIR. The epoch only steps once a non-GET SETTLES, so
+    //     between issuing a Save and its response the epoch still reads pre-write. A hit in
+    //     that window would serve an answer computed before the athlete's own write. While
+    //     anything that might mutate is unresolved there is no reuse at all.
+    //
+    // Neither weakens the reuse a preview must survive: a `test_mode` request settles with
+    // the W1–W3 dry-run proof, the epoch does not step, and the next identical question is
+    // still answered from what we have.
+    const cacheKey = `${getLocalDateString()}|${path}`;
+    const cached = reactionCache.get(cacheKey);
+    if (cached && cached.epoch === currentInputsEpoch() && !mutationsInFlight()) return cached.data;
+
+    const epochAtRequest = currentInputsEpoch();
+    const mutatingAtRequest = mutationsInFlight();
     const res = await api(path);
-    return res.data || null;
+    const data = res.data || null;
+    // Never REMEMBER an answer that could already be stale: something changed while it was
+    // in flight, or a mutation was unresolved at either end of it. This caller still gets
+    // the answer it asked for; no later caller inherits the doubt.
+    if (currentInputsEpoch() === epochAtRequest && !mutatingAtRequest && !mutationsInFlight()) {
+      rememberReaction(cacheKey, epochAtRequest, data);
+    }
+    return data;
   } catch {
     return null;
+  }
+}
+
+// Bounded on purpose: one entry per distinct question, oldest dropped first. A session asks
+// a handful; the cap means a long one can never grow this without limit.
+const REACTION_CACHE_MAX = 32;
+const reactionCache = new Map();
+function rememberReaction(cacheKey, epoch, data) {
+  reactionCache.delete(cacheKey);
+  reactionCache.set(cacheKey, { epoch, data });
+  while (reactionCache.size > REACTION_CACHE_MAX) {
+    reactionCache.delete(reactionCache.keys().next().value);
   }
 }
 
@@ -6454,7 +6518,8 @@ async function checkAndSuggestSubstitute(text) {
 async function fetchSessionPrLabel(liftCode, sessionId) {
   if (!liftCode || !sessionId || !isConnected()) return '';
   try {
-    const res = await api('/api/prs/recent');
+    // Coalesced with the dashboard refresh — both fire after the same Save.
+    const res = await coalescedGet('/api/prs/recent');
     const prs = res.data?.prs || [];
     const code = String(liftCode).toUpperCase();
     const pr = prs.find(p => String(p.liftCode || '').toUpperCase() === code);
@@ -6492,6 +6557,48 @@ async function attachVerdictContext(rec, liftCode, sessionId) {
   rec.prLabel = prLabel;
   rec.stall = stall;
   return rec;
+}
+
+// WRITE VERIFICATION — one authority, one path, never both.
+//
+// WINNER: the append receipt the server adjudicated in the write response
+// (`log_write_verification`, services/appendWriteProof.js). It carries the exact appended
+// range, the exact row count and session ownership, produced by the append itself, and it
+// costs no Sheets read. The read-back it replaces cost one metered read at closeout — the
+// instant the 2026-08-05 qualifying session hit its 429s.
+//
+// FALLBACK: `GET /api/log-workout/verify-range`, reached ONLY when the server returned no
+// verdict at all — a deployment older than that field. It is NOT reached when the verdict
+// says false: that is a real negative answer from the authority, and re-asking a weaker
+// source would launder it.
+//
+// The branches are exclusive by construction, so one successful Save produces exactly one
+// verification from exactly one authority. `tests/e2e/write-verification-authority.spec.js`
+// counts the requests the browser actually makes; `test/appendWriteProof.test.js` proves
+// the verdict describes the append that happened.
+//
+// SUNSET for the fallback and for the route: delete both once no deployment reachable by
+// this client omits `log_write_verification` — concretely, when `POST /api/log-workout` has
+// published it for a full campaign phase and no qualifying session's evidence records a
+// fallback invocation. Recorded in docs/ATLAS_SYSTEM_AUTHORITY.md (concept 11b).
+function reportWriteVerification(statusEl, lastWriteDetails) {
+  if (!lastWriteDetails) return;
+  const note = text => statusEl.appendChild(el('div', { class: 'parser-status', text }));
+  const verdict = lastWriteDetails.log_write_verification;
+  if (verdict) {
+    note(verdict.verified === true
+      ? 'Verified in Sheet ✓'
+      : `Write succeeded, but verification was inconclusive (${verdict.reason || 'unknown'})`);
+    return;
+  }
+  if (!lastWriteDetails.log_appended_range) return;
+  verifyWrittenRange(
+    lastWriteDetails.log_appended_range,
+    lastWriteDetails.session_id,
+    lastWriteDetails.log_rows_written
+  ).then(ok => {
+    note(ok ? 'Verified in Sheet ✓' : 'Write succeeded, but readback verification unavailable');
+  });
 }
 
 async function verifyWrittenRange(range, sessionId, expectedRows) {
@@ -8589,7 +8696,9 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
           log_appended_range: writeData.logAppendedRange,
           // Server-reported identity first: it may have allocated one for a blank payload.
           session_id: writeData.session_id || realPayload.session_id,
-          log_rows_written: writeData.log_rows_written
+          log_rows_written: writeData.log_rows_written,
+          // Carried verbatim — the client never derives or upgrades a verdict.
+          log_write_verification: writeData.log_write_verification || null
         };
       }
       // Step 385: mark that this deload session had a confirmed live write so
@@ -8675,17 +8784,7 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
       undoBtn.addEventListener('click', () => handleUndoLastWrite());
       loggerStatus.appendChild(undoBtn);
     }
-    if (pendingLastWrite?.log_appended_range) {
-      verifyWrittenRange(
-        pendingLastWrite.log_appended_range,
-        pendingLastWrite.session_id,
-        pendingLastWrite.log_rows_written
-      ).then(ok => {
-        loggerStatus.appendChild(el('div', { class: 'parser-status', text: ok
-          ? 'Verified in Sheet ✓'
-          : 'Write succeeded, but readback verification unavailable' }));
-      });
-    }
+    reportWriteVerification(loggerStatus, pendingLastWrite);
     if (reactionLiftCodes.length) {
       fetchReaction(reactionLiftCodes[0]).then(async rec => {
         if (!rec) return;

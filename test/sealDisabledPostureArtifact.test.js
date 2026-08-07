@@ -46,11 +46,16 @@ const { buildTurnWriteArtifact } = require('../services/turnWriteArtifact');
 // ── producer harness: the same require.cache sheets stub the store suite uses ──
 const state = { tabs: ['Session_Plan_Sets'], rows: [], updates: [] };
 const fakeSheets = {
+  // A missing tab surfaces as Google's unresolved-range rejection, and absence is
+  // CONFIRMED only by confirmTabMissing — the store proves presence from this read now,
+  // not from a separate metadata probe.
   getSpreadsheetTabs: async () => state.tabs.slice(),
   getSheetRows: async (tab) => {
-    if (!state.tabs.includes(tab)) throw new Error('tab missing');
+    if (!state.tabs.includes(tab)) throw new Error(`Unable to parse range: ${tab}!A:Z`);
     return state.rows.slice();
   },
+  confirmTabMissing: async (error, tab) => /Unable to parse range/i.test(String(error && error.message))
+    && !state.tabs.includes(tab),
   appendRows: async () => ({ data: { updates: { updatedRange: null, updatedRows: 0 } } }),
   readRange: async () => [['idempotency_key']],
   updateColumnCells: async (tab, column, cells) => {

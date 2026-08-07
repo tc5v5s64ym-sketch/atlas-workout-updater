@@ -126,6 +126,113 @@ export function friendlyTransportMessage(err) {
   return null;
 }
 
+// ── Coalesced reads ─────────────────────────────────────────────────────────
+//
+// The app opens by fanning out across several cards, and more than one card needs the SAME
+// read. `loadDashboard` and `loadCoachPlan` both want /api/plan/intent-recommendation;
+// `loadDashboard` and `loadWeeklyCoach` both want /api/coaching/insights; after a Save the
+// dashboard refresh and the verdict strip both want /api/prs/recent. The 2026-08-05
+// qualifying session's request manifest shows each of those pairs issued 0.4–0.9 s apart,
+// against a 60-read-per-minute quota.
+//
+// This coalesces only requests that OVERLAP IN TIME: a second caller joins a request that
+// is still in flight. It is not a cache. Nothing is remembered after the response arrives,
+// so a later call always goes to the server, and no response is ever served past the
+// instant it was fetched.
+//
+// WHY THAT IS SAFE ACROSS A WRITE. Any non-GET request clears the in-flight map when it
+// settles (see below), so a read STARTED after a write completed can never attach to a read
+// that started before it — it issues its own request and sees the post-write state. A read
+// that was already in flight when the write began could equally have raced it without this,
+// so nothing new is suppressed. Legitimate calls after newly written sets keep going to the
+// server; only genuinely simultaneous, identical requests share one.
+//
+// Each caller gets its OWN copy of the body, so one card cannot mutate another's data.
+const inflightReads = new Map();
+
+export function coalescedGet(path) {
+  const existing = inflightReads.get(path);
+  if (existing) return existing.then(body => copyOf(body));
+  const request = api(path).finally(() => {
+    if (inflightReads.get(path) === request) inflightReads.delete(path);
+  });
+  inflightReads.set(path, request);
+  return request.then(body => copyOf(body));
+}
+
+/** Forget every in-flight read. Called whenever a write settles. */
+export function dropCoalescedReads() {
+  inflightReads.clear();
+}
+
+// ── When could a read's answer have changed? ────────────────────────────────
+//
+// A monotonic counter that steps whenever this client did something that MIGHT have changed
+// what the server would answer. A caller can therefore prove an answer is still current by
+// comparing epochs, instead of guessing from a clock.
+//
+// It is deliberately PESSIMISTIC. Every non-GET steps it, and there are exactly two ways out:
+//
+//   1. the response carries the dry-run proof (`no_write_confirmed: true` AND
+//      `sheet_written: false`) — Invariants W1–W3, the same proof the write path itself
+//      relies on. A test_mode preview writes nothing anywhere, so nothing can have changed;
+//   2. the path is one of the two observation-only writers below.
+//
+// A new write route therefore invalidates by default — it has to be added here deliberately,
+// with evidence, to stop doing so.
+//
+// The two exceptions are not assumptions. `test/recommendationInputWrites.test.js` replays
+// the whole captured session against the real app and records every tab each request wrote:
+// /api/coach/message and /api/debug/intent-observe write only their observation tabs, and in
+// that entire session the ONLY request that wrote a tab a recommendation reads was the live
+// POST /api/log-workout. That test fails if either route starts writing one.
+let inputsEpoch = 0;
+const OBSERVATION_ONLY_WRITERS = new Set(['/api/coach/message', '/api/debug/intent-observe']);
+
+export function currentInputsEpoch() {
+  return inputsEpoch;
+}
+
+// ── …and while one is still in the air? ─────────────────────────────────────
+//
+// The epoch steps when a non-GET SETTLES, which leaves a race the exact-head review caught:
+// between issuing a Save and its response, the epoch still reads pre-write, so a reuse
+// keyed only on the epoch could hand back an answer computed before the write the athlete
+// just made. The window is exactly as long as the request takes — the worst moment to be
+// serving a stale prescription.
+//
+// So a potentially-mutating request also makes itself known WHILE IT IS UNRESOLVED. During
+// flight nothing can be proven about it: the dry-run proof arrives with the response, so the
+// pessimistic reading is the only honest one and every non-GET counts. Once it settles, the
+// proof is available and the epoch rule takes over — which is what preserves reuse across a
+// `test_mode` preview.
+//
+// The two observation-only writers are exempt here for the same audited reason they are
+// exempt from the epoch, and for no other: `test/recommendationInputWrites.test.js` replays
+// the whole captured session and shows they write only their observation tabs. The allowlist
+// is not widened for this.
+let pendingMutations = 0;
+
+export function mutationsInFlight() {
+  return pendingMutations > 0;
+}
+
+function noteMaybeChangedInputs(path, method, json) {
+  if (method === 'GET') return;
+  if (OBSERVATION_ONLY_WRITERS.has(String(path).split('?')[0])) return;
+  const data = json && json.data ? json.data : json;
+  if (data && data.no_write_confirmed === true && data.sheet_written === false) return;
+  inputsEpoch += 1;
+}
+
+function copyOf(body) {
+  try {
+    return typeof structuredClone === 'function' ? structuredClone(body) : JSON.parse(JSON.stringify(body));
+  } catch (_) {
+    return body;   // a body that cannot be copied is still better than no body
+  }
+}
+
 export async function api(path, options = {}) {
   // Internal, header-only response seam used by the bounded turn-correlation protocol.
   // Strip it before fetch so it can never become a wire option or enter response bodies,
@@ -152,9 +259,27 @@ export async function api(path, options = {}) {
   const key = getApiKey();
   if (key) headers['x-atlas-api-key'] = key;
   const method = fetchOptions.method || 'GET';
+  const mutationCandidate = method !== 'GET' && !OBSERVATION_ONLY_WRITERS.has(String(path).split('?')[0]);
+  if (mutationCandidate) pendingMutations += 1;
   const startedAt = Date.now();
   let res = null;
   let json = null;
+  // ONE SETTLEMENT VERDICT PER LOGICAL REQUEST, across every transport attempt.
+  //
+  // The transport retry below re-enters `api()` and returns its result. Because a `return`
+  // inside `try` is awaited before `finally` runs, the OUTER call's finally would otherwise
+  // run a second time after the inner one had already settled — and with the outer's own
+  // `json`, which is null, because the outer attempt never received a body. For a dry-run
+  // preview that is exactly backwards: the inner attempt carried the W1–W3 proof
+  // (`no_write_confirmed` and `sheet_written: false`), so the epoch correctly stayed put,
+  // and then the outer's null would step it anyway — throwing away a proven no-write and
+  // needlessly invalidating the recommendation reuse that C4 depends on.
+  //
+  // So the attempt that DELEGATES settles nothing: the attempt that actually got an answer
+  // owns the verdict. The counter is still balanced here (each attempt increments once and
+  // decrements once) and never reaches zero across the handoff, because the inner attempt
+  // increments before the outer decrements.
+  let delegatedToRetry = false;
   try {
     // same-origin so the HttpOnly session cookie is attached on /api calls.
     res = await fetch(path, { credentials: 'same-origin', ...fetchOptions, headers });
@@ -213,10 +338,24 @@ export async function api(path, options = {}) {
       !(options.signal && options.signal.aborted);
     if (retryable) {
       await new Promise(resolve => setTimeout(resolve, 1500));
+      delegatedToRetry = true;
       return api(path, { ...options, _retriedTransport: true });
     }
     throw err;
   } finally {
+    // A write may change what any read would answer, so no read started AFTER this write
+    // settles may attach to one that started before it. Doing it here — rather than at each
+    // write site — means a new write route cannot forget to. See coalescedGet above.
+    if (method !== 'GET') dropCoalescedReads();
+    // Skipped only when this attempt handed off to a retry — that retry has already
+    // settled the epoch from the response it really received. Every other path, including
+    // a live write that failed at transport and was NOT retried, still settles here with
+    // `json === null` and steps the epoch: a request that never came back proves nothing
+    // about whether it wrote, and the pessimistic reading is the only honest one.
+    if (!delegatedToRetry) noteMaybeChangedInputs(path, method, json);
+    // Released only after the epoch has been updated, so there is no instant where the
+    // request is neither in flight nor accounted for.
+    if (mutationCandidate) pendingMutations = Math.max(0, pendingMutations - 1);
     atlasRecentApiRequests.push({
       at: new Date().toISOString(),
       method,

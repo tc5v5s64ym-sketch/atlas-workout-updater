@@ -13,7 +13,13 @@ function createTtlCache(defaultTtlMs = 30000) {
     store.set(key, { value, expiresAt: Date.now() + ttlMs });
     return value;
   }
-  return { get, set };
+  // Drop ONE key. A caller that knows exactly what its write made stale should not have to
+  // throw away entries that are still true. Deleting an absent key is a no-op, so a caller
+  // may name a tab this cache never holds.
+  function del(key) {
+    return store.delete(key);
+  }
+  return { get, set, delete: del };
 }
 
 module.exports = { createTtlCache };
