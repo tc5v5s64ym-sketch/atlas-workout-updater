@@ -440,6 +440,32 @@ Only the **receipt** moves for the last four. Their rows keep going to their She
 `S4` deletes the file-backed store, `ATLAS_IDEMPOTENCY_FILE`, and
 `/tmp/atlas-idempotency.json`, and **proves no caller of the file store remains**.
 
+**Four operations, not three.** *Added by the advisory review of `7057b31`, which found
+`peekWrite` live at `index.js:2511` and absent from this specification.* `peekWrite` is a
+**read-only, non-mutating** lookup by `write_id`, TTL-bounded, that recovers a prior attempt's
+record — including the **server-minted `session_id`** the earlier attempt allocated
+(`test/idempotencyPersistence.test.js`, WRITE-2). Moving the store without specifying it would
+leave a live caller with no replacement. In Supabase it is a plain
+`SELECT … WHERE write_id = $1 AND created_at > now() - interval '24 hours'`; an expired row
+reads as absent, exactly as today.
+
+**The 24-hour TTL becomes a predicate plus a job, not an on-load prune.** The file store prunes
+when it loads from disk. Postgres has no load, so the same rule is expressed twice: every read
+filters on `created_at > now() - interval '24 hours'` so an expired row is never returned, and
+a periodic job deletes expired rows so the table does not grow without bound. The **behaviour**
+is unchanged; only the mechanism is. Saying "the TTL keeps its current meaning" without saying
+this specified nothing.
+
+**One safety property is deliberately reversed at `S4`, and that is recorded rather than
+implied.** Today persistence is best-effort: *"a disk failure NEVER fails a workout write; the
+module falls back to in-memory operation"* (`services/idempotency.js:16-18`). That is correct
+while Sheets is the write authority and the receipt is only a shield. After `S4` the receipt is
+written **inside the Save's own transaction against the authority**, so a receipt failure
+**fails the Save closed**. This is the intended and safer behaviour — a write whose duplicate
+shield did not persist must not be reported as committed — but it **is** a reversal of a
+documented property, and `S4` states it in its merge card rather than letting it happen
+quietly.
+
 #### `S2` and `S3` do not mirror receipts at all
 
 **Correction, from the owner review of `2ce7be3`, replacing the mechanism the review of
@@ -980,8 +1006,19 @@ entirely, and removes the need to serve any athlete read from an inert shadow.
      `scripts/reconstruct-session-reads.js`, and `docs/READ_BUDGET.md`;
    - **the file-backed idempotency store**, `ATLAS_IDEMPOTENCY_FILE`, and
      `/tmp/atlas-idempotency.json` — with a proof that **no caller of it remains** (ruling
-     D4).
+     D4). `ATLAS_IDEMPOTENCY_FILE` is read by **six** test files, not only the two named
+     above; `S4` removes every reference.
 4. Verify the deleted machinery is genuinely absent, and record the count.
+
+**A guarantee may not be deleted along with its mechanism.**
+`test/idempotencyPersistence.test.js` proves eleven behaviours of the receipt store. Some are
+file-format specific and die with the file — corrupt-file recovery, the legacy bare-array
+shape, `resetIdempotencyStore`. **Five are authority guarantees and must be re-proven against
+Supabase BEFORE that suite is deleted** (§6.3 P16a): a completed write is replayed after a
+restart; a stale `in_progress` record becomes retryable; a recent `in_progress` record still
+blocks a retry after a restart; WRITE-3's rehydrated downgrade; and WRITE-2's recovery of the
+server-minted `session_id` through `peekWrite`. Deleting the suite with the store would
+silently drop the proofs for properties the new authority still owes.
 
 **Nothing survives `S4`.** Ruling D4 removed the only artifact an earlier version of this
 design let survive. If any item on the list above cannot be deleted at `S4`, that is an open
@@ -1286,6 +1323,8 @@ Everything in §6.2, re-run after the cutover, plus:
 | P14e | **Undo reaches the mirror.** Undo a Save on an already-exported session and prove: the session re-enters the export queue; the rewrite stays **inside its own allocated block**, blanking the tail; no other session's rows are touched; and the cursor does not move backwards. Separately prove `deleteRowsByRange` is **absent** for every mirrored tab. |
 | P14f | **Any post-export mutation re-enters the queue.** Mutate an exported session's Supabase data — including a `closeout_write_id` seal — and prove `sheets_exported_at` is cleared and the session is re-exported. A session that changed and stayed exported is a stale mirror. |
 | P14g | **A session with no `Effort` row receives no `Effort` allocation**, and the `Effort` cursor does not advance for it. |
+| P16a | **The five authority guarantees of `test/idempotencyPersistence.test.js` are re-proven against Supabase** — restart replay, stale-`in_progress` retryability, recent-`in_progress` duplicate blocking, the WRITE-3 rehydrated downgrade, and WRITE-2's `peekWrite` recovery of the server-minted `session_id` — **before** that suite is deleted. A deleted suite whose guarantees were not re-proven is a lost proof, not a cleanup. |
+| P16b | **`peekWrite` has a working Supabase implementation with its live consumer (`index.js:2511`) exercised**, and an expired row is proven to read as absent. |
 | P15 | **The open-divergence count is zero** and every `atlas.migration_divergences` row is `closed`. If not, `S4` does not merge. |
 | P16 | **No caller of the file-backed idempotency store remains**, proven by search, and the store, its env var, and its file are absent. |
 | P17 | The deletion list of §5.4 is verified absent, including the dropped `atlas.migration_divergences` table. |
