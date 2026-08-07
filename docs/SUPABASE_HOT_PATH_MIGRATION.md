@@ -179,8 +179,13 @@ Holds session identity, its allocation, and the Sheets-export state of that sess
   `(session_id) WHERE sheets_exported_at IS NULL` — the export worker's queue scan.
 - **Mutability:** insert-only for identity. Exactly **six** columns are updatable —
   `sheets_exported_at`, `sheets_export_attempts`, `sheets_export_error`,
-  `sheets_export_state`, `sheets_export_next_attempt_at`, and `export_claim_token` — and only
-  the `S4` export worker and the §5.7 rebuild update them. They are unused before `S4`. The
+  `sheets_export_state`, `sheets_export_next_attempt_at`, and `export_claim_token`. Three
+  writers touch them, and the earlier text named only two: the `S4` export worker, the §5.7
+  owner-only rebuild, **and the runtime itself** — an undo (§5.6) and a closeout-seal
+  invalidation both clear `sheets_exported_at` and return the session to `queued`, which is what
+  gates P14e and P14f prove. *Corrected by the advisory review of `ec53270`: a mutability rule
+  that omits a live writer understates who can change export state.* They are unused before
+  `S4`. The
   export **destination** is not among them: it lives in `atlas.sheets_mirror_allocations`
   (§3.9).
 - **Transaction boundary for allocation:** one statement.
@@ -620,7 +625,7 @@ deletes rows whose `expires_at` has passed so the table does not grow without bo
 **behaviour** is unchanged; only the mechanism is. Saying "the TTL keeps its current meaning"
 without saying this specified nothing.
 
-**The TTL epoch resets on every newly-owned retry — a correction from the owner review of
+**The TTL epoch resets on every newly-owned retry — a correction from the required review of
 `771ff83`.** The earlier SQL filtered on `created_at` and never refreshed it, while the
 `failed → in_progress` and stale-`in_progress` transitions advanced only `attempt_started_at`.
 That silently lost time the file store gives: it starts a **clean record** on a retry, so the
@@ -844,7 +849,7 @@ divergence reason, no repair state, no comparison result, and no closure proof.
 
 It is **migration-control machinery, not product data**. It is dropped by `S4`.
 
-**Nothing that outlives `S4` may write to it — a correction from the owner review of
+**Nothing that outlives `S4` may write to it — a correction from the required review of
 `771ff83`.** An earlier version had the post-cutover exporter open a `mirror_range_occupied`
 divergence here, and route whole-tab duplicate detection here too. Both are **permanent**
 mechanisms; this table and its sweep and repair worker are **temporary**. After `S4` there
@@ -1079,7 +1084,7 @@ the Sheets reader only and is not needed against Supabase. Keep it while the rea
 | 2 | `Muscle_Group` | `muscle_group` | none | |
 | 3 | `Lift Code` | `lift_code` | none | The space in the header is preserved by the reader, not by the column name. |
 | 4 | `Canonical_Exercise` | `canonical_exercise` | none | |
-| — | *(none)* | `synced_at` | new | Mirror provenance. |
+| — | *(none)* | `sync_id` | new | Mirror provenance — the generation that wrote the row, `REFERENCES atlas.exercise_catalog_sync(sync_id)` (§3.7). *Corrected by the advisory review of `ec53270`: this row previously mapped to a `synced_at` column that §3.7 does not define. Provenance is the generation, not a per-row timestamp — `exercise_catalog_sync` already carries `started_at` and `verified_at`, so a second clock on the mirror row would be a duplicate freshness authority, which is exactly what §3.7 split the two tables to avoid.* |
 
 ### 4.6 Idempotency store → `atlas.write_receipts`
 
@@ -1274,7 +1279,7 @@ old and new, with no deploy and no restart. That is what makes §5.5 step 1 exec
 indexed single-row read per write request is affordable: these routes run a handful of times
 per session.
 
-**Failure posture — a failed read is a refusal, not a fallback.** *Corrected by the owner
+**Failure posture — a failed read is a refusal, not a fallback.** *Corrected by the required
 review of `310b01b`, which found the previous "last value read successfully" rule failing
 **open** in the exact race the control exists to close: an instance reads `frozen = false`, the
 owner then freezes, the instance's next freeze read fails, and the retained `open` value
@@ -1423,7 +1428,7 @@ entirely, and removes the need to serve any athlete read from an inert shadow.
 2. **Export a completed session to Google Sheets asynchronously**, after closeout. The
    export writes the same columns in the same owner-approved order. An export failure never
    fails a workout and never changes a visible claim.
-3. Delete, **in the same PR**. *The `S4a` / `S4b` two-build split that the owner review of
+3. Delete, **in the same PR**. *The `S4a` / `S4b` two-build split that the required review of
    `fcafa75` introduced here was **withdrawn by owner ruling on 2026-08-07** (decision D6,
    §9): the durable-capture correction had already removed its premise, because the rollback
    **data** is the verified receipt rows in `atlas.write_receipts` and the rollback **code**
@@ -2185,6 +2190,7 @@ operation. No lower rung substitutes for a higher one.
 | P8a | **The receipt TTL epoch resets on retry.** Seed a retryable receipt just under 24 hours old; claim a new attempt; complete it; advance the clock past the **original** expiry but inside 24 hours of the retry; and prove `peekWrite` and duplicate replay still succeed. A retry that inherits the first attempt's expiry fails this. |
 | P8b | **The real Render-compatible connection path works.** Open a **Supavisor session-mode** connection as **each of the four roles** — including the owner-only `atlas_rebuild`, which needs a working connection when a rebuild runs — run a multi-statement transaction, and prove a **session-level advisory lock survives across statements** — the exact behaviour the exporter depends on and the exact behaviour transaction mode would silently break. Prove each pooler connection authenticates as its intended role. Assumed IPv6 reachability does not count as proof. |
 | P9 | Every drift and authority guard passes. `npm test`, the Playwright suite, lint, syntax, and the secret scan pass. |
+| P10 | **The Supabase GitHub integration cannot reach production** (§8.5). Production auto-deploy and automatic migration are shown **OFF** at the exact head; a merge to the default branch is proven to leave `Atlas Production`'s migration count unchanged; and no GitHub-triggered path holds a production credential. Preview branches may back the disposable database P2 requires, and a green preview check is proven to be evidence about that disposable database only. |
 
 ### 6.2 Gate for `S3` (backfill, parity and readiness — no cutover)
 
@@ -2453,6 +2459,39 @@ RLS policy is a false security claim.
   restore into a scratch database. A backup that has never been restored is not a backup.
   `npm run backup:sheets` remains and keeps covering the Sheets mirror.
 - The `S4` gate requires a restore proof, not a backup setting.
+
+### 8.5 The Supabase GitHub integration — a real path, and what it may not do
+
+*Added by the advisory review of `ec53270`.* The integration **already exists on this
+repository** — its `Supabase Preview` check runs on this very PR, where it reports `skipped`
+because `S1` contains no migration. An automation path that can create databases and apply
+migrations is infrastructure, and infrastructure that is not written down is not governed.
+Recording it before `S2` is what stops it from silently becoming the thing that applies a
+schema to production.
+
+**What it may do.** Back the **disposable integration database** that §6.1 P2 requires. A
+preview branch created per pull request, seeded by the checked-in migrations and destroyed with
+the branch, satisfies "a real disposable Supabase/Postgres database, created and destroyed per
+CI run" without a second mechanism. `S2` may use it.
+
+**What it may not do, and this is the load-bearing half.**
+
+- **Production auto-deploy and automatic migration must be OFF.** No branch merge, no push, no
+  workflow run and no GitHub event may apply a migration to `Atlas Production`.
+- **No GitHub-triggered path may hold a production credential.** The preview path gets
+  preview-branch credentials only. `Atlas Production`'s connection strings and role passwords
+  stay out of Actions entirely — they are the credentials §8.1 says matter, and §8.4 already
+  forbids committing them.
+- **Production schema application stays an owner gate**, executed by Dale against
+  `Atlas Production` (§9). A green preview check is evidence about a disposable database and is
+  **never** evidence that production schema is correct or applied.
+- **The project reference is still a secret.** Recording that the integration exists is not
+  recording which project it points at (§8.4).
+
+**Proven, not assumed.** `S2` adds gate **P10** (§6.1): the production auto-deploy and
+automatic-migration settings are shown OFF at the exact head, and a merge to the default branch
+is proven to leave `Atlas Production`'s migration count unchanged. A setting nobody has looked
+at is a setting nobody controls.
 
 ---
 

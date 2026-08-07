@@ -406,7 +406,8 @@ revisions, item outcomes, and closeout and write receipts.
   falsifies — its content is dictated by owner ruling D2 and Dale writes the text); and the
   PR S4 cutover itself, which additionally requires a verified backup, a proven restore, a
   stated rollback window, and an open-divergence count of zero. Decisions D1, D3, D4 and D5
-  are **resolved** by the owner review of 2026-08-07.
+  are **resolved** by the required Atlas Contract / Systems Reviews of 2026-08-07; D6 is
+  **withdrawn** and D7 (whether the write freeze survives the migration) is **open**.
 - **Phase 4 relevance.** None yet. The migration changes where the record lives. It changes
   no engine, no decision, no packet, and no trace. `preview → approve → write`, `test_mode`
   semantics, and the W1–W3 proof fields are untouched.
