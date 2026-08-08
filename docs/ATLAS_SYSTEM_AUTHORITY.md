@@ -378,8 +378,19 @@ revisions, item outcomes, and closeout and write receipts.
   and applying it is an owner gate. The only place these migrations are applied is the
   **disposable proof database** of §6.1 P2 — a plain Postgres container created from empty and
   destroyed with each run, holding no Atlas data and outliving nothing.
-  The competing authority appears when the schema is applied and the shadow lane is
-  configured, and PR S4 removes it.
+  **Applying the schema and configuring the lane will not create one either**, and the map must
+  say so before that happens rather than after: at that point Supabase becomes a live
+  **shadow / bridge target** — an observational persistence destination whose write cannot
+  change a response, a status code, a proof field, or a visible claim. PR S2 and PR S3 move no
+  athlete-facing read or write, so Sheets still decides alone. This map's own honesty rule
+  already says reachable or running machinery is not authority merely because it exists and
+  runs; a shadow is the clearest case of it.
+  **Competing authority therefore stays NONE through PR S2 and PR S3.** Authority transfers at
+  **PR S4**, which makes Supabase the decider and converts the displaced Sheets hot-path
+  authority to an export mirror **in the same cutover** — one winner, and the loser removed
+  rather than kept alongside. The `S4` rollback window that follows is a **reversal capability,
+  not a second concurrent decider**: a restored PR S3 build would return the decision to
+  Sheets, and at every moment exactly one store decides.
 - **Status.** **SOLE LIVE AUTHORITY** (Google Sheets, plus the file-backed
   `services/idempotency.js` store for receipts). The migration is **authorized and STARTED but
   not applied**: `S2` has landed, `S3` and `S4` remain, and **no athlete-facing read or write
