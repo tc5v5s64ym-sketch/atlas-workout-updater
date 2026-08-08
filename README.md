@@ -7,7 +7,7 @@ Atlas is Dale's conversation-first personal strength coach and workout logger. I
 ## Production
 
 - Render deploys from GitHub `main`.
-- Google Sheets is the permanent V1 record.
+- Google Sheets is the permanent V1 record today. The owner authorized migrating the workout hot path to Supabase on 2026-08-07 ([`docs/SUPABASE_HOT_PATH_MIGRATION.md`](docs/SUPABASE_HOT_PATH_MIGRATION.md)). Nothing has migrated yet.
 - The application is served at `/app`.
 - Data requests require the Atlas API key or a durable owner-session cookie (see [docs/OWNER_SESSION.md](docs/OWNER_SESSION.md)).
 - Static assets are public; workout data and APIs are not.

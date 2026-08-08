@@ -12,7 +12,7 @@ The sole active execution campaign is:
 
 Atlas is Dale's conversation-first personal strength coach and workout logger. It parses natural gym language, maintains session truth, previews rows, and writes to Google Sheets only after explicit approval.
 
-- Google Sheets is the permanent V1 record; there is no second database.
+- **Storage authority is transitional.** Google Sheets is the runtime and permanent record today, and it stays the sole live authority until an authorized cutover moves it. On 2026-08-07 the owner authorized migrating the **workout hot path** — sessions, logged sets, Effort, accepted plans, plan sets and revisions, item outcomes, closeout and write receipts — to Supabase, with Sheets becoming a human-readable export mirror for those concepts only. Every other tab stays Sheets-owned. The instruction is recorded in [`docs/ATLAS_V1_EXECUTION_PLAN.md`](docs/ATLAS_V1_EXECUTION_PLAN.md) ("OWNER INSTRUCTION 2026-08-07 — SUPABASE HOT-PATH MIGRATION"); the current and intended authority per concept is [`docs/ATLAS_SYSTEM_AUTHORITY.md`](docs/ATLAS_SYSTEM_AUTHORITY.md) concept 18; the design is [`docs/SUPABASE_HOT_PATH_MIGRATION.md`](docs/SUPABASE_HOT_PATH_MIGRATION.md). Nothing has migrated yet.
 - The deterministic engine owns every number and decision.
 - The application LLM only words whitelisted facts and answers grounded questions.
 - The conversation is the product; other surfaces support it.
@@ -388,7 +388,7 @@ To answer "how much of the Soul corpus does the code actually coach yet", run `n
 
 Unless Dale explicitly changes direction, do not add:
 
-- a second database or storage migration;
+- a second database or storage migration, **other than** the owner-authorized Supabase hot-path migration recorded in the execution plan (2026-08-07). That migration is bounded to seven named concepts, and to four PRs plus the one narrowly scoped post-window schema-history cleanup PR the owner approved on 2026-08-07 (ruling D8, recorded in the plan); it authorizes no other store and no widening of its own scope;
 - multi-user/public-product architecture;
 - nutrition tracking;
 - broad wearable support;
