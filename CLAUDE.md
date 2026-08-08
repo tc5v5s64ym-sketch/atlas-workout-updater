@@ -388,7 +388,7 @@ To answer "how much of the Soul corpus does the code actually coach yet", run `n
 
 Unless Dale explicitly changes direction, do not add:
 
-- a second database or storage migration, **other than** the owner-authorized Supabase hot-path migration recorded in the execution plan (2026-08-07). That migration is bounded to seven named concepts and four PRs; it authorizes no other store and no widening of its own scope;
+- a second database or storage migration, **other than** the owner-authorized Supabase hot-path migration recorded in the execution plan (2026-08-07). That migration is bounded to seven named concepts, and to four PRs plus the one narrowly scoped post-window schema-history cleanup PR the owner approved on 2026-08-07 (ruling D8, recorded in the plan); it authorizes no other store and no widening of its own scope;
 - multi-user/public-product architecture;
 - nutrition tracking;
 - broad wearable support;

@@ -62,7 +62,7 @@ Use these only when the active execution card touches their area:
 - `COACH_PERSONALITY.md`
 - `API_REFERENCE.md`
 - `docs/SHEET_CONTRACT.md`
-- [`docs/SUPABASE_HOT_PATH_MIGRATION.md`](./SUPABASE_HOT_PATH_MIGRATION.md) — the design for the owner-authorized workout hot-path migration from Google Sheets to Supabase (owner instruction 2026-08-07): the minimum schema, the field-by-field column mapping, the four-PR closure chain, the proof required before each cutover, the rollback rules, the security design, and the data-ownership record. A **design specification**, not an execution plan — it selects no work, and the execution plan's owner-instruction block sequences the four PRs.
+- [`docs/SUPABASE_HOT_PATH_MIGRATION.md`](./SUPABASE_HOT_PATH_MIGRATION.md) — the design for the owner-authorized workout hot-path migration from Google Sheets to Supabase (owner instruction 2026-08-07): the minimum schema, the field-by-field column mapping, the closure chain — four PRs plus one bounded post-window cleanup PR (ruling D8) — the proof required before each cutover, the rollback rules, the security design, and the data-ownership record. A **design specification**, not an execution plan — it selects no work, and the execution plan's owner-instruction block sequences them.
 - `docs/SAFETY_RULES.md`
 - `docs/COACHING_ENGINE_ARCHITECTURE.md`
 - [`docs/CANONICAL_CONTRACTS.md`](./CANONICAL_CONTRACTS.md) — ratification charter + ledger for the eight canonical contracts (Phase 2 Work item 2): the versioning convention and each contract's current home, status, and ratification target. Per-contract schemas land as sequenced follow-up PRs.

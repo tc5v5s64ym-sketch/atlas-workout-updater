@@ -109,8 +109,11 @@ no permanent reconciliation logic between them.
   write, the sweep, the repair worker — and verifies their absence. The divergence **table**
   outlives the merge by design, inert and unwritten, until the `S4` rollback window closes,
   because a restored `S3` build queries it (§5.5, gate P19i); the owner then runs the drop
-  (§5.4). §5.4 lists every artifact, and the migration chain is not closed until that owner
-  cleanup executes.
+  (§5.4). §5.4 lists every artifact. **The chain is not closed until BOTH closure steps land** —
+  that owner-run drop, which converges `Atlas Production`, and the one bounded post-window
+  cleanup PR approved by ruling **D8**, which adds the versioned drop migration so a fresh
+  replay of `supabase/migrations/` converges too. *Corrected by the required review of
+  `f641894`: this summary still named only step 1.*
 
 **Reads and writes cut over together (ruling D5).** An earlier version of this design moved
 reads at `S3` while writes stayed on Sheets until `S4`. That window let reads lead writes,
@@ -1131,9 +1134,13 @@ derived from it and the key must not change.
 
 ---
 
-## 5. The four-PR closure chain
+## 5. The closure chain — four PRs, plus one bounded post-window cleanup PR
 
-One concern per PR. Each PR names what it closes and what it must not do.
+One concern per PR. Each PR names what it closes and what it must not do. The four
+implementation PRs are §5.1–§5.4; the fifth is the narrowly scoped schema-history cleanup that
+owner ruling **D8** approved, which fires only after the `S4` rollback window closes (§5.4
+step 5, §9). *The heading said "four-PR" after D8 had made that count wrong — corrected by the
+required review of `f641894`.*
 
 ### 5.1 PR S1 — governance, authority and schema design *(this PR)*
 
@@ -1144,8 +1151,10 @@ One concern per PR. Each PR names what it closes and what it must not do.
 - **Must not:** apply a schema, add a dependency, add a migration file, add an adapter,
   change product behaviour, or deploy.
 - **Closes:** the paper conflict between the owner instruction and the governing documents.
-- **Opens:** the three implementation loops below, each with a named consumer and a sunset
-  condition.
+- **Opens:** **four** loops, each with a named consumer and a sunset condition — the three
+  implementation PRs below (`S2`, `S3`, `S4`) **and** the post-window schema-history cleanup
+  that ruling D8 approved (§5.4 step 5). *Corrected by the required review of `f641894`: this
+  said three, while D8 and the merge card both count four.*
 
 ### 5.2 PR S2 — migrations, adapter, shadow write, divergence lane
 
@@ -1255,12 +1264,21 @@ nothing".
   proves it (§6.2 P8–P12). This is the one capability `S3` adds, and it moves no authority —
   which is why it belongs here rather than in the cutover build.
 - **Must not:** move any athlete-facing read or write. Sheets stays the authority for both.
-- **Blocked on:** **one owner gate — applying the `S3` migration (§3.10) to `Atlas
-  Production`.** *Corrected by the required review of `310b01b`.* The freeze cannot be proven
-  against the deployed system until that schema exists there, and applying production schema is
-  owner-reserved. The PR may merge before it; the P8a/P8b deployed-system evidence may not be
-  claimed before it. Ruling D2's Constitution amendment remains required before the `S4`
-  cutover, not before this PR.
+- **Blocked on: TWO owner gates, at different times.** *Corrected by the required review of
+  `310b01b`, then completed by the required review of `f641894`, which found this entry naming
+  only the second — so a fresh implementation agent could have started `S3` without the hosted
+  checkpoint the higher-authority plan requires first.*
+
+  1. **Before `S3` may begin:** the owner applies the `S2` schema to `Atlas Production`, **and
+     the real-Supavisor four-role and session-lock checkpoint passes** (§6.1 P8b, §8.1, and
+     the plan's owner-gate 2). `S3` does not start until it does.
+  2. **For `S3`'s deployed freeze evidence:** the owner applies the `S3` `write_freeze`
+     migration (§3.10). The PR **may merge before this**; the P8a/P8b deployed-system evidence
+     **may not be claimed before it**, because the freeze cannot be proven against a deployed
+     system whose schema does not yet exist.
+
+  Ruling D2's Constitution amendment remains required before the `S4` cutover, not before this
+  PR.
 - **Bridge introduced:** none new. The `S2` bridge continues.
 
 #### The write freeze — one bounded control authority
@@ -2667,7 +2685,7 @@ The record below is the summary. The per-concept record is
 | **Current winner** | Google Sheets, through `sheets.js`, for all seven concepts, plus the file-backed store in `services/idempotency.js` for write receipts. |
 | **Intended winner** | Supabase. Sheets becomes an export mirror for the migrated concepts, and stays the editing authority for `Exercise_Catalog`. |
 | **Bridge** | The shadow write, `atlas.migration_divergences`, the reconciliation sweep, and the repair worker. Live in `S2` and `S3` only. |
-| **Exact sunset** | **`PR S4`** deletes every consumer and writer of the four bridge components plus the §5.3 receipt migration seam, and ships the `atlas.migration_divergences` drop as an **owner-run artifact outside `supabase/migrations/`**, executed after the rollback window closes (§5.4 step 5, §5.5). Closure is **two steps**: that execution converges `Atlas Production`, and a post-window versioned migration converges the repository's reproducible schema. **The chain is not closed until both land** — an out-of-band drop alone leaves every fresh replay recreating the table. and deletes the Sheets hot-path reads, the read-budget machinery, the backfill script, the verify-range route, and the file-backed idempotency store with its env var, its file and its six test references — proving no caller remains. **One PR, one merge, one exact-head review.** The one thing `S4` does not delete is `atlas.write_freeze` and its route check, **proposed** permanent rather than a bridge and carrying a named permanent consumer — **pending decision D7**, which is open (§5.3, §9). |
+| **Exact sunset** | **`PR S4`** deletes every consumer and writer of the four bridge components plus the §5.3 receipt migration seam, and ships the `atlas.migration_divergences` drop as an **owner-run artifact outside `supabase/migrations/`**, executed after the rollback window closes (§5.4 step 5, §5.5). Closure is **two steps**: that execution converges `Atlas Production`, and a post-window versioned migration converges the repository's reproducible schema. **The chain is not closed until both land** — an out-of-band drop alone leaves every fresh replay recreating the table. and deletes the Sheets hot-path reads, the read-budget machinery, the backfill script, the verify-range route, and the file-backed idempotency store with its env var, its file and its six test references — proving no caller remains. `S4` itself is one PR, one merge, one exact-head review — but **the migration's sunset is not `S4`'s merge**: it is reached only when the owner-run drop and the bounded post-window cleanup PR (ruling D8) have both landed. The one thing `S4` does not delete is `atlas.write_freeze` and its route check, **proposed** permanent rather than a bridge and carrying a named permanent consumer — **pending decision D7**, which is open (§5.3, §9). |
 | **Code and tests deleted at closure** | The list in §5.4 step 3. **Nothing on it survives `S4`.** |
 | **Net complexity after migration** | Expected **negative**. Removed: the per-request `batchGet` read context, the route range declarations, the 30-second row cache, the session read-budget harness and its fixture, the reconstruction script, the read-budget document, the verify-range route and its client fallback, and the file-backed idempotency store. Added: ten permanent tables, one proposed-permanent table (`atlas.write_freeze`, decision D7 open) with its per-route check, one adapter module, the `Exercise_Catalog` sync, and the asynchronous export worker. The twelfth table, `atlas.migration_divergences`, and the whole bridge are temporary and are dropped. This expectation is **not yet measured**; `S4` must report the actual net line and module change. |
 

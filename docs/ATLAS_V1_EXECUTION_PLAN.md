@@ -137,7 +137,7 @@ This is the single active, executable campaign. It is embedded here — not besi
 
 **It supersedes further attempts to make Google Sheets satisfy the live workout read budget.** The read-quota work of PR #1271 and PR #1272 stands as merged code and as an honest measurement. It is no longer the path. Do not open another PR whose purpose is to fit a session inside the Google Sheets read quota.
 
-**What this instruction does not do.** It changes no counter and no phase. **Rehearsal (F-SB4): 0/5 · Stage A: 5/5 COMPLETE · Stage B: 0/5 OPEN.** Phase 5 stays unauthorized. `SESSION_PLAN_SETS_WRITE_ENABLED` stays `0`. It authorizes no product-behaviour change, no schema application, and no deployment. It is not a second campaign, roadmap, or plan — it is one insertion inside this plan, executed as one closed chain of four PRs.
+**What this instruction does not do.** It changes no counter and no phase. **Rehearsal (F-SB4): 0/5 · Stage A: 5/5 COMPLETE · Stage B: 0/5 OPEN.** Phase 5 stays unauthorized. `SESSION_PLAN_SETS_WRITE_ENABLED` stays `0`. It authorizes no product-behaviour change, no schema application, and no deployment. It is not a second campaign, roadmap, or plan — it is one insertion inside this plan, executed as one closed chain of four PRs plus the one bounded post-window cleanup PR ruling D8 approved.
 
 ### Architecture ruling
 
@@ -151,7 +151,7 @@ This is the single active, executable campaign. It is embedded here — not besi
 
 ### The design document
 
-[`docs/SUPABASE_HOT_PATH_MIGRATION.md`](SUPABASE_HOT_PATH_MIGRATION.md) holds the minimum schema, the field-by-field Sheet-column mapping, the four-PR closure chain, the exact proof required before each cutover, the failure and rollback rules, the security design, and the data-ownership record. It is a design specification. It selects no work; this block does.
+[`docs/SUPABASE_HOT_PATH_MIGRATION.md`](SUPABASE_HOT_PATH_MIGRATION.md) holds the minimum schema, the field-by-field Sheet-column mapping, the closure chain — four PRs plus the one bounded post-window cleanup PR approved by ruling D8 — the exact proof required before each cutover, the failure and rollback rules, the security design, and the data-ownership record. It is a design specification. It selects no work; this block does.
 
 ### ATLAS CONTRACT / SYSTEMS REVIEW 2026-08-07 — exact head `b38de8b8e7da55f4e28b1c71ebe1bae97b5ca710`: BLOCKING
 
@@ -402,6 +402,17 @@ Raised as `OWNER DECISION REQUIRED` by the fifteenth required review, after the 
 **Effect on open-loop accounting.** The fourth open loop the previous merge card reported as unapproved is now **owner-approved with an exact closure condition**, so the positive net change carries the explicit reason `CLAUDE.md` requires.
 
 **No counter changed and no other authorization was granted.** Campaign 0/5, Phase 5 unauthorized, no schema applied, no deployment. PR #1273 does not merge until the next exact-head Atlas Contract / Systems Review passes.
+
+### ATLAS CONTRACT / SYSTEMS REVIEW 2026-08-08 (sixteenth required) — exact head `f6418945b1ff386a593fc22f240061201958959f`: BLOCKING
+
+Review 15's substantive fixes confirmed materially present, and ruling D8 confirmed correctly recorded. The review explicitly declined to reopen Supabase-vs-Sheets, reads-and-writes-together, the deterministic exporter, the receipt state machine, the freeze mechanism or the handover mechanics. **Two** P1 consistency and sequencing defects, both narrow. All applied.
+
+1. **D8 was contradicted by several load-bearing closure summaries.** The detailed sections were right; the sweep had not reached the summaries a future builder reads first, so the repository held **two answers** to the exact sunset and the open-loop count. Corrected: the design's §2 **Exact sunset** named only the owner-run drop as the closure trigger and now names both steps; §5's heading said "The four-PR closure chain"; §5.1 said `S1` opens "the three implementation loops" where D8 and the merge card both count four; §9's **Exact sunset** row ended "One PR, one merge, one exact-head review", which is true of `S4` but false of the migration's sunset; and this plan's design-document summary still said "the four-PR closure chain" while its own closure-chain section said otherwise.
+2. **§5.3 omitted the mandatory pre-`S3` Supavisor checkpoint.** Review 14 moved the hosted role and pooler proof out of `S2` and made it an owner-gated checkpoint **after `S2` is applied to `Atlas Production` and before `S3` begins** — stated correctly in §6.1 P8b, §8.1 and this plan's owner-gate list, but §5.3 still said `S3` was blocked on "**one** owner gate", naming only the later `write_freeze` application. A fresh implementation agent could have started `S3` without the checkpoint the higher-authority plan requires first. Corrected to **two gates at different times**, kept separate: (1) before `S3` may begin — `S2` schema applied and the four-role session-lock checkpoint passed; (2) for `S3`'s deployed freeze evidence — the `write_freeze` migration applied, which the PR may merge before but whose evidence may not be claimed before.
+
+**Four further stale statements found by a mechanical sweep, in two files the review did not name.** The review listed five surfaces; a whitespace-insensitive sweep across all eight documents found four more live claims of the old topology — the plan's "executed as one closed chain of four PRs" and its "bounded to seven named concepts and to four PRs", `CLAUDE.md`'s "bounded to seven named concepts and four PRs", and `docs/DOCS_INDEX.md`'s "the four-PR closure chain" plus "sequences the four PRs". All corrected. *This is the fourth time a completeness claim would have been wrong had it been checked only against the surfaces a review happened to list; the sweep is mechanical and its residual count is reported rather than asserted.*
+
+**No counter changed and no authorization was granted by this review.** Campaign 0/5, Phase 5 unauthorized, no schema applied, no deployment. No owner decision is open beyond **D7** at the `S3` gate.
 
 ### Owner rulings D1–D5, all resolved (2026-08-07)
 
@@ -2235,7 +2246,7 @@ Crossing a numerical threshold never flips a flag automatically. Promotion, burn
 
 Do not add these while this plan is active unless Dale explicitly changes direction:
 
-- any second permanent store, **except** the Supabase hot-path migration the owner authorized on 2026-08-07 and recorded above. That migration is bounded to seven named concepts and to four PRs. It authorizes no other store, and no widening of its own scope;
+- any second permanent store, **except** the Supabase hot-path migration the owner authorized on 2026-08-07 and recorded above. That migration is bounded to seven named concepts, and to four PRs plus the one narrowly scoped post-window cleanup PR ruling D8 approved. It authorizes no other store, and no widening of its own scope;
 - multi-user/public-product architecture;
 - nutrition tracking;
 - broad wearable-vendor expansion;
