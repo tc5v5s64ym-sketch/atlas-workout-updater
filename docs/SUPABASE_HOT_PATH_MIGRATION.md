@@ -16,9 +16,12 @@ distinction is the whole point of this phase:
 - the eleven migration files of §3.1–§3.9 are in `supabase/migrations/`, together with one
   adapter (`services/supabaseAdapter.js`), the shadow write, the divergence lane, the
   reconciliation sweep, the repair worker and the `Exercise_Catalog` mirror;
-- **no schema is applied to any database, including `Atlas Production`.** A migration file in
-  a repository is not an applied schema. Applying it is an owner action, and no repository
-  code path can reach a hosted Supabase host;
+- **no schema is applied to `Atlas Production`, or to any other persistent or hosted Atlas
+  target.** A migration file in a repository is not an applied schema. Applying it is an owner
+  action, and no repository code path can reach a hosted Supabase host. The one place these
+  migrations ARE applied is the **disposable proof database** of §6.1 P2 — a plain Postgres
+  container created from empty and destroyed with each run, which holds no Atlas data and
+  outlives nothing. That is deliberate: it is how the schema is proven at all;
 - **no product behaviour changed.** The shadow lane is off unless
   `ATLAS_SUPABASE_SHADOW_WRITE=1` **and** a connection string is configured, and neither is in
   any environment;
