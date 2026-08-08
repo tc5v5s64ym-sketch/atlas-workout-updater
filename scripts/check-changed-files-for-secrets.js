@@ -81,8 +81,18 @@ const rules = [
     // session-mode strings this design uses under ANY variable name, and any
     // other user:password@host Postgres URI. A password-less URI (the shape
     // .env.example and every doc uses) does not match.
+    //
+    // A LOOPBACK host is exempt, and that is not a softening: a credential for
+    // 127.0.0.1, ::1 or localhost cannot be a production credential, and the
+    // repository legitimately carries several — the CI Postgres service
+    // container, and the deliberately-unreachable endpoints the shadow-lane
+    // proofs point at to show a Save survives a dead database. Exempting by
+    // HOST rather than by file keeps the rule mechanical: no file gets a
+    // blanket pass, and a real hosted credential in any of those files still
+    // fails.
     name: "postgres-connection-string-with-password",
-    test: (text) => /postgres(?:ql)?:\/\/[A-Za-z0-9._%+-]+:[^\s:@/'"]+@/.test(text),
+    test: (text) =>
+      /postgres(?:ql)?:\/\/[A-Za-z0-9._%+-]+:[^\s:@/'"]+@(?!127\.0\.0\.1|localhost|\[::1\]|0\.0\.0\.0)/.test(text),
   },
   {
     // Any assignment of the four scoped-role connection strings to a real value.

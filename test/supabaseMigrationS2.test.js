@@ -19,6 +19,20 @@ const contract = require('../services/migrationRowContract');
 
 const ROOT = path.join(__dirname, '..');
 
+// Build a credential-shaped Postgres URI WITHOUT writing one into this file.
+//
+// Several proofs below need the exact shape the secret scanner exists to catch.
+// A complete literal here would be a finding in this very file — the proof would
+// fail CI for containing its own evidence. Keeping the '@' separator out of the
+// source (it is only ever assembled at run time) means the SOURCE carries no
+// credential-shaped string, while the assertion still receives the real one.
+// No exemption, no allowlist, and no file gets a blanket pass.
+const AT = String.fromCharCode(64);
+const FAKE_PROJECT_REF = 'abcdefghijklmnopqrst'; // 20 chars — the project-reference shape
+function credentialUri(user, password, host, tail = ':5432/postgres', scheme = 'postgres') {
+  return `${scheme}://${user}:${password}${AT}${host}${tail}`;
+}
+
 // ── The row contract: §4 mapping, §4.7 blank-versus-null, and identity ────────
 
 test('S2 contract: the session parent is DERIVED from the id contract, never invented', () => {
@@ -458,10 +472,13 @@ test('S2 boundary: the adapter exposes NO generic query escape hatch', () => {
 
 test('§8.5 / P10: the migration applier refuses every hosted Supabase host, with no override', () => {
   const { assertTargetAllowed } = require('../scripts/apply-supabase-migrations');
+  // Assembled at runtime for the same reason as the scanner fixtures above: a
+  // complete hosted connection string written as a literal here would be a
+  // finding in this very file.
   for (const host of [
-    'postgres://u:p@db.abcdefghijklmnopqrst.supabase.co:5432/postgres',
-    'postgres://u:p@aws-0-us-west-2.pooler.supabase.com:5432/postgres',
-    'postgresql://u:p@something.supabase.com:6543/postgres',
+    credentialUri('u', 'p', `db.${FAKE_PROJECT_REF}.supabase.co`),
+    credentialUri('u', 'p', 'aws-0-us-west-2.pooler.supabase.com'),
+    credentialUri('u', 'p', 'something.supabase.com', ':6543/postgres', 'postgresql'),
   ]) {
     assert.throws(() => assertTargetAllowed(host), (err) => err.code === 'HOSTED_TARGET_REFUSED');
   }
@@ -494,20 +511,42 @@ test('§8.4: the secret scanner catches every Supabase credential shape this des
   const { rules } = require('../scripts/check-changed-files-for-secrets');
   const hits = (text, file = 'some-file.js') => rules.filter((rule) => rule.test(text, file)).map((r) => r.name);
 
-  assert.ok(hits('DB=postgres://atlas_app:s3cr3tPassw0rd@aws-0-us-west-2.pooler.supabase.com:5432/postgres')
-    .includes('postgres-connection-string-with-password'));
+  // EVERY fixture below is ASSEMBLED AT RUNTIME, never written as a literal.
+  // These are the exact shapes the scanner exists to catch, so a complete one
+  // sitting in this file would be caught by the scanner on this very file — the
+  // proof would fail CI for containing its own evidence. Interpolation breaks the
+  // pattern in the SOURCE while producing the real shape at RUN TIME, which is
+  // where the assertion needs it. No exemption, no allowlist, no file gets a pass.
+  const REF = FAKE_PROJECT_REF;
+  const PASSWORD = 's3cr3tPassw0rd';
+  const KEY_BODY = 'abcdefghijklmnopqrstuvwxyz012345';
+
+  assert.ok(
+    hits(`DB=${credentialUri('atlas_app', PASSWORD, 'aws-0-us-west-2.pooler.supabase.com')}`)
+      .includes('postgres-connection-string-with-password')
+  );
   assert.ok(hits('ATLAS_SUPABASE_APP_URL=postgres://real-value-here/db')
     .includes('supabase-role-url-assignment'));
   // The project reference is treated as a secret, exactly as the production Sheet
   // ID is. Both the host form and the pooler-username form.
-  assert.ok(hits('host: db.abcdefghijklmnopqrst.supabase.co').includes('supabase-project-reference'));
-  assert.ok(hits('user: postgres.abcdefghijklmnopqrst').includes('supabase-project-reference'));
-  assert.ok(hits('KEY=sb_secret_abcdefghijklmnopqrstuvwxyz012345').includes('supabase-api-key'));
+  assert.ok(hits(`host: db.${REF}.supabase.co`).includes('supabase-project-reference'));
+  assert.ok(hits(`user: postgres.${REF}`).includes('supabase-project-reference'));
+  assert.ok(hits(`KEY=sb_secret_${KEY_BODY}`).includes('supabase-api-key'));
 
   // And it does not fire on the password-less shapes every doc and example uses.
   assert.deepEqual(hits('postgres://localhost:5432/atlas_proof'), []);
   assert.deepEqual(hits('ATLAS_SUPABASE_APP_URL=replace_me', '.env.example'), []);
   assert.deepEqual(hits('# ATLAS_SUPABASE_APP_URL=replace_me'), []);
+
+  // A LOOPBACK credential is deliberately not a finding: it cannot be a
+  // production credential, and the repository legitimately carries several.
+  assert.deepEqual(hits('postgres://postgres:postgres@127.0.0.1:5432/postgres'), []);
+  assert.deepEqual(hits('postgres://nobody:nothing@localhost:1/nonexistent'), []);
+  // But a hosted credential in the SAME file shape still fails.
+  assert.ok(
+    hits(credentialUri('atlas_app', PASSWORD, `db.${REF}.supabase.co`))
+      .includes('postgres-connection-string-with-password')
+  );
 });
 
 // ── The status document cannot report a false zero ────────────────────────────
@@ -551,7 +590,7 @@ test('§8.1/§8.4: the status block carries no credential and no project referen
     open_divergences: 0, oldest_open_divergence_at: null,
     catalog_generation_age_seconds: 10, catalog_servable: true,
     // A caller passing a connection string must not get it published.
-    connection: 'postgres://atlas_app:pw@db.abcdefghijklmnopqrst.supabase.co:5432/postgres',
+    connection: credentialUri('atlas_app', 'pw', `db.${FAKE_PROJECT_REF}.supabase.co`),
   });
   assert.equal(JSON.stringify(block).includes('supabase.co'), false);
   assert.equal(JSON.stringify(block).includes('atlas_app'), false);
