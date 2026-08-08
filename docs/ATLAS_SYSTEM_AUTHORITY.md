@@ -1,6 +1,6 @@
 # Atlas System Authority
 
-**Current as of:** 2026-08-07 · **Basis:** Atlas Recovery Campaign (Issue #1073), Phase 4 · **Status:** current-state authority map, refreshed as authority moves.
+**Current as of:** 2026-08-08 · **Basis:** Atlas Recovery Campaign (Issue #1073), Phase 4 · **Status:** current-state authority map, refreshed as authority moves.
 
 This document answers one question per concept: **what actually decides this in production today, and what is intended to decide it.**
 
@@ -365,22 +365,29 @@ revisions, item outcomes, and closeout and write receipts.
   migration is **open decision D7**, for the owner at the `S3` gate. Google Sheets
   becomes a human-readable export mirror for these concepts, and is never required for an
   active workout to read, save, verify, or close out.
-- **Competing authority.** **NONE TODAY.** Nothing has migrated. Current `main` holds no
-  Supabase code, no migration file, and no adapter. The owner's Free-tier project
-  **Atlas Production** (verified healthy and empty, `us-west-2`, zero public tables, zero
-  migrations) has **no schema applied**, and applying it is an owner gate.
-  **PR S2 is OPEN and UNMERGED** — it proposes the eleven migration files of §3.1–§3.9, one
-  adapter, the shadow write, the divergence lane, the sweep and the repair worker, all inert
-  behind `ATLAS_SUPABASE_SHADOW_WRITE=1` plus a configured connection string. **A proposal on
-  a branch is not a state of production, and this map records production.** The competing
-  authority appears only when that PR merges, and PR S4 removes it.
+- **Competing authority.** **NONE TODAY.** Nothing has migrated, and the reason is no longer
+  that the code is absent. **PR S2 is MERGED** (`main` at `4d3e231`, PR #1274): current `main`
+  holds the eleven migration files of §3.1–§3.9, one adapter (`services/supabaseAdapter.js`),
+  the shadow write, the divergence lane, the sweep and the repair worker. All of it is
+  **DORMANT** — inert behind `ATLAS_SUPABASE_SHADOW_WRITE=1` plus a configured connection
+  string, and neither exists in any environment.
+  **Code on `main` is not a competing authority.** A concept acquires one when something
+  decides it, and nothing here decides anything: the schema is applied to **no persistent or
+  hosted Atlas target**. The owner's Free-tier project **Atlas Production** (verified healthy
+  and empty, `us-west-2`, zero public tables, zero migrations) still has **no schema applied**,
+  and applying it is an owner gate. The only place these migrations are applied is the
+  **disposable proof database** of §6.1 P2 — a plain Postgres container created from empty and
+  destroyed with each run, holding no Atlas data and outliving nothing.
+  The competing authority appears when the schema is applied and the shadow lane is
+  configured, and PR S4 removes it.
 - **Status.** **SOLE LIVE AUTHORITY** (Google Sheets, plus the file-backed
-  `services/idempotency.js` store for receipts). The migration is **authorized and not
-  started**. *An earlier revision of this entry said PR S2 "landed 2026-08-08 and is DORMANT"
-  while that PR was still open — a branch recording itself as landed. Corrected by the
-  required review of `ad18907`: the honesty rule forbids promoting a concept on a document, a
-  test, or an import, and it forbids this for the same reason. The landed-state update is made
-  after merge, from current `main`, and not before.*
+  `services/idempotency.js` store for receipts). The migration is **authorized and STARTED but
+  not applied**: `S2` has landed, `S3` and `S4` remain, and **no athlete-facing read or write
+  has moved**. *This landed state is recorded from current `main`, after the merge. An earlier
+  revision of this entry claimed it while PR #1274 was still open — a branch recording itself
+  as landed — and the required review of `ad18907` corrected it: the honesty rule forbids
+  promoting a concept on a document, a test, or an import, and it forbids this for the same
+  reason. The rule that produced the deferral stands; the deferral itself is now discharged.*
 - **Exact production consumer.** `POST /api/log-workout`, `POST /api/complete-workout`,
   `POST /api/log-workout/undo-last`, `POST /api/session-plans/accept`,
   `POST /api/session-plans/outcome`, `POST /api/session-plan-sets/accept`,
@@ -435,8 +442,9 @@ revisions, item outcomes, and closeout and write receipts.
   semantics, and the W1–W3 proof fields are untouched.
 - **Evidence.** The owner instruction of 2026-08-07, recorded in
   [`docs/ATLAS_V1_EXECUTION_PLAN.md`](./ATLAS_V1_EXECUTION_PLAN.md). The current authority is
-  the code cited above; the intended authority has no code yet, which is why the status stays
-  where it is.
+  the code cited above. The intended authority now HAS code on `main`, and the status stays
+  where it is anyway — because code is not authority. It decides nothing until the schema is
+  applied to a persistent target and the shadow lane is configured, and neither has happened.
 
 ---
 
