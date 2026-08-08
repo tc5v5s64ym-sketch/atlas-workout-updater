@@ -292,18 +292,107 @@ test('§3.5 plan sets: set_index >= 1, and the source and confidence vocabularie
 
 // ── §3.6 atlas.write_receipts ──────────────────────────────────────────────────
 
-test('§3.6 write_receipts: status is constrained, and expires_at/attempt_started_at are NOT NULL', async () => {
+test('\u00a73.6 write_receipts: status is constrained, and expires_at/attempt_started_at are NOT NULL', async () => {
   await withOwner(async (client) => {
     await expectRejected(client,
-      `INSERT INTO atlas.write_receipts (write_id, route, status, expires_at, attempt_started_at)
-       VALUES ('w1', '/api/log-workout', 'pending', now(), now())`,
+      `INSERT INTO atlas.write_receipts (write_id, route, effect_authority, status, expires_at, attempt_started_at)
+       VALUES ('w1', '/api/log-workout', 'supabase', 'pending', now(), now())`,
       [], { sqlstate: SQLSTATE.CHECK_VIOLATION });
     // A receipt with a null TTL authority would be invisible to peekWrite the
     // instant it was created, so the column may not be nullable.
     await expectRejected(client,
-      `INSERT INTO atlas.write_receipts (write_id, route, status, attempt_started_at)
-       VALUES ('w2', '/api/log-workout', 'in_progress', now())`,
+      `INSERT INTO atlas.write_receipts (write_id, route, effect_authority, status, attempt_started_at, owner_instance_id)
+       VALUES ('w2', '/api/log-workout', 'supabase', 'in_progress', now(), 'inst-1')`,
       [], { sqlstate: SQLSTATE.NOT_NULL_VIOLATION });
+  });
+});
+
+test('\u00a73.6 write_receipts: effect_authority is NOT NULL and constrained to the two declared authorities', async () => {
+  // The reclaim rule in SQL.claimWriteReceipt branches on this column. A row that
+  // carried no authority, or an unrecognised one, would fall out of BOTH branches:
+  // it could never be reclaimed and could never be marked ambiguous, so the
+  // write_id would wedge with no operator path out of it.
+  await withOwner(async (client) => {
+    await expectRejected(client,
+      `INSERT INTO atlas.write_receipts (write_id, route, status, attempt_started_at, expires_at, owner_instance_id)
+       VALUES ('w-ea-1', '/api/log-workout', 'in_progress', now(), now(), 'inst-1')`,
+      [], { sqlstate: SQLSTATE.NOT_NULL_VIOLATION });
+    await expectRejected(client,
+      `INSERT INTO atlas.write_receipts (write_id, route, effect_authority, status, attempt_started_at, expires_at, owner_instance_id)
+       VALUES ('w-ea-2', '/api/log-workout', 'postgres', 'in_progress', now(), now(), 'inst-1')`,
+      [], { sqlstate: SQLSTATE.CHECK_VIOLATION });
+  });
+});
+
+test('\u00a73.6 write_receipts: a LIVE attempt with no owner is unrepresentable', async () => {
+  // Required review of `deaa8a5`. `owner_instance_id IS DISTINCT FROM $3` reads a
+  // NULL owner as "some other process", so an in_progress row with no owner would
+  // be reclaimed on age alone -- the exact time-based inference the column exists
+  // to remove. Enforced structurally rather than by the discipline of the single
+  // adapter call site that happens to pass the value today.
+  await withOwner(async (client) => {
+    await expectRejected(client,
+      `INSERT INTO atlas.write_receipts (write_id, route, effect_authority, status, attempt_started_at, expires_at)
+       VALUES ('w-own-1', '/api/log-workout', 'supabase', 'in_progress', now(), now() + interval '1 hour')`,
+      [], { sqlstate: SQLSTATE.CHECK_VIOLATION });
+    // A terminal row may legally have none: the S4 carry (\u00a75.5a) normalises every
+    // carried in_progress record to 'failed' before inserting it, because the file
+    // store records no owner and one may not be invented.
+    await client.query(
+      `INSERT INTO atlas.write_receipts (write_id, route, effect_authority, status, attempt_started_at, expires_at)
+       VALUES ('w-own-2', '/api/log-workout', 'supabase', 'failed', now(), now() + interval '1 hour')`
+    );
+  });
+});
+
+test('\u00a73.6 write_receipts: the ambiguous state is structurally confined, and only proof leaves it', async () => {
+  await withOwner(async (client) => {
+    // Meaningless for an atomic effect: a Supabase transaction is present or
+    // absent, never maybe. Barring it here stops 'ambiguous' becoming a
+    // general-purpose stall for the migrated routes.
+    await expectRejected(client,
+      `INSERT INTO atlas.write_receipts (write_id, route, effect_authority, status, attempt_started_at, expires_at, ambiguous_at)
+       VALUES ('w-amb-1', '/api/log-workout', 'supabase', 'ambiguous', now(), now() + interval '1 hour', now())`,
+      [], { sqlstate: SQLSTATE.CHECK_VIOLATION });
+    // An ambiguous row with no ambiguous_at could not be found by the operator
+    // queue, and one holding a live token could be completed by the very process
+    // whose effect is unproven.
+    await expectRejected(client,
+      `INSERT INTO atlas.write_receipts (write_id, route, effect_authority, status, attempt_started_at, expires_at)
+       VALUES ('w-amb-2', '/api/coaching-notes', 'sheets', 'ambiguous', now(), now() + interval '1 hour')`,
+      [], { sqlstate: SQLSTATE.CHECK_VIOLATION });
+    await expectRejected(client,
+      `INSERT INTO atlas.write_receipts (write_id, route, effect_authority, status, attempt_started_at, expires_at, ambiguous_at, attempt_token)
+       VALUES ('w-amb-3', '/api/coaching-notes', 'sheets', 'ambiguous', now(), now() + interval '1 hour', now(), gen_random_uuid())`,
+      [], { sqlstate: SQLSTATE.CHECK_VIOLATION });
+
+    await client.query(
+      `INSERT INTO atlas.write_receipts (write_id, route, effect_authority, status, attempt_started_at, expires_at, ambiguous_at)
+       VALUES ('w-amb-4', '/api/coaching-notes', 'sheets', 'ambiguous', now(), now() + interval '1 hour', now())`
+    );
+    // Leaving 'ambiguous' without recording what was read at the destination is
+    // exactly the inference the state exists to forbid -- and an empty string is
+    // not a proof.
+    await expectRejected(client,
+      `UPDATE atlas.write_receipts SET status = 'failed' WHERE write_id = 'w-amb-4'`,
+      [], { sqlstate: SQLSTATE.CHECK_VIOLATION });
+    await expectRejected(client,
+      `UPDATE atlas.write_receipts SET status = 'failed', ambiguity_proof = '' WHERE write_id = 'w-amb-4'`,
+      [], { sqlstate: SQLSTATE.CHECK_VIOLATION });
+    await client.query(
+      `UPDATE atlas.write_receipts
+          SET status = 'failed',
+              ambiguity_proof = 'read Coaching_Notes A2:D200 at 2026-08-08T11:04Z; no row for this write_id'
+        WHERE write_id = 'w-amb-4'`
+    );
+    // And the provenance survives the resolution, so a later reader can tell a
+    // verified release from an assumed one.
+    const { rows } = await client.query(
+      `SELECT ambiguous_at IS NOT NULL AS was_ambiguous, ambiguity_proof
+         FROM atlas.write_receipts WHERE write_id = 'w-amb-4'`
+    );
+    assert.equal(rows[0].was_ambiguous, true);
+    assert.match(rows[0].ambiguity_proof, /no row for this write_id/);
   });
 });
 

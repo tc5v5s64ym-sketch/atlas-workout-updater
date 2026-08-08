@@ -56,7 +56,7 @@ test('P8 transition 3: an ABANDONED in_progress row — one a prior process owne
   // lock. A row this process still owns is covered by the liveness proofs below.
   const priorProcess = `atlas-host:401:${'0123456789ab'}`;
   await withRole('atlas_app', async (client) => {
-    await client.query(SQL.claimWriteReceipt, ['w-3', ROUTE, priorProcess]);
+    await client.query(SQL.claimWriteReceipt, ['w-3', ROUTE, priorProcess, 'supabase']);
     await client.query(
       `UPDATE atlas.write_receipts SET attempt_started_at = now() - interval '10 minutes' WHERE write_id = 'w-3'`
     );
@@ -296,7 +296,9 @@ test('the claim statement is a compare-and-set — ON CONFLICT DO NOTHING is not
 async function claimAsInstance(client, writeId, instanceId, { holdLock = false, route = ROUTE } = {}) {
   await client.query('SELECT pg_advisory_lock(hashtext($1))', [writeId]);
   const backend = await client.query('SELECT pg_backend_pid() AS pid');
-  const claim = await client.query(SQL.claimWriteReceipt, [writeId, route, instanceId]);
+  const claim = await client.query(SQL.claimWriteReceipt, [
+    writeId, route, instanceId, adapter.effectAuthorityForRoute(route),
+  ]);
   // Released unless the test is specifically about losing the session while it is
   // held. A proof about OWNERSHIP must not leave the lock held, or the competitor
   // would be refused for the wrong reason and the proof would be vacuous.
@@ -438,4 +440,231 @@ test('the liveness rule is in the STATEMENT, not in a comment', () => {
   assert.match(SQL.claimWriteReceipt, /owner_instance_id\s*=\s*\$3/);
   // And the process identity may not be derived from anything about the connection.
   assert.ok(adapter.INSTANCE_ID.includes(String(process.pid)));
+});
+
+// ── P16d — effect-awareness: process death is not proof of a non-write ────────
+//
+// *Required review of `deaa8a5`.* Owner process identity fixed connection loss and
+// nothing more. A different instance proves the old process is GONE; it does not
+// prove an HTTP request that process already sent to Google Sheets did not commit.
+// Google can accept an append and complete it server-side without the client
+// surviving to record the response, so five minutes of age cannot turn an
+// ambiguous post-send outcome into a proven non-write.
+//
+// The two earlier proofs each covered one half and missed the composition: the
+// connection-loss proof keeps the SAME instance (so the refusal is about
+// ownership, not about the effect), and the restarted-process proof uses a dead
+// instance but has NO UNRESOLVED EXTERNAL EFFECT allowed to commit late. These
+// proofs put both halves in one sequence.
+
+const SHEETS_ROUTE = '/api/coaching-notes';   // a D4 route: only the receipt moves
+
+// Kill instance X's claim the way a real process death does: the row keeps X's
+// ownership, X's Sheets request is neither cancelled nor acknowledged, and the
+// database learns nothing about either.
+async function abandonedAttemptFrom(deadInstance, writeId, route) {
+  const dead = await connect(roleUrl('atlas_app'));
+  dead.on('error', () => { /* this backend is destroyed on purpose */ });
+  try {
+    const claimed = await claimAsInstance(dead, writeId, deadInstance, { route });
+    assert.equal(claimed.rowCount, 1);
+  } finally {
+    await dead.end();
+  }
+  // Age past the secondary bound, so ONLY the effect authority can refuse it.
+  await withOwner(async (client) => {
+    await client.query(
+      `UPDATE atlas.write_receipts SET attempt_started_at = now() - interval '30 minutes' WHERE write_id = $1`,
+      [writeId]
+    );
+  });
+}
+
+test('P16d: process death + a Sheets append that commits LATE — the second append never happens', async () => {
+  // THE SEQUENCE THE REVIEW NAMED, end to end:
+  //   1. process A claims the write_id and sends a Sheets append;
+  //   2. Google ACCEPTS the request, but A dies before recording completion;
+  //   3. the receipt stays in_progress under A's owner_instance_id;
+  //   4. the five-minute bound elapses;
+  //   5. process B, with a different instance id, asks for the write_id;
+  //   6. A's accepted request commits.
+  // Under process identity alone, step 5 reclaimed and B appended a second copy.
+  const sheetsTab = [];                                   // the destination itself
+  const A = `atlas-host:9001:${'a11ceffec7ed0'.slice(0, 12)}`;
+  const inFlight = { from: 'A', accepted: true, recorded: false };  // Google has it
+
+  await abandonedAttemptFrom(A, 'w-eff-1', SHEETS_ROUTE);
+
+  // Step 5. B is this process, and its instance id differs from A's.
+  const b = await claim('w-eff-1', SHEETS_ROUTE);
+  assert.equal(b.duplicate, true, 'a dead process\'s UNPROVEN Sheets effect must not be reclaimed');
+  assert.equal(b.ambiguous, true, 'and the refusal must be recorded, not merely returned');
+  assert.equal(b.markedAmbiguousNow, true);
+  assert.equal(b.record.status, 'ambiguous');
+  assert.equal(b.record.owner_instance_id, A, 'the ambiguous row names WHOSE effect is unresolved');
+  assert.equal(b.record.attempt_token, null, 'A can no longer complete a receipt nothing has verified');
+  // B therefore performs no external effect.
+
+  // Step 6. A's already-accepted request commits, long after A is gone.
+  sheetsTab.push({ from: 'A', write_id: 'w-eff-1' });
+  inFlight.recorded = true;
+
+  assert.equal(sheetsTab.length, 1, 'exactly one row reached the destination');
+
+  // And it stays closed. A later retry is refused for the same reason, without
+  // needing anything to remember that B already asked.
+  const later = await claim('w-eff-1', SHEETS_ROUTE);
+  assert.equal(later.duplicate, true);
+  assert.equal(later.ambiguous, true);
+  assert.equal(later.markedAmbiguousNow, false, 'the mark is idempotent — one row, one marking');
+  assert.equal(sheetsTab.length, 1);
+});
+
+test('P16d: no timer un-wedges an ambiguous receipt — not the TTL, and not the prune', async () => {
+  // The review's explicit instruction was "do not fix this by another timer".
+  // Two timers already existed and both had to be closed, or the fix would have
+  // been a five-minute wait replaced by a twenty-four-hour one.
+  const A = `atlas-host:9002:${'deadb01710000'.slice(0, 12)}`;
+  await abandonedAttemptFrom(A, 'w-eff-2', SHEETS_ROUTE);
+  const marked = await claim('w-eff-2', SHEETS_ROUTE);
+  assert.equal(marked.record.status, 'ambiguous');
+
+  // Timer 1: the 24-hour TTL, which reclaims an expired row at ANY other status.
+  await withOwner(async (client) => {
+    await client.query(
+      `UPDATE atlas.write_receipts SET expires_at = now() - interval '48 hours' WHERE write_id = 'w-eff-2'`
+    );
+  });
+  const afterTtl = await claim('w-eff-2', SHEETS_ROUTE);
+  assert.equal(afterTtl.duplicate, true, 'an expired ambiguous row is still NOT reclaimable');
+  assert.equal(afterTtl.record.status, 'ambiguous');
+  // It also stays VISIBLE past its TTL, or the refusal would carry a null record
+  // and the caller could not say why it refused.
+  const peeked = await adapter.peekWriteReceipt('w-eff-2');
+  assert.ok(peeked, 'an ambiguous row must not read as absent once it expires');
+  assert.equal(peeked.status, 'ambiguous');
+
+  // Timer 2: the prune. Deleting the row would leave nothing at all, so the next
+  // claim would insert a clean receipt and permit the second append — the same
+  // duplicate, reached by a housekeeping job instead of a decision.
+  const pruned = await adapter.pruneWriteReceipts('migrate');
+  assert.equal(pruned.deleted, 0, 'the prune must skip an unresolved effect');
+  await withOwner(async (client) => {
+    const { rows } = await client.query(
+      `SELECT status FROM atlas.write_receipts WHERE write_id = 'w-eff-2'`
+    );
+    assert.equal(rows[0].status, 'ambiguous');
+  });
+});
+
+test('P16d: only destination-side proof releases it, in BOTH directions', async () => {
+  const A = `atlas-host:9003:${'c0ffee123456'}`;
+
+  // (a) The operator reads the tab and the row IS there. A's append landed, so the
+  // receipt completes and a retry REPLAYS rather than repeating.
+  await abandonedAttemptFrom(A, 'w-eff-3', SHEETS_ROUTE);
+  await claim('w-eff-3', SHEETS_ROUTE);
+  const landed = await adapter.resolveAmbiguousReceipt(
+    'w-eff-3', true,
+    'read Coaching_Notes A2:D400 at 2026-08-08T11:31Z; the note for this write_id is present at row 318',
+    { message: 'Note saved.' }
+  );
+  assert.equal(landed.status, 'completed');
+  const replay = await claim('w-eff-3', SHEETS_ROUTE);
+  assert.equal(replay.duplicate, true);
+  assert.equal(replay.record.status, 'completed');
+  assert.deepEqual(replay.record.response_body, { message: 'Note saved.' });
+
+  // (b) The operator reads the tab and the row is genuinely ABSENT. That is a
+  // DECLARED non-write, not an inferred one, so the write_id becomes retryable —
+  // the refusal must not be a permanent wedge.
+  await abandonedAttemptFrom(A, 'w-eff-4', SHEETS_ROUTE);
+  await claim('w-eff-4', SHEETS_ROUTE);
+  const absent = await adapter.resolveAmbiguousReceipt(
+    'w-eff-4', false,
+    'read Coaching_Notes A2:D400 at 2026-08-08T11:33Z; no note carries this write_id'
+  );
+  assert.equal(absent.status, 'failed');
+  const retry = await claim('w-eff-4', SHEETS_ROUTE);
+  assert.equal(retry.duplicate, false, 'a PROVEN non-write is retryable, exactly like any failed attempt');
+  assert.equal(retry.attempt, 2);
+
+  // (c) A resolution with no proof, or an empty one, is refused before it reaches
+  // the database — and the constraint refuses it there too (constraints.pgproof).
+  await abandonedAttemptFrom(A, 'w-eff-5', SHEETS_ROUTE);
+  await claim('w-eff-5', SHEETS_ROUTE);
+  await assert.rejects(() => adapter.resolveAmbiguousReceipt('w-eff-5', false, '   '), /destination-side proof/);
+  await assert.rejects(() => adapter.resolveAmbiguousReceipt('w-eff-5', false, null), /destination-side proof/);
+  // "Probably fine" is not a finding either: the landed argument must be a real
+  // boolean, so a truthy string cannot stand in for a read.
+  await assert.rejects(() => adapter.resolveAmbiguousReceipt('w-eff-5', 'yes', 'looked ok'), /explicit landed finding/);
+  const stillBlocked = await claim('w-eff-5', SHEETS_ROUTE);
+  assert.equal(stillBlocked.record.status, 'ambiguous');
+});
+
+test('P16d: the CONTRAST — the same death on a transactional route DOES reclaim', async () => {
+  // Effect-awareness has to cut both ways, or it is just a stall. For the three
+  // migrated routes the authoritative effect after S4 is one Supabase transaction:
+  // atomically present or atomically absent, so a process that died mid-flight
+  // committed nothing a retry could duplicate. Their Sheets export is a mirror
+  // written into a destination allocated once per session per tab (§3.9, §5.3), so
+  // a late duplicate overwrites its own identical cells.
+  const A = `atlas-host:9004:${'facefeed9999'}`;
+  await abandonedAttemptFrom(A, 'w-eff-6', '/api/log-workout');
+
+  const b = await claim('w-eff-6', '/api/log-workout');
+  assert.equal(b.duplicate, false, 'an atomic effect leaves nothing ambiguous behind');
+  assert.equal(b.attempt, 2);
+  assert.equal(b.effect_authority, 'supabase');
+
+  await withOwner(async (client) => {
+    const { rows } = await client.query(
+      `SELECT status, ambiguous_at FROM atlas.write_receipts WHERE write_id = 'w-eff-6'`
+    );
+    assert.equal(rows[0].status, 'in_progress');
+    assert.equal(rows[0].ambiguous_at, null, 'and it never passes through the ambiguous state');
+  });
+});
+
+test('P16d: the effect authority is DECLARED per route, exhaustively, and fails closed', async () => {
+  // The reclaim rule is only as sound as this map, so the map is the thing to
+  // guard. All seven D4 callers are present; three transactional, four not.
+  assert.deepEqual(
+    Object.keys(adapter.ROUTE_EFFECT_AUTHORITY).sort(),
+    [
+      '/api/bodyweight', '/api/coaching-notes', '/api/complete-workout', '/api/constraints',
+      '/api/log-modality', '/api/log-workout', '/api/log-workout/undo-last',
+    ]
+  );
+  assert.equal(
+    Object.values(adapter.ROUTE_EFFECT_AUTHORITY).filter((v) => v === 'sheets').length, 4,
+    'the four D4 routes whose rows still append to Sheets'
+  );
+
+  // An undeclared route may NOT claim. 'supabase' is the permissive value — it
+  // authorises automatic retry after a process death — so a new write caller must
+  // not be able to inherit it by omission.
+  await assert.rejects(
+    () => claim('w-eff-7', '/api/some-future-write'),
+    /no declared effect authority/
+  );
+  await withOwner(async (client) => {
+    const { rows } = await client.query(
+      `SELECT count(*)::int AS n FROM atlas.write_receipts WHERE write_id = 'w-eff-7'`
+    );
+    assert.equal(rows[0].n, 0, 'and it claims nothing on the way out');
+  });
+});
+
+test('P16d: the effect-aware rule is in the STATEMENTS, not in a comment', () => {
+  // The same textual guard the liveness rule carries, and for the same reason:
+  // dropping the effect_authority predicate would restore automatic reclaim for
+  // the four Sheets routes, and every behavioural test that does not compose a
+  // death with a late commit would still pass.
+  assert.match(SQL.claimWriteReceipt, /effect_authority\s*=\s*'supabase'/);
+  assert.match(SQL.claimWriteReceipt, /status\s*<>\s*'ambiguous'/);
+  assert.match(SQL.markReceiptAmbiguous, /effect_authority\s*=\s*'sheets'/);
+  assert.match(SQL.markReceiptAmbiguous, /attempt_token\s*=\s*NULL/);
+  assert.match(SQL.resolveAmbiguousReceipt, /WHERE write_id = \$1 AND status = 'ambiguous'/);
+  assert.match(SQL.pruneWriteReceipts, /status\s*<>\s*'ambiguous'/);
 });

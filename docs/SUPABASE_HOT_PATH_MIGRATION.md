@@ -405,17 +405,41 @@ Replaces the idempotency store in `services/idempotency.js` — **for all seven 
 |---|---|---|
 | `write_id` | `text` | **PK**. Supplied by the client, as today. |
 | `route` | `text` | One of the seven routes below. |
+| `effect_authority` | `text` | `NOT NULL`, `CHECK (effect_authority IN ('supabase','sheets'))`. **Where this route's authoritative effect lands**, written once at claim from the adapter's frozen route map and never updated. The reclaim rule branches on it — see "effect-awareness" below. |
 | `session_id` | `text` | Nullable — a claim is made before the id is known on some paths, and three routes have no session at all. |
-| `status` | `text` | `CHECK (status IN ('in_progress','completed','failed'))`. |
-| `attempt_token` | `uuid` | Nullable. The current attempt's token, regenerated on every new attempt. Null only where no Supabase attempt was ever claimed. |
+| `status` | `text` | `CHECK (status IN ('in_progress','completed','failed','ambiguous'))`. |
+| `attempt_token` | `uuid` | Nullable. The current attempt's token, regenerated on every new attempt. Null only where no Supabase attempt was ever claimed, where `failWrite` voided it, or where the row is `ambiguous`. |
 | `attempt` | `integer` | `NOT NULL DEFAULT 1`. Increments on each retry of the same `write_id`. |
+| `owner_instance_id` | `text` | **Which process owns the current attempt** — `host:pid:random`, minted once per process. **The liveness authority**, replacing a session-scoped advisory lock. Lifecycle below. |
 | `response_body` | `jsonb` | The exact body replayed to a duplicate retry. |
 | `rows_written` | `integer` | |
 | `appended_range` | `text` | Kept while the Sheets mirror exists; null afterwards. |
 | `created_at` | `timestamptz` | Immutable provenance — when the `write_id` was first seen. **Not** the TTL clock. |
-| `expires_at` | `timestamptz` | **The TTL authority.** `attempt_started_at + 24 hours`, refreshed on every newly-owned attempt. Every read filters on it; the prune deletes on it. |
+| `expires_at` | `timestamptz` | **The TTL authority.** `attempt_started_at + 24 hours`, refreshed on every newly-owned attempt. Every read filters on it; the prune deletes on it. **An `ambiguous` row is exempt from both** — see below. |
 | `attempt_started_at` | `timestamptz` | Start of the **current** attempt. The staleness clock reads this, not `created_at`. |
 | `completed_at` | `timestamptz` | Nullable. |
+| `ambiguous_at` | `timestamptz` | Nullable. When the effect became unresolved. Set once, **never cleared**, so "this row was ambiguous" survives its resolution. |
+| `ambiguity_proof` | `text` | Nullable. The destination-side proof that resolved it — what was read, and what it showed — in the same athlete-safe form as `migration_divergences.closure_proof`. |
+
+**Four structural constraints, because each unsound state is otherwise reachable by an
+ordinary `UPDATE`:**
+
+| Constraint | Rule | Why it cannot be left to the call site |
+|---|---|---|
+| `write_receipts_live_attempt_has_owner_check` | `status <> 'in_progress' OR owner_instance_id IS NOT NULL` | `owner_instance_id IS DISTINCT FROM $3` reads a **null owner as "some other process"**, so an unowned live attempt would be reclaimed on age alone — the exact time-based inference the column exists to remove. |
+| `write_receipts_ambiguous_is_sheets_only_check` | `status <> 'ambiguous' OR (effect_authority = 'sheets' AND ambiguous_at IS NOT NULL)` | An atomic effect is present or absent, never maybe. Without this, `ambiguous` becomes a general-purpose stall for the migrated routes; and a row with no `ambiguous_at` is invisible to the operator queue. |
+| `write_receipts_ambiguous_token_void_check` | `status <> 'ambiguous' OR attempt_token IS NULL` | Otherwise the very process whose effect is unverified could return and complete the receipt on the strength of it. |
+| `write_receipts_ambiguity_needs_proof_check` | `ambiguous_at IS NULL OR status = 'ambiguous' OR (ambiguity_proof IS NOT NULL AND ambiguity_proof <> '')` | **Once ambiguous, only proof gets you out.** Every unsound release — waiting, pruning, a plain retry — is a status change with no proof attached, and each one is a duplicate append. |
+
+**`owner_instance_id` lifecycle, stated because it is load-bearing safety state.**
+
+| Event | Value |
+|---|---|
+| New claim, retry, or reclaim | The claiming process's id. Always written. |
+| `in_progress` | **Never null** — enforced by the constraint above, not by adapter discipline. |
+| `completed` / `failed` | Retained as provenance of the last attempt's owner. Never cleared; nothing reads it. |
+| `ambiguous` | Retained, and it is **evidence**: it names the process whose external effect is unresolved. |
+| `S4` carry (§5.5a) | The file store records no owner, so a carried record cannot supply one — and one may not be invented. The drain normalises every carried `in_progress` record to `failed` (§5.5 step 2 sub-step i) **before** the handover inserts it, so no carried row is ever `in_progress` and the not-null rule is satisfiable without fabricating a value. |
 
 - **Mutability:** mutable, and deliberately so. The row is a **state machine**, not a
   single insert plus a single terminal update. A `write_id` is **not** consumed by a failed
@@ -437,13 +461,17 @@ Replaces the idempotency store in `services/idempotency.js` — **for all seven 
 - **Transaction boundary — a compare-and-set, never `DO NOTHING`.** The claim is one
   statement:
   ```sql
-  -- The caller MUST already hold pg_try_advisory_lock(hashtext($1)) — see "liveness" below.
-  INSERT INTO atlas.write_receipts (write_id, route, status, attempt, attempt_token,
+  -- $3 is the claiming process's owner_instance_id; $4 is the route's declared
+  -- effect_authority. The caller also holds pg_try_advisory_lock(hashtext($1)),
+  -- which serialises claimers INSIDE one process and is NOT a liveness authority.
+  INSERT INTO atlas.write_receipts (write_id, route, effect_authority, status, attempt, attempt_token,
+                                    owner_instance_id,
                                     created_at, attempt_started_at, expires_at)
-  VALUES ($1, $2, 'in_progress', 1, gen_random_uuid(),
+  VALUES ($1, $2, $4, 'in_progress', 1, gen_random_uuid(), $3,
           now(), now(), now() + interval '24 hours')
   ON CONFLICT (write_id) DO UPDATE
      SET status             = 'in_progress',
+         owner_instance_id  = $3,   -- the claimer now owns the attempt
          -- An EXPIRED row is a fresh logical record, exactly as the file store's
          -- prune-then-insert produces. A live retry continues the existing one.
          attempt            = CASE WHEN atlas.write_receipts.expires_at <= now()
@@ -461,12 +489,52 @@ Replaces the idempotency store in `services/idempotency.js` — **for all seven 
          rows_written       = NULL,
          appended_range     = NULL,
          completed_at       = NULL
-   WHERE atlas.write_receipts.status = 'failed'
+   WHERE atlas.write_receipts.status = 'failed'   -- a DECLARED non-write; both authorities retry it
+      -- Expired: reclaimable at any status EXCEPT 'ambiguous'. A 24-hour TTL is
+      -- another timer, and a timer is exactly the inference being removed.
+      OR (atlas.write_receipts.expires_at <= now()
+          AND atlas.write_receipts.status <> 'ambiguous')
       OR (atlas.write_receipts.status = 'in_progress'
+          -- EFFECT-AWARE. Only an atomic effect may be reclaimed on process death.
+          AND atlas.write_receipts.effect_authority = 'supabase'
+          -- The owning PROCESS is gone. Not "its database session dropped".
+          AND atlas.write_receipts.owner_instance_id IS DISTINCT FROM $3
           AND atlas.write_receipts.attempt_started_at < now() - interval '5 minutes')
-      OR atlas.write_receipts.expires_at <= now()   -- expired: reclaimable at ANY status
-  RETURNING attempt_token, attempt, session_id;
+  RETURNING attempt_token, attempt, session_id, owner_instance_id, effect_authority;
   ```
+
+  **The `sheets` half has no reclaim branch at all**, by construction. When the claim
+  refuses, the adapter runs a second compare-and-set on exactly the condition the claim
+  cannot decide, and the row leaves the retryable world entirely:
+
+  ```sql
+  UPDATE atlas.write_receipts
+     SET status = 'ambiguous', attempt_token = NULL, ambiguous_at = now()
+   WHERE write_id = $1
+     AND status = 'in_progress'
+     AND effect_authority = 'sheets'
+     AND owner_instance_id IS DISTINCT FROM $2
+     AND attempt_started_at < now() - interval '5 minutes'
+  RETURNING owner_instance_id, attempt, attempt_started_at;
+  ```
+
+  It records that **nobody knows**, and makes that ignorance durable and blocking. Being a
+  compare-and-set it is safe to race and idempotent: two claimers produce one mark, and the
+  loser reads it. The only exit takes a destination-side finding and its proof:
+
+  ```sql
+  UPDATE atlas.write_receipts
+     SET status          = CASE WHEN $2::boolean THEN 'completed' ELSE 'failed' END,
+         ambiguity_proof = $3::text,
+         response_body   = CASE WHEN $2::boolean THEN $4::jsonb ELSE NULL END,
+         completed_at    = CASE WHEN $2::boolean THEN now() ELSE NULL END
+   WHERE write_id = $1 AND status = 'ambiguous'
+  RETURNING status, ambiguous_at, ambiguity_proof;
+  ```
+
+  `found` → `completed`, and a retry **replays** rather than repeating. `absent` → `failed`,
+  a **declared** non-write that is retryable like any other. There is deliberately no third
+  outcome: "still unsure" is not a resolution, it is the state the row is already in.
 
   **Liveness, not a timer — restoring the WRITE-3 condition the SQL had dropped.**
   *Required review of `c22ce02`.* The file store retries an aged `in_progress` record **only when
@@ -553,6 +621,75 @@ Replaces the idempotency store in `services/idempotency.js` — **for all seven 
   secondary bound, and prove a competitor is **still refused** — so no second
   external effect occurs. It also proves the refusal does not become a permanent
   stall: a genuinely restarted process, carrying a new instance id, reclaims.
+
+  **PROCESS IDENTITY ALONE IS STILL NOT ENOUGH, AND THE REPLACEMENT IS
+  EFFECT-AWARENESS.** *Required review of `deaa8a5`.* Owner process identity fixed
+  connection loss and nothing more. A different instance proves the old process is
+  **gone**; it does **not** prove an HTTP request that process already sent to
+  Google Sheets did not commit. Google can accept an append and complete the
+  server-side effect without the client surviving to receive or record the
+  response, so five minutes of age cannot turn an ambiguous post-send outcome into
+  a proven non-write. This sequence was still legal:
+
+  1. process A claims the `write_id` and sends a Sheets write;
+  2. Google **accepts** the request, but A dies before recording completion;
+  3. the receipt stays `in_progress` under A's `owner_instance_id`;
+  4. five minutes pass;
+  5. process B, with a different instance id, reclaims **automatically**;
+  6. B performs the same Sheets effect, and A's accepted request commits — two rows.
+
+  The two liveness proofs each covered one half and **missed the composition**: P16c's
+  connection-loss case keeps the **same** instance, so its refusal is about ownership
+  rather than about the effect, while its restarted-process case uses a dead instance
+  but has **no unresolved external effect allowed to commit late**.
+
+  **One receipt state machine cannot infer identical retryability for a transactional
+  and a non-transactional effect.** Ruling D4 moves the receipt for all seven callers,
+  but only three of them move their **data**, so the reclaim rule branches on
+  `effect_authority`:
+
+  - **`supabase`** — `/api/log-workout`, `/api/complete-workout`, `undo-last`. After
+    `S4` the authoritative effect is **one transaction**: atomically present or
+    atomically absent, so a process that died mid-flight committed nothing a retry
+    could duplicate. Their Sheets export is a **mirror** written by
+    `spreadsheets.values.update` into a destination allocated once per session per tab
+    (§3.9, §5.3 item 2), so a late duplicate overwrites its own identical cells. These
+    reclaim automatically on process death, exactly as before.
+  - **`sheets`** — `coaching-notes`, `constraints`, `log-modality`, `bodyweight`. Their
+    rows keep appending to their own tabs with **no allocated destination** and **no
+    Supabase constraint able to catch a duplicate**. Nothing reclaims these on process
+    death. The claim refuses, the row moves to **`ambiguous`**, and only a
+    destination-side finding — with its proof — releases it. **Ambiguous post-send
+    state fails closed rather than automatically repeating.**
+
+  **This is not fixed by another timer, and both existing timers had to be closed**, or a
+  five-minute wait would simply have become a twenty-four-hour one:
+
+  - the claim's **expired-row** branch excludes `'ambiguous'`, so the 24-hour TTL does not
+    reclaim it;
+  - the **prune** excludes `'ambiguous'`, because deleting the row would leave nothing at
+    all and the next claim would insert a clean receipt — the same duplicate append,
+    reached by a housekeeping job instead of a decision;
+  - `peekWrite` therefore keeps an `ambiguous` row **visible past its TTL**, or a refusal
+    would carry a null record and could not say why it refused.
+
+  **`effect_authority` is declared, never derived.** It comes from a **frozen, exhaustive
+  route map** in the adapter, keyed on the exact endpoint strings the routes already pass
+  to `beginWrite`. An **undeclared route may not claim at all**: `'supabase'` is the
+  permissive value — it authorises automatic retry after a process death — so a new write
+  caller must not inherit it by omission. The column is written once at `INSERT` and is
+  **absent from `atlas_app`'s column-scoped `UPDATE` grant** (§8.2), so the runtime cannot
+  relabel a non-transactional effect as transactional and unlock automatic retry for it.
+
+  **P16d proves the composition the two halves missed**: an abandoned attempt from a dead
+  instance on a `sheets` route, a competitor that is **refused and records the ambiguity**,
+  and the dead process's append **committing late** — with exactly one row at the
+  destination. It then proves **no timer un-wedges it** (neither the TTL nor the prune),
+  that **only proof releases it in both directions** (found → `completed` and a retry
+  replays; absent → `failed` and a retry proceeds; missing, empty, or non-boolean findings
+  are refused), the **contrast** that the same death on a transactional route still
+  reclaims and never becomes ambiguous, and that the route map is exhaustive and **fails
+  closed** on an undeclared route.
 
 
 
@@ -1170,7 +1307,27 @@ The current store is a JSON map, not a Sheet tab, so this is a record-by-record 
 | `created_at_ms` | `created_at` |
 | `completed_at` | `completed_at` |
 | the in-process attempt token | `attempt_token` |
-| *(not stored today)* | `route`, `session_id`, `rows_written`, `appended_range`, `attempt`, `attempt_started_at` |
+| **"rehydrated from a prior process"** — the in-memory flag `beginWrite` reads before treating an aged `in_progress` record as abandoned (`services/idempotency.js:159-177`) | **`owner_instance_id`.** The file store answers this by asking whether the record survived a restart; the table answers it by comparing the recorded owner against the claiming process. Same question, made durable. It is **not** a carried value — see below. |
+| *(not stored today)* | `route`, `effect_authority`, `session_id`, `rows_written`, `appended_range`, `attempt`, `attempt_started_at`, `ambiguous_at`, `ambiguity_proof` |
+
+**Three of these cannot be carried from a file record, and each has a rule rather than a
+default:**
+
+- **`owner_instance_id`** — the file store records no owner, and one may not be invented: a
+  fabricated id would either look like the carrying process (wedging the `write_id` forever)
+  or like a stranger (authorising an immediate reclaim). The `S4` drain instead normalises
+  every carried `in_progress` record to `failed` (§5.5 step 2 sub-step i) **before** the
+  handover inserts it, so no carried row is ever `in_progress` and
+  `write_receipts_live_attempt_has_owner_check` is satisfied without fabricating anything.
+  A carried `failed` record is retryable by design, which is the correct reading of a
+  record whose owning process is by definition gone.
+- **`effect_authority`** — derived from the carried record's `metadata.endpoint` through the
+  same frozen route map the runtime uses, and from nothing else. A carried record whose
+  endpoint is not in the map **fails the handover** rather than defaulting, for the reason
+  §3.6 gives: `'supabase'` is the permissive value.
+- **`ambiguous_at` / `ambiguity_proof`** — always null on a carried record. The file store
+  has no ambiguous state, so nothing can arrive already blocked. New ambiguity is created
+  only by a claim after the cutover.
 
 ### 4.7 The blank-versus-null rule
 
@@ -2393,6 +2550,7 @@ operation. No lower rung substitutes for a higher one.
 | P8 | The `write_receipts` state machine is proven on all four transitions of §3.6, including that a **`failed` attempt does not consume the `write_id`** and that a superseded attempt's late `completeWrite` is discarded. |
 | P8c | **`failWrite` invalidates the token.** Fail an attempt, then send a late `completeWrite` carrying the **same** token **before any retry occurs**, and prove it is refused. The failed attempt must not become `completed`. |
 | P16c | **The receipt liveness rule survives a lost database session during an unresolved external effect.** Claim an attempt; **terminate its database backend** while the Google Sheets effect is still in flight; confirm the advisory lock is genuinely free; age the row past the five-minute bound; and prove a competitor is **still refused**, so no second external effect occurs. Then prove the refusal is not a permanent stall: a genuinely restarted process, carrying a new `owner_instance_id`, reclaims. *Added by the required review of `ad18907`, which found the previous mechanism inferring external-effect death from database-session death — a false implication that let a competitor take a freed lock and perform the same Sheets append. A test that only proves a live lock blocks a claim does not discharge this: the lock is not the mechanism under test.* |
+| P16d | **A process death does not authorise repeating a non-transactional external effect — proven as one composition, not as two halves.** Claim a `write_id` on a **`sheets`-authority D4 route** as instance A; kill A's attempt so the row keeps A's ownership with the Sheets append **neither cancelled nor acknowledged**; age it past the five-minute bound; prove a competitor with a different instance id is **refused** and that the refusal is **recorded** as `ambiguous` naming A's instance with the token voided; then let **A's already-accepted append commit late** and prove exactly **one** row reached the destination. Must additionally prove: **no timer un-wedges it** — an expired `ambiguous` row is still refused, still visible to `peekWrite`, and **not deleted by the prune**; **only destination-side proof releases it, in both directions** — found → `completed` with a retry replaying the body, absent → `failed` with a retry proceeding, and a missing, empty, or non-boolean finding refused; the **contrast** that the same death on a `supabase`-authority route still reclaims and never passes through `ambiguous`; and that the route map is **exhaustive and fails closed**, an undeclared route claiming nothing. *Added by the required review of `deaa8a5`, which found that owner process identity fixed connection loss only: a different instance proves the old process is gone, but not that an HTTP request it already sent did not commit. P16c's connection-loss case keeps the same instance, and its restarted-process case has no unresolved external effect allowed to commit late — the two prove two halves and miss the composition that matters. A test that reclaims and then checks for a duplicate does not discharge this: the duplicate must be unrepresentable, not detected.* |
 | P8a0 | **The receipt claim is executable and self-contained.** A brand-new receipt is proven to carry a **non-null `expires_at`** and to be immediately visible to `peekWrite`. An **expired `completed`** row is proven **atomically reclaimable in the claim statement** — no housekeeping job runs during the test — with `attempt` and `created_at` reset, matching prune-then-insert. The claim is proven to execute **as `atlas_app` under its actual grants**, not as a superuser. |
 | P8a | **The receipt TTL epoch resets on retry.** Seed a retryable receipt just under 24 hours old; claim a new attempt; complete it; advance the clock past the **original** expiry but inside 24 hours of the retry; and prove `peekWrite` and duplicate replay still succeed. A retry that inherits the first attempt's expiry fails this. |
 | P8b | **NOT AN `S2` MERGE GATE — an owner-gated checkpoint after `S2` is applied to `Atlas Production`, before `S3` begins.** *Corrected by the required review of `039c28c`, which found this gate unproducible under `S2`'s own rules: `S2` applies migrations to a disposable CI database only and is **forbidden** to apply schema to `Atlas Production`, while P2's database is plain Postgres with no Supavisor and no second hosted project is named. As a merge gate it demanded evidence that could only be produced by breaking `S2`'s own constraint or by silently provisioning another hosted project.* What **does** gate the `S2` merge is the local equivalent: the four roles and their exact grants are created and proven on the from-empty Postgres database, as the real roles (P7c). The hosted proof below then runs **after the owner applies `S2` to `Atlas Production`** and **before `S3` starts**, and `S3` may not begin until it passes. **The real Render-compatible connection path works.** Open a **Supavisor session-mode** connection as **each of the four roles** — including the owner-only `atlas_rebuild`, which needs a working connection when a rebuild runs — run a multi-statement transaction, and prove a **session-level advisory lock survives across statements** — the exact behaviour the exporter depends on and the exact behaviour transaction mode would silently break. Prove each pooler connection authenticates as its intended role. Assumed IPv6 reachability does not count as proof. |

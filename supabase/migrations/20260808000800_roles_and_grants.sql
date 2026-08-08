@@ -107,9 +107,20 @@ GRANT UPDATE (closeout_write_id)
 -- (§3.6): an expired row is reclaimed as a genuinely new logical record, which
 -- resets attempt and created_at and refreshes the TTL epoch. Omitting them made
 -- the claim permission-denied under its own security model.
+--
+-- ambiguous_at and ambiguity_proof are here because the runtime performs BOTH
+-- halves of the effect-aware rule: the claim path marks a prior process's
+-- unresolved Sheets effect ambiguous, and the resolution records the
+-- destination-side proof that releases it.
+--
+-- effect_authority is DELIBERATELY ABSENT. It is written once at INSERT from the
+-- frozen route map and is never updated, so the runtime cannot relabel a
+-- non-transactional effect as transactional and unlock automatic retry for it.
+-- The reclaim rule reads this column; a role that could rewrite it could defeat
+-- the rule without touching any statement. Proven both ways by §6.1 P7c/P16d.
 GRANT UPDATE (status, attempt, attempt_token, attempt_started_at, created_at,
               expires_at, session_id, response_body, rows_written, appended_range,
-              completed_at, owner_instance_id)
+              completed_at, owner_instance_id, ambiguous_at, ambiguity_proof)
   ON atlas.write_receipts TO atlas_app;
 
 -- The six updatable export-state columns of §3.1. Three writers touch them: the

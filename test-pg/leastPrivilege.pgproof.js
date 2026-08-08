@@ -211,7 +211,7 @@ test('P7c: every adapter statement atlas_app must issue SUCCEEDS as atlas_app', 
     // The whole receipt state machine, including the advisory lock.
     const lock = await client.query('SELECT pg_try_advisory_lock(hashtext($1)) AS acquired', ['w-1']);
     assert.equal(lock.rows[0].acquired, true);
-    const claim = await client.query(SQL.claimWriteReceipt, ['w-1', '/api/log-workout', 'proof-instance']);
+    const claim = await client.query(SQL.claimWriteReceipt, ['w-1', '/api/log-workout', 'proof-instance', 'supabase']);
     assert.equal(claim.rowCount, 1);
     const token = claim.rows[0].attempt_token;
     // The session_id persist — the statement whose missing grant would have made
@@ -280,8 +280,8 @@ test('P7c: the receipt prune is refused to atlas_app and permitted to atlas_migr
 test('P7c: atlas_migrate executes the declared cutover receipt carry as its real role', async () => {
   await withRole('atlas_migrate', async (client) => {
     await client.query(
-      `INSERT INTO atlas.write_receipts (write_id, route, status, attempt_started_at, expires_at)
-       VALUES ('carried-1', '/api/log-workout', 'completed', now(), now() + interval '24 hours')`
+      `INSERT INTO atlas.write_receipts (write_id, route, effect_authority, status, attempt_started_at, expires_at)
+       VALUES ('carried-1', '/api/log-workout', 'supabase', 'completed', now(), now() + interval '24 hours')`
     );
     await client.query(`UPDATE atlas.write_receipts SET rows_written = 3 WHERE write_id = 'carried-1'`);
     await client.query(`DELETE FROM atlas.write_receipts WHERE write_id = 'carried-1'`);

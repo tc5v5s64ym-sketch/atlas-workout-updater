@@ -231,11 +231,36 @@ const SQL = Object.freeze({
   //
   // The five-minute window is retained as a secondary bound only. It is not the
   // authority either: a slow request is not a dead one.
+  //
+  // ── AND PROCESS IDENTITY ALONE IS STILL NOT ENOUGH ───────────────────────────
+  // *Required review of `deaa8a5`.* A different instance proves the old process is
+  // GONE. It does not prove an HTTP request that process already sent to Google
+  // Sheets did not commit: Google can accept an append and complete it server-side
+  // without the client surviving to record the response. Five minutes of age does
+  // not turn an ambiguous post-send outcome into a proven non-write.
+  //
+  // So the reclaim is EFFECT-AWARE, and the prior-process branch below is gated on
+  // `effect_authority = 'supabase'`:
+  //
+  //   'supabase' — the authoritative effect is one transaction, atomically present
+  //     or atomically absent, and the Sheets export mirror is idempotent by an
+  //     allocated destination (§3.9, §5.3). A dead process's attempt committed
+  //     nothing that a retry could duplicate. Reclaim automatically.
+  //
+  //   'sheets' — the authoritative effect is a values.append with no allocated
+  //     destination and no Supabase constraint able to catch a duplicate. NOTHING
+  //     HERE RECLAIMS IT. The claim refuses, and markReceiptAmbiguous moves it to
+  //     'ambiguous', where only resolveAmbiguousReceipt — carrying destination-side
+  //     proof — can release it. Ambiguous post-send state FAILS CLOSED rather than
+  //     automatically repeating.
+  //
+  // The expired branch excludes 'ambiguous' for the same reason: a 24-hour TTL is
+  // another timer, and a timer is exactly the inference being removed.
   claimWriteReceipt: `
-    INSERT INTO atlas.write_receipts (write_id, route, status, attempt, attempt_token,
+    INSERT INTO atlas.write_receipts (write_id, route, effect_authority, status, attempt, attempt_token,
                                       owner_instance_id,
                                       created_at, attempt_started_at, expires_at)
-    VALUES ($1, $2, 'in_progress', 1, gen_random_uuid(), $3,
+    VALUES ($1, $2, $4, 'in_progress', 1, gen_random_uuid(), $3,
             now(), now(), now() + interval '24 hours')
     ON CONFLICT (write_id) DO UPDATE
        SET status             = 'in_progress',
@@ -254,12 +279,64 @@ const SQL = Object.freeze({
            appended_range     = NULL,
            completed_at       = NULL
      WHERE atlas.write_receipts.status = 'failed'
-        OR atlas.write_receipts.expires_at <= now()   -- expired: reclaimable at ANY status
+        -- Expired: reclaimable at any status EXCEPT 'ambiguous'. A failed row is a
+        -- DECLARED non-write (failWrite ran), not an inferred one, so both
+        -- authorities may retry it.
+        OR (atlas.write_receipts.expires_at <= now()
+            AND atlas.write_receipts.status <> 'ambiguous')
         OR (atlas.write_receipts.status = 'in_progress'
+            -- The effect is atomic, so a dead process committed nothing.
+            AND atlas.write_receipts.effect_authority = 'supabase'
             -- The owning PROCESS is gone. Not "its database session dropped".
             AND atlas.write_receipts.owner_instance_id IS DISTINCT FROM $3
             AND atlas.write_receipts.attempt_started_at < now() - interval '5 minutes')
-    RETURNING attempt_token, attempt, session_id, owner_instance_id`,
+    RETURNING attempt_token, attempt, session_id, owner_instance_id, effect_authority`,
+
+  // §3.6 — the SHEETS half of the effect-aware rule, and the only exit an
+  // abandoned non-transactional attempt has.
+  //
+  // A compare-and-set on exactly the condition the claim refuses: a prior
+  // process's live attempt on a route whose effect is a Google Sheets append. It
+  // does NOT decide whether the append landed — it records that NOBODY KNOWS, and
+  // makes that ignorance durable and blocking. Marking is safe to race: two
+  // claimers marking the same row produce one mark, and the loser reads it.
+  //
+  // The token is voided in the same statement. The dead process cannot come back
+  // and complete the receipt on the strength of an effect nothing has verified.
+  markReceiptAmbiguous: `
+    UPDATE atlas.write_receipts
+       SET status = 'ambiguous', attempt_token = NULL, ambiguous_at = now()
+     WHERE write_id = $1
+       AND status = 'in_progress'
+       AND effect_authority = 'sheets'
+       AND owner_instance_id IS DISTINCT FROM $2
+       AND attempt_started_at < now() - interval '5 minutes'
+    RETURNING owner_instance_id, attempt, attempt_started_at`,
+
+  // §3.6 — the ONLY way out of 'ambiguous', and it takes destination-side proof.
+  //
+  // $2 is the operator's finding: true when the append is FOUND at the
+  // destination, false when the destination is read and it is genuinely ABSENT.
+  // $3 is the proof text — what was read, and what it showed — in the same
+  // athlete-safe form as migration_divergences.closure_proof. The NOT NULL/non-empty
+  // requirement is also a table constraint, so a caller that omits it is refused by
+  // the schema rather than by this statement's politeness.
+  //
+  //   found    → 'completed'. The write landed; a retry must replay the receipt,
+  //              not repeat the append.
+  //   absent   → 'failed'. A declared non-write, which is retryable exactly like
+  //              any other failed attempt.
+  //
+  // There is deliberately no third outcome. "Still unsure" is not a resolution; it
+  // is the state the row is already in.
+  resolveAmbiguousReceipt: `
+    UPDATE atlas.write_receipts
+       SET status          = CASE WHEN $2::boolean THEN 'completed' ELSE 'failed' END,
+           ambiguity_proof = $3::text,
+           response_body   = CASE WHEN $2::boolean THEN $4::jsonb ELSE NULL END,
+           completed_at    = CASE WHEN $2::boolean THEN now() ELSE NULL END
+     WHERE write_id = $1 AND status = 'ambiguous'
+    RETURNING status, ambiguous_at, ambiguity_proof`,
 
   // §3.6 — persist the server-minted id under the token guard, immediately after
   // minting and before the workout write. IS NULL means a reused id is never
@@ -284,16 +361,30 @@ const SQL = Object.freeze({
      WHERE write_id = $1 AND attempt_token = $2`,
 
   // §3.6 — read-only, TTL-bounded. An expired row reads as absent, exactly as today.
+  //
+  // AN 'ambiguous' ROW IS THE ONE EXCEPTION, and it must be: the claim refuses it
+  // forever, so if the peek also reported it absent the caller would be refused
+  // with a null record and no way to say why. It stays visible past its TTL so the
+  // refusal can carry its own explanation to the operator.
   peekWriteReceipt: `
-    SELECT write_id, route, session_id, status, attempt, attempt_token,
+    SELECT write_id, route, effect_authority, session_id, status, attempt, attempt_token,
            response_body, rows_written, appended_range,
-           created_at, attempt_started_at, expires_at, completed_at
+           created_at, attempt_started_at, expires_at, completed_at,
+           ambiguous_at, ambiguity_proof, owner_instance_id
       FROM atlas.write_receipts
-     WHERE write_id = $1 AND expires_at > now()`,
+     WHERE write_id = $1 AND (expires_at > now() OR status = 'ambiguous')`,
 
   // The prune bounds table size. It carries no correctness — the claim above
   // reclaims an expired row atomically, so nothing waits for this to run.
-  pruneWriteReceipts: `DELETE FROM atlas.write_receipts WHERE expires_at <= now()`,
+  //
+  // IT MUST NEVER DELETE AN 'ambiguous' ROW. Deleting one would leave no row at
+  // all, so the next claim would insert a clean receipt and permit the second
+  // append — the exact duplicate the ambiguous state exists to prevent, reached by
+  // a housekeeping job instead of by a decision. An unresolved effect outlives the
+  // TTL by design.
+  pruneWriteReceipts: `
+    DELETE FROM atlas.write_receipts
+     WHERE expires_at <= now() AND status <> 'ambiguous'`,
 
   // §3.7 — the catalog generation lifecycle.
   // content_hash is written HERE, at attempt time, rather than updated at
@@ -733,6 +824,46 @@ async function readCatalogMirror(role = 'app') {
 // derived from anything about the database connection.
 const INSTANCE_ID = `${require('os').hostname()}:${process.pid}:${require('crypto').randomBytes(6).toString('hex')}`;
 
+// WHERE EACH ROUTE'S AUTHORITATIVE EFFECT LANDS — the seven beginWrite callers of
+// ruling D4, and nothing else.
+//
+// This is a declaration, not a derivation. The reclaim rule in
+// SQL.claimWriteReceipt is only as sound as this map, so it is frozen, exhaustive,
+// and keyed on the exact endpoint strings the routes already pass to beginWrite.
+//
+// 'supabase' is the PERMISSIVE value — it authorises automatic retry after a
+// process death — so an unrecognised route must never fall into it by default.
+const ROUTE_EFFECT_AUTHORITY = Object.freeze({
+  // The migrated hot path. After S4 the authoritative effect is one Supabase
+  // transaction, and the Sheets export is a mirror written into an allocated
+  // destination (§3.9), so a repeat overwrites its own cells.
+  '/api/log-workout': 'supabase',
+  '/api/complete-workout': 'supabase',
+  '/api/log-workout/undo-last': 'supabase',
+  // The four D4 routes. Only the RECEIPT moves; the rows keep appending to their
+  // own Sheets tabs, with no allocated destination and nothing able to catch a
+  // duplicate.
+  '/api/coaching-notes': 'sheets',
+  '/api/constraints': 'sheets',
+  '/api/log-modality': 'sheets',
+  '/api/bodyweight': 'sheets',
+});
+
+// FAIL CLOSED ON AN UNKNOWN ROUTE. A new write caller must declare where its
+// effect lands before it can claim a receipt. Defaulting either way is wrong:
+// 'supabase' would silently grant automatic retry to a non-transactional effect,
+// and 'sheets' would let a caller reach a blocking state nobody designed for.
+function effectAuthorityForRoute(route) {
+  const authority = ROUTE_EFFECT_AUTHORITY[route];
+  if (!authority) {
+    throw new Error(
+      `[supabase-adapter] no declared effect authority for write route "${route}" — ` +
+      'add it to ROUTE_EFFECT_AUTHORITY before this route claims a write receipt'
+    );
+  }
+  return authority;
+}
+
 // ONE attempt, ONE pinned connection, from claim to release.
 //
 // ── WHAT THE ADVISORY LOCK IS FOR, AND WHAT IT IS NOT ────────────────────────
@@ -760,13 +891,31 @@ async function withWriteAttempt(writeId, route, fn) {
       return fn({ acquired: false, duplicate: true, reason: 'attempt_in_progress_here' }, null);
     }
     try {
-      const claim = await client.query(SQL.claimWriteReceipt, [writeId, route, INSTANCE_ID]);
+      const authority = effectAuthorityForRoute(route);
+      const claim = await client.query(SQL.claimWriteReceipt, [writeId, route, INSTANCE_ID, authority]);
       let attempt;
       if (claim.rowCount === 0) {
-        // The WHERE refused the update: a genuine duplicate. Read the row so the
-        // caller can refuse or replay.
+        // The WHERE refused the update. Before reporting a plain duplicate, ask
+        // whether this is the case the claim CANNOT decide: a prior process's live
+        // attempt whose Google Sheets append may or may not have landed. If it is,
+        // record the ignorance durably — the row becomes 'ambiguous' and stops
+        // being retryable by anything except destination-side proof.
+        //
+        // Compare-and-set, so this is safe to race and is a no-op on every other
+        // shape of duplicate (fresh, completed, already ambiguous).
+        const marked = await client.query(SQL.markReceiptAmbiguous, [writeId, INSTANCE_ID]);
         const existing = await client.query(SQL.peekWriteReceipt, [writeId]);
-        attempt = { acquired: true, duplicate: true, record: existing.rows[0] || null };
+        const record = existing.rows[0] || null;
+        attempt = {
+          acquired: true,
+          duplicate: true,
+          record,
+          // True whenever the caller is looking at an unresolved external effect —
+          // whether this claim marked it or found it already marked. The route may
+          // not retry, and it may not report success either.
+          ambiguous: record ? record.status === 'ambiguous' : false,
+          markedAmbiguousNow: marked.rowCount > 0,
+        };
       } else {
         attempt = { acquired: true, duplicate: false, ...claim.rows[0] };
       }
@@ -828,6 +977,35 @@ async function failWriteReceipt(writeId, attemptToken) {
   });
 }
 
+// THE ONLY EXIT FROM 'ambiguous', and it is deliberately not automatic.
+//
+// `landed` is a FINDING, not a guess: the caller has read the destination tab and
+// either found the row or established it is absent. `proof` records what was read,
+// so a later reader can tell a verified resolution from an assumed one — the same
+// discipline migration_divergences.closure_proof enforces.
+//
+// This has no production caller in S2, and it will not acquire one silently: S4
+// wires the receipt authority, and until then the file store decides everything.
+// What S2 owes is that the state exists, that it blocks, and that nothing but this
+// releases it.
+async function resolveAmbiguousReceipt(writeId, landed, proof, responseBody = null) {
+  if (typeof landed !== 'boolean') {
+    throw new Error('[supabase-adapter] resolveAmbiguousReceipt requires an explicit landed finding');
+  }
+  if (typeof proof !== 'string' || proof.trim() === '') {
+    // Refused here AND by write_receipts_ambiguity_needs_proof_check. The
+    // constraint is the authority; this is the readable error.
+    throw new Error('[supabase-adapter] resolveAmbiguousReceipt requires destination-side proof text');
+  }
+  return withClient('app', async (client) => {
+    const result = await client.query(SQL.resolveAmbiguousReceipt, [
+      writeId, landed, proof.trim(),
+      landed && responseBody ? JSON.stringify(responseBody) : null,
+    ]);
+    return result.rows[0] || null;
+  });
+}
+
 async function peekWriteReceipt(writeId) {
   return withClient('app', async (client) => {
     const result = await client.query(SQL.peekWriteReceipt, [writeId]);
@@ -863,6 +1041,8 @@ module.exports = {
   SQL,
   ROLE_ENV,
   INSTANCE_ID,
+  ROUTE_EFFECT_AUTHORITY,
+  effectAuthorityForRoute,
   isConfigured,
   isShadowWriteEnabled,
   close,
@@ -900,6 +1080,7 @@ module.exports = {
   persistReceiptSessionId,
   completeWriteReceipt,
   failWriteReceipt,
+  resolveAmbiguousReceipt,
   peekWriteReceipt,
   pruneWriteReceipts,
 };
