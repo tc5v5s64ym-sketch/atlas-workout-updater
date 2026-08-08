@@ -22,6 +22,8 @@
 
 const { test, expect } = require('@playwright/test');
 const { spawn } = require('node:child_process');
+const fsp = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 const GATE_KEY = 'playwright-gate-key';
@@ -40,7 +42,23 @@ function normalize(raw) {
 
 async function bootGateServer(extraEnv) {
   const child = spawn(process.execPath, [path.join(__dirname, 'gate', 'gate-server.js')], {
-    env: { ...process.env, ATLAS_GATE_KEY: GATE_KEY, ...extraEnv },
+    env: {
+      ...process.env,
+      ATLAS_GATE_KEY: GATE_KEY,
+      // A PRIVATE receipt store per gate-server.
+      //
+      // services/idempotency.js persists to /tmp/atlas-idempotency.json, which is
+      // shared by every process on the runner — and this spec runs in BOTH the
+      // chromium and mobile-chromium projects. Left alone, the second project's
+      // server rehydrates the first project's receipts, replays the Save as a
+      // duplicate, and returns a different body, so the byte-identity comparison
+      // fails on a duplicate rather than on anything the shadow lane did.
+      ATLAS_IDEMPOTENCY_FILE: path.join(
+        fsp.mkdtempSync(path.join(os.tmpdir(), 'atlas-p3-')),
+        'idempotency.json'
+      ),
+      ...extraEnv,
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   const port = await new Promise((resolve, reject) => {
@@ -87,10 +105,12 @@ test.describe('Supabase shadow write is inert (§6.1 P3)', () => {
     test.setTimeout(180000);
 
     // Run 1 — the lane is OFF, which is production's configuration today.
+    const run = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+
     const off = await bootGateServer({ ATLAS_SUPABASE_SHADOW_WRITE: '0' });
     let offResult;
     try {
-      offResult = await saveFromBrowser(page, off.base, 'p3-lane-disabled');
+      offResult = await saveFromBrowser(page, off.base, `p3-lane-disabled-${run}`);
     } finally {
       off.child.kill('SIGTERM');
     }
@@ -104,7 +124,7 @@ test.describe('Supabase shadow write is inert (§6.1 P3)', () => {
     });
     let onResult;
     try {
-      onResult = await saveFromBrowser(page, on.base, 'p3-lane-enabled');
+      onResult = await saveFromBrowser(page, on.base, `p3-lane-enabled-${run}`);
     } finally {
       on.child.kill('SIGTERM');
     }
