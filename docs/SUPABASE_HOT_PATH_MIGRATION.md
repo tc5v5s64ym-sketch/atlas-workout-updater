@@ -1566,23 +1566,27 @@ entirely, and removes the need to serve any athlete read from an inert shadow.
    | 1 | `supabase/operations/drop_migration_divergences.sql`, owner-run | `Atlas Production` |
    | 2 | the same statement added to `supabase/migrations/` as a normal versioned file, `DROP TABLE IF EXISTS` | the repository's reproducible schema — a fresh replay ends **without** the table, and production is a **no-op** because step 1 already dropped it |
 
-   **Step 2 is a fifth repository change, and that CONTRADICTS OWNER RULING D6 AS WRITTEN.**
-   *Required review of `eae382e`.* The previous version argued its way around D6 — "not the
-   case D6 refused" — and deferred the difference to "owner acknowledgement at the `S4` gate",
-   as though a builder's reading had already superseded an owner ruling. It has not. D6 says
-   the chain stays four PRs and **"no fifth PR is required"**, and a versioned migration
-   commit is an ordinary repository change under the branch, PR and exact-head review
-   contract — not an unnamed later edit. Under `CLAUDE.md` a positive open-loop change needs an
-   **explicit owner-approved reason**, which this does not yet have.
+   **Step 2 is a fifth repository change, and the owner has approved exactly one — ruling D8,
+   2026-08-07 (§9).** It was raised as `OWNER DECISION REQUIRED` because it contradicted ruling
+   D6 as written; Dale ruled option (a). The chain is therefore **four PRs plus one narrowly
+   scoped post-window cleanup PR**, and the builder does not reinterpret that scope.
 
-   **This is recorded as decision D8 (§9) and is OWNER DECISION REQUIRED. Nothing proceeds on
-   the repository topology until Dale rules.** The distinction the previous text relied on is
-   still worth stating — D6 refused a fifth PR to *retain* code with no surviving consumer,
-   while this one *removes* a table on a trigger that cannot be pulled into `S4` — but that is
-   an **argument for the owner to weigh, not a ruling the builder may apply.**
+   The ruling's bounds are binding on step 2 and are repeated here because this is where an
+   implementer reads them. The cleanup PR:
 
-   **The migration is not closed until both steps land**, under either option D8 selects.
-   `S4` merging is not closure, and executing the operations file alone is not closure either.
+   - adds **only** the `DROP TABLE IF EXISTS atlas.migration_divergences` statement to
+     `supabase/migrations/` as a normal versioned file;
+   - **does not** reopen the `S4a` / `S4b` topology and retains no dead code;
+   - **moves no runtime authority and changes no workout data**;
+   - **adds no new framework, bridge, or feature**;
+   - **exists only** to converge reproducible schema history, after the rollback-window
+     trigger.
+
+   Anything beyond that list is outside the ruling and needs its own authorization.
+
+   **The migration is not closed until both steps land.** `S4` merging is not closure, and
+   executing the operations file alone is not closure either — that is the ruling's own
+   condition, not an addition to it.
 
 **A guarantee may not be deleted along with its mechanism.**
 `test/idempotencyPersistence.test.js` proves eleven behaviours of the receipt store. Some are
@@ -2239,8 +2243,8 @@ whole rollback window**, rather than a reverse schema transition executed under 
   `atlas_migrate` after the rollback window closes — the same owner gate that already governs
   every schema application in this chain (§9, owner-reserved gates). **Executing that file costs
   no merge** — applying SQL never did — but it is only **step 1 of two**: the repository's
-  reproducible schema converges through a later versioned migration, whose topology is **open
-  decision D8** (§5.4 step 5, §9). `S4`'s merge card records both steps, the trigger, and the
+  reproducible schema converges through a later versioned migration, delivered by the one
+  narrowly scoped cleanup PR **owner ruling D8 (2026-08-07) approved** (§5.4 step 5, §9). `S4`'s merge card records both steps, the trigger, and the
   fact that the loop stays open.
 - **During the window the table exists and is unused.** The `S4` build has no writer for it
   (P7c0 proves no permanent mechanism writes it), so it sits inert; a restored `S3` build finds
@@ -2420,7 +2424,7 @@ Before `S4` merges, record:
    owner executes `supabase/operations/drop_migration_divergences.sql` against
    `Atlas Production` as `atlas_migrate`, converging production. **Step 2:** the same statement
    enters `supabase/migrations/` as a normal versioned file so a fresh replay converges too —
-   whose repository topology is **open decision D8** (§5.4 step 5, §9). Step 1's file is
+   delivered by the one bounded cleanup PR **ruling D8 approved** (§5.4 step 5, §9). Step 1's file is
    **not** a pending migration and no `db push` can apply it early
    (§5.4 step 5). Until it runs the table stays, inert, so a restored `S3` build works
    (§5.5, gate P19i).
@@ -2701,12 +2705,17 @@ rollback source. The durable-capture correction of review 10 had already removed
 the rollback **data** is the verified receipt rows in `atlas.write_receipts`, and the rollback
 **code** is the previously merged `S3` build, which a revert restores and which already
 contains the legacy implementation. `S4` therefore never needed to ship code with no surviving
-consumer, and no fifth PR is required. `S4` deletes the store, its env var, its file and its
+consumer, and no fifth PR is required **for the reason D6 was raised about**. *Narrowed by
+ruling D8 (2026-08-07): "no fifth PR is required" was later found not to describe the chain,
+because reproducible schema history needs one post-window cleanup PR that D6 never considered.
+D6's substance stands — no PR retains code with no surviving consumer — and D8 records the one
+approved exception.* `S4` deletes the store, its env var, its file and its
 six test references exactly as ruling D4 always said, and the gate split introduced for the
 two-stage form is withdrawn with it (P16, P17).
 
-**D8 — the schema-history closure needs a fifth repository change, and that contradicts D6:
-OPEN, OWNER DECISION REQUIRED (2026-08-07).** Raised by the required review of `eae382e`.
+**D8 — the schema-history closure needs a fifth repository change: RESOLVED by owner ruling
+(2026-08-07). Option (a) approved — exactly one narrowly scoped post-window cleanup PR.**
+Raised by the required review of `eae382e`.
 
 The facts are settled and not in dispute. `S4` cannot drop `atlas.migration_divergences`,
 because a restored `S3` build queries it through the rollback window. An owner-run operations
@@ -2716,28 +2725,35 @@ forever — production right, repository permanently wrong. The statement must t
 land as a **normal versioned migration**, and that is a repository change with a branch, a PR
 and an exact-head review.
 
-**What is undecided is only the topology, and it is Dale's to decide**, because ruling **D6**
-says the chain stays four PRs and "no fifth PR is required", and because `CLAUDE.md` requires
-an explicit owner-approved reason for a positive open-loop change. The builder may not
-reinterpret an owner ruling, and the previous head's "owner acknowledgement at the `S4` gate"
-wording did exactly that. It is withdrawn.
+The topology was Dale's to decide, because ruling **D6** said the chain stays four PRs and "no
+fifth PR is required", and because `CLAUDE.md` requires an explicit owner-approved reason for a
+positive open-loop change. The builder may not reinterpret an owner ruling, and the head at
+`eae382e` did exactly that with its "owner acknowledgement at the `S4` gate" wording. That is
+withdrawn, and the question was put to the owner instead.
 
-The two truthful options:
+**The ruling: option (a).** Exactly **one** narrowly scoped post-window cleanup PR is approved.
+After the `S4` rollback window closes and the owner-run drop has converged `Atlas Production`,
+one follow-up repository PR may add the same statement to normal versioned migration history so
+every fresh replay of `supabase/migrations/` converges without recreating the temporary bridge
+table.
 
-- **(a) Amend D6 narrowly — recommended, and it is the review's recommendation too.** Permit
-  **exactly one** post-window cleanup PR whose sole concern is adding
-  `DROP TABLE IF EXISTS atlas.migration_divergences` as a versioned migration once the
-  rollback window closes. It moves **no authority and no workout data**, and it gets its own
-  branch, PR, exact-head review and closure record like any other change. D6's substance
-  survives: no PR retains code with no surviving consumer.
-- **(b) Keep D6 literally four-PR-only** and redesign the schema-history closure so no fifth
-  repository change is needed. No such design is proposed here, because every candidate either
-  drops the table before the rollback window closes — the defect review 13 found — or leaves
-  migration history permanently unconverged, which is the defect review 14 found.
+**The bounds are part of the ruling, not commentary.** The cleanup PR:
 
-**Nothing proceeds on this until Dale rules.** Everything else in this document is specified
-independently of the outcome: the two closure *steps* are required under either option, and
-only the repository shape of step 2 changes.
+- does **not** reopen `S4a` / `S4b`, and retains no dead code;
+- moves **no runtime authority** and changes **no workout data**;
+- adds **no new framework, bridge, or feature**;
+- exists **only** to close reproducible schema history, after the future rollback-window
+  trigger.
+
+**The migration remains open until both the owner-run production drop and this repository
+cleanup land.**
+
+**What this changes elsewhere.** The chain is now **four PRs plus one narrowly scoped
+post-window cleanup PR**. D6 is unaffected in substance — it refused a fifth PR that would
+*retain* code with no surviving consumer, and this one *removes* a table — but its literal
+"no fifth PR is required" no longer describes the chain, and every surface says so. The two
+closure **steps** were always required; the ruling settles only the repository shape of
+step 2.
 
 **D7 — the write freeze is PROPOSED permanent, not a bridge: OPEN, owner confirmation at the
 `S3` gate.** It is a proposal until Dale rules; it is not owner-approved permanent authority,
@@ -2800,10 +2816,9 @@ Each line is a cleanup obligation of the PR named, not of `S1`.
 - It does not claim the migration closes at `S4`'s merge. Two steps follow it: the owner-run
   drop against `Atlas Production`, and a post-window versioned migration so a fresh replay of
   `supabase/migrations/` converges.
-- **It does not claim the repository topology for that second step is settled.** It is a fifth
-  repository change, it contradicts ruling D6 as written, and it is **open decision D8** —
-  `OWNER DECISION REQUIRED`. This document records the options and a recommendation; it does
-  not choose, and no wording here supersedes D6.
+- It does not claim `S4`'s merge closes the loop. Ruling **D8** (2026-08-07) approved exactly
+  **one** narrowly scoped post-window cleanup PR for the versioned drop migration, and the
+  migration stays open until **both** the owner-run production drop and that cleanup land.
 - It does not claim a revert alone restores a runnable `S3` posture. The post-`S4` schema
   is `S3`-compatible only because the `migration_divergences` drop is deferred past the
   rollback window, and that compatibility is a gate (P19i), not an assumption.

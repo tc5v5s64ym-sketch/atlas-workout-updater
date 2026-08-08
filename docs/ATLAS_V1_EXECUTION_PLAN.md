@@ -381,7 +381,27 @@ Review 14's five fixes confirmed materially present; Supabase-vs-Sheets, reads-a
 
 **Recorded against the implementation agent.** Finding 1 is the second time this document has argued past an owner ruling instead of escalating — the first was the original D6 claim that a second build "does not add a fifth card", withdrawn at review 10. The pattern is the same: a topology consequence discovered late, then reasoned into compliance rather than put to the owner. The correct move both times was to stop and ask.
 
-**No counter changed and no authorization was granted by this review.** Campaign 0/5, Phase 5 unauthorized, no schema applied, no deployment. **D8 is open and blocks the `S4` closure topology, not this PR.**
+**No counter changed and no authorization was granted by this review.** Campaign 0/5, Phase 5 unauthorized, no schema applied, no deployment. *D8 was open at the close of this review; Dale ruled it the same day — see the owner ruling below.*
+
+### OWNER RULING 2026-08-07 — D8 RESOLVED: one narrowly scoped post-window cleanup PR is approved
+
+Raised as `OWNER DECISION REQUIRED` by the fifteenth required review, after the implementation agent was found reinterpreting ruling D6 instead of escalating. **Dale ruled option (a).**
+
+**Approved.** After the `S4` rollback window closes and the owner-run `DROP TABLE IF EXISTS atlas.migration_divergences` operation has converged `Atlas Production`, **one** follow-up repository PR may add the same drop to normal versioned migration history, so every fresh replay of `supabase/migrations/` converges without recreating the temporary bridge table.
+
+**Bounds, as ruled:**
+
+- it does **not** reopen `S4a` / `S4b` and retains **no dead code**;
+- it moves **no runtime authority** and changes **no workout data**;
+- it adds **no new framework, bridge, or feature**;
+- it exists **only** to close reproducible schema history, after the future rollback-window trigger;
+- **the migration remains open until both the owner-run production drop and this repository cleanup land.**
+
+**Effect on D6.** D6's substance is untouched — no PR retains code with no surviving consumer — but its literal "no fifth PR is required" no longer describes the chain, because reproducible schema history needs a cleanup PR D6 never considered. The chain is now **four PRs plus one bounded post-window cleanup PR**, and every surface says so.
+
+**Effect on open-loop accounting.** The fourth open loop the previous merge card reported as unapproved is now **owner-approved with an exact closure condition**, so the positive net change carries the explicit reason `CLAUDE.md` requires.
+
+**No counter changed and no other authorization was granted.** Campaign 0/5, Phase 5 unauthorized, no schema applied, no deployment. PR #1273 does not merge until the next exact-head Atlas Contract / Systems Review passes.
 
 ### Owner rulings D1–D5, all resolved (2026-08-07)
 
@@ -391,14 +411,16 @@ Review 14's five fixes confirmed materially present; Supabase-vs-Sheets, reads-a
 4. **D4 — one receipt authority.** All seven current `beginWrite` callers move to the one Supabase `write_receipts` authority. Receipt metadata is shared safety infrastructure, not a second workout-data migration. `S4` deletes the file-backed store and proves no caller remains.
 5. **D5 — the read cutover.** Defer it into `S4` so reads and writes move together. `S3` becomes backfill, continuous parity, repair, and cutover-readiness proof only. This removes the unsafe reads-leading-writes window and the need to serve athlete reads from an inert shadow.
 
-### The closure chain — four PRs, one concern each
+### The closure chain — four PRs, one concern each, plus one approved post-window cleanup PR
 
 1. **PR S1 — governance, authority and schema design.** Record this instruction and this review; correct every document that states Sheets is permanently the only V1 store; record the authority move in [`docs/ATLAS_SYSTEM_AUTHORITY.md`](ATLAS_SYSTEM_AUTHORITY.md) as concept 18; publish the design document. No code, no dependency, no migration file, no adapter, no schema application, no deployment.
 2. **PR S2 — migration files, Supabase adapter, shadow write, divergence lane, sweep, repair worker.** Sheets remains the live authority for every read and every write. No cutover.
 3. **PR S3 — backfill, continuous parity, repair, cutover-readiness proof, the write freeze and the receipt migration seam.** Moves no workout-data read or write authority. Drives the open-divergence count to zero. **It is not authority-free in every sense:** it introduces a live write-admission control over the seven `beginWrite` routes and a Supabase availability dependency on them, and its deployed-system freeze evidence is gated on the owner applying the `S3` migration to `Atlas Production`.
-4. **PR S4 — the cutover.** Reads and writes move to Supabase together. Completed sessions export to Sheets asynchronously. The same PR removes the obsolete Sheets hot-path reads, the read-budget harness authority, the probes, the caches, **every consumer and writer of the bridge**, the file-backed idempotency store and the receipt migration seam, and verifies their absence. **One artifact is deliberately deferred rather than applied:** the divergence-table drop ships as an owner-run SQL file **outside `supabase/migrations/`**, so the cutover push cannot consume it, and the owner executes it only after the rollback window closes — because a restored `S3` build queries that table. **Closure is two steps, and the second is a fifth repository change that contradicts ruling D6 as written:** that execution converges `Atlas Production`, and a post-window versioned migration converges the repository's reproducible schema, because a fresh replay of `supabase/migrations/` would otherwise recreate the bridge table forever. **The topology is recorded as open decision D8 — `OWNER DECISION REQUIRED`** — because D6 says the chain stays four PRs and a builder may not reinterpret an owner ruling. Both closure *steps* are required under either outcome; only the repository shape of step 2 depends on the ruling. **The chain is not closed until both land.**
+4. **PR S4 — the cutover.** Reads and writes move to Supabase together. Completed sessions export to Sheets asynchronously. The same PR removes the obsolete Sheets hot-path reads, the read-budget harness authority, the probes, the caches, **every consumer and writer of the bridge**, the file-backed idempotency store and the receipt migration seam, and verifies their absence. **One artifact is deliberately deferred rather than applied:** the divergence-table drop ships as an owner-run SQL file **outside `supabase/migrations/`**, so the cutover push cannot consume it, and the owner executes it only after the rollback window closes — because a restored `S3` build queries that table. **Closure is two steps, and the second is a fifth repository change that owner ruling D8 (2026-08-07) approved:** that execution converges `Atlas Production`, and a post-window versioned migration converges the repository's reproducible schema, because a fresh replay of `supabase/migrations/` would otherwise recreate the bridge table forever. **D8 permits exactly one narrowly scoped cleanup PR for it**, with bounds recorded in the chain above. **The chain is not closed until both land.**
 
-**A foundation PR is progress, not completion.** The chain is open until `S4` verifies the deleted machinery is gone. **Nothing on the `S4` deletion list survives `S4`.**
+5. **The post-window schema-history cleanup PR — approved by owner ruling D8 (2026-08-07), and bounded by it.** After the `S4` rollback window closes **and** the owner-run drop has converged `Atlas Production`, one follow-up PR adds `DROP TABLE IF EXISTS atlas.migration_divergences` to `supabase/migrations/` as a normal versioned file, so every fresh replay of migration history converges without recreating the bridge table. **The ruling's bounds are binding:** it does not reopen `S4a`/`S4b` and retains no dead code; it moves no runtime authority and changes no workout data; it adds no new framework, bridge or feature; and it exists **only** to close reproducible schema history after that future trigger. Anything beyond that needs its own authorization.
+
+**A foundation PR is progress, not completion.** The chain is open until `S4` verifies the deleted machinery is gone **and** both closure steps land — the owner-run production drop and the cleanup PR above. **Nothing on the `S4` deletion list survives `S4`**, and per ruling D8 the migration itself remains open until reproducible schema history converges too.
 
 ### Owner-reserved gates inside this chain
 
