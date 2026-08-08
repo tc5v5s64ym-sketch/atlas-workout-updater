@@ -19,9 +19,11 @@
 //
 // ── CONNECTION MODEL ──────────────────────────────────────────────────────────
 // Supavisor SESSION mode (port 5432), one connection string per role, read from
-// the server environment only. Transaction mode is not usable: the design depends
-// on session-level advisory locks held across statements, which transaction mode
-// would appear to take and actually hold nothing. No service-role key, no anon
+// the server environment only. Transaction mode is not usable: the export holds a
+// session-level advisory lock across statements, which transaction mode would
+// appear to take and actually hold nothing. Those locks SERIALISE work; none of
+// them is a liveness authority, and a dropped session is never evidence that an
+// external effect died (see SQL.claimWriteReceipt). No service-role key, no anon
 // key, no Data API. No credential ever reaches browser code.
 //
 // ── WHY THE SQL IS EXPORTED ───────────────────────────────────────────────────
@@ -199,13 +201,41 @@ const SQL = Object.freeze({
   // the write_id, and the athlete's retry of a Save that never committed would be
   // refused. That is a lost workout, not a protected one.
   //
-  // The caller MUST already hold pg_try_advisory_lock(hashtext(write_id)) — the
-  // lock, not the five-minute window, is the authority on whether another attempt
-  // is genuinely still live.
+  // ── WHAT MAKES AN `in_progress` ROW RECLAIMABLE, AND WHAT DOES NOT ───────────
+  //
+  // The reclaim condition is OWNER PROCESS IDENTITY. An `in_progress` row owned by
+  // a DIFFERENT instance than the claimer's is reclaimable; one owned by THIS
+  // instance is refused, because that attempt may still be running.
+  //
+  // An earlier version used the session-scoped advisory lock for this, and it was
+  // UNSOUND. Postgres releases an advisory lock the instant its connection drops,
+  // but the Google Sheets request the attempt is awaiting is an independent HTTP
+  // call that can still be in flight and can still commit afterwards. A dropped
+  // database session is not evidence that an external effect died. A competitor
+  // could take the freed lock, claim the receipt, and perform the SAME append —
+  // and the attempt token cannot help, because it only stops the first attempt
+  // ACKNOWLEDGING in Supabase; it cannot un-append a row from Google Sheets.
+  //
+  // Process identity carries no such inference: it does not change when a
+  // connection drops. This is also the rule the live file store actually uses
+  // (services/idempotency.js:159-177) — a record is retryable only when it was
+  // REHYDRATED FROM A PRIOR PROCESS, never merely because time passed.
+  //
+  // PRECONDITION, stated rather than assumed: "a different instance id means that
+  // process is gone" is sound under the SINGLE-INSTANCE invariant §5.3/§5.5
+  // already require for the cutover. Where more than one instance can run, a
+  // different id may be a live sibling — so this rule would then be too weak, and
+  // the S4 wiring may not proceed without that invariant enforced. Nothing here
+  // depends on it today: the file store remains the sole receipt authority
+  // through S2 and S3, and this table has no production caller.
+  //
+  // The five-minute window is retained as a secondary bound only. It is not the
+  // authority either: a slow request is not a dead one.
   claimWriteReceipt: `
     INSERT INTO atlas.write_receipts (write_id, route, status, attempt, attempt_token,
+                                      owner_instance_id,
                                       created_at, attempt_started_at, expires_at)
-    VALUES ($1, $2, 'in_progress', 1, gen_random_uuid(),
+    VALUES ($1, $2, 'in_progress', 1, gen_random_uuid(), $3,
             now(), now(), now() + interval '24 hours')
     ON CONFLICT (write_id) DO UPDATE
        SET status             = 'in_progress',
@@ -214,6 +244,7 @@ const SQL = Object.freeze({
            created_at         = CASE WHEN atlas.write_receipts.expires_at <= now()
                                      THEN now() ELSE atlas.write_receipts.created_at END,
            attempt_token      = gen_random_uuid(),
+           owner_instance_id  = $3,
            attempt_started_at = now(),
            expires_at         = now() + interval '24 hours',
            session_id         = CASE WHEN atlas.write_receipts.expires_at <= now()
@@ -223,10 +254,12 @@ const SQL = Object.freeze({
            appended_range     = NULL,
            completed_at       = NULL
      WHERE atlas.write_receipts.status = 'failed'
+        OR atlas.write_receipts.expires_at <= now()   -- expired: reclaimable at ANY status
         OR (atlas.write_receipts.status = 'in_progress'
+            -- The owning PROCESS is gone. Not "its database session dropped".
+            AND atlas.write_receipts.owner_instance_id IS DISTINCT FROM $3
             AND atlas.write_receipts.attempt_started_at < now() - interval '5 minutes')
-        OR atlas.write_receipts.expires_at <= now()
-    RETURNING attempt_token, attempt, session_id`,
+    RETURNING attempt_token, attempt, session_id, owner_instance_id`,
 
   // §3.6 — persist the server-minted id under the token guard, immediately after
   // minting and before the workout write. IS NULL means a reused id is never
@@ -690,31 +723,44 @@ async function readCatalogMirror(role = 'app') {
 // state machine is a deterministic S2 proof target (P8, P8a, P8a0, P8c). S4 wires
 // them, adds the foreign keys, and deletes the file store.
 //
-// The advisory lock is what makes "another attempt is still live" a FACT about
-// another process rather than a guess from elapsed time: if the owning process
-// dies or its connection drops, Postgres releases the lock. It is session-scoped,
-// so the connection is PINNED across claim -> effect -> complete/fail -> unlock,
-// and the unlock runs unconditionally in a finally. A leaked lock is worse than a
-// missing one: it would falsely refuse a later request as a duplicate.
+// THE PROCESS THAT OWNS AN ATTEMPT.
+//
+// Minted once per process. The random suffix matters: a pid is reused after a
+// restart, and reusing an id would make a dead process's row look like this
+// process's own and wedge the write_id permanently.
+//
+// This value is the liveness evidence in the claim above. It is deliberately NOT
+// derived from anything about the database connection.
+const INSTANCE_ID = `${require('os').hostname()}:${process.pid}:${require('crypto').randomBytes(6).toString('hex')}`;
+
 // ONE attempt, ONE pinned connection, from claim to release.
 //
-// `fn(attempt, ops)` runs with the advisory lock HELD, so for its whole duration
-// any competing claimer is told the truth — another attempt is genuinely still
-// live, its connection is open — rather than being allowed to start a second live
-// attempt because five minutes elapsed. A slow request is not a dead one.
+// ── WHAT THE ADVISORY LOCK IS FOR, AND WHAT IT IS NOT ────────────────────────
+// It SERIALISES concurrent claimers of one write_id inside a process, so two
+// in-flight requests do not race the same row. That is throughput, not safety.
 //
-// `ops` are the token-guarded transitions bound to that same pinned connection.
-// The attempt may not migrate to another backend mid-flight, or the lock and the
-// work would end up on different sessions.
+// IT IS NOT THE LIVENESS AUTHORITY, and it must never be described as one again.
+// Postgres releases an advisory lock the instant its connection drops, while the
+// Google Sheets request the attempt is awaiting is an independent HTTP call that
+// can still be in flight and can still commit. Treating a dropped database
+// session as proof that an external effect died let a competitor take the freed
+// lock and perform the SAME append — and the attempt token cannot help, because
+// it only stops the first attempt ACKNOWLEDGING in Supabase; it cannot un-append
+// a row from Google Sheets. The reclaim decision now rests on OWNER PROCESS
+// IDENTITY (see SQL.claimWriteReceipt), which a dropped connection does not change.
+//
+// `ops` are the token-guarded transitions bound to the same pinned connection.
+// The attempt may not migrate to another backend mid-flight.
 async function withWriteAttempt(writeId, route, fn) {
   return withClient('app', async (client) => {
     const lock = await client.query('SELECT pg_try_advisory_lock(hashtext($1)) AS acquired', [writeId]);
     if (!lock.rows[0].acquired) {
-      // A FACT about another process, not a guess from elapsed time.
-      return fn({ acquired: false, duplicate: true, reason: 'attempt_live_elsewhere' }, null);
+      // Another claimer in THIS process holds the row right now. Refusing is the
+      // safe direction, and it is a statement about contention, not about death.
+      return fn({ acquired: false, duplicate: true, reason: 'attempt_in_progress_here' }, null);
     }
     try {
-      const claim = await client.query(SQL.claimWriteReceipt, [writeId, route]);
+      const claim = await client.query(SQL.claimWriteReceipt, [writeId, route, INSTANCE_ID]);
       let attempt;
       if (claim.rowCount === 0) {
         // The WHERE refused the update: a genuine duplicate. Read the row so the
@@ -743,10 +789,10 @@ async function withWriteAttempt(writeId, route, fn) {
       };
       return await fn(attempt, ops);
     } finally {
-      // Every exit path — success, failure, duplicate, refusal, thrown error —
-      // releases the lock BEFORE the connection returns to the pool. A lock
-      // released only on the happy path leaks on precisely the paths that matter,
-      // and a leaked lock inverts its own meaning.
+      // Released on every exit path — success, failure, duplicate, refusal, throw —
+      // BEFORE the connection returns to the pool. A lock released only on the
+      // happy path leaks on precisely the paths that matter, and a leaked lock
+      // would falsely serialise a later request behind nothing.
       try {
         await client.query('SELECT pg_advisory_unlock(hashtext($1))', [writeId]);
       } catch {
@@ -816,6 +862,7 @@ async function pruneWriteReceipts(role = 'migrate') {
 module.exports = {
   SQL,
   ROLE_ENV,
+  INSTANCE_ID,
   isConfigured,
   isShadowWriteEnabled,
   close,

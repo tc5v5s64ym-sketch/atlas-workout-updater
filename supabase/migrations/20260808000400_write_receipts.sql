@@ -29,6 +29,22 @@ CREATE TABLE atlas.write_receipts (
   -- statement, which makes resurrection of a released attempt unrepresentable.
   attempt_token      uuid,
   attempt            integer     NOT NULL DEFAULT 1,
+  -- WHICH PROCESS OWNS THE CURRENT ATTEMPT.
+  --
+  -- This column is the liveness evidence, and it replaces an earlier mechanism
+  -- that used a session-scoped advisory lock for the same job. That mechanism was
+  -- unsound: Postgres releases an advisory lock the instant its connection drops,
+  -- while the Google Sheets request the attempt is awaiting is an independent
+  -- HTTP call that can still be in flight and can still commit. A dropped
+  -- database session is NOT evidence that an external effect died, so a
+  -- competitor could take the freed lock and perform the same append.
+  --
+  -- Process identity carries no such inference. It does not change when a
+  -- connection drops, so an attempt owned by a live process stays owned. It
+  -- mirrors the rule the live file store actually uses (services/idempotency.js):
+  -- a record is retryable only when it was REHYDRATED FROM A PRIOR PROCESS, never
+  -- merely because time passed.
+  owner_instance_id  text,
   response_body      jsonb,
   rows_written       integer,
   -- Kept while the Sheets mirror exists; null afterwards.

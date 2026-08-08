@@ -64,7 +64,7 @@ These levels are distinct and are never collapsed. They are the same rungs the c
 | 16a | Observational shadows | `coachTurnPacketShadow`, `brainShadow`, `intentShadow`, `driftShadow`, `coachShadowSheet`, `coachResponseSheet` | none — all retire | TEST/OBSERVABILITY ONLY |
 | 16b | `legacyBridge` (live browser bridge) | `src/app/legacyBridge.js`, imported on every page load | none — deleted, not promoted | TRANSITIONAL |
 | 17 | Athlete context (profile, level, equipment, readiness) | `ATLAS_PROFILE_GOAL` env var only; other fields have no live source | one layered `AthleteContext` | CONTRACT ONLY |
-| 18 | Workout hot-path durable record (sessions, logged sets, Effort, accepted plans, plan sets and revisions, item outcomes, closeout and write receipts) | Google Sheets via `sheets.js`, plus the file-backed `services/idempotency.js` store | Supabase; Sheets becomes an export mirror | SOLE LIVE AUTHORITY (Sheets) — migration authorized; PR S2 landed 2026-08-08 and is DORMANT (no schema applied, shadow lane off) |
+| 18 | Workout hot-path durable record (sessions, logged sets, Effort, accepted plans, plan sets and revisions, item outcomes, closeout and write receipts) | Google Sheets via `sheets.js`, plus the file-backed `services/idempotency.js` store | Supabase; Sheets becomes an export mirror | SOLE LIVE AUTHORITY (Sheets) — migration authorized; PR S2 is OPEN and UNMERGED (proposed, not landed) |
 
 ---
 
@@ -365,22 +365,22 @@ revisions, item outcomes, and closeout and write receipts.
   migration is **open decision D7**, for the owner at the `S3` gate. Google Sheets
   becomes a human-readable export mirror for these concepts, and is never required for an
   active workout to read, save, verify, or close out.
-- **Competing authority.** **Present in code, INERT in production, since PR S2 (2026-08-08).**
-  The repository now holds the eleven migration files of §3.1–§3.9, one adapter
-  (`services/supabaseAdapter.js`), the shadow write, the divergence lane, the sweep and the
-  repair worker. **None of it runs**: the shadow lane requires both
-  `ATLAS_SUPABASE_SHADOW_WRITE=1` and a configured connection string, and neither is set. The
-  owner's Free-tier project **Atlas Production** (verified healthy and empty, `us-west-2`,
-  zero public tables, zero migrations) has **no schema applied** — applying it is an owner
-  gate, and no repository code path can reach a hosted Supabase host
-  (`scripts/apply-supabase-migrations.js` refuses one outright; `npm run check:supabase-safety`
-  fails CI if that refusal is removed or a workflow gains a production credential). The
-  competing authority is removed by PR S4.
-- **Status.** **SOLE LIVE AUTHORITY** (Google Sheets). The migration is **authorized, and its
-  first executable step has landed and is dormant**. This entry records shipped machinery, not
-  a promotion: nothing is promoted while the shadow lane is off, no schema is applied, and no
-  read or write has moved. The honesty rule above forbids promoting Supabase on a design
-  document, and equally on an unconfigured one.
+- **Competing authority.** **NONE TODAY.** Nothing has migrated. Current `main` holds no
+  Supabase code, no migration file, and no adapter. The owner's Free-tier project
+  **Atlas Production** (verified healthy and empty, `us-west-2`, zero public tables, zero
+  migrations) has **no schema applied**, and applying it is an owner gate.
+  **PR S2 is OPEN and UNMERGED** — it proposes the eleven migration files of §3.1–§3.9, one
+  adapter, the shadow write, the divergence lane, the sweep and the repair worker, all inert
+  behind `ATLAS_SUPABASE_SHADOW_WRITE=1` plus a configured connection string. **A proposal on
+  a branch is not a state of production, and this map records production.** The competing
+  authority appears only when that PR merges, and PR S4 removes it.
+- **Status.** **SOLE LIVE AUTHORITY** (Google Sheets, plus the file-backed
+  `services/idempotency.js` store for receipts). The migration is **authorized and not
+  started**. *An earlier revision of this entry said PR S2 "landed 2026-08-08 and is DORMANT"
+  while that PR was still open — a branch recording itself as landed. Corrected by the
+  required review of `ad18907`: the honesty rule forbids promoting a concept on a document, a
+  test, or an import, and it forbids this for the same reason. The landed-state update is made
+  after merge, from current `main`, and not before.*
 - **Exact production consumer.** `POST /api/log-workout`, `POST /api/complete-workout`,
   `POST /api/log-workout/undo-last`, `POST /api/session-plans/accept`,
   `POST /api/session-plans/outcome`, `POST /api/session-plan-sets/accept`,

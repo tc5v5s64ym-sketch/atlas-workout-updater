@@ -8,13 +8,13 @@
 > It defines the schema, the mapping, the closure chain, the proof, the rollback rules,
 > the security posture, and the data-ownership record.
 
-**Status of application, current as of 2026-08-08.** `PR S1` was paper only. **`PR S2` has
-landed**, so the statement this paragraph used to make — that no Supabase code, dependency,
-migration file, or adapter exists in this repository — is no longer true and is corrected here
-rather than left to mislead. What is now true:
+**Status of application, current as of 2026-08-08.** `PR S1` was paper only and is merged.
+**`PR S2` is OPEN AND UNMERGED**, so the statement this paragraph used to make — that no
+Supabase code, dependency, migration file, or adapter exists in this repository — remains true
+of current `main`. What that PR PROPOSES, on its branch:
 
-- the eleven migration files of §3.1–§3.9 exist under `supabase/migrations/`, together with
-  one adapter (`services/supabaseAdapter.js`), the shadow write, the divergence lane, the
+- the eleven migration files of §3.1–§3.9 under `supabase/migrations/`, together with one
+  adapter (`services/supabaseAdapter.js`), the shadow write, the divergence lane, the
   reconciliation sweep, the repair worker and the `Exercise_Catalog` mirror;
 - **no schema is applied to `Atlas Production`.** Applying it is an owner action, and no
   repository code path can reach a hosted Supabase host;
@@ -23,6 +23,10 @@ rather than left to mislead. What is now true:
 - Google Sheets remains the sole live read and write authority for every migrated concept.
 
 `atlas.write_freeze` (§3.10) is still unwritten — `S3` creates it. `S3` and `S4` remain paper.
+
+*Corrected by the required review of `ad18907`, which found this document and the authority map
+both describing `S2` as landed while its PR was still open. A branch does not record itself as
+landed; these lines are updated after merge, from current `main`.*
 
 **Revision, 2026-08-07.** The required review of `b38de8b` returned **BLOCKING** with four P1
 architecture defects and five rulings. All are incorporated here. The four defects are named
@@ -474,21 +478,55 @@ Replaces the idempotency store in `services/idempotency.js` — **for all seven 
   D4 routes, whose rows still append to Google Sheets, that is a duplicate append with no
   Supabase constraint to catch it. A slow request is not a dead one.
 
-  The executable equivalent of "rehydrated from a dead process" is a **session-scoped
-  advisory lock**, the same primitive the exporter uses:
+  **THE ADVISORY LOCK WAS THE WRONG ANSWER TO THIS, AND THE REPLACEMENT IS
+  OWNER PROCESS IDENTITY.** *Required review of `ad18907`.* An earlier version of
+  this section made a **session-scoped advisory lock** the liveness authority, on
+  the reasoning that "if the owning process dies **or its connection drops**,
+  Postgres releases the lock, which is exactly the prior-process-died evidence
+  WRITE-3 relies on". **The second half of that disjunction is false**, and it
+  invalidated the whole guarantee family:
 
-  - Every claimer first takes `pg_try_advisory_lock(hashtext(write_id))` and **holds it for
-    the life of the attempt**. Supavisor session mode (§8.1) is what makes this work.
-  - If the lock cannot be taken, **another attempt is genuinely still live** — its connection
-    is open — so this caller is a duplicate and refuses. That is a fact about the other
-    process, not a guess from elapsed time.
-  - If the owning process dies or its connection drops, Postgres **releases the lock**, which
-    is exactly the "prior process died" evidence WRITE-3 relies on.
+  - Postgres releases an advisory lock the instant its connection drops — a network
+    blip, a pooler restart, an idle reap. It says nothing about the process.
+  - The attempt is meanwhile awaiting a **Google Sheets** request, which is an
+    independent HTTP call the database knows nothing about. It can still be in
+    flight, and it can still commit **after** the lock is released.
+  - A competitor then takes the freed lock, claims the receipt, and performs the
+    **same external effect**. The attempt token cannot help: it stops the first
+    attempt *acknowledging in Supabase*; it cannot un-append a row from Google
+    Sheets. For the four D4 routes there is no Supabase constraint to catch the
+    duplicate either.
 
-  The five-minute window is retained as a secondary bound, but **the lock is the authority**.
-  A stale-looking row whose lock is still held is refused.
+  **A dropped database session is not evidence that an external effect died.** No
+  reconciliation is added around two live attempts; the inference is removed.
 
-  **The normal-release contract — without it the lock leaks and inverts its own meaning.**
+  The claim's reclaim condition is now the **owner instance id** carried on the
+  receipt row:
+
+  - Every claim stamps `owner_instance_id` — a per-process value minted at module
+    load (`host:pid:random`). The random suffix matters, because a pid is reused
+    after a restart.
+  - An `in_progress` row owned by **this** instance is refused, however old. That
+    attempt may still be running, which is exactly the file store's in-process rule.
+  - An `in_progress` row owned by a **different** instance is reclaimable once the
+    secondary five-minute bound has passed. A different instance id is the
+    executable form of "rehydrated from a prior process".
+  - A connection drop changes none of this, because it changes no instance id.
+
+  **The precondition is stated rather than assumed.** "A different instance id
+  means that process is gone" is sound under the **single-instance invariant**
+  §5.3 and §5.5 already require for the cutover. Where more than one instance can
+  run, a different id may be a live sibling, so the rule would be too weak — and
+  `S4` may not wire this without that invariant enforced. Nothing depends on it
+  today: the file store remains the sole receipt authority through `S2` and `S3`,
+  and `atlas.write_receipts` has no production caller.
+
+  **The lock survives, demoted.** It serialises concurrent claimers of one
+  `write_id` inside a process. That is throughput. **It is never again described as
+  a liveness authority**, and the five-minute window remains a secondary bound
+  rather than an authority of its own.
+
+  **The normal-release contract — without it the lock leaks.**
   *Required review of `60f27b3`.* A session-scoped lock does **not** end at transaction commit,
   and returning a pooled client does **not** necessarily close the database session. The
   previous text specified acquisition and process-death release and never specified the
@@ -501,16 +539,22 @@ Replaces the idempotency store in `services/idempotency.js` — **for all seven 
   2. **`pg_advisory_unlock` runs unconditionally on every normal exit** — success, failure,
      duplicate, refusal, and thrown error alike — in a `finally`. A lock released only on the
      happy path is a lock that leaks on precisely the paths that matter.
-  3. **A leaked lock is worse than a missing one**, which is why this is a P1 and not
-     housekeeping: a later request may be falsely refused as a duplicate, and if it lands on
-     the *same* backend session, advisory-lock **reentrancy** would let it acquire a lock it
-     does not exclusively own — inverting "lock acquired proves no other owner is live" into
-     a false negative. Reentrancy is why pinning is stated as a requirement rather than an
-     optimisation.
+  3. **A leaked lock still costs something**, though less than it did when the lock
+     was load-bearing: a later request may be serialised behind nothing, and on the
+     *same* backend session advisory-lock **reentrancy** would let it acquire a lock
+     it does not exclusively own. Reentrancy is why pinning is stated as a
+     requirement rather than an optimisation.
 
-  **P16a proves all three**: a successful attempt, a failed attempt and a thrown route each
-  release the lock **before the connection returns to the pool**, while a genuinely dropped
-  connection releases it automatically.
+  **P16a proves the release contract**: a successful attempt, a failed attempt and a
+  thrown route each release the lock **before the connection returns to the pool**.
+  **P16c proves the liveness rule against the case that invalidated its predecessor**:
+  claim an attempt, drop its database session while the external effect is
+  unresolved, confirm the advisory lock is genuinely free, age the row past the
+  secondary bound, and prove a competitor is **still refused** — so no second
+  external effect occurs. It also proves the refusal does not become a permanent
+  stall: a genuinely restarted process, carrying a new instance id, reclaims.
+
+
 
   **Three corrections from the required review of `0e324ac`, all in this one statement.**
 
@@ -2348,6 +2392,7 @@ operation. No lower rung substitutes for a higher one.
 | P7c | **Least privilege is proven, not claimed.** `atlas_app` is refused a DDL statement and refused a `DELETE` on a table outside its grant list (§8.2). Every statement the design specifies — the claim, the `session_id` persist, `completeWrite`, `failWrite`, the export-state updates — is executed **as its real role** and proven to succeed. Three grant/SQL mismatches have already reached review; a statement proven only as superuser proves nothing about the deployed system. |
 | P8 | The `write_receipts` state machine is proven on all four transitions of §3.6, including that a **`failed` attempt does not consume the `write_id`** and that a superseded attempt's late `completeWrite` is discarded. |
 | P8c | **`failWrite` invalidates the token.** Fail an attempt, then send a late `completeWrite` carrying the **same** token **before any retry occurs**, and prove it is refused. The failed attempt must not become `completed`. |
+| P16c | **The receipt liveness rule survives a lost database session during an unresolved external effect.** Claim an attempt; **terminate its database backend** while the Google Sheets effect is still in flight; confirm the advisory lock is genuinely free; age the row past the five-minute bound; and prove a competitor is **still refused**, so no second external effect occurs. Then prove the refusal is not a permanent stall: a genuinely restarted process, carrying a new `owner_instance_id`, reclaims. *Added by the required review of `ad18907`, which found the previous mechanism inferring external-effect death from database-session death — a false implication that let a competitor take a freed lock and perform the same Sheets append. A test that only proves a live lock blocks a claim does not discharge this: the lock is not the mechanism under test.* |
 | P8a0 | **The receipt claim is executable and self-contained.** A brand-new receipt is proven to carry a **non-null `expires_at`** and to be immediately visible to `peekWrite`. An **expired `completed`** row is proven **atomically reclaimable in the claim statement** — no housekeeping job runs during the test — with `attempt` and `created_at` reset, matching prune-then-insert. The claim is proven to execute **as `atlas_app` under its actual grants**, not as a superuser. |
 | P8a | **The receipt TTL epoch resets on retry.** Seed a retryable receipt just under 24 hours old; claim a new attempt; complete it; advance the clock past the **original** expiry but inside 24 hours of the retry; and prove `peekWrite` and duplicate replay still succeed. A retry that inherits the first attempt's expiry fails this. |
 | P8b | **NOT AN `S2` MERGE GATE — an owner-gated checkpoint after `S2` is applied to `Atlas Production`, before `S3` begins.** *Corrected by the required review of `039c28c`, which found this gate unproducible under `S2`'s own rules: `S2` applies migrations to a disposable CI database only and is **forbidden** to apply schema to `Atlas Production`, while P2's database is plain Postgres with no Supavisor and no second hosted project is named. As a merge gate it demanded evidence that could only be produced by breaking `S2`'s own constraint or by silently provisioning another hosted project.* What **does** gate the `S2` merge is the local equivalent: the four roles and their exact grants are created and proven on the from-empty Postgres database, as the real roles (P7c). The hosted proof below then runs **after the owner applies `S2` to `Atlas Production`** and **before `S3` starts**, and `S3` may not begin until it passes. **The real Render-compatible connection path works.** Open a **Supavisor session-mode** connection as **each of the four roles** — including the owner-only `atlas_rebuild`, which needs a working connection when a rebuild runs — run a multi-statement transaction, and prove a **session-level advisory lock survives across statements** — the exact behaviour the exporter depends on and the exact behaviour transaction mode would silently break. Prove each pooler connection authenticates as its intended role. Assumed IPv6 reachability does not count as proof. |
@@ -2396,7 +2441,7 @@ Everything in §6.2, re-run after the cutover, plus:
 | P14e | **Undo reaches the mirror.** Undo a Save on an already-exported session and prove: the session re-enters the export queue; the rewrite stays **inside its own allocated block**, blanking the tail; no other session's rows are touched; and the cursor does not move backwards. Separately prove `deleteRowsByRange` is **absent** for every mirrored tab. |
 | P14f | **Any post-export mutation re-enters the queue.** Mutate an exported session's Supabase data — including a `closeout_write_id` seal — and prove `sheets_exported_at` is cleared and the session is re-exported. A session that changed and stayed exported is a stale mirror. |
 | P14g | **A session with no `Effort` row receives no `Effort` allocation**, and the `Effort` cursor does not advance for it. |
-| P16a | **The five authority guarantees of `test/idempotencyPersistence.test.js` are re-proven against Supabase**, including **WRITE-3 by its actual mechanism**: an `in_progress` row whose owner is **still live** (advisory lock held) must be **refused** even when older than five minutes, and reclaimable only once that connection drops. A test that reclaims on elapsed time alone proves the opposite of WRITE-3. Also — restart replay, stale-`in_progress` retryability, recent-`in_progress` duplicate blocking, the WRITE-3 rehydrated downgrade, and WRITE-2's `peekWrite` recovery of the server-minted `session_id` — **before** that suite is deleted. A deleted suite whose guarantees were not re-proven is a lost proof, not a cleanup. |
+| P16a | **The five authority guarantees of `test/idempotencyPersistence.test.js` are re-proven against Supabase**, including **WRITE-3 by its actual mechanism**: an `in_progress` row owned by the **live** process must be **refused** even when older than five minutes, and reclaimable only by a process that is genuinely gone — proven by `owner_instance_id`, never by a released advisory lock. *Corrected by the required review of `ad18907`: the earlier wording made "reclaimable once that connection drops" the guarantee, which is the defect. A test that reclaims on elapsed time, or on a freed lock, proves the opposite of WRITE-3.* The **single-instance invariant** §5.3/§5.5 require is a stated precondition of this rule and must be enforced before `S4` wires it. Also — restart replay, stale-`in_progress` retryability, recent-`in_progress` duplicate blocking, the WRITE-3 rehydrated downgrade, and WRITE-2's `peekWrite` recovery of the server-minted `session_id` — **before** that suite is deleted. A deleted suite whose guarantees were not re-proven is a lost proof, not a cleanup. |
 | P16b | **`peekWrite` has a working Supabase implementation with its live consumer (`index.js:2511`) exercised**, and an expired row is proven to read as absent. It must return a **non-null server-minted `session_id`** for a prior attempt — proving the adapter actually persisted it (§3.6) — and an obsolete attempt must be proven unable to overwrite a newer attempt's value. |
 | P15 | **The open-divergence count is zero** and every `atlas.migration_divergences` row is `closed`. If not, `S4` does not merge. |
 | P16 | **The legacy receipt store is absent.** The file store, `ATLAS_IDEMPOTENCY_FILE`, `/tmp/atlas-idempotency.json` and all six test references are gone, and **no caller remains**, proven by search. *The two-stage `S4a` / `S4b` form of this gate was withdrawn with ruling D6: the `S4` build never needed to carry the legacy implementation, because a rollback restores the previously merged `S3` build, which already contains it, and the rollback data comes from `atlas.write_receipts`.* |

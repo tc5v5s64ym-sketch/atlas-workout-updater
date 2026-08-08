@@ -109,7 +109,7 @@ GRANT UPDATE (closeout_write_id)
 -- the claim permission-denied under its own security model.
 GRANT UPDATE (status, attempt, attempt_token, attempt_started_at, created_at,
               expires_at, session_id, response_body, rows_written, appended_range,
-              completed_at)
+              completed_at, owner_instance_id)
   ON atlas.write_receipts TO atlas_app;
 
 -- The six updatable export-state columns of §3.1. Three writers touch them: the

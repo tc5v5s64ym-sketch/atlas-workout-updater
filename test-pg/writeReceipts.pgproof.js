@@ -14,7 +14,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { withOwner, withRole, resetSchema } = require('./support/db');
+const { withOwner, withRole, resetSchema, connect, roleUrl } = require('./support/db');
 const adapter = require('../services/supabaseAdapter');
 const { SQL } = adapter;
 
@@ -51,9 +51,12 @@ test('P8 transition 2: a FAILED attempt does NOT consume the write_id', async ()
   assert.notEqual(retry.attempt_token, first.attempt_token);
 });
 
-test('P8 transition 3: a STALE in_progress row is retryable once nothing holds its lock', async () => {
-  const first = await claim('w-3');
-  await withOwner(async (client) => {
+test('P8 transition 3: an ABANDONED in_progress row — one a prior process owned — is retryable', async () => {
+  // The condition is OWNER PROCESS IDENTITY, not elapsed time and not a released
+  // lock. A row this process still owns is covered by the liveness proofs below.
+  const priorProcess = `atlas-host:401:${'0123456789ab'}`;
+  await withRole('atlas_app', async (client) => {
+    await client.query(SQL.claimWriteReceipt, ['w-3', ROUTE, priorProcess]);
     await client.query(
       `UPDATE atlas.write_receipts SET attempt_started_at = now() - interval '10 minutes' WHERE write_id = 'w-3'`
     );
@@ -61,7 +64,7 @@ test('P8 transition 3: a STALE in_progress row is retryable once nothing holds i
   const retry = await claim('w-3');
   assert.equal(retry.duplicate, false);
   assert.equal(retry.attempt, 2);
-  assert.notEqual(retry.attempt_token, first.attempt_token);
+  assert.equal(retry.owner_instance_id, adapter.INSTANCE_ID);
 });
 
 test('P8 transition 4: a FRESH in_progress row and a COMPLETED row are genuine duplicates', async () => {
@@ -219,37 +222,6 @@ test('an obsolete attempt cannot overwrite a newer attempt\'s session_id', async
 
 // ── The advisory lock: liveness, not a timer ──────────────────────────────────
 
-test('WRITE-3 by its actual mechanism: a stale row whose owner is STILL LIVE is refused', async () => {
-  await claim('w-13');
-  await withOwner(async (client) => {
-    await client.query(
-      `UPDATE atlas.write_receipts SET attempt_started_at = now() - interval '30 minutes' WHERE write_id = 'w-13'`
-    );
-  });
-
-  // Hold the lock on a separate live connection, exactly as a slow in-flight
-  // attempt would. A slow request is not a dead one.
-  await withRole('atlas_app', async (holder) => {
-    const held = await holder.query('SELECT pg_try_advisory_lock(hashtext($1)) AS acquired', ['w-13']);
-    assert.equal(held.rows[0].acquired, true);
-
-    const refused = await claim('w-13');
-    assert.equal(refused.acquired, false);
-    assert.equal(refused.duplicate, true);
-    // A FACT about the other process — its connection is open — not a guess from
-    // elapsed time. Reclaiming on elapsed time alone proves the OPPOSITE of WRITE-3.
-    assert.equal(refused.reason, 'attempt_live_elsewhere');
-
-    await holder.query('SELECT pg_advisory_unlock(hashtext($1))', ['w-13']);
-  });
-
-  // Once that connection releases — which is exactly what a process death does —
-  // the stale row becomes reclaimable.
-  const reclaimed = await claim('w-13');
-  assert.equal(reclaimed.duplicate, false);
-  assert.equal(reclaimed.attempt, 2);
-});
-
 test('the advisory lock is released on EVERY exit path, including a thrown attempt body', async () => {
   await assert.rejects(
     adapter.withWriteAttempt('w-14', ROUTE, async () => {
@@ -310,4 +282,160 @@ test('the claim statement is a compare-and-set — ON CONFLICT DO NOTHING is not
   assert.doesNotMatch(SQL.claimWriteReceipt, /ON CONFLICT[^)]*\)\s*DO NOTHING/);
   assert.match(SQL.claimWriteReceipt, /status\s*=\s*'failed'/);
   assert.match(SQL.failWriteReceipt, /attempt_token\s*=\s*NULL/);
+});
+
+// ── Liveness: process identity, never a database session ─────────────────────
+//
+// The mechanism under test replaced one that inferred external-effect death from
+// database-session death. These proofs exercise the exact adversarial case that
+// invalidated it.
+
+// Claim as a chosen instance, on a client the test owns, using the SAME statement
+// text the adapter issues. Returns the claim plus the backend pid, so the test can
+// destroy that database session the way a network blip or a pooler restart would.
+async function claimAsInstance(client, writeId, instanceId, { holdLock = false, route = ROUTE } = {}) {
+  await client.query('SELECT pg_advisory_lock(hashtext($1))', [writeId]);
+  const backend = await client.query('SELECT pg_backend_pid() AS pid');
+  const claim = await client.query(SQL.claimWriteReceipt, [writeId, route, instanceId]);
+  // Released unless the test is specifically about losing the session while it is
+  // held. A proof about OWNERSHIP must not leave the lock held, or the competitor
+  // would be refused for the wrong reason and the proof would be vacuous.
+  if (!holdLock) await client.query('SELECT pg_advisory_unlock(hashtext($1))', [writeId]);
+  return { claim: claim.rows[0] || null, rowCount: claim.rowCount, pid: backend.rows[0].pid };
+}
+
+test('WRITE-3 by its actual mechanism: an attempt owned by THIS process is refused, however old', async () => {
+  const owner = await connect(roleUrl('atlas_app'));
+  owner.on('error', () => { /* the test terminates this backend on purpose */ });
+  try {
+    // The app process owns the attempt.
+    const first = await claimAsInstance(owner, 'w-live-1', adapter.INSTANCE_ID);
+    assert.equal(first.rowCount, 1);
+    // Age it far past the secondary five-minute bound.
+    await withOwner(async (client) => {
+      await client.query(
+        `UPDATE atlas.write_receipts SET attempt_started_at = now() - interval '6 hours' WHERE write_id = 'w-live-1'`
+      );
+    });
+
+    // The same process asks again. A slow request is not a dead one.
+    const refused = await claim('w-live-1');
+    assert.equal(refused.duplicate, true, 'elapsed time alone must never reclaim a live process\'s attempt');
+    assert.equal(refused.record.status, 'in_progress');
+  } finally {
+    await owner.end();
+  }
+});
+
+test('ADVERSARIAL: dropping the database session mid-external-effect does NOT free the attempt', async () => {
+  // THE CASE THAT INVALIDATED THE PREVIOUS MECHANISM.
+  //
+  // Attempt A owns the receipt and is awaiting a Google Sheets append — an
+  // independent HTTP call the database knows nothing about. A's Postgres
+  // connection then drops. Postgres releases its advisory lock IMMEDIATELY, but
+  // A's Sheets request is still in flight and can still commit. Under the old
+  // rule a competitor took the freed lock, claimed the receipt, and performed the
+  // SAME append; the attempt token could not help, because it only stops A
+  // acknowledging in Supabase — it cannot un-append a row from Google Sheets.
+  const externalEffects = [];
+  const owner = await connect(roleUrl('atlas_app'));
+  owner.on('error', () => { /* the test terminates this backend on purpose */ });
+  let pid;
+  try {
+    const first = await claimAsInstance(owner, 'w-live-2', adapter.INSTANCE_ID, { holdLock: true });
+    assert.equal(first.rowCount, 1);
+    pid = first.pid;
+    // A begins its external effect. It is UNRESOLVED for the whole test.
+    externalEffects.push({ attempt: 'A', state: 'in_flight' });
+  } finally {
+    // Do not close politely — terminate the backend, which is what a network blip
+    // or a pooler restart actually does.
+    await withOwner(async (client) => {
+      await client.query('SELECT pg_terminate_backend($1)', [pid]);
+    });
+    await owner.end().catch(() => {});
+  }
+
+  // The lock really is free now. This is the precondition the old mechanism
+  // mistook for evidence of death.
+  await withRole('atlas_app', async (client) => {
+    const free = await client.query('SELECT pg_try_advisory_lock(hashtext($1)) AS acquired', ['w-live-2']);
+    assert.equal(free.rows[0].acquired, true, 'a dropped session releases the advisory lock immediately');
+    await client.query('SELECT pg_advisory_unlock(hashtext($1))', ['w-live-2']);
+  });
+
+  // Age the row past the secondary bound, so nothing but ownership can refuse it.
+  await withOwner(async (client) => {
+    await client.query(
+      `UPDATE atlas.write_receipts SET attempt_started_at = now() - interval '6 hours' WHERE write_id = 'w-live-2'`
+    );
+  });
+
+  // The competitor. Same process — a single-instance deployment, which is the
+  // invariant §5.3/§5.5 require for the cutover.
+  const competitor = await claim('w-live-2');
+  assert.equal(competitor.duplicate, true, 'a freed lock must NOT authorize a second external effect');
+  assert.equal(competitor.record.status, 'in_progress');
+
+  // So the competitor never performs the effect, and A's late commit is the only one.
+  assert.equal(externalEffects.length, 1);
+  externalEffects[0].state = 'committed_late';
+  assert.deepEqual(externalEffects, [{ attempt: 'A', state: 'committed_late' }]);
+
+  await withOwner(async (client) => {
+    const { rows } = await client.query(
+      `SELECT owner_instance_id, status FROM atlas.write_receipts WHERE write_id = 'w-live-2'`
+    );
+    assert.equal(rows[0].owner_instance_id, adapter.INSTANCE_ID, 'ownership survives the dropped session');
+    assert.equal(rows[0].status, 'in_progress');
+  });
+});
+
+test('RECOVERY: a genuinely restarted process DOES reclaim — the wedge the refusal could have caused', async () => {
+  // The refusal above must not become a permanent stall. A different instance id
+  // is the executable form of "rehydrated from a prior process", which is exactly
+  // the condition services/idempotency.js uses today.
+  const deadProcess = `atlas-host:404:${'deadbeefcafe'}`;
+  const owner = await connect(roleUrl('atlas_app'));
+  owner.on('error', () => { /* the test terminates this backend on purpose */ });
+  try {
+    const first = await claimAsInstance(owner, 'w-live-3', deadProcess);
+    assert.equal(first.rowCount, 1);
+  } finally {
+    await owner.end();
+  }
+  await withOwner(async (client) => {
+    await client.query(
+      `UPDATE atlas.write_receipts SET attempt_started_at = now() - interval '10 minutes' WHERE write_id = 'w-live-3'`
+    );
+  });
+
+  const restarted = await claim('w-live-3');
+  assert.equal(restarted.duplicate, false, 'a prior process\'s abandoned attempt stays retryable');
+  assert.equal(restarted.attempt, 2);
+  assert.equal(restarted.owner_instance_id, adapter.INSTANCE_ID);
+});
+
+test('a prior process\'s attempt is NOT reclaimed before the secondary bound elapses', async () => {
+  const deadProcess = `atlas-host:405:${'feedfacefeed'}`;
+  const owner = await connect(roleUrl('atlas_app'));
+  owner.on('error', () => { /* the test terminates this backend on purpose */ });
+  try {
+    await claimAsInstance(owner, 'w-live-4', deadProcess);
+  } finally {
+    await owner.end();
+  }
+  // Fresh: the bound has not elapsed, so it stays a duplicate.
+  const early = await claim('w-live-4');
+  assert.equal(early.duplicate, true);
+});
+
+test('the liveness rule is in the STATEMENT, not in a comment', () => {
+  // A textual guard, because the failure mode is silent: reverting to a
+  // lock-derived or purely time-derived reclaim would still pass every
+  // behavioural test that does not drop a connection.
+  assert.match(SQL.claimWriteReceipt, /owner_instance_id IS DISTINCT FROM \$3/);
+  assert.match(SQL.claimWriteReceipt, /owner_instance_id\s*=\s*\$3/);
+  // And the process identity may not be derived from anything about the connection.
+  assert.ok(adapter.INSTANCE_ID.includes(String(process.pid)));
 });

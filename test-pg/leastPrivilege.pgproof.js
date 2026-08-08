@@ -211,7 +211,7 @@ test('P7c: every adapter statement atlas_app must issue SUCCEEDS as atlas_app', 
     // The whole receipt state machine, including the advisory lock.
     const lock = await client.query('SELECT pg_try_advisory_lock(hashtext($1)) AS acquired', ['w-1']);
     assert.equal(lock.rows[0].acquired, true);
-    const claim = await client.query(SQL.claimWriteReceipt, ['w-1', '/api/log-workout']);
+    const claim = await client.query(SQL.claimWriteReceipt, ['w-1', '/api/log-workout', 'proof-instance']);
     assert.equal(claim.rowCount, 1);
     const token = claim.rows[0].attempt_token;
     // The session_id persist — the statement whose missing grant would have made
