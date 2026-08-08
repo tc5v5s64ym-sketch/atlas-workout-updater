@@ -278,7 +278,26 @@ const SQL = Object.freeze({
            rows_written       = NULL,
            appended_range     = NULL,
            completed_at       = NULL
-     WHERE atlas.write_receipts.status = 'failed'
+     -- ── ONE write_id IS BOUND TO ONE ROUTE, FOR ITS WHOLE LIFE ────────────────
+     -- *Required review of 5533874.* route and effect_authority are written
+     -- at INSERT and are NOT in the DO UPDATE list, so without this guard a
+     -- write_id first claimed on a transactional route would keep
+     -- effect_authority='supabase' when the SAME id was later presented to a
+     -- Sheets route — through a client bug, a replay bug, or a namespace
+     -- collision. The Sheets append would then be reclaimed automatically after
+     -- five minutes instead of being marked ambiguous, which is exactly the
+     -- duplicate P16d exists to make impossible.
+     --
+     -- The binding is a REFUSAL, not a rewrite. Rewriting effect_authority on
+     -- retry would erase what kind of effect the PRIOR attempt may already have
+     -- sent, which is the one fact the state machine cannot afford to lose.
+     -- Both columns are checked: effect_authority is derived from route by the
+     -- frozen map, so a disagreement means the map itself changed under a live
+     -- receipt — also a case that must refuse rather than reinterpret.
+     WHERE atlas.write_receipts.route = $2
+       AND atlas.write_receipts.effect_authority = $4
+       AND (
+           atlas.write_receipts.status = 'failed'
         -- Expired: reclaimable at any status EXCEPT 'ambiguous'. A failed row is a
         -- DECLARED non-write (failWrite ran), not an inferred one, so both
         -- authorities may retry it.
@@ -290,6 +309,7 @@ const SQL = Object.freeze({
             -- The owning PROCESS is gone. Not "its database session dropped".
             AND atlas.write_receipts.owner_instance_id IS DISTINCT FROM $3
             AND atlas.write_receipts.attempt_started_at < now() - interval '5 minutes')
+       )
     RETURNING attempt_token, attempt, session_id, owner_instance_id, effect_authority`,
 
   // §3.6 — the SHEETS half of the effect-aware rule, and the only exit an
@@ -303,10 +323,15 @@ const SQL = Object.freeze({
   //
   // The token is voided in the same statement. The dead process cannot come back
   // and complete the receipt on the strength of an effect nothing has verified.
+  //
+  // Route-bound for the same reason the claim is: a claimer arriving on a
+  // DIFFERENT route than the one that owns this write_id must change nothing at
+  // all — not even to record an ambiguity about an effect it did not send.
   markReceiptAmbiguous: `
     UPDATE atlas.write_receipts
        SET status = 'ambiguous', attempt_token = NULL, ambiguous_at = now()
      WHERE write_id = $1
+       AND route = $3
        AND status = 'in_progress'
        AND effect_authority = 'sheets'
        AND owner_instance_id IS DISTINCT FROM $2
@@ -373,6 +398,18 @@ const SQL = Object.freeze({
            ambiguous_at, ambiguity_proof, owner_instance_id
       FROM atlas.write_receipts
      WHERE write_id = $1 AND (expires_at > now() OR status = 'ambiguous')`,
+
+  // §3.6 — the write_id's OWNING ROUTE, read WITHOUT the TTL filter.
+  //
+  // Deliberately not peekWriteReceipt. The route binding is about IDENTITY, not
+  // about liveness: an expired row is the most permissive reclaim branch there is,
+  // so a foreign route arriving at one must still be told it collided rather than
+  // handed a silent, unexplained refusal. peekWriteReceipt reports an expired row
+  // as absent, exactly as today, and that must not change.
+  //
+  // Two columns only, so this can never become a second way to read a receipt.
+  readReceiptRoute: `
+    SELECT route, effect_authority FROM atlas.write_receipts WHERE write_id = $1`,
 
   // The prune bounds table size. It carries no correctness — the claim above
   // reclaims an expired row atomically, so nothing waits for this to run.
@@ -824,6 +861,17 @@ async function readCatalogMirror(role = 'app') {
 // derived from anything about the database connection.
 const INSTANCE_ID = `${require('os').hostname()}:${process.pid}:${require('crypto').randomBytes(6).toString('hex')}`;
 
+// Same shape as services/migrationShadow.js's, and for the same reason: a receipt
+// anomaly must be visible to an operator, and logging must never throw into a
+// write path.
+function warn(event, fields) {
+  try {
+    console.warn(JSON.stringify({ level: 'warn', module: 'supabaseAdapter', event, ...fields }));
+  } catch {
+    /* logging must never throw into the write path */
+  }
+}
+
 // WHERE EACH ROUTE'S AUTHORITATIVE EFFECT LANDS — the seven beginWrite callers of
 // ruling D4, and nothing else.
 //
@@ -895,27 +943,59 @@ async function withWriteAttempt(writeId, route, fn) {
       const claim = await client.query(SQL.claimWriteReceipt, [writeId, route, INSTANCE_ID, authority]);
       let attempt;
       if (claim.rowCount === 0) {
-        // The WHERE refused the update. Before reporting a plain duplicate, ask
-        // whether this is the case the claim CANNOT decide: a prior process's live
-        // attempt whose Google Sheets append may or may not have landed. If it is,
-        // record the ignorance durably — the row becomes 'ambiguous' and stops
-        // being retryable by anything except destination-side proof.
+        // A ROUTE COLLISION IS NOT A DUPLICATE, and must not be answered like one.
         //
-        // Compare-and-set, so this is safe to race and is a no-op on every other
-        // shape of duplicate (fresh, completed, already ambiguous).
-        const marked = await client.query(SQL.markReceiptAmbiguous, [writeId, INSTANCE_ID]);
-        const existing = await client.query(SQL.peekWriteReceipt, [writeId]);
-        const record = existing.rows[0] || null;
-        attempt = {
-          acquired: true,
-          duplicate: true,
-          record,
-          // True whenever the caller is looking at an unresolved external effect —
-          // whether this claim marked it or found it already marked. The route may
-          // not retry, and it may not report success either.
-          ambiguous: record ? record.status === 'ambiguous' : false,
-          markedAmbiguousNow: marked.rowCount > 0,
-        };
+        // *Required review of `5533874`.* This write_id already belongs to another
+        // route. The refusal happens BEFORE anything else: no ambiguity is
+        // recorded (this claimer sent no effect to record), and the stored record
+        // is deliberately WITHHELD so no caller can replay a foreign route's
+        // response body as if it were its own.
+        //
+        // Read WITHOUT the TTL filter. An expired row is the most permissive
+        // reclaim branch there is, so a foreign route arriving at one must still
+        // be told it collided rather than handed a silent, unexplained refusal.
+        const owning = await client.query(SQL.readReceiptRoute, [writeId]);
+        const owner = owning.rows[0] || null;
+        if (owner && owner.route !== route) {
+          warn('write_receipt_route_conflict', {
+            write_id: writeId, requested_route: route, stored_route: owner.route,
+            stored_effect_authority: owner.effect_authority,
+          });
+          attempt = {
+            acquired: true,
+            duplicate: true,
+            routeConflict: true,
+            record: null,
+            requestedRoute: route,
+            storedRoute: owner.route,
+            ambiguous: false,
+            markedAmbiguousNow: false,
+          };
+        } else {
+          // A genuine refusal on this write_id's own route. Before reporting a
+          // plain duplicate, ask whether this is the case the claim CANNOT decide:
+          // a prior process's live attempt whose Google Sheets append may or may
+          // not have landed. If it is, record the ignorance durably — the row
+          // becomes 'ambiguous' and stops being retryable by anything except
+          // destination-side proof.
+          //
+          // Compare-and-set, so this is safe to race and is a no-op on every other
+          // shape of duplicate (fresh, completed, already ambiguous).
+          const marked = await client.query(SQL.markReceiptAmbiguous, [writeId, INSTANCE_ID, route]);
+          const after = await client.query(SQL.peekWriteReceipt, [writeId]);
+          const current = after.rows[0] || null;
+          attempt = {
+            acquired: true,
+            duplicate: true,
+            routeConflict: false,
+            record: current,
+            // True whenever the caller is looking at an unresolved external effect —
+            // whether this claim marked it or found it already marked. The route may
+            // not retry, and it may not report success either.
+            ambiguous: current ? current.status === 'ambiguous' : false,
+            markedAmbiguousNow: marked.rowCount > 0,
+          };
+        }
       } else {
         attempt = { acquired: true, duplicate: false, ...claim.rows[0] };
       }

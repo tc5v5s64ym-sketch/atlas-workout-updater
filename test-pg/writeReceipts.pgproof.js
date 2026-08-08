@@ -656,6 +656,160 @@ test('P16d: the effect authority is DECLARED per route, exhaustively, and fails 
   });
 });
 
+// ── P16e — one write_id is bound to one route, for its whole life ────────────
+//
+// *Required review of `5533874`.* `route` and `effect_authority` are written at
+// INSERT and are absent from the claim's DO UPDATE list, so a write_id first
+// claimed on a transactional route kept `effect_authority = 'supabase'` when the
+// SAME id was later presented to a Sheets route — through a client bug, a replay
+// bug, or a namespace collision. The Sheets append would then be reclaimed
+// automatically after five minutes instead of being marked ambiguous: exactly the
+// duplicate class P16d exists to make impossible, reached by a different door.
+//
+// The binding is a REFUSAL, not a rewrite. Rewriting effect_authority on retry
+// would erase what kind of effect the PRIOR attempt may already have sent.
+
+test('P16e: the unsafe sequence — a write_id retired on a SUPABASE route cannot be reused on a SHEETS route', async () => {
+  // Step 1-2. W is claimed on a transactional route and reaches a retryable state.
+  const first = await claim('w-bind-1', '/api/log-workout');
+  assert.equal(first.duplicate, false);
+  assert.equal(first.effect_authority, 'supabase');
+  await adapter.failWriteReceipt('w-bind-1', first.attempt_token);
+
+  // Step 3-4. The SAME write_id arrives on a Sheets route. Under the old rule the
+  // failed-row branch let it through, and the row kept effect_authority='supabase'.
+  const collided = await claim('w-bind-1', '/api/coaching-notes');
+  assert.equal(collided.duplicate, true, 'a foreign route must never obtain an attempt');
+  assert.equal(collided.routeConflict, true, 'and it must be reported as a collision, not a duplicate');
+  assert.equal(collided.storedRoute, '/api/log-workout');
+  assert.equal(collided.requestedRoute, '/api/coaching-notes');
+  // The record is WITHHELD on purpose: a caller handed the other route's stored
+  // body could replay it as its own response.
+  assert.equal(collided.record, null, 'a foreign route may not read the receipt it collided with');
+
+  // Steps 5-7 are now unreachable, and the row is untouched — no attempt, no new
+  // token, no ownership change, and above all no reinterpretation of the effect.
+  await withOwner(async (client) => {
+    const { rows } = await client.query(
+      `SELECT route, effect_authority, status, attempt, attempt_token, ambiguous_at
+         FROM atlas.write_receipts WHERE write_id = 'w-bind-1'`
+    );
+    assert.equal(rows[0].route, '/api/log-workout');
+    assert.equal(rows[0].effect_authority, 'supabase');
+    assert.equal(rows[0].status, 'failed', 'the collision changed nothing at all');
+    assert.equal(rows[0].attempt, 1);
+    assert.equal(rows[0].attempt_token, null);
+    assert.equal(rows[0].ambiguous_at, null, 'and it recorded no ambiguity about an effect it never sent');
+  });
+
+  // The write_id still belongs to its own route, and that route's retry works.
+  const ownRetry = await claim('w-bind-1', '/api/log-workout');
+  assert.equal(ownRetry.duplicate, false);
+  assert.equal(ownRetry.attempt, 2);
+});
+
+test('P16e: the reverse collision is refused too — a SHEETS write_id cannot be reused on a SUPABASE route', async () => {
+  // This direction wedges rather than duplicates, so it is the less dangerous
+  // half — but a rule that only bound the permissive direction would be a rule
+  // about one symptom rather than about identity.
+  const first = await claim('w-bind-2', '/api/coaching-notes');
+  assert.equal(first.effect_authority, 'sheets');
+  await adapter.failWriteReceipt('w-bind-2', first.attempt_token);
+
+  const collided = await claim('w-bind-2', '/api/log-workout');
+  assert.equal(collided.duplicate, true);
+  assert.equal(collided.routeConflict, true);
+  assert.equal(collided.storedRoute, '/api/coaching-notes');
+
+  await withOwner(async (client) => {
+    const { rows } = await client.query(
+      `SELECT route, effect_authority, status FROM atlas.write_receipts WHERE write_id = 'w-bind-2'`
+    );
+    assert.deepEqual(rows[0], { route: '/api/coaching-notes', effect_authority: 'sheets', status: 'failed' });
+  });
+});
+
+test('P16e: the binding holds in EVERY reclaimable state, not only the failed one', async () => {
+  // Three branches can reclaim a row, and each had to be bound or the collision
+  // simply moves to whichever one was left open.
+  //
+  // (a) EXPIRED — the most permissive branch: it reclaims at any status.
+  const expired = await claim('w-bind-3', '/api/log-workout');
+  await adapter.completeWriteReceipt('w-bind-3', expired.attempt_token, { ok: true });
+  await withOwner(async (client) => {
+    await client.query(
+      `UPDATE atlas.write_receipts SET expires_at = now() - interval '48 hours' WHERE write_id = 'w-bind-3'`
+    );
+  });
+  const foreignExpired = await claim('w-bind-3', '/api/constraints');
+  assert.equal(foreignExpired.routeConflict, true, 'an expired row is still not a free write_id for another route');
+  assert.equal((await claim('w-bind-3', '/api/log-workout')).duplicate, false, 'its own route still reclaims it');
+
+  // (b) A PRIOR PROCESS's abandoned attempt on a transactional route.
+  const dead = `atlas-host:9101:${'bindbind1111'}`;
+  await abandonedAttemptFrom(dead, 'w-bind-4', '/api/log-workout');
+  const foreignAbandoned = await claim('w-bind-4', '/api/bodyweight');
+  assert.equal(foreignAbandoned.routeConflict, true);
+  assert.equal((await claim('w-bind-4', '/api/log-workout')).duplicate, false);
+
+  // (c) An AMBIGUOUS row. A foreign route must not resolve it, mark it, or read
+  // it — it sent no effect and has nothing to say about one.
+  await abandonedAttemptFrom(dead, 'w-bind-5', '/api/coaching-notes');
+  const marked = await claim('w-bind-5', '/api/coaching-notes');
+  assert.equal(marked.record.status, 'ambiguous');
+  const foreignAmbiguous = await claim('w-bind-5', '/api/constraints');
+  assert.equal(foreignAmbiguous.routeConflict, true);
+  assert.equal(foreignAmbiguous.ambiguous, false, 'a foreign route is refused for COLLISION, not for ambiguity');
+  assert.equal(foreignAmbiguous.record, null);
+});
+
+test('P16e: a foreign route cannot MARK a receipt ambiguous either', async () => {
+  // Defence in depth. The adapter refuses the collision before reaching the mark,
+  // but the mark statement is bound as well — a future caller that reached it
+  // directly must not be able to record an ambiguity about an effect it never sent.
+  const dead = `atlas-host:9102:${'bindbind2222'}`;
+  await abandonedAttemptFrom(dead, 'w-bind-6', '/api/coaching-notes');
+  await withRole('atlas_app', async (client) => {
+    const wrongRoute = await client.query(SQL.markReceiptAmbiguous, ['w-bind-6', adapter.INSTANCE_ID, '/api/constraints']);
+    assert.equal(wrongRoute.rowCount, 0, 'the mark is route-bound in the STATEMENT');
+    const rightRoute = await client.query(SQL.markReceiptAmbiguous, ['w-bind-6', adapter.INSTANCE_ID, '/api/coaching-notes']);
+    assert.equal(rightRoute.rowCount, 1);
+  });
+});
+
+test('P16e: route and effect_authority are IMMUTABLE to the runtime', async () => {
+  // The binding above is only as strong as the pair's immutability. Neither
+  // column is in atlas_app's column-scoped UPDATE grant (§8.2), so the runtime
+  // cannot relabel a receipt's route or its effect authority and defeat the rule
+  // without touching any statement.
+  await claim('w-bind-7', '/api/coaching-notes');
+  await withRole('atlas_app', async (client) => {
+    await assert.rejects(
+      () => client.query(`UPDATE atlas.write_receipts SET route = '/api/log-workout' WHERE write_id = 'w-bind-7'`),
+      (err) => err.code === '42501'
+    );
+    await assert.rejects(
+      () => client.query(`UPDATE atlas.write_receipts SET effect_authority = 'supabase' WHERE write_id = 'w-bind-7'`),
+      (err) => err.code === '42501'
+    );
+  });
+});
+
+test('P16e: the binding is in the STATEMENTS, not in a comment', () => {
+  assert.match(SQL.claimWriteReceipt, /atlas\.write_receipts\.route\s*=\s*\$2/);
+  assert.match(SQL.claimWriteReceipt, /atlas\.write_receipts\.effect_authority\s*=\s*\$4/);
+  assert.match(SQL.markReceiptAmbiguous, /route\s*=\s*\$3/);
+  // And the DO UPDATE list still must NOT rewrite either column: reinterpreting an
+  // existing receipt would erase what kind of effect the prior attempt may have sent.
+  // Comments are stripped first, or the prose explaining the rule would trip it.
+  const executable = SQL.claimWriteReceipt
+    .split('\n').filter((line) => !line.trim().startsWith('--')).join('\n');
+  const doUpdate = executable.slice(executable.indexOf('DO UPDATE'));
+  const setClause = doUpdate.slice(0, doUpdate.indexOf('WHERE'));
+  assert.doesNotMatch(setClause, /\broute\s*=/);
+  assert.doesNotMatch(setClause, /\beffect_authority\s*=/);
+});
+
 test('P16d: the effect-aware rule is in the STATEMENTS, not in a comment', () => {
   // The same textual guard the liveness rule carries, and for the same reason:
   // dropping the effect_authority predicate would restore automatic reclaim for
