@@ -59,6 +59,57 @@ async function fetchDeployed(baseUrl, timeoutMs) {
   }
 }
 
+// Read-only Supabase migration facts for the status document (§3.8: the open
+// divergence count and the oldest open row; §3.7: the catalog generation's age).
+//
+// TOTAL — it never throws, and it never reports a count it did not read. Prefers
+// the atlas_readonly credential and falls back to the runtime role only when that
+// is the only one configured, mirroring the existing rule that read-only tools
+// build their own read-only client.
+async function readSupabaseMigrationFacts() {
+  const configured =
+    (process.env.ATLAS_SUPABASE_READONLY_URL || '').trim().length > 0 ||
+    (process.env.ATLAS_SUPABASE_APP_URL || '').trim().length > 0;
+  const shadowWriteEnabled = process.env.ATLAS_SUPABASE_SHADOW_WRITE === '1';
+  if (!configured) {
+    return { observed: false, reason: 'not_configured', configured: false, shadow_write_enabled: shadowWriteEnabled };
+  }
+
+  let adapter;
+  let mirror;
+  try {
+    adapter = require('../services/supabaseAdapter');
+    mirror = require('../services/exerciseCatalogMirror');
+  } catch (err) {
+    return { observed: false, reason: `adapter_unavailable: ${err.message}`, configured: true, shadow_write_enabled: shadowWriteEnabled };
+  }
+
+  const role = (process.env.ATLAS_SUPABASE_READONLY_URL || '').trim() ? 'readonly' : 'app';
+  try {
+    const summary = await adapter.divergenceSummary(role);
+    const generation = await adapter.currentCatalogGeneration(role);
+    const currency = mirror.currencyVerdict(generation);
+    return {
+      observed: true,
+      reason: 'read_ok',
+      configured: true,
+      shadow_write_enabled: shadowWriteEnabled,
+      open_divergences: Number(summary.open_count || 0),
+      oldest_open_divergence_at: summary.oldest_open_at
+        ? new Date(summary.oldest_open_at).toISOString()
+        : null,
+      catalog_generation_age_seconds: currency.age_seconds,
+      catalog_servable: currency.servable,
+    };
+  } catch (err) {
+    return { observed: false, reason: `read_failed: ${err.message}`, configured: true, shadow_write_enabled: shadowWriteEnabled };
+  } finally {
+    try {
+      await adapter.close();
+    } catch { /* the process is exiting anyway */ }
+  }
+}
+
 async function main() {
   const args = process.argv.slice(2);
   if (args.includes('--help') || args.includes('-h')) { printHelp(); return; }
@@ -67,6 +118,15 @@ async function main() {
   const base = (process.env.ATLAS_BASE_URL || '').trim();
   let status;
   const warnings = [];
+
+  // Supabase hot-path migration (PR S2) — §3.8 names this command as an immediate
+  // consumer of atlas.migration_divergences. Read-only, as atlas_readonly where
+  // that credential exists. Every failure degrades to observed:false with its
+  // reason: an unread divergence table is UNKNOWN, never a clean zero.
+  const supabaseMigration = await readSupabaseMigrationFacts();
+  if (!supabaseMigration.observed && supabaseMigration.configured) {
+    warnings.push(`Supabase migration facts unavailable (${supabaseMigration.reason})`);
+  }
 
   if (base) {
     const r = await fetchDeployed(base, 6000);
@@ -77,12 +137,22 @@ async function main() {
       if (local && deployed && deployed !== 'unknown' && !local.startsWith(deployed) && !deployed.startsWith(local)) {
         warnings.push(`local HEAD ${local} differs from deployed ${deployed}`);
       }
+      // The endpoint deliberately reports the migration block as NOT OBSERVED (it
+      // opens no database connection). Overlay the CLI's real read when it got one,
+      // and leave the endpoint's honest not-observed value when it did not.
+      if (supabaseMigration.observed) status.supabase_migration = supabaseMigration;
     } else {
-      status = buildLocalCliStatus({ deployed_reason: `deployed status unreachable (${r.reason})` });
+      status = buildLocalCliStatus({
+        deployed_reason: `deployed status unreachable (${r.reason})`,
+        supabase_migration: supabaseMigration,
+      });
       warnings.push(`deployed status unreachable (${r.reason}); showing local view`);
     }
   } else {
-    status = buildLocalCliStatus({ deployed_reason: 'ATLAS_BASE_URL not set; local view only' });
+    status = buildLocalCliStatus({
+      deployed_reason: 'ATLAS_BASE_URL not set; local view only',
+      supabase_migration: supabaseMigration,
+    });
     warnings.push('ATLAS_BASE_URL not set; showing local view (set it in .env to check deployed prod)');
   }
 

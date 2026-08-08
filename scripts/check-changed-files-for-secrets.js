@@ -69,6 +69,49 @@ const rules = [
     name: "anthropic-oauth-token",
     test: (text) => /sk-ant-oat[0-9]*-[A-Za-z0-9_-]{20,}/.test(text),
   },
+
+  // ── Supabase (added by PR S2, before any credential is configured) ──────────
+  //
+  // docs/SUPABASE_HOT_PATH_MIGRATION.md §8.4. Under §8.1 the credentials that
+  // MATTER are Postgres connection strings and role passwords — Atlas uses no
+  // service-role key and no anon key. Both are matched anyway, so a later
+  // reintroduction of the Data API cannot slip a key past the scanner.
+  {
+    // A Postgres URI carrying an inline password. Catches the Supavisor
+    // session-mode strings this design uses under ANY variable name, and any
+    // other user:password@host Postgres URI. A password-less URI (the shape
+    // .env.example and every doc uses) does not match.
+    name: "postgres-connection-string-with-password",
+    test: (text) => /postgres(?:ql)?:\/\/[A-Za-z0-9._%+-]+:[^\s:@/'"]+@/.test(text),
+  },
+  {
+    // Any assignment of the four scoped-role connection strings to a real value.
+    // The example file may carry a blank or `replace_me`.
+    name: "supabase-role-url-assignment",
+    test: (text, file) => {
+      const matches = text.match(/^ATLAS_SUPABASE_(?:APP|READONLY|MIGRATE|REBUILD)_URL\s*=\s*(.+)$/gm) || [];
+      return matches.some((line) => !isAllowedExampleValue(line, file));
+    },
+  },
+  {
+    // The PROJECT REFERENCE is treated as a secret, exactly as the production
+    // Sheet ID is (§8.4). It is a 20-char lowercase id and appears in every
+    // hosted Supabase host and pooler username.
+    name: "supabase-project-reference",
+    test: (text) => /\b[a-z]{20}\.supabase\.(?:co|com|in)\b/.test(text)
+      || /\bpostgres\.[a-z]{20}\b/.test(text),
+  },
+  {
+    // Service-role and anon JWTs. Atlas uses neither; matching them is what
+    // keeps that true.
+    name: "supabase-jwt-key",
+    test: (text) => /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/.test(text),
+  },
+  {
+    // The newer publishable/secret key format (sb_publishable_… / sb_secret_…).
+    name: "supabase-api-key",
+    test: (text) => /\bsb_(?:publishable|secret)_[A-Za-z0-9_-]{20,}\b/.test(text),
+  },
 ];
 
 function scan(files) {

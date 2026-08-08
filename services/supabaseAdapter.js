@@ -1,0 +1,858 @@
+'use strict';
+
+// THE ONLY MODULE THAT HOLDS A SUPABASE CLIENT.
+//
+// Design authority: docs/SUPABASE_HOT_PATH_MIGRATION.md §5.2 (one adapter,
+// no ORM, no generic repository layer, no query-builder abstraction), §8.1 (the
+// access model), §8.2 (the scoped roles), §3.1-§3.9 (the operations).
+//
+// It is to Supabase what `sheets.js` is to Google Sheets: the single place a
+// connection lives. It exposes the operations §3 names and nothing else — there
+// is deliberately no `query(sql, params)` escape hatch, because one would make
+// every caller a second holder of the client.
+//
+// ── WHAT THIS MODULE IS NOT, IN S2 ────────────────────────────────────────────
+// Google Sheets remains the sole live read and write authority for every migrated
+// concept. Nothing here decides an athlete-facing response, a status code, a proof
+// field, or a visible claim. Every operation below is either shadow work, sweep
+// work, repair work, or a deterministic proof target.
+//
+// ── CONNECTION MODEL ──────────────────────────────────────────────────────────
+// Supavisor SESSION mode (port 5432), one connection string per role, read from
+// the server environment only. Transaction mode is not usable: the design depends
+// on session-level advisory locks held across statements, which transaction mode
+// would appear to take and actually hold nothing. No service-role key, no anon
+// key, no Data API. No credential ever reaches browser code.
+//
+// ── WHY THE SQL IS EXPORTED ───────────────────────────────────────────────────
+// `SQL` below is the exact statement text every operation issues. The
+// least-privilege proof (§6.1 P7c) executes THESE strings as the real roles, so a
+// grant list and the statement it must permit cannot drift apart. Three
+// grant/SQL mismatches already reached review; a statement proven only as
+// superuser proves nothing about the deployed system.
+
+const { Pool, types } = require('pg');
+const contract = require('./migrationRowContract');
+
+// Pin the DATE parser to the wire text. Left alone, the driver hands back a JS
+// Date at the process's local midnight, which shifts a workout's date across the
+// date line and would make the sweep report a content_mismatch on every row west
+// of Greenwich. NUMERIC already arrives as text and is compared numerically by
+// the row contract.
+const PG_DATE_OID = 1082;
+types.setTypeParser(PG_DATE_OID, (value) => value);
+
+// ── Configuration ─────────────────────────────────────────────────────────────
+
+const ROLE_ENV = Object.freeze({
+  app: 'ATLAS_SUPABASE_APP_URL',
+  readonly: 'ATLAS_SUPABASE_READONLY_URL',
+  migrate: 'ATLAS_SUPABASE_MIGRATE_URL',
+  rebuild: 'ATLAS_SUPABASE_REBUILD_URL',
+});
+
+const pools = new Map();
+
+function connectionString(role) {
+  const key = ROLE_ENV[role];
+  if (!key) throw new Error(`Unknown Supabase role: ${role}`);
+  return (process.env[key] || '').trim();
+}
+
+// Configured means "a connection string exists for the runtime role". Absent, every
+// operation below is a no-op and every caller degrades to exactly today's
+// behaviour — which is what keeps this PR inert until the owner configures it.
+function isConfigured(role = 'app') {
+  return connectionString(role).length > 0;
+}
+
+// The shadow lane is OFF unless BOTH the flag is on and a connection exists. Two
+// conditions, because a flag alone on an unconfigured deployment would turn every
+// Save into a logged failure for no benefit.
+function isShadowWriteEnabled() {
+  return process.env.ATLAS_SUPABASE_SHADOW_WRITE === '1' && isConfigured('app');
+}
+
+function poolFor(role) {
+  const url = connectionString(role);
+  if (!url) {
+    const err = new Error(`Supabase is not configured for role "${role}" (${ROLE_ENV[role]} is unset).`);
+    err.code = 'SUPABASE_NOT_CONFIGURED';
+    throw err;
+  }
+  const existing = pools.get(role);
+  if (existing && existing.url === url) return existing.pool;
+  if (existing) existing.pool.end().catch(() => {});
+  const pool = new Pool({
+    connectionString: url,
+    // Small and bounded: this is a single-owner deployment and the shadow lane
+    // must never be able to starve the request path of file descriptors.
+    max: Number(process.env.ATLAS_SUPABASE_POOL_MAX || 4),
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: Number(process.env.ATLAS_SUPABASE_CONNECT_TIMEOUT_MS || 10_000),
+    // An unhandled pool error must never reach the request path.
+    allowExitOnIdle: true,
+  });
+  pool.on('error', (err) => {
+    console.warn(JSON.stringify({ level: 'warn', module: 'supabaseAdapter', event: 'pool_error', role, error: err.message }));
+  });
+  pools.set(role, { url, pool });
+  return pool;
+}
+
+async function close() {
+  const entries = [...pools.values()];
+  pools.clear();
+  await Promise.all(entries.map((entry) => entry.pool.end().catch(() => {})));
+}
+
+async function withClient(role, fn) {
+  const client = await poolFor(role).connect();
+  try {
+    return await fn(client);
+  } finally {
+    client.release();
+  }
+}
+
+// One transaction, one connection, released on every exit path. A ROLLBACK that
+// itself throws must not mask the original error, which is why it is swallowed.
+async function withTransaction(role, fn) {
+  return withClient(role, async (client) => {
+    await client.query('BEGIN');
+    try {
+      const result = await fn(client);
+      await client.query('COMMIT');
+      return result;
+    } catch (err) {
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        /* the original error is the one worth reporting */
+      }
+      throw err;
+    }
+  });
+}
+
+// ── The exact statement text (see "WHY THE SQL IS EXPORTED") ──────────────────
+
+const SQL = Object.freeze({
+  // §5.2 — every shadow transaction begins here. ON CONFLICT DO NOTHING is
+  // correct for this table and carries none of the hazard it carries for
+  // receipts: workout_sessions is insert-only for IDENTITY, so there is no later
+  // state transition for it to discard.
+  insertSessionParent: `
+    INSERT INTO atlas.workout_sessions (session_id, session_date, period, slot)
+    VALUES ($1, $2, $3, $4)
+    ON CONFLICT (session_id) DO NOTHING`,
+
+  // §3.2. write_id is ALWAYS NULL in S2/S3 (§3.6) — it is not a parameter, so no
+  // code path can populate it before the receipt authority exists.
+  insertLoggedSet: `
+    INSERT INTO atlas.logged_sets
+      (session_id, date_clean, exercise, canonical_exercise, muscle_group, lift_code,
+       set_number, weight, reps, rir, notes, volume_calc, write_id)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NULL)
+    ON CONFLICT DO NOTHING`,
+
+  // §3.3.
+  insertSessionEffort: `
+    INSERT INTO atlas.session_effort
+      (session_id, effort_date, duration, active_calories, total_calories,
+       average_hr, peak_hr, location, notes, write_id)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULL)
+    ON CONFLICT (session_id) DO NOTHING`,
+
+  // §3.4. The revision-collision behaviour is preserved exactly: zero rows
+  // returned means a row with that key already exists, and the caller then reads
+  // that one row and compares content, ignoring recorded_at.
+  insertPlanEvent: `
+    INSERT INTO atlas.session_plan_events
+      (idempotency_key, session_id, session_date, plan_version, event_type, plan_item_id,
+       planned_order, planned_lift_code, movement_pattern, outcome, performed_lift_code,
+       closeout_status, recorded_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+    ON CONFLICT (idempotency_key) DO NOTHING
+    RETURNING idempotency_key`,
+
+  // §3.5.
+  insertPlanSetRow: `
+    INSERT INTO atlas.session_plan_set_recommendations
+      (idempotency_key, session_id, session_date, plan_version, plan_item_id, planned_lift_code,
+       set_index, target_set_count, target_weight, target_reps, target_rir,
+       recommendation_source, supersedes_key, confidence, closeout_write_id, recorded_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+    ON CONFLICT (idempotency_key) DO NOTHING
+    RETURNING idempotency_key`,
+
+  // §3.5 — the seal, as one statement. The IS NULL predicate makes "never
+  // re-seal" atomic; a row already sealed under a different closeout_write_id is
+  // simply not matched.
+  sealPlanSets: `
+    UPDATE atlas.session_plan_set_recommendations
+       SET closeout_write_id = $2
+     WHERE session_id = $1 AND closeout_write_id IS NULL`,
+
+  // §3.6 — the receipt claim. A compare-and-set, never ON CONFLICT DO NOTHING:
+  // DO NOTHING would read a 'failed' row as a duplicate, permanently consuming
+  // the write_id, and the athlete's retry of a Save that never committed would be
+  // refused. That is a lost workout, not a protected one.
+  //
+  // The caller MUST already hold pg_try_advisory_lock(hashtext(write_id)) — the
+  // lock, not the five-minute window, is the authority on whether another attempt
+  // is genuinely still live.
+  claimWriteReceipt: `
+    INSERT INTO atlas.write_receipts (write_id, route, status, attempt, attempt_token,
+                                      created_at, attempt_started_at, expires_at)
+    VALUES ($1, $2, 'in_progress', 1, gen_random_uuid(),
+            now(), now(), now() + interval '24 hours')
+    ON CONFLICT (write_id) DO UPDATE
+       SET status             = 'in_progress',
+           attempt            = CASE WHEN atlas.write_receipts.expires_at <= now()
+                                     THEN 1 ELSE atlas.write_receipts.attempt + 1 END,
+           created_at         = CASE WHEN atlas.write_receipts.expires_at <= now()
+                                     THEN now() ELSE atlas.write_receipts.created_at END,
+           attempt_token      = gen_random_uuid(),
+           attempt_started_at = now(),
+           expires_at         = now() + interval '24 hours',
+           session_id         = CASE WHEN atlas.write_receipts.expires_at <= now()
+                                     THEN NULL ELSE atlas.write_receipts.session_id END,
+           response_body      = NULL,
+           rows_written       = NULL,
+           appended_range     = NULL,
+           completed_at       = NULL
+     WHERE atlas.write_receipts.status = 'failed'
+        OR (atlas.write_receipts.status = 'in_progress'
+            AND atlas.write_receipts.attempt_started_at < now() - interval '5 minutes')
+        OR atlas.write_receipts.expires_at <= now()
+    RETURNING attempt_token, attempt, session_id`,
+
+  // §3.6 — persist the server-minted id under the token guard, immediately after
+  // minting and before the workout write. IS NULL means a reused id is never
+  // rewritten; the token means an obsolete attempt cannot overwrite a newer one.
+  persistReceiptSessionId: `
+    UPDATE atlas.write_receipts
+       SET session_id = $3
+     WHERE write_id = $1 AND attempt_token = $2 AND session_id IS NULL`,
+
+  completeWriteReceipt: `
+    UPDATE atlas.write_receipts
+       SET status = 'completed', response_body = $3, rows_written = $4,
+           appended_range = $5, completed_at = now()
+     WHERE write_id = $1 AND attempt_token = $2`,
+
+  // §3.6 — failWrite INVALIDATES the token in the SAME statement. Without it, a
+  // late completeWrite carrying the released attempt's token would resurrect a
+  // write the system had already released.
+  failWriteReceipt: `
+    UPDATE atlas.write_receipts
+       SET status = 'failed', attempt_token = NULL, completed_at = NULL
+     WHERE write_id = $1 AND attempt_token = $2`,
+
+  // §3.6 — read-only, TTL-bounded. An expired row reads as absent, exactly as today.
+  peekWriteReceipt: `
+    SELECT write_id, route, session_id, status, attempt, attempt_token,
+           response_body, rows_written, appended_range,
+           created_at, attempt_started_at, expires_at, completed_at
+      FROM atlas.write_receipts
+     WHERE write_id = $1 AND expires_at > now()`,
+
+  // The prune bounds table size. It carries no correctness — the claim above
+  // reclaims an expired row atomically, so nothing waits for this to run.
+  pruneWriteReceipts: `DELETE FROM atlas.write_receipts WHERE expires_at <= now()`,
+
+  // §3.7 — the catalog generation lifecycle.
+  // content_hash is written HERE, at attempt time, rather than updated at
+  // verification. §8.2 grants atlas_app UPDATE on exactly (status, verified_at,
+  // last_error) of this table — no content_hash — so a swap that stamped the hash
+  // by UPDATE was permission-denied under its own security model, exactly as the
+  // receipt claim was before created_at/expires_at were added to its grant.
+  // Writing it at INSERT keeps §8.2's list unchanged AND gives a failed
+  // generation better provenance: it records the content it attempted.
+  beginCatalogSync: `
+    INSERT INTO atlas.exercise_catalog_sync (status, source_row_count, content_hash)
+    VALUES ('in_progress', $1, $2)
+    RETURNING sync_id`,
+  deleteCatalogMirror: `DELETE FROM atlas.exercise_catalog_mirror`,
+  insertCatalogRow: `
+    INSERT INTO atlas.exercise_catalog_mirror
+      (exercise, display_exercise, muscle_group, lift_code, canonical_exercise, sync_id)
+    VALUES ($1, $2, $3, $4, $5, $6)`,
+  verifyCatalogSync: `
+    UPDATE atlas.exercise_catalog_sync
+       SET status = 'verified', verified_at = now(), last_error = NULL
+     WHERE sync_id = $1`,
+  failCatalogSync: `
+    UPDATE atlas.exercise_catalog_sync
+       SET status = 'failed', last_error = $2
+     WHERE sync_id = $1`,
+  currentCatalogGeneration: `
+    SELECT sync_id, verified_at, content_hash, source_row_count
+      FROM atlas.exercise_catalog_sync
+     WHERE status = 'verified'
+     ORDER BY verified_at DESC
+     LIMIT 1`,
+  readCatalogMirror: `
+    SELECT exercise, display_exercise, muscle_group, lift_code, canonical_exercise
+      FROM atlas.exercise_catalog_mirror
+     ORDER BY exercise`,
+
+  // §3.8 — the divergence lane. The partial unique index means a repeated sweep
+  // cannot multiply rows for one identity.
+  openDivergence: `
+    INSERT INTO atlas.migration_divergences
+      (concept, identity_key, session_id, write_id, route, reason, detected_by, comparison_result)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    ON CONFLICT (concept, identity_key) WHERE state <> 'closed' DO NOTHING
+    RETURNING id`,
+  listOpenDivergences: `
+    SELECT id, concept, identity_key, session_id, write_id, route, reason, detected_by,
+           detected_at, state, repair_attempts, comparison_result
+      FROM atlas.migration_divergences
+     WHERE state <> 'closed'
+     ORDER BY detected_at ASC
+     LIMIT $1`,
+  claimDivergence: `
+    UPDATE atlas.migration_divergences
+       SET state = 'repairing',
+           repair_claim_token = gen_random_uuid(),
+           repair_claim_expires_at = now() + ($2 || ' seconds')::interval,
+           repair_attempts = repair_attempts + 1
+     WHERE id = $1
+       AND (state = 'open' OR (state = 'repairing' AND repair_claim_expires_at < now()))
+    RETURNING id, repair_claim_token`,
+  // A lapsed lease returns the row to the queue. It NEVER closes it.
+  releaseDivergence: `
+    UPDATE atlas.migration_divergences
+       SET state = 'open', repair_claim_token = NULL, repair_claim_expires_at = NULL,
+           comparison_result = COALESCE($3::jsonb, comparison_result)
+     WHERE id = $1 AND repair_claim_token = $2`,
+  // A divergence closes ONLY with a passing re-comparison, under a matching claim
+  // token. The table's own CHECK refuses a closed row without closure_proof, so a
+  // second implementation cannot close one either.
+  closeDivergence: `
+    UPDATE atlas.migration_divergences
+       SET state = 'closed', closed_at = now(), closure_proof = $3::text,
+           comparison_result = COALESCE($4::jsonb, comparison_result),
+           repair_claim_token = NULL, repair_claim_expires_at = NULL
+     WHERE id = $1 AND repair_claim_token = $2
+       AND $3::text IS NOT NULL AND $3::text <> ''
+    RETURNING id`,
+  divergenceSummary: `
+    SELECT count(*) FILTER (WHERE state <> 'closed')::int AS open_count,
+           count(*) FILTER (WHERE state = 'closed')::int  AS closed_count,
+           min(detected_at) FILTER (WHERE state <> 'closed') AS oldest_open_at
+      FROM atlas.migration_divergences`,
+
+  // Sweep enumeration. Full-table reads, run by a background job, never in a request.
+  listLoggedSets: `
+    SELECT id, session_id, date_clean, exercise, canonical_exercise, muscle_group, lift_code,
+           set_number, weight, reps, rir, notes, volume_calc, write_id
+      FROM atlas.logged_sets`,
+  listSessionEffort: `
+    SELECT session_id, effort_date, duration, active_calories, total_calories,
+           average_hr, peak_hr, location, notes, write_id
+      FROM atlas.session_effort`,
+  listPlanEvents: `
+    SELECT idempotency_key, session_id, session_date, plan_version, event_type, plan_item_id,
+           planned_order, planned_lift_code, movement_pattern, outcome, performed_lift_code,
+           closeout_status, recorded_at
+      FROM atlas.session_plan_events`,
+  listPlanSetRows: `
+    SELECT idempotency_key, session_id, session_date, plan_version, plan_item_id,
+           planned_lift_code, set_index, target_set_count, target_weight, target_reps,
+           target_rir, recommendation_source, supersedes_key, confidence,
+           closeout_write_id, recorded_at
+      FROM atlas.session_plan_set_recommendations`,
+
+  // The one delete the repair worker may issue on workout data: a Supabase-only
+  // logged_sets orphan, where Sheets — the live authority — holds no such row.
+  deleteLoggedSetByIdentity: `
+    DELETE FROM atlas.logged_sets
+     WHERE lower(session_id) = $1 AND lower(exercise) = $2 AND set_number = $3`,
+
+  // The export-state updates of §3.1. Unused before S4; issued here only by the
+  // least-privilege proof, so the grant list and the statement cannot drift.
+  updateExportState: `
+    UPDATE atlas.workout_sessions
+       SET sheets_exported_at = $2, sheets_export_attempts = sheets_export_attempts + 1,
+           sheets_export_error = $3, sheets_export_state = $4,
+           sheets_export_next_attempt_at = $5, export_claim_token = $6
+     WHERE session_id = $1`,
+});
+
+// ── Session parent, then children, in ONE transaction ─────────────────────────
+
+async function insertSessionParent(client, sessionId) {
+  const parsed = contract.parseSessionId(sessionId);
+  if (!parsed) {
+    const err = new Error(`session_id "${sessionId}" does not match the YYYYMMDD-{AM|PM}-NN contract.`);
+    err.code = 'SESSION_ID_UNPARSEABLE';
+    throw err;
+  }
+  await client.query(SQL.insertSessionParent, [
+    parsed.session_id,
+    parsed.session_date,
+    parsed.period,
+    parsed.slot,
+  ]);
+  return parsed;
+}
+
+function loggedSetParams(row) {
+  return [
+    row.session_id, row.date_clean, row.exercise, row.canonical_exercise, row.muscle_group,
+    row.lift_code, row.set_number, row.weight, row.reps, row.rir, row.notes, row.volume_calc,
+  ];
+}
+
+function sessionEffortParams(row) {
+  return [
+    row.session_id, row.effort_date, row.duration, row.active_calories, row.total_calories,
+    row.average_hr, row.peak_hr, row.location, row.notes,
+  ];
+}
+
+function planEventParams(row) {
+  return [
+    row.idempotency_key, row.session_id, row.session_date, row.plan_version, row.event_type,
+    row.plan_item_id, row.planned_order, row.planned_lift_code, row.movement_pattern,
+    row.outcome, row.performed_lift_code, row.closeout_status, row.recorded_at,
+  ];
+}
+
+function planSetParams(row) {
+  return [
+    row.idempotency_key, row.session_id, row.session_date, row.plan_version, row.plan_item_id,
+    row.planned_lift_code, row.set_index, row.target_set_count, row.target_weight,
+    row.target_reps, row.target_rir, row.recommendation_source, row.supersedes_key,
+    row.confidence, row.closeout_write_id, row.recorded_at,
+  ];
+}
+
+// The Save's shadow: the session parent, then its logged sets, then its Effort
+// row — ALL in one transaction. A child can never commit without its parent, and
+// a failure mid-transaction leaves neither.
+//
+// `logCells` / `effortCells` are the EXACT row arrays the Sheets append received,
+// so the mirror is a projection of what was actually written rather than a second
+// derivation of it.
+async function shadowSave({ sessionId, logCells = [], effortCells = null }) {
+  return withTransaction('app', async (client) => {
+    const parsed = await insertSessionParent(client, sessionId);
+    let sets = 0;
+    for (const cells of logCells) {
+      const row = contract.rowFromSheet('logged_sets', cells);
+      row.session_id = row.session_id || parsed.session_id;
+      const result = await client.query(SQL.insertLoggedSet, loggedSetParams(row));
+      sets += result.rowCount;
+    }
+    let effort = 0;
+    if (effortCells) {
+      const row = contract.rowFromSheet('session_effort', effortCells);
+      row.session_id = row.session_id || parsed.session_id;
+      const result = await client.query(SQL.insertSessionEffort, sessionEffortParams(row));
+      effort = result.rowCount;
+    }
+    return { session_id: parsed.session_id, logged_sets_inserted: sets, session_effort_inserted: effort };
+  });
+}
+
+// The plan spine's shadow. Parent-first for the same reason, and one transaction
+// per event batch (§3.4).
+async function shadowPlanEvents(rows) {
+  const cells = Array.isArray(rows) ? rows : [];
+  if (cells.length === 0) return { inserted: 0, existing: 0 };
+  return withTransaction('app', async (client) => {
+    const seen = new Set();
+    let inserted = 0;
+    let existing = 0;
+    for (const cellRow of cells) {
+      const row = contract.rowFromSheet('session_plan_events', cellRow);
+      if (!row.session_id) continue;
+      if (!seen.has(row.session_id)) {
+        await insertSessionParent(client, row.session_id);
+        seen.add(row.session_id);
+      }
+      const result = await client.query(SQL.insertPlanEvent, planEventParams(row));
+      if (result.rowCount > 0) inserted += 1;
+      else existing += 1;
+    }
+    return { inserted, existing };
+  });
+}
+
+async function shadowPlanSetRows(rows) {
+  const cells = Array.isArray(rows) ? rows : [];
+  if (cells.length === 0) return { inserted: 0, existing: 0 };
+  return withTransaction('app', async (client) => {
+    const seen = new Set();
+    let inserted = 0;
+    let existing = 0;
+    // A revision references the row it supersedes, so a batch must insert in
+    // ascending plan_version or the self-referencing foreign key fails.
+    const ordered = cells
+      .map((cellRow) => contract.rowFromSheet('session_plan_set_recommendations', cellRow))
+      .filter((row) => row.session_id)
+      .sort((a, b) => (a.plan_version || 0) - (b.plan_version || 0));
+    for (const row of ordered) {
+      if (!seen.has(row.session_id)) {
+        await insertSessionParent(client, row.session_id);
+        seen.add(row.session_id);
+      }
+      const result = await client.query(SQL.insertPlanSetRow, planSetParams(row));
+      if (result.rowCount > 0) inserted += 1;
+      else existing += 1;
+    }
+    return { inserted, existing };
+  });
+}
+
+// The closeout seal, mirrored so the shadow copy's CONTENT matches the tab. The
+// sweep compares closeout_write_id, so a seal that reached Sheets and not the
+// mirror is a real divergence and must be mirrored rather than ignored.
+async function shadowSealPlanSets(sessionId, closeoutWriteId) {
+  return withClient('app', async (client) => {
+    const result = await client.query(SQL.sealPlanSets, [sessionId, closeoutWriteId]);
+    return { sealed_rows: result.rowCount };
+  });
+}
+
+// ── Sweep enumeration ─────────────────────────────────────────────────────────
+
+const LIST_SQL_BY_CONCEPT = Object.freeze({
+  logged_sets: SQL.listLoggedSets,
+  session_effort: SQL.listSessionEffort,
+  session_plan_events: SQL.listPlanEvents,
+  session_plan_set_recommendations: SQL.listPlanSetRows,
+});
+
+async function listConcept(concept, role = 'app') {
+  const sql = LIST_SQL_BY_CONCEPT[concept];
+  if (!sql) throw new Error(`No enumeration for concept: ${concept}`);
+  return withClient(role, async (client) => {
+    const result = await client.query(sql);
+    return result.rows;
+  });
+}
+
+// ── Divergence lane ───────────────────────────────────────────────────────────
+
+async function openDivergence({
+  concept,
+  identityKey,
+  sessionId = null,
+  writeId = null,
+  route = null,
+  reason,
+  detectedBy,
+  comparison = null,
+}) {
+  return withClient('app', async (client) => {
+    const result = await client.query(SQL.openDivergence, [
+      concept, identityKey, sessionId, writeId, route, reason, detectedBy,
+      comparison ? JSON.stringify(comparison) : null,
+    ]);
+    return { id: result.rows[0] ? result.rows[0].id : null, created: result.rowCount > 0 };
+  });
+}
+
+async function listOpenDivergences(limit = 500) {
+  return withClient('app', async (client) => {
+    const result = await client.query(SQL.listOpenDivergences, [limit]);
+    return result.rows;
+  });
+}
+
+async function claimDivergence(id, leaseSeconds = 120) {
+  return withClient('app', async (client) => {
+    const result = await client.query(SQL.claimDivergence, [id, String(leaseSeconds)]);
+    return result.rows[0] || null;
+  });
+}
+
+async function releaseDivergence(id, token, comparison = null) {
+  return withClient('app', async (client) => {
+    const result = await client.query(SQL.releaseDivergence, [
+      id, token, comparison ? JSON.stringify(comparison) : null,
+    ]);
+    return result.rowCount > 0;
+  });
+}
+
+async function closeDivergence(id, token, closureProof, comparison = null) {
+  return withClient('app', async (client) => {
+    const result = await client.query(SQL.closeDivergence, [
+      id, token, closureProof || null, comparison ? JSON.stringify(comparison) : null,
+    ]);
+    return result.rowCount > 0;
+  });
+}
+
+async function divergenceSummary(role = 'app') {
+  return withClient(role, async (client) => {
+    const result = await client.query(SQL.divergenceSummary);
+    return result.rows[0] || { open_count: 0, closed_count: 0, oldest_open_at: null };
+  });
+}
+
+// ── Repair primitives ─────────────────────────────────────────────────────────
+
+// Insert one Sheets-authoritative row into Supabase, parent-first, in one
+// transaction. write_id is NULL by construction: the sweep genuinely cannot know
+// it (Sheets stores none), and it never fabricates one.
+async function repairInsert(concept, row) {
+  return withTransaction('app', async (client) => {
+    const sessionId = contract.sessionIdOf(concept, row);
+    if (sessionId) await insertSessionParent(client, sessionId);
+    switch (concept) {
+      case 'logged_sets':
+        return { inserted: (await client.query(SQL.insertLoggedSet, loggedSetParams(row))).rowCount };
+      case 'session_effort':
+        return { inserted: (await client.query(SQL.insertSessionEffort, sessionEffortParams(row))).rowCount };
+      case 'session_plan_events':
+        return { inserted: (await client.query(SQL.insertPlanEvent, planEventParams(row))).rowCount };
+      case 'session_plan_set_recommendations':
+        return { inserted: (await client.query(SQL.insertPlanSetRow, planSetParams(row))).rowCount };
+      default:
+        throw new Error(`No repair insert for concept: ${concept}`);
+    }
+  });
+}
+
+// The one delete the repair worker may issue on workout data (§8.2 grants
+// DELETE on logged_sets only). Every other concept's Supabase-only orphan stays
+// an OPEN divergence for the owner, because no declared principal may remove it.
+async function repairDeleteLoggedSet(identity) {
+  const [sessionId, exercise, setNumber] = String(identity).split('||');
+  return withClient('app', async (client) => {
+    const result = await client.query(SQL.deleteLoggedSetByIdentity, [
+      sessionId, exercise, Number(setNumber),
+    ]);
+    return { deleted: result.rowCount };
+  });
+}
+
+// ── Catalog mirror (§3.7) ─────────────────────────────────────────────────────
+
+async function beginCatalogSync(sourceRowCount, contentHash) {
+  return withClient('app', async (client) => {
+    const result = await client.query(SQL.beginCatalogSync, [sourceRowCount, contentHash]);
+    return result.rows[0].sync_id;
+  });
+}
+
+// The swap: delete the previous generation's rows, insert the new rows, and mark
+// the generation verified — in ONE transaction, so a reader never sees a
+// half-written catalog and a reader on the old generation is unaffected until
+// commit. content_hash is written in the same transaction as the rows it names.
+async function commitCatalogSwap(syncId, rows) {
+  return withTransaction('app', async (client) => {
+    await client.query(SQL.deleteCatalogMirror);
+    for (const row of rows) {
+      await client.query(SQL.insertCatalogRow, [
+        row.exercise, row.display_exercise, row.muscle_group, row.lift_code,
+        row.canonical_exercise, syncId,
+      ]);
+    }
+    await client.query(SQL.verifyCatalogSync, [syncId]);
+    return { rows: rows.length };
+  });
+}
+
+async function failCatalogSync(syncId, error) {
+  return withClient('app', async (client) => {
+    await client.query(SQL.failCatalogSync, [syncId, String(error && error.message ? error.message : error).slice(0, 2000)]);
+  });
+}
+
+async function currentCatalogGeneration(role = 'app') {
+  return withClient(role, async (client) => {
+    const result = await client.query(SQL.currentCatalogGeneration);
+    return result.rows[0] || null;
+  });
+}
+
+async function readCatalogMirror(role = 'app') {
+  return withClient(role, async (client) => {
+    const result = await client.query(SQL.readCatalogMirror);
+    return result.rows;
+  });
+}
+
+// ── Write receipts (§3.6) ─────────────────────────────────────────────────────
+//
+// PRESENT BUT NOT WIRED IN S2. The file-backed store in services/idempotency.js
+// remains the sole receipt authority through S2 and S3 — nothing here is called
+// by a production path, and §6.1 P7d proves atlas.write_receipts stays empty
+// after a shadow Save. These operations exist because S2 owns the schema and the
+// state machine is a deterministic S2 proof target (P8, P8a, P8a0, P8c). S4 wires
+// them, adds the foreign keys, and deletes the file store.
+//
+// The advisory lock is what makes "another attempt is still live" a FACT about
+// another process rather than a guess from elapsed time: if the owning process
+// dies or its connection drops, Postgres releases the lock. It is session-scoped,
+// so the connection is PINNED across claim -> effect -> complete/fail -> unlock,
+// and the unlock runs unconditionally in a finally. A leaked lock is worse than a
+// missing one: it would falsely refuse a later request as a duplicate.
+// ONE attempt, ONE pinned connection, from claim to release.
+//
+// `fn(attempt, ops)` runs with the advisory lock HELD, so for its whole duration
+// any competing claimer is told the truth — another attempt is genuinely still
+// live, its connection is open — rather than being allowed to start a second live
+// attempt because five minutes elapsed. A slow request is not a dead one.
+//
+// `ops` are the token-guarded transitions bound to that same pinned connection.
+// The attempt may not migrate to another backend mid-flight, or the lock and the
+// work would end up on different sessions.
+async function withWriteAttempt(writeId, route, fn) {
+  return withClient('app', async (client) => {
+    const lock = await client.query('SELECT pg_try_advisory_lock(hashtext($1)) AS acquired', [writeId]);
+    if (!lock.rows[0].acquired) {
+      // A FACT about another process, not a guess from elapsed time.
+      return fn({ acquired: false, duplicate: true, reason: 'attempt_live_elsewhere' }, null);
+    }
+    try {
+      const claim = await client.query(SQL.claimWriteReceipt, [writeId, route]);
+      let attempt;
+      if (claim.rowCount === 0) {
+        // The WHERE refused the update: a genuine duplicate. Read the row so the
+        // caller can refuse or replay.
+        const existing = await client.query(SQL.peekWriteReceipt, [writeId]);
+        attempt = { acquired: true, duplicate: true, record: existing.rows[0] || null };
+      } else {
+        attempt = { acquired: true, duplicate: false, ...claim.rows[0] };
+      }
+      const ops = {
+        persistSessionId: async (sessionId) => {
+          const r = await client.query(SQL.persistReceiptSessionId, [writeId, attempt.attempt_token, sessionId]);
+          return r.rowCount > 0;
+        },
+        complete: async (responseBody, rowsWritten = null, appendedRange = null) => {
+          const r = await client.query(SQL.completeWriteReceipt, [
+            writeId, attempt.attempt_token,
+            responseBody ? JSON.stringify(responseBody) : null, rowsWritten, appendedRange,
+          ]);
+          return r.rowCount > 0;
+        },
+        fail: async () => {
+          const r = await client.query(SQL.failWriteReceipt, [writeId, attempt.attempt_token]);
+          return r.rowCount > 0;
+        },
+      };
+      return await fn(attempt, ops);
+    } finally {
+      // Every exit path — success, failure, duplicate, refusal, thrown error —
+      // releases the lock BEFORE the connection returns to the pool. A lock
+      // released only on the happy path leaks on precisely the paths that matter,
+      // and a leaked lock inverts its own meaning.
+      try {
+        await client.query('SELECT pg_advisory_unlock(hashtext($1))', [writeId]);
+      } catch {
+        /* the connection is going back to the pool either way */
+      }
+    }
+  });
+}
+
+// The token-guarded transitions, also available OUT of an attempt — a superseded
+// attempt's late completion must be discardable, and proving that discard (P8,
+// P8c) requires issuing it from outside the attempt that owns the connection.
+async function persistReceiptSessionId(writeId, attemptToken, sessionId) {
+  return withClient('app', async (client) => {
+    const result = await client.query(SQL.persistReceiptSessionId, [writeId, attemptToken, sessionId]);
+    return result.rowCount > 0;
+  });
+}
+
+async function completeWriteReceipt(writeId, attemptToken, responseBody, rowsWritten = null, appendedRange = null) {
+  return withClient('app', async (client) => {
+    const result = await client.query(SQL.completeWriteReceipt, [
+      writeId, attemptToken, responseBody ? JSON.stringify(responseBody) : null, rowsWritten, appendedRange,
+    ]);
+    return result.rowCount > 0;
+  });
+}
+
+async function failWriteReceipt(writeId, attemptToken) {
+  return withClient('app', async (client) => {
+    const result = await client.query(SQL.failWriteReceipt, [writeId, attemptToken]);
+    return result.rowCount > 0;
+  });
+}
+
+async function peekWriteReceipt(writeId) {
+  return withClient('app', async (client) => {
+    const result = await client.query(SQL.peekWriteReceipt, [writeId]);
+    return result.rows[0] || null;
+  });
+}
+
+// THE PRUNE IS NOT A RUNTIME OPERATION, and the grants are what say so.
+//
+// §3.6 demotes the prune: it bounds table size and carries no correctness,
+// because the claim statement reclaims an expired row atomically and nothing
+// waits for cleanup. §8.2 then gives atlas_app no DELETE on write_receipts at
+// all — deliberately, since a runtime role that could delete a receipt could
+// erase duplicate protection. The two together mean the prune must run as a
+// principal that is not the server.
+//
+// atlas_migrate is the only declared role holding DELETE here, so the prune runs
+// as an operator job under that credential. Proven both ways by §6.1 P7c: the
+// statement succeeds as atlas_migrate and is REFUSED as atlas_app.
+//
+// Recorded as a finding on this PR: §3.6 describes "a periodic job" without
+// naming its principal, and §8.2's grant list makes atlas_app the wrong one.
+// Nothing here is blocked by that — the prune has no consumer until S4 — but S4
+// must not assume the runtime can call it.
+async function pruneWriteReceipts(role = 'migrate') {
+  return withClient(role, async (client) => {
+    const result = await client.query(SQL.pruneWriteReceipts);
+    return { deleted: result.rowCount };
+  });
+}
+
+module.exports = {
+  SQL,
+  ROLE_ENV,
+  isConfigured,
+  isShadowWriteEnabled,
+  close,
+
+  // §5.2 shadow lane
+  shadowSave,
+  shadowPlanEvents,
+  shadowPlanSetRows,
+  shadowSealPlanSets,
+
+  // sweep enumeration
+  listConcept,
+
+  // §3.8 divergence lane
+  openDivergence,
+  listOpenDivergences,
+  claimDivergence,
+  releaseDivergence,
+  closeDivergence,
+  divergenceSummary,
+
+  // repair primitives
+  repairInsert,
+  repairDeleteLoggedSet,
+
+  // §3.7 catalog mirror
+  beginCatalogSync,
+  commitCatalogSwap,
+  failCatalogSync,
+  currentCatalogGeneration,
+  readCatalogMirror,
+
+  // §3.6 receipts — schema-owned by S2, wired by S4
+  withWriteAttempt,
+  persistReceiptSessionId,
+  completeWriteReceipt,
+  failWriteReceipt,
+  peekWriteReceipt,
+  pruneWriteReceipts,
+};

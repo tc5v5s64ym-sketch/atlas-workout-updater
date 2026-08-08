@@ -8,9 +8,21 @@
 > It defines the schema, the mapping, the closure chain, the proof, the rollback rules,
 > the security posture, and the data-ownership record.
 
-**Nothing in this document is applied.** No Supabase code, dependency, migration file, or
-adapter exists in this repository. No schema is applied. No product behaviour changes.
-`PR S1` is paper only.
+**Status of application, current as of 2026-08-08.** `PR S1` was paper only. **`PR S2` has
+landed**, so the statement this paragraph used to make — that no Supabase code, dependency,
+migration file, or adapter exists in this repository — is no longer true and is corrected here
+rather than left to mislead. What is now true:
+
+- the eleven migration files of §3.1–§3.9 exist under `supabase/migrations/`, together with
+  one adapter (`services/supabaseAdapter.js`), the shadow write, the divergence lane, the
+  reconciliation sweep, the repair worker and the `Exercise_Catalog` mirror;
+- **no schema is applied to `Atlas Production`.** Applying it is an owner action, and no
+  repository code path can reach a hosted Supabase host;
+- **no product behaviour changes.** The shadow lane is off unless
+  `ATLAS_SUPABASE_SHADOW_WRITE=1` **and** a connection string is configured, and neither is;
+- Google Sheets remains the sole live read and write authority for every migrated concept.
+
+`atlas.write_freeze` (§3.10) is still unwritten — `S3` creates it. `S3` and `S4` remain paper.
 
 **Revision, 2026-08-07.** The required review of `b38de8b` returned **BLOCKING** with four P1
 architecture defects and five rulings. All are incorporated here. The four defects are named

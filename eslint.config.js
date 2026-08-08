@@ -77,6 +77,11 @@ module.exports = [
       'config/**/*.js',
       'rules/**/*.js',
       'test/**/*.js',
+      // The from-empty Postgres proof suite (§6.1 P2). It lives OUTSIDE test/
+      // because `node --test` treats every file under a directory named `test` as
+      // a test file, so a suite that requires a live database would fail the
+      // ordinary `npm test` run on any machine without one.
+      'test-pg/**/*.js',
     ],
     languageOptions: {
       ecmaVersion: 2022,

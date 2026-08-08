@@ -23,6 +23,7 @@
 // acceptance/revision boundaries, F10D enables live writes.
 
 const sheets = require('../sheets');
+const migrationShadow = require('./migrationShadow');
 const { sessionPlanSetsColumns } = require('../config/columns');
 const { buildAcceptedRows, buildImplicitRows, buildRevisionRow, parseRow, validateChain } = require('./sessionPlanLedger');
 
@@ -130,6 +131,11 @@ async function _append(rows, opts = {}) {
   // Log_Cleaned/Effort write path extracts it (index.js). Never return the raw object
   // as `range` (it is not the A1 proof the F10D closeout seal needs).
   const response = await sheets.appendRows(SESSION_PLAN_SETS_TAB, toAppend);
+  // Supabase hot-path migration, PR S2 — the SHADOW write, hooked at the append so
+  // the mirror projects exactly the rows that landed. TEMPORARY; S4 deletes it
+  // (docs/SUPABASE_HOT_PATH_MIGRATION.md §5.2). Fire-and-forget and total: Sheets
+  // stays the sole authority and a shadow failure changes nothing below.
+  migrationShadow.shadowPlanSetRows(toAppend, { route: SESSION_PLAN_SETS_TAB });
   const updates = response && response.data && response.data.updates ? response.data.updates : null;
   return {
     sheet_written: true,
@@ -338,6 +344,10 @@ async function sealCloseout(session, closeoutWriteId, opts = {}) {
       updated_cells: Number.isFinite(updatedCells) ? updatedCells : null,
     };
   }
+  // S2 shadow: the seal reached the tab, so the mirror's closeout_write_id must
+  // carry it too — the sweep compares that column, and a seal present in Sheets and
+  // absent in Supabase is a real content divergence, not noise to be filtered out.
+  migrationShadow.shadowPlanSetSeal(session_id, writeId, { route: SESSION_PLAN_SETS_TAB });
   return {
     sheet_written: true, no_write_confirmed: false, sealed: cells.length,
     already_sealed: alreadySealed, sealed_ok: true, column: SEAL_COL_LETTER,

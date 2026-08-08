@@ -1,0 +1,254 @@
+'use strict';
+
+// The reconciliation sweep — THE COMPLETENESS AUTHORITY for S2 and S3.
+// TEMPORARY: S4 deletes this module and proves it absent.
+//
+// Design authority: docs/SUPABASE_HOT_PATH_MIGRATION.md §5.2 ("The sweep is the
+// completeness authority, not the inline record"), §3.8, §6.1 P5 and P6.
+//
+// ── WHY THIS EXISTS RATHER THAN A QUEUE OR A RETRY ────────────────────────────
+// The shadow write runs after the athlete-facing response is decided. If the
+// process dies after the Sheets write succeeds but before either the shadow write
+// or its divergence row lands, Supabase lacks the rows AND the open-divergence
+// count still reads zero. Any mechanism that depends on something the dying
+// process was supposed to write has the same hole one level down.
+//
+// So this sweep depends on NOTHING in flight. Google Sheets is the write
+// authority throughout S2 and S3, so it holds every committed row. The sweep
+// enumerates every Sheets row of the four migrated tabs by its EXPORT IDENTITY
+// KEY, enumerates every Supabase counterpart, and opens a divergence for every
+// element of the symmetric difference. A process death anywhere in the window is
+// therefore detectable BY CONSTRUCTION — not detectable if a handler ran.
+//
+// It is read-only against both stores except for the divergence rows it opens.
+// It repairs nothing; services/migrationRepair.js does that.
+//
+// HONESTY RULE: a sweep that could not read a concept reports that concept
+// INCOMPLETE and the run `complete: false`. A partial sweep is never a zero.
+
+const contract = require('./migrationRowContract');
+
+const DEFAULT_CONCEPTS = contract.CONCEPT_NAMES;
+
+function emptyConceptResult(concept) {
+  return {
+    concept,
+    complete: false,
+    sheets_rows: 0,
+    supabase_rows: 0,
+    missing_in_supabase: 0,
+    missing_in_sheets: 0,
+    content_mismatch: 0,
+    divergences_opened: 0,
+    error: null,
+  };
+}
+
+// Index a side by identity key. A duplicate identity on the Sheets side is
+// reported rather than silently collapsed: two rows with one identity is itself a
+// defect the composite-key constraint refuses on the Supabase side.
+function indexByIdentity(concept, rows, toCanonical) {
+  const index = new Map();
+  const duplicates = [];
+  for (const raw of rows) {
+    const row = toCanonical(raw);
+    const key = contract.identityKey(concept, row);
+    if (!key || key === '||' || key === '') continue;
+    if (index.has(key)) {
+      duplicates.push(key);
+      continue;
+    }
+    index.set(key, row);
+  }
+  return { index, duplicates };
+}
+
+async function sweepRowConcept({ concept, sheets, adapter, openDivergences }) {
+  const result = emptyConceptResult(concept);
+  const spec = contract.conceptSpec(concept);
+
+  let sheetRows;
+  try {
+    sheetRows = await sheets.getSheetRows(spec.tab);
+  } catch (error) {
+    result.error = `sheets_read_failed: ${error.message}`;
+    return result;
+  }
+
+  let supabaseRows;
+  try {
+    supabaseRows = await adapter.listConcept(concept);
+  } catch (error) {
+    result.error = `supabase_read_failed: ${error.message}`;
+    return result;
+  }
+
+  const left = indexByIdentity(concept, sheetRows, (cells) => contract.rowFromSheet(concept, cells));
+  const right = indexByIdentity(concept, supabaseRows, (row) => contract.rowFromSupabase(concept, row));
+
+  result.sheets_rows = left.index.size;
+  result.supabase_rows = right.index.size;
+  result.sheets_duplicate_identities = left.duplicates.length;
+
+  const toOpen = [];
+
+  // In Sheets, absent from Supabase — the process-death case, and the ordinary
+  // "the shadow write threw" case. Sheets is the authority, so the row is real.
+  for (const [key, row] of left.index) {
+    if (!right.index.has(key)) {
+      toOpen.push({
+        concept,
+        identityKey: key,
+        sessionId: contract.sessionIdOf(concept, row),
+        reason: 'missing_in_supabase',
+        comparison: null,
+      });
+      result.missing_in_supabase += 1;
+      continue;
+    }
+    const comparison = contract.compareRows(concept, row, right.index.get(key));
+    if (!comparison.equal) {
+      toOpen.push({
+        concept,
+        identityKey: key,
+        sessionId: contract.sessionIdOf(concept, row),
+        reason: 'content_mismatch',
+        comparison: { differences: comparison.differences },
+      });
+      result.content_mismatch += 1;
+    }
+  }
+
+  // In Supabase, absent from Sheets — a shadow row whose Sheets counterpart was
+  // undone, or a row no live authority ever committed. Either way Sheets decides,
+  // so the Supabase row is the one that is wrong.
+  for (const [key, row] of right.index) {
+    if (left.index.has(key)) continue;
+    toOpen.push({
+      concept,
+      identityKey: key,
+      sessionId: contract.sessionIdOf(concept, row),
+      reason: 'missing_in_sheets',
+      comparison: null,
+    });
+    result.missing_in_sheets += 1;
+  }
+
+  if (openDivergences) {
+    for (const divergence of toOpen) {
+      try {
+        const opened = await adapter.openDivergence({ ...divergence, detectedBy: 'sweep' });
+        if (opened.created) result.divergences_opened += 1;
+      } catch (error) {
+        result.error = `divergence_open_failed: ${error.message}`;
+        return result;
+      }
+    }
+  }
+
+  result.complete = true;
+  return result;
+}
+
+// The fifth concept. Its identity is the sync generation's content_hash, not an
+// export identity key, so it is compared generation-to-source rather than
+// row-to-row (§3.8).
+//
+// During S2/S3 ONLY: an unexplained catalog drift is a migration concern, because
+// Sheets is still the live authority in that era. After S4 normal edits converge
+// through the permanent sync and nothing writes here (gate P7c0).
+async function sweepCatalog({ sheets, adapter, openDivergences }) {
+  const result = emptyConceptResult(contract.CATALOG_CONCEPT);
+
+  let sourceRows;
+  try {
+    sourceRows = await sheets.getSheetRows('Exercise_Catalog');
+  } catch (error) {
+    result.error = `sheets_read_failed: ${error.message}`;
+    return result;
+  }
+
+  let generation;
+  try {
+    generation = await adapter.currentCatalogGeneration();
+  } catch (error) {
+    result.error = `supabase_read_failed: ${error.message}`;
+    return result;
+  }
+
+  const normalized = contract.normalizeCatalogRows(sourceRows);
+  const sourceHash = contract.catalogContentHash(normalized);
+  result.sheets_rows = normalized.length;
+  result.supabase_rows = generation ? Number(generation.source_row_count || 0) : 0;
+
+  const mirrorHash = generation ? generation.content_hash : null;
+  if (mirrorHash !== sourceHash) {
+    result.content_mismatch = 1;
+    if (openDivergences) {
+      try {
+        const opened = await adapter.openDivergence({
+          concept: contract.CATALOG_CONCEPT,
+          // The generation's content_hash IS this concept's identity.
+          identityKey: sourceHash,
+          reason: 'content_mismatch',
+          detectedBy: 'sweep',
+          comparison: {
+            mirror_generation: generation ? generation.sync_id : null,
+            mirror_hash_present: Boolean(mirrorHash),
+            source_row_count: normalized.length,
+          },
+        });
+        if (opened.created) result.divergences_opened += 1;
+      } catch (error) {
+        result.error = `divergence_open_failed: ${error.message}`;
+        return result;
+      }
+    }
+  }
+
+  result.complete = true;
+  return result;
+}
+
+// Run the sweep over every declared concept.
+//
+// `openDivergences: false` makes it a pure detector, which is what the status
+// tool and a dry-run want. The default is true, because the whole point of the
+// sweep is that its findings become durable rows nothing in flight can lose.
+async function runSweep({
+  sheets,
+  adapter,
+  concepts = DEFAULT_CONCEPTS,
+  includeCatalog = true,
+  openDivergences = true,
+} = {}) {
+  const results = [];
+  for (const concept of concepts) {
+    results.push(await sweepRowConcept({ concept, sheets, adapter, openDivergences }));
+  }
+  if (includeCatalog) {
+    results.push(await sweepCatalog({ sheets, adapter, openDivergences }));
+  }
+
+  const complete = results.every((r) => r.complete);
+  const totals = results.reduce(
+    (acc, r) => ({
+      missing_in_supabase: acc.missing_in_supabase + r.missing_in_supabase,
+      missing_in_sheets: acc.missing_in_sheets + r.missing_in_sheets,
+      content_mismatch: acc.content_mismatch + r.content_mismatch,
+      divergences_opened: acc.divergences_opened + r.divergences_opened,
+    }),
+    { missing_in_supabase: 0, missing_in_sheets: 0, content_mismatch: 0, divergences_opened: 0 }
+  );
+
+  return {
+    // A SWEEP THAT HAS NOT COMPLETED IS NOT A ZERO (§5.2 point 3). Every gate that
+    // reads a zero must read this flag with it.
+    complete,
+    concepts: results,
+    totals,
+    divergences_found: totals.missing_in_supabase + totals.missing_in_sheets + totals.content_mismatch,
+  };
+}
+
+module.exports = { runSweep, sweepRowConcept, sweepCatalog, DEFAULT_CONCEPTS };

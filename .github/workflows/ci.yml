@@ -112,8 +112,73 @@ jobs:
         # or a packet reported valid that is not (H-05/H-15). Self-test: test/packetTraceGuard.test.js.
         run: npm run -s check:packet-trace
 
+      - name: Supabase migration safety guard (§6.1 P10, repository half)
+        # Fails if any GitHub-triggered path could apply schema to Atlas Production,
+        # if a workflow holds a production Supabase credential, or if the from-empty
+        # applier loses its hosted-host / non-empty refusals. The dashboard half of
+        # P10 is owner evidence and is recorded in the merge card.
+        run: npm run -s check:supabase-safety
+
       - name: Test
         run: npm test --silent
+
+  supabase-schema-proof:
+    name: Supabase schema proof (from-empty Postgres)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # docs/SUPABASE_HOT_PATH_MIGRATION.md §6.1 P2: a REAL disposable Postgres
+    # database, created from empty and destroyed for the exact run, with every file
+    # in supabase/migrations/ applied from scratch. A fake, an in-memory stub, or a
+    # mocked client does not satisfy it, and neither does a database that carried
+    # state in from an earlier commit.
+    #
+    # Deliberately a PLAIN Postgres service container, not a Supabase preview
+    # branch (§8.5). Branching is a paid-plan feature and ruling D3 records Atlas
+    # Production as Free tier, so a preview branch would be a purchase order
+    # written as a gate; and a preview branch is PR-scoped rather than run-scoped,
+    # which is the weaker guarantee that hides exactly the class of defect P1 and
+    # P7a exist to catch. This job needs no Supabase plan at all, so the whole
+    # integration can be disabled and the proof still runs.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build frontend (Vite)
+        # The process-death proof (P5) boots the REAL app in a child process, and
+        # index.js serves public/ — which is gitignored build output.
+        run: npm run build
+
+      - name: Schema, constraint, grant, shadow, sweep, repair and process-death proofs
+        env:
+          # An ADMIN connection to the throwaway service container. It is a
+          # container that lives and dies with this job; it is NOT and cannot be
+          # Atlas Production, whose credentials never enter Actions at all (§8.5).
+          ATLAS_PG_ADMIN_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+        # Fails loudly when no database is available. It never skips: a skipped
+        # proof reported as a pass is exactly the false green these gates exist for.
+        run: npm run -s test:pg
 
   coverage-report:
     name: Coverage report (non-blocking)

@@ -67,7 +67,8 @@ emitted.
 | `synthetic_rows_remaining` | Count of leftover synthetic rows, or `null` when not scanned. |
 | `owner_action_required` / `owner_action_codes` | Whether an owner/agent action is outstanding, and which. |
 | `source_freshness` | Per-source availability (`execution_plan`, `test_queue`, `build_info`). |
-| `unavailable_sources` | `[{source, reason}]` — sources that could not be read. Failures are surfaced, never swallowed. |
+| `supabase_migration` | The hot-path migration's observable state (PR S2). `{observed, reason, configured, shadow_write_enabled, open_divergences, oldest_open_divergence_at, catalog_generation_age_seconds, catalog_servable}`. **`observed:false` means nobody looked — it is NOT a zero-divergence result**, and every count stays `null` until a real read produced it. The **public endpoint always reports `observed:false`**: its contract is read-only over the deployed checkout and env presence, and it opens no database connection. `npm run atlas:status` performs the read, preferring the `atlas_readonly` credential, and overlays its result. No credential and no project reference can appear in this block. |
+| `unavailable_sources` | `[{source, reason}]` — sources that could not be read. Failures are surfaced, never swallowed. An unobserved `supabase_migration` appears here with its exact reason. |
 
 ## Sources (all read-only, all best-effort)
 
