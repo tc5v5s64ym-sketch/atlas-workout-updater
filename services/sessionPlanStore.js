@@ -24,6 +24,7 @@
 // is staged in config/wiring-allowlist.json.
 
 const sheets = require('../sheets');
+const migrationShadow = require('./migrationShadow');
 const { sessionPlansColumns } = require('../config/columns');
 const {
   buildPlanAcceptedEvents,
@@ -126,6 +127,13 @@ async function _append(rows) {
     await _ensureHeaderRow();
     await sheets.appendRows(SESSION_PLANS_TAB, toAppend);
     out.written = toAppend.length;
+    // Supabase hot-path migration, PR S2 — the SHADOW write, hooked HERE rather
+    // than at the route because this is where the committed rows are known: the
+    // mirror is a projection of what the append actually wrote, not a second
+    // derivation of the same intent. TEMPORARY; S4 deletes it
+    // (docs/SUPABASE_HOT_PATH_MIGRATION.md §5.2). Fire-and-forget and total:
+    // Sheets stays the sole authority and a shadow failure changes nothing here.
+    migrationShadow.shadowPlanEvents(toAppend, { route: SESSION_PLANS_TAB });
   }
   return out;
 }

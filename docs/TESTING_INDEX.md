@@ -31,6 +31,9 @@
 | `atlas:divergence` | `scripts/atlas-divergence.js` | `npm run atlas:divergence -- <logfile>` | Offline | No | Current |
 | `atlas:turn-write-artifact` | `scripts/atlas-turn-write-artifact.js` | `npm run atlas:turn-write-artifact -- <logfile> [--json]` | Offline | No | Current |
 | `flight-review` / `gate-a-scorecard` | `scripts/flight-review.js`, `scripts/gate-a-scorecard.js` | `node scripts/flight-review.js` · `node scripts/gate-a-scorecard.js --env=production` | Deployed read-only (Sheets) | No | Current |
+| **Supabase schema proof (from-empty Postgres)** | `test-pg/`, `scripts/run-pg-proof.js` | `ATLAS_PG_ADMIN_URL=… npm run test:pg` | Local-integration (real disposable Postgres) | No — never touches Sheets, and structurally cannot reach a hosted Supabase project | Current (PR S2) |
+| **Supabase migration applier** | `scripts/apply-supabase-migrations.js` | `npm run supabase:migrate -- --url <disposable>` | Local-integration | No — refuses a hosted Supabase host and any non-empty target, with no override | Current (PR S2) |
+| **Supabase reconciliation sweep / repair / catalog sync** | `scripts/atlas-migration-{sweep,repair}.js`, `scripts/atlas-catalog-sync.js` | `npm run atlas:sweep` · `npm run atlas:repair` · `npm run atlas:catalog-sync` | Deployed read-only (Sheets) + Supabase | No — Sheets is read-only to all three | Current (PR S2, TEMPORARY — sweep and repair are deleted at S4) |
 | Drift guards (1–4, 6) | `scripts/check-*.js` | `npm run check:wiring\|authority\|banned\|allowlist\|paper-weight\|ladder` | Offline | No | Current |
 | Secret scan | `scripts/check-changed-files-for-secrets.js` | `npm run scan:secrets` | Offline | No | Current |
 | Sheets backup | `scripts/export-sheets-backup.js` | `npm run backup:sheets` | Deployed read-only (Sheets → local files) | No | Current |
@@ -92,9 +95,25 @@ A single-user HTTP client that drives a **local** Atlas server through 7 read-on
 - **`atlas:turn-write-artifact`** — `npm run atlas:turn-write-artifact -- <logfile> [--json]` (or pipe logs on stdin). Offline, closed-whitelist join of `[interaction-trace]` and `[turn-write-proof]` on canonical `turn_id`; complete exits 0, partial exits 1, and empty exits 2 so missing evidence is never a false green. No creds, network, or Sheet access. Contract: [`verification/ISSUE_1165_SLICE_3_ARTIFACT.md`](./verification/ISSUE_1165_SLICE_3_ARTIFACT.md).
 - **`flight-review.js`** / **`gate-a-scorecard.js`** — read-only Sheets evidence extraction / GATE-A scorecard (`--env=production|sandbox`). Read-only; may emit local report files.
 
+### 5a. Supabase hot-path migration proofs (PR S2)
+
+**`npm run test:pg` is the from-empty Postgres proof suite** — `docs/SUPABASE_HOT_PATH_MIGRATION.md` §6.1 P2. Give it `ATLAS_PG_ADMIN_URL` (an admin connection to a throwaway Postgres server); it creates a uniquely named database, applies every file in `supabase/migrations/` from empty, grants the four scoped roles a per-run random login, runs `test-pg/*.pgproof.js`, and drops the database. It **fails loudly when no database is available and never skips** — a skipped proof reported as a pass is the false green the S2 gates exist to prevent.
+
+Why the files live in `test-pg/` and end `.pgproof.js`: `npm test` runs a bare `node --test`, whose default glob matches `**/*.test.js` anywhere and treats every file under a directory named `test` as a test. Under either name, a suite needing a live database would fail `npm test` on every machine without one.
+
+What it proves, as its own files: every constraint of §3.1–§3.9 by a rejected violating insert (`constraints`); least privilege executed **as the four real roles** (`leastPrivilege`); the parent-first atomic shadow transaction against an **empty** schema (`shadowWrite`); the receipt state machine including the advisory-lock liveness rule (`writeReceipts`); sweep detection and earned-only divergence closure (`sweepAndRepair`); the catalog mirror's fail-closed rule and its normal-edit case (`catalogMirror`); **process death in the exact window between the Sheets append and the shadow write** (`processDeath`); and byte-identical responses with the lane off and on (`shadowInert`).
+
+**Nothing here can reach Google Sheets or a hosted Supabase project.** `sheets.js` is stubbed by the same `require.cache` seam the rest of the suite uses, and `scripts/apply-supabase-migrations.js` refuses a `*.supabase.co`/`.com` host outright — a refusal `npm run check:supabase-safety` fails CI for removing.
+
+**Operator commands** (read-only against Sheets; they need a configured Supabase connection and report `NOT CONFIGURED` rather than a zero without one):
+
+- **`atlas:sweep`** — `npm run atlas:sweep [-- --json] [-- --detect-only]`. The reconciliation sweep, which is the **completeness authority** for the shadow window. A run that could not read a concept reports `complete:false` and exits non-zero; a partial sweep is never a zero. TEMPORARY: deleted at S4.
+- **`atlas:repair`** — `npm run atlas:repair [-- --json] [-- --limit N]`. Makes Supabase agree with Sheets, never the reverse. Closes a divergence **only** on a passing identity-and-content re-comparison, and leaves anything it holds no grant to repair OPEN as owner action required. TEMPORARY: deleted at S4.
+- **`atlas:catalog-sync`** — `npm run atlas:catalog-sync [-- --json]`. Refreshes the `Exercise_Catalog` read mirror. PERMANENT. Run it well inside `ATLAS_CATALOG_MIRROR_MAX_AGE_SEC`; past that bound the S4 Save path fails **closed** rather than serving stale content.
+
 ### 6. CI governance guards + secret scan (offline; none can write)
 
-`npm run check:wiring` (wired-or-deleted), `check:authority`, `check:banned`, `check:allowlist` (shrink-only ceiling), `check:paper-weight` (BACKLOG cap + auto-archive job), `check:ladder` (completion-ladder evidence), and `npm run scan:secrets`. Each has a self-testing `test/*.test.js`. The full drift-guard registry (and which phase built each) is in `CLAUDE.md` and the execution plan. Note: **Drift Guard 5 ("packet & trace contract tests") is Phase 4–5 work and not built yet** — its absence is expected, not a gap.
+`npm run check:wiring` (wired-or-deleted), `check:authority`, `check:banned`, `check:allowlist` (shrink-only ceiling), `check:paper-weight` (BACKLOG cap + auto-archive job), `check:ladder` (completion-ladder evidence), `check:packet-trace`, `check:backlog-intake`, **`check:supabase-safety`** (no GitHub-triggered path may apply schema to `Atlas Production` or hold a production Supabase credential — §6.1 P10, repository half), and `npm run scan:secrets` (which gained the Supabase connection-string, project-reference and key patterns in PR S2). Each has a self-testing `test/*.test.js`. The full drift-guard registry (and which phase built each) is in `CLAUDE.md` and the execution plan.
 
 ### 7. Data tools
 
@@ -105,7 +124,7 @@ A single-user HTTP client that drives a **local** Atlas server through 7 read-on
 
 | Workflow | Trigger | Runs | Sheet write? |
 |---|---|---|---|
-| `ci.yml` | PR, push→main, dispatch | build + lint + 6 guards + `npm test`; coverage (non-blocking); secret-scan; Playwright e2e; render-smoke (dispatch/main) | No (smoke dry-run only) |
+| `ci.yml` | PR, push→main, dispatch | build + lint + the drift guards + `check:supabase-safety` + `npm test`; **the Supabase schema proof against a plain `postgres:16` service container** (`npm run test:pg`); coverage (non-blocking); secret-scan; backlog-intake guard; Playwright e2e; render-smoke (dispatch/main) | No (smoke dry-run only; the Postgres container is created and destroyed with the job and cannot be `Atlas Production`) |
 | `live-retest.yml` | manual dispatch | `live-retest.js`, dry-run default; optional `ATLAS_ACCESS_CODE` secret for an authenticated read-only run | No |
 | `monitoring.yml` (Daily Mission Control) | daily cron + dispatch | `smoke-test-render.js` pinned `read-only`; opens alert issue on failure | No |
 | `merge-card-check.yml` | PR | fails a PR missing the Atlas Merge Card | No |
@@ -132,6 +151,8 @@ A system that simulates ~10 synthetic gym-goers **does not exist as built code.*
 - **"Is prod healthy?"** → `npm run atlas:status`
 - **"Review my last real session"** → `npm run atlas:review-live`
 - **"Where does prod bypass packet truth?"** → `npm run atlas:divergence -- <logfile>`
+- **"Does the Supabase schema actually hold?"** → `ATLAS_PG_ADMIN_URL=… npm run test:pg` (from empty, real Postgres, never production)
+- **"Has the mirror drifted from Sheets?"** → `npm run atlas:sweep` then `npm run atlas:repair` (Sheets read-only in both)
 - **"Run everything offline"** → `npm test` (+ `npm run test:e2e` for the browser)
 - **"Smoke the deployed app (no writes)"** → `npm run smoke:render`
 - **"Exercise the coach route synthetically"** → `node scripts/sim/run.js --base-url http://127.0.0.1:3000` (local server; read-only)

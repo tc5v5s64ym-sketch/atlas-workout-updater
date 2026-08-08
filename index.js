@@ -73,6 +73,14 @@ const {
   failWrite,
   normalizeWriteId
 } = require('./services/idempotency');
+// Supabase hot-path migration, PR S2 — the SHADOW write lane. TEMPORARY: S4
+// deletes it (docs/SUPABASE_HOT_PATH_MIGRATION.md §5.2, sunset in §5.4).
+// Google Sheets stays the sole live authority for every read and every write. The
+// calls below are fire-and-forget, run after the response is decided, and are
+// total — nothing they do can change a response, a status code, a proof field, or
+// a visible claim, and a shadow failure is never surfaced to the athlete. The lane
+// is inert unless ATLAS_SUPABASE_SHADOW_WRITE=1 AND a connection is configured.
+const migrationShadow = require('./services/migrationShadow');
 const { normalizeDate, parseNumber, calculateQualityScore, qualityScoreBreakdown } = require('./services/validation');
 const {
   createCorsMiddleware,
@@ -2761,6 +2769,14 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         writeCommitted = true;
         // Both appends succeeded on this path (the log one only when there were rows).
         invalidateSheetRowsCache(rowsToWrite.length > 0 ? logSheetName : null, effortSheetName);
+        // S2 shadow: mirror exactly what the Sheets append committed. Fire-and-forget.
+        migrationShadow.shadowSave({
+          sessionId,
+          logCells: rowsToWrite,
+          effortCells: effortRow,
+          route: '/api/complete-workout',
+          writeId: idempotency.write_id || null,
+        });
       } catch (error) {
         if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
         // WHATEVER LANDED BEFORE THE THROW IS ON THE SHEET, so the cache holding a pre-write
@@ -2773,6 +2789,18 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
           logRowsWritten > 0 ? logSheetName : null,
           effortWritten ? effortSheetName : null
         );
+        // S2 shadow: whatever landed before the throw IS on the sheet, so the
+        // mirror must carry it too. Keyed on what actually landed, exactly as the
+        // cache invalidation above is.
+        if (writeCommitted) {
+          migrationShadow.shadowSave({
+            sessionId,
+            logCells: logRowsWritten > 0 ? rowsToWrite : [],
+            effortCells: effortWritten ? effortRow : null,
+            route: '/api/complete-workout',
+            writeId: idempotency.write_id || null,
+          });
+        }
         if (idempotency.enabled && writeCommitted) {
           // The log rows are already on the sheet but the effort append (or a
           // later step) threw. Record the write as completed with a partial body
@@ -3593,6 +3621,17 @@ app.post('/api/log-workout', async (req, res) => {
       // rows this cache holds are still exactly what the sheet holds.
       invalidateSheetRowsCache(logSheetName);
       const logRowsWritten = Number(logResponse?.data?.updates?.updatedRows || 0);
+      // S2 shadow: the log rows are committed even though the Effort append
+      // failed, so the mirror carries them and nothing else. Fire-and-forget.
+      if (logRowsWritten > 0) {
+        migrationShadow.shadowSave({
+          sessionId: session_id,
+          logCells: rowsToWrite,
+          effortCells: null,
+          route: '/api/log-workout',
+          writeId: idempotency.write_id || null,
+        });
+      }
       const partialBody = {
         message: logRowsWritten > 0
           ? 'Log rows were appended but the effort row failed to write. Retrying this write_id will not append the log rows again — use undo-last or add the effort separately.'
@@ -3655,6 +3694,16 @@ app.post('/api/log-workout', async (req, res) => {
       rowsToWrite.length > 0 ? logSheetName : null,
       formattedEffortRow ? effortSheetName : null
     );
+
+    // S2 shadow: mirror exactly what the Sheets appends committed above.
+    // Fire-and-forget; the response below is decided entirely by Sheets.
+    migrationShadow.shadowSave({
+      sessionId: session_id,
+      logCells: rowsToWrite,
+      effortCells: formattedEffortRow || null,
+      route: '/api/log-workout',
+      writeId: idempotency.write_id || null,
+    });
 
     const responseBody = {
       message: 'Workout data appended successfully.',

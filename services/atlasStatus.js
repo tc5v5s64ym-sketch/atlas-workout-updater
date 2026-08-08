@@ -62,6 +62,11 @@ const ALLOWED_KEYS = [
   'owner_action_required',
   'owner_action_codes',
   'source_freshness',
+  // Supabase hot-path migration (PR S2). §3.8 names `npm run atlas:status` as an
+  // immediate consumer of atlas.migration_divergences: staleness and drift must be
+  // visible before they are fatal. TEMPORARY in part — the divergence counters go
+  // with the bridge at S4; the catalog generation's age is permanent.
+  'supabase_migration',
   'unavailable_sources'
 ];
 
@@ -81,6 +86,38 @@ function toBoolOrNull(value) {
   if (value === true) return true;
   if (value === false) return false;
   return null;
+}
+
+// The Supabase migration block, normalised so it can never report a FALSE GREEN.
+//
+// `observed:false` means nobody looked — it is NOT "zero divergences". Every count
+// is null until a real read produced it, and a read that failed says so with its
+// reason. A zero here is only ever a zero the database actually returned.
+function normalizeSupabaseMigration(raw) {
+  const base = {
+    observed: false,
+    reason: 'not_observed',
+    configured: null,
+    shadow_write_enabled: null,
+    open_divergences: null,
+    oldest_open_divergence_at: null,
+    catalog_generation_age_seconds: null,
+    catalog_servable: null,
+  };
+  if (!raw || typeof raw !== 'object') return base;
+  const numberOrNull = (value) => (typeof value === 'number' && Number.isFinite(value) ? value : null);
+  return {
+    observed: raw.observed === true,
+    reason: raw.reason != null ? String(raw.reason) : (raw.observed === true ? 'read_ok' : 'not_observed'),
+    configured: toBoolOrNull(raw.configured),
+    shadow_write_enabled: toBoolOrNull(raw.shadow_write_enabled),
+    open_divergences: raw.observed === true ? numberOrNull(raw.open_divergences) : null,
+    oldest_open_divergence_at: raw.observed === true && raw.oldest_open_divergence_at != null
+      ? String(raw.oldest_open_divergence_at)
+      : null,
+    catalog_generation_age_seconds: raw.observed === true ? numberOrNull(raw.catalog_generation_age_seconds) : null,
+    catalog_servable: raw.observed === true ? toBoolOrNull(raw.catalog_servable) : null,
+  };
 }
 
 function pushUnavailable(list, source, reason) {
@@ -322,7 +359,12 @@ function assembleStatus(input = {}) {
   const llmConfigured = toBoolOrNull(input.llm_configured);
   const synthetic = typeof input.synthetic_rows_remaining === 'number' ? input.synthetic_rows_remaining : null;
 
+  const supabaseMigration = normalizeSupabaseMigration(input.supabase_migration);
+
   const unavailable = Array.isArray(input.unavailable_sources) ? input.unavailable_sources.slice() : [];
+  if (!supabaseMigration.observed) {
+    pushUnavailable(unavailable, 'supabase_migration', supabaseMigration.reason);
+  }
   if (!plan.available) pushUnavailable(unavailable, 'execution_plan', 'plan file unreadable');
   if (!test.available) pushUnavailable(unavailable, 'test_queue', 'test ledger unreadable');
   if (synthetic === null) {
@@ -370,6 +412,7 @@ function assembleStatus(input = {}) {
       test_queue: test.available ? 'available' : 'unavailable',
       build_info: deployedCommit && deployedCommit !== 'unknown' ? 'available' : 'unavailable'
     },
+    supabase_migration: supabaseMigration,
     unavailable_sources: unavailable
   };
 }
@@ -425,7 +468,17 @@ function buildServerStatus(deploy = {}) {
     llm_provider: facts.llm_provider,
     llm_model: facts.llm_model,
     flight_recorder_enabled: facts.flight_recorder_enabled,
-    synthetic_rows_remaining: null
+    synthetic_rows_remaining: null,
+    // The public endpoint never opens a database connection — its contract is
+    // read-only over the deployed checkout and env presence. The divergence
+    // counters are read by the CLI, which may connect as atlas_readonly. Reporting
+    // "not observed here" is honest; reporting zero would not be.
+    supabase_migration: {
+      observed: false,
+      reason: 'not_observed_from_endpoint',
+      configured: (process.env.ATLAS_SUPABASE_APP_URL || '').trim().length > 0,
+      shadow_write_enabled: process.env.ATLAS_SUPABASE_SHADOW_WRITE === '1',
+    }
   });
 }
 
@@ -450,6 +503,7 @@ function buildLocalCliStatus(opts = {}) {
     llm_model: facts.llm_model,
     flight_recorder_enabled: facts.flight_recorder_enabled,
     synthetic_rows_remaining: null,
+    supabase_migration: opts.supabase_migration || null,
     unavailable_sources: unavailable
   });
 }
@@ -473,6 +527,16 @@ function renderHuman(status) {
   const fresh = s.latest_test_freshness_days == null ? '' : ` · ${s.latest_test_freshness_days}d ago`;
   lines.push(`  Latest test: ${s.latest_test_id || 'none'} ${s.latest_test_verdict || 'UNKNOWN'} (write=${s.latest_test_write_verdict || 'unknown'}, undo=${s.latest_test_undo_verdict || 'unknown'}${fresh})`);
   lines.push(`  Synthetic rows remaining: ${s.synthetic_rows_remaining == null ? 'unknown (not scanned)' : s.synthetic_rows_remaining}`);
+  const sm = s.supabase_migration || {};
+  if (sm.observed === true) {
+    const oldest = sm.oldest_open_divergence_at ? ` (oldest ${sm.oldest_open_divergence_at})` : '';
+    const catalog = sm.catalog_generation_age_seconds == null
+      ? 'catalog=none'
+      : `catalog=${sm.catalog_generation_age_seconds}s ${sm.catalog_servable ? 'servable' : 'NOT SERVABLE'}`;
+    lines.push(`  Supabase:    shadow=${sm.shadow_write_enabled ? 'on' : 'off'} · open_divergences=${sm.open_divergences}${oldest} · ${catalog}`);
+  } else {
+    lines.push(`  Supabase:    not observed (${sm.reason || 'not_observed'}) — this is NOT a zero-divergence result`);
+  }
   lines.push(`  Owner action: ${s.owner_action_required ? (s.owner_action_codes || []).join(', ') || 'yes' : 'none'}`);
   const unavail = (s.unavailable_sources || []).map(x => x && x.source).filter(Boolean);
   if (unavail.length) lines.push(`  Unavailable:  ${unavail.join(', ')}`);
@@ -488,6 +552,7 @@ module.exports = {
   TEST_QUEUE_PATH,
   parseActivePlanCard,
   parseLatestTest,
+  normalizeSupabaseMigration,
   computeOverall,
   assembleStatus,
   deriveServiceFacts,
