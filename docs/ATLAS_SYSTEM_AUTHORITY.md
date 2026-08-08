@@ -64,7 +64,7 @@ These levels are distinct and are never collapsed. They are the same rungs the c
 | 16a | Observational shadows | `coachTurnPacketShadow`, `brainShadow`, `intentShadow`, `driftShadow`, `coachShadowSheet`, `coachResponseSheet` | none — all retire | TEST/OBSERVABILITY ONLY |
 | 16b | `legacyBridge` (live browser bridge) | `src/app/legacyBridge.js`, imported on every page load | none — deleted, not promoted | TRANSITIONAL |
 | 17 | Athlete context (profile, level, equipment, readiness) | `ATLAS_PROFILE_GOAL` env var only; other fields have no live source | one layered `AthleteContext` | CONTRACT ONLY |
-| 18 | Workout hot-path durable record (sessions, logged sets, Effort, accepted plans, plan sets and revisions, item outcomes, closeout and write receipts) | Google Sheets via `sheets.js`, plus the file-backed `services/idempotency.js` store | Supabase; Sheets becomes an export mirror | SOLE LIVE AUTHORITY (Sheets) — migration authorized; PR S2 is OPEN and UNMERGED (proposed, not landed) |
+| 18 | Workout hot-path durable record (sessions, logged sets, Effort, accepted plans, plan sets and revisions, item outcomes, closeout and write receipts) | Google Sheets via `sheets.js`, plus the file-backed `services/idempotency.js` store | Supabase; Sheets becomes an export mirror | SOLE LIVE AUTHORITY (Sheets) — migration authorized; PR S2 LANDED on `main` 2026-08-08 and is DORMANT: the schema exists in `supabase/migrations/` but is applied to no database, and the shadow lane is unconfigured. Nothing has migrated. `S4` moves the authority |
 
 ---
 

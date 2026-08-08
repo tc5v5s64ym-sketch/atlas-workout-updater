@@ -9,17 +9,19 @@
 > the security posture, and the data-ownership record.
 
 **Status of application, current as of 2026-08-08.** `PR S1` was paper only and is merged.
-**`PR S2` is OPEN AND UNMERGED**, so the statement this paragraph used to make — that no
-Supabase code, dependency, migration file, or adapter exists in this repository — remains true
-of current `main`. What that PR PROPOSES, on its branch:
+**`PR S2` is MERGED** (`main` at `4d3e231`, PR #1274), so Supabase code, a dependency, the
+migration files and the adapter now EXIST in this repository. **Nothing has migrated**, and the
+distinction is the whole point of this phase:
 
-- the eleven migration files of §3.1–§3.9 under `supabase/migrations/`, together with one
+- the eleven migration files of §3.1–§3.9 are in `supabase/migrations/`, together with one
   adapter (`services/supabaseAdapter.js`), the shadow write, the divergence lane, the
   reconciliation sweep, the repair worker and the `Exercise_Catalog` mirror;
-- **no schema is applied to `Atlas Production`.** Applying it is an owner action, and no
-  repository code path can reach a hosted Supabase host;
-- **no product behaviour changes.** The shadow lane is off unless
-  `ATLAS_SUPABASE_SHADOW_WRITE=1` **and** a connection string is configured, and neither is;
+- **no schema is applied to any database, including `Atlas Production`.** A migration file in
+  a repository is not an applied schema. Applying it is an owner action, and no repository
+  code path can reach a hosted Supabase host;
+- **no product behaviour changed.** The shadow lane is off unless
+  `ATLAS_SUPABASE_SHADOW_WRITE=1` **and** a connection string is configured, and neither is in
+  any environment;
 - Google Sheets remains the sole live read and write authority for every migrated concept.
 
 `atlas.write_freeze` (§3.10) is still unwritten — `S3` creates it. `S3` and `S4` remain paper.
