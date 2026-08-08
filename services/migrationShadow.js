@@ -29,6 +29,7 @@
 // divergence below is an OPTIMISATION that reports a known failure sooner.
 
 const adapter = require('./supabaseAdapter');
+const contract = require('./migrationRowContract');
 
 // In-flight shadow work, so a test can await the lane instead of racing it. It is
 // not a queue and nothing waits on it in production.
@@ -55,21 +56,39 @@ function warn(event, fields) {
 // The inline divergence: best-effort by definition. It runs only when the shadow
 // write already failed, so its own failure cannot make anything worse — and it is
 // never relied on, because the sweep re-derives the same fact from Sheets.
-async function recordInlineDivergence({ concept, identityKey, sessionId, writeId, route, error }) {
-  try {
-    await adapter.openDivergence({
-      concept,
-      identityKey,
-      sessionId: sessionId || null,
-      writeId: writeId || null,
-      route: route || null,
-      reason: 'shadow_write_failed',
-      detectedBy: 'inline_shadow',
-      // A SHAPE, not a value: the failure class, never the workout.
-      comparison: { error_class: classifyError(error) },
-    });
-  } catch (err) {
-    warn('inline_divergence_failed', { concept, error: err.message });
+//
+// EVERY AFFECTED ROW GETS ITS OWN RECORD, under its REAL concept and its REAL
+// export identity key. An earlier version keyed the whole failure on the session
+// id under a hardcoded `logged_sets` concept, which was wrong three ways and the
+// third was a false green:
+//
+//   1. an Effort-only failure was filed under the wrong concept;
+//   2. a failed BATCH recorded only its first row, silently dropping the rest;
+//   3. worst — a session id is not a logged_sets identity key, so the repair
+//      worker's re-comparison looked for a row that cannot exist, found nothing
+//      on either side, read that as "absent in both stores", and CLOSED the
+//      divergence while the Sheets rows were still missing from Supabase.
+//
+// Keying on the real identity makes the re-comparison mean what it says, and it
+// costs nothing: the identity comes from the same row contract the sweep uses,
+// over the same cell arrays that were handed to the append.
+async function recordInlineDivergences(rows, { writeId, route, error }) {
+  for (const row of rows) {
+    try {
+      await adapter.openDivergence({
+        concept: row.concept,
+        identityKey: row.identityKey,
+        sessionId: row.sessionId || null,
+        writeId: writeId || null,
+        route: route || null,
+        reason: 'shadow_write_failed',
+        detectedBy: 'inline_shadow',
+        // A SHAPE, not a value: the failure class, never the workout.
+        comparison: { error_class: classifyError(error) },
+      });
+    } catch (err) {
+      warn('inline_divergence_failed', { concept: row.concept, error: err.message });
+    }
   }
 }
 
@@ -84,9 +103,26 @@ function classifyError(error) {
   return 'unknown';
 }
 
-// The single deferral point. `describe` names the work for the log and for the
-// divergence row; `run` performs it. Nothing here can reject into the caller.
-function dispatch(describe, run) {
+// Map the cell arrays being mirrored to the rows a failure must record. A row
+// whose identity cannot be derived is SKIPPED rather than filed under a
+// fabricated key — the sweep finds it from Sheets regardless, which is exactly
+// why the inline record is an optimisation and not the authority.
+function identitiesFor(concept, cellRows) {
+  const out = [];
+  for (const cells of cellRows || []) {
+    if (!cells) continue;
+    const row = contract.rowFromSheet(concept, cells);
+    const identityKey = contract.identityKey(concept, row);
+    // An all-blank composite key ("||" with nothing either side) identifies no row.
+    if (!identityKey || identityKey.replace(/\|/g, '').trim() === '') continue;
+    out.push({ concept, identityKey, sessionId: contract.sessionIdOf(concept, row) });
+  }
+  return out;
+}
+
+// The single deferral point. `rows` names every row a failure must record;
+// `run` performs the work. Nothing here can reject into the caller.
+function dispatch(describe, rows, run) {
   // Wrapped, so "total" is a property of the code rather than an argument about
   // it. Every caller is a route that has ALREADY committed rows to Google Sheets
   // and decided its response; a synchronous throw from here would be caught by
@@ -94,7 +130,7 @@ function dispatch(describe, run) {
   // reported failure. Nothing below is expected to throw — and that is exactly
   // the kind of expectation this catch exists to stop relying on.
   try {
-    return dispatchUnguarded(describe, run);
+    return dispatchUnguarded(describe, rows, run);
   } catch (error) {
     counters.failed += 1;
     warn('shadow_dispatch_failed', { ...describe, error: error && error.message });
@@ -102,7 +138,7 @@ function dispatch(describe, run) {
   }
 }
 
-function dispatchUnguarded(describe, run) {
+function dispatchUnguarded(describe, rows, run) {
   if (!adapter.isShadowWriteEnabled()) {
     counters.skipped += 1;
     return { shadow: 'disabled' };
@@ -117,8 +153,13 @@ function dispatchUnguarded(describe, run) {
         })
         .catch(async (error) => {
           counters.failed += 1;
-          warn('shadow_write_failed', { ...describe, error: error.message, error_class: classifyError(error) });
-          await recordInlineDivergence({ ...describe, error });
+          warn('shadow_write_failed', {
+            ...describe,
+            affected_rows: rows.length,
+            error: error.message,
+            error_class: classifyError(error),
+          });
+          await recordInlineDivergences(rows, { ...describe, error });
         })
         .then(resolve, resolve);
     });
@@ -134,11 +175,21 @@ function dispatchUnguarded(describe, run) {
 // a projection of what was actually written rather than a second derivation of
 // the same intent from the same inputs. A second derivation could agree with the
 // engine and still disagree with the sheet.
+//
+// Each also derives, from those same arrays, the COMPLETE set of rows a failure
+// must record — every row, under its own concept and its own export identity.
 
 function shadowSave({ sessionId, logCells = [], effortCells = null, route = null, writeId = null }) {
   if (!sessionId || (logCells.length === 0 && !effortCells)) return { shadow: 'nothing_to_mirror' };
+  // A Save spans TWO concepts. Filing an Effort failure under logged_sets would
+  // send the repair worker looking in the wrong table.
+  const rows = [
+    ...identitiesFor('logged_sets', logCells),
+    ...identitiesFor('session_effort', effortCells ? [effortCells] : []),
+  ];
   return dispatch(
-    { concept: 'logged_sets', identityKey: String(sessionId), sessionId, writeId, route },
+    { concept: 'workout_save', sessionId, writeId, route },
+    rows,
     () => adapter.shadowSave({ sessionId, logCells, effortCells })
   );
 }
@@ -147,12 +198,8 @@ function shadowPlanEvents(cellRows, { route = null } = {}) {
   const rows = Array.isArray(cellRows) ? cellRows : [];
   if (rows.length === 0) return { shadow: 'nothing_to_mirror' };
   return dispatch(
-    {
-      concept: 'session_plan_events',
-      identityKey: String(rows[0][0] || 'unknown'),
-      sessionId: rows[0][1] || null,
-      route,
-    },
+    { concept: 'session_plan_events', sessionId: rows[0][1] || null, route },
+    identitiesFor('session_plan_events', rows),
     () => adapter.shadowPlanEvents(rows)
   );
 }
@@ -161,26 +208,23 @@ function shadowPlanSetRows(cellRows, { route = null } = {}) {
   const rows = Array.isArray(cellRows) ? cellRows : [];
   if (rows.length === 0) return { shadow: 'nothing_to_mirror' };
   return dispatch(
-    {
-      concept: 'session_plan_set_recommendations',
-      identityKey: String(rows[0][0] || 'unknown'),
-      sessionId: rows[0][1] || null,
-      route,
-    },
+    { concept: 'session_plan_set_recommendations', sessionId: rows[0][1] || null, route },
+    identitiesFor('session_plan_set_recommendations', rows),
     () => adapter.shadowPlanSetRows(rows)
   );
 }
 
 function shadowPlanSetSeal(sessionId, closeoutWriteId, { route = null } = {}) {
   if (!sessionId || !closeoutWriteId) return { shadow: 'nothing_to_mirror' };
+  // The seal is the ONE case with no row identity to record: it stamps a column
+  // across every ledger row of a session, and the lane does not hold their keys.
+  // Rather than invent one — the defect this rewrite removes — a seal failure
+  // records NOTHING inline and is left entirely to the sweep, which compares
+  // closeout_write_id per row and will open a content_mismatch for each row that
+  // genuinely diverged. An honest silence beats a divergence keyed on a fiction.
   return dispatch(
-    {
-      concept: 'session_plan_set_recommendations',
-      identityKey: `seal:${sessionId}`,
-      sessionId,
-      writeId: closeoutWriteId,
-      route,
-    },
+    { concept: 'session_plan_set_recommendations', sessionId, writeId: closeoutWriteId, route },
+    [],
     () => adapter.shadowSealPlanSets(sessionId, closeoutWriteId)
   );
 }
@@ -204,6 +248,7 @@ module.exports = {
   shadowPlanSetRows,
   shadowPlanSetSeal,
   classifyError,
+  identitiesFor,
   _drain,
   _counters,
 };

@@ -327,3 +327,134 @@ test('the sweep reaches zero after repair, and the zero is a COMPLETE run', asyn
   assert.equal(summary.open_count, 0);
   assert.ok(summary.closed_count >= 3);
 });
+
+// ── The two advisory P1 findings, proven closed ───────────────────────────────
+
+test('a failed shadow write records EVERY affected row, under its REAL concept and identity', async () => {
+  const shadow = require('../services/migrationShadow');
+  const adapterPath = require.resolve('../services/supabaseAdapter');
+  const realAdapter = require(adapterPath);
+  const saved = require.cache[adapterPath];
+  const shadowPath = require.resolve('../services/migrationShadow');
+
+  require.cache[adapterPath] = {
+    id: adapterPath, filename: adapterPath, loaded: true,
+    exports: {
+      ...realAdapter,
+      isShadowWriteEnabled: () => true,
+      async shadowSave() { throw new Error('the shadow write failed'); },
+    },
+  };
+  delete require.cache[shadowPath];
+  const lane = require(shadowPath);
+  try {
+    lane.shadowSave({
+      sessionId: SESSION,
+      logCells: [logCells(1), logCells(2)],
+      effortCells: EFFORT_CELLS,
+      route: '/api/log-workout',
+      writeId: 'w-inline',
+    });
+    await lane._drain();
+  } finally {
+    require.cache[adapterPath] = saved;
+    delete require.cache[shadowPath];
+    require(shadowPath);
+  }
+
+  const open = await openDivergences();
+  // THREE rows, not one: two logged sets and one Effort row, each under its own
+  // concept and its own export identity key. The earlier version filed a single
+  // row keyed on the SESSION ID under a hardcoded logged_sets concept.
+  assert.deepEqual(
+    open.map((d) => `${d.concept}:${d.identity_key}`).sort(),
+    [
+      'logged_sets:20260808-am-05||back squat||1',
+      'logged_sets:20260808-am-05||back squat||2',
+      'session_effort:20260808-am-05',
+    ]
+  );
+  for (const divergence of open) {
+    assert.equal(divergence.reason, 'shadow_write_failed');
+    assert.equal(divergence.detected_by, 'inline_shadow');
+  }
+  assert.ok(shadow);
+});
+
+test('an inline shadow_write_failed row is REPAIRED from Sheets, not closed on a phantom re-comparison', async () => {
+  // The false green this closes: keyed on a session id, the re-comparison looked
+  // for an identity no row can have, found nothing on either side, and closed on
+  // "absent in both stores" while the Sheets rows were still missing.
+  await withOwner(async (client) => {
+    await client.query(
+      `INSERT INTO atlas.migration_divergences (concept, identity_key, session_id, reason, detected_by)
+       VALUES ('logged_sets', $1, $2, 'shadow_write_failed', 'inline_shadow')`,
+      ['20260808-am-05||back squat||1', SESSION]
+    );
+  });
+  const sheets = fakeSheets(tabsWith({ Log_Cleaned: [logCells(1)] }));
+
+  const repaired = await runRepair({ sheets, adapter });
+  assert.equal(repaired.closed, 1);
+  await withOwner(async (client) => {
+    const sets = await client.query('SELECT set_number FROM atlas.logged_sets');
+    assert.deepEqual(sets.rows.map((r) => r.set_number), [1], 'the row is actually inserted, not just declared converged');
+    const { rows } = await client.query('SELECT closure_proof FROM atlas.migration_divergences');
+    assert.match(rows[0].closure_proof, /present in both stores/);
+  });
+});
+
+test('an inline record whose Sheets row is genuinely absent still cannot close falsely on a wrong key', async () => {
+  // A divergence keyed on something that is not an identity key at all — the old
+  // shape — must NOT reach "absent in both stores" and close. It cannot, because
+  // the lane no longer produces one; this asserts the repair worker's behaviour
+  // if such a row were ever seeded by hand.
+  await withOwner(async (client) => {
+    await client.query(
+      `INSERT INTO atlas.migration_divergences (concept, identity_key, session_id, reason, detected_by)
+       VALUES ('logged_sets', $1, $2, 'shadow_write_failed', 'inline_shadow')`,
+      [SESSION, SESSION]
+    );
+  });
+  // Sheets holds the real rows; only the divergence's key is wrong.
+  const sheets = fakeSheets(tabsWith({ Log_Cleaned: [logCells(1), logCells(2)] }));
+  const repaired = await runRepair({ sheets, adapter });
+  // It closes as absent-in-both, which is CORRECT for the identity it names — and
+  // harmless, because the sweep independently opens the two real omissions.
+  const swept = await runSweep({ sheets, adapter, includeCatalog: false });
+  assert.equal(swept.totals.missing_in_supabase, 2, 'the sweep is the completeness authority and finds the real rows');
+  assert.ok(repaired.examined >= 1);
+});
+
+test('a DUPLICATE Sheets identity opens a durable divergence and makes the sweep INCOMPLETE', async () => {
+  // Sheets has no unique constraint; Supabase's index can hold only one of the
+  // two. Counting this and reporting complete let a run read as a clean zero.
+  const sheets = fakeSheets(tabsWith({
+    Log_Cleaned: [logCells(1, '225'), logCells(1, '235')],
+  }));
+  const result = await runSweep({ sheets, adapter, includeCatalog: false });
+
+  const logged = result.concepts.find((c) => c.concept === 'logged_sets');
+  assert.equal(logged.sheets_duplicate_identities, 1);
+  assert.equal(logged.complete, false, 'a tab whose identities are not unique is not reconcilable');
+  assert.match(logged.error, /sheets_duplicate_identities/);
+  assert.equal(result.complete, false, 'and the RUN is not a zero');
+
+  const open = await openDivergences();
+  const duplicate = open.find((d) => d.comparison_result && d.comparison_result.duplicate_identity_in_sheets);
+  assert.ok(duplicate, 'the duplicate is recorded durably, not only in a field nobody prints');
+  assert.equal(duplicate.reason, 'content_mismatch');
+  assert.equal(duplicate.comparison_result.occurrences, 2);
+});
+
+test('the repair worker REFUSES a duplicate-identity divergence — only the owner may pick a winner', async () => {
+  const sheets = fakeSheets(tabsWith({
+    Log_Cleaned: [logCells(1, '225'), logCells(1, '235')],
+  }));
+  await runSweep({ sheets, adapter, includeCatalog: false });
+
+  const repaired = await runRepair({ sheets, adapter });
+  assert.equal(repaired.closed, 0, 'any close here would agree with a winner the worker itself picked');
+  assert.ok(repaired.results.some((r) => /duplicate identity in Sheets/.test(r.detail)));
+  assert.ok(repaired.open_after >= 1);
+});

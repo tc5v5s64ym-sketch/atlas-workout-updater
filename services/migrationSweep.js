@@ -92,6 +92,35 @@ async function sweepRowConcept({ concept, sheets, adapter, openDivergences }) {
 
   const toOpen = [];
 
+  // A DUPLICATE SHEETS IDENTITY IS A FINDING, NOT A STATISTIC.
+  //
+  // Sheets has no unique constraint, so a tab can legitimately end up holding two
+  // rows under one export identity — a hand edit, or history predating the code
+  // dedupe. Supabase's unique index can hold only ONE of them, so the two stores
+  // can never agree about that identity, and whichever row the index kept will
+  // compare equal to the first Sheets row the sweep happened to index.
+  //
+  // Counting it and moving on made the run report a clean zero while an
+  // authoritative row was unrepresentable in the destination — and the S3/S4
+  // gates read exactly that zero. So each duplicate opens a DURABLE divergence,
+  // and the concept is reported INCOMPLETE: a sweep cannot reconcile a tab whose
+  // identities are not unique, and saying otherwise is the false green this whole
+  // lane exists to prevent. The repair worker refuses these deliberately — only
+  // the owner can decide which Sheets row is real.
+  for (const key of new Set(left.duplicates)) {
+    toOpen.push({
+      concept,
+      identityKey: key,
+      sessionId: contract.sessionIdOf(concept, left.index.get(key) || {}),
+      reason: 'content_mismatch',
+      comparison: {
+        duplicate_identity_in_sheets: true,
+        occurrences: left.duplicates.filter((d) => d === key).length + 1,
+      },
+    });
+    result.content_mismatch += 1;
+  }
+
   // In Sheets, absent from Supabase — the process-death case, and the ordinary
   // "the shadow write threw" case. Sheets is the authority, so the row is real.
   for (const [key, row] of left.index) {
@@ -146,7 +175,14 @@ async function sweepRowConcept({ concept, sheets, adapter, openDivergences }) {
     }
   }
 
-  result.complete = true;
+  // Complete means "the sweep could reconcile this concept", not "the sweep
+  // finished running". A tab holding two rows under one identity is not
+  // reconcilable, and that must reach the exit code rather than a field nobody
+  // prints.
+  result.complete = left.duplicates.length === 0;
+  if (!result.complete) {
+    result.error = `sheets_duplicate_identities: ${left.duplicates.length} row(s) share an export identity, which Supabase cannot represent`;
+  }
   return result;
 }
 

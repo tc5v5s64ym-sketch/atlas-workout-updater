@@ -65,6 +65,12 @@ async function main() {
           `content_mismatch=${concept.content_mismatch} ` +
           `opened=${concept.divergences_opened} ${status}`
       );
+      if (concept.sheets_duplicate_identities) {
+        console.log(
+          `    ! ${concept.sheets_duplicate_identities} duplicate Sheets identit(ies) — ` +
+            'Supabase can hold only one of each. OWNER ACTION REQUIRED; no worker may pick a winner.'
+        );
+      }
     }
     console.log(`  divergences found: ${result.divergences_found}`);
   }

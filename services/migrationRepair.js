@@ -113,9 +113,27 @@ async function repairOne({ divergence, sheets, adapter, leaseSeconds }) {
     return outcome(divergence, 'left_open', 'catalog convergence is the sync job, not this worker');
   }
 
+  // A duplicate Sheets identity is never auto-repaired. Sheets is the authority
+  // and holds TWO rows under one identity; Supabase's unique index can hold only
+  // one, so any "repair" would pick a winner and then close on a re-comparison
+  // that agreed with the winner it just picked. Only the owner can decide which
+  // Sheets row is real.
+  if (divergence.comparison_result && divergence.comparison_result.duplicate_identity_in_sheets) {
+    await adapter.releaseDivergence(divergence.id, token, divergence.comparison_result);
+    return outcome(divergence, 'left_open', 'owner action required: duplicate identity in Sheets');
+  }
+
   let repairDetail = null;
   try {
-    if (divergence.reason === 'missing_in_supabase') {
+    // A failed inline shadow write means Supabase is missing a row Sheets has —
+    // which is the same repair as an omission the sweep found, and it is safe
+    // BECAUSE the inline record now carries the row's real export identity. It
+    // did not when the record was keyed on the session id: the re-comparison
+    // then searched for an identity no row can have, found nothing on either
+    // side, and closed on "absent in both stores" while the rows were still
+    // missing. Sharing this path is what makes the record actionable rather than
+    // merely observable.
+    if (divergence.reason === 'missing_in_supabase' || divergence.reason === 'shadow_write_failed') {
       const spec = contract.conceptSpec(concept);
       const sheetRows = await sheets.getSheetRows(spec.tab);
       let source = null;
@@ -156,11 +174,6 @@ async function repairOne({ divergence, sheets, adapter, leaseSeconds }) {
           }
         }
       }
-    } else if (divergence.reason === 'shadow_write_failed') {
-      // An inline record of a KNOWN failure. It carries the session, not the row,
-      // so the repair is "re-derive from Sheets", which is exactly what the sweep
-      // already did for every affected identity. Re-comparing is the whole job.
-      repairDetail = 'inline record; convergence decided by re-comparison';
     } else {
       await adapter.releaseDivergence(divergence.id, token, { unhandled_reason: divergence.reason });
       return outcome(divergence, 'left_open', `unhandled reason ${divergence.reason}`);
