@@ -2988,7 +2988,12 @@ persistent or hosted target; no Supabase connection string of any role is config
 2. **Confirm the project is empty.** Zero public tables, zero migrations, no `atlas` schema.
    The migrations are written to apply **from empty**; a non-empty target is a different
    operation, and this runbook does not cover one.
-3. **Apply the eight files in lexical order, as the project owner role.** They create the four
+3. **Apply the eight files in lexical order, as the project owner role.** If linking inside a
+   checkout of this repository, note that `supabase/.temp/` is git-ignored because it carries
+   the linked **project reference**, which §8.4 makes a secret. `supabase/config.toml` is
+   deliberately tracked — `supabase init` writes only a local directory name there — but if a
+   CLI version writes the remote reference into it, **do not commit that file**: read it before
+   staging rather than trusting the ignore list to have anticipated the version. They create the four
    roles and run `ALTER … OWNER TO atlas_migrate`, so a lesser principal cannot apply them.
    Any owner-side path is acceptable — Supabase CLI against the linked project, or the SQL
    editor, file by file in order. **Apply them unmodified**: the reviewed bytes are the proof
