@@ -454,8 +454,13 @@ revisions, item outcomes, and closeout and write receipts.
 - **Evidence.** The owner instruction of 2026-08-07, recorded in
   [`docs/ATLAS_V1_EXECUTION_PLAN.md`](./ATLAS_V1_EXECUTION_PLAN.md). The current authority is
   the code cited above. The intended authority now HAS code on `main`, and the status stays
-  where it is anyway — because code is not authority. It decides nothing until the schema is
-  applied to a persistent target and the shadow lane is configured, and neither has happened.
+  where it is anyway — because **code is not authority, and neither is a running shadow**.
+  Applying the schema to a persistent target and configuring the shadow lane will not make
+  Supabase the decider either: that is the **next legitimate runtime state** after the owner
+  gate, and in it Supabase is a shadow / bridge target while Sheets still decides alone. It
+  becomes the decider only at **PR S4**, when reads and writes cut over together and Sheets
+  becomes the export mirror. See "Competing authority" above, which this paragraph must not
+  restate more loosely.
 
 ---
 
