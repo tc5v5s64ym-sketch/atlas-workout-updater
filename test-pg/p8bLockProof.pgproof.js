@@ -262,3 +262,98 @@ test('P8b grants: a REVOKED required grant is DETECTED', async () => {
     });
   }
 });
+
+// ── The proof runner does not kill another proof run ─────────────────────────
+//
+// *Required review of `0a3d051`.* The stale-database cleanup selects every
+// database matching `atlas_s2_proof_%` — which is also the exact name shape of a
+// LIVE run. Two overlapping `npm run test:pg` invocations on one server meant the
+// second could drop the first one's database and then drop and recreate the
+// CLUSTER-wide scoped roles underneath it. A proof runner must not destroy
+// another valid proof to clean stale state.
+//
+// Runs are now serialised on an explicit, bounded advisory lock, and these proofs
+// are unusually direct: THIS SUITE IS ITSELF RUNNING INSIDE A RUN THAT HOLDS THE
+// LOCK. So a second acquirer here is not a simulation of contention — it is real
+// contention with the very run executing this file.
+
+const runner = require('../scripts/run-pg-proof');
+
+function adminUrlOrSkip() {
+  const url = (process.env.ATLAS_PG_ADMIN_URL || '').trim();
+  // Never skip silently: the runner sets this, so its absence is a broken harness.
+  assert.ok(url, 'ATLAS_PG_ADMIN_URL must be present — the runner passes it through');
+  return url;
+}
+
+test('runner lock: a SECOND run cannot proceed while this one holds the lock', async () => {
+  const admin = adminUrlOrSkip();
+  // Bounded so the proof is fast; the real runner waits far longer before giving up.
+  await assert.rejects(
+    () => runner.acquireRunnerLock(admin, { timeoutMs: 1500, pollMs: 250 }),
+    (err) => {
+      assert.match(err.message, /holds the proof-runner lock/);
+      // The message must tell the operator what to do, not merely that it failed.
+      assert.match(err.message, /Nothing was created or dropped/);
+      return true;
+    },
+    'a second runner must be refused while a run is in progress'
+  );
+});
+
+test('runner lock: the refused run destroys NOTHING — this run\'s database survives', async () => {
+  // The load-bearing half. The old behaviour was not "the second run errors", it
+  // was "the second run drops the first run's database and roles". So the proof
+  // is about what still exists afterwards, not about the exception.
+  const admin = adminUrlOrSkip();
+  const before = await databaseInventory(admin);
+  assert.ok(before.proofDatabases.length >= 1, 'this run\'s own database must be present');
+  assert.equal(before.scopedRoles.length, 4, 'the four cluster-wide roles must be present');
+
+  await runner.acquireRunnerLock(admin, { timeoutMs: 800, pollMs: 200 }).catch(() => {});
+
+  const after = await databaseInventory(admin);
+  assert.deepEqual(after.proofDatabases, before.proofDatabases, 'no proof database may be dropped');
+  assert.deepEqual(after.scopedRoles, before.scopedRoles, 'no cluster-wide role may be dropped');
+});
+
+test('runner lock: identifiers from the catalog are QUOTED before any DROP', async () => {
+  // *Advisory review of `0a3d051`.* Database names read back from pg_catalog are
+  // not this process's strings: on a shared server another principal can create a
+  // name matching the prefix scan and containing SQL, which was interpolated into
+  // a statement run on the ADMIN connection.
+  assert.equal(runner.quoteIdent('plain'), '"plain"');
+  assert.equal(
+    runner.quoteIdent('atlas_s2_proof_x"; DROP DATABASE victim; --'),
+    '"atlas_s2_proof_x""; DROP DATABASE victim; --"',
+    'an embedded quote must be doubled, not terminated'
+  );
+  // And the runner must not be interpolating a bare name into a DROP any more.
+  const source = require('fs').readFileSync(
+    require('path').join(__dirname, '..', 'scripts', 'run-pg-proof.js'), 'utf8'
+  );
+  assert.ok(!/DROP DATABASE IF EXISTS \$\{(name|row\.datname)\}/.test(source),
+    'no unquoted identifier may reach a DROP DATABASE');
+});
+
+async function databaseInventory(admin) {
+  const { Client } = require('pg');
+  const client = new Client({ connectionString: admin });
+  await client.connect();
+  try {
+    const dbs = await client.query(
+      `SELECT datname FROM pg_database WHERE datname LIKE 'atlas\\_s2\\_proof\\_%' ORDER BY datname`
+    );
+    const roles = await client.query(
+      `SELECT rolname FROM pg_roles
+        WHERE rolname IN ('atlas_app','atlas_readonly','atlas_migrate','atlas_rebuild')
+        ORDER BY rolname`
+    );
+    return {
+      proofDatabases: dbs.rows.map((r) => r.datname),
+      scopedRoles: roles.rows.map((r) => r.rolname),
+    };
+  } finally {
+    await client.end();
+  }
+}

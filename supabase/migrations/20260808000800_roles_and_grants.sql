@@ -39,6 +39,32 @@ $$;
 --
 -- In PostgreSQL, DDL authority IS ownership: there is no ALTER or DROP privilege
 -- to grant. So atlas_migrate owns the schema and every table.
+--
+-- THE APPLIER MUST BE ABLE TO `SET ROLE` TO THE NEW OWNER, AND ON A HOSTED
+-- SUPABASE PROJECT IT CANNOT WITHOUT THIS GRANT.
+--
+-- `ALTER ... OWNER TO r` requires the executing role to be a member of `r` with
+-- SET. A SUPERUSER bypasses that, which is why this file applied cleanly for the
+-- whole of `S2`: the from-empty proof ran as the container's superuser. Supabase's
+-- `postgres` is NOT a superuser — it is a CREATEROLE role — and on PostgreSQL 16
+-- a CREATEROLE creator receives ADMIN OPTION but NOT SET, so the next statement
+-- failed with:
+--
+--     ERROR:  must be able to SET ROLE "atlas_migrate"
+--
+-- Measured against a real non-superuser CREATEROLE principal before this line was
+-- written, and the proof harness now applies every migration as such a principal
+-- so a privilege the deployment lacks can never again be assumed.
+--
+-- The plain form is used deliberately: `GRANT ... WITH SET TRUE` is PostgreSQL 16
+-- syntax and would be a syntax error on 15, while a plain GRANT means membership
+-- WITH SET on 16+ and implies SET ROLE on 15 and earlier. One statement, every
+-- supported version.
+--
+-- It grants the applier nothing it did not already control: on a virgin project
+-- the applier is the role that just created atlas_migrate.
+GRANT atlas_migrate TO current_user;
+
 ALTER SCHEMA atlas OWNER TO atlas_migrate;
 
 DO $$
