@@ -1,6 +1,6 @@
 # Atlas System Authority
 
-**Current as of:** 2026-08-07 · **Basis:** Atlas Recovery Campaign (Issue #1073), Phase 4 · **Status:** current-state authority map, refreshed as authority moves.
+**Current as of:** 2026-08-08 · **Basis:** Atlas Recovery Campaign (Issue #1073), Phase 4 · **Status:** current-state authority map, refreshed as authority moves.
 
 This document answers one question per concept: **what actually decides this in production today, and what is intended to decide it.**
 
@@ -64,7 +64,7 @@ These levels are distinct and are never collapsed. They are the same rungs the c
 | 16a | Observational shadows | `coachTurnPacketShadow`, `brainShadow`, `intentShadow`, `driftShadow`, `coachShadowSheet`, `coachResponseSheet` | none — all retire | TEST/OBSERVABILITY ONLY |
 | 16b | `legacyBridge` (live browser bridge) | `src/app/legacyBridge.js`, imported on every page load | none — deleted, not promoted | TRANSITIONAL |
 | 17 | Athlete context (profile, level, equipment, readiness) | `ATLAS_PROFILE_GOAL` env var only; other fields have no live source | one layered `AthleteContext` | CONTRACT ONLY |
-| 18 | Workout hot-path durable record (sessions, logged sets, Effort, accepted plans, plan sets and revisions, item outcomes, closeout and write receipts) | Google Sheets via `sheets.js`, plus the file-backed `services/idempotency.js` store | Supabase; Sheets becomes an export mirror | SOLE LIVE AUTHORITY (Sheets) — migration authorized; PR S2 is OPEN and UNMERGED (proposed, not landed) |
+| 18 | Workout hot-path durable record (sessions, logged sets, Effort, accepted plans, plan sets and revisions, item outcomes, closeout and write receipts) | Google Sheets via `sheets.js`, plus the file-backed `services/idempotency.js` store | Supabase; Sheets becomes an export mirror | SOLE LIVE AUTHORITY (Sheets) — migration authorized; PR S2 LANDED on `main` 2026-08-08 and is DORMANT: the schema exists in `supabase/migrations/` but is applied to NO PERSISTENT OR HOSTED ATLAS TARGET, including `Atlas Production` — it is exercised only against a disposable test Postgres created from empty and destroyed with each proof run — and the shadow lane is unconfigured. Nothing has migrated. `S4` moves the authority |
 
 ---
 
@@ -365,22 +365,52 @@ revisions, item outcomes, and closeout and write receipts.
   migration is **open decision D7**, for the owner at the `S3` gate. Google Sheets
   becomes a human-readable export mirror for these concepts, and is never required for an
   active workout to read, save, verify, or close out.
-- **Competing authority.** **NONE TODAY.** Nothing has migrated. Current `main` holds no
-  Supabase code, no migration file, and no adapter. The owner's Free-tier project
-  **Atlas Production** (verified healthy and empty, `us-west-2`, zero public tables, zero
-  migrations) has **no schema applied**, and applying it is an owner gate.
-  **PR S2 is OPEN and UNMERGED** — it proposes the eleven migration files of §3.1–§3.9, one
-  adapter, the shadow write, the divergence lane, the sweep and the repair worker, all inert
-  behind `ATLAS_SUPABASE_SHADOW_WRITE=1` plus a configured connection string. **A proposal on
-  a branch is not a state of production, and this map records production.** The competing
-  authority appears only when that PR merges, and PR S4 removes it.
+- **Competing authority.** **NONE TODAY.** Nothing has migrated, and the reason is no longer
+  that the code is absent. **PR S2 is MERGED** (`main` at `4d3e231`, PR #1274): current `main`
+  holds the eleven migration files of §3.1–§3.9, one adapter (`services/supabaseAdapter.js`),
+  the shadow write, the divergence lane, the sweep and the repair worker. All of it is
+  **DORMANT**, but **the gate differs per component and the map states them separately** —
+  one blanket rule would misdescribe the sweep, which is the completeness authority through
+  `S2` and `S3`:
+
+  | Component | What actually gates it |
+  |---|---|
+  | The **request-path shadow lane** (`services/migrationShadow.js` → `supabaseAdapter.isShadowWriteEnabled`) | **Both** `ATLAS_SUPABASE_SHADOW_WRITE=1` **and** `ATLAS_SUPABASE_APP_URL` |
+  | The **operator reconciliation tools** — `npm run atlas:sweep`, `npm run atlas:repair`, `npm run atlas:catalog-sync` | `ATLAS_SUPABASE_APP_URL` alone (`adapter.isConfigured('app')`). **Not** the shadow-write flag: they run with it off |
+  | The **receipt prune** | `ATLAS_SUPABASE_MIGRATE_URL` — it runs as `atlas_migrate`, the only role holding `DELETE` (§8.2) |
+  | The **`atlas:status` Supabase read** | `ATLAS_SUPABASE_READONLY_URL` or `ATLAS_SUPABASE_APP_URL` |
+
+  **No connection string and no flag is set in any live Atlas environment**, so every component
+  above is dormant today — but it is dormant for the reason its own row gives, not because one
+  flag covers all four.
+  **Code on `main` is not a competing authority.** A concept acquires one when something
+  decides it, and nothing here decides anything: the schema is applied to **no persistent or
+  hosted Atlas target**. The owner's Free-tier project **Atlas Production** (verified healthy
+  and empty, `us-west-2`, zero public tables, zero migrations) still has **no schema applied**,
+  and applying it is an owner gate. The only place these migrations are applied is the
+  **disposable proof database** of §6.1 P2 — a plain Postgres container created from empty and
+  destroyed with each run, holding no Atlas data and outliving nothing.
+  **Applying the schema and configuring the lane will not create one either**, and the map must
+  say so before that happens rather than after: at that point Supabase becomes a live
+  **shadow / bridge target** — an observational persistence destination whose write cannot
+  change a response, a status code, a proof field, or a visible claim. PR S2 and PR S3 move no
+  athlete-facing read or write, so Sheets still decides alone. This map's own honesty rule
+  already says reachable or running machinery is not authority merely because it exists and
+  runs; a shadow is the clearest case of it.
+  **Competing authority therefore stays NONE through PR S2 and PR S3.** Authority transfers at
+  **PR S4**, which makes Supabase the decider and converts the displaced Sheets hot-path
+  authority to an export mirror **in the same cutover** — one winner, and the loser removed
+  rather than kept alongside. The `S4` rollback window that follows is a **reversal capability,
+  not a second concurrent decider**: a restored PR S3 build would return the decision to
+  Sheets, and at every moment exactly one store decides.
 - **Status.** **SOLE LIVE AUTHORITY** (Google Sheets, plus the file-backed
-  `services/idempotency.js` store for receipts). The migration is **authorized and not
-  started**. *An earlier revision of this entry said PR S2 "landed 2026-08-08 and is DORMANT"
-  while that PR was still open — a branch recording itself as landed. Corrected by the
-  required review of `ad18907`: the honesty rule forbids promoting a concept on a document, a
-  test, or an import, and it forbids this for the same reason. The landed-state update is made
-  after merge, from current `main`, and not before.*
+  `services/idempotency.js` store for receipts). The migration is **authorized and STARTED but
+  not applied**: `S2` has landed, `S3` and `S4` remain, and **no athlete-facing read or write
+  has moved**. *This landed state is recorded from current `main`, after the merge. An earlier
+  revision of this entry claimed it while PR #1274 was still open — a branch recording itself
+  as landed — and the required review of `ad18907` corrected it: the honesty rule forbids
+  promoting a concept on a document, a test, or an import, and it forbids this for the same
+  reason. The rule that produced the deferral stands; the deferral itself is now discharged.*
 - **Exact production consumer.** `POST /api/log-workout`, `POST /api/complete-workout`,
   `POST /api/log-workout/undo-last`, `POST /api/session-plans/accept`,
   `POST /api/session-plans/outcome`, `POST /api/session-plan-sets/accept`,
@@ -435,8 +465,14 @@ revisions, item outcomes, and closeout and write receipts.
   semantics, and the W1–W3 proof fields are untouched.
 - **Evidence.** The owner instruction of 2026-08-07, recorded in
   [`docs/ATLAS_V1_EXECUTION_PLAN.md`](./ATLAS_V1_EXECUTION_PLAN.md). The current authority is
-  the code cited above; the intended authority has no code yet, which is why the status stays
-  where it is.
+  the code cited above. The intended authority now HAS code on `main`, and the status stays
+  where it is anyway — because **code is not authority, and neither is a running shadow**.
+  Applying the schema to a persistent target and configuring the shadow lane will not make
+  Supabase the decider either: that is the **next legitimate runtime state** after the owner
+  gate, and in it Supabase is a shadow / bridge target while Sheets still decides alone. It
+  becomes the decider only at **PR S4**, when reads and writes cut over together and Sheets
+  becomes the export mirror. See "Competing authority" above, which this paragraph must not
+  restate more loosely.
 
 ---
 

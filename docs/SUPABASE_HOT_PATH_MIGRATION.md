@@ -9,17 +9,32 @@
 > the security posture, and the data-ownership record.
 
 **Status of application, current as of 2026-08-08.** `PR S1` was paper only and is merged.
-**`PR S2` is OPEN AND UNMERGED**, so the statement this paragraph used to make — that no
-Supabase code, dependency, migration file, or adapter exists in this repository — remains true
-of current `main`. What that PR PROPOSES, on its branch:
+**`PR S2` is MERGED** (`main` at `4d3e231`, PR #1274), so Supabase code, a dependency, the
+migration files and the adapter now EXIST in this repository. **Nothing has migrated**, and the
+distinction is the whole point of this phase:
 
-- the eleven migration files of §3.1–§3.9 under `supabase/migrations/`, together with one
+- the eleven migration files of §3.1–§3.9 are in `supabase/migrations/`, together with one
   adapter (`services/supabaseAdapter.js`), the shadow write, the divergence lane, the
   reconciliation sweep, the repair worker and the `Exercise_Catalog` mirror;
-- **no schema is applied to `Atlas Production`.** Applying it is an owner action, and no
-  repository code path can reach a hosted Supabase host;
-- **no product behaviour changes.** The shadow lane is off unless
-  `ATLAS_SUPABASE_SHADOW_WRITE=1` **and** a connection string is configured, and neither is;
+- **no schema is applied to `Atlas Production`, or to any other persistent or hosted Atlas
+  target.** A migration file in a repository is not an applied schema. Applying it is an owner
+  action, and **no repository code path can APPLY SCHEMA to a hosted host**: the applier
+  refuses every `*.supabase.co` / `*.supabase.com` endpoint outright, including every Supavisor
+  pooler host, and no flag lifts it (`scripts/apply-supabase-migrations.js`, proven by
+  `npm run check:supabase-safety`).
+  **That is a narrower claim than "the code cannot reach a hosted host", and the wider one
+  would be false.** Since `S2`, `services/supabaseAdapter.js` builds `pg.Pool` instances from
+  the four `ATLAS_SUPABASE_*_URL` role strings and will connect to whatever host it is given —
+  by design, because that is exactly what `S4` requires. What keeps every path away from a
+  hosted target today is **configuration, not capability**: no live Atlas environment has any
+  Supabase connection string set, so no deployed path reaches a hosted Supabase target. The
+  one place these
+  migrations ARE applied is the **disposable proof database** of §6.1 P2 — a plain Postgres
+  container created from empty and destroyed with each run, which holds no Atlas data and
+  outlives nothing. That is deliberate: it is how the schema is proven at all;
+- **no product behaviour changed.** The shadow lane is off unless
+  `ATLAS_SUPABASE_SHADOW_WRITE=1` **and** a connection string is configured, and neither is in
+  any environment;
 - Google Sheets remains the sole live read and write authority for every migrated concept.
 
 `atlas.write_freeze` (§3.10) is still unwritten — `S3` creates it. `S3` and `S4` remain paper.
