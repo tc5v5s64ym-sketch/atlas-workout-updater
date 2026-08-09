@@ -59,9 +59,9 @@ const TABS = {
   ],
   Session_Plan_Sets: [
     [`${SESSIONS[0]}|1|item-1|1`, SESSIONS[0], '2026-08-01', 1, 'item-1', 'SQ01', 1, 3, 225, 5, 2,
-      'engine', '', 'high', '', '2026-08-01T10:00:00.000Z'],
+      'engine', '', 'reliable', '', '2026-08-01T10:00:00.000Z'],
     [`${SESSIONS[0]}|1|item-1|2`, SESSIONS[0], '2026-08-01', 1, 'item-1', 'SQ01', 2, 3, 225, 5, 2,
-      'engine', '', 'high', '', '2026-08-01T10:00:00.000Z'],
+      'engine', '', 'reliable', '', '2026-08-01T10:00:00.000Z'],
   ],
   Exercise_Catalog: [
     ['exercise', 'muscle_group', 'lift_code', 'canonical_exercise'],   // the catalog read KEEPS its header
