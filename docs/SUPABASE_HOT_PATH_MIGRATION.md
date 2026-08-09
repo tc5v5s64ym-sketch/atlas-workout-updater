@@ -10,34 +10,45 @@
 
 **Status of application, current as of 2026-08-08.** `PR S1` was paper only and is merged.
 **`PR S2` is MERGED** (`main` at `4d3e231`, PR #1274), so Supabase code, a dependency, the
-migration files and the adapter now EXIST in this repository. **Nothing has migrated**, and the
+migration files and the adapter EXIST in this repository. **The `S2` schema is now APPLIED to
+`Atlas Production`, and the hosted P8b gate has PASSED.** **Nothing has migrated**, and the
 distinction is the whole point of this phase:
 
-- the eleven migration files of §3.1–§3.9 are in `supabase/migrations/`, together with one
+- the **eleven `S2` tables** of §3.1–§3.9 are defined by the **eight reviewed migration files**
+  in `supabase/migrations/` — eight files, eleven tables, and the two counts are never the same
+  number — together with one
   adapter (`services/supabaseAdapter.js`), the shadow write, the divergence lane, the
   reconciliation sweep, the repair worker and the `Exercise_Catalog` mirror;
-- **no schema is applied to `Atlas Production`, or to any other persistent or hosted Atlas
-  target.** A migration file in a repository is not an applied schema. Applying it is an owner
-  action, and **no repository code path can APPLY SCHEMA to a hosted host**: the applier
-  refuses every `*.supabase.co` / `*.supabase.com` endpoint outright, including every Supavisor
-  pooler host, and no flag lifts it (`scripts/apply-supabase-migrations.js`, proven by
-  `npm run check:supabase-safety`).
-  **That is a narrower claim than "the code cannot reach a hosted host", and the wider one
-  would be false.** Since `S2`, `services/supabaseAdapter.js` builds `pg.Pool` instances from
-  the four `ATLAS_SUPABASE_*_URL` role strings and will connect to whatever host it is given —
-  by design, because that is exactly what `S4` requires. What keeps every path away from a
-  hosted target today is **configuration, not capability**: no live Atlas environment has any
-  Supabase connection string set, so no deployed path reaches a hosted Supabase target. The
-  one place these
-  migrations ARE applied is the **disposable proof database** of §6.1 P2 — a plain Postgres
-  container created from empty and destroyed with each run, which holds no Atlas data and
-  outlives nothing. That is deliberate: it is how the schema is proven at all;
+- **the schema IS applied to `Atlas Production`, by owner action, out of band, on 2026-08-08.**
+  The owner applied the eight reviewed migration files unmodified, local and remote migration
+  history matched, and the hosted checkpoint of §6.1 P8b then **PASSED with exit code `0`**
+  (§8.6 records the runbook and its outcome). A migration file in a repository was never an
+  applied schema; applying it was an owner action, and **no repository code path can APPLY
+  SCHEMA to a hosted host**: the applier refuses every `*.supabase.co` / `*.supabase.com`
+  endpoint outright, including every Supavisor pooler host, and no flag lifts it
+  (`scripts/apply-supabase-migrations.js`, proven by `npm run check:supabase-safety`). That
+  guard is unchanged and still holds — the owner applied the schema through an owner-side path,
+  not through this repository;
+- **no schema is applied to any OTHER persistent or hosted Atlas target.** The only other place
+  these migrations are applied is the **disposable proof database** of §6.1 P2 — a plain
+  Postgres container created from empty and destroyed with each run, which holds no Atlas data
+  and outlives nothing;
+- **no deployed path reaches `Atlas Production` today.** Since `S2`,
+  `services/supabaseAdapter.js` builds `pg.Pool` instances from the four `ATLAS_SUPABASE_*_URL`
+  role strings and will connect to whatever host it is given — by design, because that is
+  exactly what `S4` requires. What keeps every path away from the hosted target is
+  **configuration, not capability**: no live Atlas environment has any Supabase connection
+  string set. Applying the schema did not change that, and no Render or runtime Supabase
+  credential was configured at the gate;
 - **no product behaviour changed.** The shadow lane is off unless
   `ATLAS_SUPABASE_SHADOW_WRITE=1` **and** a connection string is configured, and neither is in
   any environment;
-- Google Sheets remains the sole live read and write authority for every migrated concept.
+- Google Sheets remains the sole live read and write authority for every migrated concept, and
+  no athlete-facing read or write has moved.
 
-`atlas.write_freeze` (§3.10) is still unwritten — `S3` creates it. `S3` and `S4` remain paper.
+`atlas.write_freeze` (§3.10) is still unwritten — `S3` creates it, and the checkpoint confirmed
+its **absence** in `Atlas Production`. `S3` is now eligible from the P8b dependency alone and
+**has not started**. `S3` and `S4` remain paper.
 
 *Corrected by the required review of `ad18907`, which found this document and the authority map
 both describing `S2` as landed while its PR was still open. A branch does not record itself as
@@ -50,10 +61,11 @@ shadow write and the evidence of it), §5.4 (the export was durable but not idem
 §3.6 (two incompatible rulings on the file-backed store). Decisions D1 through D5 are now
 **resolved by owner ruling** and are recorded in §9 as rulings, not as open questions.
 
-**The Supabase project exists.** The owner created and selected the Free-tier project named
-**Atlas Production**, independently verified healthy and empty, in `us-west-2`, with zero
-public tables and zero migrations. The project reference and every credential stay out of
-this repository (§8.4). Applying a schema to it remains a separate owner action.
+**The Supabase project exists, and now carries the `S2` schema.** The owner created and
+selected the Free-tier project named **Atlas Production** in `us-west-2`. It was independently
+verified healthy and empty — zero public tables, zero migrations — before the `S2` schema was
+applied to it on 2026-08-08; it is no longer empty. The project reference and every credential
+stay out of this repository (§8.4).
 
 ---
 
@@ -132,7 +144,10 @@ no permanent reconciliation logic between them.
   the migrated concepts, the machinery built to keep them inside the read quota, and the
   file-backed receipt store.
 - **Temporary bridge.** A bounded shadow write, a durable divergence record, a
-  reconciliation sweep, and a repair path. All four are live in `PR S2` and `PR S3` only.
+  reconciliation sweep, and a repair path. All four **exist only through `PR S2` and `PR S3`;
+  the runtime remains dormant until configured** — a lifecycle bound, not a runtime claim: no
+  Supabase role connection string is set in any live Atlas environment, so none of the four
+  runs today.
   The athlete-facing write succeeds or fails from the **current authority alone**. The
   shadow write never changes a response, a status code, or a visible claim. Atlas never
   reconciles two authorities silently.
@@ -1562,9 +1577,12 @@ nothing".
   only the second — so a fresh implementation agent could have started `S3` without the hosted
   checkpoint the higher-authority plan requires first.*
 
-  1. **Before `S3` may begin:** the owner applies the `S2` schema to `Atlas Production`, **and
-     the real-Supavisor four-role and session-lock checkpoint passes** (§6.1 P8b, §8.1, and
-     the plan's owner-gate 2). `S3` does not start until it does.
+  1. **Before `S3` may begin — DISCHARGED 2026-08-08.** This gate required the owner to apply
+     the `S2` schema to `Atlas Production` **and** the real-Supavisor four-role and session-lock
+     checkpoint to pass (§6.1 P8b, §8.1, and the plan's owner-gate 2). **Both were done.** The
+     owner applied the eight reviewed migration files, and the checkpoint **PASSED with exit
+     code `0`** (§8.6). Nothing further is owed here: **`S3` is eligible from this dependency
+     alone, and has not started.**
   2. **For `S3`'s deployed freeze evidence:** the owner applies the `S3` `write_freeze`
      migration (§3.10). The PR **may merge before this**; the P8a/P8b deployed-system evidence
      **may not be claimed before it**, because the freeze cannot be proven against a deployed
@@ -2634,7 +2652,7 @@ operation. No lower rung substitutes for a higher one.
 | P16e | **One `write_id` is bound to one route and one effect authority, for its whole life.** Create `W` under a **`supabase`** route, transition it to a retryable state, then present `W` under a **`sheets`** route and prove the request is **refused before any effect** — reported as a route collision rather than as a duplicate, with the stored record **withheld** (a foreign route must not be able to replay another route's response body), the stored row **completely unchanged** (same route, same effect authority, same status, same attempt, no new token, no `ambiguous_at`), and the receipt's **own** route still able to retry. Cover the **reverse** direction. Cover **all three** reclaimable states, not only `failed`: an **expired** row (the most permissive branch), a **prior-process** abandoned attempt, and an **`ambiguous`** row — a foreign route must be refused for collision, never read the row, and never resolve it. Prove `markReceiptAmbiguous` is route-bound in the **statement**, and that `route` and `effect_authority` are both refused to `atlas_app` with SQLSTATE `42501`. *Added by the required review of `5533874`, which found that `route` and `effect_authority` are written only on the initial `INSERT` while the `ON CONFLICT DO UPDATE` path neither rewrites them nor requires the incoming values to match — so a write_id first claimed on a transactional route kept `effect_authority = 'supabase'` when reused on a Sheets route, and the Sheets append became automatically reclaimable after five minutes instead of ambiguous. A mutation that removes the binding must make the behavioural proofs fail; a textual guard alone does not discharge this.* |
 | P8a0 | **The receipt claim is executable and self-contained.** A brand-new receipt is proven to carry a **non-null `expires_at`** and to be immediately visible to `peekWrite`. An **expired `completed`** row is proven **atomically reclaimable in the claim statement** — no housekeeping job runs during the test — with `attempt` and `created_at` reset, matching prune-then-insert. The claim is proven to execute **as `atlas_app` under its actual grants**, not as a superuser. |
 | P8a | **The receipt TTL epoch resets on retry.** Seed a retryable receipt just under 24 hours old; claim a new attempt; complete it; advance the clock past the **original** expiry but inside 24 hours of the retry; and prove `peekWrite` and duplicate replay still succeed. A retry that inherits the first attempt's expiry fails this. |
-| P8b | **NOT AN `S2` MERGE GATE — an owner-gated checkpoint after `S2` is applied to `Atlas Production`, before `S3` begins.** *Corrected by the required review of `039c28c`, which found this gate unproducible under `S2`'s own rules: `S2` applies migrations to a disposable CI database only and is **forbidden** to apply schema to `Atlas Production`, while P2's database is plain Postgres with no Supavisor and no second hosted project is named. As a merge gate it demanded evidence that could only be produced by breaking `S2`'s own constraint or by silently provisioning another hosted project.* What **does** gate the `S2` merge is the local equivalent: the four roles and their exact grants are created and proven on the from-empty Postgres database, as the real roles (P7c). The hosted proof below then runs **after the owner applies `S2` to `Atlas Production`** and **before `S3` starts**, and `S3` may not begin until it passes. **The real Render-compatible connection path works.** Open a **Supavisor session-mode** connection as **each of the four roles** — including the owner-only `atlas_rebuild`, which needs a working connection when a rebuild runs — run a multi-statement transaction, and prove a **session-level advisory lock survives across statements** — the exact behaviour the exporter depends on and the exact behaviour transaction mode would silently break. Prove each pooler connection authenticates as its intended role. Assumed IPv6 reachability does not count as proof. |
+| P8b | **DISCHARGED 2026-08-08 — the owner ran the checkpoint against `Atlas Production` and it PASSED with exit code `0`.** *(Outcome in §8.6; full record in the execution plan under "OWNER GATE — `S2` APPLIED AND P8b PASSED". The gate definition below is retained unchanged.)* **NOT AN `S2` MERGE GATE — an owner-gated checkpoint after `S2` is applied to `Atlas Production`, before `S3` begins.** *Corrected by the required review of `039c28c`, which found this gate unproducible under `S2`'s own rules: `S2` applies migrations to a disposable CI database only and is **forbidden** to apply schema to `Atlas Production`, while P2's database is plain Postgres with no Supavisor and no second hosted project is named. As a merge gate it demanded evidence that could only be produced by breaking `S2`'s own constraint or by silently provisioning another hosted project.* What **does** gate the `S2` merge is the local equivalent: the four roles and their exact grants are created and proven on the from-empty Postgres database, as the real roles (P7c). The hosted proof below then runs **after the owner applies `S2` to `Atlas Production`** and **before `S3` starts**, and `S3` may not begin until it passes. **The real Render-compatible connection path works.** Open a **Supavisor session-mode** connection as **each of the four roles** — including the owner-only `atlas_rebuild`, which needs a working connection when a rebuild runs — run a multi-statement transaction, and prove a **session-level advisory lock survives across statements** — the exact behaviour the exporter depends on and the exact behaviour transaction mode would silently break. Prove each pooler connection authenticates as its intended role. Assumed IPv6 reachability does not count as proof. |
 | P9 | Every drift and authority guard passes. `npm test`, the Playwright suite, lint, syntax, and the secret scan pass. |
 | P10 | **The Supabase GitHub integration cannot reach production** (§8.5). Production auto-deploy and automatic migration are shown **OFF** at the exact head; a merge to the default branch is proven to leave `Atlas Production`'s migration count unchanged; and no GitHub-triggered path holds a production credential. **P2's database is proven independent of the integration** — the integration can be disabled entirely and P2 still runs, which is what keeps a required proof off a paid plan (ruling D3). |
 
@@ -2971,15 +2989,31 @@ at is a setting nobody controls.
 
 ### 8.6 The `S2` → `Atlas Production` owner-gate runbook
 
+> **EXECUTED 2026-08-08 — PASS.** The owner ran every step below against `Atlas Production`.
+> The eight reviewed migration files are applied unmodified, local and remote migration history
+> match, and step 6's checkpoint **PASSED with exit code `0`**: four roles authenticated as
+> themselves through Supavisor session mode on port 5432, a multi-statement transaction stayed
+> on one backend, a session-level advisory lock survived across statements and released, the
+> eleven `S2` tables were present, `atlas.write_freeze` was **absent**, no unreviewed `atlas`
+> table existed, the four roles existed, and `atlas_app`'s column-scoped `write_receipts`
+> `UPDATE` grant was exactly the declared set with `route` and `effect_authority` not updatable.
+> Step 7's condition is therefore met: **`S3` may begin from this gate**, and it has not begun.
+> No credential, connection string, project reference or hostname is recorded anywhere in this
+> repository (§8.4). The runbook below is retained unchanged, as the procedure that was run.
+
 *Added when the gate was prepared.* Every step below is **owner-executed, out of band**. No
 repository path performs any of it, and none may be added: `scripts/apply-supabase-migrations.js`
 refuses every hosted host with no flag to lift it (§6.1 P10), and `npm run check:supabase-safety`
 proves no workflow can reach production. This section records the procedure so it is governed
 rather than improvised; it grants no authority and moves no gate.
 
-**Preconditions, all already true at `main` `5dbc99d`.** `S2` is merged; the eleven migration
-files under `supabase/migrations/` are the exact reviewed set; the schema is applied to no
-persistent or hosted target; no Supabase connection string of any role is configured.
+**Preconditions, as they stood when this runbook was prepared, at `main` `5dbc99d` — before the
+gate was run.** `S2` was merged; the eight migration files under `supabase/migrations/` — which
+define the eleven `S2` tables — were the exact reviewed set; the schema **was at that time applied to no persistent or hosted
+target**; no Supabase connection string of any role was configured. *The third precondition was
+consumed by running this runbook: the schema is now applied to `Atlas Production`. The fourth
+still holds today.* This block records the entry state of a completed procedure. It is not a
+statement about the present.
 
 1. **Confirm the dashboard half of P10 first, before anything is applied.** Production
    auto-deploy **OFF** and automatic migration **OFF** on the `Atlas Production` project. This
@@ -3031,8 +3065,10 @@ persistent or hosted target; no Supabase connection string of any role is config
 **What this gate does NOT do.** It enables no athlete-facing read or write, sets
 `ATLAS_SUPABASE_SHADOW_WRITE` nowhere, and moves no authority: Google Sheets plus
 `services/idempotency.js` remain the sole live authority through `S3`, and Supabase becomes the
-decider only at `S4`. Applying the schema makes Supabase a **shadow / bridge target**, not a
-competing authority (§9, concept 18 of the authority map).
+decider only at `S4`. Applying the schema makes `Atlas Production` a **persistent hosted
+migration / bridge target** — schema existence, not runtime integration, and not a live shadow
+path: the lane stays dormant and unconfigured. It is not a competing authority (§9, concept 18
+of the authority map).
 
 ---
 
@@ -3045,7 +3081,7 @@ The record below is the summary. The per-concept record is
 |---|---|
 | **Current winner** | Google Sheets, through `sheets.js`, for all seven concepts, plus the file-backed store in `services/idempotency.js` for write receipts. |
 | **Intended winner** | Supabase. Sheets becomes an export mirror for the migrated concepts, and stays the editing authority for `Exercise_Catalog`. |
-| **Bridge** | The shadow write, `atlas.migration_divergences`, the reconciliation sweep, and the repair worker. Live in `S2` and `S3` only. |
+| **Bridge** | The shadow write, `atlas.migration_divergences`, the reconciliation sweep, and the repair worker. **Exists through `S2` and `S3` only; the runtime stays dormant until configured.** That is a lifecycle bound, not a runtime claim: no Supabase role connection string is set in any live Atlas environment, so none of the four runs today. The `S4` sunset below is unchanged. |
 | **Exact sunset** | **`PR S4`** deletes every consumer and writer of the four bridge components plus the §5.3 receipt migration seam, and ships the `atlas.migration_divergences` drop as an **owner-run artifact outside `supabase/migrations/`**, executed after the rollback window closes (§5.4 step 5, §5.5). Closure is **two steps**: that execution converges `Atlas Production`, and a post-window versioned migration converges the repository's reproducible schema. **The chain is not closed until both land** — an out-of-band drop alone leaves every fresh replay recreating the table. and deletes the Sheets hot-path reads, the read-budget machinery, the backfill script, the verify-range route, and the file-backed idempotency store with its env var, its file and its six test references — proving no caller remains. `S4` itself is one PR, one merge, one exact-head review — but **the migration's sunset is not `S4`'s merge**: it is reached only when the owner-run drop and the bounded post-window cleanup PR (ruling D8) have both landed. The one thing `S4` does not delete is `atlas.write_freeze` and its route check, **proposed** permanent rather than a bridge and carrying a named permanent consumer — **pending decision D7**, which is open (§5.3, §9). |
 | **Code and tests deleted at closure** | The list in §5.4 step 3. **Nothing on it survives `S4`.** |
 | **Net complexity after migration** | Expected **negative**. Removed: the per-request `batchGet` read context, the route range declarations, the 30-second row cache, the session read-budget harness and its fixture, the reconstruction script, the read-budget document, the verify-range route and its client fallback, and the file-backed idempotency store. Added: ten permanent tables, one proposed-permanent table (`atlas.write_freeze`, decision D7 open) with its per-route check, one adapter module, the `Exercise_Catalog` sync, and the asynchronous export worker. The twelfth table, `atlas.migration_divergences`, and the whole bridge are temporary and are dropped. This expectation is **not yet measured**; `S4` must report the actual net line and module change. |
@@ -3073,9 +3109,19 @@ for unmigrated concepts**, and **Sheets is the export mirror for migrated concep
 writes Constitution text.
 
 **D3 — the Supabase project: RESOLVED.** Use the owner-created Free-tier project **Atlas
-Production**, verified healthy and empty, `us-west-2`, zero public tables, zero migrations.
-No identifier and no credential is committed. Applying a schema to it remains a separate
-owner action.
+Production**, `us-west-2`. **As ruled**, it was verified healthy and empty — zero public
+tables, zero migrations — and applying a schema to it was a separate owner action, still
+outstanding at the time of the ruling. No identifier and no credential is committed.
+
+> **D3's project state is SUPERSEDED as of 2026-08-08; the ruling itself stands.** The
+> selection of `Atlas Production` and the no-identifier-no-credential rule are unchanged and
+> still binding. What is no longer current is the *empty* state: the owner applied the `S2`
+> schema on 2026-08-08 under owner gate 1(a), and the hosted P8b checkpoint **PASSED** with
+> exit code `0`, so the project now carries the eleven `S2` tables and the four scoped roles.
+> **The `S2` application is not pending.** Every *further* schema application — `S3`'s
+> `write_freeze`, `S4`'s cutover schema, and `S4`'s deferred drop — remains a separate owner
+> gate. The runtime is still unconfigured, no connection string is set in any live Atlas
+> environment, and no read or write authority has moved.
 
 **D6 — the `S4` repository topology: WITHDRAWN by owner ruling (2026-08-07).** The chain stays
 the owner-approved **four** PRs, `S1 → S2 → S3 → S4`, and the `S4a` / `S4b` topology is deleted
@@ -3182,8 +3228,11 @@ Each line is a cleanup obligation of the PR named, not of `S1`.
 
 ## 11. What this document does not claim
 
-- It does not claim any Supabase table exists. The `Atlas Production` project was verified
-  empty: zero public tables, zero migrations.
+- It no longer claims `Atlas Production` is empty. It was verified empty — zero public tables,
+  zero migrations — and the owner then applied the `S2` schema to it on 2026-08-08, so the
+  eleven `S2` tables and the four scoped roles now exist there. It still claims **no data has
+  migrated**: those tables are unwritten, no connection string is configured, and Sheets decides
+  alone. It does not claim any `S3` or `S4` table exists; `atlas.write_freeze` is absent.
 - It does not claim a measurement. The net-complexity expectation in §9 and the residual
   read count in §6.2 P4 are both unmeasured, and both are marked as such.
 - It does not authorize applying a schema or deploying.
