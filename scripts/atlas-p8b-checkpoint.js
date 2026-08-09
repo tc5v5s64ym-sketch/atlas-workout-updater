@@ -67,9 +67,43 @@ const S2_TABLES = Object.freeze([
 
 const S3_TABLE_MUST_BE_ABSENT = 'write_freeze';
 
+// §8.2 — the EXACT column-scoped UPDATE grant atlas_app holds on write_receipts.
+// Compared as a set: no more and no fewer. `route` and `effect_authority` are
+// deliberately absent, because the one-write_id-one-route binding is defeated by
+// relabelling a row, not only by editing a statement.
+const APP_UPDATABLE_COLUMNS = Object.freeze([
+  'ambiguity_proof', 'ambiguous_at', 'appended_range', 'attempt', 'attempt_started_at',
+  'attempt_token', 'completed_at', 'created_at', 'expires_at', 'owner_instance_id',
+  'response_body', 'rows_written', 'session_id', 'status',
+]);
+
+// §8.4 — the project reference is a secret, so it is supplied at run time like
+// the connection strings and never committed. It is REQUIRED: a checkpoint that
+// cannot tell WHICH project it tested proves nothing about `Atlas Production`,
+// and every hosted Supabase project shares the same pooler host shape. Without
+// this, four strings pointed at a different project carrying the S2 schema would
+// discharge the gate. Found by the advisory review of `0668162`.
+const EXPECTED_REF_ENV = 'ATLAS_SUPABASE_EXPECTED_PROJECT_REF';
+
+// Supavisor carries the project in the pooler username as `postgres.<ref>`.
+// Returned, never logged.
+function projectRefOf(url) {
+  try {
+    const username = decodeURIComponent(new URL(url).username || '');
+    const dot = username.indexOf('.');
+    if (dot < 0) return null;
+    const ref = username.slice(dot + 1).trim();
+    return ref.length > 0 ? ref : null;
+  } catch {
+    return null;
+  }
+}
+
 // Supavisor's session-mode port. Transaction mode is 6543 and is the exact
 // misconfiguration this gate exists to catch, so it is named rather than merely
 // excluded.
+const CONNECT_TIMEOUT_MS = Number(process.env.ATLAS_P8B_CONNECT_TIMEOUT_MS || 15000);
+
 const SESSION_MODE_PORT = 5432;
 const TRANSACTION_MODE_PORT = 6543;
 
@@ -148,6 +182,95 @@ function checkEndpointShape(role, url) {
   return shape;
 }
 
+// Credential presence, checked BEFORE anything connects and before the project
+// identity is established. It costs nothing and it means a run that stops on an
+// unidentified project still hands the operator the complete list of what is
+// missing, rather than one problem at a time.
+function checkCredentialsPresent() {
+  for (const { role, env, note } of ROLES) {
+    const url = (process.env[env] || '').trim();
+    if (!url) {
+      record(
+        `${role}: credential`, 'FAIL',
+        `${env} is not set. P8b requires a working connection as ALL FOUR roles — ` +
+        `${role} is ${note}. An untested role is not a proven role.`
+      );
+    } else {
+      record(`${role}: credential`, 'PASS', `${env} is set`);
+    }
+  }
+}
+
+// P1 of the advisory review of `0668162`: BIND THE GATE TO ONE PROJECT.
+//
+// Every hosted Supabase project shares the `*.pooler.supabase.com` host shape, so
+// the endpoint rules above prove "a hosted pooler in session mode" and nothing
+// about WHICH project. Four strings aimed at another project carrying the same S2
+// schema would satisfy every later check and discharge the gate without ever
+// touching `Atlas Production`.
+//
+// Two things are checked, and the cheaper one catches the likelier mistake:
+//   1. all four roles resolve to the SAME project — a mixed set is a
+//      misconfiguration even when every individual string works;
+//   2. that project equals the owner-supplied expected reference.
+//
+// The reference is never printed, only compared (§8.4).
+function checkProjectIdentity() {
+  const expected = (process.env[EXPECTED_REF_ENV] || '').trim();
+  if (!expected) {
+    record(
+      'project identity: bound to the expected project', 'FAIL',
+      `${EXPECTED_REF_ENV} is not set. A checkpoint that cannot tell which project it ` +
+      'tested proves nothing about Atlas Production — every hosted project shares the ' +
+      'same pooler host shape. Supply it at run time; it is a secret and is never committed.'
+    );
+    return false;
+  }
+
+  const seen = new Map();
+  let unreadable = false;
+  for (const { role, env } of ROLES) {
+    const url = (process.env[env] || '').trim();
+    if (!url) continue;                       // already reported as a missing credential
+    const ref = projectRefOf(url);
+    if (!ref) {
+      record(
+        `project identity: ${role} carries a project reference`, 'FAIL',
+        'the pooler username is not `postgres.<projectref>`. Supavisor identifies the ' +
+        'project in the username, so a string without one is not a pooler string.'
+      );
+      unreadable = true;
+      continue;
+    }
+    seen.set(role, ref);
+  }
+  if (unreadable || seen.size === 0) return false;
+
+  const distinct = new Set(seen.values());
+  if (distinct.size > 1) {
+    // Names the ROLES that disagree, never the references themselves.
+    record(
+      'project identity: all four roles target one project', 'FAIL',
+      `the four connection strings resolve to ${distinct.size} different projects ` +
+      `(roles checked: ${[...seen.keys()].join(', ')}). Redacted deliberately.`
+    );
+    return false;
+  }
+  record('project identity: all four roles target one project', 'PASS', `${seen.size} role(s) agree`);
+
+  const actual = [...distinct][0];
+  if (actual !== expected) {
+    record(
+      'project identity: bound to the expected project', 'FAIL',
+      `the connection strings do not target the project named by ${EXPECTED_REF_ENV}. ` +
+      'Both values are redacted; this gate is about Atlas Production and nothing else.'
+    );
+    return false;
+  }
+  record('project identity: bound to the expected project', 'PASS', `matches ${EXPECTED_REF_ENV}`);
+  return true;
+}
+
 // THE LOAD-BEARING MECHANISM, extracted so it can be proven against a real
 // database before the owner ever runs this against Atlas Production.
 //
@@ -191,19 +314,11 @@ async function proveSessionLock(client, lockKey) {
 // The core of P8b. One connection, four facts, in one session.
 async function checkRole({ role, env, note }) {
   const url = (process.env[env] || '').trim();
-  if (!url) {
-    record(
-      `${role}: credential`, 'FAIL',
-      `${env} is not set. P8b requires a working connection as ALL FOUR roles — ` +
-      `${role} is ${note}. An untested role is not a proven role.`
-    );
-    return;
-  }
-  record(`${role}: credential`, 'PASS', `${env} is set`);
-
+  if (!url) return;                      // already reported by checkCredentialsPresent
   if (!checkEndpointShape(role, url)) return;
 
-  const client = new Client({ connectionString: url });
+  // Bounded: a pooler that never answers must fail the gate, not hang it.
+  const client = new Client({ connectionString: url, connectionTimeoutMillis: CONNECT_TIMEOUT_MS });
   try {
     await client.connect();
   } catch (err) {
@@ -286,7 +401,7 @@ async function checkSchema() {
     record('schema: S2 tables present', 'FAIL', 'ATLAS_SUPABASE_READONLY_URL is not set');
     return;
   }
-  const client = new Client({ connectionString: url });
+  const client = new Client({ connectionString: url, connectionTimeoutMillis: CONNECT_TIMEOUT_MS });
   try {
     await client.connect();
   } catch (err) {
@@ -342,37 +457,55 @@ async function checkSchema() {
 
     // atlas_app's column-scoped UPDATE grants are the ones a hand-applied schema
     // is most likely to lose, and the ones the receipt state machine depends on.
+    //
+    // READ WITH has_column_privilege(), NOT information_schema.column_privileges.
+    // *Advisory review of `0668162`.* That view exposes only grants involving
+    // CURRENTLY ENABLED roles, and atlas_readonly has no membership in atlas_app —
+    // so the query returned zero rows and every required column read as missing.
+    // The checkpoint would have reported FAIL on a perfectly applied schema, and
+    // the gate could never have been discharged. Verified on Postgres 16 before
+    // this was rewritten. has_column_privilege() is a catalog function and does
+    // not depend on which roles are enabled.
+    //
+    // Enumerated over EVERY column and compared as a SET, so the answer is exact
+    // in BOTH directions. A missing grant breaks the receipt state machine; an
+    // EXTRA one is worse and was previously invisible — an accidental UPDATE on
+    // `write_id` would let the runtime alter receipt IDENTITY, and the old check
+    // would still have called the set "exactly" declared.
     const grants = await client.query(
-      `SELECT table_name, column_name
-         FROM information_schema.column_privileges
-        WHERE grantee = 'atlas_app' AND privilege_type = 'UPDATE'
-          AND table_schema = 'atlas' AND table_name = 'write_receipts'
-        ORDER BY column_name`
+      `SELECT c.column_name,
+              has_column_privilege('atlas_app', 'atlas.write_receipts', c.column_name, 'UPDATE') AS granted
+         FROM information_schema.columns c
+        WHERE c.table_schema = 'atlas' AND c.table_name = 'write_receipts'
+        ORDER BY c.column_name`
     );
-    const cols = grants.rows.map((r) => r.column_name);
-    const required = [
-      'ambiguity_proof', 'ambiguous_at', 'appended_range', 'attempt', 'attempt_started_at',
-      'attempt_token', 'completed_at', 'created_at', 'expires_at', 'owner_instance_id',
-      'response_body', 'rows_written', 'session_id', 'status',
-    ];
-    const missingCols = required.filter((c) => !cols.includes(c));
-    // route and effect_authority must NOT be updatable: the round-5 binding of
-    // one write_id to one route is defeated by relabelling a row, not only by
-    // editing a statement.
-    const forbidden = ['route', 'effect_authority'].filter((c) => cols.includes(c));
-    if (missingCols.length || forbidden.length) {
+    if (grants.rows.length === 0) {
       record(
         'grants: atlas_app column-scoped UPDATE on write_receipts', 'FAIL',
-        [
-          missingCols.length ? `missing: ${missingCols.join(', ')}` : '',
-          forbidden.length ? `must NOT be granted: ${forbidden.join(', ')}` : '',
-        ].filter(Boolean).join('; ')
+        'write_receipts has no columns visible — the table is missing or unreadable'
       );
     } else {
-      record(
-        'grants: atlas_app column-scoped UPDATE on write_receipts', 'PASS',
-        `exactly the ${required.length} declared columns; route and effect_authority immutable`
-      );
+      const actual = grants.rows.filter((r) => r.granted === true).map((r) => r.column_name).sort();
+      const missingCols = APP_UPDATABLE_COLUMNS.filter((c) => !actual.includes(c));
+      const extraCols = actual.filter((c) => !APP_UPDATABLE_COLUMNS.includes(c));
+      if (missingCols.length || extraCols.length) {
+        record(
+          'grants: atlas_app column-scoped UPDATE on write_receipts', 'FAIL',
+          [
+            missingCols.length ? `missing: ${missingCols.join(', ')}` : '',
+            // route and effect_authority are the ones that matter most, because the
+            // binding of one write_id to one route is defeated by relabelling a row
+            // rather than by editing a statement — but ANY extra column fails.
+            extraCols.length ? `granted but NOT declared: ${extraCols.join(', ')}` : '',
+          ].filter(Boolean).join('; ')
+        );
+      } else {
+        record(
+          'grants: atlas_app column-scoped UPDATE on write_receipts', 'PASS',
+          `exactly the ${APP_UPDATABLE_COLUMNS.length} declared columns, no more and no fewer; ` +
+          'route and effect_authority immutable'
+        );
+      }
     }
   } catch (err) {
     record('schema: S2 tables present', 'FAIL', `unexpected error: ${err.code || err.message}`);
@@ -384,8 +517,20 @@ async function checkSchema() {
 async function main() {
   const json = process.argv.includes('--json');
 
-  for (const entry of ROLES) await checkRole(entry);
-  await checkSchema();
+  // DO NOT OPEN A CONNECTION TO A PROJECT THIS RUN CANNOT IDENTIFY. Every later
+  // check would be evidence about an unknown target, and a FAIL from one of them
+  // would read as a fact about Atlas Production. Fail fast instead.
+  checkCredentialsPresent();
+  if (checkProjectIdentity()) {
+    for (const entry of ROLES) await checkRole(entry);
+    await checkSchema();
+  } else {
+    record(
+      'checkpoint: not run', 'FAIL',
+      'no connection was opened. The project identity could not be established, so any ' +
+      'result below it would be evidence about an unknown target rather than about Atlas Production.'
+    );
+  }
 
   const verdict = failed ? 'FAIL' : 'PASS';
   if (json) {
@@ -414,6 +559,7 @@ if (require.main === module) {
 }
 
 module.exports = {
-  ROLES, S2_TABLES, S3_TABLE_MUST_BE_ABSENT, describeEndpoint,
-  proveSessionLock, SESSION_MODE_PORT, TRANSACTION_MODE_PORT,
+  ROLES, S2_TABLES, S3_TABLE_MUST_BE_ABSENT, describeEndpoint, projectRefOf,
+  proveSessionLock, SESSION_MODE_PORT, TRANSACTION_MODE_PORT, EXPECTED_REF_ENV,
+  APP_UPDATABLE_COLUMNS,
 };

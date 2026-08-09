@@ -22,7 +22,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { withRole, resetSchema, connect, roleUrl } = require('./support/db');
+const { withOwner, withRole, resetSchema, connect, roleUrl } = require('./support/db');
 const adapter = require('../services/supabaseAdapter');
 const { proveSessionLock } = require('../scripts/atlas-p8b-checkpoint');
 
@@ -125,3 +125,95 @@ async function tableCounts() {
   });
   return counts;
 }
+
+// ── The grant check: visibility-independent, and exact in BOTH directions ─────
+//
+// *Advisory review of `0668162`, P1.* The first version read
+// information_schema.column_privileges as atlas_readonly. That view exposes only
+// grants involving CURRENTLY ENABLED roles, and atlas_readonly has no membership
+// in atlas_app — so it returned zero rows, every required column read as missing,
+// and the checkpoint would have reported FAIL on a perfectly applied schema. The
+// owner gate could never have been discharged.
+
+const APP_UPDATE_QUERY = `
+  SELECT c.column_name,
+         has_column_privilege('atlas_app', 'atlas.write_receipts', c.column_name, 'UPDATE') AS granted
+    FROM information_schema.columns c
+   WHERE c.table_schema = 'atlas' AND c.table_name = 'write_receipts'
+   ORDER BY c.column_name`;
+
+const { APP_UPDATABLE_COLUMNS } = require('../scripts/atlas-p8b-checkpoint');
+
+test('P8b grants: the OLD approach really was blind — information_schema shows atlas_readonly nothing', async () => {
+  // The defect, pinned. If someone reverts to the view, this fails loudly rather
+  // than the gate quietly going permanently red.
+  await withRole('atlas_readonly', async (client) => {
+    const { rows } = await client.query(
+      `SELECT count(*)::int AS n
+         FROM information_schema.column_privileges
+        WHERE grantee = 'atlas_app' AND privilege_type = 'UPDATE'
+          AND table_schema = 'atlas' AND table_name = 'write_receipts'`
+    );
+    assert.equal(rows[0].n, 0, 'the view is role-visibility scoped — this is why the check was rewritten');
+  });
+});
+
+test('P8b grants: has_column_privilege sees the real grant set from atlas_readonly', async () => {
+  await withRole('atlas_readonly', async (client) => {
+    const { rows } = await client.query(APP_UPDATE_QUERY);
+    assert.ok(rows.length > 0, 'the columns must be enumerable');
+    const granted = rows.filter((r) => r.granted === true).map((r) => r.column_name).sort();
+    // The real applied schema must match the declared set EXACTLY.
+    assert.deepEqual(granted, [...APP_UPDATABLE_COLUMNS].sort());
+  });
+});
+
+test('P8b grants: route and effect_authority are NOT updatable, read the same way', async () => {
+  await withRole('atlas_readonly', async (client) => {
+    const { rows } = await client.query(APP_UPDATE_QUERY);
+    const byName = Object.fromEntries(rows.map((r) => [r.column_name, r.granted]));
+    assert.equal(byName.route, false, 'relabelling a route would defeat the write_id binding');
+    assert.equal(byName.effect_authority, false, 'relabelling the authority would unlock automatic retry');
+  });
+});
+
+test('P8b grants: an EXTRA grant is DETECTED — the check is exact, not just a subset test', async () => {
+  // *Advisory review of `0668162`, third P1.* The old check tested only "nothing
+  // missing" plus two named forbidden columns, so an accidental grant on any
+  // other column passed. write_id is the sharpest case: updatable receipt
+  // IDENTITY, reported as "exactly the declared set".
+  await withOwner(async (client) => {
+    await client.query('GRANT UPDATE (write_id) ON atlas.write_receipts TO atlas_app');
+  });
+  try {
+    await withRole('atlas_readonly', async (client) => {
+      const { rows } = await client.query(APP_UPDATE_QUERY);
+      const granted = rows.filter((r) => r.granted === true).map((r) => r.column_name).sort();
+      const extra = granted.filter((c) => !APP_UPDATABLE_COLUMNS.includes(c));
+      assert.deepEqual(extra, ['write_id'], 'an undeclared grant must be visible to the checkpoint');
+    });
+  } finally {
+    await withOwner(async (client) => {
+      await client.query('REVOKE UPDATE (write_id) ON atlas.write_receipts FROM atlas_app');
+    });
+  }
+});
+
+test('P8b grants: a REVOKED required grant is DETECTED', async () => {
+  await withOwner(async (client) => {
+    await client.query('REVOKE UPDATE (status) ON atlas.write_receipts FROM atlas_app');
+  });
+  try {
+    await withRole('atlas_readonly', async (client) => {
+      const { rows } = await client.query(APP_UPDATE_QUERY);
+      const granted = rows.filter((r) => r.granted === true).map((r) => r.column_name);
+      assert.ok(!granted.includes('status'), 'a lost grant must be visible');
+      const missing = APP_UPDATABLE_COLUMNS.filter((c) => !granted.includes(c));
+      assert.deepEqual(missing, ['status']);
+    });
+  } finally {
+    await withOwner(async (client) => {
+      await client.query('GRANT UPDATE (status) ON atlas.write_receipts TO atlas_app');
+    });
+  }
+});

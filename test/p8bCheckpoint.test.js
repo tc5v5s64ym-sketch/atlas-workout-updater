@@ -148,3 +148,100 @@ test('P8b: nothing on a request path invokes the checkpoint', () => {
   }
   assert.deepEqual(offenders, []);
 });
+
+// ── Binding the gate to ONE project, and to the EXPECTED one ─────────────────
+//
+// *Advisory review of `0668162`, P1.* Every hosted Supabase project shares the
+// `*.pooler.supabase.com` host shape, so the endpoint rules prove "a hosted
+// pooler in session mode" and nothing about WHICH project. Four strings aimed at
+// another project carrying the same S2 schema would satisfy every later check and
+// discharge the gate without ever touching Atlas Production.
+
+const REF_A = 'projrefaaa';
+const REF_B = 'projrefbbb';
+function poolerUrl(ref, host = POOLER_HOST, port = 5432) {
+  return `postgres://postgres.${ref}:pw${AT}${host}:${port}/postgres`;
+}
+
+test('P8b: the project reference is read from the pooler username, never from the host', () => {
+  // Supavisor identifies the project in the username as `postgres.<ref>`.
+  assert.equal(checkpoint.projectRefOf(poolerUrl(REF_A)), REF_A);
+  // A username with no project part is not a pooler string.
+  assert.equal(checkpoint.projectRefOf(endpoint(POOLER_HOST, 5432)), null);
+  assert.equal(checkpoint.projectRefOf('not a url'), null);
+});
+
+test('P8b: the expected-project variable is REQUIRED, and its absence FAILS the gate', async () => {
+  // Fail closed: a checkpoint that cannot tell which project it tested proves
+  // nothing about Atlas Production.
+  assert.equal(checkpoint.EXPECTED_REF_ENV, 'ATLAS_SUPABASE_EXPECTED_PROJECT_REF');
+
+  const { execFileSync } = require('child_process');
+  const env = { ...process.env };
+  for (const entry of checkpoint.ROLES) env[entry.env] = poolerUrl(REF_A);
+  delete env[checkpoint.EXPECTED_REF_ENV];
+
+  let output = '';
+  try {
+    output = execFileSync(process.execPath, [SCRIPT, '--json'], { env, encoding: 'utf8' });
+  } catch (err) {
+    output = err.stdout || '';
+  }
+  const report = JSON.parse(output);
+  assert.equal(report.verdict, 'FAIL');
+  const identity = report.checks.find((c) => c.check.includes('bound to the expected project'));
+  assert.ok(identity, 'the gate must report on project identity');
+  assert.equal(identity.status, 'FAIL');
+  assert.match(identity.detail, /ATLAS_SUPABASE_EXPECTED_PROJECT_REF is not set/);
+});
+
+test('P8b: four strings pointing at DIFFERENT projects fail before anything else can pass', async () => {
+  const { execFileSync } = require('child_process');
+  const env = { ...process.env };
+  checkpoint.ROLES.forEach((entry, i) => { env[entry.env] = poolerUrl(i === 0 ? REF_B : REF_A); });
+  env[checkpoint.EXPECTED_REF_ENV] = REF_A;
+
+  let output = '';
+  try {
+    output = execFileSync(process.execPath, [SCRIPT, '--json'], { env, encoding: 'utf8' });
+  } catch (err) {
+    output = err.stdout || '';
+  }
+  const report = JSON.parse(output);
+  assert.equal(report.verdict, 'FAIL');
+  const mixed = report.checks.find((c) => c.check.includes('all four roles target one project'));
+  assert.equal(mixed.status, 'FAIL');
+  // The references themselves are never printed — only which roles were checked.
+  assert.ok(!mixed.detail.includes(REF_A) && !mixed.detail.includes(REF_B), 'references stay redacted');
+});
+
+test('P8b: a project that is not the expected one fails, with both values redacted', async () => {
+  const { execFileSync } = require('child_process');
+  const env = { ...process.env };
+  for (const entry of checkpoint.ROLES) env[entry.env] = poolerUrl(REF_B);
+  env[checkpoint.EXPECTED_REF_ENV] = REF_A;
+
+  let output = '';
+  try {
+    output = execFileSync(process.execPath, [SCRIPT, '--json'], { env, encoding: 'utf8' });
+  } catch (err) {
+    output = err.stdout || '';
+  }
+  const report = JSON.parse(output);
+  assert.equal(report.verdict, 'FAIL');
+  const bound = report.checks.find((c) => c.check.includes('bound to the expected project'));
+  assert.equal(bound.status, 'FAIL');
+  assert.ok(!bound.detail.includes(REF_A) && !bound.detail.includes(REF_B), 'references stay redacted');
+  // And the whole report, not just this line, must be free of them.
+  const whole = JSON.stringify(report);
+  assert.ok(!whole.includes(REF_A) && !whole.includes(REF_B), 'no check may leak a project reference');
+});
+
+test('P8b: the declared atlas_app UPDATE set is exact, and excludes route/effect_authority', () => {
+  // Compared as a SET by the checkpoint: no more and no fewer. An extra grant on
+  // write_id would let the runtime alter receipt identity.
+  assert.equal(checkpoint.APP_UPDATABLE_COLUMNS.length, 14);
+  for (const forbidden of ['route', 'effect_authority', 'write_id']) {
+    assert.ok(!checkpoint.APP_UPDATABLE_COLUMNS.includes(forbidden), `${forbidden} must not be updatable`);
+  }
+});

@@ -3000,8 +3000,16 @@ persistent or hosted target; no Supabase connection string of any role is config
    (§8.1). Not port 6543: transaction mode returns a different backend per transaction, and the
    §5.4 export's session-level advisory lock would appear to work and hold nothing. Keep all
    four out of the repository, out of any PR body, and out of GitHub Actions (§8.4, §8.5).
-6. **Run the checkpoint** with those four strings in the environment:
-   `npm run atlas:p8b` (add `-- --json` for the machine record). It is read-only, applies no
+6. **Run the checkpoint** with those four strings **and the expected project reference** in
+   the environment — `ATLAS_SUPABASE_EXPECTED_PROJECT_REF`, supplied at run time because §8.4
+   makes the reference a secret: `npm run atlas:p8b` (add `-- --json` for the machine record).
+   **It is required, and its absence is a `FAIL`.** Every hosted Supabase project shares the
+   same `*.pooler.supabase.com` host shape, so without it four strings aimed at a different
+   project carrying the same schema would satisfy every other check and discharge this gate
+   without ever touching `Atlas Production`. The checkpoint also requires all four roles to
+   resolve to **one** project, and **opens no connection at all** until the project is
+   identified — a result gathered from an unknown target would read as a fact about production.
+   Neither the expected reference nor the actual one is ever printed. It is read-only, applies no
    schema, and writes no row. It proves, per role: the pooler authenticates as the **intended**
    role; a multi-statement transaction commits on one pinned backend; and a **session-level
    advisory lock survives across later statements**. It then verifies the eleven `S2` tables are
