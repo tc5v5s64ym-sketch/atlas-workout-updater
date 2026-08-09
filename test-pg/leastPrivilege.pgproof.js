@@ -296,26 +296,40 @@ test('P7c: atlas_migrate executes the declared cutover receipt carry as its real
 // This is the security half of owner ruling D7: the runtime CANNOT lift a freeze,
 // and that is enforced by the absence of a grant rather than by any code path. The
 // behavioural refusals are proven as the real role in writeFreeze.pgproof.js.
-test('atlas.write_freeze carries SELECT and NOTHING else — no role may write the control', async () => {
+test('atlas.write_freeze is GRANTED to nobody but readers — no role may write the control', async () => {
   await withOwner(async (client) => {
+    const owner = await client.query(
+      `SELECT tableowner FROM pg_tables WHERE schemaname = 'atlas' AND tablename = 'write_freeze'`
+    );
+    assert.equal(owner.rows[0].tableowner, 'atlas_migrate',
+      'the control is owned by the migration role, like every other table in the schema');
+
     const { rows } = await client.query(
       `SELECT grantee, privilege_type FROM information_schema.table_privileges
         WHERE table_schema = 'atlas' AND table_name = 'write_freeze'
         ORDER BY grantee, privilege_type`
     );
 
-    // NOT ONE of the four roles may INSERT, UPDATE, DELETE or TRUNCATE it. Stated
-    // as a whole-table sweep rather than per role, so a grant to a role this test
-    // did not think to name is still caught.
-    const writes = rows.filter((r) => r.privilege_type !== 'SELECT');
+    // THE OWNER IS EXCLUDED, AND THE REASON IS RECORDED RATHER THAN ASSUMED.
+    //
+    // In PostgreSQL, DDL authority IS ownership, and an owner's implicit privileges
+    // appear in this view. S2's file 8 already records that the owner's DML cannot
+    // be revoked without breaking foreign-key checks, and that the real boundary is
+    // therefore two other things: atlas_migrate is NEVER configured in the server
+    // runtime (proven by source scan in test/supabaseRoleSeparation.test.js), and
+    // atlas_app's grant list is exact. The same reasoning governs this table.
+    const granted = rows.filter((r) => r.grantee !== 'atlas_migrate');
+
+    // NOT ONE granted role may INSERT, UPDATE, DELETE or TRUNCATE it. Swept across
+    // every grantee rather than checked per role, so a write granted to a role this
+    // test did not think to name is still caught.
     assert.deepEqual(
-      writes, [],
+      granted.filter((r) => r.privilege_type !== 'SELECT'), [],
       'only the Supabase project owner may mutate the freeze — a granted write would be a second authority'
     );
 
     // And the runtime CAN read it, or the control could never admit a write.
-    const readers = rows.filter((r) => r.privilege_type === 'SELECT').map((r) => r.grantee).sort();
-    assert.ok(readers.includes('atlas_app'), 'the runtime must be able to read the control');
+    const readers = [...new Set(granted.map((r) => r.grantee))].sort();
     assert.deepEqual(readers, ['atlas_app', 'atlas_readonly', 'atlas_rebuild'],
       'exactly the three read-capable roles, and no other grantee');
   });

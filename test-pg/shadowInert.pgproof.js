@@ -131,18 +131,27 @@ async function withShadowWriteBroken(fn) {
   }
 }
 
+async function mirroredRowCount() {
+  return withOwner(async (client) => {
+    const { rows } = await client.query('SELECT count(*)::int AS n FROM atlas.logged_sets');
+    return rows[0].n;
+  });
+}
+
 test('P3: the response is BYTE-IDENTICAL when the shadow write FAILS outright', async () => {
   const off = saveOnce({ ATLAS_SUPABASE_SHADOW_WRITE: '0' });
+
+  // Measured either side of the broken run, so the claim is "this run mirrored
+  // NOTHING" rather than "the table happens to be empty" — which would depend on
+  // what every earlier statement in this file left behind.
+  const before = await mirroredRowCount();
   const broken = await withShadowWriteBroken(() => saveOnce({ ATLAS_SUPABASE_SHADOW_WRITE: '1' }));
+  const after = await mirroredRowCount();
 
   assert.equal(broken.status, 200, `the Save must succeed from Sheets alone:\n${broken.raw}`);
   assert.equal(normalize(broken.raw), normalize(off.raw));
-
-  // The shadow really did fail: nothing reached the mirror.
-  await withOwner(async (client) => {
-    const { rows } = await client.query('SELECT count(*)::int AS n FROM atlas.logged_sets');
-    assert.equal(rows[0].n, 0, 'a shadow write that silently succeeded would make this proof vacuous');
-  });
+  assert.equal(after, before,
+    'a shadow write that silently succeeded would make this proof vacuous — it must have failed outright');
 });
 
 test('P3: no proof field, status code, or visible claim mentions the shadow lane', () => {
