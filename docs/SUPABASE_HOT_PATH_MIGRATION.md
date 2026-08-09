@@ -3060,10 +3060,22 @@ toggle: a path that does not exist cannot be switched back on by a settings chan
 > Step 7's condition is therefore met: **`S3` may begin from this gate**, and it has not begun.
 > No credential, connection string, project reference or hostname is recorded anywhere in this
 > repository (§8.4). **The procedure below is the one that was executed, and its steps are
-> unchanged.** One editorial correction was made to it after the run: step 3's parenthetical
-> rationale for ignoring `supabase/.temp/` cited the retired "the reference is a secret"
-> policy, and now cites the credential-bearing state that is the real reason. **No step, no
-> order, and no action changed** — the gate that PASSED is the gate recorded here.
+> unchanged.** **TWO editorial corrections were made to it after the run**, both to *rationale*
+> text and both because the retired "the project reference is a secret" classification survived
+> in prose after §8.4 reversed it:
+>
+> 1. **Step 3** — the parenthetical rationale for ignoring `supabase/.temp/` cited that retired
+>    policy, and now cites the **credential-bearing and transient CLI state** that is the real
+>    reason.
+> 2. **Step 6** — the rationale for supplying `ATLAS_SUPABASE_EXPECTED_PROJECT_REF` at run time
+>    cited that retired policy, and now cites the real reason: it **binds the checkpoint to the
+>    owner-selected production target**, so the gate cannot be discharged against the wrong
+>    hosted project.
+>
+> **Neither correction changed an executable step, the step order, an action, a gate
+> requirement, the target-binding or fail-closed behaviour, or any PASS evidence.** The variable
+> stays required and its absence stays a `FAIL`. **The executed P8b PASS therefore stands, and
+> the gate that PASSED is the gate recorded here.**
 
 *Added when the gate was prepared.* Every step below is **owner-executed, out of band**. No
 repository path performs any of it, and none may be added: `scripts/apply-supabase-migrations.js`
