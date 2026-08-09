@@ -455,6 +455,58 @@ require.cache[visionPath] = {
   },
 };
 
+// ── The S3 write-admission control, made steerable for the browser rung ─────────
+//
+// docs/SUPABASE_HOT_PATH_MIGRATION.md §3.10 / §5.3; owner ruling D7 (2026-08-09).
+// From S3 on, the seven beginWrite routes read atlas.write_freeze before any side
+// effect and refuse unless that read returns exactly one valid row saying
+// frozen = false. The Playwright job has no database, so a spec that needs the
+// control to ADMIT has no way to say so — and a spec that needs it to REFUSE gets
+// that for free from an unreachable connection string.
+//
+// DEFAULT: NOT SET, and then nothing here runs at all. No ATLAS_SUPABASE_APP_URL
+// is configured in this harness, so the control is DORMANT and every existing spec
+// behaves exactly as it did before S3 (§6.2 P12). This block only ever activates
+// when a spec asks for a posture by name.
+//
+// It stubs the ADAPTER, never the control: services/writeFreeze.js — the fail-closed
+// decision under test — is the real module, and it reads whatever this returns.
+const GATE_WRITE_FREEZE = String(process.env.ATLAS_GATE_WRITE_FREEZE || '').trim();
+if (GATE_WRITE_FREEZE) {
+  const realAdapter = require('../../../services/supabaseAdapter');
+  const adapterPath = require.resolve('../../../services/supabaseAdapter');
+  const FREEZE_ROW = (frozen) => ({
+    id: true,
+    frozen,
+    reason: frozen ? 'gate harness — frozen posture' : 'gate harness — dormant posture',
+    set_by: 'gate-server',
+    set_at: new Date(),
+  });
+  const POSTURES = {
+    open: async () => [FREEZE_ROW(false)],
+    frozen: async () => [FREEZE_ROW(true)],
+    absent: async () => [],
+    unreadable: async () => { throw new Error('gate harness — the freeze read failed'); },
+  };
+  const posture = POSTURES[GATE_WRITE_FREEZE];
+  if (!posture) {
+    console.error(`GATE_POSTURE_ERROR: unknown ATLAS_GATE_WRITE_FREEZE="${GATE_WRITE_FREEZE}" (open|frozen|absent|unreadable)`);
+    process.exit(2);
+  }
+  require.cache[adapterPath] = {
+    id: adapterPath, filename: adapterPath, loaded: true,
+    exports: {
+      ...realAdapter,
+      // ARM the control. Everything else about the adapter — including the shadow
+      // lane's own configuration check — keeps the real implementation, so a spec
+      // can have the freeze admit while the shadow write genuinely fails.
+      isConfigured: (role = 'app') => (role === 'app' ? true : realAdapter.isConfigured(role)),
+      readWriteFreeze: posture,
+    },
+  };
+  console.log(`GATE_WRITE_FREEZE=${GATE_WRITE_FREEZE}`);
+}
+
 const { app } = require('../../../index.js');
 
 // ── Posture assertion — a harness that CLAIMS a posture must BE in it ─────────────

@@ -361,8 +361,11 @@ revisions, item outcomes, and closeout and write receipts.
 - **Intended sole authority.** Supabase, in the ten permanent record tables of
   [`docs/SUPABASE_HOT_PATH_MIGRATION.md`](./SUPABASE_HOT_PATH_MIGRATION.md) §3.1–§3.9.
   Alongside them `PR S3` builds `atlas.write_freeze` (§3.10), an owner-controlled
-  write-admission control that holds no record and moves no authority; whether it survives the
-  migration is **open decision D7**, for the owner at the `S3` gate. Google Sheets
+  write-admission control that holds no record and moves no authority. It is **PERMANENT Atlas
+  safety infrastructure with no sunset — owner ruling D7, APPROVED 2026-08-09** (recorded in
+  `docs/ATLAS_V1_EXECUTION_PLAN.md`), so `S4` does not delete it; its named permanent consumer
+  is `CLAUDE.md`'s standing rule that a production data-integrity anomaly freezes writes
+  immediately. Google Sheets
   becomes a human-readable export mirror for these concepts, and is never required for an
   active workout to read, save, verify, or close out.
 - **Competing authority.** **NONE TODAY.** Nothing has migrated, and the reason is no longer
@@ -477,7 +480,9 @@ revisions, item outcomes, and closeout and write receipts.
   PR S4 cutover itself, which additionally requires a verified backup, a proven restore, a
   stated rollback window, and an open-divergence count of zero. Decisions D1, D3, D4 and D5
   are **resolved** by the required Atlas Contract / Systems Reviews of 2026-08-07; D6 is
-  **withdrawn** and D7 (whether the write freeze survives the migration) is **open**.
+  **withdrawn**; D8 is **resolved** by owner ruling (2026-08-07); and **D7 is RESOLVED by owner
+  ruling (2026-08-09)** — the write freeze is permanent Atlas safety infrastructure with no
+  sunset, and `S4` does not delete it. **No migration decision remains open.**
 - **Phase 4 relevance.** None yet. The migration changes where the record lives. It changes
   no engine, no decision, no packet, and no trace. `preview → approve → write`, `test_mode`
   semantics, and the W1–W3 proof fields are untouched.

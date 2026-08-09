@@ -541,6 +541,22 @@ const SQL = Object.freeze({
            sheets_export_error = $3, sheets_export_state = $4,
            sheets_export_next_attempt_at = $5, export_claim_token = $6
      WHERE session_id = $1`,
+
+  // §3.10 — the write-admission read, issued once per affected write request.
+  //
+  // DELIBERATELY UNBOUNDED: no LIMIT, no WHERE. The caller must be able to tell
+  // "exactly one row" from "no rows" and from "more than one row", because §5.3
+  // makes all three of the last two FROZEN. A `LIMIT 1` would silently convert a
+  // two-row table — a state the CHECK (id) primary key should make impossible, and
+  // therefore a state that means something has gone wrong — into a confident
+  // answer. The control must never be confident about a table it does not
+  // recognise.
+  //
+  // Every column is selected so the caller can validate the row's SHAPE rather
+  // than trust it; a malformed row is frozen too.
+  readWriteFreeze: `
+    SELECT id, frozen, reason, set_by, set_at
+      FROM atlas.write_freeze`,
 });
 
 // ── Session parent, then children, in ONE transaction ─────────────────────────
@@ -782,6 +798,61 @@ async function repairInsert(concept, row) {
   });
 }
 
+// ── S3 backfill (§5.3) — TEMPORARY, deleted with the backfill script at S4 ────
+//
+// A BATCH of Sheets-authoritative rows for ONE concept, parent-first, in ONE
+// transaction. It issues the SAME statements as the shadow lane and the repair
+// worker — insertSessionParent, insertLoggedSet, insertSessionEffort,
+// insertPlanEvent, insertPlanSetRow — so the backfill can never write a row shaped
+// differently from the row the shadow write would have produced. That is the whole
+// reason this is a batching wrapper rather than a second writer.
+//
+// ON CONFLICT DO NOTHING throughout means a re-run converges instead of failing:
+// the backfill is idempotent by identity, and `inserted` versus `existing` is the
+// evidence of which rows this run actually added.
+//
+// write_id stays NULL by construction (§3.6): the workbook stores none, and the
+// backfill never fabricates one.
+async function backfillRows(concept, rows) {
+  const batch = Array.isArray(rows) ? rows : [];
+  if (batch.length === 0) return { inserted: 0, existing: 0, sessions: 0 };
+
+  // A revision references the row it supersedes, so plan-set rows must be inserted
+  // in ascending plan_version or the self-referencing foreign key fails — the same
+  // ordering shadowPlanSetRows applies, for the same reason.
+  const ordered = concept === 'session_plan_set_recommendations'
+    ? [...batch].sort((a, b) => (a.plan_version || 0) - (b.plan_version || 0))
+    : batch;
+
+  return withTransaction('app', async (client) => {
+    const seen = new Set();
+    let inserted = 0;
+    let existing = 0;
+    for (const row of ordered) {
+      const sessionId = contract.sessionIdOf(concept, row);
+      if (sessionId && !seen.has(sessionId)) {
+        await insertSessionParent(client, sessionId);
+        seen.add(sessionId);
+      }
+      let result;
+      switch (concept) {
+        case 'logged_sets':
+          result = await client.query(SQL.insertLoggedSet, loggedSetParams(row)); break;
+        case 'session_effort':
+          result = await client.query(SQL.insertSessionEffort, sessionEffortParams(row)); break;
+        case 'session_plan_events':
+          result = await client.query(SQL.insertPlanEvent, planEventParams(row)); break;
+        case 'session_plan_set_recommendations':
+          result = await client.query(SQL.insertPlanSetRow, planSetParams(row)); break;
+        default:
+          throw new Error(`No backfill insert for concept: ${concept}`);
+      }
+      if (result.rowCount > 0) inserted += 1; else existing += 1;
+    }
+    return { inserted, existing, sessions: seen.size };
+  });
+}
+
 // The one delete the repair worker may issue on workout data (§8.2 grants
 // DELETE on logged_sets only). Every other concept's Supabase-only orphan stays
 // an OPEN divergence for the owner, because no declared principal may remove it.
@@ -838,6 +909,23 @@ async function currentCatalogGeneration(role = 'app') {
 async function readCatalogMirror(role = 'app') {
   return withClient(role, async (client) => {
     const result = await client.query(SQL.readCatalogMirror);
+    return result.rows;
+  });
+}
+
+// ── Write freeze (§3.10) ──────────────────────────────────────────────────────
+//
+// WIRED IN S3, and the ONLY operation in this module that a live athlete-facing
+// request depends on. It returns the RAW rows — it renders no verdict, applies no
+// default, and swallows no error — because the fail-closed decision belongs in one
+// place (services/writeFreeze.js) and a second interpreter here would be a second
+// authority over the same question.
+//
+// A throw is the honest outcome for an unreachable or unconfigured database. The
+// control turns it into a refusal; this function does not decide.
+async function readWriteFreeze(role = 'app') {
+  return withClient(role, async (client) => {
+    const result = await client.query(SQL.readWriteFreeze);
     return result.rows;
   });
 }
@@ -1147,6 +1235,12 @@ module.exports = {
   // repair primitives
   repairInsert,
   repairDeleteLoggedSet,
+
+  // §5.3 S3 backfill — TEMPORARY, deleted with the backfill script at S4
+  backfillRows,
+
+  // §3.10 write freeze — the one operation a live write request depends on
+  readWriteFreeze,
 
   // §3.7 catalog mirror
   beginCatalogSync,

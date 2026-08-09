@@ -76,7 +76,22 @@ const routeDefinitions = [
   { path: '/api/session-plans/closeout', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true },
   { path: '/api/session-plan-sets/accept', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true },
   { path: '/api/session-plan-sets/revision', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true },
-  { path: '/api/session-plan-sets/implicit', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true }
+  { path: '/api/session-plan-sets/implicit', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true },
+
+  // ── The S3 receipt migration seam — TEMPORARY, deleted at S4 ────────────────
+  //
+  // docs/SUPABASE_HOT_PATH_MIGRATION.md §5.3. Two routes with two purposes, and
+  // NOT a generic administration surface. Both carry an authorization stricter
+  // than every other entry above: the ordinary middleware admits an API key OR a
+  // session cookie, and these additionally require `req.authMethod === 'api_key'`
+  // AND a successful current-request read of atlas.write_freeze returning
+  // frozen = true. Outside a frozen window both are inert.
+  //
+  // `readOnly` describes the SHEETS surface, as it does for every row here:
+  // neither route touches Google Sheets. The import DOES mutate live in-process
+  // receipt state, which is why `writeCapable` is true for it.
+  { path: '/api/migration/receipts/export', methods: ['POST'], public: false, authRequired: true, readOnly: true, writeCapable: false },
+  { path: '/api/migration/receipts/import', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true }
 ];
 
 module.exports = { routeDefinitions };

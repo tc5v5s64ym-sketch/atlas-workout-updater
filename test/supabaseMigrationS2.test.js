@@ -407,27 +407,54 @@ test('P7c0: the catalog sync and the export-state path do NOT write to migration
 
 // ── S2 boundaries the diff itself must keep ──────────────────────────────────
 
-test('S2 boundary: atlas.write_freeze appears in NO migration file — it belongs to S3', () => {
-  const dir = path.join(ROOT, 'supabase', 'migrations');
-  const files = fs.readdirSync(dir).filter((f) => f.endsWith('.sql'));
-  assert.ok(files.length > 0);
-  for (const file of files) {
-    const text = fs.readFileSync(path.join(dir, file), 'utf8');
+// CREATE TABLE, with or without IF NOT EXISTS. Without the optional clause this
+// scan silently MISSES a table declared as `CREATE TABLE IF NOT EXISTS`, which
+// would let a twelfth table join the schema while the "exactly eleven" assertion
+// below still passed — a false green in the one place that counts the schema.
+const CREATE_TABLE_RE = /CREATE TABLE\s+(?:IF NOT EXISTS\s+)?atlas\.(\w+)/gi;
+
+const S2_FILES = [
+  '20260808000100_atlas_schema.sql',
+  '20260808000200_workout_core.sql',
+  '20260808000300_session_plans.sql',
+  '20260808000400_write_receipts.sql',
+  '20260808000500_exercise_catalog_mirror.sql',
+  '20260808000600_migration_divergences.sql',
+  '20260808000700_sheets_mirror.sql',
+  '20260808000800_roles_and_grants.sql',
+];
+
+function tablesCreatedIn(file) {
+  const text = fs.readFileSync(path.join(ROOT, 'supabase', 'migrations', file), 'utf8');
+  return [...text.matchAll(CREATE_TABLE_RE)].map((m) => m[1]);
+}
+
+// *Updated by PR S3, which is the PR that creates it.* The invariant is unchanged
+// and is still the S2 boundary: **no S2 file may create atlas.write_freeze**. What
+// changed is that the table now exists, in exactly one file, and that file is S3's.
+// Asserting its total absence would have made the S2 boundary un-keepable the
+// moment the S3 gate it guards was actually reached.
+test('S2 boundary: NO S2 file creates atlas.write_freeze — exactly one S3 file does', () => {
+  for (const file of S2_FILES) {
     assert.equal(
-      /CREATE TABLE[^;]*write_freeze/i.test(text),
-      false,
+      tablesCreatedIn(file).includes('write_freeze'), false,
       `${file} creates atlas.write_freeze; S3 creates it alongside the control that reads it`
     );
   }
+
+  const dir = path.join(ROOT, 'supabase', 'migrations');
+  const creators = fs.readdirSync(dir)
+    .filter((f) => f.endsWith('.sql'))
+    .filter((f) => tablesCreatedIn(f).includes('write_freeze'));
+  assert.deepEqual(creators, ['20260809000100_write_freeze.sql'],
+    'exactly ONE migration file creates the control, and it is the S3 one');
+
+  // And that file creates NOTHING ELSE — one control, one meaning (§3.10, D7).
+  assert.deepEqual(tablesCreatedIn('20260809000100_write_freeze.sql'), ['write_freeze']);
 });
 
-test('S2 boundary: the migration set declares exactly the eleven tables of §3.1-§3.9', () => {
-  const dir = path.join(ROOT, 'supabase', 'migrations');
-  const created = [];
-  for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.sql')).sort()) {
-    const text = fs.readFileSync(path.join(dir, file), 'utf8');
-    for (const match of text.matchAll(/CREATE TABLE\s+atlas\.(\w+)/gi)) created.push(match[1]);
-  }
+test('S2 boundary: the S2 files declare exactly the eleven tables of §3.1-§3.9', () => {
+  const created = S2_FILES.flatMap(tablesCreatedIn);
   assert.deepEqual(created.sort(), [
     'exercise_catalog_mirror',
     'exercise_catalog_sync',
@@ -441,6 +468,16 @@ test('S2 boundary: the migration set declares exactly the eleven tables of §3.1
     'workout_sessions',
     'write_receipts',
   ]);
+});
+
+// The whole schema, counted independently of which PR shipped which file, so a
+// thirteenth table cannot arrive unremarked (§3: twelve tables — eleven permanent,
+// one temporary).
+test('the complete migration set declares exactly the twelve declared tables', () => {
+  const dir = path.join(ROOT, 'supabase', 'migrations');
+  const created = fs.readdirSync(dir).filter((f) => f.endsWith('.sql')).sort().flatMap(tablesCreatedIn);
+  assert.equal(created.length, 12, `unexpected table set: ${created.sort().join(', ')}`);
+  assert.ok(created.includes('write_freeze'));
 });
 
 test('S2 boundary: no migration file sets a role PASSWORD — credentials never enter the repository', () => {

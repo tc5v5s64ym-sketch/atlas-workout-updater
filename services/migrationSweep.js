@@ -287,4 +287,14 @@ async function runSweep({
   };
 }
 
-module.exports = { runSweep, sweepRowConcept, sweepCatalog, DEFAULT_CONCEPTS };
+module.exports = {
+  runSweep,
+  sweepRowConcept,
+  sweepCatalog,
+  DEFAULT_CONCEPTS,
+  // Exported for the S3 backfill reconciliation report (§6.2 P3), which must index
+  // both sides by the SAME export identity this sweep uses. A second indexing
+  // implementation would be a second answer to "which Supabase row is this Sheets
+  // row?", and the sweep is the completeness authority — the report is a report.
+  indexByIdentity,
+};
