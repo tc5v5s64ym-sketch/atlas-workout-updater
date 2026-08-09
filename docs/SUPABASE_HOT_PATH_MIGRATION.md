@@ -144,7 +144,10 @@ no permanent reconciliation logic between them.
   the migrated concepts, the machinery built to keep them inside the read quota, and the
   file-backed receipt store.
 - **Temporary bridge.** A bounded shadow write, a durable divergence record, a
-  reconciliation sweep, and a repair path. All four are live in `PR S2` and `PR S3` only.
+  reconciliation sweep, and a repair path. All four **exist only through `PR S2` and `PR S3`;
+  the runtime remains dormant until configured** — a lifecycle bound, not a runtime claim: no
+  Supabase role connection string is set in any live Atlas environment, so none of the four
+  runs today.
   The athlete-facing write succeeds or fails from the **current authority alone**. The
   shadow write never changes a response, a status code, or a visible claim. Atlas never
   reconciles two authorities silently.
