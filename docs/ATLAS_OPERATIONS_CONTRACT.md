@@ -101,6 +101,15 @@ own assembler throws, it returns `overall_status: "unknown"` with
 
 ## Scope (deliberately small)
 
-This is a status surface, not a dashboard. There is no new database, no Supabase,
-no duplicate telemetry store, and no second results ledger. It composes existing
+This is a status surface, not a dashboard. It creates **no independent database, no
+duplicate telemetry store, and no second results ledger**. It composes existing
 readers and the existing evidence docs.
+
+*Narrowed 2026-08-08.* This line previously read "there is no new database, no
+Supabase". That became false when `PR S2` landed the adapter and the migration
+files, and it is further out of date now that the `S2` schema is applied to
+`Atlas Production`. The scope bound this sentence carries is about **what the
+status surface builds**, not about what Atlas stores: the surface may **observe**
+the already-authorized Supabase migration state — it reports the open-divergence
+count, the oldest open row, and the catalog generation's age — and it still owns
+no store of its own.

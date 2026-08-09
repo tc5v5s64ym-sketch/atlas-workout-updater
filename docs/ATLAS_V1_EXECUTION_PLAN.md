@@ -129,7 +129,7 @@ This is the single active, executable campaign. It is embedded here — not besi
 
 **OWNER INSTRUCTION 2026-08-07 — the workout hot path migrates to Supabase.** Recorded in full in the section immediately below. It changes the storage authority; it changes no counter. **Rehearsal (F-SB4): 0/5 · Stage A: 5/5 COMPLETE · Stage B: 0/5 OPEN · Phase 5 unauthorized · `SESSION_PLAN_SETS_WRITE_ENABLED` untouched.**
 
-**OWNER GATE 2 DISCHARGED 2026-08-08 — the `S2` schema is applied to `Atlas Production` and the hosted P8b checkpoint PASSED.** The full record is in the migration section below, under "OWNER GATE — `S2` APPLIED AND P8b PASSED". `S3` is now eligible **from that dependency alone**; it **has not started**. **No counter changed by this gate: Rehearsal 0/5 · Stage A 5/5 COMPLETE · Stage B 0/5 OPEN · Phase 5 unauthorized · `SESSION_PLAN_SETS_WRITE_ENABLED` still `0`.** No athlete-facing read or write authority moved, and no Supabase connection string is configured in any live Atlas environment.
+**OWNER GATES 1(a) AND 2 DISCHARGED 2026-08-08 — the `S2` schema is applied to `Atlas Production` (gate 1(a)) and the hosted P8b checkpoint PASSED (gate 2).** The full record is in the migration section below, under "OWNER GATE — `S2` APPLIED AND P8b PASSED". `S3` is now eligible **from that dependency alone**; it **has not started**. **No counter changed by this gate: Rehearsal 0/5 · Stage A 5/5 COMPLETE · Stage B 0/5 OPEN · Phase 5 unauthorized · `SESSION_PLAN_SETS_WRITE_ENABLED` still `0`.** No athlete-facing read or write authority moved, and no Supabase connection string is configured in any live Atlas environment.
 
 ---
 
@@ -527,6 +527,8 @@ Corrected as directed, as a **state-machine/authority fix rather than another re
 ### OWNER GATE — `S2` APPLIED AND P8b PASSED (2026-08-08). Owner-run, out of band.
 
 **Owner gate 1(a) and owner gate 2 are both DISCHARGED.** Dale applied the `S2` schema to `Atlas Production` and then ran the hosted checkpoint `npm run atlas:p8b` (`scripts/atlas-p8b-checkpoint.js`, §6.1 P8b, §8.6 runbook). **It PASSED with exit code `0`.** This is owner evidence, produced out of band by the owner against the real hosted project; no repository path performed any of it, and none may be added.
+
+**Date basis (owner ruling, recorded once).** `2026-08-08` is the **owner-local calendar date, America/Vancouver (PDT)** — the date Dale ran the gate. Owner-evidence dates in this record are not converted to UTC. This is a note on this entry, not a new date-governance rule for the repository, and it creates no convention beyond owner-gate evidence. It matters because the gate ran after `3d75435` (2026-08-08 21:00 −0700), which is already 2026-08-09 in UTC; the owner-local date is the one recorded.
 
 **The schema application.** The **eight reviewed `S2` migration files** under `supabase/migrations/` were applied to `Atlas Production`, unmodified, and local and remote migration history matched afterwards. They are the eleven tables of §3.1–§3.9 and the four scoped roles of §8.2.
 

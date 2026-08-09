@@ -398,8 +398,11 @@ revisions, item outcomes, and closeout and write receipts.
   schema now exists on a hosted host that outlives a proof run. **That is schema existence, not
   runtime integration, and this map does not collapse the two.** The shadow path is **dormant
   and unconfigured** — no Supabase connection string of any role is set in any live Atlas
-  environment, so not one of the four components in the table above runs, and nothing has been
-  written to `Atlas Production` since the migration. **A target a production root cannot reach
+  environment, so not one of the four components in the table above runs, and **no configured
+  live Atlas runtime or shadow path has written to or read from `Atlas Production`.** *That is
+  the claim the evidence carries. This map does not assert what the hosted database contains —
+  it is the owner's project, reachable by the owner out of band, and no Atlas path observes it.*
+  **A target a production root cannot reach
   is not production-reachable, and a shadow that is not configured is not live**, so neither
   word is claimed here. When the lane *is* configured, the destination it becomes is still only
   observational — its write cannot change a response, a status code, a proof field, or a visible
@@ -430,7 +433,9 @@ revisions, item outcomes, and closeout and write receipts.
   `Log_Cleaned` / `Effort` read in `routes/reads.js` and `routes/coachOps.js`.
 - **Compatibility bridge.** Four components introduced by PR S2: the bounded shadow write,
   the durable divergence record (`atlas.migration_divergences`), the reconciliation sweep,
-  and the repair worker. All four are live in PR S2 and PR S3 only. The athlete-facing write
+  and the repair worker. All four **exist only through PR S2 and PR S3** — a lifecycle bound,
+  not a runtime claim: none of them runs in any live Atlas environment today, because no
+  Supabase connection string is configured. The athlete-facing write
   succeeds or fails from the current authority alone; the shadow write never changes a
   response, a status code, a proof field, or a visible claim. The **sweep**, not the inline
   record, is the completeness authority, because it depends on nothing an interrupted

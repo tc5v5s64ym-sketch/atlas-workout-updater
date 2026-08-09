@@ -1572,11 +1572,12 @@ nothing".
   only the second — so a fresh implementation agent could have started `S3` without the hosted
   checkpoint the higher-authority plan requires first.*
 
-  1. **Before `S3` may begin — DISCHARGED 2026-08-08.** the owner applies the `S2` schema to
-     `Atlas Production`, **and the real-Supavisor four-role and session-lock checkpoint passes**
-     (§6.1 P8b, §8.1, and the plan's owner-gate 2). Both happened: the eight reviewed migration
-     files are applied, and the checkpoint **PASSED with exit code `0`** (§8.6). **`S3` is
-     eligible from this dependency alone, and has not started.**
+  1. **Before `S3` may begin — DISCHARGED 2026-08-08.** This gate required the owner to apply
+     the `S2` schema to `Atlas Production` **and** the real-Supavisor four-role and session-lock
+     checkpoint to pass (§6.1 P8b, §8.1, and the plan's owner-gate 2). **Both were done.** The
+     owner applied the eight reviewed migration files, and the checkpoint **PASSED with exit
+     code `0`** (§8.6). Nothing further is owed here: **`S3` is eligible from this dependency
+     alone, and has not started.**
   2. **For `S3`'s deployed freeze evidence:** the owner applies the `S3` `write_freeze`
      migration (§3.10). The PR **may merge before this**; the P8a/P8b deployed-system evidence
      **may not be claimed before it**, because the freeze cannot be proven against a deployed
@@ -3001,9 +3002,13 @@ refuses every hosted host with no flag to lift it (§6.1 P10), and `npm run chec
 proves no workflow can reach production. This section records the procedure so it is governed
 rather than improvised; it grants no authority and moves no gate.
 
-**Preconditions, all already true at `main` `5dbc99d`.** `S2` is merged; the eleven migration
-files under `supabase/migrations/` are the exact reviewed set; the schema is applied to no
-persistent or hosted target; no Supabase connection string of any role is configured.
+**Preconditions, as they stood when this runbook was prepared, at `main` `5dbc99d` — before the
+gate was run.** `S2` was merged; the eleven migration files under `supabase/migrations/` were
+the exact reviewed set; the schema **was at that time applied to no persistent or hosted
+target**; no Supabase connection string of any role was configured. *The third precondition was
+consumed by running this runbook: the schema is now applied to `Atlas Production`. The fourth
+still holds today.* This block records the entry state of a completed procedure. It is not a
+statement about the present.
 
 1. **Confirm the dashboard half of P10 first, before anything is applied.** Production
    auto-deploy **OFF** and automatic migration **OFF** on the `Atlas Production` project. This
