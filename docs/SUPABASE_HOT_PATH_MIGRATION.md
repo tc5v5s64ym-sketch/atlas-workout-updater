@@ -2925,8 +2925,12 @@ RLS policy is a false security claim.
   configured. **Postgres connection strings and role passwords are the credentials that
   matter under §8.1**; service-role JWTs, anon keys and the `sb_secret_` / `sb_publishable_`
   formats are also matched, so a later reintroduction of the Data API cannot slip a key past
-  the scanner. The existing rule holds: no secret, `.env`, production id, or private workout
-  data in a commit or a PR.
+  the scanner. The existing rule holds, with its scope now stated exactly: **no secret, no
+  `.env`, no separately governed production identifier — the production Sheet ID being the
+  named example — and no private workout data** in a commit or a PR. **"Production id" here
+  does NOT include the Supabase project reference**, which the owner ruled non-secret on
+  2026-08-09 (next bullet). Every credential restriction is unchanged; only the classification
+  of that one identifier is.
 - **The project reference is a NON-SECRET project IDENTIFIER.** *Owner ruling, 2026-08-09,
   recorded in [`docs/ATLAS_V1_EXECUTION_PLAN.md`](./ATLAS_V1_EXECUTION_PLAN.md).* It is
   metadata: **not a password, not a key, not a token, and not an authorization mechanism**.
@@ -2982,7 +2986,11 @@ fallback, no adapter, no reconciliation mechanism. **Net architecture complexity
 *The paragraphs below are retained because they remain the governing constraints. They were
 written when the integration existed (added by the advisory review of `ec53270`); they now
 describe what may not happen **if one is ever reintroduced**, and reintroduction itself
-requires a **new explicit owner security decision** that must not expose the project reference.*
+requires a **new explicit owner security decision**. **The project reference is not a
+constraint on that decision** — §8.4 classifies it as non-secret identifier / metadata, so
+there is **no requirement to hide it** and no masking mechanism or replacement detector may be
+added to do so. What binds a reintroduction is what binds everything else here: **credentials
+and production authority**, in the constraint list below.*
 
 **It was never the P2 database, and P2 never depended on it.** That independence is why its
 removal costs this migration nothing: the schema proof runs against a plain disposable Postgres
@@ -3051,7 +3059,11 @@ toggle: a path that does not exist cannot be switched back on by a settings chan
 > `UPDATE` grant was exactly the declared set with `route` and `effect_authority` not updatable.
 > Step 7's condition is therefore met: **`S3` may begin from this gate**, and it has not begun.
 > No credential, connection string, project reference or hostname is recorded anywhere in this
-> repository (§8.4). The runbook below is retained unchanged, as the procedure that was run.
+> repository (§8.4). **The procedure below is the one that was executed, and its steps are
+> unchanged.** One editorial correction was made to it after the run: step 3's parenthetical
+> rationale for ignoring `supabase/.temp/` cited the retired "the reference is a secret"
+> policy, and now cites the credential-bearing state that is the real reason. **No step, no
+> order, and no action changed** — the gate that PASSED is the gate recorded here.
 
 *Added when the gate was prepared.* Every step below is **owner-executed, out of band**. No
 repository path performs any of it, and none may be added: `scripts/apply-supabase-migrations.js`
