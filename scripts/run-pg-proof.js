@@ -52,13 +52,85 @@ function withDatabase(url, name) {
   return parsed.toString();
 }
 
-async function adminQuery(url, sql) {
+async function adminQuery(url, sql, params) {
   const client = new Client({ connectionString: url });
   await client.connect();
   try {
-    return await client.query(sql);
+    return params ? await client.query(sql, params) : await client.query(sql);
   } finally {
     await client.end();
+  }
+}
+
+// ── Identifier quoting ────────────────────────────────────────────────────────
+//
+// *Advisory review of `0a3d051`.* Database names read back from pg_catalog are
+// NOT this process's own strings. On a shared server another principal can create
+// a database whose name matches the prefix scan below and contains SQL, and it was
+// interpolated unchanged into a statement run on the ADMIN connection. Quoting is
+// the fix; the doubling of embedded quotes is what makes it total.
+function quoteIdent(identifier) {
+  return `"${String(identifier).replace(/"/g, '""')}"`;
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// ── ONE RUN AT A TIME, ON ONE SERVER ─────────────────────────────────────────
+//
+// *Required review of `0a3d051`.* The four scoped roles are CLUSTER-wide, so two
+// runs on one server were never actually independent — each would reset the
+// other's per-run passwords. The stale-database cleanup made that latent conflict
+// destructive: `atlas_s2_proof_%` is also the exact shape of a LIVE run's
+// database, so the second runner could drop the first runner's database and then
+// drop and recreate the roles underneath it.
+//
+// A proof runner must not kill another valid proof to clean stale state. So runs
+// are serialised on an explicit, bounded advisory lock, and the lock is what makes
+// the cleanup provably correct rather than a guess: while it is held, no other run
+// can be in progress, so every surviving `atlas_s2_proof_%` database IS orphaned.
+//
+// Session-scoped, on a dedicated connection held for the whole run — it must
+// outlive individual statements, and it is released explicitly in the finally.
+const RUNNER_LOCK_KEY = 'atlas-s2-proof-runner';
+const APPLIER_ROLE = 'atlas_proof_applier';
+
+async function acquireRunnerLock(adminConnectionString, { timeoutMs = 15 * 60 * 1000, pollMs = 1000 } = {}) {
+  const client = new Client({ connectionString: adminConnectionString });
+  await client.connect();
+  const deadline = Date.now() + timeoutMs;
+  let waited = false;
+  try {
+    for (;;) {
+      const { rows } = await client.query('SELECT pg_try_advisory_lock(hashtext($1)) AS ok', [RUNNER_LOCK_KEY]);
+      if (rows[0].ok === true) {
+        if (waited) console.log('[pg-proof] the other run finished; continuing');
+        return {
+          async release() {
+            try {
+              await client.query('SELECT pg_advisory_unlock(hashtext($1))', [RUNNER_LOCK_KEY]);
+            } finally {
+              await client.end().catch(() => {});
+            }
+          },
+        };
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(
+          'Another `npm run test:pg` run holds the proof-runner lock on this server, and it did ' +
+          'not finish within the wait. The runs cannot share a server: the four scoped roles are ' +
+          'cluster-wide, so they would reset each other\'s per-run credentials. Wait for the other ' +
+          'run, or point ATLAS_PG_ADMIN_URL at a different server. Nothing was created or dropped.'
+        );
+      }
+      if (!waited) {
+        waited = true;
+        console.log('[pg-proof] another run holds the proof-runner lock — waiting rather than clobbering it');
+      }
+      await sleep(pollMs);
+    }
+  } catch (err) {
+    await client.end().catch(() => {});
+    throw err;
   }
 }
 
@@ -67,8 +139,15 @@ async function main() {
   const name = databaseName();
   const target = withDatabase(admin, name);
 
-  console.log(`[pg-proof] creating disposable database ${name}`);
-  await adminQuery(admin, `CREATE DATABASE ${name}`);
+  // Acquired BEFORE anything is created or dropped, so a run that cannot get the
+  // lock has touched nothing at all.
+  const runnerLock = await acquireRunnerLock(admin);
+
+  let failed = null;
+  let applierUrl = null;
+  try {
+    console.log(`[pg-proof] creating disposable database ${name}`);
+    await adminQuery(admin, `CREATE DATABASE ${quoteIdent(name)}`);
 
   // ── APPLY AT PRODUCTION'S PRIVILEGE LEVEL, NOT AT THE ADMIN'S ────────────────
   //
@@ -89,24 +168,28 @@ async function main() {
   // and so receives ADMIN OPTION; if they survived from an earlier run they were
   // created by someone else, the applier would hold no admin option, and the run
   // would prove a privilege relationship production will not have.
-  const applierPassword = require('crypto').randomBytes(18).toString('hex');
+    const applierPassword = require('crypto').randomBytes(18).toString('hex');
 
-  // A previous run that crashed leaves its disposable database behind, and the
-  // scoped roles then hold grants inside it, so DROP ROLE fails. CI never sees
-  // this — its container is virgin — which is exactly why it must not be left to
-  // CI to notice. These names belong to this suite alone (atlas_s2_proof_<stamp>_<salt>).
-  const leftovers = await adminQuery(
-    admin,
-    `SELECT datname FROM pg_database WHERE datname LIKE 'atlas\\_s2\\_proof\\_%' AND datname <> '${name}'`
-  );
-  for (const row of leftovers.rows) {
-    console.log(`[pg-proof] dropping leftover database ${row.datname}`);
-    await adminQuery(admin, `DROP DATABASE IF EXISTS ${row.datname}`);
-  }
+    // ORPHANED, NOT MERELY MATCHING. The runner lock is held, so no other run can
+    // be in progress — every surviving database with this suite's name shape is
+    // therefore left over from a crashed run, and dropping it destroys no live
+    // proof. Without the lock this scan could not tell the two apart, and the
+    // second of two concurrent runs would have dropped the first one's database.
+    //
+    // Names come from pg_catalog, not from this process, so they are quoted.
+    const leftovers = await adminQuery(
+      admin,
+      `SELECT datname FROM pg_database WHERE datname LIKE 'atlas\\_s2\\_proof\\_%' AND datname <> $1`,
+      [name]
+    );
+    for (const row of leftovers.rows) {
+      console.log(`[pg-proof] dropping orphaned database ${row.datname}`);
+      await adminQuery(admin, `DROP DATABASE IF EXISTS ${quoteIdent(row.datname)} WITH (FORCE)`);
+    }
 
-  for (const role of ROLE_NAMES) {
+    for (const role of ROLE_NAMES) {
     try {
-      await adminQuery(admin, `DROP ROLE IF EXISTS ${role}`);
+      await adminQuery(admin, `DROP ROLE IF EXISTS ${quoteIdent(role)}`);
     } catch (err) {
       // Never fall back to applying as the admin — that would silently restore
       // superuser and with it the blind spot. Fail with the actual remedy.
@@ -120,21 +203,22 @@ async function main() {
       );
     }
   }
-  await adminQuery(admin, `DROP ROLE IF EXISTS atlas_proof_applier`);
-  await adminQuery(
-    admin,
-    `CREATE ROLE atlas_proof_applier LOGIN PASSWORD '${applierPassword}' NOSUPERUSER CREATEROLE`
-  );
-  await adminQuery(admin, `ALTER DATABASE ${name} OWNER TO atlas_proof_applier`);
-  const applierUrl = (() => {
-    const parsed = new URL(target);
-    parsed.username = 'atlas_proof_applier';
-    parsed.password = applierPassword;
-    return parsed.toString();
-  })();
+    await adminQuery(admin, `DROP ROLE IF EXISTS ${quoteIdent(APPLIER_ROLE)}`);
+    await adminQuery(
+      admin,
+      // DDL takes no bind parameters, so the password is a literal. It is 36 hex
+      // characters this process generated a moment ago — no quote can appear in
+      // it — and the doubling is belt and braces rather than a real escape path.
+      `CREATE ROLE ${quoteIdent(APPLIER_ROLE)} LOGIN PASSWORD '${applierPassword.replace(/'/g, "''")}' NOSUPERUSER CREATEROLE`
+    );
+    await adminQuery(admin, `ALTER DATABASE ${quoteIdent(name)} OWNER TO ${quoteIdent(APPLIER_ROLE)}`);
+    applierUrl = (() => {
+      const parsed = new URL(target);
+      parsed.username = APPLIER_ROLE;
+      parsed.password = applierPassword;
+      return parsed.toString();
+    })();
 
-  let failed = null;
-  try {
     // Fail loudly rather than silently falling back to the admin: a run that
     // quietly re-acquired superuser would restore the exact blind spot this
     // change exists to remove.
@@ -204,13 +288,26 @@ async function main() {
   } catch (err) {
     failed = err;
   } finally {
-    // Destroyed with the run, whatever happened.
+    // Destroyed with the run, whatever happened — and the guard now starts at
+    // CREATE DATABASE, so a failure during setup drops the database too rather
+    // than leaking it past the exact-run destruction contract.
     try {
-      await adminQuery(admin, `DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
+      await adminQuery(admin, `DROP DATABASE IF EXISTS ${quoteIdent(name)} WITH (FORCE)`);
       console.log(`[pg-proof] dropped ${name}`);
     } catch (err) {
       console.error(`[pg-proof] could not drop ${name}: ${err.message}`);
     }
+    // The applier is per-run state too. Left behind, the next run's DROP would
+    // succeed anyway, but a stray LOGIN role on a shared server is not this
+    // suite's to leave.
+    try {
+      await adminQuery(admin, `DROP ROLE IF EXISTS ${quoteIdent(APPLIER_ROLE)}`);
+    } catch (err) {
+      console.error(`[pg-proof] could not drop ${APPLIER_ROLE}: ${err.message}`);
+    }
+    // Released last: while it is held, the cleanup above is the only thing
+    // touching this suite's shared state.
+    await runnerLock.release().catch(() => {});
   }
 
   if (failed) {
@@ -218,6 +315,8 @@ async function main() {
     process.exitCode = 1;
   }
 }
+
+module.exports = { RUNNER_LOCK_KEY, APPLIER_ROLE, acquireRunnerLock, quoteIdent };
 
 if (require.main === module) {
   main().catch((err) => {

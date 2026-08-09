@@ -235,10 +235,18 @@ test('the advisory lock is released on EVERY exit path, including a thrown attem
   assert.equal(after.acquired, true);
 
   await withOwner(async (client) => {
+    // Scoped to THIS write_id's lock, not to every advisory lock on the server.
+    // The global form was over-broad: it asserted a property of the whole cluster
+    // rather than of the attempt under test, so any other legitimate advisory
+    // lock — including the proof runner's own one-run-at-a-time lock — failed it.
     const { rows } = await client.query(
-      `SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory'`
+      `SELECT count(*)::int AS n
+         FROM pg_locks
+        WHERE locktype = 'advisory'
+          AND classid = ((hashtext($1)::bigint >> 32) & 4294967295)
+          AND objid   =  (hashtext($1)::bigint        & 4294967295)`,
+      ['w-14']
     );
-    // Only this test's own claim above may hold one, and that call has returned.
     assert.equal(rows[0].n, 0, 'no advisory lock survives a completed attempt');
   });
 });
