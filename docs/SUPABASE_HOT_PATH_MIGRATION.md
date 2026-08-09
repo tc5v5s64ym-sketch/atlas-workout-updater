@@ -2969,6 +2969,66 @@ automatic-migration settings are shown OFF at the exact head, and a merge to the
 is proven to leave `Atlas Production`'s migration count unchanged. A setting nobody has looked
 at is a setting nobody controls.
 
+### 8.6 The `S2` → `Atlas Production` owner-gate runbook
+
+*Added when the gate was prepared.* Every step below is **owner-executed, out of band**. No
+repository path performs any of it, and none may be added: `scripts/apply-supabase-migrations.js`
+refuses every hosted host with no flag to lift it (§6.1 P10), and `npm run check:supabase-safety`
+proves no workflow can reach production. This section records the procedure so it is governed
+rather than improvised; it grants no authority and moves no gate.
+
+**Preconditions, all already true at `main` `5dbc99d`.** `S2` is merged; the eleven migration
+files under `supabase/migrations/` are the exact reviewed set; the schema is applied to no
+persistent or hosted target; no Supabase connection string of any role is configured.
+
+1. **Confirm the dashboard half of P10 first, before anything is applied.** Production
+   auto-deploy **OFF** and automatic migration **OFF** on the `Atlas Production` project. This
+   is owner evidence `S2` deliberately did not claim, and it must hold *before* a migration
+   exists to be auto-applied, not after.
+2. **Confirm the project is empty.** Zero public tables, zero migrations, no `atlas` schema.
+   The migrations are written to apply **from empty**; a non-empty target is a different
+   operation, and this runbook does not cover one.
+3. **Apply the eight files in lexical order, as the project owner role.** They create the four
+   roles and run `ALTER … OWNER TO atlas_migrate`, so a lesser principal cannot apply them.
+   Any owner-side path is acceptable — Supabase CLI against the linked project, or the SQL
+   editor, file by file in order. **Apply them unmodified**: the reviewed bytes are the proof
+   surface, and an edit made during application is an unreviewed migration.
+4. **Give the four roles LOGIN and a password each.** The migrations deliberately create every
+   role `NOLOGIN` with **no password**, because §8.4 forbids a credential in the repository.
+   Four separate credentials, one per role — sharing one defeats §8.2 entirely.
+5. **Compose four Supavisor SESSION-mode connection strings**, port **5432**, one per role
+   (§8.1). The pooler username is **`[DB-USER].[PROJECT REF]`** — the four Atlas roles are
+   **custom** database roles, so the user part is `atlas_app`, `atlas_readonly`,
+   `atlas_migrate`, `atlas_rebuild`, **not** `postgres`. Supavisor authenticates the role
+   through that username, which is what makes §8.2's role separation survive pooling. Not port 6543: transaction mode returns a different backend per transaction, and the
+   §5.4 export's session-level advisory lock would appear to work and hold nothing. Keep all
+   four out of the repository, out of any PR body, and out of GitHub Actions (§8.4, §8.5).
+6. **Run the checkpoint** with those four strings **and the expected project reference** in
+   the environment — `ATLAS_SUPABASE_EXPECTED_PROJECT_REF`, supplied at run time because §8.4
+   makes the reference a secret: `npm run atlas:p8b` (add `-- --json` for the machine record).
+   **It is required, and its absence is a `FAIL`.** Every hosted Supabase project shares the
+   same `*.pooler.supabase.com` host shape, so without it four strings aimed at a different
+   project carrying the same schema would satisfy every other check and discharge this gate
+   without ever touching `Atlas Production`. The checkpoint also requires all four roles to
+   resolve to **one** project, and **opens no connection at all** until the project is
+   identified — a result gathered from an unknown target would read as a fact about production.
+   Neither the expected reference nor the actual one is ever printed. It is read-only, applies no
+   schema, and writes no row. It proves, per role: the pooler authenticates as the **intended**
+   role; a multi-statement transaction commits on one pinned backend; and a **session-level
+   advisory lock survives across later statements**. It then verifies the eleven `S2` tables are
+   present, `write_freeze` is **absent**, no unreviewed table exists, the four roles exist, and
+   `atlas_app`'s column-scoped `UPDATE` grant on `write_receipts` is exactly the declared set
+   with `route` and `effect_authority` **not** updatable.
+   **It fails closed**: a missing credential, an unreachable host, a transaction-mode endpoint
+   or a direct-endpoint host is a `FAIL`, never a skip. Exit `0` is `PASS`; exit `1` is `FAIL`.
+7. **`S3` begins only on `PASS`.** A `FAIL` is a blocker, not a warning.
+
+**What this gate does NOT do.** It enables no athlete-facing read or write, sets
+`ATLAS_SUPABASE_SHADOW_WRITE` nowhere, and moves no authority: Google Sheets plus
+`services/idempotency.js` remain the sole live authority through `S3`, and Supabase becomes the
+decider only at `S4`. Applying the schema makes Supabase a **shadow / bridge target**, not a
+competing authority (§9, concept 18 of the authority map).
+
 ---
 
 ## 9. Data ownership
