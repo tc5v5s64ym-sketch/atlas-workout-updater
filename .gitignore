@@ -41,3 +41,18 @@ live-retest-artifacts/
 canary-artifacts/
 stage-a-artifacts/
 rehearsal-artifacts/
+
+# Supabase CLI local artifacts (added when the S2 -> Atlas Production owner gate
+# was executed). `supabase link` writes the PROJECT REFERENCE and pooler
+# connection strings into these paths, and §8.4 of
+# docs/SUPABASE_HOT_PATH_MIGRATION.md treats the reference as a secret — exactly
+# as the production Sheet ID is treated. The owner links inside this checkout to
+# run `supabase db push`, so the protection has to be structural rather than a
+# remembered instruction.
+#
+# NOTE: `scan:secrets` would NOT catch config.toml's bare `project_id = "<ref>"`,
+# because the project-reference pattern requires the `.supabase.co` host suffix.
+# That is why these are ignored rather than left to the scanner.
+supabase/.temp/
+supabase/.branches/
+supabase/config.toml
