@@ -507,7 +507,7 @@ test('§8.5 / P10: the safety guard actually BITES — a synthetic violation fai
 
 // ── The secret scanner learned the Supabase shapes ────────────────────────────
 
-test('§8.4: the secret scanner catches every Supabase credential shape this design can leak', () => {
+test('§8.4: the secret scanner catches every Supabase CREDENTIAL shape, and no identifier', () => {
   const { rules } = require('../scripts/check-changed-files-for-secrets');
   const hits = (text, file = 'some-file.js') => rules.filter((rule) => rule.test(text, file)).map((r) => r.name);
 
@@ -527,10 +527,15 @@ test('§8.4: the secret scanner catches every Supabase credential shape this des
   );
   assert.ok(hits('ATLAS_SUPABASE_APP_URL=postgres://real-value-here/db')
     .includes('supabase-role-url-assignment'));
-  // The project reference is treated as a secret, exactly as the production Sheet
-  // ID is. Both the host form and the pooler-username form.
-  assert.ok(hits(`host: db.${REF}.supabase.co`).includes('supabase-project-reference'));
-  assert.ok(hits(`user: postgres.${REF}`).includes('supabase-project-reference'));
+  // The PROJECT REFERENCE is a non-secret IDENTIFIER (owner ruling 2026-08-09),
+  // so neither the host form nor the pooler-username form is a finding on its
+  // own. There is no project-reference rule, and nothing replaced it.
+  assert.deepEqual(hits(`host: db.${REF}.supabase.co`), []);
+  assert.deepEqual(hits(`user: postgres.${REF}`), []);
+  assert.ok(
+    !rules.some((rule) => rule.name === 'supabase-project-reference'),
+    'the project-reference rule is deleted, not renamed or re-added'
+  );
   assert.ok(hits(`KEY=sb_secret_${KEY_BODY}`).includes('supabase-api-key'));
 
   // And it does not fire on the password-less shapes every doc and example uses.
@@ -542,10 +547,18 @@ test('§8.4: the secret scanner catches every Supabase credential shape this des
   // production credential, and the repository legitimately carries several.
   assert.deepEqual(hits('postgres://postgres:postgres@127.0.0.1:5432/postgres'), []);
   assert.deepEqual(hits('postgres://nobody:nothing@localhost:1/nonexistent'), []);
-  // But a hosted credential in the SAME file shape still fails.
+  // But a hosted credential in the SAME file shape still fails — and this is the
+  // load-bearing pair. The reference alone is allowed above; the identical host
+  // carrying a PASSWORD is refused here. Declassifying the identifier did not
+  // declassify anything that authenticates.
   assert.ok(
     hits(credentialUri('atlas_app', PASSWORD, `db.${REF}.supabase.co`))
       .includes('postgres-connection-string-with-password')
+  );
+  assert.ok(
+    hits(credentialUri('atlas_app', PASSWORD, 'aws-0-us-west-2.pooler.supabase.com'))
+      .includes('postgres-connection-string-with-password'),
+    'a pooler credential is refused whether or not a reference appears with it'
   );
 });
 

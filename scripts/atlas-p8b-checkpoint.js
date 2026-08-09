@@ -77,8 +77,10 @@ const APP_UPDATABLE_COLUMNS = Object.freeze([
   'response_body', 'rows_written', 'session_id', 'status',
 ]);
 
-// §8.4 — the project reference is a secret, so it is supplied at run time like
-// the connection strings and never committed. It is REQUIRED: a checkpoint that
+// §8.4 — the project reference is NON-SECRET metadata (owner ruling 2026-08-09),
+// so it is not withheld for secrecy. It is still supplied at run time alongside
+// the connection strings, because it identifies the OWNER's target rather than
+// anything this repository should pin. It is REQUIRED: a checkpoint that
 // cannot tell WHICH project it tested proves nothing about `Atlas Production`,
 // and every hosted Supabase project shares the same pooler host shape. Without
 // this, four strings pointed at a different project carrying the S2 schema would
@@ -119,10 +121,13 @@ function record(check, status, detail) {
   if (status === 'FAIL') failed = true;
 }
 
-// §8.4 — the project reference is a secret, and the pooler username carries it
-// (`<db-user>.<project-ref>`). Nothing below ever prints a URL, a username, or a
-// password: only the port and whether the host has the pooler shape, which are
-// the two facts the checkpoint actually reasons about.
+// The pooler username carries the project reference (`<db-user>.<project-ref>`),
+// which §8.4 classifies as NON-SECRET metadata (owner ruling 2026-08-09) — so the
+// redaction below is not required by policy and is retained deliberately: nothing
+// here ever prints a URL, a username, or a password, and a username string is one
+// substitution away from a credential-bearing one. Only the port and whether the
+// host has the pooler shape are reported, which are the two facts the checkpoint
+// actually reasons about. Behaviour is unchanged by the ruling.
 function describeEndpoint(url) {
   let parsed;
   try {

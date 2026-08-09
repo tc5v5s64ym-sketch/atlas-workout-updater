@@ -42,3 +42,83 @@ test('google-ai-api-key flags the raw AIza token under any var name', () => {
   assert.equal(rule.test('AIza-too-short'), false, 'a short lookalike is not a key');
   assert.equal(rule.test('replace_me'), false, 'a placeholder is not a key');
 });
+
+// ── The identifier/credential boundary (owner ruling 2026-08-09) ──────────────
+//
+// A Supabase PROJECT REFERENCE is a non-secret project IDENTIFIER: not a
+// password, key, token, or authorization mechanism. The scanner must give ONE
+// answer matching that policy — the identifier passes, and everything that
+// AUTHENTICATES still fails. These fixtures are assembled at runtime so this
+// file never carries a literal credential the scanner would catch on itself.
+
+const fakeRef = 'abcdefghijklmnopqrst'; // 20-char lowercase, the reference shape
+
+test('no project-reference rule exists, and nothing replaced it', () => {
+  assert.equal(
+    ruleByName['supabase-project-reference'],
+    undefined,
+    'the project-reference rule is deleted under the owner ruling'
+  );
+  const identifierRules = rules.filter((rule) =>
+    /project.?ref|projectreference/i.test(rule.name)
+  );
+  assert.deepEqual(identifierRules, [], 'no renamed or replacement identifier detector may exist');
+});
+
+test('a reference-only Supabase hostname or identifier is ALLOWED by every rule', () => {
+  const allowed = [
+    `db.${fakeRef}.supabase.co`,
+    `https://${fakeRef}.supabase.co`,
+    `postgres.${fakeRef}`,
+    `ATLAS_SUPABASE_EXPECTED_PROJECT_REF=${fakeRef}`,
+    `aws-0-us-west-2.pooler.supabase.com`,
+    `postgres://postgres.${fakeRef}@aws-0-us-west-2.pooler.supabase.com:5432/postgres`,
+  ];
+  for (const text of allowed) {
+    const hits = rules.filter((rule) => rule.test(text, 'notes.md')).map((rule) => rule.name);
+    assert.deepEqual(hits, [], `a bare identifier must not be a finding: ${text}`);
+  }
+});
+
+test('a credential-bearing connection string still FAILS, on the same host', () => {
+  const password = 'p' + 'A55w0rd'; // assembled so the file carries no literal credential
+  const withPassword = [
+    `postgres://atlas_app:${password}@db.${fakeRef}.supabase.co:5432/postgres`,
+    `postgresql://postgres.${fakeRef}:${password}@aws-0-us-west-2.pooler.supabase.com:5432/postgres`,
+    `DB_URL="postgres://atlas_rebuild:${password}@db.${fakeRef}.supabase.co:5432/postgres"`,
+  ];
+  for (const text of withPassword) {
+    const hits = rules.filter((rule) => rule.test(text, 'notes.md')).map((rule) => rule.name);
+    assert.ok(
+      hits.includes('postgres-connection-string-with-password'),
+      `a password-bearing URI must be refused: ${text.replace(password, '<redacted>')}`
+    );
+  }
+  // The identifier is free, the credential is not — on the identical host.
+  const host = `db.${fakeRef}.supabase.co`;
+  assert.deepEqual(rules.filter((r) => r.test(host, 'notes.md')), []);
+  assert.ok(
+    rules
+      .filter((r) => r.test(`postgres://atlas_app:${password}@${host}:5432/postgres`, 'notes.md'))
+      .map((r) => r.name)
+      .includes('postgres-connection-string-with-password')
+  );
+});
+
+test('secret keys, JWTs and role-URL assignments still FAIL', () => {
+  const body = 'abcdefghijklmnopqrstuvwxyz012345';
+  const jwt = ['eyJ' + 'a'.repeat(20), 'eyJ' + 'b'.repeat(20), 'c'.repeat(20)].join('.');
+  const cases = [
+    [`KEY=sb_secret_${body}`, 'supabase-api-key'],
+    [`KEY=sb_publishable_${body}`, 'supabase-api-key'],
+    [`SUPABASE_SERVICE_ROLE_KEY=${jwt}`, 'supabase-jwt-key'],
+    ['ATLAS_SUPABASE_APP_URL=postgres://a-real-value/db', 'supabase-role-url-assignment'],
+    ['ATLAS_SUPABASE_MIGRATE_URL=postgres://a-real-value/db', 'supabase-role-url-assignment'],
+  ];
+  for (const [text, expected] of cases) {
+    const hits = rules.filter((rule) => rule.test(text, 'notes.md')).map((rule) => rule.name);
+    assert.ok(hits.includes(expected), `${expected} must still fire on: ${text.slice(0, 40)}…`);
+  }
+  // The .env.example placeholders stay allowed.
+  assert.deepEqual(rules.filter((r) => r.test('ATLAS_SUPABASE_APP_URL=replace_me', '.env.example')), []);
+});

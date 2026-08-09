@@ -2654,7 +2654,7 @@ operation. No lower rung substitutes for a higher one.
 | P8a | **The receipt TTL epoch resets on retry.** Seed a retryable receipt just under 24 hours old; claim a new attempt; complete it; advance the clock past the **original** expiry but inside 24 hours of the retry; and prove `peekWrite` and duplicate replay still succeed. A retry that inherits the first attempt's expiry fails this. |
 | P8b | **DISCHARGED 2026-08-08 — the owner ran the checkpoint against `Atlas Production` and it PASSED with exit code `0`.** *(Outcome in §8.6; full record in the execution plan under "OWNER GATE — `S2` APPLIED AND P8b PASSED". The gate definition below is retained unchanged.)* **NOT AN `S2` MERGE GATE — an owner-gated checkpoint after `S2` is applied to `Atlas Production`, before `S3` begins.** *Corrected by the required review of `039c28c`, which found this gate unproducible under `S2`'s own rules: `S2` applies migrations to a disposable CI database only and is **forbidden** to apply schema to `Atlas Production`, while P2's database is plain Postgres with no Supavisor and no second hosted project is named. As a merge gate it demanded evidence that could only be produced by breaking `S2`'s own constraint or by silently provisioning another hosted project.* What **does** gate the `S2` merge is the local equivalent: the four roles and their exact grants are created and proven on the from-empty Postgres database, as the real roles (P7c). The hosted proof below then runs **after the owner applies `S2` to `Atlas Production`** and **before `S3` starts**, and `S3` may not begin until it passes. **The real Render-compatible connection path works.** Open a **Supavisor session-mode** connection as **each of the four roles** — including the owner-only `atlas_rebuild`, which needs a working connection when a rebuild runs — run a multi-statement transaction, and prove a **session-level advisory lock survives across statements** — the exact behaviour the exporter depends on and the exact behaviour transaction mode would silently break. Prove each pooler connection authenticates as its intended role. Assumed IPv6 reachability does not count as proof. |
 | P9 | Every drift and authority guard passes. `npm test`, the Playwright suite, lint, syntax, and the secret scan pass. |
-| P10 | **The Supabase GitHub integration cannot reach production** (§8.5). *Satisfied by removal on 2026-08-09: the owner deleted both project↔repository connections, so there is no integration on this repository. The requirement below is retained as the standing constraint should one ever be reintroduced.* Production auto-deploy and automatic migration are shown **OFF** at the exact head; a merge to the default branch is proven to leave `Atlas Production`'s migration count unchanged; and no GitHub-triggered path holds a production credential. **P2's database is proven independent of the integration** — the integration can be disabled entirely and P2 still runs, which is what keeps a required proof off a paid plan (ruling D3). **That independence is what made deletion free.** |
+| P10 | **No GitHub-triggered path can reach production** (§8.5). **SATISFIED BY REMOVAL, 2026-08-09** — the owner deleted both project↔repository connections, so no Supabase GitHub integration exists on this repository and there is no OFF setting to show. **Unconditional and enforced today:** no GitHub-triggered path holds a production credential, and none may apply production schema (`npm run check:supabase-safety`, at every head). **Conditional on reintroduction:** *if* an integration is ever reintroduced, production auto-deploy and automatic migration must be shown **OFF** at the exact head, and a merge to the default branch must be proven to leave `Atlas Production`'s migration count unchanged. **P2's database is proven independent of the integration** — it can be absent entirely and P2 still runs, which is what keeps a required proof off a paid plan (ruling D3). **That independence is what made deletion free.** |
 
 ### 6.2 Gate for `S3` (backfill, parity and readiness — no cutover)
 
@@ -2923,14 +2923,27 @@ RLS policy is a false security claim.
 
 - `npm run scan:secrets` gains the Supabase patterns in `S2`, before any credential is
   configured. **Postgres connection strings and role passwords are the credentials that
-  matter under §8.1**; service-role JWTs and anon keys are also matched, so a later
-  reintroduction of the Data API cannot slip a key past the scanner. A project reference is
-  treated as a secret too. The existing rule holds: no secret, `.env`, production id, or
-  private workout data in a commit or a PR.
-- **The `Atlas Production` project reference and its credentials are not committed.** They
-  are treated exactly as the production Sheet ID is treated — never in the repository, never
-  in a PR body, never in an evidence file. The project's human-readable name is not a
-  credential and may be recorded; its reference is.
+  matter under §8.1**; service-role JWTs, anon keys and the `sb_secret_` / `sb_publishable_`
+  formats are also matched, so a later reintroduction of the Data API cannot slip a key past
+  the scanner. The existing rule holds: no secret, `.env`, production id, or private workout
+  data in a commit or a PR.
+- **The project reference is a NON-SECRET project IDENTIFIER.** *Owner ruling, 2026-08-09,
+  recorded in [`docs/ATLAS_V1_EXECUTION_PLAN.md`](./ATLAS_V1_EXECUTION_PLAN.md).* It is
+  metadata: **not a password, not a key, not a token, and not an authorization mechanism**.
+  Possessing it grants nothing — every path into `Atlas Production` still requires a
+  credential §8.1 governs. **Exposure of the reference alone therefore requires no rotation
+  and no project replacement**, and the scanner carries **no project-reference rule**; the one
+  that existed is deleted, and nothing — no detector, no masking mechanism — replaces it.
+  *This ruling changes the classification of the reference and nothing else.*
+- **Credentials stay secret, and this ruling does not touch them.** Postgres and database
+  connection strings, passwords, `ATLAS_SUPABASE_*` role URLs carrying credentials, Supabase
+  secret and service-role keys, OAuth tokens, private keys, the production Sheet ID and every
+  other separately governed identifier remain **prohibited** from the repository, a PR body,
+  an evidence file, and GitHub Actions. **The boundary is authentication material, not
+  identifiers**, and the scanner gives exactly that one answer: a bare reference or a
+  reference-bearing hostname passes, while the identical host carrying a password is refused
+  by `postgres-connection-string-with-password`. `test/secret-scan.test.js` and
+  `test/supabaseMigrationS2.test.js` prove both halves.
 - **Backups.** Before `S3`'s backfill and before `S4`'s cutover, take a backup and prove a
   restore into a scratch database. A backup that has never been restored is not a backup.
   `npm run backup:sheets` remains and keeps covering the Sheets mirror.
@@ -2943,13 +2956,28 @@ the owner removed **both** Supabase project↔repository connections pointing at
 from the Supabase organization's Integrations page. The removal is owner action, out of band; no
 repository path performed it and none may be added.
 
-**Why it was removed.** The integration's `Supabase Preview` check exposed the **project
-reference** in a public check target. §8.4 makes that reference a secret and this repository is
-public, so it was a real security defect — **pre-existing, discovered while recording the P8b
-owner gate (PR #1279), and routed to the owner rather than folded into that PR.** Dale chose
-**deletion over masking**: the integration had no consumer here, so removing it was simpler and
-stronger than adding a layer to hide what it published. Nothing replaced it — no masking layer,
-no fallback, no adapter, no reconciliation mechanism. **Net architecture complexity decreased.**
+**Why it was removed, and what the reference exposure did and did not mean.** The history, in
+order:
+
+1. While reviewing PR #1279, the integration's public `Supabase Preview` check target was found
+   to carry the **project reference**.
+2. Under the **then-current** §8.4 policy the reference was classified as a secret, so that
+   observation triggered an **owner security review**. It was routed to Dale as
+   `OWNER DECISION REQUIRED` rather than folded into #1279, because the integration predated
+   that PR.
+3. **Dale removed both project↔repository integrations** — on the grounds that the integration
+   was **unnecessary**, not that it had leaked authentication material. It had no consumer
+   here, so deletion was simpler than retaining unused infrastructure and stronger than adding
+   a layer to hide what it published.
+4. **Dale has since ruled the project reference NON-SECRET** (2026-08-09, §8.4): it is a
+   project identifier, not a password, key, token, or authorization mechanism.
+
+**Therefore the historical check targets are not an unresolved credential leak, and they
+require no rotation, no project replacement, and no remediation.** What appeared there was
+metadata. **No credential was ever exposed by that path**, and the credential rules of §8.4 are
+unchanged. The integration nonetheless **stays removed** — the reclassification does not
+resurrect a component nobody needed — and **nothing replaces it**: no masking layer, no
+fallback, no adapter, no reconciliation mechanism. **Net architecture complexity decreased.**
 
 *The paragraphs below are retained because they remain the governing constraints. They were
 written when the integration existed (added by the advisory review of `ec53270`); they now
@@ -2994,18 +3022,22 @@ acceleration**. It may never become the authority for P2 while D3's Free-tier ru
 - **Production schema application stays an owner gate**, executed by Dale against
   `Atlas Production` (§9). A green preview check is evidence about a disposable database and is
   **never** evidence that production schema is correct or applied.
-- **The project reference is still a secret.** Recording that an integration exists is not
-  recording which project it points at (§8.4). **This is the constraint the removed integration
-  broke** — its check target published the reference — so a reintroduced one must not publish it
-  anywhere a public check, status, or link can carry it.
+- **Reintroduction is itself an owner security decision.** No agent may reconnect a Supabase
+  GitHub integration, and no PR may add one as a side effect. *The project reference is **not**
+  a reason to refuse one — §8.4 now classifies it as non-secret metadata — so the standing
+  constraints are the credential and authority ones above, not an identifier rule.*
 
-**Proven, not assumed.** `S2` adds gate **P10** (§6.1): the production auto-deploy and
-automatic-migration settings are shown OFF at the exact head, and a merge to the default branch
-is proven to leave `Atlas Production`'s migration count unchanged. A setting nobody has looked
-at is a setting nobody controls. *Since 2026-08-09 there is no integration to hold such a
-setting: the connections are removed, which satisfies P10's concern more strongly than an
-OFF toggle does — a path that does not exist cannot be switched back on by a settings change.
-If an integration returns, P10's dashboard evidence is required again.*
+**Proven, not assumed — and what P10 now requires.** **There is no integration, so there is no
+OFF setting to show and no auto-deploy path to disprove.** That is a stronger state than a
+toggle: a path that does not exist cannot be switched back on by a settings change.
+
+- **Unconditional, and true today.** No GitHub-triggered path may hold a production credential,
+  and no GitHub-triggered path may apply production schema. `npm run check:supabase-safety`
+  enforces the second mechanically, at every head.
+- **Conditional on reintroduction.** *If* a Supabase GitHub integration is ever reintroduced,
+  production auto-deploy and automatic migration **must be shown OFF at the exact head**, and a
+  merge to the default branch **must be proven not to change `Atlas Production`'s migration
+  count**. A setting nobody has looked at is a setting nobody controls.
 
 ### 8.6 The `S2` → `Atlas Production` owner-gate runbook
 
@@ -3043,11 +3075,11 @@ statement about the present.
    The migrations are written to apply **from empty**; a non-empty target is a different
    operation, and this runbook does not cover one.
 3. **Apply the eight files in lexical order, as the project owner role.** If linking inside a
-   checkout of this repository, note that `supabase/.temp/` is git-ignored because it carries
-   the linked **project reference**, which §8.4 makes a secret. `supabase/config.toml` is
-   deliberately tracked — `supabase init` writes only a local directory name there — but if a
-   CLI version writes the remote reference into it, **do not commit that file**: read it before
-   staging rather than trusting the ignore list to have anticipated the version. They create the four
+   checkout of this repository, note that `supabase/.temp/` is git-ignored because it is CLI
+   transient state that can carry **credential-bearing** connection and configuration
+   artifacts. *It is not ignored for the project reference: §8.4 classifies that as non-secret
+   metadata (owner ruling 2026-08-09).* `supabase/config.toml` is deliberately tracked —
+   `supabase init` writes only a local directory name there. They create the four
    roles and run `ALTER … OWNER TO atlas_migrate`, so a lesser principal cannot apply them.
    Any owner-side path is acceptable — Supabase CLI against the linked project, or the SQL
    editor, file by file in order. **Apply them unmodified**: the reviewed bytes are the proof

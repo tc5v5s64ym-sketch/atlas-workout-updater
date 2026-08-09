@@ -76,6 +76,10 @@ const rules = [
   // MATTER are Postgres connection strings and role passwords — Atlas uses no
   // service-role key and no anon key. Both are matched anyway, so a later
   // reintroduction of the Data API cannot slip a key past the scanner.
+  //
+  // Every rule below matches AUTHENTICATION MATERIAL. None matches an
+  // identifier. That boundary is the owner's 2026-08-09 ruling, and it is the
+  // one answer this scanner gives.
   {
     // A Postgres URI carrying an inline password. Catches the Supavisor
     // session-mode strings this design uses under ANY variable name, and any
@@ -103,14 +107,15 @@ const rules = [
       return matches.some((line) => !isAllowedExampleValue(line, file));
     },
   },
-  {
-    // The PROJECT REFERENCE is treated as a secret, exactly as the production
-    // Sheet ID is (§8.4). It is a 20-char lowercase id and appears in every
-    // hosted Supabase host and pooler username.
-    name: "supabase-project-reference",
-    test: (text) => /\b[a-z]{20}\.supabase\.(?:co|com|in)\b/.test(text)
-      || /\bpostgres\.[a-z]{20}\b/.test(text),
-  },
+  // NOTE: there is deliberately NO project-reference rule. The owner ruled on
+  // 2026-08-09 that a Supabase PROJECT REFERENCE is a non-secret project
+  // IDENTIFIER — not a password, key, token, or authorization mechanism — so a
+  // bare reference or a reference-bearing hostname is not a finding, and no
+  // detector or masking mechanism replaces the rule that was removed (§8.4).
+  // A reference that appears WITH a credential still fails, on the credential
+  // rules below: `postgres-connection-string-with-password` matches the whole
+  // hosted URI regardless of which host it names. The identifier is free; the
+  // thing that authenticates is not.
   {
     // Service-role and anon JWTs. Atlas uses neither; matching them is what
     // keeps that true.
