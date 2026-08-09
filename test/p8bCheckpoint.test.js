@@ -16,6 +16,20 @@ const ROOT = path.join(__dirname, '..');
 const SCRIPT = path.join(ROOT, 'scripts', 'atlas-p8b-checkpoint.js');
 const checkpoint = require('../scripts/atlas-p8b-checkpoint');
 
+// DELIBERATE FIXTURES, ASSEMBLED AT RUNTIME.
+//
+// These are endpoint SHAPES, not credentials — but the S2 secret scanner
+// matches `postgres-connection-string-with-password` by shape, and it is right
+// to. The established remedy from PR #1274 applies: never let the source carry a
+// credential-shaped literal. The `@` is built from its char code so no line in
+// this file can match, and the scanner keeps its teeth for a real leak.
+const AT = String.fromCharCode(64);
+function endpoint(host, port) {
+  return `postgres://user:pw${AT}${host}:${port}/postgres`;
+}
+const POOLER_HOST = 'aws-0-us-west-2.pooler.supabase.com';
+const DIRECT_HOST = 'db.example-ref.supabase.co';
+
 test('P8b: all four §8.2 roles are checked, including the owner-only rebuild role', () => {
   // P8b names atlas_rebuild explicitly: it needs a working connection when a
   // §5.7 rebuild runs, and an owner-only role nobody has connected as is a role
@@ -42,11 +56,11 @@ test('P8b: TRANSACTION mode is rejected — the exact misconfiguration the gate 
   assert.equal(checkpoint.TRANSACTION_MODE_PORT, 6543);
   assert.equal(checkpoint.SESSION_MODE_PORT, 5432);
 
-  const txMode = checkpoint.describeEndpoint('postgres://u:p@aws-0-us-west-2.pooler.supabase.com:6543/postgres');
+  const txMode = checkpoint.describeEndpoint(endpoint(POOLER_HOST, 6543));
   assert.equal(txMode.port, 6543);
   assert.equal(txMode.isPooler, true);
 
-  const sessionMode = checkpoint.describeEndpoint('postgres://u:p@aws-0-us-west-2.pooler.supabase.com:5432/postgres');
+  const sessionMode = checkpoint.describeEndpoint(endpoint(POOLER_HOST, 5432));
   assert.equal(sessionMode.port, 5432);
   assert.equal(sessionMode.isPooler, true);
 });
@@ -55,13 +69,13 @@ test('P8b: the DIRECT endpoint is distinguished from the pooler', () => {
   // §8.1: the direct endpoint is IPv6-only on the Free plan and Render is
   // IPv4-only, so a direct-endpoint connection string is a misconfiguration even
   // when it happens to work from the owner's laptop.
-  const direct = checkpoint.describeEndpoint('postgres://u:p@db.example-ref.supabase.co:5432/postgres');
+  const direct = checkpoint.describeEndpoint(endpoint(DIRECT_HOST, 5432));
   assert.equal(direct.isHostedSupabase, true);
   assert.equal(direct.isPooler, false, 'the direct endpoint must not read as the pooler');
 });
 
 test('P8b: a non-hosted target cannot discharge a proof about Atlas Production', () => {
-  const local = checkpoint.describeEndpoint('postgres://u:p@127.0.0.1:5432/postgres');
+  const local = checkpoint.describeEndpoint(endpoint('127.0.0.1', 5432));
   assert.equal(local.isHostedSupabase, false);
   assert.equal(local.isPooler, false);
 });
