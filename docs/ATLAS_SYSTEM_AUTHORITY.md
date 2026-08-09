@@ -369,8 +369,20 @@ revisions, item outcomes, and closeout and write receipts.
   that the code is absent. **PR S2 is MERGED** (`main` at `4d3e231`, PR #1274): current `main`
   holds the eleven migration files of §3.1–§3.9, one adapter (`services/supabaseAdapter.js`),
   the shadow write, the divergence lane, the sweep and the repair worker. All of it is
-  **DORMANT** — inert behind `ATLAS_SUPABASE_SHADOW_WRITE=1` plus a configured connection
-  string, and neither exists in any environment.
+  **DORMANT**, but **the gate differs per component and the map states them separately** —
+  one blanket rule would misdescribe the sweep, which is the completeness authority through
+  `S2` and `S3`:
+
+  | Component | What actually gates it |
+  |---|---|
+  | The **request-path shadow lane** (`services/migrationShadow.js` → `supabaseAdapter.isShadowWriteEnabled`) | **Both** `ATLAS_SUPABASE_SHADOW_WRITE=1` **and** `ATLAS_SUPABASE_APP_URL` |
+  | The **operator reconciliation tools** — `npm run atlas:sweep`, `npm run atlas:repair`, `npm run atlas:catalog-sync` | `ATLAS_SUPABASE_APP_URL` alone (`adapter.isConfigured('app')`). **Not** the shadow-write flag: they run with it off |
+  | The **receipt prune** | `ATLAS_SUPABASE_MIGRATE_URL` — it runs as `atlas_migrate`, the only role holding `DELETE` (§8.2) |
+  | The **`atlas:status` Supabase read** | `ATLAS_SUPABASE_READONLY_URL` or `ATLAS_SUPABASE_APP_URL` |
+
+  **No connection string and no flag is set in any live Atlas environment**, so every component
+  above is dormant today — but it is dormant for the reason its own row gives, not because one
+  flag covers all four.
   **Code on `main` is not a competing authority.** A concept acquires one when something
   decides it, and nothing here decides anything: the schema is applied to **no persistent or
   hosted Atlas target**. The owner's Free-tier project **Atlas Production** (verified healthy
