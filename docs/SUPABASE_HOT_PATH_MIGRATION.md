@@ -18,7 +18,17 @@ distinction is the whole point of this phase:
   reconciliation sweep, the repair worker and the `Exercise_Catalog` mirror;
 - **no schema is applied to `Atlas Production`, or to any other persistent or hosted Atlas
   target.** A migration file in a repository is not an applied schema. Applying it is an owner
-  action, and no repository code path can reach a hosted Supabase host. The one place these
+  action, and **no repository code path can APPLY SCHEMA to a hosted host**: the applier
+  refuses every `*.supabase.co` / `*.supabase.com` endpoint outright, including every Supavisor
+  pooler host, and no flag lifts it (`scripts/apply-supabase-migrations.js`, proven by
+  `npm run check:supabase-safety`).
+  **That is a narrower claim than "the code cannot reach a hosted host", and the wider one
+  would be false.** Since `S2`, `services/supabaseAdapter.js` builds `pg.Pool` instances from
+  the four `ATLAS_SUPABASE_*_URL` role strings and will connect to whatever host it is given —
+  by design, because that is exactly what `S4` requires. What keeps every path away from a
+  hosted target today is **configuration, not capability**: no live Atlas environment has any
+  Supabase connection string set, so no deployed path reaches a hosted Supabase target. The
+  one place these
   migrations ARE applied is the **disposable proof database** of §6.1 P2 — a plain Postgres
   container created from empty and destroyed with each run, which holds no Atlas data and
   outlives nothing. That is deliberate: it is how the schema is proven at all;
