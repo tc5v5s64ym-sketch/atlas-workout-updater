@@ -14,7 +14,9 @@ migration files and the adapter EXIST in this repository. **The `S2` schema is n
 `Atlas Production`, and the hosted P8b gate has PASSED.** **Nothing has migrated**, and the
 distinction is the whole point of this phase:
 
-- the eleven migration files of §3.1–§3.9 are in `supabase/migrations/`, together with one
+- the **eleven `S2` tables** of §3.1–§3.9 are defined by the **eight reviewed migration files**
+  in `supabase/migrations/` — eight files, eleven tables, and the two counts are never the same
+  number — together with one
   adapter (`services/supabaseAdapter.js`), the shadow write, the divergence lane, the
   reconciliation sweep, the repair worker and the `Exercise_Catalog` mirror;
 - **the schema IS applied to `Atlas Production`, by owner action, out of band, on 2026-08-08.**
@@ -3003,8 +3005,8 @@ proves no workflow can reach production. This section records the procedure so i
 rather than improvised; it grants no authority and moves no gate.
 
 **Preconditions, as they stood when this runbook was prepared, at `main` `5dbc99d` — before the
-gate was run.** `S2` was merged; the eleven migration files under `supabase/migrations/` were
-the exact reviewed set; the schema **was at that time applied to no persistent or hosted
+gate was run.** `S2` was merged; the eight migration files under `supabase/migrations/` — which
+define the eleven `S2` tables — were the exact reviewed set; the schema **was at that time applied to no persistent or hosted
 target**; no Supabase connection string of any role was configured. *The third precondition was
 consumed by running this runbook: the schema is now applied to `Atlas Production`. The fourth
 still holds today.* This block records the entry state of a completed procedure. It is not a
@@ -3076,7 +3078,7 @@ The record below is the summary. The per-concept record is
 |---|---|
 | **Current winner** | Google Sheets, through `sheets.js`, for all seven concepts, plus the file-backed store in `services/idempotency.js` for write receipts. |
 | **Intended winner** | Supabase. Sheets becomes an export mirror for the migrated concepts, and stays the editing authority for `Exercise_Catalog`. |
-| **Bridge** | The shadow write, `atlas.migration_divergences`, the reconciliation sweep, and the repair worker. Live in `S2` and `S3` only. |
+| **Bridge** | The shadow write, `atlas.migration_divergences`, the reconciliation sweep, and the repair worker. **Exists through `S2` and `S3` only; the runtime stays dormant until configured.** That is a lifecycle bound, not a runtime claim: no Supabase role connection string is set in any live Atlas environment, so none of the four runs today. The `S4` sunset below is unchanged. |
 | **Exact sunset** | **`PR S4`** deletes every consumer and writer of the four bridge components plus the §5.3 receipt migration seam, and ships the `atlas.migration_divergences` drop as an **owner-run artifact outside `supabase/migrations/`**, executed after the rollback window closes (§5.4 step 5, §5.5). Closure is **two steps**: that execution converges `Atlas Production`, and a post-window versioned migration converges the repository's reproducible schema. **The chain is not closed until both land** — an out-of-band drop alone leaves every fresh replay recreating the table. and deletes the Sheets hot-path reads, the read-budget machinery, the backfill script, the verify-range route, and the file-backed idempotency store with its env var, its file and its six test references — proving no caller remains. `S4` itself is one PR, one merge, one exact-head review — but **the migration's sunset is not `S4`'s merge**: it is reached only when the owner-run drop and the bounded post-window cleanup PR (ruling D8) have both landed. The one thing `S4` does not delete is `atlas.write_freeze` and its route check, **proposed** permanent rather than a bridge and carrying a named permanent consumer — **pending decision D7**, which is open (§5.3, §9). |
 | **Code and tests deleted at closure** | The list in §5.4 step 3. **Nothing on it survives `S4`.** |
 | **Net complexity after migration** | Expected **negative**. Removed: the per-request `batchGet` read context, the route range declarations, the 30-second row cache, the session read-budget harness and its fixture, the reconstruction script, the read-budget document, the verify-range route and its client fallback, and the file-backed idempotency store. Added: ten permanent tables, one proposed-permanent table (`atlas.write_freeze`, decision D7 open) with its per-route check, one adapter module, the `Exercise_Catalog` sync, and the asynchronous export worker. The twelfth table, `atlas.migration_divergences`, and the whole bridge are temporary and are dropped. This expectation is **not yet measured**; `S4` must report the actual net line and module change. |
@@ -3104,9 +3106,19 @@ for unmigrated concepts**, and **Sheets is the export mirror for migrated concep
 writes Constitution text.
 
 **D3 — the Supabase project: RESOLVED.** Use the owner-created Free-tier project **Atlas
-Production**, verified healthy and empty, `us-west-2`, zero public tables, zero migrations.
-No identifier and no credential is committed. Applying a schema to it remains a separate
-owner action.
+Production**, `us-west-2`. **As ruled**, it was verified healthy and empty — zero public
+tables, zero migrations — and applying a schema to it was a separate owner action, still
+outstanding at the time of the ruling. No identifier and no credential is committed.
+
+> **D3's project state is SUPERSEDED as of 2026-08-08; the ruling itself stands.** The
+> selection of `Atlas Production` and the no-identifier-no-credential rule are unchanged and
+> still binding. What is no longer current is the *empty* state: the owner applied the `S2`
+> schema on 2026-08-08 under owner gate 1(a), and the hosted P8b checkpoint **PASSED** with
+> exit code `0`, so the project now carries the eleven `S2` tables and the four scoped roles.
+> **The `S2` application is not pending.** Every *further* schema application — `S3`'s
+> `write_freeze`, `S4`'s cutover schema, and `S4`'s deferred drop — remains a separate owner
+> gate. The runtime is still unconfigured, no connection string is set in any live Atlas
+> environment, and no read or write authority has moved.
 
 **D6 — the `S4` repository topology: WITHDRAWN by owner ruling (2026-08-07).** The chain stays
 the owner-approved **four** PRs, `S1 → S2 → S3 → S4`, and the `S4a` / `S4b` topology is deleted

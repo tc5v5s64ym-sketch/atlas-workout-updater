@@ -367,7 +367,8 @@ revisions, item outcomes, and closeout and write receipts.
   active workout to read, save, verify, or close out.
 - **Competing authority.** **NONE TODAY.** Nothing has migrated, and the reason is no longer
   that the code is absent. **PR S2 is MERGED** (`main` at `4d3e231`, PR #1274): current `main`
-  holds the eleven migration files of §3.1–§3.9, one adapter (`services/supabaseAdapter.js`),
+  holds the eight reviewed migration files defining the eleven `S2` tables of §3.1–§3.9, one
+  adapter (`services/supabaseAdapter.js`),
   the shadow write, the divergence lane, the sweep and the repair worker. All of it is
   **DORMANT**, but **the gate differs per component and the map states them separately** —
   one blanket rule would misdescribe the sweep, which is the completeness authority through
