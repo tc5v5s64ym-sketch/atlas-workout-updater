@@ -129,6 +129,8 @@ This is the single active, executable campaign. It is embedded here — not besi
 
 **OWNER INSTRUCTION 2026-08-07 — the workout hot path migrates to Supabase.** Recorded in full in the section immediately below. It changes the storage authority; it changes no counter. **Rehearsal (F-SB4): 0/5 · Stage A: 5/5 COMPLETE · Stage B: 0/5 OPEN · Phase 5 unauthorized · `SESSION_PLAN_SETS_WRITE_ENABLED` untouched.**
 
+**OWNER GATE 2 DISCHARGED 2026-08-08 — the `S2` schema is applied to `Atlas Production` and the hosted P8b checkpoint PASSED.** The full record is in the migration section below, under "OWNER GATE — `S2` APPLIED AND P8b PASSED". `S3` is now eligible **from that dependency alone**; it **has not started**. **No counter changed by this gate: Rehearsal 0/5 · Stage A 5/5 COMPLETE · Stage B 0/5 OPEN · Phase 5 unauthorized · `SESSION_PLAN_SETS_WRITE_ENABLED` still `0`.** No athlete-facing read or write authority moved, and no Supabase connection string is configured in any live Atlas environment.
+
 ---
 
 ## OWNER INSTRUCTION 2026-08-07 — SUPABASE HOT-PATH MIGRATION
@@ -437,9 +439,9 @@ Review 15's substantive fixes confirmed materially present, and ruling D8 confir
 
 These are gates, never merge approvals. Each one stops the chain until Dale acts.
 
-1. **Applying any schema to `Atlas Production` — every application, enumerated.** (a) `S2`'s eleven tables; (b) `S3`'s `atlas.write_freeze` migration, which also gates `S3`'s deployed-system freeze evidence (§6.2 P8b); (c) `S4`'s cutover schema and receipt transition; (d) `S4`'s deferred divergence-table drop — **an owner-run artifact at `supabase/operations/drop_migration_divergences.sql`, deliberately outside `supabase/migrations/` so that no migration run or `db push` can apply it early** — executed only after the rollback window closes, and **followed by a post-window versioned migration** so a fresh replay of migration history converges too. **The chain is not closed until both land.**
+1. **Applying any schema to `Atlas Production` — every application, enumerated.** (a) `S2`'s eleven tables — **DISCHARGED 2026-08-08**: the owner applied the eight reviewed `S2` migration files to `Atlas Production`, and local and remote migration history match; (b) `S3`'s `atlas.write_freeze` migration, which also gates `S3`'s deployed-system freeze evidence (§6.2 P8b); (c) `S4`'s cutover schema and receipt transition; (d) `S4`'s deferred divergence-table drop — **an owner-run artifact at `supabase/operations/drop_migration_divergences.sql`, deliberately outside `supabase/migrations/` so that no migration run or `db push` can apply it early** — executed only after the rollback window closes, and **followed by a post-window versioned migration** so a fresh replay of migration history converges too. **The chain is not closed until both land.**
 
-2. **The real-Supavisor role checkpoint, after `S2` is applied to `Atlas Production` and before `S3` begins.** Design gate §6.1 P8b is **not** an `S2` merge gate — `S2` may not apply schema to production, so it cannot produce hosted evidence. `S2` merges on the local role and grant proof; the hosted proof is an owner-gated checkpoint between `S2` and `S3`, and `S3` does not start until it passes. *The advisory review of `ec53270` found the `S2` application implied rather than enumerated; an unlisted gate is one nobody stops at.* No GitHub-triggered path may perform any of them (design §8.5). `S2` checks migration files into the repository and applies them to a disposable CI database only. Project provisioning is done (D3); schema application is not.
+2. **The real-Supavisor role checkpoint, after `S2` is applied to `Atlas Production` and before `S3` begins. DISCHARGED 2026-08-08 — the owner ran the hosted checkpoint and it PASSED with exit code `0`; the record is under "OWNER GATE — `S2` APPLIED AND P8b PASSED" below.** Design gate §6.1 P8b is **not** an `S2` merge gate — `S2` may not apply schema to production, so it cannot produce hosted evidence. `S2` merges on the local role and grant proof; the hosted proof is an owner-gated checkpoint between `S2` and `S3`, and `S3` does not start until it passes. *The advisory review of `ec53270` found the `S2` application implied rather than enumerated; an unlisted gate is one nobody stops at.* No GitHub-triggered path may perform any of them (design §8.5). `S2` checks migration files into the repository and applies them to a disposable CI database only. Project provisioning is done (D3); schema application is not.
 3. **The `docs/CONSTITUTION.md` amendment (D2).** Its content is dictated above. Dale writes the text; it merges before the `S4` cutover — not before `S3`, because ruling D5 means `S3` moves no authority.
 4. **The `S4` cutover itself**, because it is the first irreversible step. It requires a verified backup, a proven restore, a stated rollback window, an **open-divergence count of zero**, and proof that no caller of the file-backed store remains.
 
@@ -490,7 +492,7 @@ Corrected as directed, as a **state-machine/authority fix rather than another re
 
 ### PR S2 — MERGED 2026-08-08 (#1274): migrations, adapter, shadow write, divergence lane
 
-**Status: MERGED to `main` at `4d3e231`, DORMANT, and NOT applied to `Atlas Production`.** *This landed state is recorded from current `main`, after the merge — not by the branch about itself. The required review of `ad18907` found this heading and the authority map both pre-claiming a merged state while PR #1274 was open; the rule that produced this ordering stands.* The merge changed no running behaviour: the schema exists in `supabase/migrations/` but is applied to **no persistent or hosted Atlas target** — it is applied only to the disposable proof database §6.1 P2 creates from empty and destroys with the run — and the shadow lane is unconfigured, so **nothing has migrated**. The **next step is an OWNER GATE**, not a card. `S1` was paper. `S2` is the first executable step of the chain, and it is deliberately inert in production. The gate differs per component and is not one flag: the **request-path shadow lane** needs `ATLAS_SUPABASE_SHADOW_WRITE=1` **and** `ATLAS_SUPABASE_APP_URL`, while the **operator tools** — `atlas:sweep`, `atlas:repair`, `atlas:catalog-sync` — need only their connection string and run with the shadow flag off. What makes all of them inert is simpler than any flag: **no Supabase connection string of any role is configured in any environment.** Google Sheets remains the sole live read and write authority for every migrated concept, and no athlete-facing response, status code, proof field, or visible claim changes.
+**Status: MERGED to `main` at `4d3e231`, DORMANT, and NOT applied to `Atlas Production`.** *This section records what PR #1274 itself did and did not do; it is not current state. **The application clause is superseded as of 2026-08-08**: the owner has since applied the `S2` schema to `Atlas Production` under owner gate 1(a), recorded under "OWNER GATE — `S2` APPLIED AND P8b PASSED" below. Everything else here still holds — the code is still dormant, and no authority has moved.* *This landed state is recorded from current `main`, after the merge — not by the branch about itself. The required review of `ad18907` found this heading and the authority map both pre-claiming a merged state while PR #1274 was open; the rule that produced this ordering stands.* The merge changed no running behaviour: the schema exists in `supabase/migrations/` but is applied to **no persistent or hosted Atlas target** — it is applied only to the disposable proof database §6.1 P2 creates from empty and destroys with the run — and the shadow lane is unconfigured, so **nothing has migrated**. The **next step is an OWNER GATE**, not a card. `S1` was paper. `S2` is the first executable step of the chain, and it is deliberately inert in production. The gate differs per component and is not one flag: the **request-path shadow lane** needs `ATLAS_SUPABASE_SHADOW_WRITE=1` **and** `ATLAS_SUPABASE_APP_URL`, while the **operator tools** — `atlas:sweep`, `atlas:repair`, `atlas:catalog-sync` — need only their connection string and run with the shadow flag off. What makes all of them inert is simpler than any flag: **no Supabase connection string of any role is configured in any environment.** Google Sheets remains the sole live read and write authority for every migrated concept, and no athlete-facing response, status code, proof field, or visible claim changes.
 
 **What the PR contains.**
 
@@ -518,7 +520,35 @@ Corrected as directed, as a **state-machine/authority fix rather than another re
 
 **No counter changed. Campaign 0/5 · Stage A 5/5 COMPLETE · Stage B 0/5 OPEN. Phase 5 unauthorized. `SESSION_PLAN_SETS_WRITE_ENABLED` stays `0`. No schema applied. No deployment.**
 
-**The next step is an OWNER GATE, not a card.** Applying `S2`'s migrations to `Atlas Production` is Dale's action. After it, and before `S3` begins, the Supavisor four-role session-lock checkpoint (§6.1 P8b) must pass.
+**The next step was an OWNER GATE, not a card.** Applying `S2`'s migrations to `Atlas Production` was Dale's action. After it, and before `S3` began, the Supavisor four-role session-lock checkpoint (§6.1 P8b) had to pass. **Both are now discharged — the record is immediately below.**
+
+### OWNER GATE — `S2` APPLIED AND P8b PASSED (2026-08-08). Owner-run, out of band.
+
+**Owner gate 1(a) and owner gate 2 are both DISCHARGED.** Dale applied the `S2` schema to `Atlas Production` and then ran the hosted checkpoint `npm run atlas:p8b` (`scripts/atlas-p8b-checkpoint.js`, §6.1 P8b, §8.6 runbook). **It PASSED with exit code `0`.** This is owner evidence, produced out of band by the owner against the real hosted project; no repository path performed any of it, and none may be added.
+
+**The schema application.** The **eight reviewed `S2` migration files** under `supabase/migrations/` were applied to `Atlas Production`, unmodified, and local and remote migration history matched afterwards. They are the eleven tables of §3.1–§3.9 and the four scoped roles of §8.2.
+
+**What the checkpoint verified, per its own report.**
+
+- All four required credential inputs were present, and all four resolved to the **expected production project**.
+- All four connections used the **hosted Supavisor SESSION mode on port 5432** — not transaction mode, and not the direct endpoint.
+- Each role authenticated as its **intended** role: `atlas_app` as `atlas_app`, `atlas_readonly` as `atlas_readonly`, `atlas_migrate` as `atlas_migrate`, `atlas_rebuild` as `atlas_rebuild`.
+- A **multi-statement transaction stayed on one backend** — the backend pinning the §5.4 export depends on.
+- A **session-level advisory lock survived across later statements** and released correctly — the exact behaviour transaction mode would silently break.
+- All **eleven reviewed `S2` tables exist**, and **no unreviewed `atlas` table exists**.
+- **`atlas.write_freeze` is ABSENT**, which is the positive evidence that `S3` has not started.
+- All **four scoped roles exist**, `atlas_app` holds **exactly** the declared `write_receipts` column-scoped `UPDATE` grant, and **`route` and `effect_authority` remain not updatable**.
+- Final exit code **`0`**.
+
+**No credential, connection string, project reference, hostname, or password appears in this record, in any repository file, or in any PR body (§8.4).** The checkpoint prints none of them by construction, and this entry adds none.
+
+**What this gate did NOT do, and must not have.** No athlete-facing read or write authority moved. No Render or runtime Supabase connection was configured — **no Supabase connection string of any role is set in any live Atlas environment**, so every `S2` component stays dormant. `ATLAS_SUPABASE_SHADOW_WRITE` is set nowhere. No product code changed. No further migration was applied. `atlas.write_freeze` was not created. `preview → approve → write` is unchanged.
+
+**Effect on authority.** None. Google Sheets through `sheets.js`, plus the file-backed `services/idempotency.js` store for receipts, remains the **sole live authority** for all seven migrated concepts. Applying the schema makes Supabase a **shadow / bridge target** with the lane still unconfigured; it does not make it a decider. **Competing durable authority stays NONE**, and authority transfers only at `S4`.
+
+**Effect on eligibility.** The pre-`S3` dependency of §5.3 gate 1 is discharged, so **`S3` is eligible from that dependency standpoint**. **`S3` HAS NOT STARTED.** `S3`'s own owner gate — applying the `write_freeze` migration before any deployed-system freeze evidence is claimed (§6.2 P8b, owner gate 1(b)) — is **untouched and still outstanding**, as are ruling D2's Constitution amendment and the `S4` cutover gate.
+
+**No counter changed. Campaign 0/5 · Stage A 5/5 COMPLETE · Stage B 0/5 OPEN. Phase 5 unauthorized. `SESSION_PLAN_SETS_WRITE_ENABLED` stays `0`. No deployment.**
 
 ---
 

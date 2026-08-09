@@ -64,7 +64,7 @@ These levels are distinct and are never collapsed. They are the same rungs the c
 | 16a | Observational shadows | `coachTurnPacketShadow`, `brainShadow`, `intentShadow`, `driftShadow`, `coachShadowSheet`, `coachResponseSheet` | none — all retire | TEST/OBSERVABILITY ONLY |
 | 16b | `legacyBridge` (live browser bridge) | `src/app/legacyBridge.js`, imported on every page load | none — deleted, not promoted | TRANSITIONAL |
 | 17 | Athlete context (profile, level, equipment, readiness) | `ATLAS_PROFILE_GOAL` env var only; other fields have no live source | one layered `AthleteContext` | CONTRACT ONLY |
-| 18 | Workout hot-path durable record (sessions, logged sets, Effort, accepted plans, plan sets and revisions, item outcomes, closeout and write receipts) | Google Sheets via `sheets.js`, plus the file-backed `services/idempotency.js` store | Supabase; Sheets becomes an export mirror | SOLE LIVE AUTHORITY (Sheets) — migration authorized; PR S2 LANDED on `main` 2026-08-08 and is DORMANT: the schema exists in `supabase/migrations/` but is applied to NO PERSISTENT OR HOSTED ATLAS TARGET, including `Atlas Production` — it is exercised only against a disposable test Postgres created from empty and destroyed with each proof run — and the shadow lane is unconfigured. Nothing has migrated. `S4` moves the authority |
+| 18 | Workout hot-path durable record (sessions, logged sets, Effort, accepted plans, plan sets and revisions, item outcomes, closeout and write receipts) | Google Sheets via `sheets.js`, plus the file-backed `services/idempotency.js` store | Supabase; Sheets becomes an export mirror | SOLE LIVE AUTHORITY (Sheets) — migration authorized; PR S2 LANDED on `main` 2026-08-08 and is DORMANT. The `S2` schema IS NOW APPLIED to `Atlas Production` (owner gate, 2026-08-08, hosted checkpoint P8b PASSED), so Supabase is a live SHADOW / BRIDGE TARGET — but it is unreachable and unread: NO Supabase connection string of any role is configured in any live Atlas environment, and the shadow lane is off. Nothing has migrated, and no athlete-facing read or write has moved. `S4` moves the authority |
 
 ---
 
@@ -383,20 +383,25 @@ revisions, item outcomes, and closeout and write receipts.
   **No connection string and no flag is set in any live Atlas environment**, so every component
   above is dormant today — but it is dormant for the reason its own row gives, not because one
   flag covers all four.
-  **Code on `main` is not a competing authority.** A concept acquires one when something
-  decides it, and nothing here decides anything: the schema is applied to **no persistent or
-  hosted Atlas target**. The owner's Free-tier project **Atlas Production** (verified healthy
-  and empty, `us-west-2`, zero public tables, zero migrations) still has **no schema applied**,
-  and applying it is an owner gate. The only place these migrations are applied is the
-  **disposable proof database** of §6.1 P2 — a plain Postgres container created from empty and
-  destroyed with each run, holding no Atlas data and outliving nothing.
-  **Applying the schema and configuring the lane will not create one either**, and the map must
-  say so before that happens rather than after: at that point Supabase becomes a live
-  **shadow / bridge target** — an observational persistence destination whose write cannot
-  change a response, a status code, a proof field, or a visible claim. PR S2 and PR S3 move no
-  athlete-facing read or write, so Sheets still decides alone. This map's own honesty rule
-  already says reachable or running machinery is not authority merely because it exists and
-  runs; a shadow is the clearest case of it.
+  **Code on `main` is not a competing authority, and neither is an applied schema.** A concept
+  acquires one when something decides it, and nothing here decides anything.
+  **The schema IS now applied to a hosted target.** On 2026-08-08 the owner applied the eight
+  reviewed `S2` migration files to the Free-tier project **Atlas Production**, out of band, and
+  the hosted checkpoint of §6.1 P8b **PASSED** with exit code `0` — four roles authenticated as
+  themselves through Supavisor session mode on port 5432, a multi-statement transaction stayed
+  on one backend, a session-level advisory lock survived across statements, the eleven `S2`
+  tables were present, `atlas.write_freeze` was absent, no unreviewed `atlas` table existed, and
+  `atlas_app`'s column-scoped `write_receipts` grant was exactly the declared set. The record is
+  in the execution plan under "OWNER GATE — `S2` APPLIED AND P8b PASSED".
+  **That did not create a competing authority, and this map said so before it happened rather
+  than after:** Supabase is now a live **shadow / bridge target** — an observational persistence
+  destination whose write cannot change a response, a status code, a proof field, or a visible
+  claim. PR S2 and PR S3 move no athlete-facing read or write, so Sheets still decides alone.
+  **The target is also unreached today**: no Supabase connection string of any role is
+  configured in any live Atlas environment, so not one of the four components in the table above
+  runs, and nothing has been written to `Atlas Production` since the migration. This map's own
+  honesty rule already says reachable or running machinery is not authority merely because it
+  exists and runs; a shadow is the clearest case of it.
   **Competing authority therefore stays NONE through PR S2 and PR S3.** Authority transfers at
   **PR S4**, which makes Supabase the decider and converts the displaced Sheets hot-path
   authority to an export mirror **in the same cutover** — one winner, and the loser removed
@@ -404,9 +409,11 @@ revisions, item outcomes, and closeout and write receipts.
   not a second concurrent decider**: a restored PR S3 build would return the decision to
   Sheets, and at every moment exactly one store decides.
 - **Status.** **SOLE LIVE AUTHORITY** (Google Sheets, plus the file-backed
-  `services/idempotency.js` store for receipts). The migration is **authorized and STARTED but
-  not applied**: `S2` has landed, `S3` and `S4` remain, and **no athlete-facing read or write
-  has moved**. *This landed state is recorded from current `main`, after the merge. An earlier
+  `services/idempotency.js` store for receipts). The migration is **authorized, STARTED, and now
+  APPLIED at `S2` — but not cut over**: `S2` has landed and its schema is applied to
+  `Atlas Production` with the P8b gate passed (2026-08-08), `S3` and `S4` remain, and **no
+  athlete-facing read or write has moved**. `S3` is eligible from the P8b dependency alone and
+  **has not started**. *This landed state is recorded from current `main`, after the merge. An earlier
   revision of this entry claimed it while PR #1274 was still open — a branch recording itself
   as landed — and the required review of `ad18907` corrected it: the honesty rule forbids
   promoting a concept on a document, a test, or an import, and it forbids this for the same
