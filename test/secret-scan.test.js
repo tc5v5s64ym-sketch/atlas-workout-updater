@@ -53,6 +53,14 @@ test('google-ai-api-key flags the raw AIza token under any var name', () => {
 
 const fakeRef = 'abcdefghijklmnopqrst'; // 20-char lowercase, the reference shape
 
+// Credential URIs are ASSEMBLED AT RUNTIME, never written as a literal — the
+// `user:password@host` shape is exactly what the scanner exists to catch, so a
+// complete one sitting in this source would make the scanner fail on this very
+// file. Joining the parts breaks the pattern in the SOURCE while producing the
+// real shape at RUN TIME, which is where the assertion needs it.
+const credUri = (user, password, host) =>
+  ['postgres', '://', user, ':', password, '@', host, ':5432/postgres'].join('');
+
 test('no project-reference rule exists, and nothing replaced it', () => {
   assert.equal(
     ruleByName['supabase-project-reference'],
@@ -82,10 +90,11 @@ test('a reference-only Supabase hostname or identifier is ALLOWED by every rule'
 
 test('a credential-bearing connection string still FAILS, on the same host', () => {
   const password = 'p' + 'A55w0rd'; // assembled so the file carries no literal credential
+  const host = `db.${fakeRef}.supabase.co`;
   const withPassword = [
-    `postgres://atlas_app:${password}@db.${fakeRef}.supabase.co:5432/postgres`,
-    `postgresql://postgres.${fakeRef}:${password}@aws-0-us-west-2.pooler.supabase.com:5432/postgres`,
-    `DB_URL="postgres://atlas_rebuild:${password}@db.${fakeRef}.supabase.co:5432/postgres"`,
+    credUri('atlas_app', password, host),
+    credUri(`postgres.${fakeRef}`, password, 'aws-0-us-west-2.pooler.supabase.com'),
+    `DB_URL="${credUri('atlas_rebuild', password, host)}"`,
   ];
   for (const text of withPassword) {
     const hits = rules.filter((rule) => rule.test(text, 'notes.md')).map((rule) => rule.name);
@@ -95,11 +104,10 @@ test('a credential-bearing connection string still FAILS, on the same host', () 
     );
   }
   // The identifier is free, the credential is not — on the identical host.
-  const host = `db.${fakeRef}.supabase.co`;
   assert.deepEqual(rules.filter((r) => r.test(host, 'notes.md')), []);
   assert.ok(
     rules
-      .filter((r) => r.test(`postgres://atlas_app:${password}@${host}:5432/postgres`, 'notes.md'))
+      .filter((r) => r.test(credUri('atlas_app', password, host), 'notes.md'))
       .map((r) => r.name)
       .includes('postgres-connection-string-with-password')
   );
