@@ -2997,7 +2997,10 @@ persistent or hosted target; no Supabase connection string of any role is config
    role `NOLOGIN` with **no password**, because §8.4 forbids a credential in the repository.
    Four separate credentials, one per role — sharing one defeats §8.2 entirely.
 5. **Compose four Supavisor SESSION-mode connection strings**, port **5432**, one per role
-   (§8.1). Not port 6543: transaction mode returns a different backend per transaction, and the
+   (§8.1). The pooler username is **`[DB-USER].[PROJECT REF]`** — the four Atlas roles are
+   **custom** database roles, so the user part is `atlas_app`, `atlas_readonly`,
+   `atlas_migrate`, `atlas_rebuild`, **not** `postgres`. Supavisor authenticates the role
+   through that username, which is what makes §8.2's role separation survive pooling. Not port 6543: transaction mode returns a different backend per transaction, and the
    §5.4 export's session-level advisory lock would appear to work and hold nothing. Keep all
    four out of the repository, out of any PR body, and out of GitHub Actions (§8.4, §8.5).
 6. **Run the checkpoint** with those four strings **and the expected project reference** in

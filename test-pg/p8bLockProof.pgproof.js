@@ -42,19 +42,64 @@ test('P8b mechanism: a genuinely held session lock is reported as held across la
   });
 });
 
-test('P8b mechanism: it reports NOT-HELD when the lock is genuinely gone — the transaction-mode symptom', async () => {
-  // Simulate what transaction mode does to the observable state: the lock is
-  // acquired, and by a later statement this session no longer holds it. Done by
-  // releasing it out from under the check on the SAME session, which produces
-  // exactly the pg_locks state a migrated backend would produce.
+test('P8b mechanism: proveSessionLock ITSELF returns heldLater=false when the lock is gone', async () => {
+  // *Required review of `bb7045e`, P1.* The previous version of this test
+  // hand-rolled the pg_locks predicate and asserted it saw nothing. That proved
+  // the SQL could observe a released lock; it did NOT prove the exported
+  // mechanism the production checkpoint actually calls can return
+  // { acquired: true, heldLater: false }. The claim was stronger than the test.
+  //
+  // So the REAL function runs against the REAL database, and the release is
+  // INTERPOSED between its acquire and its later-held check. Nothing is faked:
+  // every statement below reaches Postgres on the same real session. The
+  // interposer only adds one genuine pg_advisory_unlock at the moment Supavisor
+  // transaction mode would have moved the work to a different backend.
+  const client = await connect(roleUrl('atlas_app'));
+  try {
+    const key = 'atlas-p8b-atlas_app';
+    let released = false;
+    const realQuery = client.query.bind(client);
+    client.query = async (...args) => {
+      const result = await realQuery(...args);
+      const text = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].text) || '';
+      if (!released && /pg_try_advisory_lock/.test(text)) {
+        released = true;
+        await realQuery('SELECT pg_advisory_unlock(hashtext($1))', [key]);
+      }
+      return result;
+    };
+
+    const proof = await proveSessionLock(client, key);
+    assert.equal(released, true, 'the interposer must actually have fired');
+    assert.equal(proof.acquired, true, 'the acquire itself succeeded');
+    assert.equal(
+      proof.heldLater, false,
+      'THE MECHANISM must report a vanished lock. This is the transaction-mode symptom, ' +
+      'and if proveSessionLock cannot report it, P8b passes on a deployment whose export holds nothing.'
+    );
+  } finally {
+    await client.end();
+  }
+});
+
+test('P8b mechanism: MUTATION — a re-acquire implementation would report the vanished lock as HELD', async () => {
+  // The bite. Advisory locks are RE-ENTRANT within a session, so the obvious
+  // wrong implementation — "check by taking it again" — returns true in exactly
+  // the state the real one must call false. Running both against the same real
+  // released state shows the proof above discriminates between a correct and a
+  // broken mechanism, rather than merely passing.
   const client = await connect(roleUrl('atlas_app'));
   try {
     const key = 'atlas-p8b-atlas_app';
     await client.query('SELECT pg_try_advisory_lock(hashtext($1))', [key]);
     await client.query('SELECT pg_advisory_unlock(hashtext($1))', [key]);
-    // The lock is gone. The check must now see nothing, not re-acquire and
-    // cheerfully call it held — advisory locks are re-entrant, which is exactly
-    // the trap a naive implementation falls into.
+
+    // The broken check: re-acquire and call that "still held".
+    const naive = await client.query('SELECT pg_try_advisory_lock(hashtext($1)) AS ok', [key]);
+    assert.equal(naive.rows[0].ok, true, 're-acquiring always succeeds — which is why it proves nothing');
+    await client.query('SELECT pg_advisory_unlock(hashtext($1))', [key]);
+
+    // The real check, same session, same released state.
     const { rows } = await client.query(
       `SELECT count(*)::int AS n
          FROM pg_locks
@@ -64,7 +109,7 @@ test('P8b mechanism: it reports NOT-HELD when the lock is genuinely gone — the
           AND objid   =  (hashtext($1)::bigint        & 4294967295)`,
       [key]
     );
-    assert.equal(rows[0].n, 0, 'the pg_locks predicate must report a released lock as absent');
+    assert.equal(rows[0].n, 0, 'the shipped predicate reports the truth where the naive one lies');
   } finally {
     await client.end();
   }

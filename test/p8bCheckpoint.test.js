@@ -114,12 +114,96 @@ test('P8b: the checkpoint FAILS CLOSED when no credential is configured', async 
   }
 });
 
-test('P8b: the script never prints a connection string, username, or project reference', () => {
+// ── Redaction, tested at the OUTPUT BOUNDARY ────────────────────────────────
+//
+// *Required review of `bb7045e`, P1.* The previous test asserted the source
+// contains no `parsed.username` / `parsed.password`, captioned "the credential
+// parts are never read". That was a bogus control twice over: projectRefOf()
+// MUST read the username — that is where Supavisor puts the project reference —
+// and the assertion passed only because the URL object is not named `parsed`.
+//
+// Reading the username is required. NOT LEAKING IT is the safety property, so
+// that is what is tested: run the real script down representative failure paths
+// with a credential-shaped URL carrying a distinctive password, username and
+// project reference, then assert none of them appears anywhere in stdout,
+// stderr, or the JSON report.
+const SECRET_PW = 'zzTOPSECRETpwzz';
+const SECRET_USER = 'atlas_app_custom';
+const SECRET_REF = 'zzsecretprojrefzz';
+
+function runCheckpoint(env) {
+  const { spawnSync } = require('child_process');
+  const result = spawnSync(process.execPath, [SCRIPT, '--json'], {
+    env: { ...env, ATLAS_P8B_CONNECT_TIMEOUT_MS: '1500' },
+    encoding: 'utf8',
+  });
+  return { stdout: result.stdout || '', stderr: result.stderr || '', code: result.status };
+}
+
+function credentialUrl(ref, port = 5432, host = POOLER_HOST) {
+  return `postgres://${SECRET_USER}.${ref}:${SECRET_PW}${AT}${host}:${port}/postgres`;
+}
+
+function assertNothingLeaked(out, label) {
+  for (const secret of [SECRET_PW, SECRET_USER, SECRET_REF]) {
+    assert.ok(!out.includes(secret), `${label}: leaked ${secret === SECRET_PW ? 'password' : secret === SECRET_USER ? 'username' : 'project reference'}`);
+  }
+}
+
+test('P8b redaction: a PROJECT MISMATCH failure leaks no password, username, or reference', () => {
+  const env = { ...process.env };
+  for (const entry of checkpoint.ROLES) env[entry.env] = credentialUrl(SECRET_REF);
+  env[checkpoint.EXPECTED_REF_ENV] = 'a-different-ref';
+  const { stdout, stderr } = runCheckpoint(env);
+  const report = JSON.parse(stdout);
+  assert.equal(report.verdict, 'FAIL');
+  assertNothingLeaked(stdout + stderr, 'project mismatch');
+});
+
+test('P8b redaction: a MIXED-PROJECT failure names roles, never references', () => {
+  const env = { ...process.env };
+  checkpoint.ROLES.forEach((entry, i) => {
+    env[entry.env] = credentialUrl(i === 0 ? SECRET_REF : 'zzotherrefzz');
+  });
+  env[checkpoint.EXPECTED_REF_ENV] = SECRET_REF;
+  const { stdout, stderr } = runCheckpoint(env);
+  assert.equal(JSON.parse(stdout).verdict, 'FAIL');
+  assertNothingLeaked(stdout + stderr, 'mixed projects');
+});
+
+test('P8b redaction: an ENDPOINT-SHAPE failure leaks nothing — transaction-mode port', () => {
+  // Identity passes here, so the run reaches the per-role endpoint check and
+  // fails there. No connection is opened.
+  const env = { ...process.env };
+  for (const entry of checkpoint.ROLES) env[entry.env] = credentialUrl(SECRET_REF, 6543);
+  env[checkpoint.EXPECTED_REF_ENV] = SECRET_REF;
+  const { stdout, stderr } = runCheckpoint(env);
+  const report = JSON.parse(stdout);
+  assert.equal(report.verdict, 'FAIL');
+  assert.ok(report.checks.some((c) => /endpoint shape/.test(c.check) && c.status === 'FAIL'));
+  assertNothingLeaked(stdout + stderr, 'endpoint shape');
+});
+
+test('P8b redaction: a CONNECTION failure leaks nothing — the error path is redacted too', () => {
+  // The path most likely to leak, because a driver error message can carry the
+  // host and sometimes the user. Uses a pooler-shaped hostname that does not
+  // resolve, so the run reaches the connect and fails.
+  const env = { ...process.env };
+  const deadHost = 'atlas-p8b-nonexistent.pooler.supabase.com';
+  for (const entry of checkpoint.ROLES) env[entry.env] = credentialUrl(SECRET_REF, 5432, deadHost);
+  env[checkpoint.EXPECTED_REF_ENV] = SECRET_REF;
+  const { stdout, stderr } = runCheckpoint(env);
+  const report = JSON.parse(stdout);
+  assert.equal(report.verdict, 'FAIL');
+  assertNothingLeaked(stdout + stderr, 'connection failure');
+});
+
+test('P8b: the source still never interpolates or logs a whole connection string', () => {
+  // Kept as a cheap guard against the crudest regression, and captioned for what
+  // it is — a source-level smell check, NOT the redaction proof. The four tests
+  // above are the proof.
   const source = fs.readFileSync(SCRIPT, 'utf8');
-  // §8.4 — the project reference is a secret, and the pooler username carries it.
-  // The report is built from the port and the host SHAPE, never from the URL.
   assert.ok(!/console\.log\([^)]*\burl\b/.test(source), 'no code path logs a url');
-  assert.ok(!/parsed\.username|parsed\.password/.test(source), 'the credential parts are never read');
   assert.ok(!/\$\{url\}/.test(source), 'no template ever interpolates the connection string');
 });
 
@@ -164,8 +248,11 @@ function poolerUrl(ref, host = POOLER_HOST, port = 5432) {
 }
 
 test('P8b: the project reference is read from the pooler username, never from the host', () => {
-  // Supavisor identifies the project in the username as `postgres.<ref>`.
+  // Supavisor identifies the project in the username as `<db-user>.<project-ref>`.
+  // The four Atlas roles are CUSTOM roles, so the db-user part is not `postgres`.
   assert.equal(checkpoint.projectRefOf(poolerUrl(REF_A)), REF_A);
+  // A CUSTOM database role, which is what all four Atlas roles are.
+  assert.equal(checkpoint.projectRefOf(`postgres://atlas_app.${REF_A}:pw${AT}${POOLER_HOST}:5432/postgres`), REF_A);
   // A username with no project part is not a pooler string.
   assert.equal(checkpoint.projectRefOf(endpoint(POOLER_HOST, 5432)), null);
   assert.equal(checkpoint.projectRefOf('not a url'), null);

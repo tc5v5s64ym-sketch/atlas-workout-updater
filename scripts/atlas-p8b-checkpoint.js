@@ -85,7 +85,11 @@ const APP_UPDATABLE_COLUMNS = Object.freeze([
 // discharge the gate. Found by the advisory review of `0668162`.
 const EXPECTED_REF_ENV = 'ATLAS_SUPABASE_EXPECTED_PROJECT_REF';
 
-// Supavisor carries the project in the pooler username as `postgres.<ref>`.
+// Supavisor carries the project in the pooler username as `<db-user>.<project-ref>`.
+// NOT hardcoded to `postgres.` — the four Atlas roles are CUSTOM database roles
+// (atlas_app, atlas_readonly, atlas_migrate, atlas_rebuild), and Supabase's
+// documented syntax for those is [DB-USER].[PROJECT REF]. Telling the owner to
+// build `postgres.<ref>` would hand them the wrong username at the gate.
 // Returned, never logged.
 function projectRefOf(url) {
   try {
@@ -116,7 +120,7 @@ function record(check, status, detail) {
 }
 
 // §8.4 — the project reference is a secret, and the pooler username carries it
-// (`postgres.<projectref>`). Nothing below ever prints a URL, a username, or a
+// (`<db-user>.<project-ref>`). Nothing below ever prints a URL, a username, or a
 // password: only the port and whether the host has the pooler shape, which are
 // the two facts the checkpoint actually reasons about.
 function describeEndpoint(url) {
@@ -236,7 +240,7 @@ function checkProjectIdentity() {
     if (!ref) {
       record(
         `project identity: ${role} carries a project reference`, 'FAIL',
-        'the pooler username is not `postgres.<projectref>`. Supavisor identifies the ' +
+        'the pooler username is not `<db-user>.<project-ref>`. Supavisor identifies the ' +
         'project in the username, so a string without one is not a pooler string.'
       );
       unreadable = true;
