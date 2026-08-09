@@ -41,3 +41,28 @@ live-retest-artifacts/
 canary-artifacts/
 stage-a-artifacts/
 rehearsal-artifacts/
+
+# Supabase CLI local artifacts, added to PREPARE the S2 -> Atlas Production
+# owner gate. That gate has NOT been executed: no schema is applied to any
+# persistent or hosted Atlas target, and applying it remains Dale's action.
+#
+# `supabase link` writes the linked PROJECT REFERENCE into supabase/.temp/, and
+# §8.4 of docs/SUPABASE_HOT_PATH_MIGRATION.md treats that reference as a secret —
+# exactly as the production Sheet ID is treated. The owner links inside this
+# checkout to run `supabase db push`, so the protection has to be structural
+# rather than a remembered instruction.
+#
+# supabase/config.toml is deliberately NOT ignored. `supabase init` writes
+# `project_id = "<local directory name>"` there, not the remote reference —
+# verified by running the CLI (2.113.0) rather than assumed — so ignoring it
+# guarded nothing that .temp/ does not already guard, while silently keeping
+# reviewable project configuration out of version control. Supabase's own guide
+# says to commit the supabase directory.
+#
+# scan:secrets is NOT a second line of defence for either: its
+# project-reference pattern requires the `.supabase.co` host suffix, so a bare
+# reference in a file does not match. A bare 20-character lowercase token is too
+# generic to match safely, so the pattern is left alone and these paths are
+# ignored instead.
+supabase/.temp/
+supabase/.branches/
