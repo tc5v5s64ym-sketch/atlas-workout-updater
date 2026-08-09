@@ -288,15 +288,36 @@ test('P7c: atlas_migrate executes the declared cutover receipt carry as its real
   });
 });
 
-test('the second declared atlas_migrate DML operation is NOT granted in S2 — write_freeze does not exist yet', async () => {
+// *Updated by PR S3.* The S2 boundary was "no grant on write_freeze, because the
+// table does not exist yet". S3 creates it, so the honest assertion is now the
+// EXACT grant list — and it is the stricter one, because a table that exists with
+// the wrong grants is the failure mode that actually matters.
+//
+// This is the security half of owner ruling D7: the runtime CANNOT lift a freeze,
+// and that is enforced by the absence of a grant rather than by any code path. The
+// behavioural refusals are proven as the real role in writeFreeze.pgproof.js.
+test('atlas.write_freeze carries SELECT and NOTHING else — no role may write the control', async () => {
   await withOwner(async (client) => {
     const { rows } = await client.query(
-      `SELECT count(*)::int AS n FROM information_schema.table_privileges
-        WHERE table_schema = 'atlas' AND table_name = 'write_freeze'`
+      `SELECT grantee, privilege_type FROM information_schema.table_privileges
+        WHERE table_schema = 'atlas' AND table_name = 'write_freeze'
+        ORDER BY grantee, privilege_type`
     );
-    // A grant written in S2 would prove nothing about a table that does not exist
-    // until S3. S3's migration carries it, and §6.2 P8a proves it there.
-    assert.equal(rows[0].n, 0);
+
+    // NOT ONE of the four roles may INSERT, UPDATE, DELETE or TRUNCATE it. Stated
+    // as a whole-table sweep rather than per role, so a grant to a role this test
+    // did not think to name is still caught.
+    const writes = rows.filter((r) => r.privilege_type !== 'SELECT');
+    assert.deepEqual(
+      writes, [],
+      'only the Supabase project owner may mutate the freeze — a granted write would be a second authority'
+    );
+
+    // And the runtime CAN read it, or the control could never admit a write.
+    const readers = rows.filter((r) => r.privilege_type === 'SELECT').map((r) => r.grantee).sort();
+    assert.ok(readers.includes('atlas_app'), 'the runtime must be able to read the control');
+    assert.deepEqual(readers, ['atlas_app', 'atlas_readonly', 'atlas_rebuild'],
+      'exactly the three read-capable roles, and no other grantee');
   });
 });
 

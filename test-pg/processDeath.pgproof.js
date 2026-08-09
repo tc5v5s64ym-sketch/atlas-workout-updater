@@ -192,11 +192,25 @@ test('P5 control: with the shadow write intact, the same Save mirrors and the sw
 });
 
 test('P5: Sheets remains the response authority even when the shadow path fails outright', async () => {
-  // The shadow lane is pointed at a database that does not exist. The Save must
-  // still succeed, from the current authority alone.
-  const child = runChild('survive', {
-    ATLAS_SUPABASE_APP_URL: 'postgres://nobody:nothing@127.0.0.1:1/nonexistent',
-  });
+  // ── HOW THE SHADOW IS BROKEN, AND WHY IT CHANGED AT S3 ─────────────────────
+  //
+  // This used to point the adapter at a database that does not exist. Until S3
+  // that meant only "the shadow write fails"; from S3 on it ALSO means the write
+  // is refused, because the seven beginWrite routes read atlas.write_freeze before
+  // any side effect and refuse when that read fails (§5.3, owner ruling D7).
+  // Measuring the freeze here would silently stop measuring the shadow.
+  //
+  // So the database stays REACHABLE — the freeze read succeeds and admits — and
+  // atlas_app's INSERT on logged_sets is revoked instead. The shadow transaction
+  // then fails partway through and rolls back, which is a stricter failure than
+  // never connecting at all.
+  await withOwner((client) => client.query('REVOKE INSERT ON atlas.logged_sets FROM atlas_app'));
+  let child;
+  try {
+    child = runChild('survive');
+  } finally {
+    await withOwner((client) => client.query('GRANT INSERT ON atlas.logged_sets TO atlas_app'));
+  }
 
   assert.equal(child.status, 0, `the Save must not fail with the shadow path down; stdout:\n${child.stdout}\n${child.stderr}`);
   const line = child.stdout.split('\n').find((l) => l.startsWith('RESPONSE '));

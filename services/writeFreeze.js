@@ -100,7 +100,15 @@ function refusal(code, detail = null) {
 
 // Race the read against the bound. The losing query is left to the pool — this
 // process has already decided to refuse, and waiting for it would defeat the
-// bound. `timed_out` is a refusal exactly like a thrown error.
+// bound. A timeout is a refusal exactly like a thrown error.
+//
+// THE TIMER IS DELIBERATELY NOT `unref()`ed. An unref'd timer does not keep the
+// event loop alive, so a process whose only outstanding work was a hung freeze read
+// would EXIT rather than reach its refusal — the admission decision would simply
+// evaporate. For a control whose entire purpose is to answer, an answer that never
+// arrives is the one outcome it may not produce. Holding the loop open costs at
+// most FREEZE_READ_TIMEOUT_MS, and `clearTimeout` in the `finally` releases it on
+// every path, so it can never outlive the decision it bounds.
 async function readWithBound(adapter) {
   let timer = null;
   const bound = new Promise((_, reject) => {
@@ -109,8 +117,6 @@ async function readWithBound(adapter) {
       err.code = 'WRITE_FREEZE_READ_TIMEOUT';
       reject(err);
     }, FREEZE_READ_TIMEOUT_MS);
-    // Never hold the event loop open for the bound alone.
-    if (typeof timer.unref === 'function') timer.unref();
   });
   try {
     return await Promise.race([adapter.readWriteFreeze(), bound]);
