@@ -3055,8 +3055,10 @@ persistent or hosted target; no Supabase connection string of any role is config
 **What this gate does NOT do.** It enables no athlete-facing read or write, sets
 `ATLAS_SUPABASE_SHADOW_WRITE` nowhere, and moves no authority: Google Sheets plus
 `services/idempotency.js` remain the sole live authority through `S3`, and Supabase becomes the
-decider only at `S4`. Applying the schema makes Supabase a **shadow / bridge target**, not a
-competing authority (§9, concept 18 of the authority map).
+decider only at `S4`. Applying the schema makes `Atlas Production` a **persistent hosted
+migration / bridge target** — schema existence, not runtime integration, and not a live shadow
+path: the lane stays dormant and unconfigured. It is not a competing authority (§9, concept 18
+of the authority map).
 
 ---
 

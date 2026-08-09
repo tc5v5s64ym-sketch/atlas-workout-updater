@@ -64,7 +64,7 @@ These levels are distinct and are never collapsed. They are the same rungs the c
 | 16a | Observational shadows | `coachTurnPacketShadow`, `brainShadow`, `intentShadow`, `driftShadow`, `coachShadowSheet`, `coachResponseSheet` | none — all retire | TEST/OBSERVABILITY ONLY |
 | 16b | `legacyBridge` (live browser bridge) | `src/app/legacyBridge.js`, imported on every page load | none — deleted, not promoted | TRANSITIONAL |
 | 17 | Athlete context (profile, level, equipment, readiness) | `ATLAS_PROFILE_GOAL` env var only; other fields have no live source | one layered `AthleteContext` | CONTRACT ONLY |
-| 18 | Workout hot-path durable record (sessions, logged sets, Effort, accepted plans, plan sets and revisions, item outcomes, closeout and write receipts) | Google Sheets via `sheets.js`, plus the file-backed `services/idempotency.js` store | Supabase; Sheets becomes an export mirror | SOLE LIVE AUTHORITY (Sheets) — migration authorized; PR S2 LANDED on `main` 2026-08-08 and is DORMANT. The `S2` schema IS NOW APPLIED to `Atlas Production` (owner gate, 2026-08-08, hosted checkpoint P8b PASSED), so Supabase is a live SHADOW / BRIDGE TARGET — but it is unreachable and unread: NO Supabase connection string of any role is configured in any live Atlas environment, and the shadow lane is off. Nothing has migrated, and no athlete-facing read or write has moved. `S4` moves the authority |
+| 18 | Workout hot-path durable record (sessions, logged sets, Effort, accepted plans, plan sets and revisions, item outcomes, closeout and write receipts) | Google Sheets via `sheets.js`, plus the file-backed `services/idempotency.js` store | Supabase; Sheets becomes an export mirror | SOLE LIVE AUTHORITY (Sheets) — migration authorized; PR S2 LANDED on `main` 2026-08-08 and is DORMANT. The `S2` schema IS NOW APPLIED to `Atlas Production` (owner gate, 2026-08-08, hosted checkpoint P8b PASSED), which makes it a PERSISTENT HOSTED MIGRATION / BRIDGE TARGET — schema existence only, NOT a live shadow path: the runtime shadow stays DORMANT and UNCONFIGURED, NO Supabase connection string of any role is configured in any live Atlas environment, and the shadow lane is off. Nothing has migrated, and no athlete-facing read or write has moved. `S4` moves the authority |
 
 ---
 
@@ -394,14 +394,19 @@ revisions, item outcomes, and closeout and write receipts.
   `atlas_app`'s column-scoped `write_receipts` grant was exactly the declared set. The record is
   in the execution plan under "OWNER GATE — `S2` APPLIED AND P8b PASSED".
   **That did not create a competing authority, and this map said so before it happened rather
-  than after:** Supabase is now a live **shadow / bridge target** — an observational persistence
-  destination whose write cannot change a response, a status code, a proof field, or a visible
-  claim. PR S2 and PR S3 move no athlete-facing read or write, so Sheets still decides alone.
-  **The target is also unreached today**: no Supabase connection string of any role is
-  configured in any live Atlas environment, so not one of the four components in the table above
-  runs, and nothing has been written to `Atlas Production` since the migration. This map's own
-  honesty rule already says reachable or running machinery is not authority merely because it
-  exists and runs; a shadow is the clearest case of it.
+  than after.** What it created is a **persistent hosted migration / bridge target**: the `S2`
+  schema now exists on a hosted host that outlives a proof run. **That is schema existence, not
+  runtime integration, and this map does not collapse the two.** The shadow path is **dormant
+  and unconfigured** — no Supabase connection string of any role is set in any live Atlas
+  environment, so not one of the four components in the table above runs, and nothing has been
+  written to `Atlas Production` since the migration. **A target a production root cannot reach
+  is not production-reachable, and a shadow that is not configured is not live**, so neither
+  word is claimed here. When the lane *is* configured, the destination it becomes is still only
+  observational — its write cannot change a response, a status code, a proof field, or a visible
+  claim — because PR S2 and PR S3 move no athlete-facing read or write, and Sheets decides
+  alone throughout. This map's own honesty rule already says reachable or running machinery is
+  not authority merely because it exists and runs; an unconfigured shadow against an applied
+  schema is further from authority still.
   **Competing authority therefore stays NONE through PR S2 and PR S3.** Authority transfers at
   **PR S4**, which makes Supabase the decider and converts the displaced Sheets hot-path
   authority to an export mirror **in the same cutover** — one winner, and the loser removed
@@ -474,9 +479,10 @@ revisions, item outcomes, and closeout and write receipts.
   [`docs/ATLAS_V1_EXECUTION_PLAN.md`](./ATLAS_V1_EXECUTION_PLAN.md). The current authority is
   the code cited above. The intended authority now HAS code on `main`, and the status stays
   where it is anyway — because **code is not authority, and neither is a running shadow**.
-  Applying the schema to a persistent target and configuring the shadow lane will not make
-  Supabase the decider either: that is the **next legitimate runtime state** after the owner
-  gate, and in it Supabase is a shadow / bridge target while Sheets still decides alone. It
+  The schema is now applied to a persistent target (2026-08-08) and that did not make Supabase
+  the decider; configuring the shadow lane will not either. **The lane is still unconfigured**,
+  so that is the **next legitimate runtime state**, not the current one — and in it Supabase is
+  an observational shadow destination while Sheets still decides alone. It
   becomes the decider only at **PR S4**, when reads and writes cut over together and Sheets
   becomes the export mirror. See "Competing authority" above, which this paragraph must not
   restate more loosely.
