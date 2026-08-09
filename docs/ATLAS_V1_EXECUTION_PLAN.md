@@ -554,6 +554,8 @@ Corrected as directed, as a **state-machine/authority fix rather than another re
 
 **No counter changed. Campaign 0/5 · Stage A 5/5 COMPLETE · Stage B 0/5 OPEN. Phase 5 unauthorized. `SESSION_PLAN_SETS_WRITE_ENABLED` stays `0`. No deployment.**
 
+**OWNER SECURITY DECISION 2026-08-09 — the Supabase GitHub integration is REMOVED. The routed item is closed.** While PR #1279 recorded the gate above, its `Supabase Preview` check was found to expose the **project reference** in a public check target — a **pre-existing** defect, not one #1279 introduced, and §8.4 makes that reference a secret. It was routed out of that PR as `OWNER DECISION REQUIRED` rather than folded into it. **Dale chose deletion over masking**, and on 2026-08-09 removed **both** Supabase project↔repository connections for this repository from the Supabase organization's Integrations page. **This resolves the routed item.** Nothing replaced the integration — no masking layer, no fallback, no adapter, no reconciliation mechanism — and nothing was owed to it: `P2`'s proof database is a plain disposable Postgres instance that never depended on it (§6.1 P2, ruling D3), so **net architecture complexity decreased**. Design §8.5 records the current state and the constraints that bind any future reintroduction, which is itself a **new owner security decision**. **No authority moved, no counter changed, and `S3` still has not started.**
+
 ---
 
 **STAGE B — WORKOUT 1 RERUN: MISS (2026-08-02). Streak stays 0/5.** Owner verdict: **failed**. Flight Recorder `FR-20260802003433-ekvc9w8r`, 00:34:33→00:39:54Z, on a single build (`0b3967d`, deployed 00:25:04Z) with **no deploy or restart inside the session window** — the first Stage B evidence free of the split-build contaminant.

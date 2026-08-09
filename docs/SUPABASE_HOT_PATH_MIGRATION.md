@@ -2654,7 +2654,7 @@ operation. No lower rung substitutes for a higher one.
 | P8a | **The receipt TTL epoch resets on retry.** Seed a retryable receipt just under 24 hours old; claim a new attempt; complete it; advance the clock past the **original** expiry but inside 24 hours of the retry; and prove `peekWrite` and duplicate replay still succeed. A retry that inherits the first attempt's expiry fails this. |
 | P8b | **DISCHARGED 2026-08-08 — the owner ran the checkpoint against `Atlas Production` and it PASSED with exit code `0`.** *(Outcome in §8.6; full record in the execution plan under "OWNER GATE — `S2` APPLIED AND P8b PASSED". The gate definition below is retained unchanged.)* **NOT AN `S2` MERGE GATE — an owner-gated checkpoint after `S2` is applied to `Atlas Production`, before `S3` begins.** *Corrected by the required review of `039c28c`, which found this gate unproducible under `S2`'s own rules: `S2` applies migrations to a disposable CI database only and is **forbidden** to apply schema to `Atlas Production`, while P2's database is plain Postgres with no Supavisor and no second hosted project is named. As a merge gate it demanded evidence that could only be produced by breaking `S2`'s own constraint or by silently provisioning another hosted project.* What **does** gate the `S2` merge is the local equivalent: the four roles and their exact grants are created and proven on the from-empty Postgres database, as the real roles (P7c). The hosted proof below then runs **after the owner applies `S2` to `Atlas Production`** and **before `S3` starts**, and `S3` may not begin until it passes. **The real Render-compatible connection path works.** Open a **Supavisor session-mode** connection as **each of the four roles** — including the owner-only `atlas_rebuild`, which needs a working connection when a rebuild runs — run a multi-statement transaction, and prove a **session-level advisory lock survives across statements** — the exact behaviour the exporter depends on and the exact behaviour transaction mode would silently break. Prove each pooler connection authenticates as its intended role. Assumed IPv6 reachability does not count as proof. |
 | P9 | Every drift and authority guard passes. `npm test`, the Playwright suite, lint, syntax, and the secret scan pass. |
-| P10 | **The Supabase GitHub integration cannot reach production** (§8.5). Production auto-deploy and automatic migration are shown **OFF** at the exact head; a merge to the default branch is proven to leave `Atlas Production`'s migration count unchanged; and no GitHub-triggered path holds a production credential. **P2's database is proven independent of the integration** — the integration can be disabled entirely and P2 still runs, which is what keeps a required proof off a paid plan (ruling D3). |
+| P10 | **The Supabase GitHub integration cannot reach production** (§8.5). *Satisfied by removal on 2026-08-09: the owner deleted both project↔repository connections, so there is no integration on this repository. The requirement below is retained as the standing constraint should one ever be reintroduced.* Production auto-deploy and automatic migration are shown **OFF** at the exact head; a merge to the default branch is proven to leave `Atlas Production`'s migration count unchanged; and no GitHub-triggered path holds a production credential. **P2's database is proven independent of the integration** — the integration can be disabled entirely and P2 still runs, which is what keeps a required proof off a paid plan (ruling D3). **That independence is what made deletion free.** |
 
 ### 6.2 Gate for `S3` (backfill, parity and readiness — no cutover)
 
@@ -2936,14 +2936,29 @@ RLS policy is a false security claim.
   `npm run backup:sheets` remains and keeps covering the Sheets mirror.
 - The `S4` gate requires a restore proof, not a backup setting.
 
-### 8.5 The Supabase GitHub integration — a real path, and what it may not do
+### 8.5 The Supabase GitHub integration — REMOVED 2026-08-09, and what it may not do if it returns
 
-*Added by the advisory review of `ec53270`.* The integration **already exists on this
-repository** — its `Supabase Preview` check runs on this very PR, where it reports `skipped`
-because `S1` contains no migration. An automation path that can create databases and apply
-migrations is infrastructure, and infrastructure that is not written down is not governed.
-Recording it before `S2` is what stops it from silently becoming the thing that applies a
-schema to production.
+**Current state: there is no Supabase GitHub integration on this repository.** On 2026-08-09
+the owner removed **both** Supabase project↔repository connections pointing at this repository,
+from the Supabase organization's Integrations page. The removal is owner action, out of band; no
+repository path performed it and none may be added.
+
+**Why it was removed.** The integration's `Supabase Preview` check exposed the **project
+reference** in a public check target. §8.4 makes that reference a secret and this repository is
+public, so it was a real security defect — **pre-existing, discovered while recording the P8b
+owner gate (PR #1279), and routed to the owner rather than folded into that PR.** Dale chose
+**deletion over masking**: the integration had no consumer here, so removing it was simpler and
+stronger than adding a layer to hide what it published. Nothing replaced it — no masking layer,
+no fallback, no adapter, no reconciliation mechanism. **Net architecture complexity decreased.**
+
+*The paragraphs below are retained because they remain the governing constraints. They were
+written when the integration existed (added by the advisory review of `ec53270`); they now
+describe what may not happen **if one is ever reintroduced**, and reintroduction itself
+requires a **new explicit owner security decision** that must not expose the project reference.*
+
+**It was never the P2 database, and P2 never depended on it.** That independence is why its
+removal costs this migration nothing: the schema proof runs against a plain disposable Postgres
+instance and always did.
 
 **What it may NOT be: the P2 database.** *Corrected by the required review of `8195632`, which
 found the previous version selecting a mechanism that contradicts the owner's own tier ruling.*
@@ -2979,13 +2994,18 @@ acceleration**. It may never become the authority for P2 while D3's Free-tier ru
 - **Production schema application stays an owner gate**, executed by Dale against
   `Atlas Production` (§9). A green preview check is evidence about a disposable database and is
   **never** evidence that production schema is correct or applied.
-- **The project reference is still a secret.** Recording that the integration exists is not
-  recording which project it points at (§8.4).
+- **The project reference is still a secret.** Recording that an integration exists is not
+  recording which project it points at (§8.4). **This is the constraint the removed integration
+  broke** — its check target published the reference — so a reintroduced one must not publish it
+  anywhere a public check, status, or link can carry it.
 
 **Proven, not assumed.** `S2` adds gate **P10** (§6.1): the production auto-deploy and
 automatic-migration settings are shown OFF at the exact head, and a merge to the default branch
 is proven to leave `Atlas Production`'s migration count unchanged. A setting nobody has looked
-at is a setting nobody controls.
+at is a setting nobody controls. *Since 2026-08-09 there is no integration to hold such a
+setting: the connections are removed, which satisfies P10's concern more strongly than an
+OFF toggle does — a path that does not exist cannot be switched back on by a settings change.
+If an integration returns, P10's dashboard evidence is required again.*
 
 ### 8.6 The `S2` → `Atlas Production` owner-gate runbook
 
