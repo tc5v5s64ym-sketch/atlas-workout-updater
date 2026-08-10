@@ -75,8 +75,11 @@ function emptyConceptPlan(concept) {
 // malformed historical row means. Silently inventing a parent would put a
 // fabricated session into the destination.
 function classifyRow(concept, row) {
-  const identity = contract.identityKey(concept, row);
-  if (!identity || identity === '||' || identity === '') return 'no_identity';
+  // ONE predicate for "has no identity", shared with the sweep (§ row contract).
+  // This used to test `identity === '||'`, which never matches: an all-blank
+  // three-part key joins to `'||||'`. Two near-miss guards in two modules were how
+  // an identityless authoritative row disappeared from both of them.
+  if (contract.isIdentityless(contract.identityKey(concept, row))) return 'no_identity';
   const sessionId = contract.sessionIdOf(concept, row);
   if (sessionId && !contract.parseSessionId(sessionId)) return 'unparseable_session';
   return 'ok';
@@ -154,6 +157,8 @@ async function reconcileConcept({ concept, sheets, adapter }) {
     missing_in_sheets: 0,
     content_mismatch: 0,
     sheets_duplicate_identities: 0,
+    sheets_identityless: 0,
+    supabase_identityless: 0,
     field_differences: {},
     error: null,
   };
@@ -181,6 +186,8 @@ async function reconcileConcept({ concept, sheets, adapter }) {
   result.supabase_rows = right.index.size;
   result.counts_equal = left.index.size === right.index.size;
   result.sheets_duplicate_identities = left.duplicates.length;
+  result.sheets_identityless = left.identityless;
+  result.supabase_identityless = right.identityless;
 
   for (const [key, row] of left.index) {
     const counterpart = right.index.get(key);
@@ -207,12 +214,20 @@ async function reconcileConcept({ concept, sheets, adapter }) {
   // identity blocks it too: Supabase's unique index can hold only one of the two
   // rows, so the tab is not reconcilable and reporting a zero would be the false
   // green the whole lane exists to prevent.
+  //
+  // An IDENTITYLESS authoritative row blocks it for the stronger version of the
+  // same reason: it is not merely unrepresentable, it is unmatchable, so "every
+  // row matched by its export identity key" is FALSE for this tab however equal
+  // the counts look. Counting it out of both sides would have made the counts
+  // agree and the reconciliation lie.
   result.reconciled =
     result.counts_equal &&
     result.missing_in_supabase === 0 &&
     result.missing_in_sheets === 0 &&
     result.content_mismatch === 0 &&
-    result.sheets_duplicate_identities === 0;
+    result.sheets_duplicate_identities === 0 &&
+    result.sheets_identityless === 0 &&
+    result.supabase_identityless === 0;
 
   return result;
 }
@@ -268,6 +283,19 @@ async function runBackfill({
     plans.push(await backfillConcept({ concept, sheets, adapter, apply, batchSize }));
   }
   const catalog = includeCatalog ? await backfillCatalog({ sheets, adapter, apply }) : null;
+
+  // AN IDENTITYLESS AUTHORITATIVE ROW IS A FAILURE, NOT A SKIP COUNTER.
+  // *Required review of `65310b3`, finding 3.* Sheets holds a row Supabase can
+  // never represent, and unlike the unparseable-session case it cannot even become
+  // a divergence, because a divergence is keyed by identity. Reporting it in a
+  // counter while `complete` stayed true is exactly how it disappeared.
+  const identityless = plans.filter((p) => p.rows_skipped_no_identity > 0);
+  for (const plan of identityless) {
+    plan.error = plan.error || (
+      `sheets_identityless: ${plan.rows_skipped_no_identity} authoritative row(s) in ${plan.tab} have NO export ` +
+      'identity and were NOT written. OWNER ACTION REQUIRED; the backfill never invents one'
+    );
+  }
 
   const failed = plans.filter((p) => p.error !== null);
   return {

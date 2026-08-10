@@ -49,15 +49,39 @@ INSERT INTO atlas.write_freeze (id, frozen, reason, set_by)
 VALUES (true, false, 'dormant — seeded by the S3 migration; writes open', 'migration:S3')
 ON CONFLICT (id) DO NOTHING;
 
--- ── Ownership ────────────────────────────────────────────────────────────────
+-- ── Ownership: DELIBERATELY NOT TRANSFERRED ──────────────────────────────────
 --
--- Mirrors S2 file 8: in PostgreSQL, DDL authority IS ownership, so atlas_migrate
--- owns every table in the schema. Re-granting membership to the applier is
--- idempotent and keeps this file self-contained rather than silently depending on
--- a grant made in an earlier file — the applier created atlas_migrate in S2 and so
--- holds ADMIN OPTION on it.
-GRANT atlas_migrate TO current_user;
-ALTER TABLE atlas.write_freeze OWNER TO atlas_migrate;
+-- *Corrected by the required Atlas Contract / Systems Review of `65310b3`, finding 1.*
+--
+-- An earlier version of this file ran `ALTER TABLE atlas.write_freeze OWNER TO
+-- atlas_migrate`, mirroring what S2 file 8 does for every other table. On every
+-- other table that is right: in PostgreSQL DDL authority IS ownership, and the
+-- migration role has to be able to alter the schema it maintains.
+--
+-- ON THIS TABLE IT IS WRONG, AND IT DEFEATS D7. Ownership carries implicit
+-- INSERT, UPDATE and DELETE that cannot be revoked from the owner in any durable
+-- way — an owner may re-grant to itself at will. Transferring ownership therefore
+-- created a SECOND principal that could lift a freeze, and D7 says there is one
+-- winner: the Supabase project owner, over a credential the server never holds.
+-- "One control with one meaning" is worth nothing if two roles can set it.
+--
+-- SO THE TABLE STAYS OWNED BY THE PRINCIPAL THAT APPLIED THIS MIGRATION, which is
+-- the Supabase project owner (`postgres`) on `Atlas Production`, and the
+-- NOSUPERUSER CREATEROLE applier that mirrors it in the from-empty proof. That
+-- principal is exactly the one §5.3 names as the sole mutator, so the mutation
+-- path and the ownership are the same thing rather than two things that have to
+-- agree.
+--
+-- The membership grant that the ownership transfer needed is gone with it. This
+-- file now takes no privilege on any role.
+--
+-- WHAT THIS COSTS, STATED RATHER THAN GLOSSED: atlas_migrate cannot ALTER or DROP
+-- this one table. That is the intended result — a migration role that could drop
+-- the control could remove the freeze — and any future change to its shape is an
+-- owner action, exactly like setting the row. atlas_migrate does still own the
+-- SCHEMA (S2 file 8), so a `DROP SCHEMA atlas CASCADE` would take this table with
+-- everything else; that is pre-existing S2 architecture, it is not a mutation
+-- path to the CONTROL, and §6.2 P8a's refusals are asserted against it by name.
 
 -- ── Grants: SELECT, and nothing else ─────────────────────────────────────────
 --
@@ -81,4 +105,16 @@ GRANT SELECT ON atlas.write_freeze TO atlas_app;
 GRANT SELECT ON atlas.write_freeze TO atlas_readonly;
 GRANT SELECT ON atlas.write_freeze TO atlas_rebuild;
 
--- No INSERT, UPDATE or DELETE is granted to any role. The absence is the control.
+-- ── atlas_migrate receives NOTHING, and the revoke says so out loud ──────────
+--
+-- It holds no grant here to begin with, because the ALL TABLES grants of S2 file 8
+-- ran before this table existed. The explicit REVOKE is therefore a no-op TODAY —
+-- it is written for the reader and for the next migration author, so that
+-- "atlas_migrate is not a mutator of the freeze" is a statement this file makes
+-- rather than an accident of ordering. §6.2 P8a proves the refusal behaviourally,
+-- as the real role, which is what actually enforces it.
+REVOKE ALL ON atlas.write_freeze FROM atlas_migrate;
+
+-- No INSERT, UPDATE or DELETE is granted to ANY role, and no role owns this table
+-- except the project-owner principal that applied this migration. The absence is
+-- the control.

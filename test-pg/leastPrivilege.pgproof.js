@@ -296,13 +296,25 @@ test('P7c: atlas_migrate executes the declared cutover receipt carry as its real
 // This is the security half of owner ruling D7: the runtime CANNOT lift a freeze,
 // and that is enforced by the absence of a grant rather than by any code path. The
 // behavioural refusals are proven as the real role in writeFreeze.pgproof.js.
-test('atlas.write_freeze is GRANTED to nobody but readers — no role may write the control', async () => {
+test('atlas.write_freeze is owned by the PROJECT OWNER, and no scoped role may write it', async () => {
   await withOwner(async (client) => {
-    const owner = await client.query(
+    const ownerRow = await client.query(
       `SELECT tableowner FROM pg_tables WHERE schemaname = 'atlas' AND tablename = 'write_freeze'`
     );
-    assert.equal(owner.rows[0].tableowner, 'atlas_migrate',
-      'the control is owned by the migration role, like every other table in the schema');
+    const owner = ownerRow.rows[0].tableowner;
+
+    // *Corrected by the required review of `65310b3`, finding 1.* This used to
+    // assert `owner === 'atlas_migrate'`, mirroring every other table. On THIS
+    // table that was the defect: ownership carries implicit INSERT/UPDATE/DELETE
+    // that cannot be durably revoked from the owner, so it made atlas_migrate a
+    // second principal able to lift a freeze. D7 names ONE mutator — the Supabase
+    // project owner — so the table stays owned by whoever applied the migration,
+    // which on `Atlas Production` is `postgres` and here is its NOSUPERUSER mirror.
+    assert.notEqual(owner, 'atlas_migrate',
+      'transferring ownership to the migration role recreates the second mutation authority D7 forbids');
+    for (const role of ['atlas_app', 'atlas_readonly', 'atlas_rebuild']) {
+      assert.notEqual(owner, role, `${role} must not own the control`);
+    }
 
     const { rows } = await client.query(
       `SELECT grantee, privilege_type FROM information_schema.table_privileges
@@ -310,15 +322,10 @@ test('atlas.write_freeze is GRANTED to nobody but readers — no role may write 
         ORDER BY grantee, privilege_type`
     );
 
-    // THE OWNER IS EXCLUDED, AND THE REASON IS RECORDED RATHER THAN ASSUMED.
-    //
-    // In PostgreSQL, DDL authority IS ownership, and an owner's implicit privileges
-    // appear in this view. S2's file 8 already records that the owner's DML cannot
-    // be revoked without breaking foreign-key checks, and that the real boundary is
-    // therefore two other things: atlas_migrate is NEVER configured in the server
-    // runtime (proven by source scan in test/supabaseRoleSeparation.test.js), and
-    // atlas_app's grant list is exact. The same reasoning governs this table.
-    const granted = rows.filter((r) => r.grantee !== 'atlas_migrate');
+    // The OWNER's own implicit privileges appear in this view and are excluded by
+    // identity — read from pg_tables above, never hardcoded, so this cannot quietly
+    // start excusing a different role.
+    const granted = rows.filter((r) => r.grantee !== owner);
 
     // NOT ONE granted role may INSERT, UPDATE, DELETE or TRUNCATE it. Swept across
     // every grantee rather than checked per role, so a write granted to a role this
@@ -327,6 +334,11 @@ test('atlas.write_freeze is GRANTED to nobody but readers — no role may write 
       granted.filter((r) => r.privilege_type !== 'SELECT'), [],
       'only the Supabase project owner may mutate the freeze — a granted write would be a second authority'
     );
+
+    // atlas_migrate holds NOTHING here, not even SELECT. It is the migration role,
+    // and the control is not its to read or to change.
+    assert.deepEqual(granted.filter((r) => r.grantee === 'atlas_migrate'), [],
+      'atlas_migrate must hold no privilege on the control at all');
 
     // And the runtime CAN read it, or the control could never admit a write.
     const readers = [...new Set(granted.map((r) => r.grantee))].sort();

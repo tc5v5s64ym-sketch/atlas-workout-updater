@@ -94,6 +94,41 @@ async function catalogDependency() {
   };
 }
 
+// ── THE VERDICT, AS A PURE FUNCTION ──────────────────────────────────────────
+//
+// Extracted so it can be tested adversarially without a database
+// (test/migrationReadiness.test.js). A gate whose logic only exists inside a CLI
+// main() is a gate nobody can point a counterexample at.
+//
+// ── P6 TAKES BOTH NUMBERS, AND THAT IS THE FIX ───────────────────────────────
+// *Required Atlas Contract / Systems Review of `65310b3`, finding 2.* This used to
+// read `sweep.complete && openCount === 0` — the DURABLE count only. The sweep was
+// already being run in detect-only mode right here, and its findings were thrown
+// away. So a database whose divergence table was empty because the sweep had never
+// been run in opening mode, while THIS sweep had just found a fresh mismatch,
+// reported P6 PASS: a stale zero certifying a state that was no longer true.
+//
+// Both must be zero now: no durable open row, AND nothing found by the sweep that
+// established it. They answer different questions — "has anything been recorded?"
+// and "is anything wrong right now?" — and cutover readiness needs both.
+function readinessVerdict({ parity, sweep, openDivergences, catalog }) {
+  const foundNow = Number(sweep && sweep.divergences_found) || 0;
+  const openCount = Number(openDivergences) || 0;
+  const verdict = {
+    p5_read_parity: Boolean(parity && parity.ready),
+    p6_zero_divergences: Boolean(sweep && sweep.complete) && openCount === 0 && foundNow === 0,
+    p4b_bounded_catalog_dependency: Boolean(catalog && catalog.ok),
+  };
+  return {
+    ready: Object.values(verdict).every(Boolean),
+    verdict,
+    // Reported separately so a NOT READY result says which of the two zeros failed.
+    open_divergences: openCount,
+    divergences_found_now: foundNow,
+    sweep_complete: Boolean(sweep && sweep.complete),
+  };
+}
+
 async function main() {
   const asJson = process.argv.slice(2).includes('--json');
 
@@ -122,19 +157,24 @@ async function main() {
     await adapter.close();
   }
 
-  const openCount = Number(divergences.open_count || 0);
-  const verdict = {
-    p5_read_parity: parity.ready,
-    // BOTH halves. A zero from a sweep that did not complete is not a zero.
-    p6_zero_divergences: sweep.complete && openCount === 0,
-    p4b_bounded_catalog_dependency: catalog.ok,
+  const assessment = readinessVerdict({
+    parity, sweep, openDivergences: divergences.open_count, catalog,
+  });
+  const { ready, verdict, openCount = assessment.open_divergences } = {
+    ...assessment, openCount: assessment.open_divergences,
   };
-  const ready = Object.values(verdict).every(Boolean);
 
   if (asJson) {
     console.log(JSON.stringify({
       ok: ready, configured: true, verdict, parity, sweep_complete: sweep.complete,
-      open_divergences: openCount, catalog,
+      open_divergences: openCount, divergences_found_now: assessment.divergences_found_now,
+      // Every concept the sweep could not reconcile, named — an identityless or
+      // duplicated authoritative row makes a concept INCOMPLETE and must be
+      // readable here rather than only inferable from a false `complete`.
+      incomplete_concepts: sweep.concepts.filter((c) => !c.complete).map((c) => ({
+        concept: c.concept, error: c.error,
+      })),
+      catalog,
     }, null, 2));
   } else {
     console.log(`S3 cutover readiness: ${ready ? 'READY' : 'NOT READY'}`);
@@ -144,7 +184,14 @@ async function main() {
       if (read.equal) continue;
       console.log(`     ✗ ${read.id.padEnd(26)} ${read.error ? `ERROR ${read.error}` : read.detail}`);
     }
-    console.log(`  P6 divergences          ${verdict.p6_zero_divergences ? 'PASS' : 'FAIL'} (sweep ${sweep.complete ? 'complete' : 'INCOMPLETE'}, ${openCount} open)`);
+    console.log(
+      `  P6 divergences          ${verdict.p6_zero_divergences ? 'PASS' : 'FAIL'} ` +
+      `(sweep ${sweep.complete ? 'complete' : 'INCOMPLETE'}, ${openCount} durable open, ` +
+      `${assessment.divergences_found_now} found by THIS sweep)`
+    );
+    for (const concept of sweep.concepts.filter((c) => !c.complete)) {
+      console.log(`     ✗ ${concept.concept.padEnd(34)} ${concept.error}`);
+    }
     console.log(`  P4b catalog dependency  ${catalog.ok ? 'PASS' : 'FAIL'}`);
     console.log(`     max age ${catalog.max_age_seconds}s · declared sync interval ${catalog.declared_sync_interval_seconds}s`);
     console.log(`     a total Sheets outage fails a Save after ${catalog.residual_outage_tolerance_seconds.worst_case}–${catalog.residual_outage_tolerance_seconds.best_case}s`);
@@ -164,4 +211,6 @@ if (require.main === module) {
   });
 }
 
-module.exports = { main, catalogDependency, declaredSyncIntervalSeconds, DEFAULT_SYNC_INTERVAL_SEC };
+module.exports = {
+  main, readinessVerdict, catalogDependency, declaredSyncIntervalSeconds, DEFAULT_SYNC_INTERVAL_SEC,
+};

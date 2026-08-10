@@ -1294,8 +1294,19 @@ it carries **one control with one meaning** — are the seven `beginWrite` write
   decision record is **D7** (§9); the authorization is the execution plan's owner-ruling block.
 - **Created by `S3`**, in an ordinary migration file under `supabase/migrations/`, applied to
   the disposable CI database like every other. The migration seeds the single dormant row
-  (`frozen = false`), one of the **two** declared DML operations in `atlas_migrate`'s grant
-  list (§8.2); the other is the cutover receipt carry.
+  (`frozen = false`) **as the principal that applies it** — the Supabase project owner — and
+  `ON CONFLICT DO NOTHING`, so a re-apply can never lift a live freeze.
+- **Ownership is deliberately NOT transferred to `atlas_migrate`.** *Corrected by the required
+  review of `65310b3`, finding 1: the migration originally ran `ALTER TABLE … OWNER TO
+  atlas_migrate`, and an owner's implicit `INSERT`/`UPDATE`/`DELETE` cannot be durably revoked —
+  an owner may re-grant to itself at will — so that made the migration role a **second**
+  principal able to lift a freeze, which is precisely what D7 forbids.* Every other table in
+  `atlas` is owned by `atlas_migrate`; this one is not, and the exception is the point. The
+  table stays owned by the applying principal, which IS the sole mutator §5.3 names, so the
+  ownership and the mutation path are one thing rather than two that must agree. `atlas_migrate`
+  therefore also cannot `ALTER` or `DROP` this table, and any change to its shape is an owner
+  action — exactly like setting the row. §6.2 P8a proves the refusal for **all four** scoped
+  roles, and proves the project-owner path can still set and lift the freeze.
 
 ---
 
@@ -2869,18 +2880,26 @@ DDL privilege.
 owner role, which is the owner-authentication boundary §5.3 relies on. P11 proves the runtime
 cannot open writes by any local means.
 
-**`atlas_migrate`** — **migration-only: DDL, plus exactly two declared DML operations.**
+**`atlas_migrate`** — **migration-only: DDL, plus exactly ONE declared DML operation.**
 *Corrected by the required review of `310b01b`, which found it described as "DDL only" while
-the design assigned it DML in two places.* Used by migration runs in CI and by the owner-run
-application to `Atlas Production`. **Never used by the server at runtime.**
+the design assigned it DML in two places; narrowed back to one by the required review of
+`65310b3`, finding 1.* Used by migration runs in CI and by the owner-run application to
+`Atlas Production`. **Never used by the server at runtime.**
 
 | Operation | Objects | Why it is not `atlas_app`'s |
 |---|---|---|
-| DDL | every object in `atlas` | schema is never a runtime privilege |
-| the migration seed | `INSERT` on `atlas.write_freeze` — the single dormant row, once, in the `S3` migration | the runtime must never write the row that governs it |
+| DDL | every object in `atlas` **except `atlas.write_freeze`** | schema is never a runtime privilege |
 | the cutover receipt carry | `INSERT`, `UPDATE`, `DELETE` on `atlas.write_receipts`, for the one crash-atomic transaction of §5.5a step 5 | `atlas_app` deliberately holds **no `DELETE`** on `write_receipts` — a runtime role that could delete a receipt could erase duplicate protection |
 
-It holds no other DML on any table. P7c executes both declared operations **as this role**.
+**`atlas.write_freeze` is the one object this role touches at all.** The `S3` migration seed was
+previously counted as its second declared DML operation. It is not: the seed runs as the
+**applying principal**, which owns that table, and `atlas_migrate` holds **no privilege on it
+whatsoever — not even `SELECT`** — and does not own it, so it can neither write the control nor
+alter nor drop it. A migration role able to drop the control could remove the freeze, and D7
+recognises exactly one mutator.
+
+It holds no other DML on any table. P7c executes the declared operation **as this role**, and
+§6.2 P8a proves the `write_freeze` refusals as each real role.
 
 **`atlas_readonly`** — `SELECT` only, on every table in `atlas`. Used by
 `npm run atlas:status` and `npm run atlas:review-live`, mirroring the existing rule that
@@ -2889,8 +2908,8 @@ read-only tools build their own `spreadsheets.readonly` client.
 **`atlas_rebuild`** — the owner-only principal for the §5.7 mirror rebuild, and nothing else.
 *Added by the required review of `0e324ac`, which found the rebuild owner-gated but executable by
 no declared principal: `atlas_app` holds no `DELETE` on `sheets_mirror_allocations`,
-`atlas_migrate` holds no DML on it either — its two declared DML operations are scoped to
-`write_freeze` and `write_receipts` — and `atlas_readonly` is `SELECT` only. A recovery path no
+`atlas_migrate` holds no DML on it either — its one declared DML operation is scoped to
+`write_receipts` — and `atlas_readonly` is `SELECT` only. A recovery path no
 credential may execute is not a recovery path.*
 
 | Grant | Objects |
@@ -3325,9 +3344,23 @@ Each line is a cleanup obligation of the PR named, not of `S1`.
   zero migrations — and the owner then applied the `S2` schema to it on 2026-08-08, so the
   eleven `S2` tables and the four scoped roles now exist there. It still claims **no data has
   migrated**: those tables are unwritten, no connection string is configured, and Sheets decides
-  alone. It does not claim any `S3` or `S4` table exists; `atlas.write_freeze` is absent.
-- It does not claim a measurement. The net-complexity expectation in §9 and the residual
-  read count in §6.2 P4 are both unmeasured, and both are marked as such.
+  alone.
+- **It does not claim `S3` has landed.** `S3` is **implemented in open PR #1281 and NOT
+  merged.** Its migration has **not** been applied to `Atlas Production`, so
+  **`atlas.write_freeze` does not exist there**, and **no deployed evidence exists** — §6.2 P8b
+  is outstanding, and P8–P12 are proven at the code level only, against the from-empty proof
+  database. Nothing in `S3` has moved a read or a write: Google Sheets, plus the file-backed
+  store in `services/idempotency.js`, remains the sole live authority for every migrated
+  concept, and it stays so until `S4`. Where this document describes `S3` in the present tense
+  it is describing **the reviewed design and the merged-pending implementation**, never the
+  state of the deployment.
+- It does not claim a measurement it has not taken. The net-complexity expectation in §9 is
+  unmeasured and marked as such. **The §6.2 P4(a) residual read count IS now measured** — 255
+  in-request Sheets range reads over the captured live manifest, 204 of them on migrated tabs —
+  and the census is recorded in
+  [`docs/verification/S3_CUTOVER_READINESS_2026-08-09.md`](./verification/S3_CUTOVER_READINESS_2026-08-09.md).
+  P4(b)'s bounded background dependency is stated and gated there too, and **no unqualified
+  quota-independence claim is made anywhere.**
 - It does not authorize applying a schema or deploying.
 - It does not amend the Constitution, and it writes no amended wording. Ruling D2 states the
   substance; Dale writes the text.

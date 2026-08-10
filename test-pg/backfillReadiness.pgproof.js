@@ -25,6 +25,7 @@ const backfill = require('../services/migrationBackfill');
 const readParity = require('../services/migrationReadParity');
 const { runSweep } = require('../services/migrationSweep');
 const { runRepair } = require('../services/migrationRepair');
+const { readinessVerdict } = require('../scripts/atlas-migration-readiness');
 
 // ── The workbook, as sheets.getSheetRows() presents it: DATA ROWS ONLY ────────
 // sheets.js:784-790 slices the header off, so a fixture that kept one would be
@@ -81,9 +82,20 @@ function sheetsFixture(tabs) {
   return {
     getSheetRows: async (tab) => (tabs[tab] || []).map((r) => [...r]),
     getExerciseCatalog: async () => (tabs.Exercise_Catalog || []).map((r) => [...r]),
+    // These two mirror sheets.js EXACTLY, including its skips. The real
+    // getLogCompositeKeys (sheets.js:890-913) drops a row missing session_id,
+    // exercise or set_number, and getEffortSessionIds (:883-888) drops a blank and
+    // the header. A fixture that kept them would compare the prospective read path
+    // against a Sheets behaviour production does not have.
     getLogCompositeKeys: async () => (tabs.Log_Cleaned || [])
-      .map((r) => `${String(r[1]).trim().toLowerCase()}||${String(r[2]).trim().toLowerCase()}||${String(r[6]).trim().toLowerCase()}`),
-    getEffortSessionIds: async () => (tabs.Effort || []).map((r) => String(r[1]).trim()),
+      .map((r) => [
+        String(r[1] ?? '').trim(), String(r[2] ?? '').trim(), String(r[6] ?? '').trim(),
+      ])
+      .filter(([sid, ex, setn]) => sid && ex && setn)
+      .map(([sid, ex, setn]) => `${sid.toLowerCase()}||${ex.toLowerCase()}||${setn.toLowerCase()}`),
+    getEffortSessionIds: async () => (tabs.Effort || [])
+      .map((r) => String(r[1] ?? '').trim())
+      .filter((value) => value && value.toLowerCase() !== 'session id'),
   };
 }
 
@@ -299,6 +311,128 @@ test('P6: an INCOMPLETE sweep is not a zero, even when its counters read zero', 
   assert.equal(sweep.complete, false, 'a duplicate identity makes the concept unreconcilable');
   const summary = await adapter.divergenceSummary();
   assert.ok(Number(summary.open_count) > 0, 'and it becomes a DURABLE row, not a statistic');
+});
+
+/* ══════════ FINDING 3 — an IDENTITYLESS authoritative row ══════════ */
+
+// *Required Atlas Contract / Systems Review of `65310b3`, finding 3.*
+//
+// Sheets is the authority and can hold a row with NO export identity — every
+// identity component blank. Such a row cannot be matched, cannot be compared,
+// cannot be repaired, and cannot even be recorded as a divergence, because a
+// divergence is keyed BY identity.
+//
+// Both the backfill and the sweep used to drop it silently, from BOTH sides, so
+// the counts agreed and every gate read clean. These proofs use a genuinely
+// identityless row and assert that S3 completeness, reconciliation and readiness
+// each fail EXPLICITLY. Nothing here invents an identity to make it representable —
+// that would hide the very defect being proven.
+const IDENTITYLESS_LOG_ROW = ['2026-08-07', '', '', '', 'legs', '', '', 195, 5, 2, '', 975];
+
+test('FINDING 3: an identityless authoritative row makes the BACKFILL incomplete, not merely skipped', async () => {
+  tabs.Log_Cleaned.push([...IDENTITYLESS_LOG_ROW]);
+
+  const result = await backfill.runBackfill({ sheets, adapter, apply: true });
+  const plan = result.concepts.find((c) => c.concept === 'logged_sets');
+
+  assert.equal(plan.rows_skipped_no_identity, 1, 'the row is recognised as having no identity');
+  assert.equal(plan.inserted, 5, 'and the five well-formed rows still load');
+  assert.match(plan.error, /sheets_identityless/, 'it is an ERROR, not a counter nobody reads');
+  assert.match(plan.error, /OWNER ACTION REQUIRED/);
+  assert.equal(result.complete, false,
+    'a backfill that could not represent an authoritative row is NOT complete');
+
+  // And nothing was invented to make it representable.
+  await withOwner(async (client) => {
+    const blank = await client.query(
+      `SELECT count(*)::int AS n FROM atlas.logged_sets WHERE session_id = '' OR exercise = ''`
+    );
+    assert.equal(blank.rows[0].n, 0, 'no placeholder row reached the destination');
+    const sessions = await client.query('SELECT count(*)::int AS n FROM atlas.workout_sessions');
+    assert.equal(sessions.rows[0].n, 3, 'and no fabricated session parent either');
+  });
+});
+
+test('FINDING 3: it makes the SWEEP incomplete — never a zero', async () => {
+  await backfill.runBackfill({ sheets, adapter, apply: true });
+  tabs.Log_Cleaned.push([...IDENTITYLESS_LOG_ROW]);
+
+  const sweep = await runSweep({ sheets, adapter, openDivergences: true });
+  const concept = sweep.concepts.find((c) => c.concept === 'logged_sets');
+
+  assert.equal(concept.sheets_identityless, 1, 'it is COUNTED rather than dropped');
+  assert.equal(concept.complete, false, 'and the concept is not reconcilable');
+  assert.match(concept.error, /sheets_identityless/);
+  assert.equal(sweep.complete, false, 'so the run as a whole is not a zero');
+
+  // It correctly opens NO divergence — there is no identity to key one by, and the
+  // sweep must not invent one. Incompleteness is the honest record.
+  assert.equal(concept.divergences_opened, 0);
+  assert.equal(Number((await adapter.divergenceSummary()).open_count), 0,
+    'the durable count is genuinely zero here, which is exactly why P6 may not read it alone');
+});
+
+test('FINDING 3: it makes RECONCILIATION fail even though the counts still agree', async () => {
+  await backfill.runBackfill({ sheets, adapter, apply: true });
+  tabs.Log_Cleaned.push([...IDENTITYLESS_LOG_ROW]);
+
+  const report = await backfill.reconcile({ sheets, adapter });
+  const tab = report.tabs.find((t) => t.concept === 'logged_sets');
+
+  // THE POINT: dropping the row from both sides made the counts agree, and a
+  // count-based reconciliation would have called this clean.
+  assert.equal(tab.counts_equal, true, 'the counts still match — that is the trap');
+  assert.equal(tab.missing_in_supabase, 0);
+  assert.equal(tab.content_mismatch, 0);
+  assert.equal(tab.sheets_identityless, 1);
+  assert.equal(tab.reconciled, false, 'and it is still NOT reconciled');
+  assert.equal(report.reconciled, false);
+});
+
+test('FINDING 3: readiness REFUSES on it, through the real verdict', async () => {
+  await backfill.runBackfill({ sheets, adapter, apply: true });
+  tabs.Log_Cleaned.push([...IDENTITYLESS_LOG_ROW]);
+
+  const sweep = await runSweep({ sheets, adapter, openDivergences: false });
+  const summary = await adapter.divergenceSummary();
+  const assessment = readinessVerdict({
+    parity: await readParity.compareReadPaths({ sheets, adapter }),
+    sweep,
+    openDivergences: summary.open_count,
+    catalog: { ok: true },
+  });
+
+  assert.equal(assessment.open_divergences, 0, 'the durable count is zero…');
+  assert.equal(assessment.verdict.p6_zero_divergences, false, '…and readiness refuses anyway');
+  assert.equal(assessment.ready, false);
+});
+
+/* ══════════ FINDING 2 — the stale zero, against a real database ══════════ */
+
+test('FINDING 2: a durable ZERO with a live mismatch must FAIL readiness', async () => {
+  await backfill.runBackfill({ sheets, adapter, apply: true });
+
+  // A real content divergence, introduced WITHOUT opening a divergence row — the
+  // state a database is in whenever a mismatch appears before the opening sweep
+  // next runs. The durable table stays empty.
+  await withOwner((client) => client.query(
+    `UPDATE atlas.logged_sets SET reps = reps + 1 WHERE session_id = $1 AND exercise = 'Back Squat' AND set_number = 1`,
+    [SESSIONS[0]]
+  ));
+
+  const sweep = await runSweep({ sheets, adapter, openDivergences: false });
+  const summary = await adapter.divergenceSummary();
+
+  assert.equal(Number(summary.open_count), 0, 'nothing has been RECORDED…');
+  assert.equal(sweep.complete, true, '…the sweep ran to completion…');
+  assert.equal(sweep.divergences_found, 1, '…and it found a live mismatch right now');
+
+  const assessment = readinessVerdict({
+    parity: { ready: true }, sweep, openDivergences: summary.open_count, catalog: { ok: true },
+  });
+  assert.equal(assessment.verdict.p6_zero_divergences, false,
+    'reading the durable count alone would have certified a state that is no longer true');
+  assert.equal(assessment.ready, false);
 });
 
 /* ══════════ §6.2 P7 — a repair closes only on a PASSING re-comparison ══════════ */

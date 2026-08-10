@@ -19,7 +19,7 @@ const assert = require('node:assert');
 const { spawn } = require('child_process');
 const path = require('path');
 
-const { withOwner, withRole, expectRejected, SQLSTATE } = require('./support/db');
+const { withOwner, withRole, withApplier, expectRejected, SQLSTATE } = require('./support/db');
 const adapter = require('../services/supabaseAdapter');
 
 const CHILD = path.join(__dirname, 'support', 'freezeServer.js');
@@ -98,34 +98,94 @@ test('P8a: atlas_app CAN select the row — as the real role', async () => {
   });
 });
 
-test('P8a: atlas_app is REFUSED insert, update and delete — the absence IS the control', async () => {
-  await withRole('atlas_app', async (client) => {
-    await expectRejected(
-      client,
-      `INSERT INTO atlas.write_freeze (id, frozen, reason, set_by) VALUES (true, false, 'r', 's')`,
-      [], { sqlstate: SQLSTATE.INSUFFICIENT_PRIVILEGE }
+// ── ONE WINNER: EVERY SCOPED ROLE IS REFUSED, INCLUDING atlas_migrate ─────────
+//
+// *Added by the required Atlas Contract / Systems Review of `65310b3`, finding 1.*
+//
+// The migration used to transfer ownership to atlas_migrate, which handed it
+// owner-equivalent INSERT/UPDATE/DELETE — a SECOND principal able to lift a
+// freeze, which is exactly what D7 forbids. Ownership is no longer transferred,
+// and the refusal is now asserted for ALL FOUR scoped roles rather than for the
+// runtime alone. A grant list is a claim; these are the behaviours.
+for (const role of ['atlas_app', 'atlas_migrate', 'atlas_readonly', 'atlas_rebuild']) {
+  test(`P8a: ${role} is REFUSED insert, update and delete on the control — the absence IS the control`, async () => {
+    await withRole(role, async (client) => {
+      await expectRejected(
+        client,
+        `INSERT INTO atlas.write_freeze (id, frozen, reason, set_by) VALUES (true, false, 'r', 's')`,
+        [], { sqlstate: SQLSTATE.INSUFFICIENT_PRIVILEGE }
+      );
+      // THE ONE THAT MATTERS: lifting a freeze. If any scoped role can run this,
+      // the control has two authorities and D7's "one winner" is not true.
+      await expectRejected(
+        client, 'UPDATE atlas.write_freeze SET frozen = false WHERE id', [],
+        { sqlstate: SQLSTATE.INSUFFICIENT_PRIVILEGE }
+      );
+      await expectRejected(
+        client, 'DELETE FROM atlas.write_freeze WHERE id', [],
+        { sqlstate: SQLSTATE.INSUFFICIENT_PRIVILEGE }
+      );
+    });
+  });
+
+  test(`P8a: ${role} cannot escalate — no DDL on the control either`, async () => {
+    await withRole(role, async (client) => {
+      // A role that could drop the primary key could insert a second row and make
+      // every read ambiguous; a role that could drop the table could remove the
+      // control outright. Both are ownership operations, and no scoped role owns it.
+      await expectRejected(client, 'ALTER TABLE atlas.write_freeze DROP CONSTRAINT write_freeze_pkey', [],
+        { sqlstate: SQLSTATE.INSUFFICIENT_PRIVILEGE });
+      await expectRejected(client, 'DROP TABLE atlas.write_freeze', [],
+        { sqlstate: SQLSTATE.INSUFFICIENT_PRIVILEGE });
+      // And it cannot simply grant itself the privilege it was refused.
+      await expectRejected(client, `GRANT UPDATE ON atlas.write_freeze TO ${role}`, [],
+        { sqlstate: SQLSTATE.INSUFFICIENT_PRIVILEGE });
+    });
+  });
+}
+
+test('P8a: no scoped role OWNS the control — ownership is the mutation path, and it is the owner\'s', async () => {
+  await withOwner(async (client) => {
+    const { rows } = await client.query(
+      `SELECT tableowner FROM pg_tables WHERE schemaname = 'atlas' AND tablename = 'write_freeze'`
     );
-    await expectRejected(
-      client, 'UPDATE atlas.write_freeze SET frozen = false WHERE id', [],
-      { sqlstate: SQLSTATE.INSUFFICIENT_PRIVILEGE }
-    );
-    await expectRejected(
-      client, 'DELETE FROM atlas.write_freeze WHERE id', [],
-      { sqlstate: SQLSTATE.INSUFFICIENT_PRIVILEGE }
-    );
-    // No HTTP route and no application role can lift a freeze. Only the Supabase
-    // project owner can — which is what makes the freeze itself owner authorization
-    // for the receipt migration seam (§5.3).
+    const owner = rows[0].tableowner;
+    for (const role of ['atlas_app', 'atlas_migrate', 'atlas_readonly', 'atlas_rebuild']) {
+      assert.notEqual(owner, role,
+        `${role} owns atlas.write_freeze; an owner's implicit DML cannot be durably revoked, ` +
+        'so that would be a second mutation authority over the one control D7 gives to the project owner');
+    }
   });
 });
 
-test('P8a: the runtime cannot escalate — no DDL on the control either', async () => {
-  await withRole('atlas_app', async (client) => {
-    await expectRejected(client, 'ALTER TABLE atlas.write_freeze DROP CONSTRAINT write_freeze_pkey', [],
-      { sqlstate: SQLSTATE.INSUFFICIENT_PRIVILEGE });
-    await expectRejected(client, 'DROP TABLE atlas.write_freeze', [],
-      { sqlstate: SQLSTATE.INSUFFICIENT_PRIVILEGE });
+test('P8a: THE PROJECT OWNER can set and lift the freeze — as a NOSUPERUSER role', async () => {
+  // The other half of "one winner". Refusing everybody proves the control is
+  // inert, not that it is controllable — and this runs as the applier, the
+  // CREATEROLE NOSUPERUSER principal that mirrors Supabase's `postgres`, never as
+  // the container superuser that would bypass the check being relied on.
+  await withApplier(async (client) => {
+    const set = await client.query(
+      `UPDATE atlas.write_freeze SET frozen = true, reason = $1, set_by = $2, set_at = now() WHERE id`,
+      ['owner freeze — §5.5 step 1', 'project-owner-proof']
+    );
+    assert.equal(set.rowCount, 1, 'the project owner must be able to FREEZE');
   });
+
+  // The runtime sees it, through its own least-privileged connection.
+  const frozen = await adapter.readWriteFreeze();
+  assert.equal(frozen[0].frozen, true);
+  assert.equal(frozen[0].set_by, 'project-owner-proof');
+
+  await withApplier(async (client) => {
+    const lift = await client.query(
+      `UPDATE atlas.write_freeze SET frozen = false, reason = $1, set_by = $2, set_at = now() WHERE id`,
+      ['owner lift — §5.5 step 8', 'project-owner-proof']
+    );
+    assert.equal(lift.rowCount, 1, 'and to LIFT it — a freeze nobody can lift is a permanent outage');
+  });
+
+  const lifted = await adapter.readWriteFreeze();
+  assert.equal(lifted[0].frozen, false);
 });
 
 test('P8a: the adapter read returns exactly one valid row through the real pooled connection', async () => {

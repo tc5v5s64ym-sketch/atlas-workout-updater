@@ -56,6 +56,28 @@ async function withRole(role, fn) {
   }
 }
 
+// THE PROJECT-OWNER PATH — the only principal D7 recognises as a mutator of
+// atlas.write_freeze (§3.10, §5.3).
+//
+// Deliberately NOT `withOwner`. That one is the container's superuser, and a
+// superuser bypasses every privilege check, so "the owner can lift the freeze"
+// proven as a superuser proves nothing about `Atlas Production`, which has none.
+// This is the NOSUPERUSER CREATEROLE applier that mirrors Supabase's `postgres`
+// and actually OWNS the table, because §3.10 deliberately does not transfer
+// ownership to atlas_migrate.
+function applierUrl() {
+  return requireUrl('ATLAS_PG_PROOF_URL_APPLIER');
+}
+
+async function withApplier(fn) {
+  const client = await connect(applierUrl());
+  try {
+    return await fn(client);
+  } finally {
+    await client.end();
+  }
+}
+
 // Child-first so no foreign key blocks the reset. TRUNCATE rather than DELETE so
 // identity sequences restart and a test's row ids are its own.
 const TABLES_CHILD_FIRST = [
@@ -126,8 +148,10 @@ module.exports = {
   connect,
   ownerUrl,
   roleUrl,
+  applierUrl,
   withOwner,
   withRole,
+  withApplier,
   resetSchema,
   expectRejected,
   seedSession,
