@@ -103,11 +103,40 @@ const readMigration = (file) => fs.readFileSync(path.join(MIGRATIONS, file), 'ut
 //   `fullyPermissive`    — also delete that postcondition, restoring the whole
 //                          pre-ruling posture. Now nothing refuses, and the
 //                          drifted object is adopted.
-const POSTCONDITION_BLOCK = /\nDO \$\$\nBEGIN\n  IF has_table_privilege[\s\S]*?\nEND\n\$\$;\n/;
+const POSTCONDITION_BLOCK = /\nDO \$\$\nDECLARE\n  offending text;[\s\S]*?\nEND\n\$\$;\n/;
+
+// The postcondition exactly as `39701b92` shipped it — eight hand-listed calls,
+// checking only UPDATE for atlas_readonly and atlas_rebuild. Kept verbatim so
+// "weakening it back lets the case through" is shown by RUNNING the old block.
+const LEGACY_POSTCONDITION = `
+DO $$
+BEGIN
+  IF has_table_privilege('atlas_app',      'atlas.write_freeze', 'INSERT')
+  OR has_table_privilege('atlas_app',      'atlas.write_freeze', 'UPDATE')
+  OR has_table_privilege('atlas_app',      'atlas.write_freeze', 'DELETE')
+  OR has_table_privilege('atlas_migrate',  'atlas.write_freeze', 'INSERT')
+  OR has_table_privilege('atlas_migrate',  'atlas.write_freeze', 'UPDATE')
+  OR has_table_privilege('atlas_migrate',  'atlas.write_freeze', 'DELETE')
+  OR has_table_privilege('atlas_readonly', 'atlas.write_freeze', 'UPDATE')
+  OR has_table_privilege('atlas_rebuild',  'atlas.write_freeze', 'UPDATE') THEN
+    RAISE EXCEPTION 'a scoped role can write atlas.write_freeze — the freeze would have two authorities';
+  END IF;
+END
+$$;
+`;
 
 function mutateS3(mode) {
   let sql = readMigration(S3_FILE);
   if (mode === 'none') return sql;
+
+  // A replacer FUNCTION: `$$` in a replacement string is an escape for `$`, and
+  // passing SQL as a string would corrupt the dollar quoting.
+  if (mode === 'legacyPostcondition') {
+    const swapped = sql.replace(POSTCONDITION_BLOCK, () => `\n${LEGACY_POSTCONDITION}`);
+    assert.notEqual(swapped, sql, 'the postcondition must be found in order to be replaced');
+    assert.match(swapped, /DO \$\$/, 'the legacy block must survive the substitution intact');
+    return swapped;
+  }
 
   const permissive = sql.replace(/^CREATE TABLE atlas\.write_freeze \($/m,
     'CREATE TABLE IF NOT EXISTS atlas.write_freeze (');
@@ -128,7 +157,7 @@ let created = [];
 
 // A database in the legitimate post-S2 state, optionally carrying a pre-existing
 // atlas.write_freeze, with S3 then applied (or attempted).
-async function buildDatabase({ preCreate = null, mutation = 'none' } = {}) {
+async function buildDatabase({ preCreate = null, preSql = [], mutation = 'none' } = {}) {
   const name = `atlas_s3_drift_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
   const applier = requireEnv('ATLAS_PG_PROOF_URL_APPLIER');
   const applierRole = new URL(applier).username;
@@ -151,6 +180,13 @@ async function buildDatabase({ preCreate = null, mutation = 'none' } = {}) {
   // gave it: after S2 it owns schema `atlas` and holds CREATE.
   if (preCreate) {
     await withConnection(urls.atlas_migrate, (client) => client.query(preCreate));
+  }
+
+  // ENVIRONMENT drift, as the applier — deployment-local settings that outlive any
+  // one migration. `ALTER DEFAULT PRIVILEGES` is the case the retained postcondition
+  // exists for: it attaches grants to tables this principal has not created yet.
+  for (const statement of preSql) {
+    await withConnection(urls.applier, (client) => client.query(statement.replace(/\$APPLIER/g, applierRole)));
   }
 
   let s3Error = null;
@@ -269,6 +305,78 @@ for (const [label, preCreate] of DRIFT_VARIANTS) {
     });
   });
 }
+
+/* ══════════ 2b. ENVIRONMENT DRIFT — an unexpected default write grant ══════════ */
+//
+// *Required review of `39701b92`.* The retained postcondition exists for exactly
+// this: `ALTER DEFAULT PRIVILEGES` is deployment-local, outlives any one migration,
+// and attaches grants to a table this file has not created yet. The from-empty
+// proof cannot discharge it, because that fixture controls its own defaults.
+//
+// The old block hand-listed its checks and covered only UPDATE for atlas_readonly
+// and atlas_rebuild, so a default INSERT or DELETE to either survived it.
+//
+// HONEST SCOPE: neither missing privilege is a route to OPENING writes. UPDATE —
+// the lift path — was already covered for all four roles; INSERT cannot add a row
+// past the primary key and `CHECK (id)`; DELETE and TRUNCATE remove the control,
+// and a control that cannot be read is FROZEN (§5.3). The exposure is a claim that
+// exceeded its proof, plus an availability one: a role able to delete the control
+// can wedge writes closed until the owner notices.
+const DEFAULT_GRANT_CASES = [
+  ['INSERT to atlas_readonly', 'atlas_readonly', 'INSERT'],
+  ['DELETE to atlas_rebuild', 'atlas_rebuild', 'DELETE'],
+  ['TRUNCATE to atlas_readonly', 'atlas_readonly', 'TRUNCATE'],
+];
+
+for (const [label, role, privilege] of DEFAULT_GRANT_CASES) {
+  test(`P8a: S3 REFUSES an unexpected default ${label}`, async () => {
+    const { urls, s3Error } = await buildDatabase({
+      preSql: [
+        `ALTER DEFAULT PRIVILEGES FOR ROLE "$APPLIER" IN SCHEMA atlas GRANT ${privilege} ON TABLES TO ${role}`,
+      ],
+    });
+
+    assert.ok(s3Error, `an unexpected default ${privilege} for ${role} must refuse S3`);
+    assert.match(s3Error.message, /a scoped role can write atlas\.write_freeze/);
+    assert.match(s3Error.message, new RegExp(`${role}:${privilege}`),
+      'and the refusal must NAME the offending role and privilege');
+
+    // The whole file rolled back: the control does not exist, so nothing was left
+    // behind carrying the unexpected grant.
+    await withConnection(urls.applier, async (client) => {
+      const exists = await client.query(
+        `SELECT count(*)::int AS n FROM pg_tables WHERE schemaname = 'atlas' AND tablename = 'write_freeze'`
+      );
+      assert.equal(exists.rows[0].n, 0, 'a refused S3 leaves no control behind');
+    });
+  });
+}
+
+test('P8a MUTATION: the 39701b92 postcondition lets a default DELETE to atlas_rebuild through', async () => {
+  // The bite for this finding. With the hand-listed block restored, atlas_rebuild's
+  // unexpected DELETE is not checked at all, S3 completes, and the role really can
+  // remove the control.
+  const { urls, s3Error } = await buildDatabase({
+    preSql: ['ALTER DEFAULT PRIVILEGES FOR ROLE "$APPLIER" IN SCHEMA atlas GRANT DELETE ON TABLES TO atlas_rebuild'],
+    mutation: 'legacyPostcondition',
+  });
+
+  assert.equal(s3Error, null,
+    `the hand-listed postcondition accepts it — which is the defect: ${s3Error && s3Error.message}`);
+
+  // And the consequence, demonstrated as the real role rather than asserted.
+  const rebuild = onDatabase(requireEnv('ATLAS_PG_PROOF_URL_ATLAS_REBUILD'), urls.applier.split('/').pop());
+  await withConnection(rebuild, async (client) => {
+    const deleted = await client.query('DELETE FROM atlas.write_freeze WHERE id');
+    assert.equal(deleted.rowCount, 1,
+      'atlas_rebuild removed the control — writes are now wedged closed until the owner notices');
+  });
+
+  await withConnection(urls.applier, async (client) => {
+    const rows = await client.query('SELECT count(*)::int AS n FROM atlas.write_freeze');
+    assert.equal(rows.rows[0].n, 0, 'the control is gone; every runtime read now refuses');
+  });
+});
 
 /* ══════════ 3. THE MUTATION BITE ══════════ */
 

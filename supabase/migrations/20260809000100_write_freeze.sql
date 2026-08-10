@@ -155,18 +155,32 @@ GRANT SELECT ON atlas.write_freeze TO atlas_rebuild;
 -- independent — the create refuses early, on identity, before anything is
 -- inspected; this refuses late, on effective privilege — and only removing both
 -- lets a pre-existing object be adopted.
+-- EXHAUSTIVE BY CONSTRUCTION, not by enumeration. *Required review of `39701b9`.*
+-- The previous version hand-listed eight `has_table_privilege` calls and, in doing
+-- so, checked only UPDATE for atlas_readonly and atlas_rebuild — so a default
+-- INSERT or DELETE on either would have survived a postcondition whose stated
+-- claim is that NO scoped role can write the control. A hand-written list is the
+-- wrong shape for an exhaustiveness claim; the cross product cannot omit a cell.
+--
+-- TRUNCATE is included because it is a write, and the claim says write. Leaving it
+-- out would reopen the same gap between what this block asserts and what it means.
+--
+-- The refusal NAMES the offending role and privilege, so an operator does not have
+-- to re-derive which of twenty combinations tripped it.
 DO $$
+DECLARE
+  offending text;
 BEGIN
-  IF has_table_privilege('atlas_app',      'atlas.write_freeze', 'INSERT')
-  OR has_table_privilege('atlas_app',      'atlas.write_freeze', 'UPDATE')
-  OR has_table_privilege('atlas_app',      'atlas.write_freeze', 'DELETE')
-  OR has_table_privilege('atlas_migrate',  'atlas.write_freeze', 'INSERT')
-  OR has_table_privilege('atlas_migrate',  'atlas.write_freeze', 'UPDATE')
-  OR has_table_privilege('atlas_migrate',  'atlas.write_freeze', 'DELETE')
-  OR has_table_privilege('atlas_readonly', 'atlas.write_freeze', 'UPDATE')
-  OR has_table_privilege('atlas_rebuild',  'atlas.write_freeze', 'UPDATE') THEN
-    RAISE EXCEPTION 'a scoped role can write atlas.write_freeze — the freeze would have two authorities'
-      USING HINT = 'Owner ruling D7 recognises one mutator: the Supabase project owner.';
+  SELECT string_agg(format('%s:%s', r.role, p.priv), ', ' ORDER BY r.role, p.priv)
+    INTO offending
+    FROM unnest(ARRAY['atlas_app', 'atlas_migrate', 'atlas_readonly', 'atlas_rebuild']) AS r(role)
+    CROSS JOIN unnest(ARRAY['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE']) AS p(priv)
+   WHERE has_table_privilege(r.role, 'atlas.write_freeze', p.priv);
+
+  IF offending IS NOT NULL THEN
+    RAISE EXCEPTION 'a scoped role can write atlas.write_freeze: %', offending
+      USING HINT = 'Owner ruling D7 recognises one mutator: the Supabase project owner. '
+                   'Clear the ALTER DEFAULT PRIVILEGES that granted this, then re-apply.';
   END IF;
 
   IF NOT has_table_privilege('atlas_app', 'atlas.write_freeze', 'SELECT') THEN
