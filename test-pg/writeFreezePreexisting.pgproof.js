@@ -110,21 +110,37 @@ function readMigration(file) {
 
 // ── The mutations ────────────────────────────────────────────────────────────
 //
-// `ownership` strips only the statement that TAKES ownership, leaving the
-// verification block — so the migration should refuse.
-// `ownershipAndVerification` strips both, restoring exactly the vulnerable
-// behaviour the review found — so the migration should succeed and leave the
-// competing authority alive. That second one is the bite: it proves this file
-// fails when the defect is reintroduced.
+// `establish` strips the three statements that TAKE the invariant — the ownership
+// transfer and the two access-list revokes — and keeps the verification block, so
+// the migration should REFUSE.
+//
+// `everything` strips the verification block as well, restoring exactly the
+// vulnerable code the review found, so the migration should SUCCEED and leave the
+// competing authority alive. That is the bite: it is what the passing test above
+// would fail on if the fix were reverted.
+//
+// The revokes go with the ownership transfer deliberately. They depend on it — a
+// non-owner that revokes the owner's own access-list entry strips the privileges
+// it was borrowing through membership, and the seed two statements later dies with
+// "permission denied". Leaving them in would make the mutated migration fail for
+// plumbing reasons and prove nothing about the verification.
+const MUTABLE_STATEMENTS = [
+  /^ALTER TABLE atlas\.write_freeze OWNER TO CURRENT_USER;$/m,
+  /^REVOKE ALL ON atlas\.write_freeze FROM PUBLIC;$/m,
+  /^REVOKE ALL ON atlas\.write_freeze FROM atlas_app, atlas_migrate, atlas_readonly, atlas_rebuild;$/m,
+];
+
 function mutateS3(mode) {
   let sql = readMigration(S3_FILE);
   if (mode === 'none') return sql;
 
-  const before = sql;
-  sql = sql.replace(/^ALTER TABLE atlas\.write_freeze OWNER TO CURRENT_USER;$/m, '-- [mutated away]');
-  assert.notEqual(sql, before, 'the ownership statement must exist to be mutated away');
+  for (const statement of MUTABLE_STATEMENTS) {
+    const before = sql;
+    sql = sql.replace(statement, '-- [mutated away]');
+    assert.notEqual(sql, before, `the statement ${statement} must exist to be mutated away`);
+  }
 
-  if (mode === 'ownershipAndVerification') {
+  if (mode === 'everything') {
     const withoutVerify = sql.replace(/\nDO \$\$\nDECLARE\n  expected_owner[\s\S]*?\nEND\n\$\$;\n/, '\n');
     assert.notEqual(withoutVerify, sql, 'the verification block must exist to be mutated away');
     sql = withoutVerify;
@@ -314,14 +330,15 @@ test('P8a: S3 applied over a PRE-EXISTING atlas_migrate-owned control takes owne
 
 /* ══════════ THE MUTATION BITE ══════════ */
 
-test('P8a MUTATION: without the ownership statement, S3 REFUSES to apply', async () => {
+test('P8a MUTATION: without the establishing statements, S3 REFUSES to apply', async () => {
   // The verification block is load-bearing, not decorative: with the establishing
-  // statement removed, the migration must abort rather than complete over a
+  // statements removed, the migration must abort rather than complete over a
   // control whose owner is a second authority.
-  const { urls, s3Error } = await buildHostileDatabase('ownership');
+  const { urls, s3Error } = await buildHostileDatabase('establish');
 
   assert.ok(s3Error, 'S3 must REFUSE when it cannot confirm it owns the control');
-  assert.match(s3Error.message, /owned by "atlas_migrate"/);
+  assert.match(s3Error.message, /owned by "atlas_migrate"/,
+    'and it must refuse for the RIGHT reason — the verification block, naming the wrong owner');
   assert.match(s3Error.message, /must be owned by the applying project owner/);
 
   // And it rolled back cleanly: the file is one transaction, so nothing half-applied.
@@ -343,9 +360,10 @@ test('P8a MUTATION: restoring the vulnerable behaviour reproduces the defect thi
   // now SUCCEEDS, and leaves atlas_migrate owning the control with implicit DML no
   // REVOKE can remove. This is the bite: were the fix reverted, the test above
   // would fail, and this one records precisely what it would fail on.
-  const { urls, s3Error } = await buildHostileDatabase('ownershipAndVerification');
+  const { urls, s3Error } = await buildHostileDatabase('everything');
 
-  assert.equal(s3Error, null, 'the vulnerable migration applies without complaint — which is the problem');
+  assert.equal(s3Error, null,
+    `the vulnerable migration applies without complaint — which is the problem: ${s3Error && s3Error.message}`);
 
   await withConnection(urls.applier, async (client) => {
     const owner = await client.query(
@@ -353,6 +371,17 @@ test('P8a MUTATION: restoring the vulnerable behaviour reproduces the defect thi
     );
     assert.equal(owner.rows[0].tableowner, 'atlas_migrate',
       'CREATE TABLE IF NOT EXISTS preserved the hostile owner — the defect, reproduced');
+  });
+
+  // The second half of the defect: the planted UPDATE grant also survives, so the
+  // RUNTIME role could lift a freeze too. This is why the access list is rebuilt
+  // rather than adjusted.
+  await withConnection(urls.atlas_app, async (client) => {
+    const granted = await client.query(
+      `SELECT has_table_privilege('atlas_app', 'atlas.write_freeze', 'UPDATE') AS can_write`
+    );
+    assert.equal(granted.rows[0].can_write, true,
+      'the planted runtime UPDATE grant survived — a Save path able to lift its own freeze');
   });
 
   // And the surviving owner really can lift a freeze, which is why it matters.
