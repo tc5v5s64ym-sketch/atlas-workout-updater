@@ -58,6 +58,16 @@ const MIGRATED_TABS = Object.freeze([
 // and lower-cased, skipping any row missing one of the three and any header row.
 // contract.identity('logged_sets') is byte-for-byte that key — which is the point:
 // the duplicate guard the Save path consults must not change meaning at cutover.
+//
+// THE SKIP BELOW IS A DELIBERATE MIRROR, NOT A RE-DERIVED IDENTITY RULE. It
+// reproduces the real function's own skip so this prospective replacement returns
+// what production returns; diverging from it would make the P5 comparison measure
+// a Sheets behaviour Atlas does not have. It is not a representability decision —
+// that is `contract.isIdentityless`'s job, it is applied by `compareCellSets` on
+// the row-level comparison of this same concept, and an identityless Log_Cleaned
+// row therefore fails readiness through that path rather than through this one.
+// `atlas.logged_sets` declares these columns NOT NULL in any case, so this branch
+// is unreachable against a valid mirror.
 async function logCompositeKeys({ adapter }) {
   const rows = await adapter.listConcept('logged_sets');
   const keys = [];
@@ -128,19 +138,54 @@ function compareKeyLists(left, right) {
 // Identity-keyed, field-by-field, through contract.compareRows — the same
 // comparison the sweep and the repair worker use. Two comparison implementations
 // would be two authorities.
+//
+// ── AN IDENTITYLESS ROW FAILS THE COMPARISON; IT DOES NOT VANISH ─────────────
+//
+// *Required Atlas Contract / Systems Review of `a29129e`.* This function used to
+// re-derive the retired rule — `!key || key === '||' || key === ''` — which is the
+// duplicate interpretation the row contract exists to replace, AND which never
+// caught the reviewed case: an all-blank three-part logged_sets identity joins to
+// `'||||'`, not `'||'`. So such a row was indexed under a meaningless key here
+// while the sweep and the backfill were correctly failing on it.
+//
+// Swapping the condition for `contract.isIdentityless(key)` alone would have been
+// the WRONG fix: it would still `continue`, dropping authoritative evidence from
+// both sides so the sizes matched and parity reported equal. Cutover readiness
+// would then be green on a tab holding a row Supabase can never represent.
+//
+// So the rule is consumed from its one authority, and a hit is a FAILURE. Applied
+// to BOTH sides, because an unrepresentable row is unrepresentable whichever store
+// holds it. No identity is invented — only the owner decides what such a row means.
 function compareCellSets(concept, sheetCellRows, supabaseCellRows) {
   const index = (cellRows) => {
     const map = new Map();
+    let identityless = 0;
     for (const cells of cellRows) {
       const row = contract.rowFromSheet(concept, cells);
       const key = contract.identityKey(concept, row);
-      if (!key || key === '||' || key === '') continue;   // header rows and blanks
+      if (contract.isIdentityless(key)) {
+        identityless += 1;
+        continue;
+      }
       if (!map.has(key)) map.set(key, row);
     }
-    return map;
+    return { map, identityless };
   };
-  const left = index(sheetCellRows);
-  const right = index(supabaseCellRows);
+  const leftSide = index(sheetCellRows);
+  const rightSide = index(supabaseCellRows);
+  const left = leftSide.map;
+  const right = rightSide.map;
+
+  if (leftSide.identityless > 0 || rightSide.identityless > 0) {
+    // Counts only — a redacted reason, never a value (§3.8). The row cannot be
+    // matched, compared or repaired, so readiness must refuse rather than average
+    // over it.
+    return {
+      equal: false,
+      detail: `identityless rows cannot be compared: sheets=${leftSide.identityless}, `
+        + `supabase=${rightSide.identityless}. OWNER ACTION REQUIRED; no identity is invented`,
+    };
+  }
 
   if (left.size !== right.size) {
     return { equal: false, detail: `sheets=${left.size} rows, supabase=${right.size} rows` };

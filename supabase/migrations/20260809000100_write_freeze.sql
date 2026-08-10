@@ -80,28 +80,45 @@ ON CONFLICT (id) DO NOTHING;
 -- path and the ownership are the same thing rather than two things that have to
 -- agree.
 --
--- The membership grant that the ownership transfer needed is gone with it. This
--- file now takes no privilege on any role.
---
--- WHAT THIS DOES AND DOES NOT BUY, MEASURED RATHER THAN ASSUMED.
---
 -- atlas_migrate holds no INSERT, UPDATE or DELETE here, so IT CANNOT LIFT A
--- FREEZE. That is the property D7 needs and §6.2 P8a proves as the real role.
+-- FREEZE by writing the row. §6.2 P8a proves that as the real role.
 --
--- It is NOT sealed off from the object, and the proof says so because measurement
--- said so: atlas_migrate owns the SCHEMA (S2 file 8), and a schema owner may DROP
--- a table it does not own — an earlier version of P8a asserted that drop was
--- refused, and the drop succeeded. Any future change to this table's SHAPE is
--- therefore still reachable by the migration role, and only its CONTENT is
--- exclusively the project owner's.
+-- ── AND ROW DML WAS NOT THE WHOLE ATTACK SURFACE ─────────────────────────────
 --
--- That asymmetry is safe, and it is safe by construction rather than by luck. The
--- only power atlas_migrate has over this object is to SUBTRACT it, and subtraction
--- is monotonic toward frozen: a control that cannot be read is a control that
--- REFUSES (§5.3). services/writeFreeze.js answers a missing table with
--- `row_missing`, and §6.2 P11 proves the deployed behaviour end to end by deleting
--- the row under a live server and watching the writes stay closed. Losing the
--- control can only close writes; it can never open them.
+-- *Corrected by the required review of `a29129e`, P1: the previous version of this
+-- comment claimed the only power atlas_migrate had over the control was to
+-- SUBTRACT it, and that subtraction is monotonic toward frozen. THAT CLAIM WAS NOT
+-- STRUCTURALLY SUFFICIENT, and it is withdrawn.*
+--
+-- S2 file 8 made atlas_migrate the OWNER OF SCHEMA `atlas`. A schema owner can do
+-- more than delete a table it does not own — it can REPLACE it. Drop
+-- atlas.write_freeze, create a new table of the same name seeded `frozen = false`,
+-- grant SELECT to atlas_app, and the runtime reads exactly one valid row saying
+-- writes are open. Refusing UPDATE on the original object never proved the project
+-- owner was the sole effective authority over the write-admission DECISION; it only
+-- proved it owned one particular table.
+--
+-- So the schema authority is narrowed HERE, after the S2 state exists, rather than
+-- by editing a migration the owner has already applied to `Atlas Production`.
+ALTER SCHEMA atlas OWNER TO CURRENT_USER;
+
+-- atlas_migrate keeps exactly the two schema privileges a migration role needs,
+-- explicitly, instead of the implicit everything that ownership carried:
+--
+--   USAGE   — reach the objects it owns;
+--   CREATE  — add new migration-owned objects in future migrations.
+--
+-- It still OWNS the eleven S2 tables individually, so ordinary migration DDL on
+-- those is untouched. What it loses is the ability to drop, rename, re-schema or
+-- otherwise replace an object it does not own — which is exactly and only the
+-- replacement bypass above. §6.2 P8a proves both halves: the replacement is
+-- refused, and legitimate migration DDL still works.
+GRANT USAGE, CREATE ON SCHEMA atlas TO atlas_migrate;
+
+-- NET COMPLEXITY IS NEGATIVE: one broad implicit ownership is replaced by two
+-- explicit bounded privileges. No second schema, no second freeze table, no
+-- trigger, no wrapper, no fallback, and no reconciliation mechanism — a competing
+-- authority is REMOVED, not mediated.
 
 -- ── Grants: SELECT, and nothing else ─────────────────────────────────────────
 --

@@ -158,72 +158,164 @@ for (const role of ['atlas_app', 'atlas_migrate', 'atlas_readonly', 'atlas_rebui
   });
 }
 
-// DDL is refused to the three roles that hold no ownership of any kind.
-// atlas_migrate is handled separately below, because it owns the SCHEMA and that
-// turns out to matter.
-for (const role of ['atlas_app', 'atlas_readonly', 'atlas_rebuild']) {
+// NO SCOPED ROLE HOLDS DDL ON THE CONTROL — including atlas_migrate.
+//
+// *Strengthened by the required review of `a29129e`, P1.* atlas_migrate used to be
+// exempt from this loop, because S2 file 8 made it the OWNER OF SCHEMA `atlas` and
+// a schema owner can drop a table it does not own. The S3 migration narrows that:
+// the schema is owned by the project-owner/applier, and atlas_migrate holds exactly
+// USAGE and CREATE. It is therefore in this loop now.
+for (const role of ['atlas_app', 'atlas_migrate', 'atlas_readonly', 'atlas_rebuild']) {
   test(`P8a: ${role} cannot escalate — no DDL on the control either`, async () => {
     await withRole(role, async (client) => {
       // A role that could drop the primary key could insert a second row and make
       // every read ambiguous; a role that could drop the table could remove the
-      // control outright.
+      // control outright; a role that could RENAME it could free the name and put
+      // its own object there.
       await expectRejected(client, 'ALTER TABLE atlas.write_freeze DROP CONSTRAINT write_freeze_pkey', [],
         { sqlstate: SQLSTATE.INSUFFICIENT_PRIVILEGE });
       await expectRejected(client, 'DROP TABLE atlas.write_freeze', [],
+        { sqlstate: SQLSTATE.INSUFFICIENT_PRIVILEGE });
+      await expectRejected(client, 'ALTER TABLE atlas.write_freeze RENAME TO write_freeze_displaced', [],
         { sqlstate: SQLSTATE.INSUFFICIENT_PRIVILEGE });
     });
   });
 }
 
-// ── WHAT atlas_migrate CAN STILL DO, MEASURED RATHER THAN ASSUMED ────────────
+test('P8a: the SCHEMA is owned by the project-owner path, and atlas_migrate holds only USAGE + CREATE', async () => {
+  await withOwner(async (client) => {
+    const owner = await client.query(
+      `SELECT nspowner::regrole::text AS owner FROM pg_namespace WHERE nspname = 'atlas'`
+    );
+    assert.notEqual(owner.rows[0].owner, 'atlas_migrate',
+      'schema ownership is replacement authority over every object in the namespace, including the control');
+
+    // Exactly the two privileges a migration role needs, and no implicit everything.
+    const priv = await client.query(
+      `SELECT has_schema_privilege('atlas_migrate', 'atlas', 'USAGE')  AS usage,
+              has_schema_privilege('atlas_migrate', 'atlas', 'CREATE') AS create_`
+    );
+    assert.equal(priv.rows[0].usage, true, 'it must still reach the objects it owns');
+    assert.equal(priv.rows[0].create_, true, 'and still be able to add migration-owned objects');
+  });
+});
+
+// ── THE REPLACEMENT BYPASS, DRIVEN END TO END ────────────────────────────────
 //
-// It owns the SCHEMA (S2 file 8), and a schema owner may DROP a table inside it
-// even when it does not own that table. Measured here, not inferred: an earlier
-// version of this proof asserted the drop was refused, and the drop SUCCEEDED —
-// destroying the control mid-run and taking fifteen later proofs with it.
+// *Required review of `a29129e`, P1.* Refusing row DML on one table never proved
+// the project owner was the sole authority over the write-admission DECISION. A
+// schema owner does not need to write the row: it can DROP the table, CREATE a new
+// one of the same name seeded `frozen = false`, GRANT SELECT to atlas_app, and the
+// runtime then reads exactly one valid row saying writes are open.
 //
-// So the honest claim is narrower than "atlas_migrate cannot touch the control",
-// and it is the claim D7 actually needs: atlas_migrate CANNOT LIFT A FREEZE. It
-// holds no UPDATE (proven above), so the only power it has over this object is to
-// SUBTRACT it — and subtracting it is monotonic toward frozen, because a control
-// that cannot be read is a control that refuses (§5.3; services/writeFreeze.js
-// returns `row_missing`, and P11 proves the deployed behaviour end to end).
+// This drives that whole sequence as the real role, against a real frozen control,
+// and asserts atlas_migrate cannot reach ANY replacement state the runtime accepts
+// as open.
+test('P1: atlas_migrate cannot REPLACE the control to forge an open state', async () => {
+  // 1. The project owner freezes — as the NOSUPERUSER applier that mirrors
+  //    Supabase's `postgres`, never as the container superuser.
+  await withApplier((client) => client.query(
+    `UPDATE atlas.write_freeze SET frozen = true, reason = $1, set_by = $2, set_at = now() WHERE id`,
+    ['owner freeze — replacement bypass proof', 'project-owner-proof']
+  ));
+
+  // 2. The runtime observes it, through its own least-privileged connection.
+  const observed = await adapter.readWriteFreeze();
+  assert.equal(observed.length, 1);
+  assert.equal(observed[0].frozen, true, 'the control must genuinely be frozen before the attack');
+
+  // 3–5. Every route to a forged open state, attempted as atlas_migrate.
+  await withRole('atlas_migrate', async (client) => {
+    const attempts = [
+      ['drop the control', 'DROP TABLE atlas.write_freeze'],
+      ['drop it with CASCADE', 'DROP TABLE atlas.write_freeze CASCADE'],
+      ['rename it out of the way', 'ALTER TABLE atlas.write_freeze RENAME TO write_freeze_old'],
+      ['move it to another schema', 'ALTER TABLE atlas.write_freeze SET SCHEMA public'],
+      ['take ownership of it', 'ALTER TABLE atlas.write_freeze OWNER TO atlas_migrate'],
+      ['drop the whole schema', 'DROP SCHEMA atlas CASCADE'],
+      ['write the row directly', `UPDATE atlas.write_freeze SET frozen = false WHERE id`],
+      ['delete the row so a fresh one can be seeded', 'DELETE FROM atlas.write_freeze WHERE id'],
+      ['seed a second, open row', `INSERT INTO atlas.write_freeze (id, frozen, reason, set_by)
+                                   VALUES (true, false, 'forged', 'atlas_migrate')`],
+    ];
+    for (const [what, sql] of attempts) {
+      await expectRejected(client, sql, [], { sqlstate: SQLSTATE.INSUFFICIENT_PRIVILEGE });
+      // Each attempt is verified not to have happened, so a statement that
+      // "failed" after a partial effect cannot pass unnoticed.
+      const still = await withOwner((owner) => owner.query(
+        `SELECT count(*)::int AS n FROM pg_tables WHERE schemaname = 'atlas' AND tablename = 'write_freeze'`
+      ));
+      assert.equal(still.rows[0].n, 1, `the control disappeared after attempting to ${what}`);
+    }
+
+    // It cannot create a replacement under the occupied name either — and the
+    // failure must be a DUPLICATE, proving the original is still standing rather
+    // than the CREATE being refused for privilege reasons after a successful drop.
+    const duplicate = await expectRejected(
+      client,
+      'CREATE TABLE atlas.write_freeze (id boolean PRIMARY KEY, frozen boolean NOT NULL)',
+      []
+    );
+    assert.equal(duplicate.code, '42P07', 'the name is still occupied by the real control');
+  });
+
+  // 5 (concluded). The runtime STILL sees the owner's frozen control — no forged
+  // open state was reachable by any of the routes above.
+  const after = await adapter.readWriteFreeze();
+  assert.equal(after.length, 1);
+  assert.equal(after[0].frozen, true, 'atlas_migrate must not be able to produce an open state');
+  assert.equal(after[0].set_by, 'project-owner-proof',
+    'and the row is still the one the OWNER wrote, not a replacement');
+
+  // 6. And the project-owner path can still lift the real control.
+  await withApplier((client) => client.query(
+    `UPDATE atlas.write_freeze SET frozen = false, reason = $1, set_by = $2, set_at = now() WHERE id`,
+    ['owner lift — replacement bypass proof', 'project-owner-proof']
+  ));
+  const lifted = await adapter.readWriteFreeze();
+  assert.equal(lifted[0].frozen, false);
+});
+
+// ── THE NARROWING DID NOT BREAK LEGITIMATE MIGRATION CAPABILITY ──────────────
 //
-// The whole attempt runs inside a transaction that is ROLLED BACK, so the proof
-// exercises the capability without destroying the object every later test needs.
-test('P8a: atlas_migrate owns the SCHEMA and can drop the control — which can only FREEZE, never open', async () => {
+// A bound that also disables ordinary migration DDL would be a different defect,
+// so it is proven rather than hoped. Everything runs inside a rolled-back
+// transaction; the schema is left exactly as it was found.
+test('P1: atlas_migrate retains ordinary migration DDL on the objects it owns', async () => {
   await withRole('atlas_migrate', async (client) => {
     await client.query('BEGIN');
-    let dropped = false;
     try {
-      await client.query('DROP TABLE atlas.write_freeze');
-      dropped = true;
-    } catch (err) {
-      assert.equal(err.code, SQLSTATE.INSUFFICIENT_PRIVILEGE,
-        `the drop failed for an unexpected reason: ${err.code} ${err.message}`);
+      // CREATE a new migration-owned object in the schema it no longer owns.
+      await client.query('CREATE TABLE atlas.s3_proof_scratch (id int PRIMARY KEY, note text)');
+      const owner = await client.query(
+        `SELECT tableowner FROM pg_tables WHERE schemaname = 'atlas' AND tablename = 's3_proof_scratch'`
+      );
+      assert.equal(owner.rows[0].tableowner, 'atlas_migrate', 'the creator owns what it creates');
+
+      // ALTER and DROP an object it legitimately owns.
+      await client.query('ALTER TABLE atlas.s3_proof_scratch ADD COLUMN added_by_migration boolean');
+      await client.query('DROP TABLE atlas.s3_proof_scratch');
+
+      // And ALTER a pre-existing S2 table it owns — the capability the narrowing
+      // could most plausibly have taken away.
+      await client.query('ALTER TABLE atlas.logged_sets ADD COLUMN s3_proof_scratch_column int');
     } finally {
       await client.query('ROLLBACK');
     }
-
-    // Recorded either way. If a future PostgreSQL or a tightened schema grant makes
-    // this refused, the proof still passes and the comment above becomes stale
-    // rather than wrong — but the LIFT refusal below is the load-bearing part.
-    if (dropped) {
-      const { rows } = await client.query(
-        `SELECT count(*)::int AS n FROM pg_tables WHERE schemaname = 'atlas' AND tablename = 'write_freeze'`
-      );
-      assert.equal(rows[0].n, 1, 'the rollback must have restored the control');
-    }
-
-    // THE LOAD-BEARING ASSERTION, restated at the point the capability is measured:
-    // whatever it can subtract, it cannot set this row to open.
-    await expectRejected(client, 'UPDATE atlas.write_freeze SET frozen = false WHERE id', [],
-      { sqlstate: SQLSTATE.INSUFFICIENT_PRIVILEGE });
   });
 
-  // And the runtime still sees exactly one valid row afterwards.
-  const rows = await adapter.readWriteFreeze();
-  assert.equal(rows.length, 1);
+  // The rollback left nothing behind.
+  await withOwner(async (client) => {
+    const leftovers = await client.query(
+      `SELECT count(*)::int AS n FROM pg_tables WHERE schemaname = 'atlas' AND tablename = 's3_proof_scratch'`
+    );
+    assert.equal(leftovers.rows[0].n, 0);
+    const column = await client.query(
+      `SELECT count(*)::int AS n FROM information_schema.columns
+        WHERE table_schema = 'atlas' AND table_name = 'logged_sets' AND column_name = 's3_proof_scratch_column'`
+    );
+    assert.equal(column.rows[0].n, 0);
+  });
 });
 
 test('P8a: no scoped role OWNS the control — ownership is the mutation path, and it is the owner\'s', async () => {

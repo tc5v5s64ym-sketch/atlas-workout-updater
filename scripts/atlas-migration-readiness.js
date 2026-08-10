@@ -259,7 +259,13 @@ async function main() {
   } else {
     console.log(`S3 cutover readiness: ${ready ? 'READY' : 'NOT READY'}`);
     console.log('');
-    console.log(`  P5 read parity          ${parity.ready ? 'PASS' : 'FAIL'} (${parity.reads.filter((r) => r.equal).length}/${MOVED_READS.length} moved reads equal)`);
+    // EVERY PASS/FAIL BELOW COMES FROM THE VALIDATED VERDICT, never from the raw
+    // input. *Required review of `a29129e`.* readinessVerdict() is strict, but
+    // these presentation lines still read `parity.ready ? …` and `catalog.ok ? …`,
+    // so a malformed truthy value would have printed PASS to a human while the
+    // actual gate said FAIL. A report that disagrees with its own gate is worse
+    // than no report. This is a truth-consistency correction; it adds no gate.
+    console.log(`  P5 read parity          ${verdict.p5_read_parity ? 'PASS' : 'FAIL'} (${parity.reads.filter((r) => r.equal === true).length}/${MOVED_READS.length} moved reads equal)`);
     for (const read of parity.reads) {
       if (read.equal) continue;
       console.log(`     ✗ ${read.id.padEnd(26)} ${read.error ? `ERROR ${read.error}` : read.detail}`);
@@ -276,7 +282,7 @@ async function main() {
     for (const concept of sweep.concepts.filter((c) => !c.complete)) {
       console.log(`     ✗ ${concept.concept.padEnd(34)} ${concept.error}`);
     }
-    console.log(`  P4b catalog dependency  ${catalog.ok ? 'PASS' : 'FAIL'}`);
+    console.log(`  P4b catalog dependency  ${verdict.p4b_bounded_catalog_dependency ? 'PASS' : 'FAIL'}`);
     console.log(`     max age ${catalog.max_age_seconds}s · declared sync interval ${catalog.declared_sync_interval_seconds}s`);
     console.log(`     a total Sheets outage fails a Save after ${catalog.residual_outage_tolerance_seconds.worst_case}–${catalog.residual_outage_tolerance_seconds.best_case}s`);
     console.log(`     ${catalog.claim}`);

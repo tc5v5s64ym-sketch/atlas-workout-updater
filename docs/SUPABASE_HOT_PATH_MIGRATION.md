@@ -46,9 +46,26 @@ distinction is the whole point of this phase:
 - Google Sheets remains the sole live read and write authority for every migrated concept, and
   no athlete-facing read or write has moved.
 
-`atlas.write_freeze` (§3.10) is still unwritten — `S3` creates it, and the checkpoint confirmed
-its **absence** in `Atlas Production`. `S3` is now eligible from the P8b dependency alone and
-**has not started**. `S3` and `S4` remain paper.
+**`atlas.write_freeze` (§3.10) does not exist in `Atlas Production`**, and the P8b checkpoint
+confirmed its absence there. That statement is about the DEPLOYMENT, and it is still true.
+
+**It is not true of the repository, and this block used to conflate the two.** *Corrected by the
+required review of `a29129e`, which found these lines still calling `S3` "paper" and "not
+started" from a branch that implements it.* The honest split is **branch versus production**:
+
+| | State |
+|---|---|
+| `S3` implementation | **EXISTS** — open **PR #1281**, branch `agent/supabase-s3-readiness` |
+| `S3` on `main` | **NOT MERGED** |
+| The `S3` `write_freeze` migration on `Atlas Production` | **NOT APPLIED** — an outstanding owner gate (§6.2 P8b) |
+| `atlas.write_freeze` in `Atlas Production` | **ABSENT** |
+| Runtime Supabase credential in any live environment | **NOT CONFIGURED** |
+| Deployed `S3` evidence | **NONE**, and none may be claimed |
+| Athlete-facing read or write authority moved | **NONE** — and `S3` moves none even once merged (ruling D5) |
+| Sole live authority | **Google Sheets + `services/idempotency.js`** |
+
+`S4` remains paper, remains the authority-transfer point, and has not started. Nothing in this
+document may be read as claiming `S3` is merged, deployed, applied to production, or complete.
 
 *Corrected by the required review of `ad18907`, which found this document and the authority map
 both describing `S2` as landed while its PR was still open. A branch does not record itself as
@@ -1599,8 +1616,9 @@ nothing".
      the `S2` schema to `Atlas Production` **and** the real-Supavisor four-role and session-lock
      checkpoint to pass (§6.1 P8b, §8.1, and the plan's owner-gate 2). **Both were done.** The
      owner applied the eight reviewed migration files, and the checkpoint **PASSED with exit
-     code `0`** (§8.6). Nothing further is owed here: **`S3` is eligible from this dependency
-     alone, and has not started.**
+     code `0`** (§8.6). Nothing further is owed here. **`S3` became eligible from this
+     dependency alone, and is now IMPLEMENTED in open PR #1281 — not merged, not applied to
+     `Atlas Production`, and carrying no deployed evidence.**
   2. **For `S3`'s deployed freeze evidence:** the owner applies the `S3` `write_freeze`
      migration (§3.10). The PR **may merge before this**; the P8a/P8b deployed-system evidence
      **may not be claimed before it**, because the freeze cannot be proven against a deployed

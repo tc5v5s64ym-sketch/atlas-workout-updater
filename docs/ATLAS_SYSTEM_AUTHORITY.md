@@ -423,9 +423,30 @@ revisions, item outcomes, and closeout and write receipts.
 - **Status.** **SOLE LIVE AUTHORITY** (Google Sheets, plus the file-backed
   `services/idempotency.js` store for receipts). The migration is **authorized, STARTED, and now
   APPLIED at `S2` — but not cut over**: `S2` has landed and its schema is applied to
-  `Atlas Production` with the P8b gate passed (2026-08-08), `S3` and `S4` remain, and **no
-  athlete-facing read or write has moved**. `S3` is eligible from the P8b dependency alone and
-  **has not started**. *This landed state is recorded from current `main`, after the merge. An earlier
+  `Atlas Production` with the P8b gate passed (2026-08-08), and **no athlete-facing read or
+  write has moved**.
+
+  **`S3` — implemented on a branch, landed nowhere.** *Corrected by the required review of
+  `a29129e`: this entry still said `S3` "has not started", which stopped being true once the
+  branch existed.* The distinction that matters is **branch versus production**, and both halves
+  are stated:
+
+  | | State |
+  |---|---|
+  | `S3` implementation | **EXISTS**, in open **PR #1281** / branch `agent/supabase-s3-readiness` |
+  | `S3` on `main` | **NOT LANDED** |
+  | The `S3` `write_freeze` migration on `Atlas Production` | **NOT APPLIED** |
+  | `atlas.write_freeze` in `Atlas Production` | **ABSENT** |
+  | Runtime Supabase credential in any live environment | **NOT CONFIGURED** |
+  | Athlete-facing read or write authority moved | **NONE** |
+  | Sole live authority | **Google Sheets + `services/idempotency.js`** |
+  | Authority-transfer point | **`S4`**, which has not started |
+
+  So `S3` is neither "not started" nor "done": it is written, reviewed and unmerged, and it
+  **moves no authority even once it lands** (ruling D5). `S4` remains the only step that does.
+  `S4` and the two closure steps after it remain outstanding.
+
+  *This landed state is recorded from current `main`, after the merge. An earlier
   revision of this entry claimed it while PR #1274 was still open — a branch recording itself
   as landed — and the required review of `ad18907` corrected it: the honesty rule forbids
   promoting a concept on a document, a test, or an import, and it forbids this for the same

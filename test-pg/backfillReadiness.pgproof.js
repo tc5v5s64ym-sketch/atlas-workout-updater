@@ -389,6 +389,47 @@ test('FINDING 3: it makes RECONCILIATION fail even though the counts still agree
   assert.equal(report.reconciled, false);
 });
 
+test('FINDING 3: the READ-PARITY path fails on it too, and does not drop it', async () => {
+  // *Required review of `a29129e`, P1.* compareCellSets() re-derived the retired
+  // rule and would have DROPPED this row from both sides, making the sizes match
+  // and parity report equal — a cutover-readiness green on a tab holding a row
+  // Supabase can never represent.
+  await backfill.runBackfill({ sheets, adapter, apply: true });
+  tabs.Log_Cleaned.push([...IDENTITYLESS_LOG_ROW]);
+
+  const verdict = await readParity.compareReadPaths({ sheets, adapter });
+  const rows = verdict.reads.find((r) => r.id === 'logged_sets_rows');
+
+  assert.equal(rows.equal, false, 'an identityless authoritative row must fail the comparison');
+  assert.match(rows.detail, /identityless rows cannot be compared/);
+  assert.match(rows.detail, /sheets=1/);
+  assert.match(rows.detail, /OWNER ACTION REQUIRED/);
+  assert.equal(verdict.ready, false);
+
+  // Redacted: the reason carries counts, never a value (§3.8).
+  assert.equal(/195|975/.test(rows.detail), false, 'no workout value may appear in a parity reason');
+});
+
+test('FINDING 3: a SINGLE-KEY concept with a blank identity fails parity the same way', async () => {
+  // logged_sets joins three components to `'||||'`; session_effort's identity IS
+  // the session_id, so an identityless row there is the empty string. Both must be
+  // caught by the one shared predicate, or the rule is concept-specific by accident.
+  await backfill.runBackfill({ sheets, adapter, apply: true });
+  tabs.Effort.push(['2026-08-07', '', '00:30:00', 200, 260, 120, 140, 'Home gym', '']);
+
+  const verdict = await readParity.compareReadPaths({ sheets, adapter });
+  const rows = verdict.reads.find((r) => r.id === 'session_effort_rows');
+  assert.equal(rows.equal, false, "an empty single-component identity is identityless too");
+  assert.match(rows.detail, /identityless rows cannot be compared/);
+  assert.equal(verdict.ready, false);
+
+  // And the sweep agrees, through the same predicate.
+  const sweep = await runSweep({ sheets, adapter, openDivergences: false });
+  const concept = sweep.concepts.find((c) => c.concept === 'session_effort');
+  assert.equal(concept.sheets_identityless, 1);
+  assert.equal(sweep.complete, false);
+});
+
 test('FINDING 3: readiness REFUSES on it, through the real verdict', async () => {
   await backfill.runBackfill({ sheets, adapter, apply: true });
   tabs.Log_Cleaned.push([...IDENTITYLESS_LOG_ROW]);
