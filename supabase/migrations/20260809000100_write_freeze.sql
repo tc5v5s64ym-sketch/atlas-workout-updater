@@ -33,6 +33,35 @@ CREATE TABLE IF NOT EXISTS atlas.write_freeze (
   set_at   timestamptz NOT NULL DEFAULT now()
 );
 
+-- ── ESTABLISH THE OWNERSHIP INVARIANT; DO NOT ASSUME IT ──────────────────────
+--
+-- *Required Atlas Contract / Systems Review of `bba3fbf`.* Everything below this
+-- file — and the whole of D7 — rests on "the project-owner/applier owns
+-- atlas.write_freeze, and is therefore the sole effective authority over it".
+-- `CREATE TABLE IF NOT EXISTS` DOES NOT ESTABLISH THAT. If the object already
+-- exists, the statement is a no-op and the EXISTING OWNER SURVIVES.
+--
+-- The adversarial sequence is legitimate at every step: after `S2`, atlas_migrate
+-- owns schema `atlas` and holds CREATE, so it can create `atlas.write_freeze`
+-- itself before `S3` ever runs. `S3` would then skip the create, take the schema,
+-- revoke explicit grants — and leave atlas_migrate as TABLE OWNER, holding
+-- implicit DDL and DML that no REVOKE can remove. A competing authority would
+-- survive silently, which is exactly what D7 forbids.
+--
+-- So the invariant is TAKEN, not assumed. This is a no-op on the normal path,
+-- where the applier created the table one statement ago.
+ALTER TABLE atlas.write_freeze OWNER TO CURRENT_USER;
+
+-- ── AND RESET THE ACCESS LIST, FOR THE SAME REASON ───────────────────────────
+--
+-- A pre-existing table can also carry grants its creator chose. Revoking only
+-- from atlas_migrate would leave, say, an `UPDATE` granted to atlas_app — a
+-- runtime role able to LIFT A FREEZE, which is worse than the ownership defect.
+-- The access list is therefore rebuilt from nothing rather than adjusted, so the
+-- final state does not depend on what was there before.
+REVOKE ALL ON atlas.write_freeze FROM PUBLIC;
+REVOKE ALL ON atlas.write_freeze FROM atlas_app, atlas_migrate, atlas_readonly, atlas_rebuild;
+
 -- ── The seed: DORMANT ────────────────────────────────────────────────────────
 --
 -- *Comment corrected by the required review of `ae1928c`: it still described this
@@ -142,16 +171,107 @@ GRANT SELECT ON atlas.write_freeze TO atlas_app;
 GRANT SELECT ON atlas.write_freeze TO atlas_readonly;
 GRANT SELECT ON atlas.write_freeze TO atlas_rebuild;
 
--- ── atlas_migrate receives NOTHING, and the revoke says so out loud ──────────
---
--- It holds no grant here to begin with, because the ALL TABLES grants of S2 file 8
--- ran before this table existed. The explicit REVOKE is therefore a no-op TODAY —
--- it is written for the reader and for the next migration author, so that
--- "atlas_migrate is not a mutator of the freeze" is a statement this file makes
--- rather than an accident of ordering. §6.2 P8a proves the refusal behaviourally,
--- as the real role, which is what actually enforces it.
-REVOKE ALL ON atlas.write_freeze FROM atlas_migrate;
+-- atlas_migrate receives NOTHING here — not even SELECT. Its access was cleared
+-- with everyone else's above, and nothing grants it back.
 
--- No INSERT, UPDATE or DELETE is granted to ANY role, and no role owns this table
--- except the project-owner principal that applied this migration. The absence is
--- the control.
+-- ── FAIL CLOSED: VERIFY WHAT THIS FILE PRODUCED ──────────────────────────────
+--
+-- *Required review of `bba3fbf`.* Establishing the invariant is not the same as
+-- knowing it holds. `ALTER TABLE … OWNER TO CURRENT_USER` above will fail loudly
+-- if the applier cannot take ownership — but a migration that underpins a security
+-- control must not depend on every one of its statements having had the effect the
+-- author expected. This block asserts the finished state, and RAISES rather than
+-- completing if any part of it is wrong.
+--
+-- The file runs inside one transaction (scripts/apply-supabase-migrations.js), so
+-- a raise here rolls the whole migration back. It can never half-apply and leave
+-- a control with competing authority alive: either `S3` produced exactly the
+-- declared state, or `S3` did not apply.
+DO $$
+DECLARE
+  expected_owner text := current_user;
+  actual_owner   text;
+  offending      text;
+  col_count      int;
+  nullable_cols  text;
+  row_count      int;
+  has_pk         boolean;
+  has_check      boolean;
+BEGIN
+  -- 1. OWNERSHIP — the whole of D7 rests on this one fact.
+  SELECT tableowner INTO actual_owner
+    FROM pg_tables WHERE schemaname = 'atlas' AND tablename = 'write_freeze';
+  IF actual_owner IS DISTINCT FROM expected_owner THEN
+    RAISE EXCEPTION
+      'atlas.write_freeze is owned by "%" but must be owned by the applying project owner "%"',
+      actual_owner, expected_owner
+      USING HINT = 'An owner holds implicit DML that no REVOKE can remove, so a second owner is '
+                   'a second authority able to lift a freeze. Owner ruling D7 recognises one.';
+  END IF;
+
+  -- 2. THE ACCESS LIST — exactly SELECT, to exactly three roles, and nothing else.
+  --    Read from pg_class.relacl rather than information_schema, which filters to
+  --    what the caller may see; a grant this block cannot see is one it cannot refuse.
+  SELECT string_agg(format('%s:%s', grantee_name, a.privilege_type), ', ')
+    INTO offending
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    CROSS JOIN LATERAL aclexplode(c.relacl) a
+    CROSS JOIN LATERAL (
+      SELECT CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END
+    ) AS g(grantee_name)
+   WHERE n.nspname = 'atlas' AND c.relname = 'write_freeze'
+     AND grantee_name <> expected_owner
+     AND NOT (a.privilege_type = 'SELECT'
+              AND grantee_name IN ('atlas_app', 'atlas_readonly', 'atlas_rebuild'));
+  IF offending IS NOT NULL THEN
+    RAISE EXCEPTION 'atlas.write_freeze carries unexpected privileges: %', offending
+      USING HINT = 'The runtime holds SELECT and nothing else; only the project owner may write it.';
+  END IF;
+
+  -- 3. THE EFFECTIVE ANSWER, not just the catalogue. has_table_privilege accounts
+  --    for membership and PUBLIC, so it catches a write reachable by a path the
+  --    access-list sweep above would read as absent.
+  IF has_table_privilege('atlas_app', 'atlas.write_freeze', 'INSERT')
+     OR has_table_privilege('atlas_app', 'atlas.write_freeze', 'UPDATE')
+     OR has_table_privilege('atlas_app', 'atlas.write_freeze', 'DELETE')
+     OR has_table_privilege('atlas_migrate', 'atlas.write_freeze', 'INSERT')
+     OR has_table_privilege('atlas_migrate', 'atlas.write_freeze', 'UPDATE')
+     OR has_table_privilege('atlas_migrate', 'atlas.write_freeze', 'DELETE')
+     OR has_table_privilege('atlas_readonly', 'atlas.write_freeze', 'UPDATE')
+     OR has_table_privilege('atlas_rebuild', 'atlas.write_freeze', 'UPDATE') THEN
+    RAISE EXCEPTION 'a scoped role can write atlas.write_freeze — the freeze would have two authorities';
+  END IF;
+  IF NOT has_table_privilege('atlas_app', 'atlas.write_freeze', 'SELECT') THEN
+    RAISE EXCEPTION 'atlas_app cannot read atlas.write_freeze — every write would refuse forever';
+  END IF;
+
+  -- 4. THE SHAPE. A pre-existing table could carry the right name and the wrong
+  --    guarantees. Without the single-row key this is not "one control with one
+  --    meaning", and without NOT NULL a null `frozen` is not a control state.
+  SELECT count(*)::int INTO col_count
+    FROM information_schema.columns
+   WHERE table_schema = 'atlas' AND table_name = 'write_freeze';
+  SELECT string_agg(column_name, ', ') INTO nullable_cols
+    FROM information_schema.columns
+   WHERE table_schema = 'atlas' AND table_name = 'write_freeze' AND is_nullable = 'YES';
+  IF col_count <> 5 OR nullable_cols IS NOT NULL THEN
+    RAISE EXCEPTION 'atlas.write_freeze has % column(s); nullable: %', col_count, coalesce(nullable_cols, 'none')
+      USING HINT = 'Expected exactly id, frozen, reason, set_by, set_at — all NOT NULL (§3.10).';
+  END IF;
+
+  SELECT bool_or(contype = 'p'), bool_or(contype = 'c') INTO has_pk, has_check
+    FROM pg_constraint WHERE conrelid = 'atlas.write_freeze'::regclass;
+  IF NOT coalesce(has_pk, false) OR NOT coalesce(has_check, false) THEN
+    RAISE EXCEPTION 'atlas.write_freeze is missing its single-row primary key or its CHECK (id)';
+  END IF;
+
+  -- 5. EXACTLY ONE ROW. More than one makes every read ambiguous; none makes the
+  --    control unreadable. The runtime treats both as frozen, so neither can open
+  --    writes — but neither is a state this migration may leave behind.
+  SELECT count(*)::int INTO row_count FROM atlas.write_freeze;
+  IF row_count <> 1 THEN
+    RAISE EXCEPTION 'atlas.write_freeze holds % row(s); exactly one is the control', row_count;
+  END IF;
+END
+$$;
