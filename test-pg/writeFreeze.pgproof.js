@@ -128,21 +128,94 @@ for (const role of ['atlas_app', 'atlas_migrate', 'atlas_readonly', 'atlas_rebui
     });
   });
 
-  test(`P8a: ${role} cannot escalate — no DDL on the control either`, async () => {
+  // A SELF-GRANT CONFERS NOTHING — and PostgreSQL does not say so with an error.
+  //
+  // `GRANT` by a role holding no grant option emits a WARNING and grants nothing;
+  // the statement itself SUCCEEDS. An `expectRejected` here therefore failed for
+  // the wrong reason, and worse, a check written that way would have passed
+  // vacuously the day someone did hold the grant option. The assertion has to be
+  // about the PRIVILEGE, not about the statement.
+  test(`P8a: ${role} cannot grant itself the write it was refused`, async () => {
     await withRole(role, async (client) => {
-      // A role that could drop the primary key could insert a second row and make
-      // every read ambiguous; a role that could drop the table could remove the
-      // control outright. Both are ownership operations, and no scoped role owns it.
-      await expectRejected(client, 'ALTER TABLE atlas.write_freeze DROP CONSTRAINT write_freeze_pkey', [],
-        { sqlstate: SQLSTATE.INSUFFICIENT_PRIVILEGE });
-      await expectRejected(client, 'DROP TABLE atlas.write_freeze', [],
-        { sqlstate: SQLSTATE.INSUFFICIENT_PRIVILEGE });
-      // And it cannot simply grant itself the privilege it was refused.
-      await expectRejected(client, `GRANT UPDATE ON atlas.write_freeze TO ${role}`, [],
+      await client.query(`GRANT UPDATE ON atlas.write_freeze TO ${role}`);
+      const { rows } = await client.query(
+        `SELECT has_table_privilege($1, 'atlas.write_freeze', 'UPDATE') AS granted`, [role]
+      );
+      assert.equal(rows[0].granted, false, `${role} acquired UPDATE on the control by granting it to itself`);
+      // And the behaviour, not just the catalogue.
+      await expectRejected(client, 'UPDATE atlas.write_freeze SET frozen = false WHERE id', [],
         { sqlstate: SQLSTATE.INSUFFICIENT_PRIVILEGE });
     });
   });
 }
+
+// DDL is refused to the three roles that hold no ownership of any kind.
+// atlas_migrate is handled separately below, because it owns the SCHEMA and that
+// turns out to matter.
+for (const role of ['atlas_app', 'atlas_readonly', 'atlas_rebuild']) {
+  test(`P8a: ${role} cannot escalate — no DDL on the control either`, async () => {
+    await withRole(role, async (client) => {
+      // A role that could drop the primary key could insert a second row and make
+      // every read ambiguous; a role that could drop the table could remove the
+      // control outright.
+      await expectRejected(client, 'ALTER TABLE atlas.write_freeze DROP CONSTRAINT write_freeze_pkey', [],
+        { sqlstate: SQLSTATE.INSUFFICIENT_PRIVILEGE });
+      await expectRejected(client, 'DROP TABLE atlas.write_freeze', [],
+        { sqlstate: SQLSTATE.INSUFFICIENT_PRIVILEGE });
+    });
+  });
+}
+
+// ── WHAT atlas_migrate CAN STILL DO, MEASURED RATHER THAN ASSUMED ────────────
+//
+// It owns the SCHEMA (S2 file 8), and a schema owner may DROP a table inside it
+// even when it does not own that table. Measured here, not inferred: an earlier
+// version of this proof asserted the drop was refused, and the drop SUCCEEDED —
+// destroying the control mid-run and taking fifteen later proofs with it.
+//
+// So the honest claim is narrower than "atlas_migrate cannot touch the control",
+// and it is the claim D7 actually needs: atlas_migrate CANNOT LIFT A FREEZE. It
+// holds no UPDATE (proven above), so the only power it has over this object is to
+// SUBTRACT it — and subtracting it is monotonic toward frozen, because a control
+// that cannot be read is a control that refuses (§5.3; services/writeFreeze.js
+// returns `row_missing`, and P11 proves the deployed behaviour end to end).
+//
+// The whole attempt runs inside a transaction that is ROLLED BACK, so the proof
+// exercises the capability without destroying the object every later test needs.
+test('P8a: atlas_migrate owns the SCHEMA and can drop the control — which can only FREEZE, never open', async () => {
+  await withRole('atlas_migrate', async (client) => {
+    await client.query('BEGIN');
+    let dropped = false;
+    try {
+      await client.query('DROP TABLE atlas.write_freeze');
+      dropped = true;
+    } catch (err) {
+      assert.equal(err.code, SQLSTATE.INSUFFICIENT_PRIVILEGE,
+        `the drop failed for an unexpected reason: ${err.code} ${err.message}`);
+    } finally {
+      await client.query('ROLLBACK');
+    }
+
+    // Recorded either way. If a future PostgreSQL or a tightened schema grant makes
+    // this refused, the proof still passes and the comment above becomes stale
+    // rather than wrong — but the LIFT refusal below is the load-bearing part.
+    if (dropped) {
+      const { rows } = await client.query(
+        `SELECT count(*)::int AS n FROM pg_tables WHERE schemaname = 'atlas' AND tablename = 'write_freeze'`
+      );
+      assert.equal(rows[0].n, 1, 'the rollback must have restored the control');
+    }
+
+    // THE LOAD-BEARING ASSERTION, restated at the point the capability is measured:
+    // whatever it can subtract, it cannot set this row to open.
+    await expectRejected(client, 'UPDATE atlas.write_freeze SET frozen = false WHERE id', [],
+      { sqlstate: SQLSTATE.INSUFFICIENT_PRIVILEGE });
+  });
+
+  // And the runtime still sees exactly one valid row afterwards.
+  const rows = await adapter.readWriteFreeze();
+  assert.equal(rows.length, 1);
+});
 
 test('P8a: no scoped role OWNS the control — ownership is the mutation path, and it is the owner\'s', async () => {
   await withOwner(async (client) => {

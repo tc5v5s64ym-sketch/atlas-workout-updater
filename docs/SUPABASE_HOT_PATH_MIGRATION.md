@@ -1303,10 +1303,17 @@ it carries **one control with one meaning** — are the seven `beginWrite` write
   principal able to lift a freeze, which is precisely what D7 forbids.* Every other table in
   `atlas` is owned by `atlas_migrate`; this one is not, and the exception is the point. The
   table stays owned by the applying principal, which IS the sole mutator §5.3 names, so the
-  ownership and the mutation path are one thing rather than two that must agree. `atlas_migrate`
-  therefore also cannot `ALTER` or `DROP` this table, and any change to its shape is an owner
-  action — exactly like setting the row. §6.2 P8a proves the refusal for **all four** scoped
-  roles, and proves the project-owner path can still set and lift the freeze.
+  ownership and the mutation path are one thing rather than two that must agree. §6.2 P8a proves
+  the `INSERT`/`UPDATE`/`DELETE` refusal for **all four** scoped roles, proves a self-`GRANT`
+  confers nothing, and proves the project-owner path can still set **and lift** the freeze.
+- **The bound is on the row's CONTENT, not on the object.** *Measured, not assumed.*
+  `atlas_migrate` owns the **schema** (S2 file 8), and a schema owner may `DROP` a table it does
+  not own — an earlier version of P8a asserted that drop was refused, and the drop succeeded.
+  So the migration role can still subtract this table; what it cannot do is **lift a freeze**.
+  That asymmetry is safe by construction: subtraction is monotonic toward frozen, because a
+  control that cannot be read is a control that refuses (§5.3, `row_missing`), and §6.2 P11
+  proves it end to end by deleting the row under a live server. Losing the control can only
+  close writes; it can never open them.
 
 ---
 

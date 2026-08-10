@@ -75,13 +75,25 @@ ON CONFLICT (id) DO NOTHING;
 -- The membership grant that the ownership transfer needed is gone with it. This
 -- file now takes no privilege on any role.
 --
--- WHAT THIS COSTS, STATED RATHER THAN GLOSSED: atlas_migrate cannot ALTER or DROP
--- this one table. That is the intended result — a migration role that could drop
--- the control could remove the freeze — and any future change to its shape is an
--- owner action, exactly like setting the row. atlas_migrate does still own the
--- SCHEMA (S2 file 8), so a `DROP SCHEMA atlas CASCADE` would take this table with
--- everything else; that is pre-existing S2 architecture, it is not a mutation
--- path to the CONTROL, and §6.2 P8a's refusals are asserted against it by name.
+-- WHAT THIS DOES AND DOES NOT BUY, MEASURED RATHER THAN ASSUMED.
+--
+-- atlas_migrate holds no INSERT, UPDATE or DELETE here, so IT CANNOT LIFT A
+-- FREEZE. That is the property D7 needs and §6.2 P8a proves as the real role.
+--
+-- It is NOT sealed off from the object, and the proof says so because measurement
+-- said so: atlas_migrate owns the SCHEMA (S2 file 8), and a schema owner may DROP
+-- a table it does not own — an earlier version of P8a asserted that drop was
+-- refused, and the drop succeeded. Any future change to this table's SHAPE is
+-- therefore still reachable by the migration role, and only its CONTENT is
+-- exclusively the project owner's.
+--
+-- That asymmetry is safe, and it is safe by construction rather than by luck. The
+-- only power atlas_migrate has over this object is to SUBTRACT it, and subtraction
+-- is monotonic toward frozen: a control that cannot be read is a control that
+-- REFUSES (§5.3). services/writeFreeze.js answers a missing table with
+-- `row_missing`, and §6.2 P11 proves the deployed behaviour end to end by deleting
+-- the row under a live server and watching the writes stay closed. Losing the
+-- control can only close writes; it can never open them.
 
 -- ── Grants: SELECT, and nothing else ─────────────────────────────────────────
 --
