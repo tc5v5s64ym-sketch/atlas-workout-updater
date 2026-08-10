@@ -138,8 +138,13 @@ function mutateS3(mode) {
   // else, so the malformed-control proof below shows the OLD behaviour by running
   // it rather than by describing it.
   if (mode === 'legacyVerification') {
-    const swapped = sql.replace(VERIFICATION_BLOCK, `\n${LEGACY_VERIFICATION}`);
+    // A REPLACER FUNCTION, not a replacement string. In String.replace, `$$` in the
+    // replacement is an escape for a literal `$` — so passing this SQL as a string
+    // turned every `DO $$ … $$;` into `DO $ … $;` and Postgres answered "syntax
+    // error at or near $". A function's return value is used verbatim.
+    const swapped = sql.replace(VERIFICATION_BLOCK, () => `\n${LEGACY_VERIFICATION}`);
     assert.notEqual(swapped, sql, 'the verification block must be found in order to be replaced');
+    assert.match(swapped, /DO \$\$/, 'the legacy block must survive the substitution intact');
     return swapped;
   }
 
@@ -518,11 +523,16 @@ test('P8a: the column contract is verified exactly — a wrong type is refused',
   // Five NOT NULL columns with the right names, the right primary key and a real
   // CHECK (id) — and `reason` typed as a bounded varchar rather than text. The old
   // count-and-nullability check could not see this at all.
+  //
+  // WIDE ENOUGH TO REACH THE CHECK UNDER TEST. At varchar(40) the seed's own reason
+  // string overflows and the migration dies on the INSERT, so it would refuse for a
+  // reason that has nothing to do with the column contract — a pass that proves
+  // nothing. 200 lets the seed through so the verification is what refuses.
   const { s3Error } = await buildHostileDatabase('none', `
     CREATE TABLE atlas.write_freeze (
       id       boolean       PRIMARY KEY DEFAULT true CHECK (id),
       frozen   boolean       NOT NULL,
-      reason   varchar(40)   NOT NULL,
+      reason   varchar(200)  NOT NULL,
       set_by   text          NOT NULL,
       set_at   timestamptz   NOT NULL DEFAULT now()
     )`);
