@@ -1311,8 +1311,24 @@ it carries **one control with one meaning** — are the seven `beginWrite` write
   decision record is **D7** (§9); the authorization is the execution plan's owner-ruling block.
 - **Created by `S3`**, in an ordinary migration file under `supabase/migrations/`, applied to
   the disposable CI database like every other. The migration seeds the single dormant row
-  (`frozen = false`) **as the principal that applies it** — the Supabase project owner — and
-  `ON CONFLICT DO NOTHING`, so a re-apply can never lift a live freeze.
+  (`frozen = false`) **as the principal that applies it** — the Supabase project owner.
+- **The create is STRICT: no `IF NOT EXISTS`, and a pre-existing object is refused.**
+  *Architectural ruling after review round 6 (2026-08-10).* `atlas.write_freeze` has exactly one
+  legitimate `S3` starting state — **absent**. `S2` is applied to `Atlas Production` and the P8b
+  checkpoint verified this table ABSENT there; the migration runner refuses any non-empty target;
+  hosted application is owner-run, once. A pre-existing `atlas.write_freeze` is therefore **drift,
+  not a compatibility state**, and the correct response is to refuse and change nothing rather
+  than adopt an object of unknown provenance. The file is one transaction, so a refusal applies
+  nothing at all. The accepted cost is that the migration is **not re-runnable** — which is
+  intended, because a second application has nothing legitimate to do and failing is how drift
+  becomes visible.
+- **The DDL is the schema authority; the migration does not re-verify its own `CREATE`.** An
+  earlier revision grew a ninety-line catalogue-and-probe verifier to police whatever object it
+  might find. That existed only because `IF NOT EXISTS` allowed an unknown one; with strict
+  creation, successful transactional DDL is the proof, and a catalogue query restating the
+  declaration would be a second implementation of it. One postcondition survives, because it
+  asserts an **absence** the DDL cannot establish: that no scoped role can write the control,
+  which `ALTER DEFAULT PRIVILEGES` configured outside the file could otherwise grant.
 - **Ownership is deliberately NOT transferred to `atlas_migrate`.** *Corrected by the required
   review of `65310b3`, finding 1: the migration originally ran `ALTER TABLE … OWNER TO
   atlas_migrate`, and an owner's implicit `INSERT`/`UPDATE`/`DELETE` cannot be durably revoked —
