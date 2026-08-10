@@ -128,20 +128,29 @@ for (const role of ['atlas_app', 'atlas_migrate', 'atlas_readonly', 'atlas_rebui
     });
   });
 
-  // A SELF-GRANT CONFERS NOTHING — and PostgreSQL does not say so with an error.
+  // A SELF-GRANT CONFERS NOTHING — and PostgreSQL says so in two different ways,
+  // which is why this asserts on the PRIVILEGE rather than on the statement.
   //
-  // `GRANT` by a role holding no grant option emits a WARNING and grants nothing;
-  // the statement itself SUCCEEDS. An `expectRejected` here therefore failed for
-  // the wrong reason, and worse, a check written that way would have passed
-  // vacuously the day someone did hold the grant option. The assertion has to be
-  // about the PRIVILEGE, not about the statement.
+  // A grantor holding SOME privilege but no grant option (atlas_app,
+  // atlas_readonly, atlas_rebuild all hold SELECT) gets a WARNING and the
+  // statement SUCCEEDS. A grantor holding NONE at all (atlas_migrate) gets
+  // ERROR 42501. Both were measured; an `expectRejected` passed for one group and
+  // failed for the other, and would have passed VACUOUSLY the day a role actually
+  // did hold the grant option. Only the outcome matters: no privilege, either way.
   test(`P8a: ${role} cannot grant itself the write it was refused`, async () => {
     await withRole(role, async (client) => {
-      await client.query(`GRANT UPDATE ON atlas.write_freeze TO ${role}`);
+      try {
+        await client.query(`GRANT UPDATE ON atlas.write_freeze TO ${role}`);
+      } catch (err) {
+        assert.equal(err.code, SQLSTATE.INSUFFICIENT_PRIVILEGE,
+          `the self-grant failed for an unexpected reason: ${err.code} ${err.message}`);
+      }
+
       const { rows } = await client.query(
         `SELECT has_table_privilege($1, 'atlas.write_freeze', 'UPDATE') AS granted`, [role]
       );
       assert.equal(rows[0].granted, false, `${role} acquired UPDATE on the control by granting it to itself`);
+
       // And the behaviour, not just the catalogue.
       await expectRejected(client, 'UPDATE atlas.write_freeze SET frozen = false WHERE id', [],
         { sqlstate: SQLSTATE.INSUFFICIENT_PRIVILEGE });
