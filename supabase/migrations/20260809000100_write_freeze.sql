@@ -146,6 +146,15 @@ GRANT SELECT ON atlas.write_freeze TO atlas_rebuild;
 -- to a newly created table, so "no grants beyond the three SELECTs" is a genuine
 -- postcondition rather than a restatement. It is also the exact property D7 turns
 -- on, which makes it the one worth failing the migration over.
+--
+-- IT REACHES FURTHER THAN GRANTS, AND THAT WAS MEASURED RATHER THAN INTENDED.
+-- `has_table_privilege` reports an OWNER's implicit privileges too, so this block
+-- also refuses a control owned by any of the four scoped roles. §6.2 P8a's mutation
+-- pair shows it: with the strict CREATE weakened back to `IF NOT EXISTS`, a drifted
+-- table still owned by atlas_migrate is caught HERE instead. The two defences are
+-- independent — the create refuses early, on identity, before anything is
+-- inspected; this refuses late, on effective privilege — and only removing both
+-- lets a pre-existing object be adopted.
 DO $$
 BEGIN
   IF has_table_privilege('atlas_app',      'atlas.write_freeze', 'INSERT')

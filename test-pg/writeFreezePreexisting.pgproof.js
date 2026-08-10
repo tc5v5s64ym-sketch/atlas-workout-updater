@@ -94,16 +94,34 @@ async function applyFile(client, sql, label) {
 
 const readMigration = (file) => fs.readFileSync(path.join(MIGRATIONS, file), 'utf8');
 
-// THE MUTATION: put `IF NOT EXISTS` back. That single change restores the
-// permissive path the ruling removed, and the pre-existing case then proceeds
-// instead of refusing — which is precisely what the tests below must fail on.
+// THE MUTATIONS, in two steps, because the migration turns out to have two
+// independent defences against drift and each deserves its own bite.
+//
+//   `ifNotExists`        — restore the permissive create. The strict CREATE no
+//                          longer refuses, and the refusal falls through to the
+//                          surviving postcondition.
+//   `fullyPermissive`    — also delete that postcondition, restoring the whole
+//                          pre-ruling posture. Now nothing refuses, and the
+//                          drifted object is adopted.
+const POSTCONDITION_BLOCK = /\nDO \$\$\nBEGIN\n  IF has_table_privilege[\s\S]*?\nEND\n\$\$;\n/;
+
 function mutateS3(mode) {
-  const sql = readMigration(S3_FILE);
+  let sql = readMigration(S3_FILE);
   if (mode === 'none') return sql;
-  const mutated = sql.replace(/^CREATE TABLE atlas\.write_freeze \($/m,
+
+  const permissive = sql.replace(/^CREATE TABLE atlas\.write_freeze \($/m,
     'CREATE TABLE IF NOT EXISTS atlas.write_freeze (');
-  assert.notEqual(mutated, sql, 'the strict CREATE must exist in order to be mutated away');
-  return mutated;
+  assert.notEqual(permissive, sql, 'the strict CREATE must exist in order to be mutated away');
+  sql = permissive;
+
+  if (mode === 'fullyPermissive') {
+    // A replacer FUNCTION: `$$` in a replacement string is an escape for `$`, and
+    // passing SQL as a string would corrupt the dollar quoting of anything around it.
+    const withoutPostcondition = sql.replace(POSTCONDITION_BLOCK, () => '\n');
+    assert.notEqual(withoutPostcondition, sql, 'the postcondition must exist in order to be mutated away');
+    sql = withoutPostcondition;
+  }
+  return sql;
 }
 
 let created = [];
@@ -254,14 +272,42 @@ for (const [label, preCreate] of DRIFT_VARIANTS) {
 
 /* ══════════ 3. THE MUTATION BITE ══════════ */
 
-test('P8a MUTATION: restoring IF NOT EXISTS lets the pre-existing object through', async () => {
-  // One character-level change reverts the ruling. The pre-existing table then
-  // survives, S3 completes over it, and the control the runtime reads is an object
-  // this migration never created and never inspected — which is exactly what the
-  // refusals above exist to prevent.
+test('P8a MUTATION: with IF NOT EXISTS restored, the SURVIVING postcondition still refuses', async () => {
+  // Measured, not predicted: this was expected to let the drift through, and it
+  // does not. `has_table_privilege` reports an OWNER's implicit privileges, so a
+  // drifted table still owned by atlas_migrate trips the one postcondition the
+  // ruling kept — which turns out to be load-bearing for ownership as well as for
+  // ALTER DEFAULT PRIVILEGES.
+  //
+  // The two defences are independent and the refusal moves between them: the
+  // strict CREATE refuses EARLY, on identity, before anything is inspected; the
+  // postcondition refuses LATE, on effective privilege.
   const { urls, s3Error } = await buildDatabase({
     preCreate: DRIFT_VARIANTS[1][1],       // the conditional-CHECK variant
     mutation: 'ifNotExists',
+  });
+
+  assert.ok(s3Error, 'the postcondition must still refuse a drifted, foreign-owned control');
+  assert.match(s3Error.message, /a scoped role can write atlas\.write_freeze/);
+  assert.notEqual(s3Error.code, '42P07',
+    'and it must be the LATE refusal — the strict CREATE is what produces the early one');
+
+  await withConnection(urls.applier, async (client) => {
+    const owner = await client.query(
+      `SELECT tableowner FROM pg_tables WHERE schemaname = 'atlas' AND tablename = 'write_freeze'`
+    );
+    assert.equal(owner.rows[0].tableowner, 'atlas_migrate', 'and it rolled back, adopting nothing');
+  });
+});
+
+test('P8a MUTATION: with BOTH defences removed, the pre-existing object is adopted', async () => {
+  // The full pre-ruling posture restored. Nothing refuses now, S3 completes over
+  // the drifted table, and the control the runtime reads is an object this
+  // migration never created and never inspected — which is what the refusals above
+  // exist to prevent, and what this file fails on if the ruling is reverted.
+  const { urls, s3Error } = await buildDatabase({
+    preCreate: DRIFT_VARIANTS[1][1],
+    mutation: 'fullyPermissive',
   });
 
   assert.equal(s3Error, null,
