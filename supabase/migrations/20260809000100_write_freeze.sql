@@ -192,11 +192,10 @@ DECLARE
   expected_owner text := current_user;
   actual_owner   text;
   offending      text;
-  col_count      int;
-  nullable_cols  text;
+  expected_shape text;
+  actual_shape   text;
+  pk_columns     text;
   row_count      int;
-  has_pk         boolean;
-  has_check      boolean;
 BEGIN
   -- 1. OWNERSHIP — the whole of D7 rests on this one fact.
   SELECT tableowner INTO actual_owner
@@ -246,29 +245,96 @@ BEGIN
     RAISE EXCEPTION 'atlas_app cannot read atlas.write_freeze — every write would refuse forever';
   END IF;
 
-  -- 4. THE SHAPE. A pre-existing table could carry the right name and the wrong
-  --    guarantees. Without the single-row key this is not "one control with one
-  --    meaning", and without NOT NULL a null `frozen` is not a control state.
-  SELECT count(*)::int INTO col_count
+  -- 4. THE COLUMN CONTRACT, EXACTLY — names, order, types, nullability, defaults.
+  --
+  -- *Strengthened by the required review of `ba6d95f`.* This used to count five
+  -- columns and check that none was nullable. Counting is not verifying: five
+  -- correctly-named NOT NULL columns of the wrong types, or missing the declared
+  -- defaults, would have passed. The declared shape is compared as one rendered
+  -- string so the migration proves EXACTLY what §3.10 claims and no less.
+  -- No filter on nullability: every column is rendered, so a NULLABLE column shows
+  -- up as a mismatch rather than being quietly excluded from the comparison, and a
+  -- sixth column of any kind cannot slip past by being nullable.
+  SELECT string_agg(
+           format('%s %s %s%s', column_name, data_type,
+                  CASE WHEN is_nullable = 'NO' THEN 'NOT NULL' ELSE 'NULL' END,
+                  CASE WHEN column_default IS NULL THEN '' ELSE ' DEFAULT ' || column_default END),
+           E'\n' ORDER BY ordinal_position)
+    INTO actual_shape
     FROM information_schema.columns
    WHERE table_schema = 'atlas' AND table_name = 'write_freeze';
-  SELECT string_agg(column_name, ', ') INTO nullable_cols
-    FROM information_schema.columns
-   WHERE table_schema = 'atlas' AND table_name = 'write_freeze' AND is_nullable = 'YES';
-  IF col_count <> 5 OR nullable_cols IS NOT NULL THEN
-    RAISE EXCEPTION 'atlas.write_freeze has % column(s); nullable: %', col_count, coalesce(nullable_cols, 'none')
-      USING HINT = 'Expected exactly id, frozen, reason, set_by, set_at — all NOT NULL (§3.10).';
+
+  expected_shape :=
+    'id boolean NOT NULL DEFAULT true'                     || E'\n' ||
+    'frozen boolean NOT NULL'                              || E'\n' ||
+    'reason text NOT NULL'                                 || E'\n' ||
+    'set_by text NOT NULL'                                 || E'\n' ||
+    'set_at timestamp with time zone NOT NULL DEFAULT now()';
+
+  IF actual_shape IS DISTINCT FROM expected_shape THEN
+    RAISE EXCEPTION E'atlas.write_freeze does not match the §3.10 column contract.\nexpected:\n%\nactual:\n%',
+      expected_shape, coalesce(actual_shape, '(no columns)')
+      USING HINT = 'Every column must be present, in order, with the declared type, NOT NULL, '
+                   'and the declared default — and there must be no others.';
   END IF;
 
-  SELECT bool_or(contype = 'p'), bool_or(contype = 'c') INTO has_pk, has_check
-    FROM pg_constraint WHERE conrelid = 'atlas.write_freeze'::regclass;
-  IF NOT coalesce(has_pk, false) OR NOT coalesce(has_check, false) THEN
-    RAISE EXCEPTION 'atlas.write_freeze is missing its single-row primary key or its CHECK (id)';
+  -- 5. THE PRIMARY KEY IS ON `id`, AND ON NOTHING ELSE.
+  --
+  -- `bool_or(contype = 'p')` proved only that SOME primary key existed. A table
+  -- with `UNIQUE (id)` and its PRIMARY KEY on another column satisfies that, and
+  -- satisfies `ON CONFLICT (id)` too — so the seed would succeed and the check
+  -- would pass while the declared single-row design was gone.
+  SELECT string_agg(a.attname, ', ' ORDER BY k.ord)
+    INTO pk_columns
+    FROM pg_constraint c
+    CROSS JOIN LATERAL unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+    JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+   WHERE c.conrelid = 'atlas.write_freeze'::regclass AND c.contype = 'p';
+
+  IF pk_columns IS DISTINCT FROM 'id' THEN
+    RAISE EXCEPTION 'atlas.write_freeze primary key is on (%), expected exactly (id)',
+      coalesce(pk_columns, 'no primary key');
   END IF;
 
-  -- 5. EXACTLY ONE ROW. More than one makes every read ambiguous; none makes the
+  -- 6. THE CONSTRAINTS ARE VERIFIED BY BEHAVIOUR, NOT BY EXISTENCE OR BY NAME.
+  --
+  -- `bool_or(contype = 'c')` proved only that SOME check existed — an unrelated
+  -- one satisfied it. Matching a constraint NAME would be no better: §3.10 makes
+  -- no name authoritative, and a rename would break a true migration or pass a
+  -- false one. Matching `pg_get_constraintdef` text would reject `CHECK (id = true)`,
+  -- which is the same constraint spelled differently.
+  --
+  -- So the invariant is probed. Each attempt runs in its own PL/pgSQL block, which
+  -- carries an implicit savepoint, so a correctly-refused probe leaves nothing
+  -- behind. An accepted probe means the invariant is absent — and the RAISE that
+  -- follows aborts the whole migration, taking the probe row with it.
+
+  -- 6a. `id = false` must be IMPOSSIBLE. This is what CHECK (id) actually means,
+  --     and it is what makes "one control with one meaning" true rather than
+  --     conventional.
+  BEGIN
+    INSERT INTO atlas.write_freeze (id, frozen, reason, set_by)
+    VALUES (false, true, 'S3 verification probe — must never commit', 'migration:S3');
+    RAISE EXCEPTION 'atlas.write_freeze accepted a row with id = false — CHECK (id) is absent or does not constrain id'
+      USING HINT = 'Without it the table can hold a second, unconstrained row and every read becomes ambiguous.';
+  EXCEPTION
+    WHEN check_violation THEN NULL;   -- the declared behaviour
+  END;
+
+  -- 6b. A SECOND `id = true` row must be IMPOSSIBLE, which is the other half of
+  --     the single-row idiom.
+  BEGIN
+    INSERT INTO atlas.write_freeze (id, frozen, reason, set_by)
+    VALUES (true, true, 'S3 verification probe — must never commit', 'migration:S3');
+    RAISE EXCEPTION 'atlas.write_freeze accepted a SECOND row — the single-row key is not enforced';
+  EXCEPTION
+    WHEN unique_violation THEN NULL;  -- the declared behaviour
+  END;
+
+  -- 7. EXACTLY ONE ROW. More than one makes every read ambiguous; none makes the
   --    control unreadable. The runtime treats both as frozen, so neither can open
-  --    writes — but neither is a state this migration may leave behind.
+  --    writes — but neither is a state this migration may leave behind. Checked
+  --    last, so it also proves the probes above committed nothing.
   SELECT count(*)::int INTO row_count FROM atlas.write_freeze;
   IF row_count <> 1 THEN
     RAISE EXCEPTION 'atlas.write_freeze holds % row(s); exactly one is the control', row_count;

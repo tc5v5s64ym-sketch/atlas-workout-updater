@@ -134,6 +134,15 @@ function mutateS3(mode) {
   let sql = readMigration(S3_FILE);
   if (mode === 'none') return sql;
 
+  // `legacyVerification` swaps in the `ba6d95f` block verbatim and changes nothing
+  // else, so the malformed-control proof below shows the OLD behaviour by running
+  // it rather than by describing it.
+  if (mode === 'legacyVerification') {
+    const swapped = sql.replace(VERIFICATION_BLOCK, `\n${LEGACY_VERIFICATION}`);
+    assert.notEqual(swapped, sql, 'the verification block must be found in order to be replaced');
+    return swapped;
+  }
+
   for (const statement of MUTABLE_STATEMENTS) {
     const before = sql;
     sql = sql.replace(statement, '-- [mutated away]');
@@ -141,17 +150,100 @@ function mutateS3(mode) {
   }
 
   if (mode === 'everything') {
-    const withoutVerify = sql.replace(/\nDO \$\$\nDECLARE\n  expected_owner[\s\S]*?\nEND\n\$\$;\n/, '\n');
+    const withoutVerify = sql.replace(VERIFICATION_BLOCK, '\n');
     assert.notEqual(withoutVerify, sql, 'the verification block must exist to be mutated away');
     sql = withoutVerify;
   }
   return sql;
 }
 
+// ── THE MALFORMED CONTROL ────────────────────────────────────────────────────
+//
+// *Required review of `ba6d95f`.* The hostile table above differs from the real
+// one only in WHO OWNS IT. This one differs in WHAT IT GUARANTEES, and it is built
+// to satisfy every check the `ba6d95f` verification performed:
+//
+//   • the expected table name;                        • five columns, all NOT NULL;
+//   • exactly one row;                                • SOME primary key exists;
+//   • SOME check constraint exists;
+//   • `UNIQUE (id)`, so the seed's `ON CONFLICT (id)` still resolves.
+//
+// And yet:
+//
+//   • the PRIMARY KEY is on `set_by`, not on `id`;
+//   • the only CHECK is unrelated;
+//   • there is NO `CHECK (id)`, so `id = false` is legal — the table can hold a
+//     second, unconstrained row and every read becomes ambiguous.
+//
+// `bool_or(contype = 'p')` and `bool_or(contype = 'c')` are both true here. That
+// is the whole finding: existence is not structure.
+const MALFORMED_CONTROL_SQL = `
+  CREATE TABLE atlas.write_freeze (
+    id       boolean     NOT NULL UNIQUE DEFAULT true,
+    frozen   boolean     NOT NULL,
+    reason   text        NOT NULL,
+    set_by   text        NOT NULL PRIMARY KEY,
+    set_at   timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT write_freeze_unrelated_check CHECK (length(reason) >= 0)
+  )`;
+
+// The verification block exactly as `ba6d95f` shipped it, kept verbatim as a
+// fixture so "the old behaviour accepts this" is demonstrated by RUNNING the old
+// behaviour, not by arguing about it. Only sections 4 and 5 differ from the
+// current file; the ownership and access-list checks are identical, so a pass here
+// is attributable to the weak shape logic and to nothing else.
+const LEGACY_VERIFICATION = `
+DO $$
+DECLARE
+  expected_owner text := current_user;
+  actual_owner   text;
+  col_count      int;
+  nullable_cols  text;
+  row_count      int;
+  has_pk         boolean;
+  has_check      boolean;
+BEGIN
+  SELECT tableowner INTO actual_owner
+    FROM pg_tables WHERE schemaname = 'atlas' AND tablename = 'write_freeze';
+  IF actual_owner IS DISTINCT FROM expected_owner THEN
+    RAISE EXCEPTION
+      'atlas.write_freeze is owned by "%" but must be owned by the applying project owner "%"',
+      actual_owner, expected_owner;
+  END IF;
+
+  SELECT count(*)::int INTO col_count
+    FROM information_schema.columns
+   WHERE table_schema = 'atlas' AND table_name = 'write_freeze';
+  SELECT string_agg(column_name, ', ') INTO nullable_cols
+    FROM information_schema.columns
+   WHERE table_schema = 'atlas' AND table_name = 'write_freeze' AND is_nullable = 'YES';
+  IF col_count <> 5 OR nullable_cols IS NOT NULL THEN
+    RAISE EXCEPTION 'atlas.write_freeze has % column(s); nullable: %', col_count, coalesce(nullable_cols, 'none');
+  END IF;
+
+  SELECT bool_or(contype = 'p'), bool_or(contype = 'c') INTO has_pk, has_check
+    FROM pg_constraint WHERE conrelid = 'atlas.write_freeze'::regclass;
+  IF NOT coalesce(has_pk, false) OR NOT coalesce(has_check, false) THEN
+    RAISE EXCEPTION 'atlas.write_freeze is missing its single-row primary key or its CHECK (id)';
+  END IF;
+
+  SELECT count(*)::int INTO row_count FROM atlas.write_freeze;
+  IF row_count <> 1 THEN
+    RAISE EXCEPTION 'atlas.write_freeze holds % row(s); exactly one is the control', row_count;
+  END IF;
+END
+$$;
+`;
+
+const VERIFICATION_BLOCK = /\nDO \$\$\nDECLARE\n  expected_owner[\s\S]*?\nEND\n\$\$;\n/;
+
 let created = [];
 
 // A database in the dangerous pre-`S3` state, with `S3` then applied (or attempted).
-async function buildHostileDatabase(mutation) {
+//
+// `preCreate` is the CREATE statement atlas_migrate runs before `S3` — the
+// well-formed-but-wrongly-owned control by default, or the malformed one.
+async function buildHostileDatabase(mutation, preCreate = null) {
   const name = `atlas_s3_hostile_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
   const applier = requireEnv('ATLAS_PG_PROOF_URL_APPLIER');
   const applierRole = new URL(applier).username;
@@ -181,7 +273,7 @@ async function buildHostileDatabase(mutation) {
   //    finding. The UPDATE grant to atlas_app is the second half: a runtime role
   //    able to lift a freeze is worse than the ownership defect itself.
   await withConnection(urls.atlas_migrate, async (client) => {
-    await client.query(`
+    await client.query(preCreate || `
       CREATE TABLE atlas.write_freeze (
         id       boolean     PRIMARY KEY DEFAULT true CHECK (id),
         frozen   boolean     NOT NULL,
@@ -326,6 +418,118 @@ test('P8a: S3 applied over a PRE-EXISTING atlas_migrate-owned control takes owne
     const rows = await client.query('SELECT count(*)::int AS n FROM atlas.write_freeze');
     assert.equal(rows.rows[0].n, 1, 'exactly one row, throughout');
   });
+});
+
+/* ══════════ THE MALFORMED CONTROL — STRUCTURE, NOT EXISTENCE ══════════ */
+
+test('P8a: the ba6d95f verification ACCEPTS a malformed control — the defect, demonstrated', async () => {
+  // The old behaviour, RUN rather than argued about: the `ba6d95f` verification
+  // block swapped back in verbatim, over a table built to satisfy every check it
+  // performed while guaranteeing none of what §3.10 declares.
+  const { urls, s3Error } = await buildHostileDatabase('legacyVerification', MALFORMED_CONTROL_SQL);
+
+  assert.equal(s3Error, null,
+    `the old verification must ACCEPT this table — that is the finding: ${s3Error && s3Error.message}`);
+
+  await withConnection(urls.applier, async (client) => {
+    // Every predicate the old block tested, shown true on this table.
+    const legacy = await client.query(`
+      SELECT (SELECT count(*)::int FROM information_schema.columns
+               WHERE table_schema = 'atlas' AND table_name = 'write_freeze')            AS col_count,
+             (SELECT count(*)::int FROM information_schema.columns
+               WHERE table_schema = 'atlas' AND table_name = 'write_freeze'
+                 AND is_nullable = 'YES')                                               AS nullable_cols,
+             (SELECT bool_or(contype = 'p') FROM pg_constraint
+               WHERE conrelid = 'atlas.write_freeze'::regclass)                         AS has_pk,
+             (SELECT bool_or(contype = 'c') FROM pg_constraint
+               WHERE conrelid = 'atlas.write_freeze'::regclass)                         AS has_check,
+             (SELECT count(*)::int FROM atlas.write_freeze)                             AS row_count`);
+    const l = legacy.rows[0];
+    assert.equal(l.col_count, 5, 'five columns');
+    assert.equal(l.nullable_cols, 0, 'none nullable');
+    assert.equal(l.has_pk, true, 'SOME primary key exists');
+    assert.equal(l.has_check, true, 'SOME check constraint exists');
+    assert.equal(l.row_count, 1, 'exactly one row');
+
+    // And yet the declared invariant is absent on both counts.
+    const pk = await client.query(`
+      SELECT string_agg(a.attname, ', ' ORDER BY k.ord) AS cols
+        FROM pg_constraint c
+        CROSS JOIN LATERAL unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+        JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+       WHERE c.conrelid = 'atlas.write_freeze'::regclass AND c.contype = 'p'`);
+    assert.equal(pk.rows[0].cols, 'set_by', 'the primary key is on the WRONG column');
+
+    // THE CONSEQUENCE, not just the metadata: `id = false` is legal, so the table
+    // can hold a second unconstrained row and every runtime read becomes ambiguous.
+    await client.query(
+      `INSERT INTO atlas.write_freeze (id, frozen, reason, set_by)
+       VALUES (false, false, 'a second control', 'attacker')`
+    );
+    const rows = await client.query('SELECT count(*)::int AS n FROM atlas.write_freeze');
+    assert.equal(rows.rows[0].n, 2,
+      'the malformed control accepted a second row — "one control with one meaning" is gone');
+  });
+});
+
+test('P8a: the corrected verification REFUSES the malformed control and rolls back', async () => {
+  const { urls, s3Error } = await buildHostileDatabase('none', MALFORMED_CONTROL_SQL);
+
+  assert.ok(s3Error, 'S3 must refuse a table that does not match the declared contract');
+  assert.match(s3Error.message, /primary key is on \(set_by\), expected exactly \(id\)/,
+    'and it must refuse for the RIGHT reason, naming the actual structure it found');
+
+  // THE ENTIRE FILE ROLLED BACK — the refusal is not partial. Ownership and the
+  // schema are exactly as they were before S3 ran.
+  await withConnection(urls.applier, async (client) => {
+    const owner = await client.query(
+      `SELECT tableowner FROM pg_tables WHERE schemaname = 'atlas' AND tablename = 'write_freeze'`
+    );
+    assert.equal(owner.rows[0].tableowner, 'atlas_migrate', 'the refused migration took nothing');
+    const schema = await client.query(
+      `SELECT nspowner::regrole::text AS owner FROM pg_namespace WHERE nspname = 'atlas'`
+    );
+    assert.equal(schema.rows[0].owner, 'atlas_migrate', 'and narrowed nothing');
+    const rows = await client.query('SELECT count(*)::int AS n FROM atlas.write_freeze');
+    assert.equal(rows.rows[0].n, 1, 'and seeded nothing — the probe rows never committed');
+  });
+});
+
+test('P8a: the CHECK is verified by behaviour — a missing CHECK (id) alone is refused', async () => {
+  // The primary key is correct here, so the PK test cannot be what refuses this.
+  // Only the behavioural probe can: `id = false` must be impossible, and matching a
+  // constraint NAME or its rendered TEXT would not have established that —
+  // `CHECK (id = true)` is the same constraint spelled differently.
+  const { s3Error } = await buildHostileDatabase('none', `
+    CREATE TABLE atlas.write_freeze (
+      id       boolean     PRIMARY KEY DEFAULT true,
+      frozen   boolean     NOT NULL,
+      reason   text        NOT NULL,
+      set_by   text        NOT NULL,
+      set_at   timestamptz NOT NULL DEFAULT now()
+    )`);
+
+  assert.ok(s3Error, 'a control without CHECK (id) must be refused');
+  assert.match(s3Error.message, /accepted a row with id = false/);
+  assert.match(s3Error.message, /CHECK \(id\) is absent or does not constrain id/);
+});
+
+test('P8a: the column contract is verified exactly — a wrong type is refused', async () => {
+  // Five NOT NULL columns with the right names, the right primary key and a real
+  // CHECK (id) — and `reason` typed as a bounded varchar rather than text. The old
+  // count-and-nullability check could not see this at all.
+  const { s3Error } = await buildHostileDatabase('none', `
+    CREATE TABLE atlas.write_freeze (
+      id       boolean       PRIMARY KEY DEFAULT true CHECK (id),
+      frozen   boolean       NOT NULL,
+      reason   varchar(40)   NOT NULL,
+      set_by   text          NOT NULL,
+      set_at   timestamptz   NOT NULL DEFAULT now()
+    )`);
+
+  assert.ok(s3Error, 'a control whose columns differ from §3.10 must be refused');
+  assert.match(s3Error.message, /does not match the §3.10 column contract/);
+  assert.match(s3Error.message, /character varying/, 'and it must show what it actually found');
 });
 
 /* ══════════ THE MUTATION BITE ══════════ */
