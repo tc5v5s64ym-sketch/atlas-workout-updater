@@ -35,16 +35,24 @@ CREATE TABLE IF NOT EXISTS atlas.write_freeze (
 
 -- ── The seed: DORMANT ────────────────────────────────────────────────────────
 --
--- Declared DML operation 2 of 2 in atlas_migrate's grant list (§3.10, §8.2). The
--- row ships `frozen = false`, so applying this migration changes no behaviour:
+-- *Comment corrected by the required review of `ae1928c`: it still described this
+-- as a declared DML operation in atlas_migrate's grant list, issued "before the
+-- ownership transfer below". Both statements are now false — there is no transfer,
+-- and atlas_migrate holds no DML here at all.*
+--
+-- WHO PERFORMS IT. This is MIGRATION-TIME DML by the PROJECT-OWNER / APPLIER
+-- principal — `postgres` on `Atlas Production`, and its NOSUPERUSER mirror in the
+-- from-empty proof — acting as the owner of the table it created two statements
+-- ago. It needs no grant, because ownership is not transferred away from it, and
+-- `atlas_migrate` receives NO row-DML authority on this table (see below).
+--
+-- The row ships `frozen = false`, so applying this migration changes no behaviour:
 -- §6.2 P12 proves the dormant path is byte-identical to the pre-S3 build.
 --
--- Issued BEFORE the ownership transfer below, while the applier still owns the
--- table it just created. ON CONFLICT DO NOTHING makes a re-apply a no-op and — far
--- more importantly — means a RE-RUN CAN NEVER LIFT A LIVE FREEZE. A seed that
--- overwrote the row would hand every future migration run the power to reopen
--- writes the owner had closed, which is exactly the authority this control exists
--- to keep in one place.
+-- ON CONFLICT DO NOTHING makes a re-apply a no-op and — far more importantly —
+-- means a RE-RUN CAN NEVER LIFT A LIVE FREEZE. A seed that overwrote the row would
+-- hand every future migration run the power to reopen writes the owner had closed,
+-- which is exactly the authority this control exists to keep in one place.
 INSERT INTO atlas.write_freeze (id, frozen, reason, set_by)
 VALUES (true, false, 'dormant — seeded by the S3 migration; writes open', 'migration:S3')
 ON CONFLICT (id) DO NOTHING;

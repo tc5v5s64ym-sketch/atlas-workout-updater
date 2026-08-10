@@ -111,21 +111,99 @@ async function catalogDependency() {
 // Both must be zero now: no durable open row, AND nothing found by the sweep that
 // established it. They answer different questions — "has anything been recorded?"
 // and "is anything wrong right now?" — and cutover readiness needs both.
-function readinessVerdict({ parity, sweep, openDivergences, catalog }) {
-  const foundNow = Number(sweep && sweep.divergences_found) || 0;
-  const openCount = Number(openDivergences) || 0;
+//
+// ── AND ABSENT EVIDENCE IS NOT ZERO EVIDENCE ─────────────────────────────────
+//
+// *Required Atlas Contract / Systems Review of `ae1928c`.* The first fix still
+// coerced: `Number(x) || 0` turns `undefined`, `null`, `NaN` and `'lots'` into a
+// clean **0**, and `Boolean(x)` turns `'false'`, `{}` and `1` into a clean **true**.
+// So a gate handed MISSING or MALFORMED proof reported PASS, and the unit test
+// codified it. That is the same false-green class as the stale zero, one level
+// further down: not "the evidence says nothing is wrong" but "there is no evidence,
+// and nothing is wrong is what we will assume".
+//
+// Every input is now VALIDATED rather than coerced:
+//   • a count must be PRESENT and a finite, non-negative INTEGER — missing, null,
+//     NaN, Infinity, negative, fractional, or any non-number fails;
+//   • a proof bit must be EXACTLY `true` — no truthiness, so `'false'`, `{}` and
+//     `1` satisfy nothing.
+// Anything else is a refusal, and `evidence_problems` says which input and why.
+
+// A validated count. Returns the integer, or null when the evidence is unusable —
+// and null is never equal to 0, so an unusable count can never satisfy a zero.
+function requireCount(container, key, label, problems) {
+  if (container === null || container === undefined) {
+    problems.push(`${label}: the evidence object is MISSING`);
+    return null;
+  }
+  const value = container[key];
+  if (value === undefined || value === null) {
+    problems.push(`${label} is MISSING — absent evidence is not a zero`);
+    return null;
+  }
+  if (typeof value !== 'number') {
+    problems.push(`${label} is not a number (${typeof value}) — malformed evidence is not a zero`);
+    return null;
+  }
+  // Rejects NaN and Infinity as well as fractions; both are `typeof number`.
+  if (!Number.isInteger(value)) {
+    problems.push(`${label} is not a finite integer (${value})`);
+    return null;
+  }
+  if (value < 0) {
+    problems.push(`${label} is negative (${value}) — a count cannot be`);
+    return null;
+  }
+  return value;
+}
+
+// A validated proof bit. EXACTLY `true` passes; `false` is an honest failure, and
+// anything else is malformed evidence. Both refuse, and the message distinguishes
+// them so an operator can tell a failing gate from a broken one.
+function requireTrue(container, key, label, problems) {
+  if (container === null || container === undefined) {
+    problems.push(`${label}: the evidence object is MISSING`);
+    return false;
+  }
+  const value = container[key];
+  if (value === true) return true;
+  if (value === false) {
+    problems.push(`${label} is false`);
+    return false;
+  }
+  problems.push(`${label} is not a boolean (${typeof value}) — a truthy value is not a proof`);
+  return false;
+}
+
+function readinessVerdict({ parity, sweep, openDivergences, catalog } = {}) {
+  const problems = [];
+
+  const parityReady = requireTrue(parity, 'ready', 'parity.ready', problems);
+  const sweepComplete = requireTrue(sweep, 'complete', 'sweep.complete', problems);
+  const catalogOk = requireTrue(catalog, 'ok', 'catalog.ok', problems);
+  const foundNow = requireCount(sweep, 'divergences_found', 'sweep.divergences_found', problems);
+  // Passed as a bare value by every caller, so it is wrapped to reuse one validator.
+  const openCount = requireCount({ open_divergences: openDivergences }, 'open_divergences',
+    'open_divergences', problems);
+
   const verdict = {
-    p5_read_parity: Boolean(parity && parity.ready),
-    p6_zero_divergences: Boolean(sweep && sweep.complete) && openCount === 0 && foundNow === 0,
-    p4b_bounded_catalog_dependency: Boolean(catalog && catalog.ok),
+    p5_read_parity: parityReady,
+    // Strict equality against a VALIDATED integer. An unusable count is `null`,
+    // and `null === 0` is false, so it cannot satisfy either zero.
+    p6_zero_divergences: sweepComplete && openCount === 0 && foundNow === 0,
+    p4b_bounded_catalog_dependency: catalogOk,
   };
+
   return {
-    ready: Object.values(verdict).every(Boolean),
+    ready: Object.values(verdict).every((v) => v === true),
     verdict,
-    // Reported separately so a NOT READY result says which of the two zeros failed.
+    // Reported separately so a NOT READY result says which of the two zeros failed —
+    // and `null` where the evidence could not be trusted, never a substituted 0.
     open_divergences: openCount,
     divergences_found_now: foundNow,
-    sweep_complete: Boolean(sweep && sweep.complete),
+    sweep_complete: sweepComplete,
+    // Exactly what was missing or malformed. Empty on a clean run.
+    evidence_problems: problems,
   };
 }
 
@@ -160,14 +238,16 @@ async function main() {
   const assessment = readinessVerdict({
     parity, sweep, openDivergences: divergences.open_count, catalog,
   });
-  const { ready, verdict, openCount = assessment.open_divergences } = {
-    ...assessment, openCount: assessment.open_divergences,
-  };
+  const { ready, verdict } = assessment;
+  const openCount = assessment.open_divergences;
 
   if (asJson) {
     console.log(JSON.stringify({
-      ok: ready, configured: true, verdict, parity, sweep_complete: sweep.complete,
+      ok: ready, configured: true, verdict, parity, sweep_complete: assessment.sweep_complete,
       open_divergences: openCount, divergences_found_now: assessment.divergences_found_now,
+      // Named inputs that were missing or malformed. A gate handed no evidence
+      // refuses, and this is where it says so.
+      evidence_problems: assessment.evidence_problems,
       // Every concept the sweep could not reconcile, named — an identityless or
       // duplicated authoritative row makes a concept INCOMPLETE and must be
       // readable here rather than only inferable from a false `complete`.
@@ -186,9 +266,13 @@ async function main() {
     }
     console.log(
       `  P6 divergences          ${verdict.p6_zero_divergences ? 'PASS' : 'FAIL'} ` +
-      `(sweep ${sweep.complete ? 'complete' : 'INCOMPLETE'}, ${openCount} durable open, ` +
-      `${assessment.divergences_found_now} found by THIS sweep)`
+      `(sweep ${assessment.sweep_complete ? 'complete' : 'INCOMPLETE'}, ` +
+      `${openCount === null ? 'UNUSABLE' : openCount} durable open, ` +
+      `${assessment.divergences_found_now === null ? 'UNUSABLE' : assessment.divergences_found_now} found by THIS sweep)`
     );
+    for (const problem of assessment.evidence_problems) {
+      console.log(`     ! evidence: ${problem}`);
+    }
     for (const concept of sweep.concepts.filter((c) => !c.complete)) {
       console.log(`     ✗ ${concept.concept.padEnd(34)} ${concept.error}`);
     }

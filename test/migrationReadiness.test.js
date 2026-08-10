@@ -98,7 +98,16 @@ test('an INCOMPLETE sweep fails P6 even when both counts read zero', () => {
   assert.equal(result.sweep_complete, false);
 });
 
-/* ══════════ missing, malformed and absent evidence ══════════ */
+/* ══════════ MISSING, MALFORMED, DEFAULTED OR AMBIGUOUS EVIDENCE ══════════ */
+//
+// *Required Atlas Contract / Systems Review of `ae1928c`.* The first P6 fix still
+// COERCED its inputs — `Number(x) || 0` and `Boolean(x)` — so a gate handed no
+// evidence at all reported PASS, and the test that used to live here CODIFIED that
+// by asserting a malformed durable count of `'lots'` became 0 and P6 still passed.
+// It was a false green written down as an expectation, which is worse than the bug.
+//
+// Absent evidence is not zero evidence, and a truthy value is not a proof. Every
+// case below asserts a REFUSAL.
 
 test('MISSING evidence is never a pass — an absent sweep, parity or catalog fails closed', () => {
   for (const missing of [
@@ -106,27 +115,124 @@ test('MISSING evidence is never a pass — an absent sweep, parity or catalog fa
     { parity: PARITY_OK, sweep: null, openDivergences: 0, catalog: CATALOG_OK },
     { parity: PARITY_OK, sweep: CLEAN_SWEEP, openDivergences: 0, catalog: null },
     {},
+    undefined,
   ]) {
-    assert.equal(readinessVerdict(missing).ready, false,
-      `absent evidence must refuse, not default to ready: ${JSON.stringify(Object.keys(missing))}`);
+    const result = readinessVerdict(missing);
+    assert.equal(result.ready, false,
+      `absent evidence must refuse, not default to ready: ${JSON.stringify(missing)}`);
+    assert.ok(result.evidence_problems.length > 0, 'and it must say what was missing');
   }
 });
 
-test('a NON-NUMERIC divergence count is treated as zero found only when it is genuinely absent', () => {
-  // `divergences_found` missing entirely (an older sweep shape) coerces to 0 — but
-  // `complete` and the durable count still have to hold, so this cannot pass alone.
-  const partial = readinessVerdict({
-    parity: PARITY_OK, sweep: { complete: true, concepts: [] }, openDivergences: 0, catalog: CATALOG_OK,
-  });
-  assert.equal(partial.divergences_found_now, 0);
+// ── 1. CURRENT-SWEEP divergence evidence ─────────────────────────────────────
+for (const [label, divergences_found] of [
+  ['missing', undefined],
+  ['null', null],
+  ['a string', 'lots'],
+  ['a numeric string', '0'],
+  ['NaN', NaN],
+  ['Infinity', Infinity],
+  ['-Infinity', -Infinity],
+  ['negative', -1],
+  ['fractional', 0.5],
+  ['a boolean', false],
+  ['an object', {}],
+  ['an array', []],
+]) {
+  test(`P6 FAILS when sweep.divergences_found is ${label}`, () => {
+    const sweep = { complete: true, concepts: [] };
+    if (divergences_found !== undefined) sweep.divergences_found = divergences_found;
 
-  // And a garbage durable count does not silently become zero-and-passing.
-  const garbage = readinessVerdict({
-    parity: PARITY_OK, sweep: CLEAN_SWEEP, openDivergences: 'lots', catalog: CATALOG_OK,
+    const result = readinessVerdict({
+      parity: PARITY_OK, sweep, openDivergences: 0, catalog: CATALOG_OK,
+    });
+    assert.equal(result.verdict.p6_zero_divergences, false,
+      `sweep.divergences_found = ${label} must never satisfy a zero`);
+    assert.equal(result.ready, false);
+    assert.equal(result.divergences_found_now, null, 'unusable evidence reports null, never a substituted 0');
+    assert.ok(result.evidence_problems.some((p) => p.startsWith('sweep.divergences_found')));
   });
-  assert.equal(garbage.open_divergences, 0, 'unparseable coerces to 0');
-  assert.equal(garbage.verdict.p6_zero_divergences, true,
-    'which is why the SWEEP half exists — the durable count alone was never enough');
+}
+
+// ── 2. DURABLE open-divergence evidence ──────────────────────────────────────
+for (const [label, openDivergences] of [
+  ['missing', undefined],
+  ['null', null],
+  ['a string', 'lots'],
+  ['a numeric string', '0'],
+  ['NaN', NaN],
+  ['Infinity', Infinity],
+  ['negative', -3],
+  ['fractional', 1.5],
+  ['a boolean', false],
+  ['an object', {}],
+]) {
+  test(`P6 FAILS when the durable open count is ${label}`, () => {
+    const result = readinessVerdict({
+      parity: PARITY_OK, sweep: CLEAN_SWEEP, openDivergences, catalog: CATALOG_OK,
+    });
+    assert.equal(result.verdict.p6_zero_divergences, false,
+      `open_divergences = ${label} must never satisfy a zero`);
+    assert.equal(result.ready, false);
+    assert.equal(result.open_divergences, null);
+    assert.ok(result.evidence_problems.some((p) => p.startsWith('open_divergences')));
+  });
+}
+
+// ── 3. BOOLEAN gate evidence — truthiness is not proof ───────────────────────
+const TRUTHY_NON_BOOLEANS = [['the string "false"', 'false'], ['the string "yes"', 'yes'],
+  ['an empty object', {}], ['the number 1', 1], ['a non-empty array', ['ok']]];
+
+for (const [label, truthy] of TRUTHY_NON_BOOLEANS) {
+  test(`P5 FAILS when parity.ready is ${label}`, () => {
+    const result = readinessVerdict({
+      parity: { ready: truthy }, sweep: CLEAN_SWEEP, openDivergences: 0, catalog: CATALOG_OK,
+    });
+    assert.equal(result.verdict.p5_read_parity, false, `parity.ready = ${label} is not a proof`);
+    assert.equal(result.ready, false);
+    assert.ok(result.evidence_problems.some((p) => p.includes('parity.ready is not a boolean')));
+  });
+
+  test(`P6 FAILS when sweep.complete is ${label}`, () => {
+    const result = readinessVerdict({
+      parity: PARITY_OK,
+      sweep: { complete: truthy, divergences_found: 0, concepts: [] },
+      openDivergences: 0,
+      catalog: CATALOG_OK,
+    });
+    assert.equal(result.verdict.p6_zero_divergences, false, `sweep.complete = ${label} is not a proof`);
+    assert.equal(result.sweep_complete, false);
+    assert.equal(result.ready, false);
+  });
+
+  test(`P4(b) FAILS when catalog.ok is ${label}`, () => {
+    const result = readinessVerdict({
+      parity: PARITY_OK, sweep: CLEAN_SWEEP, openDivergences: 0, catalog: { ok: truthy },
+    });
+    assert.equal(result.verdict.p4b_bounded_catalog_dependency, false, `catalog.ok = ${label} is not a proof`);
+    assert.equal(result.ready, false);
+  });
+}
+
+test('a genuine false is reported as a FAILING gate, not as broken evidence', () => {
+  // The distinction matters to an operator: "the sweep did not complete" and "the
+  // sweep did not say whether it completed" need different responses.
+  const honest = readinessVerdict({
+    parity: { ready: false }, sweep: CLEAN_SWEEP, openDivergences: 0, catalog: CATALOG_OK,
+  });
+  assert.ok(honest.evidence_problems.includes('parity.ready is false'));
+  assert.equal(honest.evidence_problems.some((p) => p.includes('not a boolean')), false);
+});
+
+test('the ONLY passing shape is exact booleans and exact integer zeros', () => {
+  const result = readinessVerdict({
+    parity: { ready: true },
+    sweep: { complete: true, divergences_found: 0, concepts: [] },
+    openDivergences: 0,
+    catalog: { ok: true },
+  });
+  assert.equal(result.ready, true);
+  assert.deepEqual(result.evidence_problems, []);
 });
 
 test('P5 and P4(b) each fail the whole verdict on their own', () => {
@@ -146,7 +252,7 @@ test('the verdict reports only — it carries no authority to move a read or a w
   });
   assert.deepEqual(
     Object.keys(result).sort(),
-    ['divergences_found_now', 'open_divergences', 'ready', 'sweep_complete', 'verdict'],
+    ['divergences_found_now', 'evidence_problems', 'open_divergences', 'ready', 'sweep_complete', 'verdict'],
     'a readiness verdict that grew an action field would be a cutover trigger, which S3 must not have'
   );
 });
