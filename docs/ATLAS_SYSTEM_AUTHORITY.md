@@ -435,20 +435,26 @@ revisions, item outcomes, and closeout and write receipts.
   |---|---|
   | `S3` implementation | **MERGED** — PR #1281, merge commit `fbe205a` |
   | `S3` on `main` | **LANDED** (2026-08-11) |
-  | The `S3` `write_freeze` migration on `Atlas Production` | **NOT APPLIED** |
-  | `atlas.write_freeze` in `Atlas Production` | **ABSENT** |
-  | Runtime Supabase credential in any live environment | **NOT CONFIGURED** |
+  | The `S3` `write_freeze` migration on `Atlas Production` | **CURRENT: UNVERIFIED** — last verified 2026-08-08: **NOT APPLIED** |
+  | `atlas.write_freeze` in `Atlas Production` | **CURRENT: UNVERIFIED** — last verified 2026-08-08: **ABSENT** |
+  | Runtime Supabase credential in any live environment | **CURRENT: UNVERIFIED** — last verified 2026-08-08: **NOT CONFIGURED** |
   | Athlete-facing read or write authority moved | **NONE** |
   | Sole live authority | **Google Sheets + `services/idempotency.js`** |
   | Authority-transfer point | **`S4`**, which has not started |
 
-  **The four production rows are the state last verified at the P8b checkpoint of 2026-08-08,
-  and this change did not re-verify them.** Merging `S3` cannot have altered them — a merge
-  applies no migration and configures no credential — so they are carried forward rather than
-  re-asserted. They are also the conservative direction: each one under-claims, so a stale copy
-  can only withhold deployed evidence, never manufacture it. Discharging §6.2 P8b still needs a
-  real read-only inspection of `Atlas Production`, which needs a Supabase credential that exists
-  in no Atlas environment and on no agent surface today.
+  **The three `UNVERIFIED` rows carry a last-verified value, not a current one**, and the
+  distinction is written into each cell so it cannot be quoted away from this paragraph. Their
+  values were observed at the P8b checkpoint of 2026-08-08; **no inspection of `Atlas Production`
+  has been made since**, so nothing here asserts what that deployment holds today. Each recorded
+  value under-claims, so a stale copy can only withhold deployed evidence, never manufacture it —
+  but under-claiming is not verification, and this table no longer presents it as one. §6.2 P8b is
+  discharged by a real read-only inspection of `Atlas Production`, and by nothing else.
+
+  *What was actually observed, and its exact bound:* the local Claude environment inspected on
+  2026-08-11 held **no usable `ATLAS_SUPABASE_*` credential of any role**, so no such inspection
+  could be performed from it. That is a statement about one inspected environment. It is **not**
+  evidence about Render, about any other Atlas environment, or about any other agent surface, and
+  it must not be read as any of those.
 
   So `S3` is neither "not started" nor "done": it is written, reviewed and **merged**, and it
   **moved no authority by landing** (ruling D5). `S4` remains the only step that does.

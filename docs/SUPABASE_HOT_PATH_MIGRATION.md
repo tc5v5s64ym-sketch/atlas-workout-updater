@@ -58,20 +58,28 @@ and "NOT MERGED" became the stale half.* The honest split is **repository versus
 |---|---|
 | `S3` implementation | **MERGED** — PR #1281, merge commit `fbe205a` |
 | `S3` on `main` | **LANDED** (2026-08-11) |
-| The `S3` `write_freeze` migration on `Atlas Production` | **NOT APPLIED** — an outstanding owner gate (§6.2 P8b) |
-| `atlas.write_freeze` in `Atlas Production` | **ABSENT** |
-| Runtime Supabase credential in any live environment | **NOT CONFIGURED** |
-| Deployed `S3` evidence | **NONE**, and none may be claimed |
+| The `S3` `write_freeze` migration on `Atlas Production` | **CURRENT: UNVERIFIED** — last verified 2026-08-08: **NOT APPLIED**; the owner gate (§6.2 P8b) is outstanding |
+| `atlas.write_freeze` in `Atlas Production` | **CURRENT: UNVERIFIED** — last verified 2026-08-08: **ABSENT** |
+| Runtime Supabase credential in any live environment | **CURRENT: UNVERIFIED** — last verified 2026-08-08: **NOT CONFIGURED** |
+| Deployed `S3` evidence | **NONE**, and none may be claimed — no deployed evidence has ever been gathered, so this row has no last-verified value to go stale |
 | Athlete-facing read or write authority moved | **NONE** — and `S3` moved none by merging (ruling D5) |
 | Sole live authority | **Google Sheets + `services/idempotency.js`** |
 
-**The four production rows are the state last verified at the P8b checkpoint of 2026-08-08, and
-the change that recorded the merge did not re-verify them.** A merge applies no migration and
-configures no credential, so merging `S3` cannot have altered them. Every one of them
-under-claims, so carrying a stale copy forward can only withhold deployed evidence, never
-manufacture it. §6.2 P8b is discharged by a real read-only inspection of `Atlas Production` —
-which needs a Supabase credential that is present in no Atlas environment and on no agent
-surface today — and by nothing else.
+**The three `UNVERIFIED` rows carry a last-verified value, not a current one**, and each cell
+says so itself so the distinction survives being quoted apart from this paragraph. Those values
+were observed at the P8b checkpoint of 2026-08-08, and **no inspection of `Atlas Production` has
+been made since** — nothing here asserts what that deployment holds today. Each recorded value
+under-claims, so a stale copy can only withhold deployed evidence, never manufacture it; but
+under-claiming is not verification, and this table no longer presents it as one. The deployed-
+evidence row is different in kind and is stated separately: it is **NONE** because none has ever
+been gathered, which is a present fact rather than an ageing one. §6.2 P8b is discharged by a
+real read-only inspection of `Atlas Production`, and by nothing else.
+
+*What was actually observed, and its exact bound:* the local Claude environment inspected on
+2026-08-11 held **no usable `ATLAS_SUPABASE_*` credential of any role**, so no such inspection
+could be performed from it. That is a statement about one inspected environment. It is **not**
+evidence about Render, about any other Atlas environment, or about any other agent surface, and
+it must not be read as any of those.
 
 `S4` remains paper, remains the authority-transfer point, and has not started. `S3` is now
 merged, and nothing in this document may be read as claiming it is **deployed, applied to
@@ -1643,8 +1651,9 @@ nothing".
      checkpoint to pass (§6.1 P8b, §8.1, and the plan's owner-gate 2). **Both were done.** The
      owner applied the eight reviewed migration files, and the checkpoint **PASSED with exit
      code `0`** (§8.6). Nothing further is owed here. **`S3` became eligible from this
-     dependency alone, and MERGED on 2026-08-11 as PR #1281 — still not applied to
-     `Atlas Production`, and still carrying no deployed evidence.**
+     dependency alone, and MERGED on 2026-08-11 as PR #1281 — carrying no deployed evidence,
+     and NOT VERIFIED as applied to `Atlas Production` (last verified 2026-08-08: NOT
+     APPLIED).**
   2. **For `S3`'s deployed freeze evidence:** the owner applies the `S3` `write_freeze`
      migration (§3.10). The PR **may merge before this**; the P8a/P8b deployed-system evidence
      **may not be claimed before it**, because the freeze cannot be proven against a deployed
@@ -3397,8 +3406,10 @@ Each line is a cleanup obligation of the PR named, not of `S1`.
   migrated**: those tables are unwritten, no connection string is configured, and Sheets decides
   alone.
 - **It claims `S3` has landed on `main`, and nothing beyond that.** `S3` **merged on 2026-08-11
-  as PR #1281**. Its migration has **not** been applied to `Atlas Production`, so
-  **`atlas.write_freeze` does not exist there**, and **no deployed evidence exists** — §6.2 P8b
+  as PR #1281**. It claims nothing about that deployment: whether the migration has been applied
+  to `Atlas Production`, and whether `atlas.write_freeze` exists there, are **UNVERIFIED as of
+  this writing** — last verified 2026-08-08, when both were absent. **No deployed evidence
+  exists**, which is a present fact and not an ageing one: none has ever been gathered. §6.2 P8b
   is outstanding, and P8–P12 are proven at the code level only, against the from-empty proof
   database. Nothing in `S3` has moved a read or a write: Google Sheets, plus the file-backed
   store in `services/idempotency.js`, remains the sole live authority for every migrated
