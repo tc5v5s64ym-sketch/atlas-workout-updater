@@ -25,6 +25,38 @@ jobs:
             const head = ((context.payload.pull_request || {}).head || {}).sha || '';
             const problems = [];
 
+            // This small closed path set is always high-risk. File paths are
+            // mechanical facts; the check does not infer risk from prose. Paths
+            // outside the set still use CLAUDE.md's canonical human decision.
+            const { owner, repo } = context.repo;
+            const pull_number = context.payload.pull_request.number;
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner,
+              repo,
+              pull_number,
+              per_page: 100,
+            });
+            const ALWAYS_REVIEW = [
+              /^(?:index|server|sheets)\.js$/i,
+              /^src\/app\/app\.js$/i,
+              /^routes\/sessionPlans\.js$/i,
+              /^services\/(?:appendWriteProof|idempotency|supabaseAdapter|turnWriteArtifact|workoutSession)\.js$/i,
+              /^services\/(?:coach|coaching|safety).*Decision.*\.js$/i,
+              /^services\/sessionPlan(?:Capture|Events|Ledger|SetsCapture|SetsStore|Store)\.js$/i,
+              /^(?:supabase|migrations)\//i,
+              /^config\/coaching\/(?:contracts|manifests)\//i,
+              /^docs\/(?:ATLAS_SYSTEM_AUTHORITY|DECISION_KERNEL|SUPABASE_HOT_PATH_MIGRATION)\.md$/i,
+              /^CLAUDE\.md$/i,
+              /^(?:package|package-lock)\.json$/i,
+              /^\.github\/workflows\//i,
+              /^\.githooks\//i,
+              /^scripts\/check-(?:authority-consistency|supabase-migration-safety|packet-trace|completion-ladder|changed-files-for-secrets|wired-modules|banned-patterns|allowlist-ratchet)\.js$/i,
+              /^test\/(?:governanceMergeAuthority|mergeCardMechanical|supabaseMigrationSafety|packetTraceGuard|completionLadderGuard)\.test\.js$/i,
+            ];
+            const mechanicallyHighRisk = files
+              .map((file) => file.filename.replace(/\\/g, '/'))
+              .filter((filename) => ALWAYS_REVIEW.some((pattern) => pattern.test(filename)));
+
             const esc = (value) => value.replace(/[.*+?^$()|[\]\\{}]/g, '\\$&');
             const sectionAfter = (heading) => body
               .slice(heading.index + heading[0].length)
@@ -148,6 +180,12 @@ jobs:
               }
 
               if (notRequired) {
+                if (mechanicallyHighRisk.length) {
+                  problems.push(
+                    'NOT REQUIRED is invalid because this PR changes mechanically high-risk path(s): ' +
+                    mechanicallyHighRisk.join(', ') + '. Record the required exact-head review.'
+                  );
+                }
                 for (const label of ['Exact reviewed head', 'Reviewer', 'Review outcome']) {
                   if (!/^N\/A$/i.test(review[label])) {
                     problems.push('A NOT REQUIRED review must record ' + label + ': N/A.');

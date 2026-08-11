@@ -126,6 +126,11 @@ The merge card records:
 
 No round count is required.
 
+The merge-card check also has a small closed list of paths that are always
+mechanically high-risk. A PR touching one cannot claim `NOT REQUIRED`. Paths
+outside that list still use the trigger decision above. The check reads
+filenames only; it does not parse prose or try to infer meaning.
+
 ### The approved active implementation agent — implementation and merge operator
 
 **Definition (canonical; every other document points here).** The **approved active implementation agent** is the one agent Dale has approved to implement Atlas work at a given time. It is a role, not a product name. The role is held by whichever agent the owner approves, on whichever surface it runs — Claude Code, Codex, Cursor, or another owner-approved implementation surface — and whichever model that surface runs.

@@ -83,30 +83,45 @@ function card(options = {}) {
   ].join('\n');
 }
 
-function validate(body, head = HEAD) {
+async function validate(body, head = HEAD, files = ['docs/status.md']) {
   let failure = '';
   const core = {
     setFailed(message) { failure = String(message); },
     info() {},
   };
-  const context = { payload: { pull_request: { body, head: { sha: head } } } };
-  vm.runInNewContext(SCRIPT, { context, core }, { timeout: 1000 });
+  const context = {
+    repo: { owner: 'owner', repo: 'repo' },
+    payload: { pull_request: { number: 1, body, head: { sha: head } } },
+  };
+  const github = {
+    rest: { pulls: { listFiles() {} } },
+    paginate: async () => files.map((filename) => ({ filename })),
+  };
+  await vm.runInNewContext(
+    `(async () => {\n${SCRIPT}\n})()`,
+    { context, core, github },
+    { timeout: 1000 },
+  );
   return failure;
 }
 
-function expectGreen(name, body) {
-  test(name, () => assert.equal(validate(body), ''));
+function expectGreen(name, body, files) {
+  test(name, async () => assert.equal(await validate(body, HEAD, files), ''));
 }
 
-function expectRed(name, body, pattern) {
-  test(name, () => {
-    const message = validate(body);
+function expectRed(name, body, pattern, files) {
+  test(name, async () => {
+    const message = await validate(body, HEAD, files);
     assert.notEqual(message, '', 'expected a mechanical failure');
     if (pattern) assert.match(message, pattern);
   });
 }
 
-expectGreen('a complete NOT REQUIRED card passes', card());
+expectGreen(
+  'a complete NOT REQUIRED card passes for ordinary documentation',
+  card(),
+  ['docs/status.md'],
+);
 expectRed('the card heading is required', 'plain PR body', /Atlas Merge Card/);
 
 for (const label of Object.keys(FIELDS)) {
@@ -140,6 +155,29 @@ const required = {
 };
 
 expectGreen('a passing required review on the exact head passes', card({ review: required }));
+expectGreen(
+  'a passing required review covers a mechanically high-risk write path',
+  card({ review: required }),
+  ['services/appendWriteProof.js'],
+);
+expectRed(
+  'a mechanically high-risk write path cannot claim NOT REQUIRED',
+  card(),
+  /mechanically high-risk path/i,
+  ['services/appendWriteProof.js'],
+);
+expectRed(
+  'a Supabase migration cannot claim NOT REQUIRED',
+  card(),
+  /supabase\/migrations/i,
+  ['supabase/migrations/202608100001_example.sql'],
+);
+expectRed(
+  'a hard-gate workflow cannot claim NOT REQUIRED',
+  card(),
+  /merge-card-check\.yml/i,
+  ['.github/workflows/merge-card-check.yml'],
+);
 expectRed(
   'a required review needs a 40-character SHA',
   card({ review: { ...required, 'Exact reviewed head': 'abc1234' } }),
