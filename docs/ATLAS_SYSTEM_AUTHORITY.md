@@ -426,24 +426,38 @@ revisions, item outcomes, and closeout and write receipts.
   `Atlas Production` with the P8b gate passed (2026-08-08), and **no athlete-facing read or
   write has moved**.
 
-  **`S3` — implemented on a branch, landed nowhere.** *Corrected by the required review of
-  `a29129e`: this entry still said `S3` "has not started", which stopped being true once the
-  branch existed.* The distinction that matters is **branch versus production**, and both halves
-  are stated:
+  **`S3` — landed on `main`, applied to no deployment.** *Corrected by the required review of
+  `a29129e`: this entry once said `S3` "has not started", which stopped being true when the
+  branch existed. It then said "landed nowhere", which stopped being true when PR #1281 merged.*
+  The distinction that matters is **repository versus production**, and both halves are stated:
 
   | | State |
   |---|---|
-  | `S3` implementation | **EXISTS**, in open **PR #1281** / branch `agent/supabase-s3-readiness` |
-  | `S3` on `main` | **NOT LANDED** |
-  | The `S3` `write_freeze` migration on `Atlas Production` | **NOT APPLIED** |
-  | `atlas.write_freeze` in `Atlas Production` | **ABSENT** |
-  | Runtime Supabase credential in any live environment | **NOT CONFIGURED** |
+  | `S3` implementation | **MERGED** — PR #1281, merge commit `fbe205a` |
+  | `S3` on `main` | **LANDED** (2026-08-11) |
+  | The `S3` `write_freeze` migration on `Atlas Production` | **CURRENT: UNVERIFIED** — last verified 2026-08-08: **NOT APPLIED** |
+  | `atlas.write_freeze` in `Atlas Production` | **CURRENT: UNVERIFIED** — last verified 2026-08-08: **ABSENT** |
+  | Runtime Supabase credential in any live environment | **CURRENT: UNVERIFIED** — last verified 2026-08-08: **NOT CONFIGURED** |
   | Athlete-facing read or write authority moved | **NONE** |
   | Sole live authority | **Google Sheets + `services/idempotency.js`** |
   | Authority-transfer point | **`S4`**, which has not started |
 
-  So `S3` is neither "not started" nor "done": it is written, reviewed and unmerged, and it
-  **moves no authority even once it lands** (ruling D5). `S4` remains the only step that does.
+  **The three `UNVERIFIED` rows carry a last-verified value, not a current one**, and the
+  distinction is written into each cell so it cannot be quoted away from this paragraph. Their
+  values were observed at the P8b checkpoint of 2026-08-08; **no inspection of `Atlas Production`
+  has been made since**, so nothing here asserts what that deployment holds today. Each recorded
+  value under-claims, so a stale copy can only withhold deployed evidence, never manufacture it —
+  but under-claiming is not verification, and this table no longer presents it as one. §6.2 P8b is
+  discharged by a real read-only inspection of `Atlas Production`, and by nothing else.
+
+  *What was actually observed, and its exact bound:* the local Claude environment inspected on
+  2026-08-11 held **no usable `ATLAS_SUPABASE_*` credential of any role**, so no such inspection
+  could be performed from it. That is a statement about one inspected environment. It is **not**
+  evidence about Render, about any other Atlas environment, or about any other agent surface, and
+  it must not be read as any of those.
+
+  So `S3` is neither "not started" nor "done": it is written, reviewed and **merged**, and it
+  **moved no authority by landing** (ruling D5). `S4` remains the only step that does.
   `S4` and the two closure steps after it remain outstanding.
 
   *This landed state is recorded from current `main`, after the merge. An earlier
