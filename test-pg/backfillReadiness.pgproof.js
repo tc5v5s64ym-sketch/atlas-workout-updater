@@ -181,6 +181,71 @@ test('BITE: bypassing the destination read makes the dry run wrong, so the proof
     'removing the destination read must change the reported result, or the read is decorative');
 });
 
+// *Required review of `63e39a3`, finding P1.* Two Sheets rows, ONE export
+// identity. `ON CONFLICT DO NOTHING` means apply inserts one of them, so a dry
+// run that counted rows would promise two. The preflight may never overstate the
+// apply it is predicting.
+test('a DUPLICATE source identity cannot overstate would_insert — it predicts what apply actually inserts', async () => {
+  // logged_sets identity is session_id||exercise||set_number, so this row is a
+  // second copy of an identity already in the fixture. Its weight differs, which
+  // is deliberate: identity collides, content does not.
+  tabs.Log_Cleaned.push(logRow(SESSIONS[0], 'Back Squat', 1, 245, 5, 2));
+  const sheets2 = sheetsFixture(tabs);
+
+  const dry = await backfill.runBackfill({
+    sheets: sheets2, adapter, apply: false, concepts: ['logged_sets'], includeCatalog: false,
+  });
+  const plan = dry.concepts[0];
+
+  assert.equal(plan.rows_with_identity, 6, 'six eligible ROWS are read');
+  assert.equal(plan.sheets_duplicate_identities, 1, 'one of them duplicates an identity, and that is reported');
+  assert.equal(plan.would_insert, 5, 'but only five distinct IDENTITIES can be inserted');
+  assert.equal(plan.already_present, 0);
+
+  // The claim, proven rather than reasoned about: the number the dry run promised
+  // is the number apply performs.
+  const applied = await backfill.runBackfill({
+    sheets: sheets2, adapter, apply: true, concepts: ['logged_sets'], includeCatalog: false,
+  });
+  assert.equal(applied.concepts[0].inserted, plan.would_insert,
+    'would_insert must equal what apply actually inserted, or the preflight lied');
+
+  await withOwner(async (client) => {
+    const n = (await client.query('SELECT count(*)::int AS n FROM atlas.logged_sets')).rows[0].n;
+    assert.equal(n, 5, 'the destination holds one row per identity, which is why five was the honest answer');
+  });
+});
+
+// *Required review of `63e39a3`, finding P2.* A summary is what an operator reads.
+test('a MIXED run — one concept read, a later one failed — reports null totals, never a partial sum', async () => {
+  const flaky = {
+    ...adapter,
+    listConcept: async (concept) => {
+      if (concept === 'session_effort') throw new Error('connection reset by peer');
+      return adapter.listConcept(concept);
+    },
+  };
+  const plan = await backfill.runBackfill({ sheets, adapter: flaky, apply: false });
+
+  assert.equal(plan.complete, false, 'a run with an unread concept is NOT complete');
+
+  const logged = plan.concepts.find((c) => c.concept === 'logged_sets');
+  const effort = plan.concepts.find((c) => c.concept === 'session_effort');
+  assert.equal(logged.error, null, 'the concept that succeeded keeps its result');
+  assert.equal(logged.would_insert, 5, 'and its own counter stays a real number');
+  assert.match(effort.error, /supabase_read_failed/, 'the concept that failed keeps its failure');
+  assert.equal(effort.would_insert, null);
+
+  // The finding itself: the aggregate must not launder a partial read into a number.
+  assert.equal(plan.totals.would_insert, null, 'a partial destination read yields NO whole-workbook total');
+  assert.equal(plan.totals.already_present, null);
+  assert.equal(plan.totals.sheets_duplicate_identities, null);
+
+  for (const [table, n] of Object.entries(await tableCounts())) {
+    assert.equal(n, 0, `a mixed failed dry run still wrote nothing to atlas.${table}`);
+  }
+});
+
 test('a dry run whose destination read FAILS is an error, never a zero', async () => {
   const broken = {
     ...adapter,
@@ -193,9 +258,11 @@ test('a dry run whose destination read FAILS is an error, never a zero', async (
     assert.match(concept.error || '', /supabase_read_failed/, 'the failure is reported, not swallowed');
     assert.equal(concept.would_insert, null, 'an uncomputed counter stays null');
     assert.equal(concept.already_present, null, 'never 0, which would read as "nothing to do"');
+    assert.equal(concept.sheets_duplicate_identities, null);
   }
   assert.equal(plan.totals.would_insert, null, 'and the total never fabricates a zero either');
   assert.equal(plan.totals.already_present, null);
+  assert.equal(plan.totals.sheets_duplicate_identities, null);
 
   for (const [table, n] of Object.entries(await tableCounts())) {
     assert.equal(n, 0, `a failed dry run still wrote nothing to atlas.${table}`);

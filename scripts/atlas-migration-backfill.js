@@ -67,6 +67,13 @@ function printBackfill(result) {
         counters +
         (plan.error ? `  FAILED (${plan.error})` : '')
     );
+    if (plan.sheets_duplicate_identities) {
+      console.log(
+        `    ! ${plan.sheets_duplicate_identities} duplicate export identity/identities in ${plan.tab}. ` +
+          'would_insert counts IDENTITIES, not rows, because the destination can hold only one row per ' +
+          'identity — so this run predicts what --apply does. The reconciliation refuses a tab in this state.'
+      );
+    }
     if (plan.rows_skipped_no_identity || plan.rows_skipped_unparseable_session) {
       console.log(
         `    ! skipped ${plan.rows_skipped_no_identity} without an export identity, ` +
