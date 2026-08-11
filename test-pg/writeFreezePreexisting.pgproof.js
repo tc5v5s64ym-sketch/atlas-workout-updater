@@ -507,7 +507,7 @@ test('P8a MUTATION: with IF NOT EXISTS restored, the SURVIVING postcondition sti
   });
 
   assert.ok(s3Error, 'the postcondition must still refuse a drifted, foreign-owned control');
-  assert.match(s3Error.message, /a scoped role can write atlas\.write_freeze/);
+  assert.match(s3Error.message, /a scoped role holds a privilege beyond SELECT on atlas\.write_freeze/);
   assert.notEqual(s3Error.code, '42P07',
     'and it must be the LATE refusal — the strict CREATE is what produces the early one');
 
