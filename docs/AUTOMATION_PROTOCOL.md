@@ -64,7 +64,7 @@ The approved active implementation agent merges when all of the following hold:
 
 1. Every applicable required GitHub check passed on the exact current head.
 2. No genuine P0/P1, invariant, trust-loop, schema, security, secret, or write-safety problem remains.
-3. Real independent/advisory findings are addressed.
+3. No real P0/P1 or high-severity/systemic defect found by an independent audit remains unresolved.
 4. One primary risk label, the merge card, and the Vision Alignment Check are complete.
 5. The branch is current, clean, mergeable, and contains one concern.
 6. The concern is authorized by `docs/ATLAS_V1_EXECUTION_PLAN.md` or an explicit owner instruction.

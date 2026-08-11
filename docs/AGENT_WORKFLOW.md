@@ -88,7 +88,7 @@ If already fixed, do not implement. If fixed but untested, add proof rather than
 The approved active implementation agent may merge when:
 
 - every applicable required GitHub check passed on the exact current head;
-- real advisory findings are fixed or explicitly judged non-issues;
+- no real P0/P1 or high-severity/systemic defect found in any review remains unresolved;
 - the PR implements one canonical-plan concern or explicit owner instruction;
 - branch hygiene, risk label, Vision Alignment Check, and merge card — including its four attribution fields — are complete;
 - no unresolved P0/P1, invariant, trust-loop, schema, security, or write-safety defect remains; and

@@ -1,156 +1,109 @@
 <!--
-Atlas Merge Card — complete every field. Missing, stale, skipped, errored,
-unavailable, or incomplete required GitHub checks are failures. Independent agent
-review comments are advisory; no separate review status, reviewer account, marker,
-or owner merge click is required for a routine authorized PR.
+  Atlas Merge Card.
 
-ATTRIBUTION (four rows below the current-state verdict). They record WHO performed
-the work, and they grant no authority. Declared evidence, not cryptographic proof.
-Record the exact model name the surface displays. Never guess a model identity: if
-the surface withholds it, say so. `None` is valid for Supporting / explore models
-only. This card is the sole attribution authority — do not add a commit trailer,
-model registry, label taxonomy, or tracking database beside it.
+  merge-card-check validates mechanical facts only: required rows are filled,
+  the current-state verdict has a closed opening, and a required architecture
+  review records PASS on this exact head. It does not interpret prose, scope,
+  negation, findings, backlog disposition, or review quality.
 -->
 
 ## 🟦 Atlas Merge Card
 
 | Field | Value |
 |---|---|
-| **PR** | #<!-- number --> |
-| **Canonical plan card** | <!-- F## or explicit owner instruction --> |
+| **Canonical plan card** | <!-- card or recorded owner instruction --> |
 | **Title** | <!-- one line --> |
-| **Primary risk** | <!-- one label + low/medium/high --> |
+| **Primary risk** | <!-- one primary label + low/medium/high --> |
 | **Files / categories touched** | <!-- concise --> |
-| **Current-state verdict** | <!-- STILL BROKEN / ALREADY FIXED / PARTIALLY FIXED / FIXED BUT UNTESTED / STALE-SUPERSEDED / NEEDS OWNER APP-TEST --> |
-| **Builder surface** | <!-- the tool this work ran on, e.g. Claude Code / Codex / Cursor --> |
-| **Primary builder model** | <!-- the exact model name the surface displays; never guessed --> |
-| **Supporting / explore models** | <!-- each other model and what it did, or None --> |
-| **Architecture / dispatch authority** | <!-- who dispatched and architecturally owns this work, normally ChatGPT --> |
-| **Tests / hard gates** | <!-- exact commands/checks + results --> |
-| **Advisory findings** | <!-- independent agent/optional clean review: fixed / non-issue / none --> |
-| **Atlas Contract / Systems Review** | <!-- required (name the trigger) / not required (say why) — see the block below --> |
+| **Current-state verdict** | <!-- OPEN with STILL BROKEN / ALREADY FIXED / PARTIALLY FIXED / FIXED BUT UNTESTED / STALE-SUPERSEDED / NEEDS OWNER APP-TEST; then current-main evidence --> |
+| **Builder surface** | <!-- the tool this work ran on --> |
+| **Primary builder model** | <!-- the exact displayed model name; if withheld, say so --> |
+| **Supporting / explore models** | <!-- each other model and role, or None --> |
+| **Architecture / dispatch authority** | <!-- normally ChatGPT --> |
+| **Authority impact** | <!-- winner, loser, bridge/sunset; or none --> |
+| **Tests / hard gates** | <!-- exact commands and results --> |
+| **Advisory audit** | <!-- not run / one pass with dispositions / second pass with its high-severity or systemic reason --> |
 | **Owner authorization required** | <!-- No, or exact reserved category and status --> |
-| **Live validation** | <!-- evidence/script needed, or n/a --> |
+| **Live validation** | <!-- evidence/script needed, or N/A --> |
 | **Merge authority** | <!-- active builder merges exact passing head / blocked on owner authorization --> |
-
----
 
 ### Concern
 
-<!-- One sentence. One PR equals one concern. -->
+<!-- One independently provable outcome. -->
 
 ### Current-state evidence
 
-<!-- Source card/finding, duplicate/stale search, exact file/function/test/PR evidence, and smallest allowed action. -->
-
-### Vision and trust alignment
-
-<!-- Principle advanced · why this is the smallest safe step · invariants checked · user-facing trust effect. -->
+<!-- Source, duplicate/stale search, exact current-main evidence, and smallest allowed action. -->
 
 ### What changed
 
 <!-- Focused summary. -->
 
-### Trust / scope safety
+### Product and trust safety
 
 - [ ] No unrelated product behavior change
 - [ ] No unapproved production-write behavior change
-- [ ] No unapproved Sheet schema/migration/data rewrite
-- [ ] No approval-gate, proof-field, parser-contract, or invariant change unless explicitly authorized
-- [ ] No secret, `.env`, production Sheet ID, or private workout evidence
-- [ ] One concern only; adjacent discoveries filed without expanding this PR
-- [ ] Canonical plan card and completion record updated where appropriate
+- [ ] No unapproved Supabase/Sheet schema, migration, cutover, or data rewrite
+- [ ] No approval, proof, parser, deterministic-decision, or invariant change unless explicitly authorized
+- [ ] No secret, `.env`, production ID, or private workout evidence
+- [ ] One authority per concept; any bridge has an exact sunset
+- [ ] One concern only
 
-### Tests and evidence
-
-<!-- Commands, deterministic CI, live/closest-integration proof, and deployed validation when applicable. -->
-
-### Additional findings
+### Proof
 
 <!--
-Owner ruling 2026-07-30, final form 2026-07-31 — bounded backlog ledger. Every finding
-discovered while doing this work gets exactly one disposition. Keep only the lines that apply.
-GitHub Issues are not a parallel backlog.
-
-ADDED TO BOUNDED BACKLOG requires the three declaration lines below it: BACKLOG.md has fixed
-capacity, so an added item must be paid for by removing, archiving, or promoting existing
-content. Name what went in, what came out, and the resulting counts — the guard checks the
-numbers, review checks that the removal was honest. Fill "counts:" in the form
-`items 282 → 282 · lines 787 → 787 · cap 787 → 787`.
+  Exact deterministic commands and results. Include the closest integration or
+  live-path proof required by the changed risk surface.
 -->
 
-- None
-- FIXED NOW:
-- REJECTED:
-- ADDED TO BOUNDED BACKLOG:
-  - added:
-  - removed/archived/promoted:
-  - counts:
-- OWNER DECISION REQUIRED:
-
-### Architecture and closed-loop impact
+### Reviewer guidance — scope and closure
 
 <!--
-Closed-Loop Delivery Contract (CLAUDE.md): Purpose → Authority → Integration → Proof →
-Cleanup → Closure. Current authority per concept is in docs/ATLAS_SYSTEM_AUTHORITY.md.
-A foundation PR is progress, not completion. Net open-loop change is normally zero or
-negative; a positive result needs an explicit owner-approved reason and a closure chain.
-Write "n/a" on a line that genuinely does not apply.
--->
+  These are reviewer questions, not machine-parsed fields:
 
-- Defect classification: <!-- local defect / authority defect / missing capability -->
-- Parent product/phase outcome:
-- Loop this PR closes:
-- Current live authority:
-- Intended sole authority:
-- Competing authority removed:
-- Exact live consumer:
-- Integration proof: <!-- unit / integration / browser-full-session / owner evidence -->
-- Temporary artifacts introduced:
-- Compatibility bridge:
-- Sunset/removal condition:
-- Production branches added:
-- Production branches removed:
-- Displaced code/tests/docs removed:
-- Open loops closed:
-- Open loops created:
-- Net open-loop change:
-- Parent status after PR: <!-- foundation / integrated / proven / closed -->
-- Why the parent is or is not fully closed:
-- Owner-approved reason if complexity or open loops increase:
+  - Is this one outcome with explicit non-goals?
+  - Does one authority win, with any loser removed or given an exact sunset?
+  - Is the live consumer named and is the proof level correct?
+  - Is temporary machinery removed or tied to an exact retirement condition?
+
+  Keep answers concise. Do not count review rounds or open loops.
+-->
 
 ### Atlas Contract / Systems Review
 
 <!--
-Owner instruction 2026-08-03, recorded in docs/ATLAS_V1_EXECUTION_PLAN.md. The ONE existing
-review lane — no second review system, no CI status, no reviewer account, no marker.
+  CLAUDE.md owns the narrow trigger list and review protocol.
 
-Required when this PR touches: campaign gates · scorecards and counters · adjudicators ·
-rehearsal or test runners · evidence collectors · identity and correlation machinery · phase or
-count advancement · trust-sensitive write, schema, security, promotion, or destructive changes.
-Also required for phase transitions, roadmap changes, product/trust-contract changes, and genuine
-ambiguity. ChatGPT performs this review (owner ruling 2026-08-03) — an implementation agent may
-not satisfy its own architecture gate, so a clean-context agent review goes under "Advisory
-disposition" and never here. The reviewer reads the EXACT head; an earlier commit does not count,
-so a push after the review means the review must be repeated.
+  The blocking question is: Is this exact head unsafe or architecturally wrong
+  to merge? Improvement ideas belong in the optional advisory audit.
 
-The review asks: (1) does this hold in the next legitimate repository state, not only the current
-fixture? (2) can missing, no-op, defaulted, circular, or hardcoded evidence produce a false green?
-(3) does the proof establish identity, content, order, and authority — not cardinality alone?
-(4) does it remain correct when historical records coexist with current state? (5) what authority
-wins, what loses, what bridge remains, and when is it removed? (6) could this falsely advance a
-count or phase? (7) what temporary machinery must be deleted?
+  On follow-up, verify the named blocker fixes and the high-risk surface changed
+  by those fixes. Do not reopen the whole artifact for unlimited new findings.
+
+  Closed forms enforced by CI:
+  - Required opens REQUIRED or NOT REQUIRED.
+  - REQUIRED: exact current 40-character head, Reviewer ChatGPT, outcome PASS.
+  - NOT REQUIRED: head, reviewer, and outcome are each N/A.
 -->
 
-- Required: <!-- required (name the trigger) / not required (say why no trigger fired) -->
-- Exact reviewed head: <!-- full 40-character commit SHA, or n/a -->
-- Reviewer: <!-- who performed the required review, or n/a -->
-- Findings and dispositions: <!-- each finding + fixed / non-issue / routed, or "none", or n/a -->
+- **Required**: <!-- REQUIRED — trigger; or NOT REQUIRED — why no high-risk trigger fired -->
+- **Exact reviewed head**: <!-- 40-character SHA, or N/A -->
+- **Reviewer**: <!-- ChatGPT, or N/A -->
+- **Review outcome**: <!-- PASS, BLOCKING, or N/A -->
+- **Findings and fix verification**: <!-- blockers and dispositions; follow-up verification; none; or N/A -->
 
-### Advisory disposition
+### Additional findings
 
-<!-- List each real finding and fix, each false alarm and rationale, or “none.” -->
+<!--
+  Optional record. Fix a real in-scope safety/correctness defect. Route an
+  adjacent improvement without widening this PR. If backlog membership changes,
+  briefly name what entered and what left. CI does not parse this prose.
+-->
+
+### Non-goals and known uncertainty
+
+<!-- What this does not do, what remains uncertain, and what would settle it. -->
 
 ### Post-merge
 
-<!-- Main/deploy verification, card update, and next eligible campaign item. -->
+<!-- Main/deployment verification, plan update, and next eligible campaign item. -->

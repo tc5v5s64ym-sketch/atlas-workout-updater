@@ -8,7 +8,7 @@ Risk labels describe what authority or evidence is outstanding. They do not crea
 
 | Label | Meaning |
 |---|---|
-| **`auto-safe`** | Authorized campaign work with no outstanding owner-reserved data-safety/product decision. Claude merges after deterministic hard gates pass and real advisory findings are addressed. |
+| **`auto-safe`** | Authorized campaign work with no outstanding owner-reserved data-safety/product decision. The active builder merges after deterministic hard gates pass and no real P0/P1 or high-severity/systemic defect remains unresolved. |
 | **`owner-live-test`** | Genuine owner/gym/device evidence is required or explicitly held. Code may still merge when safe; the campaign card remains open until the evidence is recorded. |
 | **`owner-decision`** | A product direction, production-write authorization, schema/destructive/security, Constitution/Invariant, application-model, promotion, or genuine principle-conflict decision is outstanding. |
 | **`blocked`** | A required hard gate failed/missed or a real P0/P1/contract violation remains unresolved. |
