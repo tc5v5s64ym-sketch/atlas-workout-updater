@@ -361,8 +361,11 @@ revisions, item outcomes, and closeout and write receipts.
 - **Intended sole authority.** Supabase, in the ten permanent record tables of
   [`docs/SUPABASE_HOT_PATH_MIGRATION.md`](./SUPABASE_HOT_PATH_MIGRATION.md) §3.1–§3.9.
   Alongside them `PR S3` builds `atlas.write_freeze` (§3.10), an owner-controlled
-  write-admission control that holds no record and moves no authority; whether it survives the
-  migration is **open decision D7**, for the owner at the `S3` gate. Google Sheets
+  write-admission control that holds no record and moves no authority. It is **PERMANENT Atlas
+  safety infrastructure with no sunset — owner ruling D7, APPROVED 2026-08-09** (recorded in
+  `docs/ATLAS_V1_EXECUTION_PLAN.md`), so `S4` does not delete it; its named permanent consumer
+  is `CLAUDE.md`'s standing rule that a production data-integrity anomaly freezes writes
+  immediately. Google Sheets
   becomes a human-readable export mirror for these concepts, and is never required for an
   active workout to read, save, verify, or close out.
 - **Competing authority.** **NONE TODAY.** Nothing has migrated, and the reason is no longer
@@ -420,9 +423,30 @@ revisions, item outcomes, and closeout and write receipts.
 - **Status.** **SOLE LIVE AUTHORITY** (Google Sheets, plus the file-backed
   `services/idempotency.js` store for receipts). The migration is **authorized, STARTED, and now
   APPLIED at `S2` — but not cut over**: `S2` has landed and its schema is applied to
-  `Atlas Production` with the P8b gate passed (2026-08-08), `S3` and `S4` remain, and **no
-  athlete-facing read or write has moved**. `S3` is eligible from the P8b dependency alone and
-  **has not started**. *This landed state is recorded from current `main`, after the merge. An earlier
+  `Atlas Production` with the P8b gate passed (2026-08-08), and **no athlete-facing read or
+  write has moved**.
+
+  **`S3` — implemented on a branch, landed nowhere.** *Corrected by the required review of
+  `a29129e`: this entry still said `S3` "has not started", which stopped being true once the
+  branch existed.* The distinction that matters is **branch versus production**, and both halves
+  are stated:
+
+  | | State |
+  |---|---|
+  | `S3` implementation | **EXISTS**, in open **PR #1281** / branch `agent/supabase-s3-readiness` |
+  | `S3` on `main` | **NOT LANDED** |
+  | The `S3` `write_freeze` migration on `Atlas Production` | **NOT APPLIED** |
+  | `atlas.write_freeze` in `Atlas Production` | **ABSENT** |
+  | Runtime Supabase credential in any live environment | **NOT CONFIGURED** |
+  | Athlete-facing read or write authority moved | **NONE** |
+  | Sole live authority | **Google Sheets + `services/idempotency.js`** |
+  | Authority-transfer point | **`S4`**, which has not started |
+
+  So `S3` is neither "not started" nor "done": it is written, reviewed and unmerged, and it
+  **moves no authority even once it lands** (ruling D5). `S4` remains the only step that does.
+  `S4` and the two closure steps after it remain outstanding.
+
+  *This landed state is recorded from current `main`, after the merge. An earlier
   revision of this entry claimed it while PR #1274 was still open — a branch recording itself
   as landed — and the required review of `ad18907` corrected it: the honesty rule forbids
   promoting a concept on a document, a test, or an import, and it forbids this for the same
@@ -477,7 +501,9 @@ revisions, item outcomes, and closeout and write receipts.
   PR S4 cutover itself, which additionally requires a verified backup, a proven restore, a
   stated rollback window, and an open-divergence count of zero. Decisions D1, D3, D4 and D5
   are **resolved** by the required Atlas Contract / Systems Reviews of 2026-08-07; D6 is
-  **withdrawn** and D7 (whether the write freeze survives the migration) is **open**.
+  **withdrawn**; D8 is **resolved** by owner ruling (2026-08-07); and **D7 is RESOLVED by owner
+  ruling (2026-08-09)** — the write freeze is permanent Atlas safety infrastructure with no
+  sunset, and `S4` does not delete it. **No migration decision remains open.**
 - **Phase 4 relevance.** None yet. The migration changes where the record lives. It changes
   no engine, no decision, no packet, and no trace. `preview → approve → write`, `test_mode`
   semantics, and the W1–W3 proof fields are untouched.

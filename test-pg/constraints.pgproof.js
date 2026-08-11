@@ -567,22 +567,36 @@ test('§3.9 mirror allocations: a reservation must name a real tab and a real se
   });
 });
 
-// ── §3.10 is deliberately NOT here ─────────────────────────────────────────────
+// ── §3.10 is proven by S3, not here ────────────────────────────────────────────
+//
+// *Updated by PR S3, which is the PR that creates it.* This file proves the
+// constraints of §3.1–§3.9, and §6.1 P1 explicitly excludes §3.10 because S2 is
+// forbidden to create that table. Until S3 the honest assertion was that it does
+// not exist; from S3 on, the honest assertion is that it exists with exactly the
+// declared shape — and its constraints, seed and grants are proven, as the real
+// roles, in test-pg/writeFreeze.pgproof.js (§6.2 P8a).
+//
+// The S2 boundary itself is unchanged and still enforced, in the one place that
+// can still enforce it: test/supabaseMigrationS2.test.js asserts that no S2
+// migration file creates the table and that exactly one S3 file does.
 
-test('§3.10 atlas.write_freeze does NOT exist — S2 is forbidden to create it', async () => {
+test('§3.10 atlas.write_freeze exists, created by S3 — its constraints are proven in writeFreeze.pgproof.js', async () => {
   await withOwner(async (client) => {
     const { rows } = await client.query(
       `SELECT count(*)::int AS n FROM pg_tables WHERE schemaname = 'atlas' AND tablename = 'write_freeze'`
     );
-    assert.equal(rows[0].n, 0, 'S3 creates atlas.write_freeze alongside the control that reads it');
+    assert.equal(rows[0].n, 1, 'S3 creates atlas.write_freeze alongside the control that reads it');
   });
 });
 
-test('exactly the eleven declared S2 tables exist, and no more', async () => {
+test('exactly the twelve declared tables exist, and no more', async () => {
   await withOwner(async (client) => {
     const { rows } = await client.query(
       `SELECT tablename FROM pg_tables WHERE schemaname = 'atlas' ORDER BY tablename`
     );
+    // Eleven from S2 (§3.1–§3.9) plus write_freeze from S3 (§3.10). An UNREVIEWED
+    // table joining the schema is what this list exists to catch, so it is stated
+    // in full rather than counted.
     assert.deepEqual(rows.map((r) => r.tablename), [
       'exercise_catalog_mirror',
       'exercise_catalog_sync',
@@ -594,6 +608,7 @@ test('exactly the eleven declared S2 tables exist, and no more', async () => {
       'sheets_mirror_allocations',
       'sheets_mirror_cursor',
       'workout_sessions',
+      'write_freeze',
       'write_receipts',
     ]);
   });

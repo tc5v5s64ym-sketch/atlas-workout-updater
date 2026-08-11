@@ -574,6 +574,27 @@ Corrected as directed, as a **state-machine/authority fix rather than another re
 
 **The routed `OWNER DECISION REQUIRED` item is CLOSED.** Both integrations remain removed, and reintroducing one is a **new owner security decision**. **No authority moved, no counter changed, and `S3` still has not started.**
 
+### OWNER RULING 2026-08-09 — D7 RESOLVED: the write freeze is PERMANENT Atlas safety infrastructure
+
+**This ruling is the owner authorization; it governs because it is recorded here, not because it was said in a session.** Dale approved **D7** at the `S3` gate, where the design placed it. It is no longer a proposal. Every **specification** surface now says so — the design document, and the per-concept authority record. The **dated review records above stand unedited as history**: a review that correctly called D7 open on the day it ran is not made wrong by a later ruling, and rewriting it would falsify the record rather than update it.
+
+**The ruling.** `atlas.write_freeze` is **permanent Atlas safety infrastructure, not a temporary migration bridge, and it carries NO SUNSET.** `S4` deletes the shadow write, the reconciliation sweep, the repair worker, every `atlas.migration_divergences` consumer and writer, the backfill, and the receipt migration seam. It does **not** delete this control or its route check. The named permanent consumer is `CLAUDE.md`'s standing rule *"Any production data-integrity anomaly freezes writes immediately"* — a rule Atlas had **no mechanism to execute** before `S3`, where freezing meant a deploy or a manual scramble.
+
+**The ruling is NARROW, and these bounds are part of it, not commentary.**
+
+- **One single-row write-admission control only.** It governs exactly one question — may the seven existing `beginWrite` routes write? — and nothing else.
+- The **runtime holds `SELECT` and nothing else**; only the **Supabase project owner** may mutate the row.
+- **No generic feature-flag framework.** The table has a fixed shape, no name column, no per-feature rows, and **no second controlled behaviour**. Adding one is outside this migration and needs its own authorization.
+- **No second mechanism and no fallback.** There is one control, read per request, with no cache and no local override.
+- **No weakening of `preview → approve → write`.** The trust loop is unchanged; a freeze suspends writes, it does not relax a gate.
+- **No workout-data authority moves until `S4`.** Ruling D5 is untouched: `S3` moves no read and no write, and Google Sheets decides every athlete-facing read and write until the cutover.
+
+**What this ruling does not do.** It changes no counter and no phase. **Rehearsal (F-SB4): 0/5 · Stage A: 5/5 COMPLETE · Stage B: 0/5 OPEN.** Phase 5 stays unauthorized. `SESSION_PLAN_SETS_WRITE_ENABLED` stays `0`. It authorizes no schema application, no deployment, and no cutover. It creates no decision ledger, roadmap, gate system, or governance document — it resolves one open decision inside this existing block.
+
+**Where the record lives.** The design records it at [`docs/SUPABASE_HOT_PATH_MIGRATION.md`](SUPABASE_HOT_PATH_MIGRATION.md) §3.10, §5.3, §9 (D7) and §6.3 P17; the per-concept authority record is [`docs/ATLAS_SYSTEM_AUTHORITY.md`](ATLAS_SYSTEM_AUTHORITY.md) concept 18. Those state the mechanism; **this block is the authorization.**
+
+**`S3`'s remaining owner gate is UNCHANGED and still outstanding.** The `S3` migration containing `atlas.write_freeze` must be applied to `Atlas Production` **by Dale** before any **deployed-system** freeze evidence may be claimed (§6.2 P8b). The `S3` PR may merge before that; its deployed evidence may not be claimed before it. Ruling D2's Constitution amendment remains required before the `S4` cutover.
+
 ---
 
 **STAGE B — WORKOUT 1 RERUN: MISS (2026-08-02). Streak stays 0/5.** Owner verdict: **failed**. Flight Recorder `FR-20260802003433-ekvc9w8r`, 00:34:33→00:39:54Z, on a single build (`0b3967d`, deployed 00:25:04Z) with **no deploy or restart inside the session window** — the first Stage B evidence free of the split-build contaminant.

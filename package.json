@@ -20,6 +20,8 @@
     "atlas:sweep": "node scripts/atlas-migration-sweep.js",
     "atlas:repair": "node scripts/atlas-migration-repair.js",
     "atlas:catalog-sync": "node scripts/atlas-catalog-sync.js",
+    "atlas:backfill": "node scripts/atlas-migration-backfill.js",
+    "atlas:readiness": "node scripts/atlas-migration-readiness.js",
     "supabase:migrate": "node scripts/apply-supabase-migrations.js",
     "atlas:rehearsal-session": "node scripts/atlas-rehearsal-session.js",
     "check:wiring": "node scripts/check-wired-modules.js",

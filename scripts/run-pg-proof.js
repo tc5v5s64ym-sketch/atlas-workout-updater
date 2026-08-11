@@ -249,6 +249,18 @@ async function main() {
     for (const [role, url] of Object.entries(credentials)) {
       env[`ATLAS_PG_PROOF_URL_${role.toUpperCase()}`] = url;
     }
+    // THE PROJECT-OWNER PATH, as a NOSUPERUSER role.
+    //
+    // `ATLAS_PG_PROOF_URL` above is the container's superuser, and a superuser
+    // bypasses every privilege check — so a proof that the owner "can" do
+    // something, run as that, proves nothing about `Atlas Production`, which has
+    // no superuser. The applier is the CREATEROLE, NOSUPERUSER principal that
+    // mirrors Supabase's `postgres`, and it owns `atlas.write_freeze` (§3.10).
+    //
+    // §6.2 P8a needs it in both directions: every scoped role is refused a write
+    // to the control, and THIS principal — the only one D7 recognises — can set
+    // and lift the freeze.
+    env.ATLAS_PG_PROOF_URL_APPLIER = applierUrl;
     // The adapter reads the runtime role from its ordinary environment variable,
     // so the suite exercises the SAME configuration path production uses.
     env.ATLAS_SUPABASE_APP_URL = credentials.atlas_app;

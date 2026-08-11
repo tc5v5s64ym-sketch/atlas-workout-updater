@@ -47,20 +47,36 @@ function emptyConceptResult(concept) {
 // Index a side by identity key. A duplicate identity on the Sheets side is
 // reported rather than silently collapsed: two rows with one identity is itself a
 // defect the composite-key constraint refuses on the Supabase side.
+//
+// AN IDENTITYLESS ROW IS COUNTED, NOT DROPPED. *Required review of `65310b3`,
+// finding 3.* This used to `continue` past a row with no export identity, so an
+// authoritative Sheets row that Supabase can never represent disappeared from both
+// sides of the comparison and the sweep still reported a clean zero. It is now
+// returned as a count, and the caller makes the concept INCOMPLETE — which is the
+// mechanism that already stops a gate reading a zero (§5.2 point 3).
+//
+// The old guard did not even catch the case it was written for: `!key || key ===
+// '||'` misses `'||||'`, which is what an all-blank three-part logged_sets key
+// actually joins to, so such a row was indexed under a meaningless key. One shared
+// predicate on the row contract now decides it for every concept.
 function indexByIdentity(concept, rows, toCanonical) {
   const index = new Map();
   const duplicates = [];
+  let identityless = 0;
   for (const raw of rows) {
     const row = toCanonical(raw);
     const key = contract.identityKey(concept, row);
-    if (!key || key === '||' || key === '') continue;
+    if (contract.isIdentityless(key)) {
+      identityless += 1;
+      continue;
+    }
     if (index.has(key)) {
       duplicates.push(key);
       continue;
     }
     index.set(key, row);
   }
-  return { index, duplicates };
+  return { index, duplicates, identityless };
 }
 
 async function sweepRowConcept({ concept, sheets, adapter, openDivergences }) {
@@ -89,6 +105,8 @@ async function sweepRowConcept({ concept, sheets, adapter, openDivergences }) {
   result.sheets_rows = left.index.size;
   result.supabase_rows = right.index.size;
   result.sheets_duplicate_identities = left.duplicates.length;
+  result.sheets_identityless = left.identityless;
+  result.supabase_identityless = right.identityless;
 
   const toOpen = [];
 
@@ -179,10 +197,33 @@ async function sweepRowConcept({ concept, sheets, adapter, openDivergences }) {
   // finished running". A tab holding two rows under one identity is not
   // reconcilable, and that must reach the exit code rather than a field nobody
   // prints.
-  result.complete = left.duplicates.length === 0;
-  if (!result.complete) {
-    result.error = `sheets_duplicate_identities: ${left.duplicates.length} row(s) share an export identity, which Supabase cannot represent`;
+  //
+  // AN IDENTITYLESS ROW MAKES IT INCOMPLETE FOR THE SAME REASON, and this is the
+  // whole of finding 3's fix. Sheets is the authority and holds a row with no
+  // export identity: it cannot be matched, it cannot be compared, and it cannot
+  // even be given a divergence, because a divergence is keyed BY identity. The
+  // honest answer is that this concept is NOT reconcilable — never a zero, and
+  // never an invented key to make it representable. Only the owner can decide what
+  // an identityless authoritative row means.
+  const problems = [];
+  if (left.duplicates.length > 0) {
+    problems.push(
+      `sheets_duplicate_identities: ${left.duplicates.length} row(s) share an export identity, which Supabase cannot represent`
+    );
   }
+  if (left.identityless > 0) {
+    problems.push(
+      `sheets_identityless: ${left.identityless} authoritative row(s) have NO export identity, so they cannot be ` +
+      'reconciled, repaired, or recorded as a divergence. OWNER ACTION REQUIRED; no worker may invent an identity'
+    );
+  }
+  if (right.identityless > 0) {
+    problems.push(
+      `supabase_identityless: ${right.identityless} mirrored row(s) have no export identity and cannot be compared`
+    );
+  }
+  result.complete = problems.length === 0;
+  if (!result.complete) result.error = problems.join(' · ');
   return result;
 }
 
@@ -287,4 +328,14 @@ async function runSweep({
   };
 }
 
-module.exports = { runSweep, sweepRowConcept, sweepCatalog, DEFAULT_CONCEPTS };
+module.exports = {
+  runSweep,
+  sweepRowConcept,
+  sweepCatalog,
+  DEFAULT_CONCEPTS,
+  // Exported for the S3 backfill reconciliation report (§6.2 P3), which must index
+  // both sides by the SAME export identity this sweep uses. A second indexing
+  // implementation would be a second answer to "which Supabase row is this Sheets
+  // row?", and the sweep is the completeness authority — the report is a report.
+  indexByIdentity,
+};

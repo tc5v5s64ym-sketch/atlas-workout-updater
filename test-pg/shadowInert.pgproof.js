@@ -106,15 +106,52 @@ test('P3: the response is BYTE-IDENTICAL with the shadow write disabled and enab
   });
 });
 
+// ── HOW A SHADOW FAILURE IS PRODUCED, AND WHY IT CHANGED AT S3 ────────────────
+//
+// This test used to point the adapter at an unreachable database. Until S3 that
+// meant exactly one thing: the shadow write fails. From S3 on it means TWO, because
+// the seven beginWrite routes read atlas.write_freeze before any side effect and
+// refuse when that read fails (§5.3, owner ruling D7) — so an unreachable database
+// would refuse the Save and this test would be measuring the freeze, not the shadow.
+//
+// The database therefore stays REACHABLE and the shadow write is broken a different
+// way: atlas_app's INSERT on logged_sets is revoked for the duration. That is a
+// genuine, total shadow failure — the parent row inserts, the child insert is
+// refused with 42501, and the whole shadow transaction rolls back — while the
+// freeze read succeeds and admits the write, which is the condition P3 is about.
+//
+// It is also a stronger failure than unreachability: it proves the athlete is
+// unaffected by a shadow write that fails HALFWAY THROUGH ITS OWN TRANSACTION.
+async function withShadowWriteBroken(fn) {
+  await withOwner((client) => client.query('REVOKE INSERT ON atlas.logged_sets FROM atlas_app'));
+  try {
+    return fn();
+  } finally {
+    await withOwner((client) => client.query('GRANT INSERT ON atlas.logged_sets TO atlas_app'));
+  }
+}
+
+async function mirroredRowCount() {
+  return withOwner(async (client) => {
+    const { rows } = await client.query('SELECT count(*)::int AS n FROM atlas.logged_sets');
+    return rows[0].n;
+  });
+}
+
 test('P3: the response is BYTE-IDENTICAL when the shadow write FAILS outright', async () => {
   const off = saveOnce({ ATLAS_SUPABASE_SHADOW_WRITE: '0' });
-  const broken = saveOnce({
-    ATLAS_SUPABASE_SHADOW_WRITE: '1',
-    ATLAS_SUPABASE_APP_URL: 'postgres://nobody:nothing@127.0.0.1:1/nonexistent',
-    ATLAS_SUPABASE_CONNECT_TIMEOUT_MS: '1500',
-  });
-  assert.equal(broken.status, 200);
+
+  // Measured either side of the broken run, so the claim is "this run mirrored
+  // NOTHING" rather than "the table happens to be empty" — which would depend on
+  // what every earlier statement in this file left behind.
+  const before = await mirroredRowCount();
+  const broken = await withShadowWriteBroken(() => saveOnce({ ATLAS_SUPABASE_SHADOW_WRITE: '1' }));
+  const after = await mirroredRowCount();
+
+  assert.equal(broken.status, 200, `the Save must succeed from Sheets alone:\n${broken.raw}`);
   assert.equal(normalize(broken.raw), normalize(off.raw));
+  assert.equal(after, before,
+    'a shadow write that silently succeeded would make this proof vacuous — it must have failed outright');
 });
 
 test('P3: no proof field, status code, or visible claim mentions the shadow lane', () => {

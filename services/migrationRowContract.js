@@ -258,6 +258,31 @@ function identityKey(concept, row) {
   return conceptSpec(concept).identity(row || {});
 }
 
+// ── IS THIS ROW REPRESENTABLE AT ALL? ──────────────────────────────────────────
+//
+// *Added by the required Atlas Contract / Systems Review of `65310b3`, finding 3.*
+//
+// A row whose export identity is entirely blank cannot be matched, compared,
+// repaired, or given a divergence — a divergence is keyed BY identity. Both
+// consumers of this contract used to drop such a row silently, so an authoritative
+// Sheets row that Supabase can never represent vanished from every count and the
+// migration still reported clean. That is the exact false green the S3 gates exist
+// to prevent, and it is why this predicate lives here, beside `identityKey`, rather
+// than being re-derived in the sweep and in the backfill.
+//
+// EMPTY, NOT MERELY PARTIAL. `session_id||exercise||set_number` with every part
+// blank joins to `'||||'`, and a single-component key joins to `''` — both are
+// identityless. A PARTIAL key (`'20260801-AM-01||||'`) is deliberately NOT: it is
+// still a distinguishable identity, it is still indexed, and Supabase's NOT NULL
+// columns will surface it as a genuine divergence rather than as a disappearance.
+//
+// Nothing here invents an identity. Recognising that a row has none is the whole
+// point; guessing one would make it representable and hide the defect.
+function isIdentityless(key) {
+  if (key === null || key === undefined) return true;
+  return String(key).split('||').every((part) => part.trim() === '');
+}
+
 function sessionIdOf(concept, row) {
   return conceptSpec(concept).sessionIdOf(row || {});
 }
@@ -391,6 +416,7 @@ module.exports = {
   rowFromSupabase,
   sheetCellsFromRow,
   identityKey,
+  isIdentityless,
   sessionIdOf,
   parseSessionId,
   compareRows,

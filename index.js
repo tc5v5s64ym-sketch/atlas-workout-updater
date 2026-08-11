@@ -71,7 +71,10 @@ const {
   peekWrite,
   completeWrite,
   failWrite,
-  normalizeWriteId
+  normalizeWriteId,
+  // The S3 receipt migration seam (§5.3) — TEMPORARY, deleted at S4 with the store.
+  exportLiveReceipts,
+  importReceipts
 } = require('./services/idempotency');
 // Supabase hot-path migration, PR S2 — the SHADOW write lane. TEMPORARY: S4
 // deletes it (docs/SUPABASE_HOT_PATH_MIGRATION.md §5.2, sunset in §5.4).
@@ -81,6 +84,14 @@ const {
 // a visible claim, and a shadow failure is never surfaced to the athlete. The lane
 // is inert unless ATLAS_SUPABASE_SHADOW_WRITE=1 AND a connection is configured.
 const migrationShadow = require('./services/migrationShadow');
+// Supabase hot-path migration, PR S3 — the WRITE-ADMISSION control (§3.10, §5.3).
+// PERMANENT (owner ruling D7, 2026-08-09), unlike the shadow lane above: it is
+// Atlas safety infrastructure with no sunset, and S4 does not delete it. Each of
+// the seven beginWrite routes below asks it, per request, before any side effect;
+// a write proceeds only on a successful current-request read of exactly one valid
+// row saying frozen = false. It is DORMANT until the runtime Supabase role is
+// configured, so this build behaves exactly as the pre-S3 build does today.
+const writeFreeze = require('./services/writeFreeze');
 const { normalizeDate, parseNumber, calculateQualityScore, qualityScoreBreakdown } = require('./services/validation');
 const {
   createCorsMiddleware,
@@ -1037,6 +1048,30 @@ async function enrichAndFormatLogRows(logRows, topLevelSessionId, topLevelDate, 
   return { formattedRows, warnings, pending_exercises, auto_matches, enrichedRowObjects };
 }
 
+// ── The write-admission gate, asked once per affected write request ───────────
+//
+// docs/SUPABASE_HOT_PATH_MIGRATION.md §3.10 / §5.3; owner ruling D7 (2026-08-09).
+//
+// Every one of the seven beginWrite routes calls this IMMEDIATELY BEFORE its
+// `beginWrite`, which is the write-admission point itself. That placement is what
+// makes §6.2 P10's "no side effect" literal rather than approximate: at that line
+// no Sheets append has been issued, no shadow write has run, and no receipt has
+// been claimed on any of the seven routes, so a refusal leaves nothing behind.
+//
+// It is deliberately NOT at the top of each handler. §5.3 bounds the dependency to
+// the seven write routes and says every read path, preview, coaching reply and
+// unaffected write is untouched — and on four of these routes the dry-run preview
+// returns BEFORE this line, so a `test_mode` preview is never refused by a freeze.
+// A preview writes nothing, so freezing one would widen the outage past the scope
+// the ruling grants.
+//
+// Returns null when the write may proceed, or a sent 503 response when it may not.
+async function refuseIfWritesFrozen(req, res, route) {
+  const admission = await writeFreeze.admitWrite(route);
+  if (admission.open) return null;
+  return standardError(req, res, writeFreeze.REFUSAL_MESSAGE, writeFreeze.refusalBody(admission), 503);
+}
+
 app.get('/', (req, res) => {
   return standardSuccess(req, res, 'Atlas backend is running', {
     service: 'atlas-workout-updater',
@@ -1301,6 +1336,10 @@ app.post('/api/coaching-notes', async (req, res) => {
   if (!note) return standardError(req, res, 'note string is required', null, 400);
   if (!writeId) return standardError(req, res, 'write_id is required', null, 400);
 
+  // Write-admission gate 1 of 7 (§3.10, §5.3). Nothing has been appended yet.
+  const frozen = await refuseIfWritesFrozen(req, res, '/api/coaching-notes');
+  if (frozen) return frozen;
+
   const idempotency = beginWrite(writeId, { endpoint: '/api/coaching-notes' });
 
   if (idempotency.duplicate) {
@@ -1386,6 +1425,10 @@ app.post('/api/constraints', async (req, res) => {
     return standardError(req, res, `rule must be one of: ${CONSTRAINT_RULES.join(', ')}`, null, 400);
   }
   if (!writeId) return standardError(req, res, 'write_id is required', null, 400);
+
+  // Write-admission gate 2 of 7 (§3.10, §5.3). Nothing has been appended yet.
+  const frozen = await refuseIfWritesFrozen(req, res, '/api/constraints');
+  if (frozen) return frozen;
 
   const idempotency = beginWrite(writeId, { endpoint: '/api/constraints' });
 
@@ -1505,6 +1548,11 @@ app.post('/api/log-modality', async (req, res) => {
   if (!normalizeWriteId(writeId)) {
     return standardError(req, res, 'write_id is required', null, 400);
   }
+
+  // Write-admission gate 3 of 7 (§3.10, §5.3). The dry-run returned above, so a
+  // preview is never refused here; nothing has been appended yet.
+  const frozen = await refuseIfWritesFrozen(req, res, '/api/log-modality');
+  if (frozen) return frozen;
 
   const idempotency = beginWrite(writeId, { endpoint: '/api/log-modality', session_id, date });
   if (idempotency.duplicate) {
@@ -2112,6 +2160,11 @@ app.post('/api/bodyweight', async (req, res) => {
       return standardError(req, res, 'write_id is required', null, 400);
     }
 
+    // Write-admission gate 4 of 7 (§3.10, §5.3). The dry-run returned above, so a
+    // preview is never refused here; nothing has been appended yet.
+    const frozen = await refuseIfWritesFrozen(req, res, '/api/bodyweight');
+    if (frozen) return frozen;
+
     const idempotency = beginWrite(writeId, {
       endpoint: '/api/bodyweight',
       date: normalizedDate,
@@ -2686,6 +2739,15 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
         return standardError(req, res, 'write_id is required', null, 400);
       }
+      // Write-admission gate 5 of 7 (§3.10, §5.3). Inside the live-write branch, so
+      // a `test_mode` preview never reaches it; nothing has been appended yet, and
+      // the uploaded screenshot is cleaned up exactly as every other refusal here does.
+      const frozen = await refuseIfWritesFrozen(req, res, '/api/complete-workout');
+      if (frozen) {
+        if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
+        return frozen;
+      }
+
       // Idempotency guard: a retried write_id must never append a second time.
       // Mirrors the /api/log-workout contract (beginWrite → completeWrite/failWrite).
       idempotency = beginWrite(writeId, {
@@ -3426,6 +3488,11 @@ app.post('/api/log-workout', async (req, res) => {
     return standardError(req, res, 'write_id is required', null, 400);
   }
 
+  // Write-admission gate 6 of 7 (§3.10, §5.3). The dry-run returned above, so a
+  // preview is never refused here; nothing has been appended yet.
+  const frozen = await refuseIfWritesFrozen(req, res, '/api/log-workout');
+  if (frozen) return frozen;
+
   const idempotency = beginWrite(writeId, {
     endpoint: '/api/log-workout',
     session_id,
@@ -3856,6 +3923,12 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
     );
   }
 
+  // Write-admission gate 7 of 7 (§3.10, §5.3). After the finality refusal above —
+  // which is the more specific answer and writes nothing either — and before the
+  // read-back, the delete and the receipt claim.
+  const frozen = await refuseIfWritesFrozen(req, res, '/api/log-workout/undo-last');
+  if (frozen) return frozen;
+
   const idempotency = beginWrite(write_id, {
     endpoint: '/api/log-workout/undo-last',
     session_id,
@@ -4018,6 +4091,94 @@ app.get('/api/log-workout/verify-range', async (req, res) => {
     rows_found: rows.length,
     range
   });
+});
+
+// ── THE RECEIPT MIGRATION SEAM — TEMPORARY, S3 ONLY ──────────────────────────
+//
+// docs/SUPABASE_HOT_PATH_MIGRATION.md §5.3 ("The receipt migration seam"), §5.5a,
+// §6.2 P13. EXACT SUNSET: S4 deletes both routes, both functions and the file
+// store in the same PR, and §6.3 P16 proves no caller remains.
+//
+// TWO ROUTES WITH TWO PURPOSES. There is no arbitrary state access, no third
+// operation and no key/value shape — this is not a generic administration API, and
+// adding one is outside this migration.
+//
+// ── AUTHORIZATION: TWO CONDITIONS, ANSWERING DIFFERENT QUESTIONS ─────────────
+//
+//   1. `req.authMethod === 'api_key'` — STRICTER than the ordinary /api contract.
+//      middleware.js::requireApiKey admits EITHER a matching x-atlas-api-key (:28-32)
+//      OR a valid atlas_session cookie (:34-45), because the browser path is
+//      cookie-authenticated by design. That is not acceptable for a route that
+//      REPLACES LIVE DUPLICATE-WRITE SAFETY STATE, so a session-cookie-only request
+//      is refused here even though the middleware already admitted it. This invents
+//      no new secret; it narrows to one of the two paths the middleware already
+//      distinguishes.
+//   2. A successful current-request read of atlas.write_freeze returning
+//      `frozen = true`, by the same fail-closed rule that gates the seven write
+//      routes. atlas_app holds SELECT only on that row, so the ONLY principal who
+//      can put the system into the state where these routes answer at all is the
+//      Supabase project owner. The freeze IS the owner authorization.
+//
+// Neither substitutes for the other: the freeze proves the owner opened the
+// migration window; the API key proves the caller is the owner-operated migration
+// client rather than any authenticated browser pointed at the box during it.
+//
+// NO SECOND SECRET EXISTS TO CONFIGURE, which is itself the point. An earlier
+// design added a cutover-only migration token; a server cannot verify a secret it
+// does not hold, and the only obvious way to give it one — a Render environment
+// secret — REDEPLOYS, which is the restart this seam exists to avoid and which
+// destroys the in-memory map it exists to read.
+function refuseMigrationSeam(req, res, admission) {
+  return standardError(
+    req, res,
+    'The receipt migration seam is not open.',
+    {
+      error_code: 'migration_seam_closed',
+      freeze_state: admission.code,
+      // Stated plainly so an operator sees WHICH condition failed rather than
+      // guessing between "not frozen" and "wrong credential".
+      required: 'x-atlas-api-key AND atlas.write_freeze.frozen = true',
+    },
+    403
+  );
+}
+
+async function migrationSeamAdmission(req, res, route) {
+  if (req.authMethod !== 'api_key') {
+    // Refused BEFORE the freeze read: a cookie-authenticated caller must not be
+    // able to probe the freeze state through this route either.
+    return refuseMigrationSeam(req, res, { code: 'api_key_required' });
+  }
+  const window = await writeFreeze.requireFrozenWindow(route);
+  if (!window.allowed) return refuseMigrationSeam(req, res, window);
+  return null;
+}
+
+// Read-only. Snapshots the live in-memory map of THIS process, with the
+// disk-vs-map completeness evidence §5.5a requires and the process_id the runbook
+// compares across the handover. It changes no record.
+app.post('/api/migration/receipts/export', async (req, res) => {
+  const refused = await migrationSeamAdmission(req, res, '/api/migration/receipts/export');
+  if (refused) return refused;
+
+  const snapshot = exportLiveReceipts();
+  return standardSuccess(req, res, 'Live receipt snapshot', snapshot);
+});
+
+// Replaces the live map of this ALREADY-RUNNING process with a verified set, and
+// persists it. All-or-nothing: a single rejected record changes nothing, because
+// replacing the map with the subset that happened to validate would silently
+// delete duplicate protection for the rest.
+app.post('/api/migration/receipts/import', async (req, res) => {
+  const refused = await migrationSeamAdmission(req, res, '/api/migration/receipts/import');
+  if (refused) return refused;
+
+  const body = req.body || {};
+  const result = importReceipts(body.records);
+  if (!result.applied) {
+    return standardError(req, res, 'Receipt import refused; nothing was changed.', result, 422);
+  }
+  return standardSuccess(req, res, 'Live receipt map replaced', result);
 });
 
 app.use((req, res) => {
