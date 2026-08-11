@@ -51,7 +51,7 @@ Dale is not required for routine implementation, tests, derivable UI/wording, ad
 
 ## Merge boundary
 
-The implementation agent merges an authorized routine PR after the deterministic hard gates pass, real in-scope advisory findings are addressed, scope/risk/merge-card evidence is complete, and no owner-reserved authorization remains.
+The implementation agent merges an authorized routine PR after the deterministic hard gates pass, no real P0/P1 or high-severity/systemic defect remains unresolved, scope/risk/merge-card evidence is complete, and no owner-reserved authorization remains.
 
 There is no required owner merge step and no required separate-reviewer account, review status, or marker. Dale may still merge anything directly or revoke standing authority.
 

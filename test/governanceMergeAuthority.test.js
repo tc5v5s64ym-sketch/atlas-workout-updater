@@ -10,36 +10,30 @@ function read(relPath) {
   return fs.readFileSync(path.join(ROOT, relPath), 'utf8');
 }
 
-// Models the owner-ratified Atlas contract:
-// deterministic hard gates + advisory findings + the trigger-based Atlas Contract /
-// Systems Review. Builder identity is not a merge input.
+// Models the shape of the owner-ratified merge decision:
+// deterministic hard gates + real high-severity defects + the narrowly triggered
+// Atlas Contract / Systems Review. Builder identity is not a merge input.
 //
-// The trigger set below is a FIXTURE, deliberately not a second copy of the rule:
-// `CLAUDE.md` holds the one authoritative trigger list (expanded 2026-08-03 to cover
-// campaign gates, scorecards and counters, adjudicators, rehearsal and test runners,
-// evidence collectors, identity and correlation machinery, and phase or count
-// advancement). This model reads no document and gates no real PR — it exists to pin
-// the SHAPE of the merge decision: a fired trigger without a recorded review blocks.
-// Do not read it as the trigger list.
+// The booleans below are a fixture, deliberately not a second trigger authority.
+// CLAUDE.md holds the one authoritative list. This model reads no document and
+// gates no real PR.
 function evaluateMergeAuthority(pr) {
   const blockers = [];
   const reviewRequired = Boolean(
-    pr.phaseTransition ||
-    pr.campaignChange ||
-    pr.productDirection ||
-    pr.trustContract ||
-    pr.writeOrSchema ||
+    pr.writePathOrProof ||
+    pr.schemaMigrationOrCutover ||
     pr.securityOrCredentials ||
-    pr.runtimeModel ||
-    pr.promotion ||
-    pr.destructive ||
+    pr.deterministicTrustContract ||
+    pr.authorityOwnership ||
+    pr.protectiveHardGate ||
+    pr.productDirection ||
     pr.ambiguous,
   );
 
   if (!pr.authorizedConcern) blockers.push('unauthorized-concern');
   if (!pr.requiredChecksPassed) blockers.push('required-checks');
   if (pr.realP0P1Findings > 0) blockers.push('p0-p1');
-  if (pr.realAdvisoryFindingsOpen > 0) blockers.push('advisory-findings');
+  if (pr.realHighSeveritySystemicFindingsOpen > 0) blockers.push('high-severity-systemic');
   if (!pr.riskScopeBranchMergeCardComplete) blockers.push('risk-scope-branch-merge-card');
   if (!pr.branchCurrent || !pr.mergeable) blockers.push('branch-current-mergeable');
   if (reviewRequired && pr.contractReview !== 'pass') blockers.push('contract-systems-review');
@@ -61,7 +55,7 @@ const GREEN_ROUTINE_PR = {
   authorizedConcern: true,
   requiredChecksPassed: true,
   realP0P1Findings: 0,
-  realAdvisoryFindingsOpen: 0,
+  realHighSeveritySystemicFindingsOpen: 0,
   riskScopeBranchMergeCardComplete: true,
   branchCurrent: true,
   mergeable: true,
@@ -85,15 +79,15 @@ test('owner authorization remains required only when a reserved decision is outs
   assert.deepEqual(result.blockers, ['owner-authorization']);
 });
 
-test('campaign transitions and trust changes require the Atlas Contract / Systems Review', () => {
+test('high-risk write, schema, authority, and product-trust changes require the review', () => {
   const withoutReview = evaluateMergeAuthority({
     ...GREEN_ROUTINE_PR,
-    campaignChange: true,
+    schemaMigrationOrCutover: true,
     contractReview: 'missing',
   });
   const withReview = evaluateMergeAuthority({
     ...GREEN_ROUTINE_PR,
-    phaseTransition: true,
+    writePathOrProof: true,
     contractReview: 'pass',
   });
 
@@ -103,11 +97,27 @@ test('campaign transitions and trust changes require the Atlas Contract / System
   assert.equal(withReview.canMerge, true);
 });
 
-test('failed CI and real unresolved findings block merge', async (t) => {
+test('ordinary status and evidence-format work does not trigger review by category alone', () => {
+  const result = evaluateMergeAuthority({
+    ...GREEN_ROUTINE_PR,
+    statusDocumentation: true,
+    scorecardWording: true,
+    testRunnerRefactor: true,
+    evidenceCollectorWiring: true,
+  });
+  assert.equal(result.reviewRequired, false);
+  assert.equal(result.canMerge, true);
+});
+
+test('failed CI and real unresolved high-severity findings block merge', async (t) => {
   const cases = [
     ['failed CI', { requiredChecksPassed: false }, 'required-checks'],
     ['P0/P1 finding', { realP0P1Findings: 1 }, 'p0-p1'],
-    ['real advisory finding', { realAdvisoryFindingsOpen: 1 }, 'advisory-findings'],
+    [
+      'high-severity systemic finding',
+      { realHighSeveritySystemicFindingsOpen: 1 },
+      'high-severity-systemic',
+    ],
     ['incomplete merge evidence', { riskScopeBranchMergeCardComplete: false }, 'risk-scope-branch-merge-card'],
     ['stale branch', { branchCurrent: false }, 'branch-current-mergeable'],
   ];
@@ -119,6 +129,15 @@ test('failed CI and real unresolved findings block merge', async (t) => {
       assert.ok(result.blockers.includes(expectedBlocker), result.blockers.join(', '));
     });
   }
+});
+
+test('a lower-severity advisory improvement does not create a run-until-clean gate', () => {
+  const result = evaluateMergeAuthority({
+    ...GREEN_ROUTINE_PR,
+    lowerSeverityAdvisoryIdeas: 3,
+  });
+  assert.equal(result.canMerge, true);
+  assert.deepEqual(result.blockers, []);
 });
 
 test('the retired cold-review gate is fully removed and no doc mandates a compatibility marker', () => {
@@ -328,7 +347,7 @@ test('one canonical plan selects work', () => {
   assert.match(plan, /Do not add a second roadmap/i);
 });
 
-test('active governance makes independent agent review advisory and optional', () => {
+test('active governance bounds the optional improvement audit', () => {
   const docs = [
     read('CLAUDE.md'),
     read('AGENTS.md'),
@@ -340,8 +359,10 @@ test('active governance makes independent agent review advisory and optional', (
     read('.github/PULL_REQUEST_TEMPLATE.md'),
   ].join('\n');
 
-  assert.match(docs, /independent agent review[^\n]*advisory|Codex comments are advisory|Codex review comments are advisory/i);
-  assert.match(docs, /optional clean-context review|clean-context review is optional|missing optional agent review does not block/i);
+  assert.match(docs, /independent agent review[^\n]*optional improvement audit|independent agent review[^\n]*advisory|Codex comments are advisory/i);
+  assert.match(docs, /default is \*\*one advisory pass\*\*|one advisory pass/i);
+  assert.match(docs, /second pass[^\n]*high-severity\/systemic|second pass[^\n]*high-severity or systemic/i);
+  assert.match(docs, /not "run until clean"|not run until clean/i);
   assert.match(docs, /not a required status|not a required marker|not a required marker, status/i);
   assert.doesNotMatch(docs, /cold review is required/i);
   assert.doesNotMatch(docs, /Dale remains the merge authority for owner-reserved PRs/i);

@@ -1,6 +1,8 @@
 name: Merge card check
 
-# Fails when a PR body is missing the Atlas Merge Card or retains placeholders.
+# Mechanical merge-card validation only. This check verifies required fields,
+# closed-form decisions, and the exact reviewed head. It does not interpret
+# prose, findings, backlog dispositions, scope arguments, negation, or review quality.
 
 on:
   pull_request:
@@ -11,177 +13,151 @@ permissions:
 
 jobs:
   check:
-    name: Merge card present and filled
+    name: Merge card mechanical fields
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Validate merge card
+      - name: Validate mechanical merge-card facts
         uses: actions/github-script@v7
         with:
           script: |
             const body = (context.payload.pull_request && context.payload.pull_request.body) || '';
+            const head = ((context.payload.pull_request || {}).head || {}).sha || '';
             const problems = [];
 
-            if (!/Atlas Merge Card/i.test(body)) {
-              problems.push('PR body is missing the "Atlas Merge Card" section. Start from .github/PULL_REQUEST_TEMPLATE.md.');
-            }
+            const esc = (value) => value.replace(/[.*+?^$()|[\]\\{}]/g, '\\$&');
+            const sectionAfter = (heading) => body
+              .slice(heading.index + heading[0].length)
+              .split(/\n[ \t]*#{1,6}[ \t]+/)[0];
+            const clean = (value) => value
+              .replace(/<!--[\s\S]*?-->/g, '')
+              .replace(/\*\*/g, '')
+              .trim();
 
-            // Owner ruling 2026-07-30, final form 2026-07-31 — bounded backlog ledger. Every PR
-            // records what happened to the findings it discovered. The check is LITERAL, never
-            // semantic: the section must exist and carry one of the allowed dispositions. When a
-            // PR says it added a backlog item, it must also name what was added, what was removed
-            // to pay for it, and the resulting counts — BACKLOG.md has fixed capacity. Drift
-            // Guard 7 checks the numbers; exact-head review checks that the removal was honest.
-            //
-            // Owner instruction 2026-08-03 — the Atlas Contract / Systems Review block must be
-            // PRESENT, not merely unfilled. The sentinel list below catches a RETAINED
-            // placeholder; it cannot catch a DELETED section, and CLAUDE.md now makes the
-            // recorded review a merge-gate condition. Anchored on the heading for the same
-            // reason as "Additional findings" below: prose mentioning the phrase is not the
-            // section. The block's four fields are then checked by the sentinels.
-            if (!/^[ \t]*#{2,4}[ \t]*Atlas Contract \/ Systems Review[ \t]*$/im.test(body)) {
-              problems.push('PR body is missing the "Atlas Contract / Systems Review" section (Required / Exact reviewed head / Reviewer / Findings and dispositions). Say "not required" and why when no trigger fired.');
+            const cardHeading = /^[ \t]*#{1,4}[ \t]*.*Atlas Merge Card.*$/im.exec(body);
+            if (!cardHeading) {
+              problems.push('The PR body is missing the "Atlas Merge Card" heading.');
             }
+            const cardSection = cardHeading ? sectionAfter(cardHeading) : '';
+            const rowValue = (label) => {
+              const pattern = esc(label);
+              const table = new RegExp(
+                '^[ \\t]*\\|[ \\t]*\\*{0,2}' + pattern + '\\*{0,2}[ \\t]*\\|([^\\n|]*)', 'im'
+              ).exec(cardSection);
+              if (table) return clean(table[1]);
+              const bullet = new RegExp(
+                '^[ \\t]*[-*][ \\t]*\\*{0,2}' + pattern + '\\*{0,2}[ \\t]*:(.*)$', 'im'
+              ).exec(cardSection);
+              return bullet ? clean(bullet[1]) : null;
+            };
 
-            // Merge-card attribution (owner instruction 2026-08-05 — surface and model
-            // neutrality). Atlas work may be implemented by any owner-approved agent on any
-            // approved surface, so every PR DECLARES which surface and model performed it.
-            // The four fields are declared evidence, not cryptographic proof, and they grant
-            // no authority — they record who acted.
-            //
-            // The check is LITERAL, never semantic. It cannot tell a true model name from a
-            // false one; it can only tell a claim from a blank. A field is satisfied when its
-            // row exists and carries a value that is not merely the shipped HTML-comment
-            // placeholder. `None` is a real value, so a PR that used no supporting model must
-            // still SAY `None` rather than leave the row empty — an empty row is silence, and
-            // silence is what this check exists to fail. Both the merge-card table row and a
-            // `- Label:` bullet are accepted, because a body may carry either shape.
-            //
-            // `None` is scoped, not universal (exact-head review of PR #1268, P1). CLAUDE.md
-            // permits it for Supporting / explore models ALONE; the other three name a real
-            // surface, a real displayed model name (or a plain report that the surface
-            // withholds it), and a real dispatch authority. Without the third column below,
-            // `Builder surface: None` satisfied this required check while declaring none of
-            // the attribution the check exists to require — a false green in merge governance.
-            // `None` is the one value whose permitted scope the contract defines exactly, so
-            // it is the one this LITERAL check can enforce; every other wrong-but-nonblank
-            // value stays exact-head review's job.
-            const ATTRIBUTION = [
-              ['Builder surface', 'Builder surface', false],
-              ['Primary builder model', 'Primary builder model', false],
-              ['Supporting / explore models', 'Supporting[ \\t]*/[ \\t]*explore models', true],
-              ['Architecture / dispatch authority', 'Architecture[ \\t]*/[ \\t]*dispatch authority', false],
+            const FIELDS = [
+              'Canonical plan card',
+              'Title',
+              'Primary risk',
+              'Files / categories touched',
+              'Current-state verdict',
+              'Builder surface',
+              'Primary builder model',
+              'Supporting / explore models',
+              'Architecture / dispatch authority',
+              'Authority impact',
+              'Tests / hard gates',
+              'Advisory audit',
+              'Owner authorization required',
+              'Live validation',
+              'Merge authority',
             ];
 
-            for (const [label, pattern, noneAllowed] of ATTRIBUTION) {
-              const row = new RegExp(`^[ \\t]*\\|[ \\t]*\\*{0,2}${pattern}\\*{0,2}[ \\t]*\\|(.*)$`, 'im').exec(body);
-              const bullet = new RegExp(`^[ \\t]*[-*][ \\t]*\\*{0,2}${pattern}\\*{0,2}[ \\t]*:(.*)$`, 'im').exec(body);
-              const match = row || bullet;
-              if (!match) {
-                problems.push(`Merge card is missing the required attribution field "${label}". Declare the surface, the exact displayed model name, supporting models (or None), and the dispatch authority.`);
-                continue;
-              }
-              // A table row ends in a closing pipe; strip it before reading the value. Then
-              // strip HTML comments, so the shipped placeholder reads as the blank it is.
-              const raw = row ? match[1].replace(/\|[ \t]*$/, '') : match[1];
-              const value = raw.replace(/<!--[\s\S]*?-->/g, '').replace(/\*/g, '').trim();
-              if (value === '') {
-                problems.push(`Merge card attribution field "${label}" is blank or still a template placeholder. Record the real value; use None only for Supporting / explore models, and never guess a model identity.`);
-              } else if (!noneAllowed && /^none\.?$/i.test(value)) {
-                problems.push(`Merge card attribution field "${label}" may not be None. None is valid only for Supporting / explore models; name the real surface, the exact displayed model name (or say plainly that the surface withholds it), and the dispatch authority.`);
+            for (const label of FIELDS) {
+              const value = rowValue(label);
+              if (value === null) {
+                problems.push('Merge card row "' + label + '" is missing.');
+              } else if (value === '') {
+                problems.push('Merge card row "' + label + '" is blank or still a template placeholder.');
               }
             }
 
-            // Anchor on the HEADING, not on any mention of the phrase: a body that discusses
-            // "Additional findings" in prose before the section would otherwise capture the
-            // wrong span and false-fail.
-            const findingsHeading = /^[ \t]*#{2,4}[ \t]*Additional findings[ \t]*$/im.exec(body);
-            if (!findingsHeading) {
-              problems.push('PR body is missing the "Additional findings" section (None / FIXED NOW / REJECTED / ADDED TO BOUNDED BACKLOG / OWNER DECISION REQUIRED).');
-            } else {
-              const section = body
-                .slice(findingsHeading.index + findingsHeading[0].length)
-                .split(/\n[ \t]*#{2,4}[ \t]+/)[0];
+            const currentState = rowValue('Current-state verdict') || '';
+            const CURRENT_STATE = [
+              'STILL BROKEN',
+              'ALREADY FIXED',
+              'PARTIALLY FIXED',
+              'FIXED BUT UNTESTED',
+              'STALE-SUPERSEDED',
+              'NEEDS OWNER APP-TEST',
+            ];
+            if (currentState && !CURRENT_STATE.some(
+              (value) => new RegExp('^' + esc(value) + '(?:\\b|[ \\t]*[—–:.-])', 'i').test(currentState)
+            )) {
+              problems.push('"Current-state verdict" must open with one of: ' + CURRENT_STATE.join(' / ') + '.');
+            }
 
-              if (!/^[ \t]*[-*][ \t]*(None|FIXED NOW|REJECTED|ADDED TO BOUNDED BACKLOG|OWNER DECISION REQUIRED)\b/im.test(section)) {
-                problems.push('"Additional findings" must record one disposition: None, FIXED NOW, REJECTED, ADDED TO BOUNDED BACKLOG, or OWNER DECISION REQUIRED.');
+            const reviewHeading =
+              /^[ \t]*#{2,4}[ \t]*Atlas Contract \/ Systems Review[ \t]*$/im.exec(body);
+            if (!reviewHeading) {
+              problems.push('The PR body is missing the "Atlas Contract / Systems Review" section.');
+            } else {
+              const section = sectionAfter(reviewHeading);
+              const read = (label) => {
+                const match = new RegExp(
+                  '^[ \\t]*[-*][ \\t]*\\*{0,2}' + esc(label) + '\\*{0,2}[ \\t]*:(.*)$', 'im'
+                ).exec(section);
+                return match ? clean(match[1]) : null;
+              };
+              const REVIEW_FIELDS = [
+                'Required',
+                'Exact reviewed head',
+                'Reviewer',
+                'Review outcome',
+                'Findings and fix verification',
+              ];
+              const review = {};
+              for (const label of REVIEW_FIELDS) {
+                const value = read(label);
+                review[label] = value || '';
+                if (value === null) {
+                  problems.push('The review block is missing "' + label + '".');
+                } else if (value === '') {
+                  problems.push('Review block line "' + label + '" is blank or still a template placeholder.');
+                }
               }
 
-              // Two states per line, because an untouched scaffold and a typo must differ:
-              //   WRITTEN — anything at all after the colon, including punctuation;
-              //   FILLED  — a first character that is neither whitespace nor another colon.
-              // A scaffold with every line empty is not a claim and passes. A line that was
-              // written but is not filled (`added::`) is an attempted declaration and fails.
-              const LINES = [
-                ['added:', /^[ \t]*[-*][ \t]*added[ \t]*:[ \t]*(\S)/im],
-                ['removed/archived/promoted:', /^[ \t]*[-*][ \t]*removed(?:\/archived\/promoted)?[ \t]*:[ \t]*(\S)/im],
-                ['counts:', /^[ \t]*[-*][ \t]*counts[ \t]*:[ \t]*(\S)/im],
-              ];
-              const dispositionClaim = /^[ \t]*[-*][ \t]*ADDED TO BOUNDED BACKLOG[ \t]*:?[ \t]*(\S)/im.exec(section);
-              const state = LINES.map(([label, re]) => {
-                const m = re.exec(section);
-                return { label, written: Boolean(m), filled: Boolean(m) && m[1] !== ':' };
-              });
+              const required = /^REQUIRED(?:\b|[ \t]*[—–:.-])/i.test(review.Required);
+              const notRequired = /^NOT[ \t]+REQUIRED(?:\b|[ \t]*[—–:.-])/i.test(review.Required);
+              if (review.Required && !required && !notRequired) {
+                problems.push('"Required" must open with REQUIRED or NOT REQUIRED.');
+              }
 
-              const claimed = state.some((f) => f.written)
-                || (dispositionClaim && dispositionClaim[1] !== ':');
-              if (claimed) {
-                for (const f of state) {
-                  if (!f.filled) {
-                    problems.push(`ADDED TO BOUNDED BACKLOG requires a filled "${f.label}" line — name the added item, what was removed to pay for it, and the resulting item/line/cap counts.`);
+              if (required) {
+                const reviewedHead = review['Exact reviewed head'].replace(/[\x60\s]/g, '');
+                if (!/^[0-9a-f]{40}$/i.test(reviewedHead)) {
+                  problems.push('A required review must record one bare 40-character SHA.');
+                } else if (head && reviewedHead.toLowerCase() !== head.toLowerCase()) {
+                  problems.push(
+                    'The reviewed head ' + reviewedHead.slice(0, 7) +
+                    ' is not the PR head ' + head.slice(0, 7) + '.'
+                  );
+                }
+                if (!/^ChatGPT$/i.test(review.Reviewer)) {
+                  problems.push('A required Atlas Contract / Systems Review must record Reviewer: ChatGPT.');
+                }
+                if (!/^PASS$/i.test(review['Review outcome'])) {
+                  problems.push('A required review must record Review outcome: PASS before merge.');
+                }
+              }
+
+              if (notRequired) {
+                for (const label of ['Exact reviewed head', 'Reviewer', 'Review outcome']) {
+                  if (!/^N\/A$/i.test(review[label])) {
+                    problems.push('A NOT REQUIRED review must record ' + label + ': N/A.');
                   }
                 }
               }
             }
 
-            // Sentinels copied from the unfilled template. Checkboxes are reviewed
-            // rather than mechanically enforced because an authorized exception can
-            // legitimately leave one unchecked with an explanation.
-            const sentinels = [
-              '#<!-- number -->',
-              'F## or explicit owner instruction',
-              '<!-- one line -->',
-              'one label + low/medium/high',
-              '<!-- concise -->',
-              'STILL BROKEN / ALREADY FIXED / PARTIALLY FIXED',
-              'exact commands/checks + results',
-              'independent agent/optional clean review: fixed / non-issue / none',
-              // The Atlas Contract / Systems Review block (owner instruction 2026-08-03).
-              // These four replace the retired 'NON-BLOCKING / READY / BLOCKING / not
-              // risk-triggered' sentinel: the template row it named no longer exists, so
-              // it could only false-fail a body that quotes the old wording, while the
-              // fields that replaced it were unguarded. Net coverage increases.
-              //
-              // The first sentinel is the load-bearing one. It is a PREFIX shared by BOTH
-              // placeholders that carry the required/not-required verdict — the merge-card
-              // table row and the `- Required:` bullet — because that verdict is the field
-              // the merge gate in CLAUDE.md actually turns on. Guarding only the head, the
-              // reviewer, and the dispositions would let a PR leave "was a review required
-              // at all" blank and still go green.
-              'required (name the trigger) / not required (say why',
-              'full 40-character commit SHA, or n/a',
-              'who performed the required review, or n/a',
-              'each finding + fixed / non-issue / routed',
-              'No, or exact reserved category and status',
-              'evidence/script needed, or n/a',
-              'active builder merges exact passing head / blocked on owner authorization',
-              'One sentence. One PR equals one concern',
-              'Source card/finding, duplicate/stale search',
-              'Principle advanced',
-              'Focused summary',
-              'Commands, deterministic CI',
-              'List each real finding',
-              'Main/deploy verification',
-            ];
-
-            for (const sentinel of sentinels) {
-              if (body.includes(sentinel)) {
-                problems.push(`Merge card field left as template placeholder: "${sentinel}"`);
-              }
-            }
-
             if (problems.length) {
-              core.setFailed('Incomplete merge card:\n- ' + problems.join('\n- '));
+              core.setFailed(problems.length + ' mechanical merge-card problem(s):\n- ' + problems.join('\n- '));
             } else {
-              core.info('Merge card present and filled.');
+              core.info('Merge card mechanical fields are complete. Prose remains a reviewer judgement.');
             }

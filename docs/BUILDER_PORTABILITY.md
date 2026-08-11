@@ -130,7 +130,7 @@ Avoid switching mid-PR. When unavoidable, the outgoing agent must leave these fa
 4. files changed and remaining work;
 5. tests run, failures, and unrun gates;
 6. owner authorization or live evidence still required; and
-7. any real advisory findings still open.
+7. any real P0/P1 or high-severity/systemic defect from an advisory audit still open.
 
 Write those seven items under [`docs/CONTROLLED_TECHNICAL_WRITING.md`](./CONTROLLED_TECHNICAL_WRITING.md), the shared writing standard. That file holds the rules; this document does not repeat them.
 

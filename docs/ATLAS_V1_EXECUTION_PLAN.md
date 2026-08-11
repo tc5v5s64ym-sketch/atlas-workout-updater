@@ -133,6 +133,18 @@ This is the single active, executable campaign. It is embedded here — not besi
 
 ---
 
+## OWNER INSTRUCTION 2026-08-10 — GOVERNANCE SIMPLIFICATION BEFORE ACTIVE PR
+
+**Freeze Workout PR #1281 at `9fcb2259ed1bf419a0f6f02b55be11af518f0a8e`.** Do not modify, merge, close, or continue reviewing it under the superseded review protocol.
+
+Land one governance-only simplification PR first. Preserve deterministic tests and invariants; preview → approve → write protections; Supabase and schema safety; security and secret checks; one authority per concept; owner-reserved production, schema, and security gates; and current-state verification. Remove only recursive review and prose-parsing burden. Do not change runtime behavior, a schema, production data, a write path, a secret, a campaign counter, or phase authority.
+
+After the governance PR merges: refresh current `main`; rebase the frozen PR onto it; resolve only mechanical governance-format changes required by the simplified rules; rerun the surviving deterministic product/trust gates; then resume review under the simplified protocol. The simplification never excuses a real product, security, schema, write-path, invariant, or trust defect.
+
+**No campaign state changes.** Rehearsal (F-SB4): 0/5 · Stage A: 5/5 COMPLETE · Stage B: 0/5 OPEN · Phase 5 unauthorized · `SESSION_PLAN_SETS_WRITE_ENABLED` untouched.
+
+---
+
 ## OWNER INSTRUCTION 2026-08-07 — SUPABASE HOT-PATH MIGRATION
 
 **This instruction is the owner authorization. It governs because it is recorded here, not because it was said in a session.** Dale instructs that Atlas migrates its workout hot path from Google Sheets to Supabase.
@@ -733,29 +745,17 @@ Dale's test rows deleted from `Log_Cleaned` up to his last real workout on 2026-
 
 **Run-duration note (corrected).** Session records 3 and 4 previously attributed a run-duration difference to Sheets read-quota throttling and called the question settled. That claim was unsupported and is withdrawn: the runner's read-retry path never logged, and no captured output contains a quota or rate-limit indication. The durations stand as measurements; the cause is **unknown** and is recorded as an unverified hypothesis. No verdict depended on it.
 
-**Owner ruling 2026-07-31 — authority governance (governance insertion, no phase change).** Two durable records landed together. (1) [`docs/ATLAS_SYSTEM_AUTHORITY.md`](ATLAS_SYSTEM_AUTHORITY.md) is the ownership authority; it replaced `docs/ATLAS_OWNERSHIP_CONNECTIVITY_INVENTORY.md`, which was removed, so exactly one ownership document exists. (2) The **Closed-Loop Delivery Contract** (`CLAUDE.md`) governs delivery: Purpose → Authority → Integration → Proof → Cleanup → Closure, with the no-orphan rule and net-open-loop reporting in the merge card. The architectural ruling is one winner per authority — pick a winner, remove the loser, or name an exact sunset condition; never add permanent reconciliation around competing authorities. **No Phase 5 consolidation is authorized by this insertion.** A concept recorded as `DUPLICATED` or `TRANSITIONAL` is honest bookkeeping, not a work item. The active phase stays Phase 4, and **Stage A: 5/5 — COMPLETE. Stage B: 0/5 — OPEN.** remains unchanged.
+**Owner ruling 2026-07-31 — authority governance (governance insertion, no phase change).** Two durable records landed together. (1) [`docs/ATLAS_SYSTEM_AUTHORITY.md`](ATLAS_SYSTEM_AUTHORITY.md) is the ownership authority; it replaced `docs/ATLAS_OWNERSHIP_CONNECTIVITY_INVENTORY.md`, which was removed, so exactly one ownership document exists. (2) The **Closed-Loop Delivery Contract** (`CLAUDE.md`) governs delivery: Purpose → Authority → Integration → Proof → Cleanup → Closure, with the no-orphan rule as reviewer guidance. The architectural ruling is one winner per authority — pick a winner, remove the loser, or name an exact sunset condition; never add permanent reconciliation around competing authorities. **No Phase 5 consolidation is authorized by this insertion.** A concept recorded as `DUPLICATED` or `TRANSITIONAL` is honest bookkeeping, not a work item. The active phase stays Phase 4, and **Stage A: 5/5 — COMPLETE. Stage B: 0/5 — OPEN.** remains unchanged.
 
 **Owner ruling 2026-07-31 — Phase 4 two-stage operational acceptance gate (governance insertion, no phase change).** Recorded below under "OWNER RULING — 2026-07-31 — PHASE 4 TWO-STAGE OPERATIONAL ACCEPTANCE GATE". Phase 4 exits only after Stage A (five consecutive AI-run full sessions, synthetic data, sandbox Sheet) and Stage B (five consecutive owner-run workouts) both pass and the owner explicitly authorizes Phase 5. Stage A precedes Stage B. Current counts: **Stage A: 5/5 — COMPLETE. Stage B: 0/5 — OPEN.** The active phase stays Phase 4. `SESSION_PLAN_SETS_WRITE_ENABLED` stays `0`; Stage A does not require it.
 
 **Owner ruling 2026-07-30, final form 2026-07-31 — bounded backlog ledger (governance insertion, no phase change).** Recorded below under "OWNER RULING — 2026-07-30, FINAL FORM 2026-07-31 — BOUNDED BACKLOG LEDGER" and enforced by Drift Guard 7: four dispositions, and `BACKLOG.md` at fixed capacity. The active phase stays Phase 4.
 
-**Owner instruction 2026-08-03 — the Atlas Contract / Systems Review trigger expands (governance insertion, no phase change).** The instruction governs because it is recorded here. It expands the trigger list of the **existing** review lane recorded in `CLAUDE.md` under "Project decision desk and the Atlas Contract / Systems Review". It creates **no second review system**, no new reviewer account, no new marker, no new required status, and no new CI check. The full rule, the seven review questions, and the four merge-card fields live in `CLAUDE.md`; the `.github/PULL_REQUEST_TEMPLATE.md` block is where a PR records them. This insertion is repeated here only to make the trigger list authoritative.
+**Owner instruction 2026-08-03 — Atlas Contract / Systems Review (superseded in part 2026-08-10).** The instruction established the existing ChatGPT review lane and its performer. The 2026-08-10 governance simplification above supersedes its broad category triggers, seven-question full re-review, findings-disposition burden, and any run-until-clean interpretation. `CLAUDE.md` now holds the narrow high-risk triggers and bounded follow-up protocol.
 
-The review is **required** when a PR touches: campaign gates; scorecards and counters; adjudicators; rehearsal and test runners; evidence collectors; identity and correlation machinery; phase or count advancement; or trust-sensitive write, schema, security, promotion, or destructive changes. The earlier triggers stay in force: phase transitions, roadmap changes, product or trust-contract changes, and genuine ambiguity.
+**The authority boundary survives unchanged.** ChatGPT performs a required Atlas Contract / Systems Review; an implementation agent may not satisfy its own architecture gate. The reviewer reads the exact head, and the merge card records the closed-form review result. The lane is not a production-write authorization, GitHub status, reviewer account, marker, or owner merge approval.
 
-The reviewer reads the **exact head** in a clean context. A review of an earlier commit does not cover a later head. The merge card records four fields: required or not required with the trigger that fired; the exact reviewed head as a full commit SHA; the reviewer; and every finding with its disposition.
-
-**Who performs it — OWNER RULING 2026-08-03, governing.** **ChatGPT performs the required Atlas Contract / Systems Review.** The lane's owner is unchanged; the owner instruction broadened the **existing ChatGPT lane's trigger**, not who owns that lane.
-
-An implementation agent may not satisfy its own architecture gate. A clean-context review by the implementation agent is valuable advisory evidence and is recorded under advisory findings, but it never satisfies the required review. The reasoning is recorded so it is not relitigated:
-
-- a clean context is **not an independent authority** — it is still the implementation agent, and it reproduces the same model and system blind spots;
-- naming the performer creates **observability, not separation of authority**;
-- letting the builder satisfy its own architecture gate creates a **competing authority** and weakens the project-decision-desk contract.
-
-Authority record: current and intended sole authority — **ChatGPT**. Competing authority removed — the implementation-agent clean-context review as a substitute gate satisfier. Bridge — implementation-agent clean-context reviews stay optional and advisory. Sunset — none; this is the permanent authority boundary. Net complexity — decreases, one reviewer authority instead of two.
-
-An earlier draft of this insertion recorded the opposite and was corrected by this ruling before merge.
+An implementation-agent clean-context review is an optional improvement audit. It does not substitute for a required architecture review. The default is one pass; a second runs only for a high-severity/systemic issue or a materially changed high-risk surface.
 
 This insertion selects no work, starts no phase, adds no drift guard, and changes no count. Every streak keeps the value the active `CAMPAIGN STATE:` line records, Phase 5 stays unauthorized, and `SESSION_PLAN_SETS_WRITE_ENABLED` stays untouched. This paragraph deliberately states **no streak numerals**: `parseCanonicalRehearsalCount` (`tests/e2e/gate/rehearsal-run-purpose.js`) reads the canonical rehearsal count out of this document, and a second copy of that count written in the marker's own format would be one careless edit away from either a false red (two current markers) or a false green (a stale copy read as current). One count lives in one place.
 
@@ -1112,15 +1112,21 @@ One scripted two-exercise workout: plan from history → accept → log normally
 
 ### Drift guards
 
-Each is a CI check that fails the build; a rule that lives only in a document is not a guard; the list is grow-only and published in `CLAUDE.md`.
+Each is a deterministic CI check that fails the build; a rule that lives only in a document is not a guard. Keep a guard while evidence shows it protects a demonstrated product or trust failure. Add, narrow, or retire one only through the evidence-based lifecycle below. The active guards are published in `CLAUDE.md`.
 
 1. **AUTHORITY CONSISTENCY** (build in Phase 2): one declared active-campaign line must match exactly across `CLAUDE.md`, the execution plan, and the docs index; every open issue labeled `owner-instruction` must be referenced in the plan; otherwise CI fails.
-2. **BANNED-PATTERN GUARD** (Phase 2; grow-only list): forbidden in production paths — normal-path receipt templates (**"receipt template" = a contentless acknowledgement per the 2026-07-20 owner ruling; a brief data-grounded wrap line such as `templatedOnPlanWrapLine` is not a receipt and stays legal**); route-local recomputation of packet-owned facts; legacy analytics imports for promoted decision types; duplicate safety classifiers; session-truth selectors outside WorkoutSession. Add each pattern as its finding is retired.
+2. **BANNED-PATTERN GUARD** (Phase 2; evidence-backed registry): forbidden in production paths — normal-path receipt templates (**"receipt template" = a contentless acknowledgement per the 2026-07-20 owner ruling; a brief data-grounded wrap line such as `templatedOnPlanWrapLine` is not a receipt and stays legal**); route-local recomputation of packet-owned facts; legacy analytics imports for promoted decision types; duplicate safety classifiers; session-truth selectors outside WorkoutSession. Add a pattern when a demonstrated retired finding needs a stable regression tripwire.
 3. **WIRING GUARD HARDENED** (Phase 2, enforced fully after Phase 5): the allowlist becomes shrink-only; new entries require an owner-gate note; expiries fail red — never auto-extend.
 4. **COMPLETION-LADDER VALIDATOR** (Phase 2, ✅ BUILT 2026-07-21 — `scripts/check-completion-ladder.js`, `npm run check:ladder`): no capability may claim route-consumed or live-proven without a linked test or trace ID; it also fails a structurally invalid ladder (nine boolean rungs, monotonic, a named consumer at route-consumed or higher). A synthetic-violation self-test (`test/completionLadderGuard.test.js`) proves the guard actually fails on an unsubstantiated claim.
 5. **PACKET AND TRACE CONTRACT TESTS** (Phases 4–5): every full-session test asserts the visible reply was produced from a schema-valid CoachTurnPacket and that one turn ID spans input through write proof. ✅ **FIRST INCREMENT BUILT 2026-07-24** (`scripts/check-packet-trace.js`, `npm run check:packet-trace`): the shadow anti-overclaim honesty guard — `assembleShadowPacket` may never report a packet valid that isn't, nor claim an embedded fact (session/decision/safety/closeout/exercises) present that does not validate under its own canonical contract (an underclaim is safe), nor emit a trace whose `missing`-stage list is dishonest; synthetic-violation self-test `test/packetTraceGuard.test.js`. The fuller remit — every full-session test asserting the visible reply came from a schema-valid packet with one turn ID spanning input→write proof — lands as the live route consumes the packet (Phases 4–5).
 6. **PAPER-WEIGHT GUARD** (Phase 2): CI fails when BACKLOG.md exceeds its size cap or contains shipped items older than seven days; an auto-archive job keeps it clean. The cap (`backlog_max_lines`) is permanently non-increasing under the 2026-07-30 owner ruling below.
-7. **BOUNDED-BACKLOG GUARD** (owner ruling 2026-07-30, final form 2026-07-31, ✅ BUILT — `scripts/check-backlog-intake.js`, `npm run check:backlog-intake`): on a PR diff CI fails when `BACKLOG.md` grows in top-level item count or in line count, or when `backlog_max_lines` rises above the base value. It is mechanical — three counts, no prose classification, no similarity matching — so no justification text turns it green. Removal, archival, deduplication, promotion, and in-place correction all pass, and a NET-NEUTRAL REPLACEMENT is the intended bounded-intake operation rather than a loophole: the guard cannot judge whether the removed content was genuinely fixed, stale, duplicated, rejected, or promoted, so exact-head review and the merge card's named added/removed/counts declaration carry that check. Self-tests: `test/backlogIntakeGuard.test.js`.
+7. **BOUNDED-BACKLOG GUARD** (owner ruling 2026-07-30, final form 2026-07-31, ✅ BUILT — `scripts/check-backlog-intake.js`, `npm run check:backlog-intake`): on a PR diff CI fails when `BACKLOG.md` grows in top-level item count or in line count, or when `backlog_max_lines` rises above the base value. It is mechanical — three counts, no prose classification, no similarity matching — so no justification text turns it green. Removal, archival, deduplication, promotion, and in-place correction all pass, and a NET-NEUTRAL REPLACEMENT is the intended bounded-intake operation rather than a loophole. Self-tests: `test/backlogIntakeGuard.test.js`.
+
+#### Governance-control lifecycle
+
+A focused governance PR may retire or narrow a control only when it names the demonstrated failure the control protected and proves that a surviving test, invariant, owner gate, or narrower control still protects that failure — or that the failure is no longer reachable. A replacement mechanical check includes a synthetic failing case. The PR changes the existing canonical governance home and its tests; it does not create a parallel ledger or framework. It runs the same deterministic product/trust gates as other PRs.
+
+Never retire a proven write-path, Supabase/schema, security/secret, deterministic invariant, one-authority, owner-reserved, or current-state guard merely because it creates work. Record the decision and evidence in the governance PR; no permanent retirement registry is added.
 
 ### OWNER RULING — 2026-07-30, FINAL FORM 2026-07-31 — BOUNDED BACKLOG LEDGER
 
@@ -1158,7 +1164,7 @@ Each newly added or materially reviewed item states, compactly: **classification
 
 The removed content must be genuinely fixed, stale, duplicated, rejected, archived, or moved into this plan. **Do not delete a valuable item merely to create space.** `backlog_max_lines` is permanently non-increasing.
 
-A net-neutral replacement is therefore an **intentional bounded-intake operation**, not a prohibited loophole. Drift Guard 7 enforces the three counts mechanically and cannot judge whether a removal was honest; exact-head review does that, using the merge card, where a PR adding an item names the added item, the removed or archived or promoted item, and the resulting item, line, and cap counts.
+A net-neutral replacement is therefore an **intentional bounded-intake operation**, not a prohibited loophole. Drift Guard 7 enforces the three counts mechanically and cannot judge whether a removal was honest. When a PR changes backlog membership, it briefly names the added item and the removed, archived, or promoted item for reviewer judgment. The merge-card check does not parse that prose.
 
 #### Bounded Backlog Review protocol
 
