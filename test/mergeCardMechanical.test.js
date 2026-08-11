@@ -167,6 +167,12 @@ expectRed(
   ['services/appendWriteProof.js'],
 );
 expectRed(
+  'the live coaching authority route cannot claim NOT REQUIRED',
+  card(),
+  /routes\/coachOps\.js/i,
+  ['routes/coachOps.js'],
+);
+expectRed(
   'a Supabase migration cannot claim NOT REQUIRED',
   card(),
   /supabase\/migrations/i,

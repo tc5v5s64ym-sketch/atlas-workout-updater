@@ -39,7 +39,7 @@ jobs:
             const ALWAYS_REVIEW = [
               /^(?:index|server|sheets)\.js$/i,
               /^src\/app\/app\.js$/i,
-              /^routes\/sessionPlans\.js$/i,
+              /^routes\/(?:coachOps|sessionPlans)\.js$/i,
               /^services\/(?:appendWriteProof|idempotency|supabaseAdapter|turnWriteArtifact|workoutSession)\.js$/i,
               /^services\/(?:coach|coaching|safety).*Decision.*\.js$/i,
               /^services\/sessionPlan(?:Capture|Events|Ledger|SetsCapture|SetsStore|Store)\.js$/i,
