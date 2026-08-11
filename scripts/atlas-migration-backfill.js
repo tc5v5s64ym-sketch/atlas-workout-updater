@@ -14,15 +14,18 @@
 // Google Sheets, ever.
 //
 // ── DRY RUN IS THE DEFAULT ───────────────────────────────────────────────────
-// Without --apply it reads both sides and reports what it WOULD write. Writing
-// requires the flag, deliberately.
+// Without --apply it reads BOTH sides — the workbook and Supabase — and reports
+// what it WOULD write, split into `would_insert` and `already_present`. It writes
+// to neither store. Writing requires the flag, deliberately.
 //
 // ── RUN ONCE PER ENVIRONMENT, BUT SAFE TO RE-RUN ─────────────────────────────
 // Every insert is ON CONFLICT DO NOTHING on the concept's own identity, so a
 // re-run converges rather than duplicating, and an interrupted run resumes.
 //
 // Usage:
-//   npm run atlas:backfill                     dry run — what would be written
+//   npm run atlas:backfill                     dry run — reads both sides, writes
+//                                              neither; reports would_insert /
+//                                              already_present per row concept
 //   npm run atlas:backfill -- --apply          write it
 //   npm run atlas:backfill -- --reconcile      reconcile only (§6.2 P3), no write
 //   npm run atlas:backfill -- --apply --reconcile
@@ -44,13 +47,24 @@ function flagValue(argv, name) {
   return argv[index + 1];
 }
 
+// A dry run prints the two DESTINATION-AWARE counters instead of the write
+// counters. Printing `inserted=0 existing=0` under a dry run is what let an
+// operator read "nothing to do" off a run that had never looked at the
+// destination. `?` marks a counter that was NOT computed — never 0.
+function count(value) {
+  return String(value === null || value === undefined ? '?' : value).padStart(6);
+}
+
 function printBackfill(result) {
   console.log(`Backfill ${result.applied ? 'APPLIED' : 'DRY RUN'} — ${result.complete ? 'complete' : 'INCOMPLETE'}`);
   for (const plan of result.concepts) {
+    const counters = result.applied
+      ? `inserted=${count(plan.inserted)} existing=${count(plan.existing)}`
+      : `would_insert=${count(plan.would_insert)} already_present=${count(plan.already_present)}`;
     console.log(
       `  ${plan.concept.padEnd(34)} read=${String(plan.sheet_rows_read).padStart(6)} ` +
         `eligible=${String(plan.rows_with_identity).padStart(6)} ` +
-        `inserted=${String(plan.inserted).padStart(6)} existing=${String(plan.existing).padStart(6)}` +
+        counters +
         (plan.error ? `  FAILED (${plan.error})` : '')
     );
     if (plan.rows_skipped_no_identity || plan.rows_skipped_unparseable_session) {

@@ -1629,6 +1629,16 @@ nothing".
   (§3.6) — and `sheets_mirror_cursor` takes its base at cutover (§5.5 step 4), not from the
   backfill. The backfill is a one-way script that
   is run once per environment and is deleted in `S4`.
+- **The dry run is destination-aware, and that is a contract rather than a comment.** Without
+  `--apply` the backfill reads **both** stores and writes to **neither**, and it reports the
+  eligible source rows split into `would_insert` and `already_present`, computed from a real
+  read of the destination indexed by the same export identity the sweep and the reconciliation
+  use. Both fields are `null` — never `0` — when they were not computed, and a destination read
+  that fails makes the run **incomplete** rather than a zero. *Recorded here after the dry run
+  was found returning before it read Supabase, reporting `inserted=0 existing=0` whatever the
+  destination held: the behaviour was asserted only in two code comments, so nothing outranked
+  them when they and the code disagreed. The operator question this answers — how much of the
+  workbook is already there — is the preflight for the owner-gated production backfill.*
 - Prove reconciliation (§6.2 P3).
 - Run the sweep continuously, and drive the open-divergence count to zero.
 - Prove the repair path closes a divergence only on a passing re-comparison.

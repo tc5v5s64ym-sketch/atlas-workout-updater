@@ -110,20 +110,96 @@ test.after(async () => { await adapter.close(); });
 
 /* ══════════ the backfill itself ══════════ */
 
-test('the dry run writes NOTHING and reports what it would write', async () => {
+const BACKFILLED_TABLES = ['logged_sets', 'session_effort', 'session_plan_events',
+  'session_plan_set_recommendations', 'workout_sessions', 'exercise_catalog_sync'];
+
+async function tableCounts(tables = BACKFILLED_TABLES) {
+  const counts = {};
+  await withOwner(async (client) => {
+    for (const table of tables) {
+      counts[table] = (await client.query(`SELECT count(*)::int AS n FROM atlas.${table}`)).rows[0].n;
+    }
+  });
+  return counts;
+}
+
+test('the dry run writes NOTHING, and against an EMPTY destination every eligible row is would_insert', async () => {
   const plan = await backfill.runBackfill({ sheets, adapter, apply: false });
   assert.equal(plan.applied, false);
   assert.equal(plan.complete, true);
   assert.equal(plan.totals.inserted, 0, 'a dry run must never insert');
   assert.equal(plan.totals.rows_with_identity, 11, '5 logged sets + 2 effort + 2 plan events + 2 plan set rows');
 
-  await withOwner(async (client) => {
-    for (const table of ['logged_sets', 'session_effort', 'session_plan_events',
-      'session_plan_set_recommendations', 'workout_sessions', 'exercise_catalog_sync']) {
-      const count = await client.query(`SELECT count(*)::int AS n FROM atlas.${table}`);
-      assert.equal(count.rows[0].n, 0, `atlas.${table} must be untouched by a dry run`);
-    }
-  });
+  // The half that used to be claimed and never proven: the dry run READ the
+  // destination and split the eligible rows by what it found there.
+  assert.equal(plan.totals.would_insert, 11, 'an empty destination means every eligible row would be inserted');
+  assert.equal(plan.totals.already_present, 0, 'and nothing is already present');
+
+  for (const [table, n] of Object.entries(await tableCounts())) {
+    assert.equal(n, 0, `atlas.${table} must be untouched by a dry run`);
+  }
+});
+
+test('after a completed backfill the dry run reports would_insert 0 and already_present 11', async () => {
+  await backfill.runBackfill({ sheets, adapter, apply: true });
+  const before = await tableCounts();
+
+  const plan = await backfill.runBackfill({ sheets, adapter, apply: false });
+  assert.equal(plan.applied, false);
+  assert.equal(plan.complete, true);
+  assert.equal(plan.totals.inserted, 0, 'a dry run still inserts nothing, converged or not');
+  assert.equal(plan.totals.would_insert, 0, 'a converged destination means nothing left to insert');
+  assert.equal(plan.totals.already_present, 11, 'and every eligible row is recognised as already present');
+
+  assert.deepEqual(await tableCounts(), before, 'a dry run over a populated destination changes nothing');
+});
+
+// ── THE BITE PROOF ───────────────────────────────────────────────────────────
+// The two tests above are only worth their names if they FAIL when the
+// destination read is removed. Rather than assert that in prose, mutate exactly
+// that one behaviour and prove the numbers move.
+test('BITE: bypassing the destination read makes the dry run wrong, so the proof above cannot pass without it', async () => {
+  await backfill.runBackfill({ sheets, adapter, apply: true });
+
+  // The mutant: a dry run that does not really look at Supabase. This is the
+  // shape of the original defect — it answers as though the destination were
+  // empty however full it is.
+  const blind = { ...adapter, listConcept: async () => [] };
+  const mutated = await backfill.runBackfill({ sheets, adapter: blind, apply: false });
+
+  assert.equal(mutated.totals.would_insert, 11,
+    'the blind adapter reports every row as pending against a FULL destination');
+  assert.equal(mutated.totals.already_present, 0,
+    'and sees nothing already present — the exact false preflight this fix removes');
+
+  // Same fixture, same instant, real adapter: the opposite answer. The counts
+  // therefore come from the destination read and from nothing else.
+  const honest = await backfill.runBackfill({ sheets, adapter, apply: false });
+  assert.equal(honest.totals.would_insert, 0);
+  assert.equal(honest.totals.already_present, 11);
+  assert.notEqual(mutated.totals.already_present, honest.totals.already_present,
+    'removing the destination read must change the reported result, or the read is decorative');
+});
+
+test('a dry run whose destination read FAILS is an error, never a zero', async () => {
+  const broken = {
+    ...adapter,
+    listConcept: async () => { throw new Error('connection refused'); },
+  };
+  const plan = await backfill.runBackfill({ sheets, adapter: broken, apply: false });
+
+  assert.equal(plan.complete, false, 'a run that could not read the destination is NOT complete');
+  for (const concept of plan.concepts) {
+    assert.match(concept.error || '', /supabase_read_failed/, 'the failure is reported, not swallowed');
+    assert.equal(concept.would_insert, null, 'an uncomputed counter stays null');
+    assert.equal(concept.already_present, null, 'never 0, which would read as "nothing to do"');
+  }
+  assert.equal(plan.totals.would_insert, null, 'and the total never fabricates a zero either');
+  assert.equal(plan.totals.already_present, null);
+
+  for (const [table, n] of Object.entries(await tableCounts())) {
+    assert.equal(n, 0, `a failed dry run still wrote nothing to atlas.${table}`);
+  }
 });
 
 test('the backfill loads every sourceable concept, parent-first', async () => {

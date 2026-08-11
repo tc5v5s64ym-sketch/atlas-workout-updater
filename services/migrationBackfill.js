@@ -36,6 +36,15 @@
 // re-run converges rather than duplicating or failing. A resumed run after an
 // interruption is therefore safe, and `inserted` versus `existing` says exactly
 // what this run added.
+//
+// ── THE DRY RUN READS THE DESTINATION ────────────────────────────────────────
+// Without `apply` nothing is written to either store, but Supabase IS read, so
+// the run can answer the only question a preflight is for: of the eligible source
+// rows, how many WOULD be inserted (`would_insert`) and how many are ALREADY
+// present (`already_present`). Those two fields are dry-run-only and are `null`
+// — never 0 — when they were not computed.
+
+
 
 const contract = require('./migrationRowContract');
 const { indexByIdentity } = require('./migrationSweep');
@@ -62,6 +71,13 @@ function emptyConceptPlan(concept) {
     rows_skipped_unparseable_session: 0,
     inserted: 0,
     existing: 0,
+    // DRY-RUN ONLY, and `null` means NOT COMPUTED rather than zero. An apply run
+    // leaves them null because `inserted`/`existing` already carry its truth;
+    // a dry run fills them from a real read of the destination. The two states
+    // must stay distinguishable — reporting 0 for "never looked" is the exact
+    // defect this pair was added to remove.
+    would_insert: null,
+    already_present: null,
     error: null,
   };
 }
@@ -108,9 +124,42 @@ async function backfillConcept({ concept, sheets, adapter, apply, batchSize }) {
   }
   plan.rows_with_identity = rows.length;
 
-  // A DRY RUN IS THE DEFAULT. It reads both sides and reports what it WOULD write,
-  // and it is the only mode that runs without an explicit --apply.
-  if (!apply) return plan;
+  // A DRY RUN IS THE DEFAULT, and it READS THE DESTINATION. It is the only mode
+  // that runs without an explicit --apply, and it writes nothing to either store.
+  //
+  // It used to return here, before consulting Supabase at all, and therefore
+  // reported `inserted=0 existing=0` whatever the destination held — a preflight
+  // whose output was identical for "everything is already there" and "nothing is
+  // there yet". The owner's requirement is the opposite: a dry run must truthfully
+  // separate what WOULD be inserted from what is ALREADY present.
+  //
+  // It reuses the sweep's `indexByIdentity` and the row contract's identity key, so
+  // the dry run cannot disagree with the sweep or the reconciliation about what a
+  // row is or whether the destination already holds it.
+  if (!apply) {
+    let destinationRows;
+    try {
+      destinationRows = await adapter.listConcept(concept);
+    } catch (error) {
+      // A destination read that failed is NOT a zero. Reporting one would restore
+      // the defect in a new form, so this fails the concept and the whole run.
+      plan.error = `supabase_read_failed: ${error.message}`;
+      return plan;
+    }
+    const present = indexByIdentity(concept, destinationRows, (row) => contract.rowFromSupabase(concept, row));
+    plan.would_insert = 0;
+    plan.already_present = 0;
+    for (const row of rows) {
+      // Identity is the ONLY question here, because every insert is
+      // ON CONFLICT DO NOTHING on exactly this key: an identity already in the
+      // destination would be skipped by the apply run whatever its content says.
+      // Content equality is the RECONCILIATION's question (§6.2 P3), not the
+      // backfill's, and answering it here would give the two lanes two verdicts.
+      if (present.index.has(contract.identityKey(concept, row))) plan.already_present += 1;
+      else plan.would_insert += 1;
+    }
+    return plan;
+  }
 
   for (const batch of chunk(rows, batchSize)) {
     try {
@@ -310,9 +359,23 @@ async function runBackfill({
         rows_with_identity: acc.rows_with_identity + p.rows_with_identity,
         inserted: acc.inserted + p.inserted,
         existing: acc.existing + p.existing,
+        // Carried as null on an apply run, and on a dry run whose destination read
+        // failed, so a total can never read 0 for "not computed" either.
+        would_insert: p.would_insert === null ? acc.would_insert : (acc.would_insert || 0) + p.would_insert,
+        already_present: p.already_present === null
+          ? acc.already_present
+          : (acc.already_present || 0) + p.already_present,
         skipped: acc.skipped + p.rows_skipped_no_identity + p.rows_skipped_unparseable_session,
       }),
-      { sheet_rows_read: 0, rows_with_identity: 0, inserted: 0, existing: 0, skipped: 0 }
+      {
+        sheet_rows_read: 0,
+        rows_with_identity: 0,
+        inserted: 0,
+        existing: 0,
+        would_insert: null,
+        already_present: null,
+        skipped: 0,
+      }
     ),
   };
 }
