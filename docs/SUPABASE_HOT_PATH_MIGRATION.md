@@ -51,21 +51,31 @@ confirmed its absence there. That statement is about the DEPLOYMENT, and it is s
 
 **It is not true of the repository, and this block used to conflate the two.** *Corrected by the
 required review of `a29129e`, which found these lines still calling `S3` "paper" and "not
-started" from a branch that implements it.* The honest split is **branch versus production**:
+started" from a branch that implements it; corrected again on 2026-08-11, when PR #1281 merged
+and "NOT MERGED" became the stale half.* The honest split is **repository versus production**:
 
 | | State |
 |---|---|
-| `S3` implementation | **EXISTS** — open **PR #1281**, branch `agent/supabase-s3-readiness` |
-| `S3` on `main` | **NOT MERGED** |
+| `S3` implementation | **MERGED** — PR #1281, merge commit `fbe205a` |
+| `S3` on `main` | **LANDED** (2026-08-11) |
 | The `S3` `write_freeze` migration on `Atlas Production` | **NOT APPLIED** — an outstanding owner gate (§6.2 P8b) |
 | `atlas.write_freeze` in `Atlas Production` | **ABSENT** |
 | Runtime Supabase credential in any live environment | **NOT CONFIGURED** |
 | Deployed `S3` evidence | **NONE**, and none may be claimed |
-| Athlete-facing read or write authority moved | **NONE** — and `S3` moves none even once merged (ruling D5) |
+| Athlete-facing read or write authority moved | **NONE** — and `S3` moved none by merging (ruling D5) |
 | Sole live authority | **Google Sheets + `services/idempotency.js`** |
 
-`S4` remains paper, remains the authority-transfer point, and has not started. Nothing in this
-document may be read as claiming `S3` is merged, deployed, applied to production, or complete.
+**The four production rows are the state last verified at the P8b checkpoint of 2026-08-08, and
+the change that recorded the merge did not re-verify them.** A merge applies no migration and
+configures no credential, so merging `S3` cannot have altered them. Every one of them
+under-claims, so carrying a stale copy forward can only withhold deployed evidence, never
+manufacture it. §6.2 P8b is discharged by a real read-only inspection of `Atlas Production` —
+which needs a Supabase credential that is present in no Atlas environment and on no agent
+surface today — and by nothing else.
+
+`S4` remains paper, remains the authority-transfer point, and has not started. `S3` is now
+merged, and nothing in this document may be read as claiming it is **deployed, applied to
+production, or complete**. Merging it moved no read and no write.
 
 *Corrected by the required review of `ad18907`, which found this document and the authority map
 both describing `S2` as landed while its PR was still open. A branch does not record itself as
@@ -1633,8 +1643,8 @@ nothing".
      checkpoint to pass (§6.1 P8b, §8.1, and the plan's owner-gate 2). **Both were done.** The
      owner applied the eight reviewed migration files, and the checkpoint **PASSED with exit
      code `0`** (§8.6). Nothing further is owed here. **`S3` became eligible from this
-     dependency alone, and is now IMPLEMENTED in open PR #1281 — not merged, not applied to
-     `Atlas Production`, and carrying no deployed evidence.**
+     dependency alone, and MERGED on 2026-08-11 as PR #1281 — still not applied to
+     `Atlas Production`, and still carrying no deployed evidence.**
   2. **For `S3`'s deployed freeze evidence:** the owner applies the `S3` `write_freeze`
      migration (§3.10). The PR **may merge before this**; the P8a/P8b deployed-system evidence
      **may not be claimed before it**, because the freeze cannot be proven against a deployed
@@ -3386,15 +3396,16 @@ Each line is a cleanup obligation of the PR named, not of `S1`.
   eleven `S2` tables and the four scoped roles now exist there. It still claims **no data has
   migrated**: those tables are unwritten, no connection string is configured, and Sheets decides
   alone.
-- **It does not claim `S3` has landed.** `S3` is **implemented in open PR #1281 and NOT
-  merged.** Its migration has **not** been applied to `Atlas Production`, so
+- **It claims `S3` has landed on `main`, and nothing beyond that.** `S3` **merged on 2026-08-11
+  as PR #1281**. Its migration has **not** been applied to `Atlas Production`, so
   **`atlas.write_freeze` does not exist there**, and **no deployed evidence exists** — §6.2 P8b
   is outstanding, and P8–P12 are proven at the code level only, against the from-empty proof
   database. Nothing in `S3` has moved a read or a write: Google Sheets, plus the file-backed
   store in `services/idempotency.js`, remains the sole live authority for every migrated
   concept, and it stays so until `S4`. Where this document describes `S3` in the present tense
-  it is describing **the reviewed design and the merged-pending implementation**, never the
-  state of the deployment.
+  it is describing **the reviewed design and the merged implementation**, never the state of the
+  deployment. A merge is repository truth; it is not deployment truth, and this document does
+  not let the first stand in for the second.
 - It does not claim a measurement it has not taken. The net-complexity expectation in §9 is
   unmeasured and marked as such. **The §6.2 P4(a) residual read count IS now measured** — 255
   in-request Sheets range reads over the captured live manifest, 204 of them on migrated tabs —

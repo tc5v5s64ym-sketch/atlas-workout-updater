@@ -426,15 +426,15 @@ revisions, item outcomes, and closeout and write receipts.
   `Atlas Production` with the P8b gate passed (2026-08-08), and **no athlete-facing read or
   write has moved**.
 
-  **`S3` — implemented on a branch, landed nowhere.** *Corrected by the required review of
-  `a29129e`: this entry still said `S3` "has not started", which stopped being true once the
-  branch existed.* The distinction that matters is **branch versus production**, and both halves
-  are stated:
+  **`S3` — landed on `main`, applied to no deployment.** *Corrected by the required review of
+  `a29129e`: this entry once said `S3` "has not started", which stopped being true when the
+  branch existed. It then said "landed nowhere", which stopped being true when PR #1281 merged.*
+  The distinction that matters is **repository versus production**, and both halves are stated:
 
   | | State |
   |---|---|
-  | `S3` implementation | **EXISTS**, in open **PR #1281** / branch `agent/supabase-s3-readiness` |
-  | `S3` on `main` | **NOT LANDED** |
+  | `S3` implementation | **MERGED** — PR #1281, merge commit `fbe205a` |
+  | `S3` on `main` | **LANDED** (2026-08-11) |
   | The `S3` `write_freeze` migration on `Atlas Production` | **NOT APPLIED** |
   | `atlas.write_freeze` in `Atlas Production` | **ABSENT** |
   | Runtime Supabase credential in any live environment | **NOT CONFIGURED** |
@@ -442,8 +442,16 @@ revisions, item outcomes, and closeout and write receipts.
   | Sole live authority | **Google Sheets + `services/idempotency.js`** |
   | Authority-transfer point | **`S4`**, which has not started |
 
-  So `S3` is neither "not started" nor "done": it is written, reviewed and unmerged, and it
-  **moves no authority even once it lands** (ruling D5). `S4` remains the only step that does.
+  **The four production rows are the state last verified at the P8b checkpoint of 2026-08-08,
+  and this change did not re-verify them.** Merging `S3` cannot have altered them — a merge
+  applies no migration and configures no credential — so they are carried forward rather than
+  re-asserted. They are also the conservative direction: each one under-claims, so a stale copy
+  can only withhold deployed evidence, never manufacture it. Discharging §6.2 P8b still needs a
+  real read-only inspection of `Atlas Production`, which needs a Supabase credential that exists
+  in no Atlas environment and on no agent surface today.
+
+  So `S3` is neither "not started" nor "done": it is written, reviewed and **merged**, and it
+  **moved no authority by landing** (ruling D5). `S4` remains the only step that does.
   `S4` and the two closure steps after it remain outstanding.
 
   *This landed state is recorded from current `main`, after the merge. An earlier
