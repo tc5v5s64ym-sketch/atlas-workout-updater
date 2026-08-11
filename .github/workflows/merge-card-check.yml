@@ -13,7 +13,8 @@ permissions:
 
 jobs:
   check:
-    name: Merge card mechanical fields
+    # Keep this established status name: the repository ruleset requires it.
+    name: Merge card present and filled
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

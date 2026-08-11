@@ -32,6 +32,11 @@ function extractScript() {
 
 const SCRIPT = extractScript();
 
+test('the mechanical check keeps the repository ruleset status name', () => {
+  const workflow = fs.readFileSync(WORKFLOW, 'utf8');
+  assert.match(workflow, /^\s+name:\s+Merge card present and filled\s*$/m);
+});
+
 const FIELDS = {
   'Canonical plan card': 'Owner instruction 2026-08-10',
   Title: 'Simplify review governance',
