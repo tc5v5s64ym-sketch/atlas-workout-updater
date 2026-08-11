@@ -105,21 +105,31 @@ const readMigration = (file) => fs.readFileSync(path.join(MIGRATIONS, file), 'ut
 //                          drifted object is adopted.
 const POSTCONDITION_BLOCK = /\nDO \$\$\nDECLARE\n  offending text;[\s\S]*?\nEND\n\$\$;\n/;
 
-// The postcondition exactly as `39701b92` shipped it — eight hand-listed calls,
-// checking only UPDATE for atlas_readonly and atlas_rebuild. Kept verbatim so
-// "weakening it back lets the case through" is shown by RUNNING the old block.
-const LEGACY_POSTCONDITION = `
+// The postcondition exactly as `1716066` shipped it — a cross product over a
+// HAND-MAINTAINED privilege list that omitted TRIGGER. Kept verbatim so "weakening
+// it back lets the case through" is shown by RUNNING the old block rather than
+// argued about.
+//
+// The `39701b92` version it replaced (eight hand-listed calls, UPDATE only for two
+// roles) is not kept: the enumerated version already refuses everything that one
+// missed, and the refusal proofs below cover that ground going forward.
+const ENUMERATED_POSTCONDITION = `
 DO $$
+DECLARE
+  offending text;
 BEGIN
-  IF has_table_privilege('atlas_app',      'atlas.write_freeze', 'INSERT')
-  OR has_table_privilege('atlas_app',      'atlas.write_freeze', 'UPDATE')
-  OR has_table_privilege('atlas_app',      'atlas.write_freeze', 'DELETE')
-  OR has_table_privilege('atlas_migrate',  'atlas.write_freeze', 'INSERT')
-  OR has_table_privilege('atlas_migrate',  'atlas.write_freeze', 'UPDATE')
-  OR has_table_privilege('atlas_migrate',  'atlas.write_freeze', 'DELETE')
-  OR has_table_privilege('atlas_readonly', 'atlas.write_freeze', 'UPDATE')
-  OR has_table_privilege('atlas_rebuild',  'atlas.write_freeze', 'UPDATE') THEN
-    RAISE EXCEPTION 'a scoped role can write atlas.write_freeze — the freeze would have two authorities';
+  SELECT string_agg(format('%s:%s', r.role, p.priv), ', ' ORDER BY r.role, p.priv)
+    INTO offending
+    FROM unnest(ARRAY['atlas_app', 'atlas_migrate', 'atlas_readonly', 'atlas_rebuild']) AS r(role)
+    CROSS JOIN unnest(ARRAY['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE']) AS p(priv)
+   WHERE has_table_privilege(r.role, 'atlas.write_freeze', p.priv);
+
+  IF offending IS NOT NULL THEN
+    RAISE EXCEPTION 'a scoped role can write atlas.write_freeze: %', offending;
+  END IF;
+
+  IF NOT has_table_privilege('atlas_app', 'atlas.write_freeze', 'SELECT') THEN
+    RAISE EXCEPTION 'atlas_app cannot read atlas.write_freeze — every write would refuse forever';
   END IF;
 END
 $$;
@@ -131,8 +141,8 @@ function mutateS3(mode) {
 
   // A replacer FUNCTION: `$$` in a replacement string is an escape for `$`, and
   // passing SQL as a string would corrupt the dollar quoting.
-  if (mode === 'legacyPostcondition') {
-    const swapped = sql.replace(POSTCONDITION_BLOCK, () => `\n${LEGACY_POSTCONDITION}`);
+  if (mode === 'enumeratedPostcondition') {
+    const swapped = sql.replace(POSTCONDITION_BLOCK, () => `\n${ENUMERATED_POSTCONDITION}`);
     assert.notEqual(swapped, sql, 'the postcondition must be found in order to be replaced');
     assert.match(swapped, /DO \$\$/, 'the legacy block must survive the substitution intact');
     return swapped;
@@ -326,6 +336,8 @@ const DEFAULT_GRANT_CASES = [
   ['INSERT to atlas_readonly', 'atlas_readonly', 'INSERT'],
   ['DELETE to atlas_rebuild', 'atlas_rebuild', 'DELETE'],
   ['TRUNCATE to atlas_readonly', 'atlas_readonly', 'TRUNCATE'],
+  ['TRIGGER to atlas_migrate', 'atlas_migrate', 'TRIGGER'],
+  ['REFERENCES to atlas_app', 'atlas_app', 'REFERENCES'],
 ];
 
 for (const [label, role, privilege] of DEFAULT_GRANT_CASES) {
@@ -337,7 +349,7 @@ for (const [label, role, privilege] of DEFAULT_GRANT_CASES) {
     });
 
     assert.ok(s3Error, `an unexpected default ${privilege} for ${role} must refuse S3`);
-    assert.match(s3Error.message, /a scoped role can write atlas\.write_freeze/);
+    assert.match(s3Error.message, /a scoped role holds a privilege beyond SELECT on atlas\.write_freeze/);
     assert.match(s3Error.message, new RegExp(`${role}:${privilege}`),
       'and the refusal must NAME the offending role and privilege');
 
@@ -352,29 +364,128 @@ for (const [label, role, privilege] of DEFAULT_GRANT_CASES) {
   });
 }
 
-test('P8a MUTATION: the 39701b92 postcondition lets a default DELETE to atlas_rebuild through', async () => {
-  // The bite for this finding. With the hand-listed block restored, atlas_rebuild's
-  // unexpected DELETE is not checked at all, S3 completes, and the role really can
-  // remove the control.
+// ── THE TRIGGER CASE: A SECOND EFFECTIVE AUTHORITY, NOT AN AVAILABILITY BUG ──
+//
+// *Required review of `1716066`.* Every other privilege in this class can only
+// wedge writes CLOSED — INSERT cannot pass the primary key and `CHECK (id)`,
+// DELETE and TRUNCATE leave a control that cannot be read, and an unreadable
+// control is FROZEN. TRIGGER is different in kind: a BEFORE UPDATE trigger can
+// rewrite `NEW.frozen`, so the owner's freeze still runs, still reports success,
+// and stores something else. D7's "sole effective authority over the
+// write-admission decision" would simply be false.
+//
+// atlas_migrate is the live case, because S3 deliberately leaves it CREATE on
+// schema `atlas` so legitimate migration DDL keeps working — which is also what
+// lets it define the trigger function.
+const PLANT_TRIGGER_GRANT =
+  'ALTER DEFAULT PRIVILEGES FOR ROLE "$APPLIER" IN SCHEMA atlas GRANT TRIGGER ON TABLES TO atlas_migrate';
+
+test('P8a MUTATION: with the enumerated privilege list, a TRIGGER grant defeats an owner freeze', async () => {
+  // 1–2. Plant the default TRIGGER grant, then run the `1716066` postcondition —
+  //      whose hand-maintained list has no TRIGGER in it. S3 completes.
   const { urls, s3Error } = await buildDatabase({
-    preSql: ['ALTER DEFAULT PRIVILEGES FOR ROLE "$APPLIER" IN SCHEMA atlas GRANT DELETE ON TABLES TO atlas_rebuild'],
-    mutation: 'legacyPostcondition',
+    preSql: [PLANT_TRIGGER_GRANT],
+    mutation: 'enumeratedPostcondition',
   });
 
   assert.equal(s3Error, null,
-    `the hand-listed postcondition accepts it — which is the defect: ${s3Error && s3Error.message}`);
-
-  // And the consequence, demonstrated as the real role rather than asserted.
-  const rebuild = onDatabase(requireEnv('ATLAS_PG_PROOF_URL_ATLAS_REBUILD'), urls.applier.split('/').pop());
-  await withConnection(rebuild, async (client) => {
-    const deleted = await client.query('DELETE FROM atlas.write_freeze WHERE id');
-    assert.equal(deleted.rowCount, 1,
-      'atlas_rebuild removed the control — writes are now wedged closed until the owner notices');
-  });
+    `the enumerated postcondition accepts it — which is the defect: ${s3Error && s3Error.message}`);
 
   await withConnection(urls.applier, async (client) => {
-    const rows = await client.query('SELECT count(*)::int AS n FROM atlas.write_freeze');
-    assert.equal(rows.rows[0].n, 0, 'the control is gone; every runtime read now refuses');
+    const held = await client.query(
+      `SELECT has_table_privilege('atlas_migrate', 'atlas.write_freeze', 'TRIGGER') AS t`
+    );
+    assert.equal(held.rows[0].t, true, 'and atlas_migrate really did receive TRIGGER');
+  });
+
+  // 3. As the REAL role, turn that privilege into control over the row's value.
+  await withConnection(urls.atlas_migrate, async (client) => {
+    await client.query(`
+      CREATE FUNCTION atlas.force_writes_open() RETURNS trigger AS $fn$
+      BEGIN
+        NEW.frozen := false;
+        RETURN NEW;
+      END
+      $fn$ LANGUAGE plpgsql`);
+    await client.query(`
+      CREATE TRIGGER force_writes_open
+      BEFORE UPDATE ON atlas.write_freeze
+      FOR EACH ROW EXECUTE FUNCTION atlas.force_writes_open()`);
+  });
+
+  // 4–5. The project owner freezes — and the stored state is not what it asked for.
+  await withConnection(urls.applier, async (client) => {
+    const froze = await client.query(
+      `UPDATE atlas.write_freeze SET frozen = true, reason = 'owner freeze', set_by = 'project-owner' WHERE id`
+    );
+    assert.equal(froze.rowCount, 1, 'the owner UPDATE reports success');
+
+    const stored = await client.query('SELECT frozen, reason FROM atlas.write_freeze');
+    assert.equal(stored.rows[0].frozen, false,
+      'the owner asked for frozen = true and the database holds false — a SECOND effective authority');
+    assert.equal(stored.rows[0].reason, 'owner freeze',
+      'and the owner-authored reason is still there, so the row looks like the owner wrote it');
+  });
+
+  // And the runtime agrees, through its own least-privileged connection: it would
+  // admit writes the owner believes it has closed.
+  await withConnection(urls.atlas_app, async (client) => {
+    const seen = await client.query('SELECT frozen FROM atlas.write_freeze');
+    assert.equal(seen.rows[0].frozen, false, 'the runtime would keep admitting writes');
+  });
+});
+
+test('P8a: the corrected invariant REFUSES the TRIGGER grant and rolls back', async () => {
+  // 6. The same planted drift, against the real migration.
+  const { urls, s3Error } = await buildDatabase({ preSql: [PLANT_TRIGGER_GRANT] });
+
+  assert.ok(s3Error, 'a default TRIGGER grant must refuse S3');
+  assert.match(s3Error.message, /a scoped role holds a privilege beyond SELECT on atlas\.write_freeze/);
+  assert.match(s3Error.message, /atlas_migrate:TRIGGER/, 'and it must name the role and the privilege');
+
+  await withConnection(urls.applier, async (client) => {
+    const exists = await client.query(
+      `SELECT count(*)::int AS n FROM pg_tables WHERE schemaname = 'atlas' AND tablename = 'write_freeze'`
+    );
+    assert.equal(exists.rows[0].n, 0, 'a refused S3 leaves no control behind');
+  });
+});
+
+test('P8a: the privilege set is READ FROM POSTGRESQL, not maintained here', async () => {
+  // The point of the round-8 ruling. Whatever table privileges this server
+  // supports — including MAINTAIN, which exists only from PostgreSQL 17 and which
+  // no list written today would contain — every one of them except SELECT is
+  // covered, because the set comes from acldefault() rather than from a literal.
+  const { urls } = await buildDatabase();
+
+  await withConnection(urls.applier, async (client) => {
+    const { rows } = await client.query(`
+      SELECT a.privilege_type AS priv
+        FROM pg_class c
+        CROSS JOIN LATERAL aclexplode(acldefault('r', c.relowner)) AS a
+       WHERE c.oid = 'atlas.write_freeze'::regclass
+       ORDER BY 1`);
+    const privileges = rows.map((r) => r.priv);
+
+    // Everything PostgreSQL 15/16 defines for a relation, and any later addition
+    // arrives here automatically rather than needing this file edited.
+    for (const expected of ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) {
+      assert.ok(privileges.includes(expected), `acldefault must report ${expected}`);
+    }
+    assert.ok(privileges.length >= 7);
+
+    // And on this server, no scoped role holds any of them except SELECT.
+    const offending = await client.query(`
+      SELECT string_agg(format('%s:%s', r.role, p.priv), ', ') AS bad
+        FROM unnest(ARRAY['atlas_app','atlas_migrate','atlas_readonly','atlas_rebuild']) AS r(role)
+        CROSS JOIN (
+          SELECT a.privilege_type AS priv
+            FROM pg_class c
+            CROSS JOIN LATERAL aclexplode(acldefault('r', c.relowner)) AS a
+           WHERE c.oid = 'atlas.write_freeze'::regclass AND a.privilege_type <> 'SELECT'
+        ) AS p
+       WHERE has_table_privilege(r.role, 'atlas.write_freeze', p.priv)`);
+    assert.equal(offending.rows[0].bad, null);
   });
 });
 

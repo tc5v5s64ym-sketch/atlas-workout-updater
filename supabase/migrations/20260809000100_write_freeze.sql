@@ -155,18 +155,34 @@ GRANT SELECT ON atlas.write_freeze TO atlas_rebuild;
 -- independent — the create refuses early, on identity, before anything is
 -- inspected; this refuses late, on effective privilege — and only removing both
 -- lets a pre-existing object be adopted.
--- EXHAUSTIVE BY CONSTRUCTION, not by enumeration. *Required review of `39701b9`.*
--- The previous version hand-listed eight `has_table_privilege` calls and, in doing
--- so, checked only UPDATE for atlas_readonly and atlas_rebuild — so a default
--- INSERT or DELETE on either would have survived a postcondition whose stated
--- claim is that NO scoped role can write the control. A hand-written list is the
--- wrong shape for an exhaustiveness claim; the cross product cannot omit a cell.
+-- ONE INVARIANT, DERIVED FROM POSTGRESQL — NOT A LIST THIS FILE MAINTAINS.
 --
--- TRUNCATE is included because it is a write, and the claim says write. Leaving it
--- out would reopen the same gap between what this block asserts and what it means.
+-- *Architectural ruling after review round 8 (2026-08-10).* Two consecutive
+-- reviews found the same defect in different clothes: a hand-maintained set of
+-- forbidden privileges that was missing one. Round 7 was missing INSERT and DELETE
+-- for two roles. Round 8 was missing TRIGGER for all four — and TRIGGER is not a
+-- metadata privilege. `CREATE TRIGGER` needs it, and a BEFORE UPDATE trigger can
+-- rewrite `NEW.frozen`, so a scoped role holding it can silently change what an
+-- owner's freeze actually stores. That is a second effective authority over the
+-- write-admission decision, which is exactly what D7 forbids.
 --
--- The refusal NAMES the offending role and privilege, so an operator does not have
--- to re-derive which of twenty combinations tripped it.
+-- The maintained list WAS the defect pattern, so it is gone. The invariant is now
+-- stated once:
+--
+--     for atlas.write_freeze, a scoped role may hold SELECT and nothing else.
+--
+-- The privilege set is read from `acldefault('r', …)`, which is PostgreSQL's own
+-- answer to "what privileges exist for a relation owned by this role". It is
+-- therefore complete for whatever version is executing — including `MAINTAIN`,
+-- which exists only from PostgreSQL 17 and which no list written today would have
+-- contained. Nothing here needs updating when the set changes.
+--
+-- `has_table_privilege` is kept as the test because it answers about EFFECTIVE
+-- privilege: it accounts for grants held through role membership and through
+-- PUBLIC, which reading the access list directly would miss.
+--
+-- The refusal names the offending role and privilege, so an operator does not have
+-- to re-derive which combination tripped it.
 DO $$
 DECLARE
   offending text;
@@ -174,11 +190,17 @@ BEGIN
   SELECT string_agg(format('%s:%s', r.role, p.priv), ', ' ORDER BY r.role, p.priv)
     INTO offending
     FROM unnest(ARRAY['atlas_app', 'atlas_migrate', 'atlas_readonly', 'atlas_rebuild']) AS r(role)
-    CROSS JOIN unnest(ARRAY['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE']) AS p(priv)
+    CROSS JOIN (
+      SELECT a.privilege_type AS priv
+        FROM pg_class c
+        CROSS JOIN LATERAL aclexplode(acldefault('r', c.relowner)) AS a
+       WHERE c.oid = 'atlas.write_freeze'::regclass
+         AND a.privilege_type <> 'SELECT'
+    ) AS p
    WHERE has_table_privilege(r.role, 'atlas.write_freeze', p.priv);
 
   IF offending IS NOT NULL THEN
-    RAISE EXCEPTION 'a scoped role can write atlas.write_freeze: %', offending
+    RAISE EXCEPTION 'a scoped role holds a privilege beyond SELECT on atlas.write_freeze: %', offending
       USING HINT = 'Owner ruling D7 recognises one mutator: the Supabase project owner. '
                    'Clear the ALTER DEFAULT PRIVILEGES that granted this, then re-apply.';
   END IF;
