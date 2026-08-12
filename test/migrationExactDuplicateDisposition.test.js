@@ -62,6 +62,26 @@ const withApproval = (concept, cells, overrides = {}) => ({
   }],
 });
 
+// ── SCOPING THE FROZEN APPROVALS OUT OF A CONSUMER FIXTURE ────────────────────
+//
+// The shipped map carries three real CARD_9 approvals over PRODUCTION Effort content.
+// A synthetic tab does not hold that content, so every one of them reports a
+// multiplicity mismatch — which is the production rule working exactly as the
+// required review demanded, and is also noise in a fixture that is testing something
+// else. The rule is never relaxed to quiet it. Instead a consumer fixture declares
+// the approvals it means to exercise, and they are injected at the ONE shared
+// resolver seam the consumers read — the same seam, and the same argument, as
+// `withMismatchVerdict` below. Nothing in production gains a map-injection hook: the
+// backfill, the sweep and the reconciliation still read the frozen file and only it.
+function withScopedApprovals(duplicateDispositions, run) {
+  const real = legacyMap.resolveSheetRows;
+  legacyMap.resolveSheetRows = (concept, sheetRows, options = {}) =>
+    real(concept, sheetRows, { ...options, map: { ...MAP, duplicate_dispositions: duplicateDispositions } });
+  return Promise.resolve(run()).finally(() => { legacyMap.resolveSheetRows = real; });
+}
+// The common case: a fixture that declares NO approval at all.
+const withNoApprovals = (run) => withScopedApprovals([], run);
+
 // ── 1. The frozen dispositions the owner ruled ────────────────────────────────
 
 test('map: the logged_sets conflict is resolved by a UNIQUE-fingerprint EXCLUDE, not by the new mechanism', () => {
@@ -191,27 +211,33 @@ test('the four prior duplicate export identities resolve to zero duplicate ident
 
 test('reconciliation: an UNAPPROVED identical duplicate still blocks reconciled', async () => {
   const copy = effRow('20260801-AM-01');
-  const result = await reconcileConcept({
-    concept: 'session_effort',
-    sheets: stubSheets({ Effort: [copy, copy.slice()] }),
-    adapter: INERT_ADAPTER,
+  await withNoApprovals(async () => {
+    const result = await reconcileConcept({
+      concept: 'session_effort',
+      sheets: stubSheets({ Effort: [copy, copy.slice()] }),
+      adapter: INERT_ADAPTER,
+    });
+    assert.equal(result.sheets_duplicate_identities, 1, 'nothing collapses without a frozen approval');
+    assert.equal(result.sheets_surplus_identical_excluded, 0);
+    assert.equal(result.sheets_duplicate_multiplicity_mismatch, 0, 'the duplicate is the ONLY blocker here');
+    assert.equal(result.reconciled, false);
   });
-  assert.equal(result.sheets_duplicate_identities, 1, 'nothing collapses without a frozen approval');
-  assert.equal(result.sheets_surplus_identical_excluded, 0);
-  assert.equal(result.reconciled, false);
 });
 
 test('sweep: an UNAPPROVED identical duplicate still makes the concept incomplete', async () => {
   const copy = effRow('20260801-AM-01');
-  const result = await sweepRowConcept({
-    concept: 'session_effort',
-    sheets: stubSheets({ Effort: [copy, copy.slice()] }),
-    adapter: { listConcept: async () => [], openDivergence: async () => ({ created: true }) },
-    openDivergences: false,
+  await withNoApprovals(async () => {
+    const result = await sweepRowConcept({
+      concept: 'session_effort',
+      sheets: stubSheets({ Effort: [copy, copy.slice()] }),
+      adapter: { listConcept: async () => [], openDivergence: async () => ({ created: true }) },
+      openDivergences: false,
+    });
+    assert.equal(result.sheets_duplicate_identities, 1);
+    assert.equal(result.sheets_duplicate_multiplicity_mismatch, 0);
+    assert.equal(result.complete, false);
+    assert.match(String(result.error), /sheets_duplicate_identities/);
   });
-  assert.equal(result.sheets_duplicate_identities, 1);
-  assert.equal(result.complete, false);
-  assert.match(String(result.error), /sheets_duplicate_identities/);
 });
 
 // ── 6. A CONTENT-CONFLICTING duplicate still fails ───────────────────────────
@@ -234,12 +260,14 @@ test('a content-CONFLICTING duplicate is never collapsed, even with an approval 
   assert.equal(resolved.counts.surplus_identical, 0);
   assert.equal(resolved.rows.length, 2, 'both conflicting rows are kept');
 
-  const result = await reconcileConcept({
-    concept: 'session_effort',
-    sheets: stubSheets({ Effort: [first, second] }),
-    adapter: INERT_ADAPTER,
+  await withNoApprovals(async () => {
+    const result = await reconcileConcept({
+      concept: 'session_effort',
+      sheets: stubSheets({ Effort: [first, second] }),
+      adapter: INERT_ADAPTER,
+    });
+    assert.equal(result.reconciled, false);
   });
-  assert.equal(result.reconciled, false);
 });
 
 test('a conflicting logged_sets duplicate still blocks when no exclusion names it', async () => {
@@ -280,14 +308,179 @@ test('resolver: FEWER copies than approved fails closed — the case no duplicat
   assert.equal(resolved.rows.length, 1);
 });
 
-test('resolver: an approval whose content is ABSENT is inapplicable, not a failure', () => {
-  // The tab a run reads is not always the workbook the map was frozen against. An
-  // approval that matches nothing removes nothing and makes nothing ambiguous, so it
-  // must not fail an otherwise clean tab.
-  const resolved = legacyMap.resolveSheetRows('session_effort', [effRow('20260801-AM-01')]);
-  assert.equal(resolved.counts.duplicate_multiplicity_mismatch, 0);
+// ── 7a. ZERO occurrences is a mismatch — the required review's P1 ────────────
+//
+// *Required review of `7240777`, P1.* An earlier form of this branch skipped
+// `actual === 0` as "inapplicable", on the reasoning that a vanished pair would
+// surface as `missing_in_sheets`. That reasoning fails in the one place the gate
+// exists to protect: BEFORE an apply the destination is empty, so nothing is
+// missing from Sheets, nothing is queued to insert, and a frozen ruling that no
+// longer describes the workbook would pass the pre-apply gate silently. Zero is
+// now a mismatch exactly like 1 or 3.
+
+test('resolver: an approval whose content is ABSENT is a multiplicity mismatch, not a no-op', () => {
+  const approved = effRow('20260525-PM-01');
+  const unrelated = effRow('20260801-AM-01');
+  assert.notEqual(legacyMap.rowFingerprint(approved), legacyMap.rowFingerprint(unrelated));
+
+  // The approval names content the tab does not hold at all.
+  const resolved = legacyMap.resolveSheetRows('session_effort', [unrelated], {
+    map: withApproval('session_effort', approved),
+  });
+  assert.equal(resolved.counts.duplicate_multiplicity_mismatch, 1, 'zero occurrences fails closed');
+  assert.equal(resolved.duplicateMismatches.length, 1);
+  assert.equal(resolved.duplicateMismatches[0].expected_occurrences, 2);
+  assert.equal(resolved.duplicateMismatches[0].actual_occurrences, 0, 'and it reports the real count');
+  assert.equal(resolved.duplicateMismatches[0].owner_ruling, 'TEST_RULING', 'naming the ruling that no longer holds');
+  // Fails closed: it removes nothing and rewrites nothing.
   assert.equal(resolved.counts.surplus_identical, 0);
   assert.equal(resolved.rows.length, 1);
+});
+
+test('resolver: every actual multiplicity other than the approved one is a mismatch — 0, 1 and 3 alike', () => {
+  const copy = effRow('20260525-PM-01');
+  const map = withApproval('session_effort', copy); // expected 2, surviving 1
+  const mismatchesFor = (rows) => legacyMap.resolveSheetRows('session_effort', rows, { map });
+
+  for (const [count, rows] of [
+    [0, []],
+    [1, [copy]],
+    [3, [copy, copy.slice(), copy.slice()]],
+    [4, [copy, copy.slice(), copy.slice(), copy.slice()]],
+  ]) {
+    const resolved = mismatchesFor(rows);
+    assert.equal(resolved.counts.duplicate_multiplicity_mismatch, 1, `actual ${count} must fail closed`);
+    assert.equal(resolved.duplicateMismatches[0].actual_occurrences, count);
+    assert.equal(resolved.counts.surplus_identical, 0, `actual ${count} must remove nothing`);
+    assert.equal(resolved.rows.length, rows.length, `actual ${count} must keep every copy`);
+  }
+  // Only the approved multiplicity acts.
+  const exact = mismatchesFor([copy, copy.slice()]);
+  assert.equal(exact.counts.duplicate_multiplicity_mismatch, 0);
+  assert.equal(exact.counts.surplus_identical, 1);
+  assert.equal(exact.rows.length, 1);
+});
+
+test('dry run: a vanished approved pair makes the run INCOMPLETE and writes nothing', async () => {
+  // The exact pre-apply hole. The destination is EMPTY — as it is before the real
+  // apply — so no divergence can be raised, no row is queued, and every counter
+  // reads clean. Only the multiplicity mismatch stands between this and a false
+  // green on a frozen ruling that no longer describes the tab.
+  const approved = effRow('20260525-PM-01');
+  const present = effRow('20260801-AM-01');
+
+  const sheetsCalls = [];
+  const adapterCalls = [];
+  const sheetsStub = new Proxy({
+    getSheetRows: async (tab) => { sheetsCalls.push(`getSheetRows:${tab}`); return tab === 'Effort' ? [present] : []; },
+  }, {
+    get(target, prop) {
+      if (prop in target) return target[prop];
+      return (...args) => { sheetsCalls.push(`FORBIDDEN:${String(prop)}`); throw new Error(`dry run called sheets.${String(prop)}(${args.length})`); };
+    },
+  });
+  const adapterStub = {
+    listConcept: async (concept) => { adapterCalls.push(`listConcept:${concept}`); return []; },
+    backfillRows: async () => { adapterCalls.push('FORBIDDEN:backfillRows'); throw new Error('dry run wrote to Supabase'); },
+  };
+
+  await withScopedApprovals([{
+    concept: 'session_effort',
+    tab: 'Effort',
+    row_fingerprint: legacyMap.rowFingerprint(approved),
+    disposition: 'EXCLUDE_SURPLUS_IDENTICAL',
+    expected_occurrences: 2,
+    surviving_copies: 1,
+    owner_ruling: 'TEST_RULING',
+    reason: 'synthetic fixture: the approved pair is no longer in the tab',
+  }], async () => {
+    const result = await runBackfill({
+      sheets: sheetsStub, adapter: adapterStub, concepts: ['session_effort'], includeCatalog: false, apply: false,
+    });
+
+    // THE REQUIRED OUTCOME.
+    assert.equal(result.complete, false, 'a vanished approval may not produce a complete dry run');
+    assert.equal(result.concepts[0].duplicate_multiplicity_mismatches.length, 1);
+    assert.equal(result.concepts[0].duplicate_multiplicity_mismatches[0].actual_occurrences, 0);
+    assert.match(String(result.concepts[0].error), /duplicate_multiplicity_mismatch/);
+    assert.match(String(result.concepts[0].error), /OWNER ACTION REQUIRED/);
+    assert.match(String(result.concepts[0].error), /expected 2, found 0/);
+
+    // Everything else IS clean — which is precisely why the mismatch has to fire.
+    assert.equal(result.concepts[0].sheets_duplicate_identities, 0);
+    assert.equal(result.concepts[0].rows_skipped_no_identity, 0);
+    assert.equal(result.concepts[0].rows_skipped_unparseable_session, 0);
+
+    // AND NO WRITE OCCURRED.
+    assert.equal(result.applied, false);
+    assert.equal(result.concepts[0].inserted, 0);
+    assert.equal(result.concepts[0].existing, 0);
+    assert.equal(sheetsCalls.filter((c) => c.startsWith('FORBIDDEN')).length, 0, 'no Sheets write');
+    assert.equal(adapterCalls.filter((c) => c.startsWith('FORBIDDEN')).length, 0, 'no Supabase write');
+    assert.deepEqual(adapterCalls, ['listConcept:session_effort'], 'the destination was READ and nothing else');
+  });
+});
+
+test('sweep and reconciliation also refuse a vanished approved pair', async () => {
+  const approved = effRow('20260525-PM-01');
+  const present = effRow('20260801-AM-01');
+  const sheets = stubSheets({ Effort: [present] });
+
+  await withScopedApprovals([{
+    concept: 'session_effort',
+    tab: 'Effort',
+    row_fingerprint: legacyMap.rowFingerprint(approved),
+    disposition: 'EXCLUDE_SURPLUS_IDENTICAL',
+    expected_occurrences: 2,
+    surviving_copies: 1,
+    owner_ruling: 'TEST_RULING',
+    reason: 'synthetic fixture: the approved pair is no longer in the tab',
+  }], async () => {
+    const sweep = await sweepRowConcept({
+      concept: 'session_effort',
+      sheets,
+      adapter: { listConcept: async () => [], openDivergence: async () => ({ created: true }) },
+      openDivergences: false,
+    });
+    assert.equal(sweep.sheets_duplicate_multiplicity_mismatch, 1);
+    assert.equal(sweep.complete, false);
+    assert.match(String(sweep.error), /duplicate_multiplicity_mismatch/);
+
+    const reconciliation = await reconcileConcept({
+      concept: 'session_effort',
+      sheets,
+      adapter: { listConcept: async () => [contract.rowFromSheet('session_effort', present)] },
+    });
+    // The row itself matches on both sides: counts equal, nothing missing either way.
+    assert.equal(reconciliation.counts_equal, true);
+    assert.equal(reconciliation.missing_in_sheets, 0);
+    assert.equal(reconciliation.missing_in_supabase, 0);
+    assert.equal(reconciliation.sheets_duplicate_multiplicity_mismatch, 1);
+    assert.equal(reconciliation.reconciled, false, 'the stale ruling alone blocks reconciliation');
+  });
+});
+
+test('the shipped frozen approvals fail closed against a tab that does not hold them', async () => {
+  // The production map, unscoped, over a synthetic Effort tab: all three CARD_9
+  // approvals are absent from it, and all three must fail closed. This is the
+  // fixture-contamination the other consumer tests scope away — asserted here once,
+  // deliberately, so the scoping can never hide a regression of the rule itself.
+  const result = await runBackfill({
+    sheets: stubSheets({ Effort: [effRow('20260801-AM-01')] }),
+    adapter: INERT_ADAPTER,
+    concepts: ['session_effort'],
+    includeCatalog: false,
+    apply: false,
+  });
+  assert.equal(MAP.duplicate_dispositions.length, 3);
+  assert.equal(result.concepts[0].duplicate_multiplicity_mismatches.length, 3);
+  for (const mismatch of result.concepts[0].duplicate_multiplicity_mismatches) {
+    assert.equal(mismatch.actual_occurrences, 0);
+    assert.equal(mismatch.expected_occurrences, 2);
+    assert.equal(mismatch.owner_ruling, 'CARD_9');
+  }
+  assert.equal(result.complete, false);
+  assert.equal(result.concepts[0].inserted, 0);
 });
 
 test('resolver: an approval covering FEWER copies than it claims is caught with no duplicate present', () => {
@@ -313,16 +506,18 @@ test('backfill: a stale exact-duplicate approval FAILS the run and names the fin
   const resolved = legacyMap.resolveSheetRows('session_effort', [copy], { map: stub });
   assert.equal(resolved.counts.duplicate_multiplicity_mismatch, 1);
 
-  const result = await runBackfill({
-    sheets: stubSheets({ Effort: [copy, copy.slice(), copy.slice()] }),
-    adapter: INERT_ADAPTER,
-    concepts: ['session_effort'],
-    includeCatalog: false,
+  await withNoApprovals(async () => {
+    const result = await runBackfill({
+      sheets: stubSheets({ Effort: [copy, copy.slice(), copy.slice()] }),
+      adapter: INERT_ADAPTER,
+      concepts: ['session_effort'],
+      includeCatalog: false,
+    });
+    // Three identical copies, no frozen approval for them: still a duplicate, and the
+    // backfill still reports it rather than collapsing anything.
+    assert.equal(result.concepts[0].rows_surplus_identical_excluded, 0);
+    assert.equal(result.concepts[0].sheets_duplicate_identities, 2);
   });
-  // Three identical copies, no frozen approval for them: still a duplicate, and the
-  // backfill still reports it rather than collapsing anything.
-  assert.equal(result.concepts[0].rows_surplus_identical_excluded, 0);
-  assert.equal(result.concepts[0].sheets_duplicate_identities, 2);
 });
 
 // The mismatch verdict itself is proven above, on real rows. These two prove what the
@@ -331,8 +526,11 @@ test('backfill: a stale exact-duplicate approval FAILS the run and names the fin
 // — the shared resolver export — which is also the proof that they read only that seam.
 function withMismatchVerdict(run) {
   const real = legacyMap.resolveSheetRows;
-  legacyMap.resolveSheetRows = (concept, sheetRows, options) => {
-    const resolved = real(concept, sheetRows, options);
+  legacyMap.resolveSheetRows = (concept, sheetRows, options = {}) => {
+    // Scoped as `withScopedApprovals` does, so the ONE injected mismatch is the only
+    // one — the shipped approvals would otherwise add their own against a synthetic
+    // tab, and these tests claim everything else is clean.
+    const resolved = real(concept, sheetRows, { ...options, map: { ...MAP, duplicate_dispositions: [] } });
     return {
       ...resolved,
       counts: { ...resolved.counts, duplicate_multiplicity_mismatch: 1 },
@@ -466,14 +664,28 @@ test('backfill, sweep and reconciliation report the SAME disposition verdicts', 
   const sheets = stubSheets({ Effort: [copy, copy.slice()] });
   const adapter = { ...INERT_ADAPTER, openDivergence: async () => ({ created: true }) };
 
-  const backfill = (await runBackfill({ sheets, adapter, concepts: ['session_effort'], includeCatalog: false })).concepts[0];
-  const reconciliation = await reconcileConcept({ concept: 'session_effort', sheets, adapter });
-  const sweep = await sweepRowConcept({ concept: 'session_effort', sheets, adapter, openDivergences: false });
+  // Scoped to the approval under test, so agreement is proven on a verdict the
+  // fixture controls rather than on three incidental mismatches.
+  await withScopedApprovals([{
+    concept: 'session_effort',
+    tab: 'Effort',
+    row_fingerprint: legacyMap.rowFingerprint(copy),
+    disposition: 'EXCLUDE_SURPLUS_IDENTICAL',
+    expected_occurrences: 2,
+    surviving_copies: 1,
+    owner_ruling: 'TEST_RULING',
+    reason: 'synthetic fixture',
+  }], async () => {
+    const backfill = (await runBackfill({ sheets, adapter, concepts: ['session_effort'], includeCatalog: false })).concepts[0];
+    const reconciliation = await reconcileConcept({ concept: 'session_effort', sheets, adapter });
+    const sweep = await sweepRowConcept({ concept: 'session_effort', sheets, adapter, openDivergences: false });
 
-  assert.equal(backfill.rows_surplus_identical_excluded, reconciliation.sheets_surplus_identical_excluded);
-  assert.equal(backfill.rows_surplus_identical_excluded, sweep.sheets_surplus_identical_excluded);
-  assert.equal(backfill.duplicate_multiplicity_mismatches.length, reconciliation.sheets_duplicate_multiplicity_mismatch);
-  assert.equal(backfill.duplicate_multiplicity_mismatches.length, sweep.sheets_duplicate_multiplicity_mismatch);
+    assert.equal(backfill.rows_surplus_identical_excluded, 1, 'the approval holds, so exactly one surplus is removed');
+    assert.equal(backfill.rows_surplus_identical_excluded, reconciliation.sheets_surplus_identical_excluded);
+    assert.equal(backfill.rows_surplus_identical_excluded, sweep.sheets_surplus_identical_excluded);
+    assert.equal(backfill.duplicate_multiplicity_mismatches.length, reconciliation.sheets_duplicate_multiplicity_mismatch);
+    assert.equal(backfill.duplicate_multiplicity_mismatches.length, sweep.sheets_duplicate_multiplicity_mismatch);
+  });
 });
 
 test('one resolver only: the disposition is decided in migrationLegacyIdentityMap and nowhere else', () => {
@@ -509,17 +721,29 @@ test('dry run: no Sheets write and no Supabase write, with the dispositions acti
     backfillRows: async () => { adapterCalls.push('FORBIDDEN:backfillRows'); throw new Error('dry run wrote to Supabase'); },
   };
 
-  const result = await runBackfill({
-    sheets: sheetsStub, adapter: adapterStub, concepts: ['session_effort'], includeCatalog: false, apply: false,
-  });
+  await withScopedApprovals([{
+    concept: 'session_effort',
+    tab: 'Effort',
+    row_fingerprint: legacyMap.rowFingerprint(copy),
+    disposition: 'EXCLUDE_SURPLUS_IDENTICAL',
+    expected_occurrences: 2,
+    surviving_copies: 1,
+    owner_ruling: 'TEST_RULING',
+    reason: 'synthetic fixture',
+  }], async () => {
+    const result = await runBackfill({
+      sheets: sheetsStub, adapter: adapterStub, concepts: ['session_effort'], includeCatalog: false, apply: false,
+    });
 
-  assert.equal(result.applied, false);
-  assert.equal(result.concepts[0].inserted, 0);
-  assert.equal(result.concepts[0].existing, 0);
-  assert.equal(adapterCalls.filter((c) => c.startsWith('FORBIDDEN')).length, 0, 'no Supabase write');
-  assert.equal(sheetsCalls.filter((c) => c.startsWith('FORBIDDEN')).length, 0, 'no Sheets write');
-  assert.deepEqual(adapterCalls, ['listConcept:session_effort'], 'the dry run READS the destination and nothing else');
-  // And it still answered the destination-aware question.
-  assert.equal(result.concepts[0].would_insert, 1);
-  assert.equal(result.concepts[0].already_present, 0);
+    assert.equal(result.applied, false);
+    assert.equal(result.concepts[0].rows_surplus_identical_excluded, 1, 'the disposition really is active');
+    assert.equal(result.concepts[0].inserted, 0);
+    assert.equal(result.concepts[0].existing, 0);
+    assert.equal(adapterCalls.filter((c) => c.startsWith('FORBIDDEN')).length, 0, 'no Supabase write');
+    assert.equal(sheetsCalls.filter((c) => c.startsWith('FORBIDDEN')).length, 0, 'no Sheets write');
+    assert.deepEqual(adapterCalls, ['listConcept:session_effort'], 'the dry run READS the destination and nothing else');
+    // And it still answered the destination-aware question.
+    assert.equal(result.concepts[0].would_insert, 1);
+    assert.equal(result.concepts[0].already_present, 0);
+  });
 });

@@ -22,8 +22,21 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const contract = require('../services/migrationRowContract');
+const legacyMap = require('../services/migrationLegacyIdentityMap');
 const { runBackfill } = require('../services/migrationBackfill');
 const { indexByIdentity } = require('../services/migrationSweep');
+
+// The frozen map's three exact-duplicate approvals name PRODUCTION Effort content,
+// which a synthetic fixture does not hold — and an approval that does not match the
+// tab fails closed (see test/migrationExactDuplicateDisposition.test.js). That rule
+// is correct and is never relaxed for a fixture; this scopes the unrelated approvals
+// out at the one shared resolver seam so a padding proof proves padding only.
+function withNoApprovals(run) {
+  const real = legacyMap.resolveSheetRows;
+  const map = { ...JSON.parse(require('fs').readFileSync(legacyMap.MAP_PATH, 'utf8')), duplicate_dispositions: [] };
+  legacyMap.resolveSheetRows = (concept, sheetRows, options = {}) => real(concept, sheetRows, { ...options, map });
+  return Promise.resolve(run()).finally(() => { legacyMap.resolveSheetRows = real; });
+}
 
 // ── The predicate itself ──────────────────────────────────────────────────────
 
@@ -151,16 +164,18 @@ test('backfill: the production Effort padding shape no longer escalates to the o
   const rows = [real, ...Array.from({ length: 24 }, () => blank.slice()), real.slice()];
   rows[rows.length - 1][1] = '20260612-PM-01';
 
-  const result = await runBackfill({
-    sheets: stubSheets({ Effort: rows }),
-    adapter: INERT_ADAPTER,
-    concepts: ['session_effort'],
-    includeCatalog: false,
+  await withNoApprovals(async () => {
+    const result = await runBackfill({
+      sheets: stubSheets({ Effort: rows }),
+      adapter: INERT_ADAPTER,
+      concepts: ['session_effort'],
+      includeCatalog: false,
+    });
+    const plan = result.concepts[0];
+    assert.equal(plan.sheet_rows_read, 26);
+    assert.equal(plan.rows_skipped_blank, 24);
+    assert.equal(plan.rows_skipped_no_identity, 0);
+    assert.equal(plan.rows_with_identity, 2);
+    assert.equal(plan.error, null);
   });
-  const plan = result.concepts[0];
-  assert.equal(plan.sheet_rows_read, 26);
-  assert.equal(plan.rows_skipped_blank, 24);
-  assert.equal(plan.rows_skipped_no_identity, 0);
-  assert.equal(plan.rows_with_identity, 2);
-  assert.equal(plan.error, null);
 });

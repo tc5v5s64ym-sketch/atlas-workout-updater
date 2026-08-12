@@ -263,19 +263,22 @@ function resolveSheetRows(concept, sheetRows, options = {}) {
   // than it claims is caught even when only one copy is left — the case that would
   // otherwise be silent, because a single remaining row raises no duplicate.
   //
-  // ZERO OCCURRENCES IS INAPPLICABLE, NOT A MISMATCH. Content absent from the tab
-  // removes nothing and makes nothing ambiguous, and the tab a run reads is not
-  // always the workbook the map was frozen against. Treating it as a failure would
-  // bind the resolver to one specific workbook and fail every run over any other
-  // data. The case it might seem to protect — an owner deleting BOTH copies — is
-  // already caught where it belongs: Sheets would then lack a row the destination
-  // holds, which is `missing_in_sheets`, and reconciliation already refuses that.
+  // ZERO OCCURRENCES IS A MISMATCH, exactly like 1 or 3.
+  // *Required review of `7240777`, P1.* An earlier form of this loop skipped
+  // `actual === 0` as "inapplicable". That was a hole in the pre-apply gate, and the
+  // reasoning that reconciliation would catch it was wrong in the only direction
+  // that matters: before an apply the destination is EMPTY, so `missing_in_sheets`
+  // cannot fire, there is no row to insert, and a stale or superseded owner ruling
+  // would sail through the exact gate meant to stop it. A frozen approval that
+  // describes content the tab no longer holds is not a harmless no-op — it is
+  // evidence that the map and the data have parted, and only the owner may say
+  // which one is right. Any actual multiplicity other than the approved one fails
+  // closed here.
   const active = new Set();
   for (const [key, entry] of index.duplicateDispositions) {
     if (entry.concept !== concept) continue;
     const actual = occurrences.get(key) || 0;
     if (actual === entry.expected_occurrences) { active.add(key); continue; }
-    if (actual === 0) continue;
     counts.duplicate_multiplicity_mismatch += 1;
     mismatches.push({
       concept,
