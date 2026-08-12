@@ -117,7 +117,7 @@ async function sweepRowConcept({ concept, sheets, adapter, openDivergences }) {
   // sweep beside a map-aware backfill would open a divergence for every translated
   // row. One resolver means one verdict per row for both consumers.
   const resolved = legacyMap.resolveSheetRows(concept, sheetRows);
-  const left = indexByIdentity(concept, resolved.rows, (row) => row);
+  const left = indexByIdentity(concept, [...resolved.rows, ...resolved.unmappedRows], (row) => row);
   const right = indexByIdentity(concept, supabaseRows, (row) => contract.rowFromSupabase(concept, row));
 
   result.sheets_rows = left.index.size;

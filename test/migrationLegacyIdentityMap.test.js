@@ -241,8 +241,32 @@ test('reconciliation: an unmapped legacy id blocks reconciled, whatever the coun
     adapter: INERT_ADAPTER,
   });
   assert.equal(result.sheets_unmapped_legacy, 1);
-  assert.equal(result.counts_equal, true, 'both sides are empty, so a naive check would pass');
-  assert.equal(result.reconciled, false, 'and it must still refuse to reconcile');
+  // It is INDEXED, not dropped: Sheets is the authority and holds a row Supabase
+  // lacks, so it surfaces as a real difference rather than vanishing into a counter.
+  assert.equal(result.sheets_rows, 1);
+  assert.equal(result.missing_in_supabase, 1);
+  assert.equal(result.reconciled, false, 'and it must refuse to reconcile');
+});
+
+test('sweep: an unmapped legacy row still opens a divergence rather than vanishing', async () => {
+  const opened = [];
+  const result = await sweepRowConcept({
+    concept: 'logged_sets',
+    sheets: stubSheets({ Log_Cleaned: [logRow('2029-01-01')] }),
+    adapter: {
+      listConcept: async () => [],
+      openDivergence: async (d) => { opened.push(d); return { created: true }; },
+    },
+    openDivergences: true,
+  });
+  assert.equal(result.missing_in_supabase, 1);
+  assert.equal(result.divergences_opened, 1);
+  assert.equal(opened[0].reason, 'missing_in_supabase');
+  // Keyed by the SOURCE identity, because that is what Sheets actually holds. The
+  // repair worker cannot close it, exactly as with a duplicate identity — only the
+  // owner can, by extending the frozen map.
+  assert.match(opened[0].identityKey, /^2029-01-01\|\|/);
+  assert.equal(result.complete, false);
 });
 
 test('sweep: an unmapped legacy id makes the concept incomplete', async () => {

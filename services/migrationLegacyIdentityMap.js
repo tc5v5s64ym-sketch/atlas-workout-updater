@@ -150,8 +150,12 @@ function indexMap(map) {
 //   translated       — a mapped legacy id, session_id rewritten to canonical
 //   unmapped_legacy  — a legacy id absent from the map; a FAILURE, never a skip
 //
-// `rows` carries only the rows eligible to migrate or compare, so the two consumers
-// iterate exactly the same set in exactly the same order.
+// `rows` carries the rows eligible to be WRITTEN. `unmappedRows` carries the rows
+// that must still be COMPARED — Sheets holds them and Supabase cannot, so the sweep
+// and the reconciliation index them and open the divergence, while the backfill
+// writes neither. Both consumers read the same verdicts; they differ only in which
+// of the two lists their job needs, and that difference is stated here rather than
+// re-decided in either of them.
 function resolveSheetRows(concept, sheetRows, options = {}) {
   const map = loadMap(options.map);
   const index = indexMap(map);
@@ -165,6 +169,13 @@ function resolveSheetRows(concept, sheetRows, options = {}) {
     unmapped_legacy: 0,
   };
   const rows = [];
+  // Unmapped rows, kept in their SOURCE form. They are never written, but the
+  // comparison lanes still index them: Sheets is the authority and holds a row
+  // Supabase lacks, so it must surface as a durable divergence rather than vanish
+  // into a counter. This is the treatment a duplicate identity already gets — the
+  // divergence is opened, the repair worker refuses it, and only the owner resolves
+  // it. Splitting them from `rows` is what stops the backfill writing one.
+  const unmappedRows = [];
   const unmapped = [];
 
   for (const cells of sheetRows || []) {
@@ -189,14 +200,19 @@ function resolveSheetRows(concept, sheetRows, options = {}) {
     }
 
     const entry = index.sessions.get(sessionId.trim().toLowerCase());
-    if (!entry) { counts.unmapped_legacy += 1; unmapped.push(sessionId.trim()); continue; }
+    if (!entry) {
+      counts.unmapped_legacy += 1;
+      unmapped.push(sessionId.trim());
+      unmappedRows.push(row);
+      continue;
+    }
     const canonical = entry.canonical_session_id;
     if (index.excludedSessions.has(String(canonical).trim().toUpperCase())) { counts.excluded_session += 1; continue; }
     counts.translated += 1;
     rows.push({ ...row, session_id: canonical });
   }
 
-  return { rows, counts, unmapped: [...new Set(unmapped)] };
+  return { rows, unmappedRows, counts, unmapped: [...new Set(unmapped)] };
 }
 
 module.exports = {

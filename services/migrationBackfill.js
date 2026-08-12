@@ -263,7 +263,7 @@ async function reconcileConcept({ concept, sheets, adapter }) {
   // The SAME resolver again — the reconciliation report is the third reader of the
   // frozen map and must not become a third opinion about it.
   const resolved = legacyMap.resolveSheetRows(concept, sheetRows);
-  const left = indexByIdentity(concept, resolved.rows, (row) => row);
+  const left = indexByIdentity(concept, [...resolved.rows, ...resolved.unmappedRows], (row) => row);
   const right = indexByIdentity(concept, supabaseRows, (row) => contract.rowFromSupabase(concept, row));
 
   result.sheets_rows = left.index.size;
