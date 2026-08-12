@@ -81,6 +81,13 @@ function emptyConceptPlan(concept) {
     // reported so a reader can see exactly how much of the run the bridge touched.
     rows_excluded_by_owner_ruling: 0,
     rows_translated_from_legacy: 0,
+    // Surplus copies of an owner-approved exact-duplicate fingerprint, removed at the
+    // approved multiplicity. Reported separately from `rows_excluded_by_owner_ruling`
+    // because an identical copy is not the same disposition as an excluded record.
+    rows_surplus_identical_excluded: 0,
+    // Approved exact-duplicate fingerprints whose actual multiplicity is not the
+    // frozen one. Non-empty means the run FAILS.
+    duplicate_multiplicity_mismatches: [],
     // Legacy ids the frozen map does not cover. Non-empty means the run FAILS.
     unmapped_legacy_session_ids: [],
     inserted: 0,
@@ -132,6 +139,8 @@ async function backfillConcept({ concept, sheets, adapter, apply, batchSize }) {
   plan.rows_skipped_no_identity = resolved.counts.no_identity;
   plan.rows_excluded_by_owner_ruling = resolved.counts.excluded_row + resolved.counts.excluded_session;
   plan.rows_translated_from_legacy = resolved.counts.translated;
+  plan.rows_surplus_identical_excluded = resolved.counts.surplus_identical;
+  plan.duplicate_multiplicity_mismatches = resolved.duplicateMismatches;
   // A LEGACY ID ABSENT FROM THE FROZEN MAP IS A FAILURE, NEVER A SKIP. It replaces
   // the old `unparseable_session` skip counter: every legacy id in the corpus now
   // either translates through an owner-approved entry or fails the run.
@@ -276,6 +285,8 @@ async function reconcileConcept({ concept, sheets, adapter }) {
   result.sheets_excluded_by_owner_ruling = resolved.counts.excluded_row + resolved.counts.excluded_session;
   result.sheets_translated_from_legacy = resolved.counts.translated;
   result.sheets_unmapped_legacy = resolved.counts.unmapped_legacy;
+  result.sheets_surplus_identical_excluded = resolved.counts.surplus_identical;
+  result.sheets_duplicate_multiplicity_mismatch = resolved.counts.duplicate_multiplicity_mismatch;
 
   for (const [key, row] of left.index) {
     const counterpart = right.index.get(key);
@@ -319,6 +330,11 @@ async function reconcileConcept({ concept, sheets, adapter }) {
     // row whose identity Supabase can never carry, so "every row matched by its
     // export identity key" is false however equal the counts look.
     result.sheets_unmapped_legacy === 0 &&
+    // AND A STALE EXACT-DUPLICATE APPROVAL BLOCKS IT TOO. The surplus copies were
+    // deliberately NOT removed, so the tab still holds rows the destination cannot
+    // represent; and even where the mismatch left no duplicate behind, reconciling
+    // would be certifying a tab against an owner ruling that no longer describes it.
+    result.sheets_duplicate_multiplicity_mismatch === 0 &&
     result.supabase_identityless === 0;
 
   return result;
@@ -437,6 +453,22 @@ async function runBackfill({
       `unmapped_legacy_session: ${plan.rows_skipped_unparseable_session} row(s) in ${plan.tab} carry a legacy ` +
       `session_id absent from the frozen legacy identity map (${plan.unmapped_legacy_session_ids.length} distinct ` +
       'id(s)) and were NOT written. OWNER ACTION REQUIRED; the map is frozen and the backfill never invents an entry'
+    );
+  }
+
+  // AN EXACT-DUPLICATE APPROVAL THAT NO LONGER DESCRIBES THE DATA IS A FAILURE, for
+  // the same reason again. The frozen entry says this content appears exactly N
+  // times; if it does not, the owner approved a different tab from the one being
+  // read, and the run may not claim completeness on a stale ruling.
+  const mismatched = plans.filter((p) => p.duplicate_multiplicity_mismatches.length > 0);
+  for (const plan of mismatched) {
+    const detail = plan.duplicate_multiplicity_mismatches
+      .map((m) => `${m.row_fingerprint} expected ${m.expected_occurrences}, found ${m.actual_occurrences}`)
+      .join('; ');
+    plan.error = plan.error || (
+      `duplicate_multiplicity_mismatch: ${plan.duplicate_multiplicity_mismatches.length} owner-approved exact-duplicate ` +
+      `disposition(s) in ${plan.tab} do not match the rows present (${detail}). No copy was removed. OWNER ACTION ` +
+      'REQUIRED; the map is frozen and the backfill never re-approves a multiplicity'
     );
   }
 

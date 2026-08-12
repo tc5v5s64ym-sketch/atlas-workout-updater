@@ -130,6 +130,8 @@ async function sweepRowConcept({ concept, sheets, adapter, openDivergences }) {
   result.sheets_blank_rows = resolved.counts.blank;
   result.sheets_excluded_by_owner_ruling = resolved.counts.excluded_row + resolved.counts.excluded_session;
   result.sheets_translated_from_legacy = resolved.counts.translated;
+  result.sheets_surplus_identical_excluded = resolved.counts.surplus_identical;
+  result.sheets_duplicate_multiplicity_mismatch = resolved.counts.duplicate_multiplicity_mismatch;
   // A legacy id the frozen map does not cover makes the concept INCOMPLETE, exactly
   // as an identityless row does. The sweep may not reconcile a tab it cannot read.
   result.sheets_unmapped_legacy = resolved.counts.unmapped_legacy;
@@ -252,6 +254,16 @@ async function sweepRowConcept({ concept, sheets, adapter, openDivergences }) {
       `sheets_unmapped_legacy: ${resolved.counts.unmapped_legacy} row(s) carry a legacy session_id absent from the ` +
       `frozen legacy identity map (${resolved.unmapped.length} distinct id(s)). OWNER ACTION REQUIRED; the map is ` +
       'frozen and no worker may invent an entry'
+    );
+  }
+  // AND THE SAME FOR A STALE EXACT-DUPLICATE APPROVAL. The frozen entry claims a
+  // multiplicity the tab does not have, so no copy was removed and the sweep may not
+  // certify a tab against a ruling that no longer describes it.
+  if (resolved.counts.duplicate_multiplicity_mismatch > 0) {
+    problems.push(
+      `duplicate_multiplicity_mismatch: ${resolved.counts.duplicate_multiplicity_mismatch} owner-approved ` +
+      'exact-duplicate disposition(s) do not match the rows present, so no surplus copy was removed. ' +
+      'OWNER ACTION REQUIRED; the map is frozen and no worker may re-approve a multiplicity'
     );
   }
   if (right.identityless > 0) {

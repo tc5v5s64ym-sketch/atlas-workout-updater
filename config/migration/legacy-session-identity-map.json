@@ -20,6 +20,8 @@
     "CARD_5": "keep the main-block Effort row; exclude its duplicate.",
     "CARD_6": "exclude the 2020-06-28 canonical Effort record as a test/template artefact.",
     "CARD_7": "accept both malformed-date Effort rows; effort_date comes from the proven session identity.",
+    "CARD_8": "preserve the genuine 20260520-AM-01 Back Squat set 1 workout record; exclude the conflicting TEST-LIFT-CODE-001 fragment from migration only. Google Sheets is not modified.",
+    "CARD_9": "each content-identical Effort pair preserves exactly one authoritative record in migration and excludes only the surplus identical copy. Two occurrences expected, one survives.",
     "PRIOR_RULING_1046_1054": "exclude the two non-authoritative malformed Log_Cleaned fragments."
   },
   "sessions": [
@@ -3041,6 +3043,50 @@
       "owner_ruling": "CARD_5",
       "reason": "duplicate export identity: the surviving row is the one in the main data block whose duration matches the HH:MM:SS convention used by every other canonical Effort row",
       "observed_sheet_row_at_freeze": 1018
+    },
+    {
+      "concept": "logged_sets",
+      "tab": "Log_Cleaned",
+      "row_fingerprint": "772f946a0f8a3e12",
+      "disposition": "EXCLUDE",
+      "owner_ruling": "CARD_8",
+      "reason": "conflicting duplicate export identity 20260520-AM-01||back squat||1: this is the one-row TEST-LIFT-CODE-001 fragment folded in by CARD_3, and it contradicts the genuine row of the 20-row session on reps, rir and notes. The genuine workout record survives. Its fingerprint is unique, so this exclusion removes exactly one row",
+      "observed_sheet_row_at_freeze": 1341
+    }
+  ],
+  "duplicate_dispositions": [
+    {
+      "concept": "session_effort",
+      "tab": "Effort",
+      "row_fingerprint": "89217f573da41354",
+      "disposition": "EXCLUDE_SURPLUS_IDENTICAL",
+      "expected_occurrences": 2,
+      "surviving_copies": 1,
+      "owner_ruling": "CARD_9",
+      "reason": "export identity 20251122-PM-01 recorded twice, byte-identical and equal under the row contract. One authoritative copy survives migration",
+      "observed_sheet_rows_at_freeze": [26, 27]
+    },
+    {
+      "concept": "session_effort",
+      "tab": "Effort",
+      "row_fingerprint": "8f9cd8877cacdf97",
+      "disposition": "EXCLUDE_SURPLUS_IDENTICAL",
+      "expected_occurrences": 2,
+      "surviving_copies": 1,
+      "owner_ruling": "CARD_9",
+      "reason": "export identity 20260520-AM-01 recorded twice, byte-identical and equal under the row contract. One authoritative copy survives migration",
+      "observed_sheet_rows_at_freeze": [77, 1014]
+    },
+    {
+      "concept": "session_effort",
+      "tab": "Effort",
+      "row_fingerprint": "3d8465039d116348",
+      "disposition": "EXCLUDE_SURPLUS_IDENTICAL",
+      "expected_occurrences": 2,
+      "surviving_copies": 1,
+      "owner_ruling": "CARD_9",
+      "reason": "export identity 20260525-PM-01 recorded twice, byte-identical and equal under the row contract. One authoritative copy survives migration",
+      "observed_sheet_rows_at_freeze": [78, 1015]
     }
   ]
 }

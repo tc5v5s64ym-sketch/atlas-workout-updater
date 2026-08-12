@@ -39,6 +39,12 @@ const contract = require('./migrationRowContract');
 const MAP_PATH = path.join(__dirname, '..', 'config', 'migration', 'legacy-session-identity-map.json');
 
 const DISPOSITIONS = new Set(['MAP', 'MERGE_INTO_EXISTING']);
+// The ONE exact-duplicate disposition. A row-level EXCLUDE is keyed by CONTENT, so
+// it cannot separate two rows whose content is identical — it removes both, turning
+// a duplicate into a missing record. This disposition is the smallest extension that
+// closes that gap INSIDE the existing fingerprint authority: it does not name a row,
+// it declares the multiplicity the owner approved.
+const DUPLICATE_DISPOSITIONS = new Set(['EXCLUDE_SURPLUS_IDENTICAL']);
 const PROVENANCE = new Set([
   'source_derived_embedded_in_id',
   'source_derived_carried_by_id',
@@ -111,6 +117,56 @@ function validate(map) {
     if (!String(entry.owner_ruling ?? '').trim()) problems.push(`excluded row ${entry.row_fingerprint}: no owner_ruling recorded`);
   }
 
+  // ── The exact-duplicate dispositions ────────────────────────────────────────
+  //
+  // Every field is REQUIRED and every bound is checked here, because this is the one
+  // disposition that lets a row be dropped while an identical row survives. A silent
+  // "keep one of whatever you find" would be an arbitrary collapse; the owner must
+  // state how many identical copies were approved and how many survive, and the
+  // resolver refuses to act on any other multiplicity.
+  const excludedRowKeys = new Set(
+    ((map && map.excluded_rows) || []).map((entry) => `${entry.concept}|${entry.row_fingerprint}`)
+  );
+  const duplicateKeys = new Set();
+  for (const entry of (map && map.duplicate_dispositions) || []) {
+    const fingerprint = String(entry.row_fingerprint ?? '');
+    const where = fingerprint || '<blank row_fingerprint>';
+    if (!DUPLICATE_DISPOSITIONS.has(entry.disposition)) {
+      problems.push(`duplicate disposition ${where}: disposition must be EXCLUDE_SURPLUS_IDENTICAL`);
+    }
+    if (!/^[0-9a-f]{16}$/.test(fingerprint)) {
+      problems.push(`duplicate disposition: ${entry.row_fingerprint} is not a row fingerprint`);
+    }
+    if (!contract.CONCEPT_NAMES.includes(entry.concept)) {
+      problems.push(`duplicate disposition ${where}: unknown concept ${entry.concept}`);
+    }
+    if (!String(entry.owner_ruling ?? '').trim()) {
+      problems.push(`duplicate disposition ${where}: no owner_ruling recorded`);
+    }
+    const expected = entry.expected_occurrences;
+    const surviving = entry.surviving_copies;
+    // At least 2, or it is not a duplicate and the entry has no work to do.
+    if (!Number.isInteger(expected) || expected < 2) {
+      problems.push(`duplicate disposition ${where}: expected_occurrences must be an integer of at least 2`);
+    }
+    // At least 1, or this is a disguised full EXCLUDE — which already has its own
+    // disposition and its own owner ruling.
+    if (!Number.isInteger(surviving) || surviving < 1) {
+      problems.push(`duplicate disposition ${where}: surviving_copies must be an integer of at least 1`);
+    }
+    if (Number.isInteger(expected) && Number.isInteger(surviving) && surviving >= expected) {
+      problems.push(`duplicate disposition ${where}: surviving_copies must be fewer than expected_occurrences`);
+    }
+    const key = `${entry.concept}|${fingerprint}`;
+    if (duplicateKeys.has(key)) problems.push(`duplicate disposition ${where}: declared twice`);
+    duplicateKeys.add(key);
+    // One fingerprint, one authority. A content that is both excluded outright and
+    // partly kept has two frozen answers, and no reader could say which one wins.
+    if (excludedRowKeys.has(key)) {
+      problems.push(`duplicate disposition ${where}: the same fingerprint is also an outright EXCLUDE`);
+    }
+  }
+
   if (problems.length) {
     throw new Error(`legacy identity map is invalid — ${problems.length} problem(s): ${problems.join('; ')}`);
   }
@@ -135,7 +191,9 @@ function indexMap(map) {
   for (const entry of map.excluded_sessions || []) excludedSessions.set(String(entry.session_id).trim().toUpperCase(), entry);
   const excludedRows = new Map();
   for (const entry of map.excluded_rows || []) excludedRows.set(`${entry.concept}|${entry.row_fingerprint}`, entry);
-  return { sessions, excludedSessions, excludedRows };
+  const duplicateDispositions = new Map();
+  for (const entry of map.duplicate_dispositions || []) duplicateDispositions.set(`${entry.concept}|${entry.row_fingerprint}`, entry);
+  return { sessions, excludedSessions, excludedRows, duplicateDispositions };
 }
 
 // ── THE ONE RESOLVER ──────────────────────────────────────────────────────────
@@ -144,6 +202,9 @@ function indexMap(map) {
 //
 //   blank            — a padded empty array; not a row (PR #1285's predicate)
 //   excluded_row     — an explicit frozen row-level EXCLUDE
+//   surplus_identical— a copy beyond the owner-approved surviving count of an
+//                      EXCLUDE_SURPLUS_IDENTICAL fingerprint, at the approved
+//                      multiplicity; the approved copies continue normally
 //   no_identity      — a real row with an empty export identity; still a FAILURE
 //   excluded_session — the resolved canonical session carries a frozen EXCLUDE
 //   canonical        — already canonical; PASSES THROUGH UNTRANSLATED
@@ -162,6 +223,10 @@ function resolveSheetRows(concept, sheetRows, options = {}) {
   const counts = {
     blank: 0,
     excluded_row: 0,
+    surplus_identical: 0,
+    // Distinct approved fingerprints whose ACTUAL multiplicity in the tab is not the
+    // multiplicity the owner froze. A FAILURE, never a skip — see below.
+    duplicate_multiplicity_mismatch: 0,
     no_identity: 0,
     excluded_session: 0,
     canonical: 0,
@@ -178,11 +243,76 @@ function resolveSheetRows(concept, sheetRows, options = {}) {
   const unmappedRows = [];
   const unmapped = [];
 
+  // MULTIPLICITY IS COUNTED BEFORE ANY ROW IS DECIDED. An exact-duplicate
+  // disposition is a claim about how many identical copies the tab holds, and that
+  // claim can only be checked against the whole tab — not against the rows seen so
+  // far. Blank arrays are excluded because they are not rows (§ isBlankSheetRow).
+  const occurrences = new Map();
+  for (const cells of sheetRows || []) {
+    if (contract.isBlankSheetRow(cells)) continue;
+    const key = `${concept}|${rowFingerprint(cells)}`;
+    occurrences.set(key, (occurrences.get(key) || 0) + 1);
+  }
+  // Copies of each approved fingerprint kept so far, and the approvals that did not
+  // match the data. A fingerprint is only ever counted in one of the two.
+  const kept = new Map();
+  const mismatches = [];
+
+  // EVERY APPROVAL IS CHECKED AGAINST THE WHOLE TAB, not lazily as its rows appear.
+  // The check runs over the frozen entries so that an approval covering FEWER copies
+  // than it claims is caught even when only one copy is left — the case that would
+  // otherwise be silent, because a single remaining row raises no duplicate.
+  //
+  // ZERO OCCURRENCES IS INAPPLICABLE, NOT A MISMATCH. Content absent from the tab
+  // removes nothing and makes nothing ambiguous, and the tab a run reads is not
+  // always the workbook the map was frozen against. Treating it as a failure would
+  // bind the resolver to one specific workbook and fail every run over any other
+  // data. The case it might seem to protect — an owner deleting BOTH copies — is
+  // already caught where it belongs: Sheets would then lack a row the destination
+  // holds, which is `missing_in_sheets`, and reconciliation already refuses that.
+  const active = new Set();
+  for (const [key, entry] of index.duplicateDispositions) {
+    if (entry.concept !== concept) continue;
+    const actual = occurrences.get(key) || 0;
+    if (actual === entry.expected_occurrences) { active.add(key); continue; }
+    if (actual === 0) continue;
+    counts.duplicate_multiplicity_mismatch += 1;
+    mismatches.push({
+      concept,
+      row_fingerprint: entry.row_fingerprint,
+      owner_ruling: entry.owner_ruling,
+      expected_occurrences: entry.expected_occurrences,
+      actual_occurrences: actual,
+    });
+  }
+
   for (const cells of sheetRows || []) {
     if (contract.isBlankSheetRow(cells)) { counts.blank += 1; continue; }
 
     const fingerprintKey = `${concept}|${rowFingerprint(cells)}`;
     if (index.excludedRows.has(fingerprintKey)) { counts.excluded_row += 1; continue; }
+
+    // ── THE EXACT-DUPLICATE DISPOSITION, AND WHY IT FAILS CLOSED ──────────────
+    //
+    // The owner approved a specific multiplicity: this exact content appears
+    // `expected_occurrences` times and `surviving_copies` of them are authoritative.
+    // Only an approval whose multiplicity HOLDS is `active`; one that does not was
+    // already counted as a mismatch above and removes nothing here, so every copy is
+    // let through untouched and the duplicate guard still bites.
+    //
+    // Both halves are load-bearing. Letting the rows through alone would be silent
+    // when the actual count falls BELOW the approval (an owner deleted a copy in
+    // Sheets): there would then be no duplicate left to catch. Counting alone would
+    // not stop an approval covering fewer copies than exist. Together they make
+    // every deviation loud.
+    const disposition = index.duplicateDispositions.get(fingerprintKey);
+    if (disposition && active.has(fingerprintKey)) {
+      const ordinal = kept.get(fingerprintKey) || 0;
+      kept.set(fingerprintKey, ordinal + 1);
+      // The surviving copies fall through and are resolved exactly like any other
+      // row. Only the surplus is removed, and only at the approved multiplicity.
+      if (ordinal >= disposition.surviving_copies) { counts.surplus_identical += 1; continue; }
+    }
 
     const row = contract.rowFromSheet(concept, cells);
     if (contract.isIdentityless(contract.identityKey(concept, row))) { counts.no_identity += 1; continue; }
@@ -212,7 +342,7 @@ function resolveSheetRows(concept, sheetRows, options = {}) {
     rows.push({ ...row, session_id: canonical });
   }
 
-  return { rows, unmappedRows, counts, unmapped: [...new Set(unmapped)] };
+  return { rows, unmappedRows, counts, unmapped: [...new Set(unmapped)], duplicateMismatches: mismatches };
 }
 
 module.exports = {
