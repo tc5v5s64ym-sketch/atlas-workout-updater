@@ -145,6 +145,63 @@ test('the dry run writes NOTHING, and against an EMPTY destination every eligibl
   }
 });
 
+test('BITE: a proven legacy Effort date crosses the real Postgres DATE boundary', async () => {
+  tabs.Effort[0][0] = '20260801-AM';
+  const legacySheets = sheetsFixture(tabs);
+
+  const result = await backfill.runBackfill({
+    sheets: legacySheets, adapter, apply: true, concepts: ['session_effort'], includeCatalog: false,
+  });
+  assert.equal(result.complete, true, JSON.stringify(result.concepts));
+  assert.equal(result.concepts[0].inserted, 2);
+
+  await withOwner(async (client) => {
+    const stored = await client.query(
+      'SELECT effort_date::text AS effort_date FROM atlas.session_effort WHERE session_id = $1',
+      [SESSIONS[0]]
+    );
+    assert.equal(stored.rows[0].effort_date, '2026-08-01');
+  });
+});
+
+test('the production-shaped partial state dry-runs as existing successes plus missing concepts', async () => {
+  // The paused production apply has exactly these concept classes populated:
+  // logged sets and set recommendations landed; Effort and plan events did not.
+  await backfill.runBackfill({
+    sheets, adapter, apply: true,
+    concepts: ['logged_sets', 'session_plan_set_recommendations'], includeCatalog: false,
+  });
+  const before = await tableCounts();
+
+  const dry = await backfill.runBackfill({ sheets, adapter, apply: false, includeCatalog: false });
+  const byConcept = Object.fromEntries(dry.concepts.map((plan) => [plan.concept, plan]));
+
+  assert.deepEqual(
+    {
+      logged_sets: [byConcept.logged_sets.already_present, byConcept.logged_sets.would_insert],
+      session_effort: [byConcept.session_effort.already_present, byConcept.session_effort.would_insert],
+      session_plan_events: [byConcept.session_plan_events.already_present, byConcept.session_plan_events.would_insert],
+      session_plan_set_recommendations: [
+        byConcept.session_plan_set_recommendations.already_present,
+        byConcept.session_plan_set_recommendations.would_insert,
+      ],
+    },
+    {
+      logged_sets: [5, 0],
+      session_effort: [0, 2],
+      session_plan_events: [0, 2],
+      session_plan_set_recommendations: [2, 0],
+    }
+  );
+  assert.deepEqual(await tableCounts(), before, 'the destination-aware resume proof is read-only');
+
+  const existingOnly = await backfill.reconcile({
+    sheets, adapter, concepts: ['logged_sets', 'session_plan_set_recommendations'],
+  });
+  assert.equal(existingOnly.reconciled, true,
+    'already-present successes retain exact identity and content equality without rollback');
+});
+
 test('after a completed backfill the dry run reports would_insert 0 and already_present 11', async () => {
   await backfill.runBackfill({ sheets, adapter, apply: true });
   const before = await tableCounts();

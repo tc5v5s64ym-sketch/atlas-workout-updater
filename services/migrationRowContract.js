@@ -57,6 +57,25 @@ function normalizeDate(value) {
   if (iso) {
     return `${iso[1]}-${iso[2].padStart(2, '0')}-${iso[3].padStart(2, '0')}`;
   }
+  // The production Effort corpus contains two legacy session-stamped dates in
+  // YYYYMMDD-(AM|PM) form. The period is identity provenance, not part of a SQL
+  // DATE, so remove it only for this exact, observed shape. Validate the calendar
+  // components arithmetically: Date-string parsing would be locale-dependent and
+  // Date construction can normalise an impossible day into a different month.
+  const legacySessionDate = raw.match(/^(\d{4})(\d{2})(\d{2})-(AM|PM)$/);
+  if (legacySessionDate) {
+    const year = Number(legacySessionDate[1]);
+    const month = Number(legacySessionDate[2]);
+    const day = Number(legacySessionDate[3]);
+    const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+    const daysInMonth = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    if (month >= 1 && month <= 12 && day >= 1 && day <= daysInMonth[month - 1]) {
+      return `${legacySessionDate[1]}-${legacySessionDate[2]}-${legacySessionDate[3]}`;
+    }
+    // Preserve an invalid legacy-shaped value so the destination rejects it. A
+    // migration contract may fail closed; it may never roll a bad date forward.
+    return raw;
+  }
   // A Date instance can arrive from a driver whose DATE parser was not pinned.
   // Use the UTC face deliberately: Postgres hands a date back at UTC midnight, so
   // the local face would shift the day west of Greenwich.
