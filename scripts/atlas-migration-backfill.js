@@ -81,6 +81,12 @@ function printBackfill(result) {
           'Reported, never guessed at — the sweep opens a divergence for each.'
       );
     }
+    if (plan.rows_skipped_blank) {
+      console.log(
+        `    - ${plan.rows_skipped_blank} empty row(s) in ${plan.tab} were not rows at all: Sheets pads every ` +
+          'row above a stray one below the data block. Not history, not owner-actionable, never written.'
+      );
+    }
   }
   if (result.catalog) {
     console.log(
