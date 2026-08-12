@@ -175,13 +175,13 @@ test('§3.4 session_plan_events: the three owner-frozen vocabularies are CHECK c
   await withOwner(async (client) => {
     const sessionId = await seedSession(client);
     await expectRejected(client, PLAN_EVENT_INSERT,
-      ['k-bad-type', sessionId, '2026-08-08', 1, 'plan_rejected', 'item-1', 'planned', ''],
+      ['k-bad-type', sessionId, '2026-08-08', 'pv_12345678-abcd', 'plan_rejected', 'item-1', 'planned', ''],
       { sqlstate: SQLSTATE.CHECK_VIOLATION });
     await expectRejected(client, PLAN_EVENT_INSERT,
-      ['k-bad-outcome', sessionId, '2026-08-08', 1, 'item_outcome', 'item-1', 'partially_done', ''],
+      ['k-bad-outcome', sessionId, '2026-08-08', 'pv_12345678-abcd', 'item_outcome', 'item-1', 'partially_done', ''],
       { sqlstate: SQLSTATE.CHECK_VIOLATION });
     await expectRejected(client, PLAN_EVENT_INSERT,
-      ['k-bad-closeout', sessionId, '2026-08-08', 1, 'session_closeout', '', '', 'half_finished'],
+      ['k-bad-closeout', sessionId, '2026-08-08', 'pv_12345678-abcd', 'session_closeout', '', '', 'half_finished'],
       { sqlstate: SQLSTATE.CHECK_VIOLATION });
   });
 });
@@ -191,7 +191,7 @@ test('§3.4 session_plan_events: the empty string is a MEMBER of the outcome and
     const sessionId = await seedSession(client);
     // §4.7 rule 2: '' means "not applicable to this event type" and must be legal.
     await client.query(PLAN_EVENT_INSERT,
-      ['k-closeout', sessionId, '2026-08-08', 1, 'session_closeout', '', '', 'finalized']);
+      ['k-closeout', sessionId, '2026-08-08', 'pv_12345678-abcd', 'session_closeout', '', '', 'finalized']);
     const { rows } = await client.query(
       `SELECT outcome, plan_item_id FROM atlas.session_plan_events WHERE idempotency_key = 'k-closeout'`
     );
@@ -200,16 +200,21 @@ test('§3.4 session_plan_events: the empty string is a MEMBER of the outcome and
   });
 });
 
-test('§3.4 session_plan_events: plan_version must be at least 1, and the key is unique', async () => {
+// plan_version here is the OPAQUE `pv_…` identity token from Session_Plans, held
+// as text since 20260812000100_plan_event_version_text.sql (owner ruling
+// 2026-08-12). It must be PRESENT and is otherwise not the database's to judge.
+// The set-revision counter below is the integer one, and it is a different
+// dimension. The conversion itself is proven in test-pg/planEventVersionText.pgproof.js.
+test('§3.4 session_plan_events: plan_version must be present, and the key is unique', async () => {
   await withOwner(async (client) => {
     const sessionId = await seedSession(client);
     await expectRejected(client, PLAN_EVENT_INSERT,
-      ['k-v0', sessionId, '2026-08-08', 0, 'plan_accepted', 'item-1', 'planned', ''],
+      ['k-blank', sessionId, '2026-08-08', '', 'plan_accepted', 'item-1', 'planned', ''],
       { sqlstate: SQLSTATE.CHECK_VIOLATION });
     await client.query(PLAN_EVENT_INSERT,
-      ['k-dup', sessionId, '2026-08-08', 1, 'plan_accepted', 'item-1', 'planned', '']);
+      ['k-dup', sessionId, '2026-08-08', 'pv_12345678-abcd', 'plan_accepted', 'item-1', 'planned', '']);
     await expectRejected(client, PLAN_EVENT_INSERT,
-      ['k-dup', sessionId, '2026-08-08', 2, 'plan_accepted', 'item-2', 'planned', ''],
+      ['k-dup', sessionId, '2026-08-08', 'pv_87654321-dcba', 'plan_accepted', 'item-2', 'planned', ''],
       { sqlstate: SQLSTATE.UNIQUE_VIOLATION });
   });
 });

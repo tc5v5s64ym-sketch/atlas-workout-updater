@@ -597,6 +597,32 @@ Corrected as directed, as a **state-machine/authority fix rather than another re
 
 ---
 
+### OWNER RULING 2026-08-12 — the PLAN-EVENT version is an opaque TEXT token; the PLAN-SET version stays an INTEGER
+
+**This ruling is the owner authorization; it governs because it is recorded here.** Dale authorized the `S3` plan-event schema correction on 2026-08-12. Classification: **schema-contract defect** — the destination encoded the wrong representation for an existing authoritative concept. It is not an authority defect: `Session_Plans` remains the live authority, and this ruling moves no authority.
+
+**The facts it rests on.**
+
+- `Session_Plans.plan_version` is an **authoritative opaque textual identity token**. The client mints it and `routes/sessionPlans.js` validates it against `/^pv_.+/`.
+- Read-only production forensics found **55 eligible historical plan events carrying opaque `pv_…` values**.
+- Those values are **not derivable into historical integers without inventing data**.
+- `Session_Plan_Sets.plan_version` is a **different semantic dimension**: the integer set-revision counter, whose `plan_version + 1`, highest-version fold and insert ordering are arithmetic (`services/sessionPlanLedger.js`, `services/supabaseAdapter.js`). The two columns share a name and nothing else, and they are never equality-joined.
+
+**The ruling.**
+
+- `atlas.session_plan_events.plan_version` **must preserve the opaque source token as `text`**.
+- `atlas.session_plan_set_recommendations.plan_version` **remains `integer`**.
+- **No numeric translation policy is authorized** — no opaque-to-integer map, no ordinal sequence, no default `1`, no per-session, timestamp-derived or hash-derived numbering, no duplicate version field, and no runtime fallback. The wrong representation is replaced, not reconciled.
+- The applied history is **not rewritten**. `20260808000300_session_plans.sql` is applied to `Atlas Production` and stays as it is; the correction is **one new forward migration**, `20260812000100_plan_event_version_text.sql`.
+
+**Bounds, and they are part of the ruling.** It authorizes repository schema and migration work, the one forward migration, the migration row-contract correction, deterministic tests, the from-empty Postgres proof, the documentation corrections, and read-only production inspection and dry runs. It authorizes **no production DDL, no production data write, no `atlas:backfill -- --apply`, no modification of existing production rows, no Google Sheets write, no `S4`, no authority cutover, no Render or runtime credential change, no write-freeze activation, no Stage B progression, and no Phase 5.** **Applying the new migration to `Atlas Production` needs a separate explicit Dale authorization**, at the existing owner gate 1 (§8.5). Until that apply happens, the 55 plan events remain unmigratable in production, and no `S3` reconciliation or readiness claim may report otherwise.
+
+**What this ruling does not do.** It changes no counter and no phase. **Rehearsal (F-SB4): 0/5 · Stage A: 5/5 COMPLETE · Stage B: 0/5 OPEN.** Phase 5 stays unauthorized and `SESSION_PLAN_SETS_WRITE_ENABLED` stays `0`. It creates no roadmap, decision ledger, governance system or migration controller.
+
+**Where the mechanism is recorded.** [`docs/SUPABASE_HOT_PATH_MIGRATION.md`](SUPABASE_HOT_PATH_MIGRATION.md) §3.4 and §3.5 (the semantic split), §4.3 row 4; the migration file itself; and the proofs in `test/migrationRowContractPlanVersion.test.js` and `test-pg/planEventVersionText.pgproof.js`.
+
+---
+
 **STAGE B — WORKOUT 1 RERUN: MISS (2026-08-02). Streak stays 0/5.** Owner verdict: **failed**. Flight Recorder `FR-20260802003433-ekvc9w8r`, 00:34:33→00:39:54Z, on a single build (`0b3967d`, deployed 00:25:04Z) with **no deploy or restart inside the session window** — the first Stage B evidence free of the split-build contaminant.
 
 **All three F-SB1 fixes held in production.**
