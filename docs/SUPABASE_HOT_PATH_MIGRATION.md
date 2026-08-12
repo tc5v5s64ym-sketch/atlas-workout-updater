@@ -370,7 +370,7 @@ of 7.
 | `idempotency_key` | `text` | **PK**. The existing 16-hex sha256 prefix from `services/sessionPlanEvents.js`. Unchanged. Also the export identity key. |
 | `session_id` | `text` | `REFERENCES atlas.workout_sessions(session_id)`. |
 | `session_date` | `date` | |
-| `plan_version` | `integer` | `CHECK (plan_version >= 1)`. |
+| `plan_version` | `text` | The accepted plan's OPAQUE identity token, preserved exactly. `CHECK (btrim(plan_version) <> '')`. See the note below. |
 | `event_type` | `text` | `CHECK (event_type IN ('plan_accepted','item_outcome','session_closeout'))`. |
 | `plan_item_id` | `text` | Empty string on a `session_closeout` row, as today. |
 | `planned_order` | `integer` | |
@@ -381,6 +381,23 @@ of 7.
 | `closeout_status` | `text` | `CHECK (closeout_status IN ('finalized','abandoned',''))`. |
 | `recorded_at` | `timestamptz` | |
 
+- **`plan_version` is OPAQUE TEXT, and that is a corrected statement.** This table
+  originally declared it `integer CHECK (plan_version >= 1)`, in
+  `20260808000300_session_plans.sql`, which is applied to `Atlas Production`. The
+  declaration was wrong for the concept. `Session_Plans.plan_version` is the accepted
+  plan's identity token — a `pv_…` value the client mints and `routes/sessionPlans.js`
+  validates against `/^pv_.+/` — and production forensics found **55 eligible historical
+  plan events carrying such tokens**. No integer is derivable from one without inventing
+  data. Owner ruling 2026-08-12 authorised the correction, and
+  `20260812000100_plan_event_version_text.sql` is the forward migration that makes it:
+  the integer-only constraint is dropped, the column becomes `text` through an explicit
+  `USING plan_version::text` (so a replay database's historical integer rows become their
+  exact text, `1` → `'1'`), and the one invariant that carries forward is presence. The
+  database records no `pv_` prefix rule: it preserves the authoritative token and leaves
+  the token's shape to the application that owns it. **`atlas.session_plan_set_recommendations.plan_version`
+  is a DIFFERENT dimension and stays `integer` — see §3.5.** *Not yet applied to
+  `Atlas Production`: applying it is owner gate 1 (§8.5), outstanding at the time of
+  writing.*
 - **Unique (idempotency):** the primary key. The key is derived from
   `(event_type, session_id, plan_version, plan_item_id, outcome, performed_lift_code,
   closeout_status)` and never from the timestamp. The derivation does not change.
@@ -410,7 +427,7 @@ Replaces `Session_Plan_Sets`. Concept 5, and the seal half of concept 7.
 | `idempotency_key` | `text` | **PK**. The existing 16-hex sha256 prefix from `services/sessionPlanLedger.js`. Unchanged. Also the export identity key. |
 | `session_id` | `text` | `REFERENCES atlas.workout_sessions(session_id)`. |
 | `session_date` | `date` | |
-| `plan_version` | `integer` | `CHECK (plan_version >= 1)`. |
+| `plan_version` | `integer` | The set-revision counter. `CHECK (plan_version >= 1)`. See the note below. |
 | `plan_item_id` | `text` | |
 | `planned_lift_code` | `text` | |
 | `set_index` | `integer` | `CHECK (set_index >= 1)`. |
@@ -424,6 +441,15 @@ Replaces `Session_Plan_Sets`. Concept 5, and the seal half of concept 7.
 | `closeout_write_id` | `text` | Nullable. **The only mutable column in the migrated workout schema.** |
 | `recorded_at` | `timestamptz` | |
 
+- **`plan_version` here is an INTEGER, and it must stay one.** It is the set-revision
+  counter — 1 is the accepted plan, 2, 3, … are successive revisions — and the mechanism
+  around it is arithmetic: `plan_version + 1`, the highest-version fold, and the ordering
+  the adapter applies so a revision's `supersedes_key` resolves
+  (`services/sessionPlanLedger.js`, `services/supabaseAdapter.js`). The `CHECK
+  ((plan_version = 1) = (supersedes_key IS NULL))` below is arithmetic too. **It shares a
+  name with `atlas.session_plan_events.plan_version` (§3.4) and nothing else: that one is
+  an opaque text identity token.** The two columns are never equality-joined across the
+  two tabs; the authoritative join is by `plan_item_id`.
 - **Unique:** `(session_id, plan_item_id, set_index, plan_version)`.
 - **Unique, partial:** `(supersedes_key) WHERE supersedes_key IS NOT NULL`.
 - **Check:** `(plan_version = 1) = (supersedes_key IS NULL)`.
@@ -1417,7 +1443,7 @@ the Sheets reader only and is not needed against Supabase. Keep it while the rea
 | 1 | `idempotency_key` | `idempotency_key` | none | Becomes the PK. Derivation unchanged. |
 | 2 | `session_id` | `session_id` | text → `text` FK | |
 | 3 | `session_date` | `session_date` | text → `date` | |
-| 4 | `plan_version` | `plan_version` | text → `integer` | |
+| 4 | `plan_version` | `plan_version` | none | The opaque `pv_…` plan identity token, preserved as text. NOT the integer of §4.4 row 4. |
 | 5 | `event_type` | `event_type` | none, plus `CHECK` | Owner-frozen vocabulary. |
 | 6 | `plan_item_id` | `plan_item_id` | none | `''` on a closeout row. |
 | 7 | `planned_order` | `planned_order` | text → `integer` | Nullable. |

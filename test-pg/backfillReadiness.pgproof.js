@@ -57,11 +57,15 @@ const TABS = {
     ['2026-08-03', SESSIONS[1], '00:41:00', 330, 430, 142, 165, 'Home gym', ''],
     // SESSIONS[2] deliberately has NO Effort row — a real workbook has ragged tabs.
   ],
+  // plan_version is the OPAQUE `pv_…` token the client mints and
+  // routes/sessionPlans.js validates — the exact shape all 55 eligible production
+  // plan events carry. It is NOT the integer set-revision counter of the
+  // Session_Plan_Sets rows below; the two share a name and nothing else.
   Session_Plans: [
-    [`${SESSIONS[0]}|1|plan_accepted|item-1`, SESSIONS[0], '2026-08-01', 1, 'plan_accepted', 'item-1',
-      1, 'SQ01', 'squat', '', '', '', '2026-08-01T10:00:00.000Z'],
-    [`${SESSIONS[0]}|1|session_closeout|`, SESSIONS[0], '2026-08-01', 1, 'session_closeout', '',
-      '', '', '', '', '', 'finalized', '2026-08-01T11:00:00.000Z'],
+    [`${SESSIONS[0]}|pv-a|plan_accepted|item-1`, SESSIONS[0], '2026-08-01', 'pv_12345678-abcd',
+      'plan_accepted', 'item-1', 1, 'SQ01', 'squat', '', '', '', '2026-08-01T10:00:00.000Z'],
+    [`${SESSIONS[0]}|pv-a|session_closeout|`, SESSIONS[0], '2026-08-01', 'pv_12345678-abcd',
+      'session_closeout', '', '', '', '', '', '', 'finalized', '2026-08-01T11:00:00.000Z'],
   ],
   Session_Plan_Sets: [
     [`${SESSIONS[0]}|1|item-1|1`, SESSIONS[0], '2026-08-01', 1, 'item-1', 'SQ01', 1, 3, 225, 5, 2,
@@ -718,8 +722,8 @@ test('P7: a divergence the worker CANNOT fix stays OPEN — an unrepairable one 
   await withOwner((client) => client.query(
     `INSERT INTO atlas.session_plan_events
        (idempotency_key, session_id, session_date, plan_version, event_type, plan_item_id, outcome, closeout_status, recorded_at)
-     VALUES ($1, $2, '2026-08-01', 1, 'plan_accepted', 'item-orphan', '', '', now())`,
-    [`${SESSIONS[0]}|1|plan_accepted|item-orphan`, SESSIONS[0]]
+     VALUES ($1, $2, '2026-08-01', 'pv_12345678-abcd', 'plan_accepted', 'item-orphan', '', '', now())`,
+    [`${SESSIONS[0]}|pv-a|plan_accepted|item-orphan`, SESSIONS[0]]
   ));
 
   await runSweep({ sheets, adapter, openDivergences: true });

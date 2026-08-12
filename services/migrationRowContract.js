@@ -176,7 +176,18 @@ const CONCEPTS = {
       { column: 'idempotency_key', sheetColumn: 'idempotency_key', kind: TEXT },
       { column: 'session_id', sheetColumn: 'session_id', kind: TEXT },
       { column: 'session_date', sheetColumn: 'session_date', kind: DATE },
-      { column: 'plan_version', sheetColumn: 'plan_version', kind: INT },
+      // OPAQUE TEXT IDENTITY, NOT A COUNTER. `Session_Plans.plan_version` is the
+      // accepted plan's `pv_…` token (routes/sessionPlans.js requires /^pv_.+/),
+      // and every Sheets-side consumer treats it as a string: the reader folds on
+      // it (services/sessionPlanReader.js), the builders hash it
+      // (services/sessionPlanEvents.js). Canonicalising it as INT parsed `pv_ab12`
+      // to NaN and stored NULL — the token was destroyed on the way to Supabase,
+      // and BOTH sides compared as null, so the loss looked equal. Its own column
+      // is TEXT as of 20260812000100_plan_event_version_text.sql.
+      //
+      // The IDENTICALLY NAMED field in session_plan_set_recommendations below is a
+      // DIFFERENT dimension — the integer set-revision counter — and stays INT.
+      { column: 'plan_version', sheetColumn: 'plan_version', kind: TEXT },
       { column: 'event_type', sheetColumn: 'event_type', kind: TEXT },
       // '' on a session_closeout row, and the idempotency key is derived from it,
       // so it must not become NULL or the key would change.
@@ -201,6 +212,11 @@ const CONCEPTS = {
       { column: 'idempotency_key', sheetColumn: 'idempotency_key', kind: TEXT },
       { column: 'session_id', sheetColumn: 'session_id', kind: TEXT },
       { column: 'session_date', sheetColumn: 'session_date', kind: DATE },
+      // THE SET-REVISION COUNTER, and genuinely an integer: the ledger's revision
+      // mechanism is arithmetic (`plan_version + 1`, the max-version fold,
+      // services/sessionPlanLedger.js) and the adapter orders a batch by it so a
+      // revision's self-referencing key resolves. It shares a NAME with the plan
+      // event's opaque token above and nothing else; the two are never joined.
       { column: 'plan_version', sheetColumn: 'plan_version', kind: INT },
       { column: 'plan_item_id', sheetColumn: 'plan_item_id', kind: TEXT },
       { column: 'planned_lift_code', sheetColumn: 'planned_lift_code', kind: TEXT },
