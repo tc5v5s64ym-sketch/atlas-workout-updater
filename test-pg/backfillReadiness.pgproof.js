@@ -18,6 +18,11 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
+// The frozen map's exact-duplicate approvals name PRODUCTION content, which a
+// synthetic workbook cannot hold, and an unmatched approval fails closed. Scoped
+// out at the one shared resolver seam — never by relaxing the rule. See the module.
+require('./support/syntheticIdentityMap');
+
 const { withOwner, resetSchema } = require('./support/db');
 const adapter = require('../services/supabaseAdapter');
 const contract = require('../services/migrationRowContract');
