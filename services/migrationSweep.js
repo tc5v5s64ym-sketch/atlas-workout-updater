@@ -59,11 +59,23 @@ function emptyConceptResult(concept) {
 // '||'` misses `'||||'`, which is what an all-blank three-part logged_sets key
 // actually joins to, so such a row was indexed under a meaningless key. One shared
 // predicate on the row contract now decides it for every concept.
+// A PADDED EMPTY SHEETS ARRAY IS NOT A ROW. `values.get` returns every row above a
+// stray one below the data block as an all-blank array; those are the absence of a
+// row, not authoritative history, so they are counted as `blank` and never as
+// `identityless`. The predicate is the row contract's, shared with the backfill, so
+// the two consumers cannot disagree about which arrays are rows. It matches arrays
+// only, so the Supabase side — objects — is untouched. A row with even one
+// populated cell is still a row and still counts as identityless.
 function indexByIdentity(concept, rows, toCanonical) {
   const index = new Map();
   const duplicates = [];
   let identityless = 0;
+  let blank = 0;
   for (const raw of rows) {
+    if (contract.isBlankSheetRow(raw)) {
+      blank += 1;
+      continue;
+    }
     const row = toCanonical(raw);
     const key = contract.identityKey(concept, row);
     if (contract.isIdentityless(key)) {
@@ -76,7 +88,7 @@ function indexByIdentity(concept, rows, toCanonical) {
     }
     index.set(key, row);
   }
-  return { index, duplicates, identityless };
+  return { index, duplicates, identityless, blank };
 }
 
 async function sweepRowConcept({ concept, sheets, adapter, openDivergences }) {
@@ -107,6 +119,9 @@ async function sweepRowConcept({ concept, sheets, adapter, openDivergences }) {
   result.sheets_duplicate_identities = left.duplicates.length;
   result.sheets_identityless = left.identityless;
   result.supabase_identityless = right.identityless;
+  // Padding, reported for transparency. It is deliberately NOT a completeness
+  // input: an absent row cannot diverge.
+  result.sheets_blank_rows = left.blank;
 
   const toOpen = [];
 

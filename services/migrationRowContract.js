@@ -283,6 +283,32 @@ function isIdentityless(key) {
   return String(key).split('||').every((part) => part.trim() === '');
 }
 
+// ── IS THIS A ROW AT ALL? ──────────────────────────────────────────────────────
+//
+// A DIFFERENT QUESTION FROM `isIdentityless`, and the distinction is the whole
+// point. `isIdentityless` asks whether a row's export identity is empty; this asks
+// whether the SHEETS ROW ITSELF carries any cell at all.
+//
+// Google Sheets' `values.get` pads: a stray row far below the data block forces
+// every intervening row to be returned as an all-blank array. Those padded arrays
+// are not history, not authoritative, and not owner-actionable — they are the
+// absence of a row. Counting them as identityless authoritative rows made the
+// backfill escalate 924 empty Effort arrays to the owner and buried the two
+// genuinely identityless Log_Cleaned rows inside that number.
+//
+// ONE NON-BLANK CELL IS ENOUGH TO DISQUALIFY. A row carrying a single populated
+// cell is a real row with no usable identity, and it MUST keep failing the
+// migration. Widening this predicate to "looks mostly empty" would re-create the
+// silent-drop defect that `isIdentityless` was added to remove.
+//
+// SHEETS SIDE ONLY, by construction: it accepts the positional cell ARRAY that
+// `getSheetRows` returns. A Supabase row arrives as an object, is not an array,
+// and can therefore never be classified blank by this predicate.
+function isBlankSheetRow(cells) {
+  if (!Array.isArray(cells)) return false;
+  return cells.every((cell) => cell === undefined || cell === null || String(cell).trim() === '');
+}
+
 function sessionIdOf(concept, row) {
   return conceptSpec(concept).sessionIdOf(row || {});
 }
@@ -417,6 +443,7 @@ module.exports = {
   sheetCellsFromRow,
   identityKey,
   isIdentityless,
+  isBlankSheetRow,
   sessionIdOf,
   parseSessionId,
   compareRows,

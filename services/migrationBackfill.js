@@ -69,6 +69,12 @@ function emptyConceptPlan(concept) {
     rows_with_identity: 0,
     rows_skipped_no_identity: 0,
     rows_skipped_unparseable_session: 0,
+    // Padded all-blank arrays returned by `values.get` to reach a stray row below
+    // the data block. Reported separately BECAUSE they are not history: they are
+    // neither backfillable nor owner-actionable, and counting them as identityless
+    // authoritative rows escalated 924 empty Effort arrays while hiding the two
+    // genuinely identityless Log_Cleaned rows inside the same number.
+    rows_skipped_blank: 0,
     inserted: 0,
     existing: 0,
     // DRY-RUN ONLY, and `null` means NOT COMPUTED rather than zero. An apply run
@@ -120,6 +126,11 @@ async function backfillConcept({ concept, sheets, adapter, apply, batchSize }) {
 
   const rows = [];
   for (const cells of sheetRows) {
+    // A PADDED EMPTY ARRAY IS NOT A ROW, so it never reaches classifyRow. The
+    // predicate lives on the row contract and the sweep consumes the same one, so
+    // the two cannot disagree about which arrays are rows. A row with even one
+    // populated cell falls through to classifyRow and still fails as identityless.
+    if (contract.isBlankSheetRow(cells)) { plan.rows_skipped_blank += 1; continue; }
     const row = contract.rowFromSheet(concept, cells);
     const verdict = classifyRow(concept, row);
     if (verdict === 'no_identity') { plan.rows_skipped_no_identity += 1; continue; }
@@ -228,6 +239,7 @@ async function reconcileConcept({ concept, sheets, adapter }) {
     sheets_duplicate_identities: 0,
     sheets_identityless: 0,
     supabase_identityless: 0,
+    sheets_blank_rows: 0,
     field_differences: {},
     error: null,
   };
@@ -257,6 +269,7 @@ async function reconcileConcept({ concept, sheets, adapter }) {
   result.sheets_duplicate_identities = left.duplicates.length;
   result.sheets_identityless = left.identityless;
   result.supabase_identityless = right.identityless;
+  result.sheets_blank_rows = left.blank;
 
   for (const [key, row] of left.index) {
     const counterpart = right.index.get(key);
@@ -361,8 +374,12 @@ function conceptTotals(plans) {
       inserted: acc.inserted + p.inserted,
       existing: acc.existing + p.existing,
       skipped: acc.skipped + p.rows_skipped_no_identity + p.rows_skipped_unparseable_session,
+      // Kept OUT of `skipped`: a padded empty array was never a candidate row, so
+      // folding it into the skip count would restate the same overstatement the
+      // per-concept counter removes.
+      rows_skipped_blank: acc.rows_skipped_blank + p.rows_skipped_blank,
     }),
-    { sheet_rows_read: 0, rows_with_identity: 0, inserted: 0, existing: 0, skipped: 0 }
+    { sheet_rows_read: 0, rows_with_identity: 0, inserted: 0, existing: 0, skipped: 0, rows_skipped_blank: 0 }
   );
   return {
     ...numeric,
