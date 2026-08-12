@@ -1,0 +1,3046 @@
+{
+  "version": 1,
+  "frozen": true,
+  "owner_approved": true,
+  "owner_approved_on": "2026-08-12",
+  "generated_from_main": "17ab4647a7fab73768bf342f3c96e1d03f5cc588",
+  "purpose": "Temporary S3 migration bridge. Deleted at S4 after a successful production apply and a clean reconciliation.",
+  "provenance_vocabulary": {
+    "source_derived_embedded_in_id": "the legacy id string itself carries the date",
+    "source_derived_carried_by_id": "the legacy id string itself names the period",
+    "source_derived_row_date_column": "the row's own date column, where every row of that id agrees",
+    "cross_tab_structurally_derived": "the date carries exactly one Log-side and one Effort-side legacy id and exactly one of them names the period",
+    "OWNER_DECLARED": "owner-declared migration truth. NOT a recovered historical fact and never presented as source evidence"
+  },
+  "owner_rulings": {
+    "CARD_1": "slot 01 for all legacy sessions except where an approved exception dictates otherwise. OWNER-DECLARED.",
+    "CARD_2": "period PM for the sessions with no period evidence. OWNER-DECLARED migration metadata.",
+    "CARD_3": "the two one-row malformed Log ids fold into their same-date sessions.",
+    "CARD_4": "the 2026-06-12 PM legacy Log rows merge into the existing canonical 20260612-PM-01.",
+    "CARD_5": "keep the main-block Effort row; exclude its duplicate.",
+    "CARD_6": "exclude the 2020-06-28 canonical Effort record as a test/template artefact.",
+    "CARD_7": "accept both malformed-date Effort rows; effort_date comes from the proven session identity.",
+    "PRIOR_RULING_1046_1054": "exclude the two non-authoritative malformed Log_Cleaned fragments."
+  },
+  "sessions": [
+    {
+      "legacy_session_id": "2025-08-21",
+      "disposition": "MAP",
+      "canonical_session_id": "20250821-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "OWNER_DECLARED",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1+CARD_2",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 15,
+        "effort_rows": 1,
+        "derived_date": "2025-08-21",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": null,
+        "period_provenance": null
+      }
+    },
+    {
+      "legacy_session_id": "2025-08-28",
+      "disposition": "MAP",
+      "canonical_session_id": "20250828-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "OWNER_DECLARED",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1+CARD_2",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 14,
+        "effort_rows": 0,
+        "derived_date": "2025-08-28",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": null,
+        "period_provenance": null
+      }
+    },
+    {
+      "legacy_session_id": "2025-08-31",
+      "disposition": "MAP",
+      "canonical_session_id": "20250831-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "OWNER_DECLARED",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1+CARD_2",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 14,
+        "effort_rows": 1,
+        "derived_date": "2025-08-31",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": null,
+        "period_provenance": null
+      }
+    },
+    {
+      "legacy_session_id": "2025-09-02",
+      "disposition": "MAP",
+      "canonical_session_id": "20250902-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "OWNER_DECLARED",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1+CARD_2",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 14,
+        "effort_rows": 1,
+        "derived_date": "2025-09-02",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": null,
+        "period_provenance": null
+      }
+    },
+    {
+      "legacy_session_id": "2025-09-05",
+      "disposition": "MAP",
+      "canonical_session_id": "20250905-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "OWNER_DECLARED",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1+CARD_2",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 15,
+        "effort_rows": 1,
+        "derived_date": "2025-09-05",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": null,
+        "period_provenance": null
+      }
+    },
+    {
+      "legacy_session_id": "2025-09-09",
+      "disposition": "MAP",
+      "canonical_session_id": "20250909-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "OWNER_DECLARED",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1+CARD_2",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 15,
+        "effort_rows": 1,
+        "derived_date": "2025-09-09",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": null,
+        "period_provenance": null
+      }
+    },
+    {
+      "legacy_session_id": "2025-09-17",
+      "disposition": "MAP",
+      "canonical_session_id": "20250917-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "OWNER_DECLARED",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1+CARD_2",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 15,
+        "effort_rows": 1,
+        "derived_date": "2025-09-17",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": null,
+        "period_provenance": null
+      }
+    },
+    {
+      "legacy_session_id": "2025-09-20",
+      "disposition": "MAP",
+      "canonical_session_id": "20250920-AM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 13,
+        "effort_rows": 0,
+        "derived_date": "2025-09-20",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "AM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "2025-09-20-Am",
+      "disposition": "MAP",
+      "canonical_session_id": "20250920-AM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2025-09-20",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "AM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2025-09-22",
+      "disposition": "MAP",
+      "canonical_session_id": "20250922-AM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 15,
+        "effort_rows": 0,
+        "derived_date": "2025-09-22",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "AM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "2025-09-22-Am",
+      "disposition": "MAP",
+      "canonical_session_id": "20250922-AM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2025-09-22",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "AM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2025-10-01",
+      "disposition": "MAP",
+      "canonical_session_id": "20251001-AM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 15,
+        "effort_rows": 0,
+        "derived_date": "2025-10-01",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "AM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "2025-10-01-Am",
+      "disposition": "MAP",
+      "canonical_session_id": "20251001-AM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2025-10-01",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "AM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2025-10-04",
+      "disposition": "MAP",
+      "canonical_session_id": "20251004-AM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 16,
+        "effort_rows": 0,
+        "derived_date": "2025-10-04",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "AM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "2025-10-04-Am",
+      "disposition": "MAP",
+      "canonical_session_id": "20251004-AM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2025-10-04",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "AM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2025-10-06",
+      "disposition": "MAP",
+      "canonical_session_id": "20251006-AM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 16,
+        "effort_rows": 0,
+        "derived_date": "2025-10-06",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "AM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "2025-10-06-Am",
+      "disposition": "MAP",
+      "canonical_session_id": "20251006-AM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2025-10-06",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "AM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2025-10-11",
+      "disposition": "MAP",
+      "canonical_session_id": "20251011-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "OWNER_DECLARED",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1+CARD_2",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 17,
+        "effort_rows": 1,
+        "derived_date": "2025-10-11",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": null,
+        "period_provenance": null
+      }
+    },
+    {
+      "legacy_session_id": "2025-10-15",
+      "disposition": "MAP",
+      "canonical_session_id": "20251015-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "OWNER_DECLARED",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1+CARD_2",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 13,
+        "effort_rows": 1,
+        "derived_date": "2025-10-15",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": null,
+        "period_provenance": null
+      }
+    },
+    {
+      "legacy_session_id": "2025-10-17",
+      "disposition": "MAP",
+      "canonical_session_id": "20251017-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "OWNER_DECLARED",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1+CARD_2",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 12,
+        "effort_rows": 1,
+        "derived_date": "2025-10-17",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": null,
+        "period_provenance": null
+      }
+    },
+    {
+      "legacy_session_id": "2025-10-18",
+      "disposition": "MAP",
+      "canonical_session_id": "20251018-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "OWNER_DECLARED",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1+CARD_2",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 16,
+        "effort_rows": 0,
+        "derived_date": "2025-10-18",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": null,
+        "period_provenance": null
+      }
+    },
+    {
+      "legacy_session_id": "2025-10-20",
+      "disposition": "MAP",
+      "canonical_session_id": "20251020-AM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 16,
+        "effort_rows": 0,
+        "derived_date": "2025-10-20",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "AM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "2025-10-20-Am",
+      "disposition": "MAP",
+      "canonical_session_id": "20251020-AM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2025-10-20",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "AM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2025-10-22-Am",
+      "disposition": "MAP",
+      "canonical_session_id": "20251022-AM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2025-10-22",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "AM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2025-10-24",
+      "disposition": "MAP",
+      "canonical_session_id": "20251024-AM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 13,
+        "effort_rows": 0,
+        "derived_date": "2025-10-24",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "AM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "2025-10-24-Am",
+      "disposition": "MAP",
+      "canonical_session_id": "20251024-AM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2025-10-24",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "AM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2025-10-25",
+      "disposition": "MAP",
+      "canonical_session_id": "20251025-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "OWNER_DECLARED",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1+CARD_2",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 16,
+        "effort_rows": 1,
+        "derived_date": "2025-10-25",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": null,
+        "period_provenance": null
+      }
+    },
+    {
+      "legacy_session_id": "2025-10-29",
+      "disposition": "MAP",
+      "canonical_session_id": "20251029-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "OWNER_DECLARED",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1+CARD_2",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 16,
+        "effort_rows": 0,
+        "derived_date": "2025-10-29",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": null,
+        "period_provenance": null
+      }
+    },
+    {
+      "legacy_session_id": "2025-10-30",
+      "disposition": "MAP",
+      "canonical_session_id": "20251030-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "OWNER_DECLARED",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1+CARD_2",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 19,
+        "effort_rows": 0,
+        "derived_date": "2025-10-30",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": null,
+        "period_provenance": null
+      }
+    },
+    {
+      "legacy_session_id": "2025-10-31",
+      "disposition": "MAP",
+      "canonical_session_id": "20251031-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "OWNER_DECLARED",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1+CARD_2",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2025-10-31",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": null,
+        "period_provenance": null
+      }
+    },
+    {
+      "legacy_session_id": "2025-11-03",
+      "disposition": "MAP",
+      "canonical_session_id": "20251103-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "OWNER_DECLARED",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1+CARD_2",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 15,
+        "effort_rows": 1,
+        "derived_date": "2025-11-03",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": null,
+        "period_provenance": null
+      }
+    },
+    {
+      "legacy_session_id": "2025-11-05",
+      "disposition": "MAP",
+      "canonical_session_id": "20251105-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "OWNER_DECLARED",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1+CARD_2",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 15,
+        "effort_rows": 1,
+        "derived_date": "2025-11-05",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": null,
+        "period_provenance": null
+      }
+    },
+    {
+      "legacy_session_id": "2025-11-07",
+      "disposition": "MAP",
+      "canonical_session_id": "20251107-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "OWNER_DECLARED",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1+CARD_2",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 9,
+        "effort_rows": 1,
+        "derived_date": "2025-11-07",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": null,
+        "period_provenance": null
+      }
+    },
+    {
+      "legacy_session_id": "2025-11-08",
+      "disposition": "MAP",
+      "canonical_session_id": "20251108-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "OWNER_DECLARED",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1+CARD_2",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 19,
+        "effort_rows": 1,
+        "derived_date": "2025-11-08",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": null,
+        "period_provenance": null
+      }
+    },
+    {
+      "legacy_session_id": "2025-11-09",
+      "disposition": "MAP",
+      "canonical_session_id": "20251109-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "OWNER_DECLARED",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1+CARD_2",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 1,
+        "effort_rows": 1,
+        "derived_date": "2025-11-09",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": null,
+        "period_provenance": null
+      }
+    },
+    {
+      "legacy_session_id": "2025-11-12-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20251112-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2025-11-12",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2025-11-13",
+      "disposition": "MAP",
+      "canonical_session_id": "20251113-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "OWNER_DECLARED",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1+CARD_2",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 14,
+        "effort_rows": 0,
+        "derived_date": "2025-11-13",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": null,
+        "period_provenance": null
+      }
+    },
+    {
+      "legacy_session_id": "2025-11-19",
+      "disposition": "MAP",
+      "canonical_session_id": "20251119-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "OWNER_DECLARED",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1+CARD_2",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 18,
+        "effort_rows": 0,
+        "derived_date": "2025-11-19",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": null,
+        "period_provenance": null
+      }
+    },
+    {
+      "legacy_session_id": "2025-11-22",
+      "disposition": "MAP",
+      "canonical_session_id": "20251122-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 31,
+        "effort_rows": 0,
+        "derived_date": "2025-11-22",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "2025-11-22-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20251122-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 2,
+        "derived_date": "2025-11-22",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2025-11-26",
+      "disposition": "MAP",
+      "canonical_session_id": "20251126-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 18,
+        "effort_rows": 0,
+        "derived_date": "2025-11-26",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "2025-11-26-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20251126-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2025-11-26",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2025-11-29",
+      "disposition": "MAP",
+      "canonical_session_id": "20251129-AM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 15,
+        "effort_rows": 0,
+        "derived_date": "2025-11-29",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "AM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "2025-11-29-AM",
+      "disposition": "MAP",
+      "canonical_session_id": "20251129-AM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2025-11-29",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "AM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2025-12-03",
+      "disposition": "MAP",
+      "canonical_session_id": "20251203-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 19,
+        "effort_rows": 0,
+        "derived_date": "2025-12-03",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "2025-12-03-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20251203-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2025-12-03",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2025-12-12",
+      "disposition": "MAP",
+      "canonical_session_id": "20251212-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 21,
+        "effort_rows": 0,
+        "derived_date": "2025-12-12",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "2025-12-12-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20251212-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2025-12-12",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2025-12-13",
+      "disposition": "MAP",
+      "canonical_session_id": "20251213-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 16,
+        "effort_rows": 0,
+        "derived_date": "2025-12-13",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "2025-12-13-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20251213-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2025-12-13",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2025-12-15",
+      "disposition": "MAP",
+      "canonical_session_id": "20251215-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 22,
+        "effort_rows": 0,
+        "derived_date": "2025-12-15",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "2025-12-15-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20251215-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2025-12-15",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2025-12-16",
+      "disposition": "MAP",
+      "canonical_session_id": "20251216-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 20,
+        "effort_rows": 0,
+        "derived_date": "2025-12-16",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "2025-12-16-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20251216-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2025-12-16",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2025-12-17",
+      "disposition": "MAP",
+      "canonical_session_id": "20251217-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 20,
+        "effort_rows": 0,
+        "derived_date": "2025-12-17",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "2025-12-17-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20251217-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2025-12-17",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2025-12-19",
+      "disposition": "MAP",
+      "canonical_session_id": "20251219-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 22,
+        "effort_rows": 0,
+        "derived_date": "2025-12-19",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "2025-12-19-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20251219-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2025-12-19",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2025-12-20",
+      "disposition": "MAP",
+      "canonical_session_id": "20251220-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 18,
+        "effort_rows": 0,
+        "derived_date": "2025-12-20",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "2025-12-20-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20251220-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2025-12-20",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2025-12-21",
+      "disposition": "MAP",
+      "canonical_session_id": "20251221-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "OWNER_DECLARED",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1+CARD_2",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 17,
+        "effort_rows": 0,
+        "derived_date": "2025-12-21",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": null,
+        "period_provenance": null
+      }
+    },
+    {
+      "legacy_session_id": "2025-12-22",
+      "disposition": "MAP",
+      "canonical_session_id": "20251222-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 20,
+        "effort_rows": 0,
+        "derived_date": "2025-12-22",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "2025-12-22-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20251222-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2025-12-22",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2025-12-26",
+      "disposition": "MAP",
+      "canonical_session_id": "20251226-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 17,
+        "effort_rows": 0,
+        "derived_date": "2025-12-26",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "2025-12-26-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20251226-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2025-12-26",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2026-01-03",
+      "disposition": "MAP",
+      "canonical_session_id": "20260103-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 17,
+        "effort_rows": 0,
+        "derived_date": "2026-01-03",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "2026-01-03-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260103-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2026-01-03",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2026-01-04",
+      "disposition": "MAP",
+      "canonical_session_id": "20260104-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 14,
+        "effort_rows": 0,
+        "derived_date": "2026-01-04",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "2026-01-04-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260104-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2026-01-04",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2026-01-05",
+      "disposition": "MAP",
+      "canonical_session_id": "20260105-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 12,
+        "effort_rows": 0,
+        "derived_date": "2026-01-05",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "2026-01-05-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260105-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2026-01-05",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2026-01-23",
+      "disposition": "MAP",
+      "canonical_session_id": "20260123-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 14,
+        "effort_rows": 0,
+        "derived_date": "2026-01-23",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "2026-01-23-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260123-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2026-01-23",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2026-01-24",
+      "disposition": "MAP",
+      "canonical_session_id": "20260124-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 12,
+        "effort_rows": 0,
+        "derived_date": "2026-01-24",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "2026-01-24-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260124-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2026-01-24",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2026-01-28",
+      "disposition": "MAP",
+      "canonical_session_id": "20260128-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 13,
+        "effort_rows": 0,
+        "derived_date": "2026-01-28",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "2026-01-28-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260128-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2026-01-28",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2026-01-30",
+      "disposition": "MAP",
+      "canonical_session_id": "20260130-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 19,
+        "effort_rows": 0,
+        "derived_date": "2026-01-30",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "2026-01-30-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260130-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2026-01-30",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2026-01-31",
+      "disposition": "MAP",
+      "canonical_session_id": "20260131-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 17,
+        "effort_rows": 0,
+        "derived_date": "2026-01-31",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "2026-01-31-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260131-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2026-01-31",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2026-02-04",
+      "disposition": "MAP",
+      "canonical_session_id": "20260204-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 17,
+        "effort_rows": 0,
+        "derived_date": "2026-02-04",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "2026-02-04-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260204-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2026-02-04",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2026-02-15",
+      "disposition": "MAP",
+      "canonical_session_id": "20260215-AM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 14,
+        "effort_rows": 0,
+        "derived_date": "2026-02-15",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "AM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "2026-02-15-AM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260215-AM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2026-02-15",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "AM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2026-02-20",
+      "disposition": "MAP",
+      "canonical_session_id": "20260220-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 18,
+        "effort_rows": 0,
+        "derived_date": "2026-02-20",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "2026-02-20-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260220-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2026-02-20",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2026-02-23",
+      "disposition": "MAP",
+      "canonical_session_id": "20260223-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 18,
+        "effort_rows": 0,
+        "derived_date": "2026-02-23",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "2026-02-23-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260223-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2026-02-23",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2026-02-27",
+      "disposition": "MAP",
+      "canonical_session_id": "20260227-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 14,
+        "effort_rows": 0,
+        "derived_date": "2026-02-27",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "2026-02-27-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260227-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2026-02-27",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2026-02-28",
+      "disposition": "MAP",
+      "canonical_session_id": "20260228-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 20,
+        "effort_rows": 0,
+        "derived_date": "2026-02-28",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "2026-02-28-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260228-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2026-02-28",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2026-03-04",
+      "disposition": "MAP",
+      "canonical_session_id": "20260304-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 18,
+        "effort_rows": 0,
+        "derived_date": "2026-03-04",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "2026-03-04-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260304-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2026-03-04",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2026-03-06",
+      "disposition": "MAP",
+      "canonical_session_id": "20260306-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 21,
+        "effort_rows": 0,
+        "derived_date": "2026-03-06",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "2026-03-06-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260306-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2026-03-06",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2026-03-13",
+      "disposition": "MAP",
+      "canonical_session_id": "20260313-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 18,
+        "effort_rows": 0,
+        "derived_date": "2026-03-13",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "2026-03-13-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260313-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2026-03-13",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2026-03-15",
+      "disposition": "MAP",
+      "canonical_session_id": "20260315-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 18,
+        "effort_rows": 0,
+        "derived_date": "2026-03-15",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "2026-03-15-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260315-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2026-03-15",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2026-03-18 0:00:00",
+      "disposition": "MAP",
+      "canonical_session_id": "20260318-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_time",
+        "log_rows": 21,
+        "effort_rows": 0,
+        "derived_date": "2026-03-18",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "20260318-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260318-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "compact_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2026-03-18",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2026-03-19 0:00:00",
+      "disposition": "MAP",
+      "canonical_session_id": "20260319-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_time",
+        "log_rows": 19,
+        "effort_rows": 0,
+        "derived_date": "2026-03-19",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "20260319-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260319-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "compact_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2026-03-19",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2026-03-21 0:00:00",
+      "disposition": "MAP",
+      "canonical_session_id": "20260321-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "OWNER_DECLARED",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1+CARD_2",
+      "evidence": {
+        "legacy_form": "dashed_date_time",
+        "log_rows": 19,
+        "effort_rows": 0,
+        "derived_date": "2026-03-21",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": null,
+        "period_provenance": null
+      }
+    },
+    {
+      "legacy_session_id": "2026-03-27 0:00:00",
+      "disposition": "MAP",
+      "canonical_session_id": "20260327-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_time",
+        "log_rows": 22,
+        "effort_rows": 0,
+        "derived_date": "2026-03-27",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "20260327-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260327-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "compact_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2026-03-27",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2026-04-01 0:00:00",
+      "disposition": "MAP",
+      "canonical_session_id": "20260401-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_time",
+        "log_rows": 16,
+        "effort_rows": 0,
+        "derived_date": "2026-04-01",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "20260401-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260401-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "compact_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2026-04-01",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2026-04-02 0:00:00",
+      "disposition": "MAP",
+      "canonical_session_id": "20260402-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_time",
+        "log_rows": 20,
+        "effort_rows": 0,
+        "derived_date": "2026-04-02",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "20260402-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260402-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "compact_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2026-04-02",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2026-04-04 0:00:00",
+      "disposition": "MAP",
+      "canonical_session_id": "20260404-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_time",
+        "log_rows": 19,
+        "effort_rows": 0,
+        "derived_date": "2026-04-04",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "20260404-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260404-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "compact_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2026-04-04",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2026-04-10 0:00:00",
+      "disposition": "MAP",
+      "canonical_session_id": "20260410-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_time",
+        "log_rows": 15,
+        "effort_rows": 0,
+        "derived_date": "2026-04-10",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "20260410-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260410-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "compact_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2026-04-10",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2026-04-11 0:00:00",
+      "disposition": "MAP",
+      "canonical_session_id": "20260411-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "OWNER_DECLARED",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1+CARD_2",
+      "evidence": {
+        "legacy_form": "dashed_date_time",
+        "log_rows": 15,
+        "effort_rows": 0,
+        "derived_date": "2026-04-11",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": null,
+        "period_provenance": null
+      }
+    },
+    {
+      "legacy_session_id": "2026-04-12 0:00:00",
+      "disposition": "MAP",
+      "canonical_session_id": "20260412-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_time",
+        "log_rows": 16,
+        "effort_rows": 0,
+        "derived_date": "2026-04-12",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "20260412-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260412-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "compact_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2026-04-12",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2026-04-18 0:00:00",
+      "disposition": "MAP",
+      "canonical_session_id": "20260418-AM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_time",
+        "log_rows": 17,
+        "effort_rows": 0,
+        "derived_date": "2026-04-18",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "AM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "20260418-AM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260418-AM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "compact_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2026-04-18",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "AM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2026-04-19 0:00:00",
+      "disposition": "MAP",
+      "canonical_session_id": "20260419-AM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_time",
+        "log_rows": 11,
+        "effort_rows": 0,
+        "derived_date": "2026-04-19",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "AM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "20260419-AM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260419-AM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "compact_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2026-04-19",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "AM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2026-04-20 0:00:00",
+      "disposition": "MAP",
+      "canonical_session_id": "20260420-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "OWNER_DECLARED",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1+CARD_2",
+      "evidence": {
+        "legacy_form": "dashed_date_time",
+        "log_rows": 11,
+        "effort_rows": 1,
+        "derived_date": "2026-04-20",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": null,
+        "period_provenance": null
+      }
+    },
+    {
+      "legacy_session_id": "2026-04-23 0:00:00",
+      "disposition": "MAP",
+      "canonical_session_id": "20260423-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "OWNER_DECLARED",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1+CARD_2",
+      "evidence": {
+        "legacy_form": "dashed_date_time",
+        "log_rows": 15,
+        "effort_rows": 1,
+        "derived_date": "2026-04-23",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": null,
+        "period_provenance": null
+      }
+    },
+    {
+      "legacy_session_id": "2026-04-28 0:00:00",
+      "disposition": "MAP",
+      "canonical_session_id": "20260428-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_time",
+        "log_rows": 11,
+        "effort_rows": 0,
+        "derived_date": "2026-04-28",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "20260428-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260428-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "compact_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2026-04-28",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2026-05-01 0:00:00",
+      "disposition": "MAP",
+      "canonical_session_id": "20260501-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_time",
+        "log_rows": 19,
+        "effort_rows": 0,
+        "derived_date": "2026-05-01",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "20260501-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260501-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "compact_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2026-05-01",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2026-05-07 0:00:00",
+      "disposition": "MAP",
+      "canonical_session_id": "20260507-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_time",
+        "log_rows": 19,
+        "effort_rows": 0,
+        "derived_date": "2026-05-07",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "20260507-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260507-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "compact_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2026-05-07",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2026-05-13 0:00:00",
+      "disposition": "MAP",
+      "canonical_session_id": "20260513-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_time",
+        "log_rows": 20,
+        "effort_rows": 0,
+        "derived_date": "2026-05-13",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "20260513-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260513-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "compact_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2026-05-13",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2026-05-14 0:00:00",
+      "disposition": "MAP",
+      "canonical_session_id": "20260514-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_time",
+        "log_rows": 17,
+        "effort_rows": 0,
+        "derived_date": "2026-05-14",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "20260514-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260514-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "compact_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2026-05-14",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2026-05-15 0:00:00",
+      "disposition": "MAP",
+      "canonical_session_id": "20260515-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_time",
+        "log_rows": 18,
+        "effort_rows": 0,
+        "derived_date": "2026-05-15",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "20260515-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260515-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "compact_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2026-05-15",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2026-05-17 0:00:00",
+      "disposition": "MAP",
+      "canonical_session_id": "20260517-AM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "cross_tab_structurally_derived",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "dashed_date_time",
+        "log_rows": 22,
+        "effort_rows": 0,
+        "derived_date": "2026-05-17",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "AM",
+        "period_provenance": "cross_tab_structurally_derived"
+      }
+    },
+    {
+      "legacy_session_id": "20260517-AM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260517-AM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "compact_date_period",
+        "log_rows": 0,
+        "effort_rows": 1,
+        "derived_date": "2026-05-17",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "AM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "20260520-AM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260520-AM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "compact_date_period",
+        "log_rows": 20,
+        "effort_rows": 2,
+        "derived_date": "2026-05-20",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "AM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "TEST-LIFT-CODE-001",
+      "disposition": "MAP",
+      "canonical_session_id": "20260520-AM-01",
+      "provenance": {
+        "date": "source_derived_row_date_column",
+        "period": "OWNER_DECLARED",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_3",
+      "evidence": {
+        "legacy_form": "other",
+        "log_rows": 1,
+        "effort_rows": 0,
+        "derived_date": "2026-05-20",
+        "date_provenance": "source_derived_row_date_column",
+        "derived_period": null,
+        "period_provenance": null,
+        "folded_into_same_date_session": "20260520-AM"
+      }
+    },
+    {
+      "legacy_session_id": "20260525-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260525-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "compact_date_period",
+        "log_rows": 20,
+        "effort_rows": 2,
+        "derived_date": "2026-05-25",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "20260529-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260529-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "compact_date_period",
+        "log_rows": 19,
+        "effort_rows": 1,
+        "derived_date": "2026-05-29",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "Hanging Knee Raises",
+      "disposition": "MAP",
+      "canonical_session_id": "20260529-PM-01",
+      "provenance": {
+        "date": "source_derived_row_date_column",
+        "period": "OWNER_DECLARED",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_3",
+      "evidence": {
+        "legacy_form": "other",
+        "log_rows": 1,
+        "effort_rows": 0,
+        "derived_date": "2026-05-29",
+        "date_provenance": "source_derived_row_date_column",
+        "derived_period": null,
+        "period_provenance": null,
+        "folded_into_same_date_session": "20260529-PM"
+      }
+    },
+    {
+      "legacy_session_id": "20260531-AM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260531-AM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "compact_date_period",
+        "log_rows": 12,
+        "effort_rows": 1,
+        "derived_date": "2026-05-31",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "AM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "20260607-PM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260607-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "compact_date_period",
+        "log_rows": 23,
+        "effort_rows": 1,
+        "derived_date": "2026-06-07",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "20260609-AM",
+      "disposition": "MAP",
+      "canonical_session_id": "20260609-AM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1",
+      "evidence": {
+        "legacy_form": "compact_date_period",
+        "log_rows": 20,
+        "effort_rows": 1,
+        "derived_date": "2026-06-09",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "AM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "20260612-PM",
+      "disposition": "MERGE_INTO_EXISTING",
+      "canonical_session_id": "20260612-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "source_derived_carried_by_id",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_4",
+      "evidence": {
+        "legacy_form": "compact_date_period",
+        "log_rows": 14,
+        "effort_rows": 0,
+        "derived_date": "2026-06-12",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": "PM",
+        "period_provenance": "source_derived_carried_by_id"
+      }
+    },
+    {
+      "legacy_session_id": "2026-06-18",
+      "disposition": "MAP",
+      "canonical_session_id": "20260618-PM-01",
+      "provenance": {
+        "date": "source_derived_embedded_in_id",
+        "period": "OWNER_DECLARED",
+        "slot": "OWNER_DECLARED"
+      },
+      "owner_ruling": "CARD_1+CARD_2",
+      "evidence": {
+        "legacy_form": "dashed_date_only",
+        "log_rows": 17,
+        "effort_rows": 0,
+        "derived_date": "2026-06-18",
+        "date_provenance": "source_derived_embedded_in_id",
+        "derived_period": null,
+        "period_provenance": null
+      }
+    }
+  ],
+  "excluded_sessions": [
+    {
+      "session_id": "20200628-AM-01",
+      "disposition": "EXCLUDE",
+      "owner_ruling": "CARD_6",
+      "reason": "historical test/template artefact: canonical shape, five years before every other record, zero matching Log rows"
+    }
+  ],
+  "excluded_rows": [
+    {
+      "concept": "logged_sets",
+      "tab": "Log_Cleaned",
+      "row_fingerprint": "bbdcbda3bb7d8e11",
+      "disposition": "EXCLUDE",
+      "owner_ruling": "PRIOR_RULING_1046_1054",
+      "reason": "non-authoritative malformed fragment: no date, session_id, exercise, set_number, weight or reps; carries only a canonical_exercise/muscle_group pair present in no catalog record",
+      "observed_sheet_row_at_freeze": 1046
+    },
+    {
+      "concept": "logged_sets",
+      "tab": "Log_Cleaned",
+      "row_fingerprint": "bbdcbda3bb7d8e11",
+      "disposition": "EXCLUDE",
+      "owner_ruling": "PRIOR_RULING_1046_1054",
+      "reason": "non-authoritative malformed fragment: no date, session_id, exercise, set_number, weight or reps; carries only a canonical_exercise/muscle_group pair present in no catalog record",
+      "observed_sheet_row_at_freeze": 1054
+    },
+    {
+      "concept": "session_effort",
+      "tab": "Effort",
+      "row_fingerprint": "928c4b807fcc7532",
+      "disposition": "EXCLUDE",
+      "owner_ruling": "CARD_5",
+      "reason": "duplicate export identity: the surviving row is the one in the main data block whose duration matches the HH:MM:SS convention used by every other canonical Effort row",
+      "observed_sheet_row_at_freeze": 1018
+    }
+  ]
+}

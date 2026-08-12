@@ -74,11 +74,23 @@ function printBackfill(result) {
           'identity — so this run predicts what --apply does. The reconciliation refuses a tab in this state.'
       );
     }
-    if (plan.rows_skipped_no_identity || plan.rows_skipped_unparseable_session) {
+    if (plan.rows_skipped_no_identity) {
       console.log(
-        `    ! skipped ${plan.rows_skipped_no_identity} without an export identity, ` +
-          `${plan.rows_skipped_unparseable_session} with an unparseable session_id. ` +
-          'Reported, never guessed at — the sweep opens a divergence for each.'
+        `    ! ${plan.rows_skipped_no_identity} row(s) in ${plan.tab} have no export identity. ` +
+          'Reported, never guessed at.'
+      );
+    }
+    if (plan.rows_skipped_unparseable_session) {
+      console.log(
+        `    ! ${plan.rows_skipped_unparseable_session} row(s) in ${plan.tab} carry a legacy session_id the frozen ` +
+          `legacy identity map does not cover (${plan.unmapped_legacy_session_ids.length} distinct). The map is ` +
+          'frozen; no entry is invented and the run is not complete.'
+      );
+    }
+    if (plan.rows_translated_from_legacy || plan.rows_excluded_by_owner_ruling) {
+      console.log(
+        `    - ${plan.rows_translated_from_legacy} row(s) translated through the frozen legacy identity map, ` +
+          `${plan.rows_excluded_by_owner_ruling} removed by an owner ruling. Temporary migration bridge; deleted at S4.`
       );
     }
     if (plan.rows_skipped_blank) {

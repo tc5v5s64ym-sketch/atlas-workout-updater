@@ -27,6 +27,7 @@
 // INCOMPLETE and the run `complete: false`. A partial sweep is never a zero.
 
 const contract = require('./migrationRowContract');
+const legacyMap = require('./migrationLegacyIdentityMap');
 
 const DEFAULT_CONCEPTS = contract.CONCEPT_NAMES;
 
@@ -111,17 +112,27 @@ async function sweepRowConcept({ concept, sheets, adapter, openDivergences }) {
     return result;
   }
 
-  const left = indexByIdentity(concept, sheetRows, (cells) => contract.rowFromSheet(concept, cells));
+  // THE SAME RESOLVER THE BACKFILL USES, and this is not optional. Sheets holds the
+  // legacy session string while Supabase holds the canonical one, so a map-unaware
+  // sweep beside a map-aware backfill would open a divergence for every translated
+  // row. One resolver means one verdict per row for both consumers.
+  const resolved = legacyMap.resolveSheetRows(concept, sheetRows);
+  const left = indexByIdentity(concept, resolved.rows, (row) => row);
   const right = indexByIdentity(concept, supabaseRows, (row) => contract.rowFromSupabase(concept, row));
 
   result.sheets_rows = left.index.size;
   result.supabase_rows = right.index.size;
   result.sheets_duplicate_identities = left.duplicates.length;
-  result.sheets_identityless = left.identityless;
+  result.sheets_identityless = resolved.counts.no_identity;
   result.supabase_identityless = right.identityless;
   // Padding, reported for transparency. It is deliberately NOT a completeness
   // input: an absent row cannot diverge.
-  result.sheets_blank_rows = left.blank;
+  result.sheets_blank_rows = resolved.counts.blank;
+  result.sheets_excluded_by_owner_ruling = resolved.counts.excluded_row + resolved.counts.excluded_session;
+  result.sheets_translated_from_legacy = resolved.counts.translated;
+  // A legacy id the frozen map does not cover makes the concept INCOMPLETE, exactly
+  // as an identityless row does. The sweep may not reconcile a tab it cannot read.
+  result.sheets_unmapped_legacy = resolved.counts.unmapped_legacy;
 
   const toOpen = [];
 
@@ -226,10 +237,21 @@ async function sweepRowConcept({ concept, sheets, adapter, openDivergences }) {
       `sheets_duplicate_identities: ${left.duplicates.length} row(s) share an export identity, which Supabase cannot represent`
     );
   }
-  if (left.identityless > 0) {
+  if (resolved.counts.no_identity > 0) {
     problems.push(
-      `sheets_identityless: ${left.identityless} authoritative row(s) have NO export identity, so they cannot be ` +
+      `sheets_identityless: ${resolved.counts.no_identity} authoritative row(s) have NO export identity, so they cannot be ` +
       'reconciled, repaired, or recorded as a divergence. OWNER ACTION REQUIRED; no worker may invent an identity'
+    );
+  }
+  // AND THE SAME FOR AN UNMAPPED LEGACY ID. Its row carries an identity Supabase
+  // will never hold, because only the frozen map can translate it. Reconciling
+  // around it would compare a legacy key against a canonical one and report a
+  // divergence that no repair could ever close.
+  if (resolved.counts.unmapped_legacy > 0) {
+    problems.push(
+      `sheets_unmapped_legacy: ${resolved.counts.unmapped_legacy} row(s) carry a legacy session_id absent from the ` +
+      `frozen legacy identity map (${resolved.unmapped.length} distinct id(s)). OWNER ACTION REQUIRED; the map is ` +
+      'frozen and no worker may invent an entry'
     );
   }
   if (right.identityless > 0) {

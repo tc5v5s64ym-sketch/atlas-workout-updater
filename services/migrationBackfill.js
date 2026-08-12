@@ -47,6 +47,7 @@
 
 
 const contract = require('./migrationRowContract');
+const legacyMap = require('./migrationLegacyIdentityMap');
 const { indexByIdentity } = require('./migrationSweep');
 const catalogMirror = require('./exerciseCatalogMirror');
 
@@ -75,6 +76,13 @@ function emptyConceptPlan(concept) {
     // authoritative rows escalated 924 empty Effort arrays while hiding the two
     // genuinely identityless Log_Cleaned rows inside the same number.
     rows_skipped_blank: 0,
+    // Rows the owner's frozen rulings remove from migration scope, and rows whose
+    // legacy session id the frozen map translated to a canonical one. Both are
+    // reported so a reader can see exactly how much of the run the bridge touched.
+    rows_excluded_by_owner_ruling: 0,
+    rows_translated_from_legacy: 0,
+    // Legacy ids the frozen map does not cover. Non-empty means the run FAILS.
+    unmapped_legacy_session_ids: [],
     inserted: 0,
     existing: 0,
     // DRY-RUN ONLY, and `null` means NOT COMPUTED rather than zero. An apply run
@@ -92,24 +100,14 @@ function emptyConceptPlan(concept) {
   };
 }
 
-// A Sheets row is BACKFILLABLE only when it has an export identity AND, where the
-// concept has a session parent, a session_id the parent contract can parse.
+// WHAT DECIDES A ROW NOW LIVES IN ONE PLACE.
 //
-// A row that fails either is REPORTED AND SKIPPED, never guessed at. The sweep then
-// opens a divergence for it, which is the correct outcome: Sheets is the authority
-// and holds a row Supabase cannot represent, and only the owner can decide what a
-// malformed historical row means. Silently inventing a parent would put a
-// fabricated session into the destination.
-function classifyRow(concept, row) {
-  // ONE predicate for "has no identity", shared with the sweep (§ row contract).
-  // This used to test `identity === '||'`, which never matches: an all-blank
-  // three-part key joins to `'||||'`. Two near-miss guards in two modules were how
-  // an identityless authoritative row disappeared from both of them.
-  if (contract.isIdentityless(contract.identityKey(concept, row))) return 'no_identity';
-  const sessionId = contract.sessionIdOf(concept, row);
-  if (sessionId && !contract.parseSessionId(sessionId)) return 'unparseable_session';
-  return 'ok';
-}
+// `classifyRow` used to answer "is this row backfillable?" here, while the sweep
+// answered the same question through its own index. Both survived only because they
+// agreed by accident. `migrationLegacyIdentityMap.resolveSheetRows` is now the single
+// answer — blank, excluded, identityless, canonical, translated or unmapped — and both
+// consumers take its verdicts verbatim. A second classifier in this module would be
+// the exact authority defect the frozen map exists to close, so there is none.
 
 async function backfillConcept({ concept, sheets, adapter, apply, batchSize }) {
   const plan = emptyConceptPlan(concept);
@@ -124,19 +122,21 @@ async function backfillConcept({ concept, sheets, adapter, apply, batchSize }) {
   }
   plan.sheet_rows_read = sheetRows.length;
 
-  const rows = [];
-  for (const cells of sheetRows) {
-    // A PADDED EMPTY ARRAY IS NOT A ROW, so it never reaches classifyRow. The
-    // predicate lives on the row contract and the sweep consumes the same one, so
-    // the two cannot disagree about which arrays are rows. A row with even one
-    // populated cell falls through to classifyRow and still fails as identityless.
-    if (contract.isBlankSheetRow(cells)) { plan.rows_skipped_blank += 1; continue; }
-    const row = contract.rowFromSheet(concept, cells);
-    const verdict = classifyRow(concept, row);
-    if (verdict === 'no_identity') { plan.rows_skipped_no_identity += 1; continue; }
-    if (verdict === 'unparseable_session') { plan.rows_skipped_unparseable_session += 1; continue; }
-    rows.push(row);
-  }
+  // ONE RESOLVER, SHARED WITH THE SWEEP. It applies the blank-row predicate, the
+  // frozen row-level exclusions, the identityless test, and the frozen legacy
+  // translation, in that order. The backfill does not re-decide any of them, so it
+  // cannot disagree with the sweep about a mapping, an exclusion, or a verdict.
+  const resolved = legacyMap.resolveSheetRows(concept, sheetRows);
+  const rows = resolved.rows;
+  plan.rows_skipped_blank = resolved.counts.blank;
+  plan.rows_skipped_no_identity = resolved.counts.no_identity;
+  plan.rows_excluded_by_owner_ruling = resolved.counts.excluded_row + resolved.counts.excluded_session;
+  plan.rows_translated_from_legacy = resolved.counts.translated;
+  // A LEGACY ID ABSENT FROM THE FROZEN MAP IS A FAILURE, NEVER A SKIP. It replaces
+  // the old `unparseable_session` skip counter: every legacy id in the corpus now
+  // either translates through an owner-approved entry or fails the run.
+  plan.rows_skipped_unparseable_session = resolved.counts.unmapped_legacy;
+  plan.unmapped_legacy_session_ids = resolved.unmapped;
   plan.rows_with_identity = rows.length;
 
   // A DRY RUN IS THE DEFAULT, and it READS THE DESTINATION. It is the only mode
@@ -260,16 +260,22 @@ async function reconcileConcept({ concept, sheets, adapter }) {
     return result;
   }
 
-  const left = indexByIdentity(concept, sheetRows, (cells) => contract.rowFromSheet(concept, cells));
+  // The SAME resolver again — the reconciliation report is the third reader of the
+  // frozen map and must not become a third opinion about it.
+  const resolved = legacyMap.resolveSheetRows(concept, sheetRows);
+  const left = indexByIdentity(concept, resolved.rows, (row) => row);
   const right = indexByIdentity(concept, supabaseRows, (row) => contract.rowFromSupabase(concept, row));
 
   result.sheets_rows = left.index.size;
   result.supabase_rows = right.index.size;
   result.counts_equal = left.index.size === right.index.size;
   result.sheets_duplicate_identities = left.duplicates.length;
-  result.sheets_identityless = left.identityless;
+  result.sheets_identityless = resolved.counts.no_identity;
   result.supabase_identityless = right.identityless;
-  result.sheets_blank_rows = left.blank;
+  result.sheets_blank_rows = resolved.counts.blank;
+  result.sheets_excluded_by_owner_ruling = resolved.counts.excluded_row + resolved.counts.excluded_session;
+  result.sheets_translated_from_legacy = resolved.counts.translated;
+  result.sheets_unmapped_legacy = resolved.counts.unmapped_legacy;
 
   for (const [key, row] of left.index) {
     const counterpart = right.index.get(key);
@@ -309,6 +315,10 @@ async function reconcileConcept({ concept, sheets, adapter }) {
     result.content_mismatch === 0 &&
     result.sheets_duplicate_identities === 0 &&
     result.sheets_identityless === 0 &&
+    // An UNMAPPED legacy id blocks it for the same reason again: the tab holds a
+    // row whose identity Supabase can never carry, so "every row matched by its
+    // export identity key" is false however equal the counts look.
+    result.sheets_unmapped_legacy === 0 &&
     result.supabase_identityless === 0;
 
   return result;
@@ -416,6 +426,20 @@ async function runBackfill({
     );
   }
 
+  // AN UNMAPPED LEGACY ID IS A FAILURE, NOT A SKIP COUNTER — the same rule, for the
+  // same reason. The frozen map is the owner's complete ruling over the legacy
+  // corpus, so a legacy id it does not cover is either new evidence or a stale map,
+  // and both mean the run may not claim completeness. It is never defaulted, never
+  // guessed at, and never silently dropped.
+  const unmapped = plans.filter((p) => p.rows_skipped_unparseable_session > 0);
+  for (const plan of unmapped) {
+    plan.error = plan.error || (
+      `unmapped_legacy_session: ${plan.rows_skipped_unparseable_session} row(s) in ${plan.tab} carry a legacy ` +
+      `session_id absent from the frozen legacy identity map (${plan.unmapped_legacy_session_ids.length} distinct ` +
+      'id(s)) and were NOT written. OWNER ACTION REQUIRED; the map is frozen and the backfill never invents an entry'
+    );
+  }
+
   const failed = plans.filter((p) => p.error !== null);
   return {
     applied: apply,
@@ -433,6 +457,5 @@ module.exports = {
   backfillCatalog,
   reconcile,
   reconcileConcept,
-  classifyRow,
   DEFAULT_BATCH_SIZE,
 };
