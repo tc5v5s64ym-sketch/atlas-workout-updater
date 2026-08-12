@@ -87,6 +87,20 @@ function printBackfill(result) {
           'frozen; no entry is invented and the run is not complete.'
       );
     }
+    if (plan.duplicate_multiplicity_mismatches.length) {
+      console.log(
+        `    ! ${plan.duplicate_multiplicity_mismatches.length} owner-approved exact-duplicate disposition(s) in ` +
+          `${plan.tab} do not match the rows present ` +
+          `(${plan.duplicate_multiplicity_mismatches.map((m) => `${m.row_fingerprint} expected ${m.expected_occurrences}, found ${m.actual_occurrences}`).join('; ')}). ` +
+          'No surplus copy was removed; the map is frozen and no multiplicity is re-approved.'
+      );
+    }
+    if (plan.rows_surplus_identical_excluded) {
+      console.log(
+        `    - ${plan.rows_surplus_identical_excluded} surplus identical copy/copies in ${plan.tab} removed at the ` +
+          'owner-approved multiplicity. One authoritative copy of each survives. Temporary migration bridge; deleted at S4.'
+      );
+    }
     if (plan.rows_translated_from_legacy || plan.rows_excluded_by_owner_ruling) {
       console.log(
         `    - ${plan.rows_translated_from_legacy} row(s) translated through the frozen legacy identity map, ` +

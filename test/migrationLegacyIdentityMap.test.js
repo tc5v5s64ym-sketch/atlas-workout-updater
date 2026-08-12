@@ -145,11 +145,15 @@ test('map: the two stray one-row Log ids fold into their same-date sessions', ()
 // ── 7. Log rows 1046 / 1054 are excluded ONLY by explicit frozen disposition ──
 
 test('map: the two Log fragments are excluded by explicit frozen row dispositions', () => {
-  const logExclusions = MAP.excluded_rows.filter((e) => e.concept === 'logged_sets');
+  // Scoped to the prior ruling: CARD_8 later added a third logged_sets exclusion for
+  // the conflicting test fragment, which is proven in
+  // test/migrationExactDuplicateDisposition.test.js.
+  const logExclusions = MAP.excluded_rows.filter(
+    (e) => e.concept === 'logged_sets' && e.owner_ruling === 'PRIOR_RULING_1046_1054'
+  );
   assert.equal(logExclusions.length, 2);
   for (const entry of logExclusions) {
     assert.equal(entry.disposition, 'EXCLUDE');
-    assert.equal(entry.owner_ruling, 'PRIOR_RULING_1046_1054');
     assert.match(entry.row_fingerprint, /^[0-9a-f]{16}$/);
   }
   assert.deepEqual(logExclusions.map((e) => e.observed_sheet_row_at_freeze).sort((a, b) => a - b), [1046, 1054]);

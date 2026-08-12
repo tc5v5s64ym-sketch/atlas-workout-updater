@@ -24,6 +24,10 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+// See test-pg/support/syntheticIdentityMap.js — the frozen exact-duplicate approvals
+// describe production content a synthetic workbook cannot hold, and they fail closed.
+require('./support/syntheticIdentityMap');
+
 const { withOwner, resetSchema } = require('./support/db');
 const adapter = require('../services/supabaseAdapter');
 const { runSweep } = require('../services/migrationSweep');

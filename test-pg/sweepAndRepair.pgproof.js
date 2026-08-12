@@ -11,6 +11,10 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+// See test-pg/support/syntheticIdentityMap.js — the frozen exact-duplicate approvals
+// describe production content a synthetic workbook cannot hold, and they fail closed.
+require('./support/syntheticIdentityMap');
+
 const { withOwner, resetSchema } = require('./support/db');
 const adapter = require('../services/supabaseAdapter');
 const contract = require('../services/migrationRowContract');
