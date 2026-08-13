@@ -391,11 +391,17 @@ test('P7c0: the COMPLETE writer set of atlas.migration_divergences is exactly th
   );
 });
 
-test('P7c0: the catalog sync and the export-state path do NOT write to migration_divergences', () => {
-  // Named individually because these are the two PERMANENT mechanisms an earlier
-  // version of the design routed through this table. Post-cutover mirror failures
-  // are mirror state and live in the export columns on atlas.workout_sessions.
+test('P7c0: the catalog path and the export-state path do NOT write to migration_divergences', () => {
+  // The catalog sync was one of the two PERMANENT mechanisms an earlier version of
+  // the design routed through this table. OWNER CORRECTION 2026-08-13 deleted the
+  // sync outright, so the strongest form of "it does not write here" is that
+  // neither it nor its script exists at all — asserted, so a reintroduction is
+  // caught rather than silently re-permitted.
   for (const rel of ['services/exerciseCatalogMirror.js', 'scripts/atlas-catalog-sync.js']) {
+    assert.equal(fs.existsSync(path.join(ROOT, rel)), false, `${rel} must stay deleted`);
+  }
+  // What replaced it must not reach the divergence table either.
+  for (const rel of ['services/exerciseCatalog.js', 'scripts/atlas-catalog-admin.js']) {
     const text = fs.readFileSync(path.join(ROOT, rel), 'utf8');
     assert.equal(/openDivergence|migration_divergences/.test(text), false, `${rel} must not touch the divergence table`);
   }

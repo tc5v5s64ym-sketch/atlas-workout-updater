@@ -968,7 +968,7 @@ test('the lines sheets.js emits parse, and carry the timestamp the peak is compu
 // and it fails if a range the prospective read path does not cover turns up on the
 // migrated Save path, because that would be a read S4 cannot delete.
 
-const { MIGRATED_TABS, MOVED_READS } = require('../services/migrationReadParity');
+const { MIGRATED_TABS, MOVED_READS, SUPABASE_OWNED_TABS } = require('../services/migrationReadParity');
 
 function tabOf(range) {
   return String(range).split('!')[0].trim();
@@ -1018,12 +1018,24 @@ test('S3/P4(a): the residual in-request Sheets reads on the migrated Save path a
   // Supabase implementation is a read S4 would have to keep on Sheets, which is
   // exactly the omission P1's "every read path the S4 cutover will move" exists to
   // catch — and it would be invisible in a total.
+  // A migrated-tab read is accounted for in ONE of two ways, and the two are not
+  // interchangeable:
+  //
+  //   - a declared MOVED READ, whose Supabase replacement §6.2 P5 proves equal; or
+  //   - a SUPABASE-OWNED tab, where S4 deletes the Sheets read because Supabase
+  //     owns the concept outright and there is no second store to compare against
+  //     (OWNER CORRECTION 2026-08-13 — Exercise_Catalog).
+  //
+  // Anything else is a read S4 could not delete, which is exactly the omission
+  // this assertion exists to catch.
   const coveredTabs = new Set(MOVED_READS.map((r) => r.tab));
+  const ownedTabs = new Set(SUPABASE_OWNED_TABS);
   for (const [range] of migrated) {
+    const tab = tabOf(range);
     assert.ok(
-      coveredTabs.has(tabOf(range)),
-      `${range} is read in-request from a migrated tab, but no declared moved read covers ` +
-      `${tabOf(range)} — S4 could not delete this read`
+      coveredTabs.has(tab) || ownedTabs.has(tab),
+      `${range} is read in-request from a migrated tab, but neither a declared moved read ` +
+      `nor a Supabase-owned concept accounts for ${tab} — S4 could not delete this read`
     );
   }
 });

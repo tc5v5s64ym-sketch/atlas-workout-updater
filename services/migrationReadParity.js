@@ -88,6 +88,23 @@ const MIGRATED_TABS = Object.freeze([
   'Log_Cleaned', 'Effort', 'Session_Plans', 'Session_Plan_Sets', 'Exercise_Catalog',
 ]);
 
+// ── TWO DIFFERENT LISTS, AND CONFLATING THEM WAS A DEFECT ────────────────────
+//
+// MIGRATED_TABS is "tabs whose in-request Sheets reads S4 must delete".
+// MOVED_READS is "reads whose Supabase replacement is proven equal by §6.2 P5".
+//
+// They used to be the same set, so it was safe to require every migrated-tab read
+// to be covered by a moved read. OWNER CORRECTION 2026-08-13 separated them:
+// Exercise_Catalog's Sheets read must still disappear (so it stays in
+// MIGRATED_TABS), but it is NOT proven by parity, because parity compares two
+// stores and the catalog now has one. Its Sheets read goes away because Supabase
+// OWNS the concept, not because a compared replacement matched.
+//
+// A tab listed here is accounted for by an authority change instead of by a parity
+// proof. It is deliberately a short, explicit list: an unaccounted migrated-tab
+// read must still fail, because that is a read S4 could not delete.
+const SUPABASE_OWNED_TABS = Object.freeze(['Exercise_Catalog']);
+
 // ── The two DERIVED projections, defined once and applied to BOTH sides ───────
 
 // sheets.js:890-913 builds `session_id||exercise||set_number`, each part trimmed
@@ -386,6 +403,7 @@ async function compareReadPaths({ sheets, adapter, now = Date.now() } = {}) {
 module.exports = {
   MOVED_READS,
   MIGRATED_TABS,
+  SUPABASE_OWNED_TABS,
   logCompositeKeys,
   effortSessionIds,
   conceptRows,

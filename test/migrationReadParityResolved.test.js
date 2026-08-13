@@ -555,78 +555,18 @@ test('a PARTIAL header match is data — every one of the four columns has to ag
   }
 });
 
-test('the READINESS comparison keeps a header-look-alike entry on both sides', () => {
-  // The end-to-end consequence: the row reaches the mirror, the hashes agree BECAUSE
-  // it is present on both sides, and its absence would be a silent catalog loss.
-  const rows = [...CATALOG_DATA, HEADER_LOOKALIKE_DATA_ROWS[0]];
-  const sheets = stubSheets({ tabs: {}, catalog: [CURRENT_CATALOG_HEADER, ...rows] });
-  const adapter = stubAdapter({ effective: {}, mirror: mirrorOf(rows) });
-
-  return withMap(synthMap(), async () => {
-    const result = await parity.compareReadPaths({ sheets, adapter, now: CATALOG_NOW });
-    assert.equal(readById(result, 'exercise_catalog').equal, true);
-
-    // A mirror that LOST the look-alike row must be caught, not averaged over.
-    const lossy = stubAdapter({ effective: {}, mirror: mirrorOf(CATALOG_DATA) });
-    const dropped = await parity.compareReadPaths({ sheets, adapter: lossy, now: CATALOG_NOW });
-    assert.equal(readById(dropped, 'exercise_catalog').equal, false,
-      'a catalog entry missing from the mirror is a difference, never a shared blind spot');
-  });
-});
-
-test('the prospective catalog read satisfies its LIVE consumer, which requires a header', async () => {
-  const adapter = stubAdapter({ mirror: mirrorOf(CATALOG_DATA) });
-  const rows = await parity.exerciseCatalogRows({ adapter, now: CATALOG_NOW });
-
-  // The counterexample: the payload alone breaks buildExerciseCatalogMap, because it
-  // indexes the catalog's columns by row 1.
-  assert.throws(() => buildExerciseCatalogMap(rows.slice(1)), /header must include/);
-
-  const map = buildExerciseCatalogMap(rows);
-  const entry = map.get('bench press');
-  assert.ok(entry, 'the live consumer must resolve an entry from the prospective read');
-  assert.equal(entry.muscle_group, 'Chest');
-  assert.equal(entry.lift_code, 'BP');
-  // The fourth positional slot still carries the fourth source column, unchanged.
-  assert.ok(map.get('bench'), 'the fourth column is still read as the variants list');
-});
-
-test('the catalog parity check agrees for BOTH header forms when the mirror matches', async () => {
-  for (const header of [CURRENT_CATALOG_HEADER, LEGACY_CATALOG_HEADER]) {
-    const sheets = stubSheets({ tabs: {}, catalog: [header, ...CATALOG_DATA] });
-    const adapter = stubAdapter({ effective: {}, mirror: mirrorOf(CATALOG_DATA) });
-    const result = await withMap(synthMap(), () => parity.compareReadPaths({ sheets, adapter, now: CATALOG_NOW }));
-    const read = readById(result, 'exercise_catalog');
-    assert.equal(read.equal, true, `header ${header[0]}: ${read.detail || read.error}`);
-  }
-});
-
-test('an owner catalog edit diverges until the mirror syncs, then converges', async () => {
-  const edited = [...CATALOG_DATA, ['Overhead Press', 'Shoulders', 'OHP', 'ohp, press']];
-
-  // The owner edited Sheets; the mirror still holds the previous generation.
-  const staleSheets = stubSheets({ tabs: {}, catalog: [CURRENT_CATALOG_HEADER, ...edited] });
-  const staleAdapter = stubAdapter({ effective: {}, mirror: mirrorOf(CATALOG_DATA) });
-  const before = await withMap(synthMap(), () => parity.compareReadPaths({ sheets: staleSheets, adapter: staleAdapter, now: CATALOG_NOW }));
-  assert.equal(readById(before, 'exercise_catalog').equal, false);
-  assert.equal(readById(before, 'exercise_catalog').detail, 'catalog content hashes differ');
-
-  // After the sync the mirror carries the edit, and the reads agree again.
-  const freshAdapter = stubAdapter({ effective: {}, mirror: mirrorOf(edited) });
-  const after = await withMap(synthMap(), () => parity.compareReadPaths({ sheets: staleSheets, adapter: freshAdapter, now: CATALOG_NOW }));
-  assert.equal(readById(after, 'exercise_catalog').equal, true);
-});
-
-test('a catalog mirror past its age bound FAILS closed rather than serving stale content', async () => {
-  const sheets = stubSheets({ tabs: {}, catalog: [CURRENT_CATALOG_HEADER, ...CATALOG_DATA] });
-  const adapter = stubAdapter({ effective: {}, mirror: mirrorOf(CATALOG_DATA) });
-  const wayLater = Date.parse(CATALOG_VERIFIED_AT) + (10 * 3600 * 1000);
-
-  const result = await withMap(synthMap(), () => parity.compareReadPaths({ sheets, adapter, now: wayLater }));
-  const read = readById(result, 'exercise_catalog');
-  assert.equal(read.equal, false);
-  assert.match(read.error, /catalog_mirror_stale/);
-});
+// FIVE CATALOG-PARITY TESTS WERE DELETED HERE, not adapted.
+//
+// They proved that the catalog read satisfied its live consumer, that both header
+// forms compared equal, that an owner edit in Google Sheets diverged until the
+// mirror synced, and that a mirror past CATALOG_MIRROR_MAX_AGE failed closed.
+//
+// Every one of them asserts a relationship between TWO stores. OWNER CORRECTION
+// 2026-08-13 left one: Supabase owns the catalog, it is no longer a moved read,
+// and compareReadPaths does not compare it. An owner edit is now the authority
+// changing, not drift to be detected.
+//
+// The surviving catalog properties are proven in test-pg/exerciseCatalog.pgproof.js.
 
 /* ══════════ 5. The claim this module is allowed to make ══════════ */
 

@@ -1,6 +1,9 @@
 'use strict';
 
-// §6.1 P6 — the sweep is complete on all five declared concepts.
+// §6.1 P6 — the sweep is complete on all four declared concepts. It was five; the
+//           exercise catalog stopped being one under OWNER CORRECTION 2026-08-13,
+//           because Supabase now owns it outright and it has nothing to diverge
+//           from.
 // §6.1 P7 — a divergence is not closable without closure_proof, by a lapsed
 //           lease, or by a timer.
 //
@@ -84,7 +87,7 @@ test('P6: a seeded OMISSION is detected as missing_in_supabase', async () => {
   // Only set 1 reached Supabase.
   await adapter.shadowSave({ sessionId: SESSION, logCells: [logCells(1)] });
 
-  const result = await runSweep({ sheets, adapter, includeCatalog: false });
+  const result = await runSweep({ sheets, adapter });
   assert.equal(result.complete, true);
 
   const open = await openDivergences();
@@ -101,7 +104,7 @@ test('P6: a seeded CONTENT MISMATCH is detected and classified, with values reda
   // Sheets — the authority — says 235.
   const sheets = fakeSheets(tabsWith({ Log_Cleaned: [logCells(1, '235')] }));
 
-  const result = await runSweep({ sheets, adapter, includeCatalog: false });
+  const result = await runSweep({ sheets, adapter });
   assert.equal(result.complete, true);
   assert.equal(result.totals.content_mismatch, 1);
 
@@ -120,7 +123,7 @@ test('P6: a seeded SUPABASE-ONLY ORPHAN is detected as missing_in_sheets', async
   await adapter.shadowSave({ sessionId: SESSION, logCells: [logCells(1)] });
   const sheets = fakeSheets(tabsWith({ Log_Cleaned: [] }));
 
-  const result = await runSweep({ sheets, adapter, includeCatalog: false });
+  const result = await runSweep({ sheets, adapter });
   assert.equal(result.totals.missing_in_sheets, 1);
   const [divergence] = await openDivergences();
   assert.equal(divergence.reason, 'missing_in_sheets');
@@ -132,7 +135,7 @@ test('P6: the plan spine and the set ledger are swept on the same terms', async 
   const ledgerRow = ['ls-1', SESSION, '2026-08-08', '1', 'item-1', 'SQ01', '1', '3', '225', '5', '2', 'accepted', '', 'reliable', '', now];
   const sheets = fakeSheets(tabsWith({ Session_Plans: [planRow], Session_Plan_Sets: [ledgerRow] }));
 
-  let result = await runSweep({ sheets, adapter, includeCatalog: false });
+  let result = await runSweep({ sheets, adapter });
   const open = await openDivergences();
   assert.equal(result.totals.missing_in_supabase, 2);
   assert.deepEqual(open.map((d) => d.concept).sort(), ['session_plan_events', 'session_plan_set_recommendations']);
@@ -147,38 +150,42 @@ test('P6: the plan spine and the set ledger are swept on the same terms', async 
   await withOwner(async (client) => {
     await client.query(`DELETE FROM atlas.migration_divergences`);
   });
-  result = await runSweep({ sheets, adapter, includeCatalog: false });
+  result = await runSweep({ sheets, adapter });
   assert.equal(result.divergences_found, 0);
 });
 
-test('P6: a CATALOG content mismatch opens an exercise_catalog divergence keyed by the content hash', async () => {
+test('the sweep does NOT sweep the exercise catalog — it has no second store to diverge from', async () => {
+  // This replaces "P6: a CATALOG content mismatch opens an exercise_catalog
+  // divergence". That gate existed because Google Sheets decided the catalog and
+  // Supabase held a projection that could drift.
+  //
+  // OWNER CORRECTION 2026-08-13 made Supabase the sole catalog authority. Sweeping
+  // it now would compare the authority against a tab that decides nothing, and
+  // every legitimate owner edit through `npm run atlas:catalog` would be reported
+  // as drift — turning routine maintenance into a divergence that blocks S4 (P15).
+  //
+  // The sweep runs against a Sheets catalog tab that deliberately disagrees with
+  // Supabase, and must open nothing.
   const sheets = fakeSheets(tabsWith());
-  // No verified generation exists yet, so the source hash cannot match.
-  let result = await runSweep({ sheets, adapter });
-  let open = await openDivergences();
-  const catalog = open.find((d) => d.concept === 'exercise_catalog');
-  assert.ok(catalog, 'the fifth declared concept is swept');
-  assert.equal(catalog.reason, 'content_mismatch');
-  assert.equal(
-    catalog.identity_key,
-    contract.catalogContentHash(contract.normalizeCatalogRows(CATALOG_ROWS)),
-    'the catalog concept is identified by the generation content hash, not an export key'
-  );
+  const result = await runSweep({ sheets, adapter });
+  const open = await openDivergences();
 
-  // Sync the mirror and the mismatch resolves at the source.
-  const { syncCatalog } = require('../services/exerciseCatalogMirror');
-  const sync = await syncCatalog({ sheets, adapter });
-  assert.equal(sync.ok, true);
-  await withOwner(async (client) => {
-    await client.query(`DELETE FROM atlas.migration_divergences`);
-  });
-  result = await runSweep({ sheets, adapter });
+  assert.equal(
+    open.find((d) => d.concept === 'exercise_catalog'),
+    undefined,
+    'a catalog divergence must be unrepresentable now that the catalog has one authority'
+  );
   assert.equal(result.totals.content_mismatch, 0);
+  assert.equal(
+    result.concepts.some((c) => c.concept === 'exercise_catalog'),
+    false,
+    'the catalog must not appear as a swept concept at all'
+  );
 });
 
 test('a sweep that could not read a concept reports INCOMPLETE — a partial sweep is never a zero', async () => {
   const sheets = fakeSheets(tabsWith({ Log_Cleaned: new Error('Sheets read quota exceeded') }));
-  const result = await runSweep({ sheets, adapter, includeCatalog: false });
+  const result = await runSweep({ sheets, adapter });
   assert.equal(result.complete, false);
   const logged = result.concepts.find((c) => c.concept === 'logged_sets');
   assert.equal(logged.complete, false);
@@ -187,9 +194,9 @@ test('a sweep that could not read a concept reports INCOMPLETE — a partial swe
 
 test('a repeated sweep does not multiply divergence rows for one identity', async () => {
   const sheets = fakeSheets(tabsWith({ Log_Cleaned: [logCells(1)] }));
-  await runSweep({ sheets, adapter, includeCatalog: false });
-  await runSweep({ sheets, adapter, includeCatalog: false });
-  await runSweep({ sheets, adapter, includeCatalog: false });
+  await runSweep({ sheets, adapter });
+  await runSweep({ sheets, adapter });
+  await runSweep({ sheets, adapter });
   const open = await openDivergences();
   assert.equal(open.filter((d) => d.concept === 'logged_sets').length, 1);
 });
@@ -199,7 +206,7 @@ test('a repeated sweep does not multiply divergence rows for one identity', asyn
 test('P7: repair closes an omission ONLY after a passing re-comparison, and records the proof', async () => {
   const sheets = fakeSheets(tabsWith({ Log_Cleaned: [logCells(1), logCells(2)], Effort: [EFFORT_CELLS] }));
   await adapter.shadowSave({ sessionId: SESSION, logCells: [logCells(1)] });
-  await runSweep({ sheets, adapter, includeCatalog: false });
+  await runSweep({ sheets, adapter });
 
   const repaired = await runRepair({ sheets, adapter });
   assert.equal(repaired.left_open, 0);
@@ -229,7 +236,7 @@ test('P7: a divergence whose repair did NOT converge stays OPEN', async () => {
   // Sheets copy vanishes between the sweep and the re-comparison.
   const live = tabsWith({ Log_Cleaned: [logCells(1)] });
   const sheets = fakeSheets(live);
-  await runSweep({ sheets, adapter, includeCatalog: false });
+  await runSweep({ sheets, adapter });
 
   // Now Sheets says 235 while the repair inserted 225 — the insert lands, the
   // re-comparison fails, and nothing may be closed.
@@ -245,7 +252,7 @@ test('P7: a divergence whose repair did NOT converge stays OPEN', async () => {
 
 test('P7: a divergence cannot be closed by a lapsed lease, and the claim token is what closes it', async () => {
   const sheets = fakeSheets(tabsWith({ Log_Cleaned: [logCells(1)] }));
-  await runSweep({ sheets, adapter, includeCatalog: false });
+  await runSweep({ sheets, adapter });
   const [divergence] = await adapter.listOpenDivergences(10);
 
   const claimA = await adapter.claimDivergence(divergence.id, 120);
@@ -275,7 +282,7 @@ test('P7: a divergence cannot be closed by a lapsed lease, and the claim token i
 
 test('P7: no amount of ageing closes a divergence — there is no timer path at all', async () => {
   const sheets = fakeSheets(tabsWith({ Log_Cleaned: [logCells(1)] }));
-  await runSweep({ sheets, adapter, includeCatalog: false });
+  await runSweep({ sheets, adapter });
   await withOwner(async (client) => {
     // Age it well past any plausible window and lapse every lease.
     await client.query(
@@ -294,7 +301,7 @@ test('an orphan the worker holds no grant to remove stays OPEN as owner action r
   // unrepairable by any declared principal.
   await adapter.shadowSave({ sessionId: SESSION, logCells: [logCells(1)], effortCells: EFFORT_CELLS });
   const sheets = fakeSheets(tabsWith({ Log_Cleaned: [logCells(1)], Effort: [] }));
-  await runSweep({ sheets, adapter, includeCatalog: false });
+  await runSweep({ sheets, adapter });
 
   const repaired = await runRepair({ sheets, adapter });
   assert.equal(repaired.closed, 0);
@@ -307,7 +314,7 @@ test('an orphan the worker holds no grant to remove stays OPEN as owner action r
 test('a logged_sets orphan IS repairable — deleted, then closed on absent-in-both convergence', async () => {
   await adapter.shadowSave({ sessionId: SESSION, logCells: [logCells(1)] });
   const sheets = fakeSheets(tabsWith({ Log_Cleaned: [] }));
-  await runSweep({ sheets, adapter, includeCatalog: false });
+  await runSweep({ sheets, adapter });
 
   const repaired = await runRepair({ sheets, adapter });
   assert.equal(repaired.closed, 1);
@@ -321,10 +328,10 @@ test('a logged_sets orphan IS repairable — deleted, then closed on absent-in-b
 
 test('the sweep reaches zero after repair, and the zero is a COMPLETE run', async () => {
   const sheets = fakeSheets(tabsWith({ Log_Cleaned: [logCells(1), logCells(2)], Effort: [EFFORT_CELLS] }));
-  await runSweep({ sheets, adapter, includeCatalog: false });
+  await runSweep({ sheets, adapter });
   await runRepair({ sheets, adapter });
 
-  const final = await runSweep({ sheets, adapter, includeCatalog: false });
+  const final = await runSweep({ sheets, adapter });
   assert.equal(final.complete, true);
   assert.equal(final.divergences_found, 0);
   const summary = await adapter.divergenceSummary();
@@ -425,7 +432,7 @@ test('an inline record whose Sheets row is genuinely absent still cannot close f
   const repaired = await runRepair({ sheets, adapter });
   // It closes as absent-in-both, which is CORRECT for the identity it names — and
   // harmless, because the sweep independently opens the two real omissions.
-  const swept = await runSweep({ sheets, adapter, includeCatalog: false });
+  const swept = await runSweep({ sheets, adapter });
   assert.equal(swept.totals.missing_in_supabase, 2, 'the sweep is the completeness authority and finds the real rows');
   assert.ok(repaired.examined >= 1);
 });
@@ -436,7 +443,7 @@ test('a DUPLICATE Sheets identity opens a durable divergence and makes the sweep
   const sheets = fakeSheets(tabsWith({
     Log_Cleaned: [logCells(1, '225'), logCells(1, '235')],
   }));
-  const result = await runSweep({ sheets, adapter, includeCatalog: false });
+  const result = await runSweep({ sheets, adapter });
 
   const logged = result.concepts.find((c) => c.concept === 'logged_sets');
   assert.equal(logged.sheets_duplicate_identities, 1);
@@ -455,7 +462,7 @@ test('the repair worker REFUSES a duplicate-identity divergence — only the own
   const sheets = fakeSheets(tabsWith({
     Log_Cleaned: [logCells(1, '225'), logCells(1, '235')],
   }));
-  await runSweep({ sheets, adapter, includeCatalog: false });
+  await runSweep({ sheets, adapter });
 
   const repaired = await runRepair({ sheets, adapter });
   assert.equal(repaired.closed, 0, 'any close here would agree with a winner the worker itself picked');

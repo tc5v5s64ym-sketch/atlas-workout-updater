@@ -120,7 +120,7 @@ test.after(async () => { await adapter.close(); });
 /* ══════════ the backfill itself ══════════ */
 
 const BACKFILLED_TABLES = ['logged_sets', 'session_effort', 'session_plan_events',
-  'session_plan_set_recommendations', 'workout_sessions', 'exercise_catalog_sync'];
+  'session_plan_set_recommendations', 'workout_sessions'];
 
 async function tableCounts(tables = BACKFILLED_TABLES) {
   const counts = {};
@@ -342,14 +342,13 @@ test('the backfill loads every sourceable concept, parent-first', async () => {
   await withOwner(async (client) => {
     const counts = {};
     for (const table of ['workout_sessions', 'logged_sets', 'session_effort',
-      'session_plan_events', 'session_plan_set_recommendations', 'exercise_catalog_mirror']) {
+      'session_plan_events', 'session_plan_set_recommendations']) {
       counts[table] = (await client.query(`SELECT count(*)::int AS n FROM atlas.${table}`)).rows[0].n;
     }
     assert.equal(counts.logged_sets, 5);
     assert.equal(counts.session_effort, 2);
     assert.equal(counts.session_plan_events, 2);
     assert.equal(counts.session_plan_set_recommendations, 2);
-    assert.equal(counts.exercise_catalog_mirror, 3);
     // Every child's parent was DERIVED from its session_id and inserted first.
     assert.equal(counts.workout_sessions, 3, 'three distinct sessions across the tabs');
 
@@ -805,40 +804,12 @@ test('P5: a missing row is caught by the DERIVED duplicate-guard read too', asyn
   assert.match(keys.detail, /sheets=5 supabase=4/);
 });
 
-test('P5: the catalog read FAILS CLOSED past the age bound rather than serving stale content', async () => {
-  await backfill.runBackfill({ sheets, adapter, apply: true });
-
-  // Age the verified generation past the bound.
-  await withOwner((client) => client.query(
-    `UPDATE atlas.exercise_catalog_sync SET verified_at = now() - interval '10 hours' WHERE status = 'verified'`
-  ));
-
-  let refused = null;
-  try {
-    await readParity.exerciseCatalogRows({ adapter });
-  } catch (err) {
-    refused = err;
-  }
-  assert.ok(refused, 'a stale mirror must never be served');
-  assert.equal(refused.code, 'CATALOG_MIRROR_UNAVAILABLE');
-  assert.equal(refused.status, 503);
-
-  // And the readiness verdict reports it rather than skipping it.
-  const verdict = await readParity.compareReadPaths({ sheets, adapter });
-  assert.equal(verdict.ready, false);
-  assert.match(verdict.reads.find((r) => r.id === 'exercise_catalog').error, /not servable/);
-});
-
-test('P5: a catalog EDIT converges through the sync — a changed hash is not a failure', async () => {
-  await backfill.runBackfill({ sheets, adapter, apply: true });
-  assert.equal((await readParity.compareReadPaths({ sheets, adapter })).ready, true);
-
-  // The owner edits the editing authority, which is still Google Sheets.
-  tabs.Exercise_Catalog.push(['front squat', 'legs', 'FSQ01', 'Front Squat']);
-  const drifted = await readParity.compareReadPaths({ sheets, adapter });
-  assert.equal(drifted.reads.find((r) => r.id === 'exercise_catalog').equal, false, 'the mirror is now behind');
-
-  const resynced = await backfill.backfillCatalog({ sheets, adapter, apply: true });
-  assert.equal(resynced.ok, true, 'an ordinary catalog edit is INGESTED, never recorded as a failure');
-  assert.equal((await readParity.compareReadPaths({ sheets, adapter })).ready, true);
-});
+// The two catalog P5 tests that stood here are DELETED, not adapted.
+//
+// They proved that a mirror older than CATALOG_MIRROR_MAX_AGE failed the Save
+// closed, and that an owner edit in Google Sheets converged through the sync.
+// OWNER CORRECTION 2026-08-13 removed both mechanisms: Supabase owns the catalog,
+// so there is no age bound to exceed and no Sheets edit to converge. The catalog
+// is no longer a moved read, so compareReadPaths does not compare it at all.
+//
+// What replaced them is test-pg/exerciseCatalog.pgproof.js.
