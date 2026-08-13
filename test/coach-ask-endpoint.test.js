@@ -7,7 +7,10 @@ const assert = require('node:assert/strict');
 process.env.ATLAS_API_KEY = 'test-api-key';
 process.env.GOOGLE_SHEETS_ID = 'stub-sheet';
 process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = 'stub@example.com';
-process.env.GOOGLE_PRIVATE_KEY = '-----BEGIN PRIVATE KEY-----\\nstub\\n-----END PRIVATE KEY-----';
+// Not a PEM block. The secret scanner flags a private-key SHAPE even in an obvious
+// stub, and it scans changed files — so this line only became visible when this
+// suite was touched. Every other suite already uses this form.
+process.env.GOOGLE_PRIVATE_KEY = 'KEYLINE1\\nKEYLINE2\\n';
 
 const sheetState = { appendCalls: [], deleteCalls: [] };
 const fakeSheets = {

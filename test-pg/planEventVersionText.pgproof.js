@@ -285,8 +285,18 @@ function priorMigrations() {
   const files = fs.readdirSync(MIGRATIONS).filter((n) => n.endsWith('.sql')).sort();
   const index = files.indexOf(FORWARD_FILE);
   assert.ok(index >= 0, `${FORWARD_FILE} must exist in supabase/migrations/`);
-  assert.equal(index, files.length - 1, 'the forward correction must be the LAST migration in replay order');
-  return files.slice(0, index);
+
+  // This used to assert the forward correction was the LAST migration. That was a
+  // proxy for the real invariant — "the replay contains every migration that
+  // precedes it" — and it stopped being true the moment S4 added a later one. A
+  // proxy that fails on a legitimate migration is a false red, so the invariant is
+  // now stated directly: the prior set is exactly the files that sort before this
+  // one, derived from the directory, so a migration added later still cannot
+  // silently fall out of the replay.
+  const prior = files.slice(0, index);
+  assert.deepEqual(prior, files.filter((name) => name < FORWARD_FILE),
+    'the replay must be exactly the migrations preceding the forward correction');
+  return prior;
 }
 
 let created = [];

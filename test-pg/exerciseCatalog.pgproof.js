@@ -110,7 +110,7 @@ test('the catalog carries no sync provenance column, so nothing can re-derive a 
 
 test('atlas_app CAN read the catalog — the Save path depends on exactly this', async () => {
   await seedCatalog();
-  const rows = await withRole('app', async (client) => {
+  const rows = await withRole('atlas_app', async (client) => {
     const { rows: found } = await client.query('SELECT exercise, lift_code FROM atlas.exercise_catalog ORDER BY exercise');
     return found;
   });
@@ -120,7 +120,7 @@ test('atlas_app CAN read the catalog — the Save path depends on exactly this',
 
 test('atlas_app is REFUSED every mutation of the catalog, proven as the real role', async () => {
   await seedCatalog();
-  await withRole('app', async (client) => {
+  await withRole('atlas_app', async (client) => {
     // The grant is the control. Under ruling D1 the runtime performed the
     // generation swap and therefore held INSERT and DELETE here; the S4 catalog
     // migration revoked both. If any of these three succeeds, the runtime can

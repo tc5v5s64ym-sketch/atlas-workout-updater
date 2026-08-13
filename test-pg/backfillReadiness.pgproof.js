@@ -762,12 +762,9 @@ test('P1: every declared moved read has a prospective Supabase implementation', 
     }
   }
 
-  // The catalog is the ONE moved read whose replacement carries a header, because
-  // getExerciseCatalog() does and buildExerciseCatalogMap indexes the columns by it.
-  const catalog = await readParity.exerciseCatalogRows({ adapter });
-  assert.equal(catalog.length, 4, 'one recognised header row plus the three catalog entries');
-  assert.equal(contract.isCatalogHeaderRow(catalog[0]), true, 'row 1 must be a recognised header');
-  assert.equal(contract.normalizeCatalogRows(catalog).length, 3, 'and the header is never normalised as data');
+  // The catalog is no longer a MOVED READ. OWNER CORRECTION 2026-08-13 made Supabase
+  // its sole authority, so there is no Sheets read to move and nothing to compare it
+  // against — the catalog read is proven in test-pg/exerciseCatalog.pgproof.js.
 });
 
 test('P5: every read S4 will move returns what the Sheets read returns today', async () => {

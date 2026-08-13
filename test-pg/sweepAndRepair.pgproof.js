@@ -20,7 +20,6 @@ require('./support/syntheticIdentityMap');
 
 const { withOwner, resetSchema } = require('./support/db');
 const adapter = require('../services/supabaseAdapter');
-const contract = require('../services/migrationRowContract');
 const { runSweep } = require('../services/migrationSweep');
 const { runRepair } = require('../services/migrationRepair');
 

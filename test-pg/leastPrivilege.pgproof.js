@@ -233,15 +233,11 @@ test('P7c: every adapter statement atlas_app must issue SUCCEEDS as atlas_app', 
       '20260808-PM-01', null, 'mirror_range_occupied', 'blocked', null, null,
     ]);
 
-    // The catalog generation lifecycle, including the DELETE the swap needs.
-    const sync = await client.query(SQL.beginCatalogSync, [1, 'abc']);
-    const syncId = sync.rows[0].sync_id;
-    await client.query(SQL.deleteCatalogMirror);
-    await client.query(SQL.insertCatalogRow, ['back squat', 'Back Squat', 'Legs', 'SQ01', 'Back Squat', syncId]);
-    await client.query(SQL.verifyCatalogSync, [syncId]);
-    await client.query(SQL.currentCatalogGeneration);
-    await client.query(SQL.readCatalogMirror);
-    await client.query(SQL.failCatalogSync, [syncId, 'a recorded failure']);
+    // The catalog READ, and only the read. OWNER CORRECTION 2026-08-13 made Supabase
+    // the catalog authority, so the generation lifecycle no longer exists and the
+    // runtime holds no write on it at all — the refusals are proven in
+    // test-pg/exerciseCatalog.pgproof.js.
+    await client.query(SQL.readExerciseCatalog);
 
     // The divergence lane, end to end.
     const opened = await client.query(SQL.openDivergence, [
