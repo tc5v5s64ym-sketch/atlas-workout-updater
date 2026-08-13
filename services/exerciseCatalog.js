@@ -61,10 +61,10 @@ async function readExerciseCatalogRows({ adapter } = {}) {
   return [
     [...exerciseCatalogColumns],
     ...rows.map((row) => [
-      row.display_exercise == null ? '' : String(row.display_exercise),
-      row.muscle_group == null ? '' : String(row.muscle_group),
-      row.lift_code == null ? '' : String(row.lift_code),
-      row.canonical_exercise == null ? '' : String(row.canonical_exercise),
+      String(row.display_exercise ?? ''),
+      String(row.muscle_group ?? ''),
+      String(row.lift_code ?? ''),
+      String(row.canonical_exercise ?? ''),
     ]),
   ];
 }
@@ -92,7 +92,7 @@ function catalogRowFromInput(input) {
 }
 
 function emptyToNull(value) {
-  const text = value == null ? '' : String(value).trim();
+  const text = String(value ?? '').trim();
   return text === '' ? null : text;
 }
 

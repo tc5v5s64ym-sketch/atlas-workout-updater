@@ -20,6 +20,7 @@
     "atlas:sweep": "node scripts/atlas-migration-sweep.js",
     "atlas:repair": "node scripts/atlas-migration-repair.js",
     "atlas:catalog-sync": "node scripts/atlas-catalog-sync.js",
+    "atlas:catalog": "node scripts/atlas-catalog-admin.js",
     "atlas:backfill": "node scripts/atlas-migration-backfill.js",
     "atlas:readiness": "node scripts/atlas-migration-readiness.js",
     "supabase:migrate": "node scripts/apply-supabase-migrations.js",
