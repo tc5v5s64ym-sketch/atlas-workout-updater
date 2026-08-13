@@ -603,6 +603,11 @@ test('FINDING 3: the READ-PARITY path fails on it too, and does not drop it', as
   // rule and would have DROPPED this row from both sides, making the sizes match
   // and parity report equal — a cutover-readiness green on a tab holding a row
   // Supabase can never represent.
+  //
+  // The refusal now arrives from the ONE resolver rather than from a second
+  // interpretation inside the parity module (live `Atlas Production` readiness run,
+  // 2026-08-13). The rule is unchanged and the row is still not dropped; only the
+  // component that states it moved, so the DERIVED key read refuses with it.
   await backfill.runBackfill({ sheets, adapter, apply: true });
   tabs.Log_Cleaned.push([...IDENTITYLESS_LOG_ROW]);
 
@@ -610,10 +615,14 @@ test('FINDING 3: the READ-PARITY path fails on it too, and does not drop it', as
   const rows = verdict.reads.find((r) => r.id === 'logged_sets_rows');
 
   assert.equal(rows.equal, false, 'an identityless authoritative row must fail the comparison');
-  assert.match(rows.detail, /identityless rows cannot be compared/);
-  assert.match(rows.detail, /sheets=1/);
+  assert.match(rows.detail, /identityless rows=1/);
   assert.match(rows.detail, /OWNER ACTION REQUIRED/);
   assert.equal(verdict.ready, false);
+
+  // The derived duplicate-guard read of the same tab refuses on the same verdict.
+  const keys = verdict.reads.find((r) => r.id === 'log_composite_keys');
+  assert.equal(keys.equal, false, 'a tab the frozen map cannot fully read yields no comparable key list');
+  assert.match(keys.detail, /identityless rows=1/);
 
   // Redacted: the reason carries counts, never a value (§3.8).
   assert.equal(/195|975/.test(rows.detail), false, 'no workout value may appear in a parity reason');
@@ -629,7 +638,7 @@ test('FINDING 3: a SINGLE-KEY concept with a blank identity fails parity the sam
   const verdict = await readParity.compareReadPaths({ sheets, adapter });
   const rows = verdict.reads.find((r) => r.id === 'session_effort_rows');
   assert.equal(rows.equal, false, "an empty single-component identity is identityless too");
-  assert.match(rows.detail, /identityless rows cannot be compared/);
+  assert.match(rows.detail, /identityless rows=1/);
   assert.equal(verdict.ready, false);
 
   // And the sweep agrees, through the same predicate.
@@ -754,8 +763,12 @@ test('P1: every declared moved read has a prospective Supabase implementation', 
     }
   }
 
+  // The catalog is the ONE moved read whose replacement carries a header, because
+  // getExerciseCatalog() does and buildExerciseCatalogMap indexes the columns by it.
   const catalog = await readParity.exerciseCatalogRows({ adapter });
-  assert.equal(catalog.length, 3);
+  assert.equal(catalog.length, 4, 'one recognised header row plus the three catalog entries');
+  assert.equal(contract.isCatalogHeaderRow(catalog[0]), true, 'row 1 must be a recognised header');
+  assert.equal(contract.normalizeCatalogRows(catalog).length, 3, 'and the header is never normalised as data');
 });
 
 test('P5: every read S4 will move returns what the Sheets read returns today', async () => {
