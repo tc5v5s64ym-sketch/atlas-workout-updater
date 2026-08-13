@@ -55,7 +55,6 @@
 
 const contract = require('./migrationRowContract');
 const legacyMap = require('./migrationLegacyIdentityMap');
-const catalogMirror = require('./exerciseCatalogMirror');
 
 // ── The reads S4 moves, as they exist TODAY (the left-hand side) ─────────────
 //
@@ -75,7 +74,12 @@ const MOVED_READS = Object.freeze([
   { id: 'session_effort_rows', sheets: "sheets.getSheetRows('Effort')", tab: 'Effort', supabase: "conceptRows('session_effort')" },
   { id: 'session_plan_events_rows', sheets: "sheets.getSheetRows('Session_Plans')", tab: 'Session_Plans', supabase: "conceptRows('session_plan_events')" },
   { id: 'session_plan_set_rows', sheets: "sheets.getSheetRows('Session_Plan_Sets')", tab: 'Session_Plan_Sets', supabase: "conceptRows('session_plan_set_recommendations')" },
-  { id: 'exercise_catalog', sheets: 'sheets.getExerciseCatalog()', tab: 'Exercise_Catalog', supabase: 'exerciseCatalogRows()' },
+  // The exercise catalog is NOT a moved read any more. A parity comparison asks
+  // "does the new store return what the old authority returns?", and OWNER
+  // CORRECTION 2026-08-13 removed the old authority for this concept: Supabase
+  // owns the catalog outright. Comparing it against the Sheets tab would measure
+  // drift from a tab that no longer decides anything, and would fail readiness the
+  // moment the owner edited the catalog through `npm run atlas:catalog`.
 ]);
 
 // The Sheets tabs whose in-request reads the cutover removes. Everything else the
@@ -136,33 +140,6 @@ async function effortSessionIds({ adapter }) {
 async function conceptRows(concept, { adapter }) {
   const rows = await adapter.listConcept(concept);
   return rows.map((raw) => contract.sheetCellsFromRow(concept, contract.rowFromSupabase(concept, raw)));
-}
-
-// The catalog read, served from the mirror and FAIL-CLOSED past the age bound —
-// the same 503 posture the expired Sheets cache produces today. Stale content is
-// never served silently, and never served at all.
-//
-// ── IT RETURNS A HEADER, BECAUSE ITS CONSUMER REQUIRES ONE ───────────────────
-//
-// *Live `Atlas Production` readiness run, 2026-08-13.* This is the one moved read
-// whose replacement is NOT headerless. `getSheetRows()` strips row 1, so
-// `conceptRows` above must not invent one — but `getExerciseCatalog()` does not
-// strip it, and its consumer `buildExerciseCatalogMap` INDEXES the catalog's columns
-// by that header row and throws when it cannot find a first-column name it knows.
-// A headerless projection would therefore have broken the very consumer S4 moves,
-// and the readiness comparison saw the same defect as a one-row difference.
-//
-// `contract.CATALOG_HEADER` is the declared name of the four positional mirror slots.
-// The payload below is unchanged — the same four cells, in the same order, from the
-// same mirror columns. No schema changed.
-async function exerciseCatalogRows({ adapter, now = Date.now() }) {
-  const served = await catalogMirror.readCatalogForSave({ adapter, now });
-  return [
-    [...contract.CATALOG_HEADER],
-    ...served.rows.map((row) => [
-      row.display_exercise, row.muscle_group ?? '', row.lift_code ?? '', row.canonical_exercise ?? '',
-    ]),
-  ];
 }
 
 // ── The parity verdict (§6.2 P5) ─────────────────────────────────────────────
@@ -392,21 +369,9 @@ async function compareReadPaths({ sheets, adapter, now = Date.now() } = {}) {
     );
   }
 
-  // The catalog compares through its own content hash, because that hash IS the
-  // mirror generation's identity (§3.7) and normalizing both sides the same way is
-  // what makes "the same catalog" mean one thing rather than two. It takes no part in
-  // the resolver: the catalog carries no session identity and the frozen map disposes
-  // of no catalog row.
-  try {
-    const [left, right] = [await sheets.getExerciseCatalog(), await exerciseCatalogRows({ adapter, now })];
-    const leftHash = contract.catalogContentHash(contract.normalizeCatalogRows(left));
-    const rightHash = contract.catalogContentHash(contract.normalizeCatalogRows(right));
-    record('exercise_catalog', leftHash === rightHash
-      ? { equal: true }
-      : { equal: false, detail: 'catalog content hashes differ' });
-  } catch (error) {
-    record('exercise_catalog', { equal: false, error: error.message });
-  }
+  // The catalog used to be compared here by content hash against the Sheets tab.
+  // It is not compared at all now, because it has no second store to disagree
+  // with (see MOVED_READS above).
 
   return {
     // READY means every declared moved read was RUN and returned the same answer
@@ -424,7 +389,6 @@ module.exports = {
   logCompositeKeys,
   effortSessionIds,
   conceptRows,
-  exerciseCatalogRows,
   compareReadPaths,
   compareKeyLists,
   compareCellSets,

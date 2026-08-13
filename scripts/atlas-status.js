@@ -76,10 +76,8 @@ async function readSupabaseMigrationFacts() {
   }
 
   let adapter;
-  let mirror;
   try {
     adapter = require('../services/supabaseAdapter');
-    mirror = require('../services/exerciseCatalogMirror');
   } catch (err) {
     return { observed: false, reason: `adapter_unavailable: ${err.message}`, configured: true, shadow_write_enabled: shadowWriteEnabled };
   }
@@ -87,8 +85,7 @@ async function readSupabaseMigrationFacts() {
   const role = (process.env.ATLAS_SUPABASE_READONLY_URL || '').trim() ? 'readonly' : 'app';
   try {
     const summary = await adapter.divergenceSummary(role);
-    const generation = await adapter.currentCatalogGeneration(role);
-    const currency = mirror.currencyVerdict(generation);
+    const catalogRows = await adapter.readExerciseCatalog(role);
     return {
       observed: true,
       reason: 'read_ok',
@@ -98,8 +95,11 @@ async function readSupabaseMigrationFacts() {
       oldest_open_divergence_at: summary.oldest_open_at
         ? new Date(summary.oldest_open_at).toISOString()
         : null,
-      catalog_generation_age_seconds: currency.age_seconds,
-      catalog_servable: currency.servable,
+      // OWNER CORRECTION 2026-08-13: Supabase owns the catalog, so there is no
+      // generation age and no servability verdict to report — a catalog cannot be
+      // stale relative to itself. Its SIZE is still worth surfacing, because an
+      // empty catalog is a real operational problem.
+      catalog_rows: catalogRows.length,
     };
   } catch (err) {
     return { observed: false, reason: `read_failed: ${err.message}`, configured: true, shadow_write_enabled: shadowWriteEnabled };

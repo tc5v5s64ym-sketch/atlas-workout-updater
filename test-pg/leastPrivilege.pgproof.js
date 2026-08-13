@@ -40,8 +40,14 @@ test('P7c: atlas_app is refused DDL', async () => {
 });
 
 test('P7c: atlas_app is refused DELETE on every table outside its grant list', async () => {
-  // The list is exactly three: logged_sets (undo), exercise_catalog_mirror (the
-  // §3.7 generation swap), and migration_divergences while it exists.
+  // The list is exactly two: logged_sets (undo) and migration_divergences while it
+  // exists.
+  //
+  // It was three. The §3.7 generation swap was the third, and the OWNER CORRECTION
+  // 2026-08-13 removed it: Supabase owns the catalog, mutation is owner-controlled,
+  // and the S4 catalog migration revokes atlas_app's INSERT and DELETE there. So
+  // atlas.exercise_catalog moves from the permitted list to the REFUSED list below,
+  // which is the grant-level statement of "the runtime cannot change the catalog".
   const refused = [
     'atlas.session_effort',
     'atlas.session_plan_events',
@@ -51,7 +57,7 @@ test('P7c: atlas_app is refused DELETE on every table outside its grant list', a
     'atlas.workout_sessions',
     'atlas.sheets_mirror_allocations',
     'atlas.sheets_mirror_cursor',
-    'atlas.exercise_catalog_sync',
+    'atlas.exercise_catalog',
   ];
   await withRole('atlas_app', async (client) => {
     for (const table of refused) {

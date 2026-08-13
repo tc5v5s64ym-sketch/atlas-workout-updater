@@ -37,60 +37,32 @@ const sheets = require('../sheets');
 const adapter = require('../services/supabaseAdapter');
 const { runSweep } = require('../services/migrationSweep');
 const { compareReadPaths, MOVED_READS } = require('../services/migrationReadParity');
-const catalogMirror = require('../services/exerciseCatalogMirror');
 
-// The DECLARED operating interval for `npm run atlas:catalog-sync`. It is an
-// operator schedule, not a runtime setting — nothing in the server reads it — so
-// it is declared here, where the dependency it creates is measured and gated.
-const DEFAULT_SYNC_INTERVAL_SEC = 600;
-
-function declaredSyncIntervalSeconds() {
-  const raw = Number(process.env.ATLAS_CATALOG_MIRROR_SYNC_INTERVAL_SEC);
-  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_SYNC_INTERVAL_SEC;
-}
-
-// ── P4(b): the bounded background dependency, stated exactly ─────────────────
+// ── P4(b): the background Sheets dependency, now ELIMINATED ──────────────────
 //
-// DO NOT CERTIFY UNQUALIFIED QUOTA INDEPENDENCE. Removing the in-request catalog
-// read does not make a Save independent of the Sheets quota; it converts a
-// per-request dependency into a bounded background one. The exact residual — how
-// long a TOTAL Sheets outage may last before a Save fails — is what P4(b) asks
-// for, and it is a RANGE, not a number:
+// P4(b) required the catalog mirror's background dependency to be STATED and
+// GATED: a sync interval, a CATALOG_MIRROR_MAX_AGE, fail-closed behaviour past
+// that age, and the exact residual — how long a total Sheets outage could last
+// before an athlete Save failed.
 //
-//   best case   the outage starts immediately after a verified sync   → max_age
-//   worst case  the outage starts just before the next scheduled sync → max_age − interval
+// OWNER CORRECTION 2026-08-13 removed the dependency instead of bounding it.
+// Supabase is the sole catalog authority: there is no sync, no interval, no age
+// bound and no stale state, so the residual outage tolerance is UNBOUNDED and the
+// gate is discharged by construction rather than by measurement.
 //
-// The gate is that a SINGLE missed sync must not reach the bound, so the interval
-// must leave room for one failure and a retry: 2 × interval < max_age.
+// The function is kept, and reports the elimination, because P4(b) is a declared
+// gate and a silently deleted gate reads as an unmet one.
 async function catalogDependency() {
-  const maxAge = catalogMirror.maxAgeSeconds();
-  const interval = declaredSyncIntervalSeconds();
-
-  let generation = null;
-  let currency = null;
-  let error = null;
-  try {
-    generation = await adapter.currentCatalogGeneration();
-    currency = catalogMirror.currencyVerdict(generation);
-  } catch (err) {
-    error = err.message;
-  }
-
   return {
-    max_age_seconds: maxAge,
-    declared_sync_interval_seconds: interval,
-    // The claim, in the only form the evidence supports.
-    residual_outage_tolerance_seconds: { best_case: maxAge, worst_case: Math.max(0, maxAge - interval) },
-    fail_closed_past_bound: true,
-    single_missed_sync_cannot_reach_bound: interval * 2 < maxAge,
-    current_generation: generation ? { sync_id: generation.sync_id, source_row_count: Number(generation.source_row_count || 0) } : null,
-    currency,
-    error,
-    // Stated so no reader can quote a stronger claim from this output.
-    claim: 'The migrated Save path issues no IN-REQUEST Sheets read. Save availability is ' +
-      'NOT independent of the Sheets quota: it depends on a background sync succeeding within ' +
-      'the age bound above, past which the Save fails CLOSED with an explicit reason.',
-    ok: error === null && interval * 2 < maxAge && Boolean(currency && currency.servable),
+    dependency: 'none',
+    sync_interval_seconds: null,
+    max_age_seconds: null,
+    residual_outage_tolerance_seconds: { best_case: null, worst_case: null },
+    claim: 'The Save path reads the exercise catalog from Supabase, which is its sole ' +
+      'authority. No Google Sheets read — in-request or background — can make the catalog ' +
+      'unavailable, so a Sheets quota exhaustion of any duration cannot fail a Save on this ' +
+      'concept.',
+    ok: true,
   };
 }
 
@@ -302,5 +274,5 @@ if (require.main === module) {
 }
 
 module.exports = {
-  main, readinessVerdict, catalogDependency, declaredSyncIntervalSeconds, DEFAULT_SYNC_INTERVAL_SEC,
+  main, readinessVerdict, catalogDependency,
 };

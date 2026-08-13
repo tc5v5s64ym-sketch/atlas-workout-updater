@@ -276,65 +276,14 @@ async function sweepRowConcept({ concept, sheets, adapter, openDivergences }) {
   return result;
 }
 
-// The fifth concept. Its identity is the sync generation's content_hash, not an
-// export identity key, so it is compared generation-to-source rather than
-// row-to-row (§3.8).
+// The catalog was the fifth concept. It is not swept any more.
 //
-// During S2/S3 ONLY: an unexplained catalog drift is a migration concern, because
-// Sheets is still the live authority in that era. After S4 normal edits converge
-// through the permanent sync and nothing writes here (gate P7c0).
-async function sweepCatalog({ sheets, adapter, openDivergences }) {
-  const result = emptyConceptResult(contract.CATALOG_CONCEPT);
-
-  let sourceRows;
-  try {
-    sourceRows = await sheets.getSheetRows('Exercise_Catalog');
-  } catch (error) {
-    result.error = `sheets_read_failed: ${error.message}`;
-    return result;
-  }
-
-  let generation;
-  try {
-    generation = await adapter.currentCatalogGeneration();
-  } catch (error) {
-    result.error = `supabase_read_failed: ${error.message}`;
-    return result;
-  }
-
-  const normalized = contract.normalizeCatalogRows(sourceRows);
-  const sourceHash = contract.catalogContentHash(normalized);
-  result.sheets_rows = normalized.length;
-  result.supabase_rows = generation ? Number(generation.source_row_count || 0) : 0;
-
-  const mirrorHash = generation ? generation.content_hash : null;
-  if (mirrorHash !== sourceHash) {
-    result.content_mismatch = 1;
-    if (openDivergences) {
-      try {
-        const opened = await adapter.openDivergence({
-          concept: contract.CATALOG_CONCEPT,
-          // The generation's content_hash IS this concept's identity.
-          identityKey: sourceHash,
-          reason: 'content_mismatch',
-          detectedBy: 'sweep',
-          comparison: {
-            mirror_generation: generation ? generation.sync_id : null,
-            mirror_hash_present: Boolean(mirrorHash),
-            source_row_count: normalized.length,
-          },
-        });
-        if (opened.created) result.divergences_opened += 1;
-      } catch (error) {
-        result.error = `divergence_open_failed: ${error.message}`;
-        return result;
-      }
-    }
-  }
-
-  result.complete = true;
-  return result;
-}
+// It was compared generation-to-source by content hash, because Google Sheets
+// decided the catalog and Supabase held a projection that could drift from it.
+// OWNER CORRECTION 2026-08-13 made Supabase the sole catalog authority, so there
+// is no second copy to diverge: an owner edit through `npm run atlas:catalog`
+// changes the authority itself. Sweeping it would report every legitimate edit as
+// a divergence.
 
 // Run the sweep over every declared concept.
 //
@@ -345,15 +294,11 @@ async function runSweep({
   sheets,
   adapter,
   concepts = DEFAULT_CONCEPTS,
-  includeCatalog = true,
   openDivergences = true,
 } = {}) {
   const results = [];
   for (const concept of concepts) {
     results.push(await sweepRowConcept({ concept, sheets, adapter, openDivergences }));
-  }
-  if (includeCatalog) {
-    results.push(await sweepCatalog({ sheets, adapter, openDivergences }));
   }
 
   const complete = results.every((r) => r.complete);
@@ -380,7 +325,6 @@ async function runSweep({
 module.exports = {
   runSweep,
   sweepRowConcept,
-  sweepCatalog,
   DEFAULT_CONCEPTS,
   // Exported for the S3 backfill reconciliation report (§6.2 P3), which must index
   // both sides by the SAME export identity this sweep uses. A second indexing

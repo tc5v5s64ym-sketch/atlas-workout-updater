@@ -12,9 +12,12 @@
 //     logged_sets · session_effort · session_plan_events ·
 //     session_plan_set_recommendations
 //
-// plus, through the existing catalog sync, exercise_catalog_mirror and its first
-// exercise_catalog_sync generation. workout_sessions parents are created by the
-// adapter as each child's parent, derived by parsing session_id.
+// workout_sessions parents are created by the adapter as each child's parent,
+// derived by parsing session_id.
+//
+// The exercise catalog is NOT among them. It used to be, through the Sheets
+// catalog sync. OWNER CORRECTION 2026-08-13 made Supabase the sole catalog
+// authority, so there is no prior authority to copy it from.
 //
 // It does NOT touch:
 //   • write_receipts — the workbook stores no write_id (§3.6), so there is nothing
@@ -49,7 +52,6 @@
 const contract = require('./migrationRowContract');
 const legacyMap = require('./migrationLegacyIdentityMap');
 const { indexByIdentity } = require('./migrationSweep');
-const catalogMirror = require('./exerciseCatalogMirror');
 
 // Rows are written in bounded transactions. Large enough that a full workbook is
 // not thousands of round trips, small enough that one failure does not discard an
@@ -354,29 +356,18 @@ async function reconcile({ sheets, adapter, concepts = contract.CONCEPT_NAMES } 
   };
 }
 
-// ── The catalog's first generation ───────────────────────────────────────────
+// ── The catalog is no longer a backfill concept ──────────────────────────────
 //
-// Reuses the PERMANENT sync (services/exerciseCatalogMirror.js) rather than
-// writing catalog rows here. The mirror's swap, verification, content hash and
-// failure recording are the same machinery that keeps it current afterwards, so
-// the first generation is produced by exactly the path every later generation
-// takes. A backfill-specific catalog writer would be a second way to populate the
-// mirror, and the freshness rules would then have two sources.
-async function backfillCatalog({ sheets, adapter, apply }) {
-  if (!apply) {
-    return { concept: contract.CATALOG_CONCEPT, applied: false, ok: null, note: 'dry run — no generation written' };
-  }
-  const result = await catalogMirror.syncCatalog({ sheets, adapter });
-  return {
-    concept: contract.CATALOG_CONCEPT,
-    applied: true,
-    ok: result.ok,
-    sync_id: result.sync_id || null,
-    rows: result.rows || 0,
-    content_hash: result.content_hash || null,
-    error: result.ok ? null : `${result.code}: ${result.error}`,
-  };
-}
+// It used to be. `backfillCatalog` produced the mirror's first generation by
+// calling the Sheets sync, because Google Sheets decided the catalog's content and
+// Supabase held a projection of it.
+//
+// OWNER CORRECTION 2026-08-13 made Supabase the SOLE authority for the catalog.
+// A backfill copies rows from the old authority to the new one, and for this
+// concept there is no old authority left to copy from — the rows already ARE the
+// authority. Maintaining them is `npm run atlas:catalog`, an owner-run command,
+// not a migration step. The function is removed rather than made a no-op, because
+// a no-op backfill concept would still report a status nobody should read.
 
 // AN AGGREGATE FAILS CLOSED. *Required review of `63e39a3`, finding P2.*
 //
@@ -419,7 +410,6 @@ async function runBackfill({
   sheets,
   adapter,
   concepts = contract.CONCEPT_NAMES,
-  includeCatalog = true,
   apply = false,
   batchSize = DEFAULT_BATCH_SIZE,
 } = {}) {
@@ -427,7 +417,6 @@ async function runBackfill({
   for (const concept of concepts) {
     plans.push(await backfillConcept({ concept, sheets, adapter, apply, batchSize }));
   }
-  const catalog = includeCatalog ? await backfillCatalog({ sheets, adapter, apply }) : null;
 
   // AN IDENTITYLESS AUTHORITATIVE ROW IS A FAILURE, NOT A SKIP COUNTER.
   // *Required review of `65310b3`, finding 3.* Sheets holds a row Supabase can
@@ -476,9 +465,8 @@ async function runBackfill({
   return {
     applied: apply,
     // A run with any concept error is NOT complete, whatever the counts say.
-    complete: failed.length === 0 && (!catalog || catalog.applied === false || catalog.ok === true),
+    complete: failed.length === 0,
     concepts: plans,
-    catalog,
     totals: conceptTotals(plans),
   };
 }
@@ -486,7 +474,6 @@ async function runBackfill({
 module.exports = {
   runBackfill,
   backfillConcept,
-  backfillCatalog,
   reconcile,
   reconcileConcept,
   DEFAULT_BATCH_SIZE,
