@@ -10,8 +10,8 @@ Atlas is Dale's personal training intelligence. It exists to reduce the friction
 
 ## What Atlas Is
 
-- A **chat-first workout logger** that accepts natural-language input, parses it, previews it, and writes it to Google Sheets on explicit approval.
-- A **personal intelligence layer** over a single owner's training history, backed by one spreadsheet as the permanent record.
+- A **chat-first workout logger** that accepts natural-language input, parses it, previews it, and commits it to Supabase on explicit approval.
+- A **personal intelligence layer** over a single owner's Supabase-authoritative training history, with optional asynchronous human-readable Sheets exports.
 - A **fast, opinionated tool** optimised for the moment between sets — one input, one confirmation, done.
 
 ## What Atlas Is Not (this phase)
@@ -19,7 +19,7 @@ Atlas is Dale's personal training intelligence. It exists to reduce the friction
 - A nutrition tracker.
 - A voice interface.
 - A multi-user platform.
-- A database migration project.
+- A generic database platform or multi-authority synchronization product.
 - An "Atlas Brain" autonomous agent.
 - A generic fitness API or white-label product.
 
@@ -48,7 +48,7 @@ conversation (sets coached, nothing written) → end trigger → compile the ses
   → dry-run preview (test_mode=true) → owner approves → live write → read-back proof → undo available
 ```
 
-The safety law is unchanged: no blind writes, the dry-run never touches the sheet, the owner approves before any write, the live write is provable via `sheet_written` and `log_rows_written`, and undo is available. Only the **cadence** moved — from a write per set to one write per session. There must be **no per-set save prompts** during the workout; coaching during, one save at the end.
+The safety law is unchanged: no blind writes, the dry-run never touches the authority, the owner approves before any write, the live write is provable via `write_authority`, `sheet_written`, and `log_rows_written`, and undo is available. Only the **cadence** moved — from a write per set to one write per session. There must be **no per-set save prompts** during the workout; coaching during, one save at the end.
 
 ## Source of Truth
 

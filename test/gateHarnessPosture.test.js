@@ -207,7 +207,7 @@ test('no spec in the e2e lane is gated behind a credentialed posture flag', () =
       'the rehearsal spec sets the live flag but the plan does not record the F-SB4B authorization');
     assert.ok(/sunset: F-SB4C/.test(spec),
       'the rehearsal spec must carry its F-SB4C sunset marker');
-    assert.match(spec, /ATLAS_GATE_SANDBOX_LIVE: '1',\n\s*ATLAS_GATE_LEDGER_SANDBOX: '1',/,
+    assert.match(spec, /ATLAS_GATE_SANDBOX_LIVE: '1',\r?\n\s*ATLAS_GATE_LEDGER_SANDBOX: '1',/,
       'the rehearsal spec may set the live flag only together with the ledger flag (the combined posture)');
     assert.match(spec, /test\.skip\(process\.env\.ATLAS_REHEARSAL_RUN !== '1'/,
       'the rehearsal spec must self-skip out of the default lane');

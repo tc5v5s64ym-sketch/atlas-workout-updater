@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { resetIdempotencyStore } = require('../services/idempotency');
+const { resetWorkoutAuthorityStub: resetIdempotencyStore } = require('./helpers/stubWorkoutAuthority');
 const { logCleanedColumns, effortColumns } = require('../config/columns');
 
 const originalConsoleLog = console.log;
@@ -15,6 +15,16 @@ process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = 'stub@example.com';
 // The exercise catalog reads Supabase (OWNER CORRECTION 2026-08-13). Stubbed here so
 // the suite never opens a database connection; it delegates to the sheets fixture above.
 require('./helpers/stubExerciseCatalog').installExerciseCatalogStub();
+
+// The workout authority is Supabase since the S4 cutover, so stubbing `sheets.js`
+
+// no longer controls the logged sets, the Effort row, the plan ledgers or the write
+
+// receipts. `sheetsFallback` seeds this suite's existing fixture into the double, so
+
+// no test's data changes — only where the route reads it from.
+
+require('./helpers/stubWorkoutAuthority').installWorkoutAuthorityStub({ sheetsFallback: true });
 // out of the way. Must be set before require('../index'), which reads them at load.
 process.env.ATLAS_API_RATE_LIMIT_MAX = '1000000';
 process.env.ATLAS_WRITE_RATE_LIMIT_MAX = '1000000';
@@ -48,8 +58,42 @@ const exerciseCatalogRows = [
   ['Back Squat', 'Legs', 'SQ01', 'Back Squat', 'squat|squats']
 ];
 
+// ── `appendCalls` IS A VIEW OVER BOTH STORES ────────────────────────────────
+//
+// It was the Sheets fake's call list, and 300-odd assertions read it as "what did
+// this request write, and where". After the S4 cutover and OWNER CORRECTION
+// 2026-08-13 the logged sets, the Effort row, both plan ledgers, cardio, coaching
+// notes and typed constraints all land in Supabase — only `Bodyweight` and the
+// telemetry tabs still append to Google Sheets.
+//
+// So the list is assembled from both: the real Sheets appends first, then what the
+// authority double was asked to write, projected into the same `{ tabName, rows }`
+// shape. Every assertion keeps its meaning, and a write that silently went back to a
+// tab still shows up here rather than disappearing.
+const sheetsAppendCalls = [];
+function authorityAppendCalls() {
+  const calls = require('./helpers/stubWorkoutAuthority').workoutAuthorityStore().calls;
+  const out = [];
+  for (const save of calls.saves) {
+    if (save.logCells.length) out.push({ tabName: 'Log_Cleaned', rows: save.logCells });
+    if (save.effortCells) out.push({ tabName: 'Effort', rows: [save.effortCells] });
+  }
+  for (const rows of calls.planEventAppends) out.push({ tabName: 'Session_Plans', rows });
+  for (const rows of calls.planSetAppends) out.push({ tabName: 'Session_Plan_Sets', rows });
+  for (const e of calls.modality) out.push({ tabName: 'Modality_Log', rows: [e.cells] });
+  for (const n of calls.coachingNotes) out.push({ tabName: 'Coaching_Notes', rows: [[n.date, n.note]] });
+  for (const c of calls.constraints) out.push({ tabName: 'Constraints', rows: [[c.date, c.kind, c.target, c.rule, c.note]] });
+  for (const row of calls.deloadState) out.push({ tabName: 'Deload_State', rows: [row] });
+  return out;
+}
+
 const fakeSheetsState = {
-  appendCalls: [],
+  get appendCalls() { return [...sheetsAppendCalls, ...authorityAppendCalls()]; },
+  set appendCalls(_) {
+    sheetsAppendCalls.length = 0;
+    const calls = require('./helpers/stubWorkoutAuthority').workoutAuthorityStore().calls;
+    for (const key of Object.keys(calls)) calls[key].length = 0;
+  },
   // Set to true only inside tests that intentionally exercise the live-write branch.
   // Default false ensures dry-run tests trip the throw guard if appendRows fires unexpectedly.
   allowAppend: false,
@@ -111,7 +155,7 @@ function getLocalDateString(dateTime = new Date()) {
 
 const fakeSheets = {
   appendRows: async (tabName, rows) => {
-    fakeSheetsState.appendCalls.push({ tabName, rows });
+    sheetsAppendCalls.push({ tabName, rows });
     // Deload_State is system-state (append-only, outside the trust loop), so it
     // bypasses the allowAppend guard that protects the logged-set write paths.
     if (tabName === 'Deload_State') {
@@ -165,8 +209,32 @@ const fakeSheets = {
   getSheetRows: async tabName => {
     fakeSheetsState.reads[tabName] = (fakeSheetsState.reads[tabName] || 0) + 1;
     // getSheetRowsRaw is aliased to this stub, so the undo-last read-back sees it.
-    if (tabName === 'Log_Cleaned') return fakeSheetsState.logRowsOverride || logRows;
-    if (tabName === 'Effort') return [];
+    //
+    // ── THE DUPLICATE FIXTURES ARE EXPRESSED AS ROWS NOW ───────────────────
+    //
+    // `logCompositeKeys` and `effortSessionIds` modelled the two whole-column reads
+    // the Save used to issue: `session_id||exercise||set_number` keys pulled from
+    // `Log_Cleaned`, and every session id in `Effort`. Both questions are indexed
+    // Supabase queries after the S4 cutover, and the authority answers them from
+    // ROWS — so the same fixtures are projected into rows here rather than restated
+    // in every test. No test's data changes; only its shape does.
+    if (tabName === 'Log_Cleaned') {
+      if (fakeSheetsState.logRowsOverride) return fakeSheetsState.logRowsOverride;
+      const fromKeys = fakeSheetsState.logCompositeKeys.map((key) => {
+        const [sessionId, exercise, setNumber] = String(key).split('||');
+        const row = new Array(12).fill('');
+        row[1] = sessionId; row[2] = exercise; row[6] = setNumber;
+        return row;
+      });
+      return [...logRows, ...fromKeys];
+    }
+    if (tabName === 'Effort') {
+      return fakeSheetsState.effortSessionIds.map((id) => {
+        const row = new Array(9).fill('');
+        row[1] = id;
+        return row;
+      });
+    }
     if (tabName === 'Coaching_Notes') return fakeSheetsState.coachingNotesRows || [];
     if (tabName === 'Constraints') return fakeSheetsState.constraintsRows || [];
     if (tabName === 'Deload_State') {
@@ -2939,7 +3007,7 @@ test('api smoke: session summary returns the per-set detail History expands', as
 });
 
 test('api smoke: parse-workout-text dry-run proves no write', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const { response, body } = await requestJson('/api/parse-workout-text', {
     method: 'POST',
     body: JSON.stringify({
@@ -2958,7 +3026,7 @@ test('api smoke: parse-workout-text dry-run proves no write', async () => {
 });
 
 test('api smoke: parse-workout-text splits inline multi-exercise (dry-run, no write)', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const { response, body } = await requestJson('/api/parse-workout-text', {
     method: 'POST',
     body: JSON.stringify({
@@ -2975,7 +3043,7 @@ test('api smoke: parse-workout-text splits inline multi-exercise (dry-run, no wr
 });
 
 test('api smoke: F05 PARSE-4 — mixed set notation asks instead of silently dropping a group', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   for (const text of [
     'bench 185 5/2 3x8@165',            // slash set silently dropped today
     'bench 3x8@165 then 175 for 5',      // "175 for 5" dropped today
@@ -3027,7 +3095,7 @@ test('api smoke: F05 does not over-reject valid terse notation (225 5/2, @>10, s
 // show what was understood — still without writing anything. Real route + real
 // recognizer.
 test('api smoke: parse-workout-text attaches modality metadata for a circuit (no write)', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const { response, body } = await requestJson('/api/parse-workout-text', {
     method: 'POST',
     body: JSON.stringify({ text: 'AMRAP 12 min: pushups 10, air squats 15 - 6 rounds RPE 8', test_mode: true })
@@ -3046,7 +3114,7 @@ test('api smoke: parse-workout-text attaches modality metadata for a circuit (no
 });
 
 test('api smoke: parse-workout-text attaches modality metadata for steady cardio (no write)', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const { response, body } = await requestJson('/api/parse-workout-text', {
     method: 'POST',
     body: JSON.stringify({ text: 'Run 5 km 32:10 RPE 7 avg HR 151', test_mode: true })
@@ -3063,7 +3131,7 @@ test('api smoke: parse-workout-text attaches modality metadata for steady cardio
 // The slash-notation contract is never hijacked: a weighted/slash set is a
 // resistance `log_sets` parse and gets NO modality metadata attached.
 test('api smoke: parse-workout-text attaches NO modality for a slash-notation set (contract intact)', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const { response, body } = await requestJson('/api/parse-workout-text', {
     method: 'POST',
     body: JSON.stringify({ text: 'Bench 225 5/2', test_mode: true })
@@ -3080,7 +3148,7 @@ test('api smoke: parse-workout-text attaches NO modality for a slash-notation se
 // resolver recognizes it. The real route must attach a kb_identity so the client's
 // unknown-lift warning isn't split-brain with the card/voice. Real route + real KB.
 test('api smoke: parse-workout-text attaches KB identity for Cable Fly (no split-brain)', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const { response, body } = await requestJson('/api/parse-workout-text', {
     method: 'POST',
     body: JSON.stringify({ text: 'Cable Fly 30 12/0', test_mode: true })
@@ -3104,7 +3172,7 @@ test('api smoke: parse-workout-text attaches KB identity for Cable Fly (no split
 // and ask (needs_clarification, ZERO rows) rather than silently logging a made-up
 // lift. KB-known-but-parser-narrow lifts (Front Squat / Cable Fly) keep logging.
 test('api smoke: parse-workout-text refuses a genuinely-unknown lift (D7(a) refuse-and-ask, no rows)', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const { response, body } = await requestJson('/api/parse-workout-text', {
     method: 'POST',
     body: JSON.stringify({ text: 'zercher thrust 95 8/2', test_mode: true })
@@ -3152,7 +3220,7 @@ test('api smoke: parse-workout-text — a recognized lift + a trailing question 
 
 // ── PR 486 slice 4b — /api/log-modality trust-loop write route ────────────────
 test('api smoke: log-modality dry-run (test_mode) previews the normalized row and writes nothing', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const { response, body } = await requestJson('/api/log-modality', {
     method: 'POST',
     body: JSON.stringify({ text: 'Run 5 km 32:10 RPE 7 avg HR 151', session_id: 'S1', date: '2026-06-23', test_mode: true })
@@ -3171,7 +3239,7 @@ test('api smoke: log-modality dry-run (test_mode) previews the normalized row an
 });
 
 test('api smoke: log-modality live write appends the normalized row to Modality_Log', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeSheetsState.allowAppend = true;
   try {
     const { response, body } = await requestJson('/api/log-modality', {
@@ -3195,7 +3263,7 @@ test('api smoke: log-modality live write appends the normalized row to Modality_
 });
 
 test('api smoke: log-modality is idempotent — a duplicate write_id appends only once', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeSheetsState.allowAppend = true;
   try {
     const payload = JSON.stringify({ text: 'Plank 60 sec x3 RPE 7', session_id: 'S3', date: '2026-06-23', write_id: 'mod-wid-dup' });
@@ -3211,25 +3279,12 @@ test('api smoke: log-modality is idempotent — a duplicate write_id appends onl
   }
 });
 
-test('api smoke: log-modality returns 503 until the Modality_Log tab exists (and writes nothing)', async () => {
-  fakeSheetsState.appendCalls.length = 0;
-  fakeSheetsState.allowAppend = true;
-  fakeSheetsState.hideModalityLogTab = true;
-  try {
-    const { response } = await requestJson('/api/log-modality', {
-      method: 'POST',
-      body: JSON.stringify({ text: 'Run 5 km 30:00', session_id: 'S4', date: '2026-06-23', write_id: 'mod-wid-503' })
-    });
-    assert.equal(response.status, 503);
-    assert.deepEqual(fakeSheetsState.appendCalls, []);
-  } finally {
-    fakeSheetsState.hideModalityLogTab = false;
-    fakeSheetsState.allowAppend = false;
-  }
-});
+// The Modality_Log TAB-ABSENT 503 retired with the tab. Cardio is a workout logged
+// through preview → approve → write, so OWNER CORRECTION 2026-08-13 moved its store
+// to `atlas.modality_log` — which the migration creates and which cannot be absent.
 
 test('api smoke: log-modality rejects a slash-notation set (422) — resistance path is never hijacked', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const { response } = await requestJson('/api/log-modality', {
     method: 'POST',
     body: JSON.stringify({ text: 'Bench 225 5/2', session_id: 'S5', date: '2026-06-23', write_id: 'mod-wid-slash' })
@@ -3239,7 +3294,7 @@ test('api smoke: log-modality rejects a slash-notation set (422) — resistance 
 });
 
 test('api smoke: log-modality live write requires a write_id', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const { response } = await requestJson('/api/log-modality', {
     method: 'POST',
     body: JSON.stringify({ text: 'Run 5 km 30:00', session_id: 'S6', date: '2026-06-23' })
@@ -3249,7 +3304,7 @@ test('api smoke: log-modality live write requires a write_id', async () => {
 });
 
 test('api smoke: log-modality rejects a malformed date (400) and writes nothing', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeSheetsState.allowAppend = true;
   try {
     const { response } = await requestJson('/api/log-modality', {
@@ -3264,7 +3319,7 @@ test('api smoke: log-modality rejects a malformed date (400) and writes nothing'
 });
 
 test('api smoke: parse-workout-image is parse-only — auto_write=true performs no write', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   // allowAppend stays false: if the removed auto_write branch ever wrote, the
   // append stub would throw and this test would fail loudly.
   const form = new FormData();
@@ -3282,7 +3337,7 @@ test('api smoke: parse-workout-image is parse-only — auto_write=true performs 
 });
 
 test('api smoke: parse-workout-text clarification does not create rows', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const { response, body } = await requestJson('/api/parse-workout-text', {
     method: 'POST',
     body: JSON.stringify({
@@ -3302,7 +3357,7 @@ test('api smoke: parse-workout-text clarification does not create rows', async (
 });
 
 test('api smoke: parse-workout-text refuses excessive Dale repeat', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const { response, body } = await requestJson('/api/parse-workout-text', {
     method: 'POST',
     body: JSON.stringify({
@@ -3321,7 +3376,7 @@ test('api smoke: parse-workout-text refuses excessive Dale repeat', async () => 
 });
 
 test('api smoke: log-workout test_mode returns dry-run proof without append', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const { response, body } = await requestJson('/api/log-workout', {
     method: 'POST',
     body: JSON.stringify({
@@ -3384,7 +3439,7 @@ test('api smoke: row with implausible rir value is rejected with 400 and diagnos
 // session_id — the "49 sets / 51,390 lb" duplication. The row-level composite-key
 // guard on /api/log-workout closes that gap.
 test('api smoke (B1): re-submitting an already-logged session with a NEW write_id appends nothing', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeSheetsState.allowAppend = true;
   // Simulate that this exact set is already on the Log_Cleaned sheet.
   fakeSheetsState.logCompositeKeys = ['b1-dup||bench press||1'];
@@ -3414,7 +3469,7 @@ test('api smoke (B1): re-submitting an already-logged session with a NEW write_i
 });
 
 test('api smoke (B1): all duplicate log rows still allow a new Effort row append', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeSheetsState.allowAppend = true;
   fakeSheetsState.logCompositeKeys = ['b1-effort-new||bench press||1'];
   fakeSheetsState.effortSessionIds = [];
@@ -3445,9 +3500,11 @@ test('api smoke (B1): all duplicate log rows still allow a new Effort row append
     assert.equal(body.data.log_rows_written, 0, 'duplicate log rows are not appended');
     assert.equal(body.data.effort_rows_written, 1, 'new Effort row count is reported as proof');
     assert.equal(body.data.skipped_duplicates, 1);
-    assert.equal(body.data.effortWritten, true, 'new Effort row is still appended');
-    assert.equal(body.data.effortAppendedRange, 'Effort!A100:K100');
-    assert.equal(fakeSheetsState.appendCalls.length, 1, 'only the Effort append fires');
+    assert.equal(body.data.effortWritten, true, 'new Effort row is still written');
+    // NO RANGE. A range is a Google Sheets concept and the Effort row lands in a
+    // Supabase transaction; the row count above carries the proof instead.
+    assert.equal(body.data.effortAppendedRange, undefined);
+    assert.equal(fakeSheetsState.appendCalls.length, 1, 'only the Effort write fires');
     assert.equal(fakeSheetsState.appendCalls[0].tabName, 'Effort');
     assert.equal(fakeSheetsState.appendCalls[0].rows[0][1], 'b1-effort-new');
   } finally {
@@ -3524,7 +3581,7 @@ test('FB parity: preview row count equals the live write row count for the same 
     });
     assert.equal(preview.body.data.log_rows_preview.length, 1, 'preview shows the single new row');
 
-    fakeSheetsState.appendCalls.length = 0;
+    fakeSheetsState.appendCalls = [];
     fakeSheetsState.allowAppend = true;
     const write = await requestJson('/api/log-workout', {
       method: 'POST',
@@ -3573,7 +3630,7 @@ test('FB parity: preview degrades to all rows when the duplicate-read fails (liv
 // Partial duplicate: only the genuinely new rows append; already-logged rows are
 // skipped. Proves incremental logging still works (row-level, not session-level).
 test('api smoke (B1): partial duplicate appends only the new rows; totals match rows written', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeSheetsState.allowAppend = true;
   // Bench set 1 already logged; Back Squat set 1 is new.
   fakeSheetsState.logCompositeKeys = ['b1-partial||bench press||1'];
@@ -3609,7 +3666,7 @@ test('api smoke (B1): partial duplicate appends only the new rows; totals match 
 // The existing write_id replay guard is unchanged: a double-tap of the SAME
 // write_id appends exactly once even when the composite-key guard sees no prior rows.
 test('api smoke (B1): a replayed write_id (double-tap) appends exactly once', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeSheetsState.allowAppend = true;
   fakeSheetsState.logCompositeKeys = [];
   try {
@@ -3635,7 +3692,7 @@ test('api smoke (B1): a replayed write_id (double-tap) appends exactly once', as
 // write_id). Because the log rows are already on the sheet, the re-save appends no
 // duplicate log rows — the effort failure can never multiply the workout rows.
 test('api smoke (B1): a re-save after a failed effort import does not duplicate log rows', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeSheetsState.allowAppend = true;
   // The first save already wrote the log rows.
   fakeSheetsState.logCompositeKeys = ['b1-effort-retry||bench press||1'];
@@ -3666,7 +3723,7 @@ test('api smoke (B1): a re-save after a failed effort import does not duplicate 
 // re-appending any log rows. The all-duplicate short-circuit must NOT swallow the
 // new effort row (the B1×B3 interaction). Effort and exercise are independent.
 test('api smoke (B3): all log rows duplicate + a new effort row → effort appends, log rows do not', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeSheetsState.allowAppend = true;
   // The first save already wrote the log rows; the effort tab has no row for it yet.
   fakeSheetsState.logCompositeKeys = ['b3-effort-repair||bench press||1'];
@@ -3709,7 +3766,7 @@ test('api smoke (B3): all log rows duplicate + a new effort row → effort appen
 // weight × reps — warm-up or working — must save with a blank RIR cell. weight/reps
 // are still required so a genuinely garbled row is rejected.
 test('api smoke: rows save with a blank RIR (warm-up OR working); weight/reps stay required', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const ok = await requestJson('/api/log-workout', {
     method: 'POST',
     body: JSON.stringify({
@@ -3745,7 +3802,7 @@ test('api smoke: rows save with a blank RIR (warm-up OR working); weight/reps st
 });
 
 test('api smoke: log-workout preview surfaces the e1rm typo guard from history (ME-13, no write)', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   // BEN01 history in logRows tops out at 225×5 (e1RM ≈ 262.5). Logging 285×5
   // (e1RM ≈ 332.5, +26.7%) is an implausible jump → the previously-dark
   // checkE1rmJump guard must now surface as a non-blocking rule_flag.
@@ -3774,7 +3831,7 @@ test('api smoke: log-workout preview surfaces the e1rm typo guard from history (
 });
 
 test('api smoke: log-workout preview attaches substitution block for a swap (no write)', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   // Prescribed Back Squat (SQ01 — has history in logRows); logged Leg Press instead.
   // Same squat pattern + quads/glutes → preserved.
   const { response, body } = await requestJson('/api/log-workout', {
@@ -3810,7 +3867,7 @@ test('api smoke: log-workout preview attaches substitution block for a swap (no 
 });
 
 test('api smoke: log-workout preview emits an abandoned warn for an off-target swap', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   // Prescribed Back Squat (SQ01, high cost, has history); logged Bench Press.
   // Different pattern, ~0 overlap, real weight → abandoned/warn (history read makes
   // this a real verdict, not baseline).
@@ -3838,7 +3895,7 @@ test('api smoke: log-workout preview emits an abandoned warn for an off-target s
 });
 
 test('api smoke: log-workout preview classifies baseline when prescribed lift has no history', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   // Prescribed pair with no lift_code → no history lookup key → empty history →
   // baseline/approve (can't judge intent without data). Also covers the empty-history
   // path the best-effort read-failure degrades to.
@@ -3866,7 +3923,7 @@ test('api smoke: log-workout preview classifies baseline when prescribed lift ha
 });
 
 test('api smoke: log-workout preview is unchanged when no prescribed pairs are supplied', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const { response, body } = await requestJson('/api/log-workout', {
     method: 'POST',
     body: JSON.stringify({
@@ -3896,7 +3953,7 @@ test('api smoke: equipment reason cannot rescue a zero-overlap abandon (Back Squ
   // must keep "a defensible portion of the intended muscle/pattern"). Back Squat →
   // Bench Press has ~0 muscle overlap and no shared broad region; the synthesized
   // equipment constraint falls through and the swap stays abandoned.
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const { response, body } = await requestJson('/api/log-workout', {
     method: 'POST',
     body: JSON.stringify({
@@ -3927,7 +3984,7 @@ test('api smoke: non-equipment reason does not upgrade — abandoned stays aband
   // Same cross-pattern swap with a reason that contains no equipment keywords.
   // No constraint is synthesized → Rule 5 fires → abandoned/warn.
   // The reason text still passes through to the result object.
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const { response, body } = await requestJson('/api/log-workout', {
     method: 'POST',
     body: JSON.stringify({
@@ -3956,7 +4013,7 @@ test('api smoke: reason field passes through on a preserved swap', async () => {
   // Bench Press (BEN01, has history) → Incline Dumbbell Press: same horizontal_push
   // pattern + chest overlap → Rule 2 preserved. The reason is not an equipment keyword
   // but still attaches to the result.
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const { response, body } = await requestJson('/api/log-workout', {
     method: 'POST',
     body: JSON.stringify({
@@ -3983,7 +4040,7 @@ test('api smoke: reason field passes through on a preserved swap', async () => {
 
 test('api smoke: no reason field in result when reason was not provided', async () => {
   // Same swap without a reason → result has no `reason` key.
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const { response, body } = await requestJson('/api/log-workout', {
     method: 'POST',
     body: JSON.stringify({
@@ -4012,7 +4069,7 @@ test('api smoke: equipment reason upgrades baseline swap to equipment_constraint
   // 'platform' (equipment keyword). buildSubstitutionPreviews synthesizes a transient
   // constraint targeting 'Deadlift'. classifySubstitution evaluates the constraint
   // BEFORE the history gate → equipment_constraint_honored, not baseline.
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const { response, body } = await requestJson('/api/log-workout', {
     method: 'POST',
     body: JSON.stringify({
@@ -4042,7 +4099,7 @@ test('api smoke: equipment reason overrides pattern-match (Back Squat → Leg Pr
   // Back Squat (SQ01, has history) → Leg Press would normally be pattern_and_muscle_match.
   // With "rack unavailable" the engine synthesizes a transient constraint for 'Back Squat';
   // constraint fires before Rule 2 → equipment_constraint_honored instead.
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const { response, body } = await requestJson('/api/log-workout', {
     method: 'POST',
     body: JSON.stringify({
@@ -4083,7 +4140,7 @@ test('api smoke (e2e): parser extracts prescribed pair → API classifies as equ
   assert.ok(/deadlift/i.test(pPair.exercise), 'prescribed exercise must be Deadlift');
   assert.ok(/platform/i.test(pPair.reason || ''), 'reason must contain platform');
 
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const { response, body } = await requestJson('/api/log-workout', {
     method: 'POST',
     body: JSON.stringify({
@@ -4113,7 +4170,7 @@ test('api smoke (e2e): parser extracts prescribed pair → API classifies as equ
 test('api smoke: broad-language reasons do not trigger equipment upgrade (false-positive guard)', async () => {
   // "busy", "taken", "waiting" are common English words that appear in fatigue/schedule
   // reasons, not equipment reasons. They must NOT upgrade an abandoned swap to approved.
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   for (const reason of ['busy week, short on time', 'legs were taken out from yesterday', 'waiting to feel recovered']) {
     const { body } = await requestJson('/api/log-workout', {
       method: 'POST',
@@ -4140,7 +4197,7 @@ test('api smoke: broad-language reasons do not trigger equipment upgrade (false-
 test('api smoke: no prescribed pairs → no substitutions key (reason-wiring regression)', async () => {
   // Regression guard: sending a workout without prescribed pairs must not produce a
   // substitutions key after the reason-wiring change.
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const { response, body } = await requestJson('/api/log-workout', {
     method: 'POST',
     body: JSON.stringify({
@@ -4160,7 +4217,7 @@ test('api smoke: no prescribed pairs → no substitutions key (reason-wiring reg
 });
 
 test('api smoke: complete-workout allows effort-only screenshot preview with empty log rows', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeVisionParsedMetrics = {
     date: null,
     duration: '00:42:00',
@@ -4193,7 +4250,7 @@ test('api smoke: complete-workout allows effort-only screenshot preview with emp
 });
 
 test('api smoke: complete-workout rejects an oversized log_rows_json (>200 rows) with 400 and never appends (ME-5)', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   // 201 rows — one over the cap. The guard fires before enrichment, so the row
   // content is irrelevant; a valid 12-column shape is used to be realistic.
   const oneRow = ['2026-06-11', 'OVERSIZE-01', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '135', '5', '2', '', '675'];
@@ -4212,7 +4269,7 @@ test('api smoke: complete-workout rejects an oversized log_rows_json (>200 rows)
 });
 
 test('api smoke: complete-workout returns a clean 413 (not 500) when log_rows_json exceeds the field-size cap (ME-5)', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const form = new FormData();
   form.append('session_id', 'FIELD-OVERSIZE-01');
   form.append('duration', '00:30:00');
@@ -4227,7 +4284,7 @@ test('api smoke: complete-workout returns a clean 413 (not 500) when log_rows_js
 });
 
 test('api smoke: complete-workout screenshot preview uses parsed screenshot date when form date is omitted', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   // A recent date (23 days back) computed relative to today so this test never ages
   // out of the screenshot-date plausibility window (2 days ahead / 400 days back).
   const recentDate = getLocalDateString(new Date(Date.now() - 23 * 86400000));
@@ -4258,7 +4315,7 @@ test('api smoke: complete-workout screenshot preview uses parsed screenshot date
 });
 
 test('api smoke: complete-workout screenshot preview falls back to local today when no date is provided anywhere', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeVisionParsedMetrics = {
     date: null,
     duration: '00:42:00',
@@ -4286,7 +4343,7 @@ test('api smoke: complete-workout screenshot preview falls back to local today w
 });
 
 test('api smoke: complete-workout manual date overrides parsed screenshot date', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeVisionParsedMetrics = {
     date: '2026-06-09',
     duration: '00:42:00',
@@ -4344,7 +4401,7 @@ function todayStampedBenchRows(today) {
 }
 
 test('api smoke: F08 complete-workout — a PRIOR-DAY screenshot dates BOTH Log and Effort rows (not just Effort)', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const today = getLocalDateString();
   const screenshotDate = getLocalDateString(new Date(Date.now() - 3 * 86400000)); // 3 days back, in-window
   assert.notEqual(screenshotDate, today);
@@ -4366,7 +4423,7 @@ test('api smoke: F08 complete-workout — a PRIOR-DAY screenshot dates BOTH Log 
 });
 
 test('api smoke: F08 complete-workout — MONTH-boundary screenshot date carries to Log + Effort verbatim', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const today = getLocalDateString();
   const now = new Date();
   // Last day of the previous month (≤31 days back → inside the plausibility window).
@@ -4389,7 +4446,7 @@ test('api smoke: F08 complete-workout — MONTH-boundary screenshot date carries
 });
 
 test('api smoke: F08 complete-workout — YEAR-boundary (prior-year Dec 31) screenshot date carries to Log + Effort', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const today = getLocalDateString();
   const yearBoundary = `${new Date().getFullYear() - 1}-12-31`; // ≤366 days back → inside the window
   fakeVisionParsedMetrics = {
@@ -4409,7 +4466,7 @@ test('api smoke: F08 complete-workout — YEAR-boundary (prior-year Dec 31) scre
 });
 
 test('api smoke: F08 complete-workout — timezone edge: the LOCAL today fallback dates BOTH Log and Effort (no UTC drift)', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const today = getLocalDateString(); // local, not UTC toISOString().slice(0,10)
   fakeVisionParsedMetrics = {
     date: null, duration: '00:41:00', activeCalories: 405,
@@ -4430,7 +4487,7 @@ test('api smoke: F08 complete-workout — timezone edge: the LOCAL today fallbac
 });
 
 test('api smoke: F08 complete-workout — an INVALID/implausible screenshot date asks for correction (today-fallback) and never splits Log/Effort', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const today = getLocalDateString();
   // 500 days back → outside the 400-day plausibility window (e.g. a weekday-matched wrong year).
   const implausible = getLocalDateString(new Date(Date.now() - 500 * 86400000));
@@ -4455,7 +4512,7 @@ test('api smoke: F08 complete-workout — an INVALID/implausible screenshot date
 
 test('api smoke: F08 complete-workout — ordinary same-day MANUAL (non-screenshot) closeout is unchanged; a backdated manual date dates both rows', async () => {
   // Same-day manual: no image, manual date = today → both rows on today (fix is a no-op here).
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const today = getLocalDateString();
   {
     const form = new FormData();
@@ -4486,7 +4543,7 @@ test('api smoke: F08 complete-workout — ordinary same-day MANUAL (non-screensh
 });
 
 test('api smoke: F08 complete-workout LIVE write — appended Log AND Effort rows share the canonical screenshot date', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeSheetsState.allowAppend = true;
   const today = getLocalDateString();
   const screenshotDate = getLocalDateString(new Date(Date.now() - 5 * 86400000));
@@ -4523,7 +4580,7 @@ test('api smoke: F08 complete-workout LIVE write — appended Log AND Effort row
 });
 
 test('api smoke: complete-workout effort-only live write appends only Effort rows', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeSheetsState.allowAppend = true;
 
   try {
@@ -4565,7 +4622,7 @@ test('api smoke: complete-workout effort-only live write appends only Effort row
 // append proof (per-tab range + row count from the Sheets append response) that
 // Atlas's trusted /api/log-workout path returns — never a client-side pre-count.
 test('api smoke (F02/WRITE-1): complete-workout live write reports exact per-tab append proof', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeSheetsState.allowAppend = true;
   try {
     await withMutedConsoleLog(async () => {
@@ -4587,10 +4644,14 @@ test('api smoke (F02/WRITE-1): complete-workout live write reports exact per-tab
 
       assert.equal(response.status, 200, JSON.stringify(body));
       assert.equal(data.sheet_write, 'success');
-      assert.equal(data.log_rows_written, 2, 'authoritative log count comes from the append response');
-      assert.equal(data.logAppendedRange, 'Log_Cleaned!A100:K100', 'exact log appended range is reported');
-      assert.equal(data.effort_rows_written, 1, 'authoritative effort count comes from the append response');
-      assert.equal(data.effortAppendedRange, 'Effort!A100:K100', 'exact effort appended range is reported');
+      assert.equal(data.log_rows_written, 2, 'authoritative log count comes from the transaction');
+      assert.equal(data.effort_rows_written, 1, 'authoritative effort count comes from the transaction');
+      // NO RANGES, and that is the honest report. The counts used to be paired with
+      // the A1 ranges Google returned; the Save is one Supabase transaction now, so
+      // there is no range to report and publishing one would be a claim about a
+      // Google Sheets append that never happened.
+      assert.equal(data.logAppendedRange, undefined);
+      assert.equal(data.effortAppendedRange, undefined);
     });
   } finally {
     fakeSheetsState.allowAppend = false;
@@ -4601,9 +4662,13 @@ test('api smoke (F02/WRITE-1): complete-workout live write reports exact per-tab
 // (row count disagrees with what was sent), the closeout must NOT claim success — it
 // returns an explicit unverified state so a proof mismatch can never read as a save.
 test('api smoke (F02/WRITE-1): complete-workout fails closed on an inconsistent append proof (no false success)', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeSheetsState.allowAppend = true;
-  fakeSheetsState.miswriteAppendForTab = 'Log_Cleaned';
+  // The transaction reports a count that disagrees with the rows it was asked to
+  // write. This is the only way to produce the disagreement the proof check exists
+  // for — a real transaction cannot commit a different number of rows than it
+  // inserted, which is why it is a test instrument rather than a producible shape.
+  require('./helpers/stubWorkoutAuthority').workoutAuthorityStore().saveCountOverride = 0;
   try {
     await withMutedConsoleLog(async () => {
       const form = new FormData();
@@ -4629,7 +4694,7 @@ test('api smoke (F02/WRITE-1): complete-workout fails closed on an inconsistent 
       assert.equal(details.expected_log_rows, 1);
     });
   } finally {
-    fakeSheetsState.miswriteAppendForTab = null;
+    require('./helpers/stubWorkoutAuthority').workoutAuthorityStore().saveCountOverride = null;
     fakeSheetsState.allowAppend = false;
   }
 });
@@ -4669,9 +4734,13 @@ test('api smoke (F02/WRITE-1): complete-workout dry-run carries no append proof 
 // a retried write_id (e.g. the original 500 was lost) must never be replayed as a
 // skipped_duplicate save, and must never re-append.
 test('api smoke (F02/WRITE-1): a retried write_id after an unverified proof stays fail-closed (never a false save)', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeSheetsState.allowAppend = true;
-  fakeSheetsState.miswriteAppendForTab = 'Log_Cleaned';
+  // The transaction reports a count that disagrees with the rows it was asked to
+  // write. This is the only way to produce the disagreement the proof check exists
+  // for — a real transaction cannot commit a different number of rows than it
+  // inserted, which is why it is a test instrument rather than a producible shape.
+  require('./helpers/stubWorkoutAuthority').workoutAuthorityStore().saveCountOverride = 0;
   const wid = 'f02-unverified-retry-01';
   const mkForm = () => {
     const form = new FormData();
@@ -4709,7 +4778,7 @@ test('api smoke (F02/WRITE-1): a retried write_id after an unverified proof stay
       );
     });
   } finally {
-    fakeSheetsState.miswriteAppendForTab = null;
+    require('./helpers/stubWorkoutAuthority').workoutAuthorityStore().saveCountOverride = null;
     fakeSheetsState.allowAppend = false;
   }
 });
@@ -4718,15 +4787,17 @@ test('api smoke (F02/WRITE-1): a retried write_id after an unverified proof stay
 // on the prior (crashed) attempt so the composite-key (Log) + duplicate-session
 // (Effort) dedupes catch it — never re-mint a fresh id and double-write the workout.
 test('api smoke (F03/WRITE-2): a retried write_id reuses the server-minted session id and does not double-write', async () => {
-  const idem = require('../services/idempotency');
+  // The receipt authority is Supabase; at test time this resolves to the double.
+  const idem = require('../services/writeReceipts');
+  const resetReceipts = require('./helpers/stubWorkoutAuthority').resetWorkoutAuthorityStub;
   const W = 'f03-write2-retry-01';
   const S1 = '20260612-AM-01';
   // Simulate a crashed first attempt: a released (retryable) record that stamped the
   // minted session id, with S1's Effort session already on the sheet.
-  idem.resetIdempotencyStore();
-  const begun = idem.beginWrite(W, { endpoint: '/api/complete-workout', session_id: S1 });
-  idem.failWrite(W, begun.token); // released → retryable; keeps metadata.session_id = S1
-  fakeSheetsState.appendCalls.length = 0;
+  resetReceipts();
+  const begun = await idem.beginWrite(W, { endpoint: '/api/complete-workout', session_id: S1 });
+  await idem.failWrite(W, begun.token); // released → retryable; keeps metadata.session_id = S1
+  fakeSheetsState.appendCalls = [];
   fakeSheetsState.allowAppend = true;
   fakeSheetsState.effortSessionIds = [S1];
   try {
@@ -4748,7 +4819,7 @@ test('api smoke (F03/WRITE-2): a retried write_id reuses the server-minted sessi
       assert.equal(fakeSheetsState.appendCalls.length, 0, 'a reused-minted-id retry must not re-append the workout');
     });
   } finally {
-    idem.resetIdempotencyStore();
+    resetReceipts();
     fakeSheetsState.effortSessionIds = [];
     fakeSheetsState.allowAppend = false;
   }
@@ -4758,18 +4829,20 @@ test('api smoke (F03/WRITE-2): a retried write_id reuses the server-minted sessi
 // replay of a COMPLETED write. A lost-response retry of a completed closeout (no
 // session_id) must still replay 200 skipped_duplicate, never a 409 duplicate-session.
 test('api smoke (F03/WRITE-2 guard): a completed lost-response retry idempotency-replays (not a 409 duplicate-session)', async () => {
-  const idem = require('../services/idempotency');
+  // The receipt authority is Supabase; at test time this resolves to the double.
+  const idem = require('../services/writeReceipts');
+  const resetReceipts = require('./helpers/stubWorkoutAuthority').resetWorkoutAuthorityStub;
   const W = 'f03-completed-replay-01';
   const S1 = '20260612-AM-01';
   // Simulate a COMPLETED first attempt: the record stores the success response and
   // S1's Effort session is already on the sheet.
-  idem.resetIdempotencyStore();
-  const begun = idem.beginWrite(W, { endpoint: '/api/complete-workout', session_id: S1 });
-  idem.completeWrite(W, begun.token, {
+  resetReceipts();
+  const begun = await idem.beginWrite(W, { endpoint: '/api/complete-workout', session_id: S1 });
+  await idem.completeWrite(W, begun.token, {
     session_id: S1, sheet_written: true, sheet_write: 'success',
     log_rows_written: 1, effort_written: true
   });
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeSheetsState.allowAppend = true;
   fakeSheetsState.effortSessionIds = [S1];
   try {
@@ -4793,7 +4866,7 @@ test('api smoke (F03/WRITE-2 guard): a completed lost-response retry idempotency
       assert.equal(fakeSheetsState.appendCalls.length, 0, 'a completed replay never re-appends');
     });
   } finally {
-    idem.resetIdempotencyStore();
+    resetReceipts();
     fakeSheetsState.effortSessionIds = [];
     fakeSheetsState.allowAppend = false;
   }
@@ -4804,7 +4877,7 @@ test('api smoke (F03/WRITE-2 guard): a completed lost-response retry idempotency
 // saved) instead of colliding on …-01. The server resolves the next free suffix via
 // nextAvailableSessionId; the client sends the field blank for a fresh effort upload.
 test('api smoke: complete-workout effort-only with no session_id auto-increments past an existing same-day session', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeSheetsState.allowAppend = true;
   // Seed both AM and PM -01 so the assertion is independent of the test run clock.
   fakeSheetsState.effortSessionIds = ['20260629-AM-01', '20260629-PM-01'];
@@ -4852,7 +4925,7 @@ test('api smoke: complete-workout effort-only with no session_id auto-increments
 // 429 / timeout) must NOT 500 the whole save. With logged sets present, the sets
 // are saved WITHOUT effort (blank effort row) and the owner is told.
 test('api smoke: complete-workout saves logged sets without effort when the screenshot parse fails (graceful degrade, not 500)', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeSheetsState.allowAppend = true;
   fakeVisionThrow = new Error('Gemini request failed (429): RESOURCE_EXHAUSTED');
 
@@ -4898,7 +4971,7 @@ test('api smoke: complete-workout saves logged sets without effort when the scre
 // Effort-only (no logged sets) + screenshot parse failure → nothing left to save,
 // so an honest 422 (never a 500), and no append happens.
 test('api smoke: complete-workout returns 422 (not 500) when an effort-only screenshot parse fails and never appends', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeSheetsState.allowAppend = true;
   fakeVisionThrow = new Error('Gemini request failed (429): RESOURCE_EXHAUSTED');
 
@@ -4929,7 +5002,7 @@ test('api smoke: complete-workout returns 422 (not 500) when an effort-only scre
 // validation rejected them), and is the exact poisoning path B3 targets.
 test('api smoke: complete-workout degrades (not 400) when a parsed screenshot has invalid effort metrics but sets are present (B3)', async () => {
   const savedMetrics = { ...fakeVisionParsedMetrics };
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   // Screenshot "parsed" but activeCalories is missing — normalizeAndValidateParsedMetrics
   // throws ("activeCalories is required") on this input.
   fakeVisionParsedMetrics = {
@@ -4982,7 +5055,7 @@ test('api smoke: complete-workout degrades (not 400) when a parsed screenshot ha
 // session linkage exactly like the unreadable-screenshot path.
 test('api smoke: live complete-workout saves sets with blank effort when parsed screenshot metrics are invalid (B3)', async () => {
   const savedMetrics = { ...fakeVisionParsedMetrics };
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeSheetsState.allowAppend = true;
   fakeVisionParsedMetrics = {
     date: null,
@@ -5030,7 +5103,7 @@ test('api smoke: live complete-workout saves sets with blank effort when parsed 
 // unreadable-screenshot path — source-date handling for screenshots is B5's scope.
 test('api smoke: invalid parsed screenshot metrics degrade discards the rejected screenshot date (no-manual-date convergence, B3)', async () => {
   const savedMetrics = { ...fakeVisionParsedMetrics };
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeVisionParsedMetrics = {
     date: '2026-05-01', // a date is present, but the metrics are invalid (below) → rejected
     duration: '00:42:00',
@@ -5073,7 +5146,7 @@ test('api smoke: invalid parsed screenshot metrics degrade discards the rejected
 // (honest error, never a silent blank-effort write).
 test('api smoke: complete-workout effort-only with invalid parsed metrics fails closed and never appends (B3 boundary)', async () => {
   const savedMetrics = { ...fakeVisionParsedMetrics };
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeSheetsState.allowAppend = true;
   fakeVisionParsedMetrics = {
     date: null,
@@ -5109,7 +5182,7 @@ test('api smoke: complete-workout effort-only with invalid parsed metrics fails 
 });
 
 test('api smoke: live complete-workout with write_id appends once and skips duplicate retry', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeSheetsState.allowAppend = true;
 
   const buildForm = () => {
@@ -5154,65 +5227,28 @@ test('api smoke: live complete-workout with write_id appends once and skips dupl
   }
 });
 
-// Partial-write guard parity with /api/log-workout: on a full session (log rows
-// + effort) where the log append commits but the effort append throws, the
-// write_id must be recorded as a partial completion — NOT released — so a retry
-// replays the partial state instead of re-appending the log rows a second time.
-test('api smoke: complete-workout effort failure after log append is partial, retry never re-appends', async () => {
-  fakeSheetsState.appendCalls.length = 0;
-  fakeSheetsState.allowAppend = true;
-  fakeSheetsState.failAppendForTab = 'Effort';
+// ── THE PARTIAL-WRITE GUARD RETIRED WITH THE PARTIAL ────────────────────────
+//
+// It drove the worst outcome the two-append Save could produce: the log rows
+// committed to Google Sheets, the Effort append then threw, and the write_id had to
+// be recorded as a PARTIAL completion rather than released — so a retry replayed
+// that honest partial instead of appending the log rows a second time.
+//
+// The S4 cutover writes both in ONE Supabase transaction (§6.3 P12). A failure rolls
+// the whole Save back, so there is no half-written session to record and releasing
+// the write_id is the correct action — the retry starts clean. The state the guard
+// protected against is unrepresentable rather than merely handled better, which is
+// why the test goes rather than being rewritten.
+//
+// `test/closeoutSealIntegration.test.js` holds the replacement property directly: a
+// failed Save leaves no logged set, no Effort row, and no seal.
 
-  const buildForm = () => {
-    const form = new FormData();
-    form.append('session_id', 'COMPLETE-PARTIAL-01');
-    form.append('date', '2026-06-12');
-    form.append('write_id', 'complete-partial-retry-01');
-    form.append('log_rows_json', JSON.stringify([
-      { exercise: 'Bench Press', set_number: 1, weight: 135, reps: 10, rir: 5, notes: '' }
-    ]));
-    form.append('effort_json', JSON.stringify({
-      duration: '42', activeCalories: 410, totalCalories: 520, averageHR: 148, peakHR: 171
-    }));
-    return form;
-  };
-
-  try {
-    await withMutedConsoleLog(async () => {
-      const first = await requestMultipart('/api/complete-workout', buildForm());
-      // Log rows landed; effort append failed → honest partial 500, not a clean failure.
-      assert.equal(first.response.status, 500, JSON.stringify(first.body));
-      assert.equal(first.body.status, 'error');
-      assert.equal(first.body.details.sheet_write, 'partial');
-      assert.equal(first.body.details.sheet_written, true);
-      assert.equal(first.body.details.log_rows_written, 1);
-      assert.equal(first.body.details.effort_written, false);
-      assert.equal(first.body.details.write_id, 'complete-partial-retry-01');
-      // One log append + one failed effort attempt (the stub records before throwing).
-      assert.equal(fakeSheetsState.appendCalls.length, 2);
-
-      // Outage clears; the client retries the SAME write_id. The log rows must
-      // not be appended a second time — the recorded partial result replays.
-      fakeSheetsState.failAppendForTab = null;
-      const retry = await requestMultipart('/api/complete-workout', buildForm());
-      const dupData = retry.body.data.data;
-      assert.equal(retry.response.status, 200, JSON.stringify(retry.body));
-      assert.equal(dupData.duplicate_write, true);
-      assert.equal(dupData.sheet_write, 'skipped_duplicate');
-      assert.equal(dupData.original_sheet_written, true);
-      assert.equal(fakeSheetsState.appendCalls.length, 2, 'retry must not append again');
-    });
-  } finally {
-    fakeSheetsState.allowAppend = false;
-    fakeSheetsState.failAppendForTab = null;
-  }
-});
 
 // PR-02: a screenshot approval re-sends the reviewed effort as effort_json with
 // NO image, so what gets written is exactly what the owner saw — and the vision
 // model is never run a second time. These tests pin that backend contract.
 test('api smoke: complete-workout approval payload (effort_json, no image) writes the reviewed effort values and never calls vision', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeVisionCalls = 0;
   fakeSheetsState.allowAppend = true;
 
@@ -5261,7 +5297,7 @@ test('api smoke: complete-workout approval payload (effort_json, no image) write
 });
 
 test('api smoke: complete-workout dry-run with write_id does not consume idempotency state', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
 
   const effortJson = JSON.stringify({
     duration: '42', activeCalories: 410, totalCalories: 520,
@@ -5308,7 +5344,7 @@ test('api smoke: complete-workout dry-run with write_id does not consume idempot
 });
 
 test('api smoke: complete-workout approval payload preserves a missing peak HR as an empty cell with a warning', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeVisionCalls = 0;
   fakeSheetsState.allowAppend = true;
 
@@ -5351,7 +5387,7 @@ test('api smoke: complete-workout approval payload preserves a missing peak HR a
 });
 
 test('api smoke: complete-workout still blocks blank workout text when no effort data exists', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const form = new FormData();
   form.append('session_id', 'EFFORT-MISSING-01');
   form.append('date', '2026-06-11');
@@ -5367,7 +5403,7 @@ test('api smoke: complete-workout still blocks blank workout text when no effort
 });
 
 test('api smoke: complete-workout still previews workout rows alongside screenshot effort', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeVisionParsedMetrics = {
     date: null,
     duration: '00:42:00',
@@ -5406,7 +5442,7 @@ test('api smoke: complete-workout still previews workout rows alongside screensh
 });
 
 test('api smoke: log-workout invalid payload errors without append', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const { response, body } = await requestJson('/api/log-workout', {
     method: 'POST',
     body: JSON.stringify({
@@ -5815,7 +5851,7 @@ test('api smoke: /api/plan/intent-recommendation stays read-only across all engi
 });
 
 test('api smoke: plan-today returns stable read shape', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const { response, body } = await requestJson('/api/plan/today');
 
   assert.equal(response.status, 200);
@@ -5826,7 +5862,7 @@ test('api smoke: plan-today returns stable read shape', async () => {
 });
 
 test('api smoke: progress-summary returns stable read shape', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const { response, body } = await requestJson('/api/progress/summary');
 
   assert.equal(response.status, 200);
@@ -5844,7 +5880,7 @@ test('api smoke: progress-summary returns stable read shape', async () => {
 });
 
 test('api smoke: sessions-recent returns stable read shape through read layer', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const { response, body } = await requestJson('/api/sessions/recent?limit=5');
 
   assert.equal(response.status, 200);
@@ -5856,7 +5892,7 @@ test('api smoke: sessions-recent returns stable read shape through read layer', 
 });
 
 test('api smoke: weekly-report returns stable read shape through read layer', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const { response, body } = await requestJson('/api/report/weekly?days=7');
 
   assert.equal(response.status, 200);
@@ -5871,7 +5907,7 @@ test('api smoke: weekly-report returns stable read shape through read layer', as
 });
 
 test('api smoke: exercise-detail returns stable read shape through read layer', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const { response, body } = await requestJson('/api/exercises/BEN01/detail');
 
   assert.equal(response.status, 200);
@@ -5885,7 +5921,7 @@ test('api smoke: exercise-detail returns stable read shape through read layer', 
 // This test pins the current behavior: absent test_mode = real append to Log_Cleaned.
 // A future PR may add an explicit confirm_write gate, but this task does not change that contract.
 test('api smoke: live log-workout without test_mode appends one row to Log_Cleaned', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeSheetsState.allowAppend = true;
 
   try {
@@ -5952,7 +5988,7 @@ test('api smoke: live log-workout without test_mode appends one row to Log_Clean
 // always recomputes weight × reps so column 12 cannot disagree with the set
 // (BACKLOG ME-4).
 test('api smoke: live log-workout ignores a client-supplied volume_calc and recomputes it', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeSheetsState.allowAppend = true;
 
   try {
@@ -5982,167 +6018,28 @@ test('api smoke: live log-workout ignores a client-supplied volume_calc and reco
 
 // ── header-drift guard (trust-critical) ─────────────────────────────────────
 // A hand-edited column reorder must block the live write, not misroute values.
-test('api smoke: live log-workout is blocked when Log_Cleaned header is reordered', async () => {
-  fakeSheetsState.appendCalls.length = 0;
-  fakeSheetsState.allowAppend = true;
-  // Swap weight (idx 7) and reps (idx 8) — the exact silent-misroute risk.
-  const drifted = [...logCleanedColumns];
-  [drifted[7], drifted[8]] = [drifted[8], drifted[7]];
-  fakeSheetsState.headerRows['Log_Cleaned'] = drifted;
-
-  try {
-    const { response, body } = await requestJson('/api/log-workout', {
-      method: 'POST',
-      body: JSON.stringify({
-        session_id: 'DRIFT-LOG-01',
-        date: '2026-06-11',
-        write_id: 'drift-log-01',
-        log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 135, reps: 10, rir: 5, notes: '' }]
-      })
-    });
-
-    assert.equal(response.status, 409);
-    assert.equal(body.status, 'error');
-    assert.equal(body.details.sheet_write, 'blocked_schema_drift');
-    assert.equal(body.details.sheet_written, false);
-    assert.equal(body.details.no_write_confirmed, true);
-    assert.equal(body.details.header_mismatches[0].tab, 'Log_Cleaned');
-    // Nothing was appended — the permanent record is untouched.
-    assert.equal(fakeSheetsState.appendCalls.length, 0);
-  } finally {
-    delete fakeSheetsState.headerRows['Log_Cleaned'];
-    fakeSheetsState.allowAppend = false;
-  }
-});
-
-test('api smoke: live complete-workout is blocked when Effort header is reordered', async () => {
-  fakeSheetsState.appendCalls.length = 0;
-  fakeSheetsState.allowAppend = true;
-  // Swap average_hr (idx 5) and peak_hr (idx 6) — distinct metrics must not cross.
-  const drifted = [...effortColumns];
-  [drifted[5], drifted[6]] = [drifted[6], drifted[5]];
-  fakeSheetsState.headerRows['Effort'] = drifted;
-
-  try {
-    await withMutedConsoleLog(async () => {
-      const form = new FormData();
-      form.append('session_id', 'DRIFT-EFFORT-01');
-      form.append('date', '2026-06-11');
-      form.append('log_rows_json', JSON.stringify([]));
-      form.append('write_id', 'drift-effort-01');
-      form.append('effort_json', JSON.stringify({
-        duration: '42', activeCalories: 410, totalCalories: 520,
-        averageHR: 148, peakHR: 171, workoutType: 'Traditional Strength Training'
-      }));
-      const { response, body } = await requestMultipart('/api/complete-workout', form);
-
-      assert.equal(response.status, 409, JSON.stringify(body));
-      assert.equal(body.status, 'error');
-      assert.equal(body.details.sheet_write, 'blocked_schema_drift');
-      assert.equal(body.details.sheet_written, false);
-      assert.equal(body.details.no_write_confirmed, true);
-      assert.ok(body.details.header_mismatches.some(m => m.tab === 'Effort'));
-      assert.equal(fakeSheetsState.appendCalls.length, 0);
-    });
-  } finally {
-    delete fakeSheetsState.headerRows['Effort'];
-    fakeSheetsState.allowAppend = false;
-  }
-});
-
-test('api smoke: live log-workout proceeds when header is a valid casing/alias variant', async () => {
-  fakeSheetsState.appendCalls.length = 0;
-  fakeSheetsState.allowAppend = true;
-  // Title-case + spaces + the 'date'/'volume' aliases — same order, must NOT block.
-  fakeSheetsState.headerRows['Log_Cleaned'] = ['Date', 'Session ID', 'Exercise', 'Canonical Exercise',
-    'Muscle Group', 'Lift Code', 'Set Number', 'Weight', 'Reps', 'RIR', 'Notes', 'Volume'];
-
-  try {
-    const { response, body } = await requestJson('/api/log-workout', {
-      method: 'POST',
-      body: JSON.stringify({
-        session_id: 'DRIFT-VARIANT-01',
-        date: '2026-06-11',
-        write_id: 'drift-variant-01',
-        log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 135, reps: 10, rir: 5, notes: '' }]
-      })
-    });
-
-    assert.equal(response.status, 200);
-    assert.equal(body.data.sheet_write, 'success');
-    assert.equal(fakeSheetsState.appendCalls.length, 1);
-    assert.equal(fakeSheetsState.appendCalls[0].tabName, 'Log_Cleaned');
-  } finally {
-    delete fakeSheetsState.headerRows['Log_Cleaned'];
-    fakeSheetsState.allowAppend = false;
-  }
-});
-
-test('api smoke: live complete-workout is blocked when Log_Cleaned header is reordered', async () => {
-  fakeSheetsState.appendCalls.length = 0;
-  fakeSheetsState.allowAppend = true;
-  const drifted = [...logCleanedColumns];
-  [drifted[7], drifted[8]] = [drifted[8], drifted[7]]; // weight <-> reps
-  fakeSheetsState.headerRows['Log_Cleaned'] = drifted;
-
-  try {
-    await withMutedConsoleLog(async () => {
-      const form = new FormData();
-      form.append('session_id', 'DRIFT-CW-LOG-01');
-      form.append('date', '2026-06-11');
-      form.append('write_id', 'drift-cw-log-01');
-      form.append('log_rows_json', JSON.stringify([
-        { exercise: 'Bench Press', set_number: 1, weight: 135, reps: 10, rir: 5, notes: '' }
-      ]));
-      form.append('effort_json', JSON.stringify({
-        duration: '42', activeCalories: 410, totalCalories: 520, averageHR: 148, peakHR: 171
-      }));
-      const { response, body } = await requestMultipart('/api/complete-workout', form);
-
-      assert.equal(response.status, 409, JSON.stringify(body));
-      assert.equal(body.details.sheet_write, 'blocked_schema_drift');
-      assert.ok(body.details.header_mismatches.some(m => m.tab === 'Log_Cleaned'));
-      // Blocked before either the log or effort append fired.
-      assert.equal(fakeSheetsState.appendCalls.length, 0);
-    });
-  } finally {
-    delete fakeSheetsState.headerRows['Log_Cleaned'];
-    fakeSheetsState.allowAppend = false;
-  }
-});
-
-test('api smoke: live log-workout fails closed (500, no append) when the header read throws', async () => {
-  fakeSheetsState.appendCalls.length = 0;
-  fakeSheetsState.allowAppend = true;
-  fakeSheetsState.failHeaderReadForTab = 'Log_Cleaned';
-
-  try {
-    await withMutedConsoleLog(async () => {
-      const { response, body } = await requestJson('/api/log-workout', {
-        method: 'POST',
-        body: JSON.stringify({
-          session_id: 'HDR-READ-FAIL-01',
-          date: '2026-06-11',
-          write_id: 'hdr-read-fail-01',
-          log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 135, reps: 10, rir: 5, notes: '' }]
-        })
-      });
-
-      assert.equal(response.status, 500, JSON.stringify(body));
-      assert.equal(body.status, 'error');
-      // Nothing appended — the read failure fails closed, not open.
-      assert.equal(fakeSheetsState.appendCalls.length, 0);
-    });
-  } finally {
-    fakeSheetsState.failHeaderReadForTab = null;
-    fakeSheetsState.allowAppend = false;
-  }
-});
+// ── THE SIX HEADER-DRIFT TESTS RETIRED WITH THE POSITIONAL APPEND ─────────
+//
+// They proved a real and serious guard: Atlas appended to `Log_Cleaned` and `Effort`
+// BY COLUMN POSITION, so an owner who reordered a column in the spreadsheet would
+// have had every future write land silently in the wrong field. The guard read row 1
+// of each target tab before every append, refused on a mismatch, released the
+// write_id, and failed closed when the header read itself threw.
+//
+// The Save writes NAMED COLUMNS of `atlas.logged_sets` and `atlas.session_effort`
+// now. A column cannot silently change meaning under a named insert, and a genuine
+// schema change is refused by Postgres rather than absorbed. The guard also cost two
+// metered Sheets reads on the Save path, which is where a quota exhaustion hurt most.
+//
+// Schema protection lives where the schema does: the migration, and
+// test-pg/constraints.pgproof.js, which drives the real constraints against a real
+// database. A human edit to the EXPORTED sheet is an export problem, and §5.7's
+// owner-run mirror rebuild is its named recovery.
 
 // ── undo-last tests ─────────────────────────────────────────────────────────
 // log-workout idempotency tests
 test('api smoke: live log-workout with write_id appends once and skips duplicate retry', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeSheetsState.allowAppend = true;
 
   const payload = {
@@ -6195,7 +6092,7 @@ test('api smoke: live log-workout with write_id appends once and skips duplicate
 });
 
 test('api smoke: dry-run with write_id does not consume idempotency state', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
 
   const payload = {
     session_id: 'DRY-RUN-IDEMPOTENT-01',
@@ -6245,7 +6142,7 @@ test('api smoke: dry-run with write_id does not consume idempotency state', asyn
 });
 
 test('api smoke: different write_id values write normally', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeSheetsState.allowAppend = true;
 
   const basePayload = {
@@ -6268,9 +6165,21 @@ test('api smoke: different write_id values write normally', async () => {
       method: 'POST',
       body: JSON.stringify({ ...basePayload, write_id: 'write-live-idempotent-02a' })
     });
+    // A DISTINCT SET, deliberately. The point of this test is that a different
+    // `write_id` is not blocked by the IDEMPOTENCY layer — but the second request
+    // must also be a genuinely different piece of work, or the row-level duplicate
+    // guard legitimately absorbs it and the test proves nothing about write_id.
+    //
+    // Sending byte-identical rows twice used to pass only because the guard read
+    // `Log_Cleaned` through a fake that never saw the first write. The authority
+    // records what it wrote, so an identical resend is now correctly a duplicate.
     const second = await requestJson('/api/log-workout', {
       method: 'POST',
-      body: JSON.stringify({ ...basePayload, write_id: 'write-live-idempotent-02b' })
+      body: JSON.stringify({
+        ...basePayload,
+        log_rows: [{ ...basePayload.log_rows[0], set_number: 2 }],
+        write_id: 'write-live-idempotent-02b',
+      })
     });
 
     assert.equal(first.response.status, 200, JSON.stringify(first.body));
@@ -6291,207 +6200,100 @@ test('api smoke: different write_id values write normally', async () => {
 //   sheet row 4 → logRows[2]: SESSION-NEW, Bench Press (backoff)
 //   sheet row 5 → logRows[3]: SESSION-NEW, Back Squat
 
-test('api smoke: undo-last rejects missing log_appended_range with 400', async () => {
-  fakeSheetsState.deleteCalls.length = 0;
+// ── UNDO IS BY IDENTITY, NOT BY POSITION ────────────────────────────────────
+//
+// Nine tests lived here. Six of them validated an A1 RANGE — that it was present,
+// that it targeted `Log_Cleaned`, that its row span matched `rows_to_delete`, that
+// the rows it pointed at really belonged to the session, and that a missing or
+// shifted row refused the delete. One more exercised `GET /api/log-workout/verify-range`,
+// the post-write read-back.
+//
+// Position is not identity, and that was always the weakness those tests were
+// working around: the range came from a read that could already be stale, and a
+// row-shifting delete is incompatible with the durable per-tab export allocations
+// the Sheets mirror depends on (§5.6). The Save now stamps its `write_id` on every
+// row it writes, so `DELETE ... WHERE (session_id, write_id)` addresses exactly the
+// rows of one Save and nothing else — there is no range to validate and no
+// verify-range route to read back.
+//
+// What survives is the contract that actually mattered, restated on the new
+// address: undo removes exactly one Save's rows, it refuses when nothing carries
+// that id, and a replayed undo write_id deletes once.
+
+test('api smoke: undo-last requires save_write_id with 400', async () => {
   const { response, body } = await requestJson('/api/log-workout/undo-last', {
     method: 'POST',
     body: JSON.stringify({
-      session_id: 'SESSION-NEW',
-      rows_to_delete: 1,
-      confirm_delete: true
-    })
+      session_id: 'SESSION-NEW', rows_to_delete: 1, confirm_delete: true, write_id: 'undo-no-id',
+    }),
   });
-
   assert.equal(response.status, 400);
-  assert.equal(body.status, 'error');
-  assert.deepEqual(fakeSheetsState.deleteCalls, []);
+  assert.match(body.message, /save_write_id/);
 });
 
-test('api smoke: undo-last rejects wrong tab with 400', async () => {
-  fakeSheetsState.deleteCalls.length = 0;
+test('api smoke: undo-last refuses when no row carries that save_write_id', async () => {
   const { response, body } = await requestJson('/api/log-workout/undo-last', {
     method: 'POST',
     body: JSON.stringify({
-      log_appended_range: 'Effort!A1:L1',
-      session_id: 'SESSION-NEW',
-      rows_to_delete: 1,
-      confirm_delete: true
-    })
+      save_write_id: 'w-never-written', session_id: 'SESSION-NEW',
+      rows_to_delete: 1, confirm_delete: true, write_id: 'undo-unknown-id',
+    }),
   });
-
-  assert.equal(response.status, 400);
-  assert.equal(body.status, 'error');
-  assert.match(body.message, /Log_Cleaned/);
-  assert.deepEqual(fakeSheetsState.deleteCalls, []);
+  assert.equal(response.status, 409, 'nothing carried that id — reporting success would be a lie');
+  assert.match(body.message, /No rows matched/);
 });
 
-test('api smoke: undo-last rejects rows_to_delete mismatch with 400', async () => {
-  fakeSheetsState.deleteCalls.length = 0;
+test('api smoke: undo-last deletes exactly the rows of ONE Save, and nothing else', async () => {
+  const store = require('./helpers/stubWorkoutAuthority').workoutAuthorityStore();
+  const row = (session, exercise, setNumber) => {
+    const cells = new Array(12).fill('');
+    cells[1] = session; cells[2] = exercise; cells[6] = String(setNumber);
+    return cells;
+  };
+  // Two Saves in one session, plus another session's row. Only the named Save goes.
+  store.loggedSets = [row('S-UNDO', 'Bench Press', 1), row('S-UNDO', 'Bench Press', 2), row('S-OTHER', 'Back Squat', 1)];
+  store.loggedSetWriteIds = ['w-save-a', 'w-save-b', 'w-save-a'];
+
   const { response, body } = await requestJson('/api/log-workout/undo-last', {
     method: 'POST',
     body: JSON.stringify({
-      log_appended_range: 'Log_Cleaned!A847:L847', // span = 1
-      session_id: 'SESSION-NEW',
-      rows_to_delete: 2,                           // mismatch
-      confirm_delete: true
-    })
+      save_write_id: 'w-save-a', session_id: 'S-UNDO',
+      rows_to_delete: 1, confirm_delete: true, write_id: 'undo-exact-1',
+    }),
   });
-
-  assert.equal(response.status, 400);
-  assert.equal(body.status, 'error');
-  assert.match(body.message, /rows_to_delete/);
-  assert.deepEqual(fakeSheetsState.deleteCalls, []);
-});
-
-test('api smoke: undo-last returns 409 and does not delete on session_id mismatch', async () => {
-  fakeSheetsState.deleteCalls.length = 0;
-  // Sheet row 2 → logRows[0] → SESSION-OLD; we claim SESSION-NEW → mismatch
-  const { response, body } = await requestJson('/api/log-workout/undo-last', {
-    method: 'POST',
-    body: JSON.stringify({
-      log_appended_range: 'Log_Cleaned!A2:L2',
-      session_id: 'SESSION-NEW',
-      rows_to_delete: 1,
-      confirm_delete: true
-    })
-  });
-
-  assert.equal(response.status, 409);
-  assert.equal(body.status, 'error');
-  assert.match(body.message, /session_id mismatch/i);
-  assert.deepEqual(fakeSheetsState.deleteCalls, []);
-});
-
-test('api smoke: undo-last returns 409 and does not delete when target row is missing', async () => {
-  fakeSheetsState.deleteCalls.length = 0;
-  // Sheet row 7 is beyond logRows (which covers rows 2–6), so allRows[5] is undefined
-  const { response, body } = await requestJson('/api/log-workout/undo-last', {
-    method: 'POST',
-    body: JSON.stringify({
-      log_appended_range: 'Log_Cleaned!A7:L7',
-      session_id: 'SESSION-NEW',
-      rows_to_delete: 1,
-      confirm_delete: true
-    })
-  });
-
-  assert.equal(response.status, 409);
-  assert.equal(body.status, 'error');
-  assert.match(body.message, /missing or empty/i);
-  assert.deepEqual(fakeSheetsState.deleteCalls, []);
-});
-
-test('api smoke: undo-last happy path deletes one Log_Cleaned row and returns rows_deleted: 1', async () => {
-  fakeSheetsState.deleteCalls.length = 0;
-  // Sheet row 3 → logRows[1] → SESSION-NEW; ownership verified → delete proceeds
-  const { response, body } = await requestJson('/api/log-workout/undo-last', {
-    method: 'POST',
-    body: JSON.stringify({
-      log_appended_range: 'Log_Cleaned!A3:L3',
-      session_id: 'SESSION-NEW',
-      rows_to_delete: 1,
-      confirm_delete: true
-    })
-  });
-
-  assert.equal(response.status, 200);
-  assert.equal(body.status, 'ok');
+  assert.equal(response.status, 200, JSON.stringify(body));
   assert.equal(body.data.rows_deleted, 1);
-  assert.equal(body.data.deleted_range, 'Log_Cleaned!A3:L3');
-
-  // Exactly one deleteRowsByRange call with correct 0-based indices
-  // sheet row 3 → startIndex=2 (inclusive), endIndex=3 (exclusive)
-  assert.equal(fakeSheetsState.deleteCalls.length, 1);
-  const call = fakeSheetsState.deleteCalls[0];
-  assert.equal(call.tabName, 'Log_Cleaned');
-  assert.equal(call.startIndex, 2);
-  assert.equal(call.endIndex, 3);
-});
-
-// Regression — malformed verify/undo range 400 after a MULTI-SET log.
-// A single /api/log-workout append may write up to MAX_LOG_ROWS (200) rows (a full
-// session closeout writes the whole buffer at once). The post-write verify-range
-// read-back and the undo-last delete previously capped the span at 10, so any write
-// of 11+ rows succeeded (200) yet BOTH verify-range and undo-last 400'd with
-// "Row span must be between 1 and 10" — the exact log-workout 200 → verify 400 →
-// undo 400 sequence seen in the Flight Recorder. These pin the span to MAX_LOG_ROWS.
-test('api smoke: undo-last accepts a 12-row span (multi-set closeout, >10 rows)', async () => {
-  fakeSheetsState.deleteCalls.length = 0;
-  // A Log_Cleaned whose data rows 2..13 (sheet rows) all belong to SESSION-BIG, so
-  // the read-back ownership check passes for the full 12-row span.
-  fakeSheetsState.logRowsOverride = Array.from({ length: 12 }, (_, i) =>
-    ['2026-07-05', 'SESSION-BIG', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', String(i + 1), '135', '10', '2', '', '1350']);
-  try {
-    const { response, body } = await requestJson('/api/log-workout/undo-last', {
-      method: 'POST',
-      body: JSON.stringify({
-        log_appended_range: 'Log_Cleaned!A2:L13', // span = 12
-        session_id: 'SESSION-BIG',
-        rows_to_delete: 12,
-        confirm_delete: true
-      })
-    });
-    assert.equal(response.status, 200, JSON.stringify(body));
-    assert.equal(body.data.rows_deleted, 12);
-    assert.equal(body.data.deleted_range, 'Log_Cleaned!A2:L13');
-    assert.equal(fakeSheetsState.deleteCalls.length, 1);
-    assert.equal(fakeSheetsState.deleteCalls[0].startIndex, 1); // sheet row 2 → 0-based 1
-    assert.equal(fakeSheetsState.deleteCalls[0].endIndex, 13);  // exclusive
-  } finally {
-    fakeSheetsState.logRowsOverride = null;
-  }
-});
-
-test('api smoke: verify-range accepts a 12-row span (multi-set closeout, >10 rows)', async () => {
-  fakeSheetsState.verifyRangeRows = Array.from({ length: 12 }, (_, i) =>
-    ['2026-07-05', 'SESSION-BIG', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', String(i + 1), '135', '10', '2', '', '1350']);
-  try {
-    const params = new URLSearchParams({ range: 'Log_Cleaned!A2:L13', session_id: 'SESSION-BIG', expected_rows: '12' });
-    const { response, body } = await requestJson(`/api/log-workout/verify-range?${params}`);
-    assert.equal(response.status, 200, JSON.stringify(body));
-    assert.equal(body.data.verified, true);
-    assert.equal(body.data.rows_found, 12);
-  } finally {
-    fakeSheetsState.verifyRangeRows = null;
-  }
+  // The other Save in the same session survives, and so does the other session's row
+  // that happens to share the write_id — undo is scoped to BOTH parts of the identity.
+  assert.equal(store.loggedSets.length, 2);
+  assert.ok(store.loggedSets.some((r) => r[1] === 'S-OTHER'));
+  assert.ok(store.loggedSets.some((r) => r[6] === '2'));
 });
 
 test('api smoke: undo-last with write_id deletes once and skips duplicate retry', async () => {
-  fakeSheetsState.deleteCalls.length = 0;
+  const store = require('./helpers/stubWorkoutAuthority').workoutAuthorityStore();
+  const cells = new Array(12).fill('');
+  cells[1] = 'S-UNDO-DUP'; cells[2] = 'Bench Press'; cells[6] = '1';
+  store.loggedSets = [cells];
+  store.loggedSetWriteIds = ['w-save-dup'];
 
   const payload = {
-    log_appended_range: 'Log_Cleaned!A3:L3',
-    session_id: 'SESSION-NEW',
-    rows_to_delete: 1,
-    confirm_delete: true,
-    write_id: 'undo-write-idem-01'
+    save_write_id: 'w-save-dup', session_id: 'S-UNDO-DUP',
+    rows_to_delete: 1, confirm_delete: true, write_id: 'undo-replay-1',
   };
-
-  const first = await requestJson('/api/log-workout/undo-last', {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  });
+  const post = () => requestJson('/api/log-workout/undo-last', { method: 'POST', body: JSON.stringify(payload) });
+  const first = await post();
   assert.equal(first.response.status, 200, JSON.stringify(first.body));
-  assert.equal(first.body.data.sheet_write, 'success');
-  assert.equal(first.body.data.sheet_written, true);
-  assert.equal(first.body.data.duplicate_write, false);
-  assert.equal(fakeSheetsState.deleteCalls.length, 1);
+  assert.equal(store.loggedSets.length, 0);
 
-  const duplicate = await requestJson('/api/log-workout/undo-last', {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  });
-  assert.equal(duplicate.response.status, 200, JSON.stringify(duplicate.body));
-  assert.equal(duplicate.body.data.duplicate_write, true);
-  assert.equal(duplicate.body.data.sheet_write, 'skipped_duplicate');
-  assert.equal(duplicate.body.data.sheet_written, false);
-  assert.equal(duplicate.body.data.rows_deleted, 0);
-  assert.equal(duplicate.body.data.original_rows_deleted, 1);
-  assert.equal(fakeSheetsState.deleteCalls.length, 1);
+  const replay = await post();
+  assert.equal(replay.body.data.duplicate_write, true, 'the replayed undo write_id is refused, not re-run');
+  assert.equal(store.calls.undos.length, 1, 'exactly one undo transaction ever ran');
 });
 
+
 test('api smoke: bodyweight dry-run returns no-write proof', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const { response, body } = await requestJson('/api/bodyweight', {
     method: 'POST',
     body: JSON.stringify({
@@ -6512,7 +6314,7 @@ test('api smoke: bodyweight dry-run returns no-write proof', async () => {
 });
 
 test('api smoke: bodyweight live write with write_id appends once and skips duplicate retry', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeSheetsState.allowAppend = true;
   const payload = {
     date: '2026-06-12',
@@ -6550,7 +6352,7 @@ test('api smoke: bodyweight live write with write_id appends once and skips dupl
 // ── Step 1A (HI-1): a live write with no write_id has no dedup, so a lost-response
 // retry would double-append. Every live write path must reject a missing write_id.
 test('api smoke: live log-workout without write_id is rejected with 400 and never appends', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeSheetsState.allowAppend = true;
   try {
     const { response, body } = await withMutedConsoleLog(() => requestJson('/api/log-workout', {
@@ -6572,7 +6374,7 @@ test('api smoke: live log-workout without write_id is rejected with 400 and neve
 });
 
 test('api smoke: live complete-workout without write_id is rejected with 400 and never appends', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeSheetsState.allowAppend = true;
   try {
     await withMutedConsoleLog(async () => {
@@ -6596,7 +6398,7 @@ test('api smoke: live complete-workout without write_id is rejected with 400 and
 });
 
 test('api smoke: live bodyweight without write_id is rejected with 400 and never appends', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeSheetsState.allowAppend = true;
   try {
     const { response, body } = await withMutedConsoleLog(() => requestJson('/api/bodyweight', {
@@ -6615,7 +6417,7 @@ test('api smoke: live bodyweight without write_id is rejected with 400 and never
 // ── Step 1A (CR-2): the Effort append must be guarded against a session_id that
 // already has an effort row, so a re-sent session can never write a second Effort row.
 test('api smoke: complete-workout with a duplicate session_id is rejected (409) and writes no Effort row', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeSheetsState.allowAppend = true;
   fakeSheetsState.effortSessionIds = ['DUP-EFFORT-SESSION-01'];
   try {
@@ -6644,7 +6446,7 @@ test('api smoke: complete-workout DRY-RUN does not 409 on a duplicate session �
   // PREVIEW must NOT hard-fail (the live write still 409s — asserted in the test above);
   // it returns a normal dry-run flagging duplicate_check.duplicate_session so the client
   // shows "already saved" instead of a red "Preview failed: Duplicate session".
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeSheetsState.effortSessionIds = ['DUP-EFFORT-SESSION-01'];
   try {
     await withMutedConsoleLog(async () => {
@@ -6673,7 +6475,7 @@ test('api smoke: bodyweight exercise with weight=0 passes log-workout dry-run', 
   // Regression: "Knee raises 20/2 20/2 13/2" produces weight:null from the parser.
   // The frontend maps null → '0'. Backend must accept weight '0' (or 0) without
   // throwing "Missing required log row field: weight".
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const { response, body } = await requestJson('/api/log-workout', {
     method: 'POST',
     body: JSON.stringify({
@@ -6712,81 +6514,68 @@ async function liveEffortWrite(sessionId) {
   return requestMultipart('/api/complete-workout', form);
 }
 
-// RETARGETED by C2 of the read-budget corrective. This test used to prove that an
-// EFFORT-only write made the next Log_Cleaned read fresh — which was true only because
-// every write cleared both cached tabs indiscriminately. It never was the contract: an
-// effort-only write appends nothing to Log_Cleaned, so the cached log rows are still
-// exactly what the sheet holds, and re-reading them spends a Sheets read for nothing.
+// ── THE READ-PATH SHEETS CACHE RETIRED WITH THE READS IT CACHED ─────────────
 //
-// The contract this now proves is the one that matters: a write always makes ITS OWN tab
-// fresh to the next read, and never evicts a tab it did not touch.
-test('read-path cache: analytics reads are cached within the TTL and a live write invalidates its own tab', async () => {
-  fakeSheetsState.allowAppend = true;
-  try {
-    await withMutedConsoleLog(async () => {
-      // Start from a known-empty cache: a no-argument invalidation clears everything.
-      await liveEffortWrite('CACHE-RESET-01');
-      await requestJson('/api/plan/today');
-      await requestJson('/api/plan/intent-recommendation');
+// Two tests lived here. They measured `getSheetRows` call counts per tab to prove
+// that analytics reads were served from a TTL cache, that a write invalidated its
+// own tab, and that the duplicate-protection reads were never served from it.
+//
+// Every read they measured is a Supabase query since the S4 cutover, so the counts
+// they asserted are now permanently zero and the tests could only be made to pass
+// by asserting the absence of something that cannot happen. That is not coverage.
+//
+// The cache itself was a GOOGLE SHEETS QUOTA DEVICE — it existed to spend fewer
+// metered reads — and OWNER CORRECTION 2026-08-13 forbids a cache on the workout
+// path outright, because a cache is a second copy and a second copy is a second
+// authority. So the mechanism is gone, not merely unused.
+//
+// What genuinely replaced them: `test/allSheets429.test.js` proves the workout path
+// issues no synchronous Sheets call at all under a total quota exhaustion, and
+// `test-pg/allSheets429Workout.pgproof.js` proves the same thing against a real
+// from-empty Postgres with the real adapter. Both are strictly stronger than a
+// cache-hit count, so the property is better held now than it was here.
 
-      // Both endpoints read Log_Cleaned through index.js's cached getSheetRows.
-      fakeSheetsState.reads = {};
-      await requestJson('/api/plan/today');            // warm
-      await requestJson('/api/stalls?minSessions=3');  // cache hit — no further read
-      assert.equal(fakeSheetsState.reads['Log_Cleaned'] || 0, 0,
-        'analytics reads should be served from cache');
-
-      // An EFFORT-only write must make the Effort rows fresh...
-      await liveEffortWrite('CACHE-RESET-02');
-      fakeSheetsState.reads = {};
-      await requestJson('/api/plan/intent-recommendation');
-      assert.equal(fakeSheetsState.reads['Effort'], 1,
-        'the tab the write appended to must be re-read — a write is always visible');
-      // ...and must NOT throw away log rows it did not touch.
-      assert.equal(fakeSheetsState.reads['Log_Cleaned'] || 0, 0,
-        'an effort-only write must not evict Log_Cleaned');
-
-      // A LOG write is the mirror image.
-      fakeSheetsState.reads = {};
-      const { response } = await requestJson('/api/log-workout', {
-        method: 'POST',
-        body: JSON.stringify({
-          date: '2026-06-11', session_id: 'CACHE-RESET-03', write_id: 'live-log-CACHE-RESET-03',
-          log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 225, reps: 5, rir: 2 }],
-        }),
-      });
-      assert.equal(response.status, 200);
-      fakeSheetsState.reads = {};
-      await requestJson('/api/plan/today');
-      assert.equal(fakeSheetsState.reads['Log_Cleaned'], 1,
-        'a log read after a log write must be fresh, not cached');
-    });
-  } finally {
-    fakeSheetsState.allowAppend = false;
-  }
-});
-
-test('read-path cache: duplicate-protection reads are never served from the cache', async () => {
+test('read-path: the duplicate-protection reads never touch Google Sheets at all', async () => {
+  // The narrow, still-meaningful half of the retired pair: whatever else changes,
+  // the two safety questions a live write asks must never reach a metered tab.
   fakeSheetsState.allowAppend = true;
   fakeSheetsState.safetyReadCalls.effortSessionIds = 0;
+  fakeSheetsState.safetyReadCalls.logCompositeKeys = 0;
+  fakeSheetsState.reads = {};
   try {
     await withMutedConsoleLog(async () => {
       await liveEffortWrite('CACHE-SAFETY-01');
       await liveEffortWrite('CACHE-SAFETY-02');
     });
-    // Each write re-reads the effort session ids live — the row cache never covers it.
-    assert.equal(fakeSheetsState.safetyReadCalls.effortSessionIds, 2);
+    assert.equal(fakeSheetsState.safetyReadCalls.effortSessionIds, 0,
+      'session occupancy is an indexed Supabase query, never an Effort column read');
+    assert.equal(fakeSheetsState.safetyReadCalls.logCompositeKeys, 0,
+      'row dedup is an indexed Supabase query, never a Log_Cleaned column read');
+    // `fakeSheetsState.reads` is deliberately NOT asserted here. This suite installs
+    // the authority double with `sheetsFallback`, so the double answers from the
+    // suite's own `getSheetRows` fixture — those reads belong to the HARNESS, not to
+    // production, and counting them would fail for the wrong reason. The proof that
+    // production issues no Sheets read is `test/allSheets429.test.js`, whose double
+    // runs with the fallback off for exactly this reason.
   } finally {
     fakeSheetsState.allowAppend = false;
   }
 });
 
+// THE EFFORT FIXTURE IS SEEDED IN THE AUTHORITY, not in the sheets fake. `Effort`
+// is Supabase-owned since the S4 cutover, so `getRecentRows('Effort')` is no longer
+// on this path at all — the endpoint reads `workoutAuthority.effortRows({ limit })`.
+// The DATA and both assertions are unchanged; only the store holding it moved.
+function seedEffortHistory(rows) {
+  require('./helpers/stubWorkoutAuthority').workoutAuthorityStore().effort = rows.map(r => r.slice());
+}
+
 test('history/recent: recent_effort returns the NEWEST effort rows, tail of the sheet window', async () => {
   // 7 effort rows in sheet order (oldest first). With limit=3 the endpoint
   // must return the last three (05, 06, 07) — not the head of the window.
-  fakeSheetsState.effortRecentRows = ['01', '02', '03', '04', '05', '06', '07'].map(d => [
+  seedEffortHistory(['01', '02', '03', '04', '05', '06', '07'].map(d => [
     `2026-06-${d}`, `EFFORT-${d}`, '00:45:00', '400', '500', '140', '165', 'Gym', ''
-  ]);
+  ]));
   try {
     const { response, body } = await requestJson('/api/history/recent?limit=3');
     assert.equal(response.status, 200);
@@ -6799,14 +6588,14 @@ test('history/recent: recent_effort returns the NEWEST effort rows, tail of the 
     );
     assert.equal(recentEffort[2].session_id, 'EFFORT-07');
   } finally {
-    fakeSheetsState.effortRecentRows = [];
+    seedEffortHistory([]);
   }
 });
 
 test('history/recent: limit is clamped to [1,200] for absurd/negative/NaN input (LT-008 F5)', async () => {
-  fakeSheetsState.effortRecentRows = ['01', '02', '03', '04', '05'].map(d => [
+  seedEffortHistory(['01', '02', '03', '04', '05'].map(d => [
     `2026-06-${d}`, `EFFORT-${d}`, '00:45:00', '400', '500', '140', '165', 'Gym', ''
-  ]);
+  ]));
   try {
     // limit=-5 clamps to 1 (newest only); 99999 and abc are graceful 200s, not runaways.
     const neg = await requestJson('/api/history/recent?limit=-5');
@@ -6819,77 +6608,24 @@ test('history/recent: limit is clamped to [1,200] for absurd/negative/NaN input 
       assert.ok(r.body.data.recent_effort.length <= 5);
     }
   } finally {
-    fakeSheetsState.effortRecentRows = [];
+    seedEffortHistory([]);
   }
 });
 
-test('api smoke: log-workout effort failure after log append is partial, retry never re-appends', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+// ── THE `/api/log-workout` PARTIAL GUARD RETIRED WITH THE PARTIAL ───────────
+//
+// The same reasoning as the `/api/complete-workout` one above: the log rows
+// committed, the Effort append threw, and the write_id had to be recorded as a
+// partial rather than released. One Supabase transaction cannot half-succeed, so
+// the state does not exist to guard.
+
+// A FAILED SAVE RELEASES ITS write_id, and a clean retry then writes. This is the
+// surviving half of the pair — and it is now the WHOLE rule rather than one branch
+// of it, because there is no longer a case where a failure leaves rows behind.
+test('api smoke: a failed Save releases the write_id so a clean retry can write', async () => {
+  fakeSheetsState.appendCalls = [];
   fakeSheetsState.allowAppend = true;
-  fakeSheetsState.failAppendForTab = 'Effort';
-
-  const payload = {
-    session_id: 'PARTIAL-WRITE-01',
-    date: '2026-06-12',
-    write_id: 'write-partial-retry-01',
-    log_rows: [
-      { exercise: 'Bench Press', set_number: 1, weight: 135, reps: 10, rir: 5, notes: '' }
-    ],
-    effort_row: {
-      date: '2026-06-12',
-      session_id: 'PARTIAL-WRITE-01',
-      duration: '00:45:00',
-      active_calories: 400,
-      total_calories: 500,
-      average_hr: 140,
-      peak_hr: 165,
-      location: 'Gym'
-    }
-  };
-
-  try {
-    const first = await withMutedConsoleLog(() => requestJson('/api/log-workout', {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    }));
-
-    // Log rows landed, effort append failed → honest partial error, not a clean 500.
-    assert.equal(first.response.status, 500, JSON.stringify(first.body));
-    assert.equal(first.body.status, 'error');
-    assert.equal(first.body.details.sheet_write, 'partial');
-    assert.equal(first.body.details.sheet_written, true);
-    assert.equal(first.body.details.log_rows_written, 1);
-    assert.ok(first.body.details.logAppendedRange, 'partial response must carry the appended range for undo');
-    assert.equal(first.body.details.effortWritten, false);
-    assert.equal(first.body.details.write_id, 'write-partial-retry-01');
-    // One log append + one failed effort attempt.
-    assert.equal(fakeSheetsState.appendCalls.length, 2);
-
-    // Outage clears; the client retries the SAME write_id. The log rows must
-    // not be appended a second time — the recorded partial result replays.
-    fakeSheetsState.failAppendForTab = null;
-    const retry = await withMutedConsoleLog(() => requestJson('/api/log-workout', {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    }));
-
-    assert.equal(retry.response.status, 200, JSON.stringify(retry.body));
-    assert.equal(retry.body.data.duplicate_write, true);
-    assert.equal(retry.body.data.sheet_write, 'skipped_duplicate');
-    assert.equal(retry.body.data.sheet_written, false);
-    assert.equal(retry.body.data.original_sheet_write, 'partial');
-    assert.equal(retry.body.data.logAppendedRange, first.body.details.logAppendedRange);
-    assert.equal(fakeSheetsState.appendCalls.length, 2, 'retry must not append again');
-  } finally {
-    fakeSheetsState.allowAppend = false;
-    fakeSheetsState.failAppendForTab = null;
-  }
-});
-
-test('api smoke: log-workout log-append failure releases write_id so a clean retry can write', async () => {
-  fakeSheetsState.appendCalls.length = 0;
-  fakeSheetsState.allowAppend = true;
-  fakeSheetsState.failAppendForTab = 'Log_Cleaned';
+  const store = require('./helpers/stubWorkoutAuthority');
 
   const payload = {
     session_id: 'CLEAN-RETRY-01',
@@ -6901,15 +6637,15 @@ test('api smoke: log-workout log-append failure releases write_id so a clean ret
   };
 
   try {
+    store.failWorkoutAuthorityWrites('Simulated Save failure');
     const first = await withMutedConsoleLog(() => requestJson('/api/log-workout', {
       method: 'POST',
       body: JSON.stringify(payload)
     }));
-    // Nothing was written — the write_id must be released, not poisoned.
     assert.equal(first.response.status, 500, JSON.stringify(first.body));
-    assert.equal(fakeSheetsState.appendCalls.length, 1);
+    assert.equal(store.workoutAuthorityStore().loggedSets.length, 0, 'the rollback left nothing');
 
-    fakeSheetsState.failAppendForTab = null;
+    store.failWorkoutAuthorityWrites(null);
     const retry = await withMutedConsoleLog(() => requestJson('/api/log-workout', {
       method: 'POST',
       body: JSON.stringify(payload)
@@ -6917,12 +6653,13 @@ test('api smoke: log-workout log-append failure releases write_id so a clean ret
 
     assert.equal(retry.response.status, 200, JSON.stringify(retry.body));
     assert.equal(retry.body.data.sheet_write, 'success');
-    assert.equal(retry.body.data.duplicate_write, false);
+    assert.equal(retry.body.data.duplicate_write, false,
+      'the released write_id is reusable — a failure never consumes it');
     assert.equal(retry.body.data.log_rows_written, 1);
-    assert.equal(fakeSheetsState.appendCalls.length, 2);
+    assert.equal(store.workoutAuthorityStore().loggedSets.length, 1, 'written exactly once');
   } finally {
     fakeSheetsState.allowAppend = false;
-    fakeSheetsState.failAppendForTab = null;
+    store.failWorkoutAuthorityWrites(null);
   }
 });
 
@@ -7114,34 +6851,10 @@ test('api smoke: POST /api/constraints is idempotent for repeated write_id', asy
   fakeSheetsState.appendCalls = [];
 });
 
-test('api smoke: POST /api/constraints returns 503 until the Constraints tab exists, writes nothing, and releases the write_id', async () => {
-  fakeSheetsState.hideConstraintsTab = true;
-  fakeSheetsState.allowAppend = true;
-  fakeSheetsState.appendCalls = [];
-  // try/finally so an assertion failure can never leak hideConstraintsTab into
-  // the rest of the suite (matches the Modality_Log / Deload_State 503 tests).
-  try {
-    const payload = JSON.stringify({ kind: 'injury', target: 'overhead pressing', rule: 'avoid', write_id: 'c-503-1' });
-    const { response, body } = await requestJson('/api/constraints', { method: 'POST', body: payload });
-
-    assert.equal(response.status, 503, 'missing Constraints tab → 503');
-    assert.match(body.message, /Constraints tab not found/);
-    assert.equal(fakeSheetsState.appendCalls.filter(c => c.tabName === 'Constraints').length, 0, 'nothing written');
-
-    // The 503 path must release the write_id (failWrite), so a retry after the
-    // tab exists is NOT treated as a duplicate and can write cleanly.
-    fakeSheetsState.hideConstraintsTab = false;
-    const { response: r2, body: b2 } = await requestJson('/api/constraints', { method: 'POST', body: payload });
-    assert.equal(r2.status, 200, 'retry after tab exists succeeds');
-    assert.equal(b2.data.duplicate_write, false, 'write_id was released, so the retry is not a duplicate');
-    assert.equal(b2.data.sheet_written, true);
-    assert.equal(fakeSheetsState.appendCalls.filter(c => c.tabName === 'Constraints').length, 1, 'written exactly once on the retry');
-  } finally {
-    fakeSheetsState.hideConstraintsTab = false;
-    fakeSheetsState.allowAppend = false;
-    fakeSheetsState.appendCalls = [];
-  }
-});
+// The Constraints TAB-ABSENT 503 retired with the tab, for the same reason as the
+// deload one below: a Supabase table the migration created cannot be missing, and a
+// setup instruction for a tab nothing writes would be a lie. The write-id release
+// on a refused write is unchanged and is proven by the write-freeze suite.
 
 test('api smoke: coach/chat returns propose_constraint when coach proposes a constraint', async () => {
   fakeCoachState.configured = true;
@@ -7272,36 +6985,44 @@ test('api smoke: deload routes are registered in the manifest', async () => {
   }
 });
 
-test('api smoke: recommend degrades gracefully when Deload_State is missing/unreadable (no 500)', async () => {
-  fakeSheetsState.failDeloadRead = true;
+// RETARGETED BY OWNER CORRECTION 2026-08-13. This test used to prove that an
+// unreadable `Deload_State` degraded to a 200 that reported `in_deload: false`.
+//
+// That is precisely the reading the correction rejects. "Unreadable" and "not in a
+// deload" are different facts, and the second one changes the prescription: a lifter
+// who IS deloading and whose deload state could not be read would be handed full
+// working weights, confidently, with a 200. A recommendation computed without the
+// deload state is not a softer answer — it is a different one.
+//
+// The tab it degraded around is also gone: the deload state is Supabase-owned now,
+// with no Sheets copy and no cache to serve a stale value. So the honest contract is
+// fail-closed, and that is what is asserted here.
+test('api smoke: recommend FAILS CLOSED when the deload authority is unreadable — never a false NORMAL', async () => {
+  const { failWorkoutAuthorityReads } = require('./helpers/stubWorkoutAuthority');
+  failWorkoutAuthorityReads('deload state read refused (armed)');
   try {
     const { response, body } = await requestJson('/api/recommend/next/BEN01');
-    assert.equal(response.status, 200);
-    assert.equal(body.data.deload.in_deload, false); // defaults to NORMAL, no active deload
+    assert.ok(response.status >= 500, `an unreadable authority must not answer 200 (got ${response.status})`);
+    assert.equal(body.status, 'error');
+    // The one thing that must never appear: a confident "you are not deloading".
+    assert.equal(body.data?.deload?.in_deload, undefined,
+      'a failed read may never be reported as an absent deload');
   } finally {
-    fakeSheetsState.failDeloadRead = false;
+    failWorkoutAuthorityReads(null);
   }
 });
 
-test('api smoke: deload begin returns an actionable 503 when the Deload_State tab is absent', async () => {
-  fakeSheetsState.hideDeloadStateTab = true;
-  try {
-    const { response, body } = await requestJson('/api/deload/begin', {
-      method: 'POST', body: JSON.stringify({ focus: 'strength' })
-    });
-    assert.equal(response.status, 503);
-    assert.match(body.message || body.error || '', /Deload_State tab not found/);
-  } finally {
-    fakeSheetsState.hideDeloadStateTab = false;
-  }
-});
+// The Deload_State TAB-ABSENT 503 retired with the tab. It told the owner to go and
+// create a Google Sheets tab before a deload could start; `atlas.deload_state` is
+// created by the migration and cannot be absent. A store that will not answer is
+// infrastructure and surfaces as a 500, which is the honest shape.
 
 // ── PR 341 — Planned Workout Awareness (API integration) ──────────────────────
 // These tests prove that plan_exercises wiring reaches through /api/log-workout
 // to classifySubstitution, not only through the planMatcher unit.
 
 test('api smoke: plan_exercises Deadlift + logged RDL → substitution inferred via /api/log-workout', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const { response, body } = await requestJson('/api/log-workout', {
     method: 'POST',
     body: JSON.stringify({
@@ -7328,7 +7049,7 @@ test('api smoke: plan_exercises Deadlift + logged RDL → substitution inferred 
 });
 
 test('api smoke: plan_exercises Back Squat + logged Leg Press → substitution inferred via /api/log-workout', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const { response, body } = await requestJson('/api/log-workout', {
     method: 'POST',
     body: JSON.stringify({
@@ -7354,7 +7075,7 @@ test('api smoke: plan_exercises Back Squat + logged Leg Press → substitution i
 });
 
 test('api smoke: plan_exercises Bench Press + logged Bench Press → no substitution (exact match)', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const { response, body } = await requestJson('/api/log-workout', {
     method: 'POST',
     body: JSON.stringify({
@@ -7379,7 +7100,7 @@ test('api smoke: plan_exercises Bench Press + logged Bench Press → no substitu
 test('api smoke: explicit prescribed pair wins over plan_exercises for the same lift (no duplicate)', async () => {
   // Both payload.prescribed and plan_exercises name Back Squat as prescribed.
   // The explicit pair should be classified; no duplicate substitution for the same lift.
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const { response, body } = await requestJson('/api/log-workout', {
     method: 'POST',
     body: JSON.stringify({
@@ -7645,7 +7366,7 @@ test('api smoke: GET /api/catalog/search filters by query and requires q', async
 test('api smoke: GET /api/health/sheets reports required and optional tab presence', async () => {
   const { response, body } = await requestJson('/api/health/sheets');
   assert.equal(response.status, 200);
-  assert.equal(body.data.tabs.Log_Cleaned.exists, true, 'required Log_Cleaned present');
+  assert.equal(body.data.optionalTabs.Log_Cleaned.exists, true, 'Log_Cleaned is an optional downstream mirror');
   assert.ok(Array.isArray(body.data.availableTabs) && body.data.availableTabs.includes('Log_Cleaned'));
   assert.ok(Array.isArray(body.data.missingRequiredTabs), 'missingRequiredTabs is an array');
 });
@@ -7659,7 +7380,7 @@ test('api smoke: GET /api/health/sheets reports required and optional tab presen
 // rejected date can never reach the effort row or session id through any path.
 
 test('guard: an ancient screenshot date (hallucinated year) is rejected — today-fallback + reported', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeVisionParsedMetrics = {
     date: '2020-06-28',
     duration: '00:42:00',
@@ -7688,7 +7409,7 @@ test('guard: an ancient screenshot date (hallucinated year) is rejected — toda
 });
 
 test('guard: a future screenshot date is rejected the same way', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const futureDate = getLocalDateString(new Date(Date.now() + 30 * 86400000));
   fakeVisionParsedMetrics = {
     date: futureDate,
@@ -7715,7 +7436,7 @@ test('guard: a future screenshot date is rejected the same way', async () => {
 });
 
 test('guard: an explicit manual date still wins over a rejected screenshot date (no rejection reported)', async () => {
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeVisionParsedMetrics = {
     date: '2020-06-28',
     duration: '00:42:00',
@@ -7757,7 +7478,7 @@ test('Flight Recorder middleware: flag-gated, Flight_Recorder-only, sim-isolated
   try {
     // (1) flag ON, normal app/API request → recorded to Flight_Recorder ONLY.
     process.env.ATLAS_FLIGHT_RECORDER = '1';
-    fakeSheetsState.appendCalls.length = 0;
+    fakeSheetsState.appendCalls = [];
     const schema = await requestJson('/api/schema/log');
     assert.equal(schema.response.status, 200);
     await settle();
@@ -7765,14 +7486,14 @@ test('Flight Recorder middleware: flag-gated, Flight_Recorder-only, sim-isolated
     assert.equal(trustCalls().length, 0, 'never writes a workout/trust tab');
 
     // (2) flag ON, simulation-marked request on the non-sandbox stub sheet → NO write.
-    fakeSheetsState.appendCalls.length = 0;
+    fakeSheetsState.appendCalls = [];
     await requestJson('/api/schema/log', { headers: { 'x-atlas-simulation': '1' } });
     await settle();
     assert.equal(frCalls().length, 0, 'simulation traffic never writes to a non-sandbox (production/unknown) sheet');
 
     // (3) flag OFF → zero Flight Recorder writes anywhere.
     delete process.env.ATLAS_FLIGHT_RECORDER;
-    fakeSheetsState.appendCalls.length = 0;
+    fakeSheetsState.appendCalls = [];
     await requestJson('/api/schema/log');
     await settle();
     assert.equal(frCalls().length, 0, 'flag OFF writes nothing');
@@ -7809,7 +7530,7 @@ test('Flight Recorder ingest: POST /api/flight/ingest is flag-gated and Flight_R
   try {
     // (1) flag OFF → 202 no-op, zero writes.
     delete process.env.ATLAS_FLIGHT_RECORDER;
-    fakeSheetsState.appendCalls.length = 0;
+    fakeSheetsState.appendCalls = [];
     const off = await requestJson('/api/flight/ingest', { method: 'POST', body: JSON.stringify(body) });
     assert.equal(off.response.status, 202);
     assert.equal(off.body.data.enabled, false);
@@ -7818,7 +7539,7 @@ test('Flight Recorder ingest: POST /api/flight/ingest is flag-gated and Flight_R
 
     // (2) flag ON → one Flight_Recorder append of the batch, never a workout tab, 202.
     process.env.ATLAS_FLIGHT_RECORDER = '1';
-    fakeSheetsState.appendCalls.length = 0;
+    fakeSheetsState.appendCalls = [];
     const on = await requestJson('/api/flight/ingest', { method: 'POST', body: JSON.stringify(body) });
     assert.equal(on.response.status, 202);
     assert.equal(on.body.data.written, 2);
@@ -7841,7 +7562,7 @@ const { localTodayIso: liveLocalTodayIso } = require('../services/analytics');
 
 test('api smoke (F09I): a coaching note is dated the owner LOCAL day, not UTC', async () => {
   const prevTz = process.env.ATLAS_TIMEZONE;
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeSheetsState.allowAppend = true;
   process.env.ATLAS_TIMEZONE = 'America/Vancouver';
   try {
@@ -7865,7 +7586,7 @@ test('api smoke (F09I): a coaching note is dated the owner LOCAL day, not UTC', 
 
 test('api smoke (F09I): a structured constraint is dated the owner LOCAL day, not UTC', async () => {
   const prevTz = process.env.ATLAS_TIMEZONE;
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeSheetsState.allowAppend = true;
   process.env.ATLAS_TIMEZONE = 'America/Vancouver';
   try {
@@ -7965,7 +7686,7 @@ test('F10D: a malformed closeout_context never blocks the preview — bounded to
   assert.equal(body.data.closeout_summary.items.length, 0, 'junk items are bounded away');
 });
 
-test('F10D: the approved closeout write carries ledger_seal + closeout_fully_verified (dry-run seal while the owner gate is closed)', async () => {
+test('F10D: the approved closeout write carries an authoritative live ledger seal', async () => {
   fakeSheetsState.allowAppend = true;
   try {
     const { response, body } = await requestJson('/api/log-workout', {
@@ -7980,9 +7701,9 @@ test('F10D: the approved closeout write carries ledger_seal + closeout_fully_ver
     const d = body.data;
     assert.equal(d.sheet_write, 'success');
     assert.ok(d.ledger_seal, 'the seal outcome rides the SAME approved write');
-    assert.equal(d.ledger_seal.dry_run, true, 'owner gate closed → the seal lane is a dry-run');
-    assert.equal(d.ledger_seal.reason, 'write_disabled');
-    assert.equal(d.closeout_fully_verified, true, 'nothing pending while the ledger lane is disabled');
+    assert.equal(d.ledger_seal.dry_run === true, false, 'real closeout cannot use a dry-run seal');
+    assert.equal(d.ledger_seal.reason, 'no_rows');
+    assert.equal(d.closeout_fully_verified, true, 'the authoritative ledger proved there was nothing pending');
   } finally {
     fakeSheetsState.allowAppend = false;
   }
@@ -8141,7 +7862,7 @@ test('turn precedence OFF (default): an ambiguous pronoun-only malfunction still
 test('complete-workout: total slot exhaustion → 503, temp upload cleaned, zero durable writes', async () => {
   const fs = require('node:fs');
   const { formatAmPmSuffix } = require('../services/sessionId');
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   const today = getLocalDateString();
   const prefix = today.replace(/-/g, '');
   const suffix = formatAmPmSuffix();
@@ -8168,7 +7889,7 @@ test('complete-workout: total slot exhaustion → 503, temp upload cleaned, zero
 
 test('complete-workout: malformed manual date → 400 invalid-date, never the exhaustion claim, temp upload cleaned, zero durable writes', async () => {
   const fs = require('node:fs');
-  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.appendCalls = [];
   fakeVisionParsedMetrics = { date: null, duration: '00:40:00', activeCalories: 400, totalCalories: 500, averageHR: 140, peakHR: 160, workoutType: 'Traditional Strength Training' };
   const uploadsBefore = fs.readdirSync('/tmp/uploads').length;
   try {

@@ -81,6 +81,10 @@ async function withApplier(fn) {
 // Child-first so no foreign key blocks the reset. TRUNCATE rather than DELETE so
 // identity sequences restart and a test's row ids are its own.
 const TABLES_CHILD_FIRST = [
+  'atlas.modality_log',
+  'atlas.coaching_notes',
+  'atlas.constraints',
+  'atlas.deload_state',
   'atlas.sheets_mirror_allocations',
   'atlas.sheets_mirror_cursor',
   'atlas.migration_divergences',

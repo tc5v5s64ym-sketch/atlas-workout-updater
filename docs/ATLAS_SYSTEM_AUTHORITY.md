@@ -1,6 +1,6 @@
 # Atlas System Authority
 
-**Current as of:** 2026-08-08 · **Basis:** Atlas Recovery Campaign (Issue #1073), Phase 4 · **Status:** current-state authority map, refreshed as authority moves.
+**Current as of:** 2026-08-13 · **Basis:** Atlas Recovery Campaign (Issue #1073), Phase 4, including the 2026-08-13 owner correction · **Status:** production authority plus explicit S4 target; repository wiring alone never promotes production.
 
 This document answers one question per concept: **what actually decides this in production today, and what is intended to decide it.**
 
@@ -65,6 +65,7 @@ These levels are distinct and are never collapsed. They are the same rungs the c
 | 16b | `legacyBridge` (live browser bridge) | `src/app/legacyBridge.js`, imported on every page load | none — deleted, not promoted | TRANSITIONAL |
 | 17 | Athlete context (profile, level, equipment, readiness) | `ATLAS_PROFILE_GOAL` env var only; other fields have no live source | one layered `AthleteContext` | CONTRACT ONLY |
 | 18 | Workout hot-path durable record (sessions, logged sets, Effort, accepted plans, plan sets and revisions, item outcomes, closeout and write receipts) | Google Sheets via `sheets.js`, plus the file-backed `services/idempotency.js` store | Supabase; Sheets becomes an export mirror | SOLE LIVE AUTHORITY (Sheets) — migration authorized; PR S2 LANDED on `main` 2026-08-08 and is DORMANT. The `S2` schema IS NOW APPLIED to `Atlas Production` (owner gate, 2026-08-08, hosted checkpoint P8b PASSED), which makes it a PERSISTENT HOSTED MIGRATION / BRIDGE TARGET — schema existence only, NOT a live shadow path: the runtime shadow stays DORMANT and UNCONFIGURED, NO Supabase connection string of any role is configured in any live Atlas environment, and the shadow lane is off. Nothing has migrated, and no athlete-facing read or write has moved. `S4` moves the authority |
+| 18b | Exercise catalog | Google Sheets in the last verified deployed posture | Supabase `atlas.exercise_catalog`; owner mutations only through `atlas_migrate` | S4 TARGET IMPLEMENTED; production cutover and proof outstanding |
 
 ---
 
@@ -101,8 +102,8 @@ These levels are distinct and are never collapsed. They are the same rungs the c
 - **Competing authority.** Retired by the 2026-07-29 owner authorization: the typed lane is a router over the existing `approvePendingSetRevision` / `rejectPendingSetRevision` / `explainPendingSetRevision`, and adds no second approval implementation.
 - **Status.** TRANSITIONAL — one state machine, still client-side and still dry-run at the ledger.
 - **Exact production consumer.** The composer submit path in `src/app/app.js`, and the `#1194` proposal card.
-- **Compatibility bridge.** `SESSION_PLAN_SETS_WRITE_ENABLED`, **default `0`** — the ledger write stays dry-run.
-- **Sunset condition.** Bridge closes when the owner sets the flag at the Stage B gate and the ledger write is proven.
+- **Compatibility bridge.** The deployed S3 posture may still carry `SESSION_PLAN_SETS_WRITE_ENABLED`; the S4 implementation deletes the reader entirely. There is no post-cutover bridge: only explicit `test_mode` may dry-run.
+- **Sunset condition.** Successful S4 cutover. The flag and every disabled/dry-by-default authoritative plan path are absent from the cutover build.
 - **Phase 4 relevance.** Direct (H-09).
 - **Evidence.** `services/setRevisionProposal.js` does not exist; both modules are client-side under `src/app/`. `test/setRevisionFollowupRouting.test.js` carries 59 proofs.
 
@@ -355,24 +356,23 @@ Recorded separately from concept 18 because the owner moved it separately, and b
 different mechanism: concept 18 migrates workout DATA and keeps Sheets as its export
 mirror, while this concept changes who may EDIT reference data.
 
-- **Current live authority.** **Google Sheets `Exercise_Catalog`**, read in-request by
-  `sheets.getExerciseCatalog()` from `POST /api/log-workout`, `POST /api/complete-workout`,
-  `routes/reads.js` and `routes/coachOps.js`. **This has not moved yet** — the repository
-  holds the destination, and the Save path still reads the tab.
+- **Current live authority.** **Google Sheets `Exercise_Catalog` in the last verified deployed
+  posture.** Production has not been cut over by PR #1291 and repository wiring is not
+  production evidence.
 - **Intended sole authority.** **Supabase `atlas.exercise_catalog`**, read through
   `services/exerciseCatalog.js`.
-- **Competing authority.** **YES, and it is the open defect.** The Supabase authority is
-  built (schema, adapter surface, reader module, owner CLI) and is **not yet wired**, so both
-  stores exist and Sheets still decides. This is honest bookkeeping, not authorization to
-  leave it: the wiring is the remaining `S4` work.
-- **Status.** **TRANSITIONAL — destination built, cutover outstanding.**
-- **Exact production consumer.** Intended: `getExerciseCatalog()`'s four call sites above.
-  Current: none — `services/exerciseCatalog.js` has no production caller yet.
+- **Competing authority.** **None in the S4 implementation.** Its runtime consumers all read
+  `services/exerciseCatalog.js`; the Sheets reader, sync, freshness clock and fallback are
+  absent. The currently deployed pre-cutover build remains one Sheets authority until the
+  separately authorized cutover; the two are rollback alternatives, never concurrent deciders.
+- **Status.** **S4 TARGET IMPLEMENTED — production cutover and live proof outstanding.**
+- **Exact production consumer.** `POST /api/log-workout`, `POST /api/complete-workout`,
+  `routes/reads.js`, and `routes/coachOps.js`, all through `services/exerciseCatalog.js` in
+  the S4 build.
 - **Compatibility bridge.** None, deliberately. There is no fallback from Supabase to
   Sheets and no cache: the owner correction forbids both.
-- **Sunset condition.** The Sheets `Exercise_Catalog` runtime read is deleted when the four
-  call sites move to `services/exerciseCatalog.js`. At that point `atlas.exercise_catalog` is
-  the sole authority and the tab stops being read at all.
+- **Sunset condition.** Code sunset is complete in PR #1291. Authority sunset occurs only
+  when the S4 production cutover and required deployed/all-429 proofs pass.
 - **Owner authorization.** **OWNER CORRECTION 2026-08-13**, recorded in
   `docs/ATLAS_V1_EXECUTION_PLAN.md`. It **supersedes ruling D1**, which had kept Sheets as
   the editing authority and made Supabase a freshness-bounded read mirror. The correction

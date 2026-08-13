@@ -144,6 +144,7 @@ async function mock(page, capture) {
         data: {
           sheet_write: 'success',
           sheet_written: true,
+          write_authority: 'supabase_transaction',
           log_rows_written: (body.log_rows || []).length,
           logAppendedRange: 'Log_Cleaned!A300:L302',
         },

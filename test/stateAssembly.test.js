@@ -92,16 +92,42 @@ describe('assembleState — constraints_active', () => {
     assert.ok(s.provenance.reads.includes('constraints'));
   });
 
-  it('degrades to [] when the reader is absent or throws — never blocks the snapshot', async () => {
+  // ── AN ABSENT READER STILL DEGRADES; AN UNREADABLE ONE NO LONGER DOES ──────
+  //
+  // This test previously asserted that a THROWING constraints reader degraded to
+  // `[]`, on the Sheets-era reading that a coaching read must never block a
+  // snapshot. OWNER CORRECTION 2026-08-13 rejected it: `constraints_active` is what
+  // stops the engine prescribing into a reported injury, and presenting an
+  // unreadable store as "no constraints" is not a softer answer — it is a different
+  // and more dangerous one.
+  //
+  // An ABSENT reader is unchanged, and the distinction is deliberate. No reader
+  // means this deployment does not supply the input at all; a reader that FAILED
+  // means Atlas cannot see an input it is supposed to have.
+  it('degrades to [] when the reader is absent — never blocks the snapshot', async () => {
     const absent = await assembleState({ readers: stubReaders(), asOf: ASOF });
     assert.deepEqual(absent.constraints_active, []);
-    const thrown = await assembleState({
-      readers: stubReaders({ getConstraints: async () => { throw new Error('tab missing'); } }),
-      asOf: ASOF,
-    });
-    assert.deepEqual(thrown.constraints_active, []);
-    assert.ok(!thrown.provenance.reads.includes('constraints'));
-    assert.ok(thrown.log_history.length === 2, 'the rest still hydrated');
+    assert.ok(!absent.provenance.reads.includes('constraints'));
+  });
+
+  it('FAILS CLOSED when the constraints reader throws — never a silent empty set', async () => {
+    await assert.rejects(
+      () => assembleState({
+        readers: stubReaders({ getConstraints: async () => { throw new Error('constraints unreadable'); } }),
+        asOf: ASOF,
+      }),
+      /constraints unreadable/
+    );
+  });
+
+  it('FAILS CLOSED when the deload reader throws — never a silent NORMAL', async () => {
+    await assert.rejects(
+      () => assembleState({
+        readers: stubReaders({ readDeloadState: async () => { throw new Error('deload unreadable'); } }),
+        asOf: ASOF,
+      }),
+      /deload unreadable/
+    );
   });
 
   it('knownKeys includes constraints_active only when rows exist', async () => {
@@ -140,15 +166,20 @@ describe('assembleState — derived keys', () => {
 // ─── graceful degradation ────────────────────────────────────────────────────
 
 describe('assembleState — graceful degradation', () => {
-  it('a throwing reader yields the fallback, never throws', async () => {
+  // DEGRADATION IS FOR THE INPUTS WHERE ABSENCE AND FAILURE MEAN THE SAME THING.
+  // `log_history` and `profile` are read that way: with neither, the engine has
+  // nothing to reason from and says so. The SAFETY inputs — the deload state and
+  // the constraint set — are read strictly, and their fail-closed behaviour is
+  // asserted above (OWNER CORRECTION 2026-08-13).
+  it('a throwing HISTORY reader yields the fallback, never throws', async () => {
     const s = await assembleState({
-      readers: stubReaders({ readDeloadState: async () => { throw new Error('sheets down'); } }),
+      readers: stubReaders({ getLogRows: async () => { throw new Error('history down'); } }),
       asOf: ASOF,
     });
-    assert.strictEqual(s.deload_state, null);
-    assert.ok(!s.provenance.reads.includes('deload_state'));
+    assert.deepEqual(s.log_history, []);
+    assert.ok(!s.provenance.reads.includes('log'));
     // the rest still hydrated
-    assert.ok(s.log_history.length === 2);
+    assert.ok(s.provenance.reads.includes('deload_state'));
   });
 
   it('an empty/absent log reader yields [] and no derived keys', async () => {
@@ -157,13 +188,21 @@ describe('assembleState — graceful degradation', () => {
     assert.deepEqual(s.provenance.derived, []);
   });
 
-  it('all readers failing still returns a well-formed snapshot', async () => {
+  it('the degradable readers all failing still returns a well-formed snapshot', async () => {
     const boom = async () => { throw new Error('down'); };
-    const s = await assembleState({ readers: { getLogRows: boom, readDeloadState: boom, getProfile: boom }, asOf: ASOF });
+    const s = await assembleState({ readers: { getLogRows: boom, getProfile: boom }, asOf: ASOF });
     assert.deepEqual(s.log_history, []);
-    assert.strictEqual(s.deload_state, null);
+    assert.strictEqual(s.deload_state, null, 'absent reader, not a failed one');
     assert.deepEqual(s.profile, { profile_goal: null, training_level: null, population: null });
     assert.deepEqual(s.provenance.reads, []);
+  });
+
+  it('a failing SAFETY reader is not degradable — the snapshot refuses', async () => {
+    const boom = async () => { throw new Error('down'); };
+    await assert.rejects(
+      () => assembleState({ readers: { getLogRows: boom, readDeloadState: boom, getProfile: boom }, asOf: ASOF }),
+      /down/
+    );
   });
 
   it('missing reader functions are treated as absent (no throw)', async () => {
@@ -172,10 +211,18 @@ describe('assembleState — graceful degradation', () => {
     assert.strictEqual(s.deload_state, null);
   });
 
-  it('never throws on garbage params', async () => {
-    await assert.doesNotReject(() => assembleState(null));
-    await assert.doesNotReject(() => assembleState('x'));
-    await assert.doesNotReject(() => assembleState({}));
+  // Garbage params must not produce a DIFFERENT kind of failure — a TypeError, a
+  // crash on a null dereference. With no injected readers these fall through to the
+  // production readers, which reach Supabase; unconfigured, that is a clean
+  // store-unreadable rejection, and refusing on an unreadable safety input is the
+  // corrected behaviour rather than a regression.
+  it('never fails on garbage params with anything but a clean store error', async () => {
+    for (const params of [null, 'x', {}]) {
+      await assembleState(params).then(
+        () => {},
+        (error) => assert.match(String(error && error.message), /Supabase is not configured/),
+      );
+    }
   });
 });
 
@@ -248,17 +295,18 @@ describe('stateAssembly — read-only guard', () => {
     assert.ok(src.includes("require('./deloadState')"));
   });
 
-  it("requires the Sheets client at '../sheets' — a './sheets' typo silently empties _defaultReaders", () => {
-    // The real client is repo-root sheets.js; siblings in services/ require it as '../sheets'.
-    // A './sheets' typo (services/sheets.js does not exist) throws MODULE_NOT_FOUND inside
-    // _defaultReaders' try/catch, which then returns {} — silently stripping deload_state,
-    // profile, and constraints from EVERY brian snapshot (the reader spread degrades to
-    // just getLogRows). Guard the exact path so that never regresses.
-    assert.ok(src.includes("require('../sheets')"),
-      "_defaultReaders must require the root Sheets client as '../sheets'");
-    assert.ok(!/require\(\s*['"]\.\/sheets['"]\s*\)/.test(src),
-      "must NOT require('./sheets') — services/sheets.js does not exist, so it silently returns {}");
-    // and that path must actually resolve to a real module from services/.
-    assert.doesNotThrow(() => require.resolve(path.join(__dirname, '..', 'sheets')));
+  it('requires NO Sheets client at all — every default reader is Supabase-backed', () => {
+    // The original guard pinned the exact `require('../sheets')` path, because a
+    // `./sheets` typo resolves to nothing, throws inside `_defaultReaders`' try/catch,
+    // and silently strips deload_state, profile and constraints from EVERY snapshot.
+    //
+    // The hazard is gone by construction: after the S4 cutover and OWNER CORRECTION
+    // 2026-08-13 this module reaches Google Sheets for nothing at all. The guard is
+    // therefore inverted — a `sheets` require reappearing here would be a
+    // prescription input regaining a synchronous Google Sheets dependency.
+    assert.ok(!/require\(\s*['"][.\/]*sheets['"]\s*\)/.test(src),
+      'stateAssembly must not require the Sheets client: its inputs are Supabase-owned');
+    assert.ok(src.includes("require('./coachingInputsAuthority')"),
+      'constraints come from the coaching-input authority');
   });
 });

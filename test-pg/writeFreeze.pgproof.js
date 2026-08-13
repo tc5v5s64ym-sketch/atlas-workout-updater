@@ -444,16 +444,21 @@ test('P8: the freeze activates WITHOUT a restart, in the same live process', asy
     assert.equal(after.process_id, server.processId);
     assert.equal(server.child.exitCode, null, 'and it is still the process that started');
 
-    // NO SIDE EFFECT at the database level either: the frozen request appended
-    // nothing to Sheets and wrote nothing to Supabase.
-    assert.equal(after.sheet_calls.append, before.sheet_calls.append + 1,
-      'exactly the one ADMITTED write appended — the refused one did not');
+    // NO SIDE EFFECT from the refused request. Coaching notes are Supabase-owned
+    // in S4, so the admitted request creates exactly one authoritative row and
+    // neither request calls Sheets.
+    assert.equal(after.sheet_calls.append, before.sheet_calls.append,
+      'neither the admitted nor refused coaching-note request called Sheets');
+    const stored = await withOwner((client) => client.query(
+      `SELECT count(*)::int AS n FROM atlas.coaching_notes WHERE write_id = 'p8-before-activation'`
+    ));
+    assert.equal(stored.rows[0].n, 1, 'exactly the admitted Supabase write landed');
   } finally {
     await server.stop();
   }
 });
 
-test('P8: a receipt minted before activation is still decided by the same in-memory map afterwards', async () => {
+test('P19c(a): a receipt minted before activation survives it, and the freeze is not a loss event', async () => {
   await setFreeze(false);
   const server = await startServer();
   try {
@@ -462,20 +467,32 @@ test('P8: a receipt minted before activation is still decided by the same in-mem
 
     await setFreeze(true, 'cutover window');
 
-    // The seam reads the SAME live process's map. Its process_id must match the
-    // one that served before the freeze — the freeze is not a loss event (P19c(a)).
-    const res = await fetch(`${server.baseUrl}/api/migration/receipts/export`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-atlas-api-key': API_KEY },
-      body: '{}',
+    // ── WHAT THIS PROOF LOOKS AT NOW, AND WHY IT IS THE STRONGER FORM ─────────
+    //
+    // It used to read the frozen process's PRIVATE IN-MEMORY MAP through the S3
+    // receipt migration seam, because that map was the receipt authority and no
+    // other observer could see it. Both are gone: the authority is
+    // `atlas.write_receipts`, and the seam existed only to migrate off the map.
+    //
+    // So the receipt is read from the DATABASE, directly, by a principal that is
+    // not the server. That is a better observation than the seam ever was — the
+    // old one asked the process under test to describe its own state, and this one
+    // reads the durable row without its cooperation.
+    const receipt = await withOwner(async (client) => {
+      const { rows } = await client.query(
+        'SELECT write_id, status, route, owner_instance_id, response_body FROM atlas.write_receipts WHERE write_id = $1',
+        ['p8-receipt-survives-activation']
+      );
+      return rows[0] || null;
     });
-    assert.equal(res.status, 200);
-    const body = await res.json();
-    assert.equal(body.data.process_id, server.processId, 'the frozen process is the process that minted the receipt');
-    assert.ok(
-      body.data.records.some((r) => r.write_id === 'p8-receipt-survives-activation' && r.status === 'completed'),
-      'the receipt minted before activation is still live in the map after it'
-    );
+
+    assert.ok(receipt, 'the receipt minted before activation is still there after it');
+    assert.equal(receipt.status, 'completed');
+    assert.equal(receipt.route, '/api/coaching-notes');
+    // The freeze changed no process. The receipt still names the instance that
+    // served before activation, which is the instance still serving.
+    assert.equal(receipt.owner_instance_id, server.processId,
+      'the frozen process is the process that minted the receipt');
   } finally {
     await server.stop();
   }
@@ -552,7 +569,11 @@ test('P11: with the row OPEN again the same process writes normally — the refu
     await setFreeze(false, 'lifted — §5.5 step 8');
     const lifted = await postNote(server.baseUrl, 'p11-wedge-check-open');
     assert.equal(lifted.status, 200, 'lifting the freeze must take effect on the next request too');
-    assert.equal((await identity(server)).sheet_calls.append, 1);
+    assert.equal((await identity(server)).sheet_calls.append, 0, 'lifting the freeze does not reintroduce Sheets');
+    const stored = await withOwner((client) => client.query(
+      `SELECT count(*)::int AS n FROM atlas.coaching_notes WHERE write_id = 'p11-wedge-check-open'`
+    ));
+    assert.equal(stored.rows[0].n, 1, 'the newly admitted Supabase write lands once');
   } finally {
     await server.stop();
   }

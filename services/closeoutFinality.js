@@ -25,7 +25,7 @@
 // an absent tab genuinely means "this owner has not enabled that lane yet" — the opposite posture
 // is correct here, because guessing wrong deletes an athlete's completed workout.
 
-const sheets = require('../sheets');
+const workoutAuthority = require('./workoutAuthority');
 const { SESSION_PLANS_TAB } = require('./sessionPlanStore');
 const { foldSessionPlans } = require('./sessionPlanReader');
 const { sessionPlansColumns } = require('../config/columns');
@@ -47,19 +47,25 @@ async function isSessionFinalized(sessionId) {
   const sid = normalizeSid(sessionId);
   if (!sid) return UNKNOWN;
 
-  // 1. Tab list. An unreadable tab list proves nothing either way.
-  let tabs;
-  try {
-    tabs = await sheets.getSpreadsheetTabs();
-  } catch (_) {
-    return UNKNOWN;
-  }
-  if (!Array.isArray(tabs) || !tabs.includes(SESSION_PLANS_TAB)) return UNKNOWN;
-
-  // 2. Rows.
+  // The plan events for THIS session, from Supabase — the authority for closeout
+  // since the S4 cutover.
+  //
+  // The tab-existence probe is gone with the tab. It asked whether `Session_Plans`
+  // was present at all, because a Sheets tab can genuinely be absent and an absent
+  // tab proves nothing either way. A Supabase table created by the migration cannot
+  // be absent at runtime, so the only remaining question is whether the read
+  // SUCCEEDED.
+  //
+  // FAIL CLOSED IS UNCHANGED, and it is the whole point of this module: an
+  // unreadable record returns UNKNOWN, and the caller refuses the undo rather than
+  // deleting rows it could not prove were still undoable.
+  //
+  // The read is SCOPED to the session now, where it used to pull every row in the
+  // tab and filter in memory. The fold below is unchanged and still sees exactly
+  // the rows for this session.
   let rows;
   try {
-    rows = await sheets.getSheetRows(SESSION_PLANS_TAB);
+    rows = await workoutAuthority.planEventRows({ sessionId });
   } catch (_) {
     return UNKNOWN;
   }

@@ -85,7 +85,7 @@ async function openApp(page, capture) {
       return route.fulfill(json({
         status: 'success',
         data: {
-          sheet_write: 'success', sheet_written: true, session_id: body.session_id || SESSION,
+          sheet_write: 'success', sheet_written: true, write_authority: 'supabase_transaction', session_id: body.session_id || SESSION,
           log_rows_written: (body.log_rows || []).length,
           logAppendedRange: 'Log_Cleaned!A200:L201',
           log_write_verification: {

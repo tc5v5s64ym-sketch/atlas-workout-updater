@@ -117,9 +117,9 @@ test('AC8(c) client: closeout copy requires a genuinely complete plan and never 
 });
 
 test('AC8(c) client: persistence praise ("Saved") appears only in the review-save path', () => {
-  const matches = clientSrc.match(/Saved to your sheet/g) || [];
+  const matches = clientSrc.match(/Saved to Atlas/g) || [];
   assert.equal(matches.length, 1, 'exactly one saved-confirmation copy site');
-  assert.match(clientSrc, /rv-saved-txt', '✓ Saved to your sheet'/,
+  assert.match(clientSrc, /rv-saved-txt', '✓ Saved to Atlas'/,
     'the saved confirmation lives in the review-card saved renderer, gated on a real write');
 });
 

@@ -1,49 +1,43 @@
 'use strict';
 
-// Decision Desk #952 (Option A) — Session_Plans PR-B: idempotent, append-only
-// writer. Tests inject a fake sheets module (require.cache) so no real Sheets I/O
-// runs. Pins: optional-tab 503/no-op; append-only; retry-idempotency (same event →
-// skipped, no duplicate row); the revision-collision guard fails closed; only the
-// Session_Plans tab is ever written (never Log_Cleaned/Effort); closeout_status is
+// Decision Desk #952 (Option A) — the plan-event writer: idempotent and
+// append-only. Pins: append-only; retry-idempotency (same event → skipped, no
+// duplicate row); the revision-collision guard fails closed; closeout_status is
 // blank on plan_accepted/item_outcome events.
+//
+// ── WHAT THE S4 CUTOVER CHANGED HERE, AND WHAT IT DID NOT ────────────────────
+//
+// The destination moved from the `Session_Plans` tab to `atlas.session_plan_events`,
+// so this suite drives the store against the Supabase authority double rather than a
+// fake `sheets.js`. Every behavioural pin above is UNCHANGED and still asserted.
+//
+// THREE PINS WENT WITH THE TAB, and each is gone because the condition it described
+// cannot occur, not because it stopped mattering:
+//
+//   • `tab_missing` — a Google Sheets tab can genuinely be absent, and proving
+//     absence needed its own metadata read. A table the migration created cannot be
+//     absent at runtime. The field is still reported, permanently `false`, because
+//     `services/turnWriteArtifact.js` branches on it.
+//   • "an outage is not absence" — the same question. What survives, and is asserted
+//     below, is the half that still has teeth: an unreadable authority FAILS rather
+//     than silently appending against an empty index.
+//   • the header row — a tab needed one seeded before its first data row so a later
+//     read did not swallow it. A table has columns.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { sessionPlansColumns } = require('../config/columns');
 
-// ── fake sheets (stateful; reset per test) ────────────────────────────────────
-const state = { tabs: ['Session_Plans'], rows: [], appends: [], a1: [['idempotency_key']], readError: null, listTabsFails: false };
-function reset({ tabs = ['Session_Plans'], rows = [], a1 = [['idempotency_key']], readError = null, listTabsFails = false } = {}) {
-  state.tabs = tabs; state.rows = rows.slice(); state.appends = []; state.a1 = a1;
-  state.readError = readError; state.listTabsFails = listTabsFails;
-}
-// The fake models the REAL failure shapes, because the store now proves tab existence
-// from the rows read itself rather than from a separate metadata probe. A genuinely
-// missing tab makes Google reject the range ("Unable to parse range"), and only
-// `confirmTabMissing` — which must successfully list the tabs — may conclude absence.
-// A fake that threw a generic Error would let the store's ambiguity handling go untested.
-const RANGE_UNRESOLVED = (tab) => new Error(`Unable to parse range: ${tab}!A:Z`);
-const fakeSheets = {
-  getSpreadsheetTabs: async () => state.tabs.slice(),
-  getSheetRows: async (tab) => {
-    if (state.readError) throw state.readError;
-    if (!state.tabs.includes(tab)) throw RANGE_UNRESOLVED(tab);
-    return state.rows.slice();
-  },
-  // The real classifier's contract: absence requires an unresolved range AND a successful
-  // tab listing that does not contain the tab.
-  confirmTabMissing: async (error, tab) => {
-    if (!/Unable to parse range/i.test(String(error && error.message))) return false;
-    if (state.listTabsFails) return false;   // could not look ⇒ never evidence of absence
-    return !state.tabs.includes(tab);
-  },
-  appendRows: async (tab, rows) => { state.appends.push({ tab, rows }); if (tab === 'Session_Plans') state.rows.push(...rows); },
-  readRange: async () => state.a1,
-};
-const sheetsPath = require.resolve('../sheets');
-require.cache[sheetsPath] = { id: sheetsPath, filename: sheetsPath, loaded: true, exports: fakeSheets };
+const {
+  installWorkoutAuthorityStub,
+  resetWorkoutAuthorityStub,
+  workoutAuthorityStore,
+  failWorkoutAuthorityReads,
+} = require('./helpers/stubWorkoutAuthority');
 
+installWorkoutAuthorityStub();
 const store = require('../services/sessionPlanStore');
+
 const IDX = Object.fromEntries(sessionPlansColumns.map((c, i) => [c, i]));
 const SESSION = { session_id: 'S1', session_date: '2026-07-10', plan_version: 'v1' };
 const ITEMS = [
@@ -51,53 +45,52 @@ const ITEMS = [
   { plan_item_id: 'i2', planned_order: 2, planned_lift_code: 'SQ01', movement_pattern: 'squat' },
 ];
 
-// ── optional-tab gate ─────────────────────────────────────────────────────────
+function reset() {
+  resetWorkoutAuthorityStub();
+  return workoutAuthorityStore();
+}
 
-test('tab missing → 503/no-op: nothing is written, tab_missing reported', async () => {
-  reset({ tabs: [] });
-  const r = await store.writePlanAccepted(SESSION, ITEMS, { recordedAt: 't' });
-  assert.equal(r.tab_missing, true);
-  assert.equal(r.written, 0);
-  assert.equal(state.appends.length, 0);
+// ── the authority must be readable ────────────────────────────────────────────
+
+test('an unreadable authority FAILS the append rather than writing against an empty index', async () => {
+  reset();
+  failWorkoutAuthorityReads('Supabase unreachable');
+  // Appending anyway would defeat the idempotency guard entirely: with no prior
+  // events visible, a retry would look brand new and write the batch a second time.
+  await assert.rejects(store.writePlanAccepted(SESSION, ITEMS, { recordedAt: 't' }), /unreachable/);
+  assert.equal(workoutAuthorityStore().planEvents.length, 0, 'nothing was written');
 });
 
-// An OUTAGE is not absence. `tab_missing` is a VERIFIED_EMPTY_SEAL_REASON, so a transient
-// read failure — or an unresolved range that could not be confirmed because the tab listing
-// itself failed — must never present as a missing tab.
-test('a transient read failure is NOT reported as a missing tab', async () => {
-  reset({ readError: Object.assign(new Error('Backend Error'), { status: 503 }) });
+test('tab_missing is reported false permanently — a migrated table cannot be absent', async () => {
+  reset();
   const r = await store.writePlanAccepted(SESSION, ITEMS, { recordedAt: 't' });
-  assert.equal(r.tab_missing, false, 'an outage must never read as a durable schema fact');
-  assert.equal(r.written, 2, 'the append still proceeds under its own idempotency guard');
-});
-
-test('an unresolved range that cannot be CONFIRMED absent is not reported as missing', async () => {
-  reset({ tabs: [], listTabsFails: true });
-  const r = await store.writePlanAccepted(SESSION, ITEMS, { recordedAt: 't' });
-  assert.equal(r.tab_missing, false, 'could not look ⇒ never evidence of absence');
+  assert.equal(r.tab_missing, false);
 });
 
 // ── append + idempotency ──────────────────────────────────────────────────────
 
-test('writePlanAccepted appends one row per item; only the Session_Plans tab is written', async () => {
-  reset();
+test('writePlanAccepted appends one row per item, and writes only the plan-event ledger', async () => {
+  const s = reset();
   const r = await store.writePlanAccepted(SESSION, ITEMS, { recordedAt: 't' });
   assert.equal(r.written, 2);
-  assert.equal(state.rows.length, 2);
-  assert.ok(state.appends.every(a => a.tab === 'Session_Plans'), 'never writes another tab');
-  assert.equal(state.rows[0][IDX.event_type], 'plan_accepted');
-  assert.equal(state.rows[0][IDX.outcome], 'planned');
-  assert.equal(state.rows[0][IDX.closeout_status], '', 'closeout_status blank on plan_accepted');
+  assert.equal(s.planEvents.length, 2);
+  // The Save's own concepts are untouched: this writer never reaches logged sets or
+  // the Effort row, exactly as it never reached Log_Cleaned or Effort before.
+  assert.equal(s.loggedSets.length, 0);
+  assert.equal(s.effort.length, 0);
+  assert.equal(s.planEvents[0][IDX.event_type], 'plan_accepted');
+  assert.equal(s.planEvents[0][IDX.outcome], 'planned');
+  assert.equal(s.planEvents[0][IDX.closeout_status], '', 'closeout_status blank on plan_accepted');
 });
 
 test('retry is idempotent: re-writing the same events appends nothing new', async () => {
-  reset();
+  const s = reset();
   await store.writePlanAccepted(SESSION, ITEMS, { recordedAt: 't1' });
-  const before = state.rows.length;
+  const before = s.planEvents.length;
   const r = await store.writePlanAccepted(SESSION, ITEMS, { recordedAt: 't2-different-timestamp' });
   assert.equal(r.written, 0, 'no new rows on retry');
   assert.equal(r.skipped, 2);
-  assert.equal(state.rows.length, before, 'append-only store is unchanged by a retry');
+  assert.equal(s.planEvents.length, before, 'append-only store is unchanged by a retry');
 });
 
 test('a duplicate event within a single batch is collapsed', async () => {
@@ -128,29 +121,21 @@ test('revision collision fails closed: same (session,version,item) with a change
 // ── item_outcome + closeout ───────────────────────────────────────────────────
 
 test('writeItemOutcome appends an item_outcome; substituted carries the performed code', async () => {
-  reset();
+  const s = reset();
   const r = await store.writeItemOutcome(SESSION, { plan_item_id: 'i1', planned_lift_code: 'BEN01', outcome: 'substituted', performed_lift_code: 'DBP01' }, { recordedAt: 't' });
   assert.equal(r.written, 1);
-  assert.equal(state.rows[0][IDX.event_type], 'item_outcome');
-  assert.equal(state.rows[0][IDX.outcome], 'substituted');
-  assert.equal(state.rows[0][IDX.performed_lift_code], 'DBP01');
-  assert.equal(state.rows[0][IDX.closeout_status], '', 'closeout_status blank on item_outcome');
+  assert.equal(s.planEvents[0][IDX.event_type], 'item_outcome');
+  assert.equal(s.planEvents[0][IDX.outcome], 'substituted');
+  assert.equal(s.planEvents[0][IDX.performed_lift_code], 'DBP01');
+  assert.equal(s.planEvents[0][IDX.closeout_status], '', 'closeout_status blank on item_outcome');
 });
 
 test('writeSessionCloseout appends a session_closeout with finalized|abandoned only', async () => {
-  reset();
+  const s = reset();
   const r = await store.writeSessionCloseout(SESSION, 'finalized', { recordedAt: 't' });
   assert.equal(r.written, 1);
-  assert.equal(state.rows[0][IDX.event_type], 'session_closeout');
-  assert.equal(state.rows[0][IDX.closeout_status], 'finalized');
-  assert.equal(state.rows[0][IDX.plan_item_id], '', 'session-scoped: no item id');
+  assert.equal(s.planEvents[0][IDX.event_type], 'session_closeout');
+  assert.equal(s.planEvents[0][IDX.closeout_status], 'finalized');
+  assert.equal(s.planEvents[0][IDX.plan_item_id], '', 'session-scoped: no item id');
   await assert.rejects(store.writeSessionCloseout(SESSION, 'done', { recordedAt: 't' }), /finalized\|abandoned/);
-});
-
-// ── header + read-failure safety ──────────────────────────────────────────────
-
-test('an empty tab gets its header row before the first data append', async () => {
-  reset({ a1: [] }); // no header present
-  await store.writePlanAccepted(SESSION, [ITEMS[0]], { recordedAt: 't' });
-  assert.deepEqual(state.appends[0].rows[0], [...sessionPlansColumns], 'header written first');
 });

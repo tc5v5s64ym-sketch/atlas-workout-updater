@@ -1,26 +1,20 @@
 const { test, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 
-// Stub sheets.js BEFORE requiring the engine (which pulls in services/deloadState).
-// The fake mirrors the REAL getSheetRows contract: it strips row 0 as the header
-// (sheets.js slice(1)) and returns [] when only the header exists. So tests run
-// against the true read behaviour, including the header-row dependency.
-const sheetsPath = require.resolve('../sheets');
-const HEADER = ['updated_at', 'training_state', 'deload_protocol', 'deload_reason', 'deload_start_date', 'deload_sessions_remaining', 'deload_exit_criteria'];
-const fakeSheetsState = { rows: [HEADER], appendCalls: [] };
-const fakeSheets = {
-  getSheetRows: async () => {
-    if (fakeSheetsState.rows.length <= 1) return [];
-    return fakeSheetsState.rows.slice(1).map(r => [...r]);
-  },
-  readRange: async () => (fakeSheetsState.rows.length ? [fakeSheetsState.rows[0]] : []),
-  appendRows: async (tabName, rows) => {
-    fakeSheetsState.appendCalls.push({ tabName, rows });
-    for (const r of rows) fakeSheetsState.rows.push([...r]);
-    return { data: { updates: { updatedRows: rows.length } } };
-  }
+// Install the workout-authority double BEFORE requiring the engine (which pulls in
+// services/deloadState). Supabase is the deload state's sole authority since the S4
+// cutover, so the store under test is the double rather than a fake `sheets.js`.
+const {
+  installWorkoutAuthorityStub, resetWorkoutAuthorityStub, workoutAuthorityStore,
+} = require('./helpers/stubWorkoutAuthority');
+installWorkoutAuthorityStub();
+
+// The suite's own view of the store, kept under its historical name so the
+// assertions below read unchanged.
+const fakeSheetsState = {
+  get rows() { return [[], ...workoutAuthorityStore().deloadState]; },
+  get appendCalls() { return workoutAuthorityStore().calls.deloadState.map((rows) => ({ tabName: 'Deload_State', rows: [rows] })); },
 };
-require.cache[sheetsPath] = { id: sheetsPath, filename: sheetsPath, loaded: true, exports: fakeSheets };
 
 const {
   buildExposureView, evaluateDeload, evaluateCurrentDeload,
@@ -35,8 +29,7 @@ const row = (date, sid, lift, set, weight, reps, rir) =>
   [date, sid, lift, lift, 'x', lift, String(set), String(weight), String(reps), String(rir), ''];
 
 beforeEach(() => {
-  fakeSheetsState.rows = [HEADER];
-  fakeSheetsState.appendCalls = [];
+  resetWorkoutAuthorityStub();
 });
 
 /* ======================= adapter ======================= */

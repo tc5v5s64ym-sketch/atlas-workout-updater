@@ -40,8 +40,6 @@ process.env.ATLAS_INTENT_ROUTER = 'shadow';
 process.env.ATLAS_COACH_ENGINE = 'hybrid';
 process.env.ATLAS_API_RATE_LIMIT_MAX = '1000000';
 process.env.ATLAS_WRITE_RATE_LIMIT_MAX = '1000000';
-process.env.ATLAS_IDEMPOTENCY_FILE = require('node:path').join(
-  require('node:os').tmpdir(), 'atlas-live-session-read-budget-idempotency.json');
 // The qualifying ledger posture the combined rehearsal sets
 // (`tests/e2e/gate/gate-server.js`). Set before index.js loads;
 // SESSION_PLAN_SETS_WRITE_ENABLED is captured at module load.
@@ -245,10 +243,33 @@ require.cache[require.resolve('../services/vision')] = {
 };
 
 const sheets = require('../sheets');
-const { resetIdempotencyStore } = require('../services/idempotency');
+const { resetWorkoutAuthorityStub: resetIdempotencyStore } = require('./helpers/stubWorkoutAuthority');
 // Hermetic: the catalog reads Supabase (OWNER CORRECTION 2026-08-13). This stub also
 // blanks the ATLAS_SUPABASE_* roles, so no test can open a database connection.
 require('./helpers/stubExerciseCatalog').installExerciseCatalogStub();
+
+// The workout authority is Supabase since the S4 cutover, so stubbing `sheets.js`
+
+// no longer controls the logged sets, the Effort row, the plan ledgers or the write
+
+// receipts. `sheetsFallback` seeds this suite's existing fixture into the double, so
+
+// no test's data changes — only where the route reads it from.
+
+// NO `sheetsFallback`. This file MEASURES the Google Sheets reads a real session
+// issues, so a double that answered the workout authority by reading the sheets
+// fixture would count reads production does not make. The authority is seeded
+// directly from the same fixture instead — same data, no Google call.
+const { installWorkoutAuthorityStub, resetWorkoutAuthorityStub } = require('./helpers/stubWorkoutAuthority');
+installWorkoutAuthorityStub();
+function seedAuthorityFromSheet() {
+  resetWorkoutAuthorityStub({
+    loggedSets: (SHEET.Log_Cleaned || []).slice(1),
+    effort: (SHEET.Effort || []).slice(1),
+    planEvents: (SHEET.Session_Plans || []).slice(1),
+    planSets: (SHEET.Session_Plan_Sets || []).slice(1),
+  });
+}
 const { app } = require('../index');
 
 let server; let baseUrl;
@@ -348,6 +369,7 @@ async function runLiveSession({
   runSeq += 1;
   resetIdempotencyStore();
   resetSheet();
+  seedAuthorityFromSheet();
   await settle({ quietMs: 250, maxMs: 4000 });
   reads.length = 0;
   countingOn = true;
@@ -658,15 +680,28 @@ test('the session drives the CONFIGURED coach branch — the expensive one produ
   assert.ok(run.outcomes.includes('POST /api/coach/chat -> 200 served:yes'),
     'the configured chat turn must answer with a message');
 
-  // And the grounding read itself, by its exact ranges — the one read the two branches
-  // disagree about.
-  const grounding = reads.filter(r => r.ranges.length === 3
-    && r.ranges.some(x => String(x).startsWith('Coaching_Notes'))
-    && r.ranges.some(x => String(x).startsWith('Constraints'))
-    && r.ranges.some(x => String(x).startsWith('Log_Cleaned')));
-  assert.ok(grounding.length > 0,
-    'the configured chat turn must perform its Coaching_Notes + Constraints + Log_Cleaned ' +
-    'grounding read; without it the measurement is the unconfigured session');
+  // And the grounding read itself — the one read the two branches disagree about.
+  //
+  // TWO RANGES, NOT THREE. The turn still grounds on the same three things, but
+  // `Log_Cleaned` is a Supabase concept since the S4 cutover, so only the two
+  // Sheets-owned tabs remain in the Google read. That is the shape production runs,
+  // and requiring the retired third range here would fail on the cutover itself.
+  // THE GROUNDING READ ISSUES NO GOOGLE SHEETS CALL AT ALL, and that is the point
+  // of the measurement now.
+  //
+  // The turn still grounds on the same three things — the athlete's logged history,
+  // their coaching notes and their typed constraints — but all three are Supabase
+  // concepts after the S4 cutover and OWNER CORRECTION 2026-08-13. A coaching reply
+  // is a prescription surface, and the owner ruled that no prescription input may be
+  // a synchronous Google Sheets dependency.
+  //
+  // So the branch is pinned by the MODEL CALL and the served reply above, and the
+  // read profile is pinned negatively: none of the three appears in a Sheets range.
+  const allRanges = reads.flatMap(r => r.ranges.map(String));
+  for (const tab of ['Coaching_Notes', 'Constraints', 'Log_Cleaned']) {
+    assert.ok(!allRanges.some(x => x.startsWith(tab)),
+      `${tab} is Supabase-owned — the chat turn must issue no Google Sheets read for it`);
+  }
 });
 
 // THE GUARD, and exactly what it does and does not establish.
@@ -688,6 +723,7 @@ test('the session drives the CONFIGURED coach branch — the expensive one produ
 
 test('POST /api/debug/intent-observe performs zero Sheets reads', async () => {
   resetSheet();
+  seedAuthorityFromSheet();
   resetIdempotencyStore();
   // START FROM A COLD ROW CACHE. index.js caches the full Log_Cleaned / Effort reads for 30
   // seconds, and counting at the googleapis boundary cannot see a read that a warm cache

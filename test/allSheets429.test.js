@@ -52,8 +52,6 @@ process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = 'svc@example.iam.gserviceaccount.com'
 process.env.GOOGLE_PRIVATE_KEY = 'KEYLINE1\\nKEYLINE2\\n';
 process.env.ATLAS_API_RATE_LIMIT_MAX = '1000000';
 process.env.ATLAS_WRITE_RATE_LIMIT_MAX = '1000000';
-process.env.ATLAS_IDEMPOTENCY_FILE = require('node:path').join(
-  require('node:os').tmpdir(), 'atlas-all-sheets-429-idempotency.json');
 
 const { installFakeCoachLlm } = require('./helpers/fakeCoachLlm');
 installFakeCoachLlm();
@@ -76,31 +74,63 @@ function quotaError() {
 
 // ── The census ───────────────────────────────────────────────────────────────
 
+// ── THE CLASSIFICATION IS AN AUDIT RESULT, NOT A CONVENIENCE ─────────────────
+//
+// OWNER CORRECTION 2026-08-13 rejected the earlier split twice, and both rejections
+// are recorded here because both were reclassification errors rather than coding
+// errors:
+//
+//   `Constraints`, `Deload_State`, `Coaching_Notes` were called "explicitly
+//   Sheets-owned and out of scope". They are INPUTS TO A PRESCRIPTION. A
+//   recommendation computed without the athlete's typed constraints is not a
+//   degraded answer, it is a different one — and it can prescribe into an injury
+//   the athlete already reported.
+//
+//   `Modality_Log` was called telemetry. `/api/log-modality` is an athlete-facing
+//   preview → approve → write path with a write receipt and the write freeze in
+//   front of it. A quota exhaustion would have failed that logging request outright.
+//
+// Every tab below is placed by its ACTUAL CALL SITES in production code, and each
+// telemetry entry states why no workout path reads it.
 const WORKOUT_CRITICAL_TABS = new Set([
   'Log_Cleaned', 'Effort', 'Session_Plans', 'Session_Plan_Sets', 'Exercise_Catalog',
+  // Prescription and coaching inputs (OWNER CORRECTION 2026-08-13).
+  'Constraints', 'Deload_State', 'Coaching_Notes',
+  // Cardio and conditioning is a workout.
+  'Modality_Log',
 ]);
 const TELEMETRY_TABS = new Set([
+  // Shadow and observation lanes. None is read by any decision path; each is
+  // written after the response is decided and cannot change one.
   'Flight_Recorder', 'Brain_Shadow', 'Intent_Shadow', 'Coach_Shadow', 'Coach_Response',
-  'Bug_Reports', 'Modality_Log', 'Bodyweight',
-  // Read by the recommendation and coach lanes, explicitly Sheets-owned and out of
-  // scope for the migration (design §1.2).
-  'Constraints', 'Deload_State', 'Coaching_Notes',
+  'Bug_Reports',
+  // THE ONE REMAINING SHEETS-OWNED ATHLETE CONCEPT, and its boundary is exact.
+  // `POST /api/bodyweight` appends to it and `GET /api/bodyweight/history` reads it;
+  // no recommendation, coaching, substitution, prescription, preview, approval,
+  // Save, closeout, receipt retry or undo path touches it. The `bodyweight_history`
+  // the state assembler derives comes from LOGGED SETS, not from this tab
+  // (`services/analytics.js` `buildBodyweightHistory` takes log rows), so a quota
+  // exhaustion here cannot change a workout decision.
+  'Bodyweight',
+  // Owner-facing spreadsheet furniture. No production reader.
   'Metadata', 'Logic', 'Session_Summary', 'Dashboard',
 ]);
 
-// ── RATCHET CEILINGS ─────────────────────────────────────────────────────────
+// ── THE ACCEPTANCE TARGET IS ZERO, AND IT IS ASSERTED AS ZERO ────────────────
 //
-// The measured workout-critical synchronous count TODAY, before the S4 read/write
-// cutover. They are a SHRINK-ONLY ratchet, not a target: the target is 0, stated
-// on every report line. A change that raises either number has moved the Save path
-// further onto Google Sheets, which is the opposite of this migration.
+// There is no ceiling and no ratchet. The owner correction states the equation
+// exactly: a totally quota-exhausted Google Sheets plus an Atlas workout must
+// leave the workout passing, which requires that NO workout-critical synchronous
+// Sheets call exists to fail. A tolerated non-zero count is that requirement
+// restated as a preference.
 //
-// Lower them as each concept moves. Delete them, and assert 0, when the cutover
-// completes.
-// Measured 2026-08-13 on this branch: 6 and 30, every one of them an `Effort`
-// read inside POST /api/log-workout and POST /api/complete-workout.
-const WORKOUT_CRITICAL_CEILING_REPRESENTATIVE = 6;
-const WORKOUT_CRITICAL_CEILING_FIVE_SESSION = 30;
+// WHAT THIS FILE PROVES, AND WHAT IT DOES NOT. It proves the COUNT: the real app,
+// driven over a real socket with every Sheets call throwing 429, issues zero
+// workout-critical synchronous Sheets calls. It cannot prove the workout
+// COMPLETES, because completion needs the Supabase authority and this suite has
+// no database — the stub blanks every ATLAS_SUPABASE_* role precisely so no test
+// can reach one. That half is test-pg/allSheets429Workout.pgproof.js, which runs
+// the same all-429 condition against a real from-empty Postgres.
 
 const calls = [];
 let requestContext = null;   // the athlete request in flight, or null
@@ -178,6 +208,16 @@ require.cache[require.resolve('../services/vision')] = {
 // Hermetic: the catalog reads Supabase (OWNER CORRECTION 2026-08-13). This stub also
 // blanks the ATLAS_SUPABASE_* roles, so no test can open a database connection.
 require('./helpers/stubExerciseCatalog').installExerciseCatalogStub();
+// The workout authority is Supabase since the S4 cutover, so stubbing `sheets.js`
+// no longer controls the logged sets, the Effort row, the plan ledgers or the write
+// receipts. `sheetsFallback` seeds this suite's existing fixture into the double, so
+// no test's data changes — only where the route reads it from.
+// NO `sheetsFallback` HERE, and that is the whole point of this file. The double can
+// seed itself from a suite's fake `sheets.js` fixture so an older suite keeps its
+// data; doing that HERE would make the workout authority issue Google Sheets reads,
+// which is precisely the thing this census exists to prove does not happen. The
+// authority starts empty and the flow below fills it.
+require('./helpers/stubWorkoutAuthority').installWorkoutAuthorityStub();
 const { app } = require('../index');
 
 let server; let baseUrl;
@@ -291,28 +331,21 @@ test('REPRESENTATIVE WORKOUT under total Sheets quota exhaustion — classified 
   const steps = await representativeWorkout('rep');
   const { byClass } = report('REPRESENTATIVE COMPLETE WORKOUT · Google Sheets 100% quota-exhausted', [steps]);
 
-  assert.ok(calls.length > 0, 'a census of zero calls would mean the workout never ran');
+  // The harness ran because the WORKOUT ran — not because Sheets traffic appeared.
+  // Zero Sheets calls is the target, so it can no longer double as liveness evidence.
+  assert.ok(steps.length >= 5, 'the representative workout must drive every step');
+  for (const [name, res] of steps) assert.ok(Number.isInteger(res.status), `${name} produced no HTTP response`);
 
   // An unrecognised tab must be classified deliberately. This is the guard that
   // stops the headline number being right by accident.
   assert.equal(byClass.UNCLASSIFIED, 0,
     'a Sheets call reached an unclassified tab — classify it rather than defaulting it');
 
-  // THE TWO HEADLINES, MEASURED RATHER THAN ASSERTED AWAY.
-  //
-  // The acceptance equation requires `workout_critical_sync === 0`, and the
-  // cutover that produces zero is NOT complete: the Save path still reads and
-  // writes Google Sheets. Asserting zero here would make this suite red for the
-  // whole of S4; asserting nothing would let the number drift unseen. So the
-  // number is printed above every run, and what is asserted is that it was
-  // genuinely measured and did not silently grow.
-  //
-  // Both assertions tighten to `equal(0)` when the S4 read/write cutover lands.
-  assert.ok(Number.isInteger(byClass.workout_critical_sync),
-    'the workout-critical synchronous count must be measured, not estimated');
-  assert.ok(byClass.workout_critical_sync <= WORKOUT_CRITICAL_CEILING_REPRESENTATIVE,
-    `workout-critical synchronous Sheets calls rose to ${byClass.workout_critical_sync}, above the ` +
-    `recorded ceiling of ${WORKOUT_CRITICAL_CEILING_REPRESENTATIVE}. S4 may only ever reduce this number.`);
+  // THE ACCEPTANCE TARGET, ASSERTED AS ZERO.
+  assert.equal(byClass.workout_critical_sync, 0,
+    `${byClass.workout_critical_sync} workout-critical synchronous Google Sheets call(s) remain. ` +
+    'A totally quota-exhausted Sheets must not be able to fail a workout, which requires that ' +
+    'no such call exists to fail.');
 });
 
 test('FIVE-SESSION AI WORKLOAD under total Sheets quota exhaustion — classified census', async () => {
@@ -325,10 +358,16 @@ test('FIVE-SESSION AI WORKLOAD under total Sheets quota exhaustion — classifie
 
   // The workload shape that originally exposed the problem is five sessions, so the
   // census must actually cover five of them rather than one repeated measurement.
-  assert.ok(calls.length > 0, 'the five-session workload produced no Sheets traffic to classify');
-  assert.ok(byClass.workout_critical_sync <= WORKOUT_CRITICAL_CEILING_FIVE_SESSION,
-    `workout-critical synchronous Sheets calls rose to ${byClass.workout_critical_sync}, above the ` +
-    `recorded ceiling of ${WORKOUT_CRITICAL_CEILING_FIVE_SESSION}. S4 may only ever reduce this number.`);
+  // Same: five sessions actually ran, evidenced by their own steps.
+  assert.equal(outcomes.length, 5, 'the workload must drive five sessions');
+  for (const steps of outcomes) {
+    for (const [name, res] of steps) assert.ok(Number.isInteger(res.status), `${name} produced no HTTP response`);
+  }
+  // THE ACCEPTANCE TARGET, ASSERTED AS ZERO.
+  assert.equal(byClass.workout_critical_sync, 0,
+    `${byClass.workout_critical_sync} workout-critical synchronous Google Sheets call(s) remain. ` +
+    'A totally quota-exhausted Sheets must not be able to fail a workout, which requires that ' +
+    'no such call exists to fail.');
 });
 
 test('an export/mirror failure may create backlog but may never invalidate a workout', async () => {
@@ -340,4 +379,33 @@ test('an export/mirror failure may create backlog but may never invalidate a wor
   const inRequest = calls.filter((c) => c.klass === 'async_mirror_export' && c.during !== null);
   assert.deepEqual(inRequest, [],
     'a mirror/export call inside an athlete request would make the mirror workout-critical');
+});
+
+test('POSITIVE CONTROL: the census really does record a Sheets call when one happens', async () => {
+  // A zero is only meaningful if a non-zero were observable. This makes one real
+  // Sheets call inside a request context and proves the instrument records and
+  // classifies it — so the zeros above cannot be an artefact of a dead counter.
+  calls.length = 0;
+  const sheets = require('../sheets');
+
+  requestContext = 'POSITIVE CONTROL';
+  try {
+    await sheets.getSheetRows('Log_Cleaned').catch(() => {});
+  } finally {
+    requestContext = null;
+  }
+
+  assert.ok(calls.length > 0, 'the census must record a Sheets call that really happened');
+  const logged = calls.find((c) => c.tab === 'Log_Cleaned');
+  assert.ok(logged, 'the call must be recorded against the tab it targeted');
+  assert.equal(logged.klass, 'workout_critical_sync',
+    'a migrated-tab call inside a request context must classify as workout-critical');
+
+  // And the same call OUTSIDE a request context is not workout-critical, which is
+  // the distinction the whole classification rests on.
+  calls.length = 0;
+  await sheets.getSheetRows('Log_Cleaned').catch(() => {});
+  assert.equal(calls[0].klass, 'async_mirror_export',
+    'the same call outside a request is mirror/export work, not workout-critical');
+  calls.length = 0;
 });

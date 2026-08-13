@@ -695,12 +695,6 @@ async function appendRows(tabName, rows) {
   return response;
 }
 
-async function getColumnValues(tabName, column) {
-  const range = `${tabName}!${column}:${column}`;
-  const values = await readValues(range, { majorDimension: 'COLUMNS' });
-  return (values[0] || []).slice();
-}
-
 // THE Exercise_Catalog READ AND ITS CACHE ARE DELETED.
 //
 // OWNER CORRECTION 2026-08-13 made Supabase the SOLE authority for the exercise
@@ -821,37 +815,17 @@ async function ensureSheetTab(tabName, headerRow = []) {
   }
 }
 
-async function getEffortSessionIds() {
-  const values = await getColumnValues(effortSheetName, 'B');
-  return values
-    .map(value => String(value).trim())
-    .filter(value => value && value.toLowerCase() !== 'session id');
-}
-
-async function getLogCompositeKeys() {
-  // Composite keys need session_id (B), exercise (C) and set_number (G). Those
-  // three columns fall inside the contiguous B:G span, so a SINGLE range read
-  // (ROWS-major) fetches them together — one API request instead of the three
-  // per-column reads this used to issue. On the Save hot path (dry-run preview +
-  // live write, once each) that removes two redundant Log_Cleaned reads per
-  // request; during a gym session's burst of Saves that is real quota saved.
-  // Result is identical: within each row, index 0 is B, 1 is C, 5 is G; a row
-  // missing any of the three, or a header row, is skipped exactly as before.
-  const range = `${logSheetName}!B:G`;
-  const rows = await readValues(range);
-
-  const keys = [];
-  for (const row of rows) {
-    const sid = String((row && row[0]) || '').trim();   // column B — session_id
-    const ex = String((row && row[1]) || '').trim();    // column C — exercise
-    const setn = String((row && row[5]) || '').trim();  // column G — set_number
-    if (!sid || !ex || !setn) continue;
-    // Skip header rows that might contain column titles
-    if (/session id/i.test(sid) || /exercise/i.test(ex) || /set_number/i.test(setn)) continue;
-    keys.push(`${sid.toLowerCase()}||${ex.toLowerCase()}||${setn.toLowerCase()}`);
-  }
-  return keys;
-}
+// THE COMPOSITE-KEY AND EFFORT-SESSION-ID READERS ARE DELETED (design 5.4).
+//
+// They existed because a Google Sheets tab cannot be queried: to learn which session
+// ids were occupied, or which (session, exercise, set) identities a session already
+// held, the Save path had to pull whole COLUMNS of Log_Cleaned and Effort and scan
+// them in memory — two whole-column reads on the athlete write path, every Save.
+//
+// The S4 cutover moved both questions to indexed Supabase queries scoped to one date
+// or one session (services/workoutAuthority.js). Nothing here answers them any more,
+// and NO FALLBACK REMAINS: a Google Sheets quota exhaustion cannot reach session
+// identity or row dedup at all.
 
 async function readRange(rangeA1) {
   // Outer-array copy: a request-scoped hit hands back the SAME array to every caller in
@@ -908,40 +882,111 @@ async function updateColumnCells(tabName, columnLetter, cells) {
   return response;
 }
 
-async function deleteRowsByRange(tabName, startIndex, endIndex) {
-  // startIndex: 0-based inclusive. endIndex: 0-based exclusive.
+// ── THE MIRROR EXPORT PRIMITIVES (design §5.4 mechanism 2) ───────────────────
+//
+// The export writes with `spreadsheets.values.update` into an EXACT allocated
+// range — never `values.append`. That is the whole idempotency mechanism: the same
+// session always writes the same values into the same cells, so a late duplicate
+// from a superseded worker overwrites its own identical values and has nowhere else
+// to land. An append cannot offer that, because it chooses its own destination.
+//
+// These are the only two Sheets primitives the exporter needs beyond `readRange`,
+// and neither is reachable from a workout request.
+
+function columnLetter(index) {
+  // 0-based index to an A1 column letter. The mirrored tabs are 9-16 columns wide,
+  // so a single letter would do today; two are handled so a later column addition
+  // cannot silently produce a malformed range.
+  let n = index;
+  let letters = '';
+  do {
+    letters = String.fromCharCode(65 + (n % 26)) + letters;
+    n = Math.floor(n / 26) - 1;
+  } while (n >= 0);
+  return letters;
+}
+
+// Extend the grid so an update that lands past the current row count cannot fail for
+// want of rows (§5.4 mechanism 2). A no-op when the sheet is already large enough,
+// so the common path costs one metadata read and no mutation.
+async function ensureGridRows(tabName, neededRows) {
   const sheets = await getSheetsClient();
   const meta = await meterUnretried('spreadsheets.get', ['spreadsheet metadata'], () =>
-    sheets.spreadsheets.get({
-      spreadsheetId,
-      fields: 'sheets.properties'
-    }));
+    sheets.spreadsheets.get({ spreadsheetId, fields: 'sheets.properties' }));
   const sheet = (meta.data.sheets || []).find(s => s.properties.title === tabName);
-  if (!sheet) {
-    throw new Error(`Sheet tab "${tabName}" not found in spreadsheet.`);
-  }
-  const sheetId = sheet.properties.sheetId;
+  if (!sheet) throw new Error(`ensureGridRows: tab "${tabName}" does not exist.`);
+  const current = Number(sheet.properties.gridProperties?.rowCount || 0);
+  if (current >= neededRows) return { extended: false, rowCount: current };
   await sheets.spreadsheets.batchUpdate({
     spreadsheetId,
     requestBody: {
       requests: [{
-        deleteDimension: {
-          range: { sheetId, dimension: 'ROWS', startIndex, endIndex }
-        }
-      }]
-    }
+        appendDimension: {
+          sheetId: sheet.properties.sheetId,
+          dimension: 'ROWS',
+          length: neededRows - current,
+        },
+      }],
+    },
+  });
+  return { extended: true, rowCount: neededRows };
+}
+
+// Write `rows` into `tabName` starting at the 1-based sheet row `startRow`.
+//
+// The range is DERIVED FROM THE ALLOCATION, never inferred from the data's position
+// in the tab, and row 1 is refused because it is the header on every mirrored tab.
+// Returns the raw API response; the authoritative proof is
+// `response.data.updatedRows` / `updatedRange`.
+async function updateRangeValues(tabName, startRow, rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  if (list.length === 0) throw new Error('updateRangeValues: rows must be a non-empty array.');
+  if (!Number.isInteger(startRow) || startRow < 2) {
+    throw new Error('updateRangeValues: startRow must be an integer ≥ 2 (row 1 is the header).');
+  }
+  const width = list.reduce((max, row) => Math.max(max, Array.isArray(row) ? row.length : 0), 0);
+  if (width === 0) throw new Error('updateRangeValues: rows must have at least one column.');
+  const endRow = startRow + list.length - 1;
+  const range = `${tabName}!A${startRow}:${columnLetter(width - 1)}${endRow}`;
+  // The grid must cover the range before the update, or Sheets refuses it.
+  await ensureGridRows(tabName, endRow);
+  const sheets = await getSheetsClient();
+  console.log(`[sheets.js] Mirror update ${list.length} row(s) into ${range}`);
+  const response = await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range,
+    valueInputOption: 'RAW',
+    requestBody: {
+      // Every row is padded to the full width so a short row cannot leave a stale
+      // cell from a previous, longer occupant of the same address.
+      values: list.map((row) => {
+        const cells = Array.isArray(row) ? row.slice(0, width) : [];
+        while (cells.length < width) cells.push('');
+        return cells.map(cell => (cell == null ? '' : String(cell)));
+      }),
+    },
   });
   invalidateTabCache(tabName);
+  return response;
 }
+
+// deleteRowsByRange IS DELETED (design 5.4, 5.6).
+//
+// A row-shifting delete is incompatible with the durable per-tab export allocations
+// the Sheets mirror depends on: removing a row moves every row below it, so a block
+// another session had already been allocated would silently slide. Undo addresses
+// rows by (session_id, write_id) in Supabase now, and the mirror is rewritten inside
+// its own allocated block rather than spliced.
 
 module.exports = {
   appendRows,
   readRange,
   updateColumnCells,
-  deleteRowsByRange,
+  // The mirror export primitives (§5.4 mechanism 2). Not reachable from a workout
+  // request — their only consumer is the asynchronous export worker.
+  updateRangeValues,
+  ensureGridRows,
   validateConfig,
-  getEffortSessionIds,
-  getLogCompositeKeys,
   getRecentRows,
   getSheetRows,
   getHeaderRow,

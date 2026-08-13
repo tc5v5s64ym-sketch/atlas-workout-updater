@@ -31,6 +31,7 @@ const { Client } = require('pg');
 
 const { withOwner, withRole, resetSchema, expectRejected, seedSession, SQLSTATE } = require('./support/db');
 const adapter = require('../services/supabaseAdapter');
+const workoutAuthority = require('../services/workoutAuthority');
 const contract = require('../services/migrationRowContract');
 const { sessionPlansColumns } = require('../config/columns');
 
@@ -151,10 +152,13 @@ function planEventCells(planVersion, { key = 'ff00aa11bb22cc33', eventType = 'pl
 test('P3: an opaque token crosses Sheets → contract → Postgres → comparison unmutated', async () => {
   const cells = planEventCells(TOKEN);
 
-  // The REAL shadow path, as the real atlas_app role: it applies the row contract
-  // itself, so nothing here can canonicalise the token differently from production.
-  const written = await adapter.shadowPlanEvents([cells]);
-  assert.deepEqual(written, { inserted: 1, existing: 0 });
+  // THE REAL AUTHORITY PATH, as the real atlas_app role, through the seam the routes
+  // use. It applies the row contract itself, so nothing here can canonicalise the
+  // token differently from production. This was the shadow lane before the S4
+  // cutover and it is the authoritative append now; the token contract is identical
+  // either way, which is exactly what this test exists to hold.
+  const written = await workoutAuthority.appendPlanEvents([cells]);
+  assert.deepEqual(written, { inserted: 1, skipped: 0 });
 
   // Straight from the database, before any contract touches it.
   await withOwner(async (client) => {
@@ -166,7 +170,7 @@ test('P3: an opaque token crosses Sheets → contract → Postgres → compariso
   });
 
   // And back through the contract, which is what reconciliation compares on.
-  const stored = await adapter.listConcept('session_plan_events');
+  const stored = await adapter.planEvents({});
   const fromSupabase = contract.rowFromSupabase('session_plan_events', stored[0]);
   const fromSheet = contract.rowFromSheet('session_plan_events', cells);
   assert.equal(fromSupabase.plan_version, TOKEN);
@@ -175,9 +179,9 @@ test('P3: an opaque token crosses Sheets → contract → Postgres → compariso
 });
 
 test('P3: the retry collapses on the same token — the idempotency contract is unchanged', async () => {
-  await adapter.shadowPlanEvents([planEventCells(TOKEN)]);
-  const retry = await adapter.shadowPlanEvents([planEventCells(TOKEN)]);
-  assert.deepEqual(retry, { inserted: 0, existing: 1 });
+  await workoutAuthority.appendPlanEvents([planEventCells(TOKEN)]);
+  const retry = await workoutAuthority.appendPlanEvents([planEventCells(TOKEN)]);
+  assert.deepEqual(retry, { inserted: 0, skipped: 1 });
 });
 
 test('a BLANK version is refused by the presence constraint, and NULL by NOT NULL', async () => {
@@ -217,7 +221,7 @@ test('the DATABASE does not narrow the token beyond what Atlas owns', async () =
 });
 
 test('the runtime role can read the token back through its own least-privileged connection', async () => {
-  await adapter.shadowPlanEvents([planEventCells(TOKEN)]);
+  await workoutAuthority.appendPlanEvents([planEventCells(TOKEN)]);
   await withRole('atlas_app', async (client) => {
     const { rows } = await client.query('SELECT plan_version FROM atlas.session_plan_events');
     assert.equal(rows[0].plan_version, TOKEN);

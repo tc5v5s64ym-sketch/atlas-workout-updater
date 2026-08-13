@@ -89,21 +89,19 @@ const sessionPlansColumns = [
   'recorded_at'
 ];
 
-// Session_Plan_Sets — the SET-LEVEL recommendation ledger (F10A, owner-approved
-// contract docs/SESSION_PLANS_LEDGER_DESIGN.md §2). A companion sibling tab to
-// Session_Plans (the item-level spine), joined by (session_id, plan_version,
+// Session_Plan_Sets — the SET-LEVEL recommendation ledger (owner-approved contract
+// docs/SESSION_PLANS_LEDGER_DESIGN.md §2). Supabase stores it alongside the item-level
+// Session_Plans spine, joined by (session_id, plan_version,
 // plan_item_id). Grain = set × revision: one row per (plan item, set_index, version).
 // Append-only and immutable per set once effective — a REVISION never mutates a prior
 // row; it appends a new row with plan_version+1 and supersedes_key = the superseded
 // row's key. Stores RECOMMENDATIONS ONLY (never a performed/actual value — those live
 // in Log_Cleaned; an actual is never copied back and labeled the plan). Like
-// Session_Plans/Constraints/Deload_State it is a system-state tab, NOT logged sets:
+// Session_Plans/Constraints/Deload_State it is system state, NOT logged sets:
 // these writes never route through preview→approve→write and carry no log write_id
 // (closeout stamps closeout_write_id only to SEAL a row, never as its first write).
-// OPTIONAL (config/sheetContract.js) — the writer 503s / no-ops until the owner
-// creates the tab (the owner-reserved F10D gate). Canonical lift CODES only. Column
-// order is OWNER-APPROVED: new columns are only ever appended at the end; never insert
-// or reorder without a migration + owner approval.
+// Canonical lift CODES only. Column order is OWNER-APPROVED: new columns are only
+// ever appended at the end; never insert or reorder without a migration + owner approval.
 const sessionPlanSetsColumns = [
   'idempotency_key',
   'session_id',

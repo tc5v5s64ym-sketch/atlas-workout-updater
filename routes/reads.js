@@ -8,9 +8,8 @@
 // GLOBAL `app.use('/api', …)` middleware in index.js and run before this router
 // regardless of mount position, so no per-route middleware moves here.
 //
-// The shared sheet-rows cache is INJECTED (`getSheetRows`) so a write in index.js
-// still invalidates the rows these reads see — the router must never build its own.
-// `buildExerciseCatalogEntries` is slice-exclusive and lives here.
+// No Sheets reader is injected: workout/history/catalog reads in this router come
+// from Supabase. `buildExerciseCatalogEntries` is slice-exclusive and lives here.
 //
 // This router does NOT cache the Exercise_Catalog, and neither does anything else
 // any more. It used to hold a TTL cache in series with `sheets.getExerciseCatalog`'s
@@ -21,7 +20,10 @@
 
 const express = require('express');
 const { success: standardSuccess, error: standardError } = require('../response');
-const { getRecentRows, logSheetName, effortSheetName, classifySheetsReadError } = require('../sheets');
+// The migrated workout concepts read Supabase, their sole authority since the S4
+// cutover. Same header-stripped cell shape `getSheetRows` returned, so no parse
+// site below changes — only where the rows come from.
+const workoutAuthority = require('../services/workoutAuthority');
 const { readExerciseCatalogRows } = require('../services/exerciseCatalog');
 const getExerciseCatalog = () => readExerciseCatalogRows();
 const {
@@ -35,24 +37,38 @@ const trainingStore = require('../services/trainingStore');
 
 // ── One truthful terminal status for a failed read ────────────────────────────
 //
-// Every handler in this router used to answer ANY thrown error with a hard 500 —
-// "Failed to build weekly summary", details, done. A 500 tells the client the
-// SERVER is broken and there is nothing to try again; that is the correct answer
-// for a bug in this code and the WRONG answer for Google rate-limiting us, which
-// is exactly the failure the owner hit on `GET /api/summary/weekly`. The client
-// then had no way to distinguish "Atlas is broken" from "try again in a moment".
-//
-// The read layer now retries the transient case in-request (sheets.js
-// `readWithRetry`, 3 bounded attempts). Reaching here with a transient error means
-// that bounded retry was EXHAUSTED — so this is the fail-closed terminal state, not
-// a place to retry again. It reports 503 + `retryable:true`, which is the honest
-// description of an upstream data source that is temporarily unavailable.
-//
-// This never touches a write path: this router is read-only, so a retry here can
-// never duplicate a workout row.
+// Supabase is the sole authority behind every read in this router. Keep the error
+// classification database-specific and local: importing a Sheets classifier would
+// make the removed authority a runtime dependency again. Gateway, transport and
+// PostgreSQL connection/resource failures are temporary; request, permission and
+// data failures remain hard errors until corrected.
+const TRANSIENT_AUTHORITY_HTTP_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
+const TRANSIENT_AUTHORITY_TRANSPORT_CODES = new Set([
+  'ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'ECONNABORTED',
+  'EAI_AGAIN', 'ENOTFOUND', 'EPIPE', 'EHOSTUNREACH', 'ENETUNREACH',
+  'ERR_SOCKET_CONNECTION_TIMEOUT',
+]);
+const TRANSIENT_AUTHORITY_SQLSTATES = new Set(['57P01', '57P02', '57P03', '53300', '53400']);
+
+function isTransientAuthorityReadError(error) {
+  if (!error) return false;
+  const status = Number(
+    error.status != null ? error.status
+      : (error.response && error.response.status != null) ? error.response.status
+        : NaN
+  );
+  if (TRANSIENT_AUTHORITY_HTTP_STATUSES.has(status)) return true;
+
+  const code = String(error.code || '').toUpperCase();
+  if (code.startsWith('08') || TRANSIENT_AUTHORITY_SQLSTATES.has(code)) return true;
+  if (TRANSIENT_AUTHORITY_TRANSPORT_CODES.has(code)) return true;
+
+  return /socket hang up|network|timeout|timed out|connection terminated/i
+    .test(String(error.message || ''));
+}
+
 function readFailure(req, res, message, error) {
-  const kind = classifySheetsReadError(error);
-  if (kind === 'transient') {
+  if (isTransientAuthorityReadError(error)) {
     return standardError(req, res, `${message} — the workout data source is temporarily unavailable`, {
       reason: 'upstream_read_unavailable',
       retryable: true,
@@ -106,7 +122,7 @@ function buildExerciseCatalogEntries(rows) {
   return entries;
 }
 
-module.exports = function registerReadRoutes({ getSheetRows }) {
+module.exports = function registerReadRoutes() {
   const router = express.Router();
 
   // GET /api/history/recent
@@ -118,8 +134,8 @@ module.exports = function registerReadRoutes({ getSheetRows }) {
     const exerciseFilter = req.query.exercise ? String(req.query.exercise).toLowerCase() : null;
 
     try {
-      const recentLog = await getRecentRows(logSheetName, Math.max(100, limit * 20));
-      const recentEffort = await getRecentRows(effortSheetName, Math.max(limit, 20));
+      const recentLog = await workoutAuthority.loggedSetRows({ limit: Math.max(100, limit * 20) });
+      const recentEffort = await workoutAuthority.effortRows({ limit: Math.max(limit, 20) });
 
       let filteredLog = recentLog;
       if (exerciseFilter) {
@@ -182,7 +198,7 @@ module.exports = function registerReadRoutes({ getSheetRows }) {
     if (!exercise) return standardError(req, res, 'exercise query param required', null, 400);
 
     try {
-      const allLog = await getSheetRows(logSheetName);
+      const allLog = await workoutAuthority.loggedSetRows();
       const lowerExercise = exercise.toLowerCase();
       // Find all rows where exercise or canonical_exercise matches (substring)
       const matchingRows = allLog.filter(row => {
@@ -224,7 +240,7 @@ module.exports = function registerReadRoutes({ getSheetRows }) {
     if (!liftCode) return standardError(req, res, 'liftCode is required in path', null, 400);
 
     try {
-      const allLog = await getRecentRows(logSheetName, 1000);
+      const allLog = await workoutAuthority.loggedSetRows({ limit: 1000 });
       const matching = allLog.filter(row => String(row[5] || '').toLowerCase() === liftCode);
 
       const exerciseNames = [...new Set(matching.map(r => r[2]))];
@@ -290,7 +306,7 @@ module.exports = function registerReadRoutes({ getSheetRows }) {
     }
 
     try {
-      const allLog = await getSheetRows(logSheetName);
+      const allLog = await workoutAuthority.loggedSetRows();
       const progress = computeExerciseProgress(allLog, liftCode);
       return standardSuccess(req, res, 'Exercise progress', progress);
     } catch (error) {
@@ -320,7 +336,7 @@ module.exports = function registerReadRoutes({ getSheetRows }) {
     }
 
     try {
-      const allLog = await getSheetRows(logSheetName);
+      const allLog = await workoutAuthority.loggedSetRows();
       const groups = computeMuscleGroupVolume(allLog, days);
       return standardSuccess(req, res, 'Muscle group volume summary', { days, groups });
     } catch (error) {
@@ -339,7 +355,7 @@ module.exports = function registerReadRoutes({ getSheetRows }) {
     };
 
     try {
-      const allLog = await getSheetRows(logSheetName);
+      const allLog = await workoutAuthority.loggedSetRows();
       const result = searchSessions(allLog, filters);
       return standardSuccess(req, res, 'Session search results', result);
     } catch (error) {
@@ -401,7 +417,7 @@ module.exports = function registerReadRoutes({ getSheetRows }) {
     if (!sessionId) return standardError(req, res, 'sessionId is required', null, 400);
 
     try {
-      const allLog = await getSheetRows(logSheetName);
+      const allLog = await workoutAuthority.loggedSetRows();
       const sessionRows = allLog.filter(row => String(row[1] || '').trim() === sessionId);
       if (!sessionRows.length) {
         return standardError(req, res, `No rows found for session "${sessionId}"`, null, 404);
@@ -434,8 +450,8 @@ module.exports = function registerReadRoutes({ getSheetRows }) {
   router.get('/api/summary/weekly', async (req, res) => {
 
     try {
-      const recentLog = await getRecentRows(logSheetName, 1000);
-      const recentEffort = await getRecentRows(effortSheetName, 1000);
+      const recentLog = await workoutAuthority.loggedSetRows({ limit: 1000 });
+      const recentEffort = await workoutAuthority.effortRows({ limit: 1000 });
       const today = new Date();
       const sevenDaysAgo = new Date(today);
       sevenDaysAgo.setDate(today.getDate() - 6);
@@ -544,7 +560,7 @@ module.exports = function registerReadRoutes({ getSheetRows }) {
   router.get('/api/prs/recent', async (req, res) => {
 
     try {
-      const allLog = await getSheetRows(logSheetName);
+      const allLog = await workoutAuthority.loggedSetRows();
       const prs = detectRecentPrs(allLog);
       return standardSuccess(req, res, 'Recent PRs', { prs });
     } catch (error) {
@@ -560,7 +576,7 @@ module.exports = function registerReadRoutes({ getSheetRows }) {
     }
 
     try {
-      const allLog = await getSheetRows(logSheetName);
+      const allLog = await workoutAuthority.loggedSetRows();
       const stalls = detectStalls(allLog, minSessions);
       return standardSuccess(req, res, 'Stall detection', { stalls, minSessions });
     } catch (error) {

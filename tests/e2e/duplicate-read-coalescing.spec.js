@@ -83,7 +83,7 @@ async function openApp(page, capture, { slowMs = 0, withSave = false } = {}) {
       return route.fulfill(json({
         status: 'success',
         data: {
-          sheet_write: 'success', sheet_written: true,
+          sheet_write: 'success', sheet_written: true, write_authority: 'supabase_transaction',
           session_id: body.session_id || 'PW-E2E',
           log_rows_written: (body.log_rows || []).length,
           logAppendedRange: 'Log_Cleaned!A200:L200',

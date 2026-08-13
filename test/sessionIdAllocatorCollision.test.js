@@ -31,7 +31,7 @@
 const test = require('node:test');
 const crypto = require('node:crypto');
 const assert = require('node:assert/strict');
-const { resetIdempotencyStore } = require('../services/idempotency');
+const { resetWorkoutAuthorityStub: resetIdempotencyStore } = require('./helpers/stubWorkoutAuthority');
 const { logCleanedColumns, effortColumns } = require('../config/columns');
 const { formatAmPmSuffix } = require('../services/sessionId');
 
@@ -110,6 +110,20 @@ require.cache[sheetsPath] = { id: sheetsPath, filename: sheetsPath, loaded: true
 // The exercise catalog reads Supabase (OWNER CORRECTION 2026-08-13). Stubbed here so
 // the suite never opens a database connection; it delegates to the sheets fixture above.
 require('./helpers/stubExerciseCatalog').installExerciseCatalogStub();
+
+// The workout authority is Supabase since the S4 cutover, so stubbing `sheets.js`
+
+// no longer controls the logged sets, the Effort row, the plan ledgers or the write
+
+// receipts. `sheetsFallback` seeds this suite's existing fixture into the double, so
+
+// no test's data changes — only where the route reads it from.
+
+const {
+  installWorkoutAuthorityStub, resetWorkoutAuthorityStub, workoutAuthorityStore,
+  failWorkoutAuthorityReads,
+} = require('./helpers/stubWorkoutAuthority');
+installWorkoutAuthorityStub();
 const { app } = require('../index');
 
 let server;
@@ -130,6 +144,7 @@ async function post(path, payload) {
 }
 
 function reset() {
+  resetWorkoutAuthorityStub();
   resetIdempotencyStore();
   state.appends = [];
   state.effortSessionIds = [];
@@ -137,11 +152,11 @@ function reset() {
   state.failLogRead = false;
 }
 
-// The id the server actually stamped onto the Log rows it wrote, in write order.
+// The id the server actually stamped onto the rows it wrote, in write order — read
+// from the authority the Save now goes to rather than from the Sheets append fixture.
 function writtenSessionIds() {
-  return state.appends
-    .filter(a => a.tab === 'Log_Cleaned')
-    .flatMap(a => a.rows.map(r => String(r[LOG_SESSION_IDX] || '').trim()))
+  return workoutAuthorityStore().calls.saves
+    .flatMap(save => save.logCells.map(r => String(r[LOG_SESSION_IDX] || '').trim()))
     .filter(Boolean);
 }
 
@@ -184,8 +199,8 @@ test('two same-period workouts without Effort rows get distinct session_ids', as
   // The first workout is now durably in Log_Cleaned. It wrote NO Effort row, which is
   // entirely legitimate — the athlete simply had no watch data. Effort-only knowledge is
   // therefore blind to it, and that blindness is what caused the merge.
-  assert.equal(state.effortSessionIds.length, 0, 'no Effort row exists for the first workout');
-  assert.ok(state.logCompositeKeys.length > 0, 'the first workout IS durably recorded in Log_Cleaned');
+  assert.equal(workoutAuthorityStore().effort.length, 0, 'no Effort row exists for the first workout');
+  assert.ok(workoutAuthorityStore().loggedSets.length > 0, 'the first workout IS durably recorded');
 
   const second = await logNewWorkoutWithoutEffort('Bench Press', 185);
   assert.equal(second.response.status, 200, `second workout must write: ${JSON.stringify(second.body).slice(0, 300)}`);
@@ -267,7 +282,7 @@ test('the Effort row is written under the allocated identity, not the one the cl
   });
   assert.equal(response.status, 200);
   assert.deepEqual([...new Set(writtenSessionIds())], [slot(1), slot(2)]);
-  assert.deepEqual(state.effortSessionIds, [slot(2)],
+  assert.deepEqual(workoutAuthorityStore().effort.map(r => r[1]), [slot(2)],
     'the Effort row carries the ALLOCATED identity — Log_Cleaned and Effort must never disagree');
 });
 
@@ -276,7 +291,7 @@ test('a duplicate Effort session is still refused — the pre-existing guard is 
   // double-write an Effort row) must keep working. It is scoped to writes that actually
   // append an Effort row, so the payload has to carry one for the guard to apply.
   reset();
-  state.effortSessionIds.push('20260802-PM-01');
+  workoutAuthorityStore().effort.push(['2026-08-02', '20260802-PM-01']);
   const { response } = await post('/api/log-workout', {
     session_id: '20260802-PM-01', date: DATE, write_id: crypto.randomUUID(),
     log_rows: [{ exercise: 'Back Squat', set_number: 1, weight: 225, reps: 5, rir: 2 }],
@@ -291,7 +306,7 @@ test('an unreadable Log_Cleaned refuses to allocate rather than guessing a free 
   // exact blindness that caused the silent merge — and it would do so precisely when
   // Sheets is flaky, which is when a retry storm makes a collision most likely.
   reset();
-  state.failLogRead = true;
+  failWorkoutAuthorityReads('simulated session identity read failure');
   const { response, body } = await post('/api/log-workout', {
     date: DATE, write_id: crypto.randomUUID(),
     log_rows: [{ exercise: 'Back Squat', set_number: 1, weight: 225, reps: 5, rir: 2 }],

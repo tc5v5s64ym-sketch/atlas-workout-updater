@@ -8,10 +8,9 @@
 // GLOBAL `app.use('/api', …)` middleware in index.js and run before this router
 // regardless of mount position, so no per-route middleware moves here.
 //
-// The only shared mutable state is the sheet-rows cache, INJECTED as `getSheetRows`
-// so a write elsewhere still invalidates what these reads see. Every ring buffer,
-// shadow store, and deload/flight/bug write is owned by its own service. The coach
-// and deload slice-local helper functions moved in with their routes.
+// No Sheets reader is injected into workout/coaching routes. Migrated workout
+// inputs come from Supabase; remaining Sheets operations are unrelated reporting,
+// telemetry, or export surfaces.
 
 const express = require('express');
 const { success: standardSuccess, error: standardError } = require('../response');
@@ -25,6 +24,14 @@ const {
 } = require('../sheets');
 // Supabase is the catalog's sole authority (OWNER CORRECTION 2026-08-13), so this
 // read cannot be reached by a Google Sheets quota error. Same shape as before.
+// The migrated workout concepts read Supabase, their sole authority since the S4
+// cutover. Same header-stripped cell shape `getSheetRows` returned, so no parse
+// site below changes — only where the rows come from.
+const workoutAuthority = require('../services/workoutAuthority');
+// Coaching notes, typed constraints and the deload state — Supabase, their sole
+// authority (OWNER CORRECTION 2026-08-13). All three are prescription inputs, so
+// none may be a synchronous Google Sheets dependency and none is swallowed.
+const coachingInputs = require('../services/coachingInputsAuthority');
 const { readExerciseCatalogRows } = require('../services/exerciseCatalog');
 const getExerciseCatalog = () => readExerciseCatalogRows();
 const coach = require('../services/coach');
@@ -166,7 +173,7 @@ function coachChatSessionKey(clientCtx) {
   return fingerprint.length ? `plan:${fingerprint.join('|')}` : 'owner-session';
 }
 
-module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
+module.exports = function registerCoachOpsRoutes() {
   const router = express.Router();
 
   // GET /api/health/sheets
@@ -723,7 +730,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     let enrichmentFailed = false;
     if (rawFacts.liftCode) {
       try {
-        const allLog = await getSheetRows(logSheetName);
+        const allLog = await workoutAuthority.loggedSetRows();
         engineLogRows = allLog;
         engineLiftLogRows = cleanLogForLift(allLog, rawFacts.liftCode, rawFacts.exerciseName);
         facts = enrichCoachFacts(rawFacts, allLog);
@@ -828,8 +835,8 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       let layoffFact = null;
       try {
         const [allLog, allEffort] = await Promise.all([
-          getSheetRows(logSheetName),
-          getSheetRows(effortSheetName),
+          workoutAuthority.loggedSetRows(),
+          workoutAuthority.effortRows(),
         ]);
         const layoff = assessLayoff(allLog);
         if (layoff.returning_from_layoff) {
@@ -1260,6 +1267,29 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     }
   });
 
+  // ── AN UNREADABLE AUTHORITY REFUSES THE TURN; IT NEVER ANSWERS FROM NOTHING ──
+  //
+  // OWNER CORRECTION 2026-08-13. The two engine-fill reads below used to end in
+  // `.catch(() => [])`, which turned "Supabase would not answer" into "this lifter
+  // has no training history" — and the engine then prescribed from an empty corpus
+  // as confidently as it would from a full one. A read that failed and a lifter who
+  // has never trained are not the same fact, and the deterministic engine must
+  // never be handed the second when the first is true.
+  //
+  // It is a REFUSAL rather than a rethrow because these two call sites sit outside
+  // the LLM try/catch further down: an escaping rejection in an async Express 4
+  // handler is not converted into a response at all, so the turn would hang instead
+  // of failing. 503 + `retryable` is the same truthful shape `routes/reads.js`
+  // already publishes for an unavailable upstream read.
+  function authorityReadRefusal(req, res, error) {
+    return standardError(req, res,
+      'Coach chat cannot answer — the workout data source is temporarily unavailable', {
+        reason: 'authority_read_unavailable',
+        retryable: true,
+        detail: error && error.message,
+      }, 503);
+  }
+
   router.post('/api/coach/chat', async (req, res) => {
     const message = req.body && typeof req.body.message === 'string' ? req.body.message.trim() : '';
     if (!message) {
@@ -1379,7 +1409,12 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // not an LLM guess. Gated to bare shorthand during an active session that the context
       // couldn't answer, so the Sheets read is rare (not on every chat message).
       if (!bare && isBareSessionShorthand(message) && hasActiveSessionContext(clientCtx)) {
-        const bareLog = await getSheetRows(logSheetName).catch(() => []);
+        let bareLog;
+        try {
+          bareLog = await workoutAuthority.loggedSetRows();
+        } catch (error) {
+          return authorityReadRefusal(req, res, error);
+        }
         bare = answerBareShorthand(message, clientCtx, (liftName) => recommendTargetForLift(liftName, bareLog));
       }
       if (bare) {
@@ -1431,7 +1466,12 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       if (isTurnPrecedenceEnabled()) {
         let scoped = answerCurrentExercisePrescription(message, clientCtx);
         if (!scoped && isCurrentExercisePrescriptionQuestion(message) && hasActiveSessionContext(clientCtx)) {
-          const scopedLog = await getSheetRows(logSheetName).catch(() => []);
+          let scopedLog;
+          try {
+            scopedLog = await workoutAuthority.loggedSetRows();
+          } catch (error) {
+            return authorityReadRefusal(req, res, error);
+          }
           scoped = answerCurrentExercisePrescription(message, clientCtx, (liftName) => recommendTargetForLift(liftName, scopedLog));
         }
         if (scoped) {
@@ -1543,20 +1583,27 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     // snapshot (label/readiness/history) once buildChatContext runs inside the try.
     let recExplain = coachExplanationGrounding.resolveRecommendationExplanation(message, clientCtx || {});
     try {
+      // ALL FOUR INPUTS COME FROM SUPABASE, and none of them is swallowed.
+      //
+      // The notes and constraints reads used to be `.catch(() => [])` against Google
+      // Sheets, so a quota exhaustion produced a reply grounded on neither. The owner
+      // ruled that out (OWNER CORRECTION 2026-08-13): a coaching reply that does not
+      // know about the athlete's reported injury is not a softer answer, it is a
+      // different one. An unreadable input now throws into the catch below, which is
+      // the route's existing deterministic-refusal path — the athlete gets an honest
+      // "I can't answer that right now", never a confident answer built on a gap.
       const [logR, allEffort, notesRows, constraintRows] = await Promise.all([
-        getSheetRows(logSheetName),
-        getSheetRows(effortSheetName),
-        getSheetRows('Coaching_Notes').catch(() => []),
-        getSheetRows('Constraints').catch(() => [])
+        workoutAuthority.loggedSetRows(),
+        workoutAuthority.effortRows(),
+        coachingInputs.coachingNoteRows(),
+        coachingInputs.constraintRows()
       ]);
       allLog = logR;
       const coachingNotes = notesRows
-        .map(row => Array.isArray(row) ? { date: row[0] || null, note: row[1] || null } : { date: row.date || null, note: row.note || null })
+        .map(row => ({ date: row[0] || null, note: row[1] || null }))
         .filter(n => n.note);
       const constraints = constraintRows
-        .map(row => Array.isArray(row)
-          ? { date: row[0] || null, kind: row[1] || null, target: row[2] || null, rule: row[3] || null, note: row[4] || null }
-          : { date: row.date || null, kind: row.kind || null, target: row.target || null, rule: row.rule || null, note: row.note || null })
+        .map(row => ({ date: row[0] || null, kind: row[1] || null, target: row[2] || null, rule: row[3] || null, note: row[4] || null }))
         .filter(c => c.kind && c.target && c.rule);
       // B5b Part 2 — explicit discouragement/frustration in THIS message routes the
       // chat coach mode to `reassure` (computed up top as `discouraged`; the lift-answer
@@ -1842,8 +1889,11 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // Empty reply and no proposal → fall through to the deterministic fallback below.
     } catch (error) {
       // Degrade gracefully — never an error bubble. Fall through to the deterministic
-      // fallback. allLog may be populated (throw came from Gemini after the read) or
-      // empty (the Sheets read itself failed); the fallback handles both.
+      // fallback. This catch covers the LLM call ONLY, and `allLog` is therefore
+      // already populated: the authority read happens before this try and refuses the
+      // turn outright when it fails (OWNER CORRECTION 2026-08-13), so an empty
+      // `allLog` here means the lifter genuinely has no logged sets — never that a
+      // read failed. A model outage still degrades to the deterministic answer.
       chatError = error.message;
     }
     // When the model returned nothing (or threw) on a recommendation-explanation turn,
@@ -2062,7 +2112,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
   // GET /api/coaching/insights
   router.get('/api/coaching/insights', async (req, res) => {
     try {
-      const allLog = await getSheetRows(logSheetName);
+      const allLog = await workoutAuthority.loggedSetRows();
       const stalls = detectStalls(allLog, 3);
       const deloadSuggestions = suggestDeloads(allLog, 4);
       const fatigue = computeFatigueStatus(allLog);
@@ -2094,21 +2144,19 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
   });
 
   // A deload lifecycle error is a state-machine CONFLICT (illegal move) only when it
-  // matches these patterns; anything else (Sheets I/O, etc.) is infra, not a 409.
+  // matches these patterns; anything else (store I/O, etc.) is infra, not a 409.
   function isDeloadConflict(error) {
     return /Illegal training-state transition|not in a deload|not in POST_DELOAD_EVALUATION/i
       .test(error && error.message ? error.message : '');
   }
 
-  // Deload_State is an optional tab and appendRows cannot create it — so a write
-  // lifecycle action needs the tab to exist, mirroring /api/constraints' 503.
-  const DELOAD_STATE_MISSING_MSG =
-    'Deload_State tab not found — create it in Google Sheets first (columns: updated_at, training_state, deload_protocol, deload_reason, deload_start_date, deload_sessions_remaining, deload_exit_criteria)';
-
-  async function deloadStateTabPresent() {
-    const tabs = await getSpreadsheetTabs().catch(() => []);
-    return tabs.includes('Deload_State');
-  }
+  // THE TAB-PRESENCE PRECONDITION IS GONE. `Deload_State` was an optional Google
+  // Sheets tab that `appendRows` could not create, so every lifecycle write first
+  // asked whether the owner had made it — a `spreadsheets.get` per write, and a 503
+  // telling the owner to go and create a tab. `atlas.deload_state` is created by the
+  // migration and cannot be absent, so the question and its Sheets read both go.
+  // A store that will not answer surfaces through `sendDeloadError` as a 500, which
+  // is the honest shape: infrastructure, not a missing setup step.
 
   // Classify a lifecycle write failure: 409 for a genuine illegal move, else 500
   // with a fixed message (raw error as the detail, never the user-facing message).
@@ -2133,9 +2181,6 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     const exit_criteria = typeof body.exit_criteria === 'string' && body.exit_criteria.trim()
       ? body.exit_criteria.trim().slice(0, 200)
       : protocol.exit;
-    if (!(await deloadStateTabPresent())) {
-      return standardError(req, res, DELOAD_STATE_MISSING_MSG, null, 503);
-    }
     try {
       const state = await beginDeload({ protocol, reason, sessions_remaining, exit_criteria });
       return standardSuccess(req, res, 'Deload started', { state });
@@ -2146,9 +2191,6 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
 
   // POST /api/deload/advance — record that a deload session was completed.
   router.post('/api/deload/advance', async (req, res) => {
-    if (!(await deloadStateTabPresent())) {
-      return standardError(req, res, DELOAD_STATE_MISSING_MSG, null, 503);
-    }
     try {
       const state = await recordDeloadSession({});
       return standardSuccess(req, res, 'Deload session recorded', { state });
@@ -2159,9 +2201,6 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
 
   // POST /api/deload/resolve — close out the post-deload evaluation back to NORMAL.
   router.post('/api/deload/resolve', async (req, res) => {
-    if (!(await deloadStateTabPresent())) {
-      return standardError(req, res, DELOAD_STATE_MISSING_MSG, null, 503);
-    }
     try {
       const state = await resolvePostDeload({});
       return standardSuccess(req, res, 'Deload resolved', { state });

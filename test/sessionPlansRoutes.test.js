@@ -13,13 +13,17 @@ const assert = require('node:assert/strict');
 const express = require('express');
 
 const captureCalls = [];
+let captureFailure = false;
 const envelope = (session) => ({ status: 'written', captured: true, written: 1, skipped: 0, plan_version: session.plan_version, reason: null });
+const captureResult = (session) => captureFailure
+  ? { status: 'error', captured: false, written: 0, skipped: 0, plan_version: session.plan_version, reason: 'authority unavailable' }
+  : envelope(session);
 const fakeCapture = {
   isEnabled: () => true,
   validateHeader: async () => ({ ok: true }),
-  captureAccept: async (session, items) => { captureCalls.push({ fn: 'accept', session, items }); return { ...envelope(session), written: items.length }; },
-  captureOutcome: async (session, item) => { captureCalls.push({ fn: 'outcome', session, item }); return envelope(session); },
-  captureCloseout: async (session, closeout) => { captureCalls.push({ fn: 'closeout', session, closeout }); return envelope(session); },
+  captureAccept: async (session, items) => { captureCalls.push({ fn: 'accept', session, items }); return { ...captureResult(session), written: captureFailure ? 0 : items.length }; },
+  captureOutcome: async (session, item) => { captureCalls.push({ fn: 'outcome', session, item }); return captureResult(session); },
+  captureCloseout: async (session, closeout) => { captureCalls.push({ fn: 'closeout', session, closeout }); return captureResult(session); },
 };
 const capturePath = require.resolve('../services/sessionPlanCapture');
 require.cache[capturePath] = { id: capturePath, filename: capturePath, loaded: true, exports: fakeCapture };
@@ -27,6 +31,11 @@ require.cache[capturePath] = { id: capturePath, filename: capturePath, loaded: t
 // Hermetic: the catalog reads Supabase (OWNER CORRECTION 2026-08-13). This stub also
 // blanks the ATLAS_SUPABASE_* roles, so no test can open a database connection.
 require('./helpers/stubExerciseCatalog').installExerciseCatalogStub();
+// The workout authority is Supabase since the S4 cutover, so stubbing `sheets.js`
+// no longer controls the logged sets, the Effort row, the plan ledgers or the write
+// receipts. `sheetsFallback` seeds this suite's existing fixture into the double, so
+// no test's data changes — only where the route reads it from.
+require('./helpers/stubWorkoutAuthority').installWorkoutAuthorityStub({ sheetsFallback: true });
 const registerSessionPlanRoutes = require('../routes/sessionPlans');
 
 let baseUrl, server;
@@ -48,7 +57,7 @@ const PI = 'pi_aaaaaaaa-1111-4111-8111-111111111111';
 const BASE = { session_id: 'S1', session_date: '2026-07-10', plan_version: PV };
 const ACCEPT_ITEM = { plan_item_id: PI, planned_order: 1, planned_lift_code: 'BEN01', movement_pattern: 'horizontal_push' };
 
-test.beforeEach(() => { captureCalls.length = 0; });
+test.beforeEach(() => { captureCalls.length = 0; captureFailure = false; });
 
 // ── accept ────────────────────────────────────────────────────────────────────
 
@@ -62,6 +71,17 @@ test('accept: a valid request forwards session+items and returns the envelope', 
   assert.equal(captureCalls[0].fn, 'accept');
   assert.equal(captureCalls[0].session.plan_version, PV);
   assert.equal(captureCalls[0].items[0].plan_item_id, PI);
+});
+
+test('authoritative capture failure is a 503, never a false acceptance', async () => {
+  captureFailure = true;
+  const accept = await post('/api/session-plans/accept', { ...BASE, items: [ACCEPT_ITEM] });
+  assert.equal(accept.status, 503);
+  assert.equal(accept.body.status, 'error');
+  const outcome = await post('/api/session-plans/outcome', { ...BASE, item: { plan_item_id: PI, planned_lift_code: 'BEN01', outcome: 'completed' } });
+  assert.equal(outcome.status, 503);
+  const closeout = await post('/api/session-plans/closeout', { ...BASE, closeout_status: 'finalized' });
+  assert.equal(closeout.status, 503);
 });
 
 test('accept: missing plan_version → 400, capture not called', async () => {

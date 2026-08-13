@@ -2,26 +2,24 @@
 
 // ── Session_Plan_Sets capture layer (F10B) ────────────────────────────────────
 //
-// The failure-isolated envelope + exact-header validation over the F10A idempotent
-// checkpoint writer (services/sessionPlanSetsStore.js). Exactly mirrors
+// The proof envelope over the idempotent Supabase checkpoint writer
+// (services/sessionPlanSetsStore.js). It mirrors
 // services/sessionPlanCapture.js (the Session_Plans lane) so the ledger's
 // creation-time checkpoint (design amendment A2 — durable at creation, session state
 // is a cache) is captured the moment a plan is accepted or an explicit revision is
-// issued, without ever being able to corrupt/duplicate/block the workout.
+// issued, without allowing a partial or unconfirmed ledger write to be reported as
+// authoritative.
 //
-// System-state SIDECAR — never the preview→approve→write trust loop, no log write_id,
-// writes ONLY the optional Session_Plan_Sets tab. DRY-RUN in F10B/F10C: the store is
-// gated behind SESSION_PLAN_SETS_WRITE_ENABLED (off), so every capture returns the
-// no-write proof and touches no sheet; the production tab + live-write flag are the
-// owner-reserved F10D gate.
+// System-state authority — never the preview→approve→write trust loop and no log
+// write_id. S4 writes every real checkpoint to Supabase; only an explicit test-mode
+// call is dry-run.
 //
-// TOTAL failure isolation: every function is wrapped so it can NEVER throw at a call
-// site — a failure returns a `captured:false` envelope, never a rejection. `captured`
+// TOTAL envelope isolation: every function is wrapped so it can NEVER throw at a call
+// site — a failure returns a `captured:false` envelope. Direct authoritative routes
+// translate that envelope into a fail-closed response. `captured`
 // is true ONLY when a live append actually persisted (or an idempotent skip collapsed
 // an already-persisted row); a dry-run is `captured:false` (nothing durable yet).
 
-const sheets = require('../sheets');
-const { sessionPlanSetsColumns } = require('../config/columns');
 const store = require('./sessionPlanSetsStore');
 
 const SESSION_PLAN_SETS_TAB = store.SESSION_PLAN_SETS_TAB;
@@ -31,7 +29,7 @@ function _colLetter(n) {
   while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = (n - m - 1) / 26; }
   return s;
 }
-const HEADER_RANGE = `${SESSION_PLAN_SETS_TAB}!A1:${_colLetter(sessionPlanSetsColumns.length)}1`;
+
 
 function _envelope(status, captured, extra = {}) {
   return {
@@ -48,41 +46,30 @@ function _envelope(status, captured, extra = {}) {
 // Read row 1 and compare it to the contract, position by position (owner requirement,
 // mirrors sessionPlanCapture.validateHeader). Only consulted on the LIVE path.
 async function validateHeader() {
-  let rows;
-  try {
-    rows = await sheets.readRange(HEADER_RANGE);
-  } catch (e) {
-    // Same one authority as sessionPlanCapture, and this is the site where it matters
-    // most: the seal artifact treats `tab_missing` as a VERIFIED-empty ledger
-    // (services/turnWriteArtifact.js VERIFIED_EMPTY_SEAL_REASONS). So a transient
-    // outage — or a malformed A1 range, which Google reports with the SAME
-    // "Unable to parse range" wording as an absent tab — must never reach it, or a
-    // closeout is claimed verified while real rows sit unstamped. `confirmTabMissing`
-    // returns true only after independently confirming the metadata was readable and
-    // this tab is absent from it.
-    return (await sheets.confirmTabMissing(e, SESSION_PLAN_SETS_TAB))
-      ? { ok: false, status: 'tab_missing', reason: 'Session_Plan_Sets tab confirmed absent' }
-      : { ok: false, status: 'error', reason: `Session_Plan_Sets header unreadable (${e.message})` };
-  }
-  const header = Array.isArray(rows) && Array.isArray(rows[0]) ? rows[0] : [];
-  if (header.length === 0) return { ok: false, status: 'tab_missing', reason: 'Session_Plan_Sets tab has no header row' };
-  const exact = header.length === sessionPlanSetsColumns.length
-    && sessionPlanSetsColumns.every((col, i) => String(header[i] == null ? '' : header[i]).trim() === col);
-  if (!exact) return { ok: false, status: 'header_mismatch', reason: 'Session_Plan_Sets header does not match the exact 16-column contract' };
+  // ALWAYS OK — there is no Sheets header left to validate.
+  //
+  // This read row 1 of the `Session_Plan_Sets` tab and compared it to
+  // `sessionPlanSetsColumns` position by position, so a schema drift or a missing
+  // tab refused the write instead of appending into the wrong columns. Both
+  // failure modes were properties of a spreadsheet a human can edit.
+  //
+  // The S4 cutover moved this concept to a Supabase table whose columns the
+  // migration fixed. A column cannot be renamed, reordered or removed at runtime,
+  // and the table cannot be absent — so the probe has nothing left to detect, and
+  // keeping it would mean a Google Sheets quota error could refuse a workout write
+  // for a tab the write no longer touches.
+  //
+  // The FUNCTION survives because its callers branch on its verdict; only the
+  // question it asks is gone. Genuine schema protection now lives where the schema
+  // does: the migration, and the constraint tests in test-pg/constraints.pgproof.js.
   return { ok: true };
 }
 
-// Shared: run the store checkpoint, failure-isolated, and translate its result into a
-// capture envelope. In DRY-RUN (the F10B default) the store never touches the sheet,
-// so header validation is skipped and the envelope is captured:false / dry_run:true —
-// nothing durable is claimed. On the LIVE path (F10D), validate the exact header
-// before trusting the write, and only claim captured on a real append/idempotent-skip.
+// Shared: run the store checkpoint and translate its result into a capture envelope.
+// An explicit test-mode call is captured:false / dry_run:true because nothing durable
+// is claimed. A live call claims capture only for a confirmed Supabase write or an
+// idempotent skip whose row is already durable.
 async function _capture(writerFn) {
-  if (!store.LIVE_WRITE_ENABLED) {
-    let r;
-    try { r = await writerFn(); } catch (e) { return _envelope('error', false, { reason: e.message || 'checkpoint build failed' }); }
-    return _envelope('dry_run', false, { dry_run: true, reason: r && r.reason });
-  }
   let hv;
   try { hv = await validateHeader(); } catch (e) { return _envelope('error', false, { reason: `header validation failed (${e.message})` }); }
   if (!hv.ok) return _envelope(hv.status, false, { reason: hv.reason });
@@ -92,23 +79,29 @@ async function _capture(writerFn) {
     const written = (r && r.written) || 0;
     const skipped = (r && r.skipped) || 0;
     if (written > 0) {
-      // A live append is `captured` ONLY with AUTHORITATIVE Google proof: the store
-      // confirmed the write AND returned an A1 range AND the confirmed row count
-      // equals what we asked to append. A malformed / short / range-less append fails
-      // closed as `unconfirmed` (captured:false) — never a false 'written' that lets a
-      // caller believe the durable ledger exists when Sheets did not confirm it
-      // (write-safety; CLAUDE.md live-write proof requires positive range/row evidence).
-      const confirmed = r && r.sheet_written === true && !!r.range && Number(r.rows_written) === written;
+      // A live write is `captured` ONLY with AUTHORITATIVE proof: the store confirmed
+      // the write AND the confirmed row count equals what we asked to append. A short
+      // or unconfirmed write fails closed as `unconfirmed` (captured:false) — never a
+      // false 'written' that lets a caller believe the durable ledger exists when the
+      // authority did not confirm it.
+      //
+      // THE A1 RANGE LEFT THE PREDICATE, and dropping it is not a weakening. It
+      // proved WHERE Google put the rows, never that they were the right rows, and
+      // the S4 cutover writes them to `atlas.session_plan_set_recommendations`, where
+      // there is no range to produce. Requiring one would fail EVERY live checkpoint.
+      // The row count is the same assertion it always was and now comes from the
+      // transaction that performed the write.
+      const confirmed = r && r.sheet_written === true && Number(r.rows_written) === written;
       if (!confirmed) {
-        return _envelope('unconfirmed', false, { written, skipped, range: r && r.range, reason: 'append not confirmed by Sheets (missing range or row-count mismatch)' });
+        return _envelope('unconfirmed', false, { written, skipped, reason: 'write not confirmed by the ledger authority (row-count mismatch)' });
       }
-      return _envelope('written', true, { written, skipped, range: r.range });
+      return _envelope('written', true, { written, skipped });
     }
     // A pure idempotent skip is already durable (the row exists) → captured.
     if (skipped > 0) return _envelope('skipped', true, { skipped });
     return _envelope('noop', false, { reason: 'nothing to checkpoint' });
   } catch (e) {
-    const reason = /revision collision/i.test(e.message || '') ? 'revision_collision' : (e.message || 'sidecar checkpoint failed');
+    const reason = /revision collision/i.test(e.message || '') ? 'revision_collision' : (e.message || 'plan-set checkpoint failed');
     return _envelope('error', false, { reason });
   }
 }

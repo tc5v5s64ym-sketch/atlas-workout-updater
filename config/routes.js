@@ -50,7 +50,13 @@ const routeDefinitions = [
   { path: '/api/complete-workout', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true },
   { path: '/api/log-workout', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true },
   { path: '/api/log-workout/undo-last', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true },
-  { path: '/api/log-workout/verify-range', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
+  // `/api/log-workout/verify-range` IS RETIRED and is deliberately absent. It
+  // re-read the appended A1 range to confirm a Save had landed; the write response
+  // now carries `log_write_verification`, the adjudicated receipt of the Supabase
+  // transaction that performed the write, and after the S4 cutover there is no
+  // appended range left to re-read. The entry outlived the route's removal from
+  // index.js, so this manifest was advertising a 404 — worse than an omission,
+  // because callers trust it.
   { path: '/api/session/:sessionId/summary', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/exercises/:liftCode/progress', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/exercises/:liftCode/detail', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },

@@ -6559,58 +6559,32 @@ async function attachVerdictContext(rec, liftCode, sessionId) {
   return rec;
 }
 
-// WRITE VERIFICATION — one authority, one path, never both.
+// WRITE VERIFICATION — one authority, one path, and now there is no second one.
 //
-// WINNER: the append receipt the server adjudicated in the write response
-// (`log_write_verification`, services/appendWriteProof.js). It carries the exact appended
-// range, the exact row count and session ownership, produced by the append itself, and it
-// costs no Sheets read. The read-back it replaces cost one metered read at closeout — the
-// instant the 2026-08-05 qualifying session hit its 429s.
+// THE AUTHORITY: the write receipt the server adjudicated in the write response
+// (`log_write_verification`, services/appendWriteProof.js). It carries the exact row count
+// and session ownership, produced by the write itself.
 //
-// FALLBACK: `GET /api/log-workout/verify-range`, reached ONLY when the server returned no
-// verdict at all — a deployment older than that field. It is NOT reached when the verdict
-// says false: that is a real negative answer from the authority, and re-asking a weaker
-// source would launder it.
+// THE FALLBACK IS GONE. It re-asked `GET /api/log-workout/verify-range`, which read the
+// appended A1 range back out of `Log_Cleaned`. The S4 cutover removed both: the workout is
+// written to Supabase in one transaction, so there is no A1 range to read back and no
+// Google Sheets read on the closeout path at all. Its recorded sunset condition in
+// docs/ATLAS_SYSTEM_AUTHORITY.md concept 11b is discharged by that cutover.
 //
-// The branches are exclusive by construction, so one successful Save produces exactly one
-// verification from exactly one authority. `tests/e2e/write-verification-authority.spec.js`
-// counts the requests the browser actually makes; `test/appendWriteProof.test.js` proves
-// the verdict describes the append that happened.
+// A DEPLOYMENT THAT PUBLISHES NO VERDICT NOW SAYS SO, rather than reaching for a weaker
+// source. Silence is not evidence of a good write, and the old fallback could only have
+// answered by reading a mirror that is written asynchronously after closeout — so it would
+// have reported "unavailable" for a perfectly good Save, or worse, waited on an export.
 //
-// SUNSET for the fallback and for the route: delete both once no deployment reachable by
-// this client omits `log_write_verification` — concretely, when `POST /api/log-workout` has
-// published it for a full campaign phase and no qualifying session's evidence records a
-// fallback invocation. Recorded in docs/ATLAS_SYSTEM_AUTHORITY.md (concept 11b).
+// `test/appendWriteProof.test.js` proves the verdict describes the write that happened.
 function reportWriteVerification(statusEl, lastWriteDetails) {
   if (!lastWriteDetails) return;
   const note = text => statusEl.appendChild(el('div', { class: 'parser-status', text }));
   const verdict = lastWriteDetails.log_write_verification;
-  if (verdict) {
-    note(verdict.verified === true
-      ? 'Verified in Sheet ✓'
-      : `Write succeeded, but verification was inconclusive (${verdict.reason || 'unknown'})`);
-    return;
-  }
-  if (!lastWriteDetails.log_appended_range) return;
-  verifyWrittenRange(
-    lastWriteDetails.log_appended_range,
-    lastWriteDetails.session_id,
-    lastWriteDetails.log_rows_written
-  ).then(ok => {
-    note(ok ? 'Verified in Sheet ✓' : 'Write succeeded, but readback verification unavailable');
-  });
-}
-
-async function verifyWrittenRange(range, sessionId, expectedRows) {
-  if (!range || !sessionId || !isConnected()) return false;
-  try {
-    const params = new URLSearchParams({ range, session_id: sessionId });
-    if (expectedRows) params.set('expected_rows', String(expectedRows));
-    const res = await api(`/api/log-workout/verify-range?${params}`);
-    return res?.data?.verified === true;
-  } catch {
-    return false;
-  }
+  if (!verdict) return;
+  note(verdict.verified === true
+    ? 'Verified ✓'
+    : `Write succeeded, but verification was inconclusive (${verdict.reason || 'unknown'})`);
 }
 
 function renderAtlasSuggestion(rec) {
@@ -6762,7 +6736,7 @@ function invalidatePreview() {
   previewContent.innerHTML = '';
   const btn = document.getElementById('approve-btn');
   btn.disabled = true;
-  btn.textContent = 'Write to Google Sheets';
+  btn.textContent = 'Save workout';
   const note = document.getElementById('preview-gate-note');
   if (note) note.textContent = 'Run a preview above to enable this button.';
 }
@@ -8475,7 +8449,7 @@ function renderCompleteWorkoutPreview(result) {
     effortDetailsInner
   ]));
   const approveBtn = document.getElementById('approve-btn');
-  approveBtn.textContent = effortOnly ? 'Write Effort to Google Sheets' : 'Write to Google Sheets';
+  approveBtn.textContent = effortOnly ? 'Save Effort' : 'Save workout';
 }
 
 document.getElementById('cancel-preview-btn').addEventListener('click', invalidatePreview);
@@ -8483,18 +8457,21 @@ document.getElementById('cancel-preview-btn').addEventListener('click', invalida
 async function handleUndoLastWrite(expected) {
   if (!lastWrite) return;
   // CLIENT-1 guard (audit 2026-07-07): a saved review card binds the identity of
-  // the write it represents (its log_appended_range) at save time. If that no
-  // longer matches the current lastWrite, a NEWER write has since happened — refuse,
-  // so an older card's Undo can never delete the newer write. `expected` is null for
-  // the direct "Undo last write" button and for effort-only cards (which target the
-  // latest write by definition); the appended range uniquely identifies the rows, so
-  // it is the sole discriminator (session_id is server-minted and only forwarded).
-  if (expected && expected.log_appended_range
-      && expected.log_appended_range !== lastWrite.log_appended_range) {
+  // the write it represents at save time. If that no longer matches the current
+  // lastWrite, a NEWER write has since happened — refuse, so an older card's Undo
+  // can never delete the newer write. `expected` is null for the direct "Undo last
+  // write" button and for effort-only cards (which target the latest write by
+  // definition).
+  //
+  // The discriminator is the SAVE'S write_id, not its appended range. After the S4
+  // cutover a Save lands in Supabase and produces no A1 range, and the write_id is
+  // what actually identifies the rows it wrote.
+  if (expected && expected.write_id
+      && expected.write_id !== lastWrite.write_id) {
     setStatus(loggerStatus, 'That workout is no longer your most recent save — Undo only affects your latest write.', 'error');
     return;
   }
-  const { log_appended_range, session_id, log_rows_written } = lastWrite;
+  const { write_id: saveWriteId, session_id, log_rows_written } = lastWrite;
   const undoBtn = loggerStatus.querySelector('.undo-write-btn');
   if (undoBtn) {
     undoBtn.disabled = true;
@@ -8505,7 +8482,9 @@ async function handleUndoLastWrite(expected) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        log_appended_range,
+        // The write_id of the Save being undone. The server deletes exactly the rows
+        // carrying it, so undo is by identity rather than by sheet position.
+        save_write_id: saveWriteId,
         session_id,
         rows_to_delete: log_rows_written,
         confirm_delete: true
@@ -8532,8 +8511,8 @@ window.atlasUndoLastWrite = handleUndoLastWrite;
 // CLIENT-1: review cards bind their write identity at save time so their Undo can
 // be refused once a newer write supersedes it. Returns a snapshot copy (never the
 // live ref) of the current write's identity, or null when there is no undoable write.
-window.atlasCurrentWriteIdentity = () => (lastWrite && lastWrite.log_appended_range)
-  ? { log_appended_range: lastWrite.log_appended_range, session_id: lastWrite.session_id }
+window.atlasCurrentWriteIdentity = () => (lastWrite && lastWrite.write_id)
+  ? { write_id: lastWrite.write_id, session_id: lastWrite.session_id }
   : null;
 
 // F-SB1 (Stage B workout 1, 2026-08-01). `closeout_fully_verified:false` covers three
@@ -8558,7 +8537,7 @@ function closeoutSealIsRetryable(writeData) {
   const eventOk = !ev || ev.captured === true || ev.status === 'disabled' || ev.status === 'no_plan';
   return !(Boolean(seal) && seal.no_ledger === true && seal.sealed_ok === true && eventOk);
 }
-const CLOSEOUT_RETRY_MSG = 'Workout written to Google Sheets ✓ — but the plan-ledger record could not be verified. Your sets are safe; tap Save again to re-verify (no rows will duplicate).';
+const CLOSEOUT_RETRY_MSG = 'Workout saved ✓ — but the plan-ledger record could not be verified. Your sets are safe; tap Save again to re-verify (no rows will duplicate).';
 // The machine-readable name for that outcome. The review card in
 // coach-conversation.js keys off THIS, not off the sentence above — the wording must
 // stay free to change without silently stranding the card in a false state.
@@ -8581,7 +8560,7 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
   writeInFlight = true;
   const approveBtn = document.getElementById('approve-btn');
   approveBtn.disabled = true;
-  approveBtn.textContent = 'Writing to Sheets…';
+  approveBtn.textContent = 'Saving workout…';
 
   const reactionLiftCodes = pendingWrite.liftCodes || [];
   // Captured up front — the preview teardown below nulls pendingWrite, and
@@ -8605,21 +8584,23 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
       }
       const writeResult = await submitCompleteWorkout(writeArgs);
       const writeData = writeResult?.data?.data || {};
-      // Server-side idempotency: a retried write_id is refused with proof the
-      // original write completed. Strict — accept only when the original itself
-      // confirmed a sheet write.
+      // Server-side idempotency: accept a replay only when the durable receipt
+      // proves the original Supabase transaction completed.
       duplicateBlocked = writeData.duplicate_write === true &&
-        writeData.sheet_write === 'skipped_duplicate' &&
-        writeData.original_sheet_written === true;
+        writeData.idempotency_status === 'completed' &&
+        writeData.write_authority === 'supabase_transaction';
       if (!duplicateBlocked) {
+        if (writeData.write_authority !== 'supabase_transaction') {
+          throw new Error('Save response did not prove a completed Supabase transaction.');
+        }
         if (writeData.effort_only === true) {
-          if (writeData.effort_written !== true || writeData.sheet_written !== true) {
-            throw new Error('Effort-only write did not confirm an Effort sheet write. Verify Sheets before approving again.');
+          if (writeData.effort_written !== true) {
+            throw new Error('Effort-only save did not confirm the Effort record.');
           }
         } else {
           const rowsWritten = writeData.log_rows_written;
           if (!rowsWritten || rowsWritten === 0) {
-            throw new Error(`Write completed but log_rows_written=${rowsWritten ?? 'missing'}. Verify Sheets before approving again.`);
+            throw new Error(`Save completed but log_rows_written=${rowsWritten ?? 'missing'}.`);
           }
         }
       }
@@ -8642,12 +8623,13 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
         body: JSON.stringify(modalityPayload)
       });
       const writeData = writeResult?.data || {};
-      // Idempotent replay: a duplicate write_id is echoed back with sheet_written
-      // false; the original row is already on the sheet, so treat it as blocked.
-      duplicateBlocked = writeData.duplicate_write === true && writeData.sheet_written === false;
+      // A completed duplicate echoes the original Supabase authority verdict.
+      duplicateBlocked = writeData.duplicate_write === true &&
+        writeData.idempotency_status === 'completed' &&
+        writeData.write_authority === 'supabase_transaction';
       if (!duplicateBlocked) {
-        if (writeData.sheet_write !== 'success' || writeData.sheet_written !== true) {
-          throw new Error(`Modality write did not confirm success (sheet_write=${writeData.sheet_write ?? 'missing'}). Check Sheets.`);
+        if (writeData.write_authority !== 'supabase_transaction' || writeData.modality_written !== true) {
+          throw new Error('Modality save did not prove a completed Supabase transaction.');
         }
       }
     } else {
@@ -8662,20 +8644,19 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
         body: JSON.stringify(realPayload)
       });
       const writeData = writeResult?.data || {};
-      // Server-side idempotency: a retried write_id is refused with proof the
-      // original write completed. Strict — all three fields must agree, and
-      // the original must itself have been a confirmed success.
+      // Server-side idempotency: a completed replay carries the original
+      // Supabase transaction verdict and therefore cannot duplicate rows.
       duplicateBlocked = writeData.duplicate_write === true &&
-        writeData.sheet_write === 'skipped_duplicate' &&
-        writeData.original_sheet_write === 'success';
+        writeData.idempotency_status === 'completed' &&
+        writeData.write_authority === 'supabase_transaction';
       if (!duplicateBlocked) {
-        if (writeData.sheet_write !== 'success') {
-          throw new Error(`Write response did not confirm success (sheet_write=${writeData.sheet_write ?? 'missing'}). Check Sheets.`);
+        if (writeData.write_authority !== 'supabase_transaction') {
+          throw new Error('Save response did not prove a completed Supabase transaction.');
         }
         const logRowsWritten = Number(writeData.log_rows_written || 0);
         const effortRowsWritten = Number(writeData.effort_rows_written || 0);
         if (!(logRowsWritten > 0 || effortRowsWritten > 0)) {
-          throw new Error(`Write confirmed but log_rows_written=${writeData.log_rows_written ?? 'missing'} and effort_rows_written=${writeData.effort_rows_written ?? 'missing'}. Verify Sheets before approving again.`);
+          throw new Error(`Save confirmed but log_rows_written=${writeData.log_rows_written ?? 'missing'} and effort_rows_written=${writeData.effort_rows_written ?? 'missing'}.`);
         }
       }
       // F10D — the verification verdict rides the same response. The SERVER now
@@ -8691,9 +8672,18 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
       // Capture undo details in a local — invalidatePreview() (called below) clears lastWrite.
       // On a blocked duplicate the original response is echoed back, so the
       // same undo details still point at the rows the first write appended.
-      if (writeData.logAppendedRange) {
+      // THE UNDOABLE WRITE IS IDENTIFIED BY ITS write_id, not by an A1 range.
+      //
+      // This used to be gated on `logAppendedRange`, which the Sheets append
+      // returned. After the S4 cutover the Save is one Supabase transaction and
+      // there is no range at all, so that gate would have made every write look
+      // un-undoable. What actually identifies the rows is the write_id stamped on
+      // each of them, and a Save that wrote no log rows still has nothing to undo —
+      // so the row count is the second half of the condition, exactly as the
+      // presence of a range implied it before.
+      if (writeData.write_id && Number(writeData.log_rows_written) > 0) {
         pendingLastWrite = {
-          log_appended_range: writeData.logAppendedRange,
+          write_id: writeData.write_id,
           // Server-reported identity first: it may have allocated one for a blank payload.
           session_id: writeData.session_id || realPayload.session_id,
           log_rows_written: writeData.log_rows_written,
@@ -8739,8 +8729,11 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
       loggerStatus,
       duplicateBlocked
         ? 'Duplicate tap blocked — this workout was already written. ✓'
-        : wasModality ? 'Cardio / conditioning written to Google Sheets. ✓'
-          : wasEffortOnly ? 'Effort written to Google Sheets. ✓' : 'Workout written to Google Sheets. ✓',
+        // A WORKOUT IS NO LONGER WRITTEN TO GOOGLE SHEETS, so it must not say it is.
+        // Since the S4 cutover every workout record, including modality, lands in
+        // Supabase. Any Sheets copy is asynchronous and never part of this proof.
+        : wasModality ? 'Cardio / conditioning saved. ✓'
+          : wasEffortOnly ? 'Effort saved. ✓' : 'Workout saved. ✓',
       'ok'
     );
     if (closeoutSealUnverified === 'no_ledger') appendNoLedgerNotice(loggerStatus);
@@ -8812,7 +8805,7 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
   } catch (err) {
     setStatus(loggerStatus, `Write failed: ${err.message}`, 'error');
     approveBtn.disabled = false;
-    approveBtn.textContent = 'Write to Google Sheets';
+    approveBtn.textContent = 'Save workout';
   } finally {
     writeInFlight = false;
   }

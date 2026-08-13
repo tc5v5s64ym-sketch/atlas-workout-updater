@@ -652,18 +652,19 @@ proof workout, the all-Sheets-429 proof, the sole-authority proof and the remova
 live authority all pass. It delays only the `atlas.migration_divergences` table drop.
 
 **What this correction does not do.** It changes no counter and no phase. **Rehearsal
-(F-SB4): 0/5 · Stage A: 5/5 COMPLETE · Stage B: 0/5 OPEN.** Phase 5 stays unauthorized and
-`SESSION_PLAN_SETS_WRITE_ENABLED` stays `0`. It authorizes no schema application to
-`Atlas Production`, no deployment, and no cutover.
+(F-SB4): 0/5 · Stage A: 5/5 COMPLETE · Stage B: 0/5 OPEN.** Phase 5 stays unauthorized.
+S4 retires `SESSION_PLAN_SETS_WRITE_ENABLED` and `ATLAS_SESSION_PLANS_WRITE` because
+accepted plan data is authoritative, not optional; no flag may recreate that competing lane.
+This correction authorizes no schema application to `Atlas Production`, no deployment, and
+no cutover.
 
-**Status, recorded honestly.** The destination is built and **the cutover is NOT complete**.
-PR #1291 carries the schema, the adapter surface, `services/exerciseCatalog.js`, the
-owner-run `npm run atlas:catalog`, the removal of the sync and freshness machinery, and the
-all-Sheets-429 measurement. **The four `getExerciseCatalog()` call sites still read Google
-Sheets**, so Sheets remains the live catalog authority today. The measured workout-critical
-synchronous Sheets call count is **6** for one representative workout and **30** across the
-five-session workload — not yet zero. The per-concept record is
-[`docs/ATLAS_SYSTEM_AUTHORITY.md`](ATLAS_SYSTEM_AUTHORITY.md) concept 18b.
+**Status, recorded honestly.** PR #1291 now carries the S4 implementation: the four catalog
+consumers read `services/exerciseCatalog.js`; the sync/freshness path and old catalog admin are
+deleted; authoritative plan-event and plan-set flags are removed; the measured all-429 proof
+drives a complete workout plus five sessions against real Postgres. **Production cutover is
+still NOT complete and is not authorized by this repository change**, so the deployed S3
+authority remains whatever the next read-only production gate verifies. The per-concept record
+is [`docs/ATLAS_SYSTEM_AUTHORITY.md`](ATLAS_SYSTEM_AUTHORITY.md) concept 18b.
 
 ---
 

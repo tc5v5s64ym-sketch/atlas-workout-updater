@@ -239,29 +239,43 @@ test('P7c: every adapter statement atlas_app must issue SUCCEEDS as atlas_app', 
     // test-pg/exerciseCatalog.pgproof.js.
     await client.query(SQL.readExerciseCatalog);
 
-    // The divergence lane, end to end.
-    const opened = await client.query(SQL.openDivergence, [
-      'logged_sets', 'k||x||1', '20260808-PM-01', null, '/api/log-workout',
-      'missing_in_supabase', 'sweep', JSON.stringify({ differences: [] }),
-    ]);
-    const divergenceId = opened.rows[0].id;
-    await client.query(SQL.listOpenDivergences, [10]);
-    const claimed = await client.query(SQL.claimDivergence, [divergenceId, '120']);
-    const claimToken = claimed.rows[0].repair_claim_token;
-    await client.query(SQL.releaseDivergence, [divergenceId, claimToken, null]);
-    const reclaimed = await client.query(SQL.claimDivergence, [divergenceId, '120']);
-    await client.query(SQL.closeDivergence, [
-      divergenceId, reclaimed.rows[0].repair_claim_token, 'recompare: equal', JSON.stringify({ differences: [] }),
-    ]);
-    await client.query(SQL.divergenceSummary);
-
-    // Sweep enumeration and the one workout-data delete it may issue.
-    await client.query(SQL.listLoggedSets);
-    await client.query(SQL.listSessionEffort);
-    await client.query(SQL.listPlanEvents);
-    await client.query(SQL.listPlanSetRows);
-    await client.query(SQL.deleteLoggedSetByIdentity, ['20260808-pm-01', 'back squat', 1]);
+    // THE DIVERGENCE LANE AND THE SWEEP ENUMERATIONS ARE NOT EXERCISED HERE ANY
+    // MORE, because this build issues no such statement. `services/supabaseAdapter.js`
+    // names `atlas.migration_divergences` in no SQL at all after the S4 cutover, and
+    // a privilege proof for a statement nothing can issue would be proving the grant
+    // of a capability the code does not have. §6.3 P17 asks the opposite question —
+    // that the table be INERT — and the assertion below is that question.
   });
+});
+
+// §6.3 P17 — the table survives the merge, and NOTHING IN THIS BUILD TOUCHES IT.
+//
+// It is retained for the rollback window: a restored S3 build's shadow lane, sweep
+// and repair worker query it continuously, so dropping it now would leave a revert
+// one statement from a missing table. The drop is an owner-run artifact outside
+// `supabase/migrations/`, executed after the window closes.
+//
+// This is a SOURCE assertion rather than a runtime one, and deliberately so: a
+// runtime observation could only prove that the statements this test happened to
+// drive issued nothing. Reading the adapter proves no statement exists to issue.
+test('P17: atlas.migration_divergences exists, and no adapter statement names it', async () => {
+  await withOwner(async (client) => {
+    const { rows } = await client.query(
+      "SELECT to_regclass('atlas.migration_divergences') AS present"
+    );
+    assert.ok(rows[0].present, 'the table must still exist — a restored S3 build needs it');
+  });
+
+  const source = require('fs')
+    .readFileSync(require.resolve('../services/supabaseAdapter.js'), 'utf8')
+    // Comments explain WHY the table is retained, so they name it. Statements must not.
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('//'))
+    .join('\n');
+  assert.ok(
+    !/migration_divergences/.test(source),
+    'no executable line of the adapter may name atlas.migration_divergences after S4'
+  );
 });
 
 test('P7c: the receipt prune is refused to atlas_app and permitted to atlas_migrate', async () => {

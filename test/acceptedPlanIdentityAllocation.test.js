@@ -51,17 +51,25 @@ require.cache[capturePath] = { id: capturePath, filename: capturePath, loaded: t
 // Hermetic: the catalog reads Supabase (OWNER CORRECTION 2026-08-13). This stub also
 // blanks the ATLAS_SUPABASE_* roles, so no test can open a database connection.
 require('./helpers/stubExerciseCatalog').installExerciseCatalogStub();
+// The workout authority is Supabase since the S4 cutover, so stubbing `sheets.js`
+// no longer controls the logged sets, the Effort row, the plan ledgers or the write
+// receipts. `sheetsFallback` seeds this suite's existing fixture into the double, so
+// no test's data changes — only where the route reads it from.
+const {
+  installWorkoutAuthorityStub, resetWorkoutAuthorityStub, workoutAuthorityStore,
+  failWorkoutAuthorityReads,
+} = require('./helpers/stubWorkoutAuthority');
+installWorkoutAuthorityStub();
 const registerSessionPlanRoutes = require('../routes/sessionPlans');
 
-// ── in-memory durable tabs ───────────────────────────────────────────────────────
+// ── in-memory durable records ────────────────────────────────────────────────────
+//
+// Still keyed by tab NAME, because the fixtures are rows in the owner-approved column
+// order of each tab and that is what the authority returns. There is no sheets reader
+// here any more: the route's last Sheets read — the acceptance retry-reuse lookup on
+// `Session_Plans` — moved to `workoutAuthority.planEventRows()` with the rest of the
+// plan ledger, so `seedAuthority()` below is the only thing that feeds these routes.
 const tabs = { Log_Cleaned: [], Effort: [], Session_Plans: [] };
-const failTabs = new Set();
-const readCalls = [];
-async function getSheetRows(tabName) {
-  readCalls.push(tabName);
-  if (failTabs.has(tabName)) throw new Error(`${tabName} read refused (armed)`);
-  return tabs[tabName] || [];
-}
 
 const SP_SESSION_IDX = sessionPlansColumns.indexOf('session_id');
 const SP_PLAN_VERSION_IDX = sessionPlansColumns.indexOf('plan_version');
@@ -97,30 +105,39 @@ const PV2 = 'pv_22222222-2222-4222-8222-222222222222';
 const PI = 'pi_aaaaaaaa-1111-4111-8111-111111111111';
 const ITEM = { plan_item_id: PI, planned_order: 1, planned_lift_code: 'BEN01' };
 
-let baseUrl, server, bareUrl, bareServer;
+let baseUrl, server;
 test.before(async () => {
   const app = express();
   app.use(express.json());
-  app.use(registerSessionPlanRoutes({ getSheetRows, logSheetName: 'Log_Cleaned', effortSheetName: 'Effort' }));
+  app.use(registerSessionPlanRoutes());
   await new Promise(resolve => { server = app.listen(0, () => { baseUrl = `http://127.0.0.1:${server.address().port}`; resolve(); }); });
-  // A second app with NO sheet reader at all — the no-durable-access posture.
-  const bare = express();
-  bare.use(express.json());
-  bare.use(registerSessionPlanRoutes());
-  await new Promise(resolve => { bareServer = bare.listen(0, () => { bareUrl = `http://127.0.0.1:${bareServer.address().port}`; resolve(); }); });
 });
-test.after(() => { if (server) server.close(); if (bareServer) bareServer.close(); });
+test.after(() => { if (server) server.close(); });
 
 test.beforeEach(() => {
   captureCalls.length = 0;
-  readCalls.length = 0;
-  failTabs.clear();
   tabs.Log_Cleaned = [];
   tabs.Effort = [];
   tabs.Session_Plans = [];
+  resetWorkoutAuthorityStub();
 });
 
+// Session identity comes from Supabase now, so the fixture rows have to reach the
+// authority rather than the sheets reader. The route still reads Session_Plans
+// through its injected reader for the RETRY-REUSE lookup, so `tabs.Session_Plans`
+// keeps feeding that; occupancy is answered by the authority.
+function seedAuthority() {
+  const store = workoutAuthorityStore();
+  store.loggedSets = tabs.Log_Cleaned.map((r) => r.slice());
+  store.loggedSetWriteIds = store.loggedSets.map(() => null);
+  store.effort = tabs.Effort.map((r) => r.slice());
+  store.planEvents = tabs.Session_Plans.map((r) => r.slice());
+}
+
 async function accept(body, base = baseUrl) {
+  // Seeded at the last possible moment, so a test that assigns its fixture rows
+  // after beforeEach still has them in the authority when the request runs.
+  seedAuthority();
   const r = await fetch(`${base}/api/session-plans/accept`, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
   });
@@ -203,22 +220,23 @@ test('a non-accept Session_Plans row for the same plan_version does not satisfy 
 
 // ── fail closed ──────────────────────────────────────────────────────────────────
 
-for (const source of ['Session_Plans', 'Effort', 'Log_Cleaned']) {
-  test(`unreadable ${source} occupancy fails CLOSED: 503, no identity minted, nothing written`, async () => {
-    failTabs.add(source);
-    const { status, body } = await accept(NO_ID);
-    assert.equal(status, 503);
-    assert.match(body.message, new RegExp(`${source} occupancy is unreadable`), 'the refusal names the unprovable source');
-    assert.equal(captureCalls.length, 0, 'no acceptance may be written under an unprovable identity');
-  });
-}
-
-test('no sheet reader at all → 503 for an allocating request; an established identity still works', async () => {
-  const denied = await accept(NO_ID, bareUrl);
-  assert.equal(denied.status, 503);
-  const ok = await accept({ ...NO_ID, session_id: SLOT(1) }, bareUrl);
-  assert.equal(ok.status, 200);
-  assert.equal(ok.body.data.session_id, SLOT(1));
+// ONE SOURCE NOW, NOT TWO — AND THAT IS THE POINT.
+//
+// Occupancy was once a union of three whole-tab Sheets reads, then two sources (the
+// authority for session identity, plus an injected Sheets reader still answering the
+// `Session_Plans` retry-reuse lookup). Each had to be armed separately, and each was
+// a way for a Google Sheets quota to refuse an acceptance.
+//
+// Both questions are answered by Supabase now, so there is exactly one thing that can
+// refuse and exactly one refusal to assert. The two tests that armed the two sources
+// separately collapse into this one — a genuine reduction, not a dropped case: no
+// source went unproven, one of them stopped existing.
+test('an unreadable authority fails CLOSED: 503, no identity minted, nothing written', async () => {
+  failWorkoutAuthorityReads('session identity read refused (armed)');
+  const { status, body } = await accept(NO_ID);
+  assert.equal(status, 503);
+  assert.match(body.message, /occupancy is unreadable/, 'the refusal names the unprovable source');
+  assert.equal(captureCalls.length, 0, 'no acceptance may be written under an unprovable identity');
 });
 
 // F-SB4B overflow regression (2026-08-03): with every scanned slot occupied the old
@@ -252,9 +270,12 @@ test('an unallocatable session_date → 400, nothing written', async () => {
 
 test('an established session_id is honored verbatim — no occupancy reads, no reallocation, echoed back', async () => {
   tabs.Session_Plans = [sessionPlansRow({ sessionId: SLOT(1), planVersion: PV2 })];
+  // "No occupancy read happens" is asserted by ARMING the authority to refuse every
+  // read and requiring a 200 anyway. That is stronger than counting calls on a reader
+  // the route no longer holds: a request that issued any read at all could not pass.
+  failWorkoutAuthorityReads('no read may occur on an established identity');
   const { status, body } = await accept({ ...NO_ID, session_id: SLOT(1) });
   assert.equal(status, 200);
   assert.equal(body.data.session_id, SLOT(1), 'a continuing session keeps its identity — it never forks');
   assert.equal(captureCalls[0].session.session_id, SLOT(1));
-  assert.equal(readCalls.length, 0, 'no durable read happens when the identity is already established');
 });

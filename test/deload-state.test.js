@@ -1,30 +1,16 @@
 const { test, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 
-// Stub sheets.js BEFORE requiring the module under test, so no real Google Sheets
-// call can ever happen (mirrors the require.cache injection in api-smoke.test.js).
-const sheetsPath = require.resolve('../sheets');
-const fakeSheetsState = {
-  rows: [],          // current Deload_State rows (data rows only, no header)
-  appendCalls: []    // { tabName, rows }
-};
-const fakeSheets = {
-  // Mirrors the real getSheetRows: strips row 0 (header) and returns [] when only
-  // a header (or nothing) exists. Tests seed a header row so appends read back.
-  getSheetRows: async (tabName) => {
-    fakeSheetsState.lastReadTab = tabName;
-    if (fakeSheetsState.rows.length <= 1) return [];
-    return fakeSheetsState.rows.slice(1).map(r => [...r]);
-  },
-  // ensureHeaderRow reads A1 to decide whether a header exists.
-  readRange: async () => (fakeSheetsState.rows.length ? [fakeSheetsState.rows[0]] : []),
-  appendRows: async (tabName, rows) => {
-    fakeSheetsState.appendCalls.push({ tabName, rows });
-    for (const r of rows) fakeSheetsState.rows.push([...r]);
-    return { data: { updates: { updatedRows: rows.length } } };
-  }
-};
-require.cache[sheetsPath] = { id: sheetsPath, filename: sheetsPath, loaded: true, exports: fakeSheets };
+// SUPABASE IS THE AUTHORITY (OWNER CORRECTION 2026-08-13), so the store under test
+// is the workout-authority double rather than a fake `sheets.js`. Deload state is an
+// input to a PRESCRIPTION — `/api/recommend/next` and the state assembler both read
+// it — and the owner ruled that no prescription input may be a synchronous Google
+// Sheets dependency.
+const {
+  installWorkoutAuthorityStub, resetWorkoutAuthorityStub, workoutAuthorityStore,
+  failWorkoutAuthorityReads,
+} = require('./helpers/stubWorkoutAuthority');
+installWorkoutAuthorityStub();
 
 const {
   DELOAD_STATE_TAB, defaultDeloadState, rowToState, stateToRow,
@@ -33,45 +19,55 @@ const {
 const { STATES } = require('../services/deloadStateMachine');
 const { deloadStateColumns } = require('../config/columns');
 
-// Seed a header row (matching a provisioned tab) so ensureHeaderRow is a no-op
-// for the standard tests and appendCalls reflects only data appends. The
-// header-provisioning behaviour itself is exercised in its own test below.
+// The appends this suite observes, in the authority rather than in a Sheets fake.
+const appendCalls = () => workoutAuthorityStore().calls.deloadState;
+
 beforeEach(() => {
-  fakeSheetsState.rows = [[...deloadStateColumns]];
-  fakeSheetsState.appendCalls = [];
+  resetWorkoutAuthorityStub();
 });
 
-test('appendDeloadState provisions a header row on a truly empty tab so the first state is not swallowed', async () => {
-  fakeSheetsState.rows = [];        // no header at all
-  fakeSheetsState.appendCalls = [];
+// THE HEADER-PROVISIONING TEST RETIRED WITH THE TAB. It proved that the first state
+// ever written was not swallowed as a header row, which was a real hazard: the read
+// path stripped row 0, so a tab with no header lost its first record and the lifter
+// read back as NORMAL while mid-deload. A table has columns, so there is no row 0 to
+// mistake for a header and nothing to provision.
+test('the first state ever written reads back — nothing is swallowed', async () => {
   await appendDeloadState({ training_state: STATES.DELOAD_ACTIVE, deload_protocol: 'STRENGTH_DELOAD_V1' });
-  // First append is the header, second is the state row.
-  assert.equal(fakeSheetsState.appendCalls.length, 2);
-  assert.deepEqual(fakeSheetsState.appendCalls[0].rows[0], [...deloadStateColumns]);
-  // The state reads back (not stripped away as the header).
+  assert.equal(appendCalls().length, 1, 'one append, and no header row alongside it');
   const state = await readCurrentDeloadState();
   assert.equal(state.training_state, STATES.DELOAD_ACTIVE);
 });
 
 /* ===== default state ===== */
 
-test('an empty tab reads as the default NORMAL state', async () => {
+test('an empty store reads as the default NORMAL state', async () => {
   const state = await readCurrentDeloadState();
   assert.equal(state.training_state, STATES.NORMAL);
   assert.equal(state.deload_protocol, null);
   assert.equal(state.deload_sessions_remaining, 0);
-  assert.equal(fakeSheetsState.lastReadTab, DELOAD_STATE_TAB);
+  assert.equal(DELOAD_STATE_TAB, 'Deload_State', 'the concept keeps its name');
 });
 
-test('readCurrentDeloadState degrades to NORMAL when the tab read throws (optional/missing tab)', async () => {
-  const original = fakeSheets.getSheetRows;
-  fakeSheets.getSheetRows = async () => { throw new Error('Unable to parse range: Deload_State'); };
-  try {
-    const state = await readCurrentDeloadState();
-    assert.equal(state.training_state, STATES.NORMAL);
-  } finally {
-    fakeSheets.getSheetRows = original;
-  }
+// ── AN UNREADABLE AUTHORITY IS NOT "NO DELOAD" ───────────────────────────────
+//
+// This test previously asserted the OPPOSITE: a read failure degraded to NORMAL,
+// which was defensible while the store was an optional Google Sheets tab where
+// absent and unreadable were genuinely hard to tell apart.
+//
+// OWNER CORRECTION 2026-08-13 rejected that for the migrated authority. The two
+// cases are now perfectly distinguishable — a successful read returning no rows
+// means the lifter has never deloaded, a failed read means Atlas DOES NOT KNOW —
+// and answering NORMAL on "do not know" silently discards an ACTIVE deload and
+// prescribes the athlete's full working load into a week the engine had cut.
+test('an UNREADABLE authority throws — it is never reported as NORMAL', async () => {
+  failWorkoutAuthorityReads('deload state unreadable');
+  await assert.rejects(() => readCurrentDeloadState(), /unreadable/);
+});
+
+test('an empty SUCCESSFUL read still defaults — absence and failure stay distinct', async () => {
+  const state = await readCurrentDeloadState();
+  assert.equal(state.training_state, STATES.NORMAL,
+    'no rows is a real answer: this lifter has never deloaded');
 });
 
 test('defaultDeloadState returns a fresh object each call (no shared mutation)', () => {
@@ -97,7 +93,7 @@ test('readCurrentDeloadState returns the LAST appended row', async () => {
 
 /* ===== append writes to the right tab, in column order, with a timestamp ===== */
 
-test('appendDeloadState writes to Deload_State in column order and stamps updated_at', async () => {
+test('appendDeloadState writes the record in column order and stamps updated_at', async () => {
   const record = await appendDeloadState({
     training_state: STATES.DELOAD_ACTIVE,
     deload_protocol: 'POWER_DELOAD_V1',
@@ -107,17 +103,15 @@ test('appendDeloadState writes to Deload_State in column order and stamps update
     deload_exit_criteria: 'return to working weight next session'
   });
 
-  assert.equal(fakeSheetsState.appendCalls.length, 1);
-  const { tabName, rows } = fakeSheetsState.appendCalls[0];
-  assert.equal(tabName, DELOAD_STATE_TAB);
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0].length, deloadStateColumns.length);
+  assert.equal(appendCalls().length, 1);
+  const row = appendCalls()[0];
+  assert.equal(row.length, deloadStateColumns.length);
 
   // updated_at stamped (ISO) and lands in the first column.
   assert.ok(record.updated_at && !Number.isNaN(Date.parse(record.updated_at)));
-  assert.equal(rows[0][deloadStateColumns.indexOf('updated_at')], record.updated_at);
-  assert.equal(rows[0][deloadStateColumns.indexOf('training_state')], STATES.DELOAD_ACTIVE);
-  assert.equal(rows[0][deloadStateColumns.indexOf('deload_protocol')], 'POWER_DELOAD_V1');
+  assert.equal(row[deloadStateColumns.indexOf('updated_at')], record.updated_at);
+  assert.equal(row[deloadStateColumns.indexOf('training_state')], STATES.DELOAD_ACTIVE);
+  assert.equal(row[deloadStateColumns.indexOf('deload_protocol')], 'POWER_DELOAD_V1');
 });
 
 test('a caller-supplied updated_at is preserved, not overwritten', async () => {
@@ -134,7 +128,7 @@ test('appendDeloadState throws on an unknown training_state', async () => {
     /Cannot persist unknown training_state/
   );
   await assert.rejects(() => appendDeloadState({}), /Cannot persist unknown training_state/);
-  assert.equal(fakeSheetsState.appendCalls.length, 0); // nothing written on a bad state
+  assert.equal(appendCalls().length, 0); // nothing written on a bad state
 });
 
 /* ===== row <-> state normalization ===== */

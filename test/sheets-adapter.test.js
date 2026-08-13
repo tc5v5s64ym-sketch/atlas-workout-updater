@@ -169,39 +169,17 @@ test('getSheetRows applies a finite maxRows from the TOP and returns [] when onl
 });
 
 // ---------------------------------------------------------------------------
-// deleteRowsByRange — the undo backbone: row-index math + sheetId resolution
+// deleteRowsByRange IS GONE, and with it these two tests (design 5.4, 5.6).
 // ---------------------------------------------------------------------------
-test('deleteRowsByRange resolves sheetId by title and forwards start/end indices unchanged', async () => {
-  spreadsheetsGetResponse = {
-    data: {
-      sheets: [
-        { properties: { title: 'Effort', sheetId: 11 } },
-        { properties: { title: 'Log_Cleaned', sheetId: 42 } }
-      ]
-    }
-  };
-  await sheets.deleteRowsByRange('Log_Cleaned', 5, 6);
-
-  assert.equal(calls.batchUpdate.length, 1);
-  const reqs = calls.batchUpdate[0].requestBody.requests;
-  assert.equal(reqs.length, 1);
-  assert.deepEqual(reqs[0].deleteDimension.range, {
-    sheetId: 42,          // resolved from the matching title, not the first tab
-    dimension: 'ROWS',
-    startIndex: 5,        // 0-based inclusive, forwarded verbatim
-    endIndex: 6           // 0-based exclusive, forwarded verbatim
-  });
-});
-
-test('deleteRowsByRange throws and issues no batchUpdate when the tab title is missing', async () => {
-  spreadsheetsGetResponse = { data: { sheets: [{ properties: { title: 'Effort', sheetId: 11 } }] } };
-  await assert.rejects(
-    () => sheets.deleteRowsByRange('Log_Cleaned', 5, 6),
-    /Sheet tab "Log_Cleaned" not found/
-  );
-  assert.equal(calls.batchUpdate.length, 0, 'must not delete from any tab when the target is absent');
-});
-
+//
+// It was the undo backbone while undo removed Log_Cleaned rows by POSITION. A
+// row-shifting delete is incompatible with the durable per-tab export allocations
+// the Sheets mirror now depends on — removing a row slides every row below it,
+// including a block already allocated to another session.
+//
+// Undo deletes by (session_id, write_id) in Supabase instead, which is identity
+// rather than position. test/finalizedUndoGuard.test.js drives that path through
+// the real route, and test-pg/ proves it against a real database.
 // ---------------------------------------------------------------------------
 // ensureSheetTab — must not mutate the wrong tab or clobber an existing header
 // ---------------------------------------------------------------------------

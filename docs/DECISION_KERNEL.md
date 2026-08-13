@@ -6,7 +6,7 @@
 
 ### Trust and data safety
 
-- **Approve before write.** No real Google Sheets write without explicit owner authorization. Dry-runs pass `test_mode:true` and prove `sheet_written:false` plus `no_write_confirmed:true`.
+- **Approve before write.** No authoritative workout write without explicit owner authorization. Dry-runs pass `test_mode:true` and prove `sheet_written:false` plus `no_write_confirmed:true`; live proof names `supabase_transaction` as the write authority.
 - **No silent state changes.** Writes, deletions, and state transitions must be visible, attributable, and proof-carrying.
 - **Preserve user intent.** Deterministically loggable gym input must not be silently discarded or rerouted as conversation.
 - **Truth beats convenience.** Missing or ambiguous proof is a failure, not permission to guess.
@@ -23,7 +23,7 @@
 - **Conversation is the product.** Other surfaces support the conversation rather than compete with it.
 - **Trust over cleverness.** Predictable, truthful behavior beats sophistication.
 - **Depth before breadth.** Finish and prove the existing owner-operated coaching product before adding capabilities.
-- **Storage authority is transitional.** Google Sheets is the sole live authority today. The owner authorized one bounded migration on 2026-08-07: the workout hot path moves to Supabase, and Sheets becomes an export mirror for those concepts only. It is recorded in `docs/ATLAS_V1_EXECUTION_PLAN.md` and designed in `docs/SUPABASE_HOT_PATH_MIGRATION.md`. No other second permanent database, public multi-user system, nutrition product, or broad platform expansion belongs in the V1 campaign.
+- **One workout authority.** At the S4 cutover Supabase becomes the sole live authority for every concept required to conduct a workout, including `Exercise_Catalog`, coaching inputs, and modality workouts. Google Sheets may be an asynchronous export or explicitly unrelated surface only. A Sheets quota of any kind must never block or invalidate a workout or the Phase 4 campaign. No fallback, staleness clock, optional authoritative-write flag, or second permanent database survives.
 
 ### Execution
 

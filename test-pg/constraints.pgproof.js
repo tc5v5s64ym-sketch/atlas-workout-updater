@@ -591,20 +591,23 @@ test('§3.10 atlas.write_freeze exists, created by S3 — its constraints are pr
   });
 });
 
-test('exactly the twelve declared tables exist, and no more', async () => {
+test('exactly the fifteen declared tables exist, and no more', async () => {
   await withOwner(async (client) => {
     const { rows } = await client.query(
       `SELECT tablename FROM pg_tables WHERE schemaname = 'atlas' ORDER BY tablename`
     );
-    // Eleven from S2 (§3.1–§3.9) plus write_freeze from S3 (§3.10), then the S4
-    // catalog correction: exercise_catalog_mirror renamed to exercise_catalog and
-    // exercise_catalog_sync dropped, so the schema is one table smaller. An
+    // The S2/S3 authority tables, the S4 catalog replacement, and the four S4
+    // coaching/workout-input tables. An
     // UNREVIEWED table joining the schema is what this list exists to catch, so it
     // is stated in full rather than counted.
     assert.deepEqual(rows.map((r) => r.tablename), [
+      'coaching_notes',
+      'constraints',
+      'deload_state',
       'exercise_catalog',
       'logged_sets',
       'migration_divergences',
+      'modality_log',
       'session_effort',
       'session_plan_events',
       'session_plan_set_recommendations',

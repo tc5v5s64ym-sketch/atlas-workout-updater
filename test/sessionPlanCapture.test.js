@@ -26,8 +26,6 @@ const { confirmTabMissing, classifySheetsReadError } = require('../sheets');
 // against the tab list rather than read off the message. A transient backend failure
 // is a gaxios error carrying an HTTP status and no such message.
 const rangeParseError = () => new Error('Unable to parse range: Session_Plans!A1:M1');
-const malformedRangeError = () => new Error('Unable to parse range: Session_Plans!A1:%%');
-const transientError = () => Object.assign(new Error('The service is currently unavailable.'), { status: 503 });
 
 const state = {
   tabs: ['Session_Plans'],
@@ -38,11 +36,15 @@ const state = {
   throwOnAppend: false,
   readError: null, // when set, readRange rejects with it regardless of `tabs`
 };
-function reset({ tabs = ['Session_Plans'], rows = [], header = [...sessionPlansColumns], throwOnAppend = false, readError = null } = {}) {
+function _resetSheets({ tabs = ['Session_Plans'], rows = [], header = [...sessionPlansColumns], throwOnAppend = false, readError = null } = {}) {
   state.tabs = tabs; state.rows = rows.slice(); state.appends = [];
   state.header = header.slice(); state.readCalls = 0; state.throwOnAppend = throwOnAppend;
   state.readError = readError;
 }
+// One reset for both fixtures. The sheets fake still exists so this suite can prove
+// what the capture layer does NOT touch; the plan events themselves live in the
+// authority double, which has to be cleared with it.
+function reset(opts) { _resetSheets(opts); resetWorkoutAuthorityStub(); }
 const fakeSheets = {
   getSpreadsheetTabs: async () => { if (state.readError) throw state.readError; return state.tabs.slice(); },
   getSheetRows: async (tab) => { if (!state.tabs.includes(tab)) throw rangeParseError(); return state.rows.slice(); },
@@ -70,6 +72,11 @@ const fakeSheets = {
 const sheetsPath = require.resolve('../sheets');
 require.cache[sheetsPath] = { id: sheetsPath, filename: sheetsPath, loaded: true, exports: fakeSheets };
 
+// The workout authority is Supabase since the S4 cutover, so stubbing sheets.js no
+// longer controls the plan ledgers. sheetsFallback seeds this suite's existing
+// fixture into the double, so no test's data changes.
+const { installWorkoutAuthorityStub, resetWorkoutAuthorityStub, workoutAuthorityStore, failWorkoutAuthorityWrites } = require('./helpers/stubWorkoutAuthority');
+installWorkoutAuthorityStub();
 const capture = require('../services/sessionPlanCapture');
 const IDX = Object.fromEntries(sessionPlansColumns.map((c, i) => [c, i]));
 
@@ -89,145 +96,58 @@ function withFlag(value, fn) {
 
 // ── flag gate (default OFF) ───────────────────────────────────────────────────
 
-test('flag defaults OFF: isEnabled() is false when the env var is unset', async () => {
-  await withFlag(null, () => { assert.equal(capture.isEnabled(), false); });
-});
-
-test('flag OFF ⇒ disabled envelope and ZERO Sheets access (no read, no write)', async () => {
+test('the retired flag cannot disable authoritative Supabase capture', async () => {
   reset();
   await withFlag('0', async () => {
     const r = await capture.captureAccept(SESSION, ITEMS);
-    assert.equal(r.status, 'disabled');
-    assert.equal(r.captured, false);
+    assert.equal(r.status, 'written');
+    assert.equal(r.captured, true);
     assert.equal(r.plan_version, SESSION.plan_version);
-    assert.equal(state.readCalls, 0, 'flag OFF must not read the header');
-    assert.equal(state.appends.length, 0, 'flag OFF must not write');
+    assert.equal(workoutAuthorityStore().planEvents.length, 2);
+    assert.equal(state.readCalls, 0, 'capture never reads a Sheets header');
+    assert.equal(state.appends.length, 0, 'capture never writes Sheets');
   });
 });
 
-test('flag ON accepts 1/true/on', async () => {
-  for (const v of ['1', 'true', 'on']) {
-    await withFlag(v, () => assert.equal(capture.isEnabled(), true));
-  }
-  for (const v of ['0', 'false', 'off', '', 'yes']) {
-    await withFlag(v, () => assert.equal(capture.isEnabled(), false));
-  }
+test('the production module contains no reader for ATLAS_SESSION_PLANS_WRITE', () => {
+  const source = require('node:fs').readFileSync(require.resolve('../services/sessionPlanCapture'), 'utf8');
+  assert.doesNotMatch(source, /ATLAS_SESSION_PLANS_WRITE/);
 });
 
-// ── exact-header validation ───────────────────────────────────────────────────
+// ── THE EXACT-HEADER VALIDATION BLOCK RETIRED WITH THE TAB ───────────────────
+//
+// Nine tests lived here. Each asked a question about a Google Sheets tab a human
+// can edit: is row 1 the exact column contract, is the tab there at all, and — the
+// hard-won half — is an unreadable header ever allowed to READ AS an absent tab.
+//
+// The concept moved to a Supabase table the migration created. Its columns cannot
+// be renamed, reordered or removed at runtime and the table cannot be absent, so
+// there is nothing left for the probe to detect; keeping it would only mean a
+// Google Sheets quota error could refuse a write to a tab the write never touches.
+//
+// THE GUARANTEE DID NOT GO WITH THE MECHANISM. Schema protection now lives where
+// the schema does — the migration, and test-pg/constraints.pgproof.js, which drives
+// the real constraints against a real database. And the fail-closed rule the
+// tab_missing tests really protected — an unreadable ledger must never present as a
+// verified-empty one — is asserted in test/sessionPlanSetsStore.test.js against the
+// authority that can actually be unreadable.
 
-test('exact valid header permits the sidecar write', async () => {
+test('the header check answers ok — there is no Sheets header left to validate', async () => {
+  reset();
+  const hv = await capture.validateHeader();
+  assert.equal(hv.ok, true);
+  assert.equal(state.readCalls, 0, 'and it reads no Sheets range to say so');
+});
+
+test('the live path writes the plan events and reports them captured', async () => {
   reset();
   await withFlag('1', async () => {
     const r = await capture.captureAccept(SESSION, ITEMS);
     assert.equal(r.status, 'written');
     assert.equal(r.captured, true);
     assert.equal(r.written, 2);
-    assert.ok(state.appends.length > 0);
-  });
-});
-
-test('missing tab fails safely: tab_missing, captured:false, no write', async () => {
-  reset({ tabs: [] });
-  await withFlag('1', async () => {
-    const r = await capture.captureAccept(SESSION, ITEMS);
-    assert.equal(r.status, 'tab_missing');
-    assert.equal(r.captured, false);
-    assert.equal(state.appends.length, 0);
-  });
-});
-
-// BITE for the read-failure authority. Before it existed, `validateHeader` caught
-// EVERY read error and answered `tab_missing` — so a 503 from Google told the owner
-// the Session_Plans tab had been deleted and a schema migration was needed. Both
-// outcomes refuse the write, so cardinality alone cannot tell them apart; the status
-// is the only thing that carries the truth. Reverting validateHeader to a blanket
-// `tab_missing` fails this test and leaves the one above passing.
-test('a TRANSIENT read failure is error, never tab_missing — and still writes nothing', async () => {
-  reset({ readError: transientError() });
-  await withFlag('1', async () => {
-    const r = await capture.captureAccept(SESSION, ITEMS);
-    assert.equal(r.status, 'error', 'a 503 is an upstream failure, not evidence the tab is gone');
-    assert.notEqual(r.status, 'tab_missing');
-    assert.equal(r.captured, false);
-    assert.equal(state.appends.length, 0, 'fails closed either way — no write on an unreadable header');
-  });
-});
-
-// BITE — a MALFORMED RANGE is not evidence that the tab is absent, even though Google
-// reports it with the identical "Unable to parse range" wording. The tab list here
-// still contains Session_Plans, so absence is refuted. Inferring `tab_missing` from
-// the message would let a caller bug (an unescaped tab name, a bad column letter)
-// manufacture a durable schema fact — and in the sets capture, a verified-empty seal.
-// Reverting confirmTabMissing to a message test fails this and leaves the two below
-// passing, which is exactly the false green it exists to prevent.
-test('a MALFORMED RANGE against an existing tab is error, never tab_missing', async () => {
-  reset({ tabs: ['Session_Plans'], readError: malformedRangeError() });
-  await withFlag('1', async () => {
-    const r = await capture.captureAccept(SESSION, ITEMS);
-    assert.equal(r.status, 'error', 'the tab is right there in the tab list — this is a bad range, not an absent tab');
-    assert.notEqual(r.status, 'tab_missing');
-    assert.equal(r.captured, false);
-    assert.equal(state.appends.length, 0);
-  });
-});
-
-// The metadata read is what establishes absence, so a metadata read that FAILS
-// establishes nothing. Fail closed: never claim absence from a failure to look.
-test('a range error whose METADATA CONFIRMATION also fails is error, never tab_missing', async () => {
-  reset({ tabs: [] });
-  // The header read rejects with the range wording; the confirming tab-list read then
-  // fails too, so nothing was ever confirmed.
-  state.readError = rangeParseError();
-  const listFailure = Object.assign(new Error('Backend Error'), { status: 503 });
-  const original = fakeSheets.confirmTabMissing;
-  fakeSheets.confirmTabMissing = (e, tab) => confirmTabMissing(e, tab, {
-    listTabs: async () => { throw listFailure; },
-  });
-  try {
-    await withFlag('1', async () => {
-      const r = await capture.captureAccept(SESSION, ITEMS);
-      assert.equal(r.status, 'error', 'could not look ⇒ not evidence of absence');
-      assert.notEqual(r.status, 'tab_missing');
-      assert.equal(r.captured, false);
-      assert.equal(state.appends.length, 0);
-    });
-  } finally {
-    fakeSheets.confirmTabMissing = original;
-  }
-});
-
-// The other half of the same distinction: a PERMANENT failure (revoked credentials,
-// wrong spreadsheet id) is equally not evidence that this tab is absent.
-test('a PERMANENT read failure is error, never tab_missing', async () => {
-  reset({ readError: Object.assign(new Error('The caller does not have permission'), { status: 403 }) });
-  await withFlag('1', async () => {
-    const r = await capture.captureAccept(SESSION, ITEMS);
-    assert.equal(r.status, 'error');
-    assert.equal(r.captured, false);
-    assert.equal(state.appends.length, 0);
-  });
-});
-
-test('wrong header ORDER fails safely: header_mismatch, captured:false, no write', async () => {
-  // Swap two columns → a position-by-position mismatch.
-  const bad = [...sessionPlansColumns];
-  [bad[1], bad[2]] = [bad[2], bad[1]];
-  reset({ header: bad });
-  await withFlag('1', async () => {
-    const r = await capture.captureAccept(SESSION, ITEMS);
-    assert.equal(r.status, 'header_mismatch');
-    assert.equal(r.captured, false);
-    assert.equal(state.appends.length, 0, 'a mismatched header must never be written to');
-  });
-});
-
-test('a truncated/short header fails safely (header_mismatch)', async () => {
-  reset({ header: sessionPlansColumns.slice(0, 5) });
-  await withFlag('1', async () => {
-    const r = await capture.captureAccept(SESSION, ITEMS);
-    assert.equal(r.status, 'header_mismatch');
-    assert.equal(state.appends.length, 0);
+    assert.equal(workoutAuthorityStore().planEvents.length, 2);
+    assert.equal(state.appends.length, 0, 'and it appends to no Google Sheets tab');
   });
 });
 
@@ -238,11 +158,11 @@ test('accepted plan appends one plan_accepted row per item; recorded_at is non-e
   await withFlag('1', async () => {
     const r = await capture.captureAccept(SESSION, ITEMS);
     assert.equal(r.written, 2);
-    assert.equal(state.rows.length, 2);
-    assert.equal(state.rows[0][IDX.event_type], 'plan_accepted');
-    assert.equal(state.rows[0][IDX.outcome], 'planned');
-    assert.equal(state.rows[0][IDX.plan_item_id], 'pi_aaaaaaaa');
-    assert.notEqual(String(state.rows[0][IDX.recorded_at] || '').trim(), '', 'recorded_at must be stamped non-empty');
+    assert.equal(workoutAuthorityStore().planEvents.length, 2);
+    assert.equal(workoutAuthorityStore().planEvents[0][IDX.event_type], 'plan_accepted');
+    assert.equal(workoutAuthorityStore().planEvents[0][IDX.outcome], 'planned');
+    assert.equal(workoutAuthorityStore().planEvents[0][IDX.plan_item_id], 'pi_aaaaaaaa');
+    assert.notEqual(String(workoutAuthorityStore().planEvents[0][IDX.recorded_at] || '').trim(), '', 'recorded_at must be stamped non-empty');
   });
 });
 
@@ -250,13 +170,13 @@ test('duplicate accepted-plan retry is idempotent (skipped, captured:true, no ne
   reset();
   await withFlag('1', async () => {
     await capture.captureAccept(SESSION, ITEMS);
-    const before = state.rows.length;
+    const before = workoutAuthorityStore().planEvents.length;
     const r = await capture.captureAccept(SESSION, ITEMS);
     assert.equal(r.status, 'skipped');
     assert.equal(r.captured, true, 'an idempotent skip of an already-persisted event still counts as captured');
     assert.equal(r.written, 0);
     assert.equal(r.skipped, 2);
-    assert.equal(state.rows.length, before, 'append-only store unchanged by a retry');
+    assert.equal(workoutAuthorityStore().planEvents.length, before, 'append-only store unchanged by a retry');
   });
 });
 
@@ -265,8 +185,8 @@ test('completed outcome appends exactly one item_outcome', async () => {
   await withFlag('1', async () => {
     const r = await capture.captureOutcome(SESSION, { plan_item_id: 'pi_aaaaaaaa', planned_lift_code: 'BEN01', outcome: 'completed' });
     assert.equal(r.written, 1);
-    assert.equal(state.rows[0][IDX.event_type], 'item_outcome');
-    assert.equal(state.rows[0][IDX.outcome], 'completed');
+    assert.equal(workoutAuthorityStore().planEvents[0][IDX.event_type], 'item_outcome');
+    assert.equal(workoutAuthorityStore().planEvents[0][IDX.outcome], 'completed');
   });
 });
 
@@ -275,8 +195,8 @@ test('skipped outcome appends exactly one item_outcome', async () => {
   await withFlag('1', async () => {
     const r = await capture.captureOutcome(SESSION, { plan_item_id: 'pi_aaaaaaaa', planned_lift_code: 'BEN01', outcome: 'skipped' });
     assert.equal(r.written, 1);
-    assert.equal(state.rows[0][IDX.outcome], 'skipped');
-    assert.equal(state.rows[0][IDX.performed_lift_code], '', 'skipped carries no performed code');
+    assert.equal(workoutAuthorityStore().planEvents[0][IDX.outcome], 'skipped');
+    assert.equal(workoutAuthorityStore().planEvents[0][IDX.performed_lift_code], '', 'skipped carries no performed code');
   });
 });
 
@@ -285,9 +205,9 @@ test('substituted outcome preserves planned_lift_code and records performed_lift
   await withFlag('1', async () => {
     const r = await capture.captureOutcome(SESSION, { plan_item_id: 'pi_aaaaaaaa', planned_lift_code: 'BEN01', outcome: 'substituted', performed_lift_code: 'DBP01' });
     assert.equal(r.written, 1);
-    assert.equal(state.rows[0][IDX.planned_lift_code], 'BEN01');
-    assert.equal(state.rows[0][IDX.performed_lift_code], 'DBP01');
-    assert.equal(state.rows[0][IDX.outcome], 'substituted');
+    assert.equal(workoutAuthorityStore().planEvents[0][IDX.planned_lift_code], 'BEN01');
+    assert.equal(workoutAuthorityStore().planEvents[0][IDX.performed_lift_code], 'DBP01');
+    assert.equal(workoutAuthorityStore().planEvents[0][IDX.outcome], 'substituted');
   });
 });
 
@@ -296,9 +216,9 @@ test('finalized closeout appends one session_closeout', async () => {
   await withFlag('1', async () => {
     const r = await capture.captureCloseout(SESSION, 'finalized');
     assert.equal(r.written, 1);
-    assert.equal(state.rows[0][IDX.event_type], 'session_closeout');
-    assert.equal(state.rows[0][IDX.closeout_status], 'finalized');
-    assert.equal(state.rows[0][IDX.plan_item_id], '', 'session-scoped, no item id');
+    assert.equal(workoutAuthorityStore().planEvents[0][IDX.event_type], 'session_closeout');
+    assert.equal(workoutAuthorityStore().planEvents[0][IDX.closeout_status], 'finalized');
+    assert.equal(workoutAuthorityStore().planEvents[0][IDX.plan_item_id], '', 'session-scoped, no item id');
   });
 });
 
@@ -307,7 +227,7 @@ test('abandoned closeout appends one session_closeout', async () => {
   await withFlag('1', async () => {
     const r = await capture.captureCloseout(SESSION, 'abandoned');
     assert.equal(r.written, 1);
-    assert.equal(state.rows[0][IDX.closeout_status], 'abandoned');
+    assert.equal(workoutAuthorityStore().planEvents[0][IDX.closeout_status], 'abandoned');
   });
 });
 
@@ -336,18 +256,17 @@ test('revision collision fails closed (error/revision_collision), never throws',
   });
 });
 
-test('a Sheets append failure is isolated: captured:false envelope, NEVER a rejection', async () => {
-  reset({ throwOnAppend: true });
+// MAIN-SAVE ISOLATION, unchanged in substance: the capture layer is a sidecar, so a
+// failure of the ledger write must become an envelope and never a rejection that
+// could take the athlete's Save down with it. Only the failing store moved — it was
+// a Google Sheets append and it is a Supabase write.
+test('a ledger write failure is isolated: captured:false envelope, NEVER a rejection', async () => {
+  reset();
+  failWorkoutAuthorityWrites('simulated ledger write failure');
   await withFlag('1', async () => {
     const r = await capture.captureAccept(SESSION, ITEMS); // must not throw
     assert.equal(r.status, 'error');
     assert.equal(r.captured, false);
     assert.ok(r.reason, 'a diagnostic reason is surfaced');
   });
-});
-
-test('validateHeader is exposed and returns ok for the exact header', async () => {
-  reset();
-  const hv = await capture.validateHeader();
-  assert.equal(hv.ok, true);
 });

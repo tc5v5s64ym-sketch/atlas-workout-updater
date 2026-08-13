@@ -66,8 +66,15 @@ const fakeSheets = {
 const sheetsPath = require.resolve('../sheets');
 require.cache[sheetsPath] = { id: sheetsPath, filename: sheetsPath, loaded: true, exports: fakeSheets };
 
+// The plan-set ledger is Supabase since the S4 cutover, so the rows the seal reads
+// come from the authority double rather than the sheets fake above. The fake stays
+// because this suite also proves the dry path writes NO Sheets cell.
+const { installWorkoutAuthorityStub, resetWorkoutAuthorityStub } = require('./helpers/stubWorkoutAuthority');
+installWorkoutAuthorityStub();
+
 const storePath = require.resolve('../services/sessionPlanSetsStore');
 function loadStore({ writeEnabled }) {
+  resetWorkoutAuthorityStub({ planSets: state.rows.map((r) => r.slice()) });
   delete require.cache[storePath];
   const prev = process.env.SESSION_PLAN_SETS_WRITE_ENABLED;
   process.env.SESSION_PLAN_SETS_WRITE_ENABLED = writeEnabled ? '1' : '0';
@@ -101,18 +108,22 @@ function ledgerRowsFor(sessionId) {
 
 // ── PRODUCER ──────────────────────────────────────────────────────────────────
 
-test('#1165 producer: a confirmed-absent tab in the disabled posture is a VERIFIED empty seal', async () => {
-  state.tabs = [];
+// The "confirmed-absent tab" case retired with the tab: a Supabase table the migration
+// created cannot be absent. What it really pinned — a ledger the store SUCCESSFULLY
+// read and found empty is a VERIFIED empty seal, not an unknown one — is unchanged and
+// is what this test now drives, from an empty authority.
+test('#1165 producer: an explicit test-mode empty ledger is a VERIFIED empty seal', async () => {
+  state.tabs = ['Session_Plan_Sets'];
   state.rows = [];
   state.updates = [];
   const store = loadStore({ writeEnabled: false });
-  const r = await store.sealCloseout(SESSION, 'w-close-fixture');
+  const r = await store.sealCloseout(SESSION, 'w-close-fixture', { test_mode: true });
 
   // W1–W3 dry-run proof is unchanged and stays intact.
   assert.equal(r.sheet_written, false);
   assert.equal(r.no_write_confirmed, true);
   assert.equal(r.dry_run, true);
-  assert.equal(r.reason, 'write_disabled');
+  assert.equal(r.reason, 'test_mode');
   assert.equal(r.no_ledger, true);
   assert.equal(r.would_seal, 0);
   assert.equal(r.already_sealed, 0);
@@ -123,12 +134,12 @@ test('#1165 producer: a confirmed-absent tab in the disabled posture is a VERIFI
   assert.equal(r.sealed_ok, true, 'confirmed-empty dry run must report its verified outcome');
 });
 
-test('#1165 producer: a session with no ledger rows in the disabled posture is a VERIFIED empty seal', async () => {
+test('#1165 producer: explicit test mode with no session rows is a VERIFIED empty seal', async () => {
   state.tabs = ['Session_Plan_Sets'];
   state.rows = ledgerRowsFor('session-fixture-b');
   state.updates = [];
   const store = loadStore({ writeEnabled: false });
-  const r = await store.sealCloseout(SESSION, 'w-close-fixture');
+  const r = await store.sealCloseout(SESSION, 'w-close-fixture', { test_mode: true });
 
   assert.equal(r.sheet_written, false);
   assert.equal(r.no_write_confirmed, true);
@@ -140,14 +151,14 @@ test('#1165 producer: a session with no ledger rows in the disabled posture is a
   assert.equal(r.sealed_ok, true, 'confirmed-empty dry run must report its verified outcome');
 });
 
-test('#1165 producer: a dry run with rows PENDING a stamp stays unverified', async () => {
+test('#1165 producer: explicit test mode with rows PENDING a stamp stays unverified', async () => {
   // The discriminator, held from the other side. This shape is unreachable while the flag is 0
   // (the checkpoint writers gate on it too), but it must never become verified by construction.
   state.tabs = ['Session_Plan_Sets'];
   state.rows = ledgerRowsFor(SESSION.session_id);
   state.updates = [];
   const store = loadStore({ writeEnabled: false });
-  const r = await store.sealCloseout(SESSION, 'w-close-fixture');
+  const r = await store.sealCloseout(SESSION, 'w-close-fixture', { test_mode: true });
 
   assert.equal(r.dry_run, true);
   assert.ok(r.would_seal > 0, 'rows are genuinely pending a stamp');

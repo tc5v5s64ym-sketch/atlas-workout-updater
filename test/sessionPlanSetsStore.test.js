@@ -13,6 +13,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { sessionPlanSetsColumns } = require('../config/columns');
+const {
+  installWorkoutAuthorityStub, resetWorkoutAuthorityStub, workoutAuthorityStore,
+  failWorkoutAuthorityReads,
+} = require('./helpers/stubWorkoutAuthority');
 
 // ── fake sheets (stateful; counts calls so dry-run "never touches the sheet" is provable) ──
 const state = { tabs: ['Session_Plan_Sets'], rows: [], appends: [], updates: [], a1: [['idempotency_key']], calls: 0, updateCellsResult: null, failGetTabs: false, failGetRows: false };
@@ -66,8 +70,16 @@ const fakeSheets = {
 const sheetsPath = require.resolve('../sheets');
 require.cache[sheetsPath] = { id: sheetsPath, filename: sheetsPath, loaded: true, exports: fakeSheets };
 
+// The workout authority is Supabase since the S4 cutover, so stubbing sheets.js no
+// longer controls the plan-set ledger. sheetsFallback seeds this suite's existing
+// fixture into the double, so no test's data changes — only where the store reads it
+// from. Re-installed on every reload, because the double resets its rows with it.
+installWorkoutAuthorityStub();
 const storePath = require.resolve('../services/sessionPlanSetsStore');
 function loadStore({ writeEnabled }) {
+  // The ledger rows live in the authority double, seeded from this suite's own
+  // fixture rather than read through the sheets fake — the store reads no tab now.
+  resetWorkoutAuthorityStub({ planSets: state.rows.map((r) => r.slice()) });
   delete require.cache[storePath];
   if (writeEnabled) process.env.SESSION_PLAN_SETS_WRITE_ENABLED = '1';
   else delete process.env.SESSION_PLAN_SETS_WRITE_ENABLED;
@@ -80,21 +92,18 @@ const DIP = [{ plan_item_id: 'pi_dip', planned_lift_code: 'DIP01', target_set_co
 
 // ── DRY-RUN by default (the F10A safety guarantee) ──────────────────────────────
 
-test('dry-run default: checkpointAcceptedPlan returns the no-write proof and NEVER touches the sheet', async () => {
+test('default: checkpointAcceptedPlan writes Supabase and NEVER touches Sheets', async () => {
   reset();
   const store = loadStore({ writeEnabled: false });
   const r = await store.checkpointAcceptedPlan(SESSION, DIP, { recordedAt: 't' });
-  assert.equal(r.sheet_written, false);
-  assert.equal(r.no_write_confirmed, true);
-  assert.equal(r.dry_run, true);
-  assert.equal(r.reason, 'write_disabled');
-  assert.equal(r.would_write, 3, 'the three dip set-rows it WOULD write');
-  assert.equal(state.calls, 0, 'no Sheets call at all in dry-run — no first real write');
-  assert.equal(r.rows[0][IDX.recommendation_source], 'accepted');
-  assert.equal(r.rows[0][IDX.set_index], '1');
+  assert.equal(r.sheet_written, true);
+  assert.equal(r.written, 3);
+  assert.equal(state.calls, 0, 'no Sheets call at all');
+  assert.equal(workoutAuthorityStore().planSets[0][IDX.recommendation_source], 'accepted');
+  assert.equal(workoutAuthorityStore().planSets[0][IDX.set_index], '1');
 });
 
-test('dry-run default: checkpointRevision returns the no-write proof, sheet untouched', async () => {
+test('retired flag OFF cannot disable a revision checkpoint', async () => {
   reset();
   const store = loadStore({ writeEnabled: false });
   const L = require('../services/sessionPlanLedger');
@@ -103,9 +112,8 @@ test('dry-run default: checkpointRevision returns the no-write proof, sheet unto
     plan_item_id: 'pi_dip', planned_lift_code: 'DIP01', set_index: 2, plan_version: 2, target_set_count: 3,
     target_weight: 60, target_reps: 5, target_rir: 2, recommendation_source: 'live_revision', supersedes_key,
   }, { recordedAt: 't' });
-  assert.equal(r.sheet_written, false);
-  assert.equal(r.no_write_confirmed, true);
-  assert.equal(r.would_write, 1);
+  assert.equal(r.sheet_written, true);
+  assert.equal(r.written, 1);
   assert.equal(state.calls, 0);
 });
 
@@ -128,10 +136,14 @@ test('live: enabling the owner gate appends the checkpoint rows (only Session_Pl
   assert.equal(r.sheet_written, true);
   assert.equal(r.no_write_confirmed, false);
   assert.equal(r.written, 3);
-  assert.ok(state.appends.every(a => a.tab === 'Session_Plan_Sets'), 'never writes another tab');
-  // The authoritative write proof is the A1 updatedRange, not the raw response object.
-  assert.match(r.range, /^Session_Plan_Sets!A\d+:P\d+$/, 'range is the extracted A1 updatedRange');
+  assert.equal(state.appends.length, 0, 'the ledger is Supabase — no Google Sheets append');
+  // NO RANGE, and that is the honest value. The authoritative proof used to be the
+  // A1 `updatedRange` the Sheets append returned; the rows land in Supabase now, so
+  // there is no range to report and reporting one would be a false proof field. The
+  // row count is what carries the proof.
+  assert.equal(r.range, null, 'a range is a Sheets concept and there is no Sheets write');
   assert.equal(r.rows_written, 3);
+  assert.equal(workoutAuthorityStore().planSets.length, 3);
 });
 
 test('live: retry is idempotent — same rows append nothing new', async () => {
@@ -145,13 +157,21 @@ test('live: retry is idempotent — same rows append nothing new', async () => {
   assert.equal(state.rows.length, before, 'append-only store unchanged by a retry');
 });
 
-test('live: a missing tab 503/no-ops (owner creates the tab; never auto-created)', async () => {
-  reset({ tabs: [] });
+// `tab_missing` retired with the tab: a Sheets tab can genuinely be absent and a
+// migrated table cannot, so the field is reported permanently false. The guarantee
+// that outlived it is the one below — an unreadable authority fails closed rather
+// than appending against an index it could not read, which would defeat the
+// idempotency guard entirely.
+test('live: an unreadable ledger fails closed and writes nothing', async () => {
+  reset();
   const store = loadStore({ writeEnabled: true });
+  failWorkoutAuthorityReads('Supabase unreachable');
   const r = await store.checkpointAcceptedPlan(SESSION, DIP, { recordedAt: 't' });
-  assert.equal(r.tab_missing, true);
+  assert.equal(r.reason, 'ledger_read_failed');
+  assert.equal(r.tab_missing, false, 'an outage is never a durable schema fact');
   assert.equal(r.sheet_written, false);
-  assert.equal(state.appends.length, 0);
+  assert.equal(r.no_write_confirmed, true);
+  assert.equal(workoutAuthorityStore().planSets.length, 0);
 });
 
 test('live: a same-key row with DIFFERENT content fails closed (append-only, never mutate)', async () => {
@@ -160,7 +180,8 @@ test('live: a same-key row with DIFFERENT content fails closed (append-only, nev
   const L = require('../services/sessionPlanLedger');
   // Seed a v1 set-1 row, then attempt a DIFFERENT-content row with the same identity key.
   const [seed] = L.buildAcceptedRows(SESSION, [{ plan_item_id: 'pi_dip', planned_lift_code: 'DIP01', target_set_count: 1, target_weight: 65, target_reps: 5, target_rir: 2 }]);
-  state.rows.push(seed);
+  // Into the authority, which is where the store reads its prior rows from.
+  workoutAuthorityStore().planSets.push(seed);
   const clash = L.toRow({
     session_id: 'S1', session_date: '2026-07-16', plan_version: 1, plan_item_id: 'pi_dip', planned_lift_code: 'DIP01',
     set_index: 1, target_set_count: 1, target_weight: 999, target_reps: 5, target_rir: 2,
@@ -188,18 +209,16 @@ function ledgerRowsFor(sessionId, { withSeal = '', items = null } = {}) {
   return rows;
 }
 
-test('F10D seal dry-run default: reports what it WOULD seal, writes nothing, W1–W3 proof', async () => {
+test('the retired flag cannot disable the authoritative closeout seal', async () => {
   reset({ rows: ledgerRowsFor('S1') });
   const store = loadStore({ writeEnabled: false });
   const r = await store.sealCloseout(SESSION, 'w-close-1');
-  assert.equal(r.sheet_written, false);
-  assert.equal(r.no_write_confirmed, true);
-  assert.equal(r.dry_run, true);
-  assert.equal(r.reason, 'write_disabled');
-  assert.equal(r.would_seal, 3, 'all three unstamped S1 rows');
+  assert.equal(r.sheet_written, true);
+  assert.equal(r.sealed_ok, true);
+  assert.equal(r.sealed, 3, 'all three unstamped S1 rows');
   assert.equal(r.already_sealed, 0);
   assert.equal(state.appends.length, 0, 'no append');
-  assert.equal((state.updates || []).length, 0, 'no cell update — dry-run never writes');
+  assert.equal((state.updates || []).length, 0, 'the seal never writes a Sheets cell');
 });
 
 test('F10D seal dry-run: explicit test_mode short-circuits even with the flag on', async () => {
@@ -221,20 +240,23 @@ test('F10D seal live: stamps ONLY this session\'s unstamped rows, exact cell pro
   assert.equal(r.sheet_written, true);
   assert.equal(r.sealed, 3);
   assert.equal(r.already_sealed, 0);
-  assert.equal(r.sealed_ok, true, 'updated-cell proof matches the intended count');
+  assert.equal(r.sealed_ok, true, 'the stamped count matches the intended count');
   assert.equal(state.appends.length, 0, 'a seal never appends');
-  const upd = state.updates || [];
-  assert.equal(upd.length, 1, 'one bounded column update call');
-  assert.equal(upd[0].column, 'O', 'closeout_write_id is column O (15th of 16)');
-  // other-session rows occupy data rows 0..2 → sheet rows 2..4; mine are 5..7.
-  assert.deepEqual(upd[0].cells.map(c => c.row).sort((a, b) => a - b), [5, 6, 7]);
-  assert.ok(upd[0].cells.every(c => c.value === 'w-close-1'));
-  // The in-memory sheet reflects the stamp; row CONTENT is untouched.
-  for (const row of state.rows.slice(3)) {
+  assert.equal((state.updates || []).length, 0, 'and it never writes a Sheets cell');
+  // THE SEAL IS A PREDICATE NOW, NOT A SET OF ROW POSITIONS. It used to compute each
+  // row's sheet position from a fresh read and stamp those cells by column letter —
+  // the one place production wrote by POSITION. What is asserted is the same fact it
+  // always was, read off the rows instead of off the request: this session's rows
+  // carry the seal, their content is untouched, and no other session's rows moved.
+  const rows = workoutAuthorityStore().planSets;
+  const s1 = rows.filter((row) => row[IDX.session_id] === 'S1');
+  const s2 = rows.filter((row) => row[IDX.session_id] === 'S2');
+  assert.equal(s1.length, 3);
+  for (const row of s1) {
     assert.equal(row[IDX.closeout_write_id], 'w-close-1');
     assert.equal(row[IDX.target_weight], '65', 'content column untouched by the seal');
   }
-  for (const row of state.rows.slice(0, 3)) assert.equal(row[IDX.closeout_write_id], '', 'S2 rows untouched');
+  for (const row of s2) assert.equal(row[IDX.closeout_write_id], '', 'S2 rows untouched');
 });
 
 test('F10D seal live retry (same closeout_write_id): idempotent — nothing re-stamped, ok result', async () => {
@@ -270,24 +292,17 @@ test('F10D seal: a malformed revision chain fails closed with diagnostics — no
   assert.equal((state.updates || []).length, 0, 'no cell was stamped');
 });
 
-test('F10D seal: an updated-cell-count mismatch fails closed (never a false verified seal)', async () => {
+test('F10D seal: a stamped-count mismatch fails closed (never a false verified seal)', async () => {
   reset({ rows: ledgerRowsFor('S1') });
-  state.updateCellsResult = { totalUpdatedCells: 1 }; // server claims 1, we intended 3
   const store = loadStore({ writeEnabled: true });
+  // The authority reports one stamped row where the seal decided on three. The proof
+  // is unchanged in KIND — the seal claims success only when those two agree — and
+  // only the unit moved, from updated cells to stamped rows.
+  workoutAuthorityStore().sealCountOverride = 1;
   const r = await store.sealCloseout(SESSION, 'w-close-1');
   assert.equal(r.sealed_ok, false);
   assert.equal(r.reason, 'seal_proof_mismatch');
-  state.updateCellsResult = null;
-});
-
-test('F10D seal: live with the tab missing → no_ledger no-op (legacy session, not an error)', async () => {
-  reset({ tabs: [], rows: [] });
-  const store = loadStore({ writeEnabled: true });
-  const r = await store.sealCloseout(SESSION, 'w-close-1');
-  assert.equal(r.no_ledger, true);
-  assert.equal(r.sealed, 0);
-  assert.equal(r.sealed_ok, true, 'nothing to seal is a verified (empty) seal');
-  assert.equal((state.updates || []).length, 0);
+  workoutAuthorityStore().sealCountOverride = null;
 });
 
 test('F10D seal: a session with NO ledger rows (tab exists) → no_ledger, verified-empty', async () => {
@@ -308,8 +323,9 @@ test('F10D seal: mixed already-sealed + blank rows stamps only the blanks', asyn
   assert.equal(r.sealed, 2);
   assert.equal(r.already_sealed, 1);
   assert.equal(r.sealed_ok, true);
-  const upd = state.updates || [];
-  assert.deepEqual(upd[0].cells.map(c => c.row).sort((a, b) => a - b), [3, 4], 'rows 2 and 3 of the tab data (sheet rows 3,4)');
+  // All three carry the seal afterwards; two of them were stamped by this call.
+  const sealed = workoutAuthorityStore().planSets.filter((row) => row[IDX.closeout_write_id] === 'w-close-1');
+  assert.equal(sealed.length, 3);
 });
 
 // ── Codex P1 (PR #1068): an UNREADABLE ledger is never a verified (empty) seal ──
@@ -317,44 +333,42 @@ test('F10D seal: mixed already-sealed + blank rows stamps only the blanks', asyn
 // read) is a ledger failure and must fail closed — closeout_fully_verified hangs
 // off sealed_ok, so a transient Sheets outage must never claim verification.
 
-// Retargeted from "a metadata-probe failure". Presence is now proven by the rows read
-// itself, so there is no probe to fail on the happy path. The GUARANTEE is unchanged and
-// this is now the case that carries it: the range does not resolve, but the tab listing is
-// unavailable so absence CANNOT be confirmed. That is unreadable, not empty — and
-// `no_ledger` is a verified-empty seal reason, so it must never be reachable this way.
-test('F10D seal: an unresolved range that cannot be CONFIRMED absent fails CLOSED, never a verified no_ledger', async () => {
-  reset({ tabs: [], rows: [] });
-  state.failGetTabs = true;                 // the listing confirmTabMissing needs is down
-  const store = loadStore({ writeEnabled: true });
-  const r = await store.sealCloseout(SESSION, 'w-close-1');
-  assert.equal(r.sealed_ok, false);
-  assert.equal(r.reason, 'ledger_read_failed');
-  assert.equal(r.no_ledger, undefined, 'could not confirm absence is NOT "no ledger"');
-  assert.equal((state.updates || []).length, 0);
-});
-
-test('F10D seal: a row-read failure (tab present) fails CLOSED, never a verified no_ledger', async () => {
+// The tab-absence half of this contract retired with the tab: a migrated table cannot
+// be absent at runtime, so there is nothing left to CONFIRM. The half that carried the
+// trust guarantee is unchanged and is what these three hold — an unreadable ledger is
+// never a verified empty one, because `closeout_fully_verified` hangs off `sealed_ok`.
+test('F10D seal: an unreadable ledger fails CLOSED, never a verified no_ledger', async () => {
   reset({ rows: ledgerRowsFor('S1') });
-  state.failGetRows = true;
   const store = loadStore({ writeEnabled: true });
+  failWorkoutAuthorityReads('Supabase unreachable');
   const r = await store.sealCloseout(SESSION, 'w-close-1');
   assert.equal(r.sealed_ok, false);
   assert.equal(r.reason, 'ledger_read_failed');
+  assert.equal(r.no_ledger, undefined, 'an unreadable ledger is NOT "no ledger"');
   assert.equal((state.updates || []).length, 0);
 });
 
-test('F10D readLedgerRows: an unconfirmable unresolved range returns null (read-failed), not [] (no rows)', async () => {
-  reset({ tabs: [], rows: [] });
-  state.failGetTabs = true;
+test('F10D seal: a session with NO rows is a verified-empty seal, not a failure', async () => {
+  reset({ rows: ledgerRowsFor('S9') });   // another session's rows only
+  const store = loadStore({ writeEnabled: true });
+  const r = await store.sealCloseout(SESSION, 'w-close-1');
+  assert.equal(r.no_ledger, true);
+  assert.equal(r.sealed, 0);
+  assert.equal(r.sealed_ok, true, 'nothing to seal is a verified (empty) seal');
+});
+
+test('F10D readLedgerRows: an unreadable ledger returns null (read-failed), not [] (no rows)', async () => {
+  reset({ rows: ledgerRowsFor('S1') });
   const store = loadStore({ writeEnabled: false });
+  failWorkoutAuthorityReads('Supabase unreachable');
   assert.equal(await store.readLedgerRows('S1'), null,
     'unreadable must be null; [] would claim the session genuinely has no ledger rows');
 });
 
-// And the other side of the same contract: when absence IS confirmable, it is reported as
-// a genuine empty ledger rather than as a failure.
-test('F10D readLedgerRows: a CONFIRMED absent tab returns [] (no ledger), not null', async () => {
-  reset({ tabs: [], rows: [] });
+// And the other side of the same contract: a session that genuinely has no rows is
+// reported as an empty ledger rather than as a failure.
+test('F10D readLedgerRows: a session with no rows returns [] (no ledger), not null', async () => {
+  reset({ rows: [] });
   const store = loadStore({ writeEnabled: false });
   assert.deepEqual(await store.readLedgerRows('S1'), []);
 });

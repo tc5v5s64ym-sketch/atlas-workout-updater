@@ -5,37 +5,30 @@
 // The durable checkpoint path for the set-level recommendation ledger
 // (docs/SESSION_PLANS_LEDGER_DESIGN.md, amendment 2: "durable idempotent checkpoint
 // at CREATION — session state alone is insufficient"). Each accepted plan (v1) and
-// each explicit revision is checkpointed the moment it is created, via a NON-BLOCKING,
-// idempotent sidecar append — the exact pattern services/sessionPlanStore.js uses for
-// Session_Plans. Mirrors that writer: system-state, NOT logged sets — no log write_id,
+// each explicit revision is checkpointed the moment it is created through the
+// Supabase authority. The write is idempotent and append-only. Like
+// Session_Plans, this is system state, NOT logged sets — no log write_id,
 // never through preview→approve→write, never touches Log_Cleaned/Effort. Append-only:
 // a prior recommendation row is NEVER mutated (a revision appends a new version).
 //
-// SAFETY — this whole path is DRY-RUN in F10A/F10B/F10C. Live writes are gated behind
-// SESSION_PLAN_SETS_WRITE_ENABLED (default OFF); flipping it, and creating the
-// production Session_Plan_Sets tab, is the single OWNER-RESERVED action at F10D. Until
-// then every checkpoint returns the dry-run proof (sheet_written:false,
-// no_write_confirmed:true) and writes nothing. Even with live writes enabled, a
-// missing tab is a no-op that reports tab_missing so the caller can 503 — the tab is
-// created by the owner, never here.
+// S4 removes the Sheets-era live-write gate. The Supabase table is now the sole
+// authority, so every real checkpoint writes; only an explicit test_mode dry run
+// returns no-write proof.
 //
-// Staged/unwired in F10A (config/wiring-allowlist.json): F10B wires it to the
-// acceptance/revision boundaries, F10D enables live writes.
-
-const sheets = require('../sheets');
-const migrationShadow = require('./migrationShadow');
 const { sessionPlanSetsColumns } = require('../config/columns');
 const { buildAcceptedRows, buildImplicitRows, buildRevisionRow, parseRow, validateChain } = require('./sessionPlanLedger');
 
 const SESSION_PLAN_SETS_TAB = process.env.SESSION_PLAN_SETS_SHEET_NAME || 'Session_Plan_Sets';
-// OWNER-RESERVED live-write gate (F10D). Default OFF → every checkpoint is a dry-run.
-const LIVE_WRITE_ENABLED = process.env.SESSION_PLAN_SETS_WRITE_ENABLED === '1';
 const KEY_IDX = sessionPlanSetsColumns.indexOf('idempotency_key');
 // Content columns (everything except recorded_at, which may differ across a retry).
 const CONTENT_COLS = sessionPlanSetsColumns
   .map((c, i) => ({ c, i }))
   .filter(({ c }) => c !== 'recorded_at')
   .map(({ i }) => i);
+
+const workoutAuthority = require('./workoutAuthority');
+
+const SESSION_IDX = sessionPlanSetsColumns.indexOf('session_id');
 
 function _nowIso() { return new Date().toISOString(); }
 
@@ -67,27 +60,15 @@ function _contentEqual(a, b) {
   return CONTENT_COLS.every(i => String(a[i] == null ? '' : a[i]) === String(b[i] == null ? '' : b[i]));
 }
 
-async function _ensureHeaderRow() {
-  let firstRow = [];
-  try {
-    const top = await sheets.readRange(`${SESSION_PLAN_SETS_TAB}!A1:A1`);
-    firstRow = Array.isArray(top) ? top : [];
-  } catch (_) {
-    firstRow = [];
-  }
-  const hasHeader = firstRow.length > 0 && Array.isArray(firstRow[0]) && String(firstRow[0][0] || '').trim() !== '';
-  if (!hasHeader) await sheets.appendRows(SESSION_PLAN_SETS_TAB, [[...sessionPlanSetsColumns]]);
-}
 
-// Append checkpoint rows. DRY-RUN unless live writes are owner-enabled (F10D) — a
-// dry-run never touches the sheet and returns the W1–W3 proof. Live: idempotent
+// Append checkpoint rows. An explicit dry-run never touches Supabase and returns
+// the W1–W3 proof. Live: idempotent
 // append (exact-retry rows are skipped; a same-key row with DIFFERENT content is an
 // append-only violation and fails closed — a revision must bump plan_version).
 async function _append(rows, opts = {}) {
   const list = Array.isArray(rows) ? rows : [];
-  // Explicit dry-run OR the owner gate is closed (F10A/B/C default) → never write.
-  if (opts.test_mode === true || !LIVE_WRITE_ENABLED) {
-    return _dryRunResult(list, opts.test_mode === true ? 'test_mode' : 'write_disabled');
+  if (opts.test_mode === true) {
+    return _dryRunResult(list, 'test_mode');
   }
   if (!list.length) {
     return { sheet_written: false, no_write_confirmed: true, written: 0, skipped: 0, tab_missing: false, reason: 'empty' };
@@ -96,16 +77,27 @@ async function _append(rows, opts = {}) {
   // a separate metadata probe. `null` means unreadable, which is NOT absence: the previous
   // `_tabExists()` swallowed every failure into `false` and so reported a momentary outage
   // as "the owner has not created the tab yet". It now fails closed with its own reason.
-  const ledger = await _readLedger();
-  if (ledger === null) {
+  // The ledger rows for the sessions this batch touches, from Supabase — the
+  // authority for plan sets and revisions since the S4 cutover.
+  //
+  // `tab_missing` cannot happen any more: it meant "the owner has not created the
+  // Session_Plan_Sets tab yet", and a Supabase table created by the migration
+  // cannot be absent at runtime. The field stays in every result shape because
+  // callers and `services/turnWriteArtifact.js` branch on it; it is now always
+  // false. `ledger_read_failed` still fails closed on an unreadable authority.
+  const sessionIds = [...new Set(list
+    .map((row) => String(row[SESSION_IDX] == null ? '' : row[SESSION_IDX]).trim())
+    .filter(Boolean))];
+  let ledgerRows = [];
+  try {
+    for (const sessionId of sessionIds) {
+      ledgerRows = ledgerRows.concat(await workoutAuthority.planSetRows({ sessionId }));
+    }
+  } catch (_) {
     return { sheet_written: false, no_write_confirmed: true, written: 0, skipped: 0, tab_missing: false, reason: 'ledger_read_failed' };
   }
-  if (!ledger.present) {
-    // Live enabled but the owner has not created the tab yet → 503-style no-op.
-    return { sheet_written: false, no_write_confirmed: true, written: 0, skipped: 0, tab_missing: true, reason: 'tab_missing' };
-  }
 
-  const existing = _existingByKey(ledger.rows);
+  const existing = _existingByKey(ledgerRows);
   const seen = new Map();
   const toAppend = [];
   for (const row of list) {
@@ -114,7 +106,7 @@ async function _append(rows, opts = {}) {
     if (prior) {
       if (_contentEqual(prior, row)) continue; // exact retry → skip (idempotent)
       throw new Error(
-        `sessionPlanSetsStore: revision collision on idempotency_key ${key} — a changed recommendation for the same (session_id, plan_version, plan_item_id, set_index) must bump plan_version; Session_Plan_Sets is append-only and never mutates a prior row`
+        `sessionPlanSetsStore: revision collision on idempotency_key ${key} — a changed recommendation for the same (session_id, plan_version, plan_item_id, set_index) must bump plan_version; the set ledger is append-only and never mutates a prior row`
       );
     }
     seen.set(key, row);
@@ -125,27 +117,18 @@ async function _append(rows, opts = {}) {
   if (!toAppend.length) {
     return { sheet_written: false, no_write_confirmed: true, written: 0, skipped, tab_missing: false, reason: 'all_idempotent_skips' };
   }
-  await _ensureHeaderRow();
-  // sheets.appendRows returns the raw Google API response — the AUTHORITATIVE write
-  // proof is response.data.updates.{updatedRange,updatedRows}, exactly as the
-  // Log_Cleaned/Effort write path extracts it (index.js). Never return the raw object
-  // as `range` (it is not the A1 proof the F10D closeout seal needs).
-  const response = await sheets.appendRows(SESSION_PLAN_SETS_TAB, toAppend);
-  // Supabase hot-path migration, PR S2 — the SHADOW write, hooked at the append so
-  // the mirror projects exactly the rows that landed. TEMPORARY; S4 deletes it
-  // (docs/SUPABASE_HOT_PATH_MIGRATION.md §5.2). Fire-and-forget and total: Sheets
-  // stays the sole authority and a shadow failure changes nothing below.
-  migrationShadow.shadowPlanSetRows(toAppend, { route: SESSION_PLAN_SETS_TAB });
-  const updates = response && response.data && response.data.updates ? response.data.updates : null;
+
+  const result = await workoutAuthority.appendPlanSetRows(toAppend);
   return {
     sheet_written: true,
     no_write_confirmed: false,
-    written: toAppend.length,
-    skipped,
+    written: result.inserted,
+    skipped: skipped + result.skipped,
     tab_missing: false,
-    range: updates ? (updates.updatedRange || null) : null,
-    rows_written: updates ? Number(updates.updatedRows || 0) : null,
-  };
+    // A range is a Sheets concept and there is no Sheets write here. Reporting a
+    // fabricated A1 range would be a false proof field.
+    range: null,
+    rows_written: result.inserted,  };
 }
 
 // ── public API — creation-time checkpoints ──────────────────────────────────────
@@ -198,7 +181,6 @@ function _colLetter(n) {
   while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = (n - m - 1) / 26; }
   return s;
 }
-const SEAL_COL_LETTER = _colLetter(SEAL_IDX + 1);
 
 // Read one session's raw ledger rows (for the F10D closeout summary). Returns []
 // when the tab is missing or the session has none (a legacy / pre-enablement
@@ -208,39 +190,37 @@ const SEAL_COL_LETTER = _colLetter(SEAL_IDX + 1);
 // PR #1068): a metadata outage must never be collapsed into "the tab doesn't
 // exist" — the seal fails closed on it, and the summary flags it.
 //   → { present: boolean }  when the metadata call succeeded
-//   → null                  when the metadata call itself failed
-// Read the ledger rows AND report which of the three outcomes occurred, in ONE metered
-// request instead of two.
+// Read this session's ledger rows from Supabase — the authority since the S4
+// cutover — and report which outcome occurred.
 //
-// This used to be a `spreadsheets.get` probe followed by the rows read — two requests to
-// answer one question, on every ledger operation. A SUCCESSFUL rows read is strictly
-// better evidence of presence than the probe was: more current, and free. The three
-// outcomes are unchanged and each still means exactly what it meant:
-//   { present: true, rows }  — the tab is there and these are its rows
-//   { present: false }       — CONFIRMED absent by `confirmTabMissing`, which is the one
-//                              authority for that fact and needs its own successful tab
-//                              listing to say so. A verified empty ledger.
-//   null                     — unreadable. Fails closed; never a verified empty seal.
-async function _readLedger() {
+// It used to have THREE outcomes because a Google Sheets tab can genuinely be
+// absent, and proving absence needed its own metadata read. A Supabase table
+// created by the migration cannot be absent at runtime, so `present:false` is no
+// longer reachable and the shape collapses to two:
+//
+//   { present: true, rows }  — these are the session's rows (possibly none)
+//   null                     — UNREADABLE. Fails closed; never a verified empty
+//                              seal. This is the outcome that matters, and it is
+//                              unchanged: a transient failure must never claim a
+//                              verified closeout while real rows sit unstamped.
+//
+// `present:false` is retained in the shape so the callers' branches stay intact;
+// nothing produces it.
+async function _readLedger(sessionId = null) {
   try {
-    const rows = await sheets.getSheetRows(SESSION_PLAN_SETS_TAB);
+    const rows = await workoutAuthority.planSetRows({ sessionId });
     return { present: true, rows: Array.isArray(rows) ? rows : [] };
-  } catch (error) {
-    try {
-      if (await sheets.confirmTabMissing(error, SESSION_PLAN_SETS_TAB)) return { present: false, rows: [] };
-    } catch (_) { /* could not confirm ⇒ not evidence of absence ⇒ unreadable */ }
+  } catch (_) {
     return null;
   }
 }
-
 async function readLedgerRows(sessionId) {
   const sid = String(sessionId == null ? '' : sessionId).trim();
   if (!sid) return [];
-  const ledger = await _readLedger();
+  const ledger = await _readLedger(sid);
   if (ledger === null) return null;      // unreadable — the caller must flag it
-  if (!ledger.present) return [];        // confirmed absent — a legacy/no-ledger session
-  return (Array.isArray(ledger.rows) ? ledger.rows : []).filter(r =>
-    Array.isArray(r) && String(r[SID_IDX] == null ? '' : r[SID_IDX]).trim() === sid);
+  // The read is scoped to the session, so no in-memory filter is needed.
+  return Array.isArray(ledger.rows) ? ledger.rows : [];
 }
 
 async function sealCloseout(session, closeoutWriteId, opts = {}) {
@@ -250,8 +230,8 @@ async function sealCloseout(session, closeoutWriteId, opts = {}) {
   const writeId = String(closeoutWriteId == null ? '' : closeoutWriteId).trim();
   if (!writeId) throw new Error('sessionPlanSetsStore: closeout_write_id is required');
 
-  const dryRun = opts.test_mode === true || !LIVE_WRITE_ENABLED;
-  const dryReason = opts.test_mode === true ? 'test_mode' : 'write_disabled';
+  const dryRun = opts.test_mode === true;
+  const dryReason = 'test_mode';
   const dryProof = { sheet_written: false, no_write_confirmed: true, dry_run: true, reason: dryReason };
 
   // Read the ledger (read-only — used by both the dry-run preview counts and the
@@ -260,7 +240,7 @@ async function sealCloseout(session, closeoutWriteId, opts = {}) {
   // ledger (metadata or row read failed) is a ledger failure and FAILS CLOSED
   // (Codex P1, PR #1068): a transient outage must never claim a verified closeout
   // while real rows may sit unstamped.
-  const ledger = await _readLedger();
+  const ledger = await _readLedger(session_id);
   if (ledger === null) {
     const failed = { sealed: 0, already_sealed: 0, sealed_ok: false, reason: 'ledger_read_failed' };
     return dryRun
@@ -333,30 +313,42 @@ async function sealCloseout(session, closeoutWriteId, opts = {}) {
     return { sheet_written: false, no_write_confirmed: true, sealed: 0, already_sealed: alreadySealed, sealed_ok: true, reason: 'all_sealed' };
   }
 
-  // Data row i sits at sheet row i + 2 (row 1 is the header; rows are 1-based).
-  const cells = toStamp.map(m => ({ row: m.i + 2, value: writeId }));
-  const response = await sheets.updateColumnCells(SESSION_PLAN_SETS_TAB, SEAL_COL_LETTER, cells);
-  const updatedCells = response && response.data ? Number(response.data.totalUpdatedCells) : NaN;
-  if (updatedCells !== cells.length) {
+  // THE SEAL IS A PREDICATE NOW, NOT A SET OF ROW POSITIONS.
+  //
+  // It used to compute each row's sheet position (`row = i + 2`) from a fresh read
+  // and stamp those cells by column letter. That was the one place production wrote
+  // by POSITION, and it re-derived positions every time precisely because a stored
+  // one could drift. Supabase stamps every unsealed row of the session in one
+  // statement, so there is no position to derive and nothing to drift.
+  //
+  // The PROOF is unchanged in kind: the seal claims success only when the number of
+  // rows actually stamped matches the number this function decided to stamp. A
+  // mismatch is still `seal_proof_mismatch` and still refuses to claim a verified
+  // closeout.
+  let sealedCount;
+  try {
+    sealedCount = await workoutAuthority.sealPlanSets(session_id, writeId);
+  } catch (_) {
     return {
-      sheet_written: true, sealed: 0, already_sealed: alreadySealed, sealed_ok: false,
-      reason: 'seal_proof_mismatch', expected_cells: cells.length,
-      updated_cells: Number.isFinite(updatedCells) ? updatedCells : null,
+      sheet_written: false, no_write_confirmed: true, sealed: 0,
+      already_sealed: alreadySealed, sealed_ok: false, reason: 'seal_write_failed',
     };
   }
-  // S2 shadow: the seal reached the tab, so the mirror's closeout_write_id must
-  // carry it too — the sweep compares that column, and a seal present in Sheets and
-  // absent in Supabase is a real content divergence, not noise to be filtered out.
-  migrationShadow.shadowPlanSetSeal(session_id, writeId, { route: SESSION_PLAN_SETS_TAB });
+  if (sealedCount !== toStamp.length) {
+    return {
+      sheet_written: true, sealed: 0, already_sealed: alreadySealed, sealed_ok: false,
+      reason: 'seal_proof_mismatch', expected_cells: toStamp.length,
+      updated_cells: Number.isFinite(sealedCount) ? sealedCount : null,
+    };
+  }
   return {
-    sheet_written: true, no_write_confirmed: false, sealed: cells.length,
-    already_sealed: alreadySealed, sealed_ok: true, column: SEAL_COL_LETTER,
+    sheet_written: true, no_write_confirmed: false, sealed: sealedCount,
+    already_sealed: alreadySealed, sealed_ok: true,
   };
 }
 
 module.exports = {
   SESSION_PLAN_SETS_TAB,
-  LIVE_WRITE_ENABLED,
   checkpointAcceptedPlan,
   checkpointRevision,
   checkpointImplicit,

@@ -62,10 +62,12 @@ const ALLOWED_KEYS = [
   'owner_action_required',
   'owner_action_codes',
   'source_freshness',
-  // Supabase hot-path migration (PR S2). §3.8 names `npm run atlas:status` as an
-  // immediate consumer of atlas.migration_divergences: staleness and drift must be
-  // visible before they are fatal. TEMPORARY in part — the divergence counters go
-  // with the bridge at S4; the catalog generation's age is permanent.
+  // The Supabase hot path, after the S4 cutover. The divergence counters that used
+  // to live here went with the bridge, exactly as their sunset condition said they
+  // would: they compared two authorities, and there is one. What replaced them is
+  // the EXPORT BACKLOG — the mirror is asynchronous and non-critical now, so it can
+  // fall behind without anything failing, and a backlog nobody can see is a backlog
+  // nobody clears.
   'supabase_migration',
   'unavailable_sources'
 ];
@@ -88,21 +90,20 @@ function toBoolOrNull(value) {
   return null;
 }
 
-// The Supabase migration block, normalised so it can never report a FALSE GREEN.
+// The Supabase block, normalised so it can never report a FALSE GREEN.
 //
-// `observed:false` means nobody looked — it is NOT "zero divergences". Every count
-// is null until a real read produced it, and a read that failed says so with its
-// reason. A zero here is only ever a zero the database actually returned.
+// `observed:false` means nobody looked — it is NOT "zero". Every count is null
+// until a real read produced it, and a read that failed says so with its reason. A
+// zero here is only ever a zero the database actually returned. That rule is the
+// whole point of this function and it is unchanged; only the fields moved.
 function normalizeSupabaseMigration(raw) {
   const base = {
     observed: false,
     reason: 'not_observed',
     configured: null,
-    shadow_write_enabled: null,
-    open_divergences: null,
-    oldest_open_divergence_at: null,
-    catalog_generation_age_seconds: null,
-    catalog_servable: null,
+    catalog_rows: null,
+    export_backlog: null,
+    export_blocked: null,
   };
   if (!raw || typeof raw !== 'object') return base;
   const numberOrNull = (value) => (typeof value === 'number' && Number.isFinite(value) ? value : null);
@@ -110,13 +111,9 @@ function normalizeSupabaseMigration(raw) {
     observed: raw.observed === true,
     reason: raw.reason != null ? String(raw.reason) : (raw.observed === true ? 'read_ok' : 'not_observed'),
     configured: toBoolOrNull(raw.configured),
-    shadow_write_enabled: toBoolOrNull(raw.shadow_write_enabled),
-    open_divergences: raw.observed === true ? numberOrNull(raw.open_divergences) : null,
-    oldest_open_divergence_at: raw.observed === true && raw.oldest_open_divergence_at != null
-      ? String(raw.oldest_open_divergence_at)
-      : null,
-    catalog_generation_age_seconds: raw.observed === true ? numberOrNull(raw.catalog_generation_age_seconds) : null,
-    catalog_servable: raw.observed === true ? toBoolOrNull(raw.catalog_servable) : null,
+    catalog_rows: raw.observed === true ? numberOrNull(raw.catalog_rows) : null,
+    export_backlog: raw.observed === true ? numberOrNull(raw.export_backlog) : null,
+    export_blocked: raw.observed === true ? numberOrNull(raw.export_blocked) : null,
   };
 }
 
@@ -470,14 +467,13 @@ function buildServerStatus(deploy = {}) {
     flight_recorder_enabled: facts.flight_recorder_enabled,
     synthetic_rows_remaining: null,
     // The public endpoint never opens a database connection — its contract is
-    // read-only over the deployed checkout and env presence. The divergence
-    // counters are read by the CLI, which may connect as atlas_readonly. Reporting
-    // "not observed here" is honest; reporting zero would not be.
+    // read-only over the deployed checkout and env presence. The counters are read
+    // by the CLI, which may connect as atlas_readonly. Reporting "not observed
+    // here" is honest; reporting zero would not be.
     supabase_migration: {
       observed: false,
       reason: 'not_observed_from_endpoint',
       configured: (process.env.ATLAS_SUPABASE_APP_URL || '').trim().length > 0,
-      shadow_write_enabled: process.env.ATLAS_SUPABASE_SHADOW_WRITE === '1',
     }
   });
 }
@@ -529,13 +525,10 @@ function renderHuman(status) {
   lines.push(`  Synthetic rows remaining: ${s.synthetic_rows_remaining == null ? 'unknown (not scanned)' : s.synthetic_rows_remaining}`);
   const sm = s.supabase_migration || {};
   if (sm.observed === true) {
-    const oldest = sm.oldest_open_divergence_at ? ` (oldest ${sm.oldest_open_divergence_at})` : '';
-    const catalog = sm.catalog_generation_age_seconds == null
-      ? 'catalog=none'
-      : `catalog=${sm.catalog_generation_age_seconds}s ${sm.catalog_servable ? 'servable' : 'NOT SERVABLE'}`;
-    lines.push(`  Supabase:    shadow=${sm.shadow_write_enabled ? 'on' : 'off'} · open_divergences=${sm.open_divergences}${oldest} · ${catalog}`);
+    const blocked = sm.export_blocked ? ` · export_blocked=${sm.export_blocked} (OWNER ACTION)` : '';
+    lines.push(`  Supabase:    catalog_rows=${sm.catalog_rows} · export_backlog=${sm.export_backlog}${blocked}`);
   } else {
-    lines.push(`  Supabase:    not observed (${sm.reason || 'not_observed'}) — this is NOT a zero-divergence result`);
+    lines.push(`  Supabase:    not observed (${sm.reason || 'not_observed'}) — this is NOT a clean result`);
   }
   lines.push(`  Owner action: ${s.owner_action_required ? (s.owner_action_codes || []).join(', ') || 'yes' : 'none'}`);
   const unavail = (s.unavailable_sources || []).map(x => x && x.source).filter(Boolean);

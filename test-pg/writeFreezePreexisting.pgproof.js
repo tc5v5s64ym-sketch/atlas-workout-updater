@@ -103,7 +103,7 @@ const readMigration = (file) => fs.readFileSync(path.join(MIGRATIONS, file), 'ut
 //   `fullyPermissive`    — also delete that postcondition, restoring the whole
 //                          pre-ruling posture. Now nothing refuses, and the
 //                          drifted object is adopted.
-const POSTCONDITION_BLOCK = /\nDO \$\$\nDECLARE\n  offending text;[\s\S]*?\nEND\n\$\$;\n/;
+const POSTCONDITION_BLOCK = /\r?\nDO \$\$\r?\nDECLARE\r?\n  offending text;[\s\S]*?\r?\nEND\r?\n\$\$;\r?\n/;
 
 // The postcondition exactly as `1716066` shipped it — a cross product over a
 // HAND-MAINTAINED privilege list that omitted TRIGGER. Kept verbatim so "weakening

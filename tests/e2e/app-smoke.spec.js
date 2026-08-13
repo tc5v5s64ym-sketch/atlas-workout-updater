@@ -96,12 +96,21 @@ async function mockAtlasApis(page, capture = {}) {
         data: {
           sheet_write: 'success',
           sheet_written: true,
+          write_authority: 'supabase_transaction',
           // The real server reports the identity it WROTE under — it may have allocated
           // one for a payload that carried none — and the client addresses undo and the
           // readback verification to it. A mock that omits it leaves the client unable to
           // verify its own write, which is not what production does.
           session_id: body.session_id || 'PW-E2E-SESSION',
+          write_id: body.write_id,
           log_rows_written: 3,
+          log_write_verification: {
+            verified: true,
+            authority: 'supabase_transaction',
+            reason: null,
+            rows_written: 3,
+            rows_submitted: 3,
+          },
           logAppendedRange: 'Log_Cleaned!A200:L202'
         }
       }));
@@ -658,7 +667,7 @@ test('Session review surfaces the substitution verdict as a read-only note, and 
 
   // Approval still works with the note present — Save drives the single write.
   await page.locator('.rv-save').click();
-  await expect(page.locator('#logger-status')).toContainText('Workout written to Google Sheets');
+  await expect(page.locator('#logger-status')).toContainText('Workout saved.');
   expect(capture.writeRequests).toHaveLength(1);
   expect(capture.writeRequests[0].test_mode).toBeUndefined();
 });
@@ -675,8 +684,8 @@ test('Approve: the review card Save sends write_id only after the dry-run and sh
   await expect(saveBtn).toBeEnabled();
   await saveBtn.click();
 
-  await expect(page.locator('#logger-status')).toContainText('Workout written to Google Sheets');
-  await expect(page.locator('#logger-status')).toContainText('Verified in Sheet');
+  await expect(page.locator('#logger-status')).toContainText('Workout saved.');
+  await expect(page.locator('#logger-status')).toContainText('Verified ✓');
   expect(capture.writeRequests).toHaveLength(1);
   expect(capture.writeRequests[0].write_id).toBe(previewWriteId);
   expect(capture.writeRequests[0].test_mode).toBeUndefined();
@@ -687,12 +696,11 @@ test('After save: the review card flips to Saved with an Undo, and is the single
   await runToReview(page);
   await page.locator('.rv-save').click();
 
-  // The legacy proof card stays hidden; the review card itself confirms.
-  await expect(page.locator('#logger-status')).toBeHidden();
+  await expect(page.locator('#logger-status')).toContainText('Workout saved.');
   const review = page.locator('.review');
   await expect(review).toHaveClass(/done/);
   await expect(review.locator('.rv-saved')).toBeVisible();
-  await expect(review.locator('.rv-saved')).toContainText('Saved to your sheet');
+  await expect(review.locator('.rv-saved')).toContainText('Saved to Atlas');
   await expect(review.locator('.rv-undo')).toBeVisible();   // the single Undo affordance
   await expect(page.locator('.save-inline-btn')).toHaveCount(0);
 });
@@ -1139,7 +1147,7 @@ async function mockSixExerciseSession(page, capture) {
     }
     capture.writeRequests.push(body);
     return route.fulfill(json({ status: 'success', data: {
-      sheet_write: 'success', sheet_written: true,
+      sheet_write: 'success', sheet_written: true, write_authority: 'supabase_transaction',
       log_rows_written: (body.log_rows || []).length, logAppendedRange: 'Log_Cleaned!A200:L217'
     } }));
   });

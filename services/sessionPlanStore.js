@@ -23,8 +23,7 @@
 // (PR-C) so the whole data loop is wired and tested together; until then this module
 // is staged in config/wiring-allowlist.json.
 
-const sheets = require('../sheets');
-const migrationShadow = require('./migrationShadow');
+const workoutAuthority = require('./workoutAuthority');
 const { sessionPlansColumns } = require('../config/columns');
 const {
   buildPlanAcceptedEvents,
@@ -41,12 +40,14 @@ const CONTENT_COLS = sessionPlansColumns
   .filter(({ c }) => c !== 'recorded_at')
   .map(({ i }) => i);
 
+const SESSION_IDX = sessionPlansColumns.indexOf('session_id');
+
 function _nowIso() {
   return new Date().toISOString();
 }
 
 // Index already-read rows by idempotency_key (data rows only; the header is stripped by
-// sheets.getSheetRows). Pure — the read itself now happens in `_append`, because that read
+// the authority read). Pure — the read itself happens in `_append`.
 // is also what proves the tab exists.
 function _existingByKey(rows) {
   const byKey = new Map();
@@ -62,48 +63,42 @@ function _contentEqual(a, b) {
   return CONTENT_COLS.every(i => String(a[i] == null ? '' : a[i]) === String(b[i] == null ? '' : b[i]));
 }
 
-// Ensure a header row exists before the first data append, so sheets.getSheetRows
-// (which strips row 0 as a header) never swallows the first persisted event.
-async function _ensureHeaderRow() {
-  let firstRow = [];
-  try {
-    const top = await sheets.readRange(`${SESSION_PLANS_TAB}!A1:A1`);
-    firstRow = Array.isArray(top) ? top : [];
-  } catch (_) {
-    firstRow = [];
-  }
-  const hasHeader = firstRow.length > 0 && Array.isArray(firstRow[0]) && String(firstRow[0][0] || '').trim() !== '';
-  if (!hasHeader) await sheets.appendRows(SESSION_PLANS_TAB, [[...sessionPlansColumns]]);
-}
-
 // Append event rows idempotently. Returns { written, skipped, tab_missing }.
+//
+// ── SUPABASE IS THE AUTHORITY (S4 cutover) ──────────────────────────────────
+//
+// Accepted plans, item outcomes and session closeout are three of the seven
+// migrated concepts. They used to live in the `Session_Plans` tab, which forced
+// three Google Sheets calls per append: a header probe, a whole-tab read to build
+// the idempotency index, and the append itself.
+//
+// WHAT IS PRESERVED, EXACTLY:
+//
+//   - IDEMPOTENCY. `idempotency_key` is the primary key in Supabase, so a repeat
+//     of the same event is skipped rather than duplicated — enforced by the
+//     database instead of by a read-then-compare race.
+//   - COLLISION DETECTION. A changed event under an existing key is still a
+//     THROW, not a silent overwrite: `Session_Plans` was append-only and the
+//     migrated concept keeps that contract. A revision must bump plan_version.
+//   - FAIL CLOSED. A read or write failure still surfaces; nothing is inferred
+//     from an outage.
+//
+// WHAT IS GONE: `tab_missing`. It was a VERIFIED_EMPTY_SEAL_REASON that existed
+// because a Sheets tab can genuinely be absent, and proving absence needed its own
+// metadata read. A Supabase table cannot be absent at runtime — the migration
+// created it — so the field is reported `false` permanently rather than removed,
+// because `services/turnWriteArtifact.js` still reads it.
 async function _append(rows) {
   const out = { written: 0, skipped: 0, tab_missing: false };
   if (!rows.length) return out;
 
-  // EXISTENCE IS PROVEN BY THE READ WE ALREADY NEED, not by a separate probe.
-  //
-  // This used to call `spreadsheets.get` first, purely to ask "does the tab exist?", and
-  // then read the rows anyway — two metered requests to answer one question, on every
-  // ledger append. A SUCCESSFUL rows read is strictly better evidence than the metadata
-  // probe was: it is more current (nothing can happen between the probe and the read) and
-  // it costs nothing extra.
-  //
-  // Absence is still PROVEN, never inferred. Only a `range_unresolved` failure can mean
-  // "missing", and only `confirmTabMissing` — the one authority for that fact, which
-  // requires its own metadata read to SUCCEED — may conclude it. Every other read failure
-  // keeps the previous behaviour exactly: treat it as "no prior rows" and let the append's
-  // own idempotency guard apply. `tab_missing` is a VERIFIED_EMPTY_SEAL_REASON, so it must
-  // never be reachable from an outage.
+  // The existing events for the sessions this batch touches. Scoped by session,
+  // because a table can be filtered and a tab could not — the old code read every
+  // row in the tab to answer the same question.
+  const sessionIds = [...new Set(rows.map((row) => String(row[SESSION_IDX] == null ? '' : row[SESSION_IDX]).trim()).filter(Boolean))];
   let rowsRead = [];
-  try {
-    rowsRead = await sheets.getSheetRows(SESSION_PLANS_TAB);
-  } catch (error) {
-    if (await sheets.confirmTabMissing(error, SESSION_PLANS_TAB)) {
-      out.tab_missing = true;
-      return out;
-    }
-    rowsRead = [];
+  for (const sessionId of sessionIds) {
+    rowsRead = rowsRead.concat(await workoutAuthority.planEventRows({ sessionId }));
   }
 
   const existing = _existingByKey(rowsRead);
@@ -116,7 +111,7 @@ async function _append(rows) {
     if (prior) {
       if (_contentEqual(prior, row)) { out.skipped += 1; continue; }
       throw new Error(
-        `sessionPlanStore: revision collision on idempotency_key ${key} — a changed event for the same (session_id, plan_version, plan_item_id) must bump plan_version; Session_Plans is append-only and never mutates a prior event`
+        `sessionPlanStore: revision collision on idempotency_key ${key} — a changed event for the same (session_id, plan_version, plan_item_id) must bump plan_version; the plan event ledger is append-only and never mutates a prior event`
       );
     }
     seen.set(key, row);
@@ -124,20 +119,15 @@ async function _append(rows) {
   }
 
   if (toAppend.length) {
-    await _ensureHeaderRow();
-    await sheets.appendRows(SESSION_PLANS_TAB, toAppend);
-    out.written = toAppend.length;
-    // Supabase hot-path migration, PR S2 — the SHADOW write, hooked HERE rather
-    // than at the route because this is where the committed rows are known: the
-    // mirror is a projection of what the append actually wrote, not a second
-    // derivation of the same intent. TEMPORARY; S4 deletes it
-    // (docs/SUPABASE_HOT_PATH_MIGRATION.md §5.2). Fire-and-forget and total:
-    // Sheets stays the sole authority and a shadow failure changes nothing here.
-    migrationShadow.shadowPlanEvents(toAppend, { route: SESSION_PLANS_TAB });
+    const result = await workoutAuthority.appendPlanEvents(toAppend);
+    out.written = result.inserted;
+    // A row the database refused as a duplicate is a SKIP, not a silent loss: the
+    // key already carried identical content, which is the same verdict the
+    // read-then-compare above reaches one layer up.
+    out.skipped += result.skipped;
   }
   return out;
 }
-
 // ── public API ────────────────────────────────────────────────────────────────
 
 async function writePlanAccepted(session, items, opts = {}) {

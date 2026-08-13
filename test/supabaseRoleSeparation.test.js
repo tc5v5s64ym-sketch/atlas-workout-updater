@@ -72,8 +72,16 @@ test('NO browser code imports a Supabase client or receives a connection string 
       const entry = path.join(dir, name);
       if (fs.statSync(entry).isDirectory()) { walk(entry); continue; }
       if (!name.endsWith('.js')) continue;
-      const text = fs.readFileSync(entry, 'utf8');
-      if (/supabase|ATLAS_SUPABASE|\bpg\b.*require|postgres:\/\//i.test(text)) {
+      // COMMENTS ARE NOT CODE, and after the S4 cutover the browser shell has to be
+      // able to SAY where the workout is written — "the Save lands in Supabase" is a
+      // fact a reader of this file needs. What must never appear is a client, an
+      // import, a credential or a connection string, so the scan reads executable
+      // lines only.
+      const text = fs.readFileSync(entry, 'utf8')
+        .split(/\r?\n/)
+        .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+        .join('\n');
+      if (/@supabase\/|from\s+['"][^'"]*supabase|require\(['"][^'"]*supabase|ATLAS_SUPABASE|\bpg\b.*require|postgres(?:ql)?:\/\//i.test(text)) {
         offenders.push(path.relative(ROOT, entry));
       }
     }
