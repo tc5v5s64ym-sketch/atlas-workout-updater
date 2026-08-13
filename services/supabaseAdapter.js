@@ -896,8 +896,14 @@ async function readExerciseCatalog(role = 'app') {
  * One transaction: a maintenance run either applies wholly or changes nothing, so
  * a half-applied edit can never be the state a Save reads.
  */
-async function applyCatalogMaintenance({ upserts = [], deletes = [] } = {}) {
-  return withTransaction('migrate', async (client) => {
+// The role is a DEFAULT PARAMETER, never a hard-coded literal, for the same
+// reason `pruneWriteReceipts` uses one: test/supabaseRoleSeparation.test.js proves
+// that no adapter operation hard-codes a privileged connection, so the privileged
+// roles have no request path. A literal here would give the runtime a standing
+// route to a role that can rewrite the catalog, which is exactly what the owner
+// correction's "explicitly owner-controlled mutation" forbids.
+async function applyCatalogMaintenance({ upserts = [], deletes = [] } = {}, role = 'migrate') {
+  return withTransaction(role, async (client) => {
     let upserted = 0;
     for (const row of upserts) {
       await client.query(SQL.upsertExerciseCatalogRow, [
