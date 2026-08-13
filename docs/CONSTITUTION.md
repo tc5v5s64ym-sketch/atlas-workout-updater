@@ -52,7 +52,32 @@ The safety law is unchanged: no blind writes, the dry-run never touches the shee
 
 ## Source of Truth
 
-Google Sheets is the permanent record. The app reads from it and writes to it. There is no secondary database. If Sheets and the app disagree, Sheets wins.
+**Amended by owner instruction 2026-08-07, and again by owner correction 2026-08-13.** The
+text below is the owner's direction and nothing wider; it is recorded in
+`docs/ATLAS_V1_EXECUTION_PLAN.md`.
+
+Storage authority is **per concept**, and each concept has exactly one live authority:
+
+- **Supabase wins** for the migrated workout hot path — workout sessions and their identity,
+  logged sets, Effort, accepted plans and plan events, plan sets and revisions, item
+  outcomes, closeout, and write receipts and idempotency — **and for the exercise catalog**.
+- **Google Sheets wins** for every concept that has not migrated. For those, Sheets is the
+  permanent record, the app reads from it and writes to it, and if Sheets and the app
+  disagree, Sheets wins.
+- **Google Sheets is the export mirror** for the migrated concepts. It is human-readable, it
+  is never required for an active workout to read, save, verify, or close out, and an export
+  failure may create backlog but may never invalidate a workout.
+
+**A Google Sheets quota of any kind must not invalidate or block an active workout or the
+Phase 4 test campaign.** For a migrated concept there is no synchronous Sheets call on the
+workout path, no fallback from Supabase to Sheets, no staleness clock, and no cache standing
+in for the authority.
+
+**The exercise catalog is edited only by the owner**, through an explicit owner-run command
+against Supabase. The runtime may read it and may not change it.
+
+Until a concept's cutover is complete, Google Sheets remains its live authority whatever the
+repository already contains. Building a destination does not move an authority.
 
 ## Ownership
 

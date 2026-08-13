@@ -349,6 +349,51 @@ The remaining fields below apply to **16a**.
 - **Later phase.** Phase 5e — "plumb training level, equipment profile, and readiness from their defined sources; close Issue #914. Finishes H-07."
 - **Evidence.** `services/athleteContext.js:79-80` (nullable fields); `services/profileGoal.js:14` (the env-var source); the requirer list above.
 
+## 18b. Exercise catalog
+
+Recorded separately from concept 18 because the owner moved it separately, and by a
+different mechanism: concept 18 migrates workout DATA and keeps Sheets as its export
+mirror, while this concept changes who may EDIT reference data.
+
+- **Current live authority.** **Google Sheets `Exercise_Catalog`**, read in-request by
+  `sheets.getExerciseCatalog()` from `POST /api/log-workout`, `POST /api/complete-workout`,
+  `routes/reads.js` and `routes/coachOps.js`. **This has not moved yet** — the repository
+  holds the destination, and the Save path still reads the tab.
+- **Intended sole authority.** **Supabase `atlas.exercise_catalog`**, read through
+  `services/exerciseCatalog.js`.
+- **Competing authority.** **YES, and it is the open defect.** The Supabase authority is
+  built (schema, adapter surface, reader module, owner CLI) and is **not yet wired**, so both
+  stores exist and Sheets still decides. This is honest bookkeeping, not authorization to
+  leave it: the wiring is the remaining `S4` work.
+- **Status.** **TRANSITIONAL — destination built, cutover outstanding.**
+- **Exact production consumer.** Intended: `getExerciseCatalog()`'s four call sites above.
+  Current: none — `services/exerciseCatalog.js` has no production caller yet.
+- **Compatibility bridge.** None, deliberately. There is no fallback from Supabase to
+  Sheets and no cache: the owner correction forbids both.
+- **Sunset condition.** The Sheets `Exercise_Catalog` runtime read is deleted when the four
+  call sites move to `services/exerciseCatalog.js`. At that point `atlas.exercise_catalog` is
+  the sole authority and the tab stops being read at all.
+- **Owner authorization.** **OWNER CORRECTION 2026-08-13**, recorded in
+  `docs/ATLAS_V1_EXECUTION_PLAN.md`. It **supersedes ruling D1**, which had kept Sheets as
+  the editing authority and made Supabase a freshness-bounded read mirror. The correction
+  removed the chain `Sheets tab → background sync → freshness clock → stale mirror → Save
+  503`, because a Google Sheets quota of any kind must not block an active workout or the
+  Phase 4 test campaign.
+- **What was removed.** `services/exerciseCatalogMirror.js`, `scripts/atlas-catalog-sync.js`,
+  the `atlas:catalog-sync` script, `atlas.exercise_catalog_sync`, the `sync_id` column,
+  `CATALOG_MIRROR_MAX_AGE`, the currency verdict, and the catalog concept in the backfill,
+  the read-parity comparison and the reconciliation sweep.
+- **Mutation control.** Owner-only, enforced by grant rather than by convention: the S4
+  catalog migration revokes `atlas_app`'s `INSERT` and `DELETE`, so the runtime can read the
+  catalog and cannot change it. Maintenance is `npm run atlas:catalog`
+  (`scripts/atlas-catalog-admin.js`) running as `atlas_migrate`, a role never configured in
+  the server runtime.
+- **Evidence.** `test-pg/exerciseCatalog.pgproof.js` (the runtime is refused every mutation
+  as the real role; maintenance is atomic; no freshness table survives; the catalog is fully
+  readable while every Sheets call throws 429), `test/supabaseRoleSeparation.test.js` (no
+  request path names the mutation function), and `test/allSheets429.test.js` (the measured
+  workout-critical Sheets call census).
+
 ## 18. Workout hot-path durable record
 
 Seven concepts share one entry because one owner instruction moves all seven together:
@@ -380,7 +425,7 @@ revisions, item outcomes, and closeout and write receipts.
   | Component | What actually gates it |
   |---|---|
   | The **request-path shadow lane** (`services/migrationShadow.js` → `supabaseAdapter.isShadowWriteEnabled`) | **Both** `ATLAS_SUPABASE_SHADOW_WRITE=1` **and** `ATLAS_SUPABASE_APP_URL` |
-  | The **operator reconciliation tools** — `npm run atlas:sweep`, `npm run atlas:repair`, `npm run atlas:catalog-sync` | `ATLAS_SUPABASE_APP_URL` alone (`adapter.isConfigured('app')`). **Not** the shadow-write flag: they run with it off |
+  | The **operator reconciliation tools** — `npm run atlas:sweep`, `npm run atlas:repair` | `ATLAS_SUPABASE_APP_URL` alone (`adapter.isConfigured('app')`). **Not** the shadow-write flag: they run with it off |
   | The **receipt prune** | `ATLAS_SUPABASE_MIGRATE_URL` — it runs as `atlas_migrate`, the only role holding `DELETE` (§8.2) |
   | The **`atlas:status` Supabase read** | `ATLAS_SUPABASE_READONLY_URL` or `ATLAS_SUPABASE_APP_URL` |
 

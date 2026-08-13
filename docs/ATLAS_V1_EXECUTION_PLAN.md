@@ -597,6 +597,76 @@ Corrected as directed, as a **state-machine/authority fix rather than another re
 
 ---
 
+### OWNER CORRECTION 2026-08-13 — the EXERCISE CATALOG migrates to Supabase; ruling D1 is SUPERSEDED
+
+**This correction is the owner authorization; it governs because it is recorded here.** It
+also **is the owner-supplied Constitution direction that ruling D2 required**, and no wider
+product policy is authorized by it.
+
+**Why it exists.** The migration exists because Google Sheets quota exhaustion invalidated
+Phase 4 testing. Under ruling D1 the athlete Save path still depended on Google Sheets for
+the catalog, one step removed:
+
+```
+Sheets Exercise_Catalog -> background sync -> Supabase freshness clock
+  -> CATALOG_MIRROR_MAX_AGE -> stale mirror -> Save 503
+```
+
+**The ruling.**
+
+- **Supabase is the intended sole live authority for `Exercise_Catalog`**, alongside the seven
+  hot-path concepts already named.
+- **Google Sheets must not remain a runtime, editing or serving authority for
+  `Exercise_Catalog`** if Atlas production must periodically read Sheets to keep workout Saves
+  alive.
+- **Remove** the permanent Sheets → sync → freshness clock → stale mirror → Save 503
+  dependency. **Do not** increase the max age, serve arbitrary staleness, retry Sheets harder,
+  add a cache, retain two authorities, or fall back from Supabase to Sheets.
+- **One winner: Supabase.**
+- Sheets may remain only for asynchronous human-readable exports and mirrors, telemetry, or
+  unrelated explicitly Sheets-owned concepts outside the workout critical path. **Those
+  failures must never fail a workout.**
+- **Preserve the validated catalog already in Supabase.** Choose the smallest owner-safe
+  maintenance mechanism; build no generic admin framework and no unnecessary UI. **Any
+  mutation mechanism must be explicitly owner-controlled.**
+
+**Classification: authority defect / incomplete authority cutover.** Current catalog
+authority: Sheets projected into Supabase. Intended sole authority: Supabase. Loser removed:
+the Sheets `Exercise_Catalog` runtime and editing dependency. Bridge: only strictly bounded
+`S4` transition machinery. Sunset: successful `S4` cutover, with no permanent
+Sheets-to-catalog freshness bridge. **Net permanent complexity must decrease.**
+
+**The acceptance equation, which is the gate this correction is measured against.**
+
+> Google Sheets completely quota-exhausted + Atlas production workout = workout still passes.
+
+The proof forces every Google Sheets read and write available to the process to return
+`429 RESOURCE_EXHAUSTED` against the real production architecture, runs a representative
+complete workout and the five-session workload shape, and counts every Sheets call classified
+as workout-critical synchronous, asynchronous mirror/export, or telemetry/unrelated. **The
+required workout-critical synchronous count is ZERO.** The harness may not be weakened to hide
+a call.
+
+**The seven-day rollback window does NOT delay testing** once the `S4` cutover, the deployed
+proof workout, the all-Sheets-429 proof, the sole-authority proof and the removal of the old
+live authority all pass. It delays only the `atlas.migration_divergences` table drop.
+
+**What this correction does not do.** It changes no counter and no phase. **Rehearsal
+(F-SB4): 0/5 · Stage A: 5/5 COMPLETE · Stage B: 0/5 OPEN.** Phase 5 stays unauthorized and
+`SESSION_PLAN_SETS_WRITE_ENABLED` stays `0`. It authorizes no schema application to
+`Atlas Production`, no deployment, and no cutover.
+
+**Status, recorded honestly.** The destination is built and **the cutover is NOT complete**.
+PR #1291 carries the schema, the adapter surface, `services/exerciseCatalog.js`, the
+owner-run `npm run atlas:catalog`, the removal of the sync and freshness machinery, and the
+all-Sheets-429 measurement. **The four `getExerciseCatalog()` call sites still read Google
+Sheets**, so Sheets remains the live catalog authority today. The measured workout-critical
+synchronous Sheets call count is **6** for one representative workout and **30** across the
+five-session workload — not yet zero. The per-concept record is
+[`docs/ATLAS_SYSTEM_AUTHORITY.md`](ATLAS_SYSTEM_AUTHORITY.md) concept 18b.
+
+---
+
 ### OWNER RULING 2026-08-12 — the PLAN-EVENT version is an opaque TEXT token; the PLAN-SET version stays an INTEGER
 
 **This ruling is the owner authorization; it governs because it is recorded here.** Dale authorized the `S3` plan-event schema correction on 2026-08-12. Classification: **schema-contract defect** — the destination encoded the wrong representation for an existing authoritative concept. It is not an authority defect: `Session_Plans` remains the live authority, and this ruling moves no authority.
