@@ -76,9 +76,6 @@ const fakeSheets = {
   confirmTabMissing: async () => false,
   getHeaderRow: async () => [],
   getSafeSpreadsheetConfig: () => ({}),
-  CATALOG_CACHE_TTL_MS: 60_000,
-  _resetExerciseCatalogCache: () => {},
-  _exerciseCatalogCacheStats: () => ({ hits: 0, fetches: 0 }),
 };
 require.cache[require.resolve('../sheets')] = {
   id: require.resolve('../sheets'), filename: require.resolve('../sheets'), loaded: true, exports: fakeSheets,
@@ -120,6 +117,9 @@ require.cache[require.resolve('../services/vision')] = {
 const writeFreeze = require('../services/writeFreeze');
 const { peekWrite, resetIdempotencyStore } = require('../services/idempotency');
 const session = require('../services/session');
+// The exercise catalog reads Supabase (OWNER CORRECTION 2026-08-13). Stubbed here so
+// the suite never opens a database connection; it delegates to the sheets fixture above.
+require('./helpers/stubExerciseCatalog').installExerciseCatalogStub();
 const { app } = require('../index');
 
 const OPEN_ROW = { id: true, frozen: false, reason: 'dormant', set_by: 'migration:S3', set_at: new Date() };

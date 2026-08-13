@@ -113,6 +113,9 @@ const fakeCoach = {
 const coachPath = require.resolve('../services/coach');
 require.cache[coachPath] = { id: coachPath, filename: coachPath, loaded: true, exports: fakeCoach };
 
+// The exercise catalog reads Supabase (OWNER CORRECTION 2026-08-13). Stubbed here so
+// the suite never opens a database connection; it delegates to the sheets fixture above.
+require('./helpers/stubExerciseCatalog').installExerciseCatalogStub();
 const { app } = require('../index');
 
 let baseUrl;

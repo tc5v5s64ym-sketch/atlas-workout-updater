@@ -316,7 +316,7 @@ function sheetsReadFailureClass(error) {
 // console had shown a 429 storm.
 //
 // This emits ONE machine-readable line per attempt, at the lowest boundary every read
-// passes through, carrying the HTTP request that caused it. `scripts/reconstruct-session-reads.js`
+// passes through, carrying the HTTP request that caused it. `test/allSheets429.test.js`
 // consumes it; nothing infers a count from anything else.
 //
 // Privacy: ranges are A1 notation and tab names. No cell contents, no session ids, no
@@ -458,8 +458,8 @@ async function getSheetsClient() {
 // Request-scoped read batching (F-SB4B session read budget).
 //
 // WHY. Qualifying session 1 spent 78 Sheets reads inside one rolling minute against
-// a 60/minute quota and starved itself. `docs/READ_BUDGET.md` budgets reads PER SAVE,
-// so it could not see that. The reconstruction (scripts/reconstruct-session-reads.js)
+// a 60/minute quota and starved itself. `test/allSheets429.test.js` budgets reads PER SAVE,
+// so it could not see that. The reconstruction (test/allSheets429.test.js)
 // shows the demand is not one expensive read — it is MANY separate `values.get` calls,
 // several of them the SAME range inside the SAME HTTP request.
 //
@@ -701,76 +701,17 @@ async function getColumnValues(tabName, column) {
   return (values[0] || []).slice();
 }
 
-/**
- * Exercise_Catalog — the ONE approved cross-request cache.
- *
- * It qualifies where no other range does: it is reference data the athlete's own writes
- * never touch on the Save path, and it was the single most-read range of the failed
- * session (14 of 78 reads). Every other range in this file stays uncached, because a
- * dedup key, an Effort session id, a Deload_State row, a header row or a ledger record is
- * write-sensitive evidence and a stale copy of it would corrupt a decision.
- *
- * The contract, and the reason for each clause:
- *   • server-owned — the value is read from the sheet, never supplied by a client;
- *   • bounded TTL, at most 60 s — a catalog edit is visible within one minute;
- *   • single-flight — simultaneous misses join ONE request instead of stampeding;
- *   • explicit expiry — an expired entry is DISCARDED at the point it expires, so no
- *     later branch can serve it;
- *   • no stale-after-expiry fallback — a failed refresh THROWS. It never returns the
- *     previous value, because a silently-frozen catalog is how a wrong lift_code gets
- *     written to the permanent record;
- *   • failure propagates — the error keeps the `readWithRetry` stamp, so the truthful
- *     503 classification from PR #1270 still applies to it;
- *   • never fabricates — an empty result is never cached and `[]` is never synthesized
- *     from an error. A caller that sees an empty catalog is seeing the sheet.
- */
-const CATALOG_CACHE_TTL_MS = 60_000;
-let catalogCacheEntry = null;     // { values, expiresAt }
-let catalogCacheInflight = null;  // single-flight
-const catalogCacheStats = { hits: 0, fetches: 0 };
-
-async function getExerciseCatalog({ now = Date.now } = {}) {
-  if (catalogCacheEntry) {
-    if (now() < catalogCacheEntry.expiresAt) {
-      catalogCacheStats.hits += 1;
-      return catalogCacheEntry.values.slice();
-    }
-    // Explicit expiry: drop it here so no path below can fall back to it.
-    catalogCacheEntry = null;
-  }
-  if (catalogCacheInflight) return catalogCacheInflight;
-
-  const range = `Exercise_Catalog!A:Z`;
-  catalogCacheStats.fetches += 1;
-  catalogCacheInflight = (async () => {
-    const sheets = await getSheetsClient();
-    const response = await readWithRetry(range, () => sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range
-    }), { meta: { api: 'values.get', ranges: [range] } });
-    // Outer-array copy for the same reason as readRange, and it matters more here: this
-    // array outlives the request, so one caller's mutation would reach every later one.
-    const values = (response.data.values || []).slice();
-    // An empty catalog is never cached. It is far more likely to be a transient read of a
-    // sheet mid-edit than the truth, and caching it would blind enrichment for a minute.
-    if (values.length > 0) catalogCacheEntry = { values, expiresAt: now() + CATALOG_CACHE_TTL_MS };
-    return values;
-  })();
-
-  try {
-    return await catalogCacheInflight;
-  } finally {
-    catalogCacheInflight = null;
-  }
-}
-
-/** Test-only: forget the catalog cache so a test starts from a cold, honest state. */
-function _resetExerciseCatalogCache() {
-  catalogCacheEntry = null;
-  catalogCacheInflight = null;
-  catalogCacheStats.hits = 0;
-  catalogCacheStats.fetches = 0;
-}
+// THE Exercise_Catalog READ AND ITS CACHE ARE DELETED.
+//
+// OWNER CORRECTION 2026-08-13 made Supabase the SOLE authority for the exercise
+// catalog, so this file no longer reads that tab at all. services/exerciseCatalog.js
+// is the one reader, and index.js, routes/reads.js and routes/coachOps.js call it.
+//
+// The 60-second cross-request cache went with it, and deliberately did not come
+// back anywhere: it existed because this was a quota-metered HTTP call and the
+// single most-read range of the session that starved. A SELECT on an indexed
+// primary key is not that read, and a cache would reintroduce the staleness
+// question the correction exists to delete.
 
 async function getRecentRows(tabName, maxRows = 100) {
   const range = `${tabName}!A:Z`;
@@ -999,7 +940,6 @@ module.exports = {
   updateColumnCells,
   deleteRowsByRange,
   validateConfig,
-  getExerciseCatalog,
   getEffortSessionIds,
   getLogCompositeKeys,
   getRecentRows,
@@ -1029,7 +969,4 @@ module.exports = {
   },
   declareRequestRanges,
   invalidateTabCache,
-  CATALOG_CACHE_TTL_MS,
-  _resetExerciseCatalogCache,
-  _exerciseCatalogCacheStats: () => ({ ...catalogCacheStats })
 };

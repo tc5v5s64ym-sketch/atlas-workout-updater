@@ -40,6 +40,9 @@ const fakeSheets = {
 const sheetsPath = require.resolve('../sheets');
 require.cache[sheetsPath] = { id: sheetsPath, filename: sheetsPath, loaded: true, exports: fakeSheets };
 
+// The exercise catalog reads Supabase (OWNER CORRECTION 2026-08-13). Stubbed here so
+// the suite never opens a database connection; it delegates to the sheets fixture above.
+require('./helpers/stubExerciseCatalog').installExerciseCatalogStub();
 const registerReadRoutes = require('../routes/reads');
 
 const gaxios = (status, message) => Object.assign(new Error(message), {

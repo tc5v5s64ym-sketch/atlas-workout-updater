@@ -96,6 +96,9 @@ require.cache[sheetsPath] = { id: sheetsPath, filename: sheetsPath, loaded: true
 
 const tc = require('../services/turnCorrelation');
 const { buildTurnWriteArtifact } = require('../services/turnWriteArtifact');
+// The exercise catalog reads Supabase (OWNER CORRECTION 2026-08-13). Stubbed here so
+// the suite never opens a database connection; it delegates to the sheets fixture above.
+require('./helpers/stubExerciseCatalog').installExerciseCatalogStub();
 const { app } = require('../index');
 
 const SESSION_ID = 'TC-INT-1';

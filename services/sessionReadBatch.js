@@ -6,7 +6,7 @@
 //
 // WHY THIS EXISTS. Qualifying session 1 (2026-08-05) issued 78 Sheets reads inside one
 // rolling minute against a 60/minute quota and starved itself mid-session. The
-// reconstruction in `scripts/reconstruct-session-reads.js` shows why: a complete
+// reconstruction in `test/allSheets429.test.js` shows why: a complete
 // owner-pattern session is dozens of SEPARATE `values.get` calls, many of them ranges
 // that one HTTP request needs together. `spreadsheets.values.batchGet` carries N such
 // ranges for ONE quota unit, so the fix is to name, per route, what that route needs.

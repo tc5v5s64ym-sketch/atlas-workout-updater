@@ -220,6 +220,9 @@ test('a real Save publishes an adjudicated receipt that matches the append', asy
   };
   t.after(() => { if (previous) require.cache[googleapisPath] = previous; else delete require.cache[googleapisPath]; });
 
+// Hermetic: the catalog reads Supabase (OWNER CORRECTION 2026-08-13). This stub also
+// blanks the ATLAS_SUPABASE_* roles, so no test can open a database connection.
+require('./helpers/stubExerciseCatalog').installExerciseCatalogStub();
   const { app } = require('../index');
   // The idempotency store persists to disk and rehydrates, so a write_id from an earlier
   // run of this file would be replayed as a duplicate — the recorded response, and NO

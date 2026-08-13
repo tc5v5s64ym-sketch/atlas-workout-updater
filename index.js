@@ -11,7 +11,6 @@ const {
   readRange,
   deleteRowsByRange,
   validateConfig,
-  getExerciseCatalog,
   getEffortSessionIds,
   getLogCompositeKeys,
   getSheetRows: getSheetRowsRaw,
@@ -795,6 +794,13 @@ function partitionLogRowsByExisting(formattedRows, existingLogKeys) {
 }
 
 const { generateSessionId, nextAvailableSessionId, sessionIdsFromLogCompositeKeys } = require('./services/sessionId');
+
+// The exercise catalog reads from Supabase, its sole authority (OWNER CORRECTION
+// 2026-08-13). It is NOT imported from ./sheets any more: a Google Sheets quota
+// error must not be able to reach this read, and under ruling D1 it still could.
+// Same header-plus-rows shape, so every parse site below is unchanged.
+const { readExerciseCatalogRows } = require('./services/exerciseCatalog');
+const getExerciseCatalog = () => readExerciseCatalogRows();
 
 function isTestModeEnabled(value) {
   return String(value || '').trim().toLowerCase() === 'true';
@@ -2546,7 +2552,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
     // Read Log_Cleaned's composite keys AT MOST ONCE per request. Two things need
     // them — the session-id allocator below and the row-level dedup at step 7 — and
     // before this memo the allocator simply never saw them. Memoizing keeps the Save
-    // read budget exactly where it was (docs/READ_BUDGET.md): a path that already read
+    // read budget exactly where it was (test/allSheets429.test.js): a path that already read
     // them still reads them once, and a path that did not (effort-only) still does not
     // unless the allocator actually has to run.
     let cachedLogCompositeKeys = null;
@@ -2679,7 +2685,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       } catch (error) {
         if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
         // The screenshot/effort Save is the OTHER Save path in the same read budget
-        // (`docs/READ_BUDGET.md`), enriches through the same catalog read, and carried
+        // (`test/allSheets429.test.js`), enriches through the same catalog read, and carried
         // the same blanket 400. Classified on the same authority, for the same reason.
         return standardError(req, res, 'Log rows validation/enrichment failed', process.env.NODE_ENV === 'production' ? null : error.message, saveFailureStatus(error));
       }
@@ -3245,7 +3251,7 @@ app.post('/api/log-workout', async (req, res) => {
 
   // Read each duplicate-guard column AT MOST ONCE per request. Both are needed twice
   // now — once by the allocator, once by the guards further down — and memoizing keeps
-  // this route's Sheets read count exactly where docs/READ_BUDGET.md records it.
+  // this route's Sheets read count exactly where test/allSheets429.test.js records it.
   let cachedLogCompositeKeys = null;
   const logCompositeKeys = async () => {
     if (cachedLogCompositeKeys === null) cachedLogCompositeKeys = await getLogCompositeKeys();

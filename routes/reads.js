@@ -12,16 +12,18 @@
 // still invalidates the rows these reads see — the router must never build its own.
 // `buildExerciseCatalogEntries` is slice-exclusive and lives here.
 //
-// This router does NOT cache the Exercise_Catalog. `sheets.getExerciseCatalog` is the one
-// server-owned catalog cache (60 s TTL, single-flight, no stale-after-expiry fallback).
-// A second TTL cache used to live here, and two caches in series do not give one TTL: a
-// route entry populated at t=59 from a 59-second-old sheets entry served the SAME source
-// snapshot until t≈119, past the approved bound, without ever attempting the refresh whose
-// failure the contract requires be surfaced. One authority; the loser is deleted.
+// This router does NOT cache the Exercise_Catalog, and neither does anything else
+// any more. It used to hold a TTL cache in series with `sheets.getExerciseCatalog`'s
+// own, and two caches in series do not give one TTL. Both are gone: OWNER CORRECTION
+// 2026-08-13 makes Supabase the catalog's sole authority, so the read is a SELECT on
+// an indexed primary key rather than a quota-metered HTTP call, and a cache would
+// reintroduce the staleness question the correction exists to delete.
 
 const express = require('express');
 const { success: standardSuccess, error: standardError } = require('../response');
-const { getRecentRows, getExerciseCatalog, logSheetName, effortSheetName, classifySheetsReadError } = require('../sheets');
+const { getRecentRows, logSheetName, effortSheetName, classifySheetsReadError } = require('../sheets');
+const { readExerciseCatalogRows } = require('../services/exerciseCatalog');
+const getExerciseCatalog = () => readExerciseCatalogRows();
 const {
   computeExerciseProgress,
   computeMuscleGroupVolume,

@@ -72,6 +72,9 @@ require.cache[require.resolve('../services/coachMode')] = {
 
 const originalConsoleLog = console.log;
 const express = require('express');
+// The exercise catalog reads Supabase (OWNER CORRECTION 2026-08-13). Stubbed here so
+// the suite never opens a database connection; it delegates to the sheets fixture above.
+require('./helpers/stubExerciseCatalog').installExerciseCatalogStub();
 const registerCoachOpsRoutes = require('../routes/coachOps');
 const app = express();
 app.use(express.json());

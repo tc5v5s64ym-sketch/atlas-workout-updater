@@ -16,13 +16,17 @@
 const express = require('express');
 const { success: standardSuccess, error: standardError } = require('../response');
 const {
-  getSpreadsheetTabs, getExerciseCatalog, ensureSheetTab, appendRows,
+  getSpreadsheetTabs, ensureSheetTab, appendRows,
   getRecentRows,
   // Destructuring default preserved verbatim from index.js: the test harness stubs
   // sheets.js without this export, so the fallback must survive the extraction.
   getSafeSpreadsheetConfig = () => ({ canVerify: false, source: 'GOOGLE_SHEETS_ID' }),
   logSheetName, effortSheetName,
 } = require('../sheets');
+// Supabase is the catalog's sole authority (OWNER CORRECTION 2026-08-13), so this
+// read cannot be reached by a Google Sheets quota error. Same shape as before.
+const { readExerciseCatalogRows } = require('../services/exerciseCatalog');
+const getExerciseCatalog = () => readExerciseCatalogRows();
 const coach = require('../services/coach');
 const trainingSME = require('../services/trainingSME');
 const coachPolish = require('../services/coachPolish');

@@ -12,6 +12,9 @@ process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = 'stub@example.com';
 // (the whole suite runs as one client within a single window). They exercise
 // endpoint behaviour, not throttling — rate-limiter coverage lives in
 // security.test.js with its own limiter instance — so lift the production caps
+// The exercise catalog reads Supabase (OWNER CORRECTION 2026-08-13). Stubbed here so
+// the suite never opens a database connection; it delegates to the sheets fixture above.
+require('./helpers/stubExerciseCatalog').installExerciseCatalogStub();
 // out of the way. Must be set before require('../index'), which reads them at load.
 process.env.ATLAS_API_RATE_LIMIT_MAX = '1000000';
 process.env.ATLAS_WRITE_RATE_LIMIT_MAX = '1000000';

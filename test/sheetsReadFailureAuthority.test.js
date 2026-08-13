@@ -95,10 +95,6 @@ test.beforeEach(() => {
   valuesGetPlan = [];
   spreadsheetsGetPlan = [];
   valuesBatchGetPlan = [];
-  // getExerciseCatalog now holds a bounded cross-request cache. Without this reset a
-  // cached catalog from an earlier test would serve the next one WITHOUT a read, and
-  // the retry assertions below would silently stop exercising the read path.
-  sheets._resetExerciseCatalogCache();
 });
 
 // Realistic error shapes. gaxios (googleapis) puts the HTTP status on `.status` and
@@ -340,7 +336,6 @@ test('EVERY read helper retries a transient failure', async () => {
     ['getRecentRows', () => sheets.getRecentRows('Tab'), 'valuesGet'],
     ['getSheetRows', () => sheets.getSheetRows('Tab'), 'valuesGet'],
     ['getHeaderRow', () => sheets.getHeaderRow('Tab'), 'valuesGet'],
-    ['getExerciseCatalog', () => sheets.getExerciseCatalog(), 'valuesGet'],
     ['getEffortSessionIds', () => sheets.getEffortSessionIds(), 'valuesGet'],
     ['getLogCompositeKeys', () => sheets.getLogCompositeKeys(), 'valuesGet'],
     ['getSpreadsheetTabs', () => sheets.getSpreadsheetTabs(), 'spreadsheetsGet'],
@@ -361,7 +356,6 @@ test('EVERY read helper retries a transient failure', async () => {
     valuesGetPlan = [];
     spreadsheetsGetPlan = [];
     valuesBatchGetPlan = [];
-    sheets._resetExerciseCatalogCache();
     if (counter === 'valuesGet') valuesGetPlan = [gaxios(503, 'Backend Error'), { data: { values: [] } }];
     else if (counter === 'spreadsheetsGet') spreadsheetsGetPlan = [gaxios(503, 'Backend Error'), { data: { sheets: [] } }];
     else valuesBatchGetPlan = [gaxios(503, 'Backend Error'),
@@ -385,7 +379,6 @@ test('EVERY read helper retries a transient failure', async () => {
 test('the exported read surface is exactly the set proven to retry', () => {
   const READ_HELPERS = [
     'readRange',
-    'getExerciseCatalog',
     'getEffortSessionIds',
     'getLogCompositeKeys',
     'getRecentRows',
@@ -405,7 +398,6 @@ test('the exported read surface is exactly the set proven to retry', () => {
     // `currentRequestIdentity` only reads the async-context store — read ACCOUNTING, never a
     // read: it names the HTTP request a read or write belongs to, and reaches no network.
     'runWithReadContext', 'declareRequestRanges', 'invalidateTabCache', 'currentRequestIdentity',
-    'CATALOG_CACHE_TTL_MS', '_resetExerciseCatalogCache', '_exerciseCatalogCacheStats',
     'validateConfig', 'getSafeSpreadsheetConfig',
     'isTransientAppendError', 'retryWithBackoff',
     'classifySheetsReadError', 'isTransientReadError', 'confirmTabMissing', 'readWithRetry',

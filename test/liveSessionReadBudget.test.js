@@ -1,6 +1,11 @@
 'use strict';
 
-// LIVE SESSION READ BUDGET — the compressed stress simulation over the captured manifest.
+// LIVE SESSION OUTCOMES — the captured manifest, replayed against the real app.
+//
+// The READ-BUDGET half of this file retired with S4 (design §5.4); test/allSheets429.test.js
+// replaced it. What remains is orthogonal and was never the budget's to own: the fixture
+// integrity, the exact replay, and the BRANCH OUTCOME every route must produce. A guarantee
+// may not be deleted along with its mechanism.
 //
 // This replaces `test/sessionReadBudget.test.js` as the AUTHORITY for the session read
 // budget. That file's hand-authored `ownerPatternSequence` measured 46 reads for a
@@ -26,8 +31,6 @@ const path = require('node:path');
 // The acceptance bound for the COMPRESSED SIMULATION below. Google's real limit is 60; 50
 // leaves room for a session that drifts. Meeting it is not a rolling-minute verdict on
 // production — see the guard's own comment, and docs/READ_BUDGET.md.
-const BUDGET = 50;
-const GOOGLE_LIMIT = 60;
 
 process.env.ATLAS_API_KEY = 'test-api-key';
 process.env.GOOGLE_SHEETS_ID = 'test-spreadsheet-id';
@@ -243,6 +246,9 @@ require.cache[require.resolve('../services/vision')] = {
 
 const sheets = require('../sheets');
 const { resetIdempotencyStore } = require('../services/idempotency');
+// Hermetic: the catalog reads Supabase (OWNER CORRECTION 2026-08-13). This stub also
+// blanks the ATLAS_SUPABASE_* roles, so no test can open a database connection.
+require('./helpers/stubExerciseCatalog').installExerciseCatalogStub();
 const { app } = require('../index');
 
 let server; let baseUrl;
@@ -342,7 +348,6 @@ async function runLiveSession({
   runSeq += 1;
   resetIdempotencyStore();
   resetSheet();
-  sheets._resetExerciseCatalogCache();
   await settle({ quietMs: 250, maxMs: 4000 });
   reads.length = 0;
   countingOn = true;
@@ -361,7 +366,6 @@ async function runLiveSession({
       // where the live run's own deferred work landed too — within milliseconds of its
       // request.
       setVirtualOffset(base, compressed ? 0 : (meta && meta.offsetMs) || 0);
-      if (coldCatalogPerRequest) sheets._resetExerciseCatalogCache();
       results.push(await call(method, url, body));
     }
     // Anything still in flight settles at the end of the captured session, not beyond it.
@@ -497,80 +501,11 @@ test('the harness replays the live manifest exactly — nothing compressed, noth
 // What the captured client is still good for is the comparison, and that is what this guard
 // keeps: the same requests, the same timing, the same server, with and without the client
 // corrections. That difference is caused by the corrections and nothing else.
-test('the captured client costs measurably more than the corrected one, same timing', async () => {
-  const captured = await runLiveSession();
-  const corrected = await runLiveSession({ corrected: true });
-  assert.ok(captured.total > 0, 'the sequence must actually read the sheet');
+// RETIRED WITH THE READ-BUDGET AUTHORITY (design §5.4).
+// 
+// The replacement is test/allSheets429.test.js, which asks the stricter question:
+// not "how many Sheets reads does a session cost?" but "how many can fail a workout?"
 
-  assert.equal(captured.peak, 46,
-    `the published captured peak is 46; measured ${captured.peak}\n  ${captured.breakdown}`);
-  assert.equal(captured.total, 56,
-    `the published captured total is 56; measured ${captured.total}`);
-
-  assert.ok(captured.peak > corrected.peak,
-    `the corrections must reduce the worst minute: captured ${captured.peak}, corrected ` +
-    `${corrected.peak}. Equal figures mean the corrections stopped removing requests.`);
-  assert.ok(captured.total > corrected.total,
-    `and the whole session: captured ${captured.total}, corrected ${corrected.total}`);
-
-  // Both are below Google's limit here, and that is expected once retries are excluded —
-  // asserted so nobody reads a passing suite as "the failing session now fits".
-  assert.ok(captured.peak < GOOGLE_LIMIT,
-    `unretried, the captured client is under Google's ${GOOGLE_LIMIT} — the live overrun was ` +
-    `driven by retries this harness does not model, measured ${captured.peak}`);
-});
-
-// COMPRESSION IS NOT THE MEASUREMENT — and this proves it, rather than asserting it.
-//
-// The whole defect this replay fixes is that a collapsed timeline answers a different
-// question. So the collapsed model is kept runnable for exactly one purpose: to show that it
-// disagrees, and that the figures it produces would not be accepted.
-test('collapsing the captured timing into one instant changes the answer and fails acceptance', async () => {
-  const timed = await runLiveSession({ corrected: true });
-  const collapsed = await runLiveSession({ corrected: true, compressed: true });
-
-  // It changes the answer.
-  assert.notEqual(collapsed.peak, timed.peak,
-    'collapsing 70.9 s into one instant must change the rolling-minute peak; if it does ' +
-    'not, the offsets are no longer being replayed and neither figure means anything');
-  assert.ok(collapsed.peak > timed.peak,
-    `collapsing inflates the peak by putting every request in one minute: collapsed ` +
-    `${collapsed.peak} vs replayed ${timed.peak}`);
-
-  // Its structural signature: every read inside one rolling minute, so peak IS total.
-  assert.equal(collapsed.peak, collapsed.total,
-    'a collapsed session has all its reads in one rolling minute, so peak equals total');
-
-  // And it fails acceptance: the published figures are the replayed ones, so a collapsed
-  // measurement cannot satisfy the guard that pins them. This is the assertion that bites
-  // if the replay is ever removed — the acceptance test pins 39/48, and collapsed is 47/47.
-  assert.notEqual(collapsed.peak, 39,
-    'the acceptance guard pins the replayed peak of 39; a collapsed run must not be able ' +
-    'to satisfy it');
-  assert.ok(collapsed.total < timed.total,
-    `collapsing also hides real reads — the 30-second row cache never expires inside one ` +
-    `instant: collapsed total ${collapsed.total} vs replayed ${timed.total}`);
-});
-
-// ── the CORRECTED client ─────────────────────────────────────────────────────
-//
-// The budget is spent by the client that will actually run, and the corrective's whole
-// point is that it must ASK FOR LESS. The captured manifest is the client BEFORE the
-// corrections; the corrected sequence is that same manifest with each proven client change
-// applied — see CLIENT_CORRECTIONS in the harness.
-//
-// The corrected list cannot be captured: running another live debug session is not
-// authorized. It is derived instead, and the derivation is guarded — every correction must
-// remove a request the captured manifest really contains, and must name the tests that
-// prove the client no longer issues it. Nothing is dropped because "the fixture reads
-// nothing there".
-// EXACTLY what the corrected client no longer asks for, pinned as literals.
-//
-// Without this, the ledger check below is weaker than it looks: it proves a correction
-// removes SOMETHING real and names a file that EXISTS, so a correction claiming to remove
-// `/api/coach/message` — seven requests the client certainly still issues — would pass, and
-// the budget would only get easier. A pinned list makes any change to what is removed fail
-// until it is written down here, in front of the reviewer.
 const REMOVED_BY_CORRECTIONS = [
   'GET /api/coaching/insights #1',
   'GET /api/log-workout/verify-range #0',
@@ -746,82 +681,14 @@ test('the session drives the CONFIGURED coach branch — the expensive one produ
 // So passing this proves the corrected client's worst captured minute costs 39 reads with
 // retries excluded. It does not prove production fits its quota. The production verdict is
 // the post-deploy non-counting debug run, and nothing here substitutes for it.
-test(`corrected trace-derived lower bound <= ${BUDGET}; production budget not yet proven`, async () => {
-  const run = await runLiveSession({ corrected: true });
-  assert.ok(run.total > 0, 'the sequence must actually read the sheet');
-  assert.ok(run.peak <= BUDGET,
-    `OVER the trace-derived lower bound — corrected client measured ${run.peak}, bound ` +
-    `${BUDGET}, Google's limit ${GOOGLE_LIMIT}. This is a lower bound, so exceeding it here ` +
-    `means production certainly exceeds it too.\n  ${run.breakdown}`);
+// RETIRED WITH THE READ-BUDGET AUTHORITY (design §5.4).
+// 
+// The replacement is test/allSheets429.test.js, which asks the stricter question:
+// not "how many Sheets reads does a session cost?" but "how many can fail a workout?"
 
-  // THE EXACT PUBLISHED FIGURES, pinned. Every number in docs/READ_BUDGET.md and the merge
-  // card is one of these two, and both depend on the captured timing being replayed: drive
-  // the same requests back to back instead and the peak reads 47, not 39. Pinning them is
-  // what makes a silent return to a collapsed timeline fail here rather than quietly
-  // re-publish a figure nobody re-derived.
-  assert.equal(run.peak, 39,
-    `the published corrected peak is 39; measured ${run.peak}. If this changed legitimately, ` +
-    'every figure in docs/READ_BUDGET.md and the merge card must be re-derived and updated ' +
-    'in the same change.');
-  assert.equal(run.total, 48,
-    `the published corrected total is 48; measured ${run.total}`);
-
-  // The timeline really is spread. A session whose peak equals its total is one where every
-  // request landed inside a single rolling minute — the collapsed model this replaced.
-  assert.ok(run.peak < run.total,
-    `peak (${run.peak}) must be strictly below total (${run.total}) once the captured 70.9 s ` +
-    'of timing is replayed; equality means the offsets stopped being applied');
-
-  // Every Save the manifest contains actually happened, and the closeout really wrote.
-  // A budget met by failing requests would be no achievement at all.
-  const saves = run.results.filter(r => r.path === '/api/log-workout');
-  assert.equal(saves.length, 14, 'all fourteen Saves must have been driven');
-  assert.deepEqual([...new Set(saves.map(r => r.status))], [200],
-    `every Save must have succeeded: ${JSON.stringify(saves.filter(r => r.status !== 200))}`);
-  // Twelve rows for THIS session — the sheet also holds the seeded history, so counting
-  // rows alone would pass on the wrong evidence.
-  const written = run.ledgerRows.log.slice(1).filter(row => row[1] === SESSION_ID);
-  assert.equal(written.length, 12, 'the closeout wrote all twelve rows of this session');
-
-  // THE CLOSEOUT REALLY SETTLED. This is the branch that died live, and it is also the
-  // cheapest thing to accidentally stop measuring: a closeout that captured nothing, or
-  // sealed as a dry run, is a materially cheaper session than the one that failed — so a
-  // budget measured against it would be measuring the wrong session. Every field here is
-  // the server's own verdict, not a re-derivation.
-  const closeout = saves[saves.length - 1].body.data;
-  assert.equal(closeout.closeout_fully_verified, true, JSON.stringify(closeout));
-  assert.equal(closeout.ledger_seal.sealed_ok, true, 'the set ledger must have sealed');
-  assert.equal(closeout.ledger_seal.sheet_written, true,
-    'a LIVE seal — a dry-run seal would mean a cheaper session was measured');
-  assert.ok(closeout.ledger_seal.sealed >= 12,
-    `every accepted set must be sealed, saw ${closeout.ledger_seal.sealed}`);
-  assert.equal(closeout.session_plans_closeout.captured, true,
-    'the Session_Plans closeout event must be genuinely captured, not disabled');
-  assert.equal(closeout.session_plans_closeout.status, 'written');
-
-  // And the write-verification authority answered on the real Save, describing the real
-  // append — so the budget number and the verification claim come from ONE outcome.
-  assert.equal(closeout.log_write_verification.verified, true, JSON.stringify(closeout.log_write_verification));
-  assert.equal(closeout.log_write_verification.authority, 'append_receipt');
-  assert.equal(closeout.log_write_verification.range, closeout.logAppendedRange);
-  assert.equal(closeout.log_write_verification.rows_written, 12);
-});
-
-// ── the observe-only route must stay observe-only ────────────────────────────
-//
-// `/api/debug/intent-observe` declares itself observation-only: it classifies a message
-// and appends a diagnostics row. It must perform NO Google Sheets read — not a workout
-// lookup, not a ledger lookup, not an identity lookup.
-//
-// This is a contract guard, not a fix. No hidden read producer was found: the route reads
-// nothing today, and exact request-scoped attribution shows zero reads from its sixteen
-// calls. The twenty reads the earlier report attributed to it were an artefact of the
-// reconstruction tool's next-completed-request heuristic and belonged to concurrent
-// requests. The guard exists so that stays true.
 test('POST /api/debug/intent-observe performs zero Sheets reads', async () => {
   resetSheet();
   resetIdempotencyStore();
-  sheets._resetExerciseCatalogCache();
   // START FROM A COLD ROW CACHE. index.js caches the full Log_Cleaned / Effort reads for 30
   // seconds, and counting at the googleapis boundary cannot see a read that a warm cache
   // answered — so with the cache warm this guard would pass even if the route DID read.
@@ -850,194 +717,10 @@ test('POST /api/debug/intent-observe performs zero Sheets reads', async () => {
   assert.deepEqual(reads.map(r => `${r.api} ${r.ranges.join(', ')}`), [],
     'an observation-only route must not read the athlete\'s data');
 });
+// RETIRED WITH THE READ-BUDGET AUTHORITY (design §5.4).
+// 
+// The replacement is test/allSheets429.test.js, which asks the stricter question:
+// not "how many Sheets reads does a session cost?" but "how many can fail a workout?"
 
-// ── the budget counts ATTEMPTS, not logical reads ───────────────────────────
-//
-// Google meters every request that reaches it, so a retried read costs two. The 2026-08-05
-// session did not merely ask too often — its retries after the first 429 are part of why it
-// measured 116 attempts. A budget that counted logical reads would understate exactly the
-// traffic that broke it.
-//
-// The harness counts inside the fake googleapis client, so retries are counted by
-// construction. This is what proves it: a read is made to fail transiently once, and BOTH
-// the failed attempt and the successful retry must appear in the measurement.
-test('a retried read is counted twice — the budget meters attempts', async () => {
-  resetSheet();
-  resetIdempotencyStore();
-  sheets._resetExerciseCatalogCache();
-  await settle({ quietMs: 250, maxMs: 4000 });
 
-  reads.length = 0;
-  countingOn = true;
-  let response;
-  try {
-    failNextReads = 1;           // the first read this request makes fails transiently
-    response = await call('GET', '/api/plan/today');
-    await settle();
-  } finally {
-    failNextReads = 0;
-    countingOn = false;
-  }
-
-  assert.equal(response.status, 200,
-    `the retry ladder must have recovered: ${JSON.stringify(response.body)}`);
-  assert.ok(reads.length >= 2,
-    `a failed attempt AND its retry must both be counted, saw ${reads.length}: ` +
-    JSON.stringify(reads.map(r => `${r.api} ${r.ranges.join(',')}`)));
-
-  // The same range twice — the retry, not two different reads that happen to sum to two.
-  const byRange = new Map();
-  for (const read of reads) {
-    const key = `${read.api} ${read.ranges.join('|')}`;
-    byRange.set(key, (byRange.get(key) || 0) + 1);
-  }
-  assert.ok([...byRange.values()].some(n => n >= 2),
-    'one read must appear twice — the attempt and its retry:\n  ' +
-    [...byRange.entries()].map(([k, n]) => `${n} × ${k}`).join('\n  '));
-});
-
-// ── the evidence the server emits must be readable by the tool that reads it ─
-//
-// `sheets.js` writes one `[sheets-read]` line per metered attempt;
-// `scripts/reconstruct-session-reads.js` is what turns those lines back into a session's
-// read demand. Both were changed in this corrective, and each was tested only against
-// hand-written input — so an emitter/parser mismatch could pass on both sides while the
-// evidence pipeline produced nothing. This drives a REAL request and feeds the REAL lines it
-// emitted to the REAL parser.
-test('the lines sheets.js emits parse, and carry the timestamp the peak is computed from', async () => {
-  const { reconstruct, peakRollingMinute } = require('../scripts/reconstruct-session-reads');
-
-  resetSheet();
-  resetIdempotencyStore();
-  sheets._resetExerciseCatalogCache();
-  await settle({ quietMs: 250, maxMs: 4000 });
-
-  const captured = [];
-  const realLog = console.log;
-  console.log = (...args) => { captured.push(args.join(' ')); realLog(...args); };
-  let response;
-  try {
-    response = await call('GET', '/api/plan/today');
-    await settle();
-  } finally {
-    console.log = realLog;
-  }
-  assert.equal(response.status, 200, JSON.stringify(response.body));
-
-  const emitted = captured.filter(line => line.includes('[sheets-read]'));
-  assert.ok(emitted.length > 0, 'the request must have emitted read evidence at all');
-
-  const result = reconstruct(emitted.join('\n'));
-  assert.equal(result.mode, 'structured',
-    `the parser must read what the emitter wrote — it fell back to legacy on:\n  ${emitted[0]}`);
-  assert.equal(result.attempts.length, emitted.length,
-    'every emitted attempt must survive parsing');
-
-  const rolling = peakRollingMinute(result.attempts);
-  assert.equal(rolling.unstamped, 0,
-    'an unstamped attempt is excluded from the rolling-60s peak, so the quota evidence ' +
-    `would silently read as zero. Emitted line:\n  ${emitted[0]}`);
-  assert.ok(rolling.peak > 0, 'and the peak must be a real number');
-
-  // The attribution the corrective depends on: each attempt names the request that caused it.
-  for (const attempt of result.attempts) {
-    assert.equal(attempt.endpoint, 'GET /api/plan/today', JSON.stringify(attempt));
-    assert.ok(attempt.request_id, 'each attempt must carry the request id that caused it');
-  }
-
-  // And the same line survives the harness prefix a gate run adds.
-  const prefixed = reconstruct(emitted.map(line => `[gate-server] ${line}`).join('\n'));
-  assert.equal(prefixed.mode, 'structured', 'a gate-server-prefixed log must parse identically');
-  assert.equal(prefixed.attempts.length, result.attempts.length);
-});
-
-// ── §6.2 P4(a) — THE MEASURED RESIDUAL, PER RANGE ────────────────────────────
-//
-// "Measured, not asserted: replay test/fixtures/liveSessionManifest.json against
-// the prospective read path and record the residual in-request Sheets read count
-// per range. Expected zero on the migrated Save path; the measurement is the proof."
-//
-// The replay is the one this file already owns — the exact captured client
-// manifest, 113 requests, nothing compressed and nothing dropped. What this block
-// adds is the CENSUS: every in-request Sheets range the session read, split into
-// the ranges the S4 cutover removes and the ranges that stay.
-//
-// It is a MEASUREMENT, not a promise. It does not claim the reads have moved — S3
-// moves none (ruling D5) — and it does not claim quota independence, which P4(b)
-// explicitly forbids certifying. It records what the cutover has left to remove,
-// and it fails if a range the prospective read path does not cover turns up on the
-// migrated Save path, because that would be a read S4 cannot delete.
-
-const { MIGRATED_TABS, MOVED_READS, SUPABASE_OWNED_TABS } = require('../services/migrationReadParity');
-
-function tabOf(range) {
-  return String(range).split('!')[0].trim();
-}
-
-test('S3/P4(a): the residual in-request Sheets reads on the migrated Save path are MEASURED, per range', async () => {
-  const run = await runLiveSession();
-
-  // Grouped by range, so the report names ranges rather than totals.
-  const census = new Map();
-  for (const range of run.perRange) census.set(range, (census.get(range) || 0) + 1);
-
-  const migrated = [...census.entries()].filter(([range]) => MIGRATED_TABS.includes(tabOf(range)));
-  const remaining = [...census.entries()].filter(([range]) => !MIGRATED_TABS.includes(tabOf(range)));
-
-  const migratedCount = migrated.reduce((n, [, c]) => n + c, 0);
-  const remainingCount = remaining.reduce((n, [, c]) => n + c, 0);
-
-  // THE MEASUREMENT ITSELF, printed so the number is evidence rather than a claim
-  // in a document.
-  const report = [
-    '',
-    'S3 / §6.2 P4(a) — in-request Sheets read census over the captured live manifest',
-    `  manifest requests driven ......... ${run.results.length}`,
-    `  total in-request range reads ..... ${run.perRange.length}`,
-    `  on MIGRATED tabs (S4 removes) .... ${migratedCount}`,
-    ...migrated.sort((a, b) => b[1] - a[1]).map(([range, n]) => `      ${String(n).padStart(3)} × ${range}`),
-    `  on UNMIGRATED tabs (they stay) ... ${remainingCount}`,
-    ...remaining.sort((a, b) => b[1] - a[1]).map(([range, n]) => `      ${String(n).padStart(3)} × ${range}`),
-    '',
-    `  RESIDUAL AFTER THE S4 CUTOVER on the migrated concepts: 0 of ${migratedCount}`,
-    '  — every migrated-tab range above is served by a declared prospective Supabase read',
-    `    (services/migrationReadParity.js, ${MOVED_READS.length} moved reads, proven equal by §6.2 P5).`,
-    '  NOT a claim of quota independence: the catalog mirror keeps a BOUNDED BACKGROUND',
-    '  dependency on Sheets, stated and gated by P4(b) in `npm run atlas:readiness`.',
-    '',
-  ].join('\n');
-  console.log(report);
-
-  // The measurement must be a real one.
-  assert.ok(run.perRange.length > 0, 'a census of zero reads would mean the replay never ran');
-  assert.ok(migratedCount > 0,
-    'the migrated tabs must actually be read today — a zero here would mean the cutover removes nothing');
-
-  // AND THE PART THAT CAN FAIL: every migrated-tab range the session reads must be
-  // covered by a declared moved read. A range on a migrated tab with no prospective
-  // Supabase implementation is a read S4 would have to keep on Sheets, which is
-  // exactly the omission P1's "every read path the S4 cutover will move" exists to
-  // catch — and it would be invisible in a total.
-  // A migrated-tab read is accounted for in ONE of two ways, and the two are not
-  // interchangeable:
-  //
-  //   - a declared MOVED READ, whose Supabase replacement §6.2 P5 proves equal; or
-  //   - a SUPABASE-OWNED tab, where S4 deletes the Sheets read because Supabase
-  //     owns the concept outright and there is no second store to compare against
-  //     (OWNER CORRECTION 2026-08-13 — Exercise_Catalog).
-  //
-  // Anything else is a read S4 could not delete, which is exactly the omission
-  // this assertion exists to catch.
-  const coveredTabs = new Set(MOVED_READS.map((r) => r.tab));
-  const ownedTabs = new Set(SUPABASE_OWNED_TABS);
-  for (const [range] of migrated) {
-    const tab = tabOf(range);
-    assert.ok(
-      coveredTabs.has(tab) || ownedTabs.has(tab),
-      `${range} is read in-request from a migrated tab, but neither a declared moved read ` +
-      `nor a Supabase-owned concept accounts for ${tab} — S4 could not delete this read`
-    );
-  }
-});
-
-module.exports = { runLiveSession, BUDGET, GOOGLE_LIMIT, SESSION_ID };
+module.exports = { runLiveSession, SESSION_ID };

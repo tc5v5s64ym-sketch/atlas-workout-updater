@@ -40,7 +40,6 @@ const assert = require('node:assert/strict');
 const contract = require('../services/migrationRowContract');
 const legacyMap = require('../services/migrationLegacyIdentityMap');
 const parity = require('../services/migrationReadParity');
-const { buildExerciseCatalogMap } = require('../services/exerciseEnrichment');
 
 /* ══════════ synthetic fixtures ══════════ */
 

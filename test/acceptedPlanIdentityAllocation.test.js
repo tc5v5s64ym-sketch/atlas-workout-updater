@@ -48,6 +48,9 @@ const fakeCapture = {
 const capturePath = require.resolve('../services/sessionPlanCapture');
 require.cache[capturePath] = { id: capturePath, filename: capturePath, loaded: true, exports: fakeCapture };
 
+// Hermetic: the catalog reads Supabase (OWNER CORRECTION 2026-08-13). This stub also
+// blanks the ATLAS_SUPABASE_* roles, so no test can open a database connection.
+require('./helpers/stubExerciseCatalog').installExerciseCatalogStub();
 const registerSessionPlanRoutes = require('../routes/sessionPlans');
 
 // ── in-memory durable tabs ───────────────────────────────────────────────────────

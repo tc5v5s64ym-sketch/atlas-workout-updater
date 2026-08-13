@@ -86,16 +86,28 @@ test('each declared producer key really appears in the client source for that ro
 });
 
 test('every producer declares how its body is built, and assembled ones are covered elsewhere', () => {
-  const budget = fs.readFileSync(path.join(repoRoot, 'test', 'liveSessionReadBudget.test.js'), 'utf8');
+  // This used to read `test/liveSessionReadBudget.test.js` by name. S4 deleted that
+  // suite with the rest of the read-budget authority (design §5.4), so a single
+  // named file is no longer the right question to ask — and hard-coding a deleted
+  // path would have made this guard fail for a reason unrelated to what it proves.
+  //
+  // It now asks the question it always meant: does ANY surviving suite pin this
+  // route's outcome? If none does, the route's assembled body is genuinely
+  // unverified and this fails, which is the guarantee. A suite may move without
+  // silently dropping the coverage it carried.
+  const suites = fs.readdirSync(path.join(repoRoot, 'test'))
+    .filter((file) => file.endsWith('.test.js') && file !== 'liveSessionManifestContract.test.js')
+    .map((file) => fs.readFileSync(path.join(repoRoot, 'test', file), 'utf8'));
+
   for (const [route, producer] of Object.entries(CLIENT_BODY_PRODUCERS)) {
     assert.ok(['inline', 'assembled'].includes(producer.shape),
       `${route} must declare shape 'inline' or 'assembled'`);
     if (producer.shape !== 'assembled') continue;
-    // The claim that the outcome assertion covers it must itself be true.
-    assert.ok(budget.includes(`'${route}':`) || budget.includes(`POST ${route} ->`),
-      `${route} is declared 'assembled', which means its body is verified by the branch ` +
-      'outcome assertion — but that test has no signature or pinned outcome for it, so ' +
-      'nothing verifies it at all');
+    const covered = suites.some((text) => text.includes(`'${route}':`) || text.includes(`POST ${route} ->`));
+    assert.ok(covered,
+      `${route} is declared 'assembled', which means its body is verified by a branch ` +
+      'outcome assertion — but no surviving suite pins an outcome for it, so nothing ' +
+      'verifies it at all');
   }
 });
 

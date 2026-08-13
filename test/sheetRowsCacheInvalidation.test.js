@@ -101,6 +101,9 @@ require.cache[googleapisPath] = {
 };
 
 const { resetIdempotencyStore } = require('../services/idempotency');
+// Hermetic: the catalog reads Supabase (OWNER CORRECTION 2026-08-13). This stub also
+// blanks the ATLAS_SUPABASE_* roles, so no test can open a database connection.
+require('./helpers/stubExerciseCatalog').installExerciseCatalogStub();
 const { app } = require('../index');
 
 let server; let baseUrl;
