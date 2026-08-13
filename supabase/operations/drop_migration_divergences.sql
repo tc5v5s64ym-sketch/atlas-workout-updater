@@ -1,0 +1,51 @@
+-- OWNER-RUN OPERATION — NOT A MIGRATION. Do not move this file.
+--
+-- Design authority: docs/SUPABASE_HOT_PATH_MIGRATION.md §5.4 step 5, §2 "Exact
+-- sunset", §7.3, and owner ruling D8 (2026-08-07).
+--
+-- ── WHY THIS FILE IS OUTSIDE supabase/migrations/ ─────────────────────────────
+--
+-- Pending files under `supabase/migrations/` are applied in timestamp order, so
+-- shipping this statement as a migration would apply it in the SAME operation as
+-- the S4 cutover schema. That destroys rollback compatibility at the exact moment
+-- it is most needed: a restored S3 build's shadow write, reconciliation sweep and
+-- repair worker all query `atlas.migration_divergences` continuously, and gate
+-- §6.3 P19i proves that build FAILS once the table is gone.
+--
+-- No migration run and no `supabase db push` can consume a file in this
+-- directory. That is the whole reason the directory exists.
+--
+-- ── WHEN TO RUN IT ────────────────────────────────────────────────────────────
+--
+-- After the S4 rollback window closes (§7.3), and not before. Running it early
+-- removes the ability to roll back.
+--
+-- ── HOW TO RUN IT ─────────────────────────────────────────────────────────────
+--
+-- By the owner, out of band, as `atlas_migrate`, against `Atlas Production`. No
+-- repository path executes it: `scripts/apply-supabase-migrations.js` refuses
+-- every hosted Supabase endpoint outright, and no flag lifts that refusal
+-- (`npm run check:supabase-safety`).
+--
+-- ── WHAT MUST BE TRUE FIRST ───────────────────────────────────────────────────
+--
+--   1. Every `atlas.migration_divergences` row is `closed` (§6.3 P15).
+--   2. Every consumer and writer of the table is absent from the deployed build
+--      (§6.3 P17): the shadow write, the reconciliation sweep, and the repair
+--      worker. The S4 build has none of the three.
+--   3. The S4 rollback window has closed.
+--
+-- ── THIS IS STEP 1 OF TWO, AND THE MIGRATION IS NOT CLOSED UNTIL BOTH LAND ────
+--
+-- Executing this file converges `Atlas Production`. It does NOT converge the
+-- repository: an operations file is not part of the schema that
+-- `supabase/migrations/` reconstructs, so every fresh replay of migration history
+-- — CI, a local stack, a disaster rebuild — still creates this table and never
+-- drops it.
+--
+-- Step 2 is the ONE narrowly scoped post-window cleanup PR that owner ruling D8
+-- approved: the same statement added to `supabase/migrations/` as a normal
+-- versioned file, at which point production is a no-op because this file already
+-- dropped it. Its bounds are recorded in the execution plan and in §5.4 step 5.
+
+DROP TABLE IF EXISTS atlas.migration_divergences;

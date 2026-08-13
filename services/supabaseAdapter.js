@@ -431,33 +431,26 @@ const SQL = Object.freeze({
   // receipt claim was before created_at/expires_at were added to its grant.
   // Writing it at INSERT keeps §8.2's list unchanged AND gives a failed
   // generation better provenance: it records the content it attempted.
-  beginCatalogSync: `
-    INSERT INTO atlas.exercise_catalog_sync (status, source_row_count, content_hash)
-    VALUES ('in_progress', $1, $2)
-    RETURNING sync_id`,
-  deleteCatalogMirror: `DELETE FROM atlas.exercise_catalog_mirror`,
-  insertCatalogRow: `
-    INSERT INTO atlas.exercise_catalog_mirror
-      (exercise, display_exercise, muscle_group, lift_code, canonical_exercise, sync_id)
-    VALUES ($1, $2, $3, $4, $5, $6)`,
-  verifyCatalogSync: `
-    UPDATE atlas.exercise_catalog_sync
-       SET status = 'verified', verified_at = now(), last_error = NULL
-     WHERE sync_id = $1`,
-  failCatalogSync: `
-    UPDATE atlas.exercise_catalog_sync
-       SET status = 'failed', last_error = $2
-     WHERE sync_id = $1`,
-  currentCatalogGeneration: `
-    SELECT sync_id, verified_at, content_hash, source_row_count
-      FROM atlas.exercise_catalog_sync
-     WHERE status = 'verified'
-     ORDER BY verified_at DESC
-     LIMIT 1`,
-  readCatalogMirror: `
+  readExerciseCatalog: `
     SELECT exercise, display_exercise, muscle_group, lift_code, canonical_exercise
-      FROM atlas.exercise_catalog_mirror
+      FROM atlas.exercise_catalog
      ORDER BY exercise`,
+
+  // Owner maintenance, as atlas_migrate. An upsert rather than a generation swap:
+  // the swap existed to replace a whole PROJECTED generation atomically, and there
+  // is no projection to replace. An upsert also means a run that names three
+  // exercises changes three rows, which is the smallest safe edit.
+  upsertExerciseCatalogRow: `
+    INSERT INTO atlas.exercise_catalog
+      (exercise, display_exercise, muscle_group, lift_code, canonical_exercise)
+    VALUES ($1, $2, $3, $4, $5)
+    ON CONFLICT (exercise) DO UPDATE
+       SET display_exercise   = EXCLUDED.display_exercise,
+           muscle_group       = EXCLUDED.muscle_group,
+           lift_code          = EXCLUDED.lift_code,
+           canonical_exercise = EXCLUDED.canonical_exercise`,
+  deleteExerciseCatalogRow: `
+    DELETE FROM atlas.exercise_catalog WHERE exercise = $1`,
 
   // §3.8 — the divergence lane. The partial unique index means a repeated sweep
   // cannot multiply rows for one identity.
@@ -866,50 +859,59 @@ async function repairDeleteLoggedSet(identity) {
   });
 }
 
-// ── Catalog mirror (§3.7) ─────────────────────────────────────────────────────
+// ── The exercise catalog (§3.7) — SUPABASE IS THE SOLE AUTHORITY ──────────────
+//
+// OWNER CORRECTION 2026-08-13, recorded in docs/ATLAS_V1_EXECUTION_PLAN.md. It
+// supersedes ruling D1, which kept Google Sheets as the EDITING authority and made
+// this content a freshness-bounded projection of a Sheets tab.
+//
+// WHAT WAS DELETED, AND WHY. The sync, the generation, the content hash, the
+// verified timestamp, CATALOG_MIRROR_MAX_AGE and the currency verdict all existed
+// to answer one question: how stale is our copy of a Google Sheets tab. Under D1
+// the answer could fail an athlete Save closed with a 503 — so a Google Sheets
+// quota exhaustion could block a workout through a chain of four links. The owner
+// ruled that a Sheets quota of any kind must not block an active workout. There is
+// no upstream, so there is no staleness, so there is no clock.
+//
+// There is deliberately NO fallback from Supabase to Sheets. One winner.
 
-async function beginCatalogSync(sourceRowCount, contentHash) {
-  return withClient('app', async (client) => {
-    const result = await client.query(SQL.beginCatalogSync, [sourceRowCount, contentHash]);
-    return result.rows[0].sync_id;
-  });
-}
-
-// The swap: delete the previous generation's rows, insert the new rows, and mark
-// the generation verified — in ONE transaction, so a reader never sees a
-// half-written catalog and a reader on the old generation is unaffected until
-// commit. content_hash is written in the same transaction as the rows it names.
-async function commitCatalogSwap(syncId, rows) {
-  return withTransaction('app', async (client) => {
-    await client.query(SQL.deleteCatalogMirror);
-    for (const row of rows) {
-      await client.query(SQL.insertCatalogRow, [
-        row.exercise, row.display_exercise, row.muscle_group, row.lift_code,
-        row.canonical_exercise, syncId,
-      ]);
-    }
-    await client.query(SQL.verifyCatalogSync, [syncId]);
-    return { rows: rows.length };
-  });
-}
-
-async function failCatalogSync(syncId, error) {
-  return withClient('app', async (client) => {
-    await client.query(SQL.failCatalogSync, [syncId, String(error && error.message ? error.message : error).slice(0, 2000)]);
-  });
-}
-
-async function currentCatalogGeneration(role = 'app') {
+/**
+ * The one catalog read, and it is on the athlete Save path. The only way it fails
+ * is that Supabase itself is unreachable — the same failure mode as every other
+ * authoritative read on that path, handled the same way.
+ */
+async function readExerciseCatalog(role = 'app') {
   return withClient(role, async (client) => {
-    const result = await client.query(SQL.currentCatalogGeneration);
-    return result.rows[0] || null;
-  });
-}
-
-async function readCatalogMirror(role = 'app') {
-  return withClient(role, async (client) => {
-    const result = await client.query(SQL.readCatalogMirror);
+    const result = await client.query(SQL.readExerciseCatalog);
     return result.rows;
+  });
+}
+
+/**
+ * The ONLY mutation path for the catalog, and it runs as `atlas_migrate` — a role
+ * that is never configured in the server runtime, so no request path can reach it.
+ * Its single consumer is `npm run atlas:catalog` (scripts/atlas-catalog-admin.js),
+ * which is a dry run unless the operator passes `--apply`.
+ *
+ * One transaction: a maintenance run either applies wholly or changes nothing, so
+ * a half-applied edit can never be the state a Save reads.
+ */
+async function applyCatalogMaintenance({ upserts = [], deletes = [] } = {}) {
+  return withTransaction('migrate', async (client) => {
+    let upserted = 0;
+    for (const row of upserts) {
+      await client.query(SQL.upsertExerciseCatalogRow, [
+        row.exercise, row.display_exercise, row.muscle_group, row.lift_code,
+        row.canonical_exercise,
+      ]);
+      upserted += 1;
+    }
+    let deleted = 0;
+    for (const key of deletes) {
+      const result = await client.query(SQL.deleteExerciseCatalogRow, [key]);
+      deleted += result.rowCount;
+    }
+    return { upserted, deleted };
   });
 }
 
@@ -1205,6 +1207,268 @@ async function pruneWriteReceipts(role = 'migrate') {
   });
 }
 
+// ══ S4 — the authoritative workout operations ═══════════════════════════════
+//
+// Each function below is the sole authority for what it answers. Every one of
+// them replaced a Google Sheets call, and the ROW SHAPE they return is the
+// canonical row of services/migrationRowContract.js — the same contract the
+// export uses to project a row back into its owner-approved column order. One
+// mapping, used in both directions, so the authority and its human-readable
+// export can never disagree about what a column means.
+
+/** Session ids already occupied on a date. The allocator's whole input. */
+async function sessionIdsForDate(sessionDate, role = 'app') {
+  return withClient(role, async (client) => {
+    const result = await client.query(SQL.sessionIdsForDate, [sessionDate]);
+    return result.rows.map((row) => row.session_id);
+  });
+}
+
+/** True when this session already has an Effort row — the duplicate-session guard. */
+async function effortExistsForSession(sessionId, role = 'app') {
+  return withClient(role, async (client) => {
+    const result = await client.query(SQL.effortExistsForSession, [sessionId]);
+    return result.rowCount > 0;
+  });
+}
+
+/**
+ * The identity keys this session already holds, as `exercise||set_number` lower-cased
+ * — the same shape `getLogCompositeKeys()` produced, scoped to one session because a
+ * table can be queried and a tab cannot.
+ */
+async function loggedSetIdentitiesForSession(sessionId, role = 'app') {
+  return withClient(role, async (client) => {
+    const result = await client.query(SQL.loggedSetIdentitiesForSession, [sessionId]);
+    return new Set(result.rows.map((row) => `${row.exercise}||${row.set_number}`));
+  });
+}
+
+/**
+ * THE AUTHORITATIVE SAVE. One transaction: the session parent, then its logged
+ * sets, then its Effort row.
+ *
+ * ATOMIC BY CONSTRUCTION (§6.3 P12). Either the whole Save commits or none of it
+ * does — there is no partial session to leave behind, and no "12 of 20 rows
+ * appended" state for a later read to misinterpret. That is the property a
+ * sequence of Sheets appends could never provide.
+ *
+ * `write_id` is stamped on every child row, which is what makes undo exact
+ * (§6.3 P13) and what the two S4 foreign keys enforce.
+ */
+async function saveWorkout({ sessionId, writeId, loggedSets = [], effort = null }) {
+  return withTransaction('app', async (client) => {
+    await insertSessionParent(client, sessionId);
+
+    const insertedSetIds = [];
+    let skippedDuplicateSets = 0;
+    for (const row of loggedSets) {
+      const result = await client.query(SQL.insertLoggedSetAuthoritative, [
+        sessionId, row.date_clean, row.exercise, row.canonical_exercise, row.muscle_group,
+        row.lift_code, row.set_number, row.weight, row.reps, row.rir, row.notes,
+        row.volume_calc, writeId,
+      ]);
+      if (result.rowCount > 0) insertedSetIds.push(result.rows[0].id);
+      else skippedDuplicateSets += 1;
+    }
+
+    let effortWritten = false;
+    if (effort) {
+      const result = await client.query(SQL.insertSessionEffortAuthoritative, [
+        sessionId, effort.effort_date, effort.duration, effort.active_calories,
+        effort.total_calories, effort.average_hr, effort.peak_hr, effort.location,
+        effort.notes, writeId,
+      ]);
+      effortWritten = result.rowCount > 0;
+    }
+
+    return {
+      session_id: sessionId,
+      write_id: writeId,
+      sets_written: insertedSetIds.length,
+      sets_skipped_duplicate: skippedDuplicateSets,
+      effort_written: effortWritten,
+    };
+  });
+}
+
+/**
+ * Undo. Deletes exactly the logged sets of one Save, identified by
+ * `(session_id, write_id)` — never by position, never by range.
+ *
+ * It also returns the session to the export queue, in the SAME transaction, so a
+ * mirror that already holds the undone rows cannot stay stale (§6.3 P14e/P14f).
+ * An undo that retracted Supabase and left the human-readable record intact would
+ * be a false record of the athlete's training.
+ */
+async function undoSave(sessionId, writeId) {
+  return withTransaction('app', async (client) => {
+    const deleted = await client.query(SQL.deleteSaveLoggedSets, [sessionId, writeId]);
+    await client.query(SQL.markSessionForReexport, [sessionId]);
+    return { rows_deleted: deleted.rowCount };
+  });
+}
+
+/** Return a session to the export queue after any post-export mutation. */
+async function markSessionForReexport(sessionId, role = 'app') {
+  return withClient(role, async (client) => {
+    const result = await client.query(SQL.markSessionForReexport, [sessionId]);
+    return result.rowCount > 0;
+  });
+}
+
+// ── Authoritative reads ───────────────────────────────────────────────────────
+//
+// `limit` mirrors `getRecentRows(tab, maxRows)`; omit it for the whole table, as
+// `getSheetRows(tab)` did.
+
+async function loggedSets({ sessionId = null, limit = null, role = 'app' } = {}) {
+  return withClient(role, async (client) => {
+    if (sessionId) return (await client.query(SQL.readLoggedSetsForSession, [sessionId])).rows;
+    if (Number.isFinite(limit)) return (await client.query(SQL.readRecentLoggedSets, [limit])).rows;
+    return (await client.query(SQL.readAllLoggedSets)).rows;
+  });
+}
+
+async function sessionEffort({ limit = null, role = 'app' } = {}) {
+  return withClient(role, async (client) => {
+    if (Number.isFinite(limit)) return (await client.query(SQL.readRecentEffort, [limit])).rows;
+    return (await client.query(SQL.readAllEffort)).rows;
+  });
+}
+
+async function planEvents({ sessionId = null, role = 'app' } = {}) {
+  return withClient(role, async (client) => {
+    if (sessionId) return (await client.query(SQL.readPlanEventsForSession, [sessionId])).rows;
+    return (await client.query(SQL.readAllPlanEvents)).rows;
+  });
+}
+
+async function planSetRows({ sessionId = null, role = 'app' } = {}) {
+  return withClient(role, async (client) => {
+    if (sessionId) return (await client.query(SQL.readPlanSetRowsForSession, [sessionId])).rows;
+    return (await client.query(SQL.readAllPlanSetRows)).rows;
+  });
+}
+
+// ── The plan ledgers, as authority rather than shadow ────────────────────────
+//
+// The append semantics are unchanged from the Sheets stores they replace: the
+// idempotency key decides, a repeated append is a no-op, and the caller learns
+// which keys were genuinely new. What changed is that "already present" is now a
+// primary key rather than a read-then-compare across a tab.
+
+async function appendPlanEvents(rows) {
+  return withTransaction('app', async (client) => {
+    const inserted = [];
+    for (const row of rows) {
+      await insertSessionParent(client, row.session_id);
+      const result = await client.query(SQL.insertPlanEvent, [
+        row.idempotency_key, row.session_id, row.session_date, row.plan_version, row.event_type,
+        row.plan_item_id, row.planned_order, row.planned_lift_code, row.movement_pattern,
+        row.outcome, row.performed_lift_code, row.closeout_status, row.recorded_at,
+      ]);
+      if (result.rowCount > 0) inserted.push(row.idempotency_key);
+    }
+    return { inserted, skipped: rows.length - inserted.length };
+  });
+}
+
+async function appendPlanSetRows(rows) {
+  return withTransaction('app', async (client) => {
+    const inserted = [];
+    for (const row of rows) {
+      await insertSessionParent(client, row.session_id);
+      const result = await client.query(SQL.insertPlanSetRow, [
+        row.idempotency_key, row.session_id, row.session_date, row.plan_version, row.plan_item_id,
+        row.planned_lift_code, row.set_index, row.target_set_count, row.target_weight,
+        row.target_reps, row.target_rir, row.recommendation_source, row.supersedes_key,
+        row.confidence, row.closeout_write_id, row.recorded_at,
+      ]);
+      if (result.rowCount > 0) inserted.push(row.idempotency_key);
+    }
+    return { inserted, skipped: rows.length - inserted.length };
+  });
+}
+
+/**
+ * The closeout seal, as one statement. `closeout_write_id IS NULL` makes "never
+ * re-seal" atomic, and the seal returns the session to the export queue because it
+ * is the one mutable column on an exported row (§6.3 P14f).
+ */
+async function sealPlanSetsForSession(sessionId, closeoutWriteId) {
+  return withTransaction('app', async (client) => {
+    const sealed = await client.query(SQL.sealPlanSets, [sessionId, closeoutWriteId]);
+    await client.query(SQL.markSessionForReexport, [sessionId]);
+    return { rows_sealed: sealed.rowCount };
+  });
+}
+
+// ── The export destination authority (§3.9, §5.4) ────────────────────────────
+
+async function claimExportSession(role = 'app') {
+  return withClient(role, async (client) => {
+    const result = await client.query(SQL.claimExportSession);
+    return result.rows[0] || null;
+  });
+}
+
+async function allocateMirrorBlocks(sessionId, rowCountsByTab, role = 'app') {
+  // ONE transaction covering EVERY tab this session needs. A failure therefore
+  // reserves nothing — it cannot leave one tab reserved and another not (§6.3
+  // P14b(c)) — and a tab with no rows receives no allocation and does not advance
+  // its cursor (§6.3 P14g).
+  return withTransaction(role, async (client) => {
+    const existing = await client.query(SQL.readMirrorAllocations, [sessionId]);
+    if (existing.rowCount > 0) {
+      // A re-export reuses its reservation. Reallocating would move the session's
+      // rows and strand the block it already wrote into.
+      return Object.fromEntries(existing.rows.map((row) => [row.tab, row]));
+    }
+    const allocations = {};
+    for (const [tab, rowCount] of Object.entries(rowCountsByTab)) {
+      if (!rowCount) continue;
+      const result = await client.query(SQL.allocateMirrorBlock, [tab, rowCount, sessionId]);
+      allocations[tab] = { tab, ...result.rows[0] };
+    }
+    return allocations;
+  });
+}
+
+async function readMirrorCursor(role = 'app') {
+  return withClient(role, async (client) => (await client.query(SQL.readMirrorCursor)).rows);
+}
+
+async function seedMirrorCursor(tab, nextRow, role = 'migrate') {
+  return withClient(role, async (client) => {
+    await client.query(SQL.seedMirrorCursor, [tab, nextRow]);
+  });
+}
+
+async function acknowledgeExport(sessionId, claimToken, role = 'app') {
+  return withClient(role, async (client) => {
+    const result = await client.query(SQL.acknowledgeExport, [sessionId, claimToken]);
+    return result.rowCount > 0;
+  });
+}
+
+async function recordExportFailure(sessionId, claimToken, { error, state, nextAttemptAt }, role = 'app') {
+  return withClient(role, async (client) => {
+    const result = await client.query(SQL.recordExportFailure, [
+      sessionId, claimToken, String(error || '').slice(0, 2000), state, nextAttemptAt,
+    ]);
+    return result.rows[0] || null;
+  });
+}
+
+async function exportBacklog(role = 'app') {
+  return withClient(role, async (client) => (await client.query(SQL.exportBacklog)).rows[0] || null);
+}
+
+async function listBlockedExports(role = 'app') {
+  return withClient(role, async (client) => (await client.query(SQL.listBlockedExports)).rows);
+}
+
 module.exports = {
   SQL,
   ROLE_ENV,
@@ -1242,12 +1506,35 @@ module.exports = {
   // §3.10 write freeze — the one operation a live write request depends on
   readWriteFreeze,
 
-  // §3.7 catalog mirror
-  beginCatalogSync,
-  commitCatalogSwap,
-  failCatalogSync,
-  currentCatalogGeneration,
-  readCatalogMirror,
+  // §3.7 the exercise catalog — Supabase is the sole authority (owner correction
+  // 2026-08-13). One read for the runtime, one owner-controlled mutation path.
+  readExerciseCatalog,
+  applyCatalogMaintenance,
+
+  // ══ S4 — the authoritative workout path ═════════════════════════════════════
+  sessionIdsForDate,
+  effortExistsForSession,
+  loggedSetIdentitiesForSession,
+  saveWorkout,
+  undoSave,
+  markSessionForReexport,
+  loggedSets,
+  sessionEffort,
+  planEvents,
+  planSetRows,
+  appendPlanEvents,
+  appendPlanSetRows,
+  sealPlanSetsForSession,
+
+  // the export destination authority (§3.9, §5.4)
+  claimExportSession,
+  allocateMirrorBlocks,
+  readMirrorCursor,
+  seedMirrorCursor,
+  acknowledgeExport,
+  recordExportFailure,
+  exportBacklog,
+  listBlockedExports,
 
   // §3.6 receipts — schema-owned by S2, wired by S4
   withWriteAttempt,
