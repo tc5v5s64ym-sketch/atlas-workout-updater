@@ -417,6 +417,65 @@ function compareRows(concept, sheetRow, supabaseRow) {
   return { equal: differences.length === 0, differences };
 }
 
+// ── The catalog header, in every form the live reader accepts ──────────────────
+//
+// *Live `Atlas Production` readiness run, 2026-08-13.* `sheets.getExerciseCatalog()`
+// returns the tab's raw values INCLUDING row 1, and `buildExerciseCatalogMap`
+// (services/exerciseEnrichment.js) indexes the catalog's columns BY that header row.
+// The header is therefore part of the catalog read's consumer contract, and this
+// normaliser has to recognise it wherever a caller hands one in.
+//
+// TWO FORMS ARE SUPPORTED, because the live reader supports two. `config/columns.js`
+// still declares the LEGACY spelling — `Exercise | Muscle_Group | Lift Code |
+// Canonical_Exercise` — while the live tab carries the CURRENT one —
+// `Canonical_Name | Muscle_Group | Lift_Code | Original_Variants`. Recognising only
+// the legacy first column normalised a CURRENT header as DATA: the catalog gained one
+// phantom entry named after its own first column, so a content hash taken over a
+// header-bearing read disagreed with one taken over a header-stripped read by exactly
+// that row. Nothing else about the two hashes differed.
+//
+// POSITIONAL, NOT NAMED, AND NO SCHEMA CHANGES HERE. The four mirror slots are the
+// source's four columns in order. Slot 4 holds `Original_Variants` under the current
+// header and `Canonical_Exercise` under the legacy one; the mirror column keeps the
+// name it was created with, because renaming it would be a schema change.
+const CATALOG_HEADER = Object.freeze(['Canonical_Name', 'Muscle_Group', 'Lift_Code', 'Original_Variants']);
+
+// ── A HEADER IS THE WHOLE ROW, NEVER ITS FIRST CELL ──────────────────────────
+//
+// *ChatGPT pre-review of this change, 2026-08-13.* Matching the first column alone
+// is the same false-green class this correction exists to remove, pointed the other
+// way: an exercise legitimately named `Exercise` — or any other first-column alias —
+// would have been discarded as a header. That row would then be absent from the
+// normalised catalog on BOTH sides, the two content hashes would agree, and readiness
+// would report the catalog equal while a real entry was missing from it.
+//
+// So the FULL four-column shape must match one of the two declared forms. A row whose
+// first cell looks like a header but whose remaining cells carry catalog content is
+// DATA, and it is kept.
+//
+// The tolerance is exactly the live reader's: case, surrounding space, and `_` versus
+// space are the same name (`buildExerciseCatalogMap` accepts `lift code`, `lift_code`
+// and `liftcode` alike). Nothing else is accepted, and no alias is invented here.
+//
+// Columns beyond the declared four are NOT examined, for the same reason a data row
+// ignores them: this contract maps four positions. Requiring them blank would turn a
+// tab that grew a fifth column into a phantom catalog entry and a red readiness run.
+function normalizeHeaderCell(value) {
+  return String(value ?? '').trim().toLowerCase().replace(/[\s_]+/g, ' ');
+}
+
+// The two supported forms, normalised once. The legacy form is read from
+// `config/columns.js` rather than restated, so the two cannot drift apart.
+const CATALOG_HEADER_FORMS = Object.freeze(
+  [CATALOG_HEADER, exerciseCatalogColumns].map((form) => Object.freeze(form.map(normalizeHeaderCell)))
+);
+
+function isCatalogHeaderRow(cells) {
+  if (!Array.isArray(cells)) return false;
+  const normalized = CATALOG_HEADER.map((_, index) => normalizeHeaderCell(cells[index]));
+  return CATALOG_HEADER_FORMS.some((form) => form.every((name, index) => name === normalized[index]));
+}
+
 // ── The catalog's content identity ─────────────────────────────────────────────
 //
 // SHA-256 over the normalised source rows, in order (§3.7). The hash is the
@@ -424,14 +483,13 @@ function compareRows(concept, sheetRow, supabaseRow) {
 // identity_key, so both sides must compute it the same way — which is why it
 // lives here beside the row contract rather than inside the sync.
 function normalizeCatalogRows(rows) {
-  const header = exerciseCatalogColumns.map((h) => h.toLowerCase());
   const out = [];
   for (const cells of rows || []) {
     if (!Array.isArray(cells)) continue;
     const first = String(cells[0] ?? '').trim();
     if (!first) continue;
-    // Skip the header row wherever it appears, matching the existing reader.
-    if (header[0] === first.toLowerCase()) continue;
+    // Skip the header row wherever it appears, in either supported form.
+    if (isCatalogHeaderRow(cells)) continue;
     out.push({
       exercise: first.toLowerCase(),
       display_exercise: first,
@@ -485,6 +543,8 @@ module.exports = {
   shapeOf,
   normalizeCatalogRows,
   catalogContentHash,
+  CATALOG_HEADER,
+  isCatalogHeaderRow,
   // Kinds are exported so a test can assert the §4.7 rule directly rather than
   // through a concept that happens to use it.
   KINDS: Object.freeze({ TEXT, VOCAB, INT, NUM, DATE, TIMESTAMP }),

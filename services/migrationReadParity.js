@@ -26,8 +26,35 @@
 // composite-key list if the projection differs by a trim, a case fold or a header
 // skip. Those projections are what the Save path actually consults, so they are
 // what cutover readiness has to be about.
+//
+// ── WHAT P5 CLAIMS, EXACTLY ──────────────────────────────────────────────────
+//
+// *Live `Atlas Production` readiness run, 2026-08-13.* P5 claims EQUIVALENCE AFTER
+// THE FROZEN OWNER-APPROVED MIGRATION DISPOSITIONS. It does not claim byte identity
+// against the raw pre-migration tab, and it never did: the owner ruled some rows out
+// of the migration (CARD_5 to CARD_9 and the prior 1046/1054 ruling), and Sheets
+// still holds every one of them. A comparison against the RAW tab therefore measures
+// the owner's own rulings as if they were data loss.
+//
+// That is what this module used to do. It read the Sheets side raw — through
+// `getLogCompositeKeys()`, `getEffortSessionIds()` and `getSheetRows()` — and
+// interpreted those rows HERE, with its own identityless rule. That was a second
+// interpretation of the same tabs beside `migrationLegacyIdentityMap`, so a backfill
+// and a sweep that both reported clean sat next to a readiness verdict reporting FAIL:
+// the padded empty arrays the resolver classifies as `blank`, the rows the owner
+// excluded, the surplus identical copies, and the translated legacy ids were all
+// counted here as missing or unrepresentable rows.
+//
+// The second interpretation is GONE. Every Sheets input below comes from
+// `legacyMap.resolveSheetRows`, the one resolver the backfill and the sweep already
+// call, and its verdicts are consumed verbatim. What stays failing is what SHOULD
+// fail: an unmapped legacy id, a genuinely identityless non-blank row, and an owner
+// approval whose multiplicity the tab no longer matches all refuse readiness with a
+// redacted, aggregate reason. No owner-actionable row is dropped to make a number
+// agree.
 
 const contract = require('./migrationRowContract');
+const legacyMap = require('./migrationLegacyIdentityMap');
 const catalogMirror = require('./exerciseCatalogMirror');
 
 // ── The reads S4 moves, as they exist TODAY (the left-hand side) ─────────────
@@ -36,6 +63,11 @@ const catalogMirror = require('./exerciseCatalogMirror');
 // that nobody listed here is a visible omission rather than a silent one. Each
 // entry names the Sheets function that owns it now and the Supabase function
 // below that is prospectively replacing it.
+//
+// `sheets` names the read S4 REMOVES. It is not the expression the comparison
+// evaluates: the two key lists are DERIVED from the resolved tab (see
+// `logCompositeKeysOf` and `effortSessionIdsOf`), because the raw functions
+// deliberately still describe the pre-migration Sheets identities.
 const MOVED_READS = Object.freeze([
   { id: 'log_composite_keys', sheets: 'sheets.getLogCompositeKeys()', tab: 'Log_Cleaned', supabase: 'logCompositeKeys()' },
   { id: 'effort_session_ids', sheets: 'sheets.getEffortSessionIds()', tab: 'Effort', supabase: 'effortSessionIds()' },
@@ -52,27 +84,23 @@ const MIGRATED_TABS = Object.freeze([
   'Log_Cleaned', 'Effort', 'Session_Plans', 'Session_Plan_Sets', 'Exercise_Catalog',
 ]);
 
-// ── The prospective Supabase implementations (the right-hand side) ───────────
+// ── The two DERIVED projections, defined once and applied to BOTH sides ───────
 
 // sheets.js:890-913 builds `session_id||exercise||set_number`, each part trimmed
 // and lower-cased, skipping any row missing one of the three and any header row.
-// contract.identity('logged_sets') is byte-for-byte that key — which is the point:
-// the duplicate guard the Save path consults must not change meaning at cutover.
+// contract.identityKey('logged_sets') is byte-for-byte that key — which is the
+// point: the duplicate guard the Save path consults must not change meaning at
+// cutover.
 //
-// THE SKIP BELOW IS A DELIBERATE MIRROR, NOT A RE-DERIVED IDENTITY RULE. It
-// reproduces the real function's own skip so this prospective replacement returns
-// what production returns; diverging from it would make the P5 comparison measure
-// a Sheets behaviour Atlas does not have. It is not a representability decision —
-// that is `contract.isIdentityless`'s job, it is applied by `compareCellSets` on
-// the row-level comparison of this same concept, and an identityless Log_Cleaned
-// row therefore fails readiness through that path rather than through this one.
-// `atlas.logged_sets` declares these columns NOT NULL in any case, so this branch
-// is unreachable against a valid mirror.
-async function logCompositeKeys({ adapter }) {
-  const rows = await adapter.listConcept('logged_sets');
+// ONE FUNCTION, CALLED ON BOTH SIDES. A second copy of this skip would be a second
+// answer to "what does the duplicate guard see", which is the class of defect this
+// module exists to DETECT rather than to contain. The skip is not a representability
+// decision — that is `contract.isIdentityless`'s job, and the frozen resolver applies
+// it before these rows are built. `atlas.logged_sets` declares these columns NOT NULL
+// in any case, so the skip is unreachable against a valid mirror.
+function logCompositeKeysOf(rows) {
   const keys = [];
-  for (const raw of rows) {
-    const row = contract.rowFromSupabase('logged_sets', raw);
+  for (const row of rows) {
     if (!row.session_id || !row.exercise || row.set_number === null) continue;
     keys.push(contract.identityKey('logged_sets', row));
   }
@@ -81,12 +109,20 @@ async function logCompositeKeys({ adapter }) {
 
 // sheets.js:883-888 reads Effort column B, trims, and drops the header. The
 // unique session_id of atlas.session_effort IS that list.
+function effortSessionIdsOf(rows) {
+  return rows.filter((row) => row.session_id).map((row) => String(row.session_id).trim());
+}
+
+// ── The prospective Supabase implementations (the right-hand side) ───────────
+
+async function logCompositeKeys({ adapter }) {
+  const rows = await adapter.listConcept('logged_sets');
+  return logCompositeKeysOf(rows.map((raw) => contract.rowFromSupabase('logged_sets', raw)));
+}
+
 async function effortSessionIds({ adapter }) {
   const rows = await adapter.listConcept('session_effort');
-  return rows
-    .map((raw) => contract.rowFromSupabase('session_effort', raw))
-    .filter((row) => row.session_id)
-    .map((row) => String(row.session_id).trim());
+  return effortSessionIdsOf(rows.map((raw) => contract.rowFromSupabase('session_effort', raw)));
 }
 
 // A concept's rows in the SHEETS CELL SHAPE — the 12/9/13/16-cell arrays every
@@ -105,11 +141,28 @@ async function conceptRows(concept, { adapter }) {
 // The catalog read, served from the mirror and FAIL-CLOSED past the age bound —
 // the same 503 posture the expired Sheets cache produces today. Stale content is
 // never served silently, and never served at all.
+//
+// ── IT RETURNS A HEADER, BECAUSE ITS CONSUMER REQUIRES ONE ───────────────────
+//
+// *Live `Atlas Production` readiness run, 2026-08-13.* This is the one moved read
+// whose replacement is NOT headerless. `getSheetRows()` strips row 1, so
+// `conceptRows` above must not invent one — but `getExerciseCatalog()` does not
+// strip it, and its consumer `buildExerciseCatalogMap` INDEXES the catalog's columns
+// by that header row and throws when it cannot find a first-column name it knows.
+// A headerless projection would therefore have broken the very consumer S4 moves,
+// and the readiness comparison saw the same defect as a one-row difference.
+//
+// `contract.CATALOG_HEADER` is the declared name of the four positional mirror slots.
+// The payload below is unchanged — the same four cells, in the same order, from the
+// same mirror columns. No schema changed.
 async function exerciseCatalogRows({ adapter, now = Date.now() }) {
   const served = await catalogMirror.readCatalogForSave({ adapter, now });
-  return served.rows.map((row) => [
-    row.display_exercise, row.muscle_group ?? '', row.lift_code ?? '', row.canonical_exercise ?? '',
-  ]);
+  return [
+    [...contract.CATALOG_HEADER],
+    ...served.rows.map((row) => [
+      row.display_exercise, row.muscle_group ?? '', row.lift_code ?? '', row.canonical_exercise ?? '',
+    ]),
+  ];
 }
 
 // ── The parity verdict (§6.2 P5) ─────────────────────────────────────────────
@@ -156,10 +209,25 @@ function compareKeyLists(left, right) {
 // So the rule is consumed from its one authority, and a hit is a FAILURE. Applied
 // to BOTH sides, because an unrepresentable row is unrepresentable whichever store
 // holds it. No identity is invented — only the owner decides what such a row means.
+//
+// ── A DUPLICATE IDENTITY DOES NOT VANISH EITHER ──────────────────────────────
+//
+// *Live `Atlas Production` readiness run, 2026-08-13.* `if (!map.has(key))` kept the
+// first row under a repeated identity and DISCARDED the rest. Both sides then held
+// one row per identity, the sizes agreed, and readiness reported equal on a tab
+// holding a second authoritative row Supabase's unique index can never accept. That
+// is the same silent-drop class as the identityless row above, one level along, and
+// the sweep already treats it as a finding rather than a statistic.
+//
+// The owner-approved exact duplicates are gone before this function ever sees them —
+// `resolveSheetRows` removes only the surplus copies the owner froze, at the exact
+// multiplicity the owner froze. What reaches here is therefore an UNDISPOSED
+// duplicate, and readiness refuses it.
 function compareCellSets(concept, sheetCellRows, supabaseCellRows) {
   const index = (cellRows) => {
     const map = new Map();
     let identityless = 0;
+    let duplicates = 0;
     for (const cells of cellRows) {
       const row = contract.rowFromSheet(concept, cells);
       const key = contract.identityKey(concept, row);
@@ -167,9 +235,13 @@ function compareCellSets(concept, sheetCellRows, supabaseCellRows) {
         identityless += 1;
         continue;
       }
-      if (!map.has(key)) map.set(key, row);
+      if (map.has(key)) {
+        duplicates += 1;
+        continue;
+      }
+      map.set(key, row);
     }
-    return { map, identityless };
+    return { map, identityless, duplicates };
   };
   const leftSide = index(sheetCellRows);
   const rightSide = index(supabaseCellRows);
@@ -187,6 +259,15 @@ function compareCellSets(concept, sheetCellRows, supabaseCellRows) {
     };
   }
 
+  if (leftSide.duplicates > 0 || rightSide.duplicates > 0) {
+    return {
+      equal: false,
+      detail: `duplicate export identities cannot be compared: sheets=${leftSide.duplicates}, `
+        + `supabase=${rightSide.duplicates}. OWNER ACTION REQUIRED; only the owner decides `
+        + 'which row is authoritative',
+    };
+  }
+
   if (left.size !== right.size) {
     return { equal: false, detail: `sheets=${left.size} rows, supabase=${right.size} rows` };
   }
@@ -201,6 +282,58 @@ function compareCellSets(concept, sheetCellRows, supabaseCellRows) {
   return { equal: true, detail: null };
 }
 
+// The four row concepts, each with the read ids DERIVED from its tab. Declared once
+// so one tab is read once and resolved once, and every read derived from it sees the
+// same rows. Two resolutions of one tab could disagree; one cannot.
+const ROW_CONCEPTS = Object.freeze([
+  { concept: 'logged_sets', rowsRead: 'logged_sets_rows' },
+  { concept: 'session_effort', rowsRead: 'session_effort_rows' },
+  { concept: 'session_plan_events', rowsRead: 'session_plan_events_rows' },
+  { concept: 'session_plan_set_recommendations', rowsRead: 'session_plan_set_rows' },
+]);
+
+// ── THE THREE VERDICTS THAT STILL REFUSE ─────────────────────────────────────
+//
+// The frozen map disposes of a padded blank array, an owner-excluded row, an
+// owner-approved surplus identical copy and a mapped legacy id. It disposes of
+// nothing else, and these three say so:
+//
+//   no_identity                      a real non-blank row with an empty export
+//                                    identity — Supabase can never represent it;
+//   unmapped_legacy                  a legacy session id the frozen map does not
+//                                    cover — nothing is guessed;
+//   duplicate_multiplicity_mismatch  an owner approval whose multiplicity the tab no
+//                                    longer matches — the map and the data parted.
+//
+// Each one means readiness cannot compare the tab, so it REFUSES rather than compare
+// a set it knows is short. Counts only — a redacted reason, never a value (§3.8). The
+// sweep is the lane that opens a durable divergence for these; readiness reports.
+function resolutionRefusal(resolution) {
+  const counts = resolution.counts;
+  const reasons = [];
+  if (counts.no_identity > 0) reasons.push(`identityless rows=${counts.no_identity}`);
+  if (counts.unmapped_legacy > 0) reasons.push(`unmapped legacy session ids=${counts.unmapped_legacy}`);
+  if (counts.duplicate_multiplicity_mismatch > 0) {
+    reasons.push(`stale duplicate approvals=${counts.duplicate_multiplicity_mismatch}`);
+  }
+  if (reasons.length === 0) return null;
+  return `the frozen migration dispositions do not cover this tab: ${reasons.join(', ')}. `
+    + 'OWNER ACTION REQUIRED; no identity is invented and no row is dropped to make a count agree';
+}
+
+// Read one migrated tab and resolve it through the ONE resolver. A read failure and
+// a refusal are returned rather than thrown, because both are verdicts the report has
+// to carry per read.
+async function resolveTab(concept, { sheets }) {
+  try {
+    const sheetRows = await sheets.getSheetRows(contract.conceptSpec(concept).tab);
+    const resolution = legacyMap.resolveSheetRows(concept, sheetRows);
+    return { resolution, refusal: resolutionRefusal(resolution), error: null };
+  } catch (error) {
+    return { resolution: null, refusal: null, error: error.message };
+  }
+}
+
 // Run EVERY moved read on both sides and report per-read equality.
 //
 // A read that THREW is reported as not equal with its error, never skipped. A
@@ -209,40 +342,51 @@ function compareCellSets(concept, sheetCellRows, supabaseCellRows) {
 async function compareReadPaths({ sheets, adapter, now = Date.now() } = {}) {
   const results = [];
 
-  async function check(id, leftFn, rightFn, compare) {
+  function record(id, verdict) {
     const entry = MOVED_READS.find((r) => r.id === id);
+    results.push({
+      ...entry,
+      equal: verdict.equal === true,
+      detail: verdict.detail || null,
+      error: verdict.error || null,
+    });
+  }
+
+  // One read and one resolution per migrated tab, shared by every read derived
+  // from it.
+  const tabs = new Map();
+  for (const { concept } of ROW_CONCEPTS) {
+    tabs.set(concept, await resolveTab(concept, { sheets }));
+  }
+
+  // Compare one read whose Sheets side is a resolved tab. A tab that could not be
+  // read, or that the frozen map does not fully cover, is reported NOT equal with its
+  // exact reason and the Supabase side is never consulted: an unrunnable comparison
+  // is not a passing one.
+  async function check(id, concept, project, rightFn, compare) {
+    const tab = tabs.get(concept);
+    if (tab.error) return record(id, { equal: false, error: tab.error });
+    if (tab.refusal) return record(id, { equal: false, detail: tab.refusal });
     try {
-      const [left, right] = [await leftFn(), await rightFn()];
-      const verdict = compare(left, right);
-      results.push({ ...entry, equal: verdict.equal, detail: verdict.detail, error: null });
+      return record(id, compare(project(tab.resolution.rows), await rightFn()));
     } catch (error) {
-      results.push({ ...entry, equal: false, detail: null, error: error.message });
+      return record(id, { equal: false, error: error.message });
     }
   }
 
-  await check(
-    'log_composite_keys',
-    () => sheets.getLogCompositeKeys(),
-    () => logCompositeKeys({ adapter }),
-    compareKeyLists
-  );
-  await check(
-    'effort_session_ids',
-    () => sheets.getEffortSessionIds(),
-    () => effortSessionIds({ adapter }),
-    compareKeyLists
-  );
+  await check('log_composite_keys', 'logged_sets', logCompositeKeysOf,
+    () => logCompositeKeys({ adapter }), compareKeyLists);
+  await check('effort_session_ids', 'session_effort', effortSessionIdsOf,
+    () => effortSessionIds({ adapter }), compareKeyLists);
 
-  const rowConcepts = [
-    ['logged_sets_rows', 'logged_sets'],
-    ['session_effort_rows', 'session_effort'],
-    ['session_plan_events_rows', 'session_plan_events'],
-    ['session_plan_set_rows', 'session_plan_set_recommendations'],
-  ];
-  for (const [id, concept] of rowConcepts) {
+  for (const { concept, rowsRead } of ROW_CONCEPTS) {
     await check(
-      id,
-      () => sheets.getSheetRows(contract.conceptSpec(concept).tab),
+      rowsRead,
+      concept,
+      // Back to the Sheets CELL SHAPE, so both sides are compared at the level the
+      // prospective read actually returns. `sheetCellsFromRow` is the declared
+      // inverse of `rowFromSheet`, so this invents no third representation.
+      (rows) => rows.map((row) => contract.sheetCellsFromRow(concept, row)),
       () => conceptRows(concept, { adapter }),
       (left, right) => compareCellSets(concept, left, right)
     );
@@ -250,19 +394,19 @@ async function compareReadPaths({ sheets, adapter, now = Date.now() } = {}) {
 
   // The catalog compares through its own content hash, because that hash IS the
   // mirror generation's identity (§3.7) and normalizing both sides the same way is
-  // what makes "the same catalog" mean one thing rather than two.
-  await check(
-    'exercise_catalog',
-    () => sheets.getExerciseCatalog(),
-    () => exerciseCatalogRows({ adapter, now }),
-    (left, right) => {
-      const leftHash = contract.catalogContentHash(contract.normalizeCatalogRows(left));
-      const rightHash = contract.catalogContentHash(contract.normalizeCatalogRows(right));
-      return leftHash === rightHash
-        ? { equal: true, detail: null }
-        : { equal: false, detail: 'catalog content hashes differ' };
-    }
-  );
+  // what makes "the same catalog" mean one thing rather than two. It takes no part in
+  // the resolver: the catalog carries no session identity and the frozen map disposes
+  // of no catalog row.
+  try {
+    const [left, right] = [await sheets.getExerciseCatalog(), await exerciseCatalogRows({ adapter, now })];
+    const leftHash = contract.catalogContentHash(contract.normalizeCatalogRows(left));
+    const rightHash = contract.catalogContentHash(contract.normalizeCatalogRows(right));
+    record('exercise_catalog', leftHash === rightHash
+      ? { equal: true }
+      : { equal: false, detail: 'catalog content hashes differ' });
+  } catch (error) {
+    record('exercise_catalog', { equal: false, error: error.message });
+  }
 
   return {
     // READY means every declared moved read was RUN and returned the same answer
