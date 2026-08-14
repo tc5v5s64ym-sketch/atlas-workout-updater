@@ -44,10 +44,33 @@
 // no longer read by anything, so a second carry-over could only import stale rows.
 // It has no other consumer and no reason to survive that PR.
 //
+// ── A VERIFIED-ABSENT SOURCE TAB IS A ZERO-ROW SOURCE, ACKNOWLEDGED BY THE OWNER ──
+//
+// The production workbook never held every coaching-input tab: all four are
+// OPTIONAL tabs in `config/sheetContract.js`, the runtime reads an absent tab as
+// empty (constraints read as [], deload state reads as NORMAL), and every write
+// path refuses to append to a tab that does not exist. A tab that is absent has
+// therefore accumulated no rows that this carry-over could lose.
+//
+// Absence is a DURABLE SCHEMA FACT and is never inferred from an error message.
+// It is established only by `sheets.confirmTabMissing` — the spreadsheet metadata
+// was readable AND the tab is not in the enumerated list. A permission failure, a
+// transient API failure, a malformed range against a tab that exists, unreadable
+// metadata, or a missing spreadsheet still refuses the whole transition.
+//
+// What the workbook cannot prove is HISTORY: "absent today" reads the same for a
+// tab that never existed and a tab someone deleted. Only the owner can tell those
+// apart. So `--apply` REFUSES a verified-absent tab unless the owner names it with
+// `--accept-absent-tab=<Tab>` — the typed command is the recorded acknowledgment
+// that the tab never held data. The dry run reports absence and shows the exact
+// flag the apply will require.
+//
 // USAGE
 //   npm run atlas:coaching-inputs-transition            # dry run, writes nothing
 //   npm run atlas:coaching-inputs-transition -- --apply # the owner-run write
 //   npm run atlas:coaching-inputs-transition -- --json  # machine-readable report
+//   npm run atlas:coaching-inputs-transition -- --apply --accept-absent-tab=Coaching_Notes
+//                                                       # owner acknowledges an absent tab
 
 const sheets = require('../sheets');
 const adapter = require('../services/supabaseAdapter');
@@ -117,10 +140,20 @@ const CONCEPTS = [
 ];
 
 function parseArgs(argv) {
+  const acceptAbsentTabs = [];
+  for (const arg of argv) {
+    if (typeof arg === 'string' && arg.startsWith('--accept-absent-tab=')) {
+      for (const piece of arg.slice('--accept-absent-tab='.length).split(',')) {
+        const name = piece.trim();
+        if (name) acceptAbsentTabs.push(name);
+      }
+    }
+  }
   return {
     apply: argv.includes('--apply'),
     json: argv.includes('--json'),
     help: argv.includes('--help') || argv.includes('-h'),
+    acceptAbsentTabs,
   };
 }
 
@@ -136,26 +169,47 @@ atlas:coaching-inputs-transition — one-time carry-over of the coaching inputs.
   (no flags)   DRY RUN. Reads both sides and reports. Writes nothing.
   --apply      Perform the inserts. Owner-run, once, before writes reopen.
   --json       Machine-readable report.
+  --accept-absent-tab=<Tab>
+               Owner acknowledgment that a VERIFIED-absent source tab never held
+               data, so it carries zero rows. Repeatable; commas allowed. Without
+               it, --apply refuses an absent tab.
 
 REFUSES to run --apply against a destination that already holds rows. There is no
 merge and no partial re-run: a second import is how a duplicate constraint set gets
 built, and a duplicated injury restriction is not a harmless duplicate.
+
+REFUSES to run --apply when a source tab is verified absent and not acknowledged
+with --accept-absent-tab. Absence is verified only against the workbook's own tab
+list (sheets.confirmTabMissing); an unreadable tab or workbook still refuses.
 `.trim());
 }
 
-// Read one tab, header-stripped. A tab that is absent or unreadable is a REFUSAL,
-// never an empty carry-over: importing nothing because the source could not be read
-// is the exact silent loss this script exists to prevent.
+// Read one tab, header-stripped. A tab that is UNREADABLE is a REFUSAL, never an
+// empty carry-over: importing nothing because the source could not be read is the
+// exact silent loss this script exists to prevent. A tab that is VERIFIED ABSENT —
+// established only by the two-step authority in `sheets.confirmTabMissing`
+// (metadata readable AND the tab not in the workbook's own tab list) — is a
+// zero-row source, reported as such, and gated at --apply by the owner
+// acknowledgment above. Every other failure still throws and refuses the run.
 async function readSource(concept) {
-  const rows = await sheets.getSheetRows(concept.tab);
-  return (Array.isArray(rows) ? rows : []).filter(
-    (row) => Array.isArray(row) && row.some((cell) => String(cell == null ? '' : cell).trim() !== '')
-  );
+  let rows;
+  try {
+    rows = await sheets.getSheetRows(concept.tab);
+  } catch (error) {
+    if (!(await sheets.confirmTabMissing(error, concept.tab))) throw error;
+    return { rows: [], tabAbsent: true };
+  }
+  return {
+    rows: (Array.isArray(rows) ? rows : []).filter(
+      (row) => Array.isArray(row) && row.some((cell) => String(cell == null ? '' : cell).trim() !== '')
+    ),
+    tabAbsent: false,
+  };
 }
 
-async function main() {
-  const args = parseArgs(process.argv.slice(2));
-  if (args.help) { printHelp(); return; }
+async function main(argv = process.argv.slice(2)) {
+  const args = parseArgs(argv);
+  if (args.help) { printHelp(); return null; }
 
   if (!adapter.isConfigured('migrate')) {
     throw new Error(
@@ -173,15 +227,18 @@ async function main() {
 
   for (const concept of CONCEPTS) {
     const source = await readSource(concept);
-    const meaningful = source.filter(concept.isMeaningful);
+    const meaningful = source.rows.filter(concept.isMeaningful);
     const destination = await concept.readDestination();
+    const absenceAccepted = source.tabAbsent ? args.acceptAbsentTabs.includes(concept.tab) : null;
 
     const entry = {
       concept: concept.name,
       tab: concept.tab,
-      source_rows: source.length,
+      source_tab_absent: source.tabAbsent,
+      absence_accepted: absenceAccepted,
+      source_rows: source.rows.length,
       carryable_rows: meaningful.length,
-      skipped_incomplete: source.length - meaningful.length,
+      skipped_incomplete: source.rows.length - meaningful.length,
       destination_rows: destination.length,
       inserted: 0,
       status: 'dry_run',
@@ -189,8 +246,13 @@ async function main() {
 
     // An empty destination is the only state in which "insert everything" is
     // correct. The adapter repeats this check inside the all-concept transaction.
+    // Both refusals are computed on the dry run too, so the dry run previews the
+    // exact apply verdict rather than a friendlier one.
     if (destination.length > 0) {
       entry.status = 'refused_destination_not_empty';
+      report.refusals.push(entry.concept);
+    } else if (source.tabAbsent && !absenceAccepted) {
+      entry.status = 'refused_source_tab_absent';
       report.refusals.push(entry.concept);
     }
     payload[payloadKey[concept.name]] = meaningful.map(concept.payload);
@@ -218,19 +280,34 @@ async function main() {
   if (args.json) {
     console.log(JSON.stringify(report, null, 2));
   } else {
-    console.log(args.apply ? 'COACHING INPUTS TRANSITION — APPLIED' : 'COACHING INPUTS TRANSITION — DRY RUN (nothing written)');
+    const applied = args.apply && report.refusals.length === 0;
+    console.log(applied ? 'COACHING INPUTS TRANSITION — APPLIED'
+      : args.apply ? 'COACHING INPUTS TRANSITION — REFUSED (nothing written)'
+        : 'COACHING INPUTS TRANSITION — DRY RUN (nothing written)');
     for (const entry of report.concepts) {
+      const absentNote = entry.source_tab_absent
+        ? (entry.absence_accepted ? ' SOURCE TAB ABSENT (verified, acknowledged)' : ' SOURCE TAB ABSENT (verified)')
+        : '';
       console.log(
         `  ${entry.concept.padEnd(16)} ${entry.tab.padEnd(16)} ` +
         `source=${entry.source_rows} carryable=${entry.carryable_rows} ` +
         `skipped=${entry.skipped_incomplete} destination=${entry.destination_rows} ` +
-        `inserted=${entry.inserted} [${entry.status}]`
+        `inserted=${entry.inserted} [${entry.status}]${absentNote}`
       );
     }
-    if (report.refusals.length) {
+    const notEmpty = report.concepts.filter((e) => e.status === 'refused_destination_not_empty');
+    const absent = report.concepts.filter((e) => e.status === 'refused_source_tab_absent');
+    if (notEmpty.length) {
       console.log(
-        `\nREFUSED ALL CONCEPTS because ${report.refusals.join(', ')} already holds rows. ` +
+        `\nREFUSED ALL CONCEPTS because ${notEmpty.map((e) => e.concept).join(', ')} already holds rows. ` +
         'The transition is all-or-nothing; there is no merge or partial re-run.'
+      );
+    }
+    if (absent.length) {
+      console.log(
+        `\n${notEmpty.length ? 'ALSO refused' : 'REFUSED ALL CONCEPTS'} because these source tabs are verified absent ` +
+        'and not acknowledged. If (and only if) each tab never held data, acknowledge it explicitly:\n' +
+        absent.map((e) => `  --accept-absent-tab=${e.tab}`).join('\n')
       );
     }
     if (!args.apply) console.log('\nRe-run with --apply to write. Owner-run, once, before writes reopen.');
@@ -238,6 +315,7 @@ async function main() {
 
   await adapter.close().catch(() => {});
   if (report.refusals.length && args.apply) process.exitCode = 1;
+  return report;
 }
 
 if (require.main === module) {
@@ -247,4 +325,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { CONCEPTS, parseArgs };
+module.exports = { CONCEPTS, parseArgs, readSource, main };
