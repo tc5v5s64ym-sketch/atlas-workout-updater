@@ -23,7 +23,7 @@ Render hosts the production backend:
 https://atlas-workout-updater.onrender.com
 ```
 
-Render auto-deploys from GitHub `main`. Do not change Render environment variables unless the owner explicitly approves it.
+Owner disabled Render auto-deploy on 2026-08-14 after an unauthorized S4 deploy of PR #1291. Leave auto-deploy off. Do not change Render environment variables unless the owner explicitly approves it. Production rollback to S3 `da16cd4b13912569870e9a6dee7a3281730027b1` is recorded in `docs/ATLAS_V1_EXECUTION_PLAN.md` and `docs/verification/S4_ACCIDENTAL_DEPLOY_ROLLBACK_2026-08-14.md`.
 
 ## Google Sheets Persistence
 

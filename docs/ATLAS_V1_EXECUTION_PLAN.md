@@ -96,6 +96,8 @@ This is the single active, executable campaign. It is embedded here — not besi
 
 ### CAMPAIGN STATE
 
+**S4 ACCIDENTAL DEPLOY RECOVERY — ACTIVE 2026-08-14. Do not continue the S4 cutover.** Render auto-deploy is disabled by the owner. Production is serving unauthorized S4 code `21e5d616ee3726e027331e66f2af6812760dd230` (PR #1291). The next step is the owner Render rollback to S3 `da16cd4b13912569870e9a6dee7a3281730027b1`. Evidence and the rollback runbook: [`docs/verification/S4_ACCIDENTAL_DEPLOY_ROLLBACK_2026-08-14.md`](verification/S4_ACCIDENTAL_DEPLOY_ROLLBACK_2026-08-14.md). No counter changes. Stage B stays 0/5. Phase 5 stays unauthorized. No S4 schema. No freeze activation. No production write. No write reopening.
+
 **OWNER AUTHORIZATION 2026-08-01 — Stage A is OPEN at 0/5 (no phase change).** Dale explicitly authorized Phase 4 Stage A to open. This is the owner instruction that starts the streak; it governs because it is recorded here, not because it was said in a session. It opens Stage A only: **Stage A: 5/5 — COMPLETE. Stage B: 0/5 — OPEN.** Phase 5 stays unauthorized, `SESSION_PLAN_SETS_WRITE_ENABLED` stays `0`, and no Sheet tab is created. Attempt one qualifying session at a time. The qualifying execution mode, the counting rule, the run-start boundary, and the sunset condition are recorded below under "Stage A qualifying sessions".
 
 **STAGE A — SESSION 1 PASS (2026-08-01). Streak 1/5.** One qualifying model-up session ran from clean `main` `4a233617bfe7186d804aed12cd271d7ae1f2b83e` (= `origin/main`): `npm run atlas:stage-a-session -- --session=1 --model-up`. Synthetic session `STAGEA-S1-20260801T051224-868A33`, athlete `stage-a-athlete-868A33`, run `stage-a-s1-20260801T051224-868A33`, model `gemini-2.5-flash-lite` against the declared sandbox workbook. Scorecard **PASS 26 · FAIL 0 · ERROR 0 · N/A 1** with `stage_a_eligible: true`; the single `NOT_APPLICABLE` is the owner-authorized `Session_Plans` / `Session_Plan_Sets` condition carrying its exact reason, and neither tab was created. Evidence: [`docs/verification/STAGE_A_SESSION_1_2026-08-01.md`](verification/STAGE_A_SESSION_1_2026-08-01.md). Synthetic — never owner evidence, LT evidence, or a GATE A eligible event. **Stage B stays unopened and Phase 5 stays unauthorized.** Evidence: [`docs/verification/STAGE_A_SESSION_1_2026-08-01.md`](verification/STAGE_A_SESSION_1_2026-08-01.md).
@@ -658,13 +660,18 @@ accepted plan data is authoritative, not optional; no flag may recreate that com
 This correction authorizes no schema application to `Atlas Production`, no deployment, and
 no cutover.
 
-**Status, recorded honestly.** PR #1291 (`agent/s4-supabase-cutover`) is the S4
-repository cutover. It is not a production cutover. Current `main`
-(`da16cd4b13912569870e9a6dee7a3281730027b1`) still has Google Sheets as the live
-workout authority and `services/idempotency.js` as the live receipt store. This
-branch wires Supabase as the intended authority for the seven hot-path concepts,
-the exercise catalog, coaching inputs, and write receipts, and it deletes the
+**Status, recorded honestly at PR #1291 authoring time.** PR #1291
+(`agent/s4-supabase-cutover`) is the S4 repository cutover. It was not an
+authorized production cutover. **At that writing,** `main` was
+`da16cd4b13912569870e9a6dee7a3281730027b1` and still had Google Sheets as the live
+workout authority and `services/idempotency.js` as the live receipt store. The
+branch wired Supabase as the intended authority for the seven hot-path concepts,
+the exercise catalog, coaching inputs, and write receipts, and it deleted the
 Sheets hot-path readers and the file-backed receipt store from the runtime.
+**Superseded as current production state by "S4 ACCIDENTAL PRODUCTION DEPLOY —
+RECOVERY 2026-08-14" below:** `main` is now
+`21e5d616ee3726e027331e66f2af6812760dd230`, and Render served that head without
+cutover authorization.
 
 Surfaces on the branch: `services/workoutAuthority.js`,
 `services/writeReceipts.js`, `services/exerciseCatalog.js`,
@@ -682,7 +689,9 @@ tests PASS; from-empty Postgres `npm run test:pg` PASS, including
 `test-pg/allSheets429Workout.pgproof.js` (five complete workouts, workout-critical
 synchronous Sheets calls = 0); E2E PASS; secret scan PASS; Drift Guard 7 PASS.
 Deployed debug workouts (design P8/P18) have not run. No production schema
-application, deployment, cutover, or data write has occurred.
+application, cutover, or data write has occurred. **That last sentence is the
+PR's merge-authorization state. It is not current production state. Render
+later served the merged head. See the accidental-deploy recovery block below.**
 
 Outstanding owner production gates are unchanged: 1(b) `write_freeze` apply to
 `Atlas Production`; 1(c) S4 schema apply; 1(d) divergence-table drop after the
@@ -703,7 +712,87 @@ outcome of that new head stays **PENDING** until ChatGPT reads it.
 
 **No counter changed and no authorization was granted by this review or this
 correction.** Rehearsal 0/5 · Stage A 5/5 COMPLETE · Stage B 0/5 OPEN. Phase 5
-unauthorized. No schema applied. No deployment. No S4 production cutover.
+unauthorized. No schema applied. **That paragraph is the state as of the
+PR #1291 merge authorization.** It is not current production state. Current
+production state is the accidental-deploy recovery block immediately below.
+
+---
+
+### S4 ACCIDENTAL PRODUCTION DEPLOY — RECOVERY 2026-08-14
+
+**This block is the owner instruction to recover, not to continue the cutover.**
+Dale disabled Render auto-deploy and directed the next work: determine and
+prepare the safest rollback of production to the known S3 build
+`da16cd4b13912569870e9a6dee7a3281730027b1`. Do not continue the S4 cutover.
+Do not apply S4 schema. Do not activate the write freeze unless separately
+authorized. Do not write production data. Do not reopen writes. Do not advance
+Stage B or Phase 5.
+
+**Classification: local deploy defect.** An unauthorized Render deploy of the
+S4 *repository* cutover. It is not an authorized authority transfer. Winner
+remains Google Sheets plus the S3 file-backed receipt store. Do not add a
+fallback, bridge, second authority, or emergency code path.
+
+#### Current-state verification
+
+1. **Source.** This owner instruction, recorded here.
+2. **Duplicate / stale search.** `origin/main` is
+   `21e5d616ee3726e027331e66f2af6812760dd230`, the merge of PR #1291 at
+   `2026-08-14T01:12:36Z`. Public production `GET /version` returns that same
+   full SHA, `pr: 1291`, `deployed_at: 2026-08-14T02:24:37.691Z`. Public
+   `GET /.well-known/atlas-status.json` at `2026-08-14T02:26:14.494Z` reports
+   `supabase_migration.configured: false`. Owner gates 1(b) and 1(c) remain
+   outstanding. No prior recovery PR existed.
+3. **Verdict.** `STILL BROKEN`
+4. **Evidence.** The public production documents named above, plus
+   [`docs/verification/S4_ACCIDENTAL_DEPLOY_ROLLBACK_2026-08-14.md`](verification/S4_ACCIDENTAL_DEPLOY_ROLLBACK_2026-08-14.md).
+5. **Allowed next action.** Owner Render rollback to
+   `da16cd4b13912569870e9a6dee7a3281730027b1`. No runtime code in this recovery.
+
+#### What the investigation established
+
+1. **No S4 authoritative effect from this process.** `ATLAS_SUPABASE_APP_URL`
+   is unset on the running production process, so the S4 receipt, Save, catalog,
+   and coaching-input paths cannot reach Supabase. S4 deleted the Sheets
+   hot-path writers, so those paths cannot write Sheets either. This does not
+   read `Atlas Production` and does not prove Sheets telemetry tabs were quiet.
+2. **The seven write routes will not stay closed by mechanism after S3 is
+   restored.** S3 freeze is dormant while `ATLAS_SUPABASE_APP_URL` is unset.
+   Restoring `da16cd4b` against the current Render env reopens:
+   `/api/coaching-notes`, `/api/constraints`, `/api/log-modality`,
+   `/api/bodyweight`, `/api/complete-workout`, `/api/log-workout`, and
+   `/api/log-workout/undo-last`. Until the receipt-safety horizon, the owner
+   and every agent must not call them. That is an operational hold, not a new
+   control.
+3. **S3 receipt state is destroyed and unprovable.** The S4 process replaced
+   the S3 process and deleted `services/idempotency.js`.
+   `/tmp/atlas-idempotency.json` is gone. The designed reverse transfer cannot
+   run. This recovery does not invent a substitute carry.
+4. **Receipt-safety horizon.** `DEFAULT_TTL_MS` (24 hours) after the last
+   moment an S3 process could have minted a receipt. Conservative instant:
+   `2026-08-15T02:24:37.691Z` (24 hours after the observed S4 `deployed_at`).
+   Stronger proof is the Render log of the last S3 instance exit, plus one
+   instance across the replace. Writes may not reopen before the horizon.
+   Reopening after it is a separate owner action.
+5. **No schema reversal.** S4 schema apply (gate 1(c)) is outstanding. This
+   process cannot apply DDL. GitHub has no Supabase connection. Rollback of
+   S3 *code* does not reverse S4 DDL. **Stop if** Atlas Production already
+   shows any of `20260813152939_s4_catalog_sole_authority`,
+   `20260813152952_s4_cutover_write_id_foreign_keys`, or
+   `20260813170000_s4_coaching_inputs`, or if `exercise_catalog_mirror` has
+   been renamed.
+6. **Render target.** Roll the service that serves
+   `https://atlas-workout-updater.onrender.com` back to commit
+   `da16cd4b13912569870e9a6dee7a3281730027b1` (PR #1290). Leave auto-deploy
+   off. Do not manual-deploy `main`. `main` remains the S4 head until a later
+   authorized action. After rollback, `GET /version` must report that full
+   SHA and `pr: 1290`.
+
+**What this block does not do.** It changes no counter and no phase.
+**Rehearsal, Stage A, and Stage B keep the values the active `CAMPAIGN STATE:`
+line already records.** Phase 5 stays unauthorized. It authorizes no schema
+application, no freeze, no production write, no write reopening, and no S4
+cutover.
 
 ---
 
