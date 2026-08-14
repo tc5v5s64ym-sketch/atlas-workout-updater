@@ -166,6 +166,12 @@ test('security: live write logging redacts workout and effort row contents', () 
   const logLines = source.split(/\r?\n/).filter(line => line.includes('console.log'));
   assert.ok(!logLines.some(line => line.includes('formattedLogRows')));
   assert.ok(!logLines.some(line => line.includes('formattedEffortRow')));
-  assert.match(source, /event: 'append_log_rows'/);
-  assert.match(source, /event: 'append_effort_row'/);
+  // ONE EVENT, because there is one write. The Save used to log `append_log_rows`
+  // and `append_effort_row` separately because it issued two Google Sheets appends
+  // that could half-succeed; the S4 cutover makes it one Supabase transaction, so
+  // there is one `workout_saved` line carrying both counts. What this test actually
+  // guards is unchanged: the log names WHAT happened and HOW MANY rows, never the
+  // athlete's loads, reps or notes.
+  assert.match(source, /event: 'workout_saved'/);
+  assert.ok(!logLines.some(line => line.includes('rowsToWrite')), 'no row payload in a log line');
 });

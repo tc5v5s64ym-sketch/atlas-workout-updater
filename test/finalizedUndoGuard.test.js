@@ -24,7 +24,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { resetIdempotencyStore } = require('../services/idempotency');
+const { resetWorkoutAuthorityStub: resetIdempotencyStore } = require('./helpers/stubWorkoutAuthority');
 const { logCleanedColumns, sessionPlansColumns } = require('../config/columns');
 
 const originalConsoleLog = console.log;
@@ -148,6 +148,23 @@ const fakeSheets = {
 const sheetsPath = require.resolve('../sheets');
 require.cache[sheetsPath] = { id: sheetsPath, filename: sheetsPath, loaded: true, exports: fakeSheets };
 
+// The exercise catalog reads Supabase (OWNER CORRECTION 2026-08-13). Stubbed here so
+// the suite never opens a database connection; it delegates to the sheets fixture above.
+require('./helpers/stubExerciseCatalog').installExerciseCatalogStub();
+
+// The workout authority is Supabase since the S4 cutover, so stubbing `sheets.js`
+
+// no longer controls the logged sets, the Effort row, the plan ledgers or the write
+
+// receipts. `sheetsFallback` seeds this suite's existing fixture into the double, so
+
+// no test's data changes — only where the route reads it from.
+
+const {
+  installWorkoutAuthorityStub, workoutAuthorityStore: authorityStore,
+  failWorkoutAuthorityReads,
+} = require('./helpers/stubWorkoutAuthority');
+installWorkoutAuthorityStub();
 const { app } = require('../index');
 
 let server;
@@ -172,6 +189,13 @@ test.after(async () => {
 test.beforeEach(() => {
   resetIdempotencyStore();
   resetState();
+  // Two Saves already in the authority: one for the finalized session, one for the
+  // open one. Each row carries the write_id of the Save that wrote it, which is what
+  // undo addresses now that it deletes by identity rather than by sheet position.
+  const store = authorityStore();
+  store.loggedSets = [logRow(OPEN_SESSION), logRow(FINAL_SESSION)];
+  store.loggedSetWriteIds = [OPEN_SAVE_WRITE_ID, FINAL_SAVE_WRITE_ID];
+  store.planEvents = state.planRows.map((r) => [...r]);
 });
 
 async function undo(body) {
@@ -183,15 +207,17 @@ async function undo(body) {
   return { response, body: await response.json() };
 }
 
-// Sheet row 3 = the finalized session's row; sheet row 2 = the open session's row.
-const FINAL_RANGE = 'Log_Cleaned!A3:L3';
-const OPEN_RANGE = 'Log_Cleaned!A2:L2';
+// UNDO ADDRESSES ROWS BY IDENTITY, NOT BY POSITION. It used to take the A1 range of
+// the Save being undone; since the S4 cutover it takes that Save's `write_id`, which
+// is stamped on every row the Save wrote. These are the two seeded Saves.
+const FINAL_SAVE_WRITE_ID = 'w-save-final';
+const OPEN_SAVE_WRITE_ID = 'w-save-open';
 
 function assertNothingTouched(why) {
-  assert.equal(state.deletes.length, 0, `${why}: no Log_Cleaned rows may be deleted`);
+  assert.equal(authorityStore().calls.undos.length, 0, `${why}: no undo transaction was issued`);
   assert.equal(state.appends.length, 0, `${why}: no appends to any tab`);
   assert.equal(state.updates.length, 0, `${why}: no cell updates — closeout_write_id is never touched`);
-  assert.equal(state.logRows.length, 2, `${why}: the log is unchanged`);
+  assert.equal(authorityStore().loggedSets.length, 2, `${why}: the log is unchanged`);
 }
 
 // ── the contract ──────────────────────────────────────────────────────────────
@@ -201,7 +227,7 @@ test('#1164 a finalized session with NO ledger seal rejects undo (today\'s produ
   // Session_Plans still records `finalized`, because it is a separate already-live lane. This is
   // the currently reachable incoherence, and it is the case that matters most.
   const { response, body } = await undo({
-    log_appended_range: FINAL_RANGE,
+    save_write_id: FINAL_SAVE_WRITE_ID,
     session_id: FINAL_SESSION,
     rows_to_delete: 1,
     confirm_delete: true,
@@ -217,13 +243,13 @@ test('#1164 a finalized session with NO ledger seal rejects undo (today\'s produ
 test('#1164 a finalized session WITH a sealed ledger rejects undo', async () => {
   // Same durable verdict, reached from the same Session_Plans read. The seal's presence must not
   // change the answer — the guard never consults Session_Plan_Sets and never mutates it.
-  state.planRows.push(planRow({
+  authorityStore().planEvents.push(planRow({
     key: 'k-close-final-2', session_id: FINAL_SESSION,
     event_type: 'session_closeout', closeout_status: 'finalized',
   }));
 
   const { response, body } = await undo({
-    log_appended_range: FINAL_RANGE,
+    save_write_id: FINAL_SAVE_WRITE_ID,
     session_id: FINAL_SESSION,
     rows_to_delete: 1,
     confirm_delete: true,
@@ -237,7 +263,7 @@ test('#1164 a finalized session WITH a sealed ledger rejects undo', async () => 
 
 test('#1164 the rejection explains itself to the athlete', async () => {
   const { body } = await undo({
-    log_appended_range: FINAL_RANGE,
+    save_write_id: FINAL_SAVE_WRITE_ID,
     session_id: FINAL_SESSION,
     rows_to_delete: 1,
     confirm_delete: true,
@@ -253,13 +279,13 @@ test('#1164 the rejection explains itself to the athlete', async () => {
 
 test('#1164 a duplicate rejected request stays rejected, and still deletes nothing', async () => {
   const first = await undo({
-    log_appended_range: FINAL_RANGE, session_id: FINAL_SESSION,
+    save_write_id: FINAL_SAVE_WRITE_ID, session_id: FINAL_SESSION,
     rows_to_delete: 1, confirm_delete: true, write_id: 'w-undo-dup',
   });
   assert.equal(first.body.details && first.body.details.error_code, 'finalized_workout_undo_not_supported');
 
   const second = await undo({
-    log_appended_range: FINAL_RANGE, session_id: FINAL_SESSION,
+    save_write_id: FINAL_SAVE_WRITE_ID, session_id: FINAL_SESSION,
     rows_to_delete: 1, confirm_delete: true, write_id: 'w-undo-dup',
   });
   assert.equal(second.response.status, 409);
@@ -271,10 +297,10 @@ test('#1164 a duplicate rejected request stays rejected, and still deletes nothi
 test('#1164 an unreadable Session_Plans fails CLOSED — undo is refused, not allowed', async () => {
   // The guard cannot prove the session is un-finalized, so it must not proceed. Ambiguity fails
   // closed, exactly as the seal lane's ledger_read_failed does.
-  state.failPlanRead = true;
+  failWorkoutAuthorityReads('Simulated plan-event read failure');
 
   const { response, body } = await undo({
-    log_appended_range: OPEN_RANGE, session_id: OPEN_SESSION,
+    save_write_id: OPEN_SAVE_WRITE_ID, session_id: OPEN_SESSION,
     rows_to_delete: 1, confirm_delete: true, write_id: 'w-undo-readfail',
   });
 
@@ -289,13 +315,13 @@ test('#1164 ordinary pre-finalization undo still works', async () => {
   // The open session has a plan_accepted event but NO session_closeout. Undo must behave exactly
   // as it does today: read-back verified, then delete.
   const { response, body } = await undo({
-    log_appended_range: OPEN_RANGE, session_id: OPEN_SESSION,
+    save_write_id: OPEN_SAVE_WRITE_ID, session_id: OPEN_SESSION,
     rows_to_delete: 1, confirm_delete: true, write_id: 'w-undo-ok',
   });
 
   assert.equal(response.status, 200, 'a non-finalized write is still undoable');
   assert.equal(body.data ? body.data.rows_deleted : body.rows_deleted, 1);
-  assert.equal(state.deletes.length, 1, 'exactly one delete');
+  assert.equal(authorityStore().calls.undos.length, 1, 'exactly one undo transaction');
   assert.equal(state.appends.length, 0, 'undo still writes nothing anywhere else');
   assert.equal(state.updates.length, 0, 'undo still stamps nothing');
 });
@@ -303,15 +329,15 @@ test('#1164 ordinary pre-finalization undo still works', async () => {
 test('#1164 a session with no Session_Plans history at all is still undoable', async () => {
   // The tab EXISTS and reads cleanly; it simply holds no closeout for this session. That is a
   // POSITIVE proof of not-final — distinct from the missing-tab case below, which is unknown.
-  state.planRows = [];
+  state.planRows = []; authorityStore().planEvents = [];
 
   const { response } = await undo({
-    log_appended_range: OPEN_RANGE, session_id: OPEN_SESSION,
+    save_write_id: OPEN_SAVE_WRITE_ID, session_id: OPEN_SESSION,
     rows_to_delete: 1, confirm_delete: true, write_id: 'w-undo-nohistory',
   });
 
   assert.equal(response.status, 200);
-  assert.equal(state.deletes.length, 1);
+  assert.equal(authorityStore().calls.undos.length, 1);
 });
 
 test('#1164 an abandoned closeout does not block undo', async () => {
@@ -322,33 +348,37 @@ test('#1164 an abandoned closeout does not block undo', async () => {
   ];
 
   const { response } = await undo({
-    log_appended_range: OPEN_RANGE, session_id: OPEN_SESSION,
+    save_write_id: OPEN_SAVE_WRITE_ID, session_id: OPEN_SESSION,
     rows_to_delete: 1, confirm_delete: true, write_id: 'w-undo-abandoned',
   });
 
   assert.equal(response.status, 200, 'abandoned is not finalized');
-  assert.equal(state.deletes.length, 1);
+  assert.equal(authorityStore().calls.undos.length, 1);
 });
 
 test('#1164 one session being finalized does not block undo for a different session', async () => {
   // The finalized session's event must not leak across session_id boundaries.
   const { response } = await undo({
-    log_appended_range: OPEN_RANGE, session_id: OPEN_SESSION,
+    save_write_id: OPEN_SAVE_WRITE_ID, session_id: OPEN_SESSION,
     rows_to_delete: 1, confirm_delete: true, write_id: 'w-undo-crosstalk',
   });
 
   assert.equal(response.status, 200, 'the open session is unaffected by the finalized one');
-  assert.equal(state.deletes.length, 1);
-  assert.equal(state.deletes[0].startIndex, 1, 'deleted the OPEN session row (sheet row 2), not the finalized one');
+  assert.equal(authorityStore().calls.undos.length, 1);
+  // Addressed by IDENTITY: the undo names the open session's Save, so the finalized
+  // session's row cannot be the one that went — no position arithmetic is involved.
+  assert.equal(authorityStore().calls.undos[0].writeId, OPEN_SAVE_WRITE_ID);
+  assert.equal(authorityStore().loggedSets.length, 1);
+  assert.equal(authorityStore().loggedSets[0][1], FINAL_SESSION, 'the finalized session survives');
 });
 
 test('#1164 a MISSING Session_Plans tab fails closed — absence is not proof of not-final', async () => {
   // Session_Plans is an expected live production dependency. Its unexpected absence is an anomaly,
   // not evidence that the session was never finalized, so it must never be read as finalized:false.
-  state.hidePlansTab = true;
+  failWorkoutAuthorityReads('Simulated plan-event read failure');
 
   const { response, body } = await undo({
-    log_appended_range: OPEN_RANGE, session_id: OPEN_SESSION,
+    save_write_id: OPEN_SAVE_WRITE_ID, session_id: OPEN_SESSION,
     rows_to_delete: 1, confirm_delete: true, write_id: 'w-undo-notab',
   });
 
@@ -358,10 +388,10 @@ test('#1164 a MISSING Session_Plans tab fails closed — absence is not proof of
 });
 
 test('#1164 an unreadable tab LIST fails closed', async () => {
-  state.failTabList = true;
+  failWorkoutAuthorityReads('Simulated plan-event read failure');
 
   const { response, body } = await undo({
-    log_appended_range: OPEN_RANGE, session_id: OPEN_SESSION,
+    save_write_id: OPEN_SAVE_WRITE_ID, session_id: OPEN_SESSION,
     rows_to_delete: 1, confirm_delete: true, write_id: 'w-undo-tablist',
   });
 
@@ -375,10 +405,10 @@ test('#1164 a malformed fold for this session fails closed', async () => {
   // `unknown` — refusing is safe, deleting on it is not.
   const bad = planRow({ key: 'k-bad', session_id: OPEN_SESSION, event_type: 'session_closeout' });
   bad[P.closeout_status] = 'not_a_frozen_status';   // outside the #952 frozen vocabulary
-  state.planRows.push(bad);
+  authorityStore().planEvents.push([...bad]);
 
   const { response, body } = await undo({
-    log_appended_range: OPEN_RANGE, session_id: OPEN_SESSION,
+    save_write_id: OPEN_SAVE_WRITE_ID, session_id: OPEN_SESSION,
     rows_to_delete: 1, confirm_delete: true, write_id: 'w-undo-malformed',
   });
 
@@ -388,9 +418,9 @@ test('#1164 a malformed fold for this session fails closed', async () => {
 });
 
 test('#1164 the 503 explains itself without blaming the athlete', async () => {
-  state.hidePlansTab = true;
+  failWorkoutAuthorityReads('Simulated plan-event read failure');
   const { body } = await undo({
-    log_appended_range: OPEN_RANGE, session_id: OPEN_SESSION,
+    save_write_id: OPEN_SAVE_WRITE_ID, session_id: OPEN_SESSION,
     rows_to_delete: 1, confirm_delete: true, write_id: 'w-undo-503msg',
   });
   const message = String(body.message || '');
@@ -405,7 +435,7 @@ test('#1164 a case-differing session_id cannot bypass the guard (Codex P1)', asy
   // through that read-back and delete the finalized workout — the whole contract bypassed by
   // changing one letter's case.
   const { response, body } = await undo({
-    log_appended_range: FINAL_RANGE,
+    save_write_id: FINAL_SAVE_WRITE_ID,
     session_id: FINAL_SESSION.toUpperCase(),
     rows_to_delete: 1,
     confirm_delete: true,
@@ -426,10 +456,10 @@ test('#1164 a matching row with a blank plan_version fails closed (Codex P1)', a
     event_type: 'session_closeout', closeout_status: 'finalized',
   });
   orphanRow[P.plan_version] = '';
-  state.planRows.push(orphanRow);
+  authorityStore().planEvents.push([...orphanRow]);
 
   const { response, body } = await undo({
-    log_appended_range: OPEN_RANGE, session_id: OPEN_SESSION,
+    save_write_id: OPEN_SAVE_WRITE_ID, session_id: OPEN_SESSION,
     rows_to_delete: 1, confirm_delete: true, write_id: 'w-undo-blankver',
   });
 
@@ -443,10 +473,10 @@ test('#1164 a row truncated before plan_version fails closed (Codex P1)', async 
   const truncated = [];
   truncated[P.idempotency_key] = 'k-truncated';
   truncated[P.session_id] = OPEN_SESSION;
-  state.planRows.push(truncated);
+  authorityStore().planEvents.push(truncated.slice());
 
   const { response, body } = await undo({
-    log_appended_range: OPEN_RANGE, session_id: OPEN_SESSION,
+    save_write_id: OPEN_SAVE_WRITE_ID, session_id: OPEN_SESSION,
     rows_to_delete: 1, confirm_delete: true, write_id: 'w-undo-truncated',
   });
 
@@ -465,9 +495,10 @@ test('#1164 matching rows that all drop out of the fold fail closed', async () =
   });
   junk[P.event_type] = 'not_a_real_event_type';
   state.planRows = [junk];
+  authorityStore().planEvents = [junk.slice()];
 
   const { response, body } = await undo({
-    log_appended_range: OPEN_RANGE, session_id: OPEN_SESSION,
+    save_write_id: OPEN_SAVE_WRITE_ID, session_id: OPEN_SESSION,
     rows_to_delete: 1, confirm_delete: true, write_id: 'w-undo-alldropped',
   });
 

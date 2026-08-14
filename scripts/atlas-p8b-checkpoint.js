@@ -56,14 +56,47 @@ const ROLES = Object.freeze([
   { role: 'atlas_rebuild', env: 'ATLAS_SUPABASE_REBUILD_URL', note: 'owner-only §5.7 rebuild' },
 ]);
 
-// §3.1–§3.9 — the eleven tables `S2` creates. `write_freeze` (§3.10) is `S3`'s
-// and must be ABSENT here; its presence would mean something applied S3 early.
-const S2_TABLES = Object.freeze([
-  'exercise_catalog_mirror', 'exercise_catalog_sync', 'logged_sets',
-  'migration_divergences', 'session_effort', 'session_plan_events',
+// §3.1–§3.9 — the tables `S2` creates. `write_freeze` (§3.10) is `S3`'s and must
+// be ABSENT here; its presence would mean something applied S3 early.
+//
+// ── TWO ERAS, BECAUSE THIS GATE OUTLIVED ITS OWN SCHEMA ──────────────────────
+//
+// The catalog tables differ before and after the S4 catalog migration. OWNER
+// CORRECTION 2026-08-13 renamed `exercise_catalog_mirror` to `exercise_catalog`
+// and dropped `exercise_catalog_sync`.
+//
+// This checkpoint is a DISCHARGED owner gate (2026-08-08) whose target,
+// `Atlas Production`, is still pre-S4. Flipping the list to the post-S4 names
+// would make a rerun today report a false FAIL on a correct database, and
+// pinning it to the pre-S4 names would do the same after the cutover. It
+// therefore accepts either era and reports WHICH ONE it observed, so the operator
+// reads a fact instead of a verdict about the wrong schema.
+const TABLES_COMMON = Object.freeze([
+  'logged_sets', 'migration_divergences', 'session_effort', 'session_plan_events',
   'session_plan_set_recommendations', 'sheets_mirror_allocations',
   'sheets_mirror_cursor', 'workout_sessions', 'write_receipts',
 ]);
+const CATALOG_TABLES_PRE_S4 = Object.freeze(['exercise_catalog_mirror', 'exercise_catalog_sync']);
+const CATALOG_TABLES_POST_S4 = Object.freeze(['exercise_catalog']);
+
+// Which catalog era a live schema is in. `null` means neither shape is present,
+// which is a genuine failure rather than an era.
+function catalogEra(present) {
+  if (CATALOG_TABLES_PRE_S4.every((t) => present.includes(t))) return 'pre-S4';
+  if (CATALOG_TABLES_POST_S4.every((t) => present.includes(t))
+      && !present.includes('exercise_catalog_sync')) return 'post-S4';
+  return null;
+}
+
+function expectedTables(present) {
+  const era = catalogEra(present);
+  const catalog = era === 'post-S4' ? CATALOG_TABLES_POST_S4 : CATALOG_TABLES_PRE_S4;
+  return [...TABLES_COMMON, ...catalog].sort();
+}
+
+// Retained for callers and tests that ask "what did S2 declare?" — that answer is
+// historical and does not change.
+const S2_TABLES = Object.freeze([...TABLES_COMMON, ...CATALOG_TABLES_PRE_S4].sort());
 
 const S3_TABLE_MUST_BE_ABSENT = 'write_freeze';
 
@@ -422,13 +455,23 @@ async function checkSchema() {
       `SELECT tablename FROM pg_tables WHERE schemaname = 'atlas' ORDER BY tablename`
     );
     const present = rows.map((r) => r.tablename);
-    const missing = S2_TABLES.filter((t) => !present.includes(t));
-    const unexpected = present.filter((t) => !S2_TABLES.includes(t));
+    const era = catalogEra(present);
+    const expected = expectedTables(present);
+    const missing = expected.filter((t) => !present.includes(t));
+    const unexpected = present.filter((t) => !expected.includes(t));
+
+    if (era === null) {
+      record('schema: catalog shape recognised', 'FAIL',
+        'neither the pre-S4 catalog pair nor the post-S4 exercise_catalog is present');
+    } else {
+      record('schema: catalog shape recognised', 'PASS', `${era} catalog schema`);
+    }
 
     if (missing.length) {
-      record('schema: S2 tables present', 'FAIL', `missing: ${missing.join(', ')}`);
+      record('schema: reviewed tables present', 'FAIL', `missing: ${missing.join(', ')}`);
     } else {
-      record('schema: S2 tables present', 'PASS', `all ${S2_TABLES.length} tables of §3.1–§3.9`);
+      record('schema: reviewed tables present', 'PASS',
+        `all ${expected.length} tables of §3.1–§3.9 (${era || 'unrecognised'} catalog)`);
     }
 
     // `write_freeze` here would mean S3 schema reached production early — the
@@ -568,7 +611,8 @@ if (require.main === module) {
 }
 
 module.exports = {
-  ROLES, S2_TABLES, S3_TABLE_MUST_BE_ABSENT, describeEndpoint, projectRefOf,
+  ROLES, S2_TABLES, S3_TABLE_MUST_BE_ABSENT, catalogEra, expectedTables,
+  describeEndpoint, projectRefOf,
   proveSessionLock, SESSION_MODE_PORT, TRANSACTION_MODE_PORT, EXPECTED_REF_ENV,
   APP_UPDATABLE_COLUMNS,
 };

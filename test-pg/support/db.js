@@ -81,12 +81,20 @@ async function withApplier(fn) {
 // Child-first so no foreign key blocks the reset. TRUNCATE rather than DELETE so
 // identity sequences restart and a test's row ids are its own.
 const TABLES_CHILD_FIRST = [
+  'atlas.modality_log',
+  'atlas.coaching_notes',
+  'atlas.constraints',
+  'atlas.deload_state',
   'atlas.sheets_mirror_allocations',
   'atlas.sheets_mirror_cursor',
   'atlas.migration_divergences',
   'atlas.write_receipts',
-  'atlas.exercise_catalog_mirror',
-  'atlas.exercise_catalog_sync',
+  // OWNER CORRECTION 2026-08-13: the catalog is Supabase-owned, so
+  // `exercise_catalog_mirror` was renamed to `exercise_catalog` and the
+  // `exercise_catalog_sync` freshness authority was dropped. Naming a removed
+  // relation here fails EVERY proof in the run, not only the catalog ones,
+  // because this reset runs before each of them.
+  'atlas.exercise_catalog',
   'atlas.session_plan_set_recommendations',
   'atlas.session_plan_events',
   'atlas.session_effort',

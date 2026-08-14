@@ -30,7 +30,7 @@ function _defaultReaders() {
     const { getLogRows }              = require('./trainingStore');
     const { readCurrentDeloadState }  = require('./deloadState');
     const { getProfileGoal }          = require('./profileGoal');
-    const { getSheetRows }            = require('../sheets');
+    const coachingInputs              = require('./coachingInputsAuthority');
     return {
       getLogRows,
       readDeloadState: readCurrentDeloadState,
@@ -41,20 +41,26 @@ function _defaultReaders() {
         const profile_goal = getProfileGoal();
         return profile_goal == null ? null : { profile_goal, training_level: null, population: null };
       },
-      // Stored typed constraints (the optional Constraints tab). A missing tab or
-      // read failure degrades to [] via _safeRead — never blocks the snapshot.
-      getConstraints: () => getSheetRows('Constraints'),
+      // Stored typed constraints — Supabase, their sole authority since the S4
+      // cutover (OWNER CORRECTION 2026-08-13). Read STRICTLY: an empty result is a
+      // real "no constraints", and a failure propagates.
+      getConstraints: () => coachingInputs.constraintRows(),
     };
   } catch {
-    // Reader layer unavailable (e.g. Sheets client cannot load) → degrade to an
-    // empty snapshot rather than throw. A coaching-read outage must never 500 or
-    // interrupt the write path (Constitution). provenance.reads stays empty.
+    // The reader LAYER could not be constructed at all — a module that failed to
+    // load, not a store that failed to answer. That is a deployment fault rather
+    // than a data one, and the snapshot degrades to empty as it always did.
+    // provenance.reads stays empty, so nothing downstream mistakes it for data.
     return {};
   }
 }
 
 // Run a reader safely: never throws, records success in `reads`, returns the
-// fallback on absence/empty/error so a Sheets outage degrades gracefully.
+// fallback on absence/empty/error.
+//
+// FOR THE INPUTS WHERE ABSENCE AND FAILURE MEAN THE SAME THING. `log_history` and
+// `profile` are read this way: an athlete with no logged history and an unreadable
+// history both leave the engine with nothing to reason from, and it says so.
 async function _safeRead(fn, fallback, label, reads) {
   if (typeof fn !== 'function') return fallback;
   try {
@@ -65,6 +71,22 @@ async function _safeRead(fn, fallback, label, reads) {
   } catch {
     return fallback;
   }
+}
+
+// THE SAFETY INPUTS ARE READ STRICTLY, and the difference is the whole point.
+//
+// OWNER CORRECTION 2026-08-13: a Supabase read failure must never be presented as
+// "no constraints" or "not in a deload". Those two inputs are what stop the engine
+// prescribing into a reported injury or through a deliberate deload week, so an
+// unreadable one is NOT DATA — it is the absence of a decision Atlas is not entitled
+// to make. A successful read returning nothing is still a real answer and still
+// defaults; a failure propagates and the caller refuses the request.
+async function _strictRead(fn, fallback, label, reads) {
+  if (typeof fn !== 'function') return fallback;
+  const v = await fn();
+  if (v == null) return fallback;
+  reads.push(label);
+  return v;
 }
 
 const EMPTY_PROFILE = Object.freeze({ profile_goal: null, training_level: null, population: null });
@@ -82,8 +104,10 @@ async function assembleState(params) {
   const derived = [];
 
   const log_history = await _safeRead(R.getLogRows, [], 'log', reads);
-  const deload_state = await _safeRead(R.readDeloadState, null, 'deload_state', reads);
-  const constraintsRaw = await _safeRead(R.getConstraints, [], 'constraints', reads);
+  // Strict: an unreadable deload state or constraint set fails the snapshot rather
+  // than silently becoming "not deloading" and "no injuries".
+  const deload_state = await _strictRead(R.readDeloadState, null, 'deload_state', reads);
+  const constraintsRaw = await _strictRead(R.getConstraints, [], 'constraints', reads);
   const profileRaw = await _safeRead(R.getProfile, null, 'profile', reads);
   const profile = profileRaw && typeof profileRaw === 'object'
     ? {

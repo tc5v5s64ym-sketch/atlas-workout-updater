@@ -24,7 +24,9 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { resetIdempotencyStore } = require('../services/idempotency');
+const {
+  resetWorkoutAuthorityStub: resetIdempotencyStore, workoutAuthorityStore,
+} = require('./helpers/stubWorkoutAuthority');
 const { logCleanedColumns, effortColumns, sessionPlanSetsColumns, sessionPlansColumns } = require('../config/columns');
 const {
   buildTurnWriteArtifact,
@@ -74,9 +76,27 @@ function artifactForRecord(record) {
   ].join('\n'));
 }
 
+// `state.appends` is a VIEW over both stores. It used to be the Sheets fake's call
+// list; after the S4 cutover the logged sets, the Effort row and both plan ledgers
+// land in Supabase, so the same "what did this request write, and where" question is
+// answered by the authority double. The `{ tab, rows }` shape is kept so every
+// assertion below states exactly what it always stated.
+const sheetsAppends = [];
+function authorityAppends() {
+  const calls = workoutAuthorityStore().calls;
+  const out = [];
+  for (const save of calls.saves) {
+    if (save.logCells.length) out.push({ tab: 'Log_Cleaned', rows: save.logCells });
+    if (save.effortCells) out.push({ tab: 'Effort', rows: [save.effortCells] });
+  }
+  for (const rows of calls.planEventAppends) out.push({ tab: 'Session_Plans', rows });
+  for (const rows of calls.planSetAppends) out.push({ tab: 'Session_Plan_Sets', rows });
+  return out;
+}
+
 const state = {
   planSetRows: [],
-  appends: [],
+  get appends() { return [...sheetsAppends, ...authorityAppends()]; },
   updates: [],
   logCompositeKeys: [],
 };
@@ -88,7 +108,7 @@ const exerciseCatalogRows = [
 
 const fakeSheets = {
   appendRows: async (tab, rows) => {
-    state.appends.push({ tab, rows: rows.map(r => [...r]) });
+    sheetsAppends.push({ tab, rows: rows.map(r => [...r]) });
     // Google reports the range it actually wrote, so the last column follows the appended value
     // count — Log_Cleaned's 12 columns end at L, Effort's 9 end at I. A stub that hardcoded one
     // letter for every tab would let a wrong per-tab column width pass unnoticed here.
@@ -144,6 +164,19 @@ require.cache[sheetsPath] = { id: sheetsPath, filename: sheetsPath, loaded: true
 
 const L = require('../services/sessionPlanLedger');
 const tc = require('../services/turnCorrelation');
+// The exercise catalog reads Supabase (OWNER CORRECTION 2026-08-13). Stubbed here so
+// the suite never opens a database connection; it delegates to the sheets fixture above.
+require('./helpers/stubExerciseCatalog').installExerciseCatalogStub();
+
+// The workout authority is Supabase since the S4 cutover, so stubbing `sheets.js`
+
+// no longer controls the logged sets, the Effort row, the plan ledgers or the write
+
+// receipts. `sheetsFallback` seeds this suite's existing fixture into the double, so
+
+// no test's data changes — only where the route reads it from.
+
+require('./helpers/stubWorkoutAuthority').installWorkoutAuthorityStub({ sheetsFallback: true });
 const { app } = require('../index');
 
 const SESSION_ID = 'CO-DUPE-1';
@@ -180,17 +213,32 @@ function seedLedger() {
   state.planSetRows = rows;
 }
 
-// Composite keys are `session_id||exercise||set_number`, lowercased (index.js
-// partitionLogRowsByExisting). Seeding all three makes EVERY intended log row a duplicate, which
-// with no Effort row is exactly the all-rows-duplicate branch.
+// THE DUPLICATE CHECK ASKS THE AUTHORITY NOW. It used to compare against
+// `getLogCompositeKeys()` — whole-column `session_id||exercise||set_number` keys
+// pulled from `Log_Cleaned`, because a tab cannot be filtered. The route asks
+// `workoutAuthority.existingSetIdentities(session_id)` after the S4 cutover, so
+// "already logged" is seeded as REAL LOGGED SETS in the authority rather than as a
+// key list. Seeding all three makes every intended log row a duplicate, which with
+// no Effort row is exactly the all-rows-duplicate branch.
 function everyLogRowAlreadyLogged() {
+  const store = workoutAuthorityStore();
+  for (const r of DIP_ACTUALS) {
+    const row = new Array(12).fill('');
+    row[1] = SESSION_ID;
+    row[2] = r.exercise;
+    row[6] = String(r.set_number);
+    store.loggedSets.push(row);
+    store.loggedSetWriteIds.push(null);
+  }
+  // Returned unchanged so the assignments below still read as they did; the Sheets
+  // fake keeps its own copy for the tabs it still owns.
   return DIP_ACTUALS.map(r => `${SESSION_ID.toLowerCase()}||${r.exercise.toLowerCase()}||${r.set_number}`);
 }
 
 function reset() {
   resetIdempotencyStore();
   tc._resetForTesting();
-  state.appends = [];
+  sheetsAppends.length = 0;
   state.updates = [];
   state.logCompositeKeys = [];
   seedLedger();
@@ -289,7 +337,10 @@ test('the duplicate-closeout branch: a REAL seal + closeout event, with the proj
   assert.equal(d.ledger_seal.sheet_written, true, 'the seal really stamped');
   assert.equal(d.ledger_seal.sealed_ok, true);
   assert.ok(d.ledger_seal.sealed > 0, `the seal stamped rows, got ${d.ledger_seal.sealed}`);
-  assert.ok(state.updates.length > 0, 'a real updateColumnCells call happened');
+  // A REAL SEAL happened. It was a bounded `updateColumnCells` batch against the tab;
+  // the ledger is a Supabase table now, so the seal is one statement and the evidence
+  // is the call the authority received.
+  assert.ok(workoutAuthorityStore().calls.seals.length > 0, 'a real seal statement ran');
   assert.equal(d.session_plans_closeout.captured, true, 'the closeout event was captured');
   assert.ok(
     state.appends.length > appendsBefore,
@@ -326,7 +377,13 @@ test('the duplicate-closeout branch: a REAL seal + closeout event, with the proj
   assert.equal(artifact.status, 'complete', 'the genuine sidecar stamp is reviewable end to end');
   assert.equal(artifact.turns[0].writes[0].seal.state, 'sealed');
   assert.equal(artifact.turns[0].writes[0].seal.new_seal_write, true);
-  assert.equal(artifact.turns[0].writes[0].closeout.state, 'written');
+  // `already_captured`, not `written`. The closeout EVENT was recorded on the dry-run
+  // that produced the pairing token, and the plan-event ledger is keyed by
+  // `idempotency_key` — so the live approval's identical event is refused by the
+  // primary key and folds as an idempotent skip. That is the append-only contract
+  // working, and it is the same verdict the tab's read-then-compare reached; the
+  // difference is that the database now enforces it rather than a race window.
+  assert.equal(artifact.turns[0].writes[0].closeout.state, 'already_captured');
 
   // Project, never pass through: no nested envelope, no workout data, no Sheet id.
   assert.ok(!('ledger_seal' in rec.proof), 'the nested seal envelope must not be carried');
@@ -383,15 +440,15 @@ test('a real Effort append is reviewable through its own canonical nine-column r
   assert.ok(!('session_plans_closeout' in d), 'no closeout evidence may stand in for the Effort append');
 
   const effortAppend = state.appends.find(a => a.tab === 'Effort');
-  assert.ok(effortAppend, 'a real Effort append happened');
+  assert.ok(effortAppend, 'a real Effort write happened');
   assert.equal(effortAppend.rows[0].length, effortColumns.length, 'the route sends one value per Effort column');
-  // Asserted against the SERVED range, not a literal, so the artifact is bound to what the append
-  // actually reported.
-  assert.equal(d.effortAppendedRange, `Effort!A100:${String.fromCharCode(64 + effortColumns.length)}100`);
+  // NO RANGE IS ASSERTED, because none is published. The Effort row lands in a
+  // Supabase transaction and an A1 range is a Google Sheets concept; the route
+  // deliberately reports the row count rather than inventing one.
+  assert.equal(d.effortAppendedRange, undefined);
 
   const rec = tc.recentWriteProofs().slice(-1)[0];
   assert.equal(rec.proof.effort_rows_written, 1);
-  assert.equal(rec.proof.effortAppendedRange, d.effortAppendedRange);
 
   const artifact = artifactForRecord(rec);
   assert.equal(artifact.turns[0].writes[0].proof_state, 'write_confirmed', 'a genuine Effort append is not insufficient');

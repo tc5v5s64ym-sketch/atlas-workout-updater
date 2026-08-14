@@ -1,5 +1,7 @@
 # F10D — Production readiness: proof coverage, first live write, rollback
 
+> **Historical procedure — do not execute.** S4 replaces the Sheets ledger and its feature flags with always-on Supabase authority. Current cutover gates and rollback rules live in `docs/SUPABASE_HOT_PATH_MIGRATION.md` and `docs/ATLAS_V1_EXECUTION_PLAN.md`.
+
 **Status:** F10D is built and proven in dry-run/stub/sandbox/integration coverage only. The production `Session_Plan_Sets` tab does **not** exist, `SESSION_PLAN_SETS_WRITE_ENABLED` is **not** set, and no production ledger write has occurred. Everything below this line is the evidence package and the owner-gated procedure; **none of it may be executed without Dale's explicit authorization** (CLAUDE.md owner-reserved: schema action, flag change, first live write).
 
 This document is items 4–7 of the owner's return bundle (2026-07-18 directive). Items 1–3 (PRs, CI/Codex status, transcript + screenshots) live in the PRs and the regenerated artifacts under `test-results/f10d-closeout/<project>/` (run `npx playwright test tests/e2e/gate/f10d-closeout.spec.js` to regenerate).

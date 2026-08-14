@@ -465,7 +465,7 @@ test('the liveness rule is in the STATEMENT, not in a comment', () => {
 // instance but has NO UNRESOLVED EXTERNAL EFFECT allowed to commit late. These
 // proofs put both halves in one sequence.
 
-const SHEETS_ROUTE = '/api/coaching-notes';   // a D4 route: only the receipt moves
+const SHEETS_ROUTE = '/api/bodyweight'; // the one remaining non-transactional Sheets effect
 
 // Kill instance X's claim the way a real process death does: the row keeps X's
 // ownership, X's Sheets request is neither cancelled nor acknowledged, and the
@@ -574,14 +574,14 @@ test('P16d: only destination-side proof releases it, in BOTH directions', async 
   await claim('w-eff-3', SHEETS_ROUTE);
   const landed = await adapter.resolveAmbiguousReceipt(
     'w-eff-3', true,
-    'read Coaching_Notes A2:D400 at 2026-08-08T11:31Z; the note for this write_id is present at row 318',
-    { message: 'Note saved.' }
+    'read Bodyweight A2:C400 at 2026-08-08T11:31Z; the row for this write_id is present at row 318',
+    { message: 'Bodyweight saved.' }
   );
   assert.equal(landed.status, 'completed');
   const replay = await claim('w-eff-3', SHEETS_ROUTE);
   assert.equal(replay.duplicate, true);
   assert.equal(replay.record.status, 'completed');
-  assert.deepEqual(replay.record.response_body, { message: 'Note saved.' });
+  assert.deepEqual(replay.record.response_body, { message: 'Bodyweight saved.' });
 
   // (b) The operator reads the tab and the row is genuinely ABSENT. That is a
   // DECLARED non-write, not an inferred one, so the write_id becomes retryable —
@@ -590,7 +590,7 @@ test('P16d: only destination-side proof releases it, in BOTH directions', async 
   await claim('w-eff-4', SHEETS_ROUTE);
   const absent = await adapter.resolveAmbiguousReceipt(
     'w-eff-4', false,
-    'read Coaching_Notes A2:D400 at 2026-08-08T11:33Z; no note carries this write_id'
+    'read Bodyweight A2:C400 at 2026-08-08T11:33Z; no row carries this write_id'
   );
   assert.equal(absent.status, 'failed');
   const retry = await claim('w-eff-4', SHEETS_ROUTE);
@@ -636,7 +636,7 @@ test('P16d: the CONTRAST — the same death on a transactional route DOES reclai
 
 test('P16d: the effect authority is DECLARED per route, exhaustively, and fails closed', async () => {
   // The reclaim rule is only as sound as this map, so the map is the thing to
-  // guard. All seven D4 callers are present; three transactional, four not.
+  // guard. All seven D4 callers are present; six transactional, one not.
   assert.deepEqual(
     Object.keys(adapter.ROUTE_EFFECT_AUTHORITY).sort(),
     [
@@ -645,8 +645,8 @@ test('P16d: the effect authority is DECLARED per route, exhaustively, and fails 
     ]
   );
   assert.equal(
-    Object.values(adapter.ROUTE_EFFECT_AUTHORITY).filter((v) => v === 'sheets').length, 4,
-    'the four D4 routes whose rows still append to Sheets'
+    Object.values(adapter.ROUTE_EFFECT_AUTHORITY).filter((v) => v === 'sheets').length, 1,
+    'only Bodyweight still has a non-transactional Sheets effect'
   );
 
   // An undeclared route may NOT claim. 'supabase' is the permissive value — it
@@ -720,20 +720,20 @@ test('P16e: the reverse collision is refused too — a SHEETS write_id cannot be
   // This direction wedges rather than duplicates, so it is the less dangerous
   // half — but a rule that only bound the permissive direction would be a rule
   // about one symptom rather than about identity.
-  const first = await claim('w-bind-2', '/api/coaching-notes');
+  const first = await claim('w-bind-2', '/api/bodyweight');
   assert.equal(first.effect_authority, 'sheets');
   await adapter.failWriteReceipt('w-bind-2', first.attempt_token);
 
   const collided = await claim('w-bind-2', '/api/log-workout');
   assert.equal(collided.duplicate, true);
   assert.equal(collided.routeConflict, true);
-  assert.equal(collided.storedRoute, '/api/coaching-notes');
+  assert.equal(collided.storedRoute, '/api/bodyweight');
 
   await withOwner(async (client) => {
     const { rows } = await client.query(
       `SELECT route, effect_authority, status FROM atlas.write_receipts WHERE write_id = 'w-bind-2'`
     );
-    assert.deepEqual(rows[0], { route: '/api/coaching-notes', effect_authority: 'sheets', status: 'failed' });
+    assert.deepEqual(rows[0], { route: '/api/bodyweight', effect_authority: 'sheets', status: 'failed' });
   });
 });
 
@@ -762,8 +762,8 @@ test('P16e: the binding holds in EVERY reclaimable state, not only the failed on
 
   // (c) An AMBIGUOUS row. A foreign route must not resolve it, mark it, or read
   // it — it sent no effect and has nothing to say about one.
-  await abandonedAttemptFrom(dead, 'w-bind-5', '/api/coaching-notes');
-  const marked = await claim('w-bind-5', '/api/coaching-notes');
+  await abandonedAttemptFrom(dead, 'w-bind-5', '/api/bodyweight');
+  const marked = await claim('w-bind-5', '/api/bodyweight');
   assert.equal(marked.record.status, 'ambiguous');
   const foreignAmbiguous = await claim('w-bind-5', '/api/constraints');
   assert.equal(foreignAmbiguous.routeConflict, true);
@@ -776,11 +776,11 @@ test('P16e: a foreign route cannot MARK a receipt ambiguous either', async () =>
   // but the mark statement is bound as well — a future caller that reached it
   // directly must not be able to record an ambiguity about an effect it never sent.
   const dead = `atlas-host:9102:${'bindbind2222'}`;
-  await abandonedAttemptFrom(dead, 'w-bind-6', '/api/coaching-notes');
+  await abandonedAttemptFrom(dead, 'w-bind-6', '/api/bodyweight');
   await withRole('atlas_app', async (client) => {
     const wrongRoute = await client.query(SQL.markReceiptAmbiguous, ['w-bind-6', adapter.INSTANCE_ID, '/api/constraints']);
     assert.equal(wrongRoute.rowCount, 0, 'the mark is route-bound in the STATEMENT');
-    const rightRoute = await client.query(SQL.markReceiptAmbiguous, ['w-bind-6', adapter.INSTANCE_ID, '/api/coaching-notes']);
+    const rightRoute = await client.query(SQL.markReceiptAmbiguous, ['w-bind-6', adapter.INSTANCE_ID, '/api/bodyweight']);
     assert.equal(rightRoute.rowCount, 1);
   });
 });
@@ -790,7 +790,7 @@ test('P16e: route and effect_authority are IMMUTABLE to the runtime', async () =
   // column is in atlas_app's column-scoped UPDATE grant (§8.2), so the runtime
   // cannot relabel a receipt's route or its effect authority and defeat the rule
   // without touching any statement.
-  await claim('w-bind-7', '/api/coaching-notes');
+  await claim('w-bind-7', '/api/bodyweight');
   await withRole('atlas_app', async (client) => {
     await assert.rejects(
       () => client.query(`UPDATE atlas.write_receipts SET route = '/api/log-workout' WHERE write_id = 'w-bind-7'`),

@@ -8,21 +8,13 @@ const path = require('path');
 const multer = require('multer');
 const {
   appendRows,
-  readRange,
-  deleteRowsByRange,
   validateConfig,
-  getExerciseCatalog,
-  getEffortSessionIds,
-  getLogCompositeKeys,
   getSheetRows: getSheetRowsRaw,
-  getHeaderRow,
   getSpreadsheetTabs,
   getSafeSpreadsheetConfig = () => ({ canVerify: false, source: 'GOOGLE_SHEETS_ID' }),
   // Default to "no Sheets provenance" so a test that injects a partial sheets.js stub
   // keeps exactly today's behaviour instead of crashing on an absent export.
-  sheetsReadFailureClass = () => null,
-  logSheetName,
-  effortSheetName
+  sheetsReadFailureClass = () => null
 } = require('./sheets');
 const {
   normalizeLogRow: normalizeAnalyticsLogRow,
@@ -66,24 +58,23 @@ const {
 } = require('./services/deloadEngine');
 // eslint-disable-next-line no-unused-vars -- roundLoad imported here; phase-2 deload wiring will use it
 const { selectProtocol, roundLoad, computePrescription } = require('./services/deloadProtocols');
+// THE WRITE-RECEIPT AUTHORITY IS SUPABASE (`atlas.write_receipts`), for all seven
+// write callers — owner ruling D4, design §3.6/§4.6/§5.4. The file-backed store it
+// replaced was per process and best-effort durable, so two instances could claim
+// one write_id and a restart could erase the duplicate shield without saying so.
+//
+// The contract each route consumes is unchanged — claim, replay, lost-response
+// retry, no duplicate, token guard — with two differences the call sites show:
+// every operation is awaited, because it is a database call; and an unreadable
+// authority is a REFUSAL (`unavailable`), because a write admitted with no receipt
+// has no duplicate shield at all.
 const {
   beginWrite,
   peekWrite,
   completeWrite,
   failWrite,
-  normalizeWriteId,
-  // The S3 receipt migration seam (§5.3) — TEMPORARY, deleted at S4 with the store.
-  exportLiveReceipts,
-  importReceipts
-} = require('./services/idempotency');
-// Supabase hot-path migration, PR S2 — the SHADOW write lane. TEMPORARY: S4
-// deletes it (docs/SUPABASE_HOT_PATH_MIGRATION.md §5.2, sunset in §5.4).
-// Google Sheets stays the sole live authority for every read and every write. The
-// calls below are fire-and-forget, run after the response is decided, and are
-// total — nothing they do can change a response, a status code, a proof field, or
-// a visible claim, and a shadow failure is never surfaced to the athlete. The lane
-// is inert unless ATLAS_SUPABASE_SHADOW_WRITE=1 AND a connection is configured.
-const migrationShadow = require('./services/migrationShadow');
+  normalizeWriteId
+} = require('./services/writeReceipts');
 // Supabase hot-path migration, PR S3 — the WRITE-ADMISSION control (§3.10, §5.3).
 // PERMANENT (owner ruling D7, 2026-08-09), unlike the shadow lane above: it is
 // Atlas safety infrastructure with no sunset, and S4 does not delete it. Each of
@@ -100,10 +91,8 @@ const {
   requireApiKey: requireApiKeyMiddleware,
   timingSafeStringEqual
 } = require('./middleware');
-const { createSessionReadBatchMiddleware } = require('./services/sessionReadBatch');
 const { success: standardSuccess, error: standardError } = require('./response');
 const sessionModule = require('./services/session');
-const { createTtlCache } = require('./services/cache');
 const { parseWorkoutScreenshot } = require('./services/vision');
 const coach = require('./services/coach');
 const coachPolish = require('./services/coachPolish');
@@ -120,7 +109,7 @@ const registerReadRoutes = require('./routes/reads');
 const registerCoachOpsRoutes = require('./routes/coachOps');
 const registerSessionPlanRoutes = require('./routes/sessionPlans');
 // F10D — closeout confirmation + ledger seal (dry-run until the owner enables
-// SESSION_PLAN_SETS_WRITE_ENABLED; the store gates every write internally).
+// Supabase is the sole Session_Plan_Sets authority; no live-write flag remains).
 const { sealCloseout, readLedgerRows } = require('./services/sessionPlanSetsStore');
 const turnCorrelation = require('./services/turnCorrelation');
 
@@ -284,11 +273,10 @@ function requestLogger(req, res, next) {
 }
 
 app.use(requestLogger);
-// F-SB4B session read budget. Opens a per-request Sheets read context and issues this
-// route's declared ranges as ONE values.batchGet. Transport only: it changes how many
-// API calls carry a range, never how fresh the values are, and every helper still parses
-// its own range. Declarations live in services/sessionReadBatch.js.
-app.use(createSessionReadBatchMiddleware());
+// The per-request Sheets read-batch middleware is RETIRED (design §5.4). It
+// coalesced the migrated tabs' reads into one values.batchGet to fit a metered
+// quota; those reads are Supabase queries now, so there is no Sheets range left
+// for it to batch and no quota for it to protect.
 // Read-only + approve-before-save web UI. Static assets are public; every
 // data call the UI makes still goes through /api and requires the API key.
 app.use('/app', express.static(path.join(__dirname, 'public')));
@@ -385,6 +373,9 @@ app.use((req, res, next) => {
 });
 const { readBuildInfo } = require('./services/buildInfo');
 const { buildServerStatus: buildAtlasStatus } = require('./services/atlasStatus');
+// The asynchronous mirror export worker (§5.4). Required here, started in
+// startServer() — never reachable from a request handler.
+const { startMirrorExportScheduler } = require('./services/sheetsMirrorScheduler');
 // In-memory pending exercises collected from complete-workout responses
 const pendingExercisesMemory = [];
 // TODO(persistence-layer): replace in-memory pending exercises/cache with durable storage.
@@ -393,131 +384,72 @@ const pendingExercisesMemory = [];
 // TODO(gpt-integration-layer): separate model orchestration and prompt policy from HTTP layer.
 // TODO(mobile-client): add API compatibility/versioning strategy for mobile app consumers.
 
-// A single dashboard load fans out across ~8 read endpoints, each re-reading the
-// full Log_Cleaned / Effort tabs. Cache those full reads for a short window and
-// drop the cache on every successful live write/delete (invalidateSheetRowsCache),
-// so a write is immediately visible to the next read.
+// ── THE Log_Cleaned / Effort ROW CACHE IS GONE (design §5.4) ─────────────────
 //
-// Only the log and effort full reads are cached. Everything routed through
-// getSheetRowsRaw — other tabs (e.g. Bodyweight) and, critically, the undo
-// handler's pre-delete read-back — always hits the sheet live and is never cached.
-const SHEET_ROWS_TTL_MS = 30 * 1000;
-let sheetRowsCache = createTtlCache(SHEET_ROWS_TTL_MS);
+// It existed for one reason: a single dashboard load fanned out across ~8 read
+// endpoints, each re-reading the WHOLE `Log_Cleaned` and `Effort` tabs, because a
+// tab cannot be queried. Thirty seconds of staleness was the price of staying
+// inside a metered quota, and every live write had to invalidate it so the next
+// read did not serve a workout that had already changed.
+//
+// Both halves of that trade are gone with the cutover. Those reads are indexed
+// Supabase queries scoped to a session or a date, so re-reading is cheap and there
+// is no quota to protect; and a cache that can serve a stale workout is a trust
+// cost with nothing left to buy. Removing it makes every read see the authority as
+// it is, with no invalidation contract to get wrong.
+//
+// AND NOTHING ELSE WAS EVER IN IT. The cache held exactly two keys — those two
+// tabs — and every other read (`Bodyweight`, `Constraints`, `Coaching_Notes`,
+// `Modality_Log`, `Deload_State`) already went straight through to the sheet. So
+// the cache and its whole invalidation contract go with them, rather than being
+// retained empty.
 
 // DoS ceiling for a single logged-set append (a real session is well under it).
 // Enforced on the multipart /api/complete-workout write path (parsedLogRows) and
-// shared as the source of truth by the post-write verify-range read-back and the
-// undo-last delete, which MUST accept the same span the write produces — otherwise a
-// legitimate multi-set session closeout (>10 rows in one write) succeeds yet cannot
-// be verified or undone. (The JSON /api/log-workout path does not yet enforce this
-// same cap on log_rows.length — tracked in BACKLOG.md; unreachable for one session.)
+// shared as the source of truth by the undo-last delete, which MUST accept the same
+// span the write produces — otherwise a legitimate multi-set session closeout (>10
+// rows in one write) succeeds yet cannot be undone. (The JSON /api/log-workout path
+// does not yet enforce this same cap on log_rows.length — tracked in BACKLOG.md;
+// unreachable for one session.)
 const MAX_LOG_ROWS = 200;
 
-async function getSheetRows(tabName) {
-  if (tabName !== logSheetName && tabName !== effortSheetName) {
-    return getSheetRowsRaw(tabName);
-  }
-  const cached = sheetRowsCache.get(tabName);
-  if (cached) return cached;
-  const rows = await getSheetRowsRaw(tabName);
-  sheetRowsCache.set(tabName, rows);
-  return rows;
-}
-
-/**
- * Drop what a write just made stale — and only that.
- *
- * Every caller names the tabs it wrote. A write to Log_Cleaned makes the Effort rows no
- * less true, so evicting them spends a Sheets read on the next dashboard for nothing;
- * writes to tabs this cache never holds (Coaching_Notes, Constraints, Modality_Log) used
- * to evict BOTH cached tabs while making neither stale.
- *
- * The no-argument call keeps the old behaviour — evict everything — so a caller that does
- * not say what it wrote still fails SAFE. Under-eviction would serve a stale read after a
- * write, which is a trust bug; over-eviction only costs a read. That asymmetry is why the
- * default is the pessimistic one.
- *
- * This changes only WHAT is dropped. It does not lengthen any lifetime, add a stale-serving
- * path, or make the cache time-only: the 30-second TTL and write-invalidation are both
- * unchanged.
- */
-function invalidateSheetRowsCache(...tabsWritten) {
-  if (tabsWritten.length === 0) {
-    // A fresh cache instance is the simplest correct clear — createTtlCache closes
-    // over a private Map, so swapping the reference drops every entry at once.
-    sheetRowsCache = createTtlCache(SHEET_ROWS_TTL_MS);
-    return;
-  }
-  for (const tab of tabsWritten.flat()) {
-    if (tab) sheetRowsCache.delete(tab);
-  }
-}
-
-// Read/analytics routes (Remediation PR-16) — extracted verbatim into an Express
-// Router. Mounted after the global /api middleware; the shared sheet-rows cache is
-// injected so writes still invalidate what these reads see.
-app.use(registerReadRoutes({ getSheetRows }));
-app.use(registerCoachOpsRoutes({ getSheetRows }));
-// Session_Plans capture routes (Decision Desk #952 → Option A, PR-E) — explicit,
-// feature-flagged (ATLAS_SESSION_PLANS_WRITE, default OFF) sidecar endpoints. Global
-// /api auth + rate limiting run before this router; it writes only the Session_Plans
-// tab (never Log_Cleaned/Effort). No client calls this yet (PR-F wires the client).
-app.use(registerSessionPlanRoutes({ getSheetRows, logSheetName, effortSheetName }));
+// Read/analytics and coaching routes consume Supabase directly for every migrated
+// workout concept; no Google Sheets reader is injected into their runtime graph.
+app.use(registerReadRoutes());
+app.use(registerCoachOpsRoutes());
+// Supabase-authoritative plan lifecycle endpoints. Global /api auth + rate limiting
+// run before this router; these routes never write Google Sheets or logged-set rows.
+app.use(registerSessionPlanRoutes());
 
 const { routeDefinitions } = require('./config/routes');
 // eslint-disable-next-line no-unused-vars -- exerciseCatalogColumns unused in this file; imported for catalog-audit route (Phase 0 PR-06)
 const { logCleanedColumns, logRowFieldAliases, effortColumns, exerciseCatalogColumns, effortRowFieldAliases, modalityLogColumns } = require('./config/columns');
 // eslint-disable-next-line no-unused-vars -- requiredSheetTabs, optionalSheetTabs unused here; used in startup health-check via buildSheetContractStatus
-const { requiredSheetTabs, optionalSheetTabs, buildSheetContractStatus, validateHeaderRow } = require('./config/sheetContract');
-const { verifyAppendReceipt } = require('./services/appendWriteProof');
+const { requiredSheetTabs, optionalSheetTabs, buildSheetContractStatus } = require('./config/sheetContract');
+const { verifyWriteReceipt } = require('./services/appendWriteProof');
 const LOG_SESSION_ID_COLUMN = logCleanedColumns.indexOf('session_id');
 
-// --- Header-drift guard (trust-critical write protection) --------------------
-// Atlas appends rows to Google Sheets purely by column position. If the owner
-// hand-edits the sheet and reorders a column, every future write would silently
-// land in the wrong field and corrupt the permanent record. Before any live
-// append we read row 1 of each target tab and confirm it still matches the
-// column contract; on mismatch we refuse the write instead of misrouting data.
-
-async function checkSheetHeaderContract(tabName, expectedColumns, aliases) {
-  const header = await getHeaderRow(tabName);
-  // An empty header row (uninitialized tab) is not a drift signal — appendRows
-  // will seed it. Only a populated, mismatched header blocks the write.
-  if (!Array.isArray(header) || header.length === 0) {
-    return { ok: true, tab: tabName, mismatches: [] };
-  }
-  const { ok, mismatches } = validateHeaderRow(header, expectedColumns, aliases);
-  return { ok, tab: tabName, mismatches };
-}
-
-// Returns an array of failed contracts (empty = all good). Reads only the tabs
-// a given write will actually touch.
-async function assertWriteHeaderContracts({ checkLog, checkEffort }) {
-  const failures = [];
-  if (checkLog) {
-    const result = await checkSheetHeaderContract(logSheetName, logCleanedColumns, logRowFieldAliases);
-    if (!result.ok) failures.push(result);
-  }
-  if (checkEffort) {
-    const result = await checkSheetHeaderContract(effortSheetName, effortColumns, effortRowFieldAliases);
-    if (!result.ok) failures.push(result);
-  }
-  return failures;
-}
-
-function schemaDriftDetails(failures) {
-  return {
-    sheet_write: 'blocked_schema_drift',
-    sheet_written: false,
-    no_write_confirmed: true,
-    header_mismatches: failures.map(f => ({ tab: f.tab, mismatches: f.mismatches }))
-  };
-}
-
-function schemaDriftMessage(failures) {
-  const tabs = failures.map(f => f.tab).join(', ');
-  return `Sheet header does not match the expected column contract (${tabs}); write blocked to prevent misrouted data. Restore the original column order and retry.`;
-}
+// --- The header-drift guard is retired with the positional append -------------
+//
+// Atlas appended to `Log_Cleaned` and `Effort` purely by column position, so an
+// owner who hand-edited the sheet and reordered a column would have had every
+// future write land silently in the wrong field. The guard read row 1 of each
+// target tab before every append and refused on a mismatch.
+//
+// The Save writes named columns of `atlas.logged_sets` and `atlas.session_effort`
+// now, where a column cannot silently change meaning and a genuine schema change
+// is refused by Postgres rather than absorbed. `checkSheetHeaderContract` survives
+// for the STARTUP contract report (`buildSheetContractStatus`), which reads the
+// sheet asynchronously at boot and blocks nothing; the per-write guard and its two
+// metered reads on the Save path are gone.
+//
+// A human edit to the exported sheet is now an EXPORT problem, and §5.7's owner-run
+// mirror rebuild is its named recovery — it reconstructs the tabs from Supabase.
+//
+// The guard's helper is deleted rather than retained: it had exactly two callers,
+// both of them the per-write check above, and a helper kept alive "in case" is the
+// dead machinery this migration is supposed to remove. `config/sheetContract.js`
+// still owns `validateHeaderRow` for the read-side contract report.
 
 function ensureNotes(value) {
   return value === undefined || value === null ? '' : value;
@@ -778,23 +710,48 @@ function isPlausibleScreenshotDate(isoDate, todayIso = getLocalDateString()) {
 // the exact identity the live append dedups on. Shared by BOTH the dry-run preview
 // and the live write so the preview shows EXACTLY the rows the write will append,
 // never more (the closeout "30 previewed / 22 written, Bench dropped" trust failure).
-// `existingLogKeys` are the lowercased composite keys returned by getLogCompositeKeys.
-function partitionLogRowsByExisting(formattedRows, existingLogKeys) {
-  const existing = new Set(Array.isArray(existingLogKeys) ? existingLogKeys : []);
+// `existingSetIdentities` is the Set of `exercise||set_number` keys the SESSION
+// already holds, from `workoutAuthority.existingSetIdentities`. It used to be an
+// array of `session_id||exercise||set_number` keys spanning the whole Log_Cleaned
+// tab, because a tab cannot be filtered and a table can. The comparison is
+// identical in meaning — the session is already fixed by the caller — and it is
+// now scoped to the rows it is actually about.
+function partitionLogRowsByExisting(formattedRows, existingSetIdentities) {
+  const existing = existingSetIdentities instanceof Set
+    ? existingSetIdentities
+    : new Set(Array.isArray(existingSetIdentities) ? existingSetIdentities : []);
   const newRows = [];
   const skippedDuplicates = [];
   formattedRows.forEach((row, index) => {
-    // formatted row order follows logCleanedColumns: session_id=1, exercise=2, set_number=6
-    const sid = String(row[1] || '').trim().toLowerCase();
+    // formatted row order follows logCleanedColumns: exercise=2, set_number=6
     const ex = String(row[2] || '').trim().toLowerCase();
     const setn = String(row[6] || '').trim().toLowerCase();
-    if (existing.has(`${sid}||${ex}||${setn}`)) skippedDuplicates.push({ index, row });
+    if (existing.has(`${ex}||${setn}`)) skippedDuplicates.push({ index, row });
     else newRows.push(row);
   });
   return { newRows, skippedDuplicates };
 }
 
-const { generateSessionId, nextAvailableSessionId, sessionIdsFromLogCompositeKeys } = require('./services/sessionId');
+const { generateSessionId, nextAvailableSessionId } = require('./services/sessionId');
+
+// The exercise catalog reads from Supabase, its sole authority (OWNER CORRECTION
+// 2026-08-13). It is NOT imported from ./sheets any more: a Google Sheets quota
+// error must not be able to reach this read, and under ruling D1 it still could.
+// Same header-plus-rows shape, so every parse site below is unchanged.
+const { readExerciseCatalogRows } = require('./services/exerciseCatalog');
+const getExerciseCatalog = () => readExerciseCatalogRows();
+
+// The coaching inputs — coaching notes, typed constraints and the deload state —
+// read and write Supabase, their sole authority (OWNER CORRECTION 2026-08-13). They
+// are inputs to a PRESCRIPTION, so none of them may be a synchronous Google Sheets
+// dependency, and an unreadable one is a refusal rather than an empty answer.
+const coachingInputs = require('./services/coachingInputsAuthority');
+
+// The migrated workout hot path reads and writes Supabase, its sole authority
+// (S4 cutover, design §5.4/§5.5). Session identity, row dedup, the Save itself and
+// undo all go through this one seam; `sheets.js` is no longer on the workout
+// critical path for any of them.
+const workoutAuthority = require('./services/workoutAuthority');
 
 function isTestModeEnabled(value) {
   return String(value || '').trim().toLowerCase() === 'true';
@@ -1072,6 +1029,29 @@ async function refuseIfWritesFrozen(req, res, route) {
   return standardError(req, res, writeFreeze.REFUSAL_MESSAGE, writeFreeze.refusalBody(admission), 503);
 }
 
+// ── The receipt authority must be readable, or the write does not happen ──────
+//
+// A NEW BRANCH, and it is new because the old authority could not fail. The file
+// store was a per-process `Map`, so it always answered; `atlas.write_receipts` is
+// a database, and a database can be unreachable.
+//
+// Admitting the write anyway is the one thing that must not happen. The receipt IS
+// the duplicate shield — without it a retry of a lost response appends the whole
+// workout a second time — so an unreadable authority refuses, explicitly, exactly
+// as the write freeze does. The athlete gets a clear "try again", never a silent
+// drop and never an unverified success.
+//
+// Returns null when the write may proceed, or a sent 503 when it may not.
+function refuseIfReceiptUnavailable(req, res, idempotency) {
+  if (!idempotency || !idempotency.unavailable) return null;
+  return standardError(
+    req, res,
+    'Write receipts are unavailable, so this write was refused rather than attempted without duplicate protection. Try again.',
+    { receipt_authority: 'unavailable', reason: idempotency.reason || null, sheet_written: false, no_write_confirmed: true },
+    503
+  );
+}
+
 app.get('/', (req, res) => {
   return standardSuccess(req, res, 'Atlas backend is running', {
     service: 'atlas-workout-updater',
@@ -1265,7 +1245,7 @@ app.post('/api/suggest-substitute', async (req, res) => {
       ? generateLiftCode(rec.recommendation)
       : generateLiftCode(canonName);
     if (code) {
-      const allLog = await getSheetRows(logSheetName);
+      const allLog = await workoutAuthority.loggedSetRows();
       const prescription = recommendNextSet(allLog, code);
       next_target = (prescription && prescription.next_target) || null;
     }
@@ -1311,19 +1291,21 @@ app.post('/api/session/compile', async (req, res) => {
   }
 });
 
-// GET /api/coaching-notes — return all notes from the Coaching_Notes tab.
-// READ-ONLY. Returns empty array when the tab does not exist yet.
+// GET /api/coaching-notes — the athlete's coaching notes, from Supabase.
+//
+// READ-ONLY. An empty result is a real answer; an unreadable authority is a
+// REFUSAL rather than an empty list (OWNER CORRECTION 2026-08-13). Presenting a
+// failed read as "you have no notes" invents an absence the athlete would act on.
 app.get('/api/coaching-notes', async (req, res) => {
   try {
-    const rows = await getSheetRows('Coaching_Notes').catch(() => []);
+    const rows = await coachingInputs.coachingNoteRows();
     const notes = rows
-      .map(row => Array.isArray(row)
-        ? { date: row[0] || null, note: row[1] || null }
-        : { date: (row && row.date) || null, note: (row && row.note) || null })
+      .map(row => ({ date: row[0] || null, note: row[1] || null }))
       .filter(n => n.note);
     return standardSuccess(req, res, 'Coaching notes', { notes });
   } catch (err) {
-    return standardSuccess(req, res, 'Coaching notes', { notes: [] });
+    console.error('❌ Coaching notes unreadable:', err);
+    return standardError(req, res, 'Coaching notes are unavailable right now.', { retryable: true }, 503);
   }
 });
 
@@ -1340,7 +1322,9 @@ app.post('/api/coaching-notes', async (req, res) => {
   const frozen = await refuseIfWritesFrozen(req, res, '/api/coaching-notes');
   if (frozen) return frozen;
 
-  const idempotency = beginWrite(writeId, { endpoint: '/api/coaching-notes' });
+  const idempotency = await beginWrite(writeId, { endpoint: '/api/coaching-notes' });
+  const noReceipt = refuseIfReceiptUnavailable(req, res, idempotency);
+  if (noReceipt) return noReceipt;
 
   if (idempotency.duplicate) {
     const record = idempotency.record || {};
@@ -1353,27 +1337,26 @@ app.post('/api/coaching-notes', async (req, res) => {
     );
   }
 
-  const tabs = await getSpreadsheetTabs().catch(() => []);
-  if (!tabs.includes('Coaching_Notes')) {
-    if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
-    return standardError(req, res, 'Coaching_Notes tab not found — create it in Google Sheets first (columns: date, note)', null, 503);
-  }
+  // THE TAB-EXISTENCE PROBE IS GONE. It asked whether the owner had created a Google
+  // Sheets tab, and cost a `spreadsheets.get` on the write path to ask it. A Supabase
+  // table the migration created cannot be absent at runtime.
 
   // F09I: stamp the owner's LOCAL day (ATLAS_TIMEZONE), not the UTC day — an evening-Pacific
   // note was being dated tomorrow. localTodayIso falls back to UTC until the zone is set.
   const dateStr = localTodayIso();
   try {
-    await appendRows('Coaching_Notes', [[dateStr, note.slice(0, 200)]]);
-    invalidateSheetRowsCache('Coaching_Notes');
+    await coachingInputs.appendCoachingNote({
+      date: dateStr, note: note.slice(0, 200), writeId: idempotency.write_id || null,
+    });
     const responseBody = { sheet_written: true, note_written: true, date: dateStr, note: note.slice(0, 200) };
     if (idempotency.enabled) {
       responseBody.write_id = idempotency.write_id;
       responseBody.duplicate_write = false;
-      completeWrite(idempotency.write_id, idempotency.token, responseBody);
+      await completeWrite(idempotency.write_id, idempotency.token, responseBody);
     }
     return standardSuccess(req, res, 'Coaching note saved', responseBody);
   } catch (err) {
-    if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+    if (idempotency.enabled) await failWrite(idempotency.write_id, idempotency.token);
     return standardError(req, res, 'Failed to save coaching note', err.message, 500);
   }
 });
@@ -1384,25 +1367,21 @@ app.post('/api/coaching-notes', async (req, res) => {
 const CONSTRAINT_KINDS = ['injury', 'equipment', 'preference'];
 const CONSTRAINT_RULES = ['avoid', 'limit', 'substitute'];
 
-// GET /api/constraints — return all structured constraints from the Constraints tab.
-// READ-ONLY. Returns empty array when the tab does not exist yet.
+// GET /api/constraints — the athlete's typed constraints, from Supabase.
+//
+// READ-ONLY, and it FAILS CLOSED. A constraint is an injury or a restriction the
+// athlete typed; reporting an unreadable store as an empty list would tell them
+// Atlas is holding no restrictions when it simply could not look.
 app.get('/api/constraints', async (req, res) => {
   try {
-    const rows = await getSheetRows('Constraints').catch(() => []);
+    const rows = await coachingInputs.constraintRows();
     const constraints = rows
-      .map(row => Array.isArray(row)
-        ? { date: row[0] || null, kind: row[1] || null, target: row[2] || null, rule: row[3] || null, note: row[4] || null }
-        : {
-            date: (row && row.date) || null,
-            kind: (row && row.kind) || null,
-            target: (row && row.target) || null,
-            rule: (row && row.rule) || null,
-            note: (row && row.note) || null
-          })
+      .map(row => ({ date: row[0] || null, kind: row[1] || null, target: row[2] || null, rule: row[3] || null, note: row[4] || null }))
       .filter(c => c.kind && c.target && c.rule);
     return standardSuccess(req, res, 'Constraints', { constraints });
   } catch (err) {
-    return standardSuccess(req, res, 'Constraints', { constraints: [] });
+    console.error('❌ Constraints unreadable:', err);
+    return standardError(req, res, 'Your constraints are unavailable right now.', { retryable: true }, 503);
   }
 });
 
@@ -1430,7 +1409,9 @@ app.post('/api/constraints', async (req, res) => {
   const frozen = await refuseIfWritesFrozen(req, res, '/api/constraints');
   if (frozen) return frozen;
 
-  const idempotency = beginWrite(writeId, { endpoint: '/api/constraints' });
+  const idempotency = await beginWrite(writeId, { endpoint: '/api/constraints' });
+  const noReceipt = refuseIfReceiptUnavailable(req, res, idempotency);
+  if (noReceipt) return noReceipt;
 
   if (idempotency.duplicate) {
     const record = idempotency.record || {};
@@ -1443,19 +1424,18 @@ app.post('/api/constraints', async (req, res) => {
     );
   }
 
-  const tabs = await getSpreadsheetTabs().catch(() => []);
-  if (!tabs.includes('Constraints')) {
-    if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
-    return standardError(req, res, 'Constraints tab not found — create it in Google Sheets first (columns: date, kind, target, rule, note)', null, 503);
-  }
+  // No tab probe: the constraint lands in `atlas.constraints`, which the migration
+  // created and which cannot be absent at runtime.
 
   // F09I: owner's LOCAL day (ATLAS_TIMEZONE), not UTC — see coaching-notes above.
   const dateStr = localTodayIso();
   const cleanTarget = target.slice(0, 100);
   const cleanNote = note.slice(0, 200);
   try {
-    await appendRows('Constraints', [[dateStr, kind, cleanTarget, rule, cleanNote]]);
-    invalidateSheetRowsCache('Constraints');
+    await coachingInputs.appendConstraint({
+      date: dateStr, kind, target: cleanTarget, rule, note: cleanNote,
+      writeId: idempotency.write_id || null,
+    });
     const responseBody = {
       sheet_written: true,
       constraint_written: true,
@@ -1465,18 +1445,18 @@ app.post('/api/constraints', async (req, res) => {
     if (idempotency.enabled) {
       responseBody.write_id = idempotency.write_id;
       responseBody.duplicate_write = false;
-      completeWrite(idempotency.write_id, idempotency.token, responseBody);
+      await completeWrite(idempotency.write_id, idempotency.token, responseBody);
     }
     return standardSuccess(req, res, 'Constraint saved', responseBody);
   } catch (err) {
-    if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+    if (idempotency.enabled) await failWrite(idempotency.write_id, idempotency.token);
     return standardError(req, res, 'Failed to save constraint', err.message, 500);
   }
 });
 
 // POST /api/log-modality — persist a NON-slash modality entry (timed hold /
-// steady cardio / cardio interval / circuit) to the Modality_Log tab (PR 486
-// slice 4b). The engine owns the structured fields: the route re-recognizes the
+// steady cardio / cardio interval / circuit) to Supabase. The engine owns the
+// structured fields: the route re-recognizes the
 // raw `text` server-side via recognizeModalityInput (the client never supplies the
 // numbers) and normalizes units into the Modality_Log column contract.
 //
@@ -1554,7 +1534,9 @@ app.post('/api/log-modality', async (req, res) => {
   const frozen = await refuseIfWritesFrozen(req, res, '/api/log-modality');
   if (frozen) return frozen;
 
-  const idempotency = beginWrite(writeId, { endpoint: '/api/log-modality', session_id, date });
+  const idempotency = await beginWrite(writeId, { endpoint: '/api/log-modality', session_id, date });
+  const noReceipt = refuseIfReceiptUnavailable(req, res, idempotency);
+  if (noReceipt) return noReceipt;
   if (idempotency.duplicate) {
     const rec = idempotency.record || {};
     const original = rec.response || {};
@@ -1567,35 +1549,33 @@ app.post('/api/log-modality', async (req, res) => {
     );
   }
 
-  const tabs = await getSpreadsheetTabs().catch(() => []);
-  if (!tabs.includes('Modality_Log')) {
-    if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
-    return standardError(req, res, `Modality_Log tab not found — create it in Google Sheets first (columns: ${modalityLogColumns.join(', ')})`, null, 503);
-  }
+  // No tab probe: the entry lands in `atlas.modality_log`, which the migration
+  // created and which cannot be absent at runtime.
 
   try {
-    const appendResponse = await appendRows('Modality_Log', [row]);
-    invalidateSheetRowsCache('Modality_Log');
+    await workoutAuthority.appendModality(row, idempotency.write_id || null);
     const responseBody = {
       message: 'Modality logged successfully.',
       test_mode: false,
       sheet_write: 'success',
       sheet_written: true,
+      write_authority: 'supabase_transaction',
       modality_written: true,
       modality: record.modality,
-      appendedRange: appendResponse.data.updates?.updatedRange,
+      // NO RANGE. A range is a Google Sheets concept and this entry lands in
+      // Supabase; publishing a fabricated one would be a false proof field.
       modality_row: row
     };
     if (idempotency.enabled) {
       responseBody.write_id = idempotency.write_id;
       responseBody.duplicate_write = false;
       responseBody.idempotency_status = 'completed';
-      completeWrite(idempotency.write_id, idempotency.token, responseBody);
+      await completeWrite(idempotency.write_id, idempotency.token, responseBody);
     }
     recordTurnWriteProof(payload, session_id, '/api/log-modality', responseBody);
     return standardSuccess(req, res, 'log-modality processed', responseBody, 200);
   } catch (err) {
-    if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+    if (idempotency.enabled) await failWrite(idempotency.write_id, idempotency.token);
     return standardError(req, res, 'Failed to append modality data', process.env.NODE_ENV === 'production' ? null : err.message, 500);
   }
 });
@@ -1606,7 +1586,7 @@ app.post('/api/log-modality', async (req, res) => {
 // "Today's Plan" card.
 app.get('/api/plan/today', async (req, res) => {
   try {
-    const allLog = await getSheetRows(logSheetName);
+    const allLog = await workoutAuthority.loggedSetRows();
     // Find distinct lift codes that have been trained at all
     const liftCodes = [...new Set(
       allLog
@@ -1720,8 +1700,8 @@ app.get('/api/plan/today', async (req, res) => {
 app.get('/api/plan/intent-recommendation', async (req, res) => {
   try {
     const [allLog, allEffort] = await Promise.all([
-      getSheetRows(logSheetName),
-      getSheetRows(effortSheetName)
+      workoutAuthority.loggedSetRows(),
+      workoutAuthority.effortRows()
     ]);
     // A workout-generation request routes here (authoritative pipeline) with its structured
     // constraints as query params. `focus` is honored only where the engine already supports
@@ -1852,8 +1832,8 @@ app.get('/api/plan/intent-recommendation', async (req, res) => {
 app.get('/api/recommendation/preview', async (req, res) => {
   try {
     const [allLog, allEffort] = await Promise.all([
-      getSheetRows(logSheetName),
-      getSheetRows(effortSheetName)
+      workoutAuthority.loggedSetRows(),
+      workoutAuthority.effortRows()
     ]);
     const rec = buildRecommendation({
       sessionText: req.query.text || req.query.sessionText,
@@ -1924,7 +1904,7 @@ app.get('/api/recommend/next/:liftCode', async (req, res) => {
   const intentId = ['recovery_pump', 'deload_reset'].includes(rawIntentId) ? rawIntentId : null;
 
   try {
-    const allLog = await getSheetRows(logSheetName);
+    const allLog = await workoutAuthority.loggedSetRows();
     const recommendation = recommendNextSet(allLog, liftCode, {
       ...(justLoggedSet ? { justLoggedSet } : {}),
       ...(intentId ? { intentId } : {})
@@ -2052,8 +2032,8 @@ app.get('/api/session/:sessionId/summary', async (req, res) => {
   }
 
   try {
-    const allLog = await getSheetRows(logSheetName);
-    const allEffort = await getSheetRows(effortSheetName);
+    const allLog = await workoutAuthority.loggedSetRows();
+    const allEffort = await workoutAuthority.effortRows();
     const summary = buildSessionSummary(allLog, allEffort, sessionId);
     return standardSuccess(req, res, 'Session summary', summary);
   } catch (error) {
@@ -2070,8 +2050,8 @@ app.get('/api/session/:sessionId', async (req, res) => {
   }
 
   try {
-    const recentLog = await getSheetRows(logSheetName);
-    const recentEffort = await getSheetRows(effortSheetName);
+    const recentLog = await workoutAuthority.loggedSetRows();
+    const recentEffort = await workoutAuthority.effortRows();
 
     const sessionLogRows = recentLog
       .filter(row => String(row[1] || '').trim().toLowerCase() === sessionId.toLowerCase())
@@ -2165,11 +2145,13 @@ app.post('/api/bodyweight', async (req, res) => {
     const frozen = await refuseIfWritesFrozen(req, res, '/api/bodyweight');
     if (frozen) return frozen;
 
-    const idempotency = beginWrite(writeId, {
+    const idempotency = await beginWrite(writeId, {
       endpoint: '/api/bodyweight',
       date: normalizedDate,
       weight: weightValue
     });
+    const noReceipt = refuseIfReceiptUnavailable(req, res, idempotency);
+    if (noReceipt) return noReceipt;
 
     if (idempotency.duplicate) {
       const record = idempotency.record || {};
@@ -2208,7 +2190,7 @@ app.post('/api/bodyweight', async (req, res) => {
         responseBody.write_id = idempotency.write_id;
         responseBody.duplicate_write = false;
         responseBody.idempotency_status = 'completed';
-        completeWrite(idempotency.write_id, idempotency.token, responseBody);
+        await completeWrite(idempotency.write_id, idempotency.token, responseBody);
       }
       recordTurnWriteProof(req.body, correlationSessionId, '/api/bodyweight', responseBody);
       return standardSuccess(req, res, 'Bodyweight entry appended', responseBody);
@@ -2218,7 +2200,7 @@ app.post('/api/bodyweight', async (req, res) => {
           // The row landed but post-append processing threw. Record the write as
           // completed so a retried write_id replays this state instead of
           // appending again (never failWrite a committed write).
-          completeWrite(idempotency.write_id, idempotency.token, {
+          await completeWrite(idempotency.write_id, idempotency.token, {
             entry,
             test_mode: false,
             sheet_write: 'success',
@@ -2229,7 +2211,7 @@ app.post('/api/bodyweight', async (req, res) => {
             post_processing_error: true
           });
         } else {
-          failWrite(idempotency.write_id, idempotency.token);
+          await failWrite(idempotency.write_id, idempotency.token);
         }
       }
       throw error;
@@ -2251,7 +2233,8 @@ app.get('/api/bodyweight/history', async (req, res) => {
     if (!tabs.includes('Bodyweight')) {
       return standardError(req, res, 'Bodyweight tab is missing. Cannot read history.', null, 400);
     }
-    const allRows = await getSheetRows('Bodyweight');
+    // Bodyweight is an unrelated reporting surface, never a workout prerequisite.
+    const allRows = await getSheetRowsRaw('Bodyweight');
     const history = buildBodyweightHistory(allRows, days);
     return standardSuccess(req, res, 'Bodyweight history', history);
   } catch (error) {
@@ -2261,8 +2244,8 @@ app.get('/api/bodyweight/history', async (req, res) => {
 
 app.post('/api/admin/preview-test-rows', async (req, res) => {
   try {
-    const logRows = await getSheetRows(logSheetName);
-    const effortRows = await getSheetRows(effortSheetName);
+    const logRows = await workoutAuthority.loggedSetRows();
+    const effortRows = await workoutAuthority.effortRows();
     const preview = previewTestRows(logRows, effortRows);
     return standardSuccess(req, res, 'Preview test rows', preview);
   } catch (error) {
@@ -2533,26 +2516,27 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       ? 'manual'
       : screenshotDateUsable ? 'screenshot' : 'today_fallback';
 
-    // 4) Check duplicate session protection — fetch existing IDs first so we
-    // can auto-increment the counter when two sessions share the same day/period.
+    // 4) Duplicate session protection. The occupied ids come from Supabase, the
+    // authority for session identity since the S4 cutover — one indexed lookup
+    // scoped to this date, replacing a whole-column `Effort!B:B` Sheets read that
+    // existed only because a tab cannot be queried.
     let existingEffortSessionIds;
     try {
-      existingEffortSessionIds = await getEffortSessionIds();
+      existingEffortSessionIds = await workoutAuthority.occupiedSessionIds(dateValue);
     } catch (error) {
+      console.error('❌ Failed to read session identity for duplicate-session validation:', error);
       if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
       return standardError(req, res, 'Failed to validate duplicate session.', null, 500);
     }
 
     // Read Log_Cleaned's composite keys AT MOST ONCE per request. Two things need
-    // them — the session-id allocator below and the row-level dedup at step 7 — and
-    // before this memo the allocator simply never saw them. Memoizing keeps the Save
-    // read budget exactly where it was (docs/READ_BUDGET.md): a path that already read
-    // them still reads them once, and a path that did not (effort-only) still does not
-    // unless the allocator actually has to run.
-    let cachedLogCompositeKeys = null;
-    const logCompositeKeys = async () => {
-      if (cachedLogCompositeKeys === null) cachedLogCompositeKeys = await getLogCompositeKeys();
-      return cachedLogCompositeKeys;
+    // them — the row-level dedup at step 7 — and issuing it once per request is
+    // still the right shape, though the reason changed: it was a metered Sheets
+    // quota, and it is now simply that no query needs issuing twice.
+    let cachedSetIdentities = null;
+    const existingSetIdentities = async (sid) => {
+      if (cachedSetIdentities === null) cachedSetIdentities = await workoutAuthority.existingSetIdentities(sid);
+      return cachedSetIdentities;
     };
 
     // If the client supplied a session_id, honour it (explicit beats implicit).
@@ -2569,7 +2553,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
     if (formFields.session_id) {
       sessionId = formFields.session_id;
     } else {
-      const priorRecord = normalizeWriteId(writeId) ? peekWrite(writeId) : null;
+      const priorRecord = normalizeWriteId(writeId) ? await peekWrite(writeId) : null;
       // Only reuse the minted id for a NON-completed prior attempt (failed or a
       // stale/in-progress reservation that beginWrite will downgrade) — that is the
       // retry path that actually writes, where reuse keeps the dedupes effective. A
@@ -2577,10 +2561,14 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       // replay (200 skipped_duplicate); reusing its id here would trip the
       // duplicate-session hard-stop below and 409 a successful, already-saved
       // workout on a lost-response retry.
+      // `session_id` IS A COLUMN OF THE RECEIPT NOW, not a field of a free-form
+      // metadata blob. The file store had nowhere to put it, so WRITE-2 fished it
+      // out of whatever the route happened to record; `atlas.write_receipts` gives
+      // the one fact a retry needs its own column, written under the token guard
+      // by a statement that refuses to overwrite a value already there (§3.6).
       const priorMintedSessionId = priorRecord
         && priorRecord.status !== 'completed'
-        && priorRecord.metadata
-        && priorRecord.metadata.session_id;
+        && priorRecord.session_id;
       if (priorMintedSessionId) {
         sessionId = priorMintedSessionId;
         sessionIdReused = true;
@@ -2590,18 +2578,15 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         // here and the next same-period workout re-minted its id — two real sessions
         // silently collapsed onto one identity.
         let durableSessionIds = existingEffortSessionIds;
-        try {
-          durableSessionIds = existingEffortSessionIds
-            .concat(sessionIdsFromLogCompositeKeys(await logCompositeKeys()));
-        } catch (error) {
-          // Fail CLOSED on identity: without the Log read we cannot prove the slot is
-          // free, so refuse rather than mint an id that may already belong to a saved
-          // workout. Effort-only knowledge is exactly the blindness that caused the
-          // silent merge; falling back to it would reinstate the defect under load.
-          console.error('❌ Failed to read Log_Cleaned for session-id allocation:', error);
-          if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
-          return standardError(req, res, 'Failed to allocate a session id.', null, 500);
-        }
+        // `occupiedSessionIds` already spans EVERY durable record for the date —
+        // `atlas.workout_sessions` is the session parent every logged set and Effort
+        // row hangs off, so one query answers what a union of two whole-column
+        // Sheets reads used to. The second read is gone, not merged.
+        //
+        // The defect that union existed to fix stays fixed: an Effort row is
+        // optional, so a workout logged without watch data must still occupy its
+        // slot. It does — the parent row exists either way.
+        durableSessionIds = existingEffortSessionIds;
         try {
           sessionId = nextAvailableSessionId(dateValue, durableSessionIds);
         } catch (error) {
@@ -2622,11 +2607,39 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       }
     }
 
-    // A client-supplied id OR a reused server-minted id that already exists in Effort
-    // is a duplicate session (never double-write the Effort tab). A freshly-minted id
-    // is next-available by construction, so it is never already in the list.
-    const duplicateSession = (Boolean(formFields.session_id) || sessionIdReused) &&
-      existingEffortSessionIds.map(id => id.toLowerCase()).includes(String(sessionId).toLowerCase());
+    // A client-supplied id OR a reused server-minted id that already carries an Effort
+    // row is a duplicate session (never double-write Effort). A freshly-minted id is
+    // next-available by construction, so it can never already have one.
+    //
+    // ASKED AS A PREDICATE, NOT SCANNED OUT OF THE ALLOCATOR'S LIST. This used to test
+    // membership in `existingEffortSessionIds`, which is `occupiedSessionIds(dateValue)`
+    // — and that list is SCOPED TO THE DATE, because its real job is feeding the
+    // allocator. A client-supplied id that does not begin with this request's date
+    // prefix is therefore absent from it by construction, so the guard silently passed
+    // every such id straight through to the write. `sessionHasEffort` asks about the one
+    // session actually being written, which is the question the guard always meant.
+    //
+    // A RETRY OF THIS SAME SAVE IS NOT A DUPLICATE SESSION — it is the same session.
+    // This guard runs BEFORE `beginWrite`, so it decides first, and the Effort row a
+    // lost-response retry "collides" with is the one its own earlier attempt wrote.
+    // Answering 409 there would tell the client its successfully-saved workout had
+    // been rejected. So a request whose `write_id` already names a receipt for THIS
+    // session is handed on to the receipt replay below, which answers it with the
+    // stored response — including a stored fail-closed one, which must stay
+    // fail-closed rather than becoming a 409.
+    //
+    // ONLY A **COMPLETED** RECEIPT IS A REPLAY. A failed or still-reserved prior
+    // attempt is a genuine re-attempt, not a lost response, and it must still meet
+    // this guard: that is the path where the id is deliberately reused (WRITE-2) and
+    // where an Effort row from a half-finished attempt is exactly what must not be
+    // written twice.
+    const priorReceipt = normalizeWriteId(writeId) ? await peekWrite(writeId) : null;
+    const retryOfThisSession = Boolean(priorReceipt)
+      && priorReceipt.status === 'completed'
+      && String(priorReceipt.session_id || '').trim().toLowerCase() === String(sessionId).trim().toLowerCase();
+    const duplicateSession = !retryOfThisSession
+      && (Boolean(formFields.session_id) || sessionIdReused)
+      && await workoutAuthority.sessionHasEffort(sessionId);
     // A duplicate effort session HARD-STOPS the live write (never double-write the
     // Effort tab). But a DRY-RUN preview must not fail closed — it continues to the
     // normal preview, which reports `duplicate_check.duplicate_session: true` (below) so
@@ -2679,7 +2692,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       } catch (error) {
         if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
         // The screenshot/effort Save is the OTHER Save path in the same read budget
-        // (`docs/READ_BUDGET.md`), enriches through the same catalog read, and carried
+        // (`test/allSheets429.test.js`), enriches through the same catalog read, and carried
         // the same blanket 400. Classified on the same authority, for the same reason.
         return standardError(req, res, 'Log rows validation/enrichment failed', process.env.NODE_ENV === 'production' ? null : error.message, saveFailureStatus(error));
       }
@@ -2701,18 +2714,20 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
     const rowsToWrite = [];
     const skippedDuplicates = [];
     if (!effortOnly) {
-      const existingLogKeys = await logCompositeKeys();
+      // The identities this session already holds, from Supabase — scoped to the
+      // session rather than the whole tab, because a table can be filtered and a
+      // tab could not. `exercise||set_number`; the session is already fixed.
+      const existingLogKeys = await existingSetIdentities(sessionId);
       const intendedKeys = formattedLogRows.map(row => {
         // formatted row order follows logCleanedColumns
-        const sid = String(row[1] || '').trim().toLowerCase();
         const ex = String(row[2] || '').trim().toLowerCase();
         const setn = String(row[6] || '').trim().toLowerCase();
-        return `${sid}||${ex}||${setn}`;
+        return `${ex}||${setn}`;
       });
 
       for (let i = 0; i < formattedLogRows.length; i += 1) {
         const key = intendedKeys[i];
-        if (existingLogKeys.includes(key)) {
+        if (existingLogKeys.has(key)) {
           skippedDuplicates.push({ index: i, row: formattedLogRows[i] });
         } else {
           rowsToWrite.push(formattedLogRows[i]);
@@ -2728,8 +2743,6 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
     });
     let logRowsWritten = 0;
     let effortRowsWritten = 0;
-    let logAppendedRange = null;
-    let effortAppendedRange = null;
     let effortWritten = false;
     if (!testMode) {
       // Live writes must carry a write_id so a lost-response retry is deduplicated
@@ -2750,13 +2763,20 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
 
       // Idempotency guard: a retried write_id must never append a second time.
       // Mirrors the /api/log-workout contract (beginWrite → completeWrite/failWrite).
-      idempotency = beginWrite(writeId, {
+      idempotency = await beginWrite(writeId, {
         endpoint: '/api/complete-workout',
         session_id: sessionId,
         date: dateValue,
         log_rows_count: rowsToWrite.length,
         effort_only: effortOnly
       });
+      {
+        const noReceipt = refuseIfReceiptUnavailable(req, res, idempotency);
+        if (noReceipt) {
+          if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
+          return noReceipt;
+        }
+      }
 
       if (idempotency.duplicate) {
         const record = idempotency.record || {};
@@ -2794,125 +2814,79 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         return standardSuccess(req, res, dupMessage, { status: 'ok', message: dupMessage, data: duplicateData }, record.status === 'completed' ? 200 : 409);
       }
 
-      // Header-drift guard: confirm the target tabs still match the column
-      // contract before any append. A mismatch releases the write_id (nothing
-      // was written) and refuses the write.
-      try {
-        const headerFailures = await assertWriteHeaderContracts({
-          checkLog: rowsToWrite.length > 0,
-          checkEffort: true
-        });
-        if (headerFailures.length > 0) {
-          if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
-          if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
-          return standardError(req, res, schemaDriftMessage(headerFailures), schemaDriftDetails(headerFailures), 409);
-        }
-      } catch (error) {
-        console.error('❌ Failed to validate sheet header contract:', error);
-        if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
-        if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
-        return standardError(req, res, 'Failed to validate sheet header contract.', null, 500);
-      }
+      // THE HEADER-DRIFT GUARD IS GONE FROM THIS PATH, because the hazard it
+      // protected against no longer exists here.
+      //
+      // Atlas appended to Google Sheets BY COLUMN POSITION, so an owner who
+      // reordered a column would have had every future write land silently in the
+      // wrong field. The guard read row 1 of each target tab before every append and
+      // refused on a mismatch — correct, and it cost two metered Sheets reads on the
+      // Save path, which is exactly where a 429 was most expensive.
+      //
+      // The Save writes named columns of `atlas.logged_sets` and
+      // `atlas.session_effort` now. A column cannot silently change meaning under a
+      // named insert, and a schema that did change would be refused by Postgres
+      // rather than accepted into the wrong field. The Sheets copy is projected from
+      // that data afterwards by `migrationRowContract`, which is the same mapping in
+      // both directions — so the export cannot disagree with the authority about
+      // what a column means either, and the mirror rebuild of §5.7 is the recovery
+      // if a human edits the sheet.
 
       try {
-        if (rowsToWrite.length > 0) {
-          const logResponse = await appendRows(logSheetName, rowsToWrite);
-          logAppendedRange = logResponse?.data?.updates?.updatedRange || null;
-          logRowsWritten = Number(logResponse?.data?.updates?.updatedRows || 0);
-          // Log rows have landed. From here a failure must never release the
-          // write_id (a retry would re-append these rows) — mark the write
-          // committed so the catch records a partial completion instead.
-          writeCommitted = true;
-        }
-        const effortResponse = await appendRows(effortSheetName, [effortRow]);
-        effortAppendedRange = effortResponse?.data?.updates?.updatedRange || null;
-        effortRowsWritten = Number(effortResponse?.data?.updates?.updatedRows || 0);
-        effortWritten = true;
-        writeCommitted = true;
-        // Both appends succeeded on this path (the log one only when there were rows).
-        invalidateSheetRowsCache(rowsToWrite.length > 0 ? logSheetName : null, effortSheetName);
-        // S2 shadow: mirror exactly what the Sheets append committed. Fire-and-forget.
-        migrationShadow.shadowSave({
+        // ONE TRANSACTION, replacing two Google Sheets appends.
+        //
+        // The pair could half-succeed — log rows on the sheet, Effort row missing,
+        // and a partial session for a later read to misinterpret. That is why
+        // `writeCommitted` had to be set between the two appends. Here it cannot
+        // happen: the Save commits whole or not at all (§6.3 P12), so the flag is
+        // set once, after a result exists.
+        const saved = await workoutAuthority.saveWorkout({
           sessionId,
+          writeId: idempotency.write_id || null,
           logCells: rowsToWrite,
           effortCells: effortRow,
-          route: '/api/complete-workout',
-          writeId: idempotency.write_id || null,
         });
+        logRowsWritten = saved.log_rows_written;
+        effortRowsWritten = saved.effort_written ? 1 : 0;
+        effortWritten = saved.effort_written;
+        writeCommitted = true;
       } catch (error) {
         if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
-        // WHATEVER LANDED BEFORE THE THROW IS ON THE SHEET, so the cache holding a pre-write
-        // copy of it must go — before any branch below, and whether or not idempotency is
-        // enabled. Both facts matter: the throw is usually the Effort append, but it can also
-        // come from a later step with BOTH appends already done, and the recovery branch
-        // below only runs when idempotency is on. Keyed on what actually landed, so this
-        // stays honest rather than reverting to a flush.
-        invalidateSheetRowsCache(
-          logRowsWritten > 0 ? logSheetName : null,
-          effortWritten ? effortSheetName : null
-        );
-        // S2 shadow: whatever landed before the throw IS on the sheet, so the
-        // mirror must carry it too. Keyed on what actually landed, exactly as the
-        // cache invalidation above is.
-        if (writeCommitted) {
-          migrationShadow.shadowSave({
-            sessionId,
-            logCells: logRowsWritten > 0 ? rowsToWrite : [],
-            effortCells: effortWritten ? effortRow : null,
-            route: '/api/complete-workout',
-            writeId: idempotency.write_id || null,
-          });
-        }
-        if (idempotency.enabled && writeCommitted) {
-          // The log rows are already on the sheet but the effort append (or a
-          // later step) threw. Record the write as completed with a partial body
-          // so a retried write_id replays this state instead of re-appending the
-          // log rows. Mirrors /api/log-workout's partial-write contract.
-          const partialData = {
-            session_id: sessionId,
-            date: dateValue,
-            write_id: idempotency.write_id,
-            duplicate_write: false,
-            idempotency_status: 'completed',
-            sheet_write: 'partial',
-            sheet_written: true,
-            log_rows_written: logRowsWritten,
-            logAppendedRange,
-            // Report what actually landed: normally false here (the effort append
-            // is what threw), but use the flag so an unlikely throw from a later
-            // step after a successful effort append can't understate the row.
-            effort_written: effortWritten,
-            post_processing_error: true
-          };
-          completeWrite(idempotency.write_id, idempotency.token, {
-            status: 'ok',
-            message: 'complete-workout log rows written; effort append failed',
-            data: partialData
-          });
-          liveWriteRecorded = true;
-          recordTurnWriteProof(
-            correlationPayload,
-            sessionId,
-            '/api/complete-workout',
-            partialData,
-            { correlationPayload },
-          );
-          return standardError(req, res, 'Effort row append failed after log rows were written.', partialData, 500);
-        }
-        if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
-        return standardError(req, res, 'Failed to append workout data.', null, 500);
+        console.error('❌ Failed to save the workout:', error);
+        // NOTHING LANDED, and that is now a guarantee rather than a hope.
+        //
+        // This branch used to carry a PARTIAL-WRITE recovery: two Sheets appends
+        // could half-succeed, so a throw here might mean log rows were on the sheet
+        // with the Effort row missing, and the receipt had to be COMPLETED with an
+        // honest partial body so a retry did not append the rows a second time.
+        //
+        // A Supabase transaction cannot half-succeed (§6.3 P12). A throw means the
+        // transaction rolled back and the session is atomically absent, so releasing
+        // the write_id is the correct and safe action — the retry starts clean.
+        // The partial state is not handled better here; it is unrepresentable.
+        //
+        // The S2/S3 SHADOW WRITE IS GONE for the same reason (design §5.4). It
+        // mirrored each committed Sheets append into Supabase while Sheets was the
+        // authority; Supabase IS the authority now, so a shadow would be the
+        // authority writing to itself.
+        if (idempotency.enabled) await failWrite(idempotency.write_id, idempotency.token);
+        return standardError(req, res, 'Failed to save the workout.', null, 500);
       }
 
-      // F02 / WRITE-1: a success response must never claim a write the Sheets
-      // append response did not confirm. Verify the authoritative append proof
-      // (exact range + row count per tab). The rows have already landed here, so
-      // record the write committed (a retry must not re-append) and surface the
-      // anomaly instead of reporting 'success' — a proof mismatch freezes the
-      // save into an explicit unverified state rather than a false success.
-      const logProofOk = rowsToWrite.length === 0
-        ? true
-        : (!!logAppendedRange && logRowsWritten === rowsToWrite.length);
-      const effortProofOk = !!effortAppendedRange && effortRowsWritten === 1;
+      // F02 / WRITE-1, PRESERVED AND RE-EXPRESSED. A success response must never
+      // claim a write the authority did not confirm. What changed is what counts as
+      // confirmation: it was the Sheets append receipt (exact A1 range + row count
+      // per tab), and it is now the transaction's own committed row counts.
+      //
+      // THE RANGE HAD TO LEAVE THE PREDICATE, and dropping it is not a weakening.
+      // A range only ever proved WHERE Google put the rows; it never proved they
+      // were the right rows. The counts are the same assertion they always were —
+      // exactly the rows this request intended, no more and no fewer — and they now
+      // come from the same transaction that wrote them rather than from a second
+      // system's acknowledgement. Requiring a range here would have failed EVERY
+      // save, because there is no Sheets append left to produce one.
+      const logProofOk = logRowsWritten === rowsToWrite.length;
+      const effortProofOk = effortWritten === true && effortRowsWritten === 1;
       if (!logProofOk || !effortProofOk) {
         const unverified = {
           session_id: sessionId,
@@ -2923,17 +2897,15 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
           sheet_write: 'unverified',
           sheet_written: true,
           log_rows_written: logRowsWritten,
-          logAppendedRange,
           expected_log_rows: rowsToWrite.length,
           effort_written: effortWritten,
           effort_rows_written: effortRowsWritten,
-          effortAppendedRange,
           proof_mismatch: true
         };
         if (idempotency.enabled) {
-          completeWrite(idempotency.write_id, idempotency.token, {
+          await completeWrite(idempotency.write_id, idempotency.token, {
             status: 'error',
-            message: 'complete-workout append proof missing or inconsistent',
+            message: 'complete-workout write proof missing or inconsistent',
             data: unverified
           });
           liveWriteRecorded = true;
@@ -2992,6 +2964,9 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         effort_only: effortOnly,
         sheet_written: !testMode && effortWritten,
         sheet_write: testMode ? 'skipped' : 'success',
+        // The truthful name for the same verdict; `sheet_write` above is the bounded
+        // W1–W3 compatibility alias whose sunset is the owner-approved field rename.
+        write_authority: testMode ? null : 'supabase_transaction',
         log_rows_written: testMode ? 0 : logRowsWritten,
         effort_written: effortWritten,
         duplicate_check: {
@@ -3009,11 +2984,15 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
     if (combinedWarnings.length > 0) responseBody.warnings = combinedWarnings;
     if (completeRuleFlags.length > 0) responseBody.data.rule_flags = completeRuleFlags;
 
-    // F02 / WRITE-1: report the authoritative per-tab append proof on the live
-    // write (dry runs never append, so they carry no range/count proof).
+    // F02 / WRITE-1: report the authoritative write proof on the live write (dry
+    // runs never write, so they carry no count proof).
+    //
+    // NO RANGE IS PUBLISHED, because there is none to publish. A range is a Google
+    // Sheets concept and the workout no longer lands there; emitting a null or an
+    // invented one as a proof field would be worse than omitting it, because a
+    // client reading `logAppendedRange` would be reading a claim about a write that
+    // did not happen. The row counts and the session identity are the proof.
     if (!testMode) {
-      responseBody.data.logAppendedRange = logAppendedRange;
-      responseBody.data.effortAppendedRange = effortAppendedRange;
       responseBody.data.effort_rows_written = effortRowsWritten;
     }
 
@@ -3043,7 +3022,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       responseBody.data.write_id = idempotency.write_id;
       responseBody.data.duplicate_write = false;
       responseBody.data.idempotency_status = 'completed';
-      completeWrite(idempotency.write_id, idempotency.token, responseBody);
+      await completeWrite(idempotency.write_id, idempotency.token, responseBody);
       liveWriteRecorded = true;
     }
 
@@ -3068,7 +3047,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         // Rows are already on the sheet but the response post-processing threw.
         // Record the write as completed so a retried write_id replays this state
         // instead of appending a second time (never failWrite a committed write).
-        completeWrite(idempotency.write_id, idempotency.token, {
+        await completeWrite(idempotency.write_id, idempotency.token, {
           status: 'ok',
           message: 'complete-workout written; response post-processing failed',
           data: {
@@ -3079,7 +3058,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
           }
         });
       } else if (!writeCommitted) {
-        failWrite(idempotency.write_id, idempotency.token);
+        await failWrite(idempotency.write_id, idempotency.token);
       }
     }
     return standardError(req, res, 'Failed to complete workout ingestion', { error: error.message, safeWrite: true }, 500);
@@ -3124,14 +3103,24 @@ async function buildSubstitutionPreviews(prescribedList, enrichedLoggedRows, rul
   const painFlag = Array.isArray(ruleFlags) && ruleFlags.some(f => f && f.rule_id === 'pain_flag');
 
   // Lazy reads — only reached when prescribed pairs are present.
+  //
+  // BOTH READS ARE STRICT, and the substitution path is exactly why. A substitution
+  // proposes a DIFFERENT exercise. The constraint set says which exercises the
+  // athlete must not be given, so swallowing it would offer a substitute chosen as
+  // if no injury had ever been reported.
+  //
+  // The logged history sizes that substitute's prescription, and it is strict for
+  // the same reason (OWNER CORRECTION 2026-08-13). It used to end in
+  // `.catch(() => [])`, which made an unreadable Supabase indistinguishable from a
+  // lifter who had never performed the lift — and the engine then recommended into
+  // a swap from no history at all, silently, on the safety-critical path. An
+  // unreadable authority must refuse; it must never be rendered as an empty one.
   const [allLog, constraintRows] = await Promise.all([
-    getSheetRows(logSheetName).catch(() => []),
-    getSheetRows('Constraints').catch(() => [])
+    workoutAuthority.loggedSetRows(),
+    coachingInputs.constraintRows()
   ]);
   const constraints = (constraintRows || [])
-    .map(row => Array.isArray(row)
-      ? { date: row[0] || null, kind: row[1] || null, target: row[2] || null, rule: row[3] || null, note: row[4] || null }
-      : { date: row.date || null, kind: row.kind || null, target: row.target || null, rule: row.rule || null, note: row.note || null })
+    .map(row => ({ date: row[0] || null, kind: row[1] || null, target: row[2] || null, rule: row[3] || null, note: row[4] || null }))
     .filter(c => c.kind && c.target && c.rule);
 
   const out = [];
@@ -3243,18 +3232,22 @@ app.post('/api/log-workout', async (req, res) => {
     return standardError(req, res, 'date must be a valid calendar date (YYYY-MM-DD).', null, 400);
   }
 
-  // Read each duplicate-guard column AT MOST ONCE per request. Both are needed twice
-  // now — once by the allocator, once by the guards further down — and memoizing keeps
-  // this route's Sheets read count exactly where docs/READ_BUDGET.md records it.
-  let cachedLogCompositeKeys = null;
-  const logCompositeKeys = async () => {
-    if (cachedLogCompositeKeys === null) cachedLogCompositeKeys = await getLogCompositeKeys();
-    return cachedLogCompositeKeys;
+  // The duplicate guards read Supabase, the authority since the S4 cutover. Both
+  // are still memoized per request: the reason changed from "a metered Sheets
+  // quota" to "no query needs issuing twice", but issuing one is still the right
+  // shape. The identity lookup is scoped to the date and the row lookup to the
+  // session, because a table can be filtered and a tab could not.
+  let cachedSetIdentities = null;
+  const existingSetIdentities = async (sid) => {
+    if (cachedSetIdentities === null) cachedSetIdentities = await workoutAuthority.existingSetIdentities(sid);
+    return cachedSetIdentities;
   };
-  let cachedEffortSessionIds = null;
-  const effortSessionIds = async () => {
-    if (cachedEffortSessionIds === null) cachedEffortSessionIds = await getEffortSessionIds();
-    return cachedEffortSessionIds;
+  let cachedOccupiedSessionIds = null;
+  const occupiedSessionIds = async () => {
+    if (cachedOccupiedSessionIds === null) {
+      cachedOccupiedSessionIds = await workoutAuthority.occupiedSessionIds(workoutDate);
+    }
+    return cachedOccupiedSessionIds;
   };
 
   // A blank session_id means "this is a new workout — you decide". The server is the
@@ -3264,9 +3257,11 @@ app.post('/api/log-workout', async (req, res) => {
   // unchanged, exactly as before.
   if (!session_id) {
     try {
-      const durableSessionIds = (await effortSessionIds())
-        .concat(sessionIdsFromLogCompositeKeys(await logCompositeKeys()));
-      session_id = nextAvailableSessionId(workoutDate, durableSessionIds);
+      // One query spans every durable record for the date: `atlas.workout_sessions`
+      // is the parent every logged set and Effort row hangs off, so a session
+      // logged without watch data still occupies its slot — the defect the old
+      // two-read union existed to fix stays fixed.
+      session_id = nextAvailableSessionId(workoutDate, await occupiedSessionIds());
     } catch (error) {
       // Fail CLOSED on identity: an unreadable durable record means we cannot prove
       // the slot is free, and minting into an occupied slot merges two real workouts
@@ -3351,7 +3346,7 @@ app.post('/api/log-workout', async (req, res) => {
     // the preview — the row-local ruleFlags computed above still stand. The live-write
     // path is intentionally left untouched (no extra Sheets read on the write hot path).
     try {
-      const historyRows = (await getSheetRows(logSheetName)).map(normalizeAnalyticsLogRow);
+      const historyRows = (await workoutAuthority.loggedSetRows()).map(normalizeAnalyticsLogRow);
       ruleFlags = evaluateSessionSafety(enrichedRowObjects, payload.notes || '', historyRows);
     } catch { /* keep the row-local ruleFlags already computed above */ }
 
@@ -3396,7 +3391,7 @@ app.post('/api/log-workout', async (req, res) => {
     let previewLogRows = formattedLogRows;
     let previewSkippedDuplicates = 0;
     try {
-      const existingLogKeys = await logCompositeKeys();
+      const existingLogKeys = await existingSetIdentities(session_id);
       const partition = partitionLogRowsByExisting(formattedLogRows, existingLogKeys);
       previewLogRows = partition.newRows;
       previewSkippedDuplicates = partition.skippedDuplicates.length;
@@ -3493,13 +3488,15 @@ app.post('/api/log-workout', async (req, res) => {
   const frozen = await refuseIfWritesFrozen(req, res, '/api/log-workout');
   if (frozen) return frozen;
 
-  const idempotency = beginWrite(writeId, {
+  const idempotency = await beginWrite(writeId, {
     endpoint: '/api/log-workout',
     session_id,
     date: workoutDate,
     log_rows_count: formattedLogRows.length,
     effort_row_present: Boolean(formattedEffortRow)
   });
+  const noReceipt = refuseIfReceiptUnavailable(req, res, idempotency);
+  if (noReceipt) return noReceipt;
 
   if (idempotency.duplicate) {
     const record = idempotency.record || {};
@@ -3523,17 +3520,20 @@ app.post('/api/log-workout', async (req, res) => {
   }
 
   if (formattedEffortRow) {
-    let existingEffortSessionIds;
+    // The duplicate-Effort guard asks its question directly now: does THIS session
+    // already carry an Effort row? Under Sheets it had to pull every session id in
+    // the `Effort` tab and scan, because a tab cannot answer a predicate.
+    let sessionAlreadyHasEffort;
     try {
-      existingEffortSessionIds = await effortSessionIds();
+      sessionAlreadyHasEffort = await workoutAuthority.sessionHasEffort(session_id);
     } catch (error) {
       console.error('❌ Failed to check duplicate session IDs:', error);
-      if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+      if (idempotency.enabled) await failWrite(idempotency.write_id, idempotency.token);
       return standardError(req, res, 'Failed to validate duplicate session.', null, 500);
     }
 
-    if (existingEffortSessionIds.map(id => id.toLowerCase()).includes(String(session_id).toLowerCase())) {
-      if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+    if (sessionAlreadyHasEffort) {
+      if (idempotency.enabled) await failWrite(idempotency.write_id, idempotency.token);
       return standardError(req, res, 'Duplicate session.', null, 409);
     }
   }
@@ -3552,13 +3552,13 @@ app.post('/api/log-workout', async (req, res) => {
   let rowsToWrite = formattedLogRows;
   let skippedDuplicates = [];
   try {
-    const existingLogKeys = await logCompositeKeys();
+    const existingLogKeys = await existingSetIdentities(session_id);
     const partition = partitionLogRowsByExisting(formattedLogRows, existingLogKeys);
     rowsToWrite = partition.newRows;
     skippedDuplicates = partition.skippedDuplicates;
   } catch (error) {
     console.error('❌ Failed to check for duplicate log rows:', error);
-    if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+    if (idempotency.enabled) await failWrite(idempotency.write_id, idempotency.token);
     return standardError(req, res, 'Failed to validate duplicate log rows.', null, 500);
   }
 
@@ -3573,6 +3573,7 @@ app.post('/api/log-workout', async (req, res) => {
       sheet_write: 'skipped_duplicate',
       sheet_written: false,
       original_sheet_write: 'success',
+      write_authority: 'supabase_transaction',
       duplicate_write: true,
       all_rows_duplicate: true,
       log_rows_written: 0,
@@ -3598,7 +3599,7 @@ app.post('/api/log-workout', async (req, res) => {
     if (idempotency.enabled) {
       duplicateBody.write_id = idempotency.write_id;
       duplicateBody.idempotency_status = 'completed';
-      completeWrite(idempotency.write_id, idempotency.token, duplicateBody);
+      await completeWrite(idempotency.write_id, idempotency.token, duplicateBody);
     }
     // #1165 — an all-rows-duplicate retry is NOT always a non-write. With closeout_context
     // and the Session Plan lanes enabled, this branch can append the Session_Plans closeout
@@ -3612,125 +3613,47 @@ app.post('/api/log-workout', async (req, res) => {
     return standardSuccess(req, res, duplicateBody.message, duplicateBody, 200);
   }
 
-  // Header-drift guard: confirm the target tabs still match the column contract
-  // before any append. A mismatch releases the write_id (nothing was written)
-  // and refuses the write rather than misroute values into the wrong columns.
-  try {
-    const headerFailures = await assertWriteHeaderContracts({
-      checkLog: rowsToWrite.length > 0,
-      checkEffort: Boolean(formattedEffortRow)
-    });
-    if (headerFailures.length > 0) {
-      if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
-      return standardError(req, res, schemaDriftMessage(headerFailures), schemaDriftDetails(headerFailures), 409);
-    }
-  } catch (error) {
-    console.error('❌ Failed to validate sheet header contract:', error);
-    if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
-    return standardError(req, res, 'Failed to validate sheet header contract.', null, 500);
-  }
+  // THE HEADER-DRIFT GUARD IS GONE FROM THIS PATH, for the reason recorded on
+  // `/api/complete-workout` above: it protected a positional Sheets append, and the
+  // Save writes named columns of a Supabase table. It also cost two metered Sheets
+  // reads on the Save path, which is where a quota exhaustion hurt most.
 
-  // The two appends are split so a failure between them cannot release the
-  // idempotency record while rows are already on the sheet. Log append fails
-  // → nothing was written, failWrite is safe, a retry starts clean. Effort
-  // append fails AFTER the log append → the write_id is recorded as completed
-  // with a partial result, so a retried write_id replays that honest partial
-  // response instead of appending the log rows a second time.
-  let logResponse = null;
-  if (rowsToWrite.length > 0) {
+  // ONE TRANSACTION, replacing two Google Sheets appends.
+  //
+  // The appends were deliberately SPLIT so a failure between them could not release
+  // the idempotency record while rows were already on the sheet, and an Effort failure
+  // produced an honest PARTIAL response. That whole class of outcome is now
+  // unrepresentable: the Save commits whole or not at all (§6.3 P12), so there is no
+  // half-written session for a later read to misinterpret and no partial to report.
+  //
+  // A failure here therefore wrote NOTHING, which is exactly the condition under
+  // which releasing the write_id is safe — the same rule the log-append branch
+  // already applied on its own.
+  // The transaction's own receipt, and the only record of what landed. It is what
+  // the write proof below adjudicates, so it is kept as the shape the write
+  // returned rather than reshaped into the Sheets envelope the code used to fake.
+  let saveReceipt = null;
+  if (rowsToWrite.length > 0 || formattedEffortRow) {
     try {
+      saveReceipt = await workoutAuthority.saveWorkout({
+        sessionId: session_id,
+        writeId: idempotency.write_id || null,
+        logCells: rowsToWrite,
+        effortCells: formattedEffortRow || null,
+      });
       console.log(JSON.stringify({
-        event: 'append_log_rows',
-        tab: logSheetName,
-        row_count: rowsToWrite.length,
+        event: 'workout_saved',
+        store: 'supabase',
+        row_count: saveReceipt.log_rows_written,
+        effort_written: saveReceipt.effort_written,
         skipped_duplicates: skippedDuplicates.length,
         session_id,
         requestId: req.requestId
       }));
-      logResponse = await appendRows(logSheetName, rowsToWrite);
-      console.log(JSON.stringify({
-        event: 'append_log_rows_success',
-        tab: logSheetName,
-        row_count: Number(logResponse.data.updates?.updatedRows || 0),
-        range: logResponse.data.updates?.updatedRange,
-        session_id,
-        requestId: req.requestId
-      }));
     } catch (error) {
-      console.error('❌ Failed to append workout data:', error);
-      if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
-      return standardError(req, res, 'Failed to append workout data', process.env.NODE_ENV === 'production' ? null : error.message, 500);
-    }
-  }
-
-  let effortResponse = null;
-  if (formattedEffortRow) {
-    try {
-      console.log(JSON.stringify({
-        event: 'append_effort_row',
-        tab: effortSheetName,
-        row_count: 1,
-        session_id,
-        requestId: req.requestId
-      }));
-      effortResponse = await appendRows(effortSheetName, [formattedEffortRow]);
-      console.log(JSON.stringify({
-        event: 'append_effort_row_success',
-        tab: effortSheetName,
-        row_count: Number(effortResponse.data.updates?.updatedRows || 0),
-        range: effortResponse.data.updates?.updatedRange,
-        session_id,
-        requestId: req.requestId
-      }));
-    } catch (error) {
-      console.error('❌ Effort append failed:', error);
-      // The log rows are on the sheet; the Effort append is what failed, so the Effort
-      // rows this cache holds are still exactly what the sheet holds.
-      invalidateSheetRowsCache(logSheetName);
-      const logRowsWritten = Number(logResponse?.data?.updates?.updatedRows || 0);
-      // S2 shadow: the log rows are committed even though the Effort append
-      // failed, so the mirror carries them and nothing else. Fire-and-forget.
-      if (logRowsWritten > 0) {
-        migrationShadow.shadowSave({
-          sessionId: session_id,
-          logCells: rowsToWrite,
-          effortCells: null,
-          route: '/api/log-workout',
-          writeId: idempotency.write_id || null,
-        });
-      }
-      const partialBody = {
-        message: logRowsWritten > 0
-          ? 'Log rows were appended but the effort row failed to write. Retrying this write_id will not append the log rows again — use undo-last or add the effort separately.'
-          : 'Log rows were already present and the effort row failed to write. Retrying with a new write_id can try the Effort append again without duplicating log rows.',
-        logAppendedRange: logResponse?.data?.updates?.updatedRange || null,
-        log_rows_written: logRowsWritten,
-        effort_rows_written: 0,
-        effortWritten: false,
-        test_mode: false,
-        sheet_write: 'partial',
-        sheet_written: true
-      };
-      if (idempotency.enabled) {
-        partialBody.write_id = idempotency.write_id;
-        partialBody.duplicate_write = false;
-        partialBody.idempotency_status = 'completed';
-        completeWrite(idempotency.write_id, idempotency.token, partialBody);
-      }
-      // #1165 — a PARTIAL write is the outcome most worth correlating, not the least: the log
-      // rows are already committed, so this turn really did write, and the reviewer needs that
-      // joined to the turn exactly as a success is. Correlating only the happy path would hide
-      // the one case where turn↔write evidence matters most. Same non-authoritative resolve,
-      // same verbatim proof (`sheet_write:'partial'`, `sheet_written:true`).
-      // Correlate ONLY when THIS attempt actually committed rows. When every log row was
-      // already a duplicate and a supplied Effort repair fails, nothing is written by this
-      // request, yet partialBody still reads sheet_written:true (pre-existing route
-      // behaviour, not reshaped here — W1–W3 are owner-reserved). Recording that as
-      // correlated evidence would falsely prove the turn wrote.
-      if (logRowsWritten > 0) {
-        recordTurnWriteProof(payload, session_id, '/api/log-workout', partialBody);
-      }
-      return standardError(req, res, 'Effort row append failed after log rows were written.', partialBody, 500);
+      console.error('❌ Failed to save the workout:', error);
+      if (idempotency.enabled) await failWrite(idempotency.write_id, idempotency.token);
+      return standardError(req, res, 'Failed to save the workout', process.env.NODE_ENV === 'production' ? null : error.message, 500);
     }
   }
 
@@ -3754,49 +3677,43 @@ app.post('/api/log-workout', async (req, res) => {
   }
 
   try {
-    // Exactly the tabs this request appended to. A Save with no effort row leaves the
-    // cached Effort rows true, so evicting them would spend the next dashboard's read
-    // re-reading data that did not change.
-    invalidateSheetRowsCache(
-      rowsToWrite.length > 0 ? logSheetName : null,
-      formattedEffortRow ? effortSheetName : null
-    );
-
-    // S2 shadow: mirror exactly what the Sheets appends committed above.
-    // Fire-and-forget; the response below is decided entirely by Sheets.
-    migrationShadow.shadowSave({
-      sessionId: session_id,
-      logCells: rowsToWrite,
-      effortCells: formattedEffortRow || null,
-      route: '/api/log-workout',
-      writeId: idempotency.write_id || null,
-    });
-
     const responseBody = {
-      message: 'Workout data appended successfully.',
+      message: 'Workout saved.',
       // The identity the rows were actually written under. When the client sent a blank
       // id the server allocated it, and the client cannot address its own workout —
-      // verify-range, undo, the closeout seal, correlation — without being told which
-      // session it got. A client that supplied an id sees its own value back.
+      // undo, the closeout seal, correlation — without being told which session it got.
+      // A client that supplied an id sees its own value back.
       session_id,
-      logAppendedRange: logResponse?.data?.updates?.updatedRange || null,
-      log_rows_written: Number(logResponse?.data?.updates?.updatedRows || 0),
-      effort_rows_written: Number(effortResponse?.data?.updates?.updatedRows || 0),
-      effortWritten: Boolean(formattedEffortRow),
+      log_rows_written: Number(saveReceipt?.log_rows_written || 0),
+      effort_rows_written: saveReceipt && saveReceipt.effort_written ? 1 : 0,
+      effortWritten: Boolean(saveReceipt && saveReceipt.effort_written),
       test_mode: false,
-      sheet_write: 'success'
+      // W1–W3 PROOF FIELDS ARE UNCHANGED IN NAME AND MEANING. `sheet_write` and
+      // `sheet_written` are the owner-approved live-write proof tuple, and this build
+      // does not rename them: they assert "the authoritative write succeeded", which
+      // is exactly what they asserted when the authority was Google Sheets. Renaming
+      // an owner-reserved proof field is a separate, owner-gated decision.
+      //
+      // A BOUNDED COMPATIBILITY ALIAS, WITH A NAMED SUNSET. `sheet_write` is now a
+      // legacy NAME for a Supabase verdict, so the truthful name is published beside
+      // it rather than instead of it. `write_authority` is the field a new reader
+      // should consume; `sheet_write` is retained only until the owner approves the
+      // W1–W3 field rename, and that approval is its exact sunset condition
+      // (docs/SUPABASE_HOT_PATH_MIGRATION.md §5.4). Nothing derives a decision from
+      // the alias — it is reported, never read back.
+      sheet_write: 'success',
+      write_authority: 'supabase_transaction'
     };
-    // The append's own receipt, adjudicated. This is the write-verification AUTHORITY:
-    // it establishes the exact appended range, the exact row count and session ownership
-    // from the operation that performed the write, so the client no longer spends a
-    // metered read on `GET /api/log-workout/verify-range` at closeout. The verdict is
-    // derived — a missing or self-contradicting receipt yields verified:false with an
-    // exact reason, never a fabricated confirmation. See services/appendWriteProof.js.
+    // The transaction's own receipt, adjudicated. This is the write-verification
+    // AUTHORITY: it establishes the exact row count, the session and the write_id
+    // from the operation that performed the write. The verdict is derived — a
+    // missing or self-contradicting receipt yields verified:false with an exact
+    // reason, never a fabricated confirmation. See services/appendWriteProof.js.
     if (rowsToWrite.length > 0) {
-      responseBody.log_write_verification = verifyAppendReceipt({
-        receipt: logResponse?.data?.updates,
-        tab: logSheetName,
+      responseBody.log_write_verification = verifyWriteReceipt({
+        receipt: saveReceipt,
         sessionId: session_id,
+        writeId: idempotency.write_id || normalizeWriteId(writeId),
         rowsSubmitted: rowsToWrite,
         sessionIdColumnIndex: LOG_SESSION_ID_COLUMN,
       });
@@ -3809,9 +3726,6 @@ app.post('/api/log-workout', async (req, res) => {
     if (skippedDuplicates.length > 0) {
       responseBody.skipped_duplicates = skippedDuplicates.length;
     }
-    if (effortResponse) {
-      responseBody.effortAppendedRange = effortResponse.data.updates?.updatedRange;
-    }
     if (warnings.length > 0) {
       responseBody.warnings = [...new Set(warnings)];
     }
@@ -3823,7 +3737,7 @@ app.post('/api/log-workout', async (req, res) => {
       responseBody.write_id = idempotency.write_id;
       responseBody.duplicate_write = false;
       responseBody.idempotency_status = 'completed';
-      completeWrite(idempotency.write_id, idempotency.token, responseBody);
+      await completeWrite(idempotency.write_id, idempotency.token, responseBody);
     }
 
     // #1165 — correlate this write back to the coach turn that authorized it. The claim is
@@ -3835,72 +3749,63 @@ app.post('/api/log-workout', async (req, res) => {
 
     return standardSuccess(req, res, 'log-workout processed', responseBody, 200);
   } catch (error) {
-    console.error('❌ Failed to finalize workout response after append:', error);
-    // The log (and any effort) rows are already on the sheet by this point, so
-    // releasing the idempotency record would let a retried write_id re-append.
-    // Record the write as completed instead (never failWrite a committed write).
+    console.error('❌ Failed to finalize workout response after the write:', error);
+    // The rows are already committed by this point, so releasing the receipt would
+    // let a retried write_id write them a second time. Record the write as completed
+    // instead (never failWrite a committed write).
     if (idempotency.enabled) {
-      completeWrite(idempotency.write_id, idempotency.token, {
-        message: 'Workout data appended; response finalization failed.',
-        log_rows_written: Number(logResponse?.data?.updates?.updatedRows || 0),
-        effort_rows_written: Number(effortResponse?.data?.updates?.updatedRows || 0),
-        effortWritten: Boolean(formattedEffortRow),
+      await completeWrite(idempotency.write_id, idempotency.token, {
+        message: 'Workout saved; response finalization failed.',
+        log_rows_written: Number(saveReceipt?.log_rows_written || 0),
+        effort_rows_written: saveReceipt && saveReceipt.effort_written ? 1 : 0,
+        effortWritten: Boolean(saveReceipt && saveReceipt.effort_written),
         test_mode: false,
         sheet_write: 'success',
+        write_authority: 'supabase_transaction',
         write_id: idempotency.write_id,
         duplicate_write: false,
         idempotency_status: 'completed'
       });
     }
-    return standardError(req, res, 'Failed to append workout data', process.env.NODE_ENV === 'production' ? null : error.message, 500);
+    return standardError(req, res, 'Failed to save the workout', process.env.NODE_ENV === 'production' ? null : error.message, 500);
   }
 });
 
 // POST /api/log-workout/undo-last
-// Deletes a specific row range from Log_Cleaned that was just appended by /api/log-workout.
-// Requires the exact range string returned in the write response (log_appended_range),
-// a matching session_id, and an explicit confirm_delete: true flag.
-// Performs a read-back check before deleting to verify session_id ownership.
+// Deletes the Supabase logged-set rows stamped by one specific Save. Requires that
+// Save's write_id (`save_write_id`), a matching session_id, the expected row count,
+// and explicit `confirm_delete: true`. No positional range or Sheets read-back is
+// involved.
 app.post('/api/log-workout/undo-last', async (req, res) => {
   const payload = req.body;
   if (!payload || typeof payload !== 'object') {
     return standardError(req, res, 'Invalid JSON payload.', null, 400);
   }
 
-  const { log_appended_range, session_id, rows_to_delete, confirm_delete, write_id } = payload;
+  const { save_write_id, session_id, rows_to_delete, confirm_delete, write_id } = payload;
 
   if (confirm_delete !== true) {
     return standardError(req, res, 'confirm_delete must be true to proceed with deletion.', null, 400);
   }
-  if (!log_appended_range || typeof log_appended_range !== 'string') {
-    return standardError(req, res, 'log_appended_range is required.', null, 400);
+  // UNDO IS BY IDENTITY, NOT BY POSITION.
+  //
+  // It used to take `log_appended_range` — an A1 range parsed into a start and end
+  // row — and delete whatever currently sat there. Position is not identity: the
+  // range was computed from a read that could already be stale, and a row-shifting
+  // delete is incompatible with the durable export allocations §5.6 depends on.
+  //
+  // The Save stamps its `write_id` on every row it writes, so the rows of one Save
+  // are addressable exactly. `save_write_id` is that value, which the client already
+  // holds from the Save response.
+  if (!save_write_id || typeof save_write_id !== 'string') {
+    return standardError(req, res, 'save_write_id is required — the write_id of the Save being undone.', null, 400);
   }
   if (!session_id || typeof session_id !== 'string') {
     return standardError(req, res, 'session_id is required.', null, 400);
   }
-
-  // Parse A1 range: TabName!A{startRow}:{col}{endRow}
-  const rangeMatch = log_appended_range.match(/^([^!]+)!A(\d+):[A-Z]+(\d+)$/);
-  if (!rangeMatch) {
-    return standardError(req, res, `log_appended_range is not a valid A1 range (expected e.g. Log_Cleaned!A847:L847), got "${log_appended_range}".`, null, 400);
-  }
-
-  const rangeTab = rangeMatch[1];
-  const startRow = Number(rangeMatch[2]); // 1-indexed, inclusive
-  const endRow = Number(rangeMatch[3]);   // 1-indexed, inclusive
-  const rowSpan = endRow - startRow + 1;
-
-  if (rangeTab !== logSheetName) {
-    return standardError(req, res, `log_appended_range must target "${logSheetName}", got "${rangeTab}".`, null, 400);
-  }
-  // Undo the inverse of a single write: the range may span up to the same
-  // MAX_LOG_ROWS a single /api/log-workout append can produce. A tighter cap here
-  // silently broke undo for a full multi-set session closeout (>10 rows in one write).
-  if (rowSpan < 1 || rowSpan > MAX_LOG_ROWS) {
-    return standardError(req, res, `Row span must be between 1 and ${MAX_LOG_ROWS}, got ${rowSpan}.`, null, 400);
-  }
-  if (Number(rows_to_delete) !== rowSpan) {
-    return standardError(req, res, `rows_to_delete (${rows_to_delete}) does not match range row span (${rowSpan}).`, null, 400);
+  const rowSpan = Number(rows_to_delete);
+  if (!Number.isInteger(rowSpan) || rowSpan < 1 || rowSpan > MAX_LOG_ROWS) {
+    return standardError(req, res, `rows_to_delete must be between 1 and ${MAX_LOG_ROWS}, got ${rows_to_delete}.`, null, 400);
   }
 
   // #1164 V1 safety contract — a workout that reached a durable `finalized` closeout can no longer
@@ -3929,12 +3834,14 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
   const frozen = await refuseIfWritesFrozen(req, res, '/api/log-workout/undo-last');
   if (frozen) return frozen;
 
-  const idempotency = beginWrite(write_id, {
+  const idempotency = await beginWrite(write_id, {
     endpoint: '/api/log-workout/undo-last',
     session_id,
-    log_appended_range,
+    save_write_id,
     rows_to_delete: rowSpan
   });
+  const noReceipt = refuseIfReceiptUnavailable(req, res, idempotency);
+  if (noReceipt) return noReceipt;
 
   if (idempotency.duplicate) {
     const record = idempotency.record || {};
@@ -3956,229 +3863,66 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
     return standardSuccess(req, res, message, duplicateBody, record.status === 'completed' ? 200 : 409);
   }
 
-  // Read back rows before deleting to verify session_id ownership. This is a
-  // safety read — it must reflect the live sheet, never a cached snapshot.
-  let allRows;
+  // Read back before deleting, so the response reports what was actually removed
+  // rather than what was asked for. The rows are addressed by identity, so this
+  // verifies OWNERSHIP directly: every row carrying this `(session_id, write_id)`
+  // belongs to the Save being undone, by construction of the insert.
+  let owned;
   try {
-    allRows = await getSheetRowsRaw(logSheetName);
+    owned = await workoutAuthority.loggedSetRows({ sessionId: session_id });
   } catch (error) {
-    if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
-    return standardError(req, res, 'Failed to read sheet rows for verification.', null, 500);
+    console.error('❌ Failed to read the session back for undo verification:', error);
+    if (idempotency.enabled) await failWrite(idempotency.write_id, idempotency.token);
+    return standardError(req, res, 'Failed to read rows for verification.', null, 500);
+  }
+  if (!owned.length) {
+    if (idempotency.enabled) await failWrite(idempotency.write_id, idempotency.token);
+    return standardError(
+      req, res,
+      `No rows found for session "${session_id}" — nothing to undo. Undo aborted; no rows were deleted.`,
+      null, 409
+    );
   }
 
-  const normalizedExpected = String(session_id).trim().toLowerCase();
-  for (let r = startRow; r <= endRow; r++) {
-    // allRows is 0-indexed with header excluded: sheet row 2 → allRows[0], row N → allRows[N-2]
-    const dataIndex = r - 2;
-    const row = allRows[dataIndex];
-    if (!row || row.every(cell => String(cell) === '')) {
-      if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
-      return standardError(
-        req, res,
-        `Target sheet row ${r} is missing or empty — cannot verify session_id ownership. Undo aborted — no rows were deleted.`,
-        null, 409
-      );
-    }
-    const rowSessionId = String(row[1] || '').trim();
-    if (rowSessionId.toLowerCase() !== normalizedExpected) {
-      if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
-      return standardError(
-        req, res,
-        `session_id mismatch at sheet row ${r}: expected "${session_id}", found "${rowSessionId}". Undo aborted — no rows were deleted.`,
-        null, 409
-      );
-    }
-  }
-
-  // All rows verified — proceed with deletion
+  let deleted;
   try {
-    const startIndex = startRow - 1; // 0-based inclusive
-    const endIndex = endRow;         // 0-based exclusive
-    await deleteRowsByRange(logSheetName, startIndex, endIndex);
-    // Undo removes Log_Cleaned rows only; it never touches Effort.
-    invalidateSheetRowsCache(logSheetName);
+    // Deletes exactly the rows of this Save, by (session_id, write_id), and returns
+    // the session to the export queue in the SAME transaction so the mirror cannot
+    // keep serving rows the athlete retracted (§6.3 P14e).
+    deleted = await workoutAuthority.undoSave(session_id, save_write_id);
   } catch (error) {
-    if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
-    return standardError(req, res, 'Failed to delete rows from sheet.', null, 500);
+    console.error('❌ Undo failed:', error);
+    if (idempotency.enabled) await failWrite(idempotency.write_id, idempotency.token);
+    return standardError(req, res, 'Failed to delete rows.', null, 500);
   }
 
+  if (deleted.rows_deleted === 0) {
+    // Nothing carried that write_id. Reporting success here would tell the athlete
+    // a workout was retracted when it was not.
+    if (idempotency.enabled) await failWrite(idempotency.write_id, idempotency.token);
+    return standardError(
+      req, res,
+      `No rows matched save_write_id "${save_write_id}" in session "${session_id}". Undo aborted; nothing was deleted.`,
+      null, 409
+    );
+  }
   const responseBody = {
-    deleted_range: log_appended_range,
-    rows_deleted: rowSpan,
+    // No range: the rows were addressed by identity, and an invented A1 range
+    // would be a false proof field.
+    deleted_range: null,
+    rows_deleted: deleted.rows_deleted,
     sheet_write: 'success',
-    sheet_written: true
+    sheet_written: true,
+    write_authority: 'supabase_transaction'
   };
   if (idempotency.enabled) {
     responseBody.write_id = idempotency.write_id;
     responseBody.duplicate_write = false;
     responseBody.idempotency_status = 'completed';
-    completeWrite(idempotency.write_id, idempotency.token, responseBody);
+    await completeWrite(idempotency.write_id, idempotency.token, responseBody);
   }
 
   return standardSuccess(req, res, 'Rows deleted', responseBody);
-});
-
-// GET /api/log-workout/verify-range
-// Read-only post-write verification. Reads back the exact appended range from
-// Log_Cleaned and confirms session_id ownership + row count.
-// Only targets Log_Cleaned; rejects any other tab to prevent data fishing.
-app.get('/api/log-workout/verify-range', async (req, res) => {
-  const { range, session_id, expected_rows } = req.query;
-
-  if (!range || typeof range !== 'string') {
-    return standardError(req, res, 'range query param is required.', null, 400);
-  }
-  if (!session_id || typeof session_id !== 'string') {
-    return standardError(req, res, 'session_id query param is required.', null, 400);
-  }
-
-  const rangeMatch = range.match(/^([^!]+)!A(\d+):[A-Z]+(\d+)$/);
-  if (!rangeMatch) {
-    return standardError(req, res, `range is not a valid A1 range (expected e.g. Log_Cleaned!A847:L847), got "${range}".`, null, 400);
-  }
-
-  const rangeTab = rangeMatch[1];
-  const startRow = Number(rangeMatch[2]);
-  const endRow = Number(rangeMatch[3]);
-  const rowSpan = endRow - startRow + 1;
-
-  if (rangeTab !== logSheetName) {
-    return standardError(req, res, `range must target "${logSheetName}", got "${rangeTab}".`, null, 400);
-  }
-  // Verify the exact range a single write appended: it may span up to the same
-  // MAX_LOG_ROWS that write accepts. A tighter cap here 400'd the post-write
-  // read-back for any multi-set session logging >10 rows in one write.
-  if (rowSpan < 1 || rowSpan > MAX_LOG_ROWS) {
-    return standardError(req, res, `Row span must be between 1 and ${MAX_LOG_ROWS}, got ${rowSpan}.`, null, 400);
-  }
-
-  if (expected_rows !== undefined) {
-    const expectedCount = Number(expected_rows);
-    if (!Number.isInteger(expectedCount) || expectedCount < 1 || expectedCount !== rowSpan) {
-      return standardError(req, res, `expected_rows (${expected_rows}) does not match range row span (${rowSpan}).`, null, 400);
-    }
-  }
-
-  let rows;
-  try {
-    rows = await readRange(range);
-  } catch (error) {
-    console.error('❌ Readback verification — sheet read error:', error);
-    return standardError(req, res, 'Readback verification failed: sheet read error.', null, 500);
-  }
-
-  if (rows.length === 0) {
-    return standardError(req, res, `Readback found no rows at range "${range}".`, null, 409);
-  }
-  if (rows.length !== rowSpan) {
-    return standardError(req, res, `Readback row count mismatch: expected ${rowSpan}, found ${rows.length}.`, null, 409);
-  }
-
-  const normalizedExpected = String(session_id).trim().toLowerCase();
-  for (let i = 0; i < rows.length; i++) {
-    const rowSessionId = String(rows[i][1] || '').trim().toLowerCase();
-    if (rowSessionId !== normalizedExpected) {
-      return standardError(
-        req, res,
-        `session_id mismatch at row ${i + 1}: expected "${session_id}", found "${rows[i][1] || '(empty)'}".`,
-        null, 409
-      );
-    }
-  }
-
-  return standardSuccess(req, res, 'Readback verified', {
-    verified: true,
-    rows_found: rows.length,
-    range
-  });
-});
-
-// ── THE RECEIPT MIGRATION SEAM — TEMPORARY, S3 ONLY ──────────────────────────
-//
-// docs/SUPABASE_HOT_PATH_MIGRATION.md §5.3 ("The receipt migration seam"), §5.5a,
-// §6.2 P13. EXACT SUNSET: S4 deletes both routes, both functions and the file
-// store in the same PR, and §6.3 P16 proves no caller remains.
-//
-// TWO ROUTES WITH TWO PURPOSES. There is no arbitrary state access, no third
-// operation and no key/value shape — this is not a generic administration API, and
-// adding one is outside this migration.
-//
-// ── AUTHORIZATION: TWO CONDITIONS, ANSWERING DIFFERENT QUESTIONS ─────────────
-//
-//   1. `req.authMethod === 'api_key'` — STRICTER than the ordinary /api contract.
-//      middleware.js::requireApiKey admits EITHER a matching x-atlas-api-key (:28-32)
-//      OR a valid atlas_session cookie (:34-45), because the browser path is
-//      cookie-authenticated by design. That is not acceptable for a route that
-//      REPLACES LIVE DUPLICATE-WRITE SAFETY STATE, so a session-cookie-only request
-//      is refused here even though the middleware already admitted it. This invents
-//      no new secret; it narrows to one of the two paths the middleware already
-//      distinguishes.
-//   2. A successful current-request read of atlas.write_freeze returning
-//      `frozen = true`, by the same fail-closed rule that gates the seven write
-//      routes. atlas_app holds SELECT only on that row, so the ONLY principal who
-//      can put the system into the state where these routes answer at all is the
-//      Supabase project owner. The freeze IS the owner authorization.
-//
-// Neither substitutes for the other: the freeze proves the owner opened the
-// migration window; the API key proves the caller is the owner-operated migration
-// client rather than any authenticated browser pointed at the box during it.
-//
-// NO SECOND SECRET EXISTS TO CONFIGURE, which is itself the point. An earlier
-// design added a cutover-only migration token; a server cannot verify a secret it
-// does not hold, and the only obvious way to give it one — a Render environment
-// secret — REDEPLOYS, which is the restart this seam exists to avoid and which
-// destroys the in-memory map it exists to read.
-function refuseMigrationSeam(req, res, admission) {
-  return standardError(
-    req, res,
-    'The receipt migration seam is not open.',
-    {
-      error_code: 'migration_seam_closed',
-      freeze_state: admission.code,
-      // Stated plainly so an operator sees WHICH condition failed rather than
-      // guessing between "not frozen" and "wrong credential".
-      required: 'x-atlas-api-key AND atlas.write_freeze.frozen = true',
-    },
-    403
-  );
-}
-
-async function migrationSeamAdmission(req, res, route) {
-  if (req.authMethod !== 'api_key') {
-    // Refused BEFORE the freeze read: a cookie-authenticated caller must not be
-    // able to probe the freeze state through this route either.
-    return refuseMigrationSeam(req, res, { code: 'api_key_required' });
-  }
-  const window = await writeFreeze.requireFrozenWindow(route);
-  if (!window.allowed) return refuseMigrationSeam(req, res, window);
-  return null;
-}
-
-// Read-only. Snapshots the live in-memory map of THIS process, with the
-// disk-vs-map completeness evidence §5.5a requires and the process_id the runbook
-// compares across the handover. It changes no record.
-app.post('/api/migration/receipts/export', async (req, res) => {
-  const refused = await migrationSeamAdmission(req, res, '/api/migration/receipts/export');
-  if (refused) return refused;
-
-  const snapshot = exportLiveReceipts();
-  return standardSuccess(req, res, 'Live receipt snapshot', snapshot);
-});
-
-// Replaces the live map of this ALREADY-RUNNING process with a verified set, and
-// persists it. All-or-nothing: a single rejected record changes nothing, because
-// replacing the map with the subset that happened to validate would silently
-// delete duplicate protection for the rest.
-app.post('/api/migration/receipts/import', async (req, res) => {
-  const refused = await migrationSeamAdmission(req, res, '/api/migration/receipts/import');
-  if (refused) return refused;
-
-  const body = req.body || {};
-  const result = importReceipts(body.records);
-  if (!result.applied) {
-    return standardError(req, res, 'Receipt import refused; nothing was changed.', result, 422);
-  }
-  return standardSuccess(req, res, 'Live receipt map replaced', result);
 });
 
 app.use((req, res) => {
@@ -4246,6 +3990,12 @@ function startServer() {
   ensurePublicBuilt();
   validateConfig();
   runStartupDiagnostics();
+
+  // The completed-session Sheets export worker (design §5.4). Started with the
+  // SERVER, never from a request: it must never sit on the tail of a Save, a
+  // closeout or an undo. Inert unless the owner sets ATLAS_MIRROR_EXPORT_ENABLED=1,
+  // because it writes a durable owner-visible Google Sheets surface.
+  startMirrorExportScheduler();
 
   const port = process.env.PORT || 3000;
   return app.listen(port, () => {

@@ -277,7 +277,10 @@ test('bug report captures rich diagnostic context on a single tap', () => {
 });
 
 test('required sheet contract excludes Dashboard', () => {
-  assert.deepEqual(requiredSheetTabs, ['Metadata', 'Log_Cleaned', 'Exercise_Catalog', 'Effort', 'Logic', 'Session_Summary']);
+  assert.deepEqual(requiredSheetTabs, ['Metadata', 'Logic', 'Session_Summary']);
+  assert.ok(optionalSheetTabs.includes('Log_Cleaned'));
+  assert.ok(optionalSheetTabs.includes('Exercise_Catalog'));
+  assert.ok(optionalSheetTabs.includes('Effort'));
   assert.ok(!requiredSheetTabs.includes('Dashboard'));
   assert.ok(optionalSheetTabs.includes('Dashboard'));
 });
@@ -305,8 +308,9 @@ test('sheet contract reports each missing required tab', () => {
 test('Modality_Log is an OPTIONAL tab (never required), leaving the core contract intact', () => {
   assert.ok(optionalSheetTabs.includes('Modality_Log'));
   assert.ok(!requiredSheetTabs.includes('Modality_Log'));
-  // Core contract unchanged: Log_Cleaned / Effort stay required, no new required tab.
-  assert.deepEqual(requiredSheetTabs, ['Metadata', 'Log_Cleaned', 'Exercise_Catalog', 'Effort', 'Logic', 'Session_Summary']);
+  // Workout mirrors are optional reporting surfaces; no workout authority is a
+  // required Sheets tab after S4.
+  assert.deepEqual(requiredSheetTabs, ['Metadata', 'Logic', 'Session_Summary']);
   const status = buildSheetContractStatus(requiredSheetTabs);
   assert.equal(status.missingRequiredTabs.length, 0, 'Modality_Log absent must not make the sheet incomplete');
   assert.equal(status.optional.Modality_Log, false);
@@ -995,7 +999,7 @@ test('PR 486 frontend: modality logging mirrors the trust loop without altering 
   assert.doesNotMatch(previewBlock, /delete[^\n]*test_mode|write_id: pendingWrite\.writeId/);
 
   // The ONLY live modality write is in the #approve-btn handler, gated on the
-  // preview proof, and it requires an explicit success confirmation.
+  // preview proof, and it requires an explicit Supabase transaction confirmation.
   const approveBlock = appSource.slice(
     appSource.indexOf("getElementById('approve-btn').addEventListener('click'"),
     // F10D widened: the closeout seal-verdict capture sits above the branches.
@@ -1003,13 +1007,14 @@ test('PR 486 frontend: modality logging mirrors the trust loop without altering 
   );
   assert.match(approveBlock, /pendingWrite\.mode === 'modality'/);
   assert.match(approveBlock, /write_id: pendingWrite\.writeId/, 'live write carries the staged write_id');
-  assert.match(approveBlock, /writeData\.sheet_write !== 'success' \|\| writeData\.sheet_written !== true/);
+  assert.match(approveBlock, /writeData\.write_authority !== 'supabase_transaction' \|\| writeData\.modality_written !== true/);
 
-  // Regression: the slash log-workout approve branch is unchanged — still posts
-  // /api/log-workout with test_mode deleted and requires sheet_write success.
+  // Regression: the slash log-workout approve branch still posts only after preview,
+  // with test_mode deleted, and requires Supabase transaction authority.
   assert.match(approveBlock, /const realPayload = \{ \.\.\.pendingWrite\.payload \}/);
   assert.match(approveBlock, /delete realPayload\.test_mode/);
   assert.match(approveBlock, /'\/api\/log-workout'/);
+  assert.match(approveBlock, /writeData\.write_authority !== 'supabase_transaction'/);
 
   // The modality hook lives ONLY in the coach-fallback branch (input the slash
   // parser rejected), so strength-set logging never routes through it.
@@ -3529,7 +3534,7 @@ test('multi-session/day: a saved session clears #log-session-id so the next uplo
   // pendingLastWrite, and the old window ended one character short of this assertion.
   const approveSection = appSource.slice(
     appSource.indexOf(anchor),
-    appSource.indexOf(anchor) + 12400
+    appSource.indexOf('/* ===== Session loader', appSource.indexOf(anchor))
   );
   // After a confirmed write the session is concluded, so its id must be cleared from the
   // field — otherwise the next effort upload re-sends the just-written id and collides.
@@ -3545,7 +3550,7 @@ test('effort-only preview: complete-workout preview shows no-workout copy and ef
   );
 
   assert.match(previewFn, /Effort-only preview/);
-  assert.match(previewFn, /Write Effort to Google Sheets/);
+  assert.match(previewFn, /Save Effort/);
   assert.match(previewFn, /data\.effort_source === 'manual'/);
   // Screenshot graceful-degrade: when effort couldn't be read, the heading must
   // say so instead of "Parsed effort (from screenshot)" over a blank table.
@@ -3558,7 +3563,7 @@ test('reaction layer: approve-btn captures lift codes and fires write reaction',
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   const approveSection = appSource.slice(
     appSource.indexOf(anchor),
-    appSource.indexOf(anchor) + 13600
+    appSource.indexOf('/* ===== Session loader', appSource.indexOf(anchor))
   );
   assert.match(approveSection, /reactionLiftCodes/, 'must capture reactionLiftCodes before invalidatePreview');
   assert.match(approveSection, /fetchReaction/, 'must call fetchReaction after write');
@@ -3570,7 +3575,7 @@ test('approve success message: effortOnly is captured before invalidatePreview n
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   const approveSection = appSource.slice(
     appSource.indexOf(anchor),
-    appSource.indexOf(anchor) + 11400
+    appSource.indexOf('/* ===== Session loader', appSource.indexOf(anchor))
   );
   const captureAt = approveSection.indexOf('const wasEffortOnly = pendingWrite.effortOnly');
   // Anchor on the real teardown CALL ('invalidatePreview();'), not the comment that
@@ -3589,12 +3594,13 @@ test('effort-only approve: complete-workout path accepts Effort-only writes with
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   const approveSection = appSource.slice(
     appSource.indexOf(anchor),
-    appSource.indexOf(anchor) + 9000
+    appSource.indexOf('/* ===== Session loader', appSource.indexOf(anchor))
   );
 
   assert.match(approveSection, /pendingWrite\.mode === 'screenshot' \|\| pendingWrite\.mode === 'effort-only'/);
   assert.match(approveSection, /writeData\.effort_only === true/);
-  assert.match(approveSection, /writeData\.effort_written !== true \|\| writeData\.sheet_written !== true/);
+  assert.match(approveSection, /writeData\.write_authority !== 'supabase_transaction'/);
+  assert.match(approveSection, /writeData\.effort_written !== true/);
 });
 
 // ── Post-write verdict ────────────────────────────────────────────────────────
@@ -3617,7 +3623,7 @@ test('verdict: post-write block shows Logged verdict and Next recommendation', (
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   const approveSection = appSource.slice(
     appSource.indexOf(anchor),
-    appSource.indexOf(anchor) + 13600
+    appSource.indexOf('/* ===== Session loader', appSource.indexOf(anchor))
   );
   assert.match(approveSection, /buildVerdict\(rec\)/, 'must call buildVerdict');
   assert.match(approveSection, /'Logged'/, 'must label verdict row "Logged"');
@@ -3630,7 +3636,7 @@ test('verdict: write safety unchanged — undo button still wired after verdict 
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   const approveSection = appSource.slice(
     appSource.indexOf(anchor),
-    appSource.indexOf(anchor) + 13600
+    appSource.indexOf('/* ===== Session loader', appSource.indexOf(anchor))
   );
   // undo button must still be appended before the verdict fetch
   const undoIdx = approveSection.indexOf('undo-write-btn');
@@ -3688,11 +3694,12 @@ test('duplicate-write: finally block always clears writeInFlight', () => {
 test('duplicate-write: successful write sets button text to Written ✓', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const anchor = "getElementById('approve-btn').addEventListener('click'";
-  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 13600);
-  assert.match(handler, /Written\s*✓/, 'button must show "Written ✓" after success');
+  const handlerEnd = appSource.indexOf('/* ===== Session loader', appSource.indexOf(anchor));
+  const fullHandler = appSource.slice(appSource.indexOf(anchor), handlerEnd);
+  assert.match(fullHandler, /Written\s*✓/, 'button must show "Written ✓" after success');
   // Written ✓ must appear before the catch block
-  const writtenIdx = handler.indexOf('Written');
-  const catchIdx = handler.indexOf('} catch (err)');
+  const writtenIdx = fullHandler.indexOf('Written');
+  const catchIdx = fullHandler.indexOf('} catch (err)');
   assert.ok(writtenIdx < catchIdx, 'Written ✓ text must be in success path, not catch');
 });
 
@@ -3701,60 +3708,66 @@ test('duplicate-write: undo button is unaffected — still wired after success',
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   // Window sized to reach the post-save undo button wiring (PR-0D added an
   // identity comment above it, nudging the handler length up).
-  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 12800);
+  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf('/* ===== Session loader', appSource.indexOf(anchor)));
   assert.match(handler, /undo-write-btn/, 'undo button must still exist in success path');
   assert.match(handler, /handleUndoLastWrite/, 'undo click handler must still be wired');
 });
 
 // ── Readback verification ─────────────────────────────────────────────────────
 
-test('readback: verify-range route registered as GET, read-only, auth-required', () => {
+// ── THE READ-BACK IS RETIRED, AND THESE TESTS NOW GUARD ITS ABSENCE ──────────
+//
+// Four tests here used to pin `GET /api/log-workout/verify-range` and the client's
+// `verifyWrittenRange()`: the route's tab restriction, its session/row-count checks,
+// and the client helper that called it.
+//
+// The route and the helper are gone. The write response carries
+// `log_write_verification` — the adjudicated receipt of the Supabase transaction
+// that performed the write (`services/appendWriteProof.js`) — so the read-back was
+// asking a second, weaker system to confirm what the writing system had already
+// proven, and after the S4 cutover there is no appended A1 range left to re-read.
+// The retirement is recorded as correction `C3-verify-range-retired` in
+// `test/helpers/liveSessionHarness.js`.
+//
+// Asserting the presence of a retired endpoint would pin the defect in place, so the
+// tests are inverted rather than deleted: the absence is now the thing under guard,
+// in all three places it has to hold at once. Keeping only the happy-path proof would
+// let the route quietly return.
+test('readback: the verify-range read-back is absent from the server, the manifest and the client', () => {
+  const src = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
+  const registered = src.match(/["'`]\/api\/log-workout\/verify-range["'`]/);
+  assert.equal(registered, null, 'index.js must not register the retired read-back route');
+
+  // The manifest outlived the route once already, which made it advertise a 404.
   const route = routeDefinitions.find(r => r.path === '/api/log-workout/verify-range');
-  assert.ok(route, 'route definition must exist');
-  assert.deepEqual(route.methods, ['GET']);
-  assert.equal(route.authRequired, true);
-  assert.equal(route.readOnly, true);
-  assert.equal(route.writeCapable, false);
-});
+  assert.equal(route, undefined, 'the route manifest must not advertise an endpoint the server does not serve');
 
-test('readback: verify-range endpoint enforces Log_Cleaned tab restriction', () => {
-  const src = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
-  assert.match(src, /\/api\/log-workout\/verify-range/, 'endpoint must be registered');
-  assert.match(src, /range must target/, 'must reject non-Log_Cleaned tabs');
-  assert.match(src, /not a valid A1 range/, 'must reject malformed range strings');
-});
-
-test('readback: verify-range endpoint verifies session_id and row count before returning ok', () => {
-  const src = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
-  const endpointStart = src.indexOf("'/api/log-workout/verify-range'");
-  const endpointBlock = src.slice(endpointStart, endpointStart + 3000);
-  assert.match(endpointBlock, /session_id mismatch/, 'must check session_id in returned rows');
-  assert.match(endpointBlock, /row count mismatch/, 'must check returned row count matches span');
-  assert.match(endpointBlock, /verified.*true/, 'must return verified: true on success');
-  assert.match(endpointBlock, /readRange\(range\)/, 'must call readRange with the validated range');
-});
-
-test('readback: verifyWrittenRange function exists and fails quietly', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
-  assert.match(appSource, /async function verifyWrittenRange\(/, 'verifyWrittenRange must exist');
-  const fn = appSource.slice(
-    appSource.indexOf('async function verifyWrittenRange('),
-    appSource.indexOf('async function verifyWrittenRange(') + 400
-  );
-  assert.match(fn, /return false/, 'must return false on any failure');
-  assert.match(fn, /verify-range/, 'must call verify-range endpoint');
-  assert.match(fn, /verified.*true/, 'must check verified: true in response');
+  assert.equal(/function verifyWrittenRange\s*\(/.test(appSource), false,
+    'the client read-back helper must not come back');
+});
+
+test('readback: the write response is the ONE verification authority', () => {
+  // The replacement must actually exist, or the test above would pass on a build
+  // that simply deleted verification altogether.
+  const src = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
+  assert.match(src, /log_write_verification/, 'the server must publish an adjudicated write verdict');
+  assert.match(src, /verifyWriteReceipt\(/, 'and it must come from the receipt adjudicator');
+
+  const proof = fs.readFileSync(path.join(repoRoot, 'services', 'appendWriteProof.js'), 'utf8');
+  assert.match(proof, /supabase_transaction/,
+    'the verdict names the transaction as its authority, not a Sheets range');
 });
 
 // C3 retargeted this test. The approve handler no longer calls verifyWrittenRange itself:
-// verification moved into `reportWriteVerification`, which picks the ONE authority — the
-// adjudicated append receipt, or the read-back only when the server published no verdict.
+// verification moved into `reportWriteVerification`, which consumes the ONE authority —
+// the adjudicated Supabase transaction receipt.
 // The property this test has always guarded is unchanged and still checked here:
 // verification fires after the undo button is attached and before the reaction fetch.
 test('readback: approve handler reports write verification after write, before reaction fetch', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const anchor = "getElementById('approve-btn').addEventListener('click'";
-  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 13600);
+  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf('/* ===== Session loader', appSource.indexOf(anchor)));
   assert.match(handler, /reportWriteVerification\(loggerStatus, pendingLastWrite\)/,
     'must report write verification in the success path');
   const undoIdx = handler.indexOf('undo-write-btn');
@@ -3764,35 +3777,28 @@ test('readback: approve handler reports write verification after write, before r
   assert.ok(verifyIdx < reactionIdx, 'verification must be reported before reaction fetch');
 });
 
-// The verification reporter itself: which authority it uses, and that the read-back is
-// reachable ONLY when the server published no verdict at all. A verdict of `false` is a
-// real negative answer and must not be re-asked of the weaker source.
-test('readback: reportWriteVerification uses the append receipt, and falls back only when there is no verdict', () => {
+// The verification reporter consumes the transaction receipt only. A verdict of `false`
+// is a real negative answer and must not be re-asked of a weaker source.
+test('readback: reportWriteVerification uses only the Supabase transaction receipt', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const start = appSource.indexOf('function reportWriteVerification(');
   assert.ok(start !== -1, 'reportWriteVerification must exist');
   const fn = appSource.slice(start, start + 1200);
   assert.match(fn, /log_write_verification/, 'must read the adjudicated verdict');
-  assert.match(fn, /Verified in Sheet/, 'must show Verified in Sheet note');
+  assert.match(fn, /Verified ✓/, 'must show the verified transaction note');
   assert.match(fn, /verification was inconclusive/, 'must report an unverified verdict honestly');
-  assert.match(fn, /readback verification unavailable/, 'fallback must keep its unavailable note');
-  // The verdict branch returns before the fallback can be reached.
-  const verdictIdx = fn.indexOf('log_write_verification');
-  const returnIdx = fn.indexOf('return;', verdictIdx);
-  const fallbackIdx = fn.indexOf('verifyWrittenRange(');
-  assert.ok(returnIdx !== -1 && returnIdx < fallbackIdx,
-    'a published verdict must return before the read-back fallback is reachable');
+  assert.doesNotMatch(fn, /verifyWrittenRange|readback|Sheets?/i,
+    'the reporter must not consult a second authority or claim a Sheets verification');
 });
 
-test('readback: verification failure cannot affect write success — no throw, no await block', () => {
+test('readback: verification reporting cannot perform I/O or affect write success', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const fn = appSource.slice(
-    appSource.indexOf('async function verifyWrittenRange('),
-    appSource.indexOf('async function verifyWrittenRange(') + 550
+    appSource.indexOf('function reportWriteVerification('),
+    appSource.indexOf('function renderAtlasSuggestion(')
   );
-  // Must catch all errors and return false — never re-throw
-  assert.match(fn, /catch/, 'must have a catch block');
-  assert.match(fn, /return false/, 'catch must return false, not throw');
+  assert.doesNotMatch(fn, /await|fetch\(|api\(|throw/,
+    'reporting the already-adjudicated receipt must be synchronous and side-effect free');
 });
 
 // ── Weekly Report ─────────────────────────────────────────────────────────────
@@ -4175,37 +4181,82 @@ test('progress summary: endpoint registered as GET and read-only', () => {
   assert.equal(route.authRequired, true);
 });
 
-test('trainingStore read layer can be stubbed and builds progress summary', async () => {
+// ── THE READ LAYER READS THE AUTHORITY, AND THE SHEETS STUB IS THE CONTROL ────
+//
+// These two tests stubbed `sheets.js` and asserted `getSheetRows('Log_Cleaned')`
+// was called. That assertion was correct while Google Sheets was the authority; it
+// asserts the exact thing the S4 cutover forbids, so keeping it would have pinned
+// the defect in place.
+//
+// The stub therefore moves to `services/workoutAuthority.js` — the seam production
+// reads — and the Sheets stub stays installed with every method THROWING. The
+// test keeps its original subject (the read layer can be stubbed, and the
+// analytics build over it is unchanged) and gains a positive control: a workout
+// read that reached Google Sheets fails the test loudly instead of passing
+// silently. OWNER CORRECTION 2026-08-13: a Sheets quota of any kind must never
+// reach a workout path.
+function installReadLayerDoubles({ loggedSets = [], effort = [] }) {
   const sheetsPath = require.resolve('../sheets');
+  const authorityPath = require.resolve('../services/workoutAuthority');
   const trainingStorePath = require.resolve('../services/trainingStore');
-  const originalSheetsCache = require.cache[sheetsPath];
-  const originalTrainingStoreCache = require.cache[trainingStorePath];
+  const original = {
+    sheets: require.cache[sheetsPath],
+    authority: require.cache[authorityPath],
+    trainingStore: require.cache[trainingStorePath],
+  };
   const calls = [];
 
+  const refuse = (name) => async (...args) => {
+    calls.push(['sheets:' + name, ...args.map(String)]);
+    throw new Error(`workout read reached Google Sheets via ${name} — forbidden after the S4 cutover`);
+  };
   require.cache[sheetsPath] = {
     id: sheetsPath,
     filename: sheetsPath,
     loaded: true,
     exports: {
-      getRecentRows: async (tabName, limit) => {
-        calls.push(['getRecentRows', tabName, limit]);
-        return [];
-      },
-      getSheetRows: async tabName => {
-        calls.push(['getSheetRows', tabName]);
-        if (tabName === 'Log_Cleaned') {
-          return [
-            ['2026-06-09', 'S1', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '200', '5', '2', ''],
-            ['2026-06-10', 'S2', 'Back Squat', 'Back Squat', 'Legs', 'SQ01', '1', '300', '5', '2', '']
-          ];
-        }
-        return [];
-      },
+      getRecentRows: refuse('getRecentRows'),
+      getSheetRows: refuse('getSheetRows'),
       logSheetName: 'Log_Cleaned',
-      effortSheetName: 'Effort'
-    }
+      effortSheetName: 'Effort',
+    },
+  };
+  require.cache[authorityPath] = {
+    id: authorityPath,
+    filename: authorityPath,
+    loaded: true,
+    exports: {
+      loggedSetRows: async (options = {}) => {
+        calls.push(['loggedSetRows', options.sessionId ?? null, options.limit ?? null]);
+        return loggedSets.map((row) => row.slice());
+      },
+      effortRows: async (options = {}) => {
+        calls.push(['effortRows', options.limit ?? null]);
+        return effort.map((row) => row.slice());
+      },
+    },
   };
   delete require.cache[trainingStorePath];
+
+  return {
+    calls,
+    restore() {
+      for (const [p, cached] of [[sheetsPath, original.sheets], [authorityPath, original.authority],
+        [trainingStorePath, original.trainingStore]]) {
+        if (cached) require.cache[p] = cached;
+        else delete require.cache[p];
+      }
+    },
+  };
+}
+
+test('trainingStore read layer can be stubbed and builds progress summary', async () => {
+  const doubles = installReadLayerDoubles({
+    loggedSets: [
+      ['2026-06-09', 'S1', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '200', '5', '2', ''],
+      ['2026-06-10', 'S2', 'Back Squat', 'Back Squat', 'Legs', 'SQ01', '1', '300', '5', '2', ''],
+    ],
+  });
 
   try {
     const trainingStore = require('../services/trainingStore');
@@ -4214,48 +4265,20 @@ test('trainingStore read layer can be stubbed and builds progress summary', asyn
     assert.equal(summary.total_sessions, 2);
     assert.equal(summary.total_sets, 2);
     assert.equal(summary.total_volume, 2500);
-    assert.deepEqual(calls, [['getSheetRows', 'Log_Cleaned']]);
+    // The whole read, from the authority, and NOTHING from Google Sheets.
+    assert.deepEqual(doubles.calls, [['loggedSetRows', null, null]]);
   } finally {
-    if (originalSheetsCache) require.cache[sheetsPath] = originalSheetsCache;
-    else delete require.cache[sheetsPath];
-    if (originalTrainingStoreCache) require.cache[trainingStorePath] = originalTrainingStoreCache;
-    else delete require.cache[trainingStorePath];
+    doubles.restore();
   }
 });
 
 test('trainingStore read layer combines log and effort rows for recent sessions', async () => {
-  const sheetsPath = require.resolve('../sheets');
-  const trainingStorePath = require.resolve('../services/trainingStore');
-  const originalSheetsCache = require.cache[sheetsPath];
-  const originalTrainingStoreCache = require.cache[trainingStorePath];
-  const calls = [];
-
-  require.cache[sheetsPath] = {
-    id: sheetsPath,
-    filename: sheetsPath,
-    loaded: true,
-    exports: {
-      getRecentRows: async (tabName, limit) => {
-        calls.push(['getRecentRows', tabName, limit]);
-        return [];
-      },
-      getSheetRows: async tabName => {
-        calls.push(['getSheetRows', tabName]);
-        if (tabName === 'Log_Cleaned') {
-          return [
-            ['2026-06-10', 'S1', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '200', '5', '2', '']
-          ];
-        }
-        if (tabName === 'Effort') {
-          return [['2026-06-10', 'S1', '45', '300', '400', '120', '160', 'Gym', '']];
-        }
-        return [];
-      },
-      logSheetName: 'Log_Cleaned',
-      effortSheetName: 'Effort'
-    }
-  };
-  delete require.cache[trainingStorePath];
+  const doubles = installReadLayerDoubles({
+    loggedSets: [
+      ['2026-06-10', 'S1', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '200', '5', '2', ''],
+    ],
+    effort: [['2026-06-10', 'S1', '45', '300', '400', '120', '160', 'Gym', '']],
+  });
 
   try {
     const trainingStore = require('../services/trainingStore');
@@ -4264,12 +4287,10 @@ test('trainingStore read layer combines log and effort rows for recent sessions'
     assert.equal(result.sessions.length, 1);
     assert.equal(result.sessions[0].session_id, 'S1');
     assert.equal(result.sessions[0].effort.duration, '45');
-    assert.deepEqual(calls, [['getSheetRows', 'Log_Cleaned'], ['getSheetRows', 'Effort']]);
+    // Both concepts come from the authority; the Effort join issues no Sheets read.
+    assert.deepEqual(doubles.calls.map((c) => c[0]).sort(), ['effortRows', 'loggedSetRows']);
   } finally {
-    if (originalSheetsCache) require.cache[sheetsPath] = originalSheetsCache;
-    else delete require.cache[sheetsPath];
-    if (originalTrainingStoreCache) require.cache[trainingStorePath] = originalTrainingStoreCache;
-    else delete require.cache[trainingStorePath];
+    doubles.restore();
   }
 });
 
@@ -5150,7 +5171,7 @@ test('Step 385: approve handler marks deload session written; advance fires once
   const approveStart = app.indexOf("document.getElementById('approve-btn').addEventListener('click'");
   assert.ok(approveStart !== -1, 'approve-btn click handler must exist');
   // F10D widened: the seal-verdict + finalized-emission block sits above this.
-  const handlerBody = app.slice(approveStart, approveStart + 7600);
+  const handlerBody = app.slice(approveStart, app.indexOf('/* ===== Session loader', approveStart));
 
   // advance must NOT appear anywhere in the approve handler — it belongs in endPlannedSession.
   assert.doesNotMatch(handlerBody, /\/api\/deload\/advance/, 'advance must NOT be called inside the approve handler (it fires once per session in endPlannedSession)');
@@ -5394,8 +5415,8 @@ test('RC2: the log-workout preview surfaces the chosen date + source from the wr
   assert.match(fn, /pendingWrite && pendingWrite\.payload && pendingWrite\.payload\.date/, 'date banner reads the actual write-payload date');
   assert.match(fn, /renderDateSourceNotice\(closeoutScreenshotDateSource, dsDate\)/, 'uses the shared date-source notice');
   // The source is reset on save and on start-over so a later manual save shows no banner.
-  assert.match(app, /closeoutScreenshotDateSource = null;\n    clearSessionSnapshot\(\)/, 'date source resets after a successful save (ungated — fires on screenshot/effort-only saves too)');
-  assert.match(app, /closeoutScreenshotDateSource = null;\n  setsTableBody\.innerHTML/, 'date source resets on start-over');
+  assert.match(app, /closeoutScreenshotDateSource = null;\r?\n    clearSessionSnapshot\(\)/, 'date source resets after a successful save (ungated — fires on screenshot/effort-only saves too)');
+  assert.match(app, /closeoutScreenshotDateSource = null;\r?\n  setsTableBody\.innerHTML/, 'date source resets on start-over');
 });
 
 test('saved-no-restore: a confirmed save clears the in-memory session regardless of pendingLastWrite', () => {
@@ -5547,11 +5568,11 @@ test('trust cards: status card styles every write state row in the thread', () =
 
 test('trust cards: the trust loop wiring in app.js is untouched', () => {
   const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
-  assert.match(app, /sheet_write !== 'success'/, 'live write must still require sheet_write success proof');
+  assert.match(app, /write_authority !== 'supabase_transaction'/, 'live write must require Supabase transaction proof');
   assert.match(app, /log_rows_written/, 'live write must still verify rows-written count');
   assert.match(app, /undo-last/, 'undo endpoint must still be wired');
   assert.match(app, /confirm_delete: true/, 'undo must still send explicit confirm_delete');
-  assert.match(app, /Verified in Sheet/, 'readback verification message must remain');
+  assert.match(app, /Verified ✓/, 'transaction verification message must remain');
   assert.match(app, /undo-write-btn/, 'undo button must still be appended after a write');
 });
 
@@ -5618,8 +5639,8 @@ test('write_id: duplicate acceptance is strict — all three proof fields requir
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   const handler = app.slice(app.indexOf(anchor), app.indexOf(anchor) + 9000);
   assert.match(handler, /duplicate_write === true/, 'must require duplicate_write flag');
-  assert.match(handler, /sheet_write === 'skipped_duplicate'/, 'must require the skipped_duplicate marker');
-  assert.match(handler, /original_sheet_write === 'success'/, 'must require the original write to have succeeded');
+  assert.match(handler, /idempotency_status === 'completed'/, 'must require a completed durable receipt');
+  assert.match(handler, /write_authority === 'supabase_transaction'/, 'must require the original Supabase transaction authority');
 });
 
 test('write_id: fresh-write proof is not weakened by the duplicate path', () => {
@@ -5629,10 +5650,10 @@ test('write_id: fresh-write proof is not weakened by the duplicate path', () => 
   // The success + rows-written checks must still guard every non-duplicate write.
   // A B1 repair write may legitimately write only Effort after duplicate log rows.
   const guardIdx = handler.indexOf('if (!duplicateBlocked)');
-  const successIdx = handler.indexOf("sheet_write !== 'success'");
+  const successIdx = handler.indexOf("write_authority !== 'supabase_transaction'");
   const rowsIdx = handler.indexOf('logRowsWritten > 0 || effortRowsWritten > 0');
   assert.ok(guardIdx !== -1, 'non-duplicate branch must exist');
-  assert.ok(successIdx > guardIdx, 'sheet_write success proof must remain inside the non-duplicate branch');
+  assert.ok(successIdx > guardIdx, 'Supabase authority proof must remain inside the non-duplicate branch');
   assert.ok(rowsIdx > guardIdx, 'rows-written or effort-written proof must remain inside the non-duplicate branch');
 });
 
@@ -5653,7 +5674,7 @@ test('write_id: blocked duplicate reports honestly instead of pretending to writ
 
 test('write_id: complete-workout sends write_id only on the live write', () => {
   const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
-  const fn = app.slice(app.indexOf('async function submitCompleteWorkout('), app.indexOf('async function submitCompleteWorkout(') + 800);
+  const fn = app.slice(app.indexOf('async function submitCompleteWorkout('), app.indexOf('function renderCompleteWorkoutPreview('));
   assert.match(fn, /\bwriteId\b/, 'submitCompleteWorkout must accept writeId');
   assert.match(fn, /writeId && !testMode/, 'write_id must be withheld from dry-run previews');
   assert.match(fn, /form\.append\('write_id'/, 'live write must send write_id');
@@ -5682,8 +5703,8 @@ test('write_id: screenshot approve accepts a blocked duplicate from complete-wor
   const idx = app.indexOf("pendingWrite.mode === 'screenshot'");
   const branch = app.slice(idx, idx + 1000);
   assert.match(branch, /duplicate_write === true/, 'must recognise a blocked duplicate');
-  assert.match(branch, /sheet_write === 'skipped_duplicate'/, 'must check the duplicate marker');
-  assert.match(branch, /original_sheet_written === true/, 'acceptance requires the original to have written');
+  assert.match(branch, /idempotency_status === 'completed'/, 'must require a completed durable receipt');
+  assert.match(branch, /write_authority === 'supabase_transaction'/, 'acceptance requires the original Supabase transaction');
 });
 
 // ── Coach declutter + shell cache bump ─────────────────────────────────────────
@@ -6777,7 +6798,7 @@ test('mid-session substitution: handleSetLogged passes substitution into coach f
 
 test('partial-log: parseWorkoutTextWithBackend carries unresolved lines through to the caller', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
-  const ret = appSource.slice(appSource.indexOf("intent: 'log_sets',\n    rows,"));
+  const ret = appSource.slice(appSource.search(/intent: 'log_sets',\r?\n\s*rows,/));
   assert.match(ret.slice(0, 600), /unresolved:\s*Array\.isArray\(parsed\.unresolved\)\s*\?\s*parsed\.unresolved\s*:\s*null/,
     'the log_sets return must include the unresolved lines');
 });

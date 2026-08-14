@@ -24,8 +24,6 @@ process.env.GOOGLE_PRIVATE_KEY = 'stub-private-key-sheets-is-stubbed';
 process.env.ATLAS_API_RATE_LIMIT_MAX = '1000000';
 process.env.ATLAS_WRITE_RATE_LIMIT_MAX = '1000000';
 process.env.ATLAS_VISION_RATE_LIMIT_MAX = '1000000';
-process.env.ATLAS_IDEMPOTENCY_FILE = require('node:path').join(
-  require('node:os').tmpdir(), `atlas-write-freeze-routes-${process.pid}.json`);
 
 // ── the Sheets stub: every mutation is COUNTED ───────────────────────────────
 const sheetCalls = { append: [], delete: [], update: [] };
@@ -76,9 +74,6 @@ const fakeSheets = {
   confirmTabMissing: async () => false,
   getHeaderRow: async () => [],
   getSafeSpreadsheetConfig: () => ({}),
-  CATALOG_CACHE_TTL_MS: 60_000,
-  _resetExerciseCatalogCache: () => {},
-  _exerciseCatalogCacheStats: () => ({ hits: 0, fetches: 0 }),
 };
 require.cache[require.resolve('../sheets')] = {
   id: require.resolve('../sheets'), filename: require.resolve('../sheets'), loaded: true, exports: fakeSheets,
@@ -118,8 +113,24 @@ require.cache[require.resolve('../services/vision')] = {
 };
 
 const writeFreeze = require('../services/writeFreeze');
-const { peekWrite, resetIdempotencyStore } = require('../services/idempotency');
-const session = require('../services/session');
+const {
+  resetWorkoutAuthorityStub: resetIdempotencyStore,
+  peekWriteReceiptStub: peekWrite,
+  workoutAuthorityStore,
+} = require('./helpers/stubWorkoutAuthority');
+// The exercise catalog reads Supabase (OWNER CORRECTION 2026-08-13). Stubbed here so
+// the suite never opens a database connection; it delegates to the sheets fixture above.
+require('./helpers/stubExerciseCatalog').installExerciseCatalogStub();
+
+// The workout authority is Supabase since the S4 cutover, so stubbing `sheets.js`
+
+// no longer controls the logged sets, the Effort row, the plan ledgers or the write
+
+// receipts. `sheetsFallback` seeds this suite's existing fixture into the double, so
+
+// no test's data changes — only where the route reads it from.
+
+require('./helpers/stubWorkoutAuthority').installWorkoutAuthorityStub({ sheetsFallback: true });
 const { app } = require('../index');
 
 const OPEN_ROW = { id: true, frozen: false, reason: 'dormant', set_by: 'migration:S3', set_at: new Date() };
@@ -212,13 +223,36 @@ const ROUTES = [
   },
   {
     name: '/api/log-workout/undo-last',
-    liveStatus: 200,
+    // 409, and DELIBERATELY SO. P12 asks whether the freeze control changes the
+    // athlete-facing answer, not whether the answer is a success — this suite seeds
+    // no prior Save, so undo correctly reports that nothing carried that write_id.
+    // The refusal is produced by the route's own logic AFTER admission, which is
+    // exactly the live path P12 needs it to take.
+    liveStatus: 409,
     send: (id) => post('/api/log-workout/undo-last', {
-      log_appended_range: 'Log_Cleaned!A2:L2', session_id: '20260809-AM-01',
+      save_write_id: 'w-prior-save', session_id: '20260809-AM-01',
       rows_to_delete: 1, confirm_delete: true, write_id: id,
     }),
   },
 ];
+
+// EVERY DURABLE WRITE, WHEREVER IT LANDS. The freeze proofs ask one question — did
+// this refused request leave anything behind — and after the S4 cutover the answer
+// no longer lives entirely in the Sheets fixture: coaching notes, constraints, the
+// deload state and cardio are Supabase concepts now, and only `/api/bodyweight`
+// still appends to a tab. Counting Sheets alone would have made every refusal look
+// clean for the wrong reason.
+function durableWrites() {
+  const authority = workoutAuthorityStore().calls;
+  return [
+    ...sheetCalls.append.map((c) => `sheets:${c.tabName}`),
+    ...authority.saves.map(() => 'supabase:workout'),
+    ...authority.coachingNotes.map(() => 'supabase:coaching_notes'),
+    ...authority.constraints.map(() => 'supabase:constraints'),
+    ...authority.deloadState.map(() => 'supabase:deload_state'),
+    ...authority.modality.map(() => 'supabase:modality_log'),
+  ];
+}
 
 function resetCounters() {
   sheetCalls.append.length = 0;
@@ -248,7 +282,7 @@ for (const route of ROUTES) {
     assert.equal(body.details.no_write_confirmed, true);
 
     // NO SIDE EFFECT, measured on all three of P10's named surfaces.
-    assert.deepEqual(sheetCalls.append, [], 'no Sheets append');
+    assert.deepEqual(durableWrites(), [], 'no durable write, in Sheets or in Supabase');
     assert.deepEqual(sheetCalls.delete, [], 'no Sheets delete');
     assert.deepEqual(sheetCalls.update, [], 'no Sheets cell update');
     assert.equal(peekWrite(writeId), null, 'no receipt claimed — the write_id stays completely fresh');
@@ -268,7 +302,7 @@ test('P10 — a refused write_id is still usable afterwards; a freeze consumes n
   const second = await post('/api/coaching-notes', { note: 'a', write_id: writeId });
   assert.equal(second.status, 200, 'the same write_id must write normally once the freeze lifts');
   assert.equal(second.body.data.duplicate_write, false);
-  assert.equal(sheetCalls.append.length, 1);
+  assert.equal(durableWrites().length, 1);
 });
 
 /* ══════════ §6.2 P11 — control loss cannot reopen writes ══════════ */
@@ -284,7 +318,7 @@ for (const route of ROUTES) {
     assert.equal(body.details.error_code, 'writes_frozen');
     assert.equal(body.details.freeze_state, 'read_failed');
     assert.equal(body.details.freeze_reason, null, 'a failed read reports no owner reason it never read');
-    assert.deepEqual(sheetCalls.append, [], 'no Sheets append');
+    assert.deepEqual(durableWrites(), [], 'no durable write, in Sheets or in Supabase');
     assert.deepEqual(sheetCalls.delete, [], 'no Sheets delete');
   });
 }
@@ -298,7 +332,7 @@ test('P11 — an instance that has NEVER read the row successfully refuses from 
     log_rows: [{ exercise: 'Back Squat', set_number: 1, weight: 225, reps: 5, rir: 2 }],
   });
   assert.equal(status, 503);
-  assert.deepEqual(sheetCalls.append, []);
+  assert.deepEqual(durableWrites(), []);
 });
 
 test('P11 — the row VANISHING mid-life refuses; a previously open read authorizes nothing later', async () => {
@@ -311,7 +345,7 @@ test('P11 — the row VANISHING mid-life refuses; a previously open read authori
   const { status, body } = await post('/api/coaching-notes', { note: 'second', write_id: 'vanish-2' });
   assert.equal(status, 503);
   assert.equal(body.details.freeze_state, 'row_missing');
-  assert.equal(sheetCalls.append.length, 1, 'only the first, admitted write appended');
+  assert.equal(durableWrites().length, 1, 'only the first, admitted write landed anywhere');
 });
 
 /* ══════════ §6.2 P12 — dormant, and equal to the admitted path ══════════ */
@@ -348,13 +382,13 @@ for (const route of ROUTES) {
     resetIdempotencyStore();
     resetCounters();
     const whileDormant = await route.send(`p12-dormant-${route.name.replace(/\W+/g, '-')}`);
-    const dormantAppends = sheetCalls.append.map((c) => c.tabName);
+    const dormantAppends = durableWrites();
 
     armed([OPEN_ROW]);
     resetIdempotencyStore();
     resetCounters();
     const whileOpen = await route.send(`p12-open-${route.name.replace(/\W+/g, '-')}`);
-    const openAppends = sheetCalls.append.map((c) => c.tabName);
+    const openAppends = durableWrites();
 
     // PINNED, so the comparison can never silently degrade into "two identical
     // 500s". An earlier version of this stub returned the wrong appendRows shape
@@ -368,125 +402,18 @@ for (const route of ROUTES) {
   });
 }
 
-/* ══════════ §6.2 P13 — the receipt migration seam's auth negatives ══════════ */
-
-test('P13 — the seam is INERT while writes are open: both routes refuse with no side effect', async () => {
-  armed([OPEN_ROW]);
-  for (const path of ['/api/migration/receipts/export', '/api/migration/receipts/import']) {
-    const { status, body } = await post(path, { records: [] });
-    assert.equal(status, 403, `${path} must be inert outside a frozen window`);
-    assert.equal(body.details.error_code, 'migration_seam_closed');
-    assert.equal(body.details.freeze_state, 'open');
-  }
-});
-
-test('P13 — the seam refuses when the freeze read FAILS, exactly like the write routes', async () => {
-  armed([], new Error('connection terminated unexpectedly'));
-  const { status, body } = await post('/api/migration/receipts/export', {});
-  assert.equal(status, 403);
-  assert.equal(body.details.freeze_state, 'read_failed');
-});
-
-test('P13 — THE AUTH NEGATIVE: a valid session cookie with no x-atlas-api-key is refused while frozen', async () => {
-  armed([FROZEN_ROW]);
-  const { token } = session.issueToken(process.env.ATLAS_SESSION_SECRET);
-
-  // The ordinary /api middleware ADMITS this request — that is the whole point of
-  // the finding. Proven here rather than assumed: the same cookie reaches a normal
-  // /api route successfully.
-  const control = await fetch(`${baseUrl}/api/session/status`, {
-    headers: { cookie: `${session.COOKIE_NAME}=${token}` },
-  });
-  assert.equal(control.status, 200, 'the cookie really is a valid /api credential');
-
-  const res = await fetch(`${baseUrl}/api/migration/receipts/export`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', cookie: `${session.COOKIE_NAME}=${token}` },
-    body: '{}',
-  });
-  const body = await res.json();
-  assert.equal(res.status, 403,
-    'a browser session must never replace live duplicate-write safety state, even inside the window');
-  assert.equal(body.details.freeze_state, 'api_key_required');
-
-  // And the import direction, which is the one that MUTATES.
-  const importRes = await fetch(`${baseUrl}/api/migration/receipts/import`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', cookie: `${session.COOKIE_NAME}=${token}` },
-    body: JSON.stringify({ records: [] }),
-  });
-  assert.equal(importRes.status, 403);
-});
-
-test('P13 — an unauthenticated request never reaches the seam at all', async () => {
-  armed([FROZEN_ROW]);
-  const res = await fetch(`${baseUrl}/api/migration/receipts/export`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
-  });
-  assert.equal(res.status, 401, 'the ordinary middleware still fails closed first');
-});
-
-test('P13 — with the API key AND a proven freeze, export returns the live snapshot', async () => {
-  armed([FROZEN_ROW]);
-  resetIdempotencyStore();
-
-  // A receipt minted BEFORE the freeze must still be in the map afterwards.
-  armed([OPEN_ROW]);
-  assert.equal((await post('/api/coaching-notes', { note: 'pre-freeze', write_id: 'seam-export-1' })).status, 200);
-  armed([FROZEN_ROW]);
-
-  const { status, body } = await post('/api/migration/receipts/export', {});
-  assert.equal(status, 200, JSON.stringify(body));
-  assert.ok(body.data.process_id, 'every export carries the process identity the runbook compares');
-  assert.equal(typeof body.data.persist_disabled, 'boolean');
-  assert.ok(body.data.disk_vs_map, 'the disk-vs-map completeness evidence travels with the snapshot');
-  const ids = body.data.records.map((r) => r.write_id);
-  assert.ok(ids.includes('seam-export-1'), 'the live map is what is exported');
-
-  // Repeated exports report the SAME process id — the invariant the handover checks.
-  const again = await post('/api/migration/receipts/export', {});
-  assert.equal(again.body.data.process_id, body.data.process_id);
-});
-
-test('P13 — import REPLACES the live map of the already-running process', async () => {
-  armed([FROZEN_ROW]);
-  resetIdempotencyStore();
-
-  const carried = {
-    write_id: 'carried-across-the-boundary',
-    status: 'completed',
-    created_at_ms: Date.now(),
-    created_at: new Date().toISOString(),
-    metadata: { endpoint: '/api/log-workout' },
-    response: { sheet_write: 'success', log_rows_written: 3 },
-  };
-  const { status, body } = await post('/api/migration/receipts/import', { records: [carried] });
-  assert.equal(status, 200, JSON.stringify(body));
-  assert.equal(body.data.applied, true);
-  assert.deepEqual(body.data.accepted, ['carried-across-the-boundary']);
-
-  // THE PROOF THAT MATTERS: the LIVE decider now sees a record this process never
-  // loaded from disk. peekWrite is the same function the routes consult.
-  const seen = peekWrite('carried-across-the-boundary');
-  assert.ok(seen, 'the restored record must be visible to the live process');
-  assert.equal(seen.status, 'completed');
-  assert.deepEqual(seen.response, { sheet_write: 'success', log_rows_written: 3 });
-});
-
-test('P13 — a rejected record aborts the whole import and changes nothing', async () => {
-  armed([FROZEN_ROW]);
-  resetIdempotencyStore();
-
-  const good = {
-    write_id: 'good-one', status: 'completed', created_at_ms: Date.now(),
-    metadata: {}, response: { sheet_write: 'success' },
-  };
-  const bad = { write_id: 'bad-one', status: 'nonsense', created_at_ms: Date.now() };
-
-  const { status, body } = await post('/api/migration/receipts/import', { records: [good, bad] });
-  assert.equal(status, 422);
-  assert.equal(body.details.applied, false);
-  assert.equal(body.details.rejected[0].reason, 'status_invalid');
-  assert.equal(peekWrite('good-one'), null,
-    'a partial replacement would silently delete duplicate protection for the rejected ids');
-});
+/* ══════════ §6.2 P13 — THE RECEIPT MIGRATION SEAM IS GONE ══════════ */
+//
+// Seven tests lived here. They proved the auth negatives of
+// /api/migration/receipts/export and /api/migration/receipts/import: the seam is
+// inert while writes are open, it refuses when the freeze read fails, a session
+// cookie alone is refused, and only the API key plus a proven freeze opens it.
+//
+// The seam existed for exactly one job — carrying the file-backed receipt map into
+// the new authority across the cutover, without a restart that would destroy it
+// (§5.3, §5.5a). S4 performs that cutover and deletes both routes with the store
+// they served, and §6.3 P16 requires no caller of either to remain.
+//
+// So these tests are not obsolete assertions about live behaviour; they are
+// assertions about routes that no longer exist. The write-admission control they
+// shared with the seven write routes is unchanged and is still proven above.

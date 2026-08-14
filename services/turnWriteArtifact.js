@@ -25,7 +25,6 @@ const {
   PROOF_PROJECTIONS,
 } = require('./turnCorrelation');
 const { STAGES, STAGE_STATUSES } = require('./interactionTrace');
-const { logCleanedColumns, effortColumns } = require('../config/columns');
 
 const INTERACTION_TRACE_MARKER = '[interaction-trace]';
 const TURN_WRITE_PROOF_MARKER = '[turn-write-proof]';
@@ -65,21 +64,12 @@ const ALLOWED_PROOF_KEYS = new Set([
   ...PROJECTED_PROOF_KEYS,
 ]);
 const ALLOWED_WITHHELD_KEYS = new Set(PROJECTED_PROOF_KEYS);
-// `appendRows` sends exactly one value per contract column, so Google reports an updatedRange
-// ending at that many columns. Derive the expected last column from the column contract itself
-// rather than hard-coding a letter, so a schema migration cannot silently widen what counts as
-// W3 proof (Log_Cleaned = 12 columns -> L; Effort = 9 columns -> I).
-const _lastColumnLetter = (columnCount) => String.fromCharCode('A'.charCodeAt(0) + columnCount - 1);
-const LOG_LAST_COLUMN = _lastColumnLetter(logCleanedColumns.length);
-const EFFORT_LAST_COLUMN = _lastColumnLetter(effortColumns.length);
-// The tab NAME is configurable (`sheets.js`: LOG_SHEET_NAME / EFFORT_SHEET_NAME), and the real
-// append routes use the configured name, so Google returns that name in `updatedRange`. Reading
-// the same env with the same defaults keeps a default deployment identical while not calling
-// every genuine append on an overridden deployment insufficient. Resolved once at module load —
-// this stays a pure, deterministic consumer.
-const LOG_TAB_NAME = process.env.LOG_SHEET_NAME || 'Log_Cleaned';
-const EFFORT_TAB_NAME = process.env.EFFORT_SHEET_NAME || 'Effort';
-const _escapeForRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// THE A1 RANGE CONSTANTS ARE GONE with the range clause they served. They derived
+// the expected last column from the column contract (Log_Cleaned = 12 columns -> L;
+// Effort = 9 -> I) and the configurable tab name, so a genuine append's
+// `updatedRange` could be matched exactly and a fabricated one could not. The Save
+// lands in one Supabase transaction now, so no range exists to match and the
+// committed row count carries W3's evidence instead — see `rangeEvidence` below.
 
 const BOOLEAN_PROOF_KEYS = new Set([
   'test_mode', 'sheet_written', 'no_write_confirmed', 'dry_run', 'duplicate_write',
@@ -422,43 +412,32 @@ function _sanitizeProof(record) {
     if (!_validProofValue(key, value)) return null;
     proof[key] = value;
   }
-  const hasBoundAppendRange = (keys, expectedTab, expectedLastColumn, expectedRows) => keys.some((key) => {
-    if (!Object.prototype.hasOwnProperty.call(record.proof, key)) return false;
-    const value = record.proof[key];
-    if (typeof value !== 'string'
-      || value.length > MAX_ARTIFACT_STRING_LENGTH
-      || !Number.isSafeInteger(expectedRows)
-      || expectedRows <= 0
-      || _containsCapability(value)) return false;
-    // The app SENDS an unquoted range (`${tabName}!A1`, sheets.js:123), but Google RETURNS
-    // canonical A1 in `updatedRange`, which single-quotes any sheet name that needs it — a space,
-    // a leading digit, and so on — and doubles an embedded apostrophe. Accept either form for the
-    // configured name. This cannot create a false green: the exact tab, the exact contract column
-    // span, and the exact row count are all still required; it only tolerates Google's own quoting,
-    // which otherwise strips the range evidence off a genuine append.
-    const bareTab = _escapeForRegExp(expectedTab);
-    const quotedTab = _escapeForRegExp(`'${String(expectedTab).replace(/'/g, "''")}'`);
-    const match = new RegExp(`^(?:${bareTab}|${quotedTab})!A([1-9]\\d{0,6}):${expectedLastColumn}([1-9]\\d{0,6})$`).exec(value);
-    if (!match) return false;
-    const firstRow = Number(match[1]);
-    const lastRow = Number(match[2]);
-    return lastRow >= firstRow && (lastRow - firstRow + 1) === expectedRows;
-  });
-  // Range values are intentionally never emitted. These fixed booleans let the consumer enforce
-  // W3's proof tuple without reflecting a tab/range string from the untrusted log stream.
+  // ── W3'S EVIDENCE IS THE COMMITTED ROW COUNT, NOT AN A1 RANGE ──────────────
+  //
+  // This consumer used to require a bound append range per tab: the exact tab name,
+  // the exact contract column span, and a row span equal to the claimed count. That
+  // was the strongest thing available while the write was a Google Sheets append,
+  // because the range was Google's own acknowledgement of where the rows went.
+  //
+  // The S4 cutover writes the whole Save in ONE Supabase transaction, so there is no
+  // range to bind and a route that published one would be publishing a claim about a
+  // Google Sheets append that never happened. The count is now the acknowledgement:
+  // it comes from the transaction that performed the write rather than from a second
+  // system's reply, and a transaction commits whole or not at all.
+  //
+  // WHAT THE RANGE WAS REALLY CARRYING IS PRESERVED. It made a positive count
+  // SUBSTANTIATED rather than asserted, and that role passes to the producer tuple
+  // the count already travels with — `test_mode:false`, `duplicate_write:false`,
+  // `idempotency_status:'completed'`, and on `/api/complete-workout` an explicit
+  // `sheet_written:true`. A truncated record still fails, because a lost count is
+  // still a lost tuple member.
+  //
+  // The booleans are kept, with `true` meaning "this tab's count is backed", so the
+  // predicates below read exactly as they did.
+  const countBacked = (rows) => Number.isSafeInteger(rows) && rows > 0;
   const rangeEvidence = {
-    log: hasBoundAppendRange(
-      ['logAppendedRange', 'log_appended_range'],
-      LOG_TAB_NAME,
-      LOG_LAST_COLUMN,
-      proof.log_rows_written,
-    ),
-    effort: hasBoundAppendRange(
-      ['effortAppendedRange', 'effort_appended_range'],
-      EFFORT_TAB_NAME,
-      EFFORT_LAST_COLUMN,
-      proof.effort_rows_written,
-    ),
+    log: countBacked(proof.log_rows_written),
+    effort: countBacked(proof.effort_rows_written),
   };
 
   // Drop Log/Effort tab evidence a generic route cannot have produced, and remember that it was

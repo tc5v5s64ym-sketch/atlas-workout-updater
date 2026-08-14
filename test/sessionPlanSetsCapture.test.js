@@ -19,8 +19,6 @@ const { confirmTabMissing, classifySheetsReadError } = require('../sheets');
 // instead of read off the message. A transient backend failure carries an HTTP status
 // and no range-parse message.
 const rangeParseError = () => new Error('Unable to parse range: Session_Plan_Sets!A1:P1');
-const malformedRangeError = () => new Error('Unable to parse range: Session_Plan_Sets!A1:%%');
-const transientError = () => Object.assign(new Error('Backend Error'), { status: 503 });
 
 const state = { tabs: ['Session_Plan_Sets'], rows: [], header: [[...sessionPlanSetsColumns]], calls: 0, appendThrows: null, appendShort: false, readError: null };
 function reset(over = {}) {
@@ -57,9 +55,16 @@ const fakeSheets = {
 const sheetsPath = require.resolve('../sheets');
 require.cache[sheetsPath] = { id: sheetsPath, filename: sheetsPath, loaded: true, exports: fakeSheets };
 
+// The workout authority is Supabase since the S4 cutover, so stubbing sheets.js no
+// longer controls the plan-set ledger. sheetsFallback seeds this suite's existing
+// fixture into the double, so no test's data changes — only where the store reads it
+// from. Re-installed on every reload, because the double resets its rows with it.
+const { installWorkoutAuthorityStub, resetWorkoutAuthorityStub, failWorkoutAuthorityWrites } = require('./helpers/stubWorkoutAuthority');
+installWorkoutAuthorityStub();
 const storePath = require.resolve('../services/sessionPlanSetsStore');
 const capturePath = require.resolve('../services/sessionPlanSetsCapture');
 function loadCapture({ writeEnabled }) {
+  resetWorkoutAuthorityStub();
   delete require.cache[storePath];
   delete require.cache[capturePath];
   if (writeEnabled) process.env.SESSION_PLAN_SETS_WRITE_ENABLED = '1';
@@ -70,103 +75,74 @@ function loadCapture({ writeEnabled }) {
 const SESSION = { session_id: 'S1', session_date: '2026-07-16', plan_version: 'pv_abc' };
 const ITEMS = [{ plan_item_id: 'pi_dip', planned_lift_code: 'DIP01', target_set_count: 3, target_weight: 65, target_reps: 5, target_rir: 2 }];
 
-test('dry-run default: captured:false / dry_run:true and no sheet access', async () => {
+test('the retired flag cannot disable authoritative capture and no sheet is touched', async () => {
   reset();
   const cap = loadCapture({ writeEnabled: false });
   const env = await cap.captureAcceptedPlan(SESSION, ITEMS);
-  assert.equal(env.captured, false);
-  assert.equal(env.dry_run, true);
-  assert.equal(env.status, 'dry_run');
-  assert.equal(state.calls, 0, 'a dry-run never reads or writes the sheet');
+  assert.equal(env.captured, true);
+  assert.equal(env.dry_run, false);
+  assert.equal(env.status, 'written');
+  assert.equal(env.written, 3);
+  assert.equal(state.calls, 0, 'authoritative capture never reads or writes Sheets');
 });
 
-test('live: a valid header + append reports captured:true with the extracted range', async () => {
+test('the production modules contain no reader for SESSION_PLAN_SETS_WRITE_ENABLED', () => {
+  const fs = require('node:fs');
+  assert.doesNotMatch(fs.readFileSync(require.resolve('../services/sessionPlanSetsCapture'), 'utf8'), /process\.env\.SESSION_PLAN_SETS_WRITE_ENABLED/);
+  assert.doesNotMatch(fs.readFileSync(require.resolve('../services/sessionPlanSetsStore'), 'utf8'), /process\.env\.SESSION_PLAN_SETS_WRITE_ENABLED/);
+});
+
+test('live: a confirmed write reports captured:true with its row count', async () => {
   reset();
   const cap = loadCapture({ writeEnabled: true });
   const env = await cap.captureAcceptedPlan(SESSION, ITEMS);
   assert.equal(env.captured, true);
   assert.equal(env.status, 'written');
   assert.equal(env.written, 3);
-  assert.match(env.range, /^Session_Plan_Sets!/);
+  // No range: a range is a Sheets concept, and the checkpoint lands in Supabase.
+  assert.equal(env.range == null, true);
 });
 
-test('live: a mismatched header disables the write (header_mismatch), never guesses', async () => {
-  reset({ header: [['idempotency_key', 'WRONG']] });
+// ── FOUR HEADER / TAB-ABSENCE TESTS RETIRED WITH THE TAB ─────────────────────
+//
+// They held one trust-critical line: `tab_missing` is a VERIFIED_EMPTY_SEAL_REASON
+// (services/turnWriteArtifact.js), so a Google outage or a malformed range must never
+// be reported as an absent tab — otherwise an unverified closeout reads as verified
+// while real rows sit unstamped.
+//
+// The reason that whole class is gone is that the ledger is a Supabase table now. It
+// cannot be absent, its columns cannot be reordered under a running process, and no
+// Google Sheets failure can reach this path at all. The surviving half of the line —
+// an UNREADABLE ledger is never a verified-empty one — is asserted directly against
+// the authority in test/sessionPlanSetsStore.test.js, where the read can genuinely
+// fail.
+
+// FAIL CLOSED ON AN UNCONFIRMED WRITE, unchanged: the capture claims `captured` only
+// when the authority's own row count equals what it asked to write. Only the source
+// of that count moved — it was the Sheets append receipt and it is the transaction.
+test('live: a row-count mismatch FAILS CLOSED — never a false captured', async () => {
+  reset();
   const cap = loadCapture({ writeEnabled: true });
-  const env = await cap.captureAcceptedPlan(SESSION, ITEMS);
-  assert.equal(env.captured, false);
-  assert.equal(env.status, 'header_mismatch');
-});
-
-test('live: a missing tab is tab_missing (owner creates it), no write', async () => {
-  reset({ tabs: [] });
-  const cap = loadCapture({ writeEnabled: true });
-  const env = await cap.captureAcceptedPlan(SESSION, ITEMS);
-  assert.equal(env.captured, false);
-  assert.equal(env.status, 'tab_missing');
-});
-
-// BITE — the trust-critical half of the distinction above. `tab_missing` is a member
-// of VERIFIED_EMPTY_SEAL_REASONS (services/turnWriteArtifact.js): it is one of only
-// two reasons that let a closeout be read as a VERIFIED-empty ledger. So reporting a
-// momentary Google outage as `tab_missing` does not merely mislabel a diagnostic — it
-// can present an unverified closeout as verified while real rows sit unstamped.
-// Reverting validateHeader to a blanket `tab_missing` fails this test.
-test('live: a TRANSIENT read failure is error, NEVER tab_missing (it must not read as a verified-empty ledger)', async () => {
-  reset({ readError: transientError() });
-  const cap = loadCapture({ writeEnabled: true });
-  const env = await cap.captureAcceptedPlan(SESSION, ITEMS);
-  assert.equal(env.captured, false);
-  assert.equal(env.status, 'error');
-  assert.notEqual(env.status, 'tab_missing', 'a 503 is not evidence the ledger tab is absent');
-});
-
-// BITE — the trust-critical case the exact-head review caught. Google reports a
-// MALFORMED A1 range with the same "Unable to parse range" wording as an absent tab,
-// so inferring absence from the message would let a caller bug (an unescaped tab name,
-// a bad column letter) produce `tab_missing` — which is a VERIFIED_EMPTY_SEAL_REASON.
-// A programming error could then present a ledger as verified-empty while real rows
-// sat unstamped. Here the tab list still contains Session_Plan_Sets, so absence is
-// refuted and the outcome must be `error`.
-test('live: a MALFORMED RANGE against an existing tab is error — a caller bug can never earn a verified-empty seal', async () => {
-  reset({ tabs: ['Session_Plan_Sets'], readError: malformedRangeError() });
-  const cap = loadCapture({ writeEnabled: true });
-  const env = await cap.captureAcceptedPlan(SESSION, ITEMS);
-  assert.equal(env.captured, false);
-  assert.equal(env.status, 'error');
-  assert.notEqual(env.status, 'tab_missing', 'the tab is present — this is a bad range, not an absent ledger');
-});
-
-// Absence is established by the metadata read, so a metadata read that FAILS
-// establishes nothing at all. Never claim absence from a failure to look.
-test('live: a range error whose METADATA CONFIRMATION also fails is error, never tab_missing', async () => {
-  reset({ tabs: [], readError: rangeParseError() });
-  const original = fakeSheets.confirmTabMissing;
-  fakeSheets.confirmTabMissing = (e, tab) => confirmTabMissing(e, tab, {
-    listTabs: async () => { throw Object.assign(new Error('Backend Error'), { status: 503 }); },
-  });
+  // The store reports a count that disagrees with the rows it wrote.
+  const storeModule = require('../services/sessionPlanSetsStore');
+  const real = storeModule.checkpointAcceptedPlan;
+  storeModule.checkpointAcceptedPlan = async (...args) => {
+    const r = await real.apply(storeModule, args);
+    return { ...r, rows_written: r.written - 1 };
+  };
   try {
-    const cap = loadCapture({ writeEnabled: true });
     const env = await cap.captureAcceptedPlan(SESSION, ITEMS);
-    assert.equal(env.captured, false);
-    assert.equal(env.status, 'error');
-    assert.notEqual(env.status, 'tab_missing');
+    assert.equal(env.captured, false, 'no captured claim without authoritative proof');
+    assert.equal(env.status, 'unconfirmed');
   } finally {
-    fakeSheets.confirmTabMissing = original;
+    storeModule.checkpointAcceptedPlan = real;
   }
 });
 
-test('live: an unconfirmed append (no range / short row count) FAILS CLOSED — never a false captured', async () => {
-  reset({ appendShort: true });
-  const cap = loadCapture({ writeEnabled: true });
-  const env = await cap.captureAcceptedPlan(SESSION, ITEMS);
-  assert.equal(env.captured, false, 'no captured claim without authoritative Sheets proof');
-  assert.equal(env.status, 'unconfirmed');
-});
-
 test('live: a store failure NEVER throws at the call site — it becomes a captured:false envelope', async () => {
-  reset({ appendThrows: 'boom' });
+  reset();
   const cap = loadCapture({ writeEnabled: true });
+  failWorkoutAuthorityWrites('boom');
   const env = await cap.captureAcceptedPlan(SESSION, ITEMS);
   assert.equal(env.captured, false);
   assert.equal(env.status, 'error');

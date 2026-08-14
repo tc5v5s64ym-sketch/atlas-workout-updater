@@ -2,6 +2,8 @@
 
 > **Governance layer:** Spec / design record. Subordinate to `docs/CONSTITUTION.md`, `docs/INVARIANTS.md`, and the trust contract. See `docs/GOVERNANCE.md` for the hierarchy.
 >
+> **Historical design record — superseded by S4.** Session plan events and plan-set revisions are now always-on Supabase workout authority. The former Sheets tabs, header probes, optional sidecar semantics, and `ATLAS_SESSION_PLANS_WRITE` gate are retired. Current authority is defined in `docs/ATLAS_SYSTEM_AUTHORITY.md` and `docs/SUPABASE_HOT_PATH_MIGRATION.md`.
+>
 > **Status:** Owner-authorized **Option A** (explicit lifecycle capture), 2026-07-10, following the STOP-&-REPORT finding that no authoritative server-side capture boundary exists. This is the **docs-only** first deliverable (**PR-D**). It writes **no production code**. **Owner-reviewed and APPROVED WITH AMENDMENTS (2026-07-10)** — the client-state contract, the three endpoint shapes, the capture-site classification, and the PR-E→PR-I split are approved; identity is **client-generated opaque UUIDs** (§4.4), acceptance is a distinct **"Start this plan"** plan-card button (§5), and plan-replacement capture is **deferred** (§5/§9). PR-E is authorized to proceed after this merges.
 >
 > **Standing flags (unchanged by this lane):** `ATLAS_SESSION_PLANS_WRITE` remains **OFF**. `ATLAS_COACH_PROFANITY` remains **OFF**. `skipped_pattern_streak` / `plan_deviation` drift kinds stay **unwired** until the PR-I canary passes.

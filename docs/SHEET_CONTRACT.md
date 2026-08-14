@@ -65,23 +65,22 @@ The old malformed (column-shifted) row must not return:
 Core | HNR01 | 3 | Hanging Knee Raises
 ```
 
-## `Exercise_Catalog` source of truth & sync (Remediation PR-15)
+## `Exercise_Catalog` authority (S4 owner correction, 2026-08-13)
 
-The JSON catalog **`data/exercise_catalog.v1.json`** is the declared **source of truth** for the exercise roster; the `Exercise_Catalog` sheet is a **synced view** of it. The JSON carries `name` (canonical), `primary_muscles`, `movement_pattern`, etc. — it does **not** carry `Muscle_Group` (the sheet's granular label) or `Lift_Code`, which remain **sheet-owned** fields the owner maintains.
+Supabase `atlas.exercise_catalog` is the sole live authority for catalog lookup, enrichment, recommendations, substitutions, and workout saves. Google Sheets is not an editing source, sync source, fallback, freshness clock, or runtime dependency for this concept.
 
-Reconcile the sheet against the source with the DRY-RUN reconciliation report (reads only, **never writes**):
+Owner maintenance uses the narrow Supabase command, which is dry-run by default:
 
 ```bash
-node scripts/catalog-maintenance.js --sync-sheet
+npm run atlas:catalog -- --file rows.json
+npm run atlas:catalog -- --file rows.json --apply
 ```
 
-It lists source exercises absent from the sheet (add them, filling `Muscle_Group` + `Lift_Code`) and sheet rows with no source entry (add to the JSON, or retire). Applying the sync is an **owner-run action**: edit `data/exercise_catalog.v1.json` for roster changes, then append genuinely-new rows with `--file <rows.json> --confirm`. No automated process writes the sheet.
-
-> Note: today `services/exerciseEnrichment.js` still resolves canonical/muscle/lift_code from the **sheet** at write time (the JSON lacks lift_code + muscle_group, and flipping canonical to the JSON names would rewrite `Log_Cleaned` history). Inverting enrichment to read the JSON directly is a deferred, history-affecting migration tracked in `BACKLOG.md`.
+Apply mode is explicitly owner-controlled and writes only the Supabase catalog through the migration role. It validates and deduplicates the proposed rows and reads the authoritative rows back. There is no Sheets-to-catalog sync process.
 
 ## Safe Manual Edits
 
-- Add new exercises to `data/exercise_catalog.v1.json` (source of truth), then sync the sheet (see above).
+- Propose catalog rows in a local JSON file, review the default dry-run, then use `npm run atlas:catalog -- --file rows.json --apply` only with owner authorization.
 - Add aliases only if the catalog layout supports them.
 - Keep lift codes stable after they are used in logged workouts.
 
@@ -92,6 +91,7 @@ It lists source exercises absent from the sheet (add them, filling `Muscle_Group
 - `Session_Summary` formulas
 - `Logic` formulas used by summary/reporting
 - Stored API keys or tokens in any tab
+- `Exercise_Catalog` as a way to change live Atlas behavior; Sheets is no longer its authority
 
 ## Formula Ownership
 

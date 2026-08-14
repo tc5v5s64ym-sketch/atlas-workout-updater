@@ -51,6 +51,12 @@ const fakeSheets = {
 const sheetsPath = require.resolve('../sheets');
 require.cache[sheetsPath] = { id: sheetsPath, filename: sheetsPath, loaded: true, exports: fakeSheets };
 
+// The workout authority is Supabase since the S4 cutover, so stubbing `sheets.js`
+// no longer controls the logged sets, the Effort row, the plan ledgers or the write
+// receipts. `sheetsFallback` seeds this suite's existing fixture into the double, so
+// no test's data changes — only where the route reads it from.
+const { installWorkoutAuthorityStub, resetWorkoutAuthorityStub } = require('./helpers/stubWorkoutAuthority');
+installWorkoutAuthorityStub();
 const store = require('../services/sessionPlanSetsStore');
 
 let planAcceptance, effective, ledger;
@@ -60,7 +66,7 @@ test.before(async () => {
   ledger = await import('../src/app/sessionLedger.js');
 });
 
-test.beforeEach(() => { tab.rows.length = 0; });
+test.beforeEach(() => { tab.rows.length = 0; resetWorkoutAuthorityStub(); });
 
 const SESSION = { session_id: '20260803-PM-01', session_date: '2026-08-03', plan_version: 'pv_11111111-1111-4111-8111-111111111111' };
 const PI = 'pi_aaaaaaaa-1111-4111-8111-111111111111';

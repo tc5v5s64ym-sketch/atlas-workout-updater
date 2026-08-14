@@ -112,6 +112,7 @@ async function openApp(page, capture, { startSecond = true } = {}) {
         data: {
           sheet_write: 'success',
           sheet_written: true,
+          write_authority: 'supabase_transaction',
           log_rows_written: (body.log_rows || []).length,
           logAppendedRange: 'Log_Cleaned!A200:L200',
         },
@@ -346,6 +347,7 @@ test(`closeout waits for the ordinary set turn when delayed at ${delayPoint}`, a
         data: {
           sheet_write: 'success',
           sheet_written: true,
+          write_authority: 'supabase_transaction',
           log_rows_written: (body.log_rows || []).length,
           logAppendedRange: 'Log_Cleaned!A200:L200',
         },
@@ -461,7 +463,7 @@ async function openSpecializedPreviewRace(page, capture, path) {
           status: 'success',
           data: path === '/api/bodyweight'
             ? { sheet_write: 'success', sheet_written: true }
-            : { sheet_write: 'success', sheet_written: true, modality_rows_written: 1 },
+            : { sheet_write: 'success', sheet_written: true, write_authority: 'supabase_transaction', modality_written: true, modality_rows_written: 1 },
         }));
       }
 
@@ -666,6 +668,7 @@ test('real blank-session screenshot preview adopts the server session and approv
               effort_written: true,
               sheet_write: 'success',
               sheet_written: true,
+              write_authority: 'supabase_transaction',
             },
           },
         }));
@@ -983,7 +986,12 @@ test('newer closeout screenshot selection survives an older image parse completi
           'x-atlas-turn-pairing': !isScreenshotCloseout || capture.previews.length === 1 ? TOKEN_B : TOKEN_A,
         }));
       }
-      return route.fulfill(json({ status: 'success', data: { sheet_written: true } }));
+      return route.fulfill(json({ status: 'success', data: {
+        sheet_written: true,
+        write_authority: 'supabase_transaction',
+        log_rows_written: (body.log_rows || []).length,
+        effort_rows_written: body.effort_row ? 1 : 0,
+      } }));
     }
     if (requestPath === '/api/session-plans/accept') {
       return route.fulfill(json({
@@ -1156,7 +1164,7 @@ test(`real composer A delayed in ${delayedSubstitution.label} cannot mutate afte
       capture.writes.push(body);
       return route.fulfill(json({
         status: 'success',
-        data: { sheet_write: 'success', sheet_written: true, modality_rows_written: 1 },
+        data: { sheet_write: 'success', sheet_written: true, write_authority: 'supabase_transaction', modality_written: true, modality_rows_written: 1 },
       }));
     }
     if (requestPath === '/api/session-plans/accept') {
@@ -1332,7 +1340,7 @@ async function openStructuredChatRace(page, capture) {
       capture.writes.push(body);
       return route.fulfill(json({
         status: 'success',
-        data: { sheet_write: 'success', sheet_written: true, modality_rows_written: 1 },
+        data: { sheet_write: 'success', sheet_written: true, write_authority: 'supabase_transaction', modality_written: true, modality_rows_written: 1 },
       }));
     }
     if (requestPath === '/api/session-plans/accept') {

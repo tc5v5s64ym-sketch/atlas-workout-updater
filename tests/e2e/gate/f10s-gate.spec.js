@@ -322,17 +322,19 @@ test('F10S-GATE: July 18 Work-mode smoke rerun — every exit criterion holds', 
   const actuals = await page.evaluate(() => window.getSessionLog().map(r => r.canonical || r.exercise));
   expect(actuals.filter(n => n === 'Front Squat')).toHaveLength(3);
   expect(actuals.filter(n => n === 'Back Squat')).toHaveLength(0);
-  // Non-destructive posture held END TO END: the sheet write is the closeout SAVE
-  // (never invoked here, exactly as the July 18 smoke stopped short of it) and the
-  // set-ledger write enablement is the still-paused F10D phase — so the run must
-  // record ZERO append calls and ZERO tab creations. (Belt and braces: the sheets
-  // client was an in-memory stub, so nothing could have reached Google regardless.)
+  // The accepted-plan checkpoint is now a legitimate Supabase authority write.
+  // What must remain zero is every Google Sheets append and tab creation; the gate
+  // exposes authority-double writes separately so they cannot be mistaken for API
+  // calls to Sheets.
   const gateState = await (await fetch(`${stateBase}/state`)).json();
   fs.writeFileSync(path.join(artDir, 'write-evidence.json'), JSON.stringify(gateState, null, 2));
-  expect((gateState.appends || []).length).toBe(0);
+  const sheetsAppends = (gateState.appends || []).filter((entry) => entry.authority !== 'supabase_test_double');
+  const supabaseAuthorityWrites = (gateState.appends || []).filter((entry) => entry.authority === 'supabase_test_double');
+  expect(sheetsAppends).toHaveLength(0);
+  expect(supabaseAuthorityWrites.length).toBeGreaterThan(0);
   expect((gateState.ensure_tab_calls || []).length).toBe(0);
   expect((gateState.updates || []).length).toBe(0);
   expect(gateState.sheets_stubbed_in_memory).toBe(true);
-  record('evidence', 'actuals: 3× Front Squat, 0× Back Squat (client canonical log); sheet writes: ZERO append calls, ZERO tab creations — the write phase remains F10D-gated');
+  record('evidence', 'actuals: 3× Front Squat, 0× Back Squat (client canonical log); Google Sheets calls: ZERO appends, ZERO tab creations; accepted-plan checkpoint persisted in the Supabase authority double');
   await snap(page, '08-final-state.png');
 });

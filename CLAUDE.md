@@ -10,9 +10,9 @@ The sole active execution campaign is:
 
 ## What Atlas is
 
-Atlas is Dale's conversation-first personal strength coach and workout logger. It parses natural gym language, maintains session truth, previews rows, and writes to Google Sheets only after explicit approval.
+Atlas is Dale's conversation-first personal strength coach and workout logger. It parses natural gym language, maintains session truth, previews rows, and commits an approved workout to its sole Supabase authority.
 
-- **Storage authority is transitional.** Google Sheets is the runtime and permanent record today, and it stays the sole live authority until an authorized cutover moves it. On 2026-08-07 the owner authorized migrating the **workout hot path** — sessions, logged sets, Effort, accepted plans, plan sets and revisions, item outcomes, closeout and write receipts — to Supabase, with Sheets becoming a human-readable export mirror for those concepts only. Every other tab stays Sheets-owned. The instruction is recorded in [`docs/ATLAS_V1_EXECUTION_PLAN.md`](docs/ATLAS_V1_EXECUTION_PLAN.md) ("OWNER INSTRUCTION 2026-08-07 — SUPABASE HOT-PATH MIGRATION"); the current and intended authority per concept is [`docs/ATLAS_SYSTEM_AUTHORITY.md`](docs/ATLAS_SYSTEM_AUTHORITY.md) concept 18; the design is [`docs/SUPABASE_HOT_PATH_MIGRATION.md`](docs/SUPABASE_HOT_PATH_MIGRATION.md). Nothing has migrated yet.
+- **Storage authority is transitional until the S4 production cutover.** The owner-authorized S4 target is Supabase as sole live authority for every concept needed to conduct a workout: identity/session state, logged sets, Effort, accepted plans/events, plan sets/revisions, item outcomes, closeout, receipts/idempotency, coaching inputs, modality workouts, and `Exercise_Catalog`. Google Sheets may receive asynchronous human-readable exports or hold explicitly unrelated concepts, but no Sheets quota may block or invalidate a workout or the Phase 4 campaign. There is no Supabase-to-Sheets fallback, catalog freshness clock, or optional-write flag for authoritative plan data. The correction is recorded in [`docs/ATLAS_V1_EXECUTION_PLAN.md`](docs/ATLAS_V1_EXECUTION_PLAN.md) ("OWNER CORRECTION 2026-08-13"). Production authority does not move until the separately authorized cutover succeeds.
 - The deterministic engine owns every number and decision.
 - The application LLM only words whitelisted facts and answers grounded questions.
 - The conversation is the product; other surfaces support it.
@@ -294,7 +294,7 @@ When the owner says **"execute Atlas Recovery Plan"** — or any clear variant s
 - advance the `CAMPAIGN STATE` tracker in the same PR;
 - continue until an **OWNER GATE**.
 
-At a gate, stop and ask the owner exactly one short question using that gate's script from the campaign specification. Never skip a gate; never proceed past one on inferred approval. The freeze holds: Phases 2–7 do not start until the Phase 1 owner gate passes, and `SESSION_PLAN_SETS_WRITE_ENABLED` stays `0` until Phase 4 explicitly requires it.
+At a gate, stop and ask the owner exactly one short question using that gate's script from the campaign specification. Never skip a gate; never proceed past one on inferred approval. The old `SESSION_PLAN_SETS_WRITE_ENABLED` bridge is retired by S4; accepted plan-set persistence is authoritative and always on, with only explicit `test_mode` producing a dry run.
 
 ## Owner-reserved stops
 

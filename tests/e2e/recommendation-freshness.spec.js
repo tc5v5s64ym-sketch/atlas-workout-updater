@@ -115,12 +115,13 @@ async function openApp(page, capture, control = {}) {
       return route.fulfill(json({
         status: 'success',
         data: {
-          sheet_write: 'success', sheet_written: true, session_id: body.session_id || SESSION,
+          sheet_write: 'success', sheet_written: true, write_authority: 'supabase_transaction', session_id: body.session_id || SESSION,
+          write_id: body.write_id,
           log_rows_written: (body.log_rows || []).length,
           logAppendedRange: 'Log_Cleaned!A200:L201',
           log_write_verification: {
-            verified: true, authority: 'append_receipt', reason: null,
-            range: 'Log_Cleaned!A200:L201', rows_written: (body.log_rows || []).length,
+            verified: true, authority: 'supabase_transaction', reason: null,
+            range: null, rows_written: (body.log_rows || []).length,
             rows_submitted: (body.log_rows || []).length,
           },
         },
@@ -191,6 +192,7 @@ test('the same question after the write settles reaches the server too', async (
 
   await startSave(page);
   await expect.poll(() => capture.writes.length, { timeout: 10_000 }).toBe(1);
+  await expect(page.locator('.review.done')).toBeVisible({ timeout: 10_000 });
 
   // The Save wrote Log_Cleaned — a tab the engine reads — so the epoch stepped and the
   // identical question is a different question now.

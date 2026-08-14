@@ -36,8 +36,6 @@ const BUDGET_TEST_ENV = {
   SESSION_PLAN_SETS_WRITE_ENABLED: '1',
 };
 Object.assign(process.env, BUDGET_TEST_ENV);
-process.env.ATLAS_IDEMPOTENCY_FILE = require('node:path').join(
-  require('node:os').tmpdir(), 'atlas-recommendation-input-writes-idempotency.json');
 
 const {
   logCleanedColumns, effortColumns, deloadStateColumns,
@@ -170,7 +168,20 @@ require.cache[require.resolve('../services/vision')] = {
 };
 
 const sheets = require('../sheets');
-const { resetIdempotencyStore } = require('../services/idempotency');
+const { resetWorkoutAuthorityStub: resetIdempotencyStore, workoutAuthorityStore } = require('./helpers/stubWorkoutAuthority');
+// Hermetic: the catalog reads Supabase (OWNER CORRECTION 2026-08-13). This stub also
+// blanks the ATLAS_SUPABASE_* roles, so no test can open a database connection.
+require('./helpers/stubExerciseCatalog').installExerciseCatalogStub();
+
+// The workout authority is Supabase since the S4 cutover, so stubbing `sheets.js`
+
+// no longer controls the logged sets, the Effort row, the plan ledgers or the write
+
+// receipts. `sheetsFallback` seeds this suite's existing fixture into the double, so
+
+// no test's data changes — only where the route reads it from.
+
+require('./helpers/stubWorkoutAuthority').installWorkoutAuthorityStub({ sheetsFallback: true });
 const { app } = require('../index');
 
 let server; let baseUrl;
@@ -225,16 +236,30 @@ test('only a live Save writes a tab a recommendation is computed from', async ()
   // COUNTED — they are attributed correctly by async context regardless of when they land.
   await new Promise(resolve => setTimeout(resolve, 1500));
 
-  // Which requests wrote a recommendation input?
-  const touched = [...writesByRequest.entries()]
+  // ── WHERE THE RECOMMENDATION'S INPUTS NOW LIVE ─────────────────────────────
+  //
+  // The rule is unchanged: exactly ONE request in a whole session may mutate the
+  // data a recommendation is computed from. What changed is where that data is.
+  // `Log_Cleaned` and `Effort` are Supabase concepts since the S4 cutover, so the
+  // one mutating request performs an authoritative Save rather than a Sheets
+  // append — and NO request may write a Sheets tab a recommendation reads, because
+  // the two that remain (`Deload_State`, `Constraints`) are not written by this
+  // session at all.
+  const touchedSheets = [...writesByRequest.entries()]
     .filter(([, tabs]) => [...tabs].some(t => RECOMMENDATION_INPUT_TABS.includes(t)))
     .map(([request, tabs]) => `${request} -> ${[...tabs].filter(t => RECOMMENDATION_INPUT_TABS.includes(t)).sort().join(',')}`)
     .sort();
 
-  assert.deepEqual(touched, ['POST /api/log-workout -> Log_Cleaned'],
-    'exactly one request in the whole session writes a tab a recommendation reads.\n' +
+  assert.deepEqual(touchedSheets, [],
+    'no request may write a Google Sheets tab a recommendation reads.\n' +
     'Everything observed:\n  ' +
     [...writesByRequest.entries()].map(([r, t]) => `${r} -> ${[...t].sort().join(',')}`).sort().join('\n  '));
+
+  // And exactly one request performed the authoritative Save.
+  const saves = workoutAuthorityStore().calls.saves;
+  assert.equal(saves.length, 1,
+    `exactly one request in the whole session writes the authority a recommendation reads; saw ${saves.length}`);
+  assert.ok(saves[0].logCells.length > 0, 'and it wrote the logged sets');
 
   // THE TWO ALLOWLISTED ROUTES. `src/app/api.js` exempts /api/coach/message and
   // /api/debug/intent-observe from stepping the inputs epoch — every other non-GET steps it

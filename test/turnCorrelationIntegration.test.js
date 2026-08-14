@@ -27,7 +27,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { logCleanedColumns, effortColumns, sessionPlansColumns } = require('../config/columns');
-const { resetIdempotencyStore } = require('../services/idempotency');
+const {
+  resetWorkoutAuthorityStub: resetIdempotencyStore, workoutAuthorityStore,
+} = require('./helpers/stubWorkoutAuthority');
 
 process.env.ATLAS_API_KEY = 'test-api-key';
 process.env.GOOGLE_SHEETS_ID = 'stub-sheet';
@@ -40,8 +42,41 @@ process.env.ATLAS_WRITE_RATE_LIMIT_MAX = '1000000';
 // feature stays silent.
 process.env.ATLAS_INTERACTION_TRACE = 'shadow';
 
+// `state.appends` is a VIEW over both stores. It was the Sheets fake's call list;
+// after the S4 cutover and OWNER CORRECTION 2026-08-13 the logged sets, the Effort
+// row, both plan ledgers and cardio land in Supabase, so the same "what did this
+// request write, and where" question is answered by the authority double. The
+// `{ tab, rows }` shape is kept so every assertion below states what it always did,
+// and any Sheets append that DOES still happen is included so a write silently going
+// back to a tab would show up rather than disappear.
+const sheetsAppends = [];
+function authorityAppends() {
+  const calls = workoutAuthorityStore().calls;
+  const out = [];
+  for (const save of calls.saves) {
+    if (save.logCells.length) out.push({ tab: 'Log_Cleaned', rows: save.logCells });
+    if (save.effortCells) out.push({ tab: 'Effort', rows: [save.effortCells] });
+  }
+  for (const rows of calls.planEventAppends) out.push({ tab: 'Session_Plans', rows });
+  for (const rows of calls.planSetAppends) out.push({ tab: 'Session_Plan_Sets', rows });
+  for (const entry of calls.modality) out.push({ tab: 'Modality_Log', rows: [entry.cells] });
+  for (const note of calls.coachingNotes) out.push({ tab: 'Coaching_Notes', rows: [[note.date, note.note]] });
+  for (const c of calls.constraints) out.push({ tab: 'Constraints', rows: [[c.date, c.kind, c.target, c.rule, c.note]] });
+  return out;
+}
+
+// Clears the RECORD of what was written without clearing what was written. Several
+// tests below zero the list mid-scenario to measure only the next request, while the
+// rows already in the authority must stay — they are the prior history the next
+// request's dedup reads.
+function clearAppendLog() {
+  sheetsAppends.length = 0;
+  const calls = workoutAuthorityStore().calls;
+  for (const key of Object.keys(calls)) calls[key].length = 0;
+}
+
 const state = {
-  appends: [],
+  get appends() { return [...sheetsAppends, ...authorityAppends()]; },
   failEffortAppend: false,
   proofMismatchTab: null,
   logCompositeKeys: [],
@@ -51,7 +86,7 @@ const state = {
 const fakeSheets = {
   appendRows: async (tab, rows) => {
     if (tab === 'Effort' && state.failEffortAppend) throw new Error('Simulated Effort append failure');
-    state.appends.push({ tab, rows: rows.map(r => [...r]) });
+    sheetsAppends.push({ tab, rows: rows.map(r => [...r]) });
     return {
       data: {
         updates: {
@@ -96,6 +131,19 @@ require.cache[sheetsPath] = { id: sheetsPath, filename: sheetsPath, loaded: true
 
 const tc = require('../services/turnCorrelation');
 const { buildTurnWriteArtifact } = require('../services/turnWriteArtifact');
+// The exercise catalog reads Supabase (OWNER CORRECTION 2026-08-13). Stubbed here so
+// the suite never opens a database connection; it delegates to the sheets fixture above.
+require('./helpers/stubExerciseCatalog').installExerciseCatalogStub();
+
+// The workout authority is Supabase since the S4 cutover, so stubbing `sheets.js`
+
+// no longer controls the logged sets, the Effort row, the plan ledgers or the write
+
+// receipts. `sheetsFallback` seeds this suite's existing fixture into the double, so
+
+// no test's data changes — only where the route reads it from.
+
+require('./helpers/stubWorkoutAuthority').installWorkoutAuthorityStub({ sheetsFallback: true });
 const { app } = require('../index');
 
 const SESSION_ID = 'TC-INT-1';
@@ -230,48 +278,23 @@ test('fail-closed: malformed and absent claims correlate nothing, and never brea
   }
 });
 
-test('a PARTIAL write correlates too — committed rows must never go unjoined', async () => {
-  tc._resetForTesting();
-  resetIdempotencyStore();
-  state.appends.length = 0;
-  tc.issueTurn(TURN_ID, SESSION_ID);
-  // The preview must carry the effort row the approve will write — app.js:6962 sets
-  // `payload.effort_row` at preview time whenever there is one. An effort row that appeared only
-  // on the live request would be an unpreviewed Effort append, which the payload gate refuses.
-  const effortRow = ['2026-07-25', SESSION_ID, 3600, 400, 500, 130, 165, 'Gym', ''];
-  const { pairingToken } = await previewForToken({ correlation: { turn_id: TURN_ID }, effort_row: effortRow });
-
-  state.failEffortAppend = true;
-  const { status, body } = await postWrite({
-    session_id: SESSION_ID,
-    date: '2026-07-25',
-    write_id: 'wid-int-partial',
-    log_rows: logRows(),
-    effort_row: effortRow,
-    correlation: { turn_id: TURN_ID, pairing_token: pairingToken },
-  });
-  state.failEffortAppend = false;
-
-  assert.equal(status, 500, 'a partial write is reported as an error with an authoritative proof');
-  const data = body.data || body.details || body;
-  assert.equal(data.sheet_write, 'partial');
-  assert.equal(data.sheet_written, true, 'log rows ARE committed on this path');
-
-  // The whole point: rows landed, so this turn really did write. It must be joinable.
-  const records = tc.recentWriteProofs();
-  assert.equal(records.length, 2, 'the preview record, then the partial write record');
-  const rec = records[1];
-  assert.equal(rec.turn_id, TURN_ID);
-  assert.equal(rec.proof.sheet_write, 'partial');
-  assert.equal(rec.proof.sheet_written, true);
-  assert.equal(rec.pairing.established_at_preview, true);
-  assert.equal(rec.pairing.write_attempt, 1);
-});
+// ── THE PARTIAL-WRITE CORRELATION TEST RETIRED WITH THE PARTIAL ──────────────
+//
+// It drove the worst outcome the two-append Save could produce: the log rows
+// committed to Google Sheets, the Effort append then failed, and the response
+// reported an honest `sheet_write:'partial'` with `sheet_written:true`. Its point
+// was that a turn which REALLY WROTE must stay joinable even when the request
+// failed — committed rows must never go unjoined.
+//
+// The S4 cutover writes both in ONE Supabase transaction (§6.3 P12), so the state
+// cannot exist: the Save commits whole or rolls back whole. A failure now writes
+// nothing, and nothing is what there is to join. The surviving half of the rule —
+// a turn whose write DID commit is joinable — is proven by the success cases below.
 
 test('a live write correlates its success proof, including the appended range', async () => {
   tc._resetForTesting();
   resetIdempotencyStore();
-  state.appends.length = 0;
+  clearAppendLog();
   tc.issueTurn(TURN_ID, SESSION_ID);
   // The write_id the dry-run carries is the one the approve will use (app.js:6960 → 7506),
   // so the server can corroborate the pairing — the check that makes the record's claim
@@ -334,7 +357,7 @@ test('the EMITTED preview record does not claim a payload match (Codex P1)', asy
 test('fail-closed: a live write with NO pairing correlates nothing, and still succeeds', async () => {
   tc._resetForTesting();
   resetIdempotencyStore();
-  state.appends.length = 0;
+  clearAppendLog();
   tc.issueTurn(TURN_ID, SESSION_ID);
 
   // Exactly what #1172 accepted: a fresh, same-session, well-formed turn id on a live write,
@@ -355,7 +378,7 @@ test('fail-closed: a live write with NO pairing correlates nothing, and still su
 test('fail-closed: a forged pairing token correlates nothing, and still succeeds', async () => {
   tc._resetForTesting();
   resetIdempotencyStore();
-  state.appends.length = 0;
+  clearAppendLog();
   tc.issueTurn(TURN_ID, SESSION_ID);
   await previewForToken({ correlation: { turn_id: TURN_ID } });
   const before = tc.recentWriteProofs().length;
@@ -376,7 +399,7 @@ test('fail-closed: a forged pairing token correlates nothing, and still succeeds
 test('fail-closed: a valid token on a DIFFERENT workout correlates nothing (Codex P1)', async () => {
   tc._resetForTesting();
   resetIdempotencyStore();
-  state.appends.length = 0;
+  clearAppendLog();
   tc.issueTurn(TURN_ID, SESSION_ID);
   const { pairingToken } = await previewForToken({ correlation: { turn_id: TURN_ID } });
   const before = tc.recentWriteProofs().length;
@@ -399,7 +422,7 @@ test('fail-closed: a valid token on a DIFFERENT workout correlates nothing (Code
 test('fail-closed: a FIRST live write that drops the previewed effort row correlates nothing', async () => {
   tc._resetForTesting();
   resetIdempotencyStore();
-  state.appends.length = 0;
+  clearAppendLog();
   tc.issueTurn(TURN_ID, SESSION_ID);
   // The preview stages an Effort append. The first approve silently omits it — so the write that
   // happens is NOT the write that was previewed, and it is not the documented seal retry either
@@ -429,7 +452,7 @@ test('fail-closed: a FIRST live write that drops the previewed effort row correl
 test('a live write that names another session in a ROW correlates nothing (Codex P1)', async () => {
   tc._resetForTesting();
   resetIdempotencyStore();
-  state.appends.length = 0;
+  clearAppendLog();
   tc.issueTurn(TURN_ID, SESSION_ID);
   // A row-level session_id WINS at write time (index.js:449), so this row lands under
   // OTHER_SESSION while the record would have named SESSION_ID. Refused outright.
@@ -449,11 +472,19 @@ test('a live write that names another session in a ROW correlates nothing (Codex
 test('the duplicate-closeout branch projects the seal and closeout envelopes it actually produced', async () => {
   tc._resetForTesting();
   resetIdempotencyStore();
-  state.appends.length = 0;
+  clearAppendLog();
   // Every intended log row is already on the sheet and there is no new Effort row — the
   // all-rows-duplicate branch. Composite key format is `sid||exercise||set_number`, lowercased
   // (index.js partitionLogRowsByExisting).
-  state.logCompositeKeys = [`${SESSION_ID.toLowerCase()}||bench press||1`];
+  // THE DUPLICATE IS SEEDED AS A REAL LOGGED SET. The route asks the authority
+  // `existingSetIdentities(session_id)` after the S4 cutover, not a whole-column
+  // composite-key list — so "already logged" is a row, not a key.
+  const priorRow = new Array(logCleanedColumns.length).fill('');
+  priorRow[1] = SESSION_ID;
+  priorRow[2] = 'Bench Press';
+  priorRow[6] = '1';
+  workoutAuthorityStore().loggedSets.push(priorRow);
+  workoutAuthorityStore().loggedSetWriteIds.push(null);
   tc.issueTurn(TURN_ID, SESSION_ID);
 
   // A canonical accepted-plan token (`pv_` + UUID, as src/app/planAcceptance.js mints them) —
@@ -474,14 +505,14 @@ test('the duplicate-closeout branch projects the seal and closeout envelopes it 
   assert.equal(status, 200);
   assert.equal(body.data.all_rows_duplicate, true, 'this must really be the duplicate branch');
   assert.equal(body.data.log_rows_written, 0, 'and it appended no log rows');
-  // The branch still attempted both sidecar writes — which is exactly why it correlates.
+  // The branch still attempted both authoritative plan writes — which is exactly why it correlates.
   assert.ok(body.data.ledger_seal, 'the branch attempted the ledger seal');
   assert.ok(body.data.session_plans_closeout, 'and the Session_Plans closeout event');
 
   const records = tc.recentWriteProofs();
   const rec = records[records.length - 1];
   // THE POINT: before the projections this record carried log_rows_written:0 and no seal evidence
-  // whatsoever, so it could not prove the sidecar write the trigger was added to capture.
+  // whatsoever, so it could not prove the plan-authority write the trigger was added to capture.
   // Asserted against the SERVED body rather than hardcoded, so the record cannot drift from it.
   assert.equal(rec.proof.ledger_seal_sheet_written, body.data.ledger_seal.sheet_written);
   assert.equal(rec.proof.ledger_seal_dry_run, body.data.ledger_seal.dry_run);
@@ -497,12 +528,11 @@ test('the duplicate-closeout branch projects the seal and closeout envelopes it 
   // session_closeout row this record refers to.
   assert.equal(rec.proof.session_plans_closeout_plan_version, closeout.plan_version);
 
-  // HONEST LIMIT of this harness: both lanes are OFF here, so the seal is a dry-run
-  // (`dry_run:true`, `reason:'write_disabled'`) and the capture reports `status:'disabled'`. That
-  // proves the WIRING and the projection faithfully, not a live stamp. The lanes-ON seal-fixture
-  // case — where ledger_seal_sheet_written is genuinely true — is #1173 item 3.
-  assert.equal(rec.proof.ledger_seal_dry_run, true, 'lanes off ⇒ dry-run seal, stated not implied');
-  assert.equal(rec.proof.session_plans_closeout_captured, false, 'lanes off ⇒ nothing captured');
+  // S4 retired both feature gates. Even this duplicate-log branch records the
+  // authoritative closeout in Supabase; an empty plan-set ledger can legitimately
+  // have nothing to stamp, but it is never represented as a disabled dry run.
+  assert.notEqual(rec.proof.ledger_seal_dry_run, true, 'the always-on authority must not report a disabled dry run');
+  assert.equal(rec.proof.session_plans_closeout_captured, true, 'the closeout event is authoritative even when log rows duplicate');
 });
 
 test('the pairing header is exposed to CORS clients, or a browser would hide it', async () => {
@@ -545,7 +575,7 @@ test('the real modality and bodyweight preview/write routes round-trip the exact
   ]) {
     tc._resetForTesting();
     resetIdempotencyStore();
-    state.appends.length = 0;
+    clearAppendLog();
     tc.issueTurn(TURN_ID, SESSION_ID);
     const initiation = `init:${routeCase.appendedTab === 'Bodyweight'
       ? 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
@@ -585,7 +615,7 @@ test('the real modality and bodyweight preview/write routes round-trip the exact
 test('the real multipart effort-only preview/write route binds the server-normalized payload', async () => {
   tc._resetForTesting();
   resetIdempotencyStore();
-  state.appends.length = 0;
+  clearAppendLog();
   tc.issueTurn(TURN_ID, SESSION_ID);
 
   const initiation = 'init:cccccccc-cccc-4ccc-8ccc-cccccccccccc';
@@ -637,7 +667,7 @@ test('the real multipart effort-only preview/write route binds the server-normal
 test('the real multipart route reuses one pairing when retry completes before the original attempt', async () => {
   tc._resetForTesting();
   resetIdempotencyStore();
-  state.appends.length = 0;
+  clearAppendLog();
   tc.issueTurn(TURN_ID, SESSION_ID);
 
   const initiation = 'init:56565656-5656-4656-8656-565656565656';
@@ -696,7 +726,7 @@ test('the real multipart route reuses one pairing when retry completes before th
 test('the real multipart route rejects a changed oversized retry when exact equality cannot be established', async () => {
   tc._resetForTesting();
   resetIdempotencyStore();
-  state.appends.length = 0;
+  clearAppendLog();
   tc.issueTurn(TURN_ID, SESSION_ID);
 
   const initiation = 'init:78787878-7878-4878-8878-787878787878';
@@ -735,131 +765,39 @@ test('the real multipart route rejects a changed oversized retry when exact equa
   assert.equal(state.appends.length, 0, 'both requests are still dry-run previews');
 });
 
-test('the real multipart route records a correlated partial proof after Log rows commit and Effort append fails', async () => {
-  tc._resetForTesting();
-  resetIdempotencyStore();
-  state.appends.length = 0;
-  tc.issueTurn(TURN_ID, SESSION_ID);
-
-  const initiation = 'init:abababab-abab-4bab-8bab-abababababab';
-  const effort = JSON.stringify({
-    duration: '00:42:00',
-    activeCalories: 410,
-    totalCalories: 520,
-    averageHR: 148,
-    peakHR: 171,
-    workoutType: 'Traditional Strength Training',
-  });
-  const rows = JSON.stringify(logRows());
-  const previewForm = new FormData();
-  previewForm.append('session_id', SESSION_ID);
-  previewForm.append('date', '2026-07-25');
-  previewForm.append('log_rows_json', rows);
-  previewForm.append('effort_json', effort);
-  previewForm.append('test_mode', 'true');
-  previewForm.append('correlation', JSON.stringify({
-    turn_id: TURN_ID,
-    initiation_nonce: initiation,
-  }));
-  const preview = await postMultipart('/api/complete-workout', previewForm);
-  assert.equal(preview.status, 200, JSON.stringify(preview.body));
-  const pairingToken = preview.headers.get(tc.PAIRING_TOKEN_HEADER);
-  assert.ok(tc.isWellFormedPairingToken(pairingToken));
-
-  state.failEffortAppend = true;
-  try {
-    const liveForm = new FormData();
-    liveForm.append('session_id', SESSION_ID);
-    liveForm.append('date', '2026-07-25');
-    liveForm.append('log_rows_json', rows);
-    liveForm.append('effort_json', effort);
-    liveForm.append('write_id', 'wid-complete-partial-correlation');
-    liveForm.append('correlation', JSON.stringify({
-      turn_id: TURN_ID,
-      initiation_nonce: initiation,
-      pairing_token: pairingToken,
-    }));
-    const live = await postMultipart('/api/complete-workout', liveForm);
-    assert.equal(live.status, 500, JSON.stringify(live.body));
-    assert.equal(live.body?.details?.sheet_write, 'partial');
-
-    const records = tc.recentWriteProofs();
-    assert.equal(records.length, 2, 'preview and committed partial write must both be joinable');
-    const record = records[1];
-    assert.equal(record.route, '/api/complete-workout');
-    assert.equal(record.pairing.payload_bound, true);
-    assert.equal(record.proof.sheet_write, 'partial');
-    assert.equal(record.proof.sheet_written, true);
-  } finally {
-    state.failEffortAppend = false;
-  }
-});
-
-test('the real multipart route records a correlated unverified proof after append proof mismatch', async () => {
-  tc._resetForTesting();
-  resetIdempotencyStore();
-  state.appends.length = 0;
-  tc.issueTurn(TURN_ID, SESSION_ID);
-
-  const initiation = 'init:cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd';
-  const effort = JSON.stringify({
-    duration: '00:42:00',
-    activeCalories: 410,
-    totalCalories: 520,
-    averageHR: 148,
-    peakHR: 171,
-    workoutType: 'Traditional Strength Training',
-  });
-  const rows = JSON.stringify(logRows());
-  const previewForm = new FormData();
-  previewForm.append('session_id', SESSION_ID);
-  previewForm.append('date', '2026-07-25');
-  previewForm.append('log_rows_json', rows);
-  previewForm.append('effort_json', effort);
-  previewForm.append('test_mode', 'true');
-  previewForm.append('correlation', JSON.stringify({
-    turn_id: TURN_ID,
-    initiation_nonce: initiation,
-  }));
-  const preview = await postMultipart('/api/complete-workout', previewForm);
-  assert.equal(preview.status, 200, JSON.stringify(preview.body));
-  const pairingToken = preview.headers.get(tc.PAIRING_TOKEN_HEADER);
-  assert.ok(tc.isWellFormedPairingToken(pairingToken));
-
-  state.proofMismatchTab = 'Log_Cleaned';
-  try {
-    const liveForm = new FormData();
-    liveForm.append('session_id', SESSION_ID);
-    liveForm.append('date', '2026-07-25');
-    liveForm.append('log_rows_json', rows);
-    liveForm.append('effort_json', effort);
-    liveForm.append('write_id', 'wid-complete-unverified-correlation');
-    liveForm.append('correlation', JSON.stringify({
-      turn_id: TURN_ID,
-      initiation_nonce: initiation,
-      pairing_token: pairingToken,
-    }));
-    const live = await postMultipart('/api/complete-workout', liveForm);
-    assert.equal(live.status, 500, JSON.stringify(live.body));
-    assert.equal(live.body?.details?.sheet_write, 'unverified');
-
-    const records = tc.recentWriteProofs();
-    assert.equal(records.length, 2, 'preview and committed unverified write must both be joinable');
-    const record = records[1];
-    assert.equal(record.route, '/api/complete-workout');
-    assert.equal(record.pairing.payload_bound, true);
-    assert.equal(record.proof.sheet_write, 'unverified');
-    assert.equal(record.proof.sheet_written, true);
-  } finally {
-    state.proofMismatchTab = null;
-  }
-});
+// ── TWO MULTIPART FAILURE-CORRELATION TESTS RETIRED WITH THEIR FAILURE MODES ──
+//
+// They drove `/api/complete-workout` into the two states a pair of Google Sheets
+// appends could produce and proved the turn stayed joinable in both:
+//
+//   PARTIAL     the Log rows committed, the Effort append then failed.
+//   UNVERIFIED  an append came back with a row count that disagreed with the
+//               request, so the response refused to claim success.
+//
+// Neither state exists after the S4 cutover. The Save is ONE Supabase transaction
+// (§6.3 P12): it commits whole or rolls back whole, so there is no half-written
+// session to report and no second system whose acknowledgement can disagree with
+// what was asked for. A failure writes nothing, and nothing is what there is to
+// join.
+//
+// The rule they were really protecting — a turn whose write COMMITTED must be
+// joinable, and one that did not must correlate nothing — is proven by the success
+// and fail-closed cases above, and the atomicity itself by
+// test/closeoutSealIntegration.test.js and the from-empty Postgres proofs.
 
 test('the real blank-session effort-only route adopts the server-resolved session before approval', async () => {
   tc._resetForTesting();
   resetIdempotencyStore();
-  state.appends.length = 0;
-  state.existingEffortSessionIds = ['20260725-AM-01', '20260725-PM-01'];
+  clearAppendLog();
+  // Occupancy comes from the authority now — `atlas.workout_sessions` is the parent
+  // every logged set and Effort row hangs off — so the two taken slots are seeded as
+  // real Effort rows rather than as a session-id list.
+  for (const id of ['20260725-AM-01', '20260725-PM-01']) {
+    const row = new Array(effortColumns.length).fill('');
+    row[0] = '2026-07-25';
+    row[1] = id;
+    workoutAuthorityStore().effort.push(row);
+  }
   tc.issueTurn(TURN_ID, SESSION_ID);
 
   const initiation = 'init:dddddddd-dddd-4ddd-8ddd-dddddddddddd';
@@ -913,8 +851,16 @@ test('the real blank-session effort-only route adopts the server-resolved sessio
 test('the real multipart route lets newer blank-session preview B retire A before adopting a different resolved session', async () => {
   tc._resetForTesting();
   resetIdempotencyStore();
-  state.appends.length = 0;
-  state.existingEffortSessionIds = ['20260725-AM-01', '20260725-PM-01'];
+  clearAppendLog();
+  // Occupancy comes from the authority now — `atlas.workout_sessions` is the parent
+  // every logged set and Effort row hangs off — so the two taken slots are seeded as
+  // real Effort rows rather than as a session-id list.
+  for (const id of ['20260725-AM-01', '20260725-PM-01']) {
+    const row = new Array(effortColumns.length).fill('');
+    row[0] = '2026-07-25';
+    row[1] = id;
+    workoutAuthorityStore().effort.push(row);
+  }
   tc.issueTurn(TURN_ID, SESSION_ID);
 
   const initiationA = 'init:eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
@@ -954,7 +900,12 @@ test('the real multipart route lets newer blank-session preview B retire A befor
     assert.match(resolvedSessionA, /^20260725-(?:AM|PM)-02$/);
     assert.ok(tc.isWellFormedPairingToken(pairingA));
 
-    state.existingEffortSessionIds.push(resolvedSessionA);
+    // A's identity is now OCCUPIED — seeded as a real Effort row, because occupancy
+    // is answered by the authority rather than by a session-id list.
+    const takenRow = new Array(effortColumns.length).fill('');
+    takenRow[0] = '2026-07-25';
+    takenRow[1] = resolvedSessionA;
+    workoutAuthorityStore().effort.push(takenRow);
     const previewBForm = new FormData();
     previewBForm.append('date', '2026-07-25');
     previewBForm.append('log_rows_json', JSON.stringify([]));
@@ -1022,7 +973,7 @@ test('the real multipart route lets newer blank-session preview B retire A befor
 test('the real complete-workout dry-run emits a preview proof the artifact accepts', async () => {
   tc._resetForTesting();
   resetIdempotencyStore();
-  state.appends.length = 0;
+  clearAppendLog();
   tc.issueTurn(TURN_ID, SESSION_ID);
 
   const form = new FormData();

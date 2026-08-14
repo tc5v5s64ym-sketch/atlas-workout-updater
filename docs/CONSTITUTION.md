@@ -10,8 +10,8 @@ Atlas is Dale's personal training intelligence. It exists to reduce the friction
 
 ## What Atlas Is
 
-- A **chat-first workout logger** that accepts natural-language input, parses it, previews it, and writes it to Google Sheets on explicit approval.
-- A **personal intelligence layer** over a single owner's training history, backed by one spreadsheet as the permanent record.
+- A **chat-first workout logger** that accepts natural-language input, parses it, previews it, and commits it to Supabase on explicit approval.
+- A **personal intelligence layer** over a single owner's Supabase-authoritative training history, with optional asynchronous human-readable Sheets exports.
 - A **fast, opinionated tool** optimised for the moment between sets — one input, one confirmation, done.
 
 ## What Atlas Is Not (this phase)
@@ -19,7 +19,7 @@ Atlas is Dale's personal training intelligence. It exists to reduce the friction
 - A nutrition tracker.
 - A voice interface.
 - A multi-user platform.
-- A database migration project.
+- A generic database platform or multi-authority synchronization product.
 - An "Atlas Brain" autonomous agent.
 - A generic fitness API or white-label product.
 
@@ -48,11 +48,36 @@ conversation (sets coached, nothing written) → end trigger → compile the ses
   → dry-run preview (test_mode=true) → owner approves → live write → read-back proof → undo available
 ```
 
-The safety law is unchanged: no blind writes, the dry-run never touches the sheet, the owner approves before any write, the live write is provable via `sheet_written` and `log_rows_written`, and undo is available. Only the **cadence** moved — from a write per set to one write per session. There must be **no per-set save prompts** during the workout; coaching during, one save at the end.
+The safety law is unchanged: no blind writes, the dry-run never touches the authority, the owner approves before any write, the live write is provable via `write_authority`, `sheet_written`, and `log_rows_written`, and undo is available. Only the **cadence** moved — from a write per set to one write per session. There must be **no per-set save prompts** during the workout; coaching during, one save at the end.
 
 ## Source of Truth
 
-Google Sheets is the permanent record. The app reads from it and writes to it. There is no secondary database. If Sheets and the app disagree, Sheets wins.
+**Amended by owner instruction 2026-08-07, and again by owner correction 2026-08-13.** The
+text below is the owner's direction and nothing wider; it is recorded in
+`docs/ATLAS_V1_EXECUTION_PLAN.md`.
+
+Storage authority is **per concept**, and each concept has exactly one live authority:
+
+- **Supabase wins** for the migrated workout hot path — workout sessions and their identity,
+  logged sets, Effort, accepted plans and plan events, plan sets and revisions, item
+  outcomes, closeout, and write receipts and idempotency — **and for the exercise catalog**.
+- **Google Sheets wins** for every concept that has not migrated. For those, Sheets is the
+  permanent record, the app reads from it and writes to it, and if Sheets and the app
+  disagree, Sheets wins.
+- **Google Sheets is the export mirror** for the migrated concepts. It is human-readable, it
+  is never required for an active workout to read, save, verify, or close out, and an export
+  failure may create backlog but may never invalidate a workout.
+
+**A Google Sheets quota of any kind must not invalidate or block an active workout or the
+Phase 4 test campaign.** For a migrated concept there is no synchronous Sheets call on the
+workout path, no fallback from Supabase to Sheets, no staleness clock, and no cache standing
+in for the authority.
+
+**The exercise catalog is edited only by the owner**, through an explicit owner-run command
+against Supabase. The runtime may read it and may not change it.
+
+Until a concept's cutover is complete, Google Sheets remains its live authority whatever the
+repository already contains. Building a destination does not move an authority.
 
 ## Ownership
 

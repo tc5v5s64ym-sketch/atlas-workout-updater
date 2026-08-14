@@ -1,9 +1,6 @@
-const {
-  getRecentRows,
-  getSheetRows,
-  logSheetName,
-  effortSheetName
-} = require('../sheets');
+// The migrated workout concepts read Supabase, their sole authority since the S4
+// cutover. Same header-stripped cell shape  returned.
+const workoutAuthority = require('./workoutAuthority');
 const {
   buildExerciseDetail,
   buildProgressSummary,
@@ -12,15 +9,15 @@ const {
 } = require('./analytics');
 
 async function getLogRows() {
-  return getSheetRows(logSheetName);
+  return workoutAuthority.loggedSetRows();
 }
 
 async function getEffortRows() {
-  return getSheetRows(effortSheetName);
+  return workoutAuthority.effortRows();
 }
 
 async function getRecentLogRows(limit = 1000) {
-  return getRecentRows(logSheetName, limit);
+  return workoutAuthority.loggedSetRows({ limit });
 }
 
 async function getRecentSessions(options = {}) {

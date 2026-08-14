@@ -438,7 +438,7 @@ import {
     card.appendChild(elc('div', 'rv-note', 'Nothing’s saved yet · this is the only save'));
 
     const saved = elc('div', 'rv-saved');
-    saved.appendChild(elc('span', 'rv-saved-txt', '✓ Saved to your sheet'));
+    saved.appendChild(elc('span', 'rv-saved-txt', '✓ Saved to Atlas'));
     const undo = elc('a', 'rv-undo', 'Undo');
     undo.href = '#';
     // CLIENT-1: pass THIS card's bound write identity so the undo path refuses if a

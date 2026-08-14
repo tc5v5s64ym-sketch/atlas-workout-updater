@@ -59,8 +59,18 @@ async function fetchDeployed(baseUrl, timeoutMs) {
   }
 }
 
-// Read-only Supabase migration facts for the status document (§3.8: the open
-// divergence count and the oldest open row; §3.7: the catalog generation's age).
+// Read-only Supabase facts for the status document.
+//
+// WHAT IT REPORTS NOW: the catalog's size, and the export backlog — how many closed
+// sessions still owe a Google Sheets export, and how many are `blocked` and need
+// owner action. That backlog is the one operational number the cutover created: an
+// export is asynchronous and non-critical to the workout, so it can fall behind
+// without anything failing, and a number nobody can see is a backlog nobody clears.
+//
+// WHAT IT NO LONGER REPORTS: the open-divergence count. It compared two authorities
+// during the shadow window; there is one authority now, so the count would be a
+// permanent zero dressed as an observation. The lane, its writers and its readers
+// are gone, and `atlas.migration_divergences` sits inert for the rollback window.
 //
 // TOTAL — it never throws, and it never reports a count it did not read. Prefers
 // the atlas_readonly credential and falls back to the runtime role only when that
@@ -70,39 +80,38 @@ async function readSupabaseMigrationFacts() {
   const configured =
     (process.env.ATLAS_SUPABASE_READONLY_URL || '').trim().length > 0 ||
     (process.env.ATLAS_SUPABASE_APP_URL || '').trim().length > 0;
-  const shadowWriteEnabled = process.env.ATLAS_SUPABASE_SHADOW_WRITE === '1';
   if (!configured) {
-    return { observed: false, reason: 'not_configured', configured: false, shadow_write_enabled: shadowWriteEnabled };
+    return { observed: false, reason: 'not_configured', configured: false };
   }
 
   let adapter;
-  let mirror;
   try {
     adapter = require('../services/supabaseAdapter');
-    mirror = require('../services/exerciseCatalogMirror');
   } catch (err) {
-    return { observed: false, reason: `adapter_unavailable: ${err.message}`, configured: true, shadow_write_enabled: shadowWriteEnabled };
+    return { observed: false, reason: `adapter_unavailable: ${err.message}`, configured: true };
   }
 
   const role = (process.env.ATLAS_SUPABASE_READONLY_URL || '').trim() ? 'readonly' : 'app';
   try {
-    const summary = await adapter.divergenceSummary(role);
-    const generation = await adapter.currentCatalogGeneration(role);
-    const currency = mirror.currencyVerdict(generation);
+    const catalogRows = await adapter.readExerciseCatalog(role);
+    const backlog = await adapter.exportBacklog(role);
+    const blocked = await adapter.listBlockedExports(role);
     return {
       observed: true,
       reason: 'read_ok',
       configured: true,
-      shadow_write_enabled: shadowWriteEnabled,
-      open_divergences: Number(summary.open_count || 0),
-      oldest_open_divergence_at: summary.oldest_open_at
-        ? new Date(summary.oldest_open_at).toISOString()
-        : null,
-      catalog_generation_age_seconds: currency.age_seconds,
-      catalog_servable: currency.servable,
+      // OWNER CORRECTION 2026-08-13: Supabase owns the catalog, so there is no
+      // generation age and no servability verdict to report — a catalog cannot be
+      // stale relative to itself. Its SIZE is still worth surfacing, because an
+      // empty catalog is a real operational problem.
+      catalog_rows: catalogRows.length,
+      // The mirror's health. `blocked` is the one that needs a human: it means the
+      // export refused rather than overwrote, and only the §5.7 rebuild clears it.
+      export_backlog: Number((backlog && backlog.pending) || 0),
+      export_blocked: blocked.length,
     };
   } catch (err) {
-    return { observed: false, reason: `read_failed: ${err.message}`, configured: true, shadow_write_enabled: shadowWriteEnabled };
+    return { observed: false, reason: `read_failed: ${err.message}`, configured: true };
   } finally {
     try {
       await adapter.close();

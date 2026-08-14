@@ -425,6 +425,82 @@ require.cache[sheetsPath] = {
   exports: SANDBOX_LIVE ? buildGuardedSheets() : fakeSheets,
 };
 
+// S4 moved every workout concept, including Exercise_Catalog, behind Supabase
+// authority seams. This credential-free browser harness replaces those seams —
+// not the production routes — with the same in-memory authority double used by
+// the HTTP integration suite. The wrappers below retain this harness's historical
+// write-evidence view while the application itself performs zero Sheets workout
+// operations.
+const gateAuthorityTest = require('../../../test/helpers/stubWorkoutAuthority');
+gateAuthorityTest.installWorkoutAuthorityStub({ sheetsFallback: true });
+require('../../../test/helpers/stubExerciseCatalog').installExerciseCatalogStub();
+
+const workoutAuthorityPath = require.resolve('../../../services/workoutAuthority');
+const baseWorkoutAuthority = require(workoutAuthorityPath);
+const recordAuthorityAppend = (tabName, rows) => {
+  if (!rows.length) return;
+  state.appendCalls.push({
+    at: new Date().toISOString(),
+    tabName,
+    rows: rows.map((row) => [...row]),
+    authority: 'supabase_test_double',
+  });
+};
+
+const gateWorkoutAuthority = {
+  ...baseWorkoutAuthority,
+  async appendPlanEvents(rows) {
+    const result = await baseWorkoutAuthority.appendPlanEvents(rows);
+    recordAuthorityAppend('Session_Plans', rows.slice(0, result.inserted));
+    return result;
+  },
+  async appendPlanSetRows(rows) {
+    if (state.losePlanSetRows) {
+      recordAuthorityAppend('Session_Plan_Sets', rows);
+      return { inserted: rows.length, skipped: 0 };
+    }
+    const result = await baseWorkoutAuthority.appendPlanSetRows(rows);
+    recordAuthorityAppend('Session_Plan_Sets', rows.slice(0, result.inserted));
+    state.planSetRows = gateAuthorityTest.workoutAuthorityStore().planSets.map((row) => [...row]);
+    return result;
+  },
+  async saveWorkout(input) {
+    const authorityStore = gateAuthorityTest.workoutAuthorityStore();
+    const logStart = authorityStore.loggedSets.length;
+    const effortStart = authorityStore.effort.length;
+    const result = await baseWorkoutAuthority.saveWorkout(input);
+    recordAuthorityAppend('Log_Cleaned', authorityStore.loggedSets.slice(logStart));
+    recordAuthorityAppend('Effort', authorityStore.effort.slice(effortStart));
+    return result;
+  },
+  async sealPlanSets(sessionId, closeoutWriteId) {
+    if (state.failNextSeal) {
+      state.failNextSeal = false;
+      state.updateCalls.push({
+        at: new Date().toISOString(), tabName: 'Session_Plan_Sets',
+        failed: true, authority: 'supabase_test_double', cells: [],
+      });
+      throw new Error('Simulated seal outage (armed via /fail-next-seal)');
+    }
+    const sealed = await baseWorkoutAuthority.sealPlanSets(sessionId, closeoutWriteId);
+    state.planSetRows = gateAuthorityTest.workoutAuthorityStore().planSets.map((row) => [...row]);
+    if (sealed > 0) {
+      state.updateCalls.push({
+        at: new Date().toISOString(), tabName: 'Session_Plan_Sets',
+        failed: false, authority: 'supabase_test_double', cells: new Array(sealed).fill(null),
+      });
+    }
+    return sealed;
+  },
+};
+
+require.cache[workoutAuthorityPath] = {
+  id: workoutAuthorityPath,
+  filename: workoutAuthorityPath,
+  loaded: true,
+  exports: gateWorkoutAuthority,
+};
+
 // The vision LLM is likewise replaced in-process: no key exists here (deleted
 // above), so the real module could only fail — the stub returns a DETERMINISTIC
 // synthetic Apple-Watch-style parse so the F10D screenshot-closeout scenario can
@@ -517,6 +593,17 @@ const { app } = require('../../../index.js');
 const modelPosture = MODEL_UP ? 'model-up' : 'model-down';
 const modelUpProof = { model: null, reachable: false };
 
+// Do not call process.exit() while an outbound probe is still unwinding. On Windows,
+// aborting with an active undici/libuv handle can terminate with 0xC0000409 instead of
+// the deliberate posture-refusal code. Throw to the startup boundary, set exitCode,
+// and let the event loop close its handles normally.
+function refuseStartup(message) {
+  console.error(message);
+  const error = new Error(message);
+  error.gateStartupRefusal = true;
+  throw error;
+}
+
 // MODEL-DOWN is proven by absence: no provider key can be reached, so no call is made.
 function assertModelDown() {
   const present = PROVIDER_KEYS.filter(key => process.env[key]);
@@ -541,19 +628,16 @@ async function assertModelUp() {
   // provider is reachable however many keys are present. Serving that as "model-up"
   // would be the same lie in a new costume, so refuse the combination outright.
   if (COACH_SCRIPT) {
-    console.error('GATE_POSTURE_ERROR: ATLAS_GATE_MODEL_UP=1 with ATLAS_GATE_COACH_SCRIPT=1 — a scripted coach calls no provider and can never be a model-up run.');
-    process.exit(2);
+    refuseStartup('GATE_POSTURE_ERROR: ATLAS_GATE_MODEL_UP=1 with ATLAS_GATE_COACH_SCRIPT=1 — a scripted coach calls no provider and can never be a model-up run.');
   }
   const coach = require('../../../services/coach');
   if (!coach.isConfigured()) {
-    console.error('GATE_POSTURE_ERROR: ATLAS_GATE_MODEL_UP=1 but the coach reports unconfigured — a model-up run may not degrade into a model-down one.');
-    process.exit(2);
+    refuseStartup('GATE_POSTURE_ERROR: ATLAS_GATE_MODEL_UP=1 but the coach reports unconfigured — a model-up run may not degrade into a model-down one.');
   }
   try {
     await coach.pingGemini({ timeoutMs: 10000 });
   } catch (error) {
-    console.error(`GATE_POSTURE_ERROR: ATLAS_GATE_MODEL_UP=1 but the provider is not reachable, so model-up is unproven: ${error && error.message}`);
-    process.exit(2);
+    refuseStartup(`GATE_POSTURE_ERROR: ATLAS_GATE_MODEL_UP=1 but the provider is not reachable, so model-up is unproven: ${error && error.message}`);
   }
   modelUpProof.model = coach.coachModel();
   modelUpProof.reachable = true;
@@ -583,8 +667,7 @@ async function assertSandboxLive() {
   const record = (name, ok, detail) => {
     sandboxPreflight.checks.push({ name, ok: ok === true, detail: detail || null });
     if (ok !== true) {
-      console.error(`GATE_SANDBOX_ERROR: ${name} — ${detail || 'failed'}`);
-      process.exit(2);
+      refuseStartup(`GATE_SANDBOX_ERROR: ${name} — ${detail || 'failed'}`);
     }
   };
 
@@ -860,4 +943,9 @@ const stateServer = http.createServer((req, res) => {
       console.log(`GATE_PORT=${server.address().port}`);
     });
   });
-})();
+})().catch((error) => {
+  if (!error || error.gateStartupRefusal !== true) {
+    console.error(`GATE_STARTUP_ERROR: ${error && error.message ? error.message : String(error)}`);
+  }
+  process.exitCode = 2;
+});

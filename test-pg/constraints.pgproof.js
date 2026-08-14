@@ -401,31 +401,28 @@ test('\u00a73.6 write_receipts: the ambiguous state is structurally confined, an
   });
 });
 
-// ── §3.7 the catalog mirror and its freshness authority ────────────────────────
+// ── §3.7 the exercise catalog ─────────────────────────────────────────────────
+//
+// OWNER CORRECTION 2026-08-13: Supabase is the sole authority, so the generation
+// and freshness constraints that used to live here have no subject. The
+// replacement properties — the runtime cannot mutate the catalog, maintenance is
+// transactional, and no freshness table survives — are proven in
+// test-pg/exerciseCatalog.pgproof.js. What remains a CONSTRAINT question is the
+// catalog row's own shape.
 
-test('§3.7 catalog: sync status is constrained and a verified generation must carry its facts', async () => {
+test('§3.7 catalog: a row must carry its identity and its display name', async () => {
   await withOwner(async (client) => {
     await expectRejected(client,
-      `INSERT INTO atlas.exercise_catalog_sync (status) VALUES ('maybe')`,
-      [], { sqlstate: SQLSTATE.CHECK_VIOLATION });
-    // A generation may not claim verification without verified_at and content_hash:
-    // currency and version identity are exactly what the Save path reads.
-    await expectRejected(client,
-      `INSERT INTO atlas.exercise_catalog_sync (status, verified_at) VALUES ('verified', now())`,
-      [], { sqlstate: SQLSTATE.CHECK_VIOLATION });
-  });
-});
-
-test('§3.7 catalog mirror: a row must name the generation that wrote it', async () => {
-  await withOwner(async (client) => {
-    await expectRejected(client,
-      `INSERT INTO atlas.exercise_catalog_mirror (exercise, display_exercise, sync_id)
-       VALUES ('back squat', 'Back Squat', 999999)`,
-      [], { sqlstate: SQLSTATE.FOREIGN_KEY_VIOLATION });
-    await expectRejected(client,
-      `INSERT INTO atlas.exercise_catalog_mirror (exercise, display_exercise)
-       VALUES ('back squat', 'Back Squat')`,
+      `INSERT INTO atlas.exercise_catalog (exercise) VALUES ('back squat')`,
       [], { sqlstate: SQLSTATE.NOT_NULL_VIOLATION });
+    // `exercise` is the lower-cased lookup key AND the primary key, so one
+    // exercise cannot be represented twice.
+    await client.query(
+      `INSERT INTO atlas.exercise_catalog (exercise, display_exercise) VALUES ('back squat', 'Back Squat')`
+    );
+    await expectRejected(client,
+      `INSERT INTO atlas.exercise_catalog (exercise, display_exercise) VALUES ('back squat', 'Back Squat Again')`,
+      [], { sqlstate: SQLSTATE.UNIQUE_VIOLATION });
   });
 });
 
@@ -594,19 +591,23 @@ test('§3.10 atlas.write_freeze exists, created by S3 — its constraints are pr
   });
 });
 
-test('exactly the twelve declared tables exist, and no more', async () => {
+test('exactly the fifteen declared tables exist, and no more', async () => {
   await withOwner(async (client) => {
     const { rows } = await client.query(
       `SELECT tablename FROM pg_tables WHERE schemaname = 'atlas' ORDER BY tablename`
     );
-    // Eleven from S2 (§3.1–§3.9) plus write_freeze from S3 (§3.10). An UNREVIEWED
-    // table joining the schema is what this list exists to catch, so it is stated
-    // in full rather than counted.
+    // The S2/S3 authority tables, the S4 catalog replacement, and the four S4
+    // coaching/workout-input tables. An
+    // UNREVIEWED table joining the schema is what this list exists to catch, so it
+    // is stated in full rather than counted.
     assert.deepEqual(rows.map((r) => r.tablename), [
-      'exercise_catalog_mirror',
-      'exercise_catalog_sync',
+      'coaching_notes',
+      'constraints',
+      'deload_state',
+      'exercise_catalog',
       'logged_sets',
       'migration_divergences',
+      'modality_log',
       'session_effort',
       'session_plan_events',
       'session_plan_set_recommendations',

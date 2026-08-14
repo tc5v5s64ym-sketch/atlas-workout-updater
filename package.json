@@ -1,7 +1,7 @@
 {
   "name": "atlas-workout-updater",
   "version": "1.0.0",
-  "description": "AI-assisted workout logging and coaching app: NL parsing, deterministic coaching engine, approve-before-write Google Sheets record",
+  "description": "AI-assisted workout logging and coaching app with a preview-approve-write Supabase workout authority and optional asynchronous Sheets exports",
   "private": true,
   "main": "index.js",
   "scripts": {
@@ -17,11 +17,9 @@
     "atlas:divergence": "node scripts/atlas-divergence.js",
     "atlas:turn-write-artifact": "node scripts/atlas-turn-write-artifact.js",
     "atlas:corpus-baseline": "node scripts/corpus-baseline-runner.js",
-    "atlas:sweep": "node scripts/atlas-migration-sweep.js",
-    "atlas:repair": "node scripts/atlas-migration-repair.js",
-    "atlas:catalog-sync": "node scripts/atlas-catalog-sync.js",
-    "atlas:backfill": "node scripts/atlas-migration-backfill.js",
-    "atlas:readiness": "node scripts/atlas-migration-readiness.js",
+    "atlas:catalog": "node scripts/atlas-catalog-admin.js",
+    "atlas:export-mirror": "node scripts/atlas-export-mirror.js",
+    "atlas:coaching-inputs-transition": "node scripts/atlas-coaching-inputs-transition.js",
     "supabase:migrate": "node scripts/apply-supabase-migrations.js",
     "atlas:rehearsal-session": "node scripts/atlas-rehearsal-session.js",
     "check:wiring": "node scripts/check-wired-modules.js",

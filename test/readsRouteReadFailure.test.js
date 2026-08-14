@@ -5,13 +5,10 @@
 // The owner hit a hard 500 on `GET /api/summary/weekly`. Every handler in this
 // read-only router answered ANY thrown error with 500 + the raw message. A 500 says
 // "this server is broken, there is nothing to try again", which is right for a bug
-// in this code and wrong for Google rate-limiting us — and the client had no way to
-// tell those apart.
-//
-// The read layer now retries the transient case in-request (sheets.js
-// `readWithRetry`). Arriving at the handler's catch with a transient error therefore
-// means the BOUNDED retry was exhausted, so this is the fail-closed terminal state:
-// 503 + `retryable:true`. A permanent failure still answers 500, because it is one.
+// in this code and wrong for a temporary authority outage — and the client had no
+// way to tell those apart. The S4 router now classifies failures from its sole
+// Supabase authority: temporary gateway/connection failures answer 503 with
+// `retryable:true`; permanent permission, request and data errors answer 500.
 //
 // These tests mount the REAL router on a real Express app and drive real HTTP, so
 // they prove the wiring, not just the helper. The router is read-only: nothing here
@@ -21,10 +18,6 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
 
-// The REAL classifier, captured before the fake replaces the module — the fixture
-// must never carry a second copy of it.
-const { classifySheetsReadError } = require('../sheets');
-
 const state = { recentRowsError: null, sheetRowsError: null, catalogError: null };
 
 const fakeSheets = {
@@ -33,13 +26,30 @@ const fakeSheets = {
   getRecentRows: async () => { if (state.recentRowsError) throw state.recentRowsError; return []; },
   // services/trainingStore.js destructures this from the module at load, so the
   // routes backed by the store fail through the same stub as the direct readers.
-  getSheetRows: async () => { if (state.sheetRowsError) throw state.sheetRowsError; return []; },
+  // ONE READ, NOT TWO. Under Sheets the migrated routes reached the log either
+  // through `getRecentRows` (bounded) or `getSheetRows` (whole tab), and this suite
+  // armed them separately. The S4 cutover collapsed both into one authority read, so
+  // either armed error must reach it — otherwise a test that arms `recentRowsError`
+  // would silently observe a healthy read and assert nothing.
+  getSheetRows: async () => {
+    if (state.sheetRowsError) throw state.sheetRowsError;
+    if (state.recentRowsError) throw state.recentRowsError;
+    return [];
+  },
   getExerciseCatalog: async () => { if (state.catalogError) throw state.catalogError; return []; },
-  classifySheetsReadError,
 };
 const sheetsPath = require.resolve('../sheets');
 require.cache[sheetsPath] = { id: sheetsPath, filename: sheetsPath, loaded: true, exports: fakeSheets };
 
+// The exercise catalog reads Supabase (OWNER CORRECTION 2026-08-13). Stubbed here so
+// the suite never opens a database connection; it delegates to the sheets fixture above.
+require('./helpers/stubExerciseCatalog').installExerciseCatalogStub();
+// The workout authority is Supabase since the S4 cutover, so stubbing `sheets.js`
+// no longer controls the logged sets, the Effort row, the plan ledgers or the write
+// receipts. `sheetsFallback` seeds this suite's existing fixture into the double, so
+// no test's data changes — only where the route reads it from.
+const { installWorkoutAuthorityStub, resetWorkoutAuthorityStub } = require('./helpers/stubWorkoutAuthority');
+installWorkoutAuthorityStub({ sheetsFallback: true });
 const registerReadRoutes = require('../routes/reads');
 
 const gaxios = (status, message) => Object.assign(new Error(message), {
@@ -66,9 +76,17 @@ test.beforeEach(() => {
   state.recentRowsError = null;
   state.sheetRowsError = null;
   state.catalogError = null;
+  // The double seeds itself from the sheets fixture on FIRST access, so it has to be
+  // re-armed per test — otherwise one test's successful read would outlive it and the
+  // next test's armed failure would never be reached.
+  resetWorkoutAuthorityStub();
 });
 
 async function get(path) {
+  // Re-armed per REQUEST, not per test: two of these tests change the armed failure
+  // between requests, and the double seeds itself from the fixture on first access.
+  // This read-only suite writes nothing, so discarding the seed costs nothing.
+  resetWorkoutAuthorityStub();
   const res = await fetch(`${base}${path}`);
   return { status: res.status, body: await res.json() };
 }
@@ -87,21 +105,18 @@ test('GET /api/summary/weekly answers 503 + retryable when the upstream read is 
 });
 
 test('GET /api/summary/weekly still answers a hard 500 when the failure is PERMANENT', async () => {
-  state.recentRowsError = gaxios(404, 'Requested entity was not found.');
+  state.recentRowsError = Object.assign(new Error('relation does not exist'), { code: '42P01' });
   const { status, body } = await get('/api/summary/weekly');
-  assert.equal(status, 500, 'a wrong spreadsheet id is a real server-side fault, not a retry');
+  assert.equal(status, 500, 'a missing database relation is a real server-side fault, not a retry');
   assert.equal(body.status, 'error');
-  assert.equal(body.details, 'Requested entity was not found.');
+  assert.equal(body.details, 'relation does not exist');
 });
 
-test('a rate-limit rejection is retryable; a revoked service account is not — both are 403 upstream', async () => {
-  state.recentRowsError = Object.assign(new Error('Quota exceeded'), {
-    status: 403,
-    response: { status: 403, data: { error: { status: 'RESOURCE_EXHAUSTED', message: 'Quota exceeded' } } },
-  });
+test('a PostgreSQL connection failure is retryable; a permission failure is not', async () => {
+  state.recentRowsError = Object.assign(new Error('connection failure'), { code: '08006' });
   assert.equal((await get('/api/summary/weekly')).status, 503);
 
-  state.recentRowsError = gaxios(403, 'The caller does not have permission');
+  state.recentRowsError = Object.assign(new Error('insufficient privilege'), { code: '42501' });
   assert.equal((await get('/api/summary/weekly')).status, 500);
 });
 
@@ -151,10 +166,10 @@ test('a bad request argument is still a 400, untouched by the read-failure lane'
   assert.equal((await get('/api/report/weekly?days=99')).status, 400);
 });
 
-// A missing tab is a durable schema fact for the owner to fix, not an outage: it
-// must not tell the client "try again in a moment" forever.
-test('a MISSING TAB is a 500, never a retryable 503', async () => {
-  state.recentRowsError = new Error('Unable to parse range: Log_Cleaned!A:Z');
+// A missing relation is a durable schema fact for the owner to fix, not an outage:
+// it must not tell the client "try again in a moment" forever.
+test('an undefined table is a 500, never a retryable 503', async () => {
+  state.recentRowsError = Object.assign(new Error('relation does not exist'), { code: '42P01' });
   const { status } = await get('/api/summary/weekly');
   assert.equal(status, 500);
 });

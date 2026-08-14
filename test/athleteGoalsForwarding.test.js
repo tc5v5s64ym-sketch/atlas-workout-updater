@@ -114,11 +114,17 @@ test('read budget: athleteGoals is pure — no Sheets, no network, no clock', ()
   assert.ok(!/new Date\(\)|Date\.now\(\)/.test(goalsSrc), 'must not read the clock');
 });
 
-test('read budget: the chat route derives athlete_goals from the ALREADY-FETCHED Constraints rows (zero new read)', () => {
-  // The route reads Constraints exactly once (the pre-existing constraints fetch),
-  // and goals are parsed from those same raw rows — never a second Sheets call.
-  const constraintReads = coachOpsSrc.match(/getSheetRows\('Constraints'\)/g) || [];
-  assert.equal(constraintReads.length, 1, 'exactly one Constraints read — goals add none');
+test('read budget: the chat route derives athlete_goals from the ALREADY-FETCHED constraint rows (zero new read)', () => {
+  // The route reads the constraint set exactly once, and goals are parsed from those
+  // same raw rows — never a second read.
+  //
+  // The read moved to Supabase (OWNER CORRECTION 2026-08-13): typed constraints are a
+  // prescription input, so they may not be a synchronous Google Sheets dependency. The
+  // budget rule is unchanged and is what this still pins — one read, not two.
+  assert.ok(!/getSheetRows\('Constraints'\)/.test(coachOpsSrc),
+    'the constraint read must not go to Google Sheets');
+  const constraintReads = coachOpsSrc.match(/coachingInputs\.constraintRows\(\)/g) || [];
+  assert.equal(constraintReads.length, 1, 'exactly one constraint read — goals add none');
   assert.match(coachOpsSrc, /athlete_goals:\s*readAthleteGoals\(modeOpts\.constraintRows\)/,
     'goals must derive from the raw constraintRows the route already fetched');
   assert.match(coachOpsSrc, /buildChatContext\([^)]*\{\s*discouraged,\s*constraintRows\s*\}\)/,

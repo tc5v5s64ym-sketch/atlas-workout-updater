@@ -95,10 +95,6 @@ test.beforeEach(() => {
   valuesGetPlan = [];
   spreadsheetsGetPlan = [];
   valuesBatchGetPlan = [];
-  // getExerciseCatalog now holds a bounded cross-request cache. Without this reset a
-  // cached catalog from an earlier test would serve the next one WITHOUT a read, and
-  // the retry assertions below would silently stop exercising the read path.
-  sheets._resetExerciseCatalogCache();
 });
 
 // Realistic error shapes. gaxios (googleapis) puts the HTTP status on `.status` and
@@ -340,9 +336,11 @@ test('EVERY read helper retries a transient failure', async () => {
     ['getRecentRows', () => sheets.getRecentRows('Tab'), 'valuesGet'],
     ['getSheetRows', () => sheets.getSheetRows('Tab'), 'valuesGet'],
     ['getHeaderRow', () => sheets.getHeaderRow('Tab'), 'valuesGet'],
-    ['getExerciseCatalog', () => sheets.getExerciseCatalog(), 'valuesGet'],
-    ['getEffortSessionIds', () => sheets.getEffortSessionIds(), 'valuesGet'],
-    ['getLogCompositeKeys', () => sheets.getLogCompositeKeys(), 'valuesGet'],
+    // `getEffortSessionIds` and `getLogCompositeKeys` are gone (design §5.4). They
+    // pulled whole COLUMNS of Effort and Log_Cleaned so the Save path could answer
+    // "which session ids are taken" and "which set identities does this session
+    // already hold" — questions a tab cannot be asked directly. Both are indexed
+    // Supabase queries now, so there is no Sheets read left to make robust.
     ['getSpreadsheetTabs', () => sheets.getSpreadsheetTabs(), 'spreadsheetsGet'],
     // The batch read is issued by the first read inside a request that declared ranges.
     // It reaches the same API through the same wrapper, so a transient failure must cost
@@ -361,7 +359,6 @@ test('EVERY read helper retries a transient failure', async () => {
     valuesGetPlan = [];
     spreadsheetsGetPlan = [];
     valuesBatchGetPlan = [];
-    sheets._resetExerciseCatalogCache();
     if (counter === 'valuesGet') valuesGetPlan = [gaxios(503, 'Backend Error'), { data: { values: [] } }];
     else if (counter === 'spreadsheetsGet') spreadsheetsGetPlan = [gaxios(503, 'Backend Error'), { data: { sheets: [] } }];
     else valuesBatchGetPlan = [gaxios(503, 'Backend Error'),
@@ -385,16 +382,27 @@ test('EVERY read helper retries a transient failure', async () => {
 test('the exported read surface is exactly the set proven to retry', () => {
   const READ_HELPERS = [
     'readRange',
-    'getExerciseCatalog',
-    'getEffortSessionIds',
-    'getLogCompositeKeys',
     'getRecentRows',
     'getSheetRows',
     'getHeaderRow',
     'getSpreadsheetTabs',
   ];
   const NON_READ_EXPORTS = [
-    'appendRows', 'updateColumnCells', 'deleteRowsByRange', 'ensureSheetTab',
+    'appendRows', 'updateColumnCells', 'ensureSheetTab',
+    // THE MIRROR EXPORT PRIMITIVES (design §5.4 mechanism 2). Both are write-path
+    // helpers, and both are deliberately outside the read-retry contract.
+    //
+    // `updateRangeValues` writes; it performs no read at all.
+    //
+    // `ensureGridRows` reads sheet metadata, but only as the PROBE that decides
+    // whether to run `appendDimension` — the same shape as `ensureSheetTab` above,
+    // and excluded for the same reason: retrying the probe changes WHEN a grid
+    // mutation happens, not merely how a read is reported.
+    //
+    // Neither is reachable from a workout request. Their only consumer is the
+    // asynchronous export worker, whose failures are classified and retried by its
+    // own declared backoff policy rather than by `readWithRetry`.
+    'updateRangeValues', 'ensureGridRows',
     // Request-scoped read batching. None of these reaches the network: the first
     // establishes the per-request context, the second drops cached values for a tab
     // after a write, and the last three are the catalog cache's constant and its
@@ -405,7 +413,6 @@ test('the exported read surface is exactly the set proven to retry', () => {
     // `currentRequestIdentity` only reads the async-context store — read ACCOUNTING, never a
     // read: it names the HTTP request a read or write belongs to, and reaches no network.
     'runWithReadContext', 'declareRequestRanges', 'invalidateTabCache', 'currentRequestIdentity',
-    'CATALOG_CACHE_TTL_MS', '_resetExerciseCatalogCache', '_exerciseCatalogCacheStats',
     'validateConfig', 'getSafeSpreadsheetConfig',
     'isTransientAppendError', 'retryWithBackoff',
     'classifySheetsReadError', 'isTransientReadError', 'confirmTabMissing', 'readWithRetry',

@@ -13,7 +13,10 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { resetIdempotencyStore } = require('../services/idempotency');
+const {
+  resetWorkoutAuthorityStub: resetIdempotencyStore, workoutAuthorityStore,
+  failWorkoutAuthorityWrites,
+} = require('./helpers/stubWorkoutAuthority');
 const { logCleanedColumns, effortColumns, sessionPlanSetsColumns, sessionPlansColumns } = require('../config/columns');
 
 process.env.ATLAS_API_KEY = 'test-api-key';
@@ -33,9 +36,32 @@ process.env.ATLAS_SESSION_PLANS_WRITE = '1';
 
 const SEAL_IDX = sessionPlanSetsColumns.indexOf('closeout_write_id');
 
+// ── `state.appends` IS A VIEW OVER THE AUTHORITY NOW ─────────────────────────
+//
+// It used to be the list of `appendRows` calls the Sheets fake received, and every
+// assertion below reads it as "what this request wrote, and where". After the S4
+// cutover the logged sets, the Effort row and both plan ledgers land in Supabase,
+// so the same question is answered by the authority double — and the view keeps the
+// `{ tab, rows }` shape so the assertions state the same thing they always did.
+//
+// Any Google Sheets append that DOES still happen is included, so a write that
+// silently went back to a tab would show up here rather than disappear.
+const sheetsAppends = [];
+function authorityAppends() {
+  const calls = workoutAuthorityStore().calls;
+  const out = [];
+  for (const save of calls.saves) {
+    if (save.logCells.length) out.push({ tab: 'Log_Cleaned', rows: save.logCells });
+    if (save.effortCells) out.push({ tab: 'Effort', rows: [save.effortCells] });
+  }
+  for (const rows of calls.planEventAppends) out.push({ tab: 'Session_Plans', rows });
+  for (const rows of calls.planSetAppends) out.push({ tab: 'Session_Plan_Sets', rows });
+  return out;
+}
+
 const state = {
   planSetRows: [],       // Session_Plan_Sets data rows (header stripped)
-  appends: [],           // every appendRows call
+  get appends() { return [...sheetsAppends, ...authorityAppends()]; },
   updates: [],           // every updateColumnCells call
   updateCellsResult: null, // force a seal-proof mismatch when set
   failEffortAppend: false,
@@ -51,7 +77,7 @@ const exerciseCatalogRows = [
 const fakeSheets = {
   appendRows: async (tab, rows) => {
     if (tab === 'Effort' && state.failEffortAppend) throw new Error('Simulated Effort append failure');
-    state.appends.push({ tab, rows: rows.map(r => [...r]) });
+    sheetsAppends.push({ tab, rows: rows.map(r => [...r]) });
     return { data: { updates: { updatedRange: `${tab}!A100:L${99 + rows.length}`, updatedRows: rows.length } } };
   },
   readRange: async (range) => {
@@ -110,6 +136,19 @@ const sheetsPath = require.resolve('../sheets');
 require.cache[sheetsPath] = { id: sheetsPath, filename: sheetsPath, loaded: true, exports: fakeSheets };
 
 const L = require('../services/sessionPlanLedger');
+// The exercise catalog reads Supabase (OWNER CORRECTION 2026-08-13). Stubbed here so
+// the suite never opens a database connection; it delegates to the sheets fixture above.
+require('./helpers/stubExerciseCatalog').installExerciseCatalogStub();
+
+// The workout authority is Supabase since the S4 cutover, so stubbing `sheets.js`
+
+// no longer controls the logged sets, the Effort row, the plan ledgers or the write
+
+// receipts. `sheetsFallback` seeds this suite's existing fixture into the double, so
+
+// no test's data changes — only where the route reads it from.
+
+require('./helpers/stubWorkoutAuthority').installWorkoutAuthorityStub({ sheetsFallback: true });
 const { app } = require('../index');
 
 const SESSION_ID = 'CO-LIVE-1';
@@ -132,7 +171,7 @@ function seedDipsLedger() {
 
 function reset() {
   resetIdempotencyStore();
-  state.appends = [];
+  sheetsAppends.length = 0;
   state.updates = [];
   state.updateCellsResult = null;
   state.failEffortAppend = false;
@@ -226,11 +265,18 @@ test('APPROVED closeout: Log rows append verbatim AND the ledger seals under the
   assert.equal(d.ledger_seal.sealed_ok, true);
   assert.equal(d.ledger_seal.sealed, 5);
   assert.equal(d.closeout_fully_verified, true);
-  assert.equal(state.updates.length, 1);
-  assert.ok(state.updates[0].cells.every(c => c.value === 'w-co-live-1'));
-  assert.ok(state.planSetRows.every(r => r[SEAL_IDX] === 'w-co-live-1'), 'every ledger row now carries the closeout_write_id');
+  // THE SEAL IS A PREDICATE, NOT A SET OF CELL WRITES. It used to be a positional
+  // `updateColumnCells` batch, so the proof was "one bounded column update whose
+  // every cell carries the write_id". The ledger is a Supabase table now and the
+  // seal is one statement, so the same fact is read off the rows.
+  assert.equal(state.updates.length, 0, 'no Sheets cell update — the seal is a statement');
+  assert.equal(workoutAuthorityStore().calls.seals.length, 1, 'exactly one seal');
+  assert.equal(workoutAuthorityStore().calls.seals[0].closeoutWriteId, 'w-co-live-1');
+  const sealedRows = workoutAuthorityStore().planSets;
+  assert.ok(sealedRows.length > 0 && sealedRows.every(r => r[SEAL_IDX] === 'w-co-live-1'),
+    'every ledger row now carries the closeout_write_id');
   // The ledger CONTENT is untouched — the seal is a bind, never a rewrite.
-  assert.equal(state.planSetRows[0][sessionPlanSetsColumns.indexOf('target_weight')], '65', 'v1 target still 65 — the performed 60 never rewrote the plan');
+  assert.equal(sealedRows[0][sessionPlanSetsColumns.indexOf('target_weight')], '65', 'v1 target still 65 — the performed 60 never rewrote the plan');
 });
 
 test('same-write_id retry replays idempotently: no second append, no second seal, original response echoed', async () => {
@@ -250,7 +296,10 @@ test('same-write_id retry replays idempotently: no second append, no second seal
 
 test('seal failure after committed appends: honest partial — closeout_fully_verified false, write still reported truthfully', async () => {
   reset();
-  state.updateCellsResult = { totalUpdatedCells: 2 }; // server claims 2 of 5 → proof mismatch
+  // The authority reports 2 rows stamped where the seal decided on 5 → proof
+  // mismatch. The proof is unchanged in kind; only the unit moved, from updated
+  // cells to stamped rows.
+  workoutAuthorityStore().sealCountOverride = 2;
   const { response, body } = await post('/api/log-workout', closeoutPayload({ write_id: 'w-co-live-3' }));
   assert.equal(response.status, 200);
   const d = body.data;
@@ -263,12 +312,15 @@ test('seal failure after committed appends: honest partial — closeout_fully_ve
 
 test('a fresh-write_id retry HEALS an unsealed closeout through the all-duplicate lane — zero re-appends', async () => {
   reset();
-  state.updateCellsResult = { totalUpdatedCells: 2 };
+  workoutAuthorityStore().sealCountOverride = 2;
   await post('/api/log-workout', closeoutPayload({ write_id: 'w-co-live-4' }));
   // The mismatch path stamped cells in the fake regardless of the claimed count —
   // reset the stamps so the heal genuinely has blank cells to stamp.
-  for (const r of state.planSetRows) r[SEAL_IDX] = '';
-  state.updateCellsResult = null;
+  // The override made the seal REPORT 2, but it really stamped every row. Blank the
+  // stamps so the heal genuinely has unbound rows to bind, which is the state a
+  // failed seal actually leaves behind.
+  for (const r of workoutAuthorityStore().planSets) r[SEAL_IDX] = '';
+  workoutAuthorityStore().sealCountOverride = null;
   // The rows are on the sheet now; the retry sees them as duplicates.
   state.logCompositeKeys = DIP_ACTUALS.map(a => `${SESSION_ID.toLowerCase()}||weighted dip||${a.set_number}`);
   const appendsBefore = state.appends.length;
@@ -280,13 +332,24 @@ test('a fresh-write_id retry HEALS an unsealed closeout through the all-duplicat
   assert.equal(d.ledger_seal.sealed, 5);
   assert.equal(d.closeout_fully_verified, true);
   assert.equal(state.appends.length, appendsBefore, 'the heal appended NOTHING');
-  assert.ok(state.planSetRows.every(r => r[SEAL_IDX] === 'w-co-live-4-retry'));
+  assert.ok(workoutAuthorityStore().planSets.every(r => r[SEAL_IDX] === 'w-co-live-4-retry'));
 });
 
-test('partial append failure (Effort fails after Log): fail-closed 500, no seal attempted; the ledger stays unbound for the heal', async () => {
+// ── THE PARTIAL WRITE IS UNREPRESENTABLE NOW, AND THAT IS THE POINT ──────────
+//
+// This test drove the worst outcome the two-append Save could produce: the Log rows
+// committed to Google Sheets, the Effort append then failed, and the response had to
+// report an honest PARTIAL — a workout half on the sheet, with the ledger left
+// unbound so a later retry could heal it.
+//
+// The S4 cutover writes both in ONE Supabase transaction (§6.3 P12), so that state
+// cannot exist: the Save commits whole or it rolls back whole. The test therefore
+// asserts the stronger property that replaced it — a failed write leaves NOTHING,
+// and the ledger is still unbound for the retry.
+test('a failed Save leaves NOTHING and never seals — the partial is unrepresentable', async () => {
   reset();
-  state.failEffortAppend = true;
-  const { response, body } = await post('/api/log-workout', closeoutPayload({
+  failWorkoutAuthorityWrites('Simulated Save failure');
+  const { response } = await post('/api/log-workout', closeoutPayload({
     write_id: 'w-co-live-5',
     effort_row: {
       date: '2026-07-18', session_id: SESSION_ID, duration: '00:40:00',
@@ -294,10 +357,10 @@ test('partial append failure (Effort fails after Log): fail-closed 500, no seal 
     }
   }));
   assert.equal(response.status, 500);
-  assert.equal(body.details.sheet_write, 'partial');
-  assert.equal(body.details.log_rows_written, 3, 'the Log append had already committed');
-  assert.equal(state.updates.length, 0, 'no seal on a failed closeout — nothing claims verification');
-  assert.ok(state.planSetRows.every(r => r[SEAL_IDX] === ''), 'the ledger stays unbound until a successful closeout');
+  assert.equal(workoutAuthorityStore().loggedSets.length, 0, 'no logged set survived the rollback');
+  assert.equal(workoutAuthorityStore().effort.length, 0, 'and no Effort row either');
+  assert.equal(workoutAuthorityStore().calls.seals.length, 0, 'no seal on a failed closeout — nothing claims verification');
+  assert.equal(state.updates.length, 0, 'and no Sheets cell update anywhere');
 });
 
 test('malformed ledger chain: the summary flags it and the live seal fails closed — never a partial stamp', async () => {
@@ -387,12 +450,15 @@ test('the fresh-write_id heal lane re-attempts BOTH the event (idempotent) and t
   // First approval: the event captures, but the SEAL fails its cell proof — the
   // honest partial. (The fake stamps regardless of the claimed count, so blank
   // the stamps to model rows the failed seal never actually bound.)
-  state.updateCellsResult = { totalUpdatedCells: 2 };
+  workoutAuthorityStore().sealCountOverride = 2;
   const first = await post('/api/log-workout', closeoutPayload({ write_id: 'w-co-ev-3', closeout_context: PLANNED_CONTEXT }));
   assert.equal(first.body.data.session_plans_closeout.captured, true, 'the event recorded on the first approval');
   assert.equal(first.body.data.closeout_fully_verified, false, 'the failed seal keeps the closeout unverified');
-  for (const r of state.planSetRows) r[SEAL_IDX] = '';
-  state.updateCellsResult = null;
+  // The override made the seal REPORT 2, but it really stamped every row. Blank the
+  // stamps so the heal genuinely has unbound rows to bind, which is the state a
+  // failed seal actually leaves behind.
+  for (const r of workoutAuthorityStore().planSets) r[SEAL_IDX] = '';
+  workoutAuthorityStore().sealCountOverride = null;
   const planAppendsAfterFirst = state.appends.filter(a => a.tab === 'Session_Plans').length;
   // The rows are on the sheet; the fresh-write_id retry heals through the
   // all-duplicate lane: zero re-appends anywhere, the event folds idempotently,

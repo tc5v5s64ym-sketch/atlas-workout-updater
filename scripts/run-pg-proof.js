@@ -267,7 +267,6 @@ async function main() {
     env.ATLAS_SUPABASE_READONLY_URL = credentials.atlas_readonly;
     env.ATLAS_SUPABASE_MIGRATE_URL = credentials.atlas_migrate;
     env.ATLAS_SUPABASE_REBUILD_URL = credentials.atlas_rebuild;
-    env.ATLAS_SUPABASE_SHADOW_WRITE = '1';
 
     // Enumerated explicitly rather than handed a directory: `node --test <dir>`
     // resolves the argument as a module path, and a glob would depend on a shell.

@@ -421,8 +421,21 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
     assert.equal(artifact.status, 'partial');
   });
 
-  it('requires append-range evidence for a successful live log-workout row count', () => {
-    const countWithoutRange = proof({
+  // ── THE COUNT IS THE EVIDENCE NOW, NOT A RANGE ─────────────────────────────
+  //
+  // This asserted the opposite: a live `/api/log-workout` success carrying a row
+  // count but NO append range was `insufficient`, because the range was Google's own
+  // acknowledgement of where the rows landed and a bare count could have been
+  // asserted by anything.
+  //
+  // The S4 cutover writes the Save in one Supabase transaction, so no range exists —
+  // and a record carrying one would be describing a Google Sheets append that never
+  // happened. The count now comes FROM the transaction that committed it, and the
+  // producer tuple it travels with (`test_mode:false`, `duplicate_write:false`,
+  // `idempotency_status:'completed'`) is what keeps it substantiated rather than
+  // asserted. That tuple is still required, which the test below holds.
+  it('accepts a successful live log-workout row count with no append range', () => {
+    const countOnly = proof({
       proof: {
         test_mode: false,
         sheet_write: 'success',
@@ -434,14 +447,33 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
     });
     const artifact = buildTurnWriteArtifact([
       line(INTERACTION_TRACE_MARKER, trace()),
-      line(TURN_WRITE_PROOF_MARKER, countWithoutRange),
+      line(TURN_WRITE_PROOF_MARKER, countOnly),
+    ].join('\n'));
+    const write = artifact.turns[0].writes[0];
+
+    assert.equal(write.proof_state, 'write_confirmed');
+    assert.equal(write.reviewable, true);
+    assert.equal(artifact.status, 'complete');
+  });
+
+  it('still refuses a success whose idempotency tuple is incomplete', () => {
+    const noTuple = proof({
+      proof: {
+        test_mode: false,
+        sheet_write: 'success',
+        log_rows_written: 1,
+        effort_rows_written: 0,
+      },
+    });
+    const artifact = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, noTuple),
     ].join('\n'));
     const write = artifact.turns[0].writes[0];
 
     assert.equal(write.proof_state, 'insufficient');
     assert.equal(write.reviewable, false);
     assert.ok(write.issues.includes('write_proof_insufficient'));
-    assert.equal(artifact.status, 'partial');
   });
 
   it('does not treat effort formatting bookkeeping as live append proof', () => {
@@ -507,55 +539,20 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
     }
   });
 
-  it('binds live Log and Effort counts to the correct tab, columns, and row span', () => {
-    const invalidRanges = [
-      {
-        logAppendedRange: 'Log_Cleaned!A2:L2',
-        log_rows_written: 3,
-        effort_rows_written: 0,
-      },
-      {
-        logAppendedRange: 'Effort!A2:L4',
-        log_rows_written: 3,
-        effort_rows_written: 0,
-      },
-      {
-        log_rows_written: 0,
-        effortAppendedRange: 'Log_Cleaned!A2:K2',
-        effort_rows_written: 1,
-      },
-      {
-        log_rows_written: 0,
-        effortAppendedRange: 'Effort!A2:K3',
-        effort_rows_written: 1,
-      },
-    ];
-
-    for (const invalidRange of invalidRanges) {
-      const artifact = buildTurnWriteArtifact([
-        line(INTERACTION_TRACE_MARKER, trace()),
-        line(TURN_WRITE_PROOF_MARKER, proof({
-          proof: {
-            test_mode: false,
-            sheet_write: 'success',
-            duplicate_write: false,
-            idempotency_status: 'completed',
-            ...invalidRange,
-          },
-        })),
-      ].join('\n'));
-      const write = artifact.turns[0].writes[0];
-
-      assert.equal(write.proof_state, 'insufficient', JSON.stringify(invalidRange));
-      assert.equal(write.reviewable, false, JSON.stringify(invalidRange));
-      assert.equal(artifact.status, 'partial', JSON.stringify(invalidRange));
-    }
-  });
-
-  it('accepts the canonical nine-column Effort append range and rejects a wider one', () => {
-    // config/columns.js effortColumns has nine values, so a real one-row Effort append
-    // reports Effort!A<n>:I<n>. A noncanonical wider span is not that write.
-    const canonical = buildTurnWriteArtifact([
+  // ── THREE RANGE-BINDING TESTS RETIRED WITH THE RANGE ──────────────────────
+  //
+  // They pinned W3's evidence to Google's own `updatedRange`: the exact tab, the
+  // exact contract column span (Log_Cleaned -> L, Effort -> I), a row span equal to
+  // the claimed count, and each tab's count backed by its OWN range so one could
+  // never substantiate the other.
+  //
+  // The S4 cutover writes the Save in one Supabase transaction. No range is produced,
+  // and a record carrying one would describe a Google Sheets append that did not
+  // happen — so binding to it would fail every genuine write. The evidence is the
+  // committed count plus the producer tuple it travels with, which the two tests
+  // below hold: a complete tuple confirms, and a truncated one does not.
+  it('confirms a live write from its committed counts alone', () => {
+    const bothCounts = buildTurnWriteArtifact([
       line(INTERACTION_TRACE_MARKER, trace()),
       line(TURN_WRITE_PROOF_MARKER, proof({
         proof: {
@@ -563,99 +560,36 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
           sheet_write: 'success',
           duplicate_write: false,
           idempotency_status: 'completed',
-          log_rows_written: 0,
-          effortAppendedRange: 'Effort!A100:I100',
-          effort_rows_written: 1,
-        },
-      })),
-    ].join('\n'));
-    const canonicalWrite = canonical.turns[0].writes[0];
-
-    assert.equal(canonicalWrite.proof_state, 'write_confirmed');
-    assert.equal(canonicalWrite.reviewable, true);
-    assert.equal(canonical.status, 'complete');
-
-    const wider = buildTurnWriteArtifact([
-      line(INTERACTION_TRACE_MARKER, trace()),
-      line(TURN_WRITE_PROOF_MARKER, proof({
-        proof: {
-          test_mode: false,
-          sheet_write: 'success',
-          duplicate_write: false,
-          idempotency_status: 'completed',
-          log_rows_written: 0,
-          effortAppendedRange: 'Effort!A100:K100',
-          effort_rows_written: 1,
-        },
-      })),
-    ].join('\n'));
-    const widerWrite = wider.turns[0].writes[0];
-
-    assert.equal(widerWrite.proof_state, 'insufficient');
-    assert.equal(widerWrite.reviewable, false);
-    assert.equal(wider.status, 'partial');
-  });
-
-  it('requires every positive tab count to carry its own matching range proof', () => {
-    // One tab being range-backed must never substantiate the other tab's positive count.
-    const mixed = [
-      {
-        logAppendedRange: 'Log_Cleaned!A2:L3',
-        log_rows_written: 2,
-        effortAppendedRange: 'Log_Cleaned!A100:I100',
-        effort_rows_written: 1,
-      },
-      {
-        logAppendedRange: 'Log_Cleaned!A2:L3',
-        log_rows_written: 2,
-        effort_rows_written: 1,
-      },
-      {
-        log_rows_written: 2,
-        effortAppendedRange: 'Effort!A100:I100',
-        effort_rows_written: 1,
-      },
-    ];
-
-    for (const partialRangeProof of mixed) {
-      const artifact = buildTurnWriteArtifact([
-        line(INTERACTION_TRACE_MARKER, trace()),
-        line(TURN_WRITE_PROOF_MARKER, proof({
-          proof: {
-            test_mode: false,
-            sheet_write: 'success',
-            duplicate_write: false,
-            idempotency_status: 'completed',
-            ...partialRangeProof,
-          },
-        })),
-      ].join('\n'));
-      const write = artifact.turns[0].writes[0];
-
-      assert.equal(write.proof_state, 'insufficient', JSON.stringify(partialRangeProof));
-      assert.equal(write.reviewable, false, JSON.stringify(partialRangeProof));
-      assert.equal(artifact.status, 'partial', JSON.stringify(partialRangeProof));
-    }
-
-    const bothBacked = buildTurnWriteArtifact([
-      line(INTERACTION_TRACE_MARKER, trace()),
-      line(TURN_WRITE_PROOF_MARKER, proof({
-        proof: {
-          test_mode: false,
-          sheet_write: 'success',
-          duplicate_write: false,
-          idempotency_status: 'completed',
-          logAppendedRange: 'Log_Cleaned!A2:L3',
           log_rows_written: 2,
-          effortAppendedRange: 'Effort!A100:I100',
           effort_rows_written: 1,
         },
       })),
     ].join('\n'));
 
-    assert.equal(bothBacked.turns[0].writes[0].proof_state, 'write_confirmed');
-    assert.equal(bothBacked.status, 'complete');
+    assert.equal(bothCounts.turns[0].writes[0].proof_state, 'write_confirmed');
+    assert.equal(bothCounts.status, 'complete');
   });
+
+  it('refuses a live success that lost a count — a truncated tuple is not a write', () => {
+    // `log_rows_written` absent entirely. A lost projection field must never read as
+    // "zero rows intended", which would let a truncated record vacuously confirm.
+    const truncated = buildTurnWriteArtifact([
+      line(INTERACTION_TRACE_MARKER, trace()),
+      line(TURN_WRITE_PROOF_MARKER, proof({
+        proof: {
+          test_mode: false,
+          sheet_write: 'success',
+          duplicate_write: false,
+          idempotency_status: 'completed',
+          effort_rows_written: 1,
+        },
+      })),
+    ].join('\n'));
+
+    assert.equal(truncated.turns[0].writes[0].proof_state, 'insufficient');
+    assert.equal(truncated.status, 'partial');
+  });
+
 
   it('distinguishes a newly stamped seal from an idempotent already-sealed replay', () => {
     const stamped = proof({
@@ -693,18 +627,21 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
 
   it('never lets a sidecar seal or closeout substantiate an unbacked main append', () => {
     // A seal/closeout is an independent sidecar write. It can make a duplicate-branch turn
-    // reviewable on its own, but a CLAIMED live main append that fails its own per-tab W3 tuple
+    // reviewable on its own, but a CLAIMED live main append that fails its own W3 tuple
     // must stay unproved.
+    //
+    // The two cases below used to be "a positive count with no matching A1 range". No
+    // range exists after the S4 cutover, so the unbacked shape is now a claimed live
+    // success with its COUNTS lost — a truncated producer tuple, which must never be
+    // rescued by an independent sidecar write.
     const unbackedMainWrites = [
       {
-        // Positive Log count, no Log range — rescued by a genuine fresh seal stamp.
+        // Counts lost entirely — rescued by a genuine fresh seal stamp.
         proof: {
           test_mode: false,
           sheet_write: 'success',
           duplicate_write: false,
           idempotency_status: 'completed',
-          log_rows_written: 1,
-          effort_rows_written: 0,
           ledger_seal_sheet_written: true,
           ledger_seal_sealed: 3,
           ledger_seal_already_sealed: 0,
@@ -712,13 +649,12 @@ describe('turnWriteArtifact — honest seal and closeout evidence', () => {
         },
       },
       {
-        // Positive Effort count, no Effort range — rescued by a written closeout row.
+        // One count present, the other lost — rescued by a written closeout row.
         proof: {
           test_mode: false,
           sheet_write: 'success',
           duplicate_write: false,
           idempotency_status: 'completed',
-          log_rows_written: 0,
           effort_rows_written: 1,
           session_plans_closeout_status: 'written',
           session_plans_closeout_captured: true,
@@ -2969,84 +2905,17 @@ describe('turnWriteArtifact — reachable producer paths', () => {
     }
   });
 
-  it('accepts the quoted A1 form Google returns for tab names needing quotes', () => {
-    // The app builds its append range unquoted (`${tabName}!A1`, sheets.js:123), but Google echoes
-    // CANONICAL A1 in updatedRange, which single-quotes any sheet name containing a space — and
-    // doubles an embedded apostrophe. So a deployment overriding the tab name to `Workout Log`
-    // gets back `'Workout Log'!A100:L101` and its genuine append loses its range evidence.
-    //
-    // Accepting the quoted form cannot create a false green: the exact configured name, the exact
-    // contract column span, and the exact row count are all still required. It only tolerates the
-    // quoting Google itself applies.
-    const originalLog = process.env.LOG_SHEET_NAME;
-    const originalEffort = process.env.EFFORT_SHEET_NAME;
-    process.env.LOG_SHEET_NAME = 'Workout Log';
-    process.env.EFFORT_SHEET_NAME = "Dale's Effort";
-    delete require.cache[require.resolve('../services/turnWriteArtifact')];
-    try {
-      const reloaded = require('../services/turnWriteArtifact');
-      const quoted = reloaded.buildTurnWriteArtifact([
-        line(INTERACTION_TRACE_MARKER, trace()),
-        line(TURN_WRITE_PROOF_MARKER, proof({
-          proof: {
-            test_mode: false,
-            sheet_write: 'success',
-            duplicate_write: false,
-            idempotency_status: 'completed',
-            log_rows_written: 2,
-            logAppendedRange: "'Workout Log'!A100:L101",
-            effort_rows_written: 1,
-            effortAppendedRange: "'Dale''s Effort'!A100:I100",
-          },
-        })),
-      ].join('\n'));
-      assert.equal(quoted.turns[0].writes[0].proof_state, 'write_confirmed');
-      assert.equal(quoted.status, 'complete');
-
-      // NEGATIVE CONTROL — a DIFFERENT tab, quoted, must still fail. Tolerating the quoting must
-      // not tolerate the wrong sheet.
-      const wrongTab = reloaded.buildTurnWriteArtifact([
-        line(INTERACTION_TRACE_MARKER, trace()),
-        line(TURN_WRITE_PROOF_MARKER, proof({
-          proof: {
-            test_mode: false,
-            sheet_write: 'success',
-            duplicate_write: false,
-            idempotency_status: 'completed',
-            log_rows_written: 2,
-            logAppendedRange: "'Other Log'!A100:L101",
-            effort_rows_written: 1,
-            effortAppendedRange: "'Dale''s Effort'!A100:I100",
-          },
-        })),
-      ].join('\n'));
-      assert.equal(wrongTab.turns[0].writes[0].proof_state, 'insufficient');
-    } finally {
-      if (originalLog === undefined) delete process.env.LOG_SHEET_NAME;
-      else process.env.LOG_SHEET_NAME = originalLog;
-      if (originalEffort === undefined) delete process.env.EFFORT_SHEET_NAME;
-      else process.env.EFFORT_SHEET_NAME = originalEffort;
-      delete require.cache[require.resolve('../services/turnWriteArtifact')];
-    }
-  });
-
-  it('still accepts the unquoted form for tab names that need no quoting', () => {
-    // The default deployment must be completely unchanged by the quoting tolerance.
-    const artifact = build({
-      proof: {
-        test_mode: false,
-        sheet_write: 'success',
-        duplicate_write: false,
-        idempotency_status: 'completed',
-        log_rows_written: 2,
-        logAppendedRange: 'Log_Cleaned!A100:L101',
-        effort_rows_written: 1,
-        effortAppendedRange: 'Effort!A100:I100',
-      },
-    });
-    assert.equal(artifact.turns[0].writes[0].proof_state, 'write_confirmed');
-    assert.equal(artifact.status, 'complete');
-  });
+  // ── THE A1-QUOTING TOLERANCE TESTS RETIRED WITH THE RANGE ────────────────
+  //
+  // Two tests lived here. They covered a real defect: the app builds its append
+  // range unquoted, but Google echoes CANONICAL A1 in `updatedRange`, which
+  // single-quotes any sheet name containing a space and doubles an embedded
+  // apostrophe — so a deployment that renamed the tab to `Workout Log` had every
+  // genuine append lose its range evidence and read as insufficient.
+  //
+  // The consumer no longer reads a range at all after the S4 cutover, so there is
+  // no quoting to tolerate and no tab name to match. What replaced the range as W3's
+  // evidence — the committed row counts plus the producer tuple — is asserted above.
 
   it('rejects non-stamping seal flags on a positive seal state', () => {
     // sealCloseout sets no_ledger / read_failed only on non-stamping outcomes; its successful

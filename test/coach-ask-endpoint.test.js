@@ -7,7 +7,10 @@ const assert = require('node:assert/strict');
 process.env.ATLAS_API_KEY = 'test-api-key';
 process.env.GOOGLE_SHEETS_ID = 'stub-sheet';
 process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = 'stub@example.com';
-process.env.GOOGLE_PRIVATE_KEY = '-----BEGIN PRIVATE KEY-----\\nstub\\n-----END PRIVATE KEY-----';
+// Not a PEM block. The secret scanner flags a private-key SHAPE even in an obvious
+// stub, and it scans changed files — so this line only became visible when this
+// suite was touched. Every other suite already uses this form.
+process.env.GOOGLE_PRIVATE_KEY = 'KEYLINE1\\nKEYLINE2\\n';
 
 const sheetState = { appendCalls: [], deleteCalls: [] };
 const fakeSheets = {
@@ -46,6 +49,19 @@ require.cache[require.resolve('../services/coach')] = {
 };
 
 const originalConsoleLog = console.log;
+// The exercise catalog reads Supabase (OWNER CORRECTION 2026-08-13). Stubbed here so
+// the suite never opens a database connection; it delegates to the sheets fixture above.
+require('./helpers/stubExerciseCatalog').installExerciseCatalogStub();
+
+// The workout authority is Supabase since the S4 cutover, so stubbing `sheets.js`
+
+// no longer controls the logged sets, the Effort row, the plan ledgers or the write
+
+// receipts. `sheetsFallback` seeds this suite's existing fixture into the double, so
+
+// no test's data changes — only where the route reads it from.
+
+require('./helpers/stubWorkoutAuthority').installWorkoutAuthorityStub({ sheetsFallback: true });
 const { app } = require('../index');
 
 let server;

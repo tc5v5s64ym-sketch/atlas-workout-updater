@@ -1,13 +1,10 @@
 const { test, expect } = require('@playwright/test');
 
-// C3 — ONE WRITE-VERIFICATION AUTHORITY, and it costs no Sheets read.
+// C3/S4 — ONE WRITE-VERIFICATION AUTHORITY, and it costs no Sheets read.
 //
-// Two things used to decide whether a successful Save was verified: the append's own
-// `updates` receipt (which the server already had and forwarded but never adjudicated),
-// and a separate `GET /api/log-workout/verify-range` read-back the client fired afterwards.
-// The receipt wins — it is produced by the append itself, and it is free. The read-back
-// cost one metered Sheets read at closeout, the exact instant the 2026-08-05 qualifying
-// session hit its 429s.
+// The Supabase transaction receipt decides whether a successful Save was verified.
+// The retired `GET /api/log-workout/verify-range` fallback read an asynchronous Sheets
+// mirror and could make a good workout depend on quota or mirror timing.
 //
 // This spec proves the CLIENT half at the only level where it can be proved: whether the
 // browser makes the request. Every case counts the real network calls the page issues.
@@ -15,8 +12,7 @@ const { test, expect } = require('@playwright/test');
 //   1. verdict verified   → no read-back at all, and the write still shows as verified;
 //   2. verdict inconclusive → still no read-back. A negative answer from the authority must
 //      not be laundered by re-asking a weaker source;
-//   3. no verdict (a deployment older than this field) → the read-back fallback runs, and
-//      runs exactly once.
+//   3. no verdict → no read-back and no verification claim.
 //
 // In every case exactly ONE verification path runs for one successful Save.
 
@@ -74,8 +70,9 @@ async function mockApis(page, capture, verification) {
       capture.writeRequests.push(body);
       const rows = (body.log_rows || []).length;
       const data = {
-        sheet_write: 'success', sheet_written: true,
+        sheet_write: 'success', sheet_written: true, write_authority: 'supabase_transaction',
         session_id: body.session_id || SESSION,
+        write_id: body.write_id,
         log_rows_written: rows,
         logAppendedRange: APPENDED_RANGE,
       };
@@ -108,44 +105,38 @@ async function saveOneSet(page, capture, verification) {
 
   await page.locator('.rv-save').click();
   await expect.poll(() => capture.writeRequests.length).toBe(1);
-  // The verification note is what the client appends after the write settles; waiting for
-  // it is what makes "no read-back was requested" a real observation rather than a race.
-  // Attached, not visible: the logger panel is not the surface the conversational flow
-  // shows, but the note is the client's verification output all the same.
-  await page.locator('#logger-status .parser-status').waitFor({ state: 'attached' });
+  await expect(page.locator('#logger-status')).toContainText('Workout saved.');
 }
 
 test('an adjudicated receipt verifies the write with no read-back request', async ({ page }) => {
   const capture = {};
   await saveOneSet(page, capture, {
-    verified: true, authority: 'append_receipt', reason: null,
-    range: APPENDED_RANGE, rows_written: 1, rows_submitted: 1,
+    verified: true, authority: 'supabase_transaction', reason: null,
+    range: null, rows_written: 1, rows_submitted: 1,
   });
 
-  await expect(page.locator('#logger-status')).toContainText('Verified in Sheet');
+  await expect(page.locator('#logger-status')).toContainText('Verified ✓');
   expect(capture.verifyRangeRequests).toEqual([]);
 });
 
 test('an inconclusive receipt is reported as such — it is never re-asked of the read-back', async ({ page }) => {
   const capture = {};
   await saveOneSet(page, capture, {
-    verified: false, authority: 'append_receipt', reason: 'row_count_disagrees_with_request',
-    range: APPENDED_RANGE, rows_written: 3, rows_submitted: 1,
+    verified: false, authority: 'supabase_transaction', reason: 'row_count_disagrees_with_request',
+    range: null, rows_written: 3, rows_submitted: 1,
   });
 
   await expect(page.locator('#logger-status')).toContainText('verification was inconclusive');
   await expect(page.locator('#logger-status')).toContainText('row_count_disagrees_with_request');
-  await expect(page.locator('#logger-status')).not.toContainText('Verified in Sheet');
+  await expect(page.locator('#logger-status')).not.toContainText('Verified ✓');
   expect(capture.verifyRangeRequests).toEqual([]);
 });
 
-test('a server that publishes no verdict still gets the read-back — exactly once', async ({ page }) => {
+test('a server that publishes no verdict makes no verification claim and performs no fallback read', async ({ page }) => {
   const capture = {};
   await saveOneSet(page, capture, null);
 
-  await expect(page.locator('#logger-status')).toContainText('Verified in Sheet');
-  expect(capture.verifyRangeRequests.length).toBe(1);
-  const url = new URL(capture.verifyRangeRequests[0]);
-  expect(url.searchParams.get('range')).toBe(APPENDED_RANGE);
-  expect(url.searchParams.get('session_id')).toBe(SESSION);
+  await expect(page.locator('#logger-status')).not.toContainText('Verified ✓');
+  await expect(page.locator('#logger-status')).not.toContainText('verification was inconclusive');
+  expect(capture.verifyRangeRequests).toEqual([]);
 });

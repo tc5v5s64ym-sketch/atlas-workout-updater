@@ -13,7 +13,7 @@ This document scopes the parser ↔ enrichment ↔ catalog **name unification** 
 
 - No parser behavior change. No enrichment behavior change. No `Log_Cleaned` write change.
 - No sheet sync. No catalog canonical rename. No data migration. No owner-visible behavior change.
-- Docs/audit only. (No new runtime helper was needed — `test/exerciseTruthAudit.test.js` already regenerates the divergence into `docs/verification/EXERCISE_TRUTH_AUDIT.md`, and `scripts/catalog-maintenance.js --sync-sheet` already produces the sheet diff.)
+- Docs/audit only. (Historical note: the former Sheets reconciliation command was retired by the S4 owner correction. Current catalog maintenance uses the Supabase-only `npm run atlas:catalog` command.)
 
 ---
 
@@ -139,19 +139,20 @@ traps               →  Back (or Traps — OWNER)
 2. The live `Exercise_Catalog` sheet's `Canonical_Name → Lift_Code` (the authoritative in-use codes).
 3. The historical `Log_Cleaned` `canonical_exercise → lift_code` pairs actually present in Dale's data (so no in-use code is missed).
 
-**Immutability rule:** every `lift_code` already present in `Log_Cleaned` is frozen — the bridge may add new `exercise_id → code` links but must never remap an existing code, or it splits history. Codes with no `exercise_id` counterpart stay sheet-owned. This bridge is what makes the enrichment inversion *possible* without touching history; it is not applied until §6 PR-B.
+**Immutability rule:** every `lift_code` already present in historical logged sets is frozen — the bridge may add new `exercise_id → code` links but must never remap an existing code, or it splits history. Under S4, codes without an `exercise_id` counterpart remain Supabase catalog data; none are Sheets-owned.
 
 ---
 
-## 5. Sheet sync plan (dry-run only — do NOT run live)
+## 5. Catalog maintenance (superseded by S4)
 
-`scripts/catalog-maintenance.js --sync-sheet` (PR-15) already produces the reconciliation, read-only, never writing. Owner runs it locally with sheet creds:
+This plan originally used a Sheets reconciliation command. That command and the Sheets editing authority were retired by the 2026-08-13 owner correction. Supabase is now the sole live `Exercise_Catalog` authority. The owner-controlled replacement is dry-run by default:
 
 ```
-node scripts/catalog-maintenance.js --sync-sheet
+npm run atlas:catalog -- --file rows.json
+npm run atlas:catalog -- --file rows.json --apply
 ```
 
-Expected output categories (from `planSheetSync`): **(a)** source exercises in the JSON catalog **absent from the sheet** (candidates to add — owner supplies `Muscle_Group` + `Lift_Code`, which the JSON lacks); **(b)** sheet rows **with no JSON source entry** (legacy/sheet-only — reconcile or retire). It matches a JSON name covered by a sheet *variant* as present, so it will not false-flag e.g. `RDL`↔`Romanian Deadlift`.
+Do not recreate a Sheets sync, freshness clock, or fallback from this historical plan.
 
 **What sync would change in `Exercise_Catalog`:** only additions/label reconciliations the owner approves row-by-row — it is never automated. The catalog-canonical rename (renaming `Canonical_Name` cells) is what moves source **D** and therefore col 4 of future writes; it is owner-gated and belongs to §6 PR-D.
 
@@ -168,7 +169,7 @@ Each PR is independently revertible and ordered so that no behavior changes unti
 | **A** | **Mapping data only** — add `data/muscle_group_bridge.v1.json` + `data/lift_code_bridge.v1.json` (§3, §4) as **unwired** data, with a calibration test asserting each reproduces every *currently-written* value for in-use lifts. | No (data + tests only; nothing imports them) | Reviewable now; approve the *bridges* before anything reads them |
 | **B** | **Lift-code bridge read path** — teach enrichment/`canonicalLiftCodeFor` to consult the frozen `lift_code_bridge` as an *additional* resolver, proven to return the **identical** code for every existing name (shadow-parity test). Still no name change. | No (same codes out; wider coverage) | Bridge frozen + parity green |
 | **C** | **Enrichment inversion behind a flag** — `exerciseEnrichment` resolves `canonical_exercise` + `muscle_group` from the JSON catalog + bridges, gated by `ATLAS_ENRICH_SOURCE=json` (default `sheet`). Under the flag, output must be **byte-identical** to today for the calibration corpus; drift is a test failure, not a silent write. | No by default; flag is off | Calibration + shadow-parity green under both modes |
-| **D** | **Sheet sync (owner-run)** — owner runs `--sync-sheet`, reviews the diff, and applies catalog-canonical renames to the sheet **manually**. This is the step that moves source D / col 4 of future writes. | **Yes (future col 4)** | **OWNER** — irreversible-ish sheet edit; §8 |
+| **D** | **Catalog reconciliation (superseded)** — the former owner-run Sheets sync no longer exists. Any future catalog change must target Supabase through the bounded owner command. | **Yes** | **OWNER** — current S4 authority rules apply |
 | **E** | **Parser/catalog canonical unification** — regenerate the parser's canonicals from the catalog (moves source A / col 3 of future writes), for the residuals the owner accepted in §2. Golden corpus updated to the new canonicals; `EXERCISE_TRUTH_ALLOWLIST` shrinks. | **Yes (future col 3)** | **OWNER** — per-family decisions from §2 |
 | **F** | **`Log_Cleaned` history migration (optional)** — only if the owner wants *historical* rows relabeled to the unified names (display consistency). A read-time relabel (safer) or a one-time backfill (irreversible). Analytics already join by `lift_code`, so this is **cosmetic**, not correctness. | **Yes (history)** | **OWNER** — destructive/irreversible; §8 |
 
@@ -215,5 +216,5 @@ Each PR is independently revertible and ordered so that no behavior changes unti
 - Divergence data: `docs/verification/EXERCISE_TRUTH_ALLOWLIST.json` (32 entries) + `docs/verification/EXERCISE_TRUTH_AUDIT.md` (regenerated by `test/exerciseTruthAudit.test.js`).
 - Column population + grouping: verified in `services/exerciseEnrichment.js`, `services/analytics.js`, `services/liveIntelligence.js`, `config/columns.js`, `index.js` (`logRowObjectToArray`).
 - Catalog fields / muscle taxonomy: `data/exercise_catalog.v1.json`, `services/exerciseKbSchema.js`, `services/muscleCoverage.js`.
-- Sheet shape + sync tool: `docs/SHEET_CONTRACT.md`, `scripts/catalog-maintenance.js` (`planSheetSync`, PR-15).
+- Historical Sheet shape and current Supabase catalog maintenance boundary: `docs/SHEET_CONTRACT.md`, `scripts/atlas-catalog-admin.js`.
 - Prior scope notes: `BACKLOG.md` → PR-14 / PR-15 entries.

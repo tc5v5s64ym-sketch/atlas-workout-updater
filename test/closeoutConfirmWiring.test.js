@@ -146,7 +146,7 @@ test('F10D wiring: an unverified closeout keeps the retry REACHABLE and is never
   assert.match(retryBlock, /approveBtn\.disabled = false/, 'Save is re-enabled for the retry');
   assert.match(retryBlock, /return;/, 'the unverified path returns BEFORE the preview teardown');
   const retryIdx = appSrc.indexOf(retryAnchor);
-  const teardownIdx = appSrc.indexOf('invalidatePreview();\n    setHistoryLoaded(false);');
+  const teardownIdx = appSrc.search(/invalidatePreview\(\);\r?\n    setHistoryLoaded\(false\);/);
   assert.ok(retryIdx > -1 && teardownIdx > -1 && retryIdx < teardownIdx, 'the retry staging precedes the teardown');
 });
 

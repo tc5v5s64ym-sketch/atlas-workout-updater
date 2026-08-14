@@ -1,9 +1,14 @@
 // services/deloadState.js
 //
 // Persisted training-state for the deload system, per docs/DELOAD_SPEC.md
-// ("DELOAD STATE": "Atlas must remember it is currently in a deload"). Backed by
-// the Deload_State sheet tab — Sheets is Atlas's record, so deload state lives
-// there too, never in a database.
+// ("DELOAD STATE": "Atlas must remember it is currently in a deload").
+//
+// SUPABASE IS ITS SOLE AUTHORITY (OWNER CORRECTION 2026-08-13). It was the
+// `Deload_State` tab, on the reading that Google Sheets was Atlas's record for
+// everything. But deload state is read by `/api/recommend/next` and by the state
+// assembler, so it is an input to a PRESCRIPTION — and the owner ruled that no
+// prescription input may be a synchronous Google Sheets dependency. No Sheets
+// fallback survives, and no cache was added in its place.
 //
 // APPEND-ONLY. Each state change appends a row; the CURRENT state is the last
 // row. This gives a free audit trail (the spec wants the system auditable) and
@@ -14,10 +19,14 @@
 // logged sets: they do not go through preview→approve→write, carry no write_id,
 // and never touch Log_Cleaned/Effort. Wired into request handling in a later PR.
 
-const sheets = require('../sheets');
+const authority = require('./coachingInputsAuthority');
 const { deloadStateColumns } = require('../config/columns');
 const { STATES, isState } = require('./deloadStateMachine');
 
+// Retained as the concept's NAME, not as a destination. `docs/ATLAS_SYSTEM_AUTHORITY.md`,
+// the status document and several diagnostics still label this concept by its
+// historical tab, and renaming the label would make the migration harder to read,
+// not easier. Nothing dereferences it as a Google Sheets range any more.
 const DELOAD_STATE_TAB = process.env.DELOAD_STATE_SHEET_NAME || 'Deload_State';
 
 // The implicit state of a lifter with no Deload_State history: plain NORMAL,
@@ -66,38 +75,33 @@ function stateToRow(state) {
   });
 }
 
-// Guarantee the tab has a header row before the first data append. The read path
-// (sheets.getSheetRows) strips row 0 as a header, so without one the first
-// persisted state would be swallowed and the lifter would read back as NORMAL —
-// defeating "Atlas must remember it is currently in a deload". A1 empty ⇒ no
-// header yet ⇒ write the column names first.
-async function ensureHeaderRow() {
-  let firstRow = [];
-  try {
-    const top = await sheets.readRange(`${DELOAD_STATE_TAB}!A1:A1`);
-    firstRow = Array.isArray(top) ? top : [];
-  } catch {
-    firstRow = [];
-  }
-  const hasHeader = firstRow.length > 0 && Array.isArray(firstRow[0]) && String(firstRow[0][0] || '').trim() !== '';
-  if (!hasHeader) {
-    await sheets.appendRows(DELOAD_STATE_TAB, [[...deloadStateColumns]]);
-  }
-}
+// THE HEADER-ROW SEED IS GONE. A tab needed one before its first data row, because
+// the read path strips row 0 as a header and would otherwise swallow the first
+// persisted state — the lifter would read back as NORMAL, defeating "Atlas must
+// remember it is currently in a deload". A table has columns, so there is nothing
+// to seed and nothing that can be swallowed.
 
-// Read the lifter's current training state — the last row of Deload_State, or the
-// default NORMAL state when the tab is empty/absent. Deload_State is an OPTIONAL
-// tab (config/sheetContract.js): a missing or unreadable tab is simply "no deload
-// yet", so degrade to NORMAL rather than throw — otherwise read-only callers that
-// now consult deload state (e.g. /api/recommend/next) would 500 on a spreadsheet
-// where the tab was never created.
+// Read the lifter's current training state — the newest row, or the default NORMAL
+// state when there genuinely is no history.
+//
+// ── AN UNREADABLE AUTHORITY IS NOT "NO DELOAD" ───────────────────────────────
+//
+// This used to catch every failure and return NORMAL, which was defensible while the
+// store was an OPTIONAL Google Sheets tab: absent and unreadable were hard to tell
+// apart, and a spurious deload would have cut the athlete's prescription for nothing.
+//
+// It is indefensible now, and the owner ruled it out (OWNER CORRECTION 2026-08-13).
+// Supabase is the sole authority, so the two cases are perfectly distinguishable: a
+// successful read returning no rows means the lifter has never deloaded, and a failed
+// read means Atlas DOES NOT KNOW. Answering NORMAL on "do not know" silently discards
+// an ACTIVE deload and prescribes the athlete's full working load into a week the
+// engine had deliberately cut — a different prescription, presented as a normal one.
+//
+// So an empty read still defaults, and an unreadable one THROWS. Every caller that
+// turns this into a prescription refuses that request with a clean service error;
+// callers that are telemetry catch it themselves and say so.
 async function readCurrentDeloadState() {
-  let rows;
-  try {
-    rows = await sheets.getSheetRows(DELOAD_STATE_TAB);
-  } catch {
-    return defaultDeloadState();
-  }
+  const rows = await authority.deloadStateRows();
   if (!Array.isArray(rows) || rows.length === 0) return defaultDeloadState();
   return rowToState(rows[rows.length - 1]);
 }
@@ -114,8 +118,7 @@ async function appendDeloadState(state = {}) {
     ...state,
     updated_at: state.updated_at || new Date().toISOString()
   };
-  await ensureHeaderRow();
-  await sheets.appendRows(DELOAD_STATE_TAB, [stateToRow(record)]);
+  await authority.appendDeloadState(stateToRow(record));
   return record;
 }
 

@@ -8,6 +8,22 @@
 > It defines the schema, the mapping, the closure chain, the proof, the rollback rules,
 > the security posture, and the data-ownership record.
 
+> **OWNER CORRECTION 2026-08-13 — controlling S4 addendum.** Ruling D1 and every
+> statement below that keeps Google Sheets as the editing authority for
+> `Exercise_Catalog`, calls `atlas.exercise_catalog` a mirror, requires
+> `atlas.exercise_catalog_sync`, or permits a catalog freshness clock is
+> **superseded**. S4 has one catalog table, `atlas.exercise_catalog`, and Supabase is
+> its sole authority. The runtime has `SELECT` only; the smallest owner-controlled
+> mutation is `npm run atlas:catalog` under `atlas_migrate`. Coaching notes,
+> constraints, deload state, and modality workouts also move because they are
+> required workout inputs or workouts themselves. Accepted plan events and plan-set
+> recommendations are authoritative and always persisted; their old optional-write
+> flags do not survive S4. The controlling acceptance equation is: **all Google
+> Sheets reads and writes return 429 + complete workout + five-session campaign =
+> every workout still passes, with zero workout-critical synchronous Sheets calls.**
+> Sheets export failure may create backlog only. The seven-day rollback window delays
+> only the `atlas.migration_divergences` drop and does not delay testing.
+
 **Status of application, current as of 2026-08-08.** `PR S1` was paper only and is merged.
 **`PR S2` is MERGED** (`main` at `4d3e231`, PR #1274), so Supabase code, a dependency, the
 migration files and the adapter EXIST in this repository. **The `S2` schema is now APPLIED to

@@ -13,17 +13,12 @@
 // the real one — the freeze read is a real query, over a real pooled connection,
 // as the real least-privileged role. That is the whole point.
 
-const os = require('os');
-const path = require('path');
-
 process.env.ATLAS_API_KEY = process.env.ATLAS_API_KEY || 'pg-proof-api-key';
 process.env.GOOGLE_SHEETS_ID = 'stub-sheet';
 process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = 'stub@example.com';
 process.env.GOOGLE_PRIVATE_KEY = 'stub-private-key-sheets-is-stubbed';
 process.env.ATLAS_API_RATE_LIMIT_MAX = '1000000';
 process.env.ATLAS_WRITE_RATE_LIMIT_MAX = '1000000';
-process.env.ATLAS_IDEMPOTENCY_FILE =
-  process.env.ATLAS_IDEMPOTENCY_FILE || path.join(os.tmpdir(), `atlas-freeze-child-${process.pid}.json`);
 
 // Every Sheets mutation is counted in-process and reported on demand, so the
 // parent can prove a frozen request produced NO append without trusting the
@@ -74,7 +69,12 @@ require.cache[require.resolve('../../services/vision')] = {
 };
 
 const http = require('http');
-const { PROCESS_ID } = require('../../services/idempotency');
+// THE PROCESS IDENTITY IS THE ADAPTER'S NOW. It used to come from the file-backed
+// receipt store, which minted its own id for the migration seam; that store is gone
+// and `atlas.write_receipts` records `owner_instance_id` instead. The id answers the
+// same question this proof asks — "is this the same process that served before the
+// freeze?" — and it is now the id the receipt state machine actually uses.
+const { INSTANCE_ID } = require('../../services/supabaseAdapter');
 const { app } = require('../../index');
 
 // The proof surface is a SEPARATE server on its own port, deliberately NOT an
@@ -92,14 +92,14 @@ const proof = http.createServer((req, res) => {
   res.setHeader('Content-Type', 'application/json');
   res.end(JSON.stringify({
     pid: process.pid,
-    process_id: PROCESS_ID,
+    process_id: INSTANCE_ID,
     sheet_calls: { append: calls.append.length, delete: calls.delete.length, update: calls.update.length },
   }));
 });
 
 const server = app.listen(0, '127.0.0.1', () => {
   proof.listen(0, '127.0.0.1', () => {
-    process.stdout.write(`READY ${server.address().port} ${proof.address().port} ${process.pid} ${PROCESS_ID}\n`);
+    process.stdout.write(`READY ${server.address().port} ${proof.address().port} ${process.pid} ${INSTANCE_ID}\n`);
   });
 });
 

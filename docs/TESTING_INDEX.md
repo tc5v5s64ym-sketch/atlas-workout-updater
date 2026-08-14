@@ -6,11 +6,12 @@
 
 ## Write-safety headline (read this first)
 
-- **Exactly one script in the repo can write the production Sheet: `scripts/catalog-maintenance.js`** — and only the `Exercise_Catalog` tab, **dry-run by default**, requiring an explicit `--confirm`.
+- **No owner catalog command writes Google Sheets.** `npm run atlas:catalog` is dry-run by default and, with explicit `--apply`, writes only the Supabase `atlas.exercise_catalog` authority.
+- The completed-session mirror exporter can write human-readable Sheets asynchronously. A mirror failure can grow backlog, but no workout request awaits it.
 - **No CI workflow can write a Sheet** — none carries Google write credentials.
 - The **simulation harness** can write, but **only to the sandbox sheet** — it fails closed unless the running server confirms the sandbox sheet fingerprint.
 - **TEMPORARY (sunset: F-SB4C):** the **F-SB4B rehearsal posture** of the gate server can also write, **only to the sandbox workbook** and only when a launcher explicitly sets `ATLAS_GATE_SANDBOX_LIVE=1` + `ATLAS_GATE_LEDGER_SANDBOX=1` on its own gate-server spawn with real credentials in that environment. `npm run test:e2e` can NEVER reach it: `playwright.config.js` scrubs the flag before any spec worker exists, so an exported flag in the invoking shell is inert for the whole default lane. Details in the Playwright section below.
-- Everything else is **offline**, **read-only**, or **`test_mode` dry-run**.
+- Everything else is **offline**, **read-only**, **asynchronous export**, or an explicitly governed Supabase write.
 - The structural guarantee: only `sheets.js` holds the read-write scope (`appendRows` / `deleteRowsByRange` / `batchUpdate`). Every read-only tool builds its own `spreadsheets.readonly` client and never imports those helpers.
 
 ## Master map
@@ -34,13 +35,11 @@
 | **Supabase schema proof (from-empty Postgres)** | `test-pg/`, `scripts/run-pg-proof.js` | `ATLAS_PG_ADMIN_URL=… npm run test:pg` | Local-integration (real disposable Postgres) | No — never touches Sheets, and structurally cannot reach a hosted Supabase project | Current (PR S2) |
 | **P8b hosted Supavisor checkpoint** (owner-run, out of band) | `scripts/atlas-p8b-checkpoint.js` | `npm run atlas:p8b` (`-- --json`), with the four role connection strings in the environment | Owner checkpoint against `Atlas Production` | No — read-only: applies no schema, writes no row, moves no read or write. Needs the owner's four credentials, so it cannot run in CI | Current — the owner gate between S2 and S3, **RUN AND PASSED 2026-08-08 (exit `0`)**. Rerunnable, but the gate it discharges is closed |
 | **Supabase migration applier** | `scripts/apply-supabase-migrations.js` | `npm run supabase:migrate -- --url <disposable>` | Local-integration | No — refuses a hosted Supabase host and any non-empty target, with no override | Current (PR S2) |
-| **Supabase reconciliation sweep / repair / catalog sync** | `scripts/atlas-migration-{sweep,repair}.js`, `scripts/atlas-catalog-sync.js` | `npm run atlas:sweep` · `npm run atlas:repair` · `npm run atlas:catalog-sync` | Deployed read-only (Sheets) + Supabase | No — Sheets is read-only to all three | Current (PR S2, TEMPORARY — sweep and repair are deleted at S4) |
-| **Supabase backfill (one-way, Sheets → Supabase)** | `scripts/atlas-migration-backfill.js`, `services/migrationBackfill.js` | `npm run atlas:backfill` (dry run) · `-- --apply` · `-- --reconcile` · `-- --report <path>` | Deployed read-only (Sheets) + Supabase write | No — it **never** writes Google Sheets, and a dry run is the default | Current (PR S3, TEMPORARY — deleted at S4) |
-| **Supabase cutover readiness (P4b/P5/P6)** | `scripts/atlas-migration-readiness.js`, `services/migrationReadParity.js` | `npm run atlas:readiness [-- --json]` | Deployed read-only (Sheets) + Supabase read-only | No | Current (PR S3, TEMPORARY — deleted at S4) |
+| **Completed-session Sheets mirror export** | `services/sheetsMirrorExport.js`, `services/sheetsMirrorScheduler.js`, `scripts/atlas-export-mirror.js` | `npm run atlas:export-mirror [-- --status] [-- --json]` | Deployed (Supabase read + Google Sheets write) | **Yes — it writes the four mirrored tabs**, by `values.update` into each session's own allocated block only; never appends, never deletes, and never writes Supabase workout data | Current (PR S4) |
 | Drift guards (1–4, 6) | `scripts/check-*.js` | `npm run check:wiring\|authority\|banned\|allowlist\|paper-weight\|ladder` | Offline | No | Current |
 | Secret scan | `scripts/check-changed-files-for-secrets.js` | `npm run scan:secrets` | Offline | No | Current |
 | Sheets backup | `scripts/export-sheets-backup.js` | `npm run backup:sheets` | Deployed read-only (Sheets → local files) | No | Current |
-| Catalog maintenance | `scripts/catalog-maintenance.js` | `node scripts/catalog-maintenance.js --file rows.json [--confirm]` | **Real-write (guarded)** | **Yes — `Exercise_Catalog` only, `--confirm`** | Current |
+| Catalog maintenance | `scripts/atlas-catalog-admin.js` | `npm run atlas:catalog -- --file rows.json [--apply]` | **Supabase owner-write (guarded)** | No | Current (PR S4) |
 | CI workflows (7) | `.github/workflows/` | (triggers) | Mixed | No | Current |
 | Owner live-test queue + playbook | `docs/TEST_QUEUE.md`, `docs/AGENT_LIVE_TESTING.md`, `docs/MOBILE_TEST_APP.md` | (human) | Via app, owner-gated | Current |
 
@@ -104,17 +103,13 @@ A single-user HTTP client that drives a **local** Atlas server through 7 read-on
 
 Why the files live in `test-pg/` and end `.pgproof.js`: `npm test` runs a bare `node --test`, whose default glob matches `**/*.test.js` anywhere and treats every file under a directory named `test` as a test. Under either name, a suite needing a live database would fail `npm test` on every machine without one.
 
-What it proves, as its own files: every constraint of §3.1–§3.9 by a rejected violating insert (`constraints`); least privilege executed **as the four real roles** (`leastPrivilege`); the parent-first atomic shadow transaction against an **empty** schema (`shadowWrite`); the receipt state machine including the advisory-lock liveness rule (`writeReceipts`); sweep detection and earned-only divergence closure (`sweepAndRepair`); the catalog mirror's fail-closed rule and its normal-edit case (`catalogMirror`); **process death in the exact window between the Sheets append and the shadow write** (`processDeath`); and byte-identical responses with the lane off and on (`shadowInert`).
+What it proves, as its own files: schema constraints (`constraints`); least privilege executed **as the four real roles** (`leastPrivilege`); receipt and advisory-lock liveness (`writeReceipts`, `p8bLockProof`); write-freeze behavior (`writeFreeze`, `writeFreezePreexisting`); plan-event version fidelity (`planEventVersionText`); Supabase catalog authority and guarded owner mutation (`exerciseCatalog`); atomic coaching-input transition (`coachingInputsTransition`); and a five-session representative workout campaign while **every Google Sheets operation returns 429**, including catalog use, recommendations, set logging, substitutions, preview, approval, Supabase read-back, closeout, receipts, lost-response retry, and undo (`allSheets429Workout`).
 
 **Nothing here can reach Google Sheets or a hosted Supabase project.** `sheets.js` is stubbed by the same `require.cache` seam the rest of the suite uses, and `scripts/apply-supabase-migrations.js` refuses a `*.supabase.co`/`.com` host outright — a refusal `npm run check:supabase-safety` fails CI for removing.
 
 **Operator commands** (read-only against Sheets; they need a configured Supabase connection and report `NOT CONFIGURED` rather than a zero without one):
 
-- **`atlas:sweep`** — `npm run atlas:sweep [-- --json] [-- --detect-only]`. The reconciliation sweep, which is the **completeness authority** for the shadow window. A run that could not read a concept reports `complete:false` and exits non-zero; a partial sweep is never a zero. TEMPORARY: deleted at S4.
-- **`atlas:repair`** — `npm run atlas:repair [-- --json] [-- --limit N]`. Makes Supabase agree with Sheets, never the reverse. Closes a divergence **only** on a passing identity-and-content re-comparison, and leaves anything it holds no grant to repair OPEN as owner action required. TEMPORARY: deleted at S4.
-- **`atlas:catalog-sync`** — `npm run atlas:catalog-sync [-- --json]`. Refreshes the `Exercise_Catalog` read mirror. PERMANENT. Run it well inside `ATLAS_CATALOG_MIRROR_MAX_AGE_SEC`; past that bound the S4 Save path fails **closed** rather than serving stale content.
-- **`atlas:backfill`** — `npm run atlas:backfill [-- --apply] [-- --reconcile] [-- --report <path>] [-- --json]`. The one-way S3 backfill of the four sourceable tabs plus the catalog's first generation. **A DRY RUN IS THE DEFAULT**; writing needs `--apply`. It never writes Google Sheets, every insert is idempotent by export identity so a re-run converges and an interrupted run resumes, and `write_receipts` is deliberately **not** backfilled (the workbook stores no `write_id`). `--reconcile` produces the §6.2 P3 report — counts, identity **and** field-by-field content — redacted to shapes. TEMPORARY: deleted at S4.
-- **`atlas:readiness`** — `npm run atlas:readiness [-- --json]`. The S3 cutover-readiness verdict: P5 read parity for every read S4 moves, P6 (sweep **complete** and zero open divergences), and P4(b) the stated-and-gated bounded background catalog dependency. It authorizes nothing and moves nothing. The P4(a) in-request read census is measured by `test/liveSessionReadBudget.test.js`, not here. TEMPORARY: deleted at S4.
+- **`atlas:export-mirror`** — `npm run atlas:export-mirror [-- --status] [-- --json] [-- --max N]`. The asynchronous completed-session export (design §5.4): claim, allocate a durable per-tab block, verify the range is still ours, `values.update` into it, verify every identity key appears exactly once across the whole tab, then acknowledge under the claim token. `--status` is read-only and reports the backlog and every blocked session. PERMANENT. **No workout request ever awaits it** — a total Sheets outage grows the backlog and leaves the workout untouched.
 
 ### 6. CI governance guards + secret scan (offline; none can write)
 
@@ -123,7 +118,7 @@ What it proves, as its own files: every constraint of §3.1–§3.9 by a rejecte
 ### 7. Data tools
 
 - **`export-sheets-backup.js`** — `npm run backup:sheets`. Reads all tabs → timestamped JSON/CSV in `backups/<ts>/`. Read-only on Sheets.
-- **`catalog-maintenance.js`** — **the only real-write script.** `node scripts/catalog-maintenance.js --file rows.json [--confirm]`. Dry-run without `--confirm`; a real append hits **only `Exercise_Catalog`** (hard-blocks protected data tabs), dedupes, reads back to verify. Env: `GOOGLE_SHEETS_ID` + service-account creds.
+- **`atlas-catalog-admin.js`** — the smallest owner-controlled catalog mutation surface. `npm run atlas:catalog -- --file rows.json [--apply]`. Dry-run without `--apply`; apply mode writes only `atlas.exercise_catalog` through the migration role, validates and deduplicates the input, and reads back the Supabase authority. It never reads or writes Google Sheets.
 
 ### 8. CI workflows (`.github/workflows/`)
 
@@ -144,7 +139,7 @@ What it proves, as its own files: every constraint of §3.1–§3.9 by a rejecte
 
 ### 10. The safety / provenance layer
 
-- **`test_mode`** (request field): absent = live write (invariant W2); `"true"` = dry-run (`sheet_written:false, no_write_confirmed:true`); ambiguous values fail closed. **`test_mode` is NOT universal — do not assume it dry-runs an arbitrary write route.** Only the logged-set / effort / closeout write paths inspect it (`isTestModeEnabled` at `index.js:1228` `/api/log-workout`, `1806` approve→write, `2056` `/api/complete-workout`, `2769` closeout — plus `/api/log-modality`). Routes that do **NOT** read it and therefore write LIVE even with `test_mode:true` include **`/api/coaching-notes`** and **`/api/constraints`** (both call `appendRows` directly) and the undo route **`/api/log-workout/undo-last`** (calls `deleteRowsByRange`). Treat any endpoint you have not positively confirmed honors `test_mode` as Tier 3 / live-only (see [`AGENT_LIVE_TESTING.md`](./AGENT_LIVE_TESTING.md): "test_mode is not universal"). (`ATLAS_TEST_MODE` is a phantom token — no code references it; ignore any doc that cites it.)
+- **`test_mode`** (request field): absent = live write (invariant W2); `"true"` = dry-run (`sheet_written:false, no_write_confirmed:true`); ambiguous values fail closed. **`test_mode` is NOT universal — do not assume it dry-runs an arbitrary write route.** The workout preview paths that advertise no-write proof inspect it, including `/api/log-workout` and `/api/log-modality`. `/api/coaching-notes`, `/api/constraints`, and `/api/log-workout/undo-last` are live Supabase mutations and do not become previews merely because an unrecognized `test_mode` field is supplied. All are receipt/write-freeze governed where their route contract requires it, and none writes Google Sheets. Treat any endpoint you have not positively confirmed honors `test_mode` as Tier 3 / live-only (see [`AGENT_LIVE_TESTING.md`](./AGENT_LIVE_TESTING.md): "test_mode is not universal"). (`ATLAS_TEST_MODE` is a phantom token — no code references it.)
 - **`x-atlas-request-origin`** → `services/evidenceProvenance.js` classifies traffic as `athlete_ui` (eligible) vs `synthetic` (`smoke`/`sim`/`ci`/`playwright`/`canary`/`probe`) vs `unknown`. Synthetic/test traffic never counts toward GATE-A promotion or the five-session proving run.
 
 ## Synthetic-athlete / multi-persona simulation — status
@@ -157,7 +152,7 @@ A system that simulates ~10 synthetic gym-goers **does not exist as built code.*
 - **"Review my last real session"** → `npm run atlas:review-live`
 - **"Where does prod bypass packet truth?"** → `npm run atlas:divergence -- <logfile>`
 - **"Does the Supabase schema actually hold?"** → `ATLAS_PG_ADMIN_URL=… npm run test:pg` (from empty, real Postgres, never production)
-- **"Has the mirror drifted from Sheets?"** → `npm run atlas:sweep` then `npm run atlas:repair` (Sheets read-only in both)
+- **"Is the Sheets mirror behind, or stuck?"** → `npm run atlas:export-mirror -- --status` (read-only; reports the backlog, the oldest session owing an export, and every session blocked awaiting the §5.7 owner rebuild)
 - **"Run everything offline"** → `npm test` (+ `npm run test:e2e` for the browser)
 - **"Smoke the deployed app (no writes)"** → `npm run smoke:render`
 - **"Exercise the coach route synthetically"** → `node scripts/sim/run.js --base-url http://127.0.0.1:3000` (local server; read-only)

@@ -2,37 +2,36 @@
 
 // ── Session_Plans capture routes (Decision Desk #952 → Option A, PR-E) ────────
 //
-// The three explicit, authenticated, feature-flagged sidecar endpoints
-// (docs/SESSION_PLANS_CAPTURE_SPEC.md §4). SERVER PROTOCOL ONLY — no client wiring
-// yet (PR-F). Each validates the request shape (required fields + opaque pv_/pi_ ID
+// The explicit authenticated endpoints for the Supabase-authoritative plan lifecycle.
+// Each validates the request shape (required fields + opaque pv_/pi_ ID
 // shape + frozen vocabularies), then hands off to the capture layer
-// (services/sessionPlanCapture.js), which owns the flag gate, exact-header
-// validation, the idempotent writer, and failure isolation, and returns the proof
+// (services/sessionPlanCapture.js), which owns the idempotent writer and returns the proof
 // envelope under `data.session_plans`.
 //
 // Auth (x-atlas-api-key) + rate limiting are GLOBAL `app.use('/api', …)` middleware
 // in index.js and run before this router regardless of mount position — same as the
 // other extracted routers — so no per-route auth middleware lives here. These routes
-// are `writeCapable:true` in config/routes.js but write ONLY the Session_Plans
-// sidecar: never Log_Cleaned/Effort, no write_id, never the trust loop.
+// are `writeCapable:true` in config/routes.js but write only the Supabase plan
+// authority: never logged sets/Effort and never Google Sheets.
 
 const express = require('express');
 const { success: standardSuccess, error: standardError } = require('../response');
+const workoutAuthority = require('../services/workoutAuthority');
 const capture = require('../services/sessionPlanCapture');
 const setsCapture = require('../services/sessionPlanSetsCapture');
 const { deriveImplicitRecommendation } = require('../services/implicitRecommendation');
 const { ITEM_OUTCOMES, CLOSEOUT_STATUSES } = require('../services/sessionPlanEvents');
 const { CONFIDENCE, REVISION_SOURCES } = require('../services/sessionPlanLedger');
 const { nextAvailableSessionId } = require('../services/sessionId');
-const { sessionPlansColumns, logCleanedColumns, effortColumns } = require('../config/columns');
+const { sessionPlansColumns } = require('../config/columns');
 
-// Column positions for acceptance-time occupancy reads (the layouts are the
-// authoritative config/columns.js contracts, never guessed).
+// Column positions for the acceptance-time occupancy read (the layout is the
+// authoritative config/columns.js contract, never guessed). The Log_Cleaned and
+// Effort indices that used to sit here served `_durableSessionIds`, whose Sheets
+// read the S4 cutover replaced with `workoutAuthority.occupiedSessionIds`.
 const SP_SESSION_IDX = sessionPlansColumns.indexOf('session_id');
 const SP_PLAN_VERSION_IDX = sessionPlansColumns.indexOf('plan_version');
 const SP_EVENT_IDX = sessionPlansColumns.indexOf('event_type');
-const LOG_SESSION_IDX = logCleanedColumns.indexOf('session_id');
-const EFFORT_SESSION_IDX = effortColumns.indexOf('session_id');
 
 // Opaque, client-generated identity tokens (spec §4.4): a prefix + a non-empty
 // body. The server validates SHAPE only (it never mints IDs); the builders enforce
@@ -64,6 +63,16 @@ function _sessionError(s) {
 // A positive 1-based integer (target_set_count / set_index / plan_version).
 function _isPosInt(v) { const n = Number(v); return Number.isInteger(n) && n >= 1; }
 
+// These ledgers are authoritative after S4, not optional telemetry. A route must
+// never acknowledge an accepted plan, outcome, revision, or closeout unless the
+// authority confirms it is durable (including an idempotent replay).
+function _captureRefusal(req, res, result, concept) {
+  if (result && result.captured === true) return null;
+  const status = _str(result && result.status) || 'error';
+  const reason = _str(result && result.reason) || 'authoritative write was not confirmed';
+  return standardError(req, res, `${concept} was not persisted. Retry the request.`, { status, reason }, 503);
+}
+
 // Validate one Session_Plan_Sets ledger target item at the route (400) rather than
 // letting a bad shape throw in the builder and surface as a 200 error envelope.
 function _ledgerItemError(item, { requireRevision = false } = {}) {
@@ -85,27 +94,23 @@ function _ledgerItemError(item, { requireRevision = false } = {}) {
   return null;
 }
 
-// deps (F10C): getSheetRows + the Log_Cleaned/Effort tab names are injected so the
-// /implicit route can derive the recommendation server-side over the full history (the
-// only place that history lives). The other routes are pure checkpoint sinks and use no
-// deps — so an older `registerSessionPlanRoutes()` call still works (deps default to {}).
-module.exports = function registerSessionPlanRoutes(deps = {}) {
-  const { getSheetRows, logSheetName = 'Log_Cleaned', effortSheetName = 'Effort',
-    sessionPlansSheetName = capture.SESSION_PLANS_TAB } = deps;
+// NO INJECTED SHEETS DEPENDENCY REMAINS, and the parameter is gone rather than
+// ignored (OWNER CORRECTION 2026-08-13).
+//
+// `getSheetRows` plus the Log_Cleaned/Effort tab names used to be injected here so
+// the router could read history and plan occupancy — the only place they lived. All
+// three concepts are Supabase-authoritative since the S4 cutover, so the injection
+// had already decayed to ONE surviving caller: the accept route's Session_Plans
+// occupancy read. That read was the last thing on any allocating workout-identity
+// path that could be stopped by a Google Sheets quota, and it did not degrade — it
+// answered 503 and refused to accept the plan at all.
+//
+// It now reads `atlas.session_plan_events` through the same authority every other
+// route here uses. With that gone the dependency has no consumer, so it is deleted
+// along with `_durableSessionIds` and the two column indices that served it, rather
+// than left as a parameter no call site should pass.
+module.exports = function registerSessionPlanRoutes() {
   const router = express.Router();
-
-  // Collect the session ids present in one durable tab. The read is NOT guarded here:
-  // a throw must reach the caller, because an unreadable occupancy source means slot
-  // availability cannot be proven and allocation must fail closed, never fall open.
-  async function _durableSessionIds(tabName, idx) {
-    const rows = await getSheetRows(tabName);
-    const ids = [];
-    for (const row of Array.isArray(rows) ? rows : []) {
-      const id = Array.isArray(row) ? _str(row[idx]) : '';
-      if (id) ids.push(id);
-    }
-    return ids;
-  }
 
   // POST /api/session-plans/accept — establishes plan identity: one plan_accepted
   // row per accepted item.
@@ -135,20 +140,22 @@ module.exports = function registerSessionPlanRoutes(deps = {}) {
     }
 
     if (!session.session_id) {
-      if (typeof getSheetRows !== 'function') {
-        return standardError(req, res, 'Cannot allocate a session id: no durable-record access.', null, 503);
-      }
       // Durable retry evidence first: an acceptance that already wrote rows under
       // this plan_version owns its identity. Checking before the occupancy union is
       // load-bearing — after the first attempt the union CONTAINS the allocated id,
       // so a replay that skipped this check would allocate the next slot and fork
       // one accepted workout into two identities.
+      //
+      // FROM SUPABASE, the authority for the plan ledger since the S4 cutover. The
+      // rows come back as `Session_Plans` cell rows in the owner-approved column
+      // order, so the three column indices below are unchanged — only the store
+      // answering them is. A Google Sheets quota can no longer refuse an acceptance.
       let planRows;
       try {
-        planRows = await getSheetRows(sessionPlansSheetName);
+        planRows = await workoutAuthority.planEventRows();
       } catch (e) {
-        console.error('❌ Session_Plans unreadable for acceptance session-id allocation:', e);
-        return standardError(req, res, 'Cannot allocate a session id: Session_Plans occupancy is unreadable.', null, 503);
+        console.error('❌ Plan ledger unreadable for acceptance session-id allocation:', e);
+        return standardError(req, res, 'Cannot allocate a session id: plan-ledger occupancy is unreadable.', null, 503);
       }
       const spRows = Array.isArray(planRows) ? planRows : [];
       const prior = spRows.find(r => Array.isArray(r)
@@ -158,23 +165,25 @@ module.exports = function registerSessionPlanRoutes(deps = {}) {
       if (prior) {
         session.session_id = _str(prior[SP_SESSION_IDX]);
       } else {
-        let effortIds;
-        let logIds;
+        // Occupancy comes from Supabase, the authority for session identity since
+        // the S4 cutover. `atlas.workout_sessions` is the parent every logged set
+        // and Effort row hangs off, so ONE query answers what two whole-tab Sheets
+        // reads used to — and a session logged without watch data still occupies
+        // its slot, which is the defect that union existed to fix.
+        //
+        // FAIL CLOSED is unchanged and is the whole point: an unreadable occupancy
+        // source means slot availability cannot be proven, so allocation refuses
+        // rather than falling open onto an id that may already belong to a workout.
+        let durableIds;
         try {
-          effortIds = await _durableSessionIds(effortSheetName, EFFORT_SESSION_IDX);
+          durableIds = await workoutAuthority.occupiedSessionIds(session.session_date);
         } catch (e) {
-          console.error('❌ Effort unreadable for acceptance session-id allocation:', e);
-          return standardError(req, res, 'Cannot allocate a session id: Effort occupancy is unreadable.', null, 503);
-        }
-        try {
-          logIds = await _durableSessionIds(logSheetName, LOG_SESSION_IDX);
-        } catch (e) {
-          console.error('❌ Log_Cleaned unreadable for acceptance session-id allocation:', e);
-          return standardError(req, res, 'Cannot allocate a session id: Log_Cleaned occupancy is unreadable.', null, 503);
+          console.error('❌ Session identity unreadable for acceptance session-id allocation:', e);
+          return standardError(req, res, 'Cannot allocate a session id: session occupancy is unreadable.', null, 503);
         }
         const spIds = spRows.map(r => (Array.isArray(r) ? _str(r[SP_SESSION_IDX]) : '')).filter(Boolean);
         try {
-          session.session_id = nextAvailableSessionId(session.session_date, [...effortIds, ...logIds, ...spIds]);
+          session.session_id = nextAvailableSessionId(session.session_date, [...durableIds, ...spIds]);
         } catch (e) {
           // Exhaustion is a REFUSAL, never a reuse: the allocator fails closed when
           // every slot in the period is occupied, and this route must surface that
@@ -188,6 +197,8 @@ module.exports = function registerSessionPlanRoutes(deps = {}) {
     }
 
     const result = await capture.captureAccept(session, items);
+    const refusal = _captureRefusal(req, res, result, 'Accepted plan');
+    if (refusal) return refusal;
     // The identity the acceptance was written under, echoed verbatim — for an
     // allocating request this is the client's ONLY source of the session identity.
     return standardSuccess(req, res, 'Session_Plans accept', { session_plans: result, session_id: session.session_id });
@@ -210,6 +221,8 @@ module.exports = function registerSessionPlanRoutes(deps = {}) {
       return standardError(req, res, 'a substituted outcome requires a canonical performed_lift_code (non-empty, no spaces)', null, 400);
     }
     const result = await capture.captureOutcome(session, item);
+    const refusal = _captureRefusal(req, res, result, 'Plan outcome');
+    if (refusal) return refusal;
     return standardSuccess(req, res, 'Session_Plans outcome', { session_plans: result });
   });
 
@@ -225,14 +238,15 @@ module.exports = function registerSessionPlanRoutes(deps = {}) {
       return standardError(req, res, `closeout_status must be one of ${CLOSEOUT_STATUSES.join('|')}`, null, 400);
     }
     const result = await capture.captureCloseout(session, closeoutStatus);
+    const refusal = _captureRefusal(req, res, result, 'Plan closeout');
+    if (refusal) return refusal;
     return standardSuccess(req, res, 'Session_Plans closeout', { session_plans: result });
   });
 
   // ── Session_Plan_Sets — set-level recommendation ledger (F10B) ─────────────────
   // The creation-time durable checkpoint (design amendment A2). DRY-RUN in F10B/F10C
-  // (gated behind SESSION_PLAN_SETS_WRITE_ENABLED, off) → returns the no-write proof
-  // and never touches the sheet; the production tab + live-write flag are the
-  // owner-reserved F10D gate. Sidecar only — never Log_Cleaned/Effort, no write_id.
+  // writes to the Supabase recommendation ledger. Sidecar to the workout Save,
+  // but authoritative for the accepted prescription; never Log_Cleaned/Effort.
 
   // POST /api/session-plan-sets/accept — checkpoint the accepted plan as ledger v1
   // (one row per set of every planned item, with targets).
@@ -248,6 +262,8 @@ module.exports = function registerSessionPlanRoutes(deps = {}) {
       if (err) return standardError(req, res, err, null, 400);
     }
     const result = await setsCapture.captureAcceptedPlan(session, items);
+    const refusal = _captureRefusal(req, res, result, 'Accepted plan-set prescription');
+    if (refusal) return refusal;
     return standardSuccess(req, res, 'Session_Plan_Sets accept', { session_plan_sets: result });
   });
 
@@ -264,6 +280,8 @@ module.exports = function registerSessionPlanRoutes(deps = {}) {
     const err = _ledgerItemError(revision, { requireRevision: true });
     if (err) return standardError(req, res, err, null, 400);
     const result = await setsCapture.captureRevision(session, revision);
+    const refusal = _captureRefusal(req, res, result, 'Plan-set revision');
+    if (refusal) return refusal;
     return standardSuccess(req, res, 'Session_Plan_Sets revision', { session_plan_sets: result });
   });
 
@@ -284,14 +302,35 @@ module.exports = function registerSessionPlanRoutes(deps = {}) {
     if (!PI_SHAPE.test(_str(item.plan_item_id))) return standardError(req, res, 'item.plan_item_id must be an opaque token (pi_…)', null, 400);
     const liftCode = _str(item.planned_lift_code);
     if (!LIFT_CODE_SHAPE.test(liftCode)) return standardError(req, res, 'item.planned_lift_code must be a canonical lift code (non-empty, no spaces)', null, 400);
-    if (typeof getSheetRows !== 'function') return standardError(req, res, 'implicit recommendation is unavailable (no history access)', null, 503);
-
-    // Read the full Log_Cleaned (+ Effort) history; the derivation excludes the current
-    // session itself, so a read failure degrades to no_reliable_target, never a guess.
-    let logRows = [];
-    let effortRows = [];
-    try { logRows = await getSheetRows(logSheetName); } catch (_) { logRows = []; }
-    if (effortSheetName) { try { effortRows = await getSheetRows(effortSheetName); } catch (_) { effortRows = []; } }
+    // Read the full logged-set (+ Effort) history from Supabase, the authority for
+    // both concepts since the S4 cutover. The derivation excludes the current session
+    // itself.
+    //
+    // AN UNREADABLE AUTHORITY REFUSES; IT DOES NOT DERIVE FROM EMPTY (OWNER
+    // CORRECTION 2026-08-13). Both reads used to end in `catch (_) { rows = []; }`,
+    // described as degrading to `no_reliable_target` rather than a guess. That
+    // reasoning was wrong in a way worth naming: `no_reliable_target` is not a
+    // neutral outcome, it is a RECORDED COACHING DECISION — the capture layer skips
+    // the item and the ledger carries the absence — so a momentary read failure was
+    // written down as "this lifter has no reliable history for this lift" and became
+    // indistinguishable afterwards from the same verdict reached over the real
+    // corpus. A refusal costs the athlete one retry; the silent version costs the
+    // truth of the record.
+    let logRows;
+    let effortRows;
+    try {
+      [logRows, effortRows] = await Promise.all([
+        workoutAuthority.loggedSetRows(),
+        workoutAuthority.effortRows(),
+      ]);
+    } catch (e) {
+      console.error('❌ History unreadable for implicit recommendation:', e);
+      return standardError(req, res,
+        'implicit recommendation is unavailable — the workout history is temporarily unreadable', {
+          reason: 'authority_read_unavailable',
+          retryable: true,
+        }, 503);
+    }
 
     const derivation = deriveImplicitRecommendation({
       logRows,
@@ -314,6 +353,10 @@ module.exports = function registerSessionPlanRoutes(deps = {}) {
       target_reps: derivation.target_reps,
       target_rir: derivation.target_rir,
     }]);
+    if (derivation.confidence === 'reliable') {
+      const refusal = _captureRefusal(req, res, result, 'Implicit plan-set prescription');
+      if (refusal) return refusal;
+    }
     return standardSuccess(req, res, 'Session_Plan_Sets implicit', { session_plan_sets: result, derivation });
   });
 

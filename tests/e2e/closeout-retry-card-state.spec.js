@@ -85,6 +85,7 @@ async function mockAtlasApis(page, capture) {
       const data = {
         sheet_write: 'success',
         sheet_written: true,
+        write_authority: 'supabase_transaction',
         session_id: body.session_id || TEST_SESSION,
         log_rows_written: 3,
         logAppendedRange: 'Log_Cleaned!A200:L202',
@@ -216,7 +217,7 @@ test('unverified closeout: a successful retry completes the card, and appends no
 
   await expect(review).toHaveClass(/done/);
   await expect(review.locator('.rv-saved')).toBeVisible();
-  await expect(review.locator('.rv-saved')).toContainText('Saved to your sheet');
+  await expect(review.locator('.rv-saved')).toContainText('Saved to Atlas');
 
   // Two requests, and the retry carries a FRESH write_id — replaying the first id
   // would just replay the recorded failure. The server's duplicate lane is what

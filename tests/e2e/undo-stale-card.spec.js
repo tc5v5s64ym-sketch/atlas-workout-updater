@@ -3,7 +3,7 @@ const { test, expect } = require('@playwright/test');
 // CLIENT-1 (audit 2026-07-07 / PR-0D) — Undo on a stale review card must never
 // delete a NEWER write.
 //
-// Repro: save workout A (range A200), keep training, save workout B (range A300).
+// Repro: save workout A, keep training, save workout B.
 // Card A stays in the thread with a live "Undo". Tapping it used to call the
 // global window.atlasUndoLastWrite(), which always operated on the newest write
 // (lastWrite = B) — so the lifter's latest workout was deleted while the UI said
@@ -37,9 +37,6 @@ function json(body, status = 200) {
 async function mockAtlasApis(page, capture) {
   capture.writeRequests = capture.writeRequests || [];
   capture.undoRequests = capture.undoRequests || [];
-  // Each live write gets a distinct appended range so the test can tell which
-  // write an undo request actually targeted.
-  capture.writeRanges = ['Log_Cleaned!A200:L202', 'Log_Cleaned!A300:L302'];
 
   await page.route('**/health', route => route.fulfill(json({ status: 'ok' })));
 
@@ -70,11 +67,14 @@ async function mockAtlasApis(page, capture) {
           }
         }));
       }
-      const range = capture.writeRanges[capture.writeRequests.length] || 'Log_Cleaned!A999:L999';
       capture.writeRequests.push(body);
       return route.fulfill(json({
         status: 'success',
-        data: { sheet_write: 'success', sheet_written: true, log_rows_written: 3, logAppendedRange: range }
+        data: {
+          sheet_write: 'success', sheet_written: true,
+          write_authority: 'supabase_transaction', write_id: body.write_id,
+          session_id: body.session_id || TEST_SESSION, log_rows_written: 3,
+        }
       }));
     }
 
@@ -152,12 +152,12 @@ test('CLIENT-1: a newer write confirms → the older saved card loses its live U
   const capture = {};
   await openApp(page, capture);
 
-  await logAndSave(page, 1);                    // write A → Log_Cleaned!A200:L202
+  await logAndSave(page, 1);                    // write A
   const cardA = page.locator('.review').nth(0);
   await expect(cardA).toHaveClass(/done/);
   await expect(cardA.locator('.rv-undo')).toBeVisible();   // A is the newest → undoable
 
-  await logAndSave(page, 2);                    // write B → Log_Cleaned!A300:L302
+  await logAndSave(page, 2);                    // write B
   await expect(page.locator('.review')).toHaveCount(2);
   const cardB = page.locator('.review').nth(1);
   await expect(cardB).toHaveClass(/done/);
@@ -173,35 +173,37 @@ test('CLIENT-1: the identity guard refuses an undo bound to a superseded write',
   const capture = {};
   await openApp(page, capture);
 
-  await logAndSave(page, 1);                    // write A → A200
-  await logAndSave(page, 2);                    // write B → A300 (now the current lastWrite)
+  await logAndSave(page, 1);                    // write A
+  await logAndSave(page, 2);                    // write B (now the current lastWrite)
   expect(capture.writeRequests).toHaveLength(2);
 
   // Directly exercise the guard: an Undo call carrying write A's identity must be
   // refused (no server request) now that write B is the latest write.
-  const staleResult = await page.evaluate(async () => {
-    await window.atlasUndoLastWrite({ log_appended_range: 'Log_Cleaned!A200:L202', session_id: 'PW-E2E-SESSION' });
+  const writeA = capture.writeRequests[0].write_id;
+  const writeB = capture.writeRequests[1].write_id;
+  const staleResult = await page.evaluate(async (id) => {
+    await window.atlasUndoLastWrite({ write_id: id, session_id: 'PW-E2E-SESSION' });
     return true;
-  });
+  }, writeA);
   expect(staleResult).toBe(true);
   // No undo request went to the server for the superseded identity…
   expect(capture.undoRequests).toHaveLength(0);
   // …and the current (newest) write is still undoable with a matching identity.
-  await page.evaluate(async () => {
-    await window.atlasUndoLastWrite({ log_appended_range: 'Log_Cleaned!A300:L302', session_id: 'PW-E2E-SESSION' });
-  });
+  await page.evaluate(async (id) => {
+    await window.atlasUndoLastWrite({ write_id: id, session_id: 'PW-E2E-SESSION' });
+  }, writeB);
   expect(capture.undoRequests).toHaveLength(1);
-  expect(capture.undoRequests[0].log_appended_range).toBe('Log_Cleaned!A300:L302');
+  expect(capture.undoRequests[0].save_write_id).toBe(writeB);
 });
 
 test('CLIENT-1: single-save undo still works unchanged (no regression)', async ({ page }) => {
   const capture = {};
   await openApp(page, capture);
 
-  await logAndSave(page, 1);                    // write A → A200
+  await logAndSave(page, 1);                    // write A
   await page.locator('.review').nth(0).locator('.rv-undo').click();
 
   await expect.poll(() => capture.undoRequests.length).toBe(1);
-  expect(capture.undoRequests[0].log_appended_range).toBe('Log_Cleaned!A200:L202');
+  expect(capture.undoRequests[0].save_write_id).toBe(capture.writeRequests[0].write_id);
   expect(capture.undoRequests[0].confirm_delete).toBe(true);
 });
