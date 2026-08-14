@@ -50,6 +50,7 @@
 //   npm run atlas:coaching-inputs-transition -- --json  # machine-readable report
 
 const sheets = require('../sheets');
+const { confirmTabMissing } = require('../sheets');
 const adapter = require('../services/supabaseAdapter');
 const {
   coachingNotesColumns, constraintsColumns, deloadStateColumns, modalityLogColumns,
@@ -143,14 +144,36 @@ built, and a duplicated injury restriction is not a harmless duplicate.
 `.trim());
 }
 
-// Read one tab, header-stripped. A tab that is absent or unreadable is a REFUSAL,
-// never an empty carry-over: importing nothing because the source could not be read
-// is the exact silent loss this script exists to prevent.
+// Read one tab, header-stripped.
+//
+// A tab that is UNVERIFIED or UNREADABLE is a REFUSAL — importing nothing because
+// the source could not be read is the exact silent loss this script exists to
+// prevent.
+//
+// A tab that is VERIFIED ABSENT is equivalent to a valid zero-row source. The
+// metadata read must succeed and the tab must be missing from the workbook list
+// (`sheets.confirmTabMissing`) — the same proof `sheets.js` uses everywhere else.
+// Permission failures, API failures, malformed ranges, wrong workbooks, and
+// tabs that disappeared without proof still fail closed.
 async function readSource(concept) {
-  const rows = await sheets.getSheetRows(concept.tab);
-  return (Array.isArray(rows) ? rows : []).filter(
-    (row) => Array.isArray(row) && row.some((cell) => String(cell == null ? '' : cell).trim() !== '')
-  );
+  try {
+    const rows = await sheets.getSheetRows(concept.tab);
+    return {
+      rows: (Array.isArray(rows) ? rows : []).filter(
+        (row) => Array.isArray(row) && row.some((cell) => String(cell == null ? '' : cell).trim() !== '')
+      ),
+      source_status: 'read',
+    };
+  } catch (error) {
+    if (await confirmTabMissing(error, concept.tab)) {
+      return { rows: [], source_status: 'verified_absent' };
+    }
+    const message = error && error.message ? error.message : String(error);
+    throw new Error(
+      `Failed to read source tab "${concept.tab}": ${message}. ` +
+      'Refusing to treat an unverified source as empty.'
+    );
+  }
 }
 
 async function main() {
@@ -172,13 +195,14 @@ async function main() {
   };
 
   for (const concept of CONCEPTS) {
-    const source = await readSource(concept);
+    const { rows: source, source_status } = await readSource(concept);
     const meaningful = source.filter(concept.isMeaningful);
     const destination = await concept.readDestination();
 
     const entry = {
       concept: concept.name,
       tab: concept.tab,
+      source_status,
       source_rows: source.length,
       carryable_rows: meaningful.length,
       skipped_incomplete: source.length - meaningful.length,
@@ -247,4 +271,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { CONCEPTS, parseArgs };
+module.exports = { CONCEPTS, parseArgs, readSource };
