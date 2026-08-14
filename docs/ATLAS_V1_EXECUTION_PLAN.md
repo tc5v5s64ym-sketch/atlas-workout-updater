@@ -96,7 +96,7 @@ This is the single active, executable campaign. It is embedded here — not besi
 
 ### CAMPAIGN STATE
 
-**S4 ACCIDENTAL DEPLOY RECOVERY — ACTIVE 2026-08-14. Do not continue the S4 cutover.** The owner completed the authorized Render rollback. Production is serving S3 `da16cd4b13912569870e9a6dee7a3281730027b1` (PR #1290). Render auto-deploy remains off. Receipt quarantine remains active until `2026-08-15T02:24:37.691Z`. S4 cutover remains stopped. Stage B stays 0/5. Phase 5 stays unauthorized. No S4 schema. No freeze activation. No production write. No write reopening. Evidence: [`docs/verification/S4_ACCIDENTAL_DEPLOY_ROLLBACK_2026-08-14.md`](verification/S4_ACCIDENTAL_DEPLOY_ROLLBACK_2026-08-14.md).
+**S4 ACCIDENTAL DEPLOY RECOVERY — ACTIVE 2026-08-14. Do not continue the S4 cutover.** The owner completed the authorized Render rollback. Production is serving S3 `da16cd4b13912569870e9a6dee7a3281730027b1` (PR #1290). Render auto-deploy remains off. Receipt quarantine remains active until approximately `2026-08-14T19:10:00Z` (August 14 about 12:10 PM PDT). That is 24 hours after the last-S3-process bound, not an empty-risk-class claim. S4 cutover remains stopped. Stage B stays 0/5. Phase 5 stays unauthorized. No S4 schema. No freeze activation. No production write. No write reopening. Evidence: [`docs/verification/RECEIPT_QUARANTINE_RENDER_EVIDENCE_2026-08-14.md`](verification/RECEIPT_QUARANTINE_RENDER_EVIDENCE_2026-08-14.md), [`docs/verification/S4_ACCIDENTAL_DEPLOY_ROLLBACK_2026-08-14.md`](verification/S4_ACCIDENTAL_DEPLOY_ROLLBACK_2026-08-14.md).
 
 **OWNER AUTHORIZATION 2026-08-01 — Stage A is OPEN at 0/5 (no phase change).** Dale explicitly authorized Phase 4 Stage A to open. This is the owner instruction that starts the streak; it governs because it is recorded here, not because it was said in a session. It opens Stage A only: **Stage A: 5/5 — COMPLETE. Stage B: 0/5 — OPEN.** Phase 5 stays unauthorized, `SESSION_PLAN_SETS_WRITE_ENABLED` stays `0`, and no Sheet tab is created. Attempt one qualifying session at a time. The qualifying execution mode, the counting rule, the run-start boundary, and the sunset condition are recorded below under "Stage A qualifying sessions".
 
@@ -784,9 +784,17 @@ emergency code path.
 4. **Receipt-safety horizon.** `DEFAULT_TTL_MS` (24 hours) after the last
    moment an S3 process could have minted a receipt. Conservative instant:
    `2026-08-15T02:24:37.691Z` (24 hours after the observed S4 `deployed_at`).
-   Stronger proof is the Render log of the last S3 instance exit, plus one
-   instance across the replace. Writes may not reopen before the horizon.
-   Reopening after it is a separate owner action.
+   **Stronger process-lifetime bound now recorded.** Last observed S3 app
+   activity `2026-08-13T18:54:59Z`; Render Free plan, one instance; official
+   Free spin-down after 15 minutes without inbound traffic; no later S3 boot
+   before the S4 replacement. Defensible last-S3-process bound: approximately
+   `2026-08-13T19:10:00Z`. Governing horizon: approximately
+   `2026-08-14T19:10:00Z` (August 14 about 12:10 PM PDT). Finished-request
+   logs do not prove the receipt-risk class was empty at every instant and
+   do not end the quarantine immediately. Evidence:
+   [`docs/verification/RECEIPT_QUARANTINE_RENDER_EVIDENCE_2026-08-14.md`](verification/RECEIPT_QUARANTINE_RENDER_EVIDENCE_2026-08-14.md).
+   Writes may not reopen before the horizon. Reopening after it is a
+   separate owner action.
 5. **No schema reversal.** S4 schema apply (gate 1(c)) is outstanding. This
    process cannot apply DDL. GitHub has no Supabase connection. Rollback of
    S3 *code* does not reverse S4 DDL. **Stop if** Atlas Production already
@@ -800,7 +808,8 @@ emergency code path.
    off. Do not manual-deploy `main`. Repository `main` still holds the S4
    wiring until a later authorized action. Public `GET /version` now reports
    that full SHA and `pr: 1290`. Production writes remain quarantined until
-   `2026-08-15T02:24:37.691Z`, then only after explicit owner authorization.
+   approximately `2026-08-14T19:10:00Z`, then only after explicit owner
+   authorization.
 
 **What this block does not do.** It changes no counter and no phase.
 **Rehearsal, Stage A, and Stage B keep the values the active `CAMPAIGN STATE:`

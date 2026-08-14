@@ -156,18 +156,25 @@ minted a receipt.
 | Earliest S4 merge | `2026-08-14T01:12:36Z` | PR #1291 merged; auto-deploy could start |
 | Observed S4 process start | `2026-08-14T02:24:37.691Z` | Public `/version` `deployed_at` |
 | Conservative horizon | `2026-08-15T02:24:37.691Z` | 24 hours after the observed S4 start |
+| Last observed S3 app activity | `2026-08-13T18:54:59Z` | Last S3 `app` log line |
+| Defensible last-S3-process bound | `2026-08-13T19:10:00Z` | last activity plus official 15-minute Free spin-down |
+| **Governing horizon** | **`2026-08-14T19:10:00Z`** | 24 hours after that process bound; August 14 about 12:10 PM PDT |
 
-Using the later observed S4 start is conservative if S3 died earlier. It is
-not proof that no S3 instance overlapped a first S4 instance during a rolling
-replace.
+Using the later observed S4 start is conservative if S3 died earlier. The
+stronger process-lifetime proof is now recorded in
+[`RECEIPT_QUARANTINE_RENDER_EVIDENCE_2026-08-14.md`](./RECEIPT_QUARANTINE_RENDER_EVIDENCE_2026-08-14.md).
+Last observed S3 app activity: `2026-08-13T18:54:59Z`. Render service: Free
+plan, one instance. Official Render Free-service behavior: spin down after
+15 minutes without inbound traffic. No later S3 boot or S3 app activity
+before the S4 replacement. The request logger records finished requests
+only, so that evidence does not prove the receipt-risk class was empty at
+every instant and does not end the quarantine immediately.
 
-**Stronger proof, if the owner can produce it from Render logs.** The exact
-time the last S3 instance exited, plus platform confirmation of exactly one
-instance across the replace. The horizon is then that exit time plus 24 hours.
-If those logs are absent, use `2026-08-15T02:24:37.691Z`.
+**Governing horizon:** approximately `2026-08-14T19:10:00Z`. The
+conservative instant `2026-08-15T02:24:37.691Z` remains a later bound.
 
-**Writes may not reopen before that instant.** Reopening after it is a
-separate owner action. This recovery does not reopen writes.
+**Writes may not reopen before the governing horizon.** Reopening after it
+is a separate owner action. This recovery does not reopen writes.
 
 ## 5. Rollback requires no schema reversal
 
@@ -211,9 +218,9 @@ through the Render Dashboard. The owner did not manual-deploy `main`.
 Repository `main` still holds the S4 wiring from PR #1291. Auto-deploy must
 remain off so a later push to `main` does not ship S4 again.
 
-**Post-rollback verification** is recorded in §7. Until
-`2026-08-15T02:24:37.691Z` (or the stronger logged horizon in §4), do not
-Save. Do not undo. Do not log modality, bodyweight, coaching notes, or
+**Post-rollback verification** is recorded in §7. Until approximately
+`2026-08-14T19:10:00Z` (the governing receipt-safety horizon in §4), do
+not Save. Do not undo. Do not log modality, bodyweight, coaching notes, or
 constraints. Do not reopen writes. Do not apply S4 schema. Do not activate
 the freeze. Do not continue the S4 cutover. Do not advance Stage B or
 Phase 5.
@@ -305,11 +312,14 @@ key. `GET /api/health/sheets` was not called.
 
 **Receipt quarantine.** Successful rollback is not permission to reopen
 writes. The S3 file-backed receipt mechanism is newly running and empty of
-pre-deploy receipts. The conservative no-write horizon remains
-`2026-08-15T02:24:37.691Z`. Sunset of that quarantine is that horizon plus
-clean recovery verification plus explicit owner authorization to resume
-production workout writes. No new freeze, receipt store, bridge, or
-fallback was added.
+pre-deploy receipts. The governing no-write horizon is approximately
+`2026-08-14T19:10:00Z`. That is last S3 process lifetime plus 24 hours.
+Finished-request logs do not prove the receipt-risk class was empty at
+every instant. Do not end the quarantine immediately. Sunset of that
+quarantine is that horizon plus clean recovery verification plus explicit
+owner authorization to resume production workout writes. Evidence:
+[`RECEIPT_QUARANTINE_RENDER_EVIDENCE_2026-08-14.md`](./RECEIPT_QUARANTINE_RENDER_EVIDENCE_2026-08-14.md).
+No new freeze, receipt store, bridge, or fallback was added.
 
 ## Architecture accounting
 
@@ -321,7 +331,7 @@ fallback was added.
 | Competing production authority removed | Unauthorized S4 deployment |
 | Compatibility bridge | None |
 | Temporary safety mechanism | Operational no-write quarantine only |
-| Sunset | Receipt horizon passes, recovery verification remains clean, and Dale explicitly authorizes resuming production workout writes |
+| Sunset | Approximately `2026-08-14T19:10:00Z`, then recovery verification remains clean, and Dale explicitly authorizes resuming production workout writes |
 | Net complexity | No increase |
 
 ## Non-goals

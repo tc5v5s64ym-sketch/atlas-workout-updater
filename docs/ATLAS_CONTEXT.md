@@ -23,7 +23,7 @@ Render hosts the production backend:
 https://atlas-workout-updater.onrender.com
 ```
 
-Owner disabled Render auto-deploy on 2026-08-14 after an unauthorized S4 deploy of PR #1291, then completed the Render rollback to S3 `da16cd4b13912569870e9a6dee7a3281730027b1` (PR #1290). Leave auto-deploy off. Do not change Render environment variables unless the owner explicitly approves it. Production writes remain quarantined until `2026-08-15T02:24:37.691Z`. Evidence: `docs/ATLAS_V1_EXECUTION_PLAN.md` and `docs/verification/S4_ACCIDENTAL_DEPLOY_ROLLBACK_2026-08-14.md`.
+Owner disabled Render auto-deploy on 2026-08-14 after an unauthorized S4 deploy of PR #1291, then completed the Render rollback to S3 `da16cd4b13912569870e9a6dee7a3281730027b1` (PR #1290). Leave auto-deploy off. Do not change Render environment variables unless the owner explicitly approves it. Production writes remain quarantined until approximately `2026-08-14T19:10:00Z` (August 14 about 12:10 PM PDT). That bound is last S3 process lifetime plus 24 hours, not an empty-risk-class claim. Evidence: `docs/ATLAS_V1_EXECUTION_PLAN.md`, `docs/verification/RECEIPT_QUARANTINE_RENDER_EVIDENCE_2026-08-14.md`, and `docs/verification/S4_ACCIDENTAL_DEPLOY_ROLLBACK_2026-08-14.md`.
 
 ## Google Sheets Persistence
 
