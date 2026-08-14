@@ -658,13 +658,51 @@ accepted plan data is authoritative, not optional; no flag may recreate that com
 This correction authorizes no schema application to `Atlas Production`, no deployment, and
 no cutover.
 
-**Status, recorded honestly.** PR #1291 now carries the S4 implementation: the four catalog
-consumers read `services/exerciseCatalog.js`; the sync/freshness path and old catalog admin are
-deleted; authoritative plan-event and plan-set flags are removed; the measured all-429 proof
-drives a complete workout plus five sessions against real Postgres. **Production cutover is
-still NOT complete and is not authorized by this repository change**, so the deployed S3
-authority remains whatever the next read-only production gate verifies. The per-concept record
-is [`docs/ATLAS_SYSTEM_AUTHORITY.md`](ATLAS_SYSTEM_AUTHORITY.md) concept 18b.
+**Status, recorded honestly.** PR #1291 (`agent/s4-supabase-cutover`) is the S4
+repository cutover. It is not a production cutover. Current `main`
+(`da16cd4b13912569870e9a6dee7a3281730027b1`) still has Google Sheets as the live
+workout authority and `services/idempotency.js` as the live receipt store. This
+branch wires Supabase as the intended authority for the seven hot-path concepts,
+the exercise catalog, coaching inputs, and write receipts, and it deletes the
+Sheets hot-path readers and the file-backed receipt store from the runtime.
+
+Surfaces on the branch: `services/workoutAuthority.js`,
+`services/writeReceipts.js`, `services/exerciseCatalog.js`,
+`services/coachingInputsAuthority.js`, `services/sheetsMirrorExport.js`,
+`services/sheetsMirrorScheduler.js`, S4 migrations
+`20260813152939_s4_catalog_sole_authority.sql`,
+`20260813152952_s4_cutover_write_id_foreign_keys.sql`,
+`20260813170000_s4_coaching_inputs.sql`, and the owner CLIs `atlas:catalog`,
+`atlas:export-mirror`, and `atlas:coaching-inputs-transition`. GitHub reports
+179 files, +10128 / −18375, against `main`.
+
+Proofs executed on head `1c364ddfd3d7e9c5c8f3f6bccc199c2804a48077` (CI): unit
+tests PASS; from-empty Postgres `npm run test:pg` PASS, including
+`test-pg/allSheets429Workout.pgproof.js` (five complete workouts, workout-critical
+synchronous Sheets calls = 0); E2E PASS; secret scan PASS; Drift Guard 7 PASS.
+Deployed debug workouts (design P8/P18) have not run. No production schema
+application, deployment, cutover, or data write has occurred.
+
+Outstanding owner production gates are unchanged: 1(b) `write_freeze` apply to
+`Atlas Production`; 1(c) S4 schema apply; 1(d) divergence-table drop after the
+rollback window (`supabase/operations/drop_migration_divergences.sql` is not in
+this branch); the S4 production cutover itself. This repository change
+authorizes none of them.
+
+### ATLAS CONTRACT / SYSTEMS REVIEW 2026-08-13 — exact head `1c364ddfd3d7e9c5c8f3f6bccc199c2804a48077`: BLOCKED — one named fix
+
+ChatGPT reviewed PR #1291 at `1c364ddfd3d7e9c5c8f3f6bccc199c2804a48077`.
+Outcome: **BLOCKED**. Named fix: the PR merge card still described catalog-only
+incomplete S4 (79 files, Sheets plus `idempotency.js` still live, exporter not
+built, P8–P20 not executed, reviewed head `09dd6417bc0b7f7f316691cc4a8bf7eac9ee0d08`)
+while the head contained the S4 runtime wiring above. This paragraph is that
+docs-only correction. It changes no runtime, schema, test, or architecture.
+The exact head of this correction is recorded in PR #1291 after push. Review
+outcome of that new head stays **PENDING** until ChatGPT reads it.
+
+**No counter changed and no authorization was granted by this review or this
+correction.** Rehearsal 0/5 · Stage A 5/5 COMPLETE · Stage B 0/5 OPEN. Phase 5
+unauthorized. No schema applied. No deployment. No S4 production cutover.
 
 ---
 
