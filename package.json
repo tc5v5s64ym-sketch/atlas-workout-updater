@@ -20,6 +20,7 @@
     "atlas:catalog": "node scripts/atlas-catalog-admin.js",
     "atlas:export-mirror": "node scripts/atlas-export-mirror.js",
     "atlas:coaching-inputs-transition": "node scripts/atlas-coaching-inputs-transition.js",
+    "atlas:supabase-restore-proof": "node scripts/atlas-supabase-restore-proof.js",
     "supabase:migrate": "node scripts/apply-supabase-migrations.js",
     "atlas:rehearsal-session": "node scripts/atlas-rehearsal-session.js",
     "check:wiring": "node scripts/check-wired-modules.js",
