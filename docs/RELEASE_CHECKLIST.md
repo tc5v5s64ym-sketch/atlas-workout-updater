@@ -11,6 +11,11 @@
 
 ## Before Production Change
 
+- Render auto-deploy is **off** during any Supabase/S4 authority-changing work unless Dale
+  explicitly re-enables it after a successful authorized cutover (`docs/SUPABASE_HOT_PATH_MIGRATION.md` §5.5).
+- Merging S4 wiring to `main` does **not** deploy production. The cutover build ships only by
+  an owner-authorized Render deploy after freeze, drain, receipt carry, sweep, mirror base,
+  and S4 schema prerequisites complete.
 - Current production sheet smoke is green.
 - Candidate cleaned sheet read-only smoke is green.
 - Candidate cleaned sheet dry-run is green.

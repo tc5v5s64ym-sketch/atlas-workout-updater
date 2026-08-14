@@ -59,7 +59,11 @@ In Google Sheets: **File → Make a copy**, name it `Atlas Backup YYYY-MM-DD`. T
 ### C. Bad deploy
 
 1. Render: roll back to the previous deploy in the Render dashboard, or
-2. GitHub: revert the offending merge on `main` (`git revert -m 1 <merge-sha>`); Render auto-deploys the revert.
+2. GitHub: revert the offending merge on `main` (`git revert -m 1 <merge-sha>`). **Do not
+   rely on Render auto-deploy during an authority-changing window** — auto-deploy must stay
+   off until the owner explicitly re-enables it after a successful authorized cutover
+   (`docs/SUPABASE_HOT_PATH_MIGRATION.md` §5.5). If auto-deploy is off, a revert on `main`
+   does not move production until Dale deploys or rolls back through Render.
 3. Run Mission Control `read-only` then `full` (dry-run) to confirm recovery.
 
 ### D. Leaked secret
