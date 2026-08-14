@@ -674,7 +674,8 @@ Surfaces on the branch: `services/workoutAuthority.js`,
 `20260813152952_s4_cutover_write_id_foreign_keys.sql`,
 `20260813170000_s4_coaching_inputs.sql`, and the owner CLIs `atlas:catalog`,
 `atlas:export-mirror`, and `atlas:coaching-inputs-transition`. GitHub reports
-179 files, +10128 / −18375, against `main`.
+179 files against `main`. Insertion and deletion counts live on the PR #1291
+merge card, not in this paragraph.
 
 Proofs executed on head `1c364ddfd3d7e9c5c8f3f6bccc199c2804a48077` (CI): unit
 tests PASS; from-empty Postgres `npm run test:pg` PASS, including
