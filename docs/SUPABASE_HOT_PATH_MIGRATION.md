@@ -2625,6 +2625,32 @@ Evidence of the failure mode:
 `docs/INVARIANTS.md` S4 and `docs/ATLAS_CONTEXT.md` record that auto-deploy must stay off
 until the owner re-enables it after a successful authorized cutover.
 
+**Render env-save modes — credential setup uses Save only.** Render offers three save
+behaviors when changing environment variables: **Save only**, **Save and deploy**, and
+**Save, rebuild, and deploy**. During the S4 credential handover, **only Save only** may be
+used when adding or updating `ATLAS_SUPABASE_APP_URL`. **Save and deploy** and **Save,
+rebuild, and deploy** each trigger a hidden intermediate S3 redeploy/restart that breaks the
+one-deploy cutover boundary below. There is no second deployment abstraction or controller —
+this is a procedure correction only.
+
+**Step 6 sub-procedure — one physical deploy activates S4 code and the saved credential:**
+
+1. Steps 1–5 fully pass while production remains on S3.
+2. Render auto-deploy remains **OFF**.
+3. Add or update `ATLAS_SUPABASE_APP_URL` in Render using **Save only**.
+4. Verify **no deployment occurred** and `GET /version` still reports the expected S3 SHA.
+5. Render **Deploys → Manual Deploy → Deploy a specific commit**.
+6. Select the **exact reviewed S4 cutover commit**.
+7. That deploy is the **one** cutover deployment that activates **both** the S4 code **and**
+   the already-saved `ATLAS_SUPABASE_APP_URL`.
+8. Verify the deployed full SHA and configured Supabase status (`supabase_migration.configured:
+   true` on `/.well-known/atlas-status.json`).
+9. Only then proceed to the non-counting proof workout (handover step 7).
+10. Writes reopen only after proof passes and owner authorization (handover step 8).
+
+See also
+[`docs/verification/S4_RUNTIME_CREDENTIAL_CUTOVER_PACKAGE_2026-08-14.md`](./verification/S4_RUNTIME_CREDENTIAL_CUTOVER_PACKAGE_2026-08-14.md).
+
 1. **Freeze the affected writes — all seven `beginWrite` callers, not only the migrated
    four (§5.5a) — WITHOUT a restart that destroys the source.** *Required review of `4647ee2`.*
    The previous protocol shipped the freeze as an **earlier deploy**, then carried the receipt
@@ -2691,10 +2717,12 @@ until the owner re-enables it after a successful authorized cutover.
    `atlas.write_receipts` for the first time, because every existing child row still carries a
    null `write_id`. **The file store is still present in the running `S3` build at this point**;
    it disappears with the deploy at step 6, and its data was carried at step 2a.
-6. **Deploy the cutover build** and switch the sole runtime authority. **This is an
-   owner-authorized Render deploy of the cutover commit — not a merge to `main` and not
-   Render auto-deploy.** Auto-deploy must remain off; production must be pinned until Dale
-   explicitly deploys this build after steps 1–5 pass.
+6. **Deploy the cutover build** and switch the sole runtime authority. **Follow the step 6
+   sub-procedure above** — owner-authorized Render deploy of the exact reviewed S4 cutover
+   commit, not a merge to `main`, not Render auto-deploy, and not an env-var save that
+   redeploys. Auto-deploy must remain off; production must stay pinned to S3 until Dale
+   completes the one physical cutover deploy after steps 1–5 pass and the credential is saved
+   with **Save only**.
 7. **Run the non-counting proof workout** and the exact evidence checks of §6.3.
 8. **Reopen writes**, and only after step 7 passes.
 

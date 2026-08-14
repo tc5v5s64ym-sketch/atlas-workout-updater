@@ -50,7 +50,7 @@ Render is IPv4-only; the session pooler is the executable choice (§8.1).
 
 ## Render runtime — exact configuration boundary
 
-**Set on Render (one variable) at cutover step 6, after steps 1–5:**
+**Set on Render (one variable) during handover step 6, after steps 1–5:**
 
 1. `ATLAS_SUPABASE_APP_URL` — session-pooler URL for `atlas_app`.
 
@@ -63,8 +63,18 @@ Render is IPv4-only; the session pooler is the executable choice (§8.1).
 **Do not set during quarantine or before authorized step 6.** Production today has
 `ATLAS_SUPABASE_APP_URL` unset (`supabase_migration.configured: false`).
 
-Changing a Render env var **redeploys** — treat credential setup and cutover deploy as
-one owner-planned action (§5.5 step 6), with auto-deploy off until deliberately re-enabled.
+### Render env-save modes (mandatory)
+
+Render offers **Save only**, **Save and deploy**, and **Save, rebuild, and deploy**.
+When adding or updating `ATLAS_SUPABASE_APP_URL` during the S4 handover:
+
+- **Use Save only.** The credential is saved without starting a deployment.
+- **Never use Save and deploy** or **Save, rebuild, and deploy** for this credential setup.
+  Either option triggers a hidden S3 redeploy/restart and breaks the one-deploy cutover
+  boundary in §5.5.
+
+After **Save only**, verify `GET /version` still reports the expected S3 SHA before the
+manual cutover deploy.
 
 ## Owner workstation — temporary configuration
 
@@ -75,24 +85,26 @@ export ATLAS_SUPABASE_APP_URL='…'        # only if testing runtime against sta
 export ATLAS_SUPABASE_READONLY_URL='…'   # status / review-live
 export ATLAS_SUPABASE_MIGRATE_URL='…'    # schema apply, coaching-input --apply, receipt carry
 export ATLAS_SUPABASE_REBUILD_URL='…'    # only during §5.7 rebuild
+export ATLAS_COACHING_INPUTS_EXPECTED_SHEETS_ID='…'  # production GOOGLE_SHEETS_ID for coaching-input --apply
 ```
 
-Unset `MIGRATE` and `REBUILD` when the window closes.
+Unset `MIGRATE`, `REBUILD`, and coaching-input expected id when the window closes.
 
 ## Preflight commands (before step 6 deploy)
 
-Run from owner workstation with all four URLs set locally (not on Render):
+Run from owner workstation with migrate/readonly URLs set locally (not on Render):
 
 ```bash
 # Hosted four-role + session-lock checkpoint (already PASSED 2026-08-08; re-run if roles rotated)
 npm run atlas:p8b -- --json
 
-# Coaching-input dry run (after gate 1(c) schema applied)
+# Coaching-input dry run (after gate 1(c) schema applied; set expected sheets id for verified-absent)
 npm run atlas:coaching-inputs-transition -- --json
-
-# Local restore verification pattern (disposable Postgres — not production dump)
-ATLAS_PG_ADMIN_URL=postgres://… npm run atlas:supabase-restore-proof -- --json
 ```
+
+Production backup/restore proof is **not** this package. Before write reopening, take a real
+Atlas Production backup (`pg_dump` or Supabase dashboard export), perform one scratch restore,
+and verify row counts and invariants — see §5.5 gate P19d and `docs/BACKUP_ROLLBACK.md`.
 
 ## Post-configuration health evidence (after step 6, before write reopen)
 
@@ -124,10 +136,13 @@ curl -sS -H "x-atlas-api-key: $ATLAS_API_KEY" \
 
 When steps 1–5 of §5.5 are complete and Dale authorizes step 6:
 
-1. Add **`ATLAS_SUPABASE_APP_URL`** (`atlas_app`, session pooler, port 5432) to Render.
-2. **Manually deploy** the S4 cutover commit (auto-deploy still off).
-3. Verify `/version` and `/.well-known/atlas-status.json` show `configured: true`.
-4. Complete step 7 proof workout before step 8 write reopening.
+1. Add **`ATLAS_SUPABASE_APP_URL`** (`atlas_app`, session pooler, port 5432) to Render using
+   **Save only** (not Save and deploy; not Save, rebuild, and deploy).
+2. Verify **no deployment occurred** — `GET /version` still shows the S3 SHA.
+3. **Manually deploy** the exact reviewed S4 cutover commit (auto-deploy still off). This one
+   deploy activates both the S4 code and the already-saved credential.
+4. Verify `/version` and `/.well-known/atlas-status.json` show `configured: true`.
+5. Complete step 7 proof workout before step 8 write reopening.
 
 Separate owner actions (not Render runtime): apply S4 schema (gate 1(c)), run
 coaching-input `--apply` with `ATLAS_SUPABASE_MIGRATE_URL` on workstation, activate
