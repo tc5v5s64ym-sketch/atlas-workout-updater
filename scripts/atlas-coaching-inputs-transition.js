@@ -48,10 +48,68 @@
 //   npm run atlas:coaching-inputs-transition            # dry run, writes nothing
 //   npm run atlas:coaching-inputs-transition -- --apply # the owner-run write
 //   npm run atlas:coaching-inputs-transition -- --json  # machine-readable report
+//
+// Owner workstation only (never commit):
+//   ATLAS_COACHING_INPUTS_EXPECTED_SHEETS_ID=<production GOOGLE_SHEETS_ID>
+//
+// Required for --apply. Required before a metadata-confirmed missing tab may count as
+// verified_absent (current verified absence in THAT workbook — not historical proof).
 
 const sheets = require('../sheets');
-const { confirmTabMissing } = require('../sheets');
+const { confirmTabMissing } = sheets;
 const adapter = require('../services/supabaseAdapter');
+
+const EXPECTED_SHEETS_ID_ENV = 'ATLAS_COACHING_INPUTS_EXPECTED_SHEETS_ID';
+
+/** Last characters only — never log a full spreadsheet id. */
+function spreadsheetIdSuffix(id) {
+  const value = String(id == null ? '' : id).trim();
+  if (!value) return '(unset)';
+  return value.length <= 8 ? `…${value}` : `…${value.slice(-8)}`;
+}
+
+// One-time precondition: the configured workbook must match the owner-supplied
+// production id before metadata-confirmed absence may count as zero rows.
+function resolveSourceWorkbookIdentity({ requireExpected = false } = {}) {
+  const configuredId = String(process.env.GOOGLE_SHEETS_ID || '').trim();
+  const expectedId = String(process.env[EXPECTED_SHEETS_ID_ENV] || '').trim();
+  const configuredSuffix = spreadsheetIdSuffix(configuredId);
+  const expectedSuffix = spreadsheetIdSuffix(expectedId);
+
+  if (!configuredId) {
+    return {
+      ok: false,
+      workbookVerified: false,
+      configuredSuffix,
+      expectedSuffix,
+      reason: 'GOOGLE_SHEETS_ID is not set',
+    };
+  }
+  if (requireExpected && !expectedId) {
+    return {
+      ok: false,
+      workbookVerified: false,
+      configuredSuffix,
+      expectedSuffix,
+      reason: `${EXPECTED_SHEETS_ID_ENV} is required for --apply`,
+    };
+  }
+  if (expectedId && configuredId !== expectedId) {
+    return {
+      ok: false,
+      workbookVerified: false,
+      configuredSuffix,
+      expectedSuffix,
+      reason: 'configured workbook does not match expected production workbook',
+    };
+  }
+  return {
+    ok: true,
+    workbookVerified: Boolean(expectedId),
+    configuredSuffix,
+    expectedSuffix,
+  };
+}
 const {
   coachingNotesColumns, constraintsColumns, deloadStateColumns, modalityLogColumns,
 } = require('../config/columns');
@@ -150,12 +208,13 @@ built, and a duplicated injury restriction is not a harmless duplicate.
 // the source could not be read is the exact silent loss this script exists to
 // prevent.
 //
-// A tab that is VERIFIED ABSENT is equivalent to a valid zero-row source. The
-// metadata read must succeed and the tab must be missing from the workbook list
-// (`sheets.confirmTabMissing`) — the same proof `sheets.js` uses everywhere else.
-// Permission failures, API failures, malformed ranges, wrong workbooks, and
-// tabs that disappeared without proof still fail closed.
-async function readSource(concept) {
+// A tab that is VERIFIED ABSENT is equivalent to a valid zero-row source when:
+//   (a) GOOGLE_SHEETS_ID matches the owner-supplied expected production workbook; and
+//   (b) metadata read succeeds and the tab is missing from THAT workbook's tab list
+//       (`confirmTabMissing`) — current verified absence, not historical proof.
+// Permission failures, API failures, malformed ranges, wrong workbooks, and tabs
+// that disappeared without proof still fail closed.
+async function readSource(concept, { workbookVerified = false } = {}) {
   try {
     const rows = await sheets.getSheetRows(concept.tab);
     return {
@@ -166,6 +225,13 @@ async function readSource(concept) {
     };
   } catch (error) {
     if (await confirmTabMissing(error, concept.tab)) {
+      if (!workbookVerified) {
+        throw new Error(
+          `Source tab "${concept.tab}" is absent from workbook ${spreadsheetIdSuffix(process.env.GOOGLE_SHEETS_ID)}, ` +
+          'but the configured workbook is not verified as the expected production workbook. ' +
+          `Set ${EXPECTED_SHEETS_ID_ENV} to the production GOOGLE_SHEETS_ID and retry.`
+        );
+      }
       return { rows: [], source_status: 'verified_absent' };
     }
     const message = error && error.message ? error.message : String(error);
@@ -187,7 +253,20 @@ async function main() {
     );
   }
 
-  const report = { apply: args.apply, concepts: [], refusals: [] };
+  const identity = resolveSourceWorkbookIdentity({ requireExpected: args.apply });
+  if (!identity.ok) {
+    throw new Error(
+      `${identity.reason} (configured workbook ${identity.configuredSuffix}, ` +
+      `expected ${identity.expectedSuffix})`
+    );
+  }
+
+  const report = {
+    apply: args.apply,
+    source_workbook: identity.configuredSuffix,
+    concepts: [],
+    refusals: [],
+  };
   const payload = { coachingNotes: [], constraints: [], deloadState: [], modalityLog: [] };
   const payloadKey = {
     coaching_notes: 'coachingNotes', constraints: 'constraints',
@@ -195,7 +274,9 @@ async function main() {
   };
 
   for (const concept of CONCEPTS) {
-    const { rows: source, source_status } = await readSource(concept);
+    const { rows: source, source_status } = await readSource(concept, {
+      workbookVerified: identity.workbookVerified,
+    });
     const meaningful = source.filter(concept.isMeaningful);
     const destination = await concept.readDestination();
 
@@ -271,4 +352,11 @@ if (require.main === module) {
   });
 }
 
-module.exports = { CONCEPTS, parseArgs, readSource };
+module.exports = {
+  CONCEPTS,
+  EXPECTED_SHEETS_ID_ENV,
+  parseArgs,
+  readSource,
+  resolveSourceWorkbookIdentity,
+  spreadsheetIdSuffix,
+};
