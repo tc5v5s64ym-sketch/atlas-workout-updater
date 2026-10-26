@@ -148,7 +148,6 @@ Navigation for this file (added 2026-07-01, planning consolidation PR-7). This f
 
 - [ ] **CLIENT-5** `[housekeeping]` — `registerEffortCardCleanup` registry is dead code (zero callers; documented as live) (`src/app/app.js:3683-3696`); delete or wire.
 
-- [ ] **INFRA-4** `[housekeeping]` — secret scanner exempts `*.env` files entirely and misses raw `sk-proj-…` tokens outside the assignment form (`scripts/check-changed-files-for-secrets.js:19`).
 
 - [ ] **INFRA-5** `[polish]` — no `unhandledRejection` backstop for the ~67 bare async route handlers (clean today, verified; one future unguarded `await` kills the process mid-write).
 

@@ -1,6 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { rules } = require('../scripts/check-changed-files-for-secrets');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { rules, isScannableFile, scan } = require('../scripts/check-changed-files-for-secrets');
 
 const ruleByName = Object.fromEntries(rules.map(rule => [rule.name, rule]));
 
@@ -129,4 +132,54 @@ test('secret keys, JWTs and role-URL assignments still FAIL', () => {
   }
   // The .env.example placeholders stay allowed.
   assert.deepEqual(rules.filter((r) => r.test('ATLAS_SUPABASE_APP_URL=replace_me', '.env.example')), []);
+});
+
+// ── INFRA-4: the .env exemption and raw sk-proj tokens ───────────────────────
+//
+// The scanner used to exempt every *.env file from the changed-file
+// selection, and its only OpenAI rule matched the OPENAI_API_KEY assignment
+// form — so a real credential committed in an env file, or a raw sk-proj
+// token pasted into a note or log, sailed through. Both gaps are pinned here.
+// Sample tokens are assembled at runtime so this file never carries a literal
+// key that would trip the scanner when it scans its own changed files in CI.
+
+test('scanner exposes the raw OpenAI project-key rule (INFRA-4)', () => {
+  assert.ok(ruleByName['openai-project-key'], 'raw sk-proj token rule must exist');
+});
+
+test('openai-project-key flags the raw sk-proj token outside an assignment', () => {
+  const rule = ruleByName['openai-project-key'];
+  const sampleProjectKey = ['sk', 'proj'].join('-') + '-' + 'A'.repeat(48);
+  assert.equal(rule.test(`NOTE="${sampleProjectKey}"`, 'notes.md'), true, 'a leaked key under a different name is still caught');
+  assert.equal(rule.test(`Authorization: Bearer ${sampleProjectKey}`, 'session.log'), true, 'a leaked key in prose is still caught');
+  assert.equal(rule.test(['sk', 'proj'].join('-') + '-ABCDEFGH12345678', 'test/flightRecorder.test.js'), false, 'the short redaction-test fixture is not a key');
+  assert.equal(rule.test('sk-proj-...', 'notes.md'), false, 'an ellipsis mention is not a key');
+});
+
+test('changed-file selection scans .env files instead of exempting them (INFRA-4)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-secret-scan-'));
+  try {
+    const names = ['.env', 'prod.env', 'app.js'];
+    for (const name of names) fs.writeFileSync(path.join(dir, name), 'x');
+    const candidates = [...names, 'missing.js'].map((name) => path.join(dir, name));
+    const kept = candidates.filter((file) => isScannableFile(file));
+    assert.deepEqual(kept, candidates.slice(0, 3), 'existing .env files are selected for scanning; only missing files are dropped');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('scan() flags a real credential committed in a .env file (INFRA-4)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-secret-scan-'));
+  try {
+    const envFile = path.join(dir, '.env');
+    fs.writeFileSync(envFile, `GEMINI_API_KEY=${sampleGeminiKey}\n`);
+    const failures = scan([envFile]);
+    assert.ok(
+      failures.some((failure) => failure.file === envFile && failure.rule === 'gemini-api-key-assignment'),
+      'a real key in a .env file must be a finding once the file is selected'
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
