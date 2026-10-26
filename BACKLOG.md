@@ -11,7 +11,7 @@
 The execution plan is the authoritative open-work queue; this glance-index surfaces the highest-severity OPEN items, reconciled against the 2026-07-07 deep-review audit checkboxes (`[ ]` = open) in the "Deep-review audit — 2026-07-07 — open findings" section below, `docs/BUG_TRIAGE_LEDGER.md`, and the plan.
 
 - **Open P0:** none — all four deep-review P0 data-integrity items (CLIENT-1, PARSE-1/2/3) are fixed (PR-0D–0G).
-- **Open P1:** **INFRA-3** — the secret-scan CI job false-positives on the stub `BEGIN PRIVATE KEY` literals in `test/coach-ask-endpoint.test.js` + `test/recommendation-preview-endpoint.test.js`, so any PR touching those files goes red until the stubs are built at runtime. (Retained pending current-state verification.)
+- **Open P1:** none — INFRA-3 was verified already-fixed on current state and archived 2026-10-26 (see `BACKLOG_ARCHIVE.md`).
 - **Open P2 residuals:** PARSE-6, SESS-6, and SESS-7 remain explicit open findings. The former SESS-4/SESS-5 completion-identity cluster was closed by F10 authoritative planned-slot completion identity; current residuals are tracked by Issues #1199–#1202 and the Phase-4 gate below.
 
 > 🗂️ **Completed and cancelled records live in [`BACKLOG_ARCHIVE.md`](./BACKLOG_ARCHIVE.md).** This file should contain only open, in-progress, deferred, evidence-gated, or owner-reserved work. A shipped parent remains only when its attached follow-up cannot yet be separated safely.
@@ -133,10 +133,6 @@ Navigation for this file (added 2026-07-01, planning consolidation PR-7). This f
 - **Follow-up `[polish]` (PR-0F review note):** the standalone re-parse in the header branch would dead-end a lone **contextual-alias** sub-header (`lats`/`incline`) whose standalone parse returns `ambiguous_exercise_alias` rather than `missing_sets`. Verified this does NOT regress realistic inputs — the whole-text collapse / multi-exercise split resolve `lat pulldown 130 8/2 ⏎ lats ⏎ 120 10/2` (and variants) before the rescue ever sees `lats` as a standalone header (pinned in the PARSE-2 guard golden test). If a future input ever routes a contextual-alias sub-header through the rescue, it dead-ends to an ask (trust-safe, never mislogs); to make that path keep merging, also accept a standalone whose `partial.exercise === carryExercise` in the header branch.
 
 - **Follow-up `[polish]` (PR-0G review notes, both trust-safe — asks, never mislogs):** (1) `MIN_PLAUSIBLE_WEIGHT = 6` also refuses a legit **multi-set** bare pair whose load is ≤ 5 lb (e.g. `curls 5 12 5 15` — real 5 lb DB work) because in the bare grammar a 5 lb weight is indistinguishable from an RIR token; single ≤5 lb sets stay safe via the whole-text anchor, so impact is narrow (a clarification, not a mislog). This is wider than the 6–19 / 20–49 residual gap the code comment names. (2) For a leading **unknown** name with an implausible tail (`zzq 2 185 8 2`), the refusal routes through `parseUnknownExercise → null` to the generic `missing_exercise` ask rather than the specific `ambiguous_set_format` slash-notation message — trust-safe, just less precise copy. Both resolve cleanly once PR-14 makes the parser catalog-aware (real weights vs RIR become distinguishable); no code change taken here to keep PR-0G tightly scoped.
-
-**P1 — correctness on the write/trust path:**
-
-- [ ] **INFRA-3** `[correctness]` **(E)** — secret-scan CI false-positives on the stub `GOOGLE_PRIVATE_KEY` literals in `test/coach-ask-endpoint.test.js:10` + `test/recommendation-preview-endpoint.test.js:12`; any PR touching them goes red. Build stubs at runtime.
 
 **P2 — remaining findings (fix opportunistically or fold into the remediation PR that owns the code):**
 
