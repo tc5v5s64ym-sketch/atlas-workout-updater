@@ -21,6 +21,7 @@
 // `let`s took (`x = []`, `x = {…}`, `x = null`).
 
 import { signal } from './signals-core.js';
+import { buildSetRevisionProposal } from './setRevisionProposal.js';
 
 // ── session/plan slice (private signals — never exported directly) ──────────────
 const _activePlannedSession = signal(null);
@@ -206,6 +207,23 @@ export function persistSessionSnapshot(sessionId) {
   } catch { /* storage full / disabled — persistence is best-effort, never fatal */ }
 }
 
+// #1202 — re-validate a snapshot's pendingSetRevision through the proposal builder.
+// Returns the rebuilt proposal (identical identity for a legitimately stored one), or
+// null when the stored shape is missing, malformed, or no longer buildable.
+function restorePendingSetRevision(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  return buildSetRevisionProposal({
+    plan_item_id: raw.plan_item_id,
+    planned_lift_code: raw.planned_lift_code,
+    prescribed_name: raw.prescribed_name,
+    prescription: raw.prescription,
+    from: raw.from,
+    accepted_set_count: raw.accepted_set_count,
+    plan_version: raw.plan_version,
+    proposed_at: raw.proposed_at,
+  });
+}
+
 // Read + validate a recent snapshot and APPLY it to the slice. Returns a small
 // result object so the caller can do the DOM half. Read-only restore — no network.
 // `{ resumed: false }` when there is nothing safe to resume (missing / malformed /
@@ -254,8 +272,12 @@ export function hydrateSessionSnapshot() {
     setPendingReplacement((snap.pendingReplacement && typeof snap.pendingReplacement === 'object')
       ? snap.pendingReplacement : null);
     // A v5-or-older snapshot simply lacks the field and restores null — never rejected on deploy.
-    setPendingSetRevision((snap.pendingSetRevision && typeof snap.pendingSetRevision === 'object')
-      ? snap.pendingSetRevision : null);
+    // #1202: a restored proposal is re-run through the builder, so a corrupted or
+    // hand-edited snapshot cannot resurrect a proposal the builder would refuse today
+    // (e.g. a reps-only prescription the ledger can never emit). The builder is
+    // deterministic, so a legitimately stored proposal rebuilds with the SAME
+    // proposal_id and survives intact; anything else restores as null.
+    setPendingSetRevision(restorePendingSetRevision(snap.pendingSetRevision));
     return {
       resumed: true,
       sessionId: snap.sessionId || null,

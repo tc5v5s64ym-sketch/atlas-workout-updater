@@ -54,9 +54,14 @@ function buildSetRevisionProposal(params) {
   const weight = _num(src.weight);
   const reps = _num(src.reps);
   const rir = _num(src.rir);
-  // A revision must change something measurable. Weight or reps is the minimum; RIR alone is a
+  // A revision must change something measurable, and it must be EMITTABLE: the ledger
+  // (sessionLedger.buildFutureRevisions) refuses any target missing weight OR reps — a
+  // revision never fabricates a target. Before #1202 this builder accepted weight OR reps,
+  // so a reps-only proposal could be built, stored, rendered and approved, and then emit
+  // nothing while the approval consumed it — the athlete's decision destroyed silently.
+  // The builder therefore requires the emitter's contract: weight AND reps. RIR alone is a
   // coaching note, not a prescription change the ledger can carry.
-  if (weight === null && reps === null) return null;
+  if (weight === null || reps === null) return null;
 
   // …and when the CURRENT target is known, it must actually differ. Testing presence rather than
   // change accepted a no-op — proposing the same 225x5 already prescribed — and approval then

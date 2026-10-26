@@ -200,9 +200,13 @@ expectRed(
   /not the PR head/i
 );
 expectRed(
-  'the required lane has one reviewer identity',
+  'the required lane admits only its named reviewer identities',
   card({ review: { ...required, Reviewer: 'Codex' } }),
-  /Reviewer: ChatGPT/i
+  /Reviewer: ChatGPT or Muse/i
+);
+expectGreen(
+  'an independent Muse review on the exact head passes',
+  card({ review: { ...required, Reviewer: 'Muse' } })
 );
 expectRed(
   'a blocking required review cannot merge',
