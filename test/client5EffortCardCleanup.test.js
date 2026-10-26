@@ -25,4 +25,5 @@ test('CLIENT-5: invalidatePreview keeps its live behaviour', () => {
   assert.match(body, /previewRequestSeq\+\+/, 'invalidation still supersedes in-flight previews');
   assert.match(body, /pendingWrite = null/, 'invalidation still clears the pending write');
   assert.match(body, /previewPanel\.hidden = true/, 'invalidation still hides the preview panel');
+  assert.match(body, /btn\.disabled = true/, 'invalidation still disables the approve button');
 });
