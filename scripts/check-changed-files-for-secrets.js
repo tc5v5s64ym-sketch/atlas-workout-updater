@@ -16,7 +16,16 @@ function changedFiles(range) {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
-    .filter((file) => fs.existsSync(file) && !file.endsWith(".env"));
+    .filter((file) => isScannableFile(file));
+}
+
+function isScannableFile(file) {
+  // INFRA-4: *.env files are scanned like any other file. A committed env
+  // file carrying a real credential is exactly what this scanner exists to
+  // catch, so the old blanket exemption is gone. The one sanctioned
+  // placeholder file is .env.example, and the assignment rules already
+  // special-case its allowed values (see isAllowedExampleValue).
+  return fs.existsSync(file);
 }
 
 function isAllowedExampleValue(line, file) {
@@ -29,6 +38,16 @@ const rules = [
   {
     name: "openai-key-assignment",
     test: (text) => /OPENAI_API_KEY\s*=\s*sk[-_A-Za-z0-9]{10,}/.test(text),
+  },
+  {
+    // OpenAI project keys are "sk-proj-" + a long url-safe body. Catch the raw
+    // token anywhere, so a leaked key is flagged even when it is not an
+    // OPENAI_API_KEY assignment (the google-ai-api-key and anthropic-oauth
+    // rules follow the same principle). The 32-char floor keeps short
+    // lookalikes and the redaction-test fixture token (16 chars) from
+    // tripping it; real project keys are far longer.
+    name: "openai-project-key",
+    test: (text) => /\bsk-proj-[A-Za-z0-9_-]{32,}/.test(text),
   },
   {
     name: "private-key-block",
@@ -158,7 +177,7 @@ function run(range = "origin/main...HEAD") {
   console.log("Changed-file secret scan OK");
 }
 
-module.exports = { rules, isAllowedExampleValue, scan };
+module.exports = { rules, isAllowedExampleValue, isScannableFile, scan };
 
 if (require.main === module) {
   run(process.argv[2]);
