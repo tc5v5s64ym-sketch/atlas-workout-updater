@@ -146,7 +146,6 @@ Navigation for this file (added 2026-07-01, planning consolidation PR-7). This f
 
 - [ ] **SESS-7** `[housekeeping]` — concurrent `handleSetLogged` runs record `chatTurns` out of submission order (`src/app/coach-conversation.js:1177` vs `1238,1302`).
 
-- [ ] **CLIENT-5** `[housekeeping]` — `registerEffortCardCleanup` registry is dead code (zero callers; documented as live) (`src/app/app.js:3683-3696`); delete or wire.
 
 
 - [ ] **INFRA-5** `[polish]` — no `unhandledRejection` backstop for the ~67 bare async route handlers (clean today, verified; one future unguarded `await` kills the process mid-write).

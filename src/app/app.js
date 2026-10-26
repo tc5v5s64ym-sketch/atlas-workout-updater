@@ -4398,20 +4398,10 @@ let previewRequestSeq = 0;
 // semantics are untouched: this counter has exactly one consumer, the state-changing follow-up lane.
 let turnAuthoritySeq = 0;
 
-// In-thread effort cards mirror the global approve button. When a preview is
-// replaced or invalidated, an older card no longer matches the live pendingWrite,
-// so its Save must be permanently neutralised — otherwise clicking a stale card
-// would fire the newest preview's write. Each card registers a cleanup here;
-// invalidatePreview() runs them all.
-const effortCardCleanups = [];
-// eslint-disable-next-line no-unused-vars -- global export consumed by other browser scripts; Phase 1 PR-08/09
-function registerEffortCardCleanup(fn) { effortCardCleanups.push(fn); }
-function runEffortCardCleanups() {
-  while (effortCardCleanups.length) {
-    const fn = effortCardCleanups.pop();
-    try { fn(); } catch { /* card already removed from the DOM */ }
-  }
-}
+// CLIENT-5: the effort-card cleanup registry that used to live here was dead
+// code — its register function had zero callers anywhere in the repo, so the
+// registry was always empty and its runner in invalidatePreview() was a
+// permanent no-op. Removed rather than wired: no card ever registered.
 let lastParsedWorkoutText = '';
 let lastParserStatus = null;
 let activeExercise = null;
@@ -6745,7 +6735,6 @@ function invalidatePreview() {
     activePreviewCorrelation = null;
   }
   pendingWrite = null;
-  runEffortCardCleanups();
   lastParserStatus = null;
   previewPanel.hidden = true;
   previewContent.innerHTML = '';
