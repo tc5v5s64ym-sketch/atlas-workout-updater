@@ -3560,9 +3560,10 @@ function trySetRevisionFollowup(text, boundProposalId, turnIsAuthoritative) {
     // did not name.
     if (requested != null && Number.isFinite(accepted) && requested > accepted) {
       const plural = accepted === 1 ? 'set' : 'sets';
-      announceSetRevisionReply(active, future > 0
-        ? `${name} only has ${accepted} ${plural} in the plan, not ${requested}. What's still ahead is ${ahead} — do you mean ${future === 1 ? 'that one' : 'those'}?`
-        : `${name} only has ${accepted} ${plural} in the plan, not ${requested}, and all of them are already logged.`);
+      // #1201 item 4: the future<=0 case returned far above (the lane's no-future guard), so
+      // the former else-arm here ("…and all of them are already logged") was unreachable —
+      // a leftover from the round-5 and round-7 fixes landing at different times. Deleted.
+      announceSetRevisionReply(active, `${name} only has ${accepted} ${plural} in the plan, not ${requested}. What's still ahead is ${ahead} — do you mean ${future === 1 ? 'that one' : 'those'}?`);
       return true;
     }
     if (countsFromFirstSet && requested != null && done > 0) {
@@ -3590,7 +3591,21 @@ function trySetRevisionFollowup(text, boundProposalId, turnIsAuthoritative) {
     // Nothing is logged yet, so every set the athlete named is still ahead. Echo their own scope
     // word rather than substituting a different one.
     if (position === 'all') {
-      announceSetRevisionReply(active, `What do you want to change about all ${requested != null ? `${requested} ` : ''}sets — the weight, the reps, or remove them?`);
+      announceSetRevisionReply(active, `What do you want to change about all ${requested != null ? `${requested} ` : ''}${requested === 1 ? 'set' : 'sets'} — the weight, the reps, or remove ${requested === 1 ? 'it' : 'them'}?`);
+      return true;
+    }
+    // #1199 — a POSITIONLESS fragment ("the two sets", "the sets") named no position at all, and
+    // the fallback below used to substitute 'last' — Atlas's choice, not the athlete's. When
+    // fewer sets were named than remain ahead, ask WHICH ones; when no count was named either,
+    // state the remainder without inventing a position word. An exact-count fragment
+    // (asked === future) names every set ahead, so the existing answer is unambiguous and the
+    // fallback stands for it and for every NAMED position.
+    if (position === null && asked != null && asked < future) {
+      announceSetRevisionReply(active, `There are ${ahead} of ${name} still ahead — which ${setCountWord(asked)} do you mean? Say "the last ${setCountWord(asked)}" or name the set numbers.`);
+      return true;
+    }
+    if (position === null && asked == null) {
+      announceSetRevisionReply(active, `What do you want to change about the ${setCountWord(future)} ${future === 1 ? 'set' : 'sets'} still ahead — the weight, the reps, or remove ${future === 1 ? 'it' : 'them'}?`);
       return true;
     }
     const n = asked != null ? asked : future;
