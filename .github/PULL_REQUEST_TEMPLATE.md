@@ -82,13 +82,13 @@
 
   Closed forms enforced by CI:
   - Required opens REQUIRED or NOT REQUIRED.
-  - REQUIRED: exact current 40-character head, Reviewer ChatGPT, outcome PASS.
+  - REQUIRED: exact current 40-character head, Reviewer ChatGPT or Muse (independent review), outcome PASS.
   - NOT REQUIRED: head, reviewer, and outcome are each N/A.
 -->
 
 - **Required**: <!-- REQUIRED — trigger; or NOT REQUIRED — why no high-risk trigger fired -->
 - **Exact reviewed head**: <!-- 40-character SHA, or N/A -->
-- **Reviewer**: <!-- ChatGPT, or N/A -->
+- **Reviewer**: <!-- ChatGPT or Muse (independent review), or N/A -->
 - **Review outcome**: <!-- PASS, BLOCKING, or N/A -->
 - **Findings and fix verification**: <!-- blockers and dispositions; follow-up verification; none; or N/A -->
 
