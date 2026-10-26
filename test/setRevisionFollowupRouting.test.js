@@ -454,6 +454,47 @@ test('4b.18 completed sets are NEVER included in the editable scope', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// #1199 — a POSITIONLESS scope fragment must not be answered as "the last …"
+// ═══════════════════════════════════════════════════════════════════════════════
+
+test('4b.Y14a #1199 "the two sets" (no position, fewer than remain) asks WHICH two', () => {
+  const h = withProposal();
+  const id = h.state.pendingSetRevision.proposal_id;
+
+  assert.equal(h.api.trySetRevisionFollowup('the two sets'), true);
+
+  assert.equal(lastReply(h.state),
+    'There are 3 sets of Back Squat still ahead — which two do you mean? Say "the last two" or name the set numbers.',
+    'Atlas asks which sets instead of silently choosing the last ones');
+  assert.equal(h.state.revisions.length, 0, 'no mutation');
+  assert.equal(h.state.posts.length, 0);
+  assert.equal(h.state.pendingSetRevision.proposal_id, id, 'the proposal is preserved for the correction');
+});
+
+test('4b.Y14b #1199 "the three sets" with exactly three ahead keeps the existing answer', () => {
+  const h = withProposal();
+
+  assert.equal(h.api.trySetRevisionFollowup('the three sets'), true);
+
+  assert.equal(lastReply(h.state),
+    'What do you want to change about the last three sets — the weight, the reps, or remove them?',
+    'an exact-count fragment names every set ahead, so the scope is unambiguous');
+  assert.equal(h.state.revisions.length, 0);
+});
+
+test('4b.Y14c #1199 "the sets" (no count, no position) states the remainder with no invented position', () => {
+  const h = withProposal();
+
+  assert.equal(h.api.trySetRevisionFollowup('the sets'), true);
+
+  const line = lastReply(h.state);
+  assert.equal(line,
+    'What do you want to change about the three sets still ahead — the weight, the reps, or remove them?');
+  assert.doesNotMatch(line, /\blast\b|\bfirst\b/, 'no position word the athlete never said');
+  assert.equal(h.state.revisions.length, 0);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // Phrase 5 — "drop those": ambiguous dimension
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1110,9 +1151,13 @@ test('4b.Y4 (Codex P1) a newer submit revokes an older one BEFORE any early retu
     assert.ok(bumpIdx < idx, `the revoke must precede the early return at ${earlier}`);
   }
 
-  // …and the state-changing lane must check BOTH counters.
+  // …and the state-changing lane must check BOTH counters. #1201 item 1: this assertion
+  // previously admitted a tautological alternative (`turnSeq !== undefined`) that is ALWAYS
+  // true — turnSeq is captured from turnAuthoritySeq — so a regression to previewRequestSeq-only
+  // authority (the round-3/round-9 P1) would still have passed. Only the strict call form is
+  // admitted now, asserted on the actual call text.
   const guard = appSrc.slice(handlerStart, appSrc.indexOf('activeExercise = null;', appSrc.indexOf('trySetRevisionFollowup(pendingChatText, turnProposalId')));
-  assert.match(guard, /submitSeq === previewRequestSeq && turnSeq !== undefined|submitSeq === previewRequestSeq && turnSeq === turnAuthoritySeq/,
+  assert.match(guard, /trySetRevisionFollowup\(pendingChatText, turnProposalId,\s*\n?\s*submitSeq === previewRequestSeq && turnSeq === turnAuthoritySeq\)/,
     'the lane is gated on the preview seq AND the turn authority seq');
 
   // The new counter must not be repurposed anywhere else, so preview / parse / modality and
