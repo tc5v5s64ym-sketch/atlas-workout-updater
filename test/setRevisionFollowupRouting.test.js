@@ -495,6 +495,55 @@ test('4b.Y14c #1199 "the sets" (no count, no position) states the remainder with
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// #1201 items 2, 3, 5 — audit follow-ups (item 1 is the 4b.Y4 guard, item 4 is
+// a dead-code deletion with no behaviour to pin)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+test('#1201 item 2 "go with the original" rejects again; "go with that plan" still cannot', () => {
+  const C = classifier();
+  assert.equal(C.classifySetRevisionFollowup('go with the original').action,
+    'reject_active_proposal');
+  assert.equal(C.classifySetRevisionFollowup('go with the original plan').action,
+    'reject_active_proposal');
+  assert.equal(C.classifySetRevisionFollowup('go with that plan').action, 'no_match',
+    'the bare-plan ambiguity that retired "go with" stays out — that phrase approved on the old head');
+
+  for (const words of ['go with the original', 'go with the original plan']) {
+    const h = withProposal();
+    assert.equal(h.api.trySetRevisionFollowup(words), true, `"${words}" is claimed`);
+    assert.equal(h.state.pendingSetRevision, null, `"${words}" rejects the proposal`);
+    assert.equal(h.state.revisions.length, 0, `"${words}" captures nothing`);
+    assert.match(lastReply(h.state), new RegExp(SLOT_NAME), 'and says what was kept');
+  }
+});
+
+test('#1201 item 3 the all-anchored question is singular on a one-set slot', () => {
+  const oneSetPlan = plan({
+    exercises: [{
+      name: SLOT_NAME, canonicalName: SLOT_NAME, liftCode: SLOT_CODE, lift_code: SLOT_CODE,
+      plan_item_id: SLOT_ITEM, weight: 225, reps: 5, sets: 1, rir: 2,
+    }],
+  });
+  const h = withProposal({ plan: oneSetPlan, proposal: { accepted_set_count: 1 } });
+
+  assert.equal(h.api.trySetRevisionFollowup('all the sets'), true);
+  assert.equal(lastReply(h.state),
+    'What do you want to change about all 1 set — the weight, the reps, or remove it?');
+  assert.equal(h.state.revisions.length, 0);
+});
+
+test('#1201 item 5 a full-width question mark is a question — never consent', () => {
+  const C = classifier();
+  assert.equal(C.classifySetRevisionFollowup('do that？').action, 'no_match',
+    '？ must normalize to ?, and a question is never consent');
+  const h = withProposal();
+  assert.equal(h.api.trySetRevisionFollowup('do that？'), false,
+    'the lane does not claim the turn, and nothing is approved');
+  assert.ok(h.state.pendingSetRevision, 'the proposal survives');
+  assert.equal(h.state.revisions.length, 0);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // Phrase 5 — "drop those": ambiguous dimension
 // ═══════════════════════════════════════════════════════════════════════════════
 

@@ -37,11 +37,13 @@ const NO_MATCH = { action: 'no_match' };
 
 // Same normalization the consent authority uses: lowercase, apostrophes dropped (so "Atlas's"
 // becomes "atlass" and a mobile curly quote behaves like a straight one), punctuation to spaces,
-// `?` preserved because a question is never consent.
+// `?` preserved because a question is never consent. #1201 item 5: a full-width ？ (CJK IME)
+// is mapped to `?` BEFORE the strip — erasing it turned "do that？" into bare consent.
 function normalize(text) {
   return String(text == null ? '' : text)
     .toLowerCase()
     .replace(/[’']/g, '')
+    .replace(/？/g, '?')
     .replace(/[^a-z0-9?\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -132,6 +134,14 @@ const BODILY_SYMPTOM_RE = /\b(?:hurt|hurts|hurting|pain|painful|sore|soreness|ac
 // owner-approved class-1 acceptance, and Atlas's own proposal IS a plan, so "that plan" cannot be
 // read as the original one. `original` still carries its own optional `plan` (so "keep the original
 // plan" still rejects); an ambiguous "keep the plan" now falls through and decides nothing.
+// #1201 item 2 — the ONE narrow exception to "`go with` is not a keep verb": when an
+// `original` marker is present, "go with the original[/plan]" is an unambiguous rejection
+// (it rejected on the pre-#1198 head, and `original` is a whole-word endorsement veto, so it
+// can never be read as acceptance). The bare-`plan` ambiguity stays out: "go with that plan"
+// matches nothing here, because this pattern admits no filler between "go with" and the
+// original marker beyond an optional "the".
+const GO_WITH_ORIGINAL_RE = /^go\s+with\s+(?:the\s+)?original(?:\s+(?:plan|weight|prescription|target|numbers?))?$/;
+
 const KEEP_ORIGINAL_RE = new RegExp(
   '^(?:keep|leave|stick\\s+with|stay\\s+with|stay\\s+on)\\s+'
   + '(?:(?:it|that|this|them|those|these)\\s+)?'
@@ -232,6 +242,7 @@ function classifySetRevisionFollowup(text) {
   // 2. Unambiguous rejection.
   if (!isQuestion && (CANCEL_RE.test(body)
     || ORIGINAL_ANSWER_RE.test(body)
+    || GO_WITH_ORIGINAL_RE.test(body)
     || KEEP_ORIGINAL_RE.test(body))) {
     return { action: 'reject_active_proposal' };
   }
