@@ -3593,6 +3593,20 @@ function trySetRevisionFollowup(text, boundProposalId, turnIsAuthoritative) {
       announceSetRevisionReply(active, `What do you want to change about all ${requested != null ? `${requested} ` : ''}sets — the weight, the reps, or remove them?`);
       return true;
     }
+    // #1199 — a POSITIONLESS fragment ("the two sets", "the sets") named no position at all, and
+    // the fallback below used to substitute 'last' — Atlas's choice, not the athlete's. When
+    // fewer sets were named than remain ahead, ask WHICH ones; when no count was named either,
+    // state the remainder without inventing a position word. An exact-count fragment
+    // (asked === future) names every set ahead, so the existing answer is unambiguous and the
+    // fallback stands for it and for every NAMED position.
+    if (position === null && asked != null && asked < future) {
+      announceSetRevisionReply(active, `There are ${ahead} of ${name} still ahead — which ${setCountWord(asked)} do you mean? Say "the last ${setCountWord(asked)}" or name the set numbers.`);
+      return true;
+    }
+    if (position === null && asked == null) {
+      announceSetRevisionReply(active, `What do you want to change about the ${setCountWord(future)} ${future === 1 ? 'set' : 'sets'} still ahead — the weight, the reps, or remove ${future === 1 ? 'it' : 'them'}?`);
+      return true;
+    }
     const n = asked != null ? asked : future;
     const scope = n === 1 ? 'set' : `${setCountWord(n)} sets`;
     // Echo the position the athlete actually used, so the question is about the sets they named.
