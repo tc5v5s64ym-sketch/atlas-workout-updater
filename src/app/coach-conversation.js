@@ -2066,6 +2066,14 @@ import {
       } catch { /* last-resort: never throw out of the listener */ }
     });
   });
+  // SESS-7: set-logged handling is serialized through this queue. handleSetLogged
+  // records the user turn at entry, but its Atlas turns land only after the
+  // recommendation/coaching awaits — so two submissions in flight together used to
+  // record their turns in completion order, scrambling the history later turns are
+  // answered from. Running one submission at a time, in dispatch order, keeps the
+  // recorded history in submission order.
+  let setLoggedQueue = Promise.resolve();
+
   document.addEventListener('atlas:set-logged', e => {
     const detail = e.detail || {};
     const sessionId = typeof detail.sessionId === 'string' ? detail.sessionId.trim() : '';
@@ -2080,21 +2088,28 @@ import {
     if (responseTicket && detail && typeof detail === 'object') {
       setResponseTickets.set(detail, responseTicket);
     }
-    // Bound the whole set-response pipeline, including the recommendation read that
-    // precedes /api/coach/message. Otherwise a stalled recommendation could keep an
-    // immediate closeout waiting forever before the message timeout even starts.
-    const settlementTimer = responseTicket
-      ? setTimeout(() => cancelTurnResponse(responseTicket), COACH_LLM_TIMEOUT_MS)
-      : null;
-    handleSetLogged(detail).catch(() => {}).finally(() => {
-      if (settlementTimer) clearTimeout(settlementTimer);
-      // A rejected request or an early deterministic fallback must still release any
-      // closeout waiting on this set. A successful selected response already completed
-      // the ticket; the second call is an inert fail-closed no-op.
-      if (responseTicket && typeof completeTurnResponse === 'function') {
-        completeTurnResponse(responseTicket, null);
-      }
-    });
+    const runSetLogged = () => {
+      // Bound the whole set-response pipeline, including the recommendation read
+      // that precedes /api/coach/message. Otherwise a stalled recommendation could
+      // keep an immediate closeout waiting forever before the message timeout even
+      // starts. The bound starts when this submission's handling starts, so a
+      // queued submission is never cancelled while it is still waiting its turn.
+      const settlementTimer = responseTicket
+        ? setTimeout(() => cancelTurnResponse(responseTicket), COACH_LLM_TIMEOUT_MS)
+        : null;
+      return handleSetLogged(detail).catch(() => {}).finally(() => {
+        if (settlementTimer) clearTimeout(settlementTimer);
+        // A rejected request or an early deterministic fallback must still release
+        // any closeout waiting on this set. A successful selected response already
+        // completed the ticket; the second call is an inert fail-closed no-op.
+        if (responseTicket && typeof completeTurnResponse === 'function') {
+          completeTurnResponse(responseTicket, null);
+        }
+      });
+    };
+    // The rejection arm runs the next submission too: one failed handling can
+    // never jam the queue for the rest of the session.
+    setLoggedQueue = setLoggedQueue.then(runSetLogged, runSetLogged);
   });
   // F10D acceptance boundary — the boundary's DATA guarantee is intact (the app.js
   // gate still mints identity + the Session_Plans acceptance + the ledger
