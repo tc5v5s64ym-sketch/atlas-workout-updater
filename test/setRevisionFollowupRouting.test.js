@@ -1151,9 +1151,13 @@ test('4b.Y4 (Codex P1) a newer submit revokes an older one BEFORE any early retu
     assert.ok(bumpIdx < idx, `the revoke must precede the early return at ${earlier}`);
   }
 
-  // …and the state-changing lane must check BOTH counters.
+  // …and the state-changing lane must check BOTH counters. #1201 item 1: this assertion
+  // previously admitted a tautological alternative (`turnSeq !== undefined`) that is ALWAYS
+  // true — turnSeq is captured from turnAuthoritySeq — so a regression to previewRequestSeq-only
+  // authority (the round-3/round-9 P1) would still have passed. Only the strict call form is
+  // admitted now, asserted on the actual call text.
   const guard = appSrc.slice(handlerStart, appSrc.indexOf('activeExercise = null;', appSrc.indexOf('trySetRevisionFollowup(pendingChatText, turnProposalId')));
-  assert.match(guard, /submitSeq === previewRequestSeq && turnSeq !== undefined|submitSeq === previewRequestSeq && turnSeq === turnAuthoritySeq/,
+  assert.match(guard, /trySetRevisionFollowup\(pendingChatText, turnProposalId,\s*\n?\s*submitSeq === previewRequestSeq && turnSeq === turnAuthoritySeq\)/,
     'the lane is gated on the preview seq AND the turn authority seq');
 
   // The new counter must not be repurposed anywhere else, so preview / parse / modality and
