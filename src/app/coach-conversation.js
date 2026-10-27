@@ -1502,6 +1502,35 @@ import {
 
   const setResponseTickets = new WeakMap();
 
+  // SESS-7: turn-recording slots, one per set-logged dispatch, claimed by the
+  // listener in dispatch order and chained so each submission's recorded
+  // Atlas turns flush into chatTurns only after every earlier submission's
+  // have. ONLY the recording is ordered: handleSetLogged's fetches,
+  // typing and rendering run concurrently exactly as before, because other
+  // features time their own observations off those side effects (serializing
+  // the whole handler delayed them measurably — E2E on PR #1308's first
+  // head). The user turn needs no slot: the body pushes it synchronously at
+  // entry, and entries run in dispatch order.
+  const turnFlushSlots = new WeakMap();
+  let lastTurnFlush = Promise.resolve();
+
+  function claimTurnFlushSlot(detail) {
+    const slot = { prior: lastTurnFlush, release: null, done: null, pendingTurns: [], record: null };
+    slot.done = new Promise((resolve) => { slot.release = resolve; });
+    slot.record = (turn) => { slot.pendingTurns.push(turn); };
+    lastTurnFlush = slot.done;
+    turnFlushSlots.set(detail, slot);
+  }
+
+  // The recorder a submission's body must use for its Atlas turns, or null
+  // when no slot was claimed (direct callers record at push time, as before).
+  function turnRecorderFor(detail) {
+    const slot = detail && typeof detail === 'object'
+      ? turnFlushSlots.get(detail) || null
+      : null;
+    return slot ? slot.record : null;
+  }
+
   async function handleSetLogged(detail) {
     const responseTicket = detail && typeof detail === 'object'
       ? setResponseTickets.get(detail) || null
@@ -1515,6 +1544,11 @@ import {
     // every later side effect rechecks the stricter current-owner predicate above.
     const responseMayRenderSelectedProse = () => responseMayContinue()
       || (responseTicket && responseTicket.completed === true && responseTicket.accepted === true);
+    // SESS-7: Atlas turns go through the submission's slot recorder when
+    // the listener claimed one (the ordered path buffers them for an
+    // in-order flush); otherwise they push directly, as before.
+    const recordAtlasTurn = turnRecorderFor(detail)
+      || ((turn) => { chatTurns.push(turn); });
     const {
       exercises = [],
       text = '',
@@ -1588,7 +1622,7 @@ import {
     if (note) {
       await typeOut(body, note);
       if (!responseMayContinue()) return;
-      chatTurns.push({ role: 'atlas', text: note });
+      recordAtlasTurn({ role: 'atlas', text: note });
     } else if (!responseMayContinue()) {
       return;
     }
@@ -1651,7 +1685,7 @@ import {
         await typeOut(exMsg, exText);
         if (!responseMayContinue()) return;
         bubble.appendChild(exMsg);
-        chatTurns.push({ role: 'atlas', text: exText });
+        recordAtlasTurn({ role: 'atlas', text: exText });
       } else if (!responseMayContinue()) {
         return;
       }
@@ -1804,6 +1838,27 @@ import {
           } catch { placeholder = nextEx; /* best effort — fall back to the name */ }
         }
         setWorkoutPlaceholder(placeholder);
+      }
+    }
+  }
+
+  // SESS-7 ordered entry point: the listener dispatches here. The body runs
+  // immediately (concurrently with any other in-flight submission); its
+  // buffered Atlas turns flush into chatTurns only after every earlier
+  // submission's have, on every exit path — early return or throw — so one
+  // failed handling can never jam the recording chain.
+  async function handleSetLoggedInOrder(detail) {
+    const slot = detail && typeof detail === 'object'
+      ? turnFlushSlots.get(detail) || null
+      : null;
+    try {
+      await handleSetLogged(detail);
+    } finally {
+      if (slot) {
+        turnFlushSlots.delete(detail);
+        await slot.prior;
+        for (const turn of slot.pendingTurns) chatTurns.push(turn);
+        slot.release();
       }
     }
   }
@@ -2080,13 +2135,21 @@ import {
     if (responseTicket && detail && typeof detail === 'object') {
       setResponseTickets.set(detail, responseTicket);
     }
+    // SESS-7: claim this submission's turn-recording slot at dispatch, in
+    // dispatch order. The handler's coaching work runs immediately and
+    // concurrently (below); only the recording of its Atlas turns is ordered
+    // (see handleSetLoggedInOrder), so the history later turns are answered
+    // from stays in submission order.
+    if (detail && typeof detail === 'object') {
+      claimTurnFlushSlot(detail);
+    }
     // Bound the whole set-response pipeline, including the recommendation read that
     // precedes /api/coach/message. Otherwise a stalled recommendation could keep an
     // immediate closeout waiting forever before the message timeout even starts.
     const settlementTimer = responseTicket
       ? setTimeout(() => cancelTurnResponse(responseTicket), COACH_LLM_TIMEOUT_MS)
       : null;
-    handleSetLogged(detail).catch(() => {}).finally(() => {
+    handleSetLoggedInOrder(detail).catch(() => {}).finally(() => {
       if (settlementTimer) clearTimeout(settlementTimer);
       // A rejected request or an early deterministic fallback must still release any
       // closeout waiting on this set. A successful selected response already completed

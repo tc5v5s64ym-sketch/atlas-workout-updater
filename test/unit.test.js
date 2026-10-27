@@ -6232,8 +6232,9 @@ test('G2: handleSetLogged iterates exercises.slice(1) to coach every logged lift
     'getInWorkoutNote is called per additional lift with that lift\'s exerciseName');
   // The coaching note is prefixed with the exercise name for attribution.
   assert.match(block, /`\$\{ex\.exercise\}: \$\{exReaction\.note\}`/, 'coaching note is attributed to the specific lift');
-  // The additional lift's note is pushed to chatTurns (coach memory).
-  assert.match(block, /chatTurns\.push\(\{ role: 'atlas', text: exText \}\)/, 'additional-lift notes enter chatTurns');
+  // The additional lift's note is recorded to chatTurns (coach memory) — via
+  // the SESS-7 slot recorder, which flushes it in submission order.
+  assert.match(block, /recordAtlasTurn\(\{ role: 'atlas', text: exText \}\)/, 'additional-lift notes enter chatTurns');
   // The additional lift also gets a next-set prescription when the engine has one.
   assert.match(block, /buildNextPrescription\(exRec\)/, 'each additional lift renders a next-set prescription if available');
   // G2 follow-up (owner 2026-06-28): per-lift effort-line parity — each additional
