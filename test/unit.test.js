@@ -1262,6 +1262,79 @@ test('Step 373: currentPlanForChat reads the live planned session before the cac
   assert.match(fn, /ex\.canonicalName \|\| ex\.name/, 'plan name key must match resolveCompletedIdentity');
 });
 
+// SESS-6 (Gate, owner decision 2026-10-26): the currentPlanForChat FALLBACK fed
+// the cached recommended intent to chat with no engagement check, so freestyle
+// chat was answered from a suggested plan the lifter never accepted as theirs.
+// The Gate variant (chosen over tagging the plan `suggested:true`): until the
+// coach suggestion is engaged, the fallback returns no plan at all. The live
+// active-session branch is authoritative and stays ungated. Behavioural pins:
+// the function is sliced from the built bundle and RUN with stubbed state
+// (the duplicateEchoProvesRows idiom), plus one source-ordering pin.
+function loadCurrentPlanForChat(appSource) {
+  const start = appSource.indexOf('function currentPlanForChat()');
+  assert.ok(start !== -1, 'currentPlanForChat must exist in the built app bundle');
+  const end = appSource.indexOf('// Hand a non-loggable message to the coach', start);
+  assert.ok(end !== -1, 'currentPlanForChat slice must terminate at routeMessageToCoach');
+  const fnText = appSource.slice(start, end).trimEnd();
+  return new Function(
+    'getActivePlannedSession', 'lastIntentData', 'getCoachSuggestionEngaged',
+    `${fnText}; return currentPlanForChat;`
+  );
+}
+
+const SESS6_INTENT_DATA = {
+  intents: [{
+    recommended: true,
+    exercises: [{ canonical_exercise: 'Bench Press', focus: 'Push', target_weight: 100, target_reps: 5, target_sets: 3, target_rir: 2 }],
+  }],
+};
+const SESS6_SESSION = {
+  exercises: [{ canonicalName: 'Back Squat', reason: 'Legs', weight: 140, reps: 5, sets: 5, rir: 1 }],
+};
+
+test('SESS-6 (Gate): an unengaged coach suggestion gives chat NO plan', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const build = loadCurrentPlanForChat(appSource);
+  const planForChat = build(() => null, SESS6_INTENT_DATA, () => false);
+  assert.deepEqual(planForChat(), [], 'no active session + suggestion not engaged → the fallback must not hand chat the suggested plan');
+});
+
+test('SESS-6 (Gate): an engaged coach suggestion still gives chat the recommended plan', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const build = loadCurrentPlanForChat(appSource);
+  const planForChat = build(() => null, SESS6_INTENT_DATA, () => true);
+  assert.deepEqual(planForChat(), [{
+    name: 'Bench Press', rationale: 'Push', weight: 100, reps: 5, sets: 3, rir: 2,
+  }], 'engaged → the fallback behaviour is unchanged');
+});
+
+test('SESS-6 (Gate): a live planned session is authoritative whether or not the suggestion was engaged', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const build = loadCurrentPlanForChat(appSource);
+  const expected = [{ name: 'Back Squat', rationale: 'Legs', weight: 140, reps: 5, sets: 5, rir: 1 }];
+  assert.deepEqual(build(() => SESS6_SESSION, SESS6_INTENT_DATA, () => false)(), expected,
+    'active session + unengaged → the live session plan, ungated');
+  assert.deepEqual(build(() => SESS6_SESSION, SESS6_INTENT_DATA, () => true)(), expected,
+    'active session + engaged → the live session plan, unchanged');
+});
+
+test('SESS-6 (Gate): the engagement gate sits in the fallback only, before the cached recommendation is read', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const fn = appSource.slice(
+    appSource.indexOf('function currentPlanForChat()'),
+    appSource.indexOf('function currentPlanForChat()') + 1800
+  );
+  const fallbackIdx = fn.indexOf('// Fallback:');
+  assert.ok(fallbackIdx !== -1, 'the cached-recommendation fallback must remain');
+  const activeBranch = fn.slice(0, fallbackIdx);
+  assert.doesNotMatch(activeBranch, /getCoachSuggestionEngaged/,
+    'the active-session branch must not gain an engagement gate');
+  const gateIdx = fn.indexOf('if (!getCoachSuggestionEngaged()) return [];');
+  assert.ok(gateIdx > fallbackIdx, 'the gate belongs to the fallback branch, after the active-session branch');
+  const readIdx = fn.indexOf('const intents = lastIntentData.intents');
+  assert.ok(readIdx !== -1 && gateIdx < readIdx, 'the gate must precede the read of the cached recommendation');
+});
+
 test('Step 373b: a declared swap is recorded and applied to the live session at log time', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
 

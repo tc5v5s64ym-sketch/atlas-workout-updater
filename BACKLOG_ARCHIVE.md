@@ -4,6 +4,8 @@ Completed (✅) and cancelled (~~struck~~) backlog items, moved out of [`BACKLOG
 
 **2026-07-08 (PR-21, governance diet):** a second pass moved every fully-closed, self-contained item (✅/`SHIPPED`/`FIXED`/`RESOLVED`-marked, no nested follow-up/deferred sub-note) out of `BACKLOG.md`. Items that carry any open follow-up, deferred, or not-yet-built sub-note were deliberately left in `BACKLOG.md` even when their parent PR shipped — moving them here would have hidden real open work. `BACKLOG.md` is still larger than the plan's original target size; further reduction needs editorial judgment (splitting a shipped item's prose from its still-open follow-up) that a mechanical pass can't safely do — filed as a `[housekeeping]` follow-up in `BACKLOG.md`.
 
+- ✅ **SESS-6** `[polish]` — `currentPlanForChat` fallback ignored the `coachSuggestionEngaged` gate → freestyle chat answered from an unengaged plan. **Fixed (backport PR closing this item on the S3 line, 2026-10-27; port of PR #1314 on main):** Gate variant — the owner chose Gate over tagging the plan `suggested:true` (2026-10-26). The fallback in `currentPlanForChat` (`src/app/app.js`) now returns no plan until the coach suggestion is engaged — `if (!getCoachSuggestionEngaged()) return [];` ahead of the cached-recommendation read, the same signal that already gates the other suggestion surfaces; the live active-session branch is untouched. New pins in `test/unit.test.js` slice the function from the built bundle and run it with stubbed state (2 failed before, 4/4 after: unengaged → no plan, engaged → plan unchanged, active session authoritative either way, gate placed in the fallback only).
+
 
 ## Bug-report tooling
 
