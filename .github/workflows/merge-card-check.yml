@@ -172,8 +172,8 @@ jobs:
                     ' is not the PR head ' + head.slice(0, 7) + '.'
                   );
                 }
-                if (!/^ChatGPT$/i.test(review.Reviewer)) {
-                  problems.push('A required Atlas Contract / Systems Review must record Reviewer: ChatGPT.');
+                if (!/^(ChatGPT|Muse)$/i.test(review.Reviewer)) {
+                  problems.push('A required Atlas Contract / Systems Review must record Reviewer: ChatGPT or Muse (independent review; see CLAUDE.md).');
                 }
                 if (!/^PASS$/i.test(review['Review outcome'])) {
                   problems.push('A required review must record Review outcome: PASS before merge.');
