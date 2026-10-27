@@ -45,6 +45,18 @@ test('INFRA-5: a non-Error rejection reason is still logged, and the handler nev
   assert.equal(JSON.parse(lines[0]).error, 'plain string reason');
 });
 
+test('INFRA-5: a reason whose string coercion throws lands on the fallback line, never a crash', () => {
+  const proc = fakeProc();
+  const lines = [];
+  installUnhandledRejectionBackstop({ proc, log: (l) => lines.push(l) });
+  const hostile = Object.create(null); // String(hostile) throws a TypeError
+  assert.doesNotThrow(() => proc.emit('unhandledRejection', hostile));
+  assert.equal(lines.length, 1, 'the fallback line is still logged');
+  const entry = JSON.parse(lines[0]);
+  assert.equal(entry.event, 'unhandled_rejection');
+  assert.equal(entry.error, 'unformattable rejection reason');
+});
+
 test('INFRA-5: even a throwing logger cannot take the process down', () => {
   const proc = fakeProc();
   installUnhandledRejectionBackstop({

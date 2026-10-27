@@ -16,14 +16,23 @@ function installUnhandledRejectionBackstop({ proc = process, log = console.error
   if (installedOn.has(proc)) return false;
   installedOn.add(proc);
   proc.on('unhandledRejection', (reason) => {
-    const error = reason instanceof Error ? reason : new Error(String(reason));
+    // Formatting is guarded separately from logging: String(reason) can
+    // throw (a null-prototype object), JSON.stringify can throw, and a
+    // hostile getter can throw — every one of those must still produce the
+    // fallback line instead of crashing the process from inside its own
+    // backstop (review nit on the first INFRA-5 head).
+    let line;
     try {
-      log(JSON.stringify({
+      const error = reason instanceof Error ? reason : new Error(String(reason));
+      line = JSON.stringify({
         event: 'unhandled_rejection',
         error: error.message,
         stack: error.stack || null,
-      }));
-    } catch { /* the backstop never throws */ }
+      });
+    } catch {
+      line = '{"event":"unhandled_rejection","error":"unformattable rejection reason","stack":null}';
+    }
+    try { log(line); } catch { /* the backstop never throws */ }
   });
   return true;
 }
