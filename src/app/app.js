@@ -4450,10 +4450,11 @@ let sessionCompiledAwaitingPreview = false;
 let closeoutPreviewStaged = false;
 let latestSetResponseCompletion = null;
 
-// Populated after a successful manual write. Cleared only after undo or when
-// the user explicitly picks "Log as new" in the correction dialog. NOT cleared
-// by invalidatePreview so the correction guard can fire even after the user
-// starts typing a correction in the same textarea.
+// Populated after a successful manual write. Cleared after undo, when the user
+// explicitly picks "Log as new" in the correction dialog, or on a deliberate
+// session reset (startOverWorkout — Start Over / the drawer's New session).
+// NOT cleared by invalidatePreview so the correction guard can fire even after
+// the user starts typing a correction in the same textarea.
 let lastWrite = null;
 
 // True while a live write request is in-flight. Guards against double-submit
@@ -6750,6 +6751,9 @@ document.getElementById('logger-form').addEventListener('input', invalidatePrevi
 function startOverWorkout() {
   workoutTextInput.value = '';
   lastParsedWorkoutText = '';
+  // QA-1: a deliberate fresh start re-arms closeout — the prior save's watermark
+  // must not refuse the new session's first "log it" as "nothing new".
+  lastWrite = null;
   setSessionLog([]);
   setSessionCompleted([]);
   setSessionRevisions([]); setSessionImplicitRecs([]);
@@ -6781,6 +6785,13 @@ function startOverWorkout() {
 // PR-H: an explicit "Start over" is an `abandoned` closeout (emit before the state
 // is cleared; gated on an accepted plan → no-op for freestyle).
 document.getElementById('start-over-btn')?.addEventListener('click', () => { emitPlanCloseout('abandoned'); startOverWorkout(); });
+
+// QA-1: the coach drawer's "New session" button runs the same session reset as
+// Start Over — it previously only switched tabs (drawer.js data-tab delegation)
+// and left the prior save's lastWrite watermark in place. Deliberately NO
+// emitPlanCloseout here: PR-H pins the explicit closeout emit sites (Start
+// Over, discard-restored, End session), and widening them is a separate concern.
+document.getElementById('drawer-new-session')?.addEventListener('click', () => { startOverWorkout(); });
 
 async function waitForLatestSetTurn() {
   if (!latestSetResponseCompletion) return;
@@ -6821,21 +6832,16 @@ async function runCloseout() {
     return;
   }
 
-  // Live-audit Bug #2: after a save the buffer is reset. With an EMPTY buffer AND a
-  // prior save this session (lastWrite set), "log it" has nothing new — say so
-  // plainly instead of recompiling the already-saved chat history, which both
-  // implied a fresh save ("session logged / great work") and risked re-writing the
-  // sets already on the sheet. New sets logged after a save DO buffer (sessionLog
-  // non-empty → the branch above), so this only fires when there is genuinely
-  // nothing new to log.
-  if (lastWrite) {
-    setStatus(loggerStatus, 'Nothing new to log since your last save — log some sets first.', 'warn');
-    return;
-  }
-
+  // QA-1: the Live-audit Bug #2 "nothing new" refusal used to sit here, ahead of
+  // the compile fallback, on the premise that new sets logged after a save always
+  // buffer (sessionLog non-empty → the branch above). That premise is false: a
+  // set message whose parse fails buffers nothing — it routes to the coach — so
+  // the refusal dead-ended loggable work the compile fallback below can recover
+  // from the chat history. The refusal is now the terminal status at the end of
+  // this function, reached only when the fallback found nothing new to compile.
   const turns = typeof window.getChatHistory === 'function' ? window.getChatHistory() : [];
 
-  // The buffer is empty AND nothing was saved. Before the LLM compile, check the
+  // The buffer is empty. Before the LLM compile, check the
   // canonical session: if it shows completed work (e.g. after a reload the plan +
   // completions survived but the raw set buffer didn't), the set details aren't in
   // memory to rebuild — say so honestly and route to manual entry, NEVER the false
@@ -6845,9 +6851,13 @@ async function runCloseout() {
   const canonHasWork = !!(canon && AS && typeof AS.hasLoggedWork === 'function' && AS.hasLoggedWork(canon));
 
   if (!turns.length) {
-    setStatus(loggerStatus, canonHasWork
-      ? "I can see your logged exercises, but their set details aren't in memory to compile (the app may have reloaded). Re-enter the sets in the composer and tap Save — nothing was lost on your sheet."
-      : "No conversation yet — log some sets in the chat first, then say 'log it'.", 'error');
+    // With a prior save and no conversation to compile from, "nothing new" is
+    // the accurate terminal status (QA-1: it is a conclusion, not a gate).
+    setStatus(loggerStatus, lastWrite
+      ? 'Nothing new to log since your last save — log some sets first.'
+      : canonHasWork
+        ? "I can see your logged exercises, but their set details aren't in memory to compile (the app may have reloaded). Re-enter the sets in the composer and tap Save — nothing was lost on your sheet."
+        : "No conversation yet — log some sets in the chat first, then say 'log it'.", lastWrite ? 'warn' : 'error');
     return;
   }
 
@@ -6871,10 +6881,14 @@ async function runCloseout() {
   if (!workoutText) {
     // Distinguish a genuine empty conversation from "the compiler found nothing but
     // the lifter clearly logged work" — never a flat false "no sets" when canonical
-    // state shows completed exercises.
+    // state shows completed exercises. With a prior save and no canonical work
+    // outstanding, the compile found nothing new: that is the "nothing new"
+    // terminal status (QA-1), shown only now that the fallback has run.
     setStatus(loggerStatus, canonHasWork
       ? "I couldn't recompile your sets from the conversation, but I can see you logged exercises. Re-enter them in the composer and tap Save — nothing was saved yet."
-      : "Couldn't find any sets in the conversation — did you log any exercises? You can type them in the composer directly.", 'error');
+      : lastWrite
+        ? 'Nothing new to log since your last save — log some sets first.'
+        : "Couldn't find any sets in the conversation — did you log any exercises? You can type them in the composer directly.", lastWrite && !canonHasWork ? 'warn' : 'error');
     return;
   }
 
@@ -7415,8 +7429,9 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     // instead of staging the effort and waiting for a separate "done". On re-entry the
     // closeoutAttachmentOnly path (below) folds the parsed effort into the normal
     // log-workout preview. Approve-before-write is preserved — this never writes
-    // directly; it opens the same preview "done" would, so write_id idempotency and the
-    // lastWrite "nothing new" guard still backstop any later "done".
+    // directly; it opens the same preview "done" would, so write_id idempotency and
+    // the closeout path itself (buffer first, compile fallback, then the post-save
+    // "nothing new" terminal status) still backstop any later "done".
     await handleLogIt();
     return;
   }
