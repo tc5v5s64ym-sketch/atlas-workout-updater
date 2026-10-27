@@ -1085,26 +1085,84 @@ test('live-audit PR2: a malformed SET surfaces a format hint instead of silently
   assert.doesNotMatch(guard, /routeMessageToCoach/, 'the guard itself never calls the coach');
 });
 
-test('live-audit PR3: "log it" with an empty buffer after a save says "nothing new", not a false closeout', () => {
+test('live-audit PR3 + QA-1: "log it" with an empty buffer after a save tries the compile fallback before any "nothing new" refusal', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   // The closeout logic lives in runCloseout (handleLogIt is the never-silent wrapper).
   const fn = appSource.slice(
     appSource.indexOf('async function runCloseout()'),
-    appSource.indexOf('async function runCloseout()') + 3200
+    appSource.indexOf('async function runCloseout()') + 6000
   );
   assert.ok(fn.length > 0, 'runCloseout must exist');
-  // The empty-buffer save path: lastWrite set → "nothing new", returns BEFORE the
-  // /api/session/compile fallback (so the already-saved chat history is never
-  // recompiled/re-written).
-  const nothingNewIdx = fn.indexOf("Nothing new to log since your last save");
-  const compileIdx = fn.indexOf('/api/session/compile');
-  assert.ok(nothingNewIdx > 0, 'must surface a "nothing new" status');
-  assert.match(fn, /if \(lastWrite\) \{[\s\S]*Nothing new to log[\s\S]*return;/, 'guarded by lastWrite, returns');
-  assert.ok(compileIdx > nothingNewIdx, 'the nothing-new guard must precede the compile fallback');
   // The structured-buffer branch still wins first, so NEW sets logged after a save
   // (sessionLog non-empty) are unaffected.
   const bufferIdx = fn.indexOf('if (getSessionLog().length)');
-  assert.ok(bufferIdx >= 0 && bufferIdx < nothingNewIdx, 'the sessionLog branch precedes the nothing-new guard');
+  const compileIdx = fn.indexOf('/api/session/compile');
+  assert.ok(bufferIdx >= 0 && bufferIdx < compileIdx, 'the sessionLog branch precedes the compile fallback');
+  // PR3's original pin put the lastWrite "nothing new" refusal BEFORE the compile
+  // fallback, on the premise that new post-save sets always buffer. QA-1 disproved
+  // the premise: a set message whose parse fails buffers nothing (it routes to the
+  // coach), so the refusal dead-ended loggable work the fallback could recover
+  // from the chat history. The refusal is now the TERMINAL status — present, but
+  // only reachable after the compile fallback found nothing new.
+  const nothingNewIdx = fn.lastIndexOf('Nothing new to log since your last save');
+  assert.ok(nothingNewIdx > compileIdx, '"nothing new" is only reached after the compile fallback runs');
+});
+
+test('QA-1 repair: a repeat "log it" after a save with no new chat turns refuses "nothing new" and stages no preview', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const fn = appSource.slice(
+    appSource.indexOf('async function runCloseout()'),
+    appSource.indexOf('async function runCloseout()') + 6000
+  );
+  assert.ok(fn.length > 0, 'runCloseout must exist');
+  // Independent review of b0c1fd91 (BLOCKING, Finding 1): chat history survives
+  // a save and the compile extractor reads it whole, so the QA-1 ordering fix
+  // alone let a bare repeat "log it" recompile the already-saved sets and
+  // stage them as a fresh preview — approving it wrote the workout a second
+  // time under a NEW session id, where neither the per-preview write_id nor
+  // the per-session duplicate partition can catch it. The repair records a
+  // chat-history watermark (turn count) with every save and scopes closeout
+  // to the turns after it:
+  const scopeIdx = fn.indexOf('turns.slice(lastWriteTurnCount)');
+  const compileIdx = fn.indexOf('/api/session/compile');
+  assert.ok(scopeIdx >= 0, 'runCloseout scopes the compile input to post-save turns via the save watermark');
+  assert.ok(scopeIdx < compileIdx, 'the post-save scoping is computed before the compile fallback');
+  // With no post-save turns the refusal fires BEFORE the compile call and
+  // returns — no preview is staged, so there is nothing to approve twice.
+  const guardIdx = fn.indexOf('if (lastWrite && !newTurns.length)');
+  assert.ok(guardIdx >= 0 && guardIdx < compileIdx, 'the no-new-work refusal precedes the compile fallback');
+  const guardBlock = fn.slice(guardIdx, compileIdx);
+  assert.match(guardBlock, /Nothing new to log since your last save/, 'the refusal is the nothing-new status');
+  assert.match(guardBlock, /return;/, 'the refusal returns — it stages no preview');
+  // When new post-save work DOES exist, the compile receives only those turns,
+  // so the QA-1 recovery preview cannot re-stage the saved workout beside it.
+  assert.match(fn, /history: newTurns/, 'the compile fallback receives only post-save turns');
+  // The watermark is recorded at both approve-lane sites that record a save,
+  // in lockstep with lastWrite itself.
+  const watermarkSites = appSource.match(/lastWriteTurnCount = pendingLastWrite \? currentChatTurnCount\(\) : null;/g) || [];
+  assert.equal(watermarkSites.length, 2, 'both save lanes record the chat-history watermark with lastWrite');
+});
+
+test('QA-1: startOverWorkout clears the lastWrite watermark so a fresh start re-arms closeout', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const fn = appSource.slice(
+    appSource.indexOf('function startOverWorkout()'),
+    appSource.indexOf('function startOverWorkout()') + 1600
+  );
+  assert.ok(fn.length > 0, 'startOverWorkout must exist');
+  assert.match(fn, /lastWrite = null;/, 'a deliberate fresh start clears the prior save watermark');
+});
+
+test('QA-1: the drawer "New session" button runs the session reset, not only a tab switch', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  // #drawer-new-session carries data-tab="logger", so drawer.js only navigates.
+  // Without this wiring the prior save's lastWrite watermark survived into the
+  // new session and its first "log it" was refused as "nothing new".
+  assert.match(
+    appSource,
+    /getElementById\('drawer-new-session'\)\?\.addEventListener\('click', \(\) => \{ startOverWorkout\(\); \}\)/,
+    'New session must invoke the same session reset as Start Over'
+  );
 });
 
 // P0 closeout/save trust (live test 2026-06-25): "log it"/"done" must never fail
@@ -1119,7 +1177,10 @@ test('P0 closeout: handleLogIt is a never-silent wrapper around runCloseout', ()
 
 test('P0 closeout: runCloseout reads the canonical buffer first and never gives a false "no sets" when work exists', () => {
   const src = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
-  const fn = src.slice(src.indexOf('async function runCloseout()'), src.indexOf('async function runCloseout()') + 3500);
+  // Window widened 3500 → 6000 (QA-1 repair): the post-save watermark guard now
+  // sits between the canonical check and the compile call, pushing the
+  // compile-failure copy past the old window. Assertions below are unchanged.
+  const fn = src.slice(src.indexOf('async function runCloseout()'), src.indexOf('async function runCloseout()') + 6000);
   // Canonical source: sessionLog buffer first (what the visible cards were built from).
   const bufIdx = fn.indexOf('if (getSessionLog().length)');
   assert.ok(bufIdx >= 0, 'closeout builds from the sessionLog buffer (canonical set data)');
