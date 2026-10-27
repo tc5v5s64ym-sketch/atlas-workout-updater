@@ -1567,3 +1567,90 @@ test('PARSE-3 guard: warm-up bare pairs and single sets still parse (no over-rej
   assert.deepEqual(parseWorkoutText('bench 225 5/2 185 8/2').sets.map(s => [s.weight, s.reps, s.rir]),
     [[225, 5, 2], [185, 8, 2]]);
 });
+
+// ---------------------------------------------------------------------------
+// QA-2 — slash CHAIN shapes must parse as reps-per-set, not reps/RIR.
+//
+// Two producers emit chains the shorthand grammar used to drop or misread:
+//  (a) the session-compile prompt (services/coach.js buildCompileSystemPrompt)
+//      instructs "{exercise} {weight} {reps}/{rir}", "omit the /rir if not
+//      mentioned" — with no RIR mentioned the model emits slash-terminated
+//      segments ("115 8/ 115 8/ 115 7"), which parseDaleShorthand silently
+//      dropped (only the final, slash-free segment survived);
+//  (b) hand-typed chains ("115 8/8/7", "140 10/10") — multi-slash tokens were
+//      unparseable, and an equal pair was silently read as ONE set whose RIR
+//      equalled its reps.
+//
+// The distinguishing rules (handwritten reps/RIR shorthand is untouched):
+//  - a token with 2+ slashes, or a "reps/" token with the RIR omitted, is a
+//    chain segment — it can never be a reps/RIR pair;
+//  - an EQUAL pair "n/n" with n beyond the plausible RIR range (0–5) is two
+//    sets of n, not one set at RIR n;
+//  - an unequal pair stays reps/RIR even past RIR 5 — frozen by the deload
+//    golden "shrugs 70 12/10" → [[70, 12, 10]] above.
+// Live evidence: QA defect log 2026-10-26 (agent-run session, build da16cd4b).
+// ---------------------------------------------------------------------------
+
+test('QA-2: compile-emitted trailing-slash chain keeps every set', () => {
+  const result = parseWorkoutText('Overhead Press 115 8/ 115 8/ 115 7');
+  assert.equal(result.canonical_name, 'Overhead Press');
+  assert.deepEqual(sets(result), [[115, 8, null], [115, 8, null], [115, 7, null]]);
+});
+
+test('QA-2: compile-emitted chain of slash-terminated segments only', () => {
+  const result = parseWorkoutText('Seated Row 140 10/ 140 10/');
+  assert.equal(result.canonical_name, 'Seated Row');
+  assert.deepEqual(sets(result), [[140, 10, null], [140, 10, null]]);
+});
+
+test('QA-2: hand-typed multi-slash chain is reps-per-set', () => {
+  const result = parseWorkoutText('Overhead Press 115 8/8/7');
+  assert.equal(result.canonical_name, 'Overhead Press');
+  assert.deepEqual(sets(result), [[115, 8, null], [115, 8, null], [115, 7, null]]);
+});
+
+test('QA-2: hand-typed chain at a second weight (QA-1 starved input)', () => {
+  const result = parseWorkoutText('Back Squat 225 6/6/5');
+  assert.equal(result.canonical_name, 'Back Squat');
+  assert.deepEqual(sets(result), [[225, 6, null], [225, 6, null], [225, 5, null]]);
+});
+
+test('QA-2: equal pair beyond RIR range is two sets, never one silent set at RIR = reps', () => {
+  const result = parseWorkoutText('Seated Row 140 10/10');
+  assert.equal(result.canonical_name, 'Seated Row');
+  assert.deepEqual(sets(result), [[140, 10, null], [140, 10, null]]);
+});
+
+test('QA-2: full defect sentence — both exercises, every set, nothing unresolved', () => {
+  const result = parseWorkoutText('Overhead Press 115 8/8/7\nSeated Row 140 10/10');
+  assert.equal(result.intent, 'log_sets_multi');
+  assert.deepEqual(result.unresolved || [], []);
+  const byName = Object.fromEntries((result.exercises || []).map(e => [e.canonical_name, e.sets.map(s => [s.weight, s.reps, s.rir])]));
+  assert.deepEqual(byName['Overhead Press'], [[115, 8, null], [115, 8, null], [115, 7, null]]);
+  assert.deepEqual(byName['Seated Row'], [[140, 10, null], [140, 10, null]]);
+});
+
+test('QA-2: compile round-trip — the prompt\u2019s documented no-RIR output shape parses set-for-set', () => {
+  // buildCompileSystemPrompt documents "{exercise} {weight} {reps}/{rir}" with
+  // the /rir omitted when not mentioned; emitted lines chain one segment per
+  // set on a single line, one exercise per line. Feeding that exact shape
+  // back through the parser must reproduce the session set-for-set.
+  const compiled = 'Overhead Press 115 8/ 115 8/ 115 7\nSeated Row 140 10/ 140 10/';
+  const result = parseWorkoutText(compiled);
+  assert.equal(result.intent, 'log_sets_multi');
+  assert.deepEqual(result.unresolved || [], []);
+  const byName = Object.fromEntries((result.exercises || []).map(e => [e.canonical_name, e.sets.map(s => [s.weight, s.reps, s.rir])]));
+  assert.deepEqual(byName['Overhead Press'], [[115, 8, null], [115, 8, null], [115, 7, null]]);
+  assert.deepEqual(byName['Seated Row'], [[140, 10, null], [140, 10, null]]);
+});
+
+test('QA-2 guard: handwritten reps/RIR shorthand is unchanged by chain handling', () => {
+  // The canonical shorthand pair still reads reps/RIR.
+  assert.deepEqual(sets(parseWorkoutText('Bench 140 10/2')), [[140, 10, 2]]);
+  // RIR at the top of the plausible range stays RIR.
+  assert.deepEqual(sets(parseWorkoutText('Bench 135 10/5')), [[135, 10, 5]]);
+  // An UNEQUAL pair stays reps/RIR even with RIR past 5 (frozen deload golden).
+  assert.deepEqual(sets(parseWorkoutText('shrugs 70 12/10')), [[70, 12, 10]]);
+  // Slash working sets across weights are untouched.
+  assert.deepEqual(sets(parseWorkoutText('Bench 135 10/5 185 8/3 225 5/2')), [[135, 10, 5], [185, 8, 3], [225, 5, 2]]);
+});
