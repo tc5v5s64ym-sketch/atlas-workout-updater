@@ -200,11 +200,13 @@ function unresolvableExerciseReference(message, resolve) {
   const hit = tryResolve(message);
   if (hit && hit.canonicalName) return null;
 
-  // The parser reports ambiguity only for a name it sees at the START of the text, so
-  // "how much for rows?" comes back empty while the bare "rows" comes back ambiguous.
-  // Re-ask with the extracted phrase alone to recover that message. Only the AMBIGUITY
-  // is taken from it — an anywhere-position canonical hit would already have been found
-  // in the full message above, so this can never turn a decline into a resolution.
+  // PARSE-6 extended the parser's ambiguity report to bare ambiguous words
+  // anywhere in the text, so "how much for rows?" usually comes back ambiguous
+  // directly. When it still comes back empty — the word shielded by a preceding
+  // digit or a name-like token — re-ask with the extracted phrase alone to
+  // recover that message. Only the AMBIGUITY is taken from it — an
+  // anywhere-position canonical hit would already have been found in the full
+  // message above, so this can never turn a decline into a resolution.
   const fromPhrase = (hit && hit.ambiguous) ? hit : tryResolve(phrase);
   const ambiguousMessage = fromPhrase && fromPhrase.ambiguous
     && typeof fromPhrase.message === 'string' && fromPhrase.message.trim()

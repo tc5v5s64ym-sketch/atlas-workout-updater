@@ -12,7 +12,7 @@ The execution plan is the authoritative open-work queue; this glance-index surfa
 
 - **Open P0:** none — all four deep-review P0 data-integrity items (CLIENT-1, PARSE-1/2/3) are fixed (PR-0D–0G).
 - **Open P1:** none — INFRA-3 was verified already-fixed on current state and archived 2026-10-26 (see `BACKLOG_ARCHIVE.md`).
-- **Open P2 residuals:** PARSE-6 and SESS-6 remain explicit open findings. The former SESS-4/SESS-5 completion-identity cluster was closed by F10 authoritative planned-slot completion identity; current residuals are tracked by Issues #1199–#1202 and the Phase-4 gate below.
+- **Open P2 residuals:** SESS-6 remains an explicit open finding. The former SESS-4/SESS-5 completion-identity cluster was closed by F10 authoritative planned-slot completion identity; current residuals are tracked by Issues #1199–#1202 and the Phase-4 gate below.
 
 > 🗂️ **Completed and cancelled records live in [`BACKLOG_ARCHIVE.md`](./BACKLOG_ARCHIVE.md).** This file should contain only open, in-progress, deferred, evidence-gated, or owner-reserved work. A shipped parent remains only when its attached follow-up cannot yet be separated safely.
 
@@ -140,7 +140,6 @@ Navigation for this file (added 2026-07-01, planning consolidation PR-7). This f
 
 - **LT-008 F1 defense-in-depth (deferred)** `[housekeeping]` — the date guard validates the top-level `date` param (the only field the client sends). A crafted per-row `date_clean` would still bypass it. Realistically unreachable (client never sends per-row dates), but for belt-and-suspenders add a `date_clean` calendar check inside `validateLogRowBounds` (covers the shared `/api/complete-workout` path too). Own tiny concern; low priority.
 
-- [ ] **PARSE-6** `[polish]` **(E)** — `AMBIGUOUS_ALIASES` only fires at start-of-text; mid-text bare `rows` skips the "which row?" ask (flagged unknown, not silent) (`workoutTextParser.js:137-141`).
 
 - [ ] **SESS-6** `[polish]` **(P)** — `currentPlanForChat` fallback ignores the `coachSuggestionEngaged` gate → freestyle chat answered from an unengaged plan (`src/app/app.js:5866-5878`); decide intent, then gate or tag `suggested:true`.
 
