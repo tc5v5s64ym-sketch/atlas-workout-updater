@@ -143,6 +143,30 @@ function findExerciseInText(text, { strictVariantGuard = false } = {}) {
     }
   }
 
+  // PARSE-6: a bare ambiguous alias ("rows", "press") MID-text never fired
+  // the start-of-text check above, so the input fell through to a generic
+  // missing-exercise ask — or, carrying its own sets ("today rows 95 10/2"),
+  // to a bogus unknown-exercise row. Reaching here means NO canonical alias
+  // matched anywhere, so the word is not part of a resolved lift name
+  // ("bench press", "seated rows") and no first exercise owns the text: the
+  // second-exercise shape (a resolved lift + trailing sets) resolved in the
+  // scan above and never reaches this point, leaving the G1 refuse-to-merge
+  // guard (BUG-20260629) untouched. A digit before the word means it trails
+  // numbers — another exercise's set-group or sets-first phrasing — and that
+  // shape stays with the existing unknown path rather than asking here.
+  // The word must also be BARE: when a name-like token immediately precedes
+  // it (the PARSE-1 variant judgment), it is the tail of an unknown lift
+  // NAME — "andover press 95 8/2" is one typed exercise, not a bare "press"
+  // reference — and the unknown-exercise path owns it.
+  const ambiguousKeys = Object.keys(AMBIGUOUS_ALIASES).sort((a, b) => b.length - a.length);
+  for (const ambiguous of ambiguousKeys) {
+    const match = new RegExp(`\\b${escapeRegExp(ambiguous)}\\b`).exec(normalized);
+    if (match && !/\d/.test(normalized.slice(0, match.index))
+        && !aliasIsVariantOfAnotherLift(normalized, match.index)) {
+      return { ambiguous: true, rawName: ambiguous, message: AMBIGUOUS_ALIASES[ambiguous] };
+    }
+  }
+
   return null;
 }
 
