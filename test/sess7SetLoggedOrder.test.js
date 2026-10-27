@@ -5,21 +5,25 @@
 //
 // handleSetLogged records the user turn at entry, but its Atlas turns only
 // land after the recommendation/coaching awaits (and the typeOut renders).
-// The listener used to invoke it directly per event, so two submissions in
-// flight together interleaved: the second submission's coaching could finish
-// — and be recorded — before the first one's, scrambling the history that
-// later turns are answered from (chatTurns.slice(-8) in handleChatMessage,
+// The listener invoked it directly per event and the handler pushed its
+// Atlas turns the moment they were computed, so two submissions in flight
+// together interleaved: the second submission's coaching could finish — and
+// be recorded — before the first one's, scrambling the history that later
+// turns are answered from (chatTurns.slice(-8) in handleChatMessage,
 // window.getChatHistory for the closeout compile).
 //
-// The fix serializes the handling through a promise queue in the listener:
-// submissions RUN one at a time, in dispatch order. The turn-response ticket
-// is still minted synchronously at dispatch (logical set initiation, per the
-// turn-correlation contract); only the handling — and its settlement bound —
-// waits for the submission's turn in the queue.
+// The fix orders ONLY the recording. The listener claims a flush slot per
+// dispatch, in dispatch order; the handler body runs immediately and
+// concurrently exactly as before (its fetches, typing and rendering are
+// side effects other features time their own observations off — serializing
+// the whole handler delayed them measurably and broke a staged-proposal
+// E2E observation on PR #1308's first head). The body buffers its Atlas
+// turns through recordTurn, and the wrapper flushes them into chatTurns
+// only after every earlier submission's turns have flushed.
 //
-// These tests drive the REAL listener source (sliced from
-// src/app/coach-conversation.js) with a controllable handleSetLogged stub, in
-// the repo's slice-harness style (see test/postLogIdentity.test.js).
+// These tests drive the REAL slot machinery + wrapper source (sliced from
+// src/app/coach-conversation.js) with a controllable handleSetLogged
+// stub, in the repo's slice-harness style (see test/postLogIdentity.test.js).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -31,6 +35,20 @@ const src = fs.readFileSync(
   'utf8'
 );
 
+function machineryBlock() {
+  const stateStart = src.indexOf('const turnFlushSlots');
+  const bodyStart = src.indexOf('async function handleSetLogged(');
+  const wrapStart = src.indexOf('async function handleSetLoggedInOrder');
+  const wrapEnd = src.indexOf('// End-of-session review', wrapStart);
+  assert.ok(stateStart >= 0, 'the SESS-7 turn-flush slot machinery must exist');
+  assert.ok(bodyStart > stateStart, 'handleSetLogged must follow the slot state');
+  assert.ok(wrapStart > bodyStart, 'handleSetLoggedInOrder must follow the body');
+  assert.ok(wrapEnd > wrapStart, 'the ordered entry point must be locatable');
+  // The slot state + claim (before the body) and the ordered entry point
+  // (after it); the harness shims the body between the two segments.
+  return [src.slice(stateStart, bodyStart), src.slice(wrapStart, wrapEnd)];
+}
+
 function listenerBlock() {
   const start = src.indexOf("document.addEventListener('atlas:set-logged'");
   const end = src.indexOf("document.addEventListener('atlas:plan-mutated'");
@@ -40,121 +58,134 @@ function listenerBlock() {
   return slice.slice(0, slice.lastIndexOf('});') + 3);
 }
 
-// Build the real listener with stubbed collaborators. `script` maps a detail
-// id to { ms, fail } for the handleSetLogged stub: it records start/turn
-// markers into `events` around a controllable delay, standing in for the real
-// handler's awaits (its Atlas turn lands only after them).
-function loadListener({ timeoutMs = 60000 } = {}) {
+const deferred = () => {
+  let resolve;
+  const promise = new Promise((r) => { resolve = r; });
+  return { promise, resolve };
+};
+const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+// Build the real slot machinery + ordered entry point with a controllable
+// body. The shim reproduces the real body's one-line recorder lookup
+// (turnRecorderFor, itself part of the real segment under test); bodyImpl
+// then mimics the body's behaviour: push the user turn synchronously at
+// entry, do (gated) coaching work, record the Atlas turn through the
+// recorder, and optionally throw after recording.
+function loadMachinery() {
+  const chatTurns = [];
   const events = [];
-  const completed = [];
-  const cancelled = [];
-  const listenerBox = {};
-  const fakeDocument = {
-    addEventListener: (name, fn) => { if (name === 'atlas:set-logged') listenerBox.fn = fn; },
-  };
-  const minted = [];
-  const beginTurnResponse = ({ sessionId }) => {
-    const ticket = { sessionId };
-    minted.push(ticket);
-    return ticket;
-  };
-  // Tickets are labelled by mint order (dispatch order in every test here):
-  // the first ticket minted belongs to the first submission dispatched.
-  const cancelTurnResponse = (ticket) => { cancelled.push(ticket); events.push(`cancel#${minted.indexOf(ticket)}`); };
-  const completeTurnResponse = (ticket) => { completed.push(ticket); };
-  const handleSetLogged = async (detail) => {
-    events.push(`start:${detail.id}`);
-    await new Promise((resolve) => setTimeout(resolve, detail.ms || 0));
+  const gates = {};
+  const bodyImpl = async (detail, recordAtlasTurn) => {
+    events.push(`bodyStart:${detail.id}`);
+    chatTurns.push({ role: 'user', text: `u:${detail.id}` });
+    if (gates[detail.id]) await gates[detail.id].promise;
+    events.push(`bodyDone:${detail.id}`);
+    recordAtlasTurn({ role: 'atlas', text: `a:${detail.id}` });
     if (detail.fail) throw new Error(`boom:${detail.id}`);
-    events.push(`turn:${detail.id}`);
   };
+  const [stateSeg, wrapSeg] = machineryBlock();
   const factory = new Function(
-    'document', 'beginTurnResponse', 'cancelTurnResponse', 'completeTurnResponse',
-    'handleSetLogged', 'COACH_LLM_TIMEOUT_MS', 'listenerBox',
+    'chatTurns', 'bodyImpl',
     `'use strict';
-     let setLoggedQueue = Promise.resolve();
-     const setResponseTickets = new WeakMap();
-     ${listenerBlock()}
-     return {
-       dispatch: (detail) => listenerBox.fn({ detail }),
-       tickets: setResponseTickets,
-       queue: () => setLoggedQueue,
-     };`
+     ${stateSeg}
+     async function handleSetLogged(detail) {
+       const recordAtlasTurn = turnRecorderFor(detail) || ((turn) => { chatTurns.push(turn); });
+       return bodyImpl(detail, recordAtlasTurn);
+     }
+     ${wrapSeg}
+     return { claimTurnFlushSlot, handleSetLoggedInOrder };`
   );
-  const api = factory(
-    fakeDocument, beginTurnResponse, cancelTurnResponse, completeTurnResponse,
-    handleSetLogged, timeoutMs, listenerBox
-  );
-  assert.ok(listenerBox.fn, 'the listener must have been registered');
-  return { ...api, events, completed, cancelled };
+  const api = factory(chatTurns, bodyImpl);
+  return { ...api, chatTurns, events, gates };
 }
 
-const detail = (id, ms, extra = {}) => ({
-  id, ms, sessionId: 'S1', exercises: [{ exercise: 'Bench Press', sets: [] }], ...extra,
+const atlasTexts = (turns) => turns.filter((t) => t.role === 'atlas').map((t) => t.text);
+
+test('SESS-7: Atlas turns flush in submission order even when a later body finishes first', async () => {
+  const api = loadMachinery();
+  const a = { id: 'A' };
+  const b = { id: 'B' };
+  api.gates.A = deferred();
+  // Dispatch order: A, then B. A's coaching is slow; B's is immediate.
+  api.claimTurnFlushSlot(a);
+  api.claimTurnFlushSlot(b);
+  const pA = api.handleSetLoggedInOrder(a);
+  const pB = api.handleSetLoggedInOrder(b);
+  await tick();
+  // B's body has finished and recorded its turn — but the turn must NOT be
+  // in chatTurns yet: A's earlier submission has not flushed.
+  assert.deepEqual(api.events, ['bodyStart:A', 'bodyStart:B', 'bodyDone:B']);
+  assert.deepEqual(atlasTexts(api.chatTurns), [], 'B’s Atlas turn waits for A’s flush');
+  api.gates.A.resolve();
+  await Promise.all([pA, pB]);
+  assert.deepEqual(atlasTexts(api.chatTurns), ['a:A', 'a:B'],
+    'the recorded history is in submission order, not completion order');
 });
 
-async function drain(api) {
-  await api.queue();
-  // Let any already-fired finally/timer callbacks land before asserting.
-  await new Promise((resolve) => setTimeout(resolve, 5));
-}
-
-test('SESS-7: two submissions in flight record their turns in submission order', async () => {
-  const api = loadListener();
-  // A is submitted first but its coaching awaits run long; B is submitted
-  // second and would complete almost immediately if run concurrently.
-  api.dispatch(detail('A', 40));
-  api.dispatch(detail('B', 0));
-  await drain(api);
-  assert.deepEqual(api.events.filter((e) => !e.startsWith('cancel')), [
-    'start:A', 'turn:A', 'start:B', 'turn:B',
-  ], 'the second submission must not start — let alone record its turn — before the first finishes');
+test('SESS-7: the handling itself is NOT serialized — bodies run concurrently', async () => {
+  const api = loadMachinery();
+  const a = { id: 'A' };
+  const b = { id: 'B' };
+  api.gates.A = deferred();
+  api.claimTurnFlushSlot(a);
+  api.claimTurnFlushSlot(b);
+  const pA = api.handleSetLoggedInOrder(a);
+  const pB = api.handleSetLoggedInOrder(b);
+  await tick();
+  assert.ok(api.events.includes('bodyStart:B') && api.events.includes('bodyDone:B'),
+    'B’s fetches/coaching run while A is still in flight — only the recording is ordered');
+  api.gates.A.resolve();
+  await Promise.all([pA, pB]);
 });
 
-test('SESS-7: the ticket is minted at dispatch, before the queued handling runs', async () => {
-  const api = loadListener();
-  const a = detail('A', 30);
-  const b = detail('B', 0);
-  api.dispatch(a);
-  api.dispatch(b);
-  // Synchronously after both dispatches (B still queued behind A), both
-  // tickets already exist — minting is initiation-time, not run-time.
-  assert.ok(api.tickets.get(a), 'ticket for A must be stored at dispatch');
-  assert.ok(api.tickets.get(b), 'ticket for B must be stored at dispatch, while B is still queued');
-  await drain(api);
+test('SESS-7: a throwing body still flushes its recorded turns and releases the chain', async () => {
+  const api = loadMachinery();
+  const a = { id: 'A', fail: true };
+  const b = { id: 'B' };
+  api.claimTurnFlushSlot(a);
+  api.claimTurnFlushSlot(b);
+  const pA = api.handleSetLoggedInOrder(a);
+  const pB = api.handleSetLoggedInOrder(b);
+  await assert.rejects(pA, /boom:A/, 'the body’s rejection still propagates to the caller');
+  await pB;
+  assert.deepEqual(atlasTexts(api.chatTurns), ['a:A', 'a:B'],
+    'the failed submission’s recorded turns flush in order and the next submission is not jammed');
 });
 
-test('SESS-7: a queued submission’s settlement bound starts when its handling starts', async () => {
-  const api = loadListener({ timeoutMs: 30 });
-  api.dispatch(detail('A', 50));
-  api.dispatch(detail('B', 50));
-  await drain(api);
-  const startB = api.events.indexOf('start:B');
-  const cancelB = api.events.indexOf('cancel#1'); // B's ticket: minted second
-  assert.ok(startB >= 0 && cancelB > startB,
-    'B must not be cancelled while it is still waiting in the queue — its bound runs from its own start');
-  assert.equal(api.completed.length, 2, 'both tickets are completed (released) exactly once');
+test('SESS-7: a handler invoked without a claimed slot flushes at its own settle', async () => {
+  const api = loadMachinery();
+  const solo = { id: 'S' };
+  await api.handleSetLoggedInOrder(solo);
+  assert.deepEqual(atlasTexts(api.chatTurns), ['a:S'],
+    'direct invocations (no listener claim) keep the old record-at-completion behaviour');
 });
 
-test('SESS-7: a rejected submission still releases its ticket and never jams the queue', async () => {
-  const api = loadListener();
-  api.dispatch(detail('bad', 0, { fail: true }));
-  api.dispatch(detail('B', 0));
-  await drain(api);
-  assert.deepEqual(api.events.filter((e) => !e.startsWith('cancel')), [
-    'start:bad', 'start:B', 'turn:B',
-  ], 'the submission after a rejected one still runs, in order');
-  assert.equal(api.completed.length, 2, 'the rejected submission’s ticket is still released in its finally');
-});
-
-test('SESS-7: the listener queues handling instead of invoking it directly', () => {
+test('SESS-7: the listener claims the slot at dispatch and invokes the ordered entry point directly', () => {
   const block = listenerBlock();
-  assert.match(block, /setLoggedQueue = setLoggedQueue\.then\(/,
-    'the listener must chain each submission onto the serialization queue');
+  assert.match(block, /claimTurnFlushSlot\(detail\)/,
+    'the listener must claim the recording slot per dispatch');
   assert.ok(
-    block.indexOf('beginTurnResponse') < block.indexOf('setLoggedQueue = setLoggedQueue.then('),
-    'the ticket is minted at dispatch, before the submission is queued'
+    block.indexOf('beginTurnResponse') < block.indexOf('handleSetLoggedInOrder(detail)'),
+    'the turn-response ticket is still minted at dispatch, before handling'
   );
-  assert.match(src, /let setLoggedQueue = Promise\.resolve\(\);/,
-    'the queue is a module-level promise chain in coach-conversation.js');
+  assert.ok(
+    block.indexOf('claimTurnFlushSlot(detail)') < block.indexOf('handleSetLoggedInOrder(detail)'),
+    'the slot is claimed before the handler is invoked'
+  );
+  assert.doesNotMatch(block, /setLoggedQueue/,
+    'the handler is invoked directly — handling is not serialized (PR #1308 v1 regression)');
+});
+
+test('SESS-7: the body records Atlas turns through its recorder, never by direct push', () => {
+  const start = src.indexOf('async function handleSetLogged(detail)');
+  const end = src.indexOf('async function handleSetLoggedInOrder', start);
+  assert.ok(start >= 0 && end > start, 'the handler body must be locatable');
+  const body = src.slice(start, end);
+  assert.doesNotMatch(body, /chatTurns\.push\(\{ role: 'atlas'/,
+    'Atlas turns are buffered through the recorder so the entry point can order them');
+  assert.match(body, /turnRecorderFor\(detail\)/,
+    'the body takes its recorder from the submission’s claimed slot');
+  assert.match(body, /recordAtlasTurn\(\{ role: 'atlas', text: note \}\)/);
+  assert.match(body, /chatTurns\.push\(\{ role: 'user', text \}\)/,
+    'the user turn still pushes at entry — entries run in dispatch order, so it needs no slot');
 });
