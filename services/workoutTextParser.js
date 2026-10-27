@@ -1073,6 +1073,31 @@ const MAX_PLAUSIBLE_REPS = 50;
 // caller can emit the specific "use slash notation" ask.
 const AMBIGUOUS_SET_FORMAT = Object.freeze({ ambiguousSetFormat: true });
 
+// QA-2: RIR plausibility ceiling for the equal-pair chain rule in
+// slashChainReps below. RIR lives in 0–5 (see the PARSE-3 note), so an EQUAL
+// slash pair "n/n" with n past the ceiling cannot be read as reps/RIR.
+const MAX_PLAUSIBLE_RIR = 5;
+
+// QA-2: classify a slash token as a reps-per-set CHAIN. Returns the chain's
+// rep counts, or null when the token is an ordinary reps/RIR pair (or not a
+// slash token at all). A token is a chain when:
+//   - it carries 2+ slashes ("8/8/7", "6/6/5") — never a valid reps/RIR pair,
+//     and the shape Dale hand-types for same-weight set chains; or
+//   - it is an EQUAL pair "n/n" with n > MAX_PLAUSIBLE_RIR ("10/10") — an RIR
+//     past the plausible range equal to the reps is the typed chain shorthand,
+//     not one set stopped n short.
+// An UNEQUAL pair stays reps/RIR at any value: the frozen deload golden
+// "shrugs 70 12/10" → one set at RIR 10 is real usage and must not move.
+// Chain sets carry no RIR — none was stated for any individual set.
+function slashChainReps(token) {
+  if (/^\d+(?:\/\d+){2,}$/.test(token)) return token.split('/').map(Number);
+  const pair = String(token).match(/^(\d+)\/(\d+)$/);
+  if (pair && Number(pair[1]) === Number(pair[2]) && Number(pair[1]) > MAX_PLAUSIBLE_RIR) {
+    return [Number(pair[1]), Number(pair[2])];
+  }
+  return null;
+}
+
 function parseSetGroups(text) {
   const cleaned = normalizeParserText(text)
     .replace(/\b(today|i did|did|was|were)\b/gi, ' ')
@@ -1414,6 +1439,18 @@ function parseDaleShorthand(text) {
       continue;
     }
 
+    // QA-2: a chain token under an already-established weight (continuation,
+    // e.g. "225 5/2 8/8/7") — one set per chain element, no RIR. Checked before
+    // the reps/RIR branch so an equal pair here reads as a chain too.
+    const chainHere = slashChainReps(token);
+    if (chainHere && currentWeight !== null) {
+      for (const chainReps of chainHere) {
+        previousSet = setRecord({ weight: currentWeight, reps: chainReps, rir: null });
+        sets.push(previousSet);
+      }
+      continue;
+    }
+
     const slash = token.match(/^(\d+)\/(\d+(?:\.\d+)?)$/);
     if (slash && currentWeight != null) {
       previousSet = setRecord({
@@ -1426,6 +1463,39 @@ function parseDaleShorthand(text) {
     }
 
     const weight = token.match(/^(\d+(?:\.\d+)?)(?:lb|lbs)?$/i);
+    // QA-2: a weight followed by a chain token ("115 8/8/7", "140 10/10")
+    // emits one set per chain element at that weight. This lookahead runs
+    // before the reps/RIR lookahead below because an equal pair matches both
+    // shapes and the chain reading is the correct one (see slashChainReps).
+    const nextChain = slashChainReps(tokens[i + 1] || '');
+    if (weight && nextChain) {
+      currentWeight = Number(weight[1]);
+      for (const chainReps of nextChain) {
+        previousSet = setRecord({ weight: currentWeight, reps: chainReps, rir: null });
+        sets.push(previousSet);
+      }
+      i += 1;
+      continue;
+    }
+    // QA-2: a weight followed by a slash-terminated segment ("115 8/") is one
+    // set with the RIR omitted — the exact shape the session-compile prompt
+    // (services/coach.js buildCompileSystemPrompt: "{reps}/{rir}", "omit the
+    // /rir if not mentioned") tells the extractor to emit for a no-RIR set.
+    // The bare token matches no other branch, so without this the segment —
+    // and its weight — was silently dropped and only a later slash-free
+    // segment survived.
+    const nextOpenSlash = tokens[i + 1]?.match(/^(\d+)\/$/);
+    if (weight && nextOpenSlash) {
+      currentWeight = Number(weight[1]);
+      previousSet = setRecord({
+        weight: currentWeight,
+        reps: Number(nextOpenSlash[1]),
+        rir: null,
+      });
+      sets.push(previousSet);
+      i += 1;
+      continue;
+    }
     const nextSlash = tokens[i + 1]?.match(/^(\d+)\/(\d+(?:\.\d+)?)$/);
     if (weight && nextSlash) {
       currentWeight = Number(weight[1]);
