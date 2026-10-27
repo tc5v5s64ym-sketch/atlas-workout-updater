@@ -147,7 +147,6 @@ Navigation for this file (added 2026-07-01, planning consolidation PR-7). This f
 
 
 
-- [ ] **INFRA-5** `[polish]` — no `unhandledRejection` backstop for the ~67 bare async route handlers (clean today, verified; one future unguarded `await` kills the process mid-write).
 
 ### Deep-review audit — 2026-07-07 — open findings › PR-10 live-session regression addendum — disposition (2026-07-08)
 
