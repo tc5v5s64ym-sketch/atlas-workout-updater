@@ -7149,6 +7149,12 @@ function currentPlanForChat() {
     })).filter(e => e.name);
   }
   // Fallback: the cached recommended intent (no active session yet).
+  // SESS-6 (Gate, owner decision 2026-10-26): the cached intent is a coach
+  // SUGGESTION until the lifter engages it. Unengaged, it is not their plan,
+  // so chat gets no plan from it — the same engagement signal that already
+  // gates the other suggestion surfaces (the Tag variant, marking the plan
+  // `suggested:true`, was considered and not chosen).
+  if (!getCoachSuggestionEngaged()) return [];
   if (!lastIntentData) return [];
   const intents = lastIntentData.intents || [];
   const recommended = intents.find(i => i.recommended);
