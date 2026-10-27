@@ -454,7 +454,7 @@ import {
     saved.appendChild(undo);
     card.appendChild(saved);
 
-    const review = { card, saveBtn, done: false, rowsWritten: false, priorRows: false, identity: null };
+    const review = { card, saveBtn, done: false, rowsWritten: false, priorRows: false, alreadyLogged: false, identity: null };
     currentReview = review;
     // A card built AFTER the commit stages rows that are not in the sheet, so it may
     // never claim they are — but it also may not fall back to "Nothing's saved yet",
@@ -536,6 +536,25 @@ import {
     if (note) note.textContent = PRIOR_ROWS_NOTE;
   }
 
+  // State (3) — this card's save appended NOTHING, because every row was
+  // already logged: the server's all-rows-duplicate lane, or a duplicate echo
+  // proving zero rows (QA-3). The workout IS in the log, so "Nothing's saved
+  // yet" would be the lost-session lie in the other direction — but it is not
+  // in the log because of THIS save, so the card may not wear `done`/"✓ Saved"
+  // either: that claim is reserved for a write whose own response proved its
+  // rows landed. The note names the true state, and the Save retires — there
+  // is nothing left for this card to write.
+  const ALREADY_LOGGED_NOTE = 'Already logged — this workout is in your log; this save wrote nothing new';
+  function applyAlreadyLoggedState(review) {
+    if (!review || review.done || review.rowsWritten || review.alreadyLogged) return;
+    review.alreadyLogged = true;
+    review.card.classList.add('already-logged');
+    const note = review.card.querySelector('.rv-note');
+    if (note) note.textContent = ALREADY_LOGGED_NOTE;
+    review.saveBtn.textContent = 'Already logged';
+    review.saveBtn.disabled = true;
+  }
+
   function markReviewRowsWrittenLedgerUnverified() {
     if (!currentReview) return;
     // Latch the SESSION fact first, so it survives this card being replaced — but as
@@ -566,17 +585,45 @@ import {
   // an unreadable screenshot — all of which happen BEFORE any write, where the card's
   // "Nothing's saved yet" note is true and must stay. Only the marked one means the
   // sets are already in the sheet.
+  //
+  // QA-3 — the `ok` case is matched on the state attribute for the same reason,
+  // and the unmarked version of it was the worse defect. app.js writes `.ok`
+  // into #logger-status for many actions that write nothing at all — a compile
+  // starting ('Compiling session from conversation…'), a set edit, a preview —
+  // and the observer used to call markReviewSaved() on ANY of them, flipping
+  // whatever card was current to "✓ Saved" with no write behind it (live
+  // incident, 2026-10-26: an unsaved preview card claimed a save that had
+  // written zero rows). Now the approve handler tags its outcome: an ok
+  // carrying `write-confirmed` is the ONLY status that may mark a card saved,
+  // because app.js emits that marker only when the write's own response proved
+  // its rows landed. An ok carrying `already-logged` means the write appended
+  // nothing (the rows were already logged) and gets state (3) instead. An
+  // UNMARKED ok is ambient noise from some other action and changes nothing —
+  // except the undo, whose status predates the marker discipline and is still
+  // read from its prose, as before.
   const ROWS_WRITTEN_STATE = '[data-atlas-state="rows-written-ledger-unverified"]';
+  const WRITE_CONFIRMED_STATE = '[data-atlas-state="write-confirmed"]';
+  const ALREADY_LOGGED_STATE = '[data-atlas-state="already-logged"]';
   if (loggerStatusEl) {
     new MutationObserver(() => {
       if (!currentReview) return;
       const ok = loggerStatusEl.querySelector('.status-msg.ok');
       const err = loggerStatusEl.querySelector('.status-msg.error');
       const rowsWritten = loggerStatusEl.querySelector(`.status-msg.warn${ROWS_WRITTEN_STATE}`);
+      const writeConfirmed = loggerStatusEl.querySelector(`.status-msg.ok${WRITE_CONFIRMED_STATE}`);
+      const alreadyLogged = loggerStatusEl.querySelector(`.status-msg${ALREADY_LOGGED_STATE}`);
       if (ok && /undone/i.test(ok.textContent || '')) {
         markReviewUndone();
-      } else if (ok && !currentReview.done) {
+      } else if (writeConfirmed && !currentReview.done) {
         markReviewSaved();
+      } else if (alreadyLogged && !currentReview.done) {
+        // A card already holding claim (1) — its own rows proven committed by
+        // an earlier tap, only the seal outstanding — completes on this
+        // verdict: the retry's closeout ran against those same rows and the
+        // handler reached its success status, so the save it already proved
+        // may now be claimed. A card with no such proof gets state (3).
+        if (currentReview.rowsWritten) markReviewSaved();
+        else applyAlreadyLoggedState(currentReview);
       } else if (rowsWritten && !currentReview.done) {
         markReviewRowsWrittenLedgerUnverified();
       } else if (err && !currentReview.done) {

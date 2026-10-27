@@ -1762,6 +1762,17 @@ a.lift-link:hover { text-decoration: underline; }
   color: var(--muted);
 }
 
+/* QA-3: this card's save appended nothing — the workout was already logged.
+   NOT `done`: the `.rv-saved` claim stays hidden, because this save wrote no
+   rows. The note is the reassurance (the sets are in the log), so it gets the
+   same weight as the rows-written note rather than faint fine print. */
+.review.already-logged .rv-note {
+  font-family: var(--disp);
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--ok);
+}
+
 .session-item {
   background: var(--card);
   border: 1px solid var(--border);
