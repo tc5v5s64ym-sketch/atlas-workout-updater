@@ -3659,11 +3659,13 @@ test('server allocation preserves turn correlation: correlate on the provisional
 test('multi-session/day: a saved session clears #log-session-id so the next upload is a new session', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const anchor = "getElementById('approve-btn').addEventListener('click'";
-  // Widened from 11200: the write-verification authority change (C3) added a field to
-  // pendingLastWrite, and the old window ended one character short of this assertion.
+  // Sliced to the handler's end (the Session loader banner): fixed character
+  // windows kept breaking whenever the handler legitimately grew — the QA-3
+  // backport's outcome-state code did it again — so the slice anchors to the
+  // terminator, as on main.
   const approveSection = appSource.slice(
     appSource.indexOf(anchor),
-    appSource.indexOf(anchor) + 12400
+    appSource.indexOf('/* ===== Session loader', appSource.indexOf(anchor))
   );
   // After a confirmed write the session is concluded, so its id must be cleared from the
   // field — otherwise the next effort upload re-sends the just-written id and collides.
@@ -3692,7 +3694,7 @@ test('reaction layer: approve-btn captures lift codes and fires write reaction',
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   const approveSection = appSource.slice(
     appSource.indexOf(anchor),
-    appSource.indexOf(anchor) + 13600
+    appSource.indexOf('/* ===== Session loader', appSource.indexOf(anchor))
   );
   assert.match(approveSection, /reactionLiftCodes/, 'must capture reactionLiftCodes before invalidatePreview');
   assert.match(approveSection, /fetchReaction/, 'must call fetchReaction after write');
@@ -3751,7 +3753,7 @@ test('verdict: post-write block shows Logged verdict and Next recommendation', (
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   const approveSection = appSource.slice(
     appSource.indexOf(anchor),
-    appSource.indexOf(anchor) + 13600
+    appSource.indexOf('/* ===== Session loader', appSource.indexOf(anchor))
   );
   assert.match(approveSection, /buildVerdict\(rec\)/, 'must call buildVerdict');
   assert.match(approveSection, /'Logged'/, 'must label verdict row "Logged"');
@@ -3764,7 +3766,7 @@ test('verdict: write safety unchanged — undo button still wired after verdict 
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   const approveSection = appSource.slice(
     appSource.indexOf(anchor),
-    appSource.indexOf(anchor) + 13600
+    appSource.indexOf('/* ===== Session loader', appSource.indexOf(anchor))
   );
   // undo button must still be appended before the verdict fetch
   const undoIdx = approveSection.indexOf('undo-write-btn');
@@ -3822,7 +3824,7 @@ test('duplicate-write: finally block always clears writeInFlight', () => {
 test('duplicate-write: successful write sets button text to Written ✓', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const anchor = "getElementById('approve-btn').addEventListener('click'";
-  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 13600);
+  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf('/* ===== Session loader', appSource.indexOf(anchor)));
   assert.match(handler, /Written\s*✓/, 'button must show "Written ✓" after success');
   // Written ✓ must appear before the catch block
   const writtenIdx = handler.indexOf('Written');
@@ -3833,9 +3835,9 @@ test('duplicate-write: successful write sets button text to Written ✓', () => 
 test('duplicate-write: undo button is unaffected — still wired after success', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const anchor = "getElementById('approve-btn').addEventListener('click'";
-  // Window sized to reach the post-save undo button wiring (PR-0D added an
-  // identity comment above it, nudging the handler length up).
-  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 12800);
+  // Sliced to the handler's end (the Session loader banner) — the fixed
+  // window this used kept needing nudges as the handler grew (PR-0D, QA-3).
+  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf('/* ===== Session loader', appSource.indexOf(anchor)));
   assert.match(handler, /undo-write-btn/, 'undo button must still exist in success path');
   assert.match(handler, /handleUndoLastWrite/, 'undo click handler must still be wired');
 });
@@ -3888,7 +3890,7 @@ test('readback: verifyWrittenRange function exists and fails quietly', () => {
 test('readback: approve handler reports write verification after write, before reaction fetch', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const anchor = "getElementById('approve-btn').addEventListener('click'";
-  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 13600);
+  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf('/* ===== Session loader', appSource.indexOf(anchor)));
   assert.match(handler, /reportWriteVerification\(loggerStatus, pendingLastWrite\)/,
     'must report write verification in the success path');
   const undoIdx = handler.indexOf('undo-write-btn');
@@ -5283,8 +5285,9 @@ test('Step 385: approve handler marks deload session written; advance fires once
   // ── Approve handler: sets the flag, does NOT call advance directly ──────────
   const approveStart = app.indexOf("document.getElementById('approve-btn').addEventListener('click'");
   assert.ok(approveStart !== -1, 'approve-btn click handler must exist');
-  // F10D widened: the seal-verdict + finalized-emission block sits above this.
-  const handlerBody = app.slice(approveStart, approveStart + 7600);
+  // Sliced to the handler's end (the Session loader banner): fixed windows
+  // kept breaking as the handler grew (F10D, then the QA-3 backport).
+  const handlerBody = app.slice(approveStart, app.indexOf('/* ===== Session loader', approveStart));
 
   // advance must NOT appear anywhere in the approve handler — it belongs in endPlannedSession.
   assert.doesNotMatch(handlerBody, /\/api\/deload\/advance/, 'advance must NOT be called inside the approve handler (it fires once per session in endPlannedSession)');
