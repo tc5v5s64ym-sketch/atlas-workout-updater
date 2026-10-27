@@ -1113,6 +1113,41 @@ test('live-audit PR3 + QA-1: "log it" with an empty buffer after a save tries th
   assert.ok(nothingNewIdx > compileIdx, '"nothing new" is only reached after the compile fallback runs');
 });
 
+test('QA-1 repair: a repeat "log it" after a save with no new chat turns refuses "nothing new" and stages no preview', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const fn = appSource.slice(
+    appSource.indexOf('async function runCloseout()'),
+    appSource.indexOf('async function runCloseout()') + 6000
+  );
+  assert.ok(fn.length > 0, 'runCloseout must exist');
+  // Independent review of b0c1fd91 (BLOCKING, Finding 1): chat history survives
+  // a save and the compile extractor reads it whole, so the QA-1 ordering fix
+  // alone let a bare repeat "log it" recompile the already-saved sets and
+  // stage them as a fresh preview — approving it wrote the workout a second
+  // time under a NEW session id, where neither the per-preview write_id nor
+  // the per-session duplicate partition can catch it. The repair records a
+  // chat-history watermark (turn count) with every save and scopes closeout
+  // to the turns after it:
+  const scopeIdx = fn.indexOf('turns.slice(lastWriteTurnCount)');
+  const compileIdx = fn.indexOf('/api/session/compile');
+  assert.ok(scopeIdx >= 0, 'runCloseout scopes the compile input to post-save turns via the save watermark');
+  assert.ok(scopeIdx < compileIdx, 'the post-save scoping is computed before the compile fallback');
+  // With no post-save turns the refusal fires BEFORE the compile call and
+  // returns — no preview is staged, so there is nothing to approve twice.
+  const guardIdx = fn.indexOf('if (lastWrite && !newTurns.length)');
+  assert.ok(guardIdx >= 0 && guardIdx < compileIdx, 'the no-new-work refusal precedes the compile fallback');
+  const guardBlock = fn.slice(guardIdx, compileIdx);
+  assert.match(guardBlock, /Nothing new to log since your last save/, 'the refusal is the nothing-new status');
+  assert.match(guardBlock, /return;/, 'the refusal returns — it stages no preview');
+  // When new post-save work DOES exist, the compile receives only those turns,
+  // so the QA-1 recovery preview cannot re-stage the saved workout beside it.
+  assert.match(fn, /history: newTurns/, 'the compile fallback receives only post-save turns');
+  // The watermark is recorded at both approve-lane sites that record a save,
+  // in lockstep with lastWrite itself.
+  const watermarkSites = appSource.match(/lastWriteTurnCount = pendingLastWrite \? currentChatTurnCount\(\) : null;/g) || [];
+  assert.equal(watermarkSites.length, 2, 'both save lanes record the chat-history watermark with lastWrite');
+});
+
 test('QA-1: startOverWorkout clears the lastWrite watermark so a fresh start re-arms closeout', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const fn = appSource.slice(
@@ -1147,7 +1182,10 @@ test('P0 closeout: handleLogIt is a never-silent wrapper around runCloseout', ()
 
 test('P0 closeout: runCloseout reads the canonical buffer first and never gives a false "no sets" when work exists', () => {
   const src = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
-  const fn = src.slice(src.indexOf('async function runCloseout()'), src.indexOf('async function runCloseout()') + 3500);
+  // Window widened 3500 → 6000 (QA-1 repair): the post-save watermark guard now
+  // sits between the canonical check and the compile call, pushing the
+  // compile-failure copy past the old window. Assertions below are unchanged.
+  const fn = src.slice(src.indexOf('async function runCloseout()'), src.indexOf('async function runCloseout()') + 6000);
   // Canonical source: sessionLog buffer first (what the visible cards were built from).
   const bufIdx = fn.indexOf('if (getSessionLog().length)');
   assert.ok(bufIdx >= 0, 'closeout builds from the sessionLog buffer (canonical set data)');

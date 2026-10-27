@@ -3734,6 +3734,7 @@ function showCorrectionPrompt(capturedText) {
   newBtn.addEventListener('click', () => {
     bubble.remove();
     lastWrite = null;
+    lastWriteTurnCount = null;
     workoutTextInput.value = capturedText;
     document.getElementById('logger-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
   });
@@ -4456,6 +4457,20 @@ let latestSetResponseCompletion = null;
 // NOT cleared by invalidatePreview so the correction guard can fire even after
 // the user starts typing a correction in the same textarea.
 let lastWrite = null;
+
+// QA-1 repair (independent review of PR #1312, Finding 1): the chat-history
+// turn count at the moment lastWrite was recorded. Chat history is never
+// cleared on save and the session-compile extractor reads it whole, so
+// without this watermark a bare repeat "log it" after a save recompiled the
+// already-saved sets and staged them as a fresh preview. runCloseout scopes
+// its compile to the turns after this count and refuses "nothing new" when
+// there are none. Kept in lockstep with lastWrite: set at both save sites,
+// null wherever lastWrite is nulled.
+let lastWriteTurnCount = null;
+
+function currentChatTurnCount() {
+  return typeof window.getChatHistory === 'function' ? window.getChatHistory().length : 0;
+}
 
 // True while a live write request is in-flight. Guards against double-submit
 // from rapid clicks before the button's disabled state is processed by the browser.
@@ -6754,6 +6769,7 @@ function startOverWorkout() {
   // QA-1: a deliberate fresh start re-arms closeout — the prior save's watermark
   // must not refuse the new session's first "log it" as "nothing new".
   lastWrite = null;
+  lastWriteTurnCount = null;
   setSessionLog([]);
   setSessionCompleted([]);
   setSessionRevisions([]); setSessionImplicitRecs([]);
@@ -6837,9 +6853,28 @@ async function runCloseout() {
   // buffer (sessionLog non-empty → the branch above). That premise is false: a
   // set message whose parse fails buffers nothing — it routes to the coach — so
   // the refusal dead-ended loggable work the compile fallback below can recover
-  // from the chat history. The refusal is now the terminal status at the end of
-  // this function, reached only when the fallback found nothing new to compile.
+  // from the chat history. The refusal is now reached only when there is provably
+  // nothing new to compile: as the terminal status at the end of this function
+  // when the fallback found nothing new, or — per the repair below — up front,
+  // when no chat turns exist after the last save's watermark.
   const turns = typeof window.getChatHistory === 'function' ? window.getChatHistory() : [];
+
+  // QA-1 repair (independent review of PR #1312, Finding 1): the fallback must
+  // never see the sets the last save already wrote. Chat history survives a
+  // save and the compile extractor reads it whole, so an unscoped compile let
+  // a bare repeat "log it" re-stage the saved workout as a fresh preview — and
+  // approving it wrote the workout a second time under a NEW session id, where
+  // neither the per-preview write_id nor the per-session duplicate partition
+  // can catch it. Scope the compile to the turns logged after the save's
+  // watermark (lastWriteTurnCount); when there are none, the nothing-new
+  // refusal is deterministic — no compile call, no staged preview.
+  const newTurns = (lastWrite && lastWriteTurnCount !== null)
+    ? turns.slice(lastWriteTurnCount)
+    : turns;
+  if (lastWrite && !newTurns.length) {
+    setStatus(loggerStatus, 'Nothing new to log since your last save — log some sets first.', 'warn');
+    return;
+  }
 
   // The buffer is empty. Before the LLM compile, check the
   // canonical session: if it shows completed work (e.g. after a reload the plan +
@@ -6868,7 +6903,7 @@ async function runCloseout() {
     const res = await api('/api/session/compile', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ history: turns })
+      body: JSON.stringify({ history: newTurns })
     });
     workoutText = res.data?.workout_text || null;
   } catch (err) {
@@ -8510,6 +8545,7 @@ async function handleUndoLastWrite(expected) {
       })
     });
     lastWrite = null;
+    lastWriteTurnCount = null;
     setHistoryLoaded(false); // sheet changed — History re-fetches on next visit
     setStatus(loggerStatus, 'Last write undone.', 'ok');
   } catch (err) {
@@ -8725,6 +8761,7 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
     // lane: zero re-appends, idempotent seal + closeout-event re-attempt.
     if (closeoutSealUnverified === 'retry') {
       lastWrite = pendingLastWrite;
+      lastWriteTurnCount = pendingLastWrite ? currentChatTurnCount() : null;
       if (pendingWrite && pendingWrite.payload) {
         pendingWrite.payload.write_id = generateWriteId();
         delete pendingWrite.payload.effort_row;
@@ -8761,6 +8798,7 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
     // this clears any stale manual range — otherwise a correction after an
     // effort save would Replace-via-undo the wrong (older) rows.
     lastWrite = pendingLastWrite;
+    lastWriteTurnCount = pendingLastWrite ? currentChatTurnCount() : null;
     // Remember the exercises this save wrote (DISPLAY ONLY) before the buffer is
     // cleared below, so a later closeout in the SAME workout still shows them in the
     // confirm/review card — a save concludes the session and the next set starts a
