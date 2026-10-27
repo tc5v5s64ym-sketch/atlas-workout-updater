@@ -8597,6 +8597,17 @@ const CLOSEOUT_RETRY_MSG = 'Workout saved ✓ — but the plan-ledger record cou
 // coach-conversation.js keys off THIS, not off the sentence above — the wording must
 // stay free to change without silently stranding the card in a false state.
 const CLOSEOUT_RETRY_STATE = 'rows-written-ledger-unverified';
+// QA-3 — the two outcomes an approved write can end in, carried on the approve
+// status as the same `data-atlas-state` marker discipline. `write-confirmed`:
+// THIS write's response proved its rows landed (a fresh write that passed the
+// rows checks, or a duplicate echo carrying the original write's rows-written
+// count). `already-logged`: the write appended NOTHING because the rows were
+// already logged — the server's all-rows-duplicate lane, or an echo of it.
+// That is a truthful end state, but it is not a fresh save, and the review card
+// must never render it as one: on 2026-10-26 an all-duplicate 200 flipped a
+// preview card to "✓ Saved" over a save that wrote zero rows.
+const WRITE_CONFIRMED_STATE = 'write-confirmed';
+const ALREADY_LOGGED_STATE = 'already-logged';
 const CLOSEOUT_NO_LEDGER_MSG = 'Plan tracking incomplete — this session had no plan-ledger rows to seal. Your sets are saved; there is nothing to retry.';
 // Appended UNDER the completed save's own message, the same way the readback verdict is
 // — the save really did succeed, and this names the one thing that did not.
@@ -8629,6 +8640,10 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
   let closeoutSealUnverified = false;
   let pendingLastWrite = null;
   let duplicateBlocked = false;
+  // QA-3: the outcome the success status (and, through its marker, the review
+  // card) may claim. Starts at the proven-save outcome; a branch demotes it to
+  // already-logged when its write turns out to have appended nothing.
+  let writeStatusState = WRITE_CONFIRMED_STATE;
   try {
     if (pendingWrite.mode === 'screenshot' || pendingWrite.mode === 'effort-only') {
       const writeArgs = { ...pendingWrite, testMode: false };
@@ -8644,6 +8659,9 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
       duplicateBlocked = writeData.duplicate_write === true &&
         writeData.idempotency_status === 'completed' &&
         writeData.write_authority === 'supabase_transaction';
+      // QA-3: this lane's duplicate acceptance carries no rows proof the card
+      // may claim, so a duplicate here is surfaced as already-logged.
+      if (duplicateBlocked) writeStatusState = ALREADY_LOGGED_STATE;
       if (!duplicateBlocked) {
         if (writeData.write_authority !== 'supabase_transaction') {
           throw new Error('Save response did not prove a completed Supabase transaction.');
@@ -8682,6 +8700,8 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
       duplicateBlocked = writeData.duplicate_write === true &&
         writeData.idempotency_status === 'completed' &&
         writeData.write_authority === 'supabase_transaction';
+      // QA-3: as in the screenshot lane, a duplicate here is already-logged.
+      if (duplicateBlocked) writeStatusState = ALREADY_LOGGED_STATE;
       if (!duplicateBlocked) {
         if (writeData.write_authority !== 'supabase_transaction' || writeData.modality_written !== true) {
           throw new Error('Modality save did not prove a completed Supabase transaction.');
@@ -8713,6 +8733,16 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
         if (!(logRowsWritten > 0 || effortRowsWritten > 0)) {
           throw new Error(`Save confirmed but log_rows_written=${writeData.log_rows_written ?? 'missing'} and effort_rows_written=${writeData.effort_rows_written ?? 'missing'}.`);
         }
+      }
+      // QA-3 — the duplicate waiver, bounded. A duplicate is still ACCEPTED
+      // (the workout is in the log and must not be written twice), but the
+      // outcome it may CLAIM is derived from the echo itself, not waived: if
+      // the echoed response proves this write's rows landed (a lost-response
+      // retry of a genuine save), the write-confirmed claim stands; if it
+      // proves zero rows — the all-rows-duplicate lane, or an echo of one —
+      // the outcome is already-logged, and the card must not read "Saved".
+      if (duplicateBlocked && !duplicateEchoProvesRows(writeData)) {
+        writeStatusState = ALREADY_LOGGED_STATE;
       }
       // F10D — the verification verdict rides the same response. The SERVER now
       // owns the finalized Session_Plans closeout event (recorded inside this same
@@ -8783,14 +8813,20 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
     setDefaultDate();
     setStatus(
       loggerStatus,
-      duplicateBlocked
-        ? 'Duplicate tap blocked — this workout was already written. ✓'
-        // A WORKOUT IS NO LONGER WRITTEN TO GOOGLE SHEETS, so it must not say it is.
-        // Since the S4 cutover every workout record, including modality, lands in
-        // Supabase. Any Sheets copy is asynchronous and never part of this proof.
-        : wasModality ? 'Cardio / conditioning saved. ✓'
-          : wasEffortOnly ? 'Effort saved. ✓' : 'Workout saved. ✓',
-      'ok'
+      // QA-3: a zero-append outcome is worded as what it is — already logged,
+      // nothing new written — never as a save. The marker argument carries the
+      // same verdict to the review card, which keys off it, not the prose.
+      writeStatusState === ALREADY_LOGGED_STATE
+        ? 'Already logged — this workout was already written, so nothing new was saved.'
+        : duplicateBlocked
+          ? 'Duplicate tap blocked — this workout was already written. ✓'
+          // A WORKOUT IS NO LONGER WRITTEN TO GOOGLE SHEETS, so it must not say it is.
+          // Since the S4 cutover every workout record, including modality, lands in
+          // Supabase. Any Sheets copy is asynchronous and never part of this proof.
+          : wasModality ? 'Cardio / conditioning saved. ✓'
+            : wasEffortOnly ? 'Effort saved. ✓' : 'Workout saved. ✓',
+      'ok',
+      writeStatusState
     );
     if (closeoutSealUnverified === 'no_ledger') appendNoLedgerNotice(loggerStatus);
     // Always reflect the write that just happened. Screenshot / effort-only
@@ -8921,6 +8957,19 @@ function pendingBodyweightHasPreviewProof(write) {
     write.previewProof.sheet_write === 'skipped' &&
     write.previewProof.sheet_written === false &&
     write.previewProof.no_write_confirmed === true;
+}
+
+// QA-3 — whether a DUPLICATE write response proves the write's rows landed.
+// The duplicate lane echoes the original response verbatim, so the proof is
+// read from the echo itself: a genuine save's echo carries its positive
+// rows-written count, while the all-rows-duplicate lane completes with
+// log_rows_written: 0 (and an echo of that record replays the same zero).
+// A duplicate that cannot show rows proved only that the workout was already
+// logged — never that this save wrote anything. Response-only, like
+// hasBodyweightWriteProof below, so the verdict is unit-testable.
+function duplicateEchoProvesRows(writeData) {
+  const data = writeData || {};
+  return Number(data.log_rows_written || 0) > 0 || Number(data.effort_rows_written || 0) > 0;
 }
 
 function hasBodyweightWriteProof(result) {
