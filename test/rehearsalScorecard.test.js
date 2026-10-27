@@ -40,7 +40,7 @@ function greenObservations() {
     workout_session_id: '20260803-AM-01',
     workout_id_preseeded: false,
     source: {
-      branch: 'main', clean: true, head_sha: HEAD, origin_head_sha: HEAD,
+      branch: 's3-maintenance', clean: true, head_sha: HEAD, origin_head_sha: HEAD,
       prior_rehearsal_count: 0, prior_count_reason: null,
     },
     model: { posture: 'model-up', provider_reachable: true, coach_model: 'gemini-test', live_provider_turn_observed: true },
@@ -420,7 +420,7 @@ describe('compareLedgerToDeclaration', () => {
 //   3. while a qualifying Session 2 at count 0/5 fails,
 //   4. and no debug result can advance the count.
 
-describe('run purpose — a debug sweep is possible from exact main, and never counts', () => {
+describe('run purpose — a debug sweep is possible from exact s3-maintenance, and never counts', () => {
   // Session 2 at canonical count 0/5: the exact shape that was impossible before.
   function sessionTwoAtCountZero(purpose) {
     const obs = greenObservations();
@@ -481,7 +481,8 @@ describe('run purpose — a debug sweep is possible from exact main, and never c
 
   it('the source condition still bites a debug run on a genuinely bad tree', () => {
     for (const [label, patch] of [
-      ['off-main', s => { s.branch = 'feature/x'; }],
+      ['off-branch', s => { s.branch = 'feature/x'; }],
+      ['on main — no longer the required branch (owner decision 2026-10-27)', s => { s.branch = 'main'; }],
       ['dirty', s => { s.clean = false; }],
       ['stale head', s => { s.origin_head_sha = 'b'.repeat(40); }],
       ['unreadable count', s => { s.prior_rehearsal_count = null; s.prior_count_reason = 'no marker'; }],

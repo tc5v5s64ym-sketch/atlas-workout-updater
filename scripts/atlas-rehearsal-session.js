@@ -43,10 +43,10 @@ require('dotenv').config({ path: path.join(REPO_ROOT, '.env') });
 const { SANDBOX_SPREADSHEET_ID_LAST6, isSandboxSpreadsheetId, SANDBOX_SPREADSHEET_ID } = require('../config/sandboxSheet');
 const { pickNetworkPassthrough, assertNoWorkbookId } = require('../tests/e2e/gate/rehearsal-child-env');
 const {
-  REHEARSAL_SESSION, REHEARSAL_DEBUG, REHEARSAL_STREAK_LENGTH,
+  REHEARSAL_SESSION, REHEARSAL_DEBUG, REHEARSAL_STREAK_LENGTH, REQUIRED_BRANCH,
   mintIdentities, evaluateRehearsalPreflight,
 } = require('../tests/e2e/gate/rehearsal-run-purpose');
-const { fetchOriginMain, measureSourceTree } = require('../tests/e2e/gate/rehearsal-source-facts');
+const { fetchOriginRequiredBranch, measureSourceTree } = require('../tests/e2e/gate/rehearsal-source-facts');
 const { readRunStart, classifyIncompleteRun } = require('../tests/e2e/gate/rehearsal-run-start');
 
 function fail(message) {
@@ -75,7 +75,7 @@ const MODE = 'model-up';
 
 // ── RUN PURPOSE — explicit, no default (owner instruction 2026-08-03) ──────────
 // `--qualifying` may advance the streak and requires the canonical count to equal
-// session_number - 1. `--debug` proves the scenarios on exact clean main, is NOT
+// session_number - 1. `--debug` proves the scenarios on exact clean s3-maintenance, is NOT
 // ordered against the count, and can never advance or authorize one. Neither is the
 // default: a run that does not say which it is, is refused, because "which kind of run
 // was that?" must never be answered by reading which check happened to go red.
@@ -99,7 +99,7 @@ const sessionRaw = sessionArg.slice('--session='.length).trim();
 const SESSION_NUMBER = /^[0-9]+$/.test(sessionRaw) ? Number(sessionRaw) : NaN;
 
 // ── measure the world (this script MEASURES; the pure rules DECIDE) ────────────
-const originRefreshed = fetchOriginMain(REPO_ROOT);
+const originRefreshed = fetchOriginRequiredBranch(REPO_ROOT);
 const source = measureSourceTree(REPO_ROOT);
 const gitFacts = {
   branch: source.branch,
@@ -194,7 +194,7 @@ if (!IS_QUALIFYING) {
   console.log('[rehearsal-session] *** rehearsal_eligible=false and can never advance or authorize the count.');
 }
 console.log(`[rehearsal-session] prior    : canonical rehearsal count ${source.prior_rehearsal_count}/${REHEARSAL_STREAK_LENGTH} (from the execution plan)${IS_QUALIFYING ? '' : ' — recorded, not enforced for a debug run'}`);
-console.log(`[rehearsal-session] source   : ${gitFacts.branch} @ ${gitFacts.head.slice(0, 12)} (clean, = origin/main)`);
+console.log(`[rehearsal-session] source   : ${gitFacts.branch} @ ${gitFacts.head.slice(0, 12)} (clean, = origin/${REQUIRED_BRANCH})`);
 console.log(`[rehearsal-session] run      : ${RUN_ID}`);
 console.log(`[rehearsal-session] posture  : ${MODE} + combined sandbox-live/ledger (set by the spec's own gate-server spawn)`);
 console.log(`[rehearsal-session] athlete  : ${ATHLETE_ID}`);

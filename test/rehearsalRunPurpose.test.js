@@ -13,7 +13,7 @@ const assert = require('node:assert/strict');
 
 const {
   REHEARSAL_SESSION, REHEARSAL_DEBUG, QUALIFYING_PURPOSE, isQualifyingPurpose,
-  REHEARSAL_STREAK_LENGTH, SERVER_SESSION_ID_RE,
+  REHEARSAL_STREAK_LENGTH, SERVER_SESSION_ID_RE, REQUIRED_BRANCH,
   normalizePurpose, isRehearsalSessionNumber, mintIdentities,
   workoutIdentityRefusal, runIdentityRefusal,
   parseCanonicalRehearsalCount, evaluateRehearsalPreflight,
@@ -158,7 +158,7 @@ function goodPreflightInput(over) {
     sessionNumber: 1,
     mode: 'model-up',
     runId: 'fsb4b-s1-20260803T000000-AA11BB',
-    git: { branch: 'main', head: HEAD, originHead: HEAD, clean: true },
+    git: { branch: 's3-maintenance', head: HEAD, originHead: HEAD, clean: true },
     originRefreshed: true,
     priorRehearsalCount: 0,
     priorCountReason: null,
@@ -182,6 +182,10 @@ describe('evaluateRehearsalPreflight — every rule bites', () => {
     assert.deepEqual(r, { ok: true, refusals: [] });
   });
 
+  it('pins the required branch to s3-maintenance — the S3 line production runs (owner decision 2026-10-27)', () => {
+    assert.equal(REQUIRED_BRANCH, 's3-maintenance');
+  });
+
   it('refuses anything but model-up (no downgrade path)', () => {
     const r = evaluateRehearsalPreflight(goodPreflightInput({ mode: 'model-down' }));
     assert.equal(r.ok, false);
@@ -200,12 +204,13 @@ describe('evaluateRehearsalPreflight — every rule bites', () => {
     assert.ok(r.refusals.some((x) => /unreadable \(conflicting counts\)/.test(x)));
   });
 
-  it('refuses a stale, dirty, or off-main source tree', () => {
+  it('refuses a stale, dirty, or off-branch source tree', () => {
     const other = HEAD.replace(/^a/, 'b');
     for (const [over, re] of [
-      [{ git: { branch: 'claude/x', head: HEAD, originHead: HEAD, clean: true } }, /must execute on main/],
-      [{ git: { branch: 'main', head: HEAD, originHead: HEAD, clean: false } }, /clean worktree/],
-      [{ git: { branch: 'main', head: HEAD, originHead: other, clean: true } }, /does not equal origin\/main/],
+      [{ git: { branch: 'claude/x', head: HEAD, originHead: HEAD, clean: true } }, /must execute on s3-maintenance/],
+      [{ git: { branch: 'main', head: HEAD, originHead: HEAD, clean: true } }, /must execute on s3-maintenance/],
+      [{ git: { branch: 's3-maintenance', head: HEAD, originHead: HEAD, clean: false } }, /clean worktree/],
+      [{ git: { branch: 's3-maintenance', head: HEAD, originHead: other, clean: true } }, /does not equal origin\/s3-maintenance/],
       [{ originRefreshed: false }, /may be stale/],
     ]) {
       const r = evaluateRehearsalPreflight(goodPreflightInput(over));
@@ -281,7 +286,7 @@ const CLEAN_PREFLIGHT = {
   mode: 'model-up',
   runId: 'fsb4b-s2-20260803T000000-ABC123',
   git: {
-    branch: 'main',
+    branch: 's3-maintenance',
     head: 'a'.repeat(40),
     originHead: 'a'.repeat(40),
     clean: true,
@@ -319,7 +324,7 @@ describe('run purpose — the count rule binds a qualifying run only', () => {
 
   it('a debug run is still bound by EVERY other rule — the purpose relaxes the count only', () => {
     for (const [label, patch] of [
-      ['off-main', { git: { ...CLEAN_PREFLIGHT.git, branch: 'feature/x' } }],
+      ['off-branch', { git: { ...CLEAN_PREFLIGHT.git, branch: 'feature/x' } }],
       ['dirty worktree', { git: { ...CLEAN_PREFLIGHT.git, clean: false } }],
       ['stale head', { git: { ...CLEAN_PREFLIGHT.git, originHead: 'b'.repeat(40) } }],
       ['model-down', { mode: 'model-down' }],

@@ -18,7 +18,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { parseCanonicalRehearsalCount } = require('./rehearsal-run-purpose');
+const { parseCanonicalRehearsalCount, REQUIRED_BRANCH } = require('./rehearsal-run-purpose');
 
 const REPO_ROOT = path.join(__dirname, '..', '..', '..');
 const PLAN_RELATIVE_PATH = path.join('docs', 'ATLAS_V1_EXECUTION_PLAN.md');
@@ -31,11 +31,12 @@ function git(args, repoRoot) {
   }
 }
 
-// Refresh origin/main so "HEAD equals origin/main" is measured against the real remote
-// rather than a stale local ref. Best effort: a failure is reported, never hidden.
-function fetchOriginMain(repoRoot = REPO_ROOT) {
+// Refresh origin/<REQUIRED_BRANCH> so "HEAD equals origin/<REQUIRED_BRANCH>" is
+// measured against the real remote rather than a stale local ref. Best effort: a
+// failure is reported, never hidden.
+function fetchOriginRequiredBranch(repoRoot = REPO_ROOT) {
   try {
-    execFileSync('git', ['fetch', 'origin', 'main'], { cwd: repoRoot, stdio: 'ignore' });
+    execFileSync('git', ['fetch', 'origin', REQUIRED_BRANCH], { cwd: repoRoot, stdio: 'ignore' });
     return true;
   } catch {
     return false;
@@ -47,7 +48,7 @@ function fetchOriginMain(repoRoot = REPO_ROOT) {
 function measureSourceTree(repoRoot = REPO_ROOT) {
   const branch = git(['rev-parse', '--abbrev-ref', 'HEAD'], repoRoot);
   const head = git(['rev-parse', 'HEAD'], repoRoot);
-  const originHead = git(['rev-parse', 'origin/main'], repoRoot);
+  const originHead = git(['rev-parse', `origin/${REQUIRED_BRANCH}`], repoRoot);
   const status = git(['status', '--porcelain'], repoRoot);
   const clean = head ? status === '' : undefined;
 
@@ -69,4 +70,4 @@ function measureSourceTree(repoRoot = REPO_ROOT) {
   };
 }
 
-module.exports = { REPO_ROOT, PLAN_RELATIVE_PATH, fetchOriginMain, measureSourceTree };
+module.exports = { REPO_ROOT, PLAN_RELATIVE_PATH, fetchOriginRequiredBranch, measureSourceTree };

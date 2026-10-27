@@ -29,10 +29,10 @@
 // privacy sweep are IDENTICAL under both — the only differences are recorded here.
 //
 //   REHEARSAL_SESSION (qualifying) — may advance the streak. Requires the canonical
-//     count to equal session_number - 1, exact clean main, and 25/25. It is the only
-//     purpose that can publish rehearsal_eligible=true.
+//     count to equal session_number - 1, exact clean REQUIRED_BRANCH, and 25/25. It
+//     is the only purpose that can publish rehearsal_eligible=true.
 //
-//   REHEARSAL_DEBUG (diagnostic) — proves the SCENARIOS on exact clean main without
+//   REHEARSAL_DEBUG (diagnostic) — proves the SCENARIOS on exact clean REQUIRED_BRANCH without
 //     touching the count. It does NOT require prior count == session_number - 1, it
 //     can score all 25 conditions PASS, and it ALWAYS publishes
 //     rehearsal_eligible=false. It can never advance or authorize a count.
@@ -51,6 +51,14 @@ const REHEARSAL_DEBUG = 'REHEARSAL_DEBUG';
 const RUN_PURPOSES = Object.freeze([REHEARSAL_SESSION, REHEARSAL_DEBUG]);
 const QUALIFYING_PURPOSE = REHEARSAL_SESSION;
 const REHEARSAL_STREAK_LENGTH = 5;
+
+// The one branch a run may execute on (owner decision by Dale, 2026-10-27, recorded
+// in docs/ATLAS_V1_EXECUTION_PLAN.md, F-SB4B): s3-maintenance — the S3/Sheets line
+// production runs. `main` carries the S4/Supabase build the owner does not use, so
+// a run there would certify the wrong product. Every consumer names the branch
+// through this constant so the rule lives in exactly one place; the clean-worktree
+// and HEAD == origin/<branch> requirements bind to it unchanged in strictness.
+const REQUIRED_BRANCH = 's3-maintenance';
 
 // The single predicate every consumer asks. A purpose that is absent, unknown, or
 // malformed is NOT qualifying — eligibility fails closed.
@@ -187,10 +195,10 @@ function evaluateRehearsalPreflight(input) {
 
   const git = i.git && typeof i.git === 'object' ? i.git : {};
   if (i.originRefreshed !== true) {
-    add('`git fetch origin main` did not succeed, so origin/main may be stale — the staleness check cannot be trusted');
+    add(`\`git fetch origin ${REQUIRED_BRANCH}\` did not succeed, so origin/${REQUIRED_BRANCH} may be stale — the staleness check cannot be trusted`);
   }
-  if (git.branch !== 'main') {
-    add(`a qualifying run must execute on main; the working branch is "${git.branch || 'unknown'}"`);
+  if (git.branch !== REQUIRED_BRANCH) {
+    add(`a qualifying run must execute on ${REQUIRED_BRANCH}; the working branch is "${git.branch || 'unknown'}"`);
   }
   if (git.clean !== true) {
     add('a qualifying run requires a clean worktree; uncommitted changes are present');
@@ -199,9 +207,9 @@ function evaluateRehearsalPreflight(input) {
     add(`HEAD is not a resolved commit sha (got "${git.head || 'nothing'}")`);
   }
   if (!SHA_RE.test(String(git.originHead || ''))) {
-    add(`origin/main is not a resolved commit sha (got "${git.originHead || 'nothing'}")`);
+    add(`origin/${REQUIRED_BRANCH} is not a resolved commit sha (got "${git.originHead || 'nothing'}")`);
   } else if (git.head !== git.originHead) {
-    add(`HEAD ${String(git.head).slice(0, 7)} does not equal origin/main ${String(git.originHead).slice(0, 7)} — the source tree is stale`);
+    add(`HEAD ${String(git.head).slice(0, 7)} does not equal origin/${REQUIRED_BRANCH} ${String(git.originHead).slice(0, 7)} — the source tree is stale`);
   }
 
   const env = i.env && typeof i.env === 'object' ? i.env : {};
@@ -237,6 +245,7 @@ module.exports = {
   isQualifyingPurpose,
   RUN_PURPOSES,
   REHEARSAL_STREAK_LENGTH,
+  REQUIRED_BRANCH,
   SERVER_SESSION_ID_RE,
   normalizePurpose,
   isRehearsalSessionNumber,
