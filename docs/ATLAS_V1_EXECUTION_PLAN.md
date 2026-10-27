@@ -1046,6 +1046,21 @@ Evidence:
 **Next:** re-attempt Session 1 from refreshed `main` with fresh synthetic identities after the
 corrective merges and deployment is verified. No count moves.
 
+### F-SB4B — BRANCH RULE AMENDED 2026-10-27 (owner decision, Dale). Streak stays 0/5.
+
+The qualifying-execution rule above reads "run from clean `main` equal to `origin/main`", and the
+2026-08-05 entry's "re-attempt from refreshed `main`" reads the same way. That branch identity is
+amended: **the required branch is `s3-maintenance`, clean and equal to `origin/s3-maintenance`.**
+Only the branch identity moves — the clean-worktree requirement and the HEAD-equals-origin
+requirement bind to the new branch at exactly the same strictness. Reason: since 2026-08-14 `main`
+carries the S4/Supabase build, while production runs the S3/Sheets line on `s3-maintenance`; the
+rehearsal must certify the build the owner actually uses, not the S4 build on `main`. Dale approved
+this amendment on 2026-10-27, on Muse's recommendation. All other F-SB4 rules are unchanged: five
+consecutive sessions, a post-start failure resets the streak to 0/5 and restarts at Session 1,
+model-up only, the declared sandbox workbook only, fresh synthetic identities only.
+
+**Counting unchanged:** Rehearsal (F-SB4): 0/5 · Stage A: 5/5 COMPLETE · Stage B: 0/5 OPEN · Phase 5 unauthorized · `SESSION_PLAN_SETS_WRITE_ENABLED` untouched.
+
 ### Final verdict
 
 Return exactly one of:

@@ -22,7 +22,7 @@
 // shrinking the bar.
 
 const {
-  REHEARSAL_SESSION, REHEARSAL_DEBUG, REHEARSAL_STREAK_LENGTH,
+  REHEARSAL_SESSION, REHEARSAL_DEBUG, REHEARSAL_STREAK_LENGTH, REQUIRED_BRANCH,
   normalizePurpose, isQualifyingPurpose, isRehearsalSessionNumber,
   workoutIdentityRefusal, runIdentityRefusal,
 } = require('./rehearsal-run-purpose');
@@ -786,7 +786,7 @@ function cellEquals(cell, expected) {
 // Each entry: { id, title, evaluate(obs) -> {status, detail} }; evaluate must
 // tolerate a completely absent observation branch and return ERROR.
 const CONDITIONS = Object.freeze([
-  // (1) clean source main, exact SHA recorded — measured by the RUN, not asserted.
+  // (1) clean source on the required branch, exact SHA recorded — measured by the RUN, not asserted.
   //
   // This condition asks TWO questions that used to be welded together (owner
   // instruction 2026-08-03):
@@ -803,14 +803,14 @@ const CONDITIONS = Object.freeze([
   // it ran at is not honest evidence. It simply is not ordered against it.
   {
     id: 'source_tree_verified',
-    title: 'clean main equal to origin/main with the exact SHA recorded; a qualifying session is also legal at the canonical count',
+    title: `clean ${REQUIRED_BRANCH} equal to origin/${REQUIRED_BRANCH} with the exact SHA recorded; a qualifying session is also legal at the canonical count`,
     evaluate(obs) {
       const s = obs && obs.source;
       if (!s) return missing('the source tree');
-      if (s.branch !== 'main') return err(`the run executed on "${s.branch || 'unknown'}", not main`);
+      if (s.branch !== REQUIRED_BRANCH) return err(`the run executed on "${s.branch || 'unknown'}", not ${REQUIRED_BRANCH}`);
       if (s.clean !== true) return err('the worktree was not clean');
       if (!SHA_RE.test(str(s.head_sha))) return err('HEAD did not resolve to a full sha');
-      if (s.head_sha !== s.origin_head_sha) return err(`HEAD ${str(s.head_sha).slice(0, 7)} != origin/main ${str(s.origin_head_sha).slice(0, 7)}`);
+      if (s.head_sha !== s.origin_head_sha) return err(`HEAD ${str(s.head_sha).slice(0, 7)} != origin/${REQUIRED_BRANCH} ${str(s.origin_head_sha).slice(0, 7)}`);
       const n = obs.session_number;
       if (!isRehearsalSessionNumber(n)) return err(`session number ${n} is not 1..${REHEARSAL_STREAK_LENGTH}`);
 
@@ -820,7 +820,7 @@ const CONDITIONS = Object.freeze([
       if (!Number.isInteger(prior)) {
         return err(`the canonical rehearsal count was unreadable (${s.prior_count_reason || 'no reason recorded'}); every run must record the count it ran at`);
       }
-      const head = `main @ ${s.head_sha.slice(0, 12)} (= origin/main, clean)`;
+      const head = `${REQUIRED_BRANCH} @ ${s.head_sha.slice(0, 12)} (= origin/${REQUIRED_BRANCH}, clean)`;
       if (!isQualifyingPurpose(purpose)) {
         return pass(`${head}; DIAGNOSTIC (${purpose}) session ${n} ran at canonical count ${prior}/${REHEARSAL_STREAK_LENGTH} — not ordered against it, and cannot advance it`);
       }
