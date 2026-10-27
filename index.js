@@ -26,6 +26,7 @@ const {
   detectSwap,
   localTodayIso
 } = require('./services/analytics');
+const { installUnhandledRejectionBackstop } = require('./services/processBackstop');
 const { classifySubstitution } = require('./services/substitutionIntent');
 const { inferPrescribedPairs } = require('./services/planMatcher');
 const { isConstraintMessage } = require('./services/constraintDetector');
@@ -3987,6 +3988,10 @@ function ensurePublicBuilt() {
 }
 
 function startServer() {
+  // INFRA-5: an unguarded await in any bare async route handler must log
+  // loudly instead of killing the process mid-write (Express 4 never
+  // forwards async rejections to the error middleware).
+  installUnhandledRejectionBackstop();
   ensurePublicBuilt();
   validateConfig();
   runStartupDiagnostics();
