@@ -99,3 +99,15 @@ test('PARSE-6: an ambiguous word trailing another exercise\'s set-group does not
   assert.ok(!hit || hit.ambiguous !== true,
     `expected no ambiguous result, got ${JSON.stringify(hit)}`);
 });
+
+test('PARSE-6: the digit guard alone suppresses the ask behind an UNRESOLVED set-group', () => {
+  // No canonical alias resolves anywhere here, so neither the alias scan nor
+  // the name-like-preceding-token guard can be what suppresses the ask — the
+  // preceding token is a number. Only the digit guard stands between this
+  // input and a mid-text ambiguous result.
+  for (const text of ['xyz 95 10/2 rows', 'xyz 95 10/2 press']) {
+    const hit = canonicalizeExerciseName(text);
+    assert.ok(!hit || hit.ambiguous !== true,
+      `${text}: expected no ambiguous result, got ${JSON.stringify(hit)}`);
+  }
+});
