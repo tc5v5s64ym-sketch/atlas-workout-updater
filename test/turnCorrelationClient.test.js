@@ -108,7 +108,11 @@ test('client correlation: a selected failed response settles and cannot reuse an
 
   const failedResponse = protocol.beginTurnResponse({ sessionId: SESSION_A });
   const settlement = protocol.waitForTurnResponse({ sessionId: SESSION_A });
-  assert.equal(protocol.completeTurnResponse(failedResponse, null), false);
+  // A SELECTED response presents its headers; this one established no turn. (A
+  // completion presenting no headers at all is a different event — no response was
+  // ever selected — and cannot retire the capture; that retention case is pinned
+  // by the set-logged tests below.)
+  assert.equal(protocol.completeTurnResponse(failedResponse, headers(null, null)), false);
   assert.equal(await settlement, false, 'a failed selected response must settle its closeout wait');
   assert.equal(protocol.beginPreview({ sessionId: SESSION_A }), null,
     'a failed newer response must not let closeout claim the unrelated older turn');
@@ -374,6 +378,114 @@ test('client correlation: plan-message fallback cannot touch an unscoped respons
     /\bresponseTicket\b/,
     'the unrelated plan-message fallback has no turn-response ticket and must remain callable while disconnected',
   );
+});
+
+test('client correlation: a set-logged ticket that completes with no selected response cannot erase a captured turn', async () => {
+  const { createTurnCorrelation } = await loadClient();
+  const protocol = createTurnCorrelation({ randomUUID: deterministicIds() });
+
+  // An accepted coach interaction captures the session's turn.
+  const coachResponse = protocol.beginTurnResponse({ sessionId: SESSION_A });
+  assert.equal(protocol.completeTurnResponse(coachResponse, headers(TURN_A, null)), true);
+
+  // The deterministic logging lane mints its own ticket for ordering/settlement and
+  // completes it with NO selected response (offline, a rejected request, a watchdog
+  // timeout, or a reaction served without any coach call). That completion settles
+  // the ticket — a closeout waiting on it is still released — but the ticket never
+  // presented an interaction, so it owns nothing it may retire.
+  const setTicket = protocol.beginTurnResponse({ sessionId: SESSION_A });
+  const settlement = protocol.waitForTurnResponse({ sessionId: SESSION_A });
+  assert.equal(protocol.completeTurnResponse(setTicket, null), false);
+  assert.equal(await settlement, false, 'the unaccepted set ticket must still settle its closeout wait');
+
+  // The captured turn survives to the closeout preview and produces the claim.
+  const preview = protocol.beginPreview({ sessionId: SESSION_A });
+  assert.ok(preview, 'the captured turn must survive a set-logged completion with no selected response');
+  assert.equal(preview.turnId, TURN_A);
+  assert.equal(protocol.completePreview(preview, headers(TURN_A, TOKEN_A)), true);
+  assert.deepEqual(protocol.approvalClaim(preview), {
+    turn_id: TURN_A,
+    initiation_nonce: preview.initiation_nonce,
+    pairing_token: TOKEN_A,
+  });
+});
+
+test('client correlation: a completion with no selected response cannot retire an active preview', async () => {
+  const { createTurnCorrelation } = await loadClient();
+  const protocol = createTurnCorrelation({ randomUUID: deterministicIds() });
+  protocol.captureTurn({ sessionId: SESSION_A, turnId: TURN_A });
+  const preview = protocol.beginPreview({ sessionId: SESSION_A });
+  assert.equal(protocol.completePreview(preview, headers(TURN_A, TOKEN_A)), true);
+
+  // A set is logged while the review card is up; its ticket completes with no
+  // selected response. The live preview's pairing is not the ticket's to retire.
+  const setTicket = protocol.beginTurnResponse({ sessionId: SESSION_A });
+  assert.equal(protocol.completeTurnResponse(setTicket, null), false);
+  assert.deepEqual(protocol.approvalClaim(preview), {
+    turn_id: TURN_A,
+    initiation_nonce: preview.initiation_nonce,
+    pairing_token: TOKEN_A,
+  }, 'the active preview must keep its claim across a no-response set-logged completion');
+});
+
+test('client correlation: a watchdog-cancelled ticket settles its waiters without erasing a captured turn', async () => {
+  const { createTurnCorrelation } = await loadClient();
+  const protocol = createTurnCorrelation({ randomUUID: deterministicIds() });
+  const coachResponse = protocol.beginTurnResponse({ sessionId: SESSION_A });
+  assert.equal(protocol.completeTurnResponse(coachResponse, headers(TURN_A, null)), true);
+
+  const stalled = protocol.beginTurnResponse({ sessionId: SESSION_A });
+  const settlement = protocol.waitForTurnResponse({ sessionId: SESSION_A });
+  assert.equal(protocol.cancelTurnResponse(stalled), true);
+  assert.equal(await settlement, false, 'a cancelled ticket must still settle its closeout wait');
+
+  const preview = protocol.beginPreview({ sessionId: SESSION_A });
+  assert.ok(preview, 'a watchdog cancel presents no response, so the captured turn must survive it');
+  assert.equal(preview.turnId, TURN_A);
+});
+
+test('client correlation: a selected response that establishes no turn still retires the captured turn and its active preview', async () => {
+  const { createTurnCorrelation } = await loadClient();
+  const protocol = createTurnCorrelation({ randomUUID: deterministicIds() });
+  const coachResponse = protocol.beginTurnResponse({ sessionId: SESSION_A });
+  assert.equal(protocol.completeTurnResponse(coachResponse, headers(TURN_A, null)), true);
+  const preview = protocol.beginPreview({ sessionId: SESSION_A });
+  assert.equal(protocol.completePreview(preview, headers(TURN_A, TOKEN_A)), true);
+
+  // A newer interaction WAS selected and presented, and it established no turn:
+  // it supersedes the retained turn, so neither the turn nor a preview minted
+  // from it may be claimed afterwards. This is the erasure's designed home.
+  const newerResponse = protocol.beginTurnResponse({ sessionId: SESSION_A });
+  assert.equal(protocol.completeTurnResponse(newerResponse, headers(null, null)), false);
+  assert.equal(protocol.approvalClaim(preview), null,
+    'a presented turnless response retires the preview minted from the superseded turn');
+  assert.equal(protocol.beginPreview({ sessionId: SESSION_A }), null,
+    'a presented turnless response must not let closeout claim the superseded older turn');
+});
+
+test('client correlation: a superseded or abandoned capture cannot be presented at a later preview', async () => {
+  const { createTurnCorrelation } = await loadClient();
+  const protocol = createTurnCorrelation({ randomUUID: deterministicIds() });
+
+  const responseA = protocol.beginTurnResponse({ sessionId: SESSION_A });
+  assert.equal(protocol.completeTurnResponse(responseA, headers(TURN_A, null)), true);
+  const previewA = protocol.beginPreview({ sessionId: SESSION_A });
+  assert.equal(protocol.completePreview(previewA, headers(TURN_A, TOKEN_A)), true);
+
+  // A newer accepted turn supersedes the capture AND the preview minted from it.
+  const responseB = protocol.beginTurnResponse({ sessionId: SESSION_A });
+  assert.equal(protocol.completeTurnResponse(responseB, headers(TURN_B, null)), true);
+  assert.equal(protocol.approvalClaim(previewA), null,
+    'a preview minted from a superseded capture can never produce a claim');
+
+  const previewB = protocol.beginPreview({ sessionId: SESSION_A });
+  assert.equal(previewB.turnId, TURN_B);
+  assert.equal(protocol.completePreview(previewB, headers(TURN_B, TOKEN_B)), true);
+
+  // An abandoned (retired) preview cannot be completed or claimed afterwards.
+  assert.equal(protocol.retirePreview(previewB), true);
+  assert.equal(protocol.completePreview(previewB, headers(TURN_B, TOKEN_B)), false);
+  assert.equal(protocol.approvalClaim(previewB), null);
 });
 
 test('client correlation: real composer fallthrough rechecks submit authority after substitute routing awaits', () => {

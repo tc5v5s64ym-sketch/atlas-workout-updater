@@ -166,7 +166,22 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
     if (authoritativeTurnResponse !== ticket || turnResponses.get(ticket.sessionId) !== ticket) return false;
     ticket.completed = true;
     ticket.accepted = captureTurnResponse({ sessionId: ticket.sessionId, responseHeaders });
-    if (!ticket.accepted) {
+    // RETENTION. An unaccepted completion retires session state only when it actually
+    // PRESENTED a response: a selected response that established no turn is a newer
+    // interaction, and it supersedes the captured turn (and any preview minted from
+    // it) so a later preview cannot claim a turn the conversation has moved past.
+    // A completion with NO response headers presented nothing — the ticket was a
+    // pipeline artifact (the set-logged lane completing offline, on a rejected
+    // request, on a watchdog timeout, or after a reaction served without any coach
+    // call). No interaction happened, so there is nothing to supersede: the ticket
+    // settles its waiters and retires only its own state, and a turn captured by an
+    // earlier accepted interaction survives until a newer capture replaces it, a
+    // presented turnless response supersedes it, or the session is evicted. Erasing
+    // on every unaccepted completion made the write-proof join depend on
+    // conversation shape: deterministic set-logging after one accepted interaction
+    // erased the turn before the closeout preview could claim it, and a successful
+    // write emitted no proof.
+    if (!ticket.accepted && responseHeaders !== null && responseHeaders !== undefined) {
       const current = sessions.get(ticket.sessionId);
       if (current) {
         if (current.active) {
