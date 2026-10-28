@@ -265,3 +265,41 @@ test('a proven settle judges stored sequence evidence before the claim snapshot 
   assert.equal(spec.split('redeemOnStoredEvidence(bubbleRecords);').length - 1, 1,
     'the redemption runs in exactly one place — the proven settle, never an ordinary sweep');
 });
+
+test('the write boundary is sampled in-page at the response instant, harvested before teardown, and persisted (in-page boundary)', () => {
+  const spec = fs.readFileSync(path.join(__dirname, '..', 'tests', 'e2e', 'gate', 'rehearsal.spec.js'), 'utf8');
+  const observer = fs.readFileSync(path.join(__dirname, '..', 'tests', 'e2e', 'gate', 'rehearsal-bubble-observer.js'), 'utf8');
+  // The sampler lives inside the collector's init script, wrapped around the
+  // page's own fetch, so its reaction is attached to the save promise before the
+  // app's continuation can render the claim the response causes.
+  assert.match(observer, /window\.fetch = function/,
+    'the in-page sampler must wrap window.fetch inside the collector init script');
+  assert.match(spec, /boundaryName: '__atlasWriteBoundary'/,
+    'the spec must install the sampler under its boundary hook name');
+  // The old outside read is gone entirely: no listener-side clock state remains.
+  assert.ok(!/liveWriteChangeSeq/.test(spec),
+    'the spec must not carry the old outside-the-page sampling state');
+  const listenerStart = spec.indexOf("page.on('response'");
+  const listenerEnd = spec.indexOf('// ── 1. Open the real built client');
+  assert.ok(listenerStart > -1 && listenerEnd > listenerStart, 'the pinned listener landmarks are present');
+  assert.ok(!/__atlasBubbleState/.test(spec.slice(listenerStart, listenerEnd)),
+    'the response listener must not read the collector clock — that read lands after the page rendered the claim the response caused (run fsb4b-s1-20261028T065034-CDE1FA failed condition 9 on exactly it)');
+  // The samples are harvested while the session document still exists — before
+  // the teardown reload replaces it — and paired at the boundary, not read live.
+  const harvestIdx = spec.indexOf('writeBoundarySamples = samples');
+  const teardownIdx = spec.indexOf('await proveTeardownAndNoInheritance(page, h, { base });');
+  assert.ok(harvestIdx > -1, 'the spec must harvest the in-page samples');
+  assert.ok(teardownIdx > -1 && harvestIdx < teardownIdx,
+    'the harvest must precede the teardown reload — afterwards the document holding the samples no longer exists');
+  assert.match(spec, /pairLiveWriteChangeSeq\(saveResponses, writeBoundarySamples\)/,
+    'the boundary must pair the network records with the harvested samples under the guards');
+  // Both judged boundaries are persisted into the run evidence: the failed run's
+  // boundary existed nowhere in its artifacts and had to be reconstructed from
+  // the verdict's branch.
+  assert.match(spec, /boundaries: \{/,
+    'the claim evidence must persist the judged boundaries');
+  assert.match(spec, /atChangeSeq: liveWriteBoundary\.atChangeSeq/,
+    'the persisted write boundary must carry its sampled sequence');
+  assert.match(spec, /atChangeSeq: mutationBoundary\.atChangeSeq/,
+    'the persisted mutation boundary must carry its sequence');
+});

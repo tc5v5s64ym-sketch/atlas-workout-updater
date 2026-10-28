@@ -42,6 +42,7 @@ const { pickNetworkPassthrough, assertNoWorkbookId, GATE_STARTUP_TIMEOUT_MS } = 
 const {
   OBSERVER_FLUSH_MS, bubbleObserverInitScript, BUBBLE_ID_ATTR, BUBBLE_SEQ_ATTR,
   ingestLiveObservation, reconcileSweep, redeemOnStoredEvidence, recordsToMessages, makeBoundary,
+  pairLiveWriteChangeSeq,
   SEEN_ATTR,
   NEW_BUBBLE_SELECTOR,
   markExistingBubblesScript,
@@ -940,11 +941,6 @@ async function takeBoundary(page) {
   return makeBoundary({ atMs: Date.now(), atChangeSeq, ingestSeq: bubbleIngestSeq, drained });
 }
 
-// The logical clock AT THE INSTANT a live write response is observed. Read inside the
-// response listener so the boundary carries evidence valid at its own moment, instead of
-// borrowing a certificate from the pre-click drain.
-let liveWriteChangeSeq = null;
-
 // A RECONCILER, not the collector. It can fill in a bubble the observer never reported,
 // and such a record is marked retroactive so the claim decisions fail closed on it. It
 // never improves a live timestamp.
@@ -1258,6 +1254,11 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
   // A body that cannot be parsed is recorded as capture_failed — distinguishable
   // from "no request", and never counted as a proven write (fail-closed).
   const saveResponses = [];
+  // The in-page write-boundary samples, harvested in section 13a while the
+  // session's document still exists: one { changeSeq, status } per fulfilled
+  // save-route response, in resolution order — the page-side mirror of
+  // saveResponses, paired with it when the boundary is built.
+  let writeBoundarySamples = [];
   page.on('response', async (res) => {
     const phase = currentPhase;
     const url = res.url();
@@ -1280,18 +1281,14 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
           capture_failed: data ? false : true,
         };
         saveResponses.push(record);
-        // THE WRITE BOUNDARY'S OWN INSTANT. Read the page's logical clock here, as the
-        // successful live write is observed — not before the click and not after the
-        // save settles. A certificate from either of those instants would be a
-        // transplant (owner P1, 2026-08-03).
-        if (record.capture_failed !== true && record.test_mode !== true
-          && record.sheet_write === 'success' && liveWriteChangeSeq === null) {
-          try {
-            const st = await page.evaluate(() => (typeof window.__atlasBubbleState === 'function'
-              ? window.__atlasBubbleState() : null));
-            if (st && Number.isFinite(st.changeSeq)) liveWriteChangeSeq = st.changeSeq;
-          } catch { liveWriteChangeSeq = null; }
-        }
+        // NO boundary clock is read here, deliberately. The page sampled its own
+        // logical clock at the instant this response resolved (the in-page sampler
+        // in rehearsal-bubble-observer.js); a read from THIS listener — after the
+        // body parse, over a CDP round trip — lands after the page has already
+        // rendered the saved state this response caused, which is how run
+        // fsb4b-s1-20261028T065034-CDE1FA's earned claim came to be judged
+        // `before`. The samples are harvested with the claim evidence in section
+        // 13a and paired with these records when the boundary is built.
       } catch {
         saveResponses.push({ phase, at: Date.now(), endpoint, status: null, capture_failed: true });
       }
@@ -1339,6 +1336,7 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
     flushName: '__atlasBubbleFlush',
     stateName: '__atlasBubbleState',
     readName: '__atlasBubbleRead',
+    boundaryName: '__atlasWriteBoundary',
     idAttr: BUBBLE_ID_ATTR,
     seqAttr: BUBBLE_SEQ_ATTR,
   });
@@ -1617,6 +1615,17 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
   const collectorSettled = await settleBubbleCollector(page);
   const originalVisibleMessages = recordsToMessages(bubbleRecords);
   note('claim-settle', `collector ${collectorSettled ? 'settled' : 'DID NOT settle'} before the claim snapshot; ${originalVisibleMessages.filter((m) => m.retroactive === true).length} of ${originalVisibleMessages.length} record(s) still retroactive`);
+  // Harvest the in-page write-boundary samples NOW, alongside the claim
+  // snapshot: the teardown reload in 13b replaces this document and takes the
+  // samples with it. A failed or absent read leaves the list empty, and pairing
+  // then yields no sequence — the boundary fails closed, as an unread clock
+  // always has.
+  try {
+    const samples = await page.evaluate(() => (typeof window.__atlasWriteBoundary === 'function'
+      ? window.__atlasWriteBoundary() : null));
+    if (Array.isArray(samples)) writeBoundarySamples = samples;
+  } catch { writeBoundarySamples = []; }
+  note('claim-boundary', `${writeBoundarySamples.length} in-page write sample(s) harvested for ${saveResponses.length} observed save response(s)`);
 
   // ── 13b. Cross-session teardown and inheritance (declared scenarios only) ────
   // Runs AFTER every durable read AND after the evidence above is preserved, and
@@ -1772,10 +1781,11 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
   const liveWriteBoundary = (() => {
     const live = saveResponses.filter(r => r.capture_failed !== true && r.test_mode !== true && r.sheet_write === 'success');
     if (!live.length) return null;
-    // The response time AND the logical clock read at that same instant. When the clock
-    // read failed, `atChangeSeq` is null and every collector claim at or after the write
-    // is `uncertain` — fail closed, never a borrowed certificate.
-    return makeBoundary({ atMs: live[0].at, atChangeSeq: liveWriteChangeSeq, drained: false });
+    // The response time AND the logical clock sampled IN THE PAGE at the instant
+    // that response resolved, paired with this record under the guards. When no
+    // sample pairs, `atChangeSeq` is null and every collector claim at or after
+    // the write is `uncertain` — fail closed, never a borrowed certificate.
+    return makeBoundary({ atMs: live[0].at, atChangeSeq: pairLiveWriteChangeSeq(saveResponses, writeBoundarySamples), drained: false });
   })();
   // THE CLAIM SWEEP — derived, never a constant. The previous value was a literal
   // `false` justified as "asserted per-beat pre-acceptance", but the per-beat checks
@@ -1808,6 +1818,19 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
       change_seq: Number.isFinite(m.changeSeq) ? m.changeSeq : null,
       swept_at_change_seq: Number.isFinite(m.sweptAtChangeSeq) ? m.sweptAtChangeSeq : null,
     })),
+    // The two boundaries the detectors judged against, persisted in full — the
+    // timing half of the verdict, next to the records it judged. Run
+    // fsb4b-s1-20261028T065034-CDE1FA's write boundary existed NOWHERE in its
+    // evidence, so its misjudgement had to be reconstructed from the verdict's
+    // branch instead of read off the record. Numbers only; no message text.
+    boundaries: {
+      write: liveWriteBoundary
+        ? { atMs: liveWriteBoundary.atMs, atChangeSeq: liveWriteBoundary.atChangeSeq, drained: liveWriteBoundary.drained }
+        : null,
+      mutation: mutationBoundary
+        ? { atMs: mutationBoundary.atMs, atChangeSeq: mutationBoundary.atChangeSeq, drained: mutationBoundary.drained }
+        : null,
+    },
   };
   note('claim-sweep', `${originalVisibleMessages.length} visible messages; mutation ${mutationBoundary === null ? 'never' : `recorded (drained=${mutationBoundary.drained})`}; live write ${liveWriteBoundary === null ? 'NOT observed' : `observed (drained=${liveWriteBoundary.drained})`}; unsupported mutation=${mutationSweep.unsupported} write=${writeSweep.unsupported}; coach-capture failures ${coachCaptureFailures.count}`);
 
