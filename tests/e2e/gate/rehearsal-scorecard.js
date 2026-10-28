@@ -713,6 +713,27 @@ function explicitNextUpClaim(text) {
 // carries them carries the logged header too and must be judged as BOTH.
 // These are ordinary athlete-facing coach phrasings for outstanding work
 // ("you still need to finish…", "it isn't done yet"), not probe strings.
+//
+// B1-R repair (Systems Review of f4459300, comment 6480713282): the same
+// escape survived in the no-boundary form whenever the predicate sat outside
+// the vocabulary above — "You've logged Back Squat, Overhead Press hasn't
+// been done yet", "… is unfinished", "… was skipped", "… and Overhead Press
+// awaits" all returned ok. Two vocabulary rounds have leaked, so this repair
+// adds NO vocabulary. It is structural: inside a LOGGED-framed clause, the
+// enumeration items after the header are examined one by one with the same
+// signal the B1 repair already uses — a PURE enumeration item is nothing but
+// capitalised lift-name words (isListTail, per item). An item that instead
+// OPENS with lift-name words and then carries further material is not a list
+// item at all: the lift name is the SUBJECT of a new assertion and the
+// further material is its predicate, whatever words that predicate happens
+// to use. The clause is split at that item (see subjectPredicateSplitIndex):
+// the enumeration before it keeps the logged framing, and the portion from
+// that item on is judged as BOTH framings — the fail-closed primitive this
+// design already applies to a clause carrying both framings — so a complete
+// or retired lift asserted there is judged as remaining, and a never-logged
+// lift named there is still judged as a logged claim. A pure enumeration in
+// every list form (comma, "and", comma + "and") contains no such item and
+// is untouched.
 const LOGGED_FRAMING = /\b(?:(?:you|we)(?:'ve| have)?\s+(?:just\s+|already\s+|also\s+)?(?:logged|completed|finished|recorded|done)|(?:logged|completed|recorded) this session|(?:is|are|was|were|been)\s+(?:logged|completed|recorded)|^logged\b)/i;
 const REMAINING_FRAMING = /\b(?:remaining|remains|still (?:to|has|have|left|on|shows?)|still to do|still needs?|needs? to (?:finish|complete|do)|needs (?:finishing|completing)|must (?:finish|complete|do)|have to (?:finish|complete|do)|not (?:done|finished|complete)(?: yet)?|left to|left\b|to come|coming up|next up|planned|prescribed|scheduled|on the plan|on your list|outstanding|upcoming|yet to|what'?s left|calls for|call for|target(?:ing|s)?|aim(?:ing)? for|we'?ll|you'?ll|should (?:do|hit|aim)|going to)\b/i;
 const REPLY_CLAUSE_BOUNDARY = /\s*(?:;|:|\s+[—–]\s+|,\s*(?:so|but|and|then|although|though|while|yet)\b|\s+and\s+(?=(?:you|we)\b)|\s+(?:but|while)\s+)\s*/;
@@ -739,6 +760,42 @@ function isListTail(clause) {
     return words.length >= 1 && words.length <= 4
       && words.every((w) => /^[A-Z][A-Za-z'’.-]*$/.test(w));
   });
+}
+
+// B1-R: the index at which a LOGGED-framed clause stops being an enumeration
+// and restarts as an assertion, or -1 when it never does. The clause is
+// walked item by item over its enumeration separators (comma, " and "). The
+// first item carries the logged header itself ("You've logged Back Squat"),
+// so it is never a restart. Each later item is either a pure enumeration
+// item — one to four capitalised name words and nothing else, the per-item
+// form of isListTail — or it opens with such name words and then carries
+// further material: that material is a predicate and the name is its
+// subject, so the restart begins at the separator before that item. An item
+// that opens with no name words (prose, a pronoun, an adverb) names no lift
+// as a subject and is not a restart. No predicate WORD is ever consulted:
+// "hasn't been done yet", "is unfinished", "was skipped", "awaits" and any
+// predicate nobody has listed yet are all the same shape — a name followed
+// by something that is not a name.
+function subjectPredicateSplitIndex(clause) {
+  const text = String(clause || '');
+  const separators = [];
+  const sepRe = /,|\s+and\s+/gi;
+  let m;
+  while ((m = sepRe.exec(text)) !== null) {
+    separators.push({ start: m.index, end: m.index + m[0].length });
+  }
+  for (let i = 0; i < separators.length; i += 1) {
+    const chunkEnd = i + 1 < separators.length ? separators[i + 1].start : text.length;
+    const item = text.slice(separators[i].end, chunkEnd).trim()
+      .replace(/^(?:and|or)\s+/i, '').replace(/[.!?,;:]+\s*$/, '').trim();
+    if (!item || isListTail(item)) continue;
+    const words = item.split(/\s+/);
+    let nameWords = 0;
+    while (nameWords < words.length && nameWords < 4
+      && /^[A-Z][A-Za-z'’.-]*$/.test(words[nameWords])) nameWords += 1;
+    if (nameWords >= 1 && words.length > nameWords) return separators[i].start;
+  }
+  return -1;
 }
 
 // Split a reply into framed segments: [{ text, logged, remaining }]. Unframed
@@ -777,6 +834,26 @@ function framedReplySegments(replyText) {
         // reach so a later list tail cannot resurrect it across the clause.
         framing = { logged: false, remaining: false };
         if (boundaryBefore !== null) inherited = framing;
+      }
+      if (framing.logged && !framing.remaining) {
+        // B1-R: a LOGGED-only clause can still restart mid-clause, with no
+        // clause boundary at all — a lift name in list position carrying its
+        // own predicate ("…, Overhead Press hasn't been done yet"). Split
+        // there: the enumeration before the restart stays logged-only, the
+        // assertion from the restart on is judged as BOTH framings, and the
+        // framing a later tail in this sentence can inherit is that
+        // fail-closed both.
+        const splitAt = subjectPredicateSplitIndex(clause);
+        if (splitAt > 0) {
+          const head = clause.slice(0, splitAt).trim();
+          const tail = clause.slice(splitAt).replace(/^\s*,\s*/, '').replace(/^\s+and\s+/i, '').trim();
+          if (head && tail) {
+            out.push({ text: head, logged: true, remaining: false });
+            out.push({ text: tail, logged: true, remaining: true });
+            inherited = { logged: true, remaining: true };
+            continue;
+          }
+        }
       }
       out.push({ text: clause, logged: framing.logged, remaining: framing.remaining });
     }

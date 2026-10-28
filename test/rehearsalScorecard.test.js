@@ -925,6 +925,145 @@ describe('replyMatchesExpectation — B1 framing-inheritance repair', () => {
   });
 });
 
+// ── B1-R — the no-boundary comma/and-joined form (review of f4459300) ───────
+// The B1 repair closed the escape at every CLAUSE BOUNDARY and added the
+// need/must/not-done vocabulary for the two comma-joined shapes in that
+// review. Review 6480713282 of f4459300 showed the identical escape surviving
+// in the NO-BOUNDARY form: one clause carrying the logged header, a complete
+// lift as the subject of a remaining-work assertion, joined by a bare comma
+// or "and", whenever the predicate is outside that added vocabulary
+// ("hasn't been done yet", "is unfinished", "was skipped", "awaits", …).
+// The repair here is STRUCTURAL, not another vocabulary round: within a
+// logged-framed clause, an enumeration item that is not a pure lift name —
+// it opens with a lift name and carries predicate material after it — is a
+// subject + predicate restart, and the portion from that item on is judged
+// as BOTH framings (the fail-closed primitive for clauses carrying both).
+// Every B1-R BITE pin below returns ok=true on f4459300 (failing-first) and
+// produces the complete-as-remaining problem on this head. The CONTROL pins
+// already bit on f4459300 by design (existing remaining vocabulary, or the
+// preserved false-logged-claim rule) and must keep biting; the legitimate
+// shapes pass on both heads.
+
+describe('replyMatchesExpectation — B1-R no-boundary subject + predicate repair', () => {
+  const PLAN = [
+    { exercise: 'Back Squat', target_sets: 2 },
+    { exercise: 'Overhead Press', target_sets: 2 },
+    { exercise: 'Romanian Deadlift', target_sets: 2 },
+    { exercise: 'Bench Press', target_sets: 2 },
+    { exercise: 'Seated Row', target_sets: 2 },
+    { exercise: 'Bicep Curl', target_sets: 2 },
+  ];
+  const session3 = () => deriveExpectedRemaining({
+    plan: PLAN,
+    loggedNames: [
+      'back squat', 'back squat', 'overhead press', 'overhead press',
+      'romanian deadlift', 'romanian deadlift',
+      'seated row', 'incline db press', 'face pull', 'incline db press',
+    ],
+    replacement: { sourceName: 'Bench Press', replacementName: 'Incline DB Press', sets: 3 },
+  });
+  const REMAINING_OK = 'You still have Incline DB Press, Seated Row, and Bicep Curl left.';
+  const COMPLETE_PROBLEM = /"Overhead Press", which the declaration says is already complete/;
+
+  const b1rShapes = [
+    ['the reviewed string — negated perfect contraction, "hasn\'t been done yet" (bare comma)',
+      `You've logged Back Squat, Overhead Press hasn't been done yet. ${REMAINING_OK}`],
+    ['negated perfect contraction, "isn\'t done yet" (bare comma)',
+      `You've logged Back Squat, Overhead Press isn't done yet. ${REMAINING_OK}`],
+    ['negated perfect contraction, "hasn\'t been finished yet" (bare comma)',
+      `You've logged Back Squat, Overhead Press hasn't been finished yet. ${REMAINING_OK}`],
+    ['negated perfect contraction, plural subject "sets weren\'t done yet" (bare comma)',
+      `You've logged Back Squat, Overhead Press sets weren't done yet. ${REMAINING_OK}`],
+    ['stative adjective, "is unfinished" (bare comma)',
+      `You've logged Back Squat, Overhead Press is unfinished. ${REMAINING_OK}`],
+    ['stative adjective, "is pending" (bare comma)',
+      `You've logged Back Squat, Overhead Press is pending. ${REMAINING_OK}`],
+    ['passive form, "was skipped" (bare comma)',
+      `You've logged Back Squat, Overhead Press was skipped. ${REMAINING_OK}`],
+    ['passive form, "got skipped" (bare comma)',
+      `You've logged Back Squat, Overhead Press got skipped. ${REMAINING_OK}`],
+    ['passive form, "was missed" (bare comma)',
+      `You've logged Back Squat, Overhead Press was missed. ${REMAINING_OK}`],
+    ['awaiting-type verb, "awaits" (bare "and")',
+      `You've logged Back Squat and Overhead Press awaits. ${REMAINING_OK}`],
+    ['SELF-GENERATED predicate — future auxiliary, "will go last" (bare comma)',
+      `You've logged Back Squat, Overhead Press will go last. ${REMAINING_OK}`],
+    ['SELF-GENERATED predicate — perception verb + participle adjective, "looks untouched" (bare comma)',
+      `You've logged Back Squat, Overhead Press looks untouched. ${REMAINING_OK}`],
+    ['SELF-GENERATED predicate — sequence verb, "follows after the rest" (bare "and")',
+      `You've logged Back Squat and Overhead Press follows after the rest. ${REMAINING_OK}`],
+  ];
+  for (const [name, reply] of b1rShapes) {
+    it(`BITE — ${name} fails as complete-named-as-remaining`, () => {
+      const cmp = replyMatchesExpectation(reply, session3());
+      assert.equal(cmp.ok, false, name);
+      assert.match(cmp.problems.join(' '), COMPLETE_PROBLEM, name);
+    });
+  }
+
+  it('BITE — a predicate restart on a LATER enumeration item fails (the pure items before it stay logged)', () => {
+    const cmp = replyMatchesExpectation(
+      `You've logged Back Squat, Overhead Press, Romanian Deadlift hasn't been done yet. ${REMAINING_OK}`,
+      session3());
+    assert.equal(cmp.ok, false);
+    assert.match(cmp.problems.join(' '), /"Romanian Deadlift", which the declaration says is already complete/);
+    assert.doesNotMatch(cmp.problems.join(' '), /"Overhead Press", which the declaration says is already complete/);
+  });
+
+  it('CONTROL (already bit on f4459300 via the existing remaining vocabulary) — "is outstanding"', () => {
+    const cmp = replyMatchesExpectation(
+      `You've logged Back Squat, Overhead Press is outstanding. ${REMAINING_OK}`,
+      session3());
+    assert.equal(cmp.ok, false);
+    assert.match(cmp.problems.join(' '), COMPLETE_PROBLEM);
+  });
+
+  it('CONTROL (already bit on f4459300 via the existing remaining vocabulary) — "remains undone"', () => {
+    const cmp = replyMatchesExpectation(
+      `You've logged Back Squat, Overhead Press remains undone. ${REMAINING_OK}`,
+      session3());
+    assert.equal(cmp.ok, false);
+    assert.match(cmp.problems.join(' '), COMPLETE_PROBLEM);
+  });
+
+  it('CONTROL (preserved bite) — a logged enumeration tail naming a zero-logged lift still fails as a false logged claim', () => {
+    const cmp = replyMatchesExpectation(
+      `You've logged Back Squat, Overhead Press, Bicep Curl. ${REMAINING_OK}`,
+      session3());
+    assert.equal(cmp.ok, false);
+    assert.match(cmp.problems.join(' '), /"Bicep Curl" as logged, but the declaration records no logged sets for it/);
+  });
+
+  it('CONTROL (preserved bite) — a logged enumeration tail naming the retired lift still fails as a false logged claim', () => {
+    const cmp = replyMatchesExpectation(
+      `You've logged Back Squat, Bench Press. ${REMAINING_OK}`,
+      session3());
+    assert.equal(cmp.ok, false);
+    assert.match(cmp.problems.join(' '), /"Bench Press" as logged, but the declaration records no logged sets for it/);
+  });
+
+  it('a pure comma enumeration in the no-boundary form stays green', () => {
+    const cmp = replyMatchesExpectation(
+      `You've logged Back Squat, Overhead Press, Romanian Deadlift. ${REMAINING_OK}`,
+      session3());
+    assert.deepEqual(cmp, { ok: true, problems: [] });
+  });
+
+  it('a pure "and" enumeration in the no-boundary form stays green', () => {
+    const cmp = replyMatchesExpectation(
+      `You've logged Back Squat and Overhead Press. ${REMAINING_OK}`,
+      session3());
+    assert.deepEqual(cmp, { ok: true, problems: [] });
+  });
+
+  it('"remains" in prose with no lift-name subject creates no problem (checked against legit prose)', () => {
+    const cmp = replyMatchesExpectation(
+      `You've logged Back Squat, and the plan remains as written. ${REMAINING_OK}`,
+      session3());
+    assert.deepEqual(cmp, { ok: true, problems: [] });
+  });
+});
+
 // ── the claim sweep: no constant may stand in for evidence ───────────────────
 
 describe('detectUnsupportedMutationWording — derived, phase-bounded, fails closed', () => {
