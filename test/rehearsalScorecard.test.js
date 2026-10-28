@@ -839,6 +839,92 @@ describe('replyMatchesExpectation — segment-aware framing (corrective 11)', ()
   });
 });
 
+// ── B1 — a new assertion never inherits logged framing (review of 93907b08) ──
+// Independent review of corrective 11 returned BLOCKING with one demonstrated
+// blocker: "You've logged Back Squat, and you still need to finish Overhead
+// Press." returned ok=true on 93907b08. The subject-restarting clause matched
+// no REMAINING vocabulary, so it INHERITED the recap's logged framing and the
+// complete-as-remaining assertion fell between the two judgements — the
+// logged-claim check cannot catch it, because Overhead Press genuinely has
+// logged sets. The same escape existed at every clause boundary whenever the
+// clause after it asserted something instead of continuing a list. The repair
+// restricts inheritance to pure enumeration tails, makes a subject-restarting
+// clause fall back to unframed, and adds the need/must/not-done family to the
+// remaining vocabulary for the two comma-joined shapes that form no clause
+// boundary at all. Every B1 pin below is ok=true on 93907b08 (failing-first)
+// and produces the complete-as-remaining problem here.
+
+describe('replyMatchesExpectation — B1 framing-inheritance repair', () => {
+  const PLAN = [
+    { exercise: 'Back Squat', target_sets: 2 },
+    { exercise: 'Overhead Press', target_sets: 2 },
+    { exercise: 'Romanian Deadlift', target_sets: 2 },
+    { exercise: 'Bench Press', target_sets: 2 },
+    { exercise: 'Seated Row', target_sets: 2 },
+    { exercise: 'Bicep Curl', target_sets: 2 },
+  ];
+  const session3 = () => deriveExpectedRemaining({
+    plan: PLAN,
+    loggedNames: [
+      'back squat', 'back squat', 'overhead press', 'overhead press',
+      'romanian deadlift', 'romanian deadlift',
+      'seated row', 'incline db press', 'face pull', 'incline db press',
+    ],
+    replacement: { sourceName: 'Bench Press', replacementName: 'Incline DB Press', sets: 3 },
+  });
+  const REMAINING_OK = 'You still have Incline DB Press, Seated Row, and Bicep Curl left.';
+  const COMPLETE_PROBLEM = /"Overhead Press", which the declaration says is already complete/;
+
+  const b1Shapes = [
+    ['the exact reviewed B1 string (subject restart, "still need to finish")',
+      `You've logged Back Squat, and you still need to finish Overhead Press. ${REMAINING_OK}`],
+    ['the "still need to do" variant (subject restart)',
+      `You've logged Back Squat, and you still need to do Overhead Press. ${REMAINING_OK}`],
+    ['the "must finish" variant (subject restart)',
+      `You've logged Back Squat, and you must finish Overhead Press. ${REMAINING_OK}`],
+    ['the "still needs finishing" variant (comma-joined, no clause boundary)',
+      `You've logged Back Squat, Overhead Press still needs finishing. ${REMAINING_OK}`],
+    ['the "is not done yet" variant (comma-joined, no clause boundary)',
+      `You've logged Back Squat, Overhead Press is not done yet. ${REMAINING_OK}`],
+    ['a new assertion after a semicolon',
+      `You've logged Back Squat; Overhead Press got skipped. ${REMAINING_OK}`],
+    ['a new assertion after a dash',
+      `You've logged Back Squat — Overhead Press got skipped. ${REMAINING_OK}`],
+    ['a new assertion after comma + but',
+      `You've logged Back Squat, but Overhead Press got skipped. ${REMAINING_OK}`],
+    ['a new assertion after comma + and with a lift-name subject (no pronoun restart)',
+      `You've logged Back Squat, and Overhead Press got skipped. ${REMAINING_OK}`],
+  ];
+  for (const [name, reply] of b1Shapes) {
+    it(`BITE — ${name} fails as complete-named-as-remaining`, () => {
+      const cmp = replyMatchesExpectation(reply, session3());
+      assert.equal(cmp.ok, false, name);
+      assert.match(cmp.problems.join(' '), COMPLETE_PROBLEM, name);
+    });
+  }
+
+  it('a logged enumeration with list tails stays green', () => {
+    const cmp = replyMatchesExpectation(
+      'You\'ve logged Back Squat, Overhead Press, and Romanian Deadlift. Still remaining: Incline DB Press, Seated Row, Bicep Curl.',
+      session3());
+    assert.deepEqual(cmp, { ok: true, problems: [] });
+  });
+
+  it('a semicolon-separated logged list stays green — its fragments are list tails, not assertions', () => {
+    const cmp = replyMatchesExpectation(
+      `You've logged Back Squat; Overhead Press; Romanian Deadlift. ${REMAINING_OK}`,
+      session3());
+    assert.deepEqual(cmp, { ok: true, problems: [] });
+  });
+
+  it('a subject-restarting clause carrying its OWN logged framing is still judged as logged', () => {
+    const cmp = replyMatchesExpectation(
+      `You've logged Back Squat, and you've also logged Overhead Press. ${REMAINING_OK}`,
+      session3());
+    assert.deepEqual(cmp, { ok: true, problems: [] });
+  });
+});
+
 // ── the claim sweep: no constant may stand in for evidence ───────────────────
 
 describe('detectUnsupportedMutationWording — derived, phase-bounded, fails closed', () => {

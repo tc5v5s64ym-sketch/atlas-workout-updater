@@ -685,9 +685,61 @@ function explicitNextUpClaim(text) {
 // anywhere before it in its sentence is UNFRAMED. A clause carrying BOTH
 // framings is judged as both (fail-closed, the old behaviour for prose that
 // will not separate its claims).
-const LOGGED_FRAMING = /\b(?:(?:you|we)(?:'ve| have)?\s+(?:just\s+|already\s+)?(?:logged|completed|finished|recorded|done)|(?:logged|completed|recorded) this session|(?:is|are|was|were|been)\s+(?:logged|completed|recorded)|^logged\b)/i;
-const REMAINING_FRAMING = /\b(?:remaining|remains|still (?:to|has|have|left|on|shows?)|still to do|left to|left\b|to come|coming up|next up|planned|prescribed|scheduled|on the plan|on your list|outstanding|upcoming|yet to|what'?s left|calls for|call for|target(?:ing|s)?|aim(?:ing)? for|we'?ll|you'?ll|should (?:do|hit|aim)|going to)\b/i;
+//
+// B1 repair (Systems Review of 93907b08, comment 6480019118): inheritance as
+// first built let a NEW ASSERTION ride under a logged header — "You've logged
+// Back Squat, and you still need to finish Overhead Press" split at the
+// subject restart, the new clause inherited LOGGED, and the complete-as-
+// remaining assertion fell between the two judgements (the logged-claim check
+// could not catch it: Overhead Press genuinely has logged sets). The same
+// escape existed at every clause boundary (semicolon, dash, comma +
+// conjunction, bare but/while) whenever the following clause asserted
+// something instead of continuing the list. Inheritance is therefore now
+// restricted to what it exists for — a PURE ENUMERATION TAIL (a list fragment
+// naming lifts and asserting nothing, see isListTail):
+//   - a subject-restarting clause ("… and you/we …") never inherits: with no
+//     framing of its own it falls back to UNFRAMED, the old fail-closed
+//     behaviour, whatever the clause before it carried;
+//   - at every other boundary, a clause that asserts anything (a predicate,
+//     a pronoun subject, prose of any kind) likewise falls back to UNFRAMED
+//     instead of inheriting, so a later pure tail cannot resurrect the
+//     earlier framing across it either;
+//   - a pure enumeration tail still inherits at every boundary kind — colon
+//     list, semicolon list, comma + "and" tail alike — because a list tail
+//     continues an enumeration; it does not begin a new assertion.
+// The need/must/not-done family also joins REMAINING_FRAMING below: the two
+// comma-joined B1 shapes ("Overhead Press still needs finishing", "Overhead
+// Press is not done yet") form no clause boundary at all, so the clause that
+// carries them carries the logged header too and must be judged as BOTH.
+// These are ordinary athlete-facing coach phrasings for outstanding work
+// ("you still need to finish…", "it isn't done yet"), not probe strings.
+const LOGGED_FRAMING = /\b(?:(?:you|we)(?:'ve| have)?\s+(?:just\s+|already\s+|also\s+)?(?:logged|completed|finished|recorded|done)|(?:logged|completed|recorded) this session|(?:is|are|was|were|been)\s+(?:logged|completed|recorded)|^logged\b)/i;
+const REMAINING_FRAMING = /\b(?:remaining|remains|still (?:to|has|have|left|on|shows?)|still to do|still needs?|needs? to (?:finish|complete|do)|needs (?:finishing|completing)|must (?:finish|complete|do)|have to (?:finish|complete|do)|not (?:done|finished|complete)(?: yet)?|left to|left\b|to come|coming up|next up|planned|prescribed|scheduled|on the plan|on your list|outstanding|upcoming|yet to|what'?s left|calls for|call for|target(?:ing|s)?|aim(?:ing)? for|we'?ll|you'?ll|should (?:do|hit|aim)|going to)\b/i;
 const REPLY_CLAUSE_BOUNDARY = /\s*(?:;|:|\s+[—–]\s+|,\s*(?:so|but|and|then|although|though|while|yet)\b|\s+and\s+(?=(?:you|we)\b)|\s+(?:but|while)\s+)\s*/;
+const REPLY_CLAUSE_SPLIT = new RegExp(`(${REPLY_CLAUSE_BOUNDARY.source})`);
+
+// Words that make a clause an ASSERTION rather than a list fragment: finite
+// verbs, auxiliaries and modals, pronouns and function words, and the
+// predicate vocabulary of remaining/logged claims. A lift name contains none
+// of them.
+const CLAUSE_ASSERTION_WORD = /\b(?:is|are|was|were|be|been|being|am|has|have|had|do|does|did|done|need|needs|needed|must|should|shall|will|would|can|could|may|might|still|not|never|finish|finishes|finished|finishing|complete|completes|completed|completing|remain|remains|remaining|left|come|comes|coming|next|got|get|gets|skipped|missed|forgotten|counts|count|knock|say|says|tell|tells|keep|keeps|take|takes|hit|aim|aims|call|calls|log|logs|logged|perform|performs|performed|unfinished|incomplete|outstanding|pending|undone|yet|the|a|an|your|you|we|it|they|he|she|this|that|those|these|there|here|now|then|so|but|while|although|though|for|with|without|until|because|when|what|who|all|any|more|work|sets?|reps?)\b/i;
+
+// A PURE ENUMERATION TAIL: one or more comma-separated lift names and nothing
+// else — every part is one to four capitalised name words, with no assertion
+// word anywhere. "Face Pull" and "Back Squat, Overhead Press, Romanian
+// Deadlift" qualify; "Overhead Press still needs finishing" and "Overhead
+// Press got skipped" do not, however the boundary before them was written.
+function isListTail(clause) {
+  const clean = String(clause || '').replace(/["“”]/g, '').replace(/[.!?,;:]+\s*$/, '').trim();
+  if (!clean || CLAUSE_ASSERTION_WORD.test(clean)) return false;
+  const parts = clean.split(',').map((p) => p.trim().replace(/^(?:and|or)\s+/i, '')).filter(Boolean);
+  if (!parts.length) return false;
+  return parts.every((part) => {
+    const words = part.split(/\s+/);
+    return words.length >= 1 && words.length <= 4
+      && words.every((w) => /^[A-Z][A-Za-z'’.-]*$/.test(w));
+  });
+}
 
 // Split a reply into framed segments: [{ text, logged, remaining }]. Unframed
 // segments carry neither flag and are judged as remaining-relevant by the
@@ -697,13 +749,35 @@ function framedReplySegments(replyText) {
     .split(/(?<=[.!?])\s+|\n+/).map((s) => s.trim()).filter(Boolean);
   const out = [];
   for (const sentence of sentences) {
-    const clauses = sentence.split(REPLY_CLAUSE_BOUNDARY).map((s) => s.trim()).filter(Boolean);
+    // Split WITH the separators kept, so each clause knows which boundary
+    // precedes it (parts alternate clause, separator, clause, …).
+    const parts = sentence.split(REPLY_CLAUSE_SPLIT);
+    const clauses = [];
+    for (let i = 0; i < parts.length; i += 2) {
+      const text = String(parts[i] || '').trim();
+      if (text) clauses.push({ text, boundaryBefore: i === 0 ? null : String(parts[i - 1] || '') });
+    }
     let inherited = null;
-    for (const clause of clauses) {
+    for (const { text: clause, boundaryBefore } of clauses) {
       const own = { logged: LOGGED_FRAMING.test(clause), remaining: REMAINING_FRAMING.test(clause) };
       let framing;
       if (own.logged || own.remaining) { framing = own; inherited = own; }
-      else framing = inherited || { logged: false, remaining: false };
+      else if (boundaryBefore !== null && /^(?:you|we)\b/i.test(clause)) {
+        // Subject restart: a new assertion by a new subject. It never
+        // inherits the previous clause's framing — in particular not LOGGED —
+        // and the framing available to any later tail resets with it.
+        framing = { logged: false, remaining: false };
+        inherited = framing;
+      } else if (inherited && isListTail(clause)) {
+        // Pure enumeration tail: the list continues under its header.
+        framing = inherited;
+      } else {
+        // Any other unframed clause asserts something of its own (or opens
+        // the sentence): judged unframed, and it ends the previous framing's
+        // reach so a later list tail cannot resurrect it across the clause.
+        framing = { logged: false, remaining: false };
+        if (boundaryBefore !== null) inherited = framing;
+      }
       out.push({ text: clause, logged: framing.logged, remaining: framing.remaining });
     }
   }
