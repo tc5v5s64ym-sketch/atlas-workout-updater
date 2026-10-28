@@ -101,6 +101,7 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
     if (!validSessionId(sessionId) || !validTurnId(turnId)) return false;
     const current = sessions.get(sessionId);
     if (current && current.turnId === turnId) {
+      current.coachResponsePresented = true;
       touch(sessionId, current);
       return true;
     }
@@ -108,10 +109,14 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
       current.active.pairingToken = null;
       current.active.superseded = true;
     }
+    if (current) current.coachResponsePresented = true;
     touch(sessionId, {
       turnId,
       active: null,
       retired: current && Array.isArray(current.retired) ? current.retired : [],
+      // A capture exists only because a coach response was presented in this
+      // session — the same evidence the resolution gate in beginPreview reads.
+      coachResponsePresented: true,
     });
     return true;
   }
@@ -178,12 +183,28 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
       // left exactly as they are, so a late response can never move a session's
       // claim backward or resurrect a superseded turn.
       if (responseHeaders !== null && responseHeaders !== undefined) {
+        // PRESENTED-RESPONSE EVIDENCE. A revoked completion that still carried
+        // response headers is proof a coach response was actually PRESENTED in
+        // this session (the athlete saw coaching), even though this ticket may
+        // no longer act on it. Record that fact on the session: it is the gate
+        // beginPreview's session resolution reads, and it is the ONLY way that
+        // gate opens. Completions with no headers presented nothing — a failed
+        // coach call (whose ticket is completed with null by the caller's
+        // finally), a watchdog cancel, a stalled lane that never dispatched —
+        // record nothing, so such a session can never resolve a turn it never
+        // saw. The evidence never overrides a deliberate retirement: the
+        // resolutionBlocked check in beginPreview still vetoes resolution.
+        let state = sessions.get(ticket.sessionId);
+        if (!state) {
+          state = { turnId: null, active: null, retired: [], coachResponsePresented: true };
+          touch(ticket.sessionId, state);
+        } else if (state.coachResponsePresented !== true) {
+          state.coachResponsePresented = true;
+          touch(ticket.sessionId, state);
+        }
         const turnId = headerValue(responseHeaders, TURN_ID_HEADER);
         if (validTurnId(turnId)) {
-          const state = sessions.get(ticket.sessionId);
-          if (!state) {
-            touch(ticket.sessionId, { turnId, active: null, retired: [] });
-          } else if (!state.turnId && !state.active && !state.resolutionBlocked) {
+          if (!state.turnId && !state.active && !state.resolutionBlocked) {
             state.turnId = turnId;
             touch(ticket.sessionId, state);
           }
@@ -218,6 +239,10 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
         }
         current.turnId = null;
         current.active = null;
+        // This response WAS presented, so the session's presented-response
+        // evidence stands — but the resolution block below vetoes resolution
+        // anyway: the evidence never overrides a deliberate retirement.
+        current.coachResponsePresented = true;
         // A presented response that established no turn is the conversation
         // moving on: it retires not only the captured turn but also any later
         // attempt to resolve one server-side for this session (see beginPreview),
@@ -327,7 +352,18 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
     // migrated away from) is blocked: reaching back past that retirement to an
     // older turn is exactly what the retirement exists to prevent.
     if (state && state.resolutionBlocked) return null;
-    const resolutionState = state || { turnId: null, active: null, retired: [] };
+    // PRESENTED-RESPONSE GATE. Resolution is not a blanket fallback for a
+    // capture-less session: it may fire only when a coach response was actually
+    // PRESENTED in this session (recorded by completeTurnResponse / captureTurn
+    // as coachResponsePresented). A session where set coaching FAILED (the
+    // coach call rejected; the ticket completed with no response) or where no
+    // coach interaction ever happened (a stalled pre-message recommendation;
+    // deterministic logging only) presented nothing, so its closeout preview
+    // and write carry NO correlation of any kind — the pending-clarification
+    // contract pins exactly that, and a blanket claim could attribute a write
+    // to a turn whose coaching failed, which the claimed path can never do.
+    if (!state || state.coachResponsePresented !== true) return null;
+    const resolutionState = state;
     const correlation = {
       initiation_nonce,
       resolve_latest_turn: true,
@@ -378,6 +414,7 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
       }
       preview.turnId = responseTurnId;
       state.turnId = responseTurnId;
+      state.coachResponsePresented = true;
       preview.pairingToken = pairingToken;
       return true;
     }

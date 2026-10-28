@@ -29,6 +29,26 @@
 //      turn this server issued, for this session, inside the same freshness
 //      window, and the pairing it mints is payload-bound exactly like a claimed
 //      one. A session with no registered turn resolves to nothing.
+//
+// REPAIR (post-review, hosted E2E): resolution as first shipped was a BLANKET
+// fallback — beginPreview staged resolve_latest_turn whenever the client held
+// no capture. That broke the pending-clarification contract pinned by
+// tests/e2e/pending-clarification-resolve.spec.js (UNMODIFIED): when set
+// coaching FAILED, or when no coach interaction ever happened (a stalled
+// pre-message recommendation; deterministic logging only), the closeout
+// preview and write must carry NO correlation — and in the failed shape a
+// blanket claim could attribute a write to a turn whose coaching failed,
+// which the claimed path can never do. Resolution is therefore GATED on
+// positive client-side evidence that a coach response was actually PRESENTED
+// in the session (coachResponsePresented, recorded by completeTurnResponse
+// whenever a completion carries response headers, and by every capture/fill).
+// A failed coach call completes its ticket with NO response (the caller's
+// finally passes null) and a stalled lane never completes with a response at
+// all, so neither records evidence and neither can resolve. The pins below
+// that assumed blanket resolution were re-scoped to establish that evidence
+// first, through the same revoked-completion point the chat lane uses; the
+// diagnosed run itself is pinned end to end in the final test, where the
+// presented tips response lands through the FILL and is claimed directly.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -52,6 +72,9 @@ async function loadClient() {
 
 const TURN_A = 'turn:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const TURN_B = 'turn:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+// The diagnosed run's tips turn, as registered server-side at
+// 2026-10-28T16:14:17.881Z (interaction trace in the run's server log).
+const TURN_TIPS = 'turn:2026-10-28T16:14:13.992Z_2_xu3lk8';
 const SESSION_A = '20261028-PM-04';
 const SESSION_B = '20261028-PM-05';
 const PROVISIONAL = '20261028-PM-03';
@@ -93,6 +116,23 @@ function writePayload(correlation, sessionId) {
     log_rows: [logRow(sid)],
     correlation,
   };
+}
+
+// Present a coach response in the session WITHOUT landing a capture: the
+// response's ticket is revoked by a newer submission before it completes (the
+// chat lane's exact shape — getChatReply completes the ticket after its
+// response lands, whenever that is), and the response carries no turn id to
+// capture (the /api/coach/ask shape in getChatReply, which completes the
+// ticket with smeHeaders that may carry no turn id at all). The completion
+// records presented-response evidence and nothing else: no fill, no capture,
+// no block. This is the minimum honest setup for a resolution preview under
+// the gated design — a session that never presented a response cannot use it
+// (see the gating pins at the end of this file).
+async function presentRevokedTurnlessResponse(client, sessionId) {
+  const presented = client.beginTurnResponse({ sessionId });
+  const revoker = client.beginTurnResponse({ sessionId });
+  assert.equal(client.completeTurnResponse(revoker, null), false);
+  assert.equal(client.completeTurnResponse(presented, headersFrom({})), false);
 }
 
 // Drive one full preview → mint → approve → write round-trip and assert the proof.
@@ -245,6 +285,18 @@ test('resolution: a session with only set-logged tickets claims the server lates
   assert.equal(client.cancelTurnResponse(setTicketB), true);
   assert.deepEqual(client.diagnosticSnapshot(), [], 'the client holds no turn state at all');
 
+  // RE-SCOPED (gated resolution): the original pin staged a resolution preview
+  // from this capture-less, response-less state — the blanket fallback the
+  // pending-clarification contract forbids. Resolution now requires evidence
+  // that a coach response was presented in this session, so the chain gains
+  // the one link the contract permits: a coach response WAS presented here
+  // (revoked before completion, carrying no turn to capture — the SME/chat
+  // shape), which records evidence but still no capture.
+  await presentRevokedTurnlessResponse(client, SESSION_A);
+  assert.deepEqual(client.diagnosticSnapshot(), [{
+    session_id: SESSION_A, turn_id: null, active_initiation: null, retired_count: 0,
+  }], 'presented evidence is recorded, but the client still holds no turn to claim');
+
   // The closeout preview therefore asks the server to resolve the session's
   // authoritative turn state instead of presenting a capture it does not hold.
   const preview = client.beginPreview({ sessionId: SESSION_A });
@@ -272,6 +324,10 @@ test('resolution: the latest registered turn wins, and a stale latest turn fails
   server.issueTurn(TURN_A, SESSION_A, { nowMs: T0 });
   server.issueTurn(TURN_B, SESSION_A, { nowMs: T0 + 60_000 });
 
+  // RE-SCOPED (gated resolution): a presented coach response establishes the
+  // evidence the resolution preview requires; the server-side selection and
+  // staleness semantics below are unchanged.
+  await presentRevokedTurnlessResponse(client, SESSION_A);
   const preview = client.beginPreview({ sessionId: SESSION_A });
   const resolved = server.resolveCorrelation(writePayload(preview.correlation), {
     sessionId: SESSION_A, isPreview: true, writeId: WRITE_ID, nowMs: T0 + 120_000,
@@ -300,6 +356,9 @@ test('resolution: a capture landing mid-preview supersedes the resolution previe
   server.issueTurn(TURN_A, SESSION_A);
   server.issueTurn(TURN_B, SESSION_A);
 
+  // RE-SCOPED (gated resolution): presented-response evidence first, as in
+  // every resolution pin — the supersession semantics below are unchanged.
+  await presentRevokedTurnlessResponse(client, SESSION_A);
   const preview = client.beginPreview({ sessionId: SESSION_A });
   assert.equal(preview.correlation.resolve_latest_turn, true);
 
@@ -383,8 +442,11 @@ test('resolution: attacks stay rejected', async () => {
   assert.equal(ungated.ok, false, 'an ungated provisional name resolves nothing');
 
   // Client side: a resolution preview whose response carries a token but no
-  // turn to adopt can never complete or be claimed.
+  // turn to adopt can never complete or be claimed. (RE-SCOPED for the gate:
+  // the preview is staged from presented-response evidence, not from nothing.)
+  await presentRevokedTurnlessResponse(client, SESSION_A);
   const preview = client.beginPreview({ sessionId: SESSION_A });
+  assert.ok(preview && preview.correlation.resolve_latest_turn === true);
   assert.equal(client.completePreview(preview, headersFrom({ 'x-atlas-turn-pairing': `pair:${'b'.repeat(32)}` })), false);
   assert.equal(client.approvalClaim(preview), null);
 
@@ -401,6 +463,9 @@ test('resolution: the provisional handshake mints through the existing adoption 
   // identity the preview resolves to.
   server.issueTurn(TURN_A, PROVISIONAL);
 
+  // RE-SCOPED (gated resolution): the provisional session also needs
+  // presented-response evidence before its preview may resolve.
+  await presentRevokedTurnlessResponse(client, PROVISIONAL);
   const preview = client.beginPreview({
     sessionId: PROVISIONAL,
     provisionalSessionId: PROVISIONAL,
@@ -469,6 +534,122 @@ test('resolution: a migrated-away provisional session cannot resolve, and an era
   assert.equal(erased.completeTurnResponse(turnless, headersFrom({})), false);
   assert.equal(erased.beginPreview({ sessionId: SESSION_B }), null,
     'a deliberately retired capture blocks resolution as it blocks claiming');
+
+  server._resetForTesting();
+});
+
+test('gating: failed set coaching presents no coach response — no fill, no resolution, no preview', async () => {
+  const { createTurnCorrelation } = await loadClient();
+  const client = createTurnCorrelation({ randomUUID: deterministicIds() });
+  server._resetForTesting();
+
+  // The pending-clarification spec's failed-coaching shape, at module level:
+  // the set-logged handler's /api/coach/message call FAILED (503). In
+  // getLlmCoachingMessage the rejected request never reaches the
+  // completeTurnResponse call inside that function — the ticket is completed
+  // only by the atlas:set-logged listener's finally, with NO response (null).
+  // Nothing was presented, so nothing may be claimed or resolved, even though
+  // this pin registers a server turn for the session to prove the block is
+  // the client gate, not the server's ignorance.
+  server.issueTurn(TURN_A, SESSION_A);
+  const setTicket = client.beginTurnResponse({ sessionId: SESSION_A });
+  assert.equal(client.completeTurnResponse(setTicket, null), false);
+  assert.deepEqual(client.diagnosticSnapshot(), [], 'a no-response completion creates no session state');
+  assert.equal(client.beginPreview({ sessionId: SESSION_A }), null,
+    'a session whose only coach call failed stages no correlation at preview');
+
+  // The same shape when an error response IS the selected response: it
+  // presents no turn, so it fills nothing and — as a presented turnless
+  // completion on a session holding a capture — it retires claimability
+  // instead of opening resolution.
+  const clientB = createTurnCorrelation({ randomUUID: deterministicIds() });
+  clientB.captureTurn({ sessionId: SESSION_B, turnId: TURN_B });
+  const errorTicket = clientB.beginTurnResponse({ sessionId: SESSION_B });
+  assert.equal(clientB.completeTurnResponse(errorTicket, headersFrom({})), false);
+  assert.equal(clientB.beginPreview({ sessionId: SESSION_B }), null,
+    'a presented error/no-turn response retires the session; it never opens resolution');
+
+  server._resetForTesting();
+});
+
+test('gating: a stalled pre-message lane presents nothing — closeout stages no correlation', async () => {
+  const { createTurnCorrelation } = await loadClient();
+  const client = createTurnCorrelation({ randomUUID: deterministicIds() });
+  server._resetForTesting();
+
+  // The spec's stalled shape: the set-logged handler stalls in the
+  // recommendation read that precedes /api/coach/message, so NO coach call
+  // ever happens (messageCalls stays 0). The handler's ticket is settled only
+  // by the watchdog cancel and by later handlers' null completions — every
+  // completion presents no response. A server-registered turn (registered
+  // here deliberately) is not enough: with no presented response in the
+  // session, the gate keeps the preview uncorrelated.
+  server.issueTurn(TURN_A, SESSION_A);
+  const stalled = client.beginTurnResponse({ sessionId: SESSION_A });
+  assert.equal(client.cancelTurnResponse(stalled), true, 'the watchdog settles the stalled ticket');
+  const later = client.beginTurnResponse({ sessionId: SESSION_A });
+  assert.equal(client.completeTurnResponse(later, null), false);
+  assert.deepEqual(client.diagnosticSnapshot(), [], 'no presented response, no session state');
+  assert.equal(client.beginPreview({ sessionId: SESSION_A }), null,
+    'a session with no presented coach response stages no correlation at preview');
+
+  server._resetForTesting();
+});
+
+test('diagnosed chain: the tips chat turn, revoked by set-logged dispatches, lands by fill and the write proves', async () => {
+  const { createTurnCorrelation } = await loadClient();
+  const client = createTurnCorrelation({ randomUUID: deterministicIds() });
+  server._resetForTesting();
+
+  // Run fsb4b-s1-20261028T161326-AB4F5C, traced from code (see PR body):
+  // the session's one completed coach interaction was the tips question via
+  // the CHAT lane. That lane is ticketed, not a direct capture: the
+  // atlas:chat-message listener (coach-conversation.js) begins a turn ticket,
+  // getChatReply races /api/coach/ask first (13 ms, no usable answer, ticket
+  // NOT completed there) and then completes the ticket with the
+  // /api/coach/chat response headers when that call returns. The server
+  // registered the turn when the chat call completed (16:14:17.881).
+  const chatRes = fakeResponse();
+  assert.equal(server.attachTurnToResponse(chatRes, TURN_TIPS, SESSION_A), TURN_TIPS);
+  const chatTicket = client.beginTurnResponse({ sessionId: SESSION_A });
+
+  // While /api/coach/chat was in flight (16:14:13.992–16:14:17.881), an
+  // Incline DB Press set-logged dispatch began its own ticket (its
+  // /api/recommend/next reaction read starts at 16:14:14.089 in the server
+  // log), revoking the chat ticket's authority. That handler then died at
+  // the responseMayContinue gate — it never dispatched a coach call — and
+  // its ticket settled with no response.
+  const inclineTicket = client.beginTurnResponse({ sessionId: SESSION_A });
+  assert.equal(client.completeTurnResponse(inclineTicket, null), false);
+
+  // The chat response now completes, revoked: not accepted as the selected
+  // response, but it WAS presented (the athlete read the tips), so its turn
+  // lands as the session's claimable state through the fill.
+  assert.equal(client.completeTurnResponse(chatTicket, headersFrom(chatRes._h)), false);
+  assert.deepEqual(client.diagnosticSnapshot(), [{
+    session_id: SESSION_A, turn_id: TURN_TIPS, active_initiation: null, retired_count: 0,
+  }], 'the presented tips turn is the session claimable state');
+
+  // The subsequent Seated Row and Bicep Curl set-logged events each begin a
+  // ticket and settle it with no response (revoked at the gate, or
+  // watchdog-cancelled during the Sheets 429 storm; the run's server log
+  // holds zero /api/coach/message calls). Under #1328 semantics those null
+  // completions retire only their own tickets — the filled turn survives.
+  const seatedTicket = client.beginTurnResponse({ sessionId: SESSION_A });
+  assert.equal(client.completeTurnResponse(seatedTicket, null), false);
+  const bicepTicket = client.beginTurnResponse({ sessionId: SESSION_A });
+  assert.equal(client.cancelTurnResponse(bicepTicket), true);
+
+  // Closeout: the preview CLAIMS the filled tips turn directly — no
+  // resolution marker is involved — and the write emits its proof.
+  const preview = client.beginPreview({ sessionId: SESSION_A });
+  assert.ok(preview, 'the closeout preview must claim the filled tips turn');
+  assert.equal(preview.turnId, TURN_TIPS);
+  assert.equal(preview.correlation.turn_id, TURN_TIPS);
+  assert.equal(preview.correlation.resolve_latest_turn, undefined);
+  const record = await assertWriteProves(client, preview);
+  assert.equal(record.turn_id, TURN_TIPS);
+  assert.ok(server.recentWriteProofs().some(r => r.turn_id === TURN_TIPS && r.route === '/api/log-workout'));
 
   server._resetForTesting();
 });
