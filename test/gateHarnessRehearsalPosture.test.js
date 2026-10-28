@@ -210,3 +210,18 @@ test('both harness servers bind to loopback and the default lane scrubs the live
   assert.match(cfg, /delete process\.env\.ATLAS_GATE_SANDBOX_LIVE;/,
     'playwright.config.js must scrub the live flag before any spec worker exists — an exported flag in the invoking shell must be inert for the whole default lane');
 });
+
+test('the rehearsal waits for the acceptance boundary itself before reading app state', () => {
+  const spec = fs.readFileSync(path.join(__dirname, '..', 'tests', 'e2e', 'gate', 'rehearsal.spec.js'), 'utf8');
+  assert.match(spec, /const APP_READINESS_TIMEOUT_MS = 30000;/,
+    'the readiness wait budget is a named constant');
+  const waitIdx = spec.indexOf("page.waitForFunction(() => typeof window.atlasAcceptPlan === 'function', null, { timeout: APP_READINESS_TIMEOUT_MS })");
+  assert.ok(waitIdx > -1,
+    'the spec must wait for window.atlasAcceptPlan itself — networkidle proves only 500 ms of network quiet, not that the module graph executed (runs fsb4b-s1-20261028T022014-A6659B and fsb4b-s1-20261028T022107-25585D failed NOT_STARTED on exactly that gap)');
+  const snapIdx = spec.indexOf("snap(page, '01-client-open.png')");
+  const shellIdx = spec.indexOf("getElementById('shell-version')");
+  const acceptIdx = spec.indexOf('window.atlasAcceptPlan({');
+  assert.ok(snapIdx > -1 && shellIdx > -1 && acceptIdx > -1, 'the pinned spec landmarks are present');
+  assert.ok(waitIdx < snapIdx && waitIdx < shellIdx && waitIdx < acceptIdx,
+    'the readiness wait must precede the client-open screenshot, the app-state reads, and the acceptance call');
+});

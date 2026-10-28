@@ -55,6 +55,7 @@ const { SANDBOX_SPREADSHEET_ID, SANDBOX_SPREADSHEET_ID_LAST6 } = require('../../
 const { logCleanedColumns, effortColumns, sessionPlansColumns, sessionPlanSetsColumns } = require('../../../config/columns');
 
 const GATE_KEY = 'playwright-gate-key';
+const APP_READINESS_TIMEOUT_MS = 30000;
 const RUN_ID = process.env.ATLAS_REHEARSAL_RUN_ID;
 const ATHLETE_ID = process.env.ATLAS_REHEARSAL_ATHLETE_ID;
 const ARTIFACT_DIR = process.env.ATLAS_REHEARSAL_ARTIFACT_DIR;
@@ -1292,6 +1293,17 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
   await page.addInitScript(stagedProposalObserverScript, STAGED_PROPOSALS_KEY);
   await page.goto(`${base}/app/`);
   await page.waitForLoadState('networkidle');
+  // networkidle is a NETWORK signal — 500 ms without requests — not app
+  // readiness: the module graph can still be executing after the network goes
+  // quiet. Qualifying attempts fsb4b-s1-20261028T022014-A6659B and
+  // fsb4b-s1-20261028T022107-25585D failed NOT_STARTED in ~2.7 s with
+  // `window.atlasAcceptPlan is not a function`; their gate-server logs show a
+  // 0.93 s request span with zero /api calls (the app never booted), while the
+  // scored run's first /api call came 0.8 s after its first request.
+  // window.atlasAcceptPlan is assigned at app.js top level when the module
+  // graph executes, so wait for the acceptance boundary itself before the
+  // screenshot and every app-state read below.
+  await page.waitForFunction(() => typeof window.atlasAcceptPlan === 'function', null, { timeout: APP_READINESS_TIMEOUT_MS });
   await snap(page, '01-client-open.png');
   // The shell tag is baked into the bundle and rendered into #shell-version at load
   // (app.js populateBuildInfo) — the DOM is the observable, not a window global.
