@@ -1187,3 +1187,275 @@ test.describe('F-SB4B write boundary — sampled in-page at response resolution'
       'a non-save route is not the write, and a rejected fetch saw no response').toEqual([]);
   });
 });
+
+
+// ── F-SB4B attribute observer: a class-only reveal is a counted change ───────
+//
+// THE DEFECT (qualifying Session 1, fsb4b-s1-20261028T130455-6EEF09, 24/25).
+// PR #1326's in-page sampler worked exactly as designed — 14 samples for 14
+// save responses, the paired write boundary atChangeSeq 156 — yet the earned
+// "✓ Saved to your sheet" claim still judged 'before', because the claim
+// record's change_seq was ALSO 156. The reveal is a CLASS-ONLY mutation:
+// markReviewSaved (src/app/coach-conversation.js) does exactly one DOM
+// mutation on the card — classList.add('done') — and .rv-saved is
+// display:none until .review.done (src/app/styles.css), so the claim enters
+// the bubble's visibility-aware innerText only through that flip. The
+// collector observed { childList, subtree, characterData } — NOT attributes —
+// so the reveal never advanced the logical clock, and the record was stamped
+// by an unrelated later value that happened to equal the boundary sample in a
+// quiet thread.
+//
+// These fixtures reproduce the product's exact shape on a routed origin: a
+// review card whose saved label is revealed by a class, and a save handler in
+// the product's form (await fetch → parse → flip). The counting is scoped: a
+// class change is counted only where it changed a bubble's VISIBLE text, so
+// the clock the bounded settle waits on cannot be starved by class churn that
+// carries no claim evidence, and a bubble untouched by the change keeps the
+// sequence of the change that produced its text.
+
+test.describe('F-SB4B collector — a class-only reveal is a counted change', () => {
+  const ORIGIN = 'http://fixture.local';
+  const FIXTURE_HTML = `<!doctype html><html><head><style>
+      .rv-saved { display: none; }
+      .review.done .rv-saved { display: flex; }
+      .review.done .rv-act { display: none; }
+    </style></head><body>
+    <div id="thread-messages"></div>
+    <script>
+      const bubble = document.createElement('div');
+      bubble.className = 'chat-bubble chat-bubble-atlas';
+      const body = document.createElement('div');
+      body.textContent = "Here's your effort and the full session — give it a look before it goes to your sheet:";
+      const card = document.createElement('div');
+      card.className = 'review';
+      const act = document.createElement('span');
+      act.className = 'rv-act';
+      act.textContent = 'Save to sheet';
+      const saved = document.createElement('span');
+      saved.className = 'rv-saved';
+      saved.textContent = '✓ Saved to your sheet';
+      card.appendChild(act);
+      card.appendChild(saved);
+      bubble.appendChild(body);
+      bubble.appendChild(card);
+      document.getElementById('thread-messages').appendChild(bubble);
+      window.__fixture = {
+        // The product's save shape: await the fetch, parse the body, THEN flip
+        // the card with the class-only mutation markReviewSaved performs.
+        async saveHonest() {
+          const res = await fetch('/api/log-workout', { method: 'POST', body: '{}' });
+          await res.json();
+          card.classList.add('done');
+        },
+        // The optimistic defect shape: the class flips BEFORE the response.
+        async saveOptimistic() {
+          card.classList.add('done');
+          const res = await fetch('/api/log-workout', { method: 'POST', body: '{}' });
+          await res.json();
+        },
+        hideAgain() { card.classList.remove('done'); },
+      };
+    </script></body></html>`;
+
+  // The collector install, as in the in-page-boundary suite: a data: URL
+  // cannot fetch, so the fixture lives on a routed origin.
+  async function startFixture(page, phaseRef) {
+    const records = {};
+    const state = { ingestSeq: 0 };
+    await page.exposeFunction('__atlasBubbleObserved', (batch) => {
+      const now = Date.now();
+      for (const item of (Array.isArray(batch) ? batch : [])) {
+        state.ingestSeq += 1;
+        ingestLiveObservation(records, item, {
+          phase: phaseRef.value, nowMs: now, ingestSeq: state.ingestSeq, thinkingMarker: THINKING,
+        });
+      }
+    });
+    await page.addInitScript(bubbleObserverInitScript, {
+      flushMs: OBSERVER_FLUSH_MS,
+      threadId: 'thread-messages',
+      bubbleSelector: '.chat-bubble-atlas',
+      callbackName: '__atlasBubbleObserved',
+      flushName: '__atlasBubbleFlush',
+      stateName: '__atlasBubbleState',
+      readName: '__atlasBubbleRead',
+      boundaryName: '__atlasWriteBoundary',
+      idAttr: BUBBLE_ID_ATTR,
+      seqAttr: BUBBLE_SEQ_ATTR,
+    });
+    await page.goto(`${ORIGIN}/`);
+    return { records, state };
+  }
+
+  const readSamples = (page) => page.evaluate(() => (typeof window.__atlasWriteBoundary === 'function'
+    ? window.__atlasWriteBoundary() : null));
+
+  const routeSaveOk = (page) => page.route(`${ORIGIN}/api/log-workout`, (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ test_mode: false, sheet_write: 'success' }),
+  }));
+
+  test('BITE: a claim revealed by the response’s class flip is counted at the flip — after the in-page sample', async ({ page }) => {
+    await page.route(`${ORIGIN}/`, (route) => route.fulfill({ contentType: 'text/html', body: FIXTURE_HTML }));
+    await routeSaveOk(page);
+    const phaseRef = { value: 'closeout' };
+    const { records } = await startFixture(page, phaseRef);
+    await settle(page);
+
+    const before = recordsToMessages(records)[0];
+    expect(before.text, 'the hidden label is not visible text before the flip').not.toMatch(/Saved to your sheet/);
+    expect(before.text).toMatch(/give it a look before it goes to your sheet/);
+
+    await page.evaluate(() => window.__fixture.saveHonest());
+    await settle(page);
+
+    const claim = recordsToMessages(records)[0];
+    expect(claim.text, 'the flip landed in the record as a live observation').toMatch(/Saved to your sheet/);
+    expect(claim.retroactive, 'the collector counted the reveal itself, so no sweep has to vouch for it').toBe(false);
+
+    const samples = await readSamples(page);
+    expect(samples, 'exactly one save-route response was sampled').toHaveLength(1);
+    // The causal fact: the sampler's reaction precedes the app continuation
+    // that performs the flip, so the flip — now a counted change — holds a
+    // strictly later sequence than the sample. Attempt 5's failure was the
+    // equality of these two numbers.
+    expect(claim.changeSeq, 'the reveal is stamped by its own counted change, after the sample')
+      .toBeGreaterThan(samples[0].changeSeq);
+
+    // The runner's own reconciling sweep (§13a) must leave the now-live record
+    // exactly as the observer reported it.
+    reconcileSweep(records, await readObserved(page), {
+      phase: 'teardown', nowMs: Date.now(), thinkingMarker: THINKING,
+      collectorQuiet: true, sweptAtChangeSeq: await readChangeSeq(page),
+    });
+    const swept = recordsToMessages(records)[0];
+    expect(swept.retroactive).toBe(false);
+    expect(swept.changeSeq).toBe(claim.changeSeq);
+
+    const onNew = detectUnsupportedWriteClaim({
+      messages: recordsToMessages(records),
+      liveWriteBoundary: makeBoundary({ atMs: Date.now(), atChangeSeq: samples[0].changeSeq, drained: false }),
+    });
+    expect(onNew.unsupported,
+      `the earned class-revealed claim judges after the write: ${onNew.detail}`).toBe(false);
+  });
+
+  test('the INVERSE pin: a class flip BEFORE the response still fails — at exact equality with the sample', async ({ page }) => {
+    await page.route(`${ORIGIN}/`, (route) => route.fulfill({ contentType: 'text/html', body: FIXTURE_HTML }));
+    // The response is HELD until the test releases it, so the flip is provably
+    // rendered and counted before the response resolves.
+    let releaseSave;
+    const gate = new Promise((r) => { releaseSave = r; });
+    await page.route(`${ORIGIN}/api/log-workout`, async (route) => {
+      await gate;
+      await route.fulfill({
+        status: 200, contentType: 'application/json',
+        body: JSON.stringify({ test_mode: false, sheet_write: 'success' }),
+      });
+    });
+    const phaseRef = { value: 'closeout' };
+    const { records } = await startFixture(page, phaseRef);
+    await settle(page);
+    const seqBefore = await readChangeSeq(page);
+
+    const saving = page.evaluate(() => window.__fixture.saveOptimistic());
+    // The optimistic reveal is on screen and COUNTED while the response is held —
+    // on the old observer nothing advances the clock here at all.
+    await expect.poll(() => readChangeSeq(page), { timeout: 5000 }).toBeGreaterThan(seqBefore);
+    await expect.poll(() => recordsToMessages(records)[0].text, { timeout: 5000 })
+      .toMatch(/Saved to your sheet/);
+    releaseSave();
+    await saving;
+    await settle(page);
+
+    const claim = recordsToMessages(records)[0];
+    expect(claim.retroactive).toBe(false);
+    const samples = await readSamples(page);
+    expect(samples).toHaveLength(1);
+    // EQUALITY, causal as in the in-page-boundary pin: the reveal was the last
+    // change counted before the response resolved, so the sample IS its
+    // sequence — and the strict comparison keeps equality on the 'before' side.
+    expect(samples[0].changeSeq, 'a pre-response reveal is counted before the sample is taken')
+      .toBe(claim.changeSeq);
+
+    const sweep = detectUnsupportedWriteClaim({
+      messages: recordsToMessages(records),
+      liveWriteBoundary: makeBoundary({ atMs: Date.now(), atChangeSeq: samples[0].changeSeq, drained: false }),
+    });
+    expect(sweep.unsupported,
+      'counting the flip must not rescue an optimistic claim').toBe(true);
+    expect(sweep.detail).toMatch(/before the live write succeeded/);
+  });
+
+  test('a class change that hides the claim again is counted too — text diffs run in both directions', async ({ page }) => {
+    await page.route(`${ORIGIN}/`, (route) => route.fulfill({ contentType: 'text/html', body: FIXTURE_HTML }));
+    await routeSaveOk(page);
+    const phaseRef = { value: 'closeout' };
+    const { records } = await startFixture(page, phaseRef);
+    await settle(page);
+
+    await page.evaluate(() => window.__fixture.saveHonest());
+    await settle(page);
+    const revealed = recordsToMessages(records)[0];
+    expect(revealed.text).toMatch(/Saved to your sheet/);
+    // Snapshot the scalar NOW: recordsToMessages returns the live record
+    // objects, so after the un-flip the same object carries the new sequence
+    // and a comparison against the reference would compare it to itself.
+    const revealedSeq = revealed.changeSeq;
+
+    await page.evaluate(() => window.__fixture.hideAgain());
+    await settle(page);
+    const hidden = recordsToMessages(records)[0];
+    expect(hidden.text, 'the un-flip removes the claim from the visible text').not.toMatch(/Saved to your sheet/);
+    expect(hidden.changeSeq, 'and the removal is stamped by its own later counted change')
+      .toBeGreaterThan(revealedSeq);
+  });
+
+  test('PROPERTY: class churn that changes no bubble’s visible text is not counted and cannot starve the settle', async ({ page }) => {
+    const phaseRef = { value: 'logging' };
+    const { records } = await startCollector(page, phaseRef);
+    await appendBubble(page, 'first reply');
+    await appendBubble(page, 'second reply');
+    // The non-bubble thread child exists BEFORE the baseline: creating it is a
+    // childList change and is counted as one — it is the churn below that must not be.
+    await page.evaluate(() => {
+      const dot = document.createElement('div');
+      dot.id = 'status-dot';
+      document.getElementById('thread-messages').appendChild(dot);
+    });
+    await settle(page);
+    await page.evaluate(() => window.__atlasBubbleFlush());
+
+    const clockBefore = await readChangeSeq(page);
+    const msgsBefore = recordsToMessages(records).map((m) => ({ text: m.text, changeSeq: m.changeSeq }));
+    expect(msgsBefore).toHaveLength(2);
+
+    // Class churn of every shape that carries no claim evidence: toggles on
+    // both bubbles, on the thread container itself, and a repeating interval
+    // toggler on the non-bubble child (the class-animation shape).
+    await page.evaluate(() => {
+      const thread = document.getElementById('thread-messages');
+      const bubbles = thread.querySelectorAll('.chat-bubble-atlas');
+      bubbles[0].classList.add('wiggle');
+      bubbles[1].classList.toggle('pulse');
+      thread.classList.add('thread-wiggle');
+      window.__churn = setInterval(() => {
+        document.getElementById('status-dot').classList.toggle('on');
+      }, 50);
+    });
+    await page.waitForTimeout(550);
+    await page.evaluate(() => { clearInterval(window.__churn); window.__atlasBubbleFlush(); });
+    await settle(page);
+
+    expect(await readChangeSeq(page), 'no bubble’s text changed, so the logical clock did not advance')
+      .toBe(clockBefore);
+    const st = await page.evaluate(() => window.__atlasBubbleState());
+    expect(st.pending, 'the collector is quiet — the bounded settle is not starved by class churn')
+      .toBe(false);
+    expect(st.changeSeq).toBe(st.flushedSeq);
+
+    const msgsAfter = recordsToMessages(records).map((m) => ({ text: m.text, changeSeq: m.changeSeq }));
+    expect(msgsAfter, 'an unchanged bubble keeps the sequence of the change that produced its text')
+      .toEqual(msgsBefore);
+  });
+});

@@ -303,3 +303,30 @@ test('the write boundary is sampled in-page at the response instant, harvested b
   assert.match(spec, /atChangeSeq: mutationBoundary\.atChangeSeq/,
     'the persisted mutation boundary must carry its sequence');
 });
+
+test('the collector counts class-only reveals, scoped to class changes that change visible text (attribute observer)', () => {
+  const observer = fs.readFileSync(path.join(__dirname, '..', 'tests', 'e2e', 'gate', 'rehearsal-bubble-observer.js'), 'utf8');
+  // The Saved reveal is a CLASS-ONLY mutation: markReviewSaved adds 'done' to
+  // the card and .rv-saved is display:none until .review.done (styles.css).
+  // A collector observing only childList/characterData never counts it, so the
+  // claim is stamped by an unrelated later value — run
+  // fsb4b-s1-20261028T130455-6EEF09 recorded the claim and the in-page write
+  // boundary at the SAME sequence (156) and judged an earned claim 'before'.
+  assert.match(observer, /attributes: true, attributeFilter: \['class'\]/,
+    'the collector must observe class attribute changes — the reveal it exists to time is one');
+  // Scoped, not coarse: an attribute-only batch takes a visibility pass that
+  // counts the change only where a bubble’s visible text actually changed,
+  // diffed against the text the collector last read for that bubble. A class
+  // wiggle that reveals and hides nothing must not advance the clock, or the
+  // bounded settle (which requires the collector pending === false) can be
+  // starved by class churn that carries no claim evidence.
+  assert.match(observer, /const markVisibilityChanges = \(\) => \{/,
+    'attribute-only batches must take the scoped visibility pass, not markAll');
+  assert.match(observer, /lastText\.get\(b\.id\) !== b\.text/,
+    'the visibility pass must diff each bubble’s text against the collector’s last read');
+  // The content path is untouched: any batch carrying a childList or
+  // characterData record still takes markAll, so no prior corrective’s
+  // counting changes.
+  assert.match(observer, /r\.type !== 'attributes'/,
+    'the dispatcher must keep non-attribute records on the markAll path');
+});
