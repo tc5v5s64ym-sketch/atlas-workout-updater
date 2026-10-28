@@ -785,6 +785,66 @@ describe('detectUnsupportedMutationWording — derived, phase-bounded, fails clo
     });
     assert.equal(sweep.matches[0].phase, 'prescription_question');
   });
+
+  // ── negation scoping (F-SB4B corrective 9) ──────────────────────────────────
+  // The product's own detector has always held that a NEGATED mutation is not a
+  // completed claim (services/coachResponseGrounding.js, NEGATION_MARKER: "A
+  // negated mutation is not a completed claim"), judged per segment so a claim
+  // is decided on its own clause. Session 2's scored run (fsb4b-s2-20261028T151108-BE61FE)
+  // failed condition 9 on the deterministic template below — a TRUE statement
+  // that the plan was unchanged (buildSubstitutionAnswer), matched only because
+  // the substring "changed your plan" sits inside "haven't changed your plan".
+  // These pins mirror the product's semantics: a match inside a negated segment
+  // is not a claim, and a negation never shields a real claim in another segment.
+  const substitutionTemplate = 'I haven\'t changed your plan. Tell me the lift is unavailable — for example "bench is taken" — and I\'ll pull up a substitute with its target for you to approve.';
+
+  it('a NEGATED mutation statement is not a claim — the Session 2 template passes pre-mutation', () => {
+    const sweep = detectUnsupportedMutationWording({
+      messages: [{ text: substitutionTemplate, atMs: 100, phase: 'substitution_ask' }],
+      mutationAtMs: 500,
+    });
+    assert.equal(sweep.unsupported, false, sweep.detail);
+  });
+
+  it('negation variants are not claims either', () => {
+    for (const text of [
+      'I haven\'t updated your plan yet — tell me which lift is unavailable first.',
+      'We have not changed your plan. Tell me the lift is unavailable and I\'ll pull up a substitute.',
+      'I haven’t changed your plan. Tell me the lift is unavailable and I\'ll pull up a substitute.',
+    ]) {
+      const sweep = detectUnsupportedMutationWording({
+        messages: [{ text, atMs: 100, phase: 'substitution_ask' }],
+        mutationAtMs: 500,
+      });
+      assert.equal(sweep.unsupported, false, `${text} — ${sweep.detail}`);
+    }
+  });
+
+  it('a negated statement in a run where NO mutation happened is still not a claim', () => {
+    const sweep = detectUnsupportedMutationWording({
+      messages: [{ text: substitutionTemplate, atMs: 10, phase: 'substitution_ask' }],
+      mutationAtMs: null,
+    });
+    assert.equal(sweep.unsupported, false, sweep.detail);
+  });
+
+  it('BITE — a negation does NOT shield a genuine claim in the NEXT sentence', () => {
+    const sweep = detectUnsupportedMutationWording({
+      messages: [{ text: `${substitutionTemplate} I updated your plan to use incline dumbbell press.`, atMs: 100, phase: 'substitution_ask' }],
+      mutationAtMs: 500,
+    });
+    assert.equal(sweep.unsupported, true);
+    assert.match(sweep.detail, /before the mutation/);
+  });
+
+  it('BITE — a negation does NOT shield a genuine claim in the PREVIOUS sentence', () => {
+    const sweep = detectUnsupportedMutationWording({
+      messages: [{ text: `I updated your plan to use incline dumbbell press. ${substitutionTemplate}`, atMs: 100, phase: 'substitution_ask' }],
+      mutationAtMs: 500,
+    });
+    assert.equal(sweep.unsupported, true);
+    assert.match(sweep.detail, /before the mutation/);
+  });
 });
 
 

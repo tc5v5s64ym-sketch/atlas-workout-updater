@@ -366,6 +366,68 @@ const COMPLETED_MUTATION_PATTERNS = Object.freeze([
   /(?:removed|dropped) .{0,30}from your plan\b/i,
 ]);
 
+// ── negation scoping (F-SB4B corrective 9) ────────────────────────────────────
+// The table above is matched against whole messages, so a bare substring hit
+// cannot tell a claim from its negation: "(haven't) changed your plan" matched
+// /(?:updated|changed) your plan/ and Session 2's scored run
+// (fsb4b-s2-20261028T151108-BE61FE) failed condition 9 on the product's
+// deterministic, TRUE statement that the plan was unchanged — condition 9's own
+// definition covers wording "claiming completion", and a negated statement
+// claims the opposite. The product's detector settled this long ago
+// (services/coachResponseGrounding.js, NEGATION_MARKER: "A negated mutation is
+// not a completed claim"), judging per clause-ish segment so a negation in one
+// segment cannot shield a real claim in the next. That semantics is MIRRORED
+// here, not imported: the product module does not export its marker or its
+// segmenter, and its exported detector carries the product's own pattern
+// table, so importing it would change this table's reach. The patterns, the
+// boundary rules, and the verdict plumbing are unchanged — the ONLY matches
+// removed are those inside a negated segment.
+// Verbatim mirror of the product's NEGATION_MARKER (coachResponseGrounding.js).
+const NEGATION_MARKER = /\b(haven'?t|have not|hasn'?t|has not|hadn'?t|had not|didn'?t|did not|don'?t|do not|won'?t|will not|wouldn'?t|would not|never|nothing|no changes?|not (?:yet )?(?:been )?(?:updated|changed|saved|switched|adjusted|modified|edited|revised|altered|swapped|replaced))\b/;
+
+// [start, end) spans of the clause-ish segments of `text`, split on the same
+// boundaries as the product's segments(): sentence enders and newlines.
+// Spans are over the ORIGINAL text so a match can be located in its segment.
+function claimSegmentSpans(text) {
+  const spans = [];
+  const separator = /(?<=[.!?])\s+|\n+/g;
+  let start = 0;
+  let m;
+  while ((m = separator.exec(text)) !== null) {
+    spans.push([start, m.index]);
+    start = m.index + m[0].length;
+  }
+  spans.push([start, text.length]);
+  return spans;
+}
+
+// The product judges the marker on normalized text (lowercased, typographic
+// apostrophes straightened — its normalize()) — mirror that, so "haven’t"
+// negates exactly like "haven't".
+function isNegatedSegment(segmentText) {
+  const normalized = String(segmentText || '').toLowerCase().replace(/[‘’ʼ′]/g, "'");
+  return NEGATION_MARKER.test(normalized);
+}
+
+// The first table pattern with a match OUTSIDE every negated segment, else
+// null. A pattern may match several times in one message (a negated mention,
+// then a real claim in the next sentence) — every match is judged on the
+// segment that contains its start.
+function completedMutationPatternFor(text) {
+  const spans = claimSegmentSpans(text);
+  const negated = spans.map(([a, b]) => isNegatedSegment(text.slice(a, b)));
+  for (const re of COMPLETED_MUTATION_PATTERNS) {
+    const global = new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`);
+    let m;
+    while ((m = global.exec(text)) !== null) {
+      if (m[0].length === 0) { global.lastIndex += 1; continue; }
+      const segIdx = spans.findIndex(([a, b]) => m.index >= a && m.index < b);
+      if (segIdx === -1 || !negated[segIdx]) return re;
+    }
+  }
+  return null;
+}
+
 function detectUnsupportedMutationWording(input) {
   const i = input && typeof input === 'object' ? input : {};
   const messages = Array.isArray(i.messages) ? i.messages : null;
@@ -405,7 +467,7 @@ function detectUnsupportedMutationWording(input) {
   for (const m of messages) {
     const text = String((m && m.text) || '');
     if (!text) continue;
-    const pattern = COMPLETED_MUTATION_PATTERNS.find((re) => re.test(text));
+    const pattern = completedMutationPatternFor(text);
     if (!pattern) continue;
     const atMs = Number.isFinite(m && m.atMs) ? m.atMs : null;
     // Unsupported unless the claim is PROVABLY after the mutation. `uncertain` — a
