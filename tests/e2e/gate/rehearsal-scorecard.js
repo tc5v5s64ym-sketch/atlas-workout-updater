@@ -647,218 +647,135 @@ function explicitNextUpClaim(text) {
   return null;
 }
 
-// ── segment-aware reply framing (F-SB4B corrective 11) ────────────────────────
+// ── the remaining-answer beat: strict default + plain logged-list carve-out ──
+// (F-SB4B corrective 11, Option A — the redesign after three segment-aware heads)
+//
 // Session 3's scored run (fsb4b-s3-20261028T195320-ACB006) failed this beat on a
 // reply that OPENED with a truthful logged recap ("You've logged Back Squat,
 // Overhead Press, Romanian Deadlift, Seated Row, Incline DB Press, and Face
 // Pull." — every fact verified accurate; Face Pull is the scenario's declared
 // off-plan insertion) and then stated the remaining work correctly. The old
 // beat had no framing awareness: ANY mention of a completed lift counted as
-// claiming it remaining, and remaining ORDER was read off first mentions across
-// the whole text, so the recap's log order failed a reply whose remaining
-// statement (and the client's canonical state) were right. Decisive proof: the
-// product's own deterministic grounded statement (buildGroundedSessionStateStatement,
-// services/coachResponseGrounding.js) fed through the old beat against that
-// run's expectation reproduces exactly its four problems. A beat the product's
-// canonical grounded prose cannot pass measures a shape the product never
-// promised — the same machinery-defect class as corrective 9, whose fix
-// mirrored the product's own negation semantics. This fix mirrors the product's
-// own framing semantics instead:
+// claiming it remaining, and remaining ORDER was read off first mentions
+// across the whole text, so the recap's log order failed a reply whose
+// remaining statement (and the client's canonical state) were right.
 //
-//   - segmentation is the product's: sentences (grounding's `segments`), then
-//     clauses on its CLAUSE_BOUNDARY (semicolon, dash, comma + conjunction),
-//     extended with a colon (a list header's framing governs its list) and a
-//     subject-restarting "and you/we …" boundary;
-//   - REMAINING framing is the product's REMAINING_FRAMING vocabulary, plus the
-//     remaining-answer phrasings this beat exists to judge ("what's left",
-//     "still to do", "left to do", a leading "Left:", "on your list" — the
-//     sessionPlanExecutor close-answer shape);
-//   - LOGGED framing is the past-tense log-recap vocabulary of the grounded
-//     statement and the run's reply ("you've logged", "logged this session",
-//     "… is/are logged"). A bare "done" is deliberately NOT a logged marker:
-//     the close answer's "Not done yet — … still on your list" is a remaining
-//     statement, and classifying it logged would recreate the defect mirrored.
+// Three segment-aware heads (93907b08, f4459300, 25667b2d) tried to judge each
+// framed segment as what it is. Three independent reviews each found the same
+// escape in a new form: a completed lift asserted as still-to-do HIDING inside
+// a logged-framed sentence — conjoined at a clause boundary (B1), joined by a
+// bare comma or "and" with the predicate outside the added vocabulary (B1-R),
+// and finally with subject and predicate SEPARATED by a relative pronoun, an
+// em-dash, an appositive, a determiner, or mere lowercase (B1-R2) — while the
+// third head also began failing truthful DECORATED recaps ("Overhead Press
+// (60 kg)", "… for 2 sets", "… (last one was tough)"). Prose shape cannot
+// separate list membership from a new claim: a lift name plus further material
+// is neither necessary nor sufficient for "new assertion". The repair loop's
+// stop rule fired, and the coordinator decided Option A: flip the default.
 //
-// A clause carrying no framing of its own INHERITS the framing of the clause
-// before it in the same sentence — that is what keeps a list's tail ("…,
-// and Face Pull") under its header's framing — and a clause with no framing
-// anywhere before it in its sentence is UNFRAMED. A clause carrying BOTH
-// framings is judged as both (fail-closed, the old behaviour for prose that
-// will not separate its claims).
+// THE RULE (Option A). A COMPLETE lift named ANYWHERE in the reply counts
+// against the session — the pre-corrective whole-text behaviour — UNLESS the
+// mention sits inside a PLAIN, UNDECORATED LOGGED LIST. A plain logged list
+// is defined mechanically and narrowly, as a SENTENCE shape: the sentence's
+// ENTIRE content is
+//   (1) one logged-framing header — "You've logged", "You logged",
+//       "We've completed", "Logged this session:", "Logged:" — followed by
+//   (2) one or more lift names drawn from the declaration's own names
+//       (remaining / complete / retired / logged), joined ONLY by list
+//       punctuation and conjunctions: commas, semicolons, "and", "or", "&".
+// No parentheticals, no weights, no set counts, no asides, no additional
+// clauses, no still-to-do language. A sentence deviating in ANY token is not
+// a list and earns no carve-out — fail-closed toward the strict default.
+// There is no segmentation, no framing inheritance, and no per-item
+// splitting: the carve-out is all-or-nothing per sentence, so no assertion
+// can hide inside one — every escape in the three reviews is a sentence
+// whose content is not exactly header + names, and is judged whole.
 //
-// B1 repair (Systems Review of 93907b08, comment 6480019118): inheritance as
-// first built let a NEW ASSERTION ride under a logged header — "You've logged
-// Back Squat, and you still need to finish Overhead Press" split at the
-// subject restart, the new clause inherited LOGGED, and the complete-as-
-// remaining assertion fell between the two judgements (the logged-claim check
-// could not catch it: Overhead Press genuinely has logged sets). The same
-// escape existed at every clause boundary (semicolon, dash, comma +
-// conjunction, bare but/while) whenever the following clause asserted
-// something instead of continuing the list. Inheritance is therefore now
-// restricted to what it exists for — a PURE ENUMERATION TAIL (a list fragment
-// naming lifts and asserting nothing, see isListTail):
-//   - a subject-restarting clause ("… and you/we …") never inherits: with no
-//     framing of its own it falls back to UNFRAMED, the old fail-closed
-//     behaviour, whatever the clause before it carried;
-//   - at every other boundary, a clause that asserts anything (a predicate,
-//     a pronoun subject, prose of any kind) likewise falls back to UNFRAMED
-//     instead of inheriting, so a later pure tail cannot resurrect the
-//     earlier framing across it either;
-//   - a pure enumeration tail still inherits at every boundary kind — colon
-//     list, semicolon list, comma + "and" tail alike — because a list tail
-//     continues an enumeration; it does not begin a new assertion.
-// The need/must/not-done family also joins REMAINING_FRAMING below: the two
-// comma-joined B1 shapes ("Overhead Press still needs finishing", "Overhead
-// Press is not done yet") form no clause boundary at all, so the clause that
-// carries them carries the logged header too and must be judged as BOTH.
-// These are ordinary athlete-facing coach phrasings for outstanding work
-// ("you still need to finish…", "it isn't done yet"), not probe strings.
-//
-// B1-R repair (Systems Review of f4459300, comment 6480713282): the same
-// escape survived in the no-boundary form whenever the predicate sat outside
-// the vocabulary above — "You've logged Back Squat, Overhead Press hasn't
-// been done yet", "… is unfinished", "… was skipped", "… and Overhead Press
-// awaits" all returned ok. Two vocabulary rounds have leaked, so this repair
-// adds NO vocabulary. It is structural: inside a LOGGED-framed clause, the
-// enumeration items after the header are examined one by one with the same
-// signal the B1 repair already uses — a PURE enumeration item is nothing but
-// capitalised lift-name words (isListTail, per item). An item that instead
-// OPENS with lift-name words and then carries further material is not a list
-// item at all: the lift name is the SUBJECT of a new assertion and the
-// further material is its predicate, whatever words that predicate happens
-// to use. The clause is split at that item (see subjectPredicateSplitIndex):
-// the enumeration before it keeps the logged framing, and the portion from
-// that item on is judged as BOTH framings — the fail-closed primitive this
-// design already applies to a clause carrying both framings — so a complete
-// or retired lift asserted there is judged as remaining, and a never-logged
-// lift named there is still judged as a logged claim. A pure enumeration in
-// every list form (comma, "and", comma + "and") contains no such item and
-// is untouched.
-const LOGGED_FRAMING = /\b(?:(?:you|we)(?:'ve| have)?\s+(?:just\s+|already\s+|also\s+)?(?:logged|completed|finished|recorded|done)|(?:logged|completed|recorded) this session|(?:is|are|was|were|been)\s+(?:logged|completed|recorded)|^logged\b)/i;
-const REMAINING_FRAMING = /\b(?:remaining|remains|still (?:to|has|have|left|on|shows?)|still to do|still needs?|needs? to (?:finish|complete|do)|needs (?:finishing|completing)|must (?:finish|complete|do)|have to (?:finish|complete|do)|not (?:done|finished|complete)(?: yet)?|left to|left\b|to come|coming up|next up|planned|prescribed|scheduled|on the plan|on your list|outstanding|upcoming|yet to|what'?s left|calls for|call for|target(?:ing|s)?|aim(?:ing)? for|we'?ll|you'?ll|should (?:do|hit|aim)|going to)\b/i;
-const REPLY_CLAUSE_BOUNDARY = /\s*(?:;|:|\s+[—–]\s+|,\s*(?:so|but|and|then|although|though|while|yet)\b|\s+and\s+(?=(?:you|we)\b)|\s+(?:but|while)\s+)\s*/;
-const REPLY_CLAUSE_SPLIT = new RegExp(`(${REPLY_CLAUSE_BOUNDARY.source})`);
+// The carved-out lists are still judged — as LOGGED claims: a lift named in
+// one that the declaration records no logged sets for is a false logged
+// claim. The remaining checks (presence, order, the complete and retired
+// bans, explicit next-up claims) run over the text OUTSIDE the carved lists,
+// so a remaining lift named only inside a recap still does not count as
+// stated remaining. A decorated recap naming a completed lift ("Overhead
+// Press (60 kg)") FAILS under this rule — intended, chosen behaviour: the
+// definition was not widened to rescue it, because every widening round is
+// what reopened the escape.
+const LOGGED_LIST_HEADERS = Object.freeze([
+  /^(?:you|we)(?:'ve| have)\s+(?:just\s+|already\s+|also\s+)?(?:logged|completed|recorded|finished)(?:\s*:\s*|\s+)/i,
+  /^(?:you|we)\s+(?:just\s+|already\s+|also\s+)?(?:logged|completed|recorded|finished)(?:\s*:\s*|\s+)/i,
+  /^logged\s+this\s+session(?:\s*:\s*|\s+)/i,
+  /^logged\s*:\s*/i,
+]);
 
-// Words that make a clause an ASSERTION rather than a list fragment: finite
-// verbs, auxiliaries and modals, pronouns and function words, and the
-// predicate vocabulary of remaining/logged claims. A lift name contains none
-// of them.
-const CLAUSE_ASSERTION_WORD = /\b(?:is|are|was|were|be|been|being|am|has|have|had|do|does|did|done|need|needs|needed|must|should|shall|will|would|can|could|may|might|still|not|never|finish|finishes|finished|finishing|complete|completes|completed|completing|remain|remains|remaining|left|come|comes|coming|next|got|get|gets|skipped|missed|forgotten|counts|count|knock|say|says|tell|tells|keep|keeps|take|takes|hit|aim|aims|call|calls|log|logs|logged|perform|performs|performed|unfinished|incomplete|outstanding|pending|undone|yet|the|a|an|your|you|we|it|they|he|she|this|that|those|these|there|here|now|then|so|but|while|although|though|for|with|without|until|because|when|what|who|all|any|more|work|sets?|reps?)\b/i;
-
-// A PURE ENUMERATION TAIL: one or more comma-separated lift names and nothing
-// else — every part is one to four capitalised name words, with no assertion
-// word anywhere. "Face Pull" and "Back Squat, Overhead Press, Romanian
-// Deadlift" qualify; "Overhead Press still needs finishing" and "Overhead
-// Press got skipped" do not, however the boundary before them was written.
-function isListTail(clause) {
-  const clean = String(clause || '').replace(/["“”]/g, '').replace(/[.!?,;:]+\s*$/, '').trim();
-  if (!clean || CLAUSE_ASSERTION_WORD.test(clean)) return false;
-  const parts = clean.split(',').map((p) => p.trim().replace(/^(?:and|or)\s+/i, '')).filter(Boolean);
-  if (!parts.length) return false;
-  return parts.every((part) => {
-    const words = part.split(/\s+/);
-    return words.length >= 1 && words.length <= 4
-      && words.every((w) => /^[A-Z][A-Za-z'’.-]*$/.test(w));
-  });
+// The declaration's own lift names, longest first so a longer name is tried
+// before any shorter name it contains. Entries: { name, key } — `name` keeps
+// the declaration's spelling for failure messages.
+function knownLiftNames(expectation) {
+  const exp = expectation && typeof expectation === 'object' ? expectation : {};
+  const key = (v) => String(v == null ? '' : v).trim().toLowerCase().replace(/[-\s]+/g, ' ');
+  const out = [];
+  const seen = new Set();
+  for (const list of [exp.remaining, exp.complete, exp.retired, exp.logged]) {
+    for (const name of (Array.isArray(list) ? list : [])) {
+      const k = key(name);
+      if (name && k && !seen.has(k)) { seen.add(k); out.push({ name, key: k }); }
+    }
+  }
+  return out.sort((a, b) => b.name.length - a.name.length);
 }
 
-// B1-R: the index at which a LOGGED-framed clause stops being an enumeration
-// and restarts as an assertion, or -1 when it never does. The clause is
-// walked item by item over its enumeration separators (comma, " and "). The
-// first item carries the logged header itself ("You've logged Back Squat"),
-// so it is never a restart. Each later item is either a pure enumeration
-// item — one to four capitalised name words and nothing else, the per-item
-// form of isListTail — or it opens with such name words and then carries
-// further material: that material is a predicate and the name is its
-// subject, so the restart begins at the separator before that item. An item
-// that opens with no name words (prose, a pronoun, an adverb) names no lift
-// as a subject and is not a restart. No predicate WORD is ever consulted:
-// "hasn't been done yet", "is unfinished", "was skipped", "awaits" and any
-// predicate nobody has listed yet are all the same shape — a name followed
-// by something that is not a name.
-function subjectPredicateSplitIndex(clause) {
-  const text = String(clause || '');
-  const separators = [];
-  const sepRe = /,|\s+and\s+/gi;
-  let m;
-  while ((m = sepRe.exec(text)) !== null) {
-    separators.push({ start: m.index, end: m.index + m[0].length });
-  }
-  for (let i = 0; i < separators.length; i += 1) {
-    const chunkEnd = i + 1 < separators.length ? separators[i + 1].start : text.length;
-    const item = text.slice(separators[i].end, chunkEnd).trim()
-      .replace(/^(?:and|or)\s+/i, '').replace(/[.!?,;:]+\s*$/, '').trim();
-    if (!item || isListTail(item)) continue;
-    const words = item.split(/\s+/);
-    let nameWords = 0;
-    while (nameWords < words.length && nameWords < 4
-      && /^[A-Z][A-Za-z'’.-]*$/.test(words[nameWords])) nameWords += 1;
-    if (nameWords >= 1 && words.length > nameWords) return separators[i].start;
-  }
-  return -1;
+// True when `part` is exactly the lift `name` — the full phrase with flexible
+// separators and nothing before or after (the anchored form of the mention
+// match used everywhere else in this module: "Bench" is not "Bench Press").
+function isExactLiftName(part, name) {
+  const words = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return false;
+  const pattern = words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[\\s-]+');
+  return new RegExp(`^${pattern}$`, 'i').test(part);
 }
 
-// Split a reply into framed segments: [{ text, logged, remaining }]. Unframed
-// segments carry neither flag and are judged as remaining-relevant by the
-// caller (the old behaviour for a pure remaining-work answer).
-function framedReplySegments(replyText) {
+// Match ONE sentence against the plain logged-list shape above. Returns the
+// list's lift entries in order, or null when the sentence is anything else —
+// any token that is not the header, a known lift name, or list punctuation /
+// conjunction disqualifies the whole sentence.
+function plainLoggedList(sentence, known) {
+  const s = String(sentence || '').trim();
+  let rest = null;
+  for (const re of LOGGED_LIST_HEADERS) {
+    const m = re.exec(s);
+    if (m) { rest = s.slice(m[0].length); break; }
+  }
+  if (rest === null) return null;
+  const body = rest.replace(/[.!?]+\s*$/, '').trim();
+  if (!body) return null;
+  const items = body.split(/\s*(?:,|;)\s*/)
+    .flatMap((p) => p.split(/\s+(?:and|or)\s+/i))
+    .map((p) => p.trim().replace(/^(?:and|or)\s+/i, '').replace(/^["“”'']+|["“”'']+$/g, '').trim())
+    .filter(Boolean);
+  if (!items.length) return null;
+  const names = [];
+  for (const item of items) {
+    const hit = known.find((entry) => isExactLiftName(item, entry.name));
+    if (!hit) return null;
+    names.push(hit);
+  }
+  return names;
+}
+
+// Split the reply into sentences and carve out its plain logged lists.
+// Returns { judgedText, loggedNames }: the text every remaining-work check
+// runs over, and the lift entries the carved lists claimed as logged.
+function carvePlainLoggedLists(replyText, known) {
   const sentences = String(replyText == null ? '' : replyText)
     .split(/(?<=[.!?])\s+|\n+/).map((s) => s.trim()).filter(Boolean);
-  const out = [];
+  const judged = [];
+  const loggedNames = [];
   for (const sentence of sentences) {
-    // Split WITH the separators kept, so each clause knows which boundary
-    // precedes it (parts alternate clause, separator, clause, …).
-    const parts = sentence.split(REPLY_CLAUSE_SPLIT);
-    const clauses = [];
-    for (let i = 0; i < parts.length; i += 2) {
-      const text = String(parts[i] || '').trim();
-      if (text) clauses.push({ text, boundaryBefore: i === 0 ? null : String(parts[i - 1] || '') });
-    }
-    let inherited = null;
-    for (const { text: clause, boundaryBefore } of clauses) {
-      const own = { logged: LOGGED_FRAMING.test(clause), remaining: REMAINING_FRAMING.test(clause) };
-      let framing;
-      if (own.logged || own.remaining) { framing = own; inherited = own; }
-      else if (boundaryBefore !== null && /^(?:you|we)\b/i.test(clause)) {
-        // Subject restart: a new assertion by a new subject. It never
-        // inherits the previous clause's framing — in particular not LOGGED —
-        // and the framing available to any later tail resets with it.
-        framing = { logged: false, remaining: false };
-        inherited = framing;
-      } else if (inherited && isListTail(clause)) {
-        // Pure enumeration tail: the list continues under its header.
-        framing = inherited;
-      } else {
-        // Any other unframed clause asserts something of its own (or opens
-        // the sentence): judged unframed, and it ends the previous framing's
-        // reach so a later list tail cannot resurrect it across the clause.
-        framing = { logged: false, remaining: false };
-        if (boundaryBefore !== null) inherited = framing;
-      }
-      if (framing.logged && !framing.remaining) {
-        // B1-R: a LOGGED-only clause can still restart mid-clause, with no
-        // clause boundary at all — a lift name in list position carrying its
-        // own predicate ("…, Overhead Press hasn't been done yet"). Split
-        // there: the enumeration before the restart stays logged-only, the
-        // assertion from the restart on is judged as BOTH framings, and the
-        // framing a later tail in this sentence can inherit is that
-        // fail-closed both.
-        const splitAt = subjectPredicateSplitIndex(clause);
-        if (splitAt > 0) {
-          const head = clause.slice(0, splitAt).trim();
-          const tail = clause.slice(splitAt).replace(/^\s*,\s*/, '').replace(/^\s+and\s+/i, '').trim();
-          if (head && tail) {
-            out.push({ text: head, logged: true, remaining: false });
-            out.push({ text: tail, logged: true, remaining: true });
-            inherited = { logged: true, remaining: true };
-            continue;
-          }
-        }
-      }
-      out.push({ text: clause, logged: framing.logged, remaining: framing.remaining });
-    }
+    const list = plainLoggedList(sentence, known);
+    if (list) loggedNames.push(...list);
+    else judged.push(sentence);
   }
-  return out;
+  return { judgedText: judged.join(' '), loggedNames };
 }
 
 // Does the visible reply agree with the declaration — in CONTENT and in ORDER, and on
@@ -869,57 +786,52 @@ function framedReplySegments(replyText) {
 // SEQUENCE. A reply naming every correct lift in the wrong order, or explicitly naming
 // the wrong lift as next while mentioning the real next-up elsewhere, passed.
 //
-// Corrective 11: each framed segment is judged as what it is. The checks below
-// run over the reply's REMAINING-RELEVANT text — its remaining-framed and
-// unframed segments — so a logged recap can neither satisfy a remaining claim
-// nor pollute its order; and its LOGGED-framed segments are judged as logged
-// claims against the expectation's `logged` knowledge.
+// Corrective 11 (Option A): the checks run over the reply MINUS its plain
+// logged lists (see the carve-out above) — a truthful plain recap can neither
+// satisfy a remaining claim nor pollute its order — and the carved lists are
+// judged as logged claims against the expectation's `logged` knowledge.
 function replyMatchesExpectation(replyText, expectation) {
   const problems = [];
   const text = String(replyText == null ? '' : replyText);
   const exp = expectation && typeof expectation === 'object' ? expectation : {};
   const remaining = Array.isArray(exp.remaining) ? exp.remaining : [];
 
-  const segments = framedReplySegments(text);
-  const remainingText = segments.filter((s) => s.remaining || !s.logged).map((s) => s.text).join(' ');
-  const loggedText = segments.filter((s) => s.logged).map((s) => s.text).join(' ');
+  const { judgedText, loggedNames } = carvePlainLoggedLists(text, knownLiftNames(exp));
 
   const positions = [];
   for (const name of remaining) {
-    const at = liftMentionIndex(remainingText, name);
+    const at = liftMentionIndex(judgedText, name);
     if (at < 0) problems.push(`the reply does not name remaining lift "${name}"`);
     else positions.push({ name, at });
   }
   for (const name of (Array.isArray(exp.complete) ? exp.complete : [])) {
-    if (liftMentionIndex(remainingText, name) >= 0) problems.push(`the reply names "${name}", which the declaration says is already complete`);
+    if (liftMentionIndex(judgedText, name) >= 0) problems.push(`the reply names "${name}", which the declaration says is already complete`);
   }
   for (const name of (Array.isArray(exp.retired) ? exp.retired : [])) {
-    if (liftMentionIndex(remainingText, name) >= 0) problems.push(`the reply names "${name}", which an accepted substitution removed from the plan`);
+    if (liftMentionIndex(judgedText, name) >= 0) problems.push(`the reply names "${name}", which an accepted substitution removed from the plan`);
   }
 
-  // LOGGED claims: a lift named in a logged-framed segment must be one the
-  // declaration records logged sets for. An expectation built by hand without
-  // `logged` falls back to its complete lifts — the only lifts such an
-  // expectation can prove were logged. A retired lift named here is caught as
-  // the false logged claim it is (it was never logged); the retired rule above
-  // still governs a retired lift named as remaining, and nothing else changes.
-  if (loggedText) {
+  // LOGGED claims: a lift named in a carved-out plain logged list must be one
+  // the declaration records logged sets for. An expectation built by hand
+  // without `logged` falls back to its complete lifts — the only lifts such
+  // an expectation can prove were logged. A retired lift named here is caught
+  // as the false logged claim it is (it was never logged); the retired rule
+  // above still governs a retired lift named anywhere else.
+  if (loggedNames.length) {
     const key = (v) => String(v == null ? '' : v).trim().toLowerCase().replace(/[-\s]+/g, ' ');
     const loggedKeys = new Set((Array.isArray(exp.logged) ? exp.logged : (Array.isArray(exp.complete) ? exp.complete : [])).map(key));
-    const candidates = [...remaining, ...(Array.isArray(exp.complete) ? exp.complete : []), ...(Array.isArray(exp.retired) ? exp.retired : [])];
     const seen = new Set();
-    for (const name of candidates) {
-      const k = key(name);
-      if (seen.has(k)) continue;
-      seen.add(k);
-      if (!loggedKeys.has(k) && liftMentionIndex(loggedText, name) >= 0) {
-        problems.push(`the reply names "${name}" as logged, but the declaration records no logged sets for it`);
+    for (const entry of loggedNames) {
+      if (seen.has(entry.key)) continue;
+      seen.add(entry.key);
+      if (!loggedKeys.has(entry.key)) {
+        problems.push(`the reply names "${entry.name}" as logged, but the declaration records no logged sets for it`);
       }
     }
   }
 
-  // ORDER: the remaining lifts must appear in the declared sequence — judged by
-  // first mentions WITHIN the remaining-relevant text, never across a recap.
+  // ORDER: the remaining lifts must appear in the declared sequence — judged
+  // by first mentions WITHIN the judged text, never across a carved recap.
   if (positions.length === remaining.length && remaining.length > 1) {
     const spoken = positions.slice().sort((a, b) => a.at - b.at).map((p) => p.name);
     if (spoken.join('|') !== remaining.join('|')) {
@@ -927,9 +839,9 @@ function replyMatchesExpectation(replyText, expectation) {
     }
   }
 
-  // EXPLICIT next-up: judged only when the reply actually makes the claim, and
-  // only over the remaining-relevant text a next-up claim can live in.
-  const claimed = explicitNextUpClaim(remainingText);
+  // EXPLICIT next-up: judged only when the reply actually makes the claim,
+  // and only over the judged text a next-up claim can live in.
+  const claimed = explicitNextUpClaim(judgedText);
   if (claimed !== null) {
     // Fall back to the head of the remaining list when the caller supplied no explicit
     // nextUp — an expectation with remaining work always has one.
