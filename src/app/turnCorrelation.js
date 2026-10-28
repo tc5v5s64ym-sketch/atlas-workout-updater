@@ -101,6 +101,7 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
     if (!validSessionId(sessionId) || !validTurnId(turnId)) return false;
     const current = sessions.get(sessionId);
     if (current && current.turnId === turnId) {
+      current.coachResponsePresented = true;
       touch(sessionId, current);
       return true;
     }
@@ -108,10 +109,14 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
       current.active.pairingToken = null;
       current.active.superseded = true;
     }
+    if (current) current.coachResponsePresented = true;
     touch(sessionId, {
       turnId,
       active: null,
       retired: current && Array.isArray(current.retired) ? current.retired : [],
+      // A capture exists only because a coach response was presented in this
+      // session — the same evidence the resolution gate in beginPreview reads.
+      coachResponsePresented: true,
     });
     return true;
   }
@@ -163,7 +168,50 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
 
   function completeTurnResponse(ticket, responseHeaders) {
     if (!ticket || ticket.completed === true || !validSessionId(ticket.sessionId)) return false;
-    if (authoritativeTurnResponse !== ticket || turnResponses.get(ticket.sessionId) !== ticket) return false;
+    if (authoritativeTurnResponse !== ticket || turnResponses.get(ticket.sessionId) !== ticket) {
+      // CORRELATION FILL. Authority decides whose response may ACT — render prose,
+      // apply structured effects — and a revoked ticket never regains it: this
+      // branch settles nothing and accepts nothing. But the response was still
+      // PRESENTED (the athlete saw real coaching), and the turn id it carries is
+      // a server-issued fact about this session. When the session holds no
+      // claimable turn at all — none captured, none being previewed — dropping
+      // that fact made the write-proof join depend on submission cadence: a coach
+      // response slower than the next set-logged submission was revoked before
+      // it could land its capture, and a successful closeout write emitted no
+      // proof. Fill only the empty case: an existing capture, an active preview,
+      // and a capture a presented turnless response deliberately retired are all
+      // left exactly as they are, so a late response can never move a session's
+      // claim backward or resurrect a superseded turn.
+      if (responseHeaders !== null && responseHeaders !== undefined) {
+        // PRESENTED-RESPONSE EVIDENCE. A revoked completion that still carried
+        // response headers is proof a coach response was actually PRESENTED in
+        // this session (the athlete saw coaching), even though this ticket may
+        // no longer act on it. Record that fact on the session: it is the gate
+        // beginPreview's session resolution reads, and it is the ONLY way that
+        // gate opens. Completions with no headers presented nothing — a failed
+        // coach call (whose ticket is completed with null by the caller's
+        // finally), a watchdog cancel, a stalled lane that never dispatched —
+        // record nothing, so such a session can never resolve a turn it never
+        // saw. The evidence never overrides a deliberate retirement: the
+        // resolutionBlocked check in beginPreview still vetoes resolution.
+        let state = sessions.get(ticket.sessionId);
+        if (!state) {
+          state = { turnId: null, active: null, retired: [], coachResponsePresented: true };
+          touch(ticket.sessionId, state);
+        } else if (state.coachResponsePresented !== true) {
+          state.coachResponsePresented = true;
+          touch(ticket.sessionId, state);
+        }
+        const turnId = headerValue(responseHeaders, TURN_ID_HEADER);
+        if (validTurnId(turnId)) {
+          if (!state.turnId && !state.active && !state.resolutionBlocked) {
+            state.turnId = turnId;
+            touch(ticket.sessionId, state);
+          }
+        }
+      }
+      return false;
+    }
     ticket.completed = true;
     ticket.accepted = captureTurnResponse({ sessionId: ticket.sessionId, responseHeaders });
     // RETENTION. An unaccepted completion retires session state only when it actually
@@ -191,6 +239,15 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
         }
         current.turnId = null;
         current.active = null;
+        // This response WAS presented, so the session's presented-response
+        // evidence stands — but the resolution block below vetoes resolution
+        // anyway: the evidence never overrides a deliberate retirement.
+        current.coachResponsePresented = true;
+        // A presented response that established no turn is the conversation
+        // moving on: it retires not only the captured turn but also any later
+        // attempt to resolve one server-side for this session (see beginPreview),
+        // so closeout can never reach back past it to an older turn.
+        current.resolutionBlocked = true;
         touch(ticket.sessionId, current);
       }
     }
@@ -241,14 +298,13 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
     // sessions, because all structured response effects target the same app surface.
     revokeTurnResponseAuthority();
     const state = stateFor(sessionId);
-    if (!state || !validTurnId(state.turnId)) return null;
     const permitsSessionResolution = provisionalSessionId !== undefined;
     if (permitsSessionResolution
         && (!validSessionId(provisionalSessionId) || provisionalSessionId !== sessionId)) {
       return null;
     }
 
-    if (state.active) {
+    if (state && state.active) {
       state.active.pairingToken = null;
       state.active.superseded = true;
       addRetired(state, state.active.initiation_nonce);
@@ -256,11 +312,63 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
 
     const initiation_nonce = `init:${String(randomUUID())}`;
     if (!INITIATION_NONCE_RE.test(initiation_nonce)) return null;
+    const retired = state && Array.isArray(state.retired) ? state.retired : [];
+
+    // A captured turn is claimed directly — the original round-trip, unchanged.
+    if (state && validTurnId(state.turnId)) {
+      const correlation = {
+        turn_id: state.turnId,
+        initiation_nonce,
+        ...(retired.length
+          ? { retire_initiation_nonces: [...retired] }
+          : {}),
+        ...(permitsSessionResolution
+          ? { provisional_session_id: provisionalSessionId }
+          : {}),
+      };
+      const preview = {
+        sessionId,
+        turnId: state.turnId,
+        initiation_nonce,
+        correlation,
+        pairingToken: null,
+        superseded: false,
+        permitsSessionResolution,
+      };
+      state.active = preview;
+      touch(sessionId, state);
+      return preview;
+    }
+
+    // SESSION RESOLUTION. The session holds no captured turn — none ever landed
+    // (the deterministic set-logging cadence revoked every lane that could have
+    // committed one) — so there is nothing to claim. Rather than stage no
+    // correlation at all, the preview asks the server to resolve the claim
+    // against the latest turn the SERVER registered for this exact session; the
+    // server remains the only authority on whether such a turn exists and is
+    // fresh, and it echoes the resolved id on the preview response for
+    // completePreview to adopt. A session whose capture was DELIBERATELY retired
+    // (a presented turnless response, or a session identity this conversation
+    // migrated away from) is blocked: reaching back past that retirement to an
+    // older turn is exactly what the retirement exists to prevent.
+    if (state && state.resolutionBlocked) return null;
+    // PRESENTED-RESPONSE GATE. Resolution is not a blanket fallback for a
+    // capture-less session: it may fire only when a coach response was actually
+    // PRESENTED in this session (recorded by completeTurnResponse / captureTurn
+    // as coachResponsePresented). A session where set coaching FAILED (the
+    // coach call rejected; the ticket completed with no response) or where no
+    // coach interaction ever happened (a stalled pre-message recommendation;
+    // deterministic logging only) presented nothing, so its closeout preview
+    // and write carry NO correlation of any kind — the pending-clarification
+    // contract pins exactly that, and a blanket claim could attribute a write
+    // to a turn whose coaching failed, which the claimed path can never do.
+    if (!state || state.coachResponsePresented !== true) return null;
+    const resolutionState = state;
     const correlation = {
-      turn_id: state.turnId,
       initiation_nonce,
-      ...(state.retired.length
-        ? { retire_initiation_nonces: [...state.retired] }
+      resolve_latest_turn: true,
+      ...(retired.length
+        ? { retire_initiation_nonces: [...retired] }
         : {}),
       ...(permitsSessionResolution
         ? { provisional_session_id: provisionalSessionId }
@@ -268,15 +376,16 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
     };
     const preview = {
       sessionId,
-      turnId: state.turnId,
+      turnId: null,
+      resolvesLatestTurn: true,
       initiation_nonce,
       correlation,
       pairingToken: null,
       superseded: false,
       permitsSessionResolution,
     };
-    state.active = preview;
-    touch(sessionId, state);
+    resolutionState.active = preview;
+    touch(sessionId, resolutionState);
     return preview;
   }
 
@@ -286,8 +395,30 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
     if (!state || state.active !== preview || state.turnId !== preview.turnId) return false;
     const responseTurnId = headerValue(responseHeaders, TURN_ID_HEADER);
     const pairingToken = headerValue(responseHeaders, PAIRING_TOKEN_HEADER);
-    if (responseTurnId !== preview.turnId || !validTurnId(responseTurnId)
-        || !validPairingToken(pairingToken)) {
+    if (!validPairingToken(pairingToken)) {
+      preview.pairingToken = null;
+      return false;
+    }
+    if (preview.resolvesLatestTurn === true && preview.turnId === null) {
+      // SESSION RESOLUTION adoption. The preview claimed no turn, so the
+      // response's echoed id is not compared against one — it is ADOPTED, after
+      // the same shape gate a claimed id passes. The id came from this server's
+      // registry for this session (it minted the pairing against it), and the
+      // token beside it is what binds the approval; a response with no turn to
+      // adopt, or a junk one, completes nothing. The adopted turn becomes the
+      // session's captured turn, so the approval claim below — and any later
+      // preview — treats it exactly like a turn captured from a coach response.
+      if (!validTurnId(responseTurnId)) {
+        preview.pairingToken = null;
+        return false;
+      }
+      preview.turnId = responseTurnId;
+      state.turnId = responseTurnId;
+      state.coachResponsePresented = true;
+      preview.pairingToken = pairingToken;
+      return true;
+    }
+    if (responseTurnId !== preview.turnId || !validTurnId(responseTurnId)) {
       preview.pairingToken = null;
       return false;
     }
@@ -306,6 +437,10 @@ export function createTurnCorrelation({ randomUUID = defaultRandomUUID } = {}) {
     // from the preview's explicit provisional identity to an otherwise-unclaimed server result.
     if (sessions.has(resolvedSessionId)) return false;
     sessions.delete(oldSessionId);
+    // The vacated identity keeps a tombstone: this conversation deliberately moved
+    // to the resolved identity, so the old one retains no capability — it cannot
+    // claim (its turn moved with the state) and it must not resolve one either.
+    touch(oldSessionId, { turnId: null, active: null, retired: [], resolutionBlocked: true });
     preview.sessionId = resolvedSessionId;
     touch(resolvedSessionId, state);
     return true;
