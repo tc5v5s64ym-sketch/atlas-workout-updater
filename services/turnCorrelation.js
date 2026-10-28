@@ -569,6 +569,33 @@ function _evictExpired(nowMs) {
   }
 }
 
+// The latest turn this server registered for a session — the lookup behind
+// preview-time SESSION RESOLUTION. Candidate identities are the write's own session
+// and, only under the explicit preview-session-resolution gate, the provisional
+// session the client says the conversation ran under — the same gated trust the
+// adoption branch in resolveCorrelation extends to a named claim. Latest issuance
+// wins; a tie keeps the most recently registered record. Freshness is NOT decided
+// here: the caller runs the resolved record through the ordinary freshness gate,
+// so a stale latest turn fails closed as `stale` rather than reaching back to an
+// older one. Returns { turnId, rec } or null when the server holds no turn for the
+// session — resolution can surface only a turn this server issued, for this
+// session, and nothing else.
+function _latestTurnForSession(opts, claim) {
+  const candidates = [];
+  if (_isNonEmptyString(opts.sessionId)) candidates.push(String(opts.sessionId));
+  if (opts.allowPreviewSessionResolution === true
+      && _isNonEmptyString(claim.provisional_session_id)) {
+    candidates.push(String(claim.provisional_session_id));
+  }
+  if (!candidates.length) return null;
+  let best = null;
+  for (const [id, rec] of registry) {
+    if (!candidates.some(sid => _sessionValueMatches(rec.sessionId, sid))) continue;
+    if (!best || rec.atMs >= best.rec.atMs) best = { turnId: id, rec };
+  }
+  return best;
+}
+
 function _enforceCap() {
   if (registry.size <= MAX_ENTRIES) return;
   const oldestFirst = [...registry.entries()].sort((a, b) => a[1].atMs - b[1].atMs);
@@ -606,10 +633,11 @@ function issueTurn(turnId, sessionId, opts = {}) {
  *   resolveCorrelation(payload, { sessionId, nowMs })
  *     → { ok, turn_id, reason }
  *
- * `payload` is the raw request body. Only `payload.correlation.turn_id` and
- * `payload.correlation.pairing_token` are ever read — every other key on the correlation object
- * is ignored outright, never stored and never echoed, so the envelope can grow (D10) without
- * this becoming a pass-through for client data.
+ * `payload` is the raw request body. Only `payload.correlation.turn_id`,
+ * `payload.correlation.pairing_token`, the initiation-protocol fields, the provisional
+ * session field, and the exact `resolve_latest_turn` marker are ever read — every other key
+ * on the correlation object is ignored outright, never stored and never echoed, so the
+ * envelope can grow (D10) without this becoming a pass-through for client data.
  *
  * `opts.isPreview` must be passed EXPLICITLY by a dry-run call site. It is never inferred from
  * a missing write_id: a live route that forgot to pass one would then silently mint a pairing
@@ -627,11 +655,32 @@ function resolveCorrelation(payload, opts = {}) {
 
     // Shape gate FIRST: a malformed claim is rejected without touching the registry.
     if (!_isPlainObject(claim)) return miss(REASONS.MALFORMED);
-    if (!isWellFormedTurnId(claim.turn_id)) return miss(REASONS.MALFORMED);
-    const turnId = String(claim.turn_id).trim();
 
-    const rec = registry.get(turnId);
-    if (!rec) return miss(REASONS.UNKNOWN);
+    // SESSION RESOLUTION (preview only). A claim that names NO turn but carries the
+    // exact resolution marker asks the server to name the turn itself: the latest
+    // turn this server registered for the claim's session. That repairs the
+    // capture-creation gap without moving the trust boundary — the client's
+    // capture was always a convenience copy of a server fact, and where the
+    // deterministic set-logging cadence prevented any capture from landing, the
+    // registry is the remaining authority. The resolved record then passes through
+    // EVERY gate below unchanged (retirement, session binding incl. row-level
+    // sessions, freshness, payload binding), so a resolved pairing is exactly as
+    // strong as a claimed one. A claim that names a turn is always judged as a
+    // claim; the marker beside a name is ignored.
+    let turnId = null;
+    let rec = null;
+    if (claim.turn_id === undefined && claim.resolve_latest_turn === true) {
+      if (opts.isPreview !== true) return miss(REASONS.MALFORMED);
+      const resolved = _latestTurnForSession(opts, claim);
+      if (!resolved) return miss(REASONS.UNKNOWN);
+      turnId = resolved.turnId;
+      rec = resolved.rec;
+    } else {
+      if (!isWellFormedTurnId(claim.turn_id)) return miss(REASONS.MALFORMED);
+      turnId = String(claim.turn_id).trim();
+      rec = registry.get(turnId);
+      if (!rec) return miss(REASONS.UNKNOWN);
+    }
 
     // Retirement is initiation authority, independent of whichever resolved session a newer
     // preview adopted. Report the bounded tombstone before the old session can mismatch.
