@@ -1533,3 +1533,90 @@ describe('reconcileSweep — a later look cannot rewrite when a claim became vis
     assert.deepEqual(recordsToMessages(records), []);
   });
 });
+
+// F-SB4B corrective 7 — the UPDATE path discards the sweep's sequence evidence.
+//
+// Corrective 6 gave a sweep-CREATED record the collector clock the sweep read
+// (`sweptAtChangeSeq`), so the observer's own first report can redeem it by sequence
+// proof. The UPDATE path — a quiet sweep downgrading an EXISTING live record whose
+// text it found changed — never stored that clock, though `reconcileSweep` receives
+// it on both paths. The record a downgrade leaves is therefore unredeemable BY
+// CONSTRUCTION: when the live report for the very change the sweep saw arrives with
+// the same text, the redemption branch tests `prior.sweptAtChangeSeq`, finds none,
+// and refuses — and the text-difference branch cannot fire, because the sweep
+// already wrote that text. Qualifying Session 1 (fsb4b-s1-20261028T051612-EFEB58,
+// 24/25) failed condition 9 on exactly one retroactive record out of 17, with zero
+// claim matches and every durable check exact; its evidence persisted no per-record
+// diagnostics, so the record could not be named after the fact.
+//
+// THE RULE is corrective 6's, unchanged: a downgraded record may be redeemed ONLY by
+// a live report whose changeSeq proves the change already existed when the sweep
+// inspected it. A later, missing, or invalid sequence still cannot redeem, and a
+// record whose report never arrives still fails closed.
+describe('reconcileSweep UPDATE path — a downgrade keeps the sweep\'s sequence evidence (corrective 7)', () => {
+  const downgrade = (records, opts = {}) => {
+    ingestLiveObservation(records, { id: '1', text: 'Thinking…', changeSeq: 1 }, { phase: 'closeout', nowMs: 100 });
+    reconcileSweep(records, [{ id: '1', text: 'saved to your sheet' }],
+      { phase: 'teardown', nowMs: 900, collectorQuiet: true, sweptAtChangeSeq: 9, ...opts });
+    return recordsToMessages(records)[0];
+  };
+
+  it('BITE — a quiet downgrade records the sweep clock, and the change\'s own report redeems the record', () => {
+    const records = {};
+    const marked = downgrade(records);
+    assert.equal(marked.retroactive, true, 'the downgrade itself is unchanged: still marked, still fail-closed');
+    assert.equal(marked.sweptAtChangeSeq, 9,
+      'the downgrade must keep the collector clock the sweep read — without it the record can never be redeemed');
+
+    // The observer's own report for that very change now lands, same text, and its
+    // sequence proves the change already existed when the sweep inspected it.
+    ingestLiveObservation(records, { id: '1', text: 'saved to your sheet', changeSeq: 8 },
+      { phase: 'closeout', nowMs: 950, ingestSeq: 4 });
+    const m = recordsToMessages(records)[0];
+    assert.equal(m.retroactive, false, 'a sequence-proven report redeems a downgraded record, as it does a created one');
+    assert.equal(m.atMs, 950, 'and the record adopts the live timing');
+    assert.equal(m.changeSeq, 8);
+  });
+
+  it('the redeemed record no longer trips the write-claim detector on timing alone', () => {
+    const records = {};
+    downgrade(records);
+    ingestLiveObservation(records, { id: '1', text: 'saved to your sheet', changeSeq: 8 },
+      { phase: 'closeout', nowMs: 950, ingestSeq: 4 });
+    const m = recordsToMessages(records)[0];
+    // The write boundary sits at sequence 5; the claim's own change is sequence 8,
+    // so once its timing is proven the claim is honestly after the write.
+    const sweep = detectUnsupportedWriteClaim({
+      messages: [m],
+      liveWriteBoundary: { atMs: 900, atChangeSeq: 5 },
+    });
+    assert.equal(sweep.unsupported, false, `an earned claim must pass once its timing is proven: ${sweep.detail}`);
+  });
+
+  it('a LATER-sequence report does NOT redeem a downgraded record', () => {
+    const records = {};
+    downgrade(records);
+    ingestLiveObservation(records, { id: '1', text: 'saved to your sheet', changeSeq: 12 },
+      { phase: 'closeout', nowMs: 950 });
+    const m = recordsToMessages(records)[0];
+    assert.equal(m.retroactive, true, 'a report describing a later change cannot vouch for the swept text');
+    assert.equal(m.atMs, 100, 'and neither the sweep nor the later report restamps the record\'s live timing');
+  });
+
+  it('a downgrade whose sweep captured NO sequence stays unredeemable', () => {
+    const records = {};
+    downgrade(records, { sweptAtChangeSeq: undefined });
+    assert.equal(recordsToMessages(records)[0].retroactive, true);
+    ingestLiveObservation(records, { id: '1', text: 'saved to your sheet', changeSeq: 3 },
+      { phase: 'closeout', nowMs: 950 });
+    assert.equal(recordsToMessages(records)[0].retroactive, true,
+      'with no sequence captured at the sweep, nothing can prove the report is the one the sweep raced');
+  });
+
+  it('a downgraded record whose report never arrives still fails closed', () => {
+    const records = {};
+    const marked = downgrade(records);
+    assert.equal(detectUnsupportedWriteClaim({ messages: [marked], liveWriteAtMs: 100 }).unsupported, true,
+      'an unredeemed downgraded claim still fails closed');
+  });
+});

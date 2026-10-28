@@ -475,6 +475,22 @@ function reconcileSweep(records, observed, { phase, nowMs, thinkingMarker = 'Thi
       prior.text = text;
       prior.placeholder = text.includes(thinkingMarker);
       prior.retroactive = true;
+      // KEEP THE SWEEP'S SEQUENCE EVIDENCE (F-SB4B corrective 7). Corrective 6 gave a
+      // sweep-CREATED record the collector clock the sweep read, so the observer's own
+      // report can redeem it by sequence proof. This UPDATE path discarded that clock,
+      // which made a downgraded record unredeemable BY CONSTRUCTION: its own report,
+      // arriving with the same text the sweep already wrote, is tested against a
+      // `sweptAtChangeSeq` that was never stored, and the text-difference branch
+      // cannot fire for text the sweep itself supplied. Qualifying Session 1
+      // (fsb4b-s1-20261028T051612-EFEB58) failed condition 9 on exactly one such
+      // record — zero claim matches, every durable check exact.
+      //
+      // The rule is corrective 6's, unchanged: only a report whose change already
+      // existed at this sweep's instant may redeem, so the window is THIS sweep's
+      // clock. A sweep that captured no clock leaves any prior evidence untouched —
+      // and a live-created record has none, so it stays exactly as unredeemable as
+      // before, which is the fail-closed direction.
+      if (Number.isFinite(sweptAtChangeSeq)) prior.sweptAtChangeSeq = sweptAtChangeSeq;
     }
   }
   return out;

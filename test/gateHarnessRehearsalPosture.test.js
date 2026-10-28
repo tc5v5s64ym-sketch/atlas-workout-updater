@@ -225,3 +225,22 @@ test('the rehearsal waits for the acceptance boundary itself before reading app 
   assert.ok(waitIdx < snapIdx && waitIdx < shellIdx && waitIdx < acceptIdx,
     'the readiness wait must precede the client-open screenshot, the app-state reads, and the acceptance call');
 });
+
+test('the claim snapshot follows a final collector settle, and per-record claim diagnostics are persisted', () => {
+  const spec = fs.readFileSync(path.join(__dirname, '..', 'tests', 'e2e', 'gate', 'rehearsal.spec.js'), 'utf8');
+  assert.match(spec, /async function settleBubbleCollector\(page\) \{/,
+    'the spec must define a final drain + settle for the bubble collector (F-SB4B corrective 7)');
+  const settleIdx = spec.indexOf('await settleBubbleCollector(page);');
+  assert.ok(settleIdx > -1, 'section 13a must run the settle before snapshotting the claim records');
+  const snapshotIdx = spec.indexOf('const originalVisibleMessages = recordsToMessages(bubbleRecords);');
+  assert.ok(snapshotIdx > -1, 'the pinned snapshot landmark is present');
+  assert.ok(settleIdx < snapshotIdx,
+    'the settle must precede the snapshot — a snapshot taken straight after the final sweep judges records whose redeeming reports are still in flight (run fsb4b-s1-20261028T051612-EFEB58 failed condition 9 on exactly one such record, with zero claim matches)');
+  // The next occurrence must be diagnosable: the run evidence persists one entry per
+  // claim record — identity, phase, and the timing evidence, never the text (run
+  // fsb4b-s1-20261028T051612-EFEB58's artifacts named no bubble).
+  assert.match(spec, /records: originalVisibleMessages\.map\(/,
+    'the claim evidence must persist per-record diagnostics');
+  assert.match(spec, /swept_at_change_seq/,
+    'the persisted diagnostics must carry the sweep sequence evidence');
+});
