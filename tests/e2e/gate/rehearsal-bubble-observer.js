@@ -179,6 +179,13 @@ function bubbleObserverInitScript({ flushMs, threadId, bubbleSelector, callbackN
     const prior = pending.get(id);
     pending.set(id, prior === undefined ? seq : Math.min(prior, seq));
   };
+  // bubble id -> the visible text the collector last read for it. This is the
+  // baseline the class-visibility pass (below) diffs against: a class change is
+  // counted only where it actually revealed or hid text. It is refreshed by every
+  // full read (`markAll`) and by the visibility pass itself, so a change counted
+  // once is never counted twice and a text change already carried by a content
+  // mutation is never re-counted by the class change that accompanied it.
+  const lastText = new Map();
   let observer = null;
   let timer = null;
   let changeSeq = 0;      // the logical clock: every observed DOM change
@@ -196,7 +203,7 @@ function bubbleObserverInitScript({ flushMs, threadId, bubbleSelector, callbackN
     // decides what to send.
     if (observer && thread0) {
       const outstanding = observer.takeRecords();
-      if (outstanding && outstanding.length) markAll();
+      if (outstanding && outstanding.length) handleMutationRecords(outstanding);
     }
     const seqAtFlush = changeSeq;
     const thread = document.getElementById(threadId);
@@ -239,8 +246,88 @@ function bubbleObserverInitScript({ flushMs, threadId, bubbleSelector, callbackN
 
   const markAll = () => {
     changeSeq += 1;
-    for (const b of stampAndRead()) markPending(b.id, changeSeq);
+    for (const b of stampAndRead()) {
+      lastText.set(b.id, b.text);
+      markPending(b.id, changeSeq);
+    }
     schedule();
+  };
+
+  // ── CLASS-ONLY REVEALS ARE CHANGES TOO (F-SB4B attribute observer) ──────────
+  //
+  // THE DEFECT THIS CLOSES. The earned "✓ Saved to your sheet" label is revealed
+  // by a CLASS-ONLY mutation: `markReviewSaved` (src/app/coach-conversation.js)
+  // does exactly one DOM mutation on the review card — `classList.add('done')` —
+  // and `.rv-saved` is `display:none` until `.review.done` (src/app/styles.css),
+  // so the label's text enters the card bubble's visibility-aware `innerText`
+  // only via that flip. This collector observed childList/subtree/characterData
+  // but NOT attributes, so the reveal never advanced the logical clock. The
+  // claim record was instead stamped by whatever unrelated change the collector
+  // next counted — and when the thread is quiet after the save, that value
+  // coincides with the in-page write sample. Qualifying Session 1
+  // (fsb4b-s1-20261028T130455-6EEF09) failed condition 9 on exactly this: PR
+  // #1326's sampler worked as designed (14 samples for 14 save responses, the
+  // paired write boundary at changeSeq 156) and the claim's record ALSO carried
+  // 156, so the strict comparison judged an earned claim `before`.
+  //
+  // THE FIX counts the flip. The observer also observes `class` attribute
+  // changes, and an attribute-only batch takes this visibility pass: re-read
+  // every bubble and count ONE change, marking pending ONLY the bubbles whose
+  // visible text actually changed against `lastText`. The ordering against the
+  // write boundary then falls out of the machinery PR #1326 built: the sampler's
+  // promise reaction is attached before the app's `await` continuation, so it
+  // reads the counter BEFORE the continuation performs the flip, and the flip's
+  // own callback stamps the newly visible text with a strictly later sequence —
+  // `after`. A flip performed BEFORE the response (the optimistic case) is
+  // counted before the sample is taken, so it still classifies `before` —
+  // equality exactly when it was the last change counted, as with any
+  // pre-response change.
+  //
+  // SCOPED, NOT COARSE — a class wiggle that reveals and hides nothing must not
+  // move anything. Naively routing attribute batches through `markAll` would
+  // bump the clock and re-queue EVERY bubble on every class toggle in the
+  // thread (typing indicators, disabled states, animations on unrelated
+  // cards), and the bounded settle (`settleBubbleCollector`) — which requires
+  // `pending === false` and an identical record snapshot across attempts —
+  // could be starved by churn carrying no claim evidence. Here, a batch that
+  // changes no bubble's text counts nothing: no bump, no pending, no schedule.
+  // `attributeFilter: ['class']` is the other half of the scoping: it keeps the
+  // collector from observing its own `data-*` stamps (`data-rehearsal-bubble-id`,
+  // `data-rehearsal-bubble-seq`) and the driver's `data-rehearsal-seen` marks,
+  // which are attributes too and change far more often than any class.
+  //
+  // The stamping property the claim decisions rely on is unchanged and now
+  // doubly held. Node-side, `ingestLiveObservation` moves a record only when
+  // its TEXT changes (the corrective-6/8 redemption branches aside), so a
+  // re-delivery of unchanged text can never re-stamp a bubble with a later
+  // sequence; this pass additionally never queues an unchanged bubble at all.
+  // The one dependency is the earliest-pending rule above, and it is
+  // deliberate: the card's pending slot must have been flushed clear between
+  // the save click's mutations and the flip, or the flip's delivery would
+  // carry the click's earlier sequence. In the real flow the 100 ms flush
+  // timer against a multi-second Sheets write guarantees that separation; the
+  // fixtures settle before saving, which makes it deterministic there.
+  const markVisibilityChanges = () => {
+    const changed = [];
+    for (const b of stampAndRead()) {
+      if (lastText.get(b.id) !== b.text) changed.push(b);
+      lastText.set(b.id, b.text);
+    }
+    if (!changed.length) return;
+    changeSeq += 1;
+    for (const b of changed) markPending(b.id, changeSeq);
+    schedule();
+  };
+
+  // ONE DISPATCHER for every mutation batch, from the observer callback and
+  // from the drain's `takeRecords` path alike: any batch carrying a content
+  // record (childList/characterData) takes the full `markAll` read, exactly as
+  // before; an attribute-only batch takes the scoped visibility pass.
+  const handleMutationRecords = (records) => {
+    const list = Array.isArray(records) ? records : [];
+    if (!list.length) return;
+    if (list.some((r) => r && r.type !== 'attributes')) { markAll(); return; }
+    markVisibilityChanges();
   };
 
   window[flushName] = () => flush();
@@ -330,9 +417,11 @@ function bubbleObserverInitScript({ flushMs, threadId, bubbleSelector, callbackN
     const thread = document.getElementById(threadId);
     if (!thread) return false;
     // Any subtree change can add a bubble or rewrite one's text, so every mutation
-    // re-reads (and stamps) the whole small list.
-    observer = new MutationObserver(() => markAll());
-    observer.observe(thread, { childList: true, subtree: true, characterData: true });
+    // re-reads (and stamps) the whole small list. Class attribute changes are
+    // observed too — the Saved reveal is one (see markVisibilityChanges) — and
+    // the dispatcher scopes them to the changes that move visible text.
+    observer = new MutationObserver((records) => handleMutationRecords(records));
+    observer.observe(thread, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['class'] });
     markAll();
     return true;
   };

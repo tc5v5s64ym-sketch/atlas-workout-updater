@@ -1875,3 +1875,50 @@ describe('the live write boundary is paired from the in-page sample (in-page bou
     }).unsupported, true, 'a claim counted before the response resolved is before the write');
   });
 });
+
+describe('ingest — a re-delivery of unchanged text cannot move a record (attribute-observer property)', () => {
+  // The collector now counts class changes that reveal or hide bubble text
+  // (the Saved reveal is class-only). Counting them re-reads and can re-deliver
+  // bubbles the change did not touch. The property the whole design rests on:
+  // a record's sequence is the sequence of the change that produced its TEXT —
+  // a re-delivery carrying the same text at a later sequence must leave the
+  // record exactly where it was, or every claim in the thread would inherit
+  // the timing of an unrelated class wiggle.
+  it('a later report carrying the SAME text leaves the record’s sequence and instant untouched', () => {
+    const records = {};
+    ingestLiveObservation(records, { id: '1', text: 'session preview', changeSeq: 7 },
+      { phase: 'closeout', nowMs: 100, ingestSeq: 1 });
+    ingestLiveObservation(records, { id: '1', text: 'session preview', changeSeq: 42 },
+      { phase: 'closeout', nowMs: 900, ingestSeq: 2 });
+    const m = recordsToMessages(records)[0];
+    assert.equal(m.text, 'session preview');
+    assert.equal(m.changeSeq, 7, 'the record keeps the sequence of the change that produced its text');
+    assert.equal(m.atMs, 100, 'and the instant of that change, not of the re-delivery');
+    assert.equal(m.retroactive, false);
+  });
+
+  it('the property holds after the text has moved once: only a text change moves the sequence', () => {
+    const records = {};
+    ingestLiveObservation(records, { id: '1', text: 'a', changeSeq: 3 }, { phase: 'p', nowMs: 10, ingestSeq: 1 });
+    ingestLiveObservation(records, { id: '1', text: 'ab', changeSeq: 20 }, { phase: 'p', nowMs: 20, ingestSeq: 2 });
+    ingestLiveObservation(records, { id: '1', text: 'ab', changeSeq: 99 }, { phase: 'p', nowMs: 30, ingestSeq: 3 });
+    const m = recordsToMessages(records)[0];
+    assert.equal(m.text, 'ab');
+    assert.equal(m.changeSeq, 20, 'the unchanged re-delivery must not drag the record to 99');
+    assert.equal(m.atMs, 20);
+  });
+
+  it('an unchanged re-delivery cannot redeem a retroactive record on a LATER sequence', () => {
+    const records = {};
+    // Sweep-created at collector clock 10; the same text then re-delivered at
+    // 42. Redemption (corrective 6) requires the report's sequence to predate
+    // the sweep's clock — a later sequence proves nothing, so the mark stands
+    // and the claim still fails closed.
+    reconcileSweep(records, [{ id: '1', text: '✓ Saved to your sheet' }],
+      { phase: 'closeout', nowMs: 100, collectorQuiet: true, sweptAtChangeSeq: 10 });
+    ingestLiveObservation(records, { id: '1', text: '✓ Saved to your sheet', changeSeq: 42 },
+      { phase: 'closeout', nowMs: 200, ingestSeq: 1 });
+    const m = recordsToMessages(records)[0];
+    assert.equal(m.retroactive, true, 'a later-sequence re-delivery is not sequence proof');
+  });
+});
