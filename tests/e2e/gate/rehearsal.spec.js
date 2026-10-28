@@ -41,7 +41,7 @@ const { markRunStarted, verifyRunStartMarker } = require('./rehearsal-run-start'
 const { pickNetworkPassthrough, assertNoWorkbookId, GATE_STARTUP_TIMEOUT_MS } = require('./rehearsal-child-env');
 const {
   OBSERVER_FLUSH_MS, bubbleObserverInitScript, BUBBLE_ID_ATTR, BUBBLE_SEQ_ATTR,
-  ingestLiveObservation, reconcileSweep, recordsToMessages, makeBoundary,
+  ingestLiveObservation, reconcileSweep, redeemOnStoredEvidence, recordsToMessages, makeBoundary,
   SEEN_ATTR,
   NEW_BUBBLE_SELECTOR,
   markExistingBubblesScript,
@@ -1017,6 +1017,15 @@ async function sweepAtlasBubbles(page) {
 // and condition 9 still fails on it. The settle only stops the snapshot from racing
 // a report that was already on its way. A collector that never settles is reported
 // and the snapshot proceeds; unproven timing remains the detectors' to refuse.
+//
+// F-SB4B corrective 8 completes the proven branch: run
+// fsb4b-s1-20261028T060125-0939CE settled cleanly yet still failed condition 9 on a
+// record (id 17, the final bubble) whose downgrading sweep landed after its
+// last-ever report, so no report could ever arrive to redeem it — while its stored
+// pair (change_seq 128, swept_at_change_seq 128) already satisfied the sequence
+// proof. On the proven branch only, `redeemOnStoredEvidence` judges that stored
+// proof; anything the proof does not cover stays retroactive, and an unsettled
+// collector (the fall-through below) judges nothing.
 async function settleBubbleCollector(page) {
   let previous = null;
   for (let attempt = 0; attempt < 8; attempt += 1) {
@@ -1029,7 +1038,16 @@ async function settleBubbleCollector(page) {
     } catch { pending = true; }
     const snapshot = JSON.stringify(recordsToMessages(bubbleRecords)
       .map((r) => [r.id, r.text, r.retroactive === true, r.placeholder === true]));
-    if (!pending && snapshot === previous) return true;
+    if (!pending && snapshot === previous) {
+      // The collector is PROVEN finished — no report is in flight and none can
+      // still arrive for a static bubble — so a record the final sweep downgraded
+      // after its bubble's last-ever report can never be redeemed by the ingest
+      // path. Judge its stored sequence evidence now, under corrective 6's exact
+      // proof (F-SB4B corrective 8): a record whose own live sequence does not
+      // predate its downgrading sweep's clock stays retroactive and still fails.
+      redeemOnStoredEvidence(bubbleRecords);
+      return true;
+    }
     previous = snapshot;
     await page.waitForTimeout(OBSERVER_FLUSH_MS * 2);
   }

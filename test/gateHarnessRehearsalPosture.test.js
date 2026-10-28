@@ -244,3 +244,24 @@ test('the claim snapshot follows a final collector settle, and per-record claim 
   assert.match(spec, /swept_at_change_seq/,
     'the persisted diagnostics must carry the sweep sequence evidence');
 });
+
+test('a proven settle judges stored sequence evidence before the claim snapshot (corrective 8)', () => {
+  const spec = fs.readFileSync(path.join(__dirname, '..', 'tests', 'e2e', 'gate', 'rehearsal.spec.js'), 'utf8');
+  const observer = fs.readFileSync(path.join(__dirname, '..', 'tests', 'e2e', 'gate', 'rehearsal-bubble-observer.js'), 'utf8');
+  assert.match(observer, /function redeemOnStoredEvidence\(records\) \{/,
+    'the observer must export the settle-time redemption on stored sequence evidence');
+  // The redemption may run ONLY on the settle's proven branch — collector not
+  // pending AND the record set identical across a flush window. Anywhere else
+  // (an unsettled collector, an ordinary sweep) the mark must stand, because a
+  // report still in flight is the live authority, not the stored pair.
+  const settle = spec.slice(spec.indexOf('async function settleBubbleCollector(page) {'),
+    spec.indexOf('const THINKING = '));
+  assert.ok(settle.length > 0, 'the pinned settle landmark is present');
+  const provenIdx = settle.indexOf('if (!pending && snapshot === previous)');
+  const redeemIdx = settle.indexOf('redeemOnStoredEvidence(bubbleRecords);');
+  assert.ok(provenIdx > -1, 'the settle success branch is present');
+  assert.ok(redeemIdx > provenIdx,
+    'stored-evidence redemption must run inside the proven-settle branch — run fsb4b-s1-20261028T060125-0939CE failed condition 9 on a record whose stored pair (128 <= 128) satisfied the sequence proof but whose bubble, being final, had no later report to redeem it');
+  assert.equal(spec.split('redeemOnStoredEvidence(bubbleRecords);').length - 1, 1,
+    'the redemption runs in exactly one place — the proven settle, never an ordinary sweep');
+});

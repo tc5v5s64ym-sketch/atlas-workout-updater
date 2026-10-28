@@ -24,7 +24,7 @@ const { sessionPlanSetsColumns } = require('../config/columns');
 // The bubble-lifecycle collector is its own module: the page reports its text changes
 // and Node stamps them on receipt, so a timestamp cannot be assigned by a later sweep.
 const {
-  ingestLiveObservation, reconcileSweep, recordsToMessages,
+  ingestLiveObservation, reconcileSweep, recordsToMessages, redeemOnStoredEvidence,
 } = require('../tests/e2e/gate/rehearsal-bubble-observer');
 
 const HEAD = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678';
@@ -1618,5 +1618,137 @@ describe('reconcileSweep UPDATE path — a downgrade keeps the sweep\'s sequence
     const marked = downgrade(records);
     assert.equal(detectUnsupportedWriteClaim({ messages: [marked], liveWriteAtMs: 100 }).unsupported, true,
       'an unredeemed downgraded claim still fails closed');
+  });
+});
+
+// F-SB4B corrective 8 — redemption is evaluated only when a report ARRIVES, and a
+// downgraded FINAL bubble has no later report coming.
+//
+// Corrective 7 made a quiet downgrade keep the sweep's sequence evidence, so the
+// change's own live report can redeem the record inside `ingestLiveObservation`.
+// Qualifying Session 1 (fsb4b-s1-20261028T060125-0939CE, 23/25) showed the terminal
+// case of that design: the failing record (id 17, the final logging_tail bubble)
+// reached the claim snapshot with `change_seq` 128 and `swept_at_change_seq` 128 —
+// its stored evidence SATISFIES corrective 6/7's sequence proof — yet it was still
+// `retroactive`, because the downgrading sweep landed after that bubble's last-ever
+// report and a static final bubble generates no further report for the redemption
+// branch to evaluate. The corrective-7 settle then certified the collector settled
+// (nothing undelivered, record set stable) with the record still marked, and both
+// claim detectors failed condition 9 closed on it. Zero claim matches; every
+// durable check exact.
+//
+// THE RULE is the same sequence proof, judged where the evidence lives once the
+// collector is PROVEN finished: at settle time, a still-retroactive record whose
+// OWN stored pair satisfies `changeSeq <= sweptAtChangeSeq` (both finite) is
+// redeemed on that evidence. The placement stays fail-closed in the direction that
+// matters: the detectors place the claim by the record's stored `changeSeq`, the
+// EARLIEST sequence the bubble's live history supports, so a redeemed claim can
+// only ever look EARLIER against a boundary — never later, never more earned.
+// A record missing either side of the proof (a sweep-created record carries no
+// `changeSeq` at all; a later sequence; a sweep that captured no clock) is NOT
+// redeemed and still fails condition 9.
+describe('settle-time redemption on stored sequence evidence (corrective 8)', () => {
+  // The failing run's record 17, rebuilt through the real reducers: a live report
+  // sets the record's sequence, then a quiet sweep — its clock reading the SAME
+  // sequence — finds the bubble's text moved on and downgrades it. No report for
+  // that bubble can ever arrive after this: it is the final bubble.
+  const record17 = () => {
+    const records = {};
+    ingestLiveObservation(records, { id: '17', text: 'Wrapping up…', changeSeq: 128 },
+      { phase: 'logging_tail', nowMs: 1000, ingestSeq: 40 });
+    reconcileSweep(records, [{ id: '17', text: 'Done — saved to your sheet' }],
+      { phase: 'logging_tail', nowMs: 2000, collectorQuiet: true, sweptAtChangeSeq: 128 });
+    return records;
+  };
+
+  it('BITE — the downgrade-after-last-report state is terminal without settle-time redemption', () => {
+    const records = record17();
+    const marked = recordsToMessages(records)[0];
+    assert.equal(marked.retroactive, true, 'the downgrade marks it, as designed');
+    assert.equal(marked.changeSeq, 128, 'the record keeps the sequence its own live report carried');
+    assert.equal(marked.sweptAtChangeSeq, 128, 'and the sweep kept its clock (corrective 7)');
+    // Even a same-text report arriving now could not be distinguished from the one
+    // already consumed — and for a final bubble none arrives. The detectors judge
+    // the state as it stands:
+    assert.equal(detectUnsupportedWriteClaim({ messages: [marked], liveWriteAtMs: 100 }).unsupported, true,
+      'unredeemed, the record fails closed — this is the state run 0939CE was scored on');
+  });
+
+  it('a record whose stored evidence satisfies the sequence proof is redeemed at settle', () => {
+    const records = record17();
+    const redeemed = redeemOnStoredEvidence(records);
+    const m = recordsToMessages(records)[0];
+    assert.equal(redeemed, 1, 'exactly the one proven record is redeemed');
+    assert.equal(m.retroactive, false);
+    assert.equal(m.text, 'Done — saved to your sheet', 'redemption judges the stored evidence; it rewrites nothing');
+    assert.equal(m.changeSeq, 128, 'the live sequence stands — placement uses the earliest supported sequence');
+    assert.equal(m.atMs, 1000, 'and the live timing stands');
+  });
+
+  it('the redeemed record is judged on its sequence by the detectors — earned only if truly after', () => {
+    const records = record17();
+    redeemOnStoredEvidence(records);
+    const m = recordsToMessages(records)[0];
+    // Write boundary at sequence 100: the claim's stored sequence (128) is after
+    // it, so once its timing is proven the claim is honestly earned.
+    assert.equal(detectUnsupportedWriteClaim({
+      messages: [m], liveWriteBoundary: { atMs: 900, atChangeSeq: 100 },
+    }).unsupported, false, 'a proven claim placed after the write must pass');
+    // Write boundary at sequence 200: the same record is placed BEFORE the write
+    // and the claim is unsupported — redemption proves timing, it does not excuse.
+    assert.equal(detectUnsupportedWriteClaim({
+      messages: [m], liveWriteBoundary: { atMs: 900, atChangeSeq: 200 },
+    }).unsupported, true, 'a claim placed before the write still fails — redemption is not an exemption');
+  });
+
+  it('a sweep-CREATED record carries no live sequence and is NOT redeemed', () => {
+    const records = {};
+    reconcileSweep(records, [{ id: '1', text: 'saved to your sheet' }],
+      { phase: 'teardown', nowMs: 900, collectorQuiet: true, sweptAtChangeSeq: 7 });
+    assert.equal(redeemOnStoredEvidence(records), 0);
+    const m = recordsToMessages(records)[0];
+    assert.equal(m.retroactive, true, 'a bubble no report ever described stays untrusted');
+    assert.equal(detectUnsupportedWriteClaim({ messages: [m], liveWriteAtMs: 100 }).unsupported, true);
+  });
+
+  it('a LATER stored sequence does NOT redeem — the report postdates the sweep', () => {
+    const records = {};
+    ingestLiveObservation(records, { id: '1', text: 'Thinking…', changeSeq: 12 }, { phase: 'closeout', nowMs: 100 });
+    reconcileSweep(records, [{ id: '1', text: 'saved to your sheet' }],
+      { phase: 'teardown', nowMs: 900, collectorQuiet: true, sweptAtChangeSeq: 9 });
+    assert.equal(redeemOnStoredEvidence(records), 0);
+    assert.equal(recordsToMessages(records)[0].retroactive, true,
+      'changeSeq 12 > sweptAtChangeSeq 9: the stored evidence does not satisfy the proof');
+  });
+
+  it('a sweep that captured NO clock leaves the record unredeemable at settle too', () => {
+    const records = {};
+    ingestLiveObservation(records, { id: '1', text: 'Thinking…', changeSeq: 3 }, { phase: 'closeout', nowMs: 100 });
+    reconcileSweep(records, [{ id: '1', text: 'saved to your sheet' }],
+      { phase: 'teardown', nowMs: 900, collectorQuiet: true, sweptAtChangeSeq: undefined });
+    assert.equal(redeemOnStoredEvidence(records), 0);
+    assert.equal(recordsToMessages(records)[0].retroactive, true);
+  });
+
+  it('non-finite stored sequences do NOT redeem', () => {
+    for (const [changeSeq, sweptAt] of [[NaN, 9], [3, NaN], [Infinity, 9], [3, Infinity]]) {
+      const records = {
+        1: {
+          id: '1', text: 'saved to your sheet', atMs: 100, phase: 'closeout',
+          retroactive: true, changeSeq, sweptAtChangeSeq: sweptAt, placeholder: false,
+        },
+      };
+      assert.equal(redeemOnStoredEvidence(records), 0,
+        `changeSeq=${changeSeq} sweptAt=${sweptAt} must not redeem`);
+      assert.equal(records[1].retroactive, true);
+    }
+  });
+
+  it('live records are untouched — settle-time redemption only lifts an unproven mark', () => {
+    const records = {};
+    ingestLiveObservation(records, { id: '1', text: 'a live reply', changeSeq: 4 }, { phase: 'ask', nowMs: 100 });
+    const before = JSON.stringify(recordsToMessages(records)[0]);
+    assert.equal(redeemOnStoredEvidence(records), 0);
+    assert.equal(JSON.stringify(recordsToMessages(records)[0]), before, 'nothing about a live record changes');
   });
 });
