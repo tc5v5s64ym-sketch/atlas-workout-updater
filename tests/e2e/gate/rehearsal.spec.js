@@ -998,6 +998,43 @@ async function sweepAtlasBubbles(page) {
   if (!swept.quiet) note('sweep', `collector not quiet at sweep — existing live records left for their pending reports (${swept.observed.length} bubble(s))`);
   return swept.observed.length;
 }
+
+// ── Final collector settle (F-SB4B corrective 7) ───────────────────────────────
+// THE GAP THIS CLOSES. Section 13a snapshots the claim records immediately after its
+// sweep. A record that sweep creates — or the last settleReply sweep created — is
+// born (or left) `retroactive`, and its only redemption is the observer's own live
+// report, which may already be in flight (the flush window plus IPC) yet land after
+// the snapshot, when nothing will ever ingest it into the evidence the detectors
+// judge. Qualifying Session 1 (fsb4b-s1-20261028T051612-EFEB58) failed condition 9 on
+// exactly one such record of 17: zero claim matches, every durable check exact — the
+// harness had simply not finished observing when it judged.
+//
+// The settle gives the collector a PROVEN chance to finish before the snapshot:
+// sweep, then require the page-side collector to report nothing undelivered AND the
+// record set to be identical across a full flush window, twice in a row. This
+// weakens nothing. The detectors still fail closed on any record still retroactive
+// after a settled collector — a record whose report never arrives stays retroactive
+// and condition 9 still fails on it. The settle only stops the snapshot from racing
+// a report that was already on its way. A collector that never settles is reported
+// and the snapshot proceeds; unproven timing remains the detectors' to refuse.
+async function settleBubbleCollector(page) {
+  let previous = null;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    await sweepAtlasBubbles(page);
+    let pending = true;
+    try {
+      const state = await page.evaluate(() => (typeof window.__atlasBubbleState === 'function'
+        ? window.__atlasBubbleState() : null));
+      pending = !state || state.pending !== false;
+    } catch { pending = true; }
+    const snapshot = JSON.stringify(recordsToMessages(bubbleRecords)
+      .map((r) => [r.id, r.text, r.retroactive === true, r.placeholder === true]));
+    if (!pending && snapshot === previous) return true;
+    previous = snapshot;
+    await page.waitForTimeout(OBSERVER_FLUSH_MS * 2);
+  }
+  return false;
+}
 const THINKING = 'Thinking…';
 const SETTLE_TIMEOUT_MS = 90000;
 const STABLE_MS = 750;
@@ -1555,10 +1592,13 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
   // save claim in the ORIGINAL thread vanish and condition 9 pass (owner P1,
   // 2026-08-03). Both claim verdicts are computed from evidence captured here; the
   // fresh session's thread is separate evidence and never a replacement carrier.
-  // Drain, so the snapshot carries every report the page had pending.
+  // Drain, so the snapshot carries every report the page had pending — and settle
+  // (F-SB4B corrective 7), so a record the final sweep itself created gets the
+  // redemption its in-flight report carries before the detectors judge it.
   await takeBoundary(page);
-  await sweepAtlasBubbles(page);
+  const collectorSettled = await settleBubbleCollector(page);
   const originalVisibleMessages = recordsToMessages(bubbleRecords);
+  note('claim-settle', `collector ${collectorSettled ? 'settled' : 'DID NOT settle'} before the claim snapshot; ${originalVisibleMessages.filter((m) => m.retroactive === true).length} of ${originalVisibleMessages.length} record(s) still retroactive`);
 
   // ── 13b. Cross-session teardown and inheritance (declared scenarios only) ────
   // Runs AFTER every durable read AND after the evidence above is preserved, and
@@ -1736,6 +1776,20 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
     unsupported_mutation_wording: mutationSweep.unsupported,
     unsupported_write_claim: writeSweep.unsupported,
     detail: [mutationSweep.detail, writeSweep.detail].filter(Boolean).join(' | '),
+    // Per-record claim-sweep diagnostics (F-SB4B corrective 7). The aggregate detail
+    // string cannot name WHICH record failed closed — run
+    // fsb4b-s1-20261028T051612-EFEB58's single retroactive record was unidentifiable
+    // from its artifacts. One entry per record: its identity, the phase that created
+    // it, and the timing evidence the detectors judged. No text, so the privacy
+    // sweep's surface is unchanged.
+    records: originalVisibleMessages.map((m) => ({
+      id: (m.id === null || m.id === undefined) ? null : String(m.id),
+      phase: m.phase || 'unknown',
+      retroactive: m.retroactive === true,
+      placeholder: m.placeholder === true,
+      change_seq: Number.isFinite(m.changeSeq) ? m.changeSeq : null,
+      swept_at_change_seq: Number.isFinite(m.sweptAtChangeSeq) ? m.sweptAtChangeSeq : null,
+    })),
   };
   note('claim-sweep', `${originalVisibleMessages.length} visible messages; mutation ${mutationBoundary === null ? 'never' : `recorded (drained=${mutationBoundary.drained})`}; live write ${liveWriteBoundary === null ? 'NOT observed' : `observed (drained=${liveWriteBoundary.drained})`}; unsupported mutation=${mutationSweep.unsupported} write=${writeSweep.unsupported}; coach-capture failures ${coachCaptureFailures.count}`);
 
