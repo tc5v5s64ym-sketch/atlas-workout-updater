@@ -18,13 +18,18 @@
 // This list is NETWORK PLUMBING ONLY: proxy routing and CA trust. Some environments
 // (including Atlas's remote execution container) route all outbound HTTPS through a
 // proxy with its own certificate authority, and without these the sandbox connection
-// fails TLS verification before it can reach Google. None of these names carries a
+// fails TLS verification before it can reach Google. NODE_USE_ENV_PROXY belongs to
+// the proxy routing: on Node 24 the global fetch (undici) ignores the proxy
+// variables unless that switch is set, so passing the variables without it would
+// leave the child direct-egress — and refused at the model-up probe — in exactly
+// the proxy-only environments this list exists for. None of these names carries a
 // workbook id, a credential, a feature flag, or a model posture — those are passed
 // deliberately and individually by each builder, and are never swept in from here.
 const NETWORK_PASSTHROUGH = Object.freeze([
   'HTTPS_PROXY', 'https_proxy',
   'HTTP_PROXY', 'http_proxy',
   'NO_PROXY', 'no_proxy',
+  'NODE_USE_ENV_PROXY',
   'NODE_EXTRA_CA_CERTS',
   'SSL_CERT_FILE',
   'NIX_SSL_CERT_FILE',
