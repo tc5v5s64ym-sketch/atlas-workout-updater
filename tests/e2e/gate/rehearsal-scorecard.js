@@ -533,14 +533,21 @@ function detectUnsupportedMutationWording(input) {
 //   loggedNames: ['back squat', 'back squat', …] // one entry per declared logged SET
 //   replacement: { sourceName, replacementName, sets } | null  // an ACCEPTED substitution
 // }
-// Returns { remaining: [names…], nextUp: name|null, complete: [names…] }.
+// Returns { remaining: [names…], nextUp: name|null, complete: [names…],
+//           retired: [names…], logged: [names…] }.
+// `logged` is every lift the declaration records at least one logged set for —
+// complete lifts, REMAINING lifts with partial sets, and declared off-plan lifts
+// (which sit on no plan slot, so they are carried as declared). It is the truth a
+// reply's logged recap is judged against (corrective 11, below).
 // Names are compared case- and separator-insensitively; the returned names keep the
 // declaration's own spelling so a failure message reads like the plan.
 function deriveExpectedRemaining(declaration) {
   const d = declaration && typeof declaration === 'object' ? declaration : {};
   const key = (v) => String(v == null ? '' : v).trim().toLowerCase().replace(/[-\s]+/g, ' ');
   const plan = Array.isArray(d.plan) ? d.plan : [];
-  const loggedNames = (Array.isArray(d.loggedNames) ? d.loggedNames : []).map(key);
+  const loggedRaw = (Array.isArray(d.loggedNames) ? d.loggedNames : [])
+    .map((v) => String(v == null ? '' : v).trim()).filter(Boolean);
+  const loggedNames = loggedRaw.map(key);
   const rep = d.replacement && typeof d.replacement === 'object' ? d.replacement : null;
   const stagedSets = (rep && Number.isInteger(rep.sets) && rep.sets > 0) ? rep.sets : null;
 
@@ -577,7 +584,20 @@ function deriveExpectedRemaining(declaration) {
     if (item.sets > 0 && done >= item.sets) complete.push(item.name);
     else remaining.push(item.name);
   }
-  return { remaining, nextUp: remaining.length ? remaining[0] : null, complete, retired };
+
+  // Logged knowledge, deduped: plan slots (post-substitution spelling) with at
+  // least one declared set, then any declared logged name that sits on no slot —
+  // an off-plan insertion, or a lift logged before it was retired — as declared.
+  const logged = [];
+  const loggedSeen = new Set();
+  const noteLogged = (name, k) => {
+    if (name && k && !loggedSeen.has(k)) { loggedSeen.add(k); logged.push(name); }
+  };
+  for (const item of items) {
+    if ((loggedCount.get(key(item.name)) || 0) > 0) noteLogged(item.name, key(item.name));
+  }
+  loggedRaw.forEach((raw, i) => noteLogged(raw, loggedNames[i]));
+  return { remaining, nextUp: remaining.length ? remaining[0] : null, complete, retired, logged };
 }
 
 // Compare an OBSERVED ordered list (client state) against the derived expectation.
@@ -627,6 +647,69 @@ function explicitNextUpClaim(text) {
   return null;
 }
 
+// ── segment-aware reply framing (F-SB4B corrective 11) ────────────────────────
+// Session 3's scored run (fsb4b-s3-20261028T195320-ACB006) failed this beat on a
+// reply that OPENED with a truthful logged recap ("You've logged Back Squat,
+// Overhead Press, Romanian Deadlift, Seated Row, Incline DB Press, and Face
+// Pull." — every fact verified accurate; Face Pull is the scenario's declared
+// off-plan insertion) and then stated the remaining work correctly. The old
+// beat had no framing awareness: ANY mention of a completed lift counted as
+// claiming it remaining, and remaining ORDER was read off first mentions across
+// the whole text, so the recap's log order failed a reply whose remaining
+// statement (and the client's canonical state) were right. Decisive proof: the
+// product's own deterministic grounded statement (buildGroundedSessionStateStatement,
+// services/coachResponseGrounding.js) fed through the old beat against that
+// run's expectation reproduces exactly its four problems. A beat the product's
+// canonical grounded prose cannot pass measures a shape the product never
+// promised — the same machinery-defect class as corrective 9, whose fix
+// mirrored the product's own negation semantics. This fix mirrors the product's
+// own framing semantics instead:
+//
+//   - segmentation is the product's: sentences (grounding's `segments`), then
+//     clauses on its CLAUSE_BOUNDARY (semicolon, dash, comma + conjunction),
+//     extended with a colon (a list header's framing governs its list) and a
+//     subject-restarting "and you/we …" boundary;
+//   - REMAINING framing is the product's REMAINING_FRAMING vocabulary, plus the
+//     remaining-answer phrasings this beat exists to judge ("what's left",
+//     "still to do", "left to do", a leading "Left:", "on your list" — the
+//     sessionPlanExecutor close-answer shape);
+//   - LOGGED framing is the past-tense log-recap vocabulary of the grounded
+//     statement and the run's reply ("you've logged", "logged this session",
+//     "… is/are logged"). A bare "done" is deliberately NOT a logged marker:
+//     the close answer's "Not done yet — … still on your list" is a remaining
+//     statement, and classifying it logged would recreate the defect mirrored.
+//
+// A clause carrying no framing of its own INHERITS the framing of the clause
+// before it in the same sentence — that is what keeps a list's tail ("…,
+// and Face Pull") under its header's framing — and a clause with no framing
+// anywhere before it in its sentence is UNFRAMED. A clause carrying BOTH
+// framings is judged as both (fail-closed, the old behaviour for prose that
+// will not separate its claims).
+const LOGGED_FRAMING = /\b(?:(?:you|we)(?:'ve| have)?\s+(?:just\s+|already\s+)?(?:logged|completed|finished|recorded|done)|(?:logged|completed|recorded) this session|(?:is|are|was|were|been)\s+(?:logged|completed|recorded)|^logged\b)/i;
+const REMAINING_FRAMING = /\b(?:remaining|remains|still (?:to|has|have|left|on|shows?)|still to do|left to|left\b|to come|coming up|next up|planned|prescribed|scheduled|on the plan|on your list|outstanding|upcoming|yet to|what'?s left|calls for|call for|target(?:ing|s)?|aim(?:ing)? for|we'?ll|you'?ll|should (?:do|hit|aim)|going to)\b/i;
+const REPLY_CLAUSE_BOUNDARY = /\s*(?:;|:|\s+[—–]\s+|,\s*(?:so|but|and|then|although|though|while|yet)\b|\s+and\s+(?=(?:you|we)\b)|\s+(?:but|while)\s+)\s*/;
+
+// Split a reply into framed segments: [{ text, logged, remaining }]. Unframed
+// segments carry neither flag and are judged as remaining-relevant by the
+// caller (the old behaviour for a pure remaining-work answer).
+function framedReplySegments(replyText) {
+  const sentences = String(replyText == null ? '' : replyText)
+    .split(/(?<=[.!?])\s+|\n+/).map((s) => s.trim()).filter(Boolean);
+  const out = [];
+  for (const sentence of sentences) {
+    const clauses = sentence.split(REPLY_CLAUSE_BOUNDARY).map((s) => s.trim()).filter(Boolean);
+    let inherited = null;
+    for (const clause of clauses) {
+      const own = { logged: LOGGED_FRAMING.test(clause), remaining: REMAINING_FRAMING.test(clause) };
+      let framing;
+      if (own.logged || own.remaining) { framing = own; inherited = own; }
+      else framing = inherited || { logged: false, remaining: false };
+      out.push({ text: clause, logged: framing.logged, remaining: framing.remaining });
+    }
+  }
+  return out;
+}
+
 // Does the visible reply agree with the declaration — in CONTENT and in ORDER, and on
 // any explicit next-up claim it chooses to make?
 //
@@ -634,26 +717,58 @@ function explicitNextUpClaim(text) {
 // and no completed/retired lift is, does not prove the reply told the truth about
 // SEQUENCE. A reply naming every correct lift in the wrong order, or explicitly naming
 // the wrong lift as next while mentioning the real next-up elsewhere, passed.
+//
+// Corrective 11: each framed segment is judged as what it is. The checks below
+// run over the reply's REMAINING-RELEVANT text — its remaining-framed and
+// unframed segments — so a logged recap can neither satisfy a remaining claim
+// nor pollute its order; and its LOGGED-framed segments are judged as logged
+// claims against the expectation's `logged` knowledge.
 function replyMatchesExpectation(replyText, expectation) {
   const problems = [];
   const text = String(replyText == null ? '' : replyText);
   const exp = expectation && typeof expectation === 'object' ? expectation : {};
   const remaining = Array.isArray(exp.remaining) ? exp.remaining : [];
 
+  const segments = framedReplySegments(text);
+  const remainingText = segments.filter((s) => s.remaining || !s.logged).map((s) => s.text).join(' ');
+  const loggedText = segments.filter((s) => s.logged).map((s) => s.text).join(' ');
+
   const positions = [];
   for (const name of remaining) {
-    const at = liftMentionIndex(text, name);
+    const at = liftMentionIndex(remainingText, name);
     if (at < 0) problems.push(`the reply does not name remaining lift "${name}"`);
     else positions.push({ name, at });
   }
   for (const name of (Array.isArray(exp.complete) ? exp.complete : [])) {
-    if (liftMentionIndex(text, name) >= 0) problems.push(`the reply names "${name}", which the declaration says is already complete`);
+    if (liftMentionIndex(remainingText, name) >= 0) problems.push(`the reply names "${name}", which the declaration says is already complete`);
   }
   for (const name of (Array.isArray(exp.retired) ? exp.retired : [])) {
-    if (liftMentionIndex(text, name) >= 0) problems.push(`the reply names "${name}", which an accepted substitution removed from the plan`);
+    if (liftMentionIndex(remainingText, name) >= 0) problems.push(`the reply names "${name}", which an accepted substitution removed from the plan`);
   }
 
-  // ORDER: the remaining lifts must appear in the declared sequence.
+  // LOGGED claims: a lift named in a logged-framed segment must be one the
+  // declaration records logged sets for. An expectation built by hand without
+  // `logged` falls back to its complete lifts — the only lifts such an
+  // expectation can prove were logged. A retired lift named here is caught as
+  // the false logged claim it is (it was never logged); the retired rule above
+  // still governs a retired lift named as remaining, and nothing else changes.
+  if (loggedText) {
+    const key = (v) => String(v == null ? '' : v).trim().toLowerCase().replace(/[-\s]+/g, ' ');
+    const loggedKeys = new Set((Array.isArray(exp.logged) ? exp.logged : (Array.isArray(exp.complete) ? exp.complete : [])).map(key));
+    const candidates = [...remaining, ...(Array.isArray(exp.complete) ? exp.complete : []), ...(Array.isArray(exp.retired) ? exp.retired : [])];
+    const seen = new Set();
+    for (const name of candidates) {
+      const k = key(name);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      if (!loggedKeys.has(k) && liftMentionIndex(loggedText, name) >= 0) {
+        problems.push(`the reply names "${name}" as logged, but the declaration records no logged sets for it`);
+      }
+    }
+  }
+
+  // ORDER: the remaining lifts must appear in the declared sequence — judged by
+  // first mentions WITHIN the remaining-relevant text, never across a recap.
   if (positions.length === remaining.length && remaining.length > 1) {
     const spoken = positions.slice().sort((a, b) => a.at - b.at).map((p) => p.name);
     if (spoken.join('|') !== remaining.join('|')) {
@@ -661,8 +776,9 @@ function replyMatchesExpectation(replyText, expectation) {
     }
   }
 
-  // EXPLICIT next-up: judged only when the reply actually makes the claim.
-  const claimed = explicitNextUpClaim(text);
+  // EXPLICIT next-up: judged only when the reply actually makes the claim, and
+  // only over the remaining-relevant text a next-up claim can live in.
+  const claimed = explicitNextUpClaim(remainingText);
   if (claimed !== null) {
     // Fall back to the head of the remaining list when the caller supplied no explicit
     // nextUp — an expectation with remaining work always has one.

@@ -715,6 +715,130 @@ describe('deriveExpectedRemaining — independent of client state and reply', ()
   });
 });
 
+// ── segment-aware reply judging (F-SB4B corrective 11) ───────────────────────
+// Session 3's scored run (fsb4b-s3-20261028T195320-ACB006) failed condition 8 on a
+// reply whose FIRST sentence was a truthful logged recap — "You've logged Back
+// Squat, Overhead Press, Romanian Deadlift, Seated Row, Incline DB Press, and
+// Face Pull." — judged by a beat with no framing awareness: every completed lift
+// named ANYWHERE counted as claimed remaining, and remaining ORDER was read off
+// first mentions across the whole text, so the recap's log order (Seated Row
+// before Incline DB Press) failed a reply whose remaining statement and the
+// client's canonical state were both correct. Decisive proof: the product's own
+// deterministic grounded statement (buildGroundedSessionStateStatement,
+// services/coachResponseGrounding.js) fed through the old beat against this same
+// expectation reproduces exactly the run's four problems. A beat the product's
+// canonical grounded prose cannot pass measures a shape the product never
+// promised. The fix judges each framed segment as what it is.
+
+describe('replyMatchesExpectation — segment-aware framing (corrective 11)', () => {
+  const PLAN = [
+    { exercise: 'Back Squat', target_sets: 2 },
+    { exercise: 'Overhead Press', target_sets: 2 },
+    { exercise: 'Romanian Deadlift', target_sets: 2 },
+    { exercise: 'Bench Press', target_sets: 2 },
+    { exercise: 'Seated Row', target_sets: 2 },
+    { exercise: 'Bicep Curl', target_sets: 2 },
+  ];
+  // The Session 3 declaration at the remaining-answer beat, derived exactly as
+  // the gate driver derives it: pre-Bench lifts x2, the batch (Seated Row first,
+  // the replacement second), the off-plan Face Pull, the replacement's second
+  // set; the staged prescription for the substitute is 3 sets.
+  const session3 = () => deriveExpectedRemaining({
+    plan: PLAN,
+    loggedNames: [
+      'back squat', 'back squat', 'overhead press', 'overhead press',
+      'romanian deadlift', 'romanian deadlift',
+      'seated row', 'incline db press', 'face pull', 'incline db press',
+    ],
+    replacement: { sourceName: 'Bench Press', replacementName: 'Incline DB Press', sets: 3 },
+  });
+  const RECAP = "You've logged Back Squat, Overhead Press, Romanian Deadlift, Seated Row, Incline DB Press, and Face Pull.";
+  const REMAINING_OK = 'You still have Incline DB Press, Seated Row, and Bicep Curl left.';
+
+  it('the Session 3 expectation carries the logged knowledge the driver declared', () => {
+    const e = session3();
+    assert.deepEqual(e.remaining, ['Incline DB Press', 'Seated Row', 'Bicep Curl']);
+    assert.deepEqual(e.complete, ['Back Squat', 'Overhead Press', 'Romanian Deadlift']);
+    assert.deepEqual(e.retired, ['Bench Press']);
+    // Complete lifts, partially-logged remaining lifts (plan spelling), and the
+    // declared off-plan lift (as declared) — the truth a logged recap is judged on.
+    assert.deepEqual(e.logged, ['Back Squat', 'Overhead Press', 'Romanian Deadlift', 'Incline DB Press', 'Seated Row', 'face pull']);
+  });
+
+  it('logged knowledge is empty when nothing was logged, and names a partially-logged lift', () => {
+    assert.deepEqual(deriveExpectedRemaining({ plan: PLAN, loggedNames: [], replacement: null }).logged, []);
+    const one = deriveExpectedRemaining({ plan: PLAN, loggedNames: ['back squat'], replacement: null });
+    assert.deepEqual(one.logged, ['Back Squat']);
+    assert.ok(one.remaining.includes('Back Squat'), 'one of two sets leaves the lift both logged and remaining');
+  });
+
+  it('the run\'s preserved recap followed by a correctly-ordered remaining statement passes', () => {
+    const cmp = replyMatchesExpectation(`${RECAP} ${REMAINING_OK}`, session3());
+    assert.deepEqual(cmp, { ok: true, problems: [] });
+  });
+
+  it('the product\'s grounded-statement shape passes against the same expectation', () => {
+    // The exact shape buildGroundedSessionStateStatement produces for this state:
+    // logged lifts in log order, then remaining in plan order, then its own
+    // still-planned disclaimer. On the pre-fix beat this reproduces the run's
+    // four problems verbatim.
+    const grounded = 'Logged this session: Back Squat, Overhead Press, Romanian Deadlift, Seated Row, Incline DB Press, Face Pull. '
+      + 'Still remaining: Incline DB Press, Seated Row, Bicep Curl. '
+      + 'Those are still planned, not done — nothing counts as completed until it\'s logged.';
+    const cmp = replyMatchesExpectation(grounded, session3());
+    assert.deepEqual(cmp, { ok: true, problems: [] });
+  });
+
+  it('BITE — a remaining segment naming a completed lift as still-to-do fails', () => {
+    const cmp = replyMatchesExpectation('Still remaining: Back Squat, Incline DB Press, Seated Row, Bicep Curl.', session3());
+    assert.equal(cmp.ok, false);
+    assert.match(cmp.problems.join(' '), /"Back Squat", which the declaration says is already complete/);
+  });
+
+  it('BITE — a remaining segment listing remaining lifts in the wrong order fails', () => {
+    const cmp = replyMatchesExpectation('Still remaining: Seated Row, Incline DB Press, Bicep Curl.', session3());
+    assert.equal(cmp.ok, false);
+    assert.match(cmp.problems.join(' '), /declaration order is \[Incline DB Press, Seated Row, Bicep Curl\]/);
+  });
+
+  it('BITE — a logged segment naming a lift that was never logged fails AS A LOGGED CLAIM', () => {
+    // Bench Press is the retired source: never logged this session. Named in a
+    // logged recap it is a false logged claim — NOT a remaining-work problem,
+    // and the retired-as-remaining wording must not fire for it.
+    const cmp = replyMatchesExpectation(
+      `You've logged Bench Press, Back Squat, Overhead Press, Romanian Deadlift, Seated Row, Incline DB Press, and Face Pull. ${REMAINING_OK}`,
+      session3());
+    assert.equal(cmp.ok, false);
+    assert.match(cmp.problems.join(' '), /"Bench Press" as logged, but the declaration records no logged sets for it/);
+    assert.doesNotMatch(cmp.problems.join(' '), /accepted substitution removed from the plan/);
+  });
+
+  it('BITE — a logged segment naming a remaining lift with zero logged sets fails', () => {
+    const cmp = replyMatchesExpectation(`You've logged Bicep Curl. ${REMAINING_OK}`, session3());
+    assert.equal(cmp.ok, false);
+    assert.match(cmp.problems.join(' '), /"Bicep Curl" as logged, but the declaration records no logged sets for it/);
+  });
+
+  it('BITE — a retired lift named AS REMAINING still fails', () => {
+    const cmp = replyMatchesExpectation('Still remaining: Bench Press, Incline DB Press, Seated Row, Bicep Curl.', session3());
+    assert.equal(cmp.ok, false);
+    assert.match(cmp.problems.join(' '), /"Bench Press", which an accepted substitution removed from the plan/);
+  });
+
+  it('a remaining lift named ONLY in the logged recap is not counted as stated remaining', () => {
+    const cmp = replyMatchesExpectation(`${RECAP} You still have Bicep Curl left.`, session3());
+    assert.equal(cmp.ok, false);
+    assert.match(cmp.problems.join(' '), /does not name remaining lift "Incline DB Press"/);
+    assert.match(cmp.problems.join(' '), /does not name remaining lift "Seated Row"/);
+  });
+
+  it('a pure remaining-only answer (the sessionPlanExecutor close-answer shape) passes', () => {
+    const closeAnswer = 'Not done yet — 3 still on your list: Incline DB Press, Seated Row, Bicep Curl. Knock those out, then say "log it" to save.';
+    const cmp = replyMatchesExpectation(closeAnswer, session3());
+    assert.deepEqual(cmp, { ok: true, problems: [] });
+  });
+});
+
 // ── the claim sweep: no constant may stand in for evidence ───────────────────
 
 describe('detectUnsupportedMutationWording — derived, phase-bounded, fails closed', () => {
