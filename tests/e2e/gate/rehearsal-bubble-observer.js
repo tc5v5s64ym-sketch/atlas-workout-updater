@@ -125,7 +125,7 @@ function markExistingBubblesScript(attr) {
 // runs before any application script on every navigation, so it is installed for the
 // fresh-session transition too. It reports `{ id, text }` per changed bubble and
 // takes NO timestamp of its own — timing belongs to the receiving side.
-function bubbleObserverInitScript({ flushMs, threadId, bubbleSelector, callbackName, flushName, stateName, readName, idAttr, seqAttr }) {
+function bubbleObserverInitScript({ flushMs, threadId, bubbleSelector, callbackName, flushName, stateName, readName, boundaryName, idAttr, seqAttr }) {
   // THE ONE BUBBLE IDENTITY (F-SB4B corrective 5). Every bubble the collector has ever
   // seen carries a stable id, assigned once and never reused, and the monotonic counter
   // lives on the THREAD element so a bubble's id is independent of anything that has
@@ -248,6 +248,83 @@ function bubbleObserverInitScript({ flushMs, threadId, bubbleSelector, callbackN
   // fills in carries the id the observer would have given it.
   window[readName] = () => stampAndRead();
   window[stateName] = () => ({ changeSeq, flushedSeq, pending: changeSeq !== flushedSeq });
+
+  // ── THE WRITE BOUNDARY, SAMPLED IN-PAGE AT THE RESPONSE'S OWN INSTANT ────────
+  //
+  // THE DEFECT THIS REPLACES (F-SB4B in-page boundary; owner-approved design fix,
+  // 2026-10-28). The live write boundary's `atChangeSeq` used to be read by the
+  // SPEC, from outside the page: Playwright's response listener parsed the body
+  // and then ran `await page.evaluate(() => window.__atlasBubbleState())`. That
+  // read is causally AFTER the page's own handling of the same response — the
+  // app's `api()` awaited its fetch, parsed the body, wrote the write-confirmed
+  // status, and the review card flipped to its saved state (the `.rv-saved`
+  // label becoming visible), with this collector counting the flip — all before
+  // a CDP round trip could land. Qualifying Session 1
+  // (fsb4b-s1-20261028T065034-CDE1FA) failed condition 9 on exactly this: the
+  // earned "✓ Saved to your sheet" claim carried changeSeq 146 and the sampled
+  // boundary came back >= 146, so the strict comparison judged an earned claim
+  // `before`. The response instant cannot be sampled from outside the page at
+  // all: any channel slower than the page's own promise reactions reads a clock
+  // the response has already advanced.
+  //
+  // THE FIX samples the counter where the instant exists. The app's one save
+  // transport is `fetch` (`api()` in src/app/api.js; there is no XHR in the
+  // client), so this init script — which runs before any application script —
+  // wraps `window.fetch` and, for a save-route request, attaches its reaction to
+  // the underlying promise BEFORE returning that same promise to the caller.
+  // Promise reactions run in attachment order, so on resolution the sampler runs
+  // before the caller's `await` continuation: before the body is parsed, before
+  // any handler can mutate the DOM, at the one instant the counter still reads
+  // exactly what the response left behind. (The collector assigns sequences from
+  // MutationObserver callbacks, which queue when a mutation happens; every
+  // mutation that preceded the response has been counted by the time its
+  // reaction runs, and the render the response itself causes is counted only
+  // afterwards.) Consequences, both load-bearing:
+  //
+  //   * a claim the response CAUSES gets a strictly later sequence and
+  //     classifies `after` — the earned case the old read failed;
+  //   * a claim rendered BEFORE the response (the optimistic case) already
+  //     holds a sequence no greater than the sample — equality exactly when it
+  //     was the last change counted — and still classifies `before`. Equality
+  //     is reachable only by a pre-response change.
+  //
+  // The sampler judges nothing and reads no body: it records one entry per
+  // FULFILLED save-route response, in resolution order — `{ changeSeq, status }`
+  // — and the spec pairs the entries with its own network records under the
+  // guards the old sampling site applied (`pairLiveWriteChangeSeq`). A rejected
+  // fetch produced no response, so it leaves no sample, exactly as the network
+  // listener records none. The wrap is transparent: the SAME promise object is
+  // returned, and arguments, resolution value, and rejection identity are
+  // untouched. The in-page `Date.now()` is deliberately NOT recorded — Session
+  // 5's fake clock makes it incomparable to the Node-side write time; the
+  // boundary's `atMs` stays the network record's, as before.
+  const writeBoundarySamples = [];
+  const SAVE_ROUTE_PATH = /\/api\/(log-workout|complete-workout)\b/;
+  if (boundaryName && typeof window.fetch === 'function') {
+    const pageFetch = window.fetch.bind(window);
+    window.fetch = function (...args) {
+      const promise = pageFetch(...args);
+      let pathname = '';
+      try {
+        const input = args[0];
+        const raw = typeof input === 'string' ? input
+          : (input && typeof input.url === 'string' ? input.url
+            : (input && typeof input.href === 'string' ? input.href : ''));
+        pathname = new URL(raw, window.location.href).pathname;
+      } catch { pathname = ''; }
+      if (SAVE_ROUTE_PATH.test(pathname)) {
+        promise.then((res) => {
+          writeBoundarySamples.push({
+            changeSeq,
+            status: res && Number.isFinite(res.status) ? res.status : null,
+          });
+        }, () => { /* no response arrived, so there is nothing to sample */ });
+      }
+      return promise;
+    };
+    window[boundaryName] = () => writeBoundarySamples
+      .map((s) => ({ changeSeq: s.changeSeq, status: s.status }));
+  }
 
   const attach = () => {
     const thread = document.getElementById(threadId);
@@ -372,6 +449,38 @@ function makeBoundary({ atMs, atChangeSeq = null, ingestSeq = null, drained = fa
 function normalizeBoundary(value) {
   if (value && typeof value === 'object') return makeBoundary(value);
   return makeBoundary({ atMs: value, atChangeSeq: null, ingestSeq: null, drained: false });
+}
+
+// ── pairing the in-page write samples with the network record ────────────────
+// The spec observes every save-route response from the network side (arrival
+// time, HTTP status, the parsed proof fields) and the in-page sampler observes
+// the same responses from the page side (the collector clock at each one's
+// resolution). Both streams cover the same requests in response-arrival order,
+// so their entries correspond BY ORDINAL — pairing never filters one side to
+// fit the other. The boundary's sequence is the sample paired with the FIRST
+// response passing the guards the old sampling site applied: a parsed body
+// (`capture_failed !== true`), not a test-mode preview (`test_mode !== true`),
+// and a proven live write (`sheet_write === 'success'`) — corroborated by the
+// HTTP status both sides independently recorded for that response.
+//
+// Any doubt yields null: no guarded response, no sample at that ordinal, a
+// non-finite sampled sequence, or a status disagreement (the streams have
+// drifted, so an ordinal pairing could attach the WRONG response's clock to the
+// write). A boundary built on null carries no sequence evidence and the claim
+// decisions fail closed on it — the same failure the old read produced when its
+// evaluate failed. The difference is that a sample, when it exists, is from the
+// response's own instant rather than from after its render.
+function pairLiveWriteChangeSeq(saveResponses, samples) {
+  const responses = Array.isArray(saveResponses) ? saveResponses : [];
+  const list = Array.isArray(samples) ? samples : [];
+  const idx = responses.findIndex((r) => r && r.capture_failed !== true
+    && r.test_mode !== true && r.sheet_write === 'success');
+  if (idx === -1) return null;
+  const sample = list[idx];
+  if (!sample || !Number.isFinite(sample.changeSeq)) return null;
+  if (!Number.isFinite(responses[idx].status) || !Number.isFinite(sample.status)
+    || sample.status !== responses[idx].status) return null;
+  return sample.changeSeq;
 }
 
 // Was this claim provably visible AFTER the boundary?
@@ -579,5 +688,6 @@ module.exports = {
   recordsToMessages,
   makeBoundary,
   normalizeBoundary,
+  pairLiveWriteChangeSeq,
   classifyClaimAgainstBoundary,
 };

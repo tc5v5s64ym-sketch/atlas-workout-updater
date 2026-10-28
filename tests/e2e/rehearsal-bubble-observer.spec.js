@@ -72,6 +72,7 @@ async function startCollector(page, phaseRef) {
     flushName: '__atlasBubbleFlush',
     stateName: '__atlasBubbleState',
     readName: '__atlasBubbleRead',
+    boundaryName: '__atlasWriteBoundary',
     idAttr: BUBBLE_ID_ATTR,
     seqAttr: BUBBLE_SEQ_ATTR,
   });
@@ -986,5 +987,203 @@ test.describe('F-SB4B sweep — a sweep-created record is redeemed only by seque
     expect(m.retroactive, 'genuinely sweep-only evidence is never redeemed').toBe(true);
     expect(detectUnsupportedWriteClaim({ messages: [m], liveWriteAtMs: Date.now() + 1000 }).unsupported)
       .toBe(true);
+  });
+});
+
+
+// ── F-SB4B in-page write boundary: the response instant lives inside the page ──
+//
+// THE DEFECT (qualifying Session 1, fsb4b-s1-20261028T065034-CDE1FA, 24/25). The
+// live-write boundary's clock was read by the spec's response listener, from
+// OUTSIDE the page: `await res.json()` first, then
+// `page.evaluate(() => window.__atlasBubbleState())`. The page's own handling of
+// that same response — api()'s awaited fetch resolving, the body parse, app.js
+// writing the write-confirmed status, the review card's observer flipping it to
+// done, the collector counting the flip — all of it runs on promise reactions and
+// MutationObserver microtasks that complete before a CDP round trip can land.
+// The sample therefore came back >= the earned claim's own changeSeq (146), and
+// the strict comparison judged the claim `before` a write it was caused by.
+//
+// These fixtures reproduce the app's exact shape on a routed origin: a preview
+// bubble, and a save whose response handler flips the bubble to the saved claim.
+// The OLD read is performed the OLD way — inside a response listener, after the
+// body parse — so the bite is the mechanism, not a description of it.
+
+test.describe('F-SB4B write boundary — sampled in-page at response resolution', () => {
+  const ORIGIN = 'http://fixture.local';
+  const FIXTURE_HTML = `<!doctype html><html><body>
+    <div id="thread-messages"></div>
+    <script>
+      const body = document.createElement('div');
+      const bubble = document.createElement('div');
+      bubble.className = 'chat-bubble chat-bubble-atlas';
+      body.textContent = "Here's your session — Nothing's saved yet";
+      bubble.appendChild(body);
+      document.getElementById('thread-messages').appendChild(bubble);
+      window.__fixture = {
+        // The product's save shape: await the fetch, parse the body, THEN flip.
+        async saveHonest() {
+          const res = await fetch('/api/log-workout', { method: 'POST', body: '{}' });
+          await res.json();
+          body.textContent = '✓ Saved to your sheet';
+        },
+        // The optimistic defect shape: the claim renders BEFORE the response.
+        async saveOptimistic() {
+          body.textContent = '✓ Saved to your sheet';
+          const res = await fetch('/api/log-workout', { method: 'POST', body: '{}' });
+          await res.json();
+        },
+      };
+    </script></body></html>`;
+
+  // The collector install, as in startCollector, but the document is the fixture
+  // origin: a data: URL cannot fetch, and the sampler's whole subject is a fetch.
+  async function startFixture(page, phaseRef) {
+    const records = {};
+    const state = { ingestSeq: 0 };
+    await page.exposeFunction('__atlasBubbleObserved', (batch) => {
+      const now = Date.now();
+      for (const item of (Array.isArray(batch) ? batch : [])) {
+        state.ingestSeq += 1;
+        ingestLiveObservation(records, item, {
+          phase: phaseRef.value, nowMs: now, ingestSeq: state.ingestSeq, thinkingMarker: THINKING,
+        });
+      }
+    });
+    await page.addInitScript(bubbleObserverInitScript, {
+      flushMs: OBSERVER_FLUSH_MS,
+      threadId: 'thread-messages',
+      bubbleSelector: '.chat-bubble-atlas',
+      callbackName: '__atlasBubbleObserved',
+      flushName: '__atlasBubbleFlush',
+      stateName: '__atlasBubbleState',
+      readName: '__atlasBubbleRead',
+      boundaryName: '__atlasWriteBoundary',
+      idAttr: BUBBLE_ID_ATTR,
+      seqAttr: BUBBLE_SEQ_ATTR,
+    });
+    await page.goto(`${ORIGIN}/`);
+    return { records, state };
+  }
+
+  const readSamples = (page) => page.evaluate(() => (typeof window.__atlasWriteBoundary === 'function'
+    ? window.__atlasWriteBoundary() : null));
+
+  test('BITE: a claim rendered BY the response — the old outside read judges it before, the in-page sample after', async ({ page }) => {
+    await page.route(`${ORIGIN}/`, (route) => route.fulfill({ contentType: 'text/html', body: FIXTURE_HTML }));
+    await page.route(`${ORIGIN}/api/log-workout`, (route) => route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({ test_mode: false, sheet_write: 'success' }),
+    }));
+    const phaseRef = { value: 'closeout' };
+    const { records } = await startFixture(page, phaseRef);
+    await settle(page);
+
+    // The OLD sampling, performed the old way: inside the response listener,
+    // after the body was parsed, read the collector clock from outside the page.
+    let oldSample = null;
+    page.on('response', async (res) => {
+      if (!/\/api\/log-workout\b/.test(res.url())) return;
+      await res.json().catch(() => null);
+      const st = await page.evaluate(() => (typeof window.__atlasBubbleState === 'function'
+        ? window.__atlasBubbleState() : null));
+      if (st && Number.isFinite(st.changeSeq)) oldSample = st.changeSeq;
+    });
+
+    await page.evaluate(() => window.__fixture.saveHonest());
+    await settle(page);
+
+    const claim = recordsToMessages(records)[0];
+    expect(claim.text, 'the flip landed in the record').toMatch(/Saved to your sheet/);
+    expect(claim.retroactive).toBe(false);
+
+    const samples = await readSamples(page);
+    expect(samples, 'exactly one save-route response was sampled').toHaveLength(1);
+    expect(samples[0].status).toBe(200);
+    // The causal facts, independent of any wall clock: the in-page sample was
+    // taken before the response's own render was counted; the outside read —
+    // taken after it — necessarily contains the claim's own change.
+    expect(samples[0].changeSeq, 'the in-page sample predates the change the response caused')
+      .toBeLessThan(claim.changeSeq);
+    expect(oldSample, 'the outside read was taken after the page rendered the claim')
+      .toBeGreaterThanOrEqual(claim.changeSeq);
+
+    const onOld = detectUnsupportedWriteClaim({
+      messages: recordsToMessages(records),
+      liveWriteBoundary: makeBoundary({ atMs: Date.now(), atChangeSeq: oldSample, drained: false }),
+    });
+    expect(onOld.unsupported,
+      'the old sampling reproduces the qualifying failure on an earned claim').toBe(true);
+    expect(onOld.detail).toMatch(/before the live write succeeded/);
+
+    const onNew = detectUnsupportedWriteClaim({
+      messages: recordsToMessages(records),
+      liveWriteBoundary: makeBoundary({ atMs: Date.now(), atChangeSeq: samples[0].changeSeq, drained: false }),
+    });
+    expect(onNew.unsupported,
+      `the in-page sample judges the earned claim after the write: ${onNew.detail}`).toBe(false);
+  });
+
+  test('the INVERSE pin: a claim rendered BEFORE the response still fails — at exact equality with the sample', async ({ page }) => {
+    await page.route(`${ORIGIN}/`, (route) => route.fulfill({ contentType: 'text/html', body: FIXTURE_HTML }));
+    // The response is HELD until the test releases it, so the claim is provably
+    // rendered and counted before the response resolves.
+    let releaseSave;
+    const gate = new Promise((r) => { releaseSave = r; });
+    await page.route(`${ORIGIN}/api/log-workout`, async (route) => {
+      await gate;
+      await route.fulfill({
+        status: 200, contentType: 'application/json',
+        body: JSON.stringify({ test_mode: false, sheet_write: 'success' }),
+      });
+    });
+    const phaseRef = { value: 'closeout' };
+    const { records } = await startFixture(page, phaseRef);
+    await settle(page);
+    const seqBefore = await readChangeSeq(page);
+
+    const saving = page.evaluate(() => window.__fixture.saveOptimistic());
+    // The optimistic claim is on screen and counted while the response is held.
+    await expect.poll(() => readChangeSeq(page), { timeout: 5000 }).toBeGreaterThan(seqBefore);
+    releaseSave();
+    await saving;
+    await settle(page);
+
+    const claim = recordsToMessages(records)[0];
+    expect(claim.text).toMatch(/Saved to your sheet/);
+    const samples = await readSamples(page);
+    expect(samples).toHaveLength(1);
+    // EQUALITY, and it is causal, not coincidental: the claim was the last change
+    // counted before the response resolved, so the sample — the counter at
+    // resolution — IS the claim's sequence. Equality can arise only this way,
+    // which is why the strict comparison keeps equality on the `before` side.
+    expect(samples[0].changeSeq, 'a pre-response change is counted before the sample is taken')
+      .toBe(claim.changeSeq);
+
+    const sweep = detectUnsupportedWriteClaim({
+      messages: recordsToMessages(records),
+      liveWriteBoundary: makeBoundary({ atMs: Date.now(), atChangeSeq: samples[0].changeSeq, drained: false }),
+    });
+    expect(sweep.unsupported,
+      'the in-page boundary must not rescue an optimistic claim').toBe(true);
+    expect(sweep.detail).toMatch(/before the live write succeeded/);
+  });
+
+  test('the sampler records ONLY fulfilled save-route responses', async ({ page }) => {
+    await page.route(`${ORIGIN}/`, (route) => route.fulfill({ contentType: 'text/html', body: FIXTURE_HTML }));
+    await page.route(`${ORIGIN}/api/coach/message`, (route) => route.fulfill({
+      status: 200, contentType: 'application/json', body: '{}',
+    }));
+    await page.route(`${ORIGIN}/api/log-workout`, (route) => route.abort());
+    const phaseRef = { value: 'closeout' };
+    await startFixture(page, phaseRef);
+
+    await page.evaluate(async () => {
+      await fetch('/api/coach/message', { method: 'POST', body: '{}' }).catch(() => {});
+      await fetch('/api/log-workout', { method: 'POST', body: '{}' }).catch(() => {});
+    });
+
+    expect(await readSamples(page),
+      'a non-save route is not the write, and a rejected fetch saw no response').toEqual([]);
   });
 });

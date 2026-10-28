@@ -25,6 +25,7 @@ const { sessionPlanSetsColumns } = require('../config/columns');
 // and Node stamps them on receipt, so a timestamp cannot be assigned by a later sweep.
 const {
   ingestLiveObservation, reconcileSweep, recordsToMessages, redeemOnStoredEvidence,
+  classifyClaimAgainstBoundary, pairLiveWriteChangeSeq,
 } = require('../tests/e2e/gate/rehearsal-bubble-observer');
 
 const HEAD = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678';
@@ -1750,5 +1751,127 @@ describe('settle-time redemption on stored sequence evidence (corrective 8)', ()
     const before = JSON.stringify(recordsToMessages(records)[0]);
     assert.equal(redeemOnStoredEvidence(records), 0);
     assert.equal(JSON.stringify(recordsToMessages(records)[0]), before, 'nothing about a live record changes');
+  });
+});
+
+// F-SB4B in-page write boundary — the boundary's clock was read from OUTSIDE the page.
+//
+// Qualifying Session 1 (fsb4b-s1-20261028T065034-CDE1FA, 24/25) failed condition 9 on
+// the one claim every prior corrective had been converging on: the review card's
+// "✓ Saved to your sheet" label. The label is earned — `.rv-saved` is display:none
+// until `.review.done`, the card flips only after the successful save response, and
+// the collector reads `innerText`, so the claim text enters the record only
+// post-write. The record carried changeSeq 146. The boundary's `atChangeSeq` was
+// sampled by the spec's response listener via `await page.evaluate(...)` — a read
+// that is causally AFTER the page's own handling of the same response (fetch
+// resolution → body parse → status write → the card's MutationObserver flip →
+// the collector counting that flip), so the sample came back >= 146 and the strict
+// comparison judged an earned claim `before`. The response instant cannot be
+// sampled from outside the page: any channel slower than the page's own promise
+// reactions reads a clock the response has already advanced. The boundary value
+// was also persisted NOWHERE in the run's evidence, so the misjudgement had to be
+// reconstructed from the verdict's branch — the spec now persists both judged
+// boundaries alongside these records.
+//
+// THE FIX samples the clock IN the page: the collector's init script wraps
+// `window.fetch` and attaches its reaction to a save-route promise BEFORE
+// returning that promise to the caller, so on resolution the sampler reads the
+// collector counter synchronously, before the caller's continuation can mutate
+// the DOM. The samples are harvested before the teardown reload and paired with
+// the spec's network records HERE, under the same guards the old sampling site
+// applied. The detector and `classifyClaimAgainstBoundary` are untouched.
+describe('the live write boundary is paired from the in-page sample (in-page boundary)', () => {
+  const resp = (over = {}) => ({
+    phase: 'closeout', at: 5000, endpoint: 'log-workout', status: 200, capture_failed: false, ...over,
+  });
+  const preview = () => resp({ test_mode: true, sheet_written: false, no_write_confirmed: true });
+  const liveOk = () => resp({ test_mode: false, sheet_write: 'success' });
+  const sample = (changeSeq, status = 200) => ({ changeSeq, status });
+
+  it('pairs the first guarded live write with the sample at the SAME ordinal', () => {
+    // Two test-mode previews precede the live write on BOTH streams; pairing is by
+    // ordinal over the full response stream, never by filtering one side.
+    const responses = [preview(), preview(), liveOk()];
+    const samples = [sample(10), sample(20), sample(42)];
+    assert.equal(pairLiveWriteChangeSeq(responses, samples), 42);
+  });
+
+  it('a test-mode response is never the boundary, whatever its body claims', () => {
+    const responses = [resp({ test_mode: true, sheet_write: 'success' })];
+    assert.equal(pairLiveWriteChangeSeq(responses, [sample(7)]), null);
+  });
+
+  it('a capture-failed entry is never the boundary', () => {
+    const responses = [resp({ capture_failed: true, status: null, sheet_write: 'success' })];
+    assert.equal(pairLiveWriteChangeSeq(responses, [sample(7)]), null);
+  });
+
+  it('a status disagreement between the two records of one response yields no sequence', () => {
+    // The streams have drifted (a response one side saw and the other did not):
+    // pairing by ordinal would attach the WRONG response's clock to the write.
+    assert.equal(pairLiveWriteChangeSeq([liveOk()], [sample(9, 500)]), null);
+  });
+
+  it('a missing sample at the ordinal yields no sequence', () => {
+    assert.equal(pairLiveWriteChangeSeq([preview(), liveOk()], [sample(3)]), null);
+    assert.equal(pairLiveWriteChangeSeq([liveOk()], []), null);
+    assert.equal(pairLiveWriteChangeSeq([liveOk()], null), null);
+  });
+
+  it('a non-finite sampled sequence yields no sequence', () => {
+    for (const bad of [NaN, Infinity, null, undefined, '42']) {
+      assert.equal(pairLiveWriteChangeSeq([liveOk()], [{ changeSeq: bad, status: 200 }]), null,
+        `changeSeq=${String(bad)} must not pair`);
+    }
+  });
+
+  it('no guarded live write yields no sequence', () => {
+    assert.equal(pairLiveWriteChangeSeq([preview()], [sample(3)]), null);
+    assert.equal(pairLiveWriteChangeSeq([], []), null);
+  });
+
+  it('EQUALITY PIN: a claim AT the sampled sequence is before — equality is reachable only by a pre-response change', () => {
+    // The sampler reads the counter at the response's resolution, before the
+    // response's own effects are counted. A change whose sequence EQUALS the
+    // sample was therefore already counted when the response resolved: it
+    // happened before the write succeeded, and the strict comparison must keep
+    // it `before`. Only a strictly later sequence is `after`.
+    const boundary = { atMs: 5000, atChangeSeq: 146, drained: false };
+    assert.equal(classifyClaimAgainstBoundary({ atMs: 6000, changeSeq: 146 }, boundary), 'before');
+    assert.equal(classifyClaimAgainstBoundary({ atMs: 6000, changeSeq: 147 }, boundary), 'after');
+    assert.equal(classifyClaimAgainstBoundary({ atMs: 4000, changeSeq: 145 }, boundary), 'before');
+  });
+
+  it('THE RUN, at the detector: the earned claim passes on the in-page sample and fails on the old outside read', () => {
+    // Run fsb4b-s1-20261028T065034-CDE1FA's failing record, rebuilt at the values
+    // the verdict's branch proves: the claim's own sequence is 146, and the old
+    // outside read returned a boundary >= 146. The in-page sample is the counter
+    // as the response left it — strictly below the change the response caused.
+    const claim = {
+      id: '17', text: '✓ Saved to your sheet', atMs: 6000, phase: 'logging_tail',
+      changeSeq: 146, retroactive: false, placeholder: false,
+    };
+    const inPage = pairLiveWriteChangeSeq([preview(), liveOk()], [sample(112), sample(128)]);
+    assert.equal(inPage, 128);
+    assert.equal(detectUnsupportedWriteClaim({
+      messages: [claim], liveWriteBoundary: { atMs: 5000, atChangeSeq: inPage, drained: false },
+    }).unsupported, false, 'sampled at the response instant, the earned claim is after the write');
+    assert.equal(detectUnsupportedWriteClaim({
+      messages: [claim], liveWriteBoundary: { atMs: 5000, atChangeSeq: 146, drained: false },
+    }).unsupported, true, 'the old outside read — the sample already containing the claim — judges it before');
+  });
+
+  it('the inverse stays closed: a pre-response claim fails on the in-page sample too', () => {
+    // The optimistic case: the claim rendered BEFORE the response resolved, so it
+    // was already counted when the sampler read the counter — its sequence can be
+    // at most the sample, never above it.
+    const claim = {
+      id: '9', text: '✓ Saved to your sheet', atMs: 4500, phase: 'closeout',
+      changeSeq: 128, retroactive: false, placeholder: false,
+    };
+    const inPage = pairLiveWriteChangeSeq([liveOk()], [sample(128)]);
+    assert.equal(detectUnsupportedWriteClaim({
+      messages: [claim], liveWriteBoundary: { atMs: 5000, atChangeSeq: inPage, drained: false },
+    }).unsupported, true, 'a claim counted before the response resolved is before the write');
   });
 });
