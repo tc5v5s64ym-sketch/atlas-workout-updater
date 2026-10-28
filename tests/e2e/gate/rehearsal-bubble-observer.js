@@ -496,6 +496,64 @@ function reconcileSweep(records, observed, { phase, nowMs, thinkingMarker = 'Thi
   return out;
 }
 
+// ── settle-time redemption on stored evidence (F-SB4B corrective 8) ────────────
+//
+// THE GAP THIS CLOSES. Redemption of a `retroactive` record is evaluated ONLY inside
+// `ingestLiveObservation`, i.e. only when a live report ARRIVES. A quiet sweep that
+// downgrades a record AFTER that bubble's last-ever report therefore leaves a mark
+// nothing can lift: the bubble is final and static, so no further mutation occurs,
+// no further report is generated, and the redemption branch never runs again.
+// Qualifying Session 1 (fsb4b-s1-20261028T060125-0939CE) failed condition 9 on
+// exactly that state — per-record diagnostics name it: id 17, the final
+// logging_tail bubble, `change_seq` 128, `swept_at_change_seq` 128, still
+// `retroactive` at the snapshot after the collector had provably settled (nothing
+// undelivered, record set stable across a full flush window, twice). Its stored
+// evidence already satisfied the sequence proof; the proof was simply never judged.
+//
+// THE FIX judges the stored evidence where it lives, at the one moment it is known
+// to be complete: the collector has settled, so no report is still in flight and
+// the pair on the record — the sequence its own live report carried (`changeSeq`)
+// and the collector clock the downgrading sweep read (`sweptAtChangeSeq`) — is ALL
+// the evidence there will ever be. The test is corrective 6's, unchanged: the live
+// change already existed at the sweep's instant iff `changeSeq <= sweptAtChangeSeq`,
+// both finite. What is judged is the record's own history, not a new observation:
+// the downgrading sweep read the record's current text at a collector clock of
+// `sweptAtChangeSeq` with the collector quiet, so that text existed at a logical
+// instant no later than that clock, and the record's stored `changeSeq` is a live
+// sequence no later than it.
+//
+// FAIL-CLOSED is preserved in both directions that matter:
+//   * A record missing either side of the proof is NOT redeemed: a sweep-CREATED
+//     record carries no `changeSeq` at all (no live report ever described it), a
+//     later sequence describes a change the sweep had not seen, and a missing or
+//     non-finite value on either side proves nothing. Such records stay
+//     `retroactive` and condition 9 still fails on them.
+//   * Placement cannot be bought. The detectors place a claim by the record's
+//     stored `changeSeq` — the earliest sequence its live history supports — so a
+//     redeemed claim can only ever look EARLIER against a boundary, never later
+//     or more earned. A claim the sequence places before the boundary still fails;
+//     redemption proves timing, it does not excuse wording.
+//
+// This runs ONLY on the spec's proven settle (see `settleBubbleCollector`). An
+// unsettled collector judges nothing here: a report may still be in flight, and
+// the live report remains the timing authority wherever one can still arrive.
+// Returns how many records were redeemed.
+function redeemOnStoredEvidence(records) {
+  const out = records && typeof records === 'object' ? records : {};
+  let redeemed = 0;
+  for (const key of Object.keys(out)) {
+    const r = out[key];
+    if (!r || r.retroactive !== true) continue;
+    if (Number.isFinite(r.changeSeq)
+      && Number.isFinite(r.sweptAtChangeSeq)
+      && r.changeSeq <= r.sweptAtChangeSeq) {
+      r.retroactive = false;
+      redeemed += 1;
+    }
+  }
+  return redeemed;
+}
+
 // Ordered by bubble IDENTITY, which is assignment order: ids are handed out in DOM
 // order as bubbles are first seen and never reused, so this is the order the thread
 // actually rendered — a fact position stops carrying the moment anything is evicted.
@@ -517,6 +575,7 @@ module.exports = {
   bubbleObserverInitScript,
   ingestLiveObservation,
   reconcileSweep,
+  redeemOnStoredEvidence,
   recordsToMessages,
   makeBoundary,
   normalizeBoundary,
