@@ -1102,6 +1102,95 @@ describe('P1-B — an object body with no usable message is a capture FAILURE', 
   });
 });
 
+describe('P1-B2 — the S3 coach endpoints\' designed no-message lanes are not capture failures', () => {
+  // Session 1 (run fsb4b-s1-20261028T003215-0B5724) scored 24/25: four 2xx coach
+  // responses the S3 app served exactly as designed were classified capture-failed,
+  // because the classifier knew only the non-2xx lane. The lanes below are the app's
+  // own contract (routes/coachOps.js); each is recognized ONLY on the positive wire
+  // evidence it serializes — never on `message` being null alone. The claim detectors'
+  // own fail-closed rule (a retroactive record fails both sweeps) is pinned separately
+  // in the reconcileSweep suite below and is not weakened by anything here.
+  const LANES = [
+    ['a routine block at the acknowledgment tier serves no prose',
+      { data: { message: null, voice: null, sub_voice: null, configured: true, model: 'gemini-2.5-flash-lite', kind: 'block', note_tier: 'ack_only', note_trigger: null, note_reason_code: null } }],
+    ['the unconfigured fallback always serves null',
+      { data: { message: null, voice: null, sub_voice: null, configured: false, model: 'gemini-2.5-flash-lite', note_tier: null } }],
+    ['the generation-failed fallback serves null and serializes why',
+      { data: { message: null, voice: null, sub_voice: null, configured: true, model: 'gemini-2.5-flash-lite', error: 'provider timeout', note_tier: null } }],
+    ['the set-effort voice suppressed the prose (suppress_generic_prose)',
+      { data: { message: null, voice: { primary_line: 'Back off today.', severity: 'caution', reason_codes: ['fatigue'], suppress_generic_prose: true, contradictions: [] }, sub_voice: null, configured: true, model: 'gemini-2.5-flash-lite', source: 'gemini', kind: 'set' } }],
+    ['the substitution voice suppressed the prose (contradictions)',
+      { data: { message: null, voice: { primary_line: null, severity: 'neutral', reason_codes: [], suppress_generic_prose: false, contradictions: [] }, sub_voice: { primary_line: 'Good swap.', severity: 'pivot', reason_codes: ['good_pivot'], suppress_generic_prose: false, contradictions: ['prose claimed the swap was unsafe'] }, configured: true, model: 'gemini-2.5-flash-lite', source: 'gemini', kind: 'set' } }],
+    ['the training SME stays quiet for logging-shaped input (log_only)',
+      { data: { depth: 'log_only', answer: null, cards: [], confidenceLevel: 'none', source: 'training_sme' } }],
+    ['the training SME has no card for the question (answer null)',
+      { data: { depth: 'card', answer: null, cards: [], confidenceLevel: 'none', source: 'training_sme' } }],
+  ];
+
+  for (const [label, body] of LANES) {
+    it(`LANE — ${label} → no-message-path, and the turn may settle on stability`, () => {
+      const capture = classifyCoachResponseCapture({ status: 200, body, parseFailed: false });
+      assert.equal(capture.outcome, 'no-message-path', `${label} must not be a capture failure: ${capture.reason}`);
+      assert.equal(capture.message, null);
+      const outcome = classifySettlement({
+        text: 'the client-rendered templated line',
+        servedMessages: [],
+        stableForMs: 99999,
+        captureFailed: capture.outcome === 'capture-failed',
+      });
+      assert.equal(outcome, 'stable-no-served-message', `${label} must permit stability settlement`);
+      assert.equal(isSettled(outcome), true);
+    });
+  }
+
+  it('LANE — an athlete-facing training-SME answer is the served reply', () => {
+    const answer = 'A hinge pattern trains the glutes and hamstrings.';
+    const capture = classifyCoachResponseCapture({
+      status: 200, parseFailed: false,
+      body: { data: { depth: 'card', answer, cards: [{ id: 'hinge' }], confidenceLevel: 'high', source: 'training_sme' } },
+    });
+    assert.equal(capture.outcome, 'served');
+    assert.equal(capture.message, answer);
+    assert.equal(classifySettlement({ text: answer, servedMessages: [capture.message], stableForMs: 0 }), 'served-complete');
+  });
+
+  // The fail-closed direction is unchanged: none of these carries a lane's full
+  // positive evidence, so each stays a capture failure and blocks settlement.
+  const BROKEN = [
+    ['a gemini-path null with no lane evidence (a suppression the wire cannot prove)',
+      { data: { message: null, voice: null, sub_voice: null, configured: true, model: 'gemini-2.5-flash-lite', source: 'gemini', kind: 'set', note_tier: null } }],
+    ['a neutral voice carrying a null message (emptied/register-shaped)',
+      { data: { message: null, voice: { primary_line: null, severity: 'neutral', reason_codes: [], suppress_generic_prose: false, contradictions: [] }, sub_voice: null, configured: true, model: 'gemini-2.5-flash-lite', source: 'gemini', kind: 'plan' } }],
+    ['a block whose tier is not the acknowledgment tier',
+      { data: { message: null, voice: null, sub_voice: null, configured: true, model: 'gemini-2.5-flash-lite', kind: 'block', note_tier: 'short' } }],
+    ['an acknowledgment tier on a non-block kind',
+      { data: { message: null, voice: null, sub_voice: null, configured: true, model: 'gemini-2.5-flash-lite', kind: 'set', note_tier: 'ack_only' } }],
+    ['an error string with no configured/model context',
+      { data: { message: null, error: 'boom' } }],
+    ['a non-string message wearing lane fields (malformed, not a lane)',
+      { data: { message: 123, kind: 'block', note_tier: 'ack_only', configured: false } }],
+    ['an SME shape without the training_sme source evidence',
+      { data: { depth: 'log_only', answer: null, cards: [] } }],
+    ['a blank message whose voice does not suppress',
+      { data: { message: '   ', voice: { severity: 'neutral', suppress_generic_prose: false, contradictions: [] }, configured: true, source: 'gemini', kind: 'set' } }],
+  ];
+
+  for (const [label, body] of BROKEN) {
+    it(`BITE — ${label} → capture-failed, and a quiet bubble does NOT settle`, () => {
+      const capture = classifyCoachResponseCapture({ status: 200, body, parseFailed: false });
+      assert.equal(capture.outcome, 'capture-failed', `${label} must stay a capture failure`);
+      const outcome = classifySettlement({
+        text: 've.',
+        servedMessages: [],
+        stableForMs: 99999,
+        captureFailed: capture.outcome === 'capture-failed',
+      });
+      assert.equal(outcome, 'capture-failed');
+      assert.equal(isSettled(outcome), false);
+    });
+  }
+});
+
 describe('P1-C — write claims are timed against the live write, not the word "done"', () => {
   // Session 4's shape: the athlete says "I'm done for today" BEFORE the save. The old
   // verdict sliced the thread at that literal and discarded everything after it.
