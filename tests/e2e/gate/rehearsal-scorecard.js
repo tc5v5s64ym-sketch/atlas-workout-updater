@@ -169,10 +169,38 @@ function compareReplacementIdentity(identity, durable) {
 // granted `stable-no-served-message` and treated MISSING evidence as proof that the
 // path genuinely served none.
 //
-// A legitimate no-message path is now EXPLICIT and narrow: a non-2xx coach response is
+// A legitimate no-message path is EXPLICIT and narrow. A non-2xx coach response is
 // the client's own outage/fallback lane, which renders locally and serves no message.
-// Every other missing, blank, or non-string `message` on a successful response is a
-// CAPTURE FAILURE, and settlement fails closed on it.
+//
+// On the S3 line the coach endpoints serve FURTHER no-message lanes on 2xx, each
+// carrying positive wire evidence of the lane in `data` (routes/coachOps.js):
+//   · a routine block at the acknowledgment tier — `kind:'block'` with
+//     `note_tier:'ack_only'` — returns `message:null` and never calls the model;
+//     the client renders its own receipt or stays silent;
+//   · the unconfigured fallback finalizes a null candidate, so it always serves
+//     null — it serializes `configured:false`;
+//   · the generation-failed fallback likewise always serves null and serializes
+//     why — a non-empty `error` string in its configured/model context;
+//   · the deterministic engine suppressed the LLM prose (set-effort or substitution
+//     voice) and the client renders the voice's own line instead — the suppressing
+//     voice rides in the response with `suppress_generic_prose:true` or a non-empty
+//     `contradictions` list;
+//   · /api/coach/ask never serializes `message` at all: the reply rides in
+//     `answer`, and logging-shaped input returns depth `log_only` with
+//     `answer:null` so the chat stays quiet — the lane serializes
+//     `source:'training_sme'` with a string `depth`, and an athlete-facing answer
+//     IS the served reply.
+// Session 1 (fsb4b-s1-20261028T003215-0B5724) recorded four of these designed
+// responses as capture failures and failed condition 9 on them at 24/25.
+//
+// A lane is recognized ONLY on that positive evidence, and only when `message`
+// is null, absent, or blank: a non-string, non-null `message` (e.g. 123) is a
+// malformed body and stays a capture failure whatever else rides along. A
+// suppression with NO voice evidence on the wire (register suppression, or an
+// emptied reply under a neutral voice) serializes nothing that distinguishes it
+// from a broken null — the suppression code is server-side only — so it stays a
+// capture failure too. Every other missing, blank, or non-string `message` on a
+// successful response is a CAPTURE FAILURE, and settlement fails closed on it.
 function classifyCoachResponseCapture(observation) {
   const o = observation && typeof observation === 'object' ? observation : {};
   if (o.parseFailed === true) return { outcome: 'capture-failed', message: null, reason: 'the response body could not be parsed' };
@@ -185,9 +213,57 @@ function classifyCoachResponseCapture(observation) {
   if (!body) return { outcome: 'capture-failed', message: null, reason: 'a successful coach response carried no object body' };
   const data = (body.data && typeof body.data === 'object') ? body.data : body;
   const message = data && typeof data.message === 'string' ? data.message : null;
+  if (message !== null && message.trim() !== '') return { outcome: 'served', message, reason: null };
+  // No served prose in `message`. A designed no-message lane may still claim this
+  // response — on its own positive evidence only (see coachNoMessageLane), and
+  // never for a body whose `message` is present but not a string.
+  const rawMessage = data ? data.message : undefined;
+  if (rawMessage === null || rawMessage === undefined
+    || (typeof rawMessage === 'string' && rawMessage.trim() === '')) {
+    const lane = coachNoMessageLane(data);
+    if (lane) return lane;
+  }
   if (message === null) return { outcome: 'capture-failed', message: null, reason: 'a successful coach response carried no string `message`' };
-  if (message.trim() === '') return { outcome: 'capture-failed', message: null, reason: 'a successful coach response carried a blank `message`' };
-  return { outcome: 'served', message, reason: null };
+  return { outcome: 'capture-failed', message: null, reason: 'a successful coach response carried a blank `message`' };
+}
+
+// The S3 coach endpoints' designed no-message lanes, keyed on the positive wire
+// evidence each lane serializes (see the classifier's header comment). Returns a
+// classification for a recognized lane, or null when the response carries no
+// lane evidence — the caller then fails closed.
+function coachNoMessageLane(data) {
+  const d = data && typeof data === 'object' ? data : {};
+  const noMessage = (reason) => ({ outcome: 'no-message-path', message: null, reason });
+  // /api/coach/ask: the reply rides in `answer`; `log_only` is the quiet lane.
+  if (d.source === 'training_sme' && typeof d.depth === 'string') {
+    if (d.depth !== 'log_only' && typeof d.answer === 'string' && d.answer.trim() !== '') {
+      return { outcome: 'served', message: d.answer, reason: null };
+    }
+    return noMessage('the training SME served no athlete-facing answer (log_only or no card); the client stays quiet by design');
+  }
+  // Routine block, acknowledgment only: no prose is served and none is called for.
+  if (d.kind === 'block' && d.note_tier === 'ack_only') {
+    return noMessage('a routine block at the acknowledgment tier serves no coach prose; the client renders its own receipt');
+  }
+  // Unconfigured fallback: the lane finalizes a null candidate by construction.
+  if (d.configured === false) {
+    return noMessage('the coach is unconfigured and serves no message; the client renders its templated fallback');
+  }
+  // Generation-failed fallback: the same null construction, with the failure
+  // serialized in its configured/model context.
+  if (typeof d.error === 'string' && d.error.trim() !== ''
+    && (d.configured === true || typeof d.model === 'string')) {
+    return noMessage('coach generation failed and the fallback serves no message; the client renders its templated fallback');
+  }
+  // The deterministic engine suppressed the prose; the client renders the
+  // suppressing voice's own deterministic line instead.
+  const voiceSuppresses = (v) => Boolean(v && typeof v === 'object'
+    && (v.suppress_generic_prose === true
+      || (Array.isArray(v.contradictions) && v.contradictions.length > 0)));
+  if (voiceSuppresses(d.voice) || voiceSuppresses(d.sub_voice)) {
+    return noMessage('the deterministic engine suppressed the coach prose; the client renders the voice line instead');
+  }
+  return null;
 }
 
 // ── unsupported write-completion claim ─────────────────────────────────────────
