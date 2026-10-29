@@ -35,6 +35,22 @@ function normalizeParserText(value) {
     .trim();
 }
 
+// SC6-MARCUS-02: sentence punctuation attached to an "xN" set multiplier is
+// punctuation, not part of the multiplier token — "Bench 225 5/2 x3." is a
+// sentence that ends after the multiplier. The set grammars match the
+// multiplier token-exactly (/^x(\d+)$/ in parseDaleShorthand, the anchored
+// forms in parseBodyweightReps), so a trailing ".", "!", "?", ";", ":" or ","
+// silently defeated the expansion and logged ONE set instead of N. Strip a
+// sentence-punctuation run from the multiplier token at the set-grammar seam
+// (parseSetGroups / parseBodyweightReps) so a punctuated xN expands exactly
+// like the bare xN in single, multi and sentence-stacked input. The lookahead
+// (punctuation must end the token) keeps a decimal tail untouched: "x3.5" is
+// never read as x3 or x35. Applied only inside the set grammars — the caller's
+// raw text (and question detection on it) is unchanged.
+function stripMultiplierSentencePunctuation(text) {
+  return String(text || '').replace(/\bx(\d+)[.,;:!?]+(?=\s|$)/gi, 'x$1');
+}
+
 // Owner decision 2026-07-04: the main training log stores POUNDS only. Kilograms
 // are converted to lb on input (never stored mixed with lb in the weight column);
 // redundant pound units ("225 lb", "225lbs", "225#") are stripped so the bare
@@ -1075,7 +1091,7 @@ function slashChainReps(token) {
 }
 
 function parseSetGroups(text) {
-  const cleaned = normalizeParserText(text)
+  const cleaned = stripMultiplierSentencePunctuation(normalizeParserText(text))
     .replace(/\b(today|i did|did|was|were)\b/gi, ' ')
     // Added-load bodyweight notation: a token-LEADING "+" on a load ("Dips +25 8/2",
     // "Pull-ups +25 6/2") marks EXTERNAL load. Atlas has no separate added-load
@@ -1518,7 +1534,7 @@ function parseDaleShorthand(text) {
 }
 
 function parseBodyweightReps(text) {
-  const cleaned = normalizeParserText(text);
+  const cleaned = stripMultiplierSentencePunctuation(normalizeParserText(text));
 
   // "15 x3" → 3 sets of 15 reps BW
   const repeatMatch = cleaned.match(/^(\d+)\s*x(\d+)$/i);

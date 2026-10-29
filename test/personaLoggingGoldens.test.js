@@ -83,7 +83,6 @@ const MEASURES = ['weight', 'reps', 'rir', 'durationSec', 'distanceM'];
 const KNOWN_FAILURES = {
   'SC1-OWNER-02': "bare 'Incline' is ambiguous to the parser (needs_clarification); expected Incline Dumbbell Bench 75 x [8/2, 7/1, 6/1]",
   'SC1-OWNER-03': "bare 'Rows' is ambiguous to the parser (needs_clarification); the card states Seated Rows from session context the unit seam does not receive",
-  'SC1-OWNER-04': "'KR 15 x3' resolves to Hanging Knee Raises but the parser finds no sets (needs_clarification, missing_sets); expected 3 x 15 reps bodyweight",
   'SC2-OWNER-03': 'sentence-stacked second exercise is not split (needs_clarification, unattributable_trailing_sets); expected Lat Pulldown + Incline Dumbbell Curl, 3 sets each',
   'SC3-OWNER-03': "sets are exact (150 x [12/2, 10/1]) but the exercise is left unresolved — parser logs 'Extensions' with unknown_exercise; expected identity Leg Extension",
   'SC4-OWNER-01': "sets are exact but the exercise is left unresolved — parser logs 'Machine Press' with unknown_exercise; expected identity Machine Chest Press (absent from the parser ontology)",
@@ -91,7 +90,6 @@ const KNOWN_FAILURES = {
   'SC4-OWNER-03': "bare 'Rows' is ambiguous to the parser (needs_clarification); the card states Seated Rows by plan match against the session's declared plan",
   'SC5-OWNER-03': "bare 'Rows' is ambiguous to the parser (needs_clarification); the card states Seated Rows from session context the unit seam does not receive",
   'SC6-MARCUS-01': "nameless back-off continuation '290 5/2 x3' has no exercise (needs_clarification, missing_exercise); the unit seam receives no activeExercise — production supplies it from session state",
-  'SC6-MARCUS-02': 'sentence-final period after x3 defeats the multiplier expansion in both paths: 1 set per exercise logged instead of 3 (Bench 225 5/2 and RDL 285 6/2); without the period both paths expand correctly',
   'SC7-PRIYA-01': 'prose log is not parsed (needs_clarification, missing_exercise); expected Goblet Squat 35 x [10/2, 10/2, 10/1]',
   'SC7-PRIYA-02': 'question-shaped log produces no usable parse (needs_clarification, unattributable_trailing_sets); expected Dumbbell Bench 3 x (25 lb x 8)',
   'SC7-PRIYA-03': "rows half is ambiguous ('Rows', needs_clarification) and the modality recognizer returns the plank as timed_hold with exercise null — duration 40 s matches, identity 'Plank' is not recovered",

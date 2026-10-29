@@ -106,3 +106,76 @@ test('the `225 5/2` slash contract is byte-for-byte unchanged', () => {
   const r = parseWorkoutText('Bench Press 225 5/2');
   assert.deepEqual(sets(r), [[225, 5, 2]]);
 });
+
+// ── (d) sentence punctuation on the xN multiplier (SC6-MARCUS-02) ──────────────
+// A sentence-final period attached to the multiplier ("Bench 225 5/2 x3.")
+// defeated the token-exact xN expansion and silently logged ONE set instead of
+// three, in the single-exercise, multi-exercise, and sentence-stacked paths.
+// Sentence punctuation is not part of the multiplier token: a punctuated xN
+// must expand identically to the bare xN. Sibling sentence punctuation
+// (! ? ; :) shares the same tokenization flaw; a comma already worked in the
+// slash path but not in the bodyweight path — all are pinned here.
+
+const multiSets = (r) => {
+  assert.equal(r.intent, 'log_sets_multi', `expected log_sets_multi, got ${r.intent} (${r.message || ''})`);
+  return r.exercises.map(e => [e.canonical_name, e.sets.map(s => [s.weight, s.reps, s.rir])]);
+};
+
+test('(d) period-terminated multiplier, single exercise: "Bench 225 5/2 x3." logs 3 sets', () => {
+  assert.deepEqual(sets(parseWorkoutText('Bench 225 5/2 x3.')), [[225, 5, 2], [225, 5, 2], [225, 5, 2]]);
+  assert.deepEqual(sets(parseWorkoutText('RDL 285 6/2 x3.')), [[285, 6, 2], [285, 6, 2], [285, 6, 2]]);
+});
+
+test('(d) period-terminated multiplier expands identically to the unterminated one', () => {
+  assert.deepEqual(
+    parseWorkoutText('Bench 225 5/2 x3.').sets,
+    parseWorkoutText('Bench 225 5/2 x3').sets,
+  );
+});
+
+test('(d) period-terminated multiplier, multi-exercise: final "x3." still expands', () => {
+  assert.deepEqual(multiSets(parseWorkoutText('Bench 225 5/2 x3 RDL 285 6/2 x3.')), [
+    ['Bench Press', [[225, 5, 2], [225, 5, 2], [225, 5, 2]]],
+    ['RDL', [[285, 6, 2], [285, 6, 2], [285, 6, 2]]],
+  ]);
+});
+
+test('(d) sentence-stacked: "Bench 225 5/2 x3. RDL 285 6/2 x3." logs 3 + 3 sets', () => {
+  assert.deepEqual(multiSets(parseWorkoutText('Bench 225 5/2 x3. RDL 285 6/2 x3.')), [
+    ['Bench Press', [[225, 5, 2], [225, 5, 2], [225, 5, 2]]],
+    ['RDL', [[285, 6, 2], [285, 6, 2], [285, 6, 2]]],
+  ]);
+});
+
+test('(d) sibling sentence punctuation on the multiplier (! ? ; :) expands the same', () => {
+  for (const punct of ['!', '?', ';', ':']) {
+    assert.deepEqual(
+      sets(parseWorkoutText(`Bench 225 5/2 x3${punct}`)),
+      [[225, 5, 2], [225, 5, 2], [225, 5, 2]],
+      `x3${punct} must expand to 3 sets`,
+    );
+  }
+  // Sentence-internal sibling punctuation in the stacked form.
+  assert.deepEqual(multiSets(parseWorkoutText('Bench 225 5/2 x3! RDL 285 6/2 x3?')), [
+    ['Bench Press', [[225, 5, 2], [225, 5, 2], [225, 5, 2]]],
+    ['RDL', [[285, 6, 2], [285, 6, 2], [285, 6, 2]]],
+  ]);
+});
+
+test('(d) bodyweight multiplier path: sentence punctuation (incl. comma) expands the same', () => {
+  for (const punct of ['.', ',', '!', '?', ';', ':']) {
+    const r = parseWorkoutText(`Push-ups 15 x3${punct}`);
+    assert.equal(r.intent, 'log_sets', `x3${punct}: expected log_sets, got ${r.intent}`);
+    assert.deepEqual(r.sets.map(s => [s.weight, s.reps, s.rir]),
+      [[null, 15, null], [null, 15, null], [null, 15, null]], `x3${punct} must expand to 3 sets`);
+  }
+  const dips = parseWorkoutText('Dips 10/2 x3.');
+  assert.equal(dips.intent, 'log_sets');
+  assert.equal(dips.sets.length, 3, 'Dips 10/2 x3. must expand to 3 sets');
+});
+
+test('(d) guard: a decimal tail is NOT punctuation — "x3.5" does not become a multiplier', () => {
+  const r = parseWorkoutText('Bench 225 5/2 x3.5');
+  assert.equal(r.intent, 'log_sets');
+  assert.equal(r.sets.length, 1, 'x3.5 must not be read as x3 or x35');
+});
