@@ -327,8 +327,40 @@ function detectUnsupportedMutationClaim(text) {
 // Fail-closed — when the deterministic state is absent, a completion claim is ungrounded
 // rather than assumed true.
 
-// Exercises with genuine completed work this session: plan_state.completed plus every
-// exercise the deterministic session tally records as logged.
+// Exercises with genuine completed work this session: plan_state.completed, plus a
+// session_tally row that meets the prescription rule below. plan_state.completed is
+// membership and is not reinterpreted here.
+//
+// A tally row completes an exercise only when its logged set count reaches the
+// prescribed set count, and only when that count is known. The prescription is the
+// positive finite `sets` on the same context's current_plan entry, matched by nameKey.
+// Logged count >= prescribed → completed. Logged count < prescribed → not completed
+// by the tally. No known prescription (the lift is off the plan, or the plan entry
+// has no positive set count) keeps the prior rule: any logged set completes it.
+// sets == 0 is not completed work. sets == null keeps the prior treatment, because
+// a null count cannot prove a partial.
+function prescribedSetCount(context, key) {
+  if (!key) return null;
+  const plan = Array.isArray(context.current_plan) ? context.current_plan : [];
+  for (const entry of plan) {
+    if (!entry || typeof entry !== 'object') continue;
+    if (nameKey(entry.name || entry.exercise) !== key) continue;
+    const sets = entry.sets;
+    if (typeof sets === 'number' && Number.isFinite(sets) && sets > 0) return sets;
+  }
+  return null;
+}
+
+function tallyRowCompletesExercise(entry, context) {
+  const sets = entry ? entry.sets : undefined;
+  // A tally row with no set actually logged is not completed work.
+  if (sets != null && !(Number(sets) > 0)) return false;
+  const prescribed = prescribedSetCount(context, nameKey(entry && entry.exercise));
+  // Unknown prescription, or a null logged count (partial not provable): prior rule.
+  if (prescribed == null || sets == null) return true;
+  return Number(sets) >= prescribed;
+}
+
 function completedExerciseKeys(context) {
   const c = context && typeof context === 'object' ? context : {};
   const keys = new Set();
@@ -340,15 +372,15 @@ function completedExerciseKeys(context) {
   if (tally && Array.isArray(tally.exercises)) {
     for (const e of tally.exercises) {
       const k = nameKey(e && e.exercise);
-      // A tally row with no set actually logged is not completed work.
-      if (k && (e.sets == null || Number(e.sets) > 0)) keys.add(k);
+      if (k && tallyRowCompletesExercise(e, c)) keys.add(k);
     }
   }
   return keys;
 }
 
-// Exercises the deterministic plan state still lists as outstanding, minus anything the
-// tally proves was logged (the tally is the stronger evidence of actual work).
+// Exercises the deterministic plan state still lists as outstanding, minus anything
+// completedExerciseKeys treats as finished. plan_state.completed always wins. A tally
+// row wins only under the prescription rule in tallyRowCompletesExercise.
 function remainingExerciseNames(context) {
   const c = context && typeof context === 'object' ? context : {};
   const ps = c.plan_state && typeof c.plan_state === 'object' ? c.plan_state : null;
