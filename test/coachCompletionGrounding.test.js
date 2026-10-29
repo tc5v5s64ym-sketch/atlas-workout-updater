@@ -236,6 +236,80 @@ test('A11. remainingExerciseNames trusts the tally over a stale remaining list',
   assert.deepEqual(remaining, ['Overhead Press', 'Romanian Deadlift', 'Plank']);
 });
 
+// Prescription-aware completion. A tally row is finished work only when the logged
+// set count reaches the prescribed set count on the same context's current_plan.
+// A11 above is unchanged: it has no current_plan, so the tally still proves the
+// stale Barbell Row is not remaining.
+
+function partialPlanContext() {
+  return {
+    current_plan: [
+      { name: 'Seated Row', sets: 3, reps: 10, weight: 140, rir: 2 },
+      { name: 'Incline DB Press', sets: 3, reps: 8, weight: 50, rir: 2 },
+    ],
+    plan_state: {
+      planned: ['Seated Row', 'Incline DB Press'],
+      completed: [],
+      remaining: ['Seated Row', 'Incline DB Press'],
+      isComplete: false,
+    },
+    session_tally: {
+      exercises: [
+        { exercise: 'Seated Row', sets: 1 },
+        { exercise: 'Incline DB Press', sets: 1 },
+      ],
+    },
+  };
+}
+
+test('A12. a partially logged planned lift stays remaining and is named under Still remaining', () => {
+  const ctx = partialPlanContext();
+  const remaining = grounding.remainingExerciseNames(ctx);
+  assert.ok(remaining.includes('Seated Row'), '1 of 3 prescribed sets is not finished work');
+  assert.ok(remaining.includes('Incline DB Press'), '1 of 3 prescribed sets is not finished work');
+  assert.deepEqual(remaining, ['Seated Row', 'Incline DB Press']);
+  const statement = grounding.buildGroundedSessionStateStatement(ctx);
+  assert.match(statement, /Still remaining: Seated Row, Incline DB Press/);
+});
+
+test('A13. a planned lift logged to its prescribed set count leaves remaining', () => {
+  const ctx = partialPlanContext();
+  ctx.session_tally.exercises = [
+    { exercise: 'Seated Row', sets: 3 },
+    { exercise: 'Incline DB Press', sets: 1 },
+  ];
+  const remaining = grounding.remainingExerciseNames(ctx);
+  assert.ok(!remaining.includes('Seated Row'), '3 of 3 prescribed sets is finished work');
+  assert.deepEqual(remaining, ['Incline DB Press']);
+});
+
+test('A14. an off-plan logged lift in a stale remaining list leaves remaining', () => {
+  const ctx = partialPlanContext();
+  ctx.plan_state.planned = ['Seated Row', 'Incline DB Press', 'Face Pull'];
+  ctx.plan_state.remaining = ['Seated Row', 'Incline DB Press', 'Face Pull'];
+  ctx.session_tally.exercises = [{ exercise: 'Face Pull', sets: 2 }];
+  const remaining = grounding.remainingExerciseNames(ctx);
+  assert.ok(!remaining.includes('Face Pull'), 'no prescription is known, so any logged set completes it');
+  assert.deepEqual(remaining, ['Seated Row', 'Incline DB Press']);
+});
+
+test('A15. a tally row with 0 sets does not complete a planned lift', () => {
+  const ctx = partialPlanContext();
+  ctx.session_tally.exercises = [{ exercise: 'Seated Row', sets: 0 }];
+  const remaining = grounding.remainingExerciseNames(ctx);
+  assert.ok(remaining.includes('Seated Row'));
+  assert.deepEqual(remaining, ['Seated Row', 'Incline DB Press']);
+});
+
+test('A16. plan_state.completed keeps a lift out of remaining regardless of the tally', () => {
+  const ctx = partialPlanContext();
+  ctx.plan_state.completed = ['Seated Row'];
+  ctx.session_tally.exercises = [{ exercise: 'Seated Row', sets: 1 }];
+  const remaining = grounding.remainingExerciseNames(ctx);
+  assert.ok(!remaining.includes('Seated Row'), 'plan_state.completed stays authoritative');
+  assert.deepEqual(remaining, ['Incline DB Press']);
+});
+
 // ── Part B — the production route ──────────────────────────────────────────
 
 process.env.ATLAS_API_KEY = 'test-api-key';
