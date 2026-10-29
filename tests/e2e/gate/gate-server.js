@@ -227,6 +227,46 @@ const exerciseCatalogRows = [
   ['Bench Press', 'Chest', 'BEN01', 'Bench Press', 'bench press|bench']
 ];
 
+// ── PERSONA-HISTORY SEAM (Slice 2a, persona test rig — issue #1607) ────────────
+// Opt-in only, default OFF: ATLAS_GATE_PERSONA=<slug> names a persona fixture
+// (tests/e2e/gate/personas/<slug>.js, loaded through the one loader). Flag
+// absent → this block does not run and the harness serves exactly the shared
+// rows above, byte-identical to before.
+//
+// When a persona is active, its historyRows become part of what the app READS
+// as Log_Cleaned history, in BOTH sheets postures:
+//   - in-memory stub: the served rows are computed here (servedLogRows);
+//   - sandbox-live: the guarded adapter wraps the real reads and merges the
+//     fixture rows into the returned data rows — the real sheets.js read
+//     methods return data rows only (header excluded), so the merge is
+//     shape-identical to the stub's. The workbook itself is never written
+//     with fixture rows: persona history is a READ seam, and the write guard's
+//     authorized set is unchanged.
+// Whether the fixture rows ride ALONGSIDE the existing history or REPLACE it
+// is the fixture's own declaration (historyMode) — for Jonas-shaped personas
+// the engine-visible history IS the test input (design §3.2). The fixture's
+// catalogRows (lifts the catalog lacks) append to the catalog in both
+// postures. A slug that cannot be loaded, or a malformed fixture, exits the
+// harness before any port is published — a persona run against the WRONG
+// history is worse than no run.
+const PERSONA_SLUG = String(process.env.ATLAS_GATE_PERSONA || '').trim().toLowerCase();
+let PERSONA = null;
+if (PERSONA_SLUG) {
+  try {
+    PERSONA = require('./personas/load-persona').loadPersonaFixture(PERSONA_SLUG);
+  } catch (e) {
+    console.error(`GATE_POSTURE_ERROR: ATLAS_GATE_PERSONA=${PERSONA_SLUG} — ${e.message}`);
+    process.exit(2);
+  }
+}
+const PERSONA_HISTORY_MODE = PERSONA ? PERSONA.historyMode : null;
+const servedLogRows = PERSONA
+  ? (PERSONA_HISTORY_MODE === 'replace' ? [] : logRows).concat(PERSONA.historyRows)
+  : logRows;
+const servedCatalogRows = PERSONA
+  ? exerciseCatalogRows.concat(PERSONA.catalogRows)
+  : exerciseCatalogRows;
+
 const state = {
   appendCalls: [],   // every appendRows({ tabName, rows }) in arrival order
   deleteCalls: [],
@@ -287,19 +327,19 @@ const fakeSheets = {
   },
   deleteRowsByRange: async (...args) => { state.deleteCalls.push(args); return { ok: true }; },
   validateConfig: () => {},
-  getExerciseCatalog: async () => exerciseCatalogRows,
+  getExerciseCatalog: async () => servedCatalogRows,
   getEffortSessionIds: async () => appendedRowsFor('Effort').map(r => String(r[1] || '')),
   // The REAL server's duplicate partition joins with '||' — the delimiter must
   // match or a retry's dedup never fires and rows re-append (F10D-RT heal lane).
   getLogCompositeKeys: async () =>
     appendedRowsFor('Log_Cleaned').map(r => `${r[1]}||${r[2]}||${r[6]}`.toLowerCase()),
   getRecentRows: async (tabName, maxRows = 100) => {
-    if (tabName === 'Log_Cleaned') return logRows.concat(appendedRowsFor('Log_Cleaned')).slice(-maxRows);
+    if (tabName === 'Log_Cleaned') return servedLogRows.concat(appendedRowsFor('Log_Cleaned')).slice(-maxRows);
     if (tabName === 'Effort') return appendedRowsFor('Effort').slice(-maxRows);
     return [];
   },
   getSheetRows: async tabName => {
-    if (tabName === 'Log_Cleaned') return logRows.concat(appendedRowsFor('Log_Cleaned'));
+    if (tabName === 'Log_Cleaned') return servedLogRows.concat(appendedRowsFor('Log_Cleaned'));
     if (tabName === 'Effort') return appendedRowsFor('Effort');
     if (tabName === 'Session_Plans') return appendedRowsFor('Session_Plans');
     if (tabName === 'Session_Plan_Sets') return state.planSetRows.map(r => [...r]);
@@ -381,6 +421,33 @@ function buildGuardedSheets() {
 
   return {
     ...real,
+    // PERSONA-HISTORY SEAM, live posture (Slice 2a — see the seam block above):
+    // the fixture's history rides the real READ path, merged into the data rows
+    // the real adapter returns (header already excluded by sheets.js, so the
+    // shape matches the stub posture exactly). 'replace' hides the workbook's
+    // own history from the app for this run; nothing is written or deleted —
+    // the workbook's rows are untouched and reappear the moment the flag is
+    // absent. No persona active → the real reads pass through unwrapped.
+    getRecentRows: async (tabName, maxRows = 100) => {
+      const rows = await real.getRecentRows(tabName, maxRows);
+      if (!PERSONA || tabName !== 'Log_Cleaned') return rows;
+      const merged = PERSONA_HISTORY_MODE === 'replace'
+        ? [...PERSONA.historyRows]
+        : [...PERSONA.historyRows, ...rows];
+      return merged.slice(-maxRows);
+    },
+    getSheetRows: async (tabName, maxRows) => {
+      const rows = await real.getSheetRows(tabName, maxRows);
+      if (!PERSONA || tabName !== 'Log_Cleaned') return rows;
+      return PERSONA_HISTORY_MODE === 'replace'
+        ? [...PERSONA.historyRows]
+        : [...PERSONA.historyRows, ...rows];
+    },
+    getExerciseCatalog: async (...args) => {
+      const rows = await real.getExerciseCatalog(...args);
+      if (!PERSONA || PERSONA.catalogRows.length === 0) return rows;
+      return rows.concat(PERSONA.catalogRows);
+    },
     appendRows: async (tabName, rows) => {
       assertSandboxNow('appendRows', tabName);
       if (!WRITABLE_TABS.has(tabName)) {
@@ -818,6 +885,16 @@ const stateServer = http.createServer((req, res) => {
     // `coach_scripted` marks the stubbed stand-in, which is model-down (nothing
     // outbound) with the coach module replaced.
     model_posture: modelPosture,
+    // The persona-history seam's live claim (Slice 2a): which persona this
+    // process armed, and how its history is being served — read from the
+    // loaded fixture, so the transcript records what was TRUE.
+    persona: PERSONA ? {
+      slug: PERSONA.slug,
+      source_ref: PERSONA.sourceRef,
+      history_mode: PERSONA_HISTORY_MODE,
+      history_rows: PERSONA.historyRows.length,
+      catalog_rows: PERSONA.catalogRows.length,
+    } : null,
     provider_key_present: PROVIDER_KEYS.some(key => Boolean(process.env[key])),
     provider_reachable: modelUpProof.reachable,
     coach_model: modelUpProof.model,

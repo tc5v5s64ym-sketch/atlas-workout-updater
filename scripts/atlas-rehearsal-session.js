@@ -4,6 +4,17 @@
 //
 //   npm run atlas:rehearsal-session -- --session=1 --model-up
 //
+//   Persona rehearsals (Slice 2a, persona test rig — issue #1607) ride the same
+//   command under their own purpose:
+//
+//   npm run atlas:rehearsal-session -- --persona=marcus --model-up
+//
+//   A persona run is structurally NON-COUNTING: it carries no session number,
+//   the preflight never consults the canonical count on its behalf, and its
+//   artifacts can never publish rehearsal_eligible=true. --persona combined
+//   with --qualifying (or --debug) is refused by resolveRunPurpose before
+//   anything else happens.
+//
 // Adapted from the proven Stage A command (atlas-stage-a-session.js, sunset PR #1234)
 // under the owner resolution recorded in docs/ATLAS_V1_EXECUTION_PLAN.md (F-SB4B,
 // 2026-08-03). It implements NO runner, NO scenario, NO scorecard, and NO second
@@ -43,8 +54,8 @@ require('dotenv').config({ path: path.join(REPO_ROOT, '.env') });
 const { SANDBOX_SPREADSHEET_ID_LAST6, isSandboxSpreadsheetId, SANDBOX_SPREADSHEET_ID } = require('../config/sandboxSheet');
 const { pickNetworkPassthrough, assertNoWorkbookId } = require('../tests/e2e/gate/rehearsal-child-env');
 const {
-  REHEARSAL_SESSION, REHEARSAL_DEBUG, REHEARSAL_STREAK_LENGTH, REQUIRED_BRANCH,
-  mintIdentities, evaluateRehearsalPreflight,
+  REHEARSAL_SESSION, REHEARSAL_DEBUG, PERSONA_RUN, REHEARSAL_STREAK_LENGTH, REQUIRED_BRANCH,
+  mintIdentities, mintPersonaIdentities, resolveRunPurpose, evaluateRehearsalPreflight,
 } = require('../tests/e2e/gate/rehearsal-run-purpose');
 const { fetchOriginRequiredBranch, measureSourceTree } = require('../tests/e2e/gate/rehearsal-source-facts');
 const { measureServedBuild, evaluateBuildIdentity } = require('../tests/e2e/gate/rehearsal-build-identity');
@@ -57,8 +68,10 @@ function fail(message) {
 
 // Exit 2 with the full refusal list. NOT STARTED, by the session-start boundary above.
 function refuse(refusals) {
-  console.error('\n[rehearsal-session] NOT STARTED — the qualifying preflight refused this run.');
-  console.error('[rehearsal-session] No browser opened, no turn was submitted, the rehearsal streak is unchanged.\n');
+  console.error(`\n[rehearsal-session] NOT STARTED — ${IS_PERSONA ? 'the persona preflight refused this run' : 'the qualifying preflight refused this run'}.`);
+  console.error(IS_PERSONA
+    ? '[rehearsal-session] No browser opened, no turn was submitted, and the canonical count was never consulted.\n'
+    : '[rehearsal-session] No browser opened, no turn was submitted, the rehearsal streak is unchanged.\n');
   for (const r of refusals) console.error(`  ✗ ${r}`);
   console.error('');
   process.exit(2);
@@ -77,27 +90,46 @@ const MODE = 'model-up';
 // ── RUN PURPOSE — explicit, no default (owner instruction 2026-08-03) ──────────
 // `--qualifying` may advance the streak and requires the canonical count to equal
 // session_number - 1. `--debug` proves the scenarios on exact clean s3-maintenance, is NOT
-// ordered against the count, and can never advance or authorize one. Neither is the
+// ordered against the count, and can never advance or authorize one. `--persona=<slug>`
+// (Slice 2a) runs a persona fixture on the same harness under its own purpose: no
+// session number, the count never consulted, never eligible. None is the
 // default: a run that does not say which it is, is refused, because "which kind of run
 // was that?" must never be answered by reading which check happened to go red.
 const wantsDebug = argv.includes('--debug');
 const wantsQualifying = argv.includes('--qualifying');
-if (wantsDebug && wantsQualifying) {
-  fail('--debug and --qualifying are mutually exclusive; a run has exactly one purpose.');
-}
-if (!wantsDebug && !wantsQualifying) {
-  fail('declare the run purpose explicitly: --debug (diagnostic, never counts) or --qualifying (may advance the streak). There is no default.');
-}
-const RUN_PURPOSE = wantsQualifying ? REHEARSAL_SESSION : REHEARSAL_DEBUG;
+const personaArg = argv.find((a) => a.startsWith('--persona='));
+const PERSONA_SLUG = personaArg ? personaArg.slice('--persona='.length).trim().toLowerCase() : null;
+// The DECISION is pure and unit-tested (resolveRunPurpose in
+// rehearsal-run-purpose.js): exactly one purpose per run, and a persona run
+// combined with a counting flag is refused there — this script only acts on it.
+const resolution = resolveRunPurpose({ wantsQualifying, wantsDebug, personaSlug: PERSONA_SLUG });
+if (!resolution.ok) fail(resolution.refusal);
+const RUN_PURPOSE = resolution.purpose;
 const IS_QUALIFYING = RUN_PURPOSE === REHEARSAL_SESSION;
+const IS_PERSONA = RUN_PURPOSE === PERSONA_RUN;
 
 const sessionArg = argv.find((a) => a.startsWith('--session='));
-if (!sessionArg) {
+if (IS_PERSONA && sessionArg) {
+  fail('--session does not apply to a persona run: a persona run is not a streak member and carries no session number.');
+}
+if (!IS_PERSONA && !sessionArg) {
   fail(`--session=<n> is required and has no default (n is 1..${REHEARSAL_STREAK_LENGTH}).`);
 }
-const sessionRaw = sessionArg.slice('--session='.length).trim();
-// Parsed strictly: "1.5", "01x", and "" must not become 1.
-const SESSION_NUMBER = /^[0-9]+$/.test(sessionRaw) ? Number(sessionRaw) : NaN;
+// Parsed strictly: "1.5", "01x", and "" must not become 1. A persona run has no
+// session number at all (null, never NaN-as-a-number).
+const sessionRaw = !IS_PERSONA && sessionArg ? sessionArg.slice('--session='.length).trim() : '';
+const SESSION_NUMBER = IS_PERSONA ? null : (/^[0-9]+$/.test(sessionRaw) ? Number(sessionRaw) : NaN);
+
+// A persona run names a fixture, and the fixture must exist and be well-formed
+// before anything else is measured — an unknown persona is a NOT STARTED
+// refusal here, never a mid-run surprise.
+if (IS_PERSONA) {
+  try {
+    require('../tests/e2e/gate/personas/load-persona').loadPersonaFixture(PERSONA_SLUG);
+  } catch (e) {
+    fail(e.message);
+  }
+}
 
 // ── measure the world (this script MEASURES; the pure rules DECIDE) ────────────
 const originRefreshed = fetchOriginRequiredBranch(REPO_ROOT);
@@ -114,7 +146,9 @@ const nonce = crypto.randomBytes(3).toString('hex').toUpperCase();
 
 let identities;
 try {
-  identities = mintIdentities({ sessionNumber: SESSION_NUMBER, stamp, nonce });
+  identities = IS_PERSONA
+    ? mintPersonaIdentities({ slug: PERSONA_SLUG, stamp, nonce })
+    : mintIdentities({ sessionNumber: SESSION_NUMBER, stamp, nonce });
 } catch (e) {
   fail(e.message);
 }
@@ -126,7 +160,9 @@ const { run_id: RUN_ID, athlete_id: ATHLETE_ID } = identities;
 // The purpose is in the DIRECTORY NAME. Diagnostic artifacts must be identifiable as
 // diagnostic from the path alone, without opening a file.
 const ARTIFACT_DIR = path.join(REPO_ROOT, 'rehearsal-artifacts',
-  `${IS_QUALIFYING ? 'qualifying' : 'debug'}-session-${SESSION_NUMBER}-${stamp}-${nonce}`);
+  IS_PERSONA
+    ? `persona-${PERSONA_SLUG}-${stamp}-${nonce}`
+    : `${IS_QUALIFYING ? 'qualifying' : 'debug'}-session-${SESSION_NUMBER}-${stamp}-${nonce}`);
 
 // ── the child environment, constructed field by field ──────────────────────────
 // `...process.env` is deliberately absent: the ambient GOOGLE_SHEETS_ID must never
@@ -141,12 +177,21 @@ const childEnv = {
   ...pickNetworkPassthrough(),
   PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH,
   PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: process.env.PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD,
-  ATLAS_REHEARSAL_RUN: '1',
-  ATLAS_RUN_PURPOSE: RUN_PURPOSE,
-  ATLAS_REHEARSAL_SESSION_NUMBER: String(SESSION_NUMBER),
-  ATLAS_REHEARSAL_RUN_ID: RUN_ID,
-  ATLAS_REHEARSAL_ATHLETE_ID: ATHLETE_ID,
-  ATLAS_REHEARSAL_ARTIFACT_DIR: ARTIFACT_DIR,
+  ...(IS_PERSONA ? {
+    ATLAS_PERSONA_RUN: '1',
+    ATLAS_RUN_PURPOSE: RUN_PURPOSE,
+    ATLAS_PERSONA_SLUG: PERSONA_SLUG,
+    ATLAS_PERSONA_RUN_ID: RUN_ID,
+    ATLAS_PERSONA_ATHLETE_ID: ATHLETE_ID,
+    ATLAS_PERSONA_ARTIFACT_DIR: ARTIFACT_DIR,
+  } : {
+    ATLAS_REHEARSAL_RUN: '1',
+    ATLAS_RUN_PURPOSE: RUN_PURPOSE,
+    ATLAS_REHEARSAL_SESSION_NUMBER: String(SESSION_NUMBER),
+    ATLAS_REHEARSAL_RUN_ID: RUN_ID,
+    ATLAS_REHEARSAL_ATHLETE_ID: ATHLETE_ID,
+    ATLAS_REHEARSAL_ARTIFACT_DIR: ARTIFACT_DIR,
+  }),
   GOOGLE_SERVICE_ACCOUNT_EMAIL: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
   GOOGLE_PRIVATE_KEY: process.env.GOOGLE_PRIVATE_KEY,
   GEMINI_API_KEY: process.env.GEMINI_API_KEY,
@@ -162,7 +207,31 @@ const childCarriesWorkoutSessionId = Object.keys(childEnv)
   .some((k) => /SESSION_ID|WORKOUT_SESSION/i.test(k));
 
 // ── decide ─────────────────────────────────────────────────────────────────────
-const preflight = evaluateRehearsalPreflight({
+const preflightEnv = {
+  childCarriesWorkbookId,
+  childCarriesWorkoutSessionId,
+  rehearsalPostureDeclared: IS_PERSONA
+    ? childEnv.ATLAS_PERSONA_RUN === '1'
+    : childEnv.ATLAS_REHEARSAL_RUN === '1',
+  declaredWorkbookIsSandbox: isSandboxSpreadsheetId(SANDBOX_SPREADSHEET_ID),
+  nodeEnvProduction: childEnv.NODE_ENV === 'production',
+  hasServiceAccountEmail: Boolean(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL),
+  hasPrivateKey: Boolean(process.env.GOOGLE_PRIVATE_KEY),
+  hasProviderKey: Boolean(process.env.GEMINI_API_KEY),
+};
+const preflight = evaluateRehearsalPreflight(IS_PERSONA ? {
+  purpose: RUN_PURPOSE,
+  personaSlug: PERSONA_SLUG,
+  mode: MODE,
+  runId: RUN_ID,
+  git: gitFacts,
+  originRefreshed,
+  // NO priorRehearsalCount, deliberately: a persona run never consults the
+  // canonical count — not for ordering, not as a refusal — so the measured
+  // count is not even handed to the decision. (The preflight's persona branch
+  // refuses nothing about an absent count; the rehearsal branches keep theirs.)
+  env: preflightEnv,
+} : {
   purpose: RUN_PURPOSE,
   sessionNumber: SESSION_NUMBER,
   mode: MODE,
@@ -171,16 +240,7 @@ const preflight = evaluateRehearsalPreflight({
   originRefreshed,
   priorRehearsalCount: source.prior_rehearsal_count,
   priorCountReason: source.prior_count_reason,
-  env: {
-    childCarriesWorkbookId,
-    childCarriesWorkoutSessionId,
-    rehearsalPostureDeclared: childEnv.ATLAS_REHEARSAL_RUN === '1',
-    declaredWorkbookIsSandbox: isSandboxSpreadsheetId(SANDBOX_SPREADSHEET_ID),
-    nodeEnvProduction: childEnv.NODE_ENV === 'production',
-    hasServiceAccountEmail: Boolean(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL),
-    hasPrivateKey: Boolean(process.env.GOOGLE_PRIVATE_KEY),
-    hasProviderKey: Boolean(process.env.GEMINI_API_KEY),
-  },
+  env: preflightEnv,
 });
 if (!preflight.ok) refuse(preflight.refusals);
 
@@ -211,23 +271,36 @@ console.log(`[rehearsal-session] client   : built from ${buildIdentity.served_co
 fs.mkdirSync(ARTIFACT_DIR, { recursive: true });
 
 const ambientLast6 = process.env.GOOGLE_SHEETS_ID ? String(process.env.GOOGLE_SHEETS_ID).slice(-6) : null;
-console.log(`[rehearsal-session] purpose  : ${RUN_PURPOSE} — session ${SESSION_NUMBER} of ${REHEARSAL_STREAK_LENGTH}`);
-if (!IS_QUALIFYING) {
-  console.log('[rehearsal-session] *** DIAGNOSTIC RUN — NON-COUNTING. It exercises the same browser, provider,');
-  console.log('[rehearsal-session] *** write, durable-evidence, adjudicator, privacy and scenario conditions as a');
-  console.log('[rehearsal-session] *** qualifying run, and can score every condition PASS, but it always publishes');
-  console.log('[rehearsal-session] *** rehearsal_eligible=false and can never advance or authorize the count.');
+if (IS_PERSONA) {
+  console.log(`[rehearsal-session] purpose  : ${RUN_PURPOSE} — persona "${PERSONA_SLUG}" (plumbing smoke; no beats run, nothing scored)`);
+  console.log('[rehearsal-session] *** PERSONA RUN — NON-COUNTING. It exercises the same browser, provider, write');
+  console.log('[rehearsal-session] *** and durable-evidence path as a qualifying run, with the athlete, plan and history');
+  console.log('[rehearsal-session] *** supplied by the persona fixture. It has no session number, the canonical count is');
+  console.log('[rehearsal-session] *** never consulted on its behalf, and it can never publish rehearsal_eligible=true.');
+  console.log('[rehearsal-session] prior    : canonical rehearsal count NOT consulted (persona runs are not streak members)');
+} else {
+  console.log(`[rehearsal-session] purpose  : ${RUN_PURPOSE} — session ${SESSION_NUMBER} of ${REHEARSAL_STREAK_LENGTH}`);
+  if (!IS_QUALIFYING) {
+    console.log('[rehearsal-session] *** DIAGNOSTIC RUN — NON-COUNTING. It exercises the same browser, provider,');
+    console.log('[rehearsal-session] *** write, durable-evidence, adjudicator, privacy and scenario conditions as a');
+    console.log('[rehearsal-session] *** qualifying run, and can score every condition PASS, but it always publishes');
+    console.log('[rehearsal-session] *** rehearsal_eligible=false and can never advance or authorize the count.');
+  }
+  console.log(`[rehearsal-session] prior    : canonical rehearsal count ${source.prior_rehearsal_count}/${REHEARSAL_STREAK_LENGTH} (from the execution plan)${IS_QUALIFYING ? '' : ' — recorded, not enforced for a debug run'}`);
 }
-console.log(`[rehearsal-session] prior    : canonical rehearsal count ${source.prior_rehearsal_count}/${REHEARSAL_STREAK_LENGTH} (from the execution plan)${IS_QUALIFYING ? '' : ' — recorded, not enforced for a debug run'}`);
 console.log(`[rehearsal-session] source   : ${gitFacts.branch} @ ${gitFacts.head.slice(0, 12)} (clean, = origin/${REQUIRED_BRANCH})`);
 console.log(`[rehearsal-session] run      : ${RUN_ID}`);
-console.log(`[rehearsal-session] posture  : ${MODE} + combined sandbox-live/ledger (set by the spec's own gate-server spawn)`);
+console.log(IS_PERSONA
+  ? '[rehearsal-session] posture  : model-up operator command; the persona smoke\'s gate server runs the in-memory ledger posture (it submits no coach turn — see persona.spec.js)'
+  : `[rehearsal-session] posture  : ${MODE} + combined sandbox-live/ledger (set by the spec's own gate-server spawn)`);
 console.log(`[rehearsal-session] athlete  : ${ATHLETE_ID}`);
 console.log('[rehearsal-session] workout  : NO pre-seeded id — the server allocator mints it at acceptance (isolation rule 3)');
 console.log(`[rehearsal-session] workbook : declared sandbox last6 ${SANDBOX_SPREADSHEET_ID_LAST6}`);
 console.log(`[rehearsal-session] ambient  : ${ambientLast6 ? `GOOGLE_SHEETS_ID last6 ${ambientLast6} present and NOT passed to the child` : 'no ambient GOOGLE_SHEETS_ID'}`);
 console.log(`[rehearsal-session] artifacts: ${path.relative(process.cwd(), ARTIFACT_DIR)}`);
-console.log('[rehearsal-session] the session begins when the browser submits the first synthetic athlete turn.\n');
+console.log(IS_PERSONA
+  ? '[rehearsal-session] the smoke begins when the browser opens the app against the persona-armed harness.\n'
+  : '[rehearsal-session] the session begins when the browser submits the first synthetic athlete turn.\n');
 
 // --retries=0 is load-bearing, not cosmetic: playwright.config.js grants CI
 // runs one retry (`retries: process.env.CI ? 1 : 0`) and this command forwards
@@ -243,11 +316,33 @@ console.log('[rehearsal-session] the session begins when the browser submits the
 const runner = spawn(
   process.execPath,
   [path.join(REPO_ROOT, 'node_modules', '@playwright', 'test', 'cli.js'),
-    'test', 'tests/e2e/gate/rehearsal.spec.js', '--project=chromium', '--workers=1', '--retries=0'],
+    'test', IS_PERSONA ? 'tests/e2e/gate/persona.spec.js' : 'tests/e2e/gate/rehearsal.spec.js',
+    '--project=chromium', '--workers=1', '--retries=0'],
   { env: childEnv, stdio: 'inherit', cwd: REPO_ROOT },
 );
 
 runner.on('exit', (code) => {
+  if (IS_PERSONA) {
+    // A persona run publishes persona-evidence.json, never a scorecard: there
+    // is nothing to score in a plumbing smoke, and a scorecard-shaped artifact
+    // from a non-rehearsal purpose is exactly the confusion the separate
+    // purpose exists to prevent. No evidence = the smoke did not complete.
+    const evidencePath = path.join(ARTIFACT_DIR, 'persona-evidence.json');
+    if (!fs.existsSync(evidencePath)) {
+      console.error('\n[rehearsal-session] NO PERSONA EVIDENCE — the smoke did not complete.');
+      console.error('[rehearsal-session] Nothing was scored, and a persona run has no count to affect either way.');
+      console.error(`[rehearsal-session] evidence preserved at ${path.relative(process.cwd(), ARTIFACT_DIR)}`);
+      process.exit(1);
+    }
+    const evidence = JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
+    const passed = (evidence.checks || []).filter((c) => c.ok).length;
+    console.log(`\n[rehearsal-session] PERSONA SMOKE: ${evidence.ok ? 'OK' : 'NOT OK'} — ${passed}/${(evidence.checks || []).length} plumbing checks passed`);
+    for (const c of evidence.checks || []) {
+      if (!c.ok) console.log(`  FAILED ${c.id} — ${c.detail}`);
+    }
+    console.log(`[rehearsal-session] rehearsal_eligible: ${evidence.rehearsal_eligible} (a persona run can never count)`);
+    process.exit(code === 0 && evidence.ok === true ? 0 : 1);
+  }
   const scorecardPath = path.join(ARTIFACT_DIR, 'scorecard.json');
   if (!fs.existsSync(scorecardPath)) {
     // No scorecard does not say WHICH side of the session-start boundary the run died
