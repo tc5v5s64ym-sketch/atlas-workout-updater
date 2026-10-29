@@ -85,7 +85,7 @@ passthrough + LLM `session_intent` — and **live-verified by the owner the same
 **4 fixed pending an owner live re-test** (the coach-fallback pair -153258/-153312, the restore
 banner -003505, the knee-raise prompt -002945), **0 open**, 4 noise (one a near-dup). All
 known-actionable rows now have a shipped fix; the remaining work is owner live validation — see
-the live-test items in `BACKLOG.md` / the QA campaign.
+the live-test items in the GitHub Issues backlog (label: backlog) (the owner live-validation checklist issue, #1540) / the QA campaign.
 
 ---
 

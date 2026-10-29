@@ -118,7 +118,7 @@ What it proves, as its own files: every constraint of §3.1–§3.9 by a rejecte
 
 ### 6. CI governance guards + secret scan (offline; none can write)
 
-`npm run check:wiring` (wired-or-deleted), `check:authority`, `check:banned`, `check:allowlist` (shrink-only ceiling), `check:paper-weight` (BACKLOG cap + auto-archive job), `check:ladder` (completion-ladder evidence), `check:packet-trace`, `check:backlog-intake`, **`check:supabase-safety`** (no GitHub-triggered path may apply schema to `Atlas Production` or hold a production Supabase credential — §6.1 P10, repository half), and `npm run scan:secrets` (which gained the Supabase connection-string, project-reference and key patterns in PR S2). Each has a self-testing `test/*.test.js`. The full drift-guard registry (and which phase built each) is in `CLAUDE.md` and the execution plan.
+`npm run check:wiring` (wired-or-deleted), `check:authority`, `check:banned`, `check:allowlist` (shrink-only ceiling), `check:paper-weight` (BACKLOG.md frozen-stub check — fails if the stub grows past `backlog_stub_max_lines` or loses its Issues-board pointer; backlog contents are no longer enforced), `check:ladder` (completion-ladder evidence), `check:packet-trace`, **`check:supabase-safety`** (no GitHub-triggered path may apply schema to `Atlas Production` or hold a production Supabase credential — §6.1 P10, repository half), and `npm run scan:secrets` (which gained the Supabase connection-string, project-reference and key patterns in PR S2). Each has a self-testing `test/*.test.js`. Drift Guard 7 (`check:backlog-intake`) was retired 2026-10-28 when the backlog moved to the GitHub Issues board — its script, self-tests, npm script, and CI job were removed. The full drift-guard registry (and which phase built each) is in `CLAUDE.md` and the execution plan.
 
 ### 7. Data tools
 
@@ -129,7 +129,7 @@ What it proves, as its own files: every constraint of §3.1–§3.9 by a rejecte
 
 | Workflow | Trigger | Runs | Sheet write? |
 |---|---|---|---|
-| `ci.yml` | PR, push→main, dispatch | build + lint + the drift guards + `check:supabase-safety` + `npm test`; **the Supabase schema proof against a plain `postgres:16` service container** (`npm run test:pg`); coverage (non-blocking); secret-scan; backlog-intake guard; Playwright e2e; render-smoke (dispatch/main) | No (smoke dry-run only; the Postgres container is created and destroyed with the job and cannot be `Atlas Production`) |
+| `ci.yml` | PR, push→main, dispatch | build + lint + the drift guards + `check:supabase-safety` + `npm test`; **the Supabase schema proof against a plain `postgres:16` service container** (`npm run test:pg`); coverage (non-blocking); secret-scan; Playwright e2e; render-smoke (dispatch/main) | No (smoke dry-run only; the Postgres container is created and destroyed with the job and cannot be `Atlas Production`) |
 | `live-retest.yml` | manual dispatch | `live-retest.js`, dry-run default; optional `ATLAS_ACCESS_CODE` secret for an authenticated read-only run | No |
 | `monitoring.yml` (Daily Mission Control) | daily cron + dispatch | `smoke-test-render.js` pinned `read-only`; opens alert issue on failure | No |
 | `merge-card-check.yml` | PR | fails a PR missing the Atlas Merge Card | No |
