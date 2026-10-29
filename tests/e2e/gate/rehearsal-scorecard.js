@@ -726,9 +726,94 @@ const LOGGED_LIST_HEADERS = Object.freeze([
   /^logged\s*:\s*/i,
 ]);
 
+// ── Declaration-declared lift aliases (F-SB4B corrective 12) ────────────────
+//
+// Session 3's second scored FAIL (run fsb4b-s3-20261029T082343-D0E7E0): PR
+// #1591's deterministic lane answered "What do I have left?" with the
+// grounded statement, whose Logged list is rendered from session_tally
+// spellings — the tally's log-row name for the deadlift is "RDL", while the
+// declaration names the lift "Romanian Deadlift". The carve-out vocabulary
+// was the declaration's names only, so that one tally-spelled item sank the
+// whole plain logged list and the beat judged the recap as prose: completed
+// lifts were flagged and the remaining order was read off first mentions
+// inside the recap. Diagnosis probes proved the 2×2: even a substantively
+// perfect remaining answer in the product's real output shape failed this
+// beat, and the same text with the deadlift spelled as the declaration
+// spells it passed. A target that names a lift differently BY DESIGN is a
+// harness vocabulary mismatch, not a product failure.
+//
+// THE ADMISSION — vocabulary only, no judging change: the frozen declaration
+// may declare, per lift, the product's own spellings as ALIASES
+// (expectation.aliases = { 'Romanian Deadlift': ['RDL'] }, declared in the
+// scenario, on the spec side). An admitted alias enters knownLiftNames under
+// its canonical lift's key and counts as a mention of that lift EVERYWHERE
+// the beat looks — carve-out membership, logged claims, complete/retired
+// naming, remaining presence and order, next-up claims — so an alias is
+// never a hiding place: "RDL" outside a qualifying logged list flags exactly
+// as "Romanian Deadlift" would. Aliases come ONLY from the declaration —
+// never from the reply, never derived from the target's output — and match
+// with this module's exact full-phrase matching. An undeclared spelling
+// still disqualifies a carve-out: the fail-closed, all-or-nothing default is
+// unchanged, and an expectation with no aliases is judged exactly as before.
+
+// The expectation's declared aliases, as a Map of canonical name key ->
+// alias spellings. Admissions are fail-closed: the canonical name must be
+// one of the expectation's own names; an alias equal to its own lift's name
+// or to ANOTHER lift's name admits nothing (it would blur two lifts into
+// one); an alias string claimed by two lifts admits nothing for either.
+function declaredLiftAliases(expectation) {
+  const exp = expectation && typeof expectation === 'object' ? expectation : {};
+  const key = (v) => String(v == null ? '' : v).trim().toLowerCase().replace(/[-\s]+/g, ' ');
+  const raw = (exp.aliases && typeof exp.aliases === 'object' && !Array.isArray(exp.aliases)) ? exp.aliases : {};
+  const canonicalKeys = new Set();
+  for (const list of [exp.remaining, exp.complete, exp.retired, exp.logged]) {
+    for (const name of (Array.isArray(list) ? list : [])) {
+      const k = key(name);
+      if (k) canonicalKeys.add(k);
+    }
+  }
+  const byCanonical = new Map();
+  const owners = new Map();
+  for (const [name, aliases] of Object.entries(raw)) {
+    const ck = key(name);
+    if (!ck || !canonicalKeys.has(ck) || !Array.isArray(aliases)) continue;
+    const clean = [];
+    for (const alias of aliases) {
+      const s = String(alias == null ? '' : alias).trim();
+      const ak = key(s);
+      if (!s || !ak || ak === ck || canonicalKeys.has(ak)) continue;
+      if (clean.some((x) => key(x) === ak)) continue;
+      clean.push(s);
+      owners.set(ak, (owners.get(ak) || 0) + 1);
+    }
+    if (clean.length) byCanonical.set(ck, clean);
+  }
+  for (const [ck, aliases] of byCanonical) {
+    const kept = aliases.filter((a) => owners.get(key(a)) === 1);
+    if (kept.length) byCanonical.set(ck, kept);
+    else byCanonical.delete(ck);
+  }
+  return byCanonical;
+}
+
+// The first mention of a lift in `text`, counting its declaration-declared
+// aliases as mentions of the lift itself. Returns the earliest index, or -1.
+function liftMentionIndexWithAliases(text, name, aliasesByKey) {
+  let at = liftMentionIndex(text, name);
+  const key = (v) => String(v == null ? '' : v).trim().toLowerCase().replace(/[-\s]+/g, ' ');
+  for (const alias of (aliasesByKey.get(key(name)) || [])) {
+    const i = liftMentionIndex(text, alias);
+    if (i >= 0 && (at < 0 || i < at)) at = i;
+  }
+  return at;
+}
+
 // The declaration's own lift names, longest first so a longer name is tried
 // before any shorter name it contains. Entries: { name, key } — `name` keeps
-// the declaration's spelling for failure messages.
+// the declaration's spelling for failure messages. Declaration-declared
+// aliases (corrective 12) enter as further entries under their canonical
+// lift's key, so a carved list naming an alias is judged as a logged claim
+// about the canonical lift.
 function knownLiftNames(expectation) {
   const exp = expectation && typeof expectation === 'object' ? expectation : {};
   const key = (v) => String(v == null ? '' : v).trim().toLowerCase().replace(/[-\s]+/g, ' ');
@@ -739,6 +824,10 @@ function knownLiftNames(expectation) {
       const k = key(name);
       if (name && k && !seen.has(k)) { seen.add(k); out.push({ name, key: k }); }
     }
+  }
+  const aliases = declaredLiftAliases(exp);
+  for (const entry of out.slice()) {
+    for (const alias of (aliases.get(entry.key) || [])) out.push({ name: alias, key: entry.key });
   }
   return out.sort((a, b) => b.name.length - a.name.length);
 }
@@ -912,19 +1001,20 @@ function replyMatchesExpectation(replyText, expectation) {
   const exp = expectation && typeof expectation === 'object' ? expectation : {};
   const remaining = Array.isArray(exp.remaining) ? exp.remaining : [];
 
+  const aliases = declaredLiftAliases(exp);
   const { judgedText, loggedNames } = carvePlainLoggedLists(text, knownLiftNames(exp));
 
   const positions = [];
   for (const name of remaining) {
-    const at = liftMentionIndex(judgedText, name);
+    const at = liftMentionIndexWithAliases(judgedText, name, aliases);
     if (at < 0) problems.push(`the reply does not name remaining lift "${name}"`);
     else positions.push({ name, at });
   }
   for (const name of (Array.isArray(exp.complete) ? exp.complete : [])) {
-    if (liftMentionIndex(judgedText, name) >= 0) problems.push(`the reply names "${name}", which the declaration says is already complete`);
+    if (liftMentionIndexWithAliases(judgedText, name, aliases) >= 0) problems.push(`the reply names "${name}", which the declaration says is already complete`);
   }
   for (const name of (Array.isArray(exp.retired) ? exp.retired : [])) {
-    if (liftMentionIndex(judgedText, name) >= 0) problems.push(`the reply names "${name}", which an accepted substitution removed from the plan`);
+    if (liftMentionIndexWithAliases(judgedText, name, aliases) >= 0) problems.push(`the reply names "${name}", which an accepted substitution removed from the plan`);
   }
 
   // LOGGED claims: a lift named in a carved-out plain logged list or
@@ -964,7 +1054,7 @@ function replyMatchesExpectation(replyText, expectation) {
     // nextUp — an expectation with remaining work always has one.
     const wanted = exp.nextUp || (remaining.length ? remaining[0] : null);
     if (!wanted) problems.push(`the reply claims "${claimed}" is next, but the declaration expects no remaining work`);
-    else if (liftMentionIndex(claimed, wanted) < 0) {
+    else if (liftMentionIndexWithAliases(claimed, wanted, aliases) < 0) {
       // One-directional on purpose: the CLAIM must carry the full expected name.
       // Accepting the reverse would let "Bench" satisfy "Bench Press", which is the
       // partial-name match this module refuses everywhere else.

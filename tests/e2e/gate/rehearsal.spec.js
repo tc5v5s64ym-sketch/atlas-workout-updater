@@ -154,6 +154,15 @@ const SCENARIOS = {
       'romanian deadlift 235 x 5 @2', 'romanian deadlift 235 x 5 @2',
     ],
     substitutionAsk: 'The bench is taken at the gym so plan give me a substitute workout',
+    // Declaration-declared lift aliases (F-SB4B corrective 12): the product's
+    // deterministic statement renders its logged list from session_tally
+    // spellings, and the tally's log-row name for the deadlift is "RDL" — the
+    // preserved reply of run fsb4b-s3-20261029T082343-D0E7E0 reads "Logged
+    // this session: Back Squat, Overhead Press, RDL, …" — while this
+    // declaration names the lift "Romanian Deadlift". The map admits the
+    // product's own spelling as that lift. It is declared HERE, in the frozen
+    // scenario, never read from a reply or derived from the target's output.
+    liftAliases: { 'Romanian Deadlift': ['RDL'] },
     // The Codex P1 edge at full-session level: after the proposal is staged, ONE
     // multi-exercise submission where a DIFFERENT valid planned exercise (Seated Row)
     // appears FIRST and the proposed replacement appears SECOND. The binder must
@@ -272,11 +281,16 @@ function parseShorthand(s) {
 // plan: the engine prescribes it, and Session 1 proved a declared 2 against a
 // prescribed 3 (F-SB4B corrective 3).
 function expectedRemainingNow(SC, loggedSets, sub) {
-  return deriveExpectedRemaining({
+  const expectation = deriveExpectedRemaining({
     plan: SC.plan,
     loggedNames: loggedSets.map(x => x.name),
     replacement: sub ? { sourceName: sub.sourceName, replacementName: sub.name, sets: sub.sets } : null,
   });
+  // Declaration-declared lift aliases (corrective 12) ride on the expectation
+  // the beat judges against. The derivation above is untouched; a scenario
+  // that declares no aliases produces exactly the expectation it always did.
+  if (SC.liftAliases) expectation.aliases = SC.liftAliases;
+  return expectation;
 }
 
 // Compare BOTH observations against that one expectation, and record each separately so
