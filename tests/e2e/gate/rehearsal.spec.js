@@ -36,7 +36,8 @@ const {
   classifyCoachResponseCapture, detectUnsupportedWriteClaim, liftMentionIndex,
 } = require('./rehearsal-scorecard');
 const { REHEARSAL_SESSION } = require('./rehearsal-run-purpose');
-const { measureSourceTree } = require('./rehearsal-source-facts');
+const { measureSourceTree, REPO_ROOT } = require('./rehearsal-source-facts');
+const { checkServedBuildIdentity } = require('./rehearsal-build-identity');
 const { markRunStarted, verifyRunStartMarker } = require('./rehearsal-run-start');
 const { pickNetworkPassthrough, assertNoWorkbookId, GATE_STARTUP_TIMEOUT_MS } = require('./rehearsal-child-env');
 const {
@@ -838,6 +839,7 @@ let child = null;
 let base = null;
 let stateBase = null;
 let artDir = null;
+let servedBuildCommit = null;
 let serverStdout = '';
 const timeline = [];
 const note = (step, detail) => timeline.push({ at: new Date().toISOString(), step, detail });
@@ -1254,6 +1256,25 @@ test.beforeAll(async () => {
   }
   artDir = ARTIFACT_DIR;
   fs.mkdirSync(artDir, { recursive: true });
+
+  // ── the served client must be the build OF THIS verified source ────────────
+  // public/ is gitignored build output and the gate server never rebuilds it,
+  // so a bundle built from an older commit would otherwise serve silently
+  // while the server executes fresh (run fsb4b-s3-20261029T101354-B9957C).
+  // Refuse HERE — before the server spawns and before any athlete turn can
+  // exist — so the run is a machinery abort on the NOT STARTED side of the
+  // session-start boundary, never a scored attempt: no RUN_START marker is
+  // written, and MACHINERY_ABORT.json in the artifact dir states why. The
+  // operator command rebuilds the client before spawning Playwright; this
+  // check is the guard for every path that reaches the spec without it.
+  const buildIdentity = checkServedBuildIdentity({
+    repoRoot: REPO_ROOT, sourceHeadSha: SOURCE.head_sha, artifactDir: artDir, runId: RUN_ID,
+  });
+  if (!buildIdentity.ok) {
+    throw new Error(`rehearsal machinery abort (NOT STARTED): ${buildIdentity.reason}`);
+  }
+  servedBuildCommit = buildIdentity.served_commit;
+  note('build-identity', `served build commit ${servedBuildCommit} == verified source ${SOURCE.head_sha}`);
 
   // The child environment is CONSTRUCTED, never inherited (`...process.env` absent).
   const childEnv = {
@@ -1979,7 +2000,7 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
       preflight_checks: (finalState.sandbox_preflight && finalState.sandbox_preflight.checks) || [],
       child_carried_workbook_id: false, // assertNoWorkbookId threw otherwise, before boot
     },
-    ui: { real_browser: true, shell_build: shellBuild },
+    ui: { real_browser: true, shell_build: shellBuild, build_commit: servedBuildCommit },
     provenance: {
       request_origin: await page.evaluate(() => (navigator.webdriver === true ? 'playwright' : 'athlete_ui')),
       real_index_js: Boolean(finalState.ledger_sandbox !== undefined),

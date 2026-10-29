@@ -50,7 +50,7 @@ function greenObservations() {
       preflight_ok: true, preflight_checks: [{ name: 'sandbox_reachable', ok: true }],
       child_carried_workbook_id: false,
     },
-    ui: { real_browser: true, shell_build: 'build-test' },
+    ui: { real_browser: true, shell_build: 'build-test', build_commit: HEAD },
     provenance: { request_origin: 'playwright', real_index_js: true },
     scenario: {
       id: 'session-1-full-flow',
