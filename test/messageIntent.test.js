@@ -22,6 +22,41 @@ test('isQuestionText: a bare past-tense log is NOT a question', () => {
   assert.equal(isQuestionText('done with squats'), false);
 });
 
+test('isQuestionText: a leading AM / statement "am" is NOT a question on the opener alone', () => {
+  // SC9-RAY-01 secondary defect: "AM" is the morning-session label in Ray's
+  // batch log, not the interrogative verb in "Am I …?". The detector lowercases
+  // first, so the bare "am" opener fired on every case form of the label —
+  // and on elliptical statements like an age statement. None of these is a
+  // question on the opener alone.
+  assert.equal(isQuestionText('AM done, logging late: trap bar DL 245 5/3 x3, press 115 6/2 x3, pullups BW 8/2 x3'), false);
+  assert.equal(isQuestionText('AM done, logging late'), false);
+  assert.equal(isQuestionText('Am done, logging late'), false);
+  assert.equal(isQuestionText('am done, logging late'), false);
+  assert.equal(isQuestionText('AM session: bench 225 5/2'), false);
+  assert.equal(isQuestionText('Am session: bench 225 5/2'), false);
+  assert.equal(isQuestionText('am session: bench 225 5/2'), false);
+  assert.equal(isQuestionText('AM workout done'), false);
+  assert.equal(isQuestionText('Am 62 and still lifting'), false);
+  assert.equal(isQuestionText('AM 62 and still lifting'), false);
+});
+
+test('isQuestionText: genuine "Am I …" interrogatives still fire', () => {
+  // With and without the trailing "?" — the "am i" opener itself must carry it.
+  assert.equal(isQuestionText('Am I supposed to deload this week?'), true);
+  assert.equal(isQuestionText('Am I supposed to deload this week'), true);
+  assert.equal(isQuestionText('am I doing this right'), true);
+  assert.equal(isQuestionText('Am I actually getting anywhere'), true);
+});
+
+test('AC8: an AM-led log opening is not suppressed as a question by the floor', () => {
+  const r = classifyMessageIntent('AM done, logging late: trap bar DL 245 5/3 x3', {
+    hasResolvedLift: false, hasSetTokens: false
+  });
+  assert.equal(r.isQuestion, false);
+  assert.equal(r.suppressLog, false);
+  assert.equal(r.reason, null);
+});
+
 test('isQuestionText: openers do not fire on lift names that merely share letters', () => {
   assert.equal(isQuestionText('arnold press 50 8/2'), false); // not "are"
   assert.equal(isQuestionText('iso row 120 10'), false);      // not "is"

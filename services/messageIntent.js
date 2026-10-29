@@ -25,7 +25,13 @@ function isQuestionText(text) {
   // Interrogative openers. Each is anchored with \b so it can't fire on a lift
   // name that merely starts with the same letters (e.g. "are" must not match
   // "arnold press", "is" must not match a lift like "iso row").
-  const QUESTION_OPENERS = /^(what|whats|what's|whatre|whatra|when|where|why|how|hows|how's|which|who|whom|should|shouldn'?t|could|couldn'?t|would|wouldn'?t|can|will|won'?t|are|aren'?t|is|isn'?t|am|was|were|does|doesn'?t)\b/;
+  // "am" is NOT a bare opener: the only interrogative it can head is "am I …",
+  // while a leading "AM" is commonly the morning-session label in a log
+  // ("AM done, logging late: …", "AM session: …") and "am" can also head an
+  // elliptical statement ("Am 62 and still lifting"). Matching "am i" only —
+  // the text is already lowercased, so this covers every case form — keeps
+  // genuine "Am I …?" questions firing without marking those statements.
+  const QUESTION_OPENERS = /^(what|whats|what's|whatre|whatra|when|where|why|how|hows|how's|which|who|whom|should|shouldn'?t|could|couldn'?t|would|wouldn'?t|can|will|won'?t|are|aren'?t|is|isn'?t|am i|was|were|does|doesn'?t)\b/;
   if (QUESTION_OPENERS.test(t)) return true;
 
   // Explicit question phrases that can appear after a leading word.
