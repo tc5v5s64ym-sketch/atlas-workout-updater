@@ -6,42 +6,42 @@
     {
       "file": "services/objectiveScorer.js",
       "expires": "2026-12-31",
-      "roadmap": "BACKLOG.md deferred session-planning wiring + docs/SESSION_PLANNING_ENGINE.md; pure scorer shipped, live-snapshot wiring not selected by the V1 campaign."
+      "roadmap": "the GitHub Issues backlog (label: backlog) deferred session-planning wiring + docs/SESSION_PLANNING_ENGINE.md; pure scorer shipped, live-snapshot wiring not selected by the V1 campaign."
     },
     {
       "file": "services/objectiveScoring.js",
       "expires": "2026-12-31",
-      "roadmap": "BACKLOG.md deferred session-planning wiring + docs/SESSION_PLANNING_ENGINE.md; frozen weights await an owner-approved future campaign."
+      "roadmap": "the GitHub Issues backlog (label: backlog) deferred session-planning wiring + docs/SESSION_PLANNING_ENGINE.md; frozen weights await an owner-approved future campaign."
     },
     {
       "file": "services/sessionCloseout.js",
       "expires": "2026-12-31",
-      "roadmap": "BACKLOG.md deferred session-planning engine wiring + docs/SESSION_PLANNING_ENGINE.md; not independently authorized by its presence here."
+      "roadmap": "the GitHub Issues backlog (label: backlog) deferred session-planning engine wiring + docs/SESSION_PLANNING_ENGINE.md; not independently authorized by its presence here."
     },
     {
       "file": "services/deterministicCoachRenderer.js",
       "expires": "2026-12-31",
-      "roadmap": "BACKLOG.md deterministic coach renderer follow-up; pure engine shipped and any remaining wiring must be selected by the canonical campaign or a later owner-approved plan."
+      "roadmap": "the GitHub Issues backlog (label: backlog) deterministic coach renderer follow-up; pure engine shipped and any remaining wiring must be selected by the canonical campaign or a later owner-approved plan."
     },
     {
       "file": "services/autoregulationModule.js",
       "expires": "2026-12-31",
-      "roadmap": "BACKLOG.md deferred One-Brain capability wiring + docs/COACHING_ENGINE_ARCHITECTURE.md; promotion remains evidence- and owner-gated."
+      "roadmap": "the GitHub Issues backlog (label: backlog) deferred One-Brain capability wiring + docs/COACHING_ENGINE_ARCHITECTURE.md; promotion remains evidence- and owner-gated."
     },
     {
       "file": "services/starterProgramModule.js",
       "expires": "2026-12-31",
-      "roadmap": "BACKLOG.md deferred program-selection wiring + docs/COACHING_ENGINE_ARCHITECTURE.md; not V1 campaign work."
+      "roadmap": "the GitHub Issues backlog (label: backlog) deferred program-selection wiring + docs/COACHING_ENGINE_ARCHITECTURE.md; not V1 campaign work."
     },
     {
       "file": "services/intermediateProgramModule.js",
       "expires": "2026-12-31",
-      "roadmap": "BACKLOG.md deferred program-selection wiring + docs/COACHING_ENGINE_ARCHITECTURE.md; not V1 campaign work."
+      "roadmap": "the GitHub Issues backlog (label: backlog) deferred program-selection wiring + docs/COACHING_ENGINE_ARCHITECTURE.md; not V1 campaign work."
     },
     {
       "file": "services/populationCapsModule.js",
       "expires": "2026-12-31",
-      "roadmap": "BACKLOG.md deferred goal/population-policy wiring + docs/COACHING_ENGINE_ARCHITECTURE.md; not V1 campaign work."
+      "roadmap": "the GitHub Issues backlog (label: backlog) deferred goal/population-policy wiring + docs/COACHING_ENGINE_ARCHITECTURE.md; not V1 campaign work."
     }
   ],
   "testOnly": [

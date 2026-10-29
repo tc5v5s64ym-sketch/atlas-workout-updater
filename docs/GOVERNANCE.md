@@ -22,7 +22,7 @@ Backlog / Evidence / Specs
 
 **Canonical Execution Plan** — the one ordered campaign currently being built. Lives in `docs/ATLAS_V1_EXECUTION_PLAN.md`. It is the sole authority for selecting the next PR until V1 stabilization ends.
 
-**Backlog** — the intake and deferred-work ledger. Lives in `BACKLOG.md`. While the canonical plan has eligible work, the backlog records discoveries but does not reorder the campaign.
+**Backlog** — the intake and deferred-work ledger. Lives in the GitHub Issues backlog (label: backlog). While the canonical plan has eligible work, the backlog records discoveries but does not reorder the campaign.
 
 **Evidence and specs** — `docs/TEST_QUEUE.md`, `docs/BUG_TRIAGE_LEDGER.md`, promotion criteria, architecture, narrow design specs, audits, and research. They prove, constrain, or explain work; they do not independently select it.
 

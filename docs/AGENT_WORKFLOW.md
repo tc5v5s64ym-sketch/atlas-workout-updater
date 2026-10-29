@@ -11,7 +11,7 @@ For routine work:
 3. `docs/BUILDER_PORTABILITY.md`
 4. `docs/ATLAS_V1_EXECUTION_PLAN.md`
 5. `docs/DECISION_KERNEL.md`
-6. `BACKLOG.md` for awareness and deferred discoveries
+6. the GitHub Issues backlog (label: backlog) for awareness and deferred discoveries
 7. this workflow and the relevant specs/invariants/tests
 
 Historical plans, audits, proposals, chat transcripts, and Git history never select the next PR.
@@ -125,7 +125,7 @@ Read `docs/AGENT_LIVE_TESTING.md` and local `.env` rather than asking Dale for k
 ## Campaign maintenance
 
 - Update the active card when work merges or a premise is proven stale.
-- File adjacent discoveries in `BACKLOG.md`; do not add them to the campaign without an explicit owner-approved plan change.
+- File adjacent discoveries in the GitHub Issues backlog (label: backlog) — open a GitHub Issue labelled backlog with a disposition; do not add them to the campaign without an explicit owner-approved plan change.
 - Do not create a second roadmap, fix-it doc, or session master plan.
 - When a genuine new precedent appears, update only the smallest relevant governance document.
 
