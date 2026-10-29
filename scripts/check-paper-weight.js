@@ -1,27 +1,25 @@
 'use strict';
 
-// Drift Guard 6 — PAPER-WEIGHT GUARD (Phase 2).
+// Drift Guard 6 — PAPER-WEIGHT GUARD (Phase 2), NARROWED 2026-10-28.
 //
-// Spec: docs/ATLAS_V1_EXECUTION_PLAN.md "Drift guards" #6 — "CI fails when BACKLOG.md
-// exceeds its size cap or contains shipped items older than seven days; an auto-archive
-// job keeps it clean." Published in CLAUDE.md.
+// Spec: docs/ATLAS_V1_EXECUTION_PLAN.md "OWNER RULING — 2026-10-28 — BACKLOG MOVES TO
+// THE GITHUB ISSUES BOARD" and CLAUDE.md Guard 6. The backlog now lives as GitHub
+// Issues (label `backlog`); BACKLOG.md is a frozen pointer stub. The pre-migration
+// rules — the shrink-only size cap on the ledger (config `backlog_max_lines`) and
+// the [archive-ready] staleness rule over ledger contents — enforced backlog
+// CONTENTS and were retired with the migration. What survives, narrowed to the
+// post-migration failure mode (findings quietly re-accumulating in the file
+// instead of the Issues board):
 //
-// Enforces two of the three parts here (the third — the auto-archive JOB — is
-// scripts/archive-backlog.js, run to clear a staleness failure):
+//  STUB INTEGRITY: BACKLOG.md must exist, must carry the Issues-board pointer
+//  (the `label:backlog` issues query URL), and must not exceed
+//  config/paper-weight.json `backlog_stub_max_lines`.
 //
-//  1. SIZE CAP (shrink-only ratchet): BACKLOG.md may not exceed
-//     config/paper-weight.json `backlog_max_lines`. The cap ratchets DOWN as the
-//     archive job trims the file; raising it needs a recorded justification.
-//
-//  2. STALENESS (shipped items > 7 days): CI fails when an item explicitly tagged
-//     `[archive-ready: YYYY-MM-DD]` lingers more than `stale_after_days` (default 7)
-//     past that date. The tag is an EXPLICIT, human-confirmed signal — the guard
-//     never guesses archivability from free text, because the 2026-07-20 archive
-//     reconciliation proved you cannot reliably tell a fully-shipped item from a
-//     ✅-with-open-follow-up item by heuristics (docs/verification/BACKLOG_RECONCILIATION_2026-07-20.md).
-//     So the staleness rule cannot false-fail the many ✅-with-open-follow-up items the
-//     file deliberately keeps; it only fires on an item a human deliberately marked ready.
-//     Clear a staleness failure by running `npm run archive:backlog -- --apply`.
+// The archive-ready marker helpers below are UNCHANGED: scripts/archive-backlog.js
+// still imports them (countLines, archiveReadyTags) to move explicitly tagged
+// items to BACKLOG_ARCHIVE.md, and the tag remains the only archival signal —
+// nothing here guesses archivability from free text (2026-07-20 reconciliation,
+// docs/verification/BACKLOG_RECONCILIATION_2026-07-20.md).
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -30,7 +28,9 @@ const ROOT = path.join(__dirname, '..');
 const BACKLOG = path.join(ROOT, 'BACKLOG.md');
 const CONFIG = path.join(ROOT, 'config', 'paper-weight.json');
 
-const DEFAULT_STALE_AFTER_DAYS = 7;
+// The pointer the frozen stub must carry: the GitHub Issues board query for the
+// backlog label. Exact substring of the stub's board URL.
+const BOARD_POINTER = 'issues?q=label%3Abacklog';
 
 // Matches the archive-ready MARKER by name, independent of its ": date" syntax — the whole
 // bracket payload (everything after "archive-ready" up to "]") is captured and then validated,
@@ -92,11 +92,11 @@ function findArchiveReady(text, today) {
 }
 
 /**
- * Pure analysis. `config` (parsed paper-weight.json), `backlog` (BACKLOG.md text), and
- * `today` (a Date) are injectable for tests; default to the real files / real clock.
+ * Pure analysis (narrowed form). `config` (parsed paper-weight.json) and `backlog`
+ * (BACKLOG.md text) are injectable for tests; default to the real files.
  * Never throws.
  */
-function analyze({ config, backlog, today } = {}) {
+function analyze({ config, backlog } = {}) {
   let cfg = config;
   if (cfg === undefined) {
     try { cfg = JSON.parse(fs.readFileSync(CONFIG, 'utf8')); }
@@ -107,44 +107,35 @@ function analyze({ config, backlog, today } = {}) {
     try { text = fs.readFileSync(BACKLOG, 'utf8'); }
     catch (e) { return { valid: false, errors: [`cannot read BACKLOG.md: ${e.message}`] }; }
   }
-  const now = today instanceof Date ? today : new Date();
 
   const errors = [];
-  const cap = cfg && cfg.backlog_max_lines;
-  if (!Number.isInteger(cap) || cap <= 0) {
-    return { valid: false, errors: ['backlog_max_lines: must be a positive integer (the shrink-only size cap)'] };
+  const stubMax = cfg && cfg.backlog_stub_max_lines;
+  if (!Number.isInteger(stubMax) || stubMax <= 0) {
+    return { valid: false, errors: ['backlog_stub_max_lines: must be a positive integer (the frozen-stub line bound)'] };
   }
   if (typeof cfg._note !== 'string' || !cfg._note.trim()) {
     errors.push('config/paper-weight.json: a non-empty _note is required');
   }
 
-  // 1. Size cap.
-  const lines = countLines(text);
-  if (lines > cap) {
-    errors.push(`BACKLOG.md has ${lines} lines but the cap is ${cap} — trim/archive shipped items (do not raise the cap without a recorded justification).`);
-  }
-
-  // 2. Staleness on explicit [archive-ready: DATE] tags.
-  const staleAfter = Number.isInteger(cfg.stale_after_days) && cfg.stale_after_days > 0
-    ? cfg.stale_after_days : DEFAULT_STALE_AFTER_DAYS;
-  const tags = findArchiveReady(text, now);
-  const stale = [];
-  for (const t of tags) {
-    if (t.malformed) {
-      errors.push(`BACKLOG.md line ${t.line}: malformed [archive-ready: ${t.dateStr}] date — use YYYY-MM-DD.`);
-      continue;
-    }
-    if (t.ageDays > staleAfter) stale.push(t);
-  }
-  if (stale.length) {
-    const list = stale.map((t) => `line ${t.line} (${t.dateStr}, ${t.ageDays}d)`).join(', ');
+  // Stub integrity 1 — the Issues-board pointer must be present.
+  if (!String(text).includes(BOARD_POINTER)) {
     errors.push(
-      `BACKLOG.md has ${stale.length} archive-ready item(s) older than ${staleAfter} days: ${list}. ` +
-      `Run \`npm run archive:backlog -- --apply\` to move them to BACKLOG_ARCHIVE.md and ratchet the cap.`,
+      'BACKLOG.md no longer carries the GitHub Issues backlog pointer ' +
+      `(${BOARD_POINTER}) — it is a frozen pointer stub since the 2026-10-28 migration; ` +
+      'restore the pointer instead of editing the stub back into a ledger.',
     );
   }
 
-  return { valid: errors.length === 0, errors, lines, cap, archiveReady: tags.length, stale: stale.length };
+  // Stub integrity 2 — the stub must stay within its line bound.
+  const lines = countLines(text);
+  if (lines > stubMax) {
+    errors.push(
+      `BACKLOG.md has ${lines} lines but the frozen-stub bound is ${stubMax} — ` +
+      'the backlog lives on the GitHub Issues board (label: backlog); open an Issue instead of adding items here.',
+    );
+  }
+
+  return { valid: errors.length === 0, errors, lines, stubMaxLines: stubMax };
 }
 
 if (require.main === module) {
@@ -153,10 +144,7 @@ if (require.main === module) {
     console.error('❌ Paper-weight guard FAILED:\n- ' + r.errors.join('\n- '));
     process.exit(1);
   }
-  const staleNote = r.archiveReady
-    ? ` · ${r.archiveReady} archive-ready item(s), none stale`
-    : '';
-  console.log(`✅ Paper-weight guard OK — BACKLOG.md ${r.lines}/${r.cap} lines (shrink-only; cap ratchets down as the archive job trims it)${staleNote}.`);
+  console.log(`✅ Paper-weight guard OK — BACKLOG.md is the frozen pointer stub (${r.lines}/${r.stubMaxLines} lines) to the GitHub Issues backlog.`);
 }
 
 module.exports = { analyze, countLines, findArchiveReady, parseIsoDayUtc, archiveReadyTags };

@@ -94,10 +94,10 @@ jobs:
         # and expiry-fails-red are enforced by the wiring guard above).
         run: npm run -s check:allowlist
 
-      - name: Paper-weight guard (Drift Guard 6)
-        # Shrink-only: BACKLOG.md may not exceed config/paper-weight.json
-        # backlog_max_lines (the staleness + auto-archive parts pair with the
-        # deferred archive editorial pass).
+      - name: Paper-weight guard (Drift Guard 6, narrowed 2026-10-28)
+        # BACKLOG.md is a frozen pointer stub to the GitHub Issues backlog:
+        # fails if the stub exceeds config/paper-weight.json
+        # backlog_stub_max_lines or loses its Issues-board pointer.
         run: npm run -s check:paper-weight
 
       - name: Completion-ladder guard (Drift Guard 4)
@@ -234,32 +234,6 @@ jobs:
               || echo "(coverage summary not captured — see the step log)"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-
-  backlog-intake-guard:
-    name: Backlog intake guard (Drift Guard 7)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    # PR-only: the guard compares BACKLOG.md and the paper-weight cap against the
-    # PR base, so it needs a base ref. Owner ruling 2026-07-30, final form 2026-07-31 —
-    # bounded backlog ledger at fixed capacity.
-    if: github.event_name == 'pull_request'
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0          # need history so the merge base resolves
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Bounded backlog (item, line, and cap counts never grow)
-        env:
-          BASE_REF: ${{ github.base_ref }}
-        run: |
-          git fetch --no-tags origin "$BASE_REF"
-          npm run -s check:backlog-intake -- --require-base "origin/$BASE_REF"
 
   secret-scan:
     name: Secret scan

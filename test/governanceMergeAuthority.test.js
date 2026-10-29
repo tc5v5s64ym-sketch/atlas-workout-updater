@@ -411,8 +411,11 @@ test('one compact launcher exists, it is tool-neutral, and it selects only plan 
     assert.doesNotMatch(quoted, tool, `the launcher must name no tool or model: ${tool}`);
   }
 
-  // It must not license backlog, retired-plan, or chat-history work selection.
-  assert.match(agents, /Never select work from `BACKLOG\.md`, a retired plan, an audit, a proposal, a standalone issue, Git history, or a chat transcript/i);
+  // It must not license retired-plan, audit, proposal, Git-history, or chat-history
+  // work selection; the GitHub Issues backlog feeds the plan but never selects work
+  // itself (owner ruling 2026-10-28).
+  assert.match(agents, /Never select work from a retired plan, an audit, a proposal, Git history, or a chat transcript/i);
+  assert.match(agents, /Work is selected only from the execution plan; the plan draws on the GitHub Issues backlog \(label `backlog`\) — an issue alone never authorizes work/i);
 
   // Every other surface points here instead of carrying a competing launcher.
   for (const rel of ['CLAUDE.md', 'docs/AGENT_WORKFLOW.md', 'docs/BUILDER_PORTABILITY.md', 'docs/CODEX_SESSION_STARTER.md']) {
