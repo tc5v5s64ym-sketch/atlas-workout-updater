@@ -857,6 +857,38 @@ const serverState = () => readJson(`${stateBase}/`, 'harness state read');
 const durableRows = (sessionId) => readJson(`${stateBase}/durable-rows?session_id=${encodeURIComponent(sessionId)}`, 'durable row read');
 const snap = async (page, name) => page.screenshot({ path: path.join(artDir, name), fullPage: true });
 
+// ── Client turn-correlation diagnostics (join diagnostics) ────────────────────
+// turnCorrelation.js's diagnosticSnapshot() is token-free BY DESIGN — session
+// ids, turn ids, initiation nonces, retired counts; never a pairing token —
+// and it is the only client-side record of whether a correlation claim existed
+// at a beat. It hangs off the module namespace, not a window global: the built
+// client is native ES modules served verbatim, and a dynamic import of the
+// exact module URL the app's own graph loaded returns the app's singleton from
+// the realm's module map (verified in the gate posture: after an app-driven
+// coach turn, the snapshot shows that turn's session and turn id). The read is
+// read-only — it dispatches nothing and mutates nothing — and any failure
+// (module unreachable, unexpected shape) yields null: diagnostics are evidence
+// ABOUT the run, never a reason to fail it.
+async function readCorrelationDiagnostics(page) {
+  try {
+    return await page.evaluate(async () => {
+      const ns = await import('/app/turnCorrelation.js');
+      if (!ns || !ns.turnCorrelation || typeof ns.turnCorrelation.diagnosticSnapshot !== 'function') return null;
+      const value = ns.turnCorrelation.diagnosticSnapshot();
+      return Array.isArray(value) ? value : null;
+    });
+  } catch { return null; }
+}
+
+// One-line summary of a harvested snapshot for the timeline note. Ids only —
+// the initiation nonce is reported as present/absent, never printed (the
+// verbatim snapshot in evidence.json carries it; the note stays summary-level).
+function correlationSnapshotDetail(snapshot) {
+  if (snapshot === null) return 'unavailable (recorded null)';
+  if (snapshot.length === 0) return 'no correlated sessions';
+  return snapshot.map(s => `${s.session_id} turn=${s.turn_id || 'none'} active_initiation=${s.active_initiation ? 'present' : 'none'} retired=${s.retired_count}`).join('; ');
+}
+
 // The session-start boundary is crossed at the FIRST composer submission, recorded
 // BEFORE the click so a submission that dies is still a submission. The marker is
 // READ BACK through the canonical reader before the click and every identity field
@@ -1305,11 +1337,30 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
   // save-route response, in resolution order — the page-side mirror of
   // saveResponses, paired with it when the boundary is built.
   let writeBoundarySamples = [];
+  // Client turn-correlation diagnostics (join diagnostics): snapshots of the
+  // client's correlation claim state at the save beat and again in section 13a,
+  // carried into evidence.json verbatim (see readCorrelationDiagnostics).
+  // Evidence only — nothing scored reads them. They exist so a
+  // trace_write_join failure (2 traces / 0 proofs, run
+  // fsb4b-s1-20261029T034938-C93176, where no [turn-write-proof] record was
+  // ever emitted) can be diagnosed from the run's own artifacts: did the
+  // client hold a claim at the save, and what state did the session end in?
+  const correlationDiagnostics = { save: null, '13a': null };
   page.on('response', async (res) => {
     const phase = currentPhase;
     const url = res.url();
     if (/\/api\/(log-workout|complete-workout)\b/.test(url)) {
       const endpoint = url.includes('complete-workout') ? 'complete-workout' : 'log-workout';
+      // Correlation headers (join diagnostics): the turn id is an id and is
+      // recorded verbatim; the pairing header carries a TOKEN — only its
+      // presence is recorded, never its value. Read BEFORE the body parse so a
+      // capture_failed record carries them too: whether the server echoed a
+      // pairing on THIS response is one of the two facts a trace_write_join
+      // failure needs, and an unparseable body must not erase it.
+      const responseHeaders = res.headers();
+      const turnIdHeader = typeof responseHeaders['x-atlas-turn-id'] === 'string'
+        ? responseHeaders['x-atlas-turn-id'] : null;
+      const pairingHeaderPresent = typeof responseHeaders['x-atlas-turn-pairing'] === 'string';
       try {
         const body = await res.json();
         const layers = [body, body && body.data, body && body.data && body.data.data]
@@ -1325,6 +1376,8 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
           no_write_confirmed: data ? data.no_write_confirmed : undefined,
           sheet_write: data ? data.sheet_write : undefined,
           capture_failed: data ? false : true,
+          turn_id_header: turnIdHeader,
+          pairing_header_present: pairingHeaderPresent,
         };
         saveResponses.push(record);
         // NO boundary clock is read here, deliberately. The page sampled its own
@@ -1336,7 +1389,10 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
         // `before`. The samples are harvested with the claim evidence in section
         // 13a and paired with these records when the boundary is built.
       } catch {
-        saveResponses.push({ phase, at: Date.now(), endpoint, status: null, capture_failed: true });
+        saveResponses.push({
+          phase, at: Date.now(), endpoint, status: null, capture_failed: true,
+          turn_id_header: turnIdHeader, pairing_header_present: pairingHeaderPresent,
+        });
       }
       return;
     }
@@ -1512,6 +1568,12 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
   const savedLabel = await page.locator('.review.done .rv-saved-txt').innerText().catch(() => '');
   const stuckSaving = /saving…/i.test(savedLabel);
   await snap(page, '08-saved.png');
+  // Join diagnostics at the save beat: the client's correlation claim state
+  // now that the write has settled — harvested while the session's document
+  // and its turn state still exist, paired in evidence with the save-route
+  // responses' correlation headers.
+  correlationDiagnostics.save = await readCorrelationDiagnostics(page);
+  note('correlation-diagnostics-save', correlationSnapshotDetail(correlationDiagnostics.save));
 
   // ── 10. Durable state, session-filtered ──────────────────────────────────────
   let d = null;
@@ -1672,6 +1734,11 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
     if (Array.isArray(samples)) writeBoundarySamples = samples;
   } catch { writeBoundarySamples = []; }
   note('claim-boundary', `${writeBoundarySamples.length} in-page write sample(s) harvested for ${saveResponses.length} observed save response(s)`);
+  // Join diagnostics, second beat: the correlation claim state the completed
+  // session ends with, harvested with the rest of the pre-teardown evidence —
+  // after the 13b reload this document, and its module state, no longer exist.
+  correlationDiagnostics['13a'] = await readCorrelationDiagnostics(page);
+  note('correlation-diagnostics-13a', correlationSnapshotDetail(correlationDiagnostics['13a']));
 
   // ── 13b. Cross-session teardown and inheritance (declared scenarios only) ────
   // Runs AFTER every durable read AND after the evidence above is preserved, and
@@ -2012,6 +2079,11 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
       ui_stuck_saving: stuckSaving, final_state_ok: savedLabel.trim().length > 0, detail: savedLabel.trim(),
     },
     trace: { join_ok: joined, turn_id: proofTurn, detail: `${traces.length} traces, ${proofs.length} proofs` },
+    // Join diagnostics, persisted verbatim and judged by NO condition: the
+    // client-side half of the trace_write_join evidence pair (the save-route
+    // records' correlation headers are the wire half). Present so the next
+    // join failure is diagnosable from this file alone.
+    correlation_diagnostics: correlationDiagnostics,
     review: { found_exact_session: reviewFound, all_unknown: reviewAllUnknown, failed_criteria: reviewFailed },
     weekly: { status: weeklyRes.status, valid_body: Boolean(weeklyBody && typeof weeklyBody === 'object' && !weeklyBody.error), detail: weeklyErrorDetail },
     guard: {
