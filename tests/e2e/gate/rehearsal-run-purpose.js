@@ -48,9 +48,56 @@
 // inferred from which check happened to go red.
 const REHEARSAL_SESSION = 'REHEARSAL_SESSION';
 const REHEARSAL_DEBUG = 'REHEARSAL_DEBUG';
-const RUN_PURPOSES = Object.freeze([REHEARSAL_SESSION, REHEARSAL_DEBUG]);
+//   PERSONA_RUN (Slice 2a, persona test rig — issue #1607) — a persona rehearsal
+//     on the same harness (design §3): the athlete, plan, and history come from a
+//     persona fixture instead of the frozen owner SCENARIOS. It is NOT a rehearsal
+//     session and NOT a debug session: it has no session number, it is never
+//     ordered against the canonical count, the preflight never consults the count
+//     on its behalf, and — because isQualifyingPurpose below names exactly one
+//     qualifying purpose — its artifacts can never publish rehearsal_eligible=true
+//     or advance/authorize a count. It exists as its own purpose string, rather
+//     than riding --debug, so a persona run is identifiable as one from its
+//     recorded purpose alone (design §4.1's reporting-clarity question, answered
+//     for the separate string).
+const PERSONA_RUN = 'PERSONA_RUN';
+const RUN_PURPOSES = Object.freeze([REHEARSAL_SESSION, REHEARSAL_DEBUG, PERSONA_RUN]);
 const QUALIFYING_PURPOSE = REHEARSAL_SESSION;
 const REHEARSAL_STREAK_LENGTH = 5;
+
+// A persona is named by a slug: a lowercase name, never a path. The fixture
+// loader (personas/load-persona.js) resolves a slug to a module of the same
+// name, so anything path-shaped (dots, slashes, uppercase) is refused here,
+// in the one place every consumer asks.
+const PERSONA_SLUG_RE = /^[a-z][a-z0-9-]*$/;
+function isPersonaSlug(value) {
+  return typeof value === 'string' && PERSONA_SLUG_RE.test(value);
+}
+
+// ── purpose resolution — the operator command's flags, decided purely ─────────
+// The runner script is a top-level program (its refusals are process exits), so
+// the DECISION it acts on lives here where unit tests can bite it: exactly one
+// purpose per run, and a persona run combined with a counting flag is refused
+// by construction, not by the script remembering to check. Returns
+// { ok: true, purpose } or { ok: false, refusal }.
+function resolveRunPurpose({ wantsQualifying = false, wantsDebug = false, personaSlug = null } = {}) {
+  const hasPersona = personaSlug !== null && personaSlug !== undefined && String(personaSlug).trim() !== '';
+  if (hasPersona && !isPersonaSlug(String(personaSlug).trim())) {
+    return { ok: false, refusal: `"${personaSlug}" is not a valid persona slug — a slug is a lowercase name (a-z, 0-9, hyphens), never a path` };
+  }
+  if (hasPersona && wantsQualifying) {
+    return { ok: false, refusal: '--persona and --qualifying are mutually exclusive: a persona run is structurally non-counting and can never advance the rehearsal streak' };
+  }
+  if (hasPersona && wantsDebug) {
+    return { ok: false, refusal: '--persona is its own run purpose (PERSONA_RUN); do not combine it with --debug' };
+  }
+  if (wantsDebug && wantsQualifying) {
+    return { ok: false, refusal: '--debug and --qualifying are mutually exclusive; a run has exactly one purpose' };
+  }
+  if (hasPersona) return { ok: true, purpose: PERSONA_RUN };
+  if (wantsQualifying) return { ok: true, purpose: REHEARSAL_SESSION };
+  if (wantsDebug) return { ok: true, purpose: REHEARSAL_DEBUG };
+  return { ok: false, refusal: 'declare the run purpose explicitly: --debug (diagnostic, never counts), --qualifying (may advance the streak), or --persona=<slug> (persona rehearsal, never counts). There is no default' };
+}
 
 // The one branch a run may execute on (owner decision by Dale, 2026-10-27, recorded
 // in docs/ATLAS_V1_EXECUTION_PLAN.md, F-SB4B): s3-maintenance — the S3/Sheets line
@@ -89,6 +136,38 @@ function mintIdentities({ sessionNumber, stamp, nonce }) {
     run_id: `fsb4b-s${sessionNumber}-${stamp}-${nonce}`,
     athlete_id: `fsb4b-athlete-${nonce}`,
   };
+}
+
+// Persona correlation identities — a DELIBERATELY different family from the
+// rehearsal's. A persona run id never carries the fsb4b-s<N>- marker (so a
+// persona artifact can never satisfy a rehearsal session's runIdentityRefusal),
+// and a rehearsal run id never carries the persona- marker (so the persona
+// check below refuses it). The workout session id is still never minted — the
+// server allocator owns it under every purpose.
+function mintPersonaIdentities({ slug, stamp, nonce }) {
+  if (!stamp || !nonce) throw new Error('mintPersonaIdentities requires a stamp and a nonce');
+  if (!isPersonaSlug(slug)) {
+    throw new Error(`a persona slug must be a lowercase name (a-z, 0-9, hyphens); got "${slug}"`);
+  }
+  return {
+    run_id: `persona-${slug}-${stamp}-${nonce}`,
+    athlete_id: `persona-athlete-${nonce}`,
+  };
+}
+
+// The persona correlation family check: the RUN identity must carry this
+// persona's marker, so neither a rehearsal run's artifacts nor another
+// persona's can satisfy a persona run's assertions. Returns null when
+// legitimate, or a refusal string. Never throws.
+function personaRunIdentityRefusal({ slug, runId }) {
+  const rid = typeof runId === 'string' ? runId.trim() : '';
+  if (!isPersonaSlug(slug)) {
+    return `a persona slug must be a lowercase name (a-z, 0-9, hyphens); got "${slug}"`;
+  }
+  if (!rid.startsWith(`persona-${slug}-`)) {
+    return `run id "${rid}" does not carry the persona marker (persona-${slug}-…) — a rehearsal or foreign run's artifacts cannot satisfy a persona run`;
+  }
+  return null;
 }
 
 // The INVERTED workout-identity check (isolation rules 3–4). Returns null when the
@@ -174,7 +253,15 @@ function evaluateRehearsalPreflight(input) {
     add(`rehearsal sessions are model-up only; got "${i.mode || 'no posture'}"`);
   }
   const n = i.sessionNumber;
-  if (!isRehearsalSessionNumber(n)) {
+  const persona = purpose === PERSONA_RUN;
+  if (persona) {
+    // A persona run has NO rehearsal session number — it is not a member of the
+    // streak, so there is no number to validate. What it must carry instead is
+    // a valid persona slug, checked with the identity rule below.
+    if (i.sessionNumber !== undefined && i.sessionNumber !== null) {
+      add(`a persona run carries no rehearsal session number (it is not a streak member); got sessionNumber ${JSON.stringify(i.sessionNumber)}`);
+    }
+  } else if (!isRehearsalSessionNumber(n)) {
     add(`--session must be an integer 1..${REHEARSAL_STREAK_LENGTH} (there is no default); got ${n === undefined ? 'nothing' : JSON.stringify(n)}`);
   }
   // THE COUNT RULE — qualifying only. Session N is legal only at N-1, which refuses a
@@ -182,7 +269,10 @@ function evaluateRehearsalPreflight(input) {
   // bound by it: it can never advance the count, so ordering it against the count
   // would only forbid the diagnostic sweep this purpose exists to allow. The count is
   // still READ under both purposes and recorded in the evidence, so a debug run's
-  // artifacts state the count they ran at.
+  // artifacts state the count they ran at. A PERSONA run is one step further: the
+  // count is never consulted on its behalf at all — not for ordering, not as a
+  // refusal — so a persona preflight handed an unreadable or absent count refuses
+  // nothing about it (the runner therefore does not even pass one).
   const prior = i.priorRehearsalCount;
   const countReadable = Number.isInteger(prior) && prior >= 0 && prior <= REHEARSAL_STREAK_LENGTH;
   if (qualifying) {
@@ -232,7 +322,9 @@ function evaluateRehearsalPreflight(input) {
   if (env.hasPrivateKey !== true) add('GOOGLE_PRIVATE_KEY is not exported');
   if (env.hasProviderKey !== true) add('GEMINI_API_KEY is not exported, so model-up cannot be proven');
 
-  const runRef = runIdentityRefusal({ sessionNumber: n, runId: i.runId });
+  const runRef = persona
+    ? personaRunIdentityRefusal({ slug: i.personaSlug, runId: i.runId })
+    : runIdentityRefusal({ sessionNumber: n, runId: i.runId });
   if (runRef) add(runRef);
 
   return { ok: refusals.length === 0, refusals };
@@ -241,6 +333,7 @@ function evaluateRehearsalPreflight(input) {
 module.exports = {
   REHEARSAL_SESSION,
   REHEARSAL_DEBUG,
+  PERSONA_RUN,
   QUALIFYING_PURPOSE,
   isQualifyingPurpose,
   RUN_PURPOSES,
@@ -254,4 +347,9 @@ module.exports = {
   runIdentityRefusal,
   parseCanonicalRehearsalCount,
   evaluateRehearsalPreflight,
+  PERSONA_SLUG_RE,
+  isPersonaSlug,
+  resolveRunPurpose,
+  mintPersonaIdentities,
+  personaRunIdentityRefusal,
 };
