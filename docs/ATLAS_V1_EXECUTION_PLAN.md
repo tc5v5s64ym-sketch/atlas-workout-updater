@@ -23,7 +23,7 @@ Read in this order for routine work:
 2. `docs/ATLAS_V1_EXECUTION_PLAN.md` — the sole work-selection and sequencing authority.
 3. `docs/ATLAS_SYSTEM_AUTHORITY.md` — the ownership authority: what decides each concept today, what is intended to, and the exact sunset condition for every competing path.
 4. `docs/DECISION_KERNEL.md` — durable product and trust principles.
-5. `BACKLOG.md` — intake/deferred ledger and supporting finding detail; **not a competing queue** while this plan has eligible work.
+5. The **GitHub Issues backlog** (label `backlog`) — intake/deferred ledger and supporting finding detail; **not a competing queue** while this plan has eligible work. (`BACKLOG.md` is a frozen pointer stub since 2026-10-28; `BACKLOG_ARCHIVE.md` is the historical record.)
 6. Relevant specs, invariants, tests, and evidence ledgers.
 
 The following remain separate because they are not execution plans:
@@ -796,7 +796,7 @@ Dale's test rows deleted from `Log_Cleaned` up to his last real workout on 2026-
 
 **Owner ruling 2026-07-31 — Phase 4 two-stage operational acceptance gate (governance insertion, no phase change).** Recorded below under "OWNER RULING — 2026-07-31 — PHASE 4 TWO-STAGE OPERATIONAL ACCEPTANCE GATE". Phase 4 exits only after Stage A (five consecutive AI-run full sessions, synthetic data, sandbox Sheet) and Stage B (five consecutive owner-run workouts) both pass and the owner explicitly authorizes Phase 5. Stage A precedes Stage B. Current counts: **Stage A: 5/5 — COMPLETE. Stage B: 0/5 — OPEN.** The active phase stays Phase 4. `SESSION_PLAN_SETS_WRITE_ENABLED` stays `0`; Stage A does not require it.
 
-**Owner ruling 2026-07-30, final form 2026-07-31 — bounded backlog ledger (governance insertion, no phase change).** Recorded below under "OWNER RULING — 2026-07-30, FINAL FORM 2026-07-31 — BOUNDED BACKLOG LEDGER" and enforced by Drift Guard 7: four dispositions, and `BACKLOG.md` at fixed capacity. The active phase stays Phase 4.
+**Owner ruling 2026-07-30, final form 2026-07-31 — bounded backlog ledger (governance insertion, no phase change).** Recorded below under "OWNER RULING — 2026-07-30, FINAL FORM 2026-07-31 — BOUNDED BACKLOG LEDGER" and enforced by Drift Guard 7: four dispositions, and `BACKLOG.md` at fixed capacity. The active phase stays Phase 4. **Form superseded 2026-10-28** — see "OWNER RULING — 2026-10-28 — BACKLOG MOVES TO THE GITHUB ISSUES BOARD" below: GitHub Issues are now the backlog ledger, Drift Guard 7 is retired, and `BACKLOG.md` is a frozen pointer stub; the four dispositions and the bounded-intake intent stand.
 
 **Owner instruction 2026-08-03 — Atlas Contract / Systems Review (superseded in part 2026-08-10).** The instruction established the existing ChatGPT review lane and its performer. The 2026-08-10 governance simplification above supersedes its broad category triggers, seven-question full re-review, findings-disposition burden, and any run-until-clean interpretation. `CLAUDE.md` now holds the narrow high-risk triggers and bounded follow-up protocol.
 
@@ -1201,8 +1201,8 @@ Each is a deterministic CI check that fails the build; a rule that lives only in
 3. **WIRING GUARD HARDENED** (Phase 2, enforced fully after Phase 5): the allowlist becomes shrink-only; new entries require an owner-gate note; expiries fail red — never auto-extend.
 4. **COMPLETION-LADDER VALIDATOR** (Phase 2, ✅ BUILT 2026-07-21 — `scripts/check-completion-ladder.js`, `npm run check:ladder`): no capability may claim route-consumed or live-proven without a linked test or trace ID; it also fails a structurally invalid ladder (nine boolean rungs, monotonic, a named consumer at route-consumed or higher). A synthetic-violation self-test (`test/completionLadderGuard.test.js`) proves the guard actually fails on an unsubstantiated claim.
 5. **PACKET AND TRACE CONTRACT TESTS** (Phases 4–5): every full-session test asserts the visible reply was produced from a schema-valid CoachTurnPacket and that one turn ID spans input through write proof. ✅ **FIRST INCREMENT BUILT 2026-07-24** (`scripts/check-packet-trace.js`, `npm run check:packet-trace`): the shadow anti-overclaim honesty guard — `assembleShadowPacket` may never report a packet valid that isn't, nor claim an embedded fact (session/decision/safety/closeout/exercises) present that does not validate under its own canonical contract (an underclaim is safe), nor emit a trace whose `missing`-stage list is dishonest; synthetic-violation self-test `test/packetTraceGuard.test.js`. The fuller remit — every full-session test asserting the visible reply came from a schema-valid packet with one turn ID spanning input→write proof — lands as the live route consumes the packet (Phases 4–5).
-6. **PAPER-WEIGHT GUARD** (Phase 2): CI fails when BACKLOG.md exceeds its size cap or contains shipped items older than seven days; an auto-archive job keeps it clean. The cap (`backlog_max_lines`) is permanently non-increasing under the 2026-07-30 owner ruling below.
-7. **BOUNDED-BACKLOG GUARD** (owner ruling 2026-07-30, final form 2026-07-31, ✅ BUILT — `scripts/check-backlog-intake.js`, `npm run check:backlog-intake`): on a PR diff CI fails when `BACKLOG.md` grows in top-level item count or in line count, or when `backlog_max_lines` rises above the base value. It is mechanical — three counts, no prose classification, no similarity matching — so no justification text turns it green. Removal, archival, deduplication, promotion, and in-place correction all pass, and a NET-NEUTRAL REPLACEMENT is the intended bounded-intake operation rather than a loophole. Self-tests: `test/backlogIntakeGuard.test.js`.
+6. **PAPER-WEIGHT GUARD** (Phase 2): CI fails when BACKLOG.md exceeds its size cap or contains shipped items older than seven days; an auto-archive job keeps it clean. The cap (`backlog_max_lines`) is permanently non-increasing under the 2026-07-30 owner ruling below. **Narrowed 2026-10-28** under the backlog-migration ruling below: the guard no longer enforces backlog contents; it keeps `BACKLOG.md` a frozen pointer stub (stub bound + Issues-board pointer) and its marker helpers still serve the archive job.
+7. **BOUNDED-BACKLOG GUARD** (owner ruling 2026-07-30, final form 2026-07-31, ✅ BUILT — `scripts/check-backlog-intake.js`, `npm run check:backlog-intake`): on a PR diff CI fails when `BACKLOG.md` grows in top-level item count or in line count, or when `backlog_max_lines` rises above the base value. It is mechanical — three counts, no prose classification, no similarity matching — so no justification text turns it green. Removal, archival, deduplication, promotion, and in-place correction all pass, and a NET-NEUTRAL REPLACEMENT is the intended bounded-intake operation rather than a loophole. Self-tests: `test/backlogIntakeGuard.test.js`. **RETIRED 2026-10-28** under the owner ruling recorded below (backlog moved to the GitHub Issues board): the script, its self-tests, the `check:backlog-intake` npm script, and its CI job are removed by the governance PR that records this retirement.
 
 #### Governance-control lifecycle
 
@@ -1211,6 +1211,8 @@ A focused governance PR may retire or narrow a control only when it names the de
 Never retire a proven write-path, Supabase/schema, security/secret, deterministic invariant, one-authority, owner-reserved, or current-state guard merely because it creates work. Record the decision and evidence in the governance PR; no permanent retirement registry is added.
 
 ### OWNER RULING — 2026-07-30, FINAL FORM 2026-07-31 — BOUNDED BACKLOG LEDGER
+
+> **FORM SUPERSEDED 2026-10-28.** The bounded-ledger INTENT of this ruling stands; its fixed-capacity `BACKLOG.md` FORM is superseded by "OWNER RULING — 2026-10-28 — BACKLOG MOVES TO THE GITHUB ISSUES BOARD" recorded immediately after this block. GitHub Issues are now the backlog ledger; the Bounded Backlog Review protocol in this block runs against the Issues board (`label:backlog`).
 
 `BACKLOG.md` is a **bounded, actively consumed evidence ledger**. This supersedes the blanket intake closure; it does not restore unlimited intake.
 
@@ -1264,6 +1266,19 @@ During one review cycle, implement **at most two** backlog fixes: backlog cleanu
 #### Stability period
 
 This backlog policy is **locked for four completed backlog-review cycles**. Do not propose another backlog-governance redesign during that period unless a concrete failure proves that legitimate work is being lost or left unaddressed.
+
+### OWNER RULING — 2026-10-28 — BACKLOG MOVES TO THE GITHUB ISSUES BOARD
+
+**Owner direction (Dale, 2026-10-28), recorded verbatim:** "let's just kind of reconcile all that and just get it all in the Git issues board let's update any documentation in the repo to ensure that it all kind of points to the issue board for the backlog". Dale confirmed execution the same day. The concrete failure the stability lock above excepted is on record: by October 2026 `BACKLOG.md` stood at its fixed capacity (785 of 787 lines) while live findings kept arriving, so the file form — not the bounded-intake intent — is what failed.
+
+Effective with this ruling:
+
+1. **GitHub Issues are the backlog ledger.** Every live backlog item lives as a GitHub Issue labelled `backlog`, plus its classification labels. The Issues board is where deferred work is preserved, dispositioned, and reviewed.
+2. **This plan remains the sole work-selection and sequencing authority.** The backlog — now the Issues board — preserves findings; it never selects work, authorizes a PR, or competes with this plan. The plan draws on the GitHub Issues backlog (`label:backlog`); an issue alone never authorizes work.
+3. **The 2026-07-30/31 ruling's FORM is superseded; its INTENT stands.** Bounded, dispositioned intake and no competing queue carry over unchanged: every finding still takes exactly one disposition (FIX NOW / REJECT / ADD TO BACKLOG — now: open a GitHub Issue labelled `backlog` / OWNER DECISION REQUIRED), the intake qualification is unchanged, and the Bounded Backlog Review protocol above now runs against the Issues board (`label:backlog`) instead of `BACKLOG.md`. What ends is the fixed-capacity file mechanics: item counts, line counts, and `backlog_max_lines` no longer gate intake.
+4. **`BACKLOG.md` is frozen as a pointer stub.** It states where the backlog lives and is never edited back into a ledger. `BACKLOG_ARCHIVE.md` remains the historical record, unchanged.
+5. **Drift Guard 7 is retired under this instruction.** Drift guards are grow-only: a guard is never removed or weakened without an owner instruction recorded in this plan (drift-guard list, item 5). This ruling is that instruction. The failure Guard 7 protected — undispositioned intake quietly growing a second queue — remains protected by surviving controls: the disposition and qualification rules, the Bounded Backlog Review protocol, and Drift Guard 6 as narrowed, which fails if `BACKLOG.md` grows past its stub bound or loses its Issues-board pointer.
+6. **Item migration is its own step.** Creating the issues from the reconciled backlog, cross-linking items that already have issues, and labelling the open issues proceed under this ruling; items whose disposition is OWNER DECISION are not decided by the migration and stay the owner's to rule on.
 
 ### OWNER RULING — 2026-07-31 — PHASE 4 TWO-STAGE OPERATIONAL ACCEPTANCE GATE
 
@@ -2489,7 +2504,7 @@ Before implementation, report only:
 - This file is updated only for real campaign state, a proven stale premise, or a necessary split of one card into safer one-concern PRs.
 - Do not add a second roadmap, phase plan, campaign controller, fix-it document, or session-specific master prompt.
 - Narrow specs may be added when a card genuinely requires design, but the card remains the sequencing authority.
-- New discoveries go to `BACKLOG.md`; they enter this plan only through an explicit owner-approved campaign change.
+- New discoveries are opened as GitHub Issues labelled `backlog` with a disposition (owner ruling 2026-10-28, above); they enter this plan only through an explicit owner-approved campaign change.
 - Git history is the archive. Completed-plan prose does not need to remain in the live documentation tree.
 
 > **Finish. Prove. Declare. Then make it pretty.**

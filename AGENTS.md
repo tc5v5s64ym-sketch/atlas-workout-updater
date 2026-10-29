@@ -30,7 +30,7 @@ This is the one implementation launcher. Do not write a second one.
 
 > Read `AGENTS.md` and execute the first eligible unfinished Atlas concern as the approved active implementation agent. Use a fresh `agent/<concern>` branch. Stop only for an owner-reserved gate or required external review.
 
-"First eligible unfinished concern" means the first eligible unfinished card in [`docs/ATLAS_V1_EXECUTION_PLAN.md`](docs/ATLAS_V1_EXECUTION_PLAN.md), and nothing else. Never select work from `BACKLOG.md`, a retired plan, an audit, a proposal, a standalone issue, Git history, or a chat transcript while the plan has eligible work.
+"First eligible unfinished concern" means the first eligible unfinished card in [`docs/ATLAS_V1_EXECUTION_PLAN.md`](docs/ATLAS_V1_EXECUTION_PLAN.md), and nothing else. Never select work from a retired plan, an audit, a proposal, Git history, or a chat transcript while the plan has eligible work. Work is selected only from the execution plan; the plan draws on the GitHub Issues backlog (label `backlog`) — an issue alone never authorizes work.
 
 ## Cold-start acceptance trial
 
