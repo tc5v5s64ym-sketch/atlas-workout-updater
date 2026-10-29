@@ -39,6 +39,7 @@ const { REHEARSAL_SESSION } = require('./rehearsal-run-purpose');
 const { measureSourceTree, REPO_ROOT } = require('./rehearsal-source-facts');
 const { checkServedBuildIdentity } = require('./rehearsal-build-identity');
 const { refuseRetriedAttempt } = require('./rehearsal-attempt-guard');
+const { evaluateTraceWriteJoin } = require('./rehearsal-write-proof-join');
 const { markRunStarted, verifyRunStartMarker } = require('./rehearsal-run-start');
 const { pickNetworkPassthrough, assertNoWorkbookId, GATE_STARTUP_TIMEOUT_MS } = require('./rehearsal-child-env');
 const {
@@ -1699,11 +1700,12 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
     .map(l => { try { return JSON.parse(l.slice(l.indexOf(marker) + marker.length).trim()); } catch { return null; } }).filter(Boolean);
   const traces = parseMarker('[interaction-trace]');
   const proofs = parseMarker('[turn-write-proof]');
-  // The record's proof fields live under `proof` (services/turnCorrelation.js
-  // buildWriteProofRecord); the live write carries sheet_write:'success' there.
-  const liveProof = proofs.find(p => p && p.proof && p.proof.sheet_write === 'success') || proofs[proofs.length - 1] || null;
-  const proofTurn = liveProof ? liveProof.turn_id : null;
-  const joined = Boolean(proofTurn) && traces.some(t => t.turn_id === proofTurn);
+  // The join may use ONLY a live write proof (proof.sheet_write 'success'):
+  // a preview emits a proof record for the same turn_id with sheet_write
+  // 'skipped', and promoting it by fallback once let condition 19 pass with
+  // no live write at all. The selection is unit-pinned in
+  // rehearsal-write-proof-join.js (no fallback exists there).
+  const { join_ok: joined, turn_id: proofTurn, detail: traceJoinDetail } = evaluateTraceWriteJoin({ traces, proofs });
 
   // ── 13. Review-tool adjudication against the SANDBOX (read-only) ─────────────
   await new Promise(r => setTimeout(r, 45000)); // the adjudicator reads 8 tabs right after the durable polls — give it its own quota window
@@ -2129,7 +2131,7 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
         && spsRows.every(r => String(r[spsIdx.seal] || '').trim() !== ''),
       ui_stuck_saving: stuckSaving, final_state_ok: savedLabel.trim().length > 0, detail: savedLabel.trim(),
     },
-    trace: { join_ok: joined, turn_id: proofTurn, detail: `${traces.length} traces, ${proofs.length} proofs` },
+    trace: { join_ok: joined, turn_id: proofTurn, detail: traceJoinDetail },
     // Join diagnostics, persisted verbatim and judged by NO condition: the
     // client-side half of the trace_write_join evidence pair (the save-route
     // records' correlation headers are the wire half). Present so the next
