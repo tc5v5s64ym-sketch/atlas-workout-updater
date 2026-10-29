@@ -57,7 +57,7 @@ import { mostRecentCompletablePlanItem } from './planCompletion.js';
 // plan_item_id + slot position; name/liftCode used ONLY as logged-evidence to
 // attribute a log to one slot (exact-outranks-substring + ambiguity refusal). Every
 // remaining/completion surface routes through it so they can never disagree.
-import { remainingSlotNames, variantSatisfies, planSlotStatuses, firstUnloggedSlot } from './planSlotStatuses.js';
+import { remainingSlotNames, completedSlotNames, variantSatisfies, planSlotStatuses, firstUnloggedSlot } from './planSlotStatuses.js';
 // F10B — the client session ledger: build future-set-only revisions from an explicit
 // mid-session recommendation (a substitution), append-only, and count performed sets
 // so a completed set is never revised. Revisions live in the store (getSessionRevisions)
@@ -5883,6 +5883,20 @@ function remainingPlannedExercises() {
   return remainingSlotNames(activePlanForSlots(), getSessionCompleted(), getSessionLog());
 }
 
+function completedPlannedExercises() {
+  // F-SB4 Session 3 — the completed counterpart of remainingPlannedExercises():
+  // the slots the ONE selector judges FULLY complete (required set count reached,
+  // or the authoritative id-outcome lane). This — not getSessionCompleted() — is
+  // what plan_state.completed forwards: the server contract reads that field as
+  // prescription-complete (completedExerciseKeys: "plan_state.completed always
+  // wins" and subtracts it from remaining), so forwarding the >=1-logged-set list
+  // put partially logged slots (Incline 2/3, Seated Row 1/2) in BOTH lists and
+  // the engine's "what do I have left?" answer dropped them from remaining.
+  // getSessionCompleted() itself is unchanged: plan_completed, the set-logged
+  // handoff event, and every client surface keep the >=1-set list.
+  return completedSlotNames(activePlanForSlots(), getSessionCompleted(), getSessionLog());
+}
+
 function isPlanCloseoutAwaitingSave() {
   return getSessionLog().length > 0 &&
     plannedExerciseOrder().length > 0 &&
@@ -7231,7 +7245,7 @@ function routeMessageToCoach(text) {
     const remaining = remainingPlannedExercises();
     context.plan_state = {
       planned: plannedExerciseOrder(),
-      completed: [...getSessionCompleted()],
+      completed: completedPlannedExercises(),
       remaining,
       isComplete: remaining.length === 0,
     };
