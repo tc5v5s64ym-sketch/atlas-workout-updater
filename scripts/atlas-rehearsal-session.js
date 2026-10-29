@@ -229,10 +229,21 @@ console.log(`[rehearsal-session] ambient  : ${ambientLast6 ? `GOOGLE_SHEETS_ID l
 console.log(`[rehearsal-session] artifacts: ${path.relative(process.cwd(), ARTIFACT_DIR)}`);
 console.log('[rehearsal-session] the session begins when the browser submits the first synthetic athlete turn.\n');
 
+// --retries=0 is load-bearing, not cosmetic: playwright.config.js grants CI
+// runs one retry (`retries: process.env.CI ? 1 : 0`) and this command forwards
+// the ambient CI into the child (childEnv above). The spec writes its
+// scorecard BEFORE asserting the run passed, and this command decides the run
+// from the exit code plus the FINAL scorecard — so one retry would re-run the
+// whole session, overwrite a scored FAIL's scorecard, and report a qualifying
+// PASS. The flag overrides the config for THIS invocation only; ordinary E2E
+// keeps its CI retry. The ambient CI is deliberately NOT stripped instead:
+// CI also drives the config's forbidOnly and webServer.reuseExistingServer
+// in the child, and flipping those is outside this concern. The spec refuses
+// a retried attempt on its own as the second layer (rehearsal-attempt-guard).
 const runner = spawn(
   process.execPath,
   [path.join(REPO_ROOT, 'node_modules', '@playwright', 'test', 'cli.js'),
-    'test', 'tests/e2e/gate/rehearsal.spec.js', '--project=chromium', '--workers=1'],
+    'test', 'tests/e2e/gate/rehearsal.spec.js', '--project=chromium', '--workers=1', '--retries=0'],
   { env: childEnv, stdio: 'inherit', cwd: REPO_ROOT },
 );
 
