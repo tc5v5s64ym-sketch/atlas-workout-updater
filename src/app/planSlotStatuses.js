@@ -254,6 +254,22 @@ const _exports = (function () {
     return remainingSlots(activePlan, completedNames, sessionLog).map(s => s.name);
   }
 
+  // The fully-done slots (status 'completed', real name), in visible order. An
+  // in-progress slot (attributed but below its required set count) is NOT here —
+  // it is still remaining above. The two families partition the named slots.
+  function completedSlots(activePlan, completedNames, sessionLog) {
+    return planSlotStatuses(activePlan, completedNames, sessionLog).filter(s => s.status === STATUS.COMPLETED && s.name);
+  }
+
+  // Completed slot NAMES in order — the mirror of remainingSlotNames. This is the
+  // ONLY "completed" verdict a consumer that reads completion as prescription-
+  // complete may take from the client: getSessionCompleted() means ">=1 logged
+  // set", which is a different fact (F-SB4 Session 3: a 2/3-sets slot forwarded
+  // as completed dropped out of the server's remaining list).
+  function completedSlotNames(activePlan, completedNames, sessionLog) {
+    return completedSlots(activePlan, completedNames, sessionLog).map(s => s.name);
+  }
+
   // The first still-to-do slot (next up), or null when the plan is complete/empty.
   function firstUnloggedSlot(activePlan, completedNames, sessionLog) {
     return remainingSlots(activePlan, completedNames, sessionLog)[0] || null;
@@ -279,6 +295,8 @@ const _exports = (function () {
     planSlotStatuses,
     remainingSlots,
     remainingSlotNames,
+    completedSlots,
+    completedSlotNames,
     firstUnloggedSlot,
     isSlotComplete,
     isPlanComplete,
@@ -292,6 +310,8 @@ export const {
   planSlotStatuses,
   remainingSlots,
   remainingSlotNames,
+  completedSlots,
+  completedSlotNames,
   firstUnloggedSlot,
   isSlotComplete,
   isPlanComplete,
