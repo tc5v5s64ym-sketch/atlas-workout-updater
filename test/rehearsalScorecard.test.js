@@ -1220,6 +1220,123 @@ describe('replyMatchesExpectation — Option A: strict default + plain logged-li
   }
 });
 
+// ── Declaration-declared lift aliases (F-SB4B corrective 12) ─────────────────
+// Session 3's second scored FAIL (run fsb4b-s3-20261029T082343-D0E7E0): the
+// deterministic lane (PR #1591) answered "What do I have left?" with the
+// grounded statement, whose Logged list renders session_tally spellings —
+// the tally calls the deadlift "RDL", the declaration calls it "Romanian
+// Deadlift". One tally-spelled item sank the whole plain logged list, and
+// the beat judged the recap as prose. The pins below fix the vocabulary
+// admission: the frozen declaration may declare the product's own spellings
+// as aliases of a lift; matching stays exact and fail-closed; an alias
+// counts as a mention of its canonical lift for every beat purpose.
+describe('replyMatchesExpectation — declaration-declared lift aliases (corrective 12)', () => {
+  const PLAN = [
+    { exercise: 'Back Squat', target_sets: 2 },
+    { exercise: 'Overhead Press', target_sets: 2 },
+    { exercise: 'Romanian Deadlift', target_sets: 2 },
+    { exercise: 'Bench Press', target_sets: 2 },
+    { exercise: 'Seated Row', target_sets: 2 },
+    { exercise: 'Bicep Curl', target_sets: 2 },
+  ];
+  // The Session 3 declaration at the remaining-answer beat, exactly as the
+  // Option A block derives it; the alias map is the one SCENARIOS[3] declares.
+  const session3 = (aliases) => {
+    const e = deriveExpectedRemaining({
+      plan: PLAN,
+      loggedNames: [
+        'back squat', 'back squat', 'overhead press', 'overhead press',
+        'romanian deadlift', 'romanian deadlift',
+        'seated row', 'incline db press', 'face pull', 'incline db press',
+      ],
+      replacement: { sourceName: 'Bench Press', replacementName: 'Incline DB Press', sets: 3 },
+    });
+    if (aliases) e.aliases = aliases;
+    return e;
+  };
+  const RDL_ALIASES = { 'Romanian Deadlift': ['RDL'] };
+  // A substantively PERFECT remaining answer in the product's real output
+  // shape (the diagnosis probe's B3 text): the grounded statement's logged
+  // list with the tally spelling, the correct remaining clause.
+  const PERFECT_RDL = 'Logged this session: Back Squat, Overhead Press, RDL, Seated Row, Incline DB Press, Face Pull. '
+    + 'Still remaining: Incline DB Press, Seated Row, Bicep Curl. '
+    + 'Those are still planned, not done — nothing counts as completed until it\'s logged.';
+  // The run's ACTUAL reply, as preserved in its evidence (first 160 chars):
+  // substantively wrong — it names only Bicep Curl as remaining.
+  const ACTUAL_RUN_REPLY = 'Logged this session: Back Squat, Overhead Press, RDL, Seated Row, Incline DB Press, Face Pull. '
+    + 'Still remaining: Bicep Curl. Those are still planned, not done — ';
+
+  it('a perfect remaining answer in the product\'s real output shape passes when the declaration declares the tally spelling', () => {
+    assert.deepEqual(replyMatchesExpectation(PERFECT_RDL, session3(RDL_ALIASES)), { ok: true, problems: [] });
+  });
+
+  it('the SAME reply still fails when the expectation declares no alias (fail-closed, unchanged)', () => {
+    // These are the run's recorded scorecard problems verbatim: without the
+    // declared alias the tally spelling earns no carve-out, exactly as on base.
+    const cmp = replyMatchesExpectation(PERFECT_RDL, session3(null));
+    assert.equal(cmp.ok, false);
+    assert.match(cmp.problems.join(' '), /"Back Squat", which the declaration says is already complete/);
+    assert.match(cmp.problems.join(' '), /"Overhead Press", which the declaration says is already complete/);
+    assert.match(cmp.problems.join(' '), /the declaration order is \[Incline DB Press, Seated Row, Bicep Curl\]/);
+  });
+
+  it('the run\'s actual wrong reply still fails WITH the alias — on the presence problems, not rescued', () => {
+    const cmp = replyMatchesExpectation(ACTUAL_RUN_REPLY, session3(RDL_ALIASES));
+    assert.equal(cmp.ok, false);
+    assert.match(cmp.problems.join(' '), /does not name remaining lift "Incline DB Press"/);
+    assert.match(cmp.problems.join(' '), /does not name remaining lift "Seated Row"/);
+    assert.doesNotMatch(cmp.problems.join(' '), /already complete/);
+    assert.doesNotMatch(cmp.problems.join(' '), /declaration order/);
+  });
+
+  it('BITE — the alias is not a hiding place: "RDL" claimed as remaining flags as the canonical complete lift', () => {
+    const cmp = replyMatchesExpectation('Still remaining: RDL, Incline DB Press, Seated Row, Bicep Curl.', session3(RDL_ALIASES));
+    assert.equal(cmp.ok, false);
+    assert.match(cmp.problems.join(' '), /"Romanian Deadlift", which the declaration says is already complete/);
+  });
+
+  it('BITE — the alias in a decorated sentence flags as the canonical complete lift', () => {
+    const cmp = replyMatchesExpectation(
+      'You still need to finish RDL today. Still remaining: Incline DB Press, Seated Row, Bicep Curl.',
+      session3(RDL_ALIASES));
+    assert.equal(cmp.ok, false);
+    assert.match(cmp.problems.join(' '), /"Romanian Deadlift", which the declaration says is already complete/);
+  });
+
+  it('BITE — an alias set-fact enumeration is judged as a logged claim about the canonical lift', () => {
+    // Nothing logged in this expectation, so an "RDL 235 x 5 @ RIR 2" detail
+    // sentence is a FALSE logged claim — visible only because the declared
+    // alias admits "RDL" into the enumeration vocabulary under the canonical
+    // key. (Without alias support the sentence is invisible to the beat.)
+    const e = deriveExpectedRemaining({ plan: PLAN, loggedNames: [], replacement: null });
+    e.aliases = RDL_ALIASES;
+    const cmp = replyMatchesExpectation(
+      'RDL 235 x 5 @ RIR 2. You still have Back Squat, Overhead Press, Romanian Deadlift, Bench Press, Seated Row, and Bicep Curl left.',
+      e);
+    assert.equal(cmp.ok, false);
+    assert.match(cmp.problems.join(' '), /"RDL" as logged, but the declaration records no logged sets for it/);
+  });
+
+  it('a neighbouring scenario with no aliases declared is judged exactly as before (pass and fail fixtures)', () => {
+    // The Session-1-shaped declaration from the deriveExpectedRemaining BITE:
+    // substitute "Incline Dumbbell Press", remaining [Seated Row, Bicep Curl].
+    const e = deriveExpectedRemaining({
+      plan: PLAN,
+      loggedNames: [
+        'back squat', 'back squat', 'overhead press', 'overhead press',
+        'romanian deadlift', 'romanian deadlift',
+        'incline dumbbell press', 'incline dumbbell press',
+      ],
+      replacement: { sourceName: 'Bench Press', replacementName: 'Incline Dumbbell Press' },
+    });
+    assert.deepEqual(e.remaining, ['Seated Row', 'Bicep Curl']);
+    assert.deepEqual(replyMatchesExpectation('You still have Seated Row and Bicep Curl left.', e), { ok: true, problems: [] });
+    const bad = replyMatchesExpectation('You still have Bench Press, Seated Row and Bicep Curl left.', e);
+    assert.equal(bad.ok, false);
+    assert.match(bad.problems.join(' '), /accepted substitution removed from the plan/);
+  });
+});
+
 // ── the claim sweep: no constant may stand in for evidence ───────────────────
 
 describe('detectUnsupportedMutationWording — derived, phase-bounded, fails closed', () => {
