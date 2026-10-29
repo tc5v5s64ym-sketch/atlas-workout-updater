@@ -94,7 +94,7 @@ const KNOWN_FAILURES = {
   'SC7-PRIYA-02': 'question-shaped log produces no usable parse (needs_clarification, unattributable_trailing_sets); expected Dumbbell Bench 3 x (25 lb x 8)',
   'SC7-PRIYA-03': "rows half is ambiguous ('Rows', needs_clarification) and the modality recognizer returns the plank as timed_hold with exercise null — duration 40 s matches, identity 'Plank' is not recovered",
   'SC8-JONAS-01': 'stacked Rows sets are dropped (needs_clarification, unattributable_trailing_sets) after the Bench parse; expected Bench Press + Rows',
-  'SC9-RAY-01': 'a 3-exercise batch log that also asks a question is suppressed whole (intent question, logged_nothing_question); nothing is logged',
+  'SC9-RAY-01': "compound failure, not question suppression alone: 'trap bar DL' has no parser alias (logs unknown 'Trap Bar Dl'), bare 'press' is pinned never-guess ambiguous (its Overhead Press identity is plan context the unit seam does not receive), and Pull-Up has no bodyweight slash-pair path ('pullups BW 8/2 x3' -> missing_sets) — the parse dead-ends to needs_clarification regardless of the question, and the question floor only labels the dead-end (intent question, logged_nothing_question; isQuestionText also fires on the leading 'AM' opener); full resolution needs the parser slices + Slice 2 plan context (issue #1607 design note)",
   'SC9-RAY-02': "modality recognizer returns null for the prose interval log '4 x 500'; expected Rower 4 x 500 m",
   'SC10-ELLEN-01': 'full-sentence prose log is not parsed (needs_clarification, missing_exercise); expected Leg Press [180x10/4, 230x8/2 x3]',
   'SC10-ELLEN-02': 'prose two-exercise turn is not parsed (needs_clarification, unattributable_trailing_sets); expected Incline Dumbbell Bench + Seated Rows',
