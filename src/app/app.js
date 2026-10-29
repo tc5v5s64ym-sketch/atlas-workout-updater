@@ -7346,14 +7346,27 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
   // structured, engagement-carrying render every other recommendation entry
   // point uses. With the home tiles retired (owner directive 2026-07-03), the
   // typed sentence IS the pick's entry; a chat-prose answer here would be a
-  // second recommendation voice.
+  // second recommendation voice. The athlete's structured constraints
+  // (requested first exercise, focus) ride into the authoritative pipeline so
+  // it can honor them — never a client-built plan.
+  //
+  // The lane may claim the turn ONLY when coach-conversation.js actually
+  // registered the pick entry point (window.atlasOpenCoachPick): that module
+  // rides the second module graph, so at submit time it can have failed or
+  // still be loading. Claiming the turn anyway dropped the athlete's message
+  // with no reply, no error, and no fallback (F-SB4 Session 2 teardown
+  // opener, run fsb4b-s2-20261029T013544-B83515). When the entry point is
+  // absent the turn is NOT claimed: it falls through to the ordinary lanes
+  // below and is answered there — the artifact lane's rule, never silence.
   if (looksLikeSessionRequest(workoutTextInput.value)) {
-    // Carry the athlete's structured constraints (requested first exercise, focus) into the
-    // authoritative pipeline so it can honor them — never a client-built plan.
-    const genConstraints = sessionQuestion.extractGenerationConstraints(workoutTextInput.value);
-    setTimeout(() => { workoutTextInput.value = ''; }, 0);
-    openCoachPickInThread(genConstraints);
-    return;
+    if (typeof window.atlasOpenCoachPick !== 'function') {
+      console.warn('[atlas] Coach pick entry point unavailable; session request answered by the ordinary coach lane.');
+    } else {
+      const genConstraints = sessionQuestion.extractGenerationConstraints(workoutTextInput.value);
+      setTimeout(() => { workoutTextInput.value = ''; }, 0);
+      openCoachPickInThread(genConstraints);
+      return;
+    }
   }
 
   // Composer-first Phase B2: deterministic artifact asks ("show my last
