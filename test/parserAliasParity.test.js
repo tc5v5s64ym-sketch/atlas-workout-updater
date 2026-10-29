@@ -28,6 +28,21 @@ const FROZEN_EXERCISE_ALIASES = [
   ['Bench Press', ['bench press', 'barbell bench', 'flat bench', 'bb bench', 'bench', 'bp']],
   ['Back Squat', ['back squat', 'bb squat', 'squats', 'squat', 'bs']],
   ['Deadlift', ['deadlift', 'dead', 'dl']],
+  // RECONCILED 2026-10-29 (SC9-RAY-01 investigation, issue #1607, option B slice i).
+  // 'Trap Bar Deadlift' was absent from every parser table, so the corpus log
+  // 'trap bar DL 245 5/3 x3' logged as unknown exercise 'Trap Bar Dl'
+  // (needs_catalog_review) standalone, and as plain Deadlift in a multi-exercise
+  // split (only the inner 'dl' alias matched). Added as the catalog's EXISTING
+  // canonical: data/exercise_aliases.v1.json already resolves 'trap bar deadlift',
+  // 'hex bar deadlift', 'trap bar dl', 'tbdl', 'trap bar deadlifts' and
+  // 'hex bar dl' to exercise_id 'trap_bar_deadlift' (catalog name
+  // 'Trap Bar Deadlift'), so the truth audit has a source and no taxonomy forks.
+  // The hyphenated spellings follow this table's own convention of enumerating
+  // both orthographies (cf. 'bent-over row'/'bent over row', 'pull-up'/'pull up')
+  // because normalizeKey preserves hyphens. Bare 'trap bar' is deliberately NOT
+  // aliased: it is the implement, not the lift — the catalog does not list it,
+  // and prose like 'trap bar sits one session from 255' must not start a lift.
+  ['Trap Bar Deadlift', ['trap bar deadlift', 'trap bar deadlifts', 'trap-bar deadlift', 'trap-bar deadlifts', 'hex bar deadlift', 'hex-bar deadlift', 'trap bar dl', 'trap-bar dl', 'hex bar dl', 'hex-bar dl', 'tbdl']],
   ['RDL', ['romanian deadlifts', 'romanian deadlift', 'romanian dls', 'romanian dl', 'rdls', 'rdl']],
   ['Overhead Press', ['overhead press', 'over head press', 'military press', 'standing press', 'strict press', 'overhead', 'ohp']],
   ['Lat Pulldown', ['lat pulldown', 'lat pull down', 'pulldown', 'cable pulldown']],

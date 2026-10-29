@@ -43,8 +43,8 @@ history form):
 ## Sources
 
 **A — Parser (workoutTextParser.js — EXERCISE_ALIASES + CONTEXTUAL_ALIASES)**
-- Canonical count: 28
-- Alias-to-canonical entries: 134
+- Canonical count: 29
+- Alias-to-canonical entries: 140
 
 **B — Data JSON (exercise_catalog.v1.json + exercise_aliases.v1.json)**
 - Canonical count: 346
@@ -551,6 +551,7 @@ history form):
 | Leg Press | A, B, C |
 | Pull-Up | A, B, C |
 | Push-Up | A, B, C |
+| Trap Bar Deadlift | A, B, C |
 
 ### Missing from: **B**
 
@@ -590,7 +591,6 @@ history form):
 | Skull Crusher | B, C |
 | Step-Up | B, C |
 | Sumo Deadlift | B, C |
-| Trap Bar Deadlift | B, C |
 | Tricep Pushdown | B, C |
 | Walking Lunge | B, C |
 
