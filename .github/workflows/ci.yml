@@ -317,7 +317,7 @@ jobs:
               // routes/ is required for the same reason as config/: index.js
               // registers routes/reads, routes/coachOps and routes/sessionPlans --
               // route handlers the gate specs exercise through the real app.
-              if (/^(services|src|api|scripts|config|routes)\//.test(lower)) return true;
+              if (/^(services|src|api|scripts|config|routes|rules)\//.test(lower)) return true;
               if (lower.startsWith('.github/workflows/')) return true;
 
               return false;
