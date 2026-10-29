@@ -303,12 +303,21 @@ jobs:
               if (lower === 'playwright.config.js') return true;
               if (lower === 'package.json' || lower === 'package-lock.json') return true;
               if (lower === 'index.js' || lower === 'server.js' || lower === 'app.js') return true;
+              // sheets.js / middleware.js / response.js are root modules index.js
+              // requires directly -- app code the gate specs exercise through the
+              // real app, covered by no directory rule below.
+              // vite.config.js configures `npm run build` (pretest:e2e), so it
+              // feeds the built client the same way scripts/ does.
+              if (lower === 'sheets.js' || lower === 'middleware.js' || lower === 'response.js' || lower === 'vite.config.js') return true;
               // config/ feeds the gate specs: gate-server.js loads the real app
               // (index.js) which reads config/columns, config/routes, etc. A schema
               // or route-config change must run the E2E that asserts against it.
               // scripts/ stays required: `npm run build` (pretest:e2e) runs
               // scripts/write-build-info.js, so scripts feed the built client too.
-              if (/^(services|src|api|scripts|config)\//.test(lower)) return true;
+              // routes/ is required for the same reason as config/: index.js
+              // registers routes/reads, routes/coachOps and routes/sessionPlans --
+              // route handlers the gate specs exercise through the real app.
+              if (/^(services|src|api|scripts|config|routes)\//.test(lower)) return true;
               if (lower.startsWith('.github/workflows/')) return true;
 
               return false;
