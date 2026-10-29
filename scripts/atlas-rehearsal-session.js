@@ -54,7 +54,7 @@ require('dotenv').config({ path: path.join(REPO_ROOT, '.env') });
 const { SANDBOX_SPREADSHEET_ID_LAST6, isSandboxSpreadsheetId, SANDBOX_SPREADSHEET_ID } = require('../config/sandboxSheet');
 const { pickNetworkPassthrough, assertNoWorkbookId } = require('../tests/e2e/gate/rehearsal-child-env');
 const {
-  REHEARSAL_SESSION, REHEARSAL_DEBUG, PERSONA_RUN, REHEARSAL_STREAK_LENGTH, REQUIRED_BRANCH,
+  REHEARSAL_SESSION, PERSONA_RUN, REHEARSAL_STREAK_LENGTH, REQUIRED_BRANCH,
   mintIdentities, mintPersonaIdentities, resolveRunPurpose, evaluateRehearsalPreflight,
 } = require('../tests/e2e/gate/rehearsal-run-purpose');
 const { fetchOriginRequiredBranch, measureSourceTree } = require('../tests/e2e/gate/rehearsal-source-facts');
