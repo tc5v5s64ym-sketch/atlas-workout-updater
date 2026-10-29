@@ -123,14 +123,17 @@ const registerSessionPlanRoutes = require('./routes/sessionPlans');
 // SESSION_PLAN_SETS_WRITE_ENABLED; the store gates every write internally).
 const { sealCloseout, readLedgerRows } = require('./services/sessionPlanSetsStore');
 const turnCorrelation = require('./services/turnCorrelation');
+const { isShadowEnabled } = require('./services/interactionTraceShadow');
 
 // #1165 — join a completed write back to the coach turn that authorized it.
 //
 // The coach turn ends on a READ-ONLY route, so the write always lands on a separate request;
 // this is the only place the two can meet. Best-effort and strictly observational: it runs
 // after the write and its proof exist, never alters the response, and returns nothing the
-// route depends on. A rejected or absent correlation claim is silent — a write must never
-// fail because its telemetry could not be joined.
+// route depends on. A rejected or absent correlation claim never fails the write — but
+// under the shadow gate it is no longer silent either: the rejection leaves one bounded
+// [turn-write-proof-miss] record naming its reason, so a missing proof is diagnosable
+// instead of indistinguishable from a key mismatch.
 // #1173 item 1 — the binding is ESTABLISHED AT PREVIEW. A dry-run call site passes
 // `isPreview: true` EXPLICITLY (never inferred from a missing write_id — a live route that
 // forgot one would then mint itself a pairing) and gets back a token, handed to the client in
@@ -150,7 +153,32 @@ function recordTurnWriteProof(payload, sessionId, route, proof, opts = {}) {
       // corroboration on the record, never as a gate.
       previewedWriteId: isPreview && correlationPayload ? correlationPayload.write_id : undefined,
     });
-    if (!resolved.ok) return null;
+    if (!resolved.ok) {
+      // The resolver computed WHY this claim failed; discarding that reason here made
+      // every rejection identical silence (run fsb4b-s1-20261029T034938-C93176 emitted
+      // zero proof records and no reason anywhere). Emit one bounded miss record under
+      // the SAME shadow gate as the proof itself, so production posture without the
+      // flag emits nothing new. Closed scalars only: the route this wrapper serves, the
+      // resolver's reason, and whether a claim was carried at all (plus its turn id when
+      // that id is well-formed) — never the pairing token, never payload data.
+      if (isShadowEnabled()) {
+        const claim = correlationPayload && typeof correlationPayload === 'object'
+          ? correlationPayload.correlation
+          : undefined;
+        const claimPresent = claim !== undefined && claim !== null;
+        console.log(`[turn-write-proof-miss] ${JSON.stringify({
+          route: typeof route === 'string' && route.trim() ? String(route).trim() : null,
+          is_preview: isPreview,
+          reason: typeof resolved.reason === 'string' ? resolved.reason : null,
+          claim_present: claimPresent,
+          claim_turn_id: claimPresent && turnCorrelation.isWellFormedTurnId(claim.turn_id)
+            ? String(claim.turn_id).trim()
+            : null,
+          session_id: typeof sessionId === 'string' && sessionId.trim() ? String(sessionId).trim() : null,
+        })}`);
+      }
+      return null;
+    }
     if (isPreview) {
       turnCorrelation.attachPairingToResponse(opts.res, resolved.pairing_token, resolved.turn_id);
     }

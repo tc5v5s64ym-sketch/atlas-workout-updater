@@ -1076,3 +1076,99 @@ test('the real complete-workout dry-run emits a preview proof the artifact accep
   assert.equal(artifact.turns[0].previews.length, 1);
   assert.equal(artifact.turns[0].previews[0].proof_state, 'no_write_confirmed');
 });
+
+// ── [turn-write-proof-miss] — a REJECTED resolution must be observable under the same
+// shadow gate as the proof itself. Run fsb4b-s1-20261029T034938-C93176 emitted ZERO proof
+// records and no reason anywhere, so its trace_write_join failure could not be told apart
+// from a key mismatch: every rejection in the proof path was silent by design, and the
+// resolver's computed reason was discarded at the route wrapper. These tests pin the miss
+// record's shape, its closed field set, and its gate — and that success stays miss-free.
+async function captureEmitted(fn) {
+  const emitted = [];
+  const originalLog = console.log;
+  console.log = (...args) => { emitted.push(args.join(' ')); };
+  try { await fn(); } finally { console.log = originalLog; }
+  return emitted;
+}
+
+function missRecords(emitted) {
+  const marker = '[turn-write-proof-miss]';
+  return emitted
+    .filter((line) => line.includes(marker))
+    .map((line) => JSON.parse(line.slice(line.indexOf(marker) + marker.length).trim()));
+}
+
+function proofEmissions(emitted) {
+  // The trailing space keeps the proof marker distinct from the miss marker.
+  return emitted.filter((line) => line.includes('[turn-write-proof] '));
+}
+
+test('a correlation-less preview emits ONE bounded [turn-write-proof-miss] naming the absent claim', async () => {
+  tc._resetForTesting();
+  const emitted = await captureEmitted(async () => {
+    const { status, body } = await postWrite(dryRunPayload({}));
+    assert.equal(status, 200);
+    assert.equal(body.data.no_write_confirmed, true, 'the write itself is untouched by its telemetry');
+  });
+  const misses = missRecords(emitted);
+  assert.equal(misses.length, 1, 'exactly one miss record for the rejected resolution');
+  const miss = misses[0];
+  assert.deepEqual(
+    Object.keys(miss).sort(),
+    ['claim_present', 'claim_turn_id', 'is_preview', 'reason', 'route', 'session_id'],
+    'the miss record carries exactly its six closed fields — no token, no payload data',
+  );
+  assert.equal(miss.route, '/api/log-workout');
+  assert.equal(miss.is_preview, true);
+  assert.equal(miss.reason, tc.REASONS.ABSENT);
+  assert.equal(miss.claim_present, false);
+  assert.equal(miss.claim_turn_id, null);
+  assert.equal(miss.session_id, SESSION_ID);
+  assert.equal(proofEmissions(emitted).length, 0, 'a rejected resolution emits no proof');
+  assert.equal(tc.recentWriteProofs().length, 0);
+});
+
+test('a rejected claim names itself on the miss record — present, with its turn id, never its token', async () => {
+  tc._resetForTesting(); // nothing issued → the named turn resolves unknown
+  const forgedToken = 'pv_00000000-0000-4000-8000-000000000000';
+  const emitted = await captureEmitted(async () => {
+    const { status } = await postWrite(dryRunPayload({
+      correlation: { turn_id: TURN_ID, pairing_token: forgedToken },
+    }));
+    assert.equal(status, 200);
+  });
+  const misses = missRecords(emitted);
+  assert.equal(misses.length, 1);
+  assert.equal(misses[0].reason, tc.REASONS.UNKNOWN);
+  assert.equal(misses[0].claim_present, true);
+  assert.equal(misses[0].claim_turn_id, TURN_ID);
+  assert.ok(!emitted.join('\n').includes(forgedToken), 'the pairing token must never be emitted');
+});
+
+test('a successful resolution emits its proof and NO miss record', async () => {
+  tc._resetForTesting();
+  tc.issueTurn(TURN_ID, SESSION_ID);
+  const emitted = await captureEmitted(async () => {
+    const { status } = await postWrite(dryRunPayload({ correlation: { turn_id: TURN_ID } }));
+    assert.equal(status, 200);
+  });
+  assert.equal(proofEmissions(emitted).length, 1, 'the proof still emits exactly as before');
+  assert.equal(missRecords(emitted).length, 0, 'success must not leave a miss record');
+});
+
+test('with the shadow gate OFF a rejected resolution emits nothing at all', async () => {
+  tc._resetForTesting();
+  const previous = process.env.ATLAS_INTERACTION_TRACE;
+  delete process.env.ATLAS_INTERACTION_TRACE;
+  try {
+    const emitted = await captureEmitted(async () => {
+      const { status } = await postWrite(dryRunPayload({}));
+      assert.equal(status, 200);
+    });
+    assert.equal(missRecords(emitted).length, 0, 'no miss record while the shadow is off');
+    assert.equal(proofEmissions(emitted).length, 0, 'and no proof either — the miss rides the proof gate');
+  } finally {
+    if (previous === undefined) delete process.env.ATLAS_INTERACTION_TRACE;
+    else process.env.ATLAS_INTERACTION_TRACE = previous;
+  }
+});
