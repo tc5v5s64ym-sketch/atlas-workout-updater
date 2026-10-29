@@ -26,7 +26,7 @@
 // gate harness's session-filtered /durable-rows verifier (which 403s any identity this
 // process did not write).
 
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
@@ -47,6 +47,7 @@ const {
   mintIdentities, evaluateRehearsalPreflight,
 } = require('../tests/e2e/gate/rehearsal-run-purpose');
 const { fetchOriginRequiredBranch, measureSourceTree } = require('../tests/e2e/gate/rehearsal-source-facts');
+const { measureServedBuild, evaluateBuildIdentity } = require('../tests/e2e/gate/rehearsal-build-identity');
 const { readRunStart, classifyIncompleteRun } = require('../tests/e2e/gate/rehearsal-run-start');
 
 function fail(message) {
@@ -182,6 +183,30 @@ const preflight = evaluateRehearsalPreflight({
   },
 });
 if (!preflight.ok) refuse(preflight.refusals);
+
+// ── build the client from the exact verified tree ─────────────────────────────
+// public/ is gitignored Vite output and the gate server requires index.js
+// directly, so the app's build-if-missing guard never runs in a rehearsal — a
+// bundle built from an OLDER commit otherwise serves silently while the server
+// and the tests execute fresh (run fsb4b-s3-20261029T101354-B9957C scored
+// against a client built 2026-10-27). Build HERE — the source is verified,
+// no browser exists yet — and re-verify the stamp the build wrote. A build
+// failure or a wrong stamp is a machinery refusal on the NOT STARTED side of
+// the session-start boundary, never a scored attempt.
+// RENDER_GIT_COMMIT is neutralized for the build child: write-build-info.js
+// prefers it, and a Render-only value ambient in an operator shell would stamp
+// the bundle with a commit this tree never verified. Empty falls back to
+// `git rev-parse HEAD` — the verified source itself.
+console.log('[rehearsal-session] building the client from the verified tree (npm run build)…');
+const build = spawnSync('npm', ['run', 'build'], {
+  cwd: REPO_ROOT, stdio: 'inherit', env: { ...process.env, RENDER_GIT_COMMIT: '' },
+});
+if (build.error || build.status !== 0) {
+  refuse([`the client build failed (${build.error ? build.error.message : `npm run build exited ${build.status}`}) — a rehearsal never runs against an unbuilt or stale client`]);
+}
+const buildIdentity = evaluateBuildIdentity({ buildInfo: measureServedBuild(REPO_ROOT), sourceHeadSha: gitFacts.head });
+if (!buildIdentity.ok) refuse([buildIdentity.reason]);
+console.log(`[rehearsal-session] client   : built from ${buildIdentity.served_commit.slice(0, 12)} — the verified source`);
 
 fs.mkdirSync(ARTIFACT_DIR, { recursive: true });
 

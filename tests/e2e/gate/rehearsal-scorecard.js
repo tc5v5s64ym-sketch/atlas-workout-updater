@@ -1414,16 +1414,29 @@ const CONDITIONS = Object.freeze([
       return pass('the workbook id was assigned from config/sandboxSheet.js, never inherited');
     },
   },
-  // (6) real browser and built client.
+  // (6) real browser and built client — the shell the browser ran must be the
+  // build OF THE EXACT VERIFIED SOURCE (condition 1), not merely A build: a
+  // bundle built from an older commit serves stale client code under a fresh
+  // source's name while the server executes fresh (run
+  // fsb4b-s3-20261029T101354-B9957C, whose served bundle predated four merged
+  // client fixes). Both sides of the comparison are recorded and named.
   {
     id: 'real_browser_built_client',
-    title: 'a real browser drove the BUILT client shell',
+    title: 'a real browser drove the BUILT client shell, built from the exact verified source commit',
     evaluate(obs) {
       const ui = obs && obs.ui;
       if (!ui) return missing('the browser evidence');
       if (ui.real_browser !== true) return err('the run did not record a real browser');
       if (!str(ui.shell_build)) return err('the built shell recorded no build identity');
-      return pass(`built shell ${ui.shell_build} in a real browser`);
+      const served = str(ui.build_commit);
+      if (!served) return err('the run recorded no served build commit — the built client cannot be tied to the verified source');
+      if (!SHA_RE.test(served)) return err(`the recorded served build commit "${served}" is not a full commit sha`);
+      const s = obs && obs.source;
+      if (!s) return missing('the source tree');
+      const head = str(s.head_sha);
+      if (!SHA_RE.test(head)) return err('the verified source sha was not recorded as a full commit sha');
+      if (served !== head) return fail(`the served client was built from commit ${served} but the verified source is ${head} — the run measured a stale client build, not the source it claims`);
+      return pass(`built shell ${ui.shell_build} in a real browser; served build commit ${served} == verified source ${head}`);
     },
   },
   // (7) full production path — the gate server IS index.js; provenance marks synthetic.
