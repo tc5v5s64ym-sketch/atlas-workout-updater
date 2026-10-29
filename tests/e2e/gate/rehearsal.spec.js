@@ -747,6 +747,21 @@ async function proveTeardownAndNoInheritance(page, h, { base }) {
   await page.goto(`${base}/app/`);
   await page.waitForLoadState('networkidle');
 
+  // Readiness parity with first load, for the SECOND script graph. First load
+  // waits for window.atlasAcceptPlan (first graph) because networkidle proves
+  // only network quiet, not that the module graph executed. The opener turn in
+  // step 4 is served by the Coach's Pick lane, whose entry
+  // window.atlasOpenCoachPick is assigned by coach-conversation.js — the last
+  // module of the second graph. Run fsb4b-s2-20261029T013544-B83515 submitted
+  // the opener while that global was not yet a function and the lane silently
+  // dropped it, scoring a machinery gap as a conversation failure. Wait for
+  // the pick global itself, on the same budget as first load. A timeout is
+  // recorded below and thrown as machinery evidence — never a scored opener.
+  let pickGlobalReady = true;
+  try {
+    await page.waitForFunction(() => typeof window.atlasOpenCoachPick === 'function', null, { timeout: APP_READINESS_TIMEOUT_MS });
+  } catch { pickGlobalReady = false; }
+
   const inherited = await page.evaluate((key) => {
     let snap = null;
     try { const raw = localStorage.getItem(key); snap = raw ? JSON.parse(raw) : null; } catch { snap = 'unreadable'; }
@@ -763,6 +778,10 @@ async function proveTeardownAndNoInheritance(page, h, { base }) {
       closeoutCards: document.querySelectorAll('.closeout-confirm').length,
       snapshotPendingReplacement: Boolean(snap && snap !== 'unreadable' && snap.pendingReplacement),
       snapshotPendingSetRevision: Boolean(snap && snap !== 'unreadable' && snap.pendingSetRevision),
+      // The second graph's readiness, recorded EITHER WAY — whether the wait
+      // above succeeded or timed out, the artifact states the pick global's
+      // status at the moment the opener would have been submitted.
+      coachPickGlobal: typeof window.atlasOpenCoachPick,
     };
   }, SNAPSHOT_KEY);
 
@@ -783,6 +802,16 @@ async function proveTeardownAndNoInheritance(page, h, { base }) {
   ];
   for (const [id, ok, detail] of checks) h.stateCheck(id, ok, detail);
 
+  // The readiness verdict is recorded as evidence either way, and a failed wait
+  // stops the proof HERE: the opener is not submitted, so a second graph that
+  // never arrived fails the run as machinery evidence — NOT_STARTED-style —
+  // instead of surfacing later as a scored-looking conversation failure.
+  h.stateCheck('teardown-second-graph-ready', pickGlobalReady && inherited.coachPickGlobal === 'function',
+    `typeof window.atlasOpenCoachPick at teardown submit: ${inherited.coachPickGlobal}`);
+  if (!pickGlobalReady) {
+    throw new Error(`rehearsal: teardown second-graph readiness failed — window.atlasOpenCoachPick is ${inherited.coachPickGlobal} after ${APP_READINESS_TIMEOUT_MS / 1000}s; the opener was NOT submitted (machinery evidence, not a scored conversation failure)`);
+  }
+
   // 4. A single non-writing conversational turn, to prove the fresh session's own
   //    coaching path does not resurrect the finished session's work. It never saves.
   const opener = await settleReply(page, 'what should I train today?');
@@ -798,6 +827,12 @@ let artDir = null;
 let serverStdout = '';
 const timeline = [];
 const note = (step, detail) => timeline.push({ at: new Date().toISOString(), step, detail });
+// Client-side failures collected by the session test's pageerror/console handlers.
+// Module scope so afterAll can persist them for EVERY run: a run that did not fail
+// at closeout previously discarded them entirely, and the Session 2 teardown
+// failure (run fsb4b-s2-20261029T013544-B83515) was undiagnosable for exactly
+// that reason — its page errors existed nowhere in its artifacts.
+const pageErrors = [];
 
 async function readJson(url, what) {
   let lastError = null;
@@ -1215,12 +1250,23 @@ test.beforeAll(async () => {
   note('boot', `combined rehearsal posture up; workbook last6 ${SANDBOX_SPREADSHEET_ID_LAST6}`);
 });
 
+// ONE writer for the collected page errors, two triggers: the closeout-failure
+// catch (immediate, under its failure name) and afterAll (every run). The content
+// format is the closeout path's original one — entries joined by a blank line,
+// with the explicit empty marker when nothing was captured.
+function persistPageErrors(fileName) {
+  if (artDir) fs.writeFileSync(path.join(artDir, fileName), pageErrors.join('\n\n') || '(no page errors captured)');
+}
+
 test.afterAll(async () => {
   // Always persist the server's own output — an aborted run's evidence matters MOST.
   try {
     if (artDir) {
       const redacted = serverStdout.split(SANDBOX_SPREADSHEET_ID).join(`…${SANDBOX_SPREADSHEET_ID_LAST6}`);
       fs.writeFileSync(path.join(artDir, 'server-log.txt'), redacted);
+      // The page errors ride along for EVERY run, not only a closeout failure:
+      // a teardown or conversation failure discards them otherwise.
+      persistPageErrors('pageerrors.txt');
     }
   } catch { /* best-effort */ }
   if (child) child.kill('SIGTERM');
@@ -1239,8 +1285,8 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
   let currentPhase = 'setup';
   currentPhaseRef.value = 'setup';
   // Client-side failures are EVIDENCE: a swallowed render exception can silently
-  // eat a closeout preview. Captured to the artifact dir, never inferred.
-  const pageErrors = [];
+  // eat a closeout preview. Collected into the module-scope pageErrors (persisted
+  // to the artifact dir for every run by afterAll), never inferred.
   page.on('pageerror', (err) => { pageErrors.push(`[pageerror] ${err && err.message}\n${(err && err.stack || '').split('\n').slice(0, 6).join('\n')}`); });
   page.on('console', (msg) => { if (msg.type() === 'error') pageErrors.push(`[console.error] ${msg.text().slice(0, 500)}`); });
   const coachResponses = [];
@@ -1433,7 +1479,7 @@ test('F-SB4B rehearsal session: one owner-pattern workout through the real brows
     // Failure evidence: the exact rendered thread tail, preserved before rethrow.
     const tail = await page.locator('#thread-messages').innerText().catch(() => '(unreadable)');
     fs.writeFileSync(path.join(artDir, 'closeout-failure-thread.txt'), tail.slice(-4000));
-    fs.writeFileSync(path.join(artDir, 'closeout-failure-pageerrors.txt'), pageErrors.join('\n\n') || '(no page errors captured)');
+    persistPageErrors('closeout-failure-pageerrors.txt');
     const clientState = await page.evaluate(() => ({
       plan: (() => { const pl = window.getActivePlannedSession(); return pl ? { index: pl.index, accepted: pl.accepted, plan_version: pl.plan_version, session_id: pl.session_id, exercises: pl.exercises.map(e => ({ name: e.canonicalName || e.name, sets: e.sets, accepted_set_count: e.accepted_set_count })) } : null; })(),
       log: window.getSessionLog ? window.getSessionLog().map(x => ({ ex: x.exercise || x.name, w: x.weight, r: x.reps })) : null,

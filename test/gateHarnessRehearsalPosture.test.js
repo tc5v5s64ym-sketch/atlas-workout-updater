@@ -304,6 +304,63 @@ test('the write boundary is sampled in-page at the response instant, harvested b
     'the persisted mutation boundary must carry its sequence');
 });
 
+test('the teardown waits for the second-graph pick global before its opener turn (teardown readiness)', () => {
+  const spec = fs.readFileSync(path.join(__dirname, '..', 'tests', 'e2e', 'gate', 'rehearsal.spec.js'), 'utf8');
+  const teardown = spec.slice(spec.indexOf('async function proveTeardownAndNoInheritance'),
+    spec.indexOf('let child = null;'));
+  assert.ok(teardown.length > 0, 'the pinned teardown landmark is present');
+  // networkidle after the teardown reload proves only network quiet — the same
+  // gap first load closed for the first graph. Run
+  // fsb4b-s2-20261029T013544-B83515 submitted its opener while
+  // window.atlasOpenCoachPick (assigned by coach-conversation.js, the second
+  // graph's last module) was not yet a function, and the Coach's Pick lane
+  // silently dropped it. The wait is on the SAME budget as first load.
+  assert.match(teardown, /page\.waitForFunction\(\(\) => typeof window\.atlasOpenCoachPick === 'function', null, \{ timeout: APP_READINESS_TIMEOUT_MS \}\)/,
+    'the teardown must wait for window.atlasOpenCoachPick itself before the opener turn');
+  // The global's status is recorded in the inheritance probe EITHER WAY, so the
+  // artifact states it at submit time even when the wait succeeds.
+  assert.match(teardown, /coachPickGlobal: typeof window\.atlasOpenCoachPick/,
+    'the inheritance probe must record typeof window.atlasOpenCoachPick');
+  assert.match(teardown, /'teardown-second-graph-ready'/,
+    'the readiness verdict must be recorded as a state check');
+  // A timed-out wait throws as machinery evidence BEFORE the opener: the opener
+  // is never submitted against a second graph that never arrived.
+  const throwIdx = teardown.indexOf('teardown second-graph readiness failed');
+  const openerIdx = teardown.indexOf("settleReply(page, 'what should I train today?')");
+  assert.ok(throwIdx > -1, 'the readiness timeout must throw as machinery evidence');
+  assert.ok(openerIdx > throwIdx,
+    'the readiness throw must precede the opener turn — the opener is not submitted on a failed wait');
+});
+
+test('the collected page errors are persisted for every run, not only on closeout failure (pageerror persistence)', () => {
+  const spec = fs.readFileSync(path.join(__dirname, '..', 'tests', 'e2e', 'gate', 'rehearsal.spec.js'), 'utf8');
+  // ONE writer, two triggers. Run fsb4b-s2-20261029T013544-B83515's page errors
+  // were collected and then discarded because the run did not fail at closeout.
+  assert.match(spec, /function persistPageErrors\(fileName\) \{/,
+    'the spec must define one pageerror writer');
+  assert.match(spec, /pageErrors\.join\('\\n\\n'\) \|\| '\(no page errors captured\)'/,
+    'the writer must keep the closeout path\'s original content format');
+  const writerCount = spec.split('fs.writeFileSync(path.join(artDir, fileName)').length - 1;
+  assert.equal(writerCount, 1, 'the pageerror write must exist in exactly one place — the shared writer');
+  // Trigger one: the closeout-failure catch, under its failure name.
+  assert.match(spec, /persistPageErrors\('closeout-failure-pageerrors\.txt'\)/,
+    'the closeout-failure path must persist through the shared writer');
+  // Trigger two: afterAll, beside server-log.txt, so EVERY run leaves the file.
+  const afterAll = spec.slice(spec.indexOf('test.afterAll(async () => {'),
+    spec.indexOf("test('F-SB4B rehearsal session"));
+  assert.ok(afterAll.length > 0, 'the pinned afterAll landmark is present');
+  assert.match(afterAll, /persistPageErrors\('pageerrors\.txt'\)/,
+    'afterAll must persist the page errors for every run');
+  const serverLogIdx = afterAll.indexOf("'server-log.txt'");
+  assert.ok(serverLogIdx > -1 && afterAll.indexOf("persistPageErrors('pageerrors.txt')") > serverLogIdx,
+    'the every-run pageerror write must sit beside the server-log write in afterAll');
+  // The collection is module-scope, or afterAll could never see it.
+  assert.match(spec, /const pageErrors = \[\];/,
+    'the pageerror collection must be declared once, at module scope');
+  assert.equal(spec.split('const pageErrors = [];').length - 1, 1,
+    'the pageerror collection must be declared exactly once');
+});
+
 test('the collector counts class-only reveals, scoped to class changes that change visible text (attribute observer)', () => {
   const observer = fs.readFileSync(path.join(__dirname, '..', 'tests', 'e2e', 'gate', 'rehearsal-bubble-observer.js'), 'utf8');
   // The Saved reveal is a CLASS-ONLY mutation: markReviewSaved adds 'done' to
