@@ -387,3 +387,79 @@ test('the collector counts class-only reveals, scoped to class changes that chan
   assert.match(observer, /r\.type !== 'attributes'/,
     'the dispatcher must keep non-attribute records on the markAll path');
 });
+
+test('the save-response capture records the correlation headers with token discipline (join diagnostics)', () => {
+  const spec = fs.readFileSync(path.join(__dirname, '..', 'tests', 'e2e', 'gate', 'rehearsal.spec.js'), 'utf8');
+  const listenerStart = spec.indexOf("page.on('response'");
+  const listenerEnd = spec.indexOf('// ── 1. Open the real built client');
+  assert.ok(listenerStart > -1 && listenerEnd > listenerStart, 'the pinned listener landmarks are present');
+  const listener = spec.slice(listenerStart, listenerEnd);
+  // Run fsb4b-s1-20261029T034938-C93176 failed trace_write_join with 2 traces /
+  // 0 proofs and no [turn-write-proof] record was ever emitted; its artifacts
+  // could not show whether the server echoed a pairing on the save responses
+  // at all. The turn id is an id — recorded verbatim. The pairing header
+  // carries a TOKEN: only its presence is ever recorded.
+  assert.match(listener, /turn_id_header: turnIdHeader/,
+    'the save-response record must carry the response turn id');
+  assert.match(listener, /const turnIdHeader = typeof responseHeaders\['x-atlas-turn-id'\] === 'string'/,
+    'the turn id must be read from the response headers');
+  assert.match(listener, /const pairingHeaderPresent = typeof responseHeaders\['x-atlas-turn-pairing'\] === 'string'/,
+    'the pairing header must be reduced to a presence boolean at the read site');
+  assert.match(listener, /pairing_header_present: pairingHeaderPresent/,
+    'the save-response record must carry the pairing presence boolean');
+  // TOKEN DISCIPLINE, pinned negatively: the pairing header is read in exactly
+  // one place in the whole spec — the presence expression above. Its value is
+  // never assigned, interpolated, or logged anywhere.
+  assert.equal(spec.split("'x-atlas-turn-pairing'").length - 1, 1,
+    'the pairing header may be read only once — the presence check; its value must never be captured');
+  assert.ok(!/pairing_header:/.test(spec),
+    'no record field may carry the pairing header value');
+  // The headers are read BEFORE the body parse, so the capture_failed fallback
+  // record carries them too — an unparseable body must not erase the wire half
+  // of the join evidence.
+  const headersIdx = listener.indexOf('const responseHeaders = res.headers();');
+  const parseIdx = listener.indexOf('await res.json()');
+  assert.ok(headersIdx > -1 && parseIdx > headersIdx,
+    'the correlation headers must be read before the body parse');
+  assert.match(listener, /capture_failed: true,\s*\n?\s*turn_id_header: turnIdHeader, pairing_header_present: pairingHeaderPresent/,
+    'the capture_failed fallback record must carry both correlation header fields');
+});
+
+test('the correlation diagnostics snapshot is harvested at the save beat and in 13a, and persisted (join diagnostics)', () => {
+  const spec = fs.readFileSync(path.join(__dirname, '..', 'tests', 'e2e', 'gate', 'rehearsal.spec.js'), 'utf8');
+  // The reader reaches the client's diagnosticSnapshot() through the module
+  // namespace — the built client is native ES modules and the function hangs
+  // off no window global. A dynamic import of the exact module URL the app's
+  // graph loaded returns the app's singleton from the realm's module map.
+  assert.match(spec, /async function readCorrelationDiagnostics\(page\) \{/,
+    'the spec must define the correlation diagnostics reader');
+  assert.match(spec, /await import\('\/app\/turnCorrelation\.js'\)/,
+    'the reader must reach the module through its own URL');
+  assert.match(spec, /ns\.turnCorrelation\.diagnosticSnapshot\(\)/,
+    'the reader must call the singleton\'s diagnosticSnapshot');
+  // Fail-soft by construction: the read is wrapped so any failure yields null,
+  // and the detail formatter has an explicit recorded-null branch — missing
+  // diagnostics never fail a run whose scored evidence is complete.
+  assert.match(spec, /function correlationSnapshotDetail\(snapshot\) \{/,
+    'the spec must define the snapshot detail formatter');
+  assert.match(spec, /if \(snapshot === null\) return 'unavailable \(recorded null\)'/,
+    'an unavailable snapshot must be recorded as an explicit null, never silently absent');
+  // Beat one: at the save, after the click that drives the write.
+  const clickIdx = spec.indexOf('await saveControl.click();');
+  const saveHarvestIdx = spec.indexOf('correlationDiagnostics.save = await readCorrelationDiagnostics(page);');
+  assert.ok(clickIdx > -1 && saveHarvestIdx > clickIdx,
+    'the save-beat snapshot must be harvested after the save click');
+  assert.match(spec, /note\('correlation-diagnostics-save', correlationSnapshotDetail\(correlationDiagnostics\.save\)\)/,
+    'the save-beat harvest must be noted on the timeline');
+  // Beat two: in 13a, with the pre-teardown evidence — before the reload that
+  // replaces the document holding the module state.
+  const harvest13aIdx = spec.indexOf("correlationDiagnostics['13a'] = await readCorrelationDiagnostics(page);");
+  const teardownIdx = spec.indexOf('await proveTeardownAndNoInheritance(page, h, { base });');
+  assert.ok(harvest13aIdx > -1 && teardownIdx > harvest13aIdx,
+    'the 13a snapshot must be harvested before the teardown reload');
+  assert.match(spec, /note\('correlation-diagnostics-13a', correlationSnapshotDetail\(correlationDiagnostics\['13a'\]\)\)/,
+    'the 13a harvest must be noted on the timeline');
+  // Persisted into evidence.json verbatim, judged by no condition.
+  assert.match(spec, /correlation_diagnostics: correlationDiagnostics,/,
+    'the harvested snapshots must be persisted into the run evidence');
+});
