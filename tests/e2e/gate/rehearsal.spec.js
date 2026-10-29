@@ -38,6 +38,7 @@ const {
 const { REHEARSAL_SESSION } = require('./rehearsal-run-purpose');
 const { measureSourceTree, REPO_ROOT } = require('./rehearsal-source-facts');
 const { checkServedBuildIdentity } = require('./rehearsal-build-identity');
+const { refuseRetriedAttempt } = require('./rehearsal-attempt-guard');
 const { markRunStarted, verifyRunStartMarker } = require('./rehearsal-run-start');
 const { pickNetworkPassthrough, assertNoWorkbookId, GATE_STARTUP_TIMEOUT_MS } = require('./rehearsal-child-env');
 const {
@@ -1248,6 +1249,21 @@ function eveningInstant(tz, hour, minute) {
 }
 
 test.beforeAll(async () => {
+  // ── a retried attempt is never scored ──────────────────────────────────────
+  // playwright.config.js grants CI runs one retry, and this spec writes its
+  // scorecard BEFORE asserting the run passed — a retry would re-run the whole
+  // session and overwrite the first attempt's recorded scorecard, converting
+  // a scored FAIL into a reported PASS with the FAIL evidence destroyed. The
+  // operator command passes --retries=0, but the spec refuses on its own too:
+  // consult the guard FIRST — before artDir is assigned (so afterAll cannot
+  // truncate the first attempt's server log or page errors from this worker),
+  // before the gate server spawns, and before any athlete turn can exist. A
+  // refusal records RETRY_REFUSED.json and throws: this attempt submits no
+  // turn, writes no scorecard, and the first attempt's evidence stands.
+  const attempt = refuseRetriedAttempt({ artifactDir: ARTIFACT_DIR, runId: RUN_ID, retry: test.info().retry });
+  if (!attempt.ok) {
+    throw new Error(`rehearsal retry refused (NOT SCORED): ${attempt.reason}`);
+  }
   if (!RUN_ID || !ATHLETE_ID || !ARTIFACT_DIR) {
     throw new Error('rehearsal: run it through `npm run atlas:rehearsal-session` — the run/athlete ids and artifact dir are minted there, never here.');
   }
