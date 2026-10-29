@@ -129,6 +129,18 @@ test('excluded list is present with a reason per entry and never overlaps the go
   }
 });
 
+test('counts are pinned: 35 goldens (33 log + 2 correction-end-state) and 10 excluded', () => {
+  // Pinned from the PR #1613 review (Slice 1a): without an exact count, a
+  // golden could be silently deleted and every other assertion in this file
+  // would still pass. An intentional extraction change must update this pin
+  // in the same PR that changes the fixture — that is what makes the change
+  // deliberate and reviewable.
+  assert.equal(GOLDENS.length, 35, 'golden count is pinned at 35');
+  assert.equal(GOLDENS.filter((g) => g.kind === 'log').length, 33, 'log goldens pinned at 33');
+  assert.equal(GOLDENS.filter((g) => g.kind === 'correction-end-state').length, 2, 'correction-end-state goldens pinned at 2');
+  assert.equal(EXCLUDED.length, 10, 'excluded count is pinned at 10');
+});
+
 test('all fifteen corpus sessions are accounted for across the two lists', () => {
   const covered = new Set();
   for (const g of GOLDENS) covered.add(g.session);
