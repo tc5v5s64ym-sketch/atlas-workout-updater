@@ -454,3 +454,80 @@ test('B4. the mutation backstop still runs — this PR adds a lane, it does not 
   assert.doesNotMatch(String(data.message || ''), /was updated/i);
   assert.equal(writeAttempts.length, 0);
 });
+
+// ── Part D — the remaining-work lane (F-SB4 Session 3) ─────────────────────
+//
+// Run fsb4b-s3-20261029T055908-69D1E9 failed condition 8: the athlete asked
+// "What do I have left?" and NO deterministic lane claimed the phrasing, so the
+// model answered from the tally with a bare set-fact enumeration naming NONE of
+// the remaining lifts — while the correct plan_state.remaining (Incline DB
+// Press, Seated Row, Bicep Curl) sat in its own snapshot unused. The judge's
+// expectation was verified correct three ways. These tests rebuild that exact
+// state: Incline DB Press is the substituted slot (3 prescribed sets, 2 logged),
+// Seated Row is partial (1 of 2), Bicep Curl untouched (0 of 2).
+
+const S3_PLAN = [
+  { name: 'Back Squat', sets: 2, reps: 5, rir: 2 },
+  { name: 'Overhead Press', sets: 2, reps: 6, rir: 2 },
+  { name: 'Romanian Deadlift', sets: 2, reps: 5, rir: 2 },
+  { name: 'Incline DB Press', sets: 3, reps: 8, rir: 2 },
+  { name: 'Seated Row', sets: 2, reps: 8, rir: 2 },
+  { name: 'Bicep Curl', sets: 2, reps: 10, rir: 2 },
+];
+const S3_CONTEXT = {
+  current_plan: S3_PLAN,
+  plan_completed: ['Back Squat', 'Overhead Press', 'Romanian Deadlift'],
+  plan_state: {
+    planned: S3_PLAN.map((e) => e.name),
+    completed: ['Back Squat', 'Overhead Press', 'Romanian Deadlift'],
+    remaining: ['Incline DB Press', 'Seated Row', 'Bicep Curl'],
+    isComplete: false,
+  },
+  session_tally: {
+    exercises: [
+      { exercise: 'Back Squat', sets: 2, per_set: [{ weight: 225, reps: 5, rir: 2 }], planned: true },
+      { exercise: 'Overhead Press', sets: 2, per_set: [{ weight: 110, reps: 6, rir: 2 }], planned: true },
+      { exercise: 'Romanian Deadlift', sets: 2, per_set: [{ weight: 235, reps: 5, rir: 2 }], planned: true },
+      { exercise: 'Incline DB Press', sets: 2, per_set: [{ weight: 60, reps: 8, rir: 2 }], planned: true },
+      { exercise: 'Seated Row', sets: 1, per_set: [{ weight: 160, reps: 8, rir: 2 }], planned: true },
+    ],
+    total_working_sets: 9,
+  },
+};
+// The failed run's exact model reply: a recap of logged sets naming no remaining lift.
+const S3_ENUMERATION = 'Back Squat 225 x 5 @ RIR 2, Overhead Press 110 x 6 @ RIR 2, Overhead Press 110 x 6 @ RIR 2, Romanian Deadlift 235 x 5 @ RIR 2, Romanian Deadlift 235 x 5 @ RIR 2';
+
+async function chatS3(message, reply) {
+  coachState.reply = reply;
+  writeAttempts.length = 0;
+  const res = await fetch(`${baseUrl}/api/coach/chat`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-atlas-api-key': 'test-api-key', 'x-atlas-request-origin': 'probe' },
+    body: JSON.stringify({ message, context: S3_CONTEXT }),
+  });
+  const body = await res.json().catch(() => ({}));
+  return { status: res.status, data: body && body.data ? body.data : {} };
+}
+
+test('D1. the Session 3 turn: "What do I have left?" is answered deterministically, naming exactly the remaining lifts', async () => {
+  const { status, data } = await chatS3('What do I have left?', S3_ENUMERATION);
+  assert.equal(status, 200);
+  // The engine, not the model, owns the answer — the enumeration never lands.
+  assert.equal(data.source, 'engine');
+  assert.doesNotMatch(String(data.message || ''), /225 x 5/);
+  // Exactly the three remaining lifts are named as remaining — the partially
+  // logged Incline DB Press (2 of 3) and Seated Row (1 of 2) included, per the
+  // prescription-aware remaining rule.
+  assert.match(String(data.message || ''), /Still remaining: Incline DB Press, Seated Row, Bicep Curl\./);
+  assert.equal(data.propose_edit, null);
+  assert.equal(data.propose_plan_edit, null);
+  assert.equal(writeAttempts.length, 0);
+});
+
+test('D2. parity: the model-empty path answers the same phrasing with the same grounded statement', async () => {
+  const { status, data } = await chatS3('What do I have left?', null);
+  assert.equal(status, 200);
+  assert.equal(data.source, 'engine');
+  assert.match(String(data.message || ''), /Still remaining: Incline DB Press, Seated Row, Bicep Curl\./);
+  assert.equal(writeAttempts.length, 0);
+});

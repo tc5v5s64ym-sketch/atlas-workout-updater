@@ -2199,13 +2199,17 @@ test('step-375: empty plan_completed ([]) still yields plan_state with ALL exerc
   // set logged yet). The server must compute an authoritative plan_state so the
   // coach can answer "what's left?" early in a session instead of falling back
   // to current_plan. An empty array must NOT be treated like an absent field.
+  // NOTE (remaining-work lane): the "what's left?" phrasing itself is now claimed
+  // deterministically before the model runs, so these three gate tests drive the
+  // route with a model-reaching message — what they pin is the plan_state the
+  // server computes into the context, which is unchanged.
   fakeCoachState.configured = true;
   fakeCoachState.lastChatContext = null;
   try {
     const { response } = await requestJson('/api/coach/chat', {
       method: 'POST',
       body: JSON.stringify({
-        message: "what's left?",
+        message: 'Where am I at?',
         context: {
           current_plan: [
             { name: 'Deadlift',     weight: 315, reps: 5,  sets: 3, rir: 2 },
@@ -2237,7 +2241,7 @@ test('step-375: partial plan_completed drives remaining — completed lift drops
     const { response } = await requestJson('/api/coach/chat', {
       method: 'POST',
       body: JSON.stringify({
-        message: "what's left?",
+        message: 'Where am I at?',
         context: {
           current_plan: [
             { name: 'Deadlift',     weight: 315, reps: 5,  sets: 3, rir: 2 },
@@ -2270,7 +2274,7 @@ test('step-375: current_plan WITHOUT plan_completed leaves plan_state null (gate
     const { response } = await requestJson('/api/coach/chat', {
       method: 'POST',
       body: JSON.stringify({
-        message: "what's left?",
+        message: 'Where am I at?',
         context: {
           current_plan: [
             { name: 'Deadlift',     weight: 315, reps: 5, sets: 3, rir: 2 },

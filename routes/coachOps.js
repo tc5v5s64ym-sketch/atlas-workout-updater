@@ -1471,6 +1471,20 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       const close = (canonicalSession && buildSessionCloseAnswerFromSession(message, canonicalSession))
         || buildSessionCloseAnswer(message, planStateFromContext(clientCtx));
       if (close) return close;
+      // "What do I have left?" — the SAME deterministic claim the configured path makes
+      // (see the remaining-work lane below): the grounded logged-vs-remaining statement
+      // over the client-forwarded state, so the model-down path answers this phrasing
+      // identically instead of dead-ending or improvising. Gated on an active session
+      // exactly like the configured lane; the statement itself owns the honest wording
+      // when the state is thin (no plan_state → tally line or the no-record line).
+      if (coachResponseGrounding.isRemainingWorkQuestion(message) && coachResponseGrounding.hasActiveSession(clientCtx)) {
+        return coachResponseGrounding.buildGroundedSessionStateStatement({
+          plan_state: planStateFromContext(clientCtx),
+          current_plan: Array.isArray(clientCtx && clientCtx.current_plan) ? clientCtx.current_plan : [],
+          current_preview: Array.isArray(clientCtx && clientCtx.current_preview) ? clientCtx.current_preview : [],
+          session_tally: clientCtx && typeof clientCtx.session_tally === 'object' && !Array.isArray(clientCtx.session_tally) ? clientCtx.session_tally : null,
+        });
+      }
       // Phase 4 (chat/SME lane — divergence D2/D9, packet/session consumption), flag-gated
       // ATLAS_TURN_PRECEDENCE (default inert). A "what's next?" question is STATE-ANSWERABLE from
       // session truth, but today it dead-ends to "coach unavailable" on the model-down path —
@@ -1697,6 +1711,23 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
         const substitutionAnswer = coachResponseGrounding.buildSubstitutionAnswer(message, context);
         return standardSuccess(req, res, 'Coach chat — grounded substitution turn (deterministic)', {
           message: substitutionAnswer, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
+          configured: true, model: coach.coachModel(), source: 'engine'
+        });
+      }
+      // FAIL-CLOSED REMAINING-WORK QUESTION (F-SB4 Session 3). "What do I have left?"
+      // is a state question the engine already answers — buildGroundedSessionStateStatement
+      // renders logged-vs-remaining from the server-recomputed plan_state + tally — but no
+      // lane claimed the phrasing, so the model answered from the tally alone with a bare
+      // set-fact recap naming none of the remaining lifts, prose the completion backstop
+      // cannot catch (no completion verb). Claim the phrasing deterministically, in the
+      // dispute/substitution shape. The claim gate is the neighbours' hasActiveSession:
+      // with an authoritative plan_state the statement names the remaining lifts; with a
+      // thinner state it degrades to the statement's own honest lines (tally-only, or the
+      // no-record line) — once claimed, this phrasing never falls through to the model.
+      if (coachResponseGrounding.isRemainingWorkQuestion(message) && coachResponseGrounding.hasActiveSession(context)) {
+        const remainingAnswer = coachResponseGrounding.buildGroundedSessionStateStatement(context);
+        return standardSuccess(req, res, 'Coach chat — grounded remaining work (deterministic)', {
+          message: remainingAnswer, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
           configured: true, model: coach.coachModel(), source: 'engine'
         });
       }

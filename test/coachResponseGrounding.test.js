@@ -492,3 +492,68 @@ test('F-SB3 buildSubstitutionAnswer: grounded in the plan, never a completed-mut
   assert.match(noPlan, /don't have your current plan in view/i);
   assert.equal(g.detectUnsupportedMutationClaim(noPlan).length, 0);
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FAIL-CLOSED remaining-work question (F-SB4 Session 3) — the "what do I have
+// left?" phrasing gets a deterministic lane, so the model never improvises the
+// remaining list from the tally alone.
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('isRemainingWorkQuestion: the what\'s-left family is claimed', () => {
+  for (const m of [
+    'What do I have left?',                    // the failed run's exact message
+    "What's left?",
+    'what is remaining',
+    'What else is left?',
+    "What's still left?",
+    'What remains?',
+    'What do I have left to do?',
+    'What have I got left?',
+    'Which exercises are left?',
+    'Which lifts do I have left?',
+    'Anything else left?',
+    'Is there anything left?',
+    'How many exercises do I have left?',
+    'How many lifts are still left?',
+    'What do I have left today?',
+    "What's left in today's session?",
+    "What's left on the plan?",
+    'So, what do I have left?',
+    'What do I still have left?',
+  ]) assert.equal(g.isRemainingWorkQuestion(m), true, `remaining-work: ${JSON.stringify(m)}`);
+});
+
+test('isRemainingWorkQuestion: shapes other lanes own are NOT claimed', () => {
+  // Attribute asks belong to services/sessionQuestionAnswer.js.
+  assert.equal(g.isRemainingWorkQuestion('How much weight is left on the bar?'), false, 'attribute: how much + weight');
+  assert.equal(g.isRemainingWorkQuestion('How many sets do I have left for bench?'), false, 'attribute: how many + sets');
+  assert.equal(g.isRemainingWorkQuestion('How many reps are remaining on this set?'), false, 'attribute: how many + reps');
+  assert.equal(g.isRemainingWorkQuestion('What weight should I use for the remaining sets?'), false, 'attribute: what weight');
+  // Next-up questions belong to the next-up lane.
+  assert.equal(g.isRemainingWorkQuestion("What's next?"), false, 'next-up');
+  assert.equal(g.isRemainingWorkQuestion('What am I doing next?'), false, 'next-up');
+  // Session-close questions belong to the session-close lane.
+  assert.equal(g.isRemainingWorkQuestion('Are we done?'), false, 'session-close');
+  assert.equal(g.isRemainingWorkQuestion('Is that everything?'), false, 'session-close');
+  assert.equal(g.isRemainingWorkQuestion("That's it, right?"), false, 'session-close');
+});
+
+test('isRemainingWorkQuestion: "left"/"remaining" in non-remaining senses is NOT claimed', () => {
+  // DEFENDED DECLINE: "left in the tank" is an energy idiom, not plan state. The
+  // session-scope tail whitelist is what declines it — after "anything left" only
+  // a session/workout/plan scope (or to-do/for-me/today) may follow, and "in the
+  // tank for a finisher" is none of those. Answering it with the remaining-lift
+  // list would be a wrong, confident answer; the model keeps the turn.
+  assert.equal(g.isRemainingWorkQuestion('Is there anything left in the tank for a finisher?'), false, 'energy idiom, not plan remaining');
+  // A possession question, not session state: the "of …" tail must name the
+  // session/workout/plan, and "my protein shake" does not.
+  assert.equal(g.isRemainingWorkQuestion("What's left of my protein shake?"), false, 'possession, not plan remaining');
+  // "left" as a past-tense verb / a time budget with a planning ask attached —
+  // neither is the anchored whole-message question.
+  assert.equal(g.isRemainingWorkQuestion('Left my shoes at the gym'), false, 'statement, not the question');
+  assert.equal(g.isRemainingWorkQuestion('I have 20 minutes left, what should I do?'), false, 'time budget + planning ask');
+  assert.equal(g.isRemainingWorkQuestion('Why is there so much left to do?'), false, 'explanation framing');
+  assert.equal(g.isRemainingWorkQuestion('What is progressive overload?'), false, 'education');
+  assert.equal(g.isRemainingWorkQuestion(''), false, 'empty');
+  assert.equal(g.isRemainingWorkQuestion(null), false, 'null');
+});

@@ -593,6 +593,57 @@ function buildGroundedSessionStateStatement(context) {
   return parts.join(' ');
 }
 
+// ── fail-closed remaining-work question ─────────────────────────────────────
+//
+// "What do I have left?" is a STATE question whose deterministic answer already
+// exists — buildGroundedSessionStateStatement above renders it from plan_state +
+// session_tally. But no lane claimed the phrasing: the client classifier does not
+// match it and neither did any route lane, so the turn reached the model, which
+// answered from the tally alone with a bare set-fact recap naming NONE of the
+// remaining lifts while the correct plan_state.remaining sat unused in its own
+// snapshot (F-SB4 Session 3, run fsb4b-s3-20261029T055908-69D1E9). The completion
+// backstop cannot catch that prose — an enumeration with no completion verb is
+// not a completion claim — so the fix is a claim, not a bigger denylist.
+//
+// Tight on purpose, like the session-close family: whole-message, anchored, and
+// fail-closed — an ambiguous shape declines and keeps today's handling. No lift
+// name is required (the answer is the whole remaining list, not one lift's
+// target). Shapes other lanes own are excluded: next-up questions (guarded by
+// isNextUpQuestion itself), session-close questions (their cores share no token
+// with these), and attribute asks — "how much …" is guarded explicitly, and a
+// "how many" ask is claimed ONLY when it counts remaining exercises/lifts, never
+// weight/reps/sets/RIR (services/sessionQuestionAnswer.js owns those).
+const REMAINING_WORK_LEADIN_RE = /^(?:ok(?:ay)?|so|and|well|hey|right)\s*[, ]\s*/;
+// What may follow the core: a to-do/to-go infinitive and ONE session-scope phrase.
+// The whitelist is what declines "is there anything left in the tank …" (an
+// energy idiom, not plan state) and "what's left of my protein shake?" — neither
+// tail is the session, so neither is this lane's question.
+const REMAINING_WORK_TAIL = String.raw`(?:\s+to (?:do|go))?(?:\s+(?:for me|for today|today|in (?:today'?s|the|this|my) (?:session|workout|training|plan)|on (?:today'?s|the|this|my) plan|of (?:today'?s|the|this) (?:session|workout|plan)))?`;
+const REMAINING_WORK_CORES = [
+  String.raw`what do (?:i|we) (?:still )?have (?:still )?(?:left|remaining)`,
+  String.raw`what have (?:i|we) (?:got )?(?:still )?(?:left|remaining)`,
+  String.raw`what(?:'s| is) (?:else )?(?:still )?(?:left|remaining)`,
+  String.raw`what else (?:is )?(?:still )?(?:left|remaining)`,
+  String.raw`what (?:still )?remains\b`,
+  String.raw`which (?:exercises?|lifts?|movements?) (?:are )?(?:still )?(?:left|remaining)`,
+  String.raw`which (?:exercises?|lifts?|movements?) do (?:i|we) have (?:still )?(?:left|remaining)`,
+  String.raw`(?:is there )?anything (?:else )?(?:still )?(?:left|remaining)`,
+  String.raw`how many (?:exercises?|lifts?|movements?) do (?:i|we) have (?:still )?(?:left|remaining)`,
+  String.raw`how many (?:exercises?|lifts?|movements?) (?:are )?(?:still )?(?:left|remaining)`,
+];
+const REMAINING_WORK_RES = REMAINING_WORK_CORES.map(
+  (core) => new RegExp(`^${core}${REMAINING_WORK_TAIL}[\\s?.!]*$`)
+);
+
+function isRemainingWorkQuestion(message) {
+  const m = normalize(message);
+  if (!m) return false;
+  if (isNextUpQuestion(m)) return false;
+  if (/\bhow much\b/.test(m)) return false;
+  const body = m.replace(REMAINING_WORK_LEADIN_RE, '');
+  return REMAINING_WORK_RES.some((re) => re.test(body));
+}
+
 // ── grounded plan statement ─────────────────────────────────────────────────
 
 function formatPlanLine(entry) {
@@ -999,6 +1050,7 @@ module.exports = {
   detectUnsupportedMutationClaim,
   detectUngroundedCompletionClaim,
   buildGroundedSessionStateStatement,
+  isRemainingWorkQuestion,
   workoutIsComplete,
   remainingExerciseNames,
   extractClaimedTargets,
