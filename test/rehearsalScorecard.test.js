@@ -748,6 +748,17 @@ describe('deriveExpectedRemaining — independent of client state and reply', ()
 // logged Overhead Press") and a recap followed by a prose clause — neither
 // sentence is exactly header + names.
 //
+// Option A′ — the bounded extension of A, in the A′ pins at the end of this
+// block. Strict A also failed the literal Session 3 reply over the detail
+// sentence's set FACTS, and a definition that fails the canonical truthful
+// reply over fact tokens measures style, not truth: the remaining answer is
+// model prose and cannot be shaped deterministically. A′ adds ONE carve-out
+// shape beside the plain list — the SET-FACT ENUMERATION (lift names, each
+// optionally followed by set-fact tokens only: numbers, kg/lb, x/× markers,
+// "@ RIR n"; no other token) — widening what counts as list CONTENT, never
+// assertions. A status assertion necessarily carries non-fact alphabetic
+// tokens, so the escape family stays dead by construction.
+//
 // EVIDENCE NOTE on the Session 3 reply itself: the run's artifacts preserve
 // only the reply's first 160 of 607 characters (the scorecard detail slices
 // the preview; the bubble records carry no text). The preserved text is the
@@ -755,8 +766,10 @@ describe('deriveExpectedRemaining — independent of client state and reply', ()
 // sentence: "Back Squat 225 x 5 @ RIR 2 Overhead Press 110 x 6 @ RI…". The
 // PASS pin below therefore uses the preserved recap sentence verbatim plus
 // the correctly-ordered remaining statement — the representation all three
-// reviews adjudicated — and a separate pin documents the preserved detail
-// shape failing under A, as A's strictness intends.
+// reviews adjudicated. Under A a separate pin documented the preserved
+// detail shape failing, as A's strictness intended; A′ supersedes that pin
+// — the preserved detail shape is a set-fact enumeration and now PASSES,
+// and the A′ pins below carry the full Session-3-shaped reply.
 
 describe('replyMatchesExpectation — Option A: strict default + plain logged-list carve-out', () => {
   const PLAN = [
@@ -1076,18 +1089,135 @@ describe('replyMatchesExpectation — Option A: strict default + plain logged-li
     assert.match(cmp.problems.join(' '), /"Back Squat", which the declaration says is already complete/);
   });
 
-  it('FAILS BY DESIGN (Option A) — the evidence-preserved Session 3 shape: a per-set detail sentence after the plain list', () => {
+  it('PASSES under Option A′ (superseding A) — the evidence-preserved Session 3 shape: a per-set detail sentence after the plain list', () => {
     // The run's preserved reply text (first 160 of 607 chars) shows a per-set
     // detail sentence opening right after the plain recap: "Back Squat 225 x
-    // 5 @ RIR 2 Overhead Press 110 x 6 @ RI…". Such a sentence names completed
-    // lifts with loads; it is not a plain logged list, and under A it fails —
-    // the same intended strictness as the decorated recaps above. (The PASS
-    // pin at the top of this block covers the reply's preserved plain list
-    // plus its correctly-ordered remaining statement.)
+    // 5 @ RIR 2 Overhead Press 110 x 6 @ RI…". Under strict A this pin
+    // asserted the shape FAILS (a detail sentence is not a plain logged
+    // list). A′ supersedes that: the sentence is a set-fact enumeration —
+    // lift names followed by fact tokens only, no predicate anywhere — so
+    // it is carved out and judged as logged claims, and the single preserved
+    // entry (Back Squat, which has declared logged sets) is truthful.
     const cmp = replyMatchesExpectation(`${RECAP} Back Squat 225 x 5 @ RIR 2. ${REMAINING_OK}`, session3());
+    assert.deepEqual(cmp, { ok: true, problems: [] });
+  });
+
+  // ── the Option A′ extension: the set-fact enumeration ────────────────────
+  // A second carve-out shape beside the plain list: a sentence whose ENTIRE
+  // content is lift names (the declaration's own names), each optionally
+  // followed by set-fact tokens ONLY — digits, load units (kg, lb), ×/x rep
+  // markers, "@ RIR n" tokens, set-count shapes, list punctuation and
+  // conjunctions. It widens what counts as list CONTENT (facts), never
+  // assertions: any prose word, predicate, parenthetical, or status token
+  // disqualifies the whole sentence. The header logged list stays exactly
+  // as strict — a parenthetical fact inside THAT sentence still
+  // disqualifies it (the B2 pins above are untouched).
+
+  it('A′ PASS — the full Session-3-shaped reply: plain recap + set-fact enumeration + remaining statement in declaration order', () => {
+    // The first two entries are verbatim from the preserved reply text
+    // ("Back Squat 225 x 5 @ RIR 2 Overhead Press 110 x 6 @ RI…", cut off
+    // mid-"RIR" at 160 chars); the remaining entries complete the sentence
+    // in the identical grammar for the other lifts the recap names. Seated
+    // Row and Incline DB Press are partially logged AND still remaining —
+    // naming them in the enumeration is the truthful Session 3 shape.
+    const detail = 'Back Squat 225 x 5 @ RIR 2 Overhead Press 110 x 6 @ RIR 2 '
+      + 'Romanian Deadlift 185 x 5 @ RIR 2 Seated Row 120 x 8 @ RIR 3 '
+      + 'Incline DB Press 50 x 8 @ RIR 2 Face Pull 40 x 12 @ RIR 1.';
+    const cmp = replyMatchesExpectation(`${RECAP} ${detail} ${REMAINING_OK}`, session3());
+    assert.deepEqual(cmp, { ok: true, problems: [] });
+  });
+
+  it('A′ PASS — enumerations with load units, attached/spaced numbers, and set-count shapes', () => {
+    for (const detail of [
+      'Back Squat 100 kg 3x5, Overhead Press 60kg x 5.',
+      'Back Squat 225 lb x 5 @ RIR 2; Overhead Press 110 x 6.',
+      'Back Squat 102.5 x 5 @ RIR 2 and Overhead Press 110 x 6 @ RIR 2.',
+    ]) {
+      const cmp = replyMatchesExpectation(`${RECAP} ${detail} ${REMAINING_OK}`, session3());
+      assert.deepEqual(cmp, { ok: true, problems: [] }, detail);
+    }
+  });
+
+  it('A′ BITE — a detail sentence carrying a prose aside fails', () => {
+    // The parenthetical is prose, not a fact token: the sentence is no
+    // enumeration, so it is judged whole and the completed lift it names
+    // counts against the session.
+    const cmp = replyMatchesExpectation(`${RECAP} Romanian Deadlift 225 x 5 (last one was tough). ${REMAINING_OK}`, session3());
+    assert.equal(cmp.ok, false);
+    assert.match(cmp.problems.join(' '), /"Romanian Deadlift", which the declaration says is already complete/);
+  });
+
+  const aprimeStatusShapes = [
+    ['a negated-perfect status predicate — "hasn\'t been done yet"',
+      'Back Squat 225 x 5 @ RIR 2 Overhead Press hasn\'t been done yet.'],
+    ['a stative status predicate — "is unfinished"',
+      'Back Squat 225 x 5, Overhead Press is unfinished.'],
+    ['a passive status predicate — "was skipped"',
+      'Back Squat 225 x 5 @ RIR 2, Overhead Press was skipped.'],
+  ];
+  for (const [name, detail] of aprimeStatusShapes) {
+    it(`A′ BITE — an enumeration-shaped sentence containing ${name} fails`, () => {
+      // A status assertion necessarily contains non-fact alphabetic tokens,
+      // so it can never sit inside the enumeration shape: the sentence is
+      // judged whole, exactly as under strict A.
+      const cmp = replyMatchesExpectation(`${RECAP} ${detail} ${REMAINING_OK}`, session3());
+      assert.equal(cmp.ok, false, name);
+      assert.match(cmp.problems.join(' '), COMPLETE_PROBLEM, name);
+    });
+  }
+
+  it('A′ BITE — an enumeration naming a lift with no declared logged sets fails as a false logged claim', () => {
+    // Carved enumerations are judged as logged claims, exactly like carved
+    // lists: Bicep Curl is remaining and was never logged; Bench Press is
+    // retired and was never logged. Neither may be named here.
+    const unlogged = replyMatchesExpectation(`${RECAP} Bicep Curl 30 x 10 @ RIR 2. ${REMAINING_OK}`, session3());
+    assert.equal(unlogged.ok, false);
+    assert.match(unlogged.problems.join(' '), /"Bicep Curl" as logged, but the declaration records no logged sets for it/);
+    const retired = replyMatchesExpectation(`${RECAP} Bench Press 135 x 5 @ RIR 2. ${REMAINING_OK}`, session3());
+    assert.equal(retired.ok, false);
+    assert.match(retired.problems.join(' '), /"Bench Press" as logged, but the declaration records no logged sets for it/);
+    assert.doesNotMatch(retired.problems.join(' '), /accepted substitution removed from the plan/);
+  });
+
+  it('A′ BITE — a remaining lift named ONLY in an enumeration is not counted as stated remaining', () => {
+    // The enumeration is carved out of the judged text, like the recap: a
+    // truthful detail sentence can neither satisfy a remaining claim nor
+    // pollute its order.
+    const cmp = replyMatchesExpectation(
+      `${RECAP} Seated Row 120 x 8 @ RIR 3. You still have Incline DB Press and Bicep Curl left.`,
+      session3());
+    assert.equal(cmp.ok, false);
+    assert.match(cmp.problems.join(' '), /does not name remaining lift "Seated Row"/);
+  });
+
+  it('A′ BITE — the header logged-list sentence gains no facts allowance (a header carrying facts is neither shape)', () => {
+    const cmp = replyMatchesExpectation(`You've logged Back Squat 225 x 5 @ RIR 2. ${REMAINING_OK}`, session3());
     assert.equal(cmp.ok, false);
     assert.match(cmp.problems.join(' '), /"Back Squat", which the declaration says is already complete/);
   });
+
+  it('A′ BITE — a fact-free headerless name list is not an enumeration and earns no carve-out', () => {
+    // The enumeration requires fact content; without it the sentence is a
+    // bare name list, which Option A's header requirement already governs.
+    const cmp = replyMatchesExpectation(`Back Squat, Overhead Press, Romanian Deadlift. ${REMAINING_OK}`, session3());
+    assert.equal(cmp.ok, false);
+    assert.match(cmp.problems.join(' '), COMPLETE_PROBLEM);
+  });
+
+  const aprimeExcludedTokens = [
+    ['the word "sets" — "for 2 sets"', 'Back Squat 225 for 2 sets.'],
+    ['"RPE" in place of "RIR"', 'Back Squat 225 x 5 @ RPE 8.'],
+    ['"lbs" in place of "lb"', 'Back Squat 225 lbs x 5.'],
+    ['a rep range — "5-6"', 'Back Squat 225 x 5-6.'],
+    ['a percent token — "80%"', 'Back Squat 225 x 5 @ 80%.'],
+  ];
+  for (const [name, detail] of aprimeExcludedTokens) {
+    it(`A′ BITE — an enumeration-shaped sentence carrying ${name} fails (ambiguous token classes stay excluded)`, () => {
+      const cmp = replyMatchesExpectation(`${RECAP} ${detail} ${REMAINING_OK}`, session3());
+      assert.equal(cmp.ok, false, name);
+      assert.match(cmp.problems.join(' '), /"Back Squat", which the declaration says is already complete/, name);
+    });
+  }
 });
 
 // ── the claim sweep: no constant may stand in for evidence ───────────────────

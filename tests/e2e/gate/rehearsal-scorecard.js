@@ -700,6 +700,25 @@ function explicitNextUpClaim(text) {
 // Press (60 kg)") FAILS under this rule — intended, chosen behaviour: the
 // definition was not widened to rescue it, because every widening round is
 // what reopened the escape.
+//
+// Option A′ — the one bounded extension of A, decided after the Session 3
+// evidence was re-read. A's strictness failed the LITERAL Session 3 reply
+// for a reason A's rationale does not cover: after its plain recap, the
+// reply carries a per-set detail sentence ("Back Squat 225 x 5 @ RIR 2
+// Overhead Press 110 x 6 @ RI…" — preserved verbatim in the run's scorecard
+// detail) that names completed lifts with SET FACTS. A detail sentence is
+// not a claim about what remains: it carries no predicate at all. The three
+// widening rounds died classifying CLAIMS (predicates); A′ widens only what
+// counts as list CONTENT (facts), never assertions, by adding a SECOND
+// carve-out shape alongside the plain logged list: the SET-FACT ENUMERATION,
+// defined mechanically in `setFactEnumeration` below. A status assertion
+// ("hasn't been done yet", "is unfinished", "was skipped") necessarily
+// contains alphabetic tokens outside the fact vocabulary, so it can never
+// sit inside either carve-out shape — the escape class stays dead by
+// construction, for the same reason as under A. The plain logged list is
+// unchanged, byte-for-byte as strict: its header sentence gains no facts
+// allowance, and the enumeration shape has no header — a header sentence
+// carrying facts is neither shape and is judged whole.
 const LOGGED_LIST_HEADERS = Object.freeze([
   /^(?:you|we)(?:'ve| have)\s+(?:just\s+|already\s+|also\s+)?(?:logged|completed|recorded|finished)(?:\s*:\s*|\s+)/i,
   /^(?:you|we)\s+(?:just\s+|already\s+|also\s+)?(?:logged|completed|recorded|finished)(?:\s*:\s*|\s+)/i,
@@ -762,16 +781,112 @@ function plainLoggedList(sentence, known) {
   return names;
 }
 
-// Split the reply into sentences and carve out its plain logged lists.
-// Returns { judgedText, loggedNames }: the text every remaining-work check
-// runs over, and the lift entries the carved lists claimed as logged.
+// ── Option A′: the set-fact enumeration — the second carve-out shape ────────
+//
+// A sentence is a SET-FACT ENUMERATION when its ENTIRE content is one or
+// more entries of the form
+//   LIFT-NAME (fact atom)*
+// joined only by list punctuation (commas, semicolons) and conjunctions
+// ("and", "or", "&"), where LIFT-NAME is drawn from the declaration's own
+// names (`known`, the same set the plain logged list draws from) and a fact
+// atom is exactly one of:
+//   - a number: digits with an optional decimal part ("225", "102.5"),
+//     optionally carrying a load unit ("225 kg", "60kg"),
+//   - a standalone load unit: "kg", "lb",
+//   - a rep/set marker: "x", "×" (spaced "225 x 5" or attached "3x5"),
+//   - the effort tokens "@" and "RIR" ("@ RIR 2").
+// NO other token is allowed anywhere in the sentence: any prose word,
+// predicate, parenthetical aside, or status language disqualifies the WHOLE
+// sentence (fail-closed to the strict default). Token classes not listed —
+// the words "reps"/"sets", "RPE", "lbs", "pounds", "%", ranges ("5-6"),
+// bodyweight shorthands — are excluded by that silence: ambiguous classes
+// stay out rather than being guessed in. The sentence must carry at least
+// one fact atom overall: a fact-free sentence is a headerless name list,
+// which is NOT carved out (the plain list's header requirement stands, and
+// this shape has no header). An entry may carry zero fact atoms when a
+// sibling entry carries them — the names are still judged as logged claims,
+// so a bare entry can state nothing but membership.
+//
+// One fact atom at the match position (sticky). Alphabetic atoms are
+// word-bounded so they cannot match inside a longer word ("x" inside
+// "extra", "rir" inside "first", "kg" inside a name fragment).
+const SET_FACT_ATOM = /\d+(?:\.\d+)?(?:\s*(?:kg|lb)(?![a-z]))?|(?:kg|lb)(?![a-z])|@|rir(?![a-z])|[x×](?![a-z])/iy;
+
+// Match ONE known lift name at exactly `pos` in `body` (the declaration's
+// names are tried longest first by knownLiftNames). The name must end at a
+// non-alphanumeric boundary, so "Back Squat225" is not the name "Back
+// Squat" followed by a fact. Returns { entry, length } or null.
+function matchKnownLiftNameAt(body, pos, known) {
+  const rest = body.slice(pos);
+  for (const entry of known) {
+    const words = String(entry.name || '').trim().split(/\s+/).filter(Boolean);
+    if (!words.length) continue;
+    const pattern = words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[\\s-]+');
+    const m = new RegExp(`^${pattern}(?![a-z0-9])`, 'i').exec(rest);
+    if (m) return { entry, length: m[0].length };
+  }
+  return null;
+}
+
+// Match ONE sentence against the set-fact enumeration shape above. Returns
+// the enumeration's lift entries in order, or null when the sentence is
+// anything else.
+function setFactEnumeration(sentence, known) {
+  const s = String(sentence || '').trim();
+  const body = s.replace(/[.!?]+\s*$/, '').trim();
+  if (!body) return null;
+  let pos = 0;
+  let factAtoms = 0;
+  const entries = [];
+  const skipInline = () => { while (pos < body.length && /\s/.test(body[pos])) pos += 1; };
+  // Between entries: whitespace, commas, semicolons, "&", and the
+  // conjunction words "and" / "or" as whole tokens.
+  const skipSeparators = () => {
+    for (;;) {
+      skipInline();
+      const ch = body[pos];
+      if (ch === ',' || ch === ';' || ch === '&') { pos += 1; continue; }
+      const conj = /^(?:and|or)(?![a-z])/i.exec(body.slice(pos));
+      if (conj) { pos += conj[0].length; continue; }
+      return;
+    }
+  };
+  skipInline();
+  for (;;) {
+    const hit = matchKnownLiftNameAt(body, pos, known);
+    if (!hit) return null;
+    entries.push(hit.entry);
+    pos += hit.length;
+    // The entry's fact atoms — numbers, units, markers, nothing else. The
+    // first token that is not a fact atom ends the entry's facts; the main
+    // loop then requires a separator and the next entry's name.
+    for (;;) {
+      skipInline();
+      SET_FACT_ATOM.lastIndex = pos;
+      const atom = SET_FACT_ATOM.exec(body);
+      if (!atom) break;
+      pos += atom[0].length;
+      factAtoms += 1;
+    }
+    skipSeparators();
+    if (pos >= body.length) break;
+  }
+  // A fact-free sentence is a headerless name list, not an enumeration.
+  if (!entries.length || factAtoms === 0) return null;
+  return entries;
+}
+
+// Split the reply into sentences and carve out its plain logged lists and
+// its set-fact enumerations (Option A′). Returns { judgedText, loggedNames }:
+// the text every remaining-work check runs over, and the lift entries the
+// carved sentences claimed as logged.
 function carvePlainLoggedLists(replyText, known) {
   const sentences = String(replyText == null ? '' : replyText)
     .split(/(?<=[.!?])\s+|\n+/).map((s) => s.trim()).filter(Boolean);
   const judged = [];
   const loggedNames = [];
   for (const sentence of sentences) {
-    const list = plainLoggedList(sentence, known);
+    const list = plainLoggedList(sentence, known) || setFactEnumeration(sentence, known);
     if (list) loggedNames.push(...list);
     else judged.push(sentence);
   }
@@ -786,10 +901,11 @@ function carvePlainLoggedLists(replyText, known) {
 // SEQUENCE. A reply naming every correct lift in the wrong order, or explicitly naming
 // the wrong lift as next while mentioning the real next-up elsewhere, passed.
 //
-// Corrective 11 (Option A): the checks run over the reply MINUS its plain
-// logged lists (see the carve-out above) — a truthful plain recap can neither
-// satisfy a remaining claim nor pollute its order — and the carved lists are
-// judged as logged claims against the expectation's `logged` knowledge.
+// Corrective 11 (Option A, as extended by A′): the checks run over the reply
+// MINUS its plain logged lists and set-fact enumerations (see the carve-outs
+// above) — a truthful plain recap or per-set detail sentence can neither
+// satisfy a remaining claim nor pollute its order — and the carved sentences
+// are judged as logged claims against the expectation's `logged` knowledge.
 function replyMatchesExpectation(replyText, expectation) {
   const problems = [];
   const text = String(replyText == null ? '' : replyText);
@@ -811,8 +927,9 @@ function replyMatchesExpectation(replyText, expectation) {
     if (liftMentionIndex(judgedText, name) >= 0) problems.push(`the reply names "${name}", which an accepted substitution removed from the plan`);
   }
 
-  // LOGGED claims: a lift named in a carved-out plain logged list must be one
-  // the declaration records logged sets for. An expectation built by hand
+  // LOGGED claims: a lift named in a carved-out plain logged list or
+  // set-fact enumeration must be one the declaration records logged sets
+  // for. An expectation built by hand
   // without `logged` falls back to its complete lifts — the only lifts such
   // an expectation can prove were logged. A retired lift named here is caught
   // as the false logged claim it is (it was never logged); the retired rule
