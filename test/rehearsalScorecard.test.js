@@ -715,6 +715,511 @@ describe('deriveExpectedRemaining — independent of client state and reply', ()
   });
 });
 
+// ── Option A reply judging (F-SB4B corrective 11, redesign) ─────────────────
+// Session 3's scored run (fsb4b-s3-20261028T195320-ACB006) failed condition 8
+// on a reply whose FIRST sentence was a truthful logged recap — "You've
+// logged Back Squat, Overhead Press, Romanian Deadlift, Seated Row, Incline
+// DB Press, and Face Pull." — judged by a beat with no framing awareness:
+// every completed lift named ANYWHERE counted as claimed remaining, and
+// remaining ORDER was read off first mentions across the whole text, so the
+// recap's log order (Seated Row before Incline DB Press) failed a reply whose
+// remaining statement and the client's canonical state were both correct.
+//
+// Three segment-aware heads tried to judge each framed segment as what it
+// is; three independent reviews (comments 6480019118, 6480713282, 6481339434)
+// each found the same escape in a new form — a completed lift asserted as
+// still-to-do hiding inside a logged-framed sentence (clause boundary, then
+// no-boundary comma/and joins, then subject and predicate separated by a
+// relative pronoun, a dash, an appositive, a determiner, or lowercase) — and
+// the third head also failed truthful decorated recaps. Prose shape cannot
+// separate list membership from a new claim, so the coordinator flipped the
+// default (Option A):
+//
+//   A completed lift mentioned ANYWHERE counts against the session, UNLESS
+//   the mention sits inside a PLAIN, UNDECORATED LOGGED LIST — a sentence
+//   whose entire content is a logged-framing header ("You've logged …",
+//   "Logged this session: …") plus lift names joined only by list
+//   punctuation and conjunctions. Anything else earns no carve-out.
+//
+// A decorated recap naming a completed lift ("Overhead Press (60 kg)") fails
+// under A BY DESIGN — the pins below assert that as intended behaviour, not
+// as a defect. Two v3-legitimate shapes likewise lose their carve-out and are
+// pinned as failures: a conjoined second logged claim ("…, and you've also
+// logged Overhead Press") and a recap followed by a prose clause — neither
+// sentence is exactly header + names.
+//
+// Option A′ — the bounded extension of A, in the A′ pins at the end of this
+// block. Strict A also failed the literal Session 3 reply over the detail
+// sentence's set FACTS, and a definition that fails the canonical truthful
+// reply over fact tokens measures style, not truth: the remaining answer is
+// model prose and cannot be shaped deterministically. A′ adds ONE carve-out
+// shape beside the plain list — the SET-FACT ENUMERATION (lift names, each
+// optionally followed by set-fact tokens only: numbers, kg/lb, x/× markers,
+// "@ RIR n"; no other token) — widening what counts as list CONTENT, never
+// assertions. A status assertion necessarily carries non-fact alphabetic
+// tokens, so the escape family stays dead by construction.
+//
+// EVIDENCE NOTE on the Session 3 reply itself: the run's artifacts preserve
+// only the reply's first 160 of 607 characters (the scorecard detail slices
+// the preview; the bubble records carry no text). The preserved text is the
+// plain recap sentence verbatim, then the opening of a per-set detail
+// sentence: "Back Squat 225 x 5 @ RIR 2 Overhead Press 110 x 6 @ RI…". The
+// PASS pin below therefore uses the preserved recap sentence verbatim plus
+// the correctly-ordered remaining statement — the representation all three
+// reviews adjudicated. Under A a separate pin documented the preserved
+// detail shape failing, as A's strictness intended; A′ supersedes that pin
+// — the preserved detail shape is a set-fact enumeration and now PASSES,
+// and the A′ pins below carry the full Session-3-shaped reply.
+
+describe('replyMatchesExpectation — Option A: strict default + plain logged-list carve-out', () => {
+  const PLAN = [
+    { exercise: 'Back Squat', target_sets: 2 },
+    { exercise: 'Overhead Press', target_sets: 2 },
+    { exercise: 'Romanian Deadlift', target_sets: 2 },
+    { exercise: 'Bench Press', target_sets: 2 },
+    { exercise: 'Seated Row', target_sets: 2 },
+    { exercise: 'Bicep Curl', target_sets: 2 },
+  ];
+  // The Session 3 declaration at the remaining-answer beat, derived exactly as
+  // the gate driver derives it: pre-Bench lifts x2, the batch (Seated Row first,
+  // the replacement second), the off-plan Face Pull, the replacement's second
+  // set; the staged prescription for the substitute is 3 sets.
+  const session3 = () => deriveExpectedRemaining({
+    plan: PLAN,
+    loggedNames: [
+      'back squat', 'back squat', 'overhead press', 'overhead press',
+      'romanian deadlift', 'romanian deadlift',
+      'seated row', 'incline db press', 'face pull', 'incline db press',
+    ],
+    replacement: { sourceName: 'Bench Press', replacementName: 'Incline DB Press', sets: 3 },
+  });
+  const RECAP = "You've logged Back Squat, Overhead Press, Romanian Deadlift, Seated Row, Incline DB Press, and Face Pull.";
+  const REMAINING_OK = 'You still have Incline DB Press, Seated Row, and Bicep Curl left.';
+  const COMPLETE_PROBLEM = /"Overhead Press", which the declaration says is already complete/;
+
+  it('the Session 3 expectation carries the logged knowledge the driver declared', () => {
+    const e = session3();
+    assert.deepEqual(e.remaining, ['Incline DB Press', 'Seated Row', 'Bicep Curl']);
+    assert.deepEqual(e.complete, ['Back Squat', 'Overhead Press', 'Romanian Deadlift']);
+    assert.deepEqual(e.retired, ['Bench Press']);
+    // Complete lifts, partially-logged remaining lifts (plan spelling), and the
+    // declared off-plan lift (as declared) — the truth a logged recap is judged on.
+    assert.deepEqual(e.logged, ['Back Squat', 'Overhead Press', 'Romanian Deadlift', 'Incline DB Press', 'Seated Row', 'face pull']);
+  });
+
+  it('logged knowledge is empty when nothing was logged, and names a partially-logged lift', () => {
+    assert.deepEqual(deriveExpectedRemaining({ plan: PLAN, loggedNames: [], replacement: null }).logged, []);
+    const one = deriveExpectedRemaining({ plan: PLAN, loggedNames: ['back squat'], replacement: null });
+    assert.deepEqual(one.logged, ['Back Squat']);
+    assert.ok(one.remaining.includes('Back Squat'), 'one of two sets leaves the lift both logged and remaining');
+  });
+
+  it('the Session 3 reply passes: its preserved plain logged list is carved out, its remaining work named completely and in order', () => {
+    const cmp = replyMatchesExpectation(`${RECAP} ${REMAINING_OK}`, session3());
+    assert.deepEqual(cmp, { ok: true, problems: [] });
+  });
+
+  it('the product\'s grounded-statement shape passes against the same expectation', () => {
+    // The exact shape buildGroundedSessionStateStatement produces for this state:
+    // "Logged this session:" is one of the plain-list headers, its list is
+    // undecorated, and the remaining sentence stands outside it. (On the
+    // pre-corrective beat this reproduced the run's four problems verbatim.)
+    const grounded = 'Logged this session: Back Squat, Overhead Press, Romanian Deadlift, Seated Row, Incline DB Press, Face Pull. '
+      + 'Still remaining: Incline DB Press, Seated Row, Bicep Curl. '
+      + 'Those are still planned, not done — nothing counts as completed until it\'s logged.';
+    const cmp = replyMatchesExpectation(grounded, session3());
+    assert.deepEqual(cmp, { ok: true, problems: [] });
+  });
+
+  it('plain logged lists in every list form are carved out', () => {
+    for (const reply of [
+      `You've logged Back Squat, Overhead Press, and Romanian Deadlift. ${REMAINING_OK}`,
+      `You've logged Back Squat, Overhead Press, Romanian Deadlift. ${REMAINING_OK}`,
+      `You've logged Back Squat and Overhead Press. ${REMAINING_OK}`,
+      `You've logged Back Squat; Overhead Press; Romanian Deadlift. ${REMAINING_OK}`,
+      `Logged: Back Squat, Overhead Press. ${REMAINING_OK}`,
+    ]) {
+      assert.deepEqual(replyMatchesExpectation(reply, session3()), { ok: true, problems: [] }, reply);
+    }
+  });
+
+  it('BITE — a remaining segment naming a completed lift as still-to-do fails', () => {
+    const cmp = replyMatchesExpectation('Still remaining: Back Squat, Incline DB Press, Seated Row, Bicep Curl.', session3());
+    assert.equal(cmp.ok, false);
+    assert.match(cmp.problems.join(' '), /"Back Squat", which the declaration says is already complete/);
+  });
+
+  it('BITE — a remaining segment listing remaining lifts in the wrong order fails', () => {
+    const cmp = replyMatchesExpectation('Still remaining: Seated Row, Incline DB Press, Bicep Curl.', session3());
+    assert.equal(cmp.ok, false);
+    assert.match(cmp.problems.join(' '), /declaration order is \[Incline DB Press, Seated Row, Bicep Curl\]/);
+  });
+
+  it('BITE — a plain logged list naming a lift that was never logged fails AS A LOGGED CLAIM', () => {
+    // Bench Press is the retired source: never logged this session. Named in a
+    // plain logged list it is a false logged claim — NOT a remaining-work
+    // problem, and the retired-as-remaining wording must not fire for it.
+    const cmp = replyMatchesExpectation(
+      `You've logged Bench Press, Back Squat, Overhead Press, Romanian Deadlift, Seated Row, Incline DB Press, and Face Pull. ${REMAINING_OK}`,
+      session3());
+    assert.equal(cmp.ok, false);
+    assert.match(cmp.problems.join(' '), /"Bench Press" as logged, but the declaration records no logged sets for it/);
+    assert.doesNotMatch(cmp.problems.join(' '), /accepted substitution removed from the plan/);
+  });
+
+  it('BITE — a plain logged list naming a remaining lift with zero logged sets fails as a false logged claim', () => {
+    const cmp = replyMatchesExpectation(`You've logged Bicep Curl. ${REMAINING_OK}`, session3());
+    assert.equal(cmp.ok, false);
+    assert.match(cmp.problems.join(' '), /"Bicep Curl" as logged, but the declaration records no logged sets for it/);
+  });
+
+  it('BITE — a plain logged list tail naming a zero-logged or retired lift fails as a false logged claim', () => {
+    const zero = replyMatchesExpectation(`You've logged Back Squat, Overhead Press, Bicep Curl. ${REMAINING_OK}`, session3());
+    assert.equal(zero.ok, false);
+    assert.match(zero.problems.join(' '), /"Bicep Curl" as logged, but the declaration records no logged sets for it/);
+    const retired = replyMatchesExpectation(`You've logged Back Squat, Bench Press. ${REMAINING_OK}`, session3());
+    assert.equal(retired.ok, false);
+    assert.match(retired.problems.join(' '), /"Bench Press" as logged, but the declaration records no logged sets for it/);
+  });
+
+  it('BITE — a retired lift named AS REMAINING still fails', () => {
+    const cmp = replyMatchesExpectation('Still remaining: Bench Press, Incline DB Press, Seated Row, Bicep Curl.', session3());
+    assert.equal(cmp.ok, false);
+    assert.match(cmp.problems.join(' '), /"Bench Press", which an accepted substitution removed from the plan/);
+  });
+
+  it('a remaining lift named ONLY in the logged recap is not counted as stated remaining', () => {
+    const cmp = replyMatchesExpectation(`${RECAP} You still have Bicep Curl left.`, session3());
+    assert.equal(cmp.ok, false);
+    assert.match(cmp.problems.join(' '), /does not name remaining lift "Incline DB Press"/);
+    assert.match(cmp.problems.join(' '), /does not name remaining lift "Seated Row"/);
+  });
+
+  it('a pure remaining-only answer (the sessionPlanExecutor close-answer shape) passes', () => {
+    const closeAnswer = 'Not done yet — 3 still on your list: Incline DB Press, Seated Row, Bicep Curl. Knock those out, then say "log it" to save.';
+    const cmp = replyMatchesExpectation(closeAnswer, session3());
+    assert.deepEqual(cmp, { ok: true, problems: [] });
+  });
+
+  it('BITE — a list-shaped sentence containing a name the declaration does not know is NOT a plain list', () => {
+    // The carve-out's items must be drawn from the declaration's own names;
+    // one unknown item disqualifies the sentence and the strict default judges
+    // the completed lift it also names.
+    const cmp = replyMatchesExpectation(`You've logged Back Squat, Mystery Lift. ${REMAINING_OK}`, session3());
+    assert.equal(cmp.ok, false);
+    assert.match(cmp.problems.join(' '), /"Back Squat", which the declaration says is already complete/);
+  });
+
+  // ── the B1 escape family (review 6480019118 of 93907b08) ──────────────────
+  // A remaining assertion conjoined to a logged recap. Under A none of these
+  // sentences is exactly header + names, so none is carved out and the strict
+  // default catches the completed lift in every form — boundary or not.
+
+  const b1Shapes = [
+    ['the exact reviewed B1 string (subject restart, "still need to finish")',
+      `You've logged Back Squat, and you still need to finish Overhead Press. ${REMAINING_OK}`],
+    ['the "still need to do" variant (subject restart)',
+      `You've logged Back Squat, and you still need to do Overhead Press. ${REMAINING_OK}`],
+    ['the "must finish" variant (subject restart)',
+      `You've logged Back Squat, and you must finish Overhead Press. ${REMAINING_OK}`],
+    ['the "still needs finishing" variant (comma-joined, no clause boundary)',
+      `You've logged Back Squat, Overhead Press still needs finishing. ${REMAINING_OK}`],
+    ['the "is not done yet" variant (comma-joined, no clause boundary)',
+      `You've logged Back Squat, Overhead Press is not done yet. ${REMAINING_OK}`],
+    ['a new assertion after a semicolon',
+      `You've logged Back Squat; Overhead Press got skipped. ${REMAINING_OK}`],
+    ['a new assertion after a dash',
+      `You've logged Back Squat — Overhead Press got skipped. ${REMAINING_OK}`],
+    ['a new assertion after comma + but',
+      `You've logged Back Squat, but Overhead Press got skipped. ${REMAINING_OK}`],
+    ['a new assertion after comma + and with a lift-name subject (no pronoun restart)',
+      `You've logged Back Squat, and Overhead Press got skipped. ${REMAINING_OK}`],
+  ];
+  for (const [name, reply] of b1Shapes) {
+    it(`BITE — ${name} fails as complete-named-as-remaining`, () => {
+      const cmp = replyMatchesExpectation(reply, session3());
+      assert.equal(cmp.ok, false, name);
+      assert.match(cmp.problems.join(' '), COMPLETE_PROBLEM, name);
+    });
+  }
+
+  // ── the B1-R escape family (review 6480713282 of f4459300) ───────────────
+  // The same escape in the no-boundary comma/and-joined form, with predicates
+  // outside every vocabulary round. Under A the predicate's WORDS are never
+  // consulted: the sentence is not header + names, so it is judged whole.
+
+  const b1rShapes = [
+    ['the reviewed string — negated perfect contraction, "hasn\'t been done yet" (bare comma)',
+      `You've logged Back Squat, Overhead Press hasn't been done yet. ${REMAINING_OK}`],
+    ['negated perfect contraction, "isn\'t done yet" (bare comma)',
+      `You've logged Back Squat, Overhead Press isn't done yet. ${REMAINING_OK}`],
+    ['negated perfect contraction, "hasn\'t been finished yet" (bare comma)',
+      `You've logged Back Squat, Overhead Press hasn't been finished yet. ${REMAINING_OK}`],
+    ['negated perfect contraction, plural subject "sets weren\'t done yet" (bare comma)',
+      `You've logged Back Squat, Overhead Press sets weren't done yet. ${REMAINING_OK}`],
+    ['stative adjective, "is unfinished" (bare comma)',
+      `You've logged Back Squat, Overhead Press is unfinished. ${REMAINING_OK}`],
+    ['stative adjective, "is pending" (bare comma)',
+      `You've logged Back Squat, Overhead Press is pending. ${REMAINING_OK}`],
+    ['passive form, "was skipped" (bare comma)',
+      `You've logged Back Squat, Overhead Press was skipped. ${REMAINING_OK}`],
+    ['passive form, "got skipped" (bare comma)',
+      `You've logged Back Squat, Overhead Press got skipped. ${REMAINING_OK}`],
+    ['passive form, "was missed" (bare comma)',
+      `You've logged Back Squat, Overhead Press was missed. ${REMAINING_OK}`],
+    ['awaiting-type verb, "awaits" (bare "and")',
+      `You've logged Back Squat and Overhead Press awaits. ${REMAINING_OK}`],
+    ['SELF-GENERATED predicate — future auxiliary, "will go last" (bare comma)',
+      `You've logged Back Squat, Overhead Press will go last. ${REMAINING_OK}`],
+    ['SELF-GENERATED predicate — perception verb + participle adjective, "looks untouched" (bare comma)',
+      `You've logged Back Squat, Overhead Press looks untouched. ${REMAINING_OK}`],
+    ['SELF-GENERATED predicate — sequence verb, "follows after the rest" (bare "and")',
+      `You've logged Back Squat and Overhead Press follows after the rest. ${REMAINING_OK}`],
+    ['vocabulary control — "is outstanding"',
+      `You've logged Back Squat, Overhead Press is outstanding. ${REMAINING_OK}`],
+    ['vocabulary control — "remains undone"',
+      `You've logged Back Squat, Overhead Press remains undone. ${REMAINING_OK}`],
+  ];
+  for (const [name, reply] of b1rShapes) {
+    it(`BITE — ${name} fails as complete-named-as-remaining`, () => {
+      const cmp = replyMatchesExpectation(reply, session3());
+      assert.equal(cmp.ok, false, name);
+      assert.match(cmp.problems.join(' '), COMPLETE_PROBLEM, name);
+    });
+  }
+
+  it('BITE — a predicate restart on a LATER enumeration item poisons the whole sentence (no per-item precision under A)', () => {
+    // The v3 head split the clause at the restarting item and flagged only
+    // Romanian Deadlift. A has no per-item splitting: the sentence is not a
+    // plain list, so BOTH completed lifts it names are judged.
+    const cmp = replyMatchesExpectation(
+      `You've logged Back Squat, Overhead Press, Romanian Deadlift hasn't been done yet. ${REMAINING_OK}`,
+      session3());
+    assert.equal(cmp.ok, false);
+    assert.match(cmp.problems.join(' '), /"Romanian Deadlift", which the declaration says is already complete/);
+    assert.match(cmp.problems.join(' '), COMPLETE_PROBLEM);
+  });
+
+  // ── the B1-R2 escape family (review 6481339434 of 25667b2d) ──────────────
+  // Subject and predicate SEPARATED — by a relative pronoun, an em-dash, an
+  // appositive, a determiner, an adverb, quotation, a plus-join, or mere
+  // lowercase. Every one of these sentences returned ok=true on 25667b2d.
+  // Under A each is a sentence that is not exactly header + names; the strict
+  // default fails them all by construction, without locating the assertion.
+
+  const b1r2Shapes = [
+    ['relative clause — "which hasn\'t been done yet"',
+      `You've logged Back Squat, Overhead Press, which hasn't been done yet. ${REMAINING_OK}`],
+    ['relative clause — "which deserves another run"',
+      `You've logged Back Squat, Overhead Press, which deserves another run. ${REMAINING_OK}`],
+    ['em-dash predicate-only — "hasn\'t been done yet"',
+      `You've logged Back Squat, Overhead Press — hasn't been done yet. ${REMAINING_OK}`],
+    ['em-dash predicate-only — "deserves another run"',
+      `You've logged Back Squat, Overhead Press — deserves another run. ${REMAINING_OK}`],
+    ['lowercase restart — "overhead press hasn\'t been done yet"',
+      `You've logged Back Squat, overhead press hasn't been done yet. ${REMAINING_OK}`],
+    ['lowercase restart — "overhead press deserves another run"',
+      `You've logged Back Squat, overhead press deserves another run. ${REMAINING_OK}`],
+    ['appositive — "Overhead Press, your second lift, deserves another run"',
+      `You've logged Back Squat, Overhead Press, your second lift, deserves another run. ${REMAINING_OK}`],
+    ['determiner-prefixed subject — "your Overhead Press deserves another run"',
+      `You've logged Back Squat, your Overhead Press deserves another run. ${REMAINING_OK}`],
+    ['adverb-prefixed subject — "sadly Overhead Press deserves another run"',
+      `You've logged Back Squat, sadly Overhead Press deserves another run. ${REMAINING_OK}`],
+    ['quoted name — "\\"Overhead Press\\" deserves another run"',
+      `You've logged Back Squat, "Overhead Press" deserves another run. ${REMAINING_OK}`],
+    ['plus-joined — "plus Overhead Press deserves another run"',
+      `You've logged Back Squat, plus Overhead Press deserves another run. ${REMAINING_OK}`],
+  ];
+  for (const [name, reply] of b1r2Shapes) {
+    it(`BITE — ${name} fails as complete-named-as-remaining`, () => {
+      const cmp = replyMatchesExpectation(reply, session3());
+      assert.equal(cmp.ok, false, name);
+      assert.match(cmp.problems.join(' '), COMPLETE_PROBLEM, name);
+    });
+  }
+
+  // ── B2 shapes: decorated recaps — failing is INTENDED under A ────────────
+  // These truthful recaps were green on f4459300 and failed on 25667b2d as
+  // over-bite. Under A they fail BY DESIGN: an annotation is decoration, a
+  // decorated sentence is not a plain logged list, and the definition is not
+  // widened to rescue them — every widening round reopened the escape above.
+
+  const b2Shapes = [
+    ['a load annotation — "Overhead Press (60 kg)"',
+      `You've logged Back Squat, Overhead Press (60 kg), and Romanian Deadlift. ${REMAINING_OK}`],
+    ['a set-count annotation — "Overhead Press (2 sets)"',
+      `You've logged Back Squat, Overhead Press (2 sets), and Romanian Deadlift. ${REMAINING_OK}`],
+    ['a set-count phrase — "Overhead Press for 2 sets"',
+      `You've logged Back Squat, Overhead Press for 2 sets, and Romanian Deadlift. ${REMAINING_OK}`],
+    ['a remark annotation — "Overhead Press (both heavy)"',
+      `You've logged Back Squat, Overhead Press (both heavy). ${REMAINING_OK}`],
+    ['a remark annotation — "Romanian Deadlift (last one was tough)"',
+      `You've logged Back Squat, Overhead Press, Romanian Deadlift (last one was tough). ${REMAINING_OK}`],
+  ];
+  for (const [name, reply] of b2Shapes) {
+    it(`FAILS BY DESIGN (Option A) — ${name}`, () => {
+      const cmp = replyMatchesExpectation(reply, session3());
+      assert.equal(cmp.ok, false, name);
+      assert.match(cmp.problems.join(' '), COMPLETE_PROBLEM, name);
+    });
+  }
+
+  // ── v3-legitimate shapes A deliberately no longer carves out ─────────────
+
+  it('FAILS BY DESIGN (Option A) — a conjoined second logged claim is not a plain list', () => {
+    // Green on all three segment-aware heads (the restart carried its own
+    // logged framing). The sentence's content is header + name + a SECOND
+    // verb phrase — not exactly header + names — so A judges it whole.
+    const cmp = replyMatchesExpectation(
+      `You've logged Back Squat, and you've also logged Overhead Press. ${REMAINING_OK}`,
+      session3());
+    assert.equal(cmp.ok, false);
+    assert.match(cmp.problems.join(' '), COMPLETE_PROBLEM);
+  });
+
+  it('FAILS BY DESIGN (Option A) — a recap sentence carrying a prose clause is not a plain list', () => {
+    // Green on 25667b2d ("the plan remains as written" asserted nothing about
+    // a lift). Under A the sentence is not exactly header + names; Back Squat
+    // is a completed lift mentioned outside a plain logged list.
+    const cmp = replyMatchesExpectation(
+      `You've logged Back Squat, and the plan remains as written. ${REMAINING_OK}`,
+      session3());
+    assert.equal(cmp.ok, false);
+    assert.match(cmp.problems.join(' '), /"Back Squat", which the declaration says is already complete/);
+  });
+
+  it('PASSES under Option A′ (superseding A) — the evidence-preserved Session 3 shape: a per-set detail sentence after the plain list', () => {
+    // The run's preserved reply text (first 160 of 607 chars) shows a per-set
+    // detail sentence opening right after the plain recap: "Back Squat 225 x
+    // 5 @ RIR 2 Overhead Press 110 x 6 @ RI…". Under strict A this pin
+    // asserted the shape FAILS (a detail sentence is not a plain logged
+    // list). A′ supersedes that: the sentence is a set-fact enumeration —
+    // lift names followed by fact tokens only, no predicate anywhere — so
+    // it is carved out and judged as logged claims, and the single preserved
+    // entry (Back Squat, which has declared logged sets) is truthful.
+    const cmp = replyMatchesExpectation(`${RECAP} Back Squat 225 x 5 @ RIR 2. ${REMAINING_OK}`, session3());
+    assert.deepEqual(cmp, { ok: true, problems: [] });
+  });
+
+  // ── the Option A′ extension: the set-fact enumeration ────────────────────
+  // A second carve-out shape beside the plain list: a sentence whose ENTIRE
+  // content is lift names (the declaration's own names), each optionally
+  // followed by set-fact tokens ONLY — digits, load units (kg, lb), ×/x rep
+  // markers, "@ RIR n" tokens, set-count shapes, list punctuation and
+  // conjunctions. It widens what counts as list CONTENT (facts), never
+  // assertions: any prose word, predicate, parenthetical, or status token
+  // disqualifies the whole sentence. The header logged list stays exactly
+  // as strict — a parenthetical fact inside THAT sentence still
+  // disqualifies it (the B2 pins above are untouched).
+
+  it('A′ PASS — the full Session-3-shaped reply: plain recap + set-fact enumeration + remaining statement in declaration order', () => {
+    // The first two entries are verbatim from the preserved reply text
+    // ("Back Squat 225 x 5 @ RIR 2 Overhead Press 110 x 6 @ RI…", cut off
+    // mid-"RIR" at 160 chars); the remaining entries complete the sentence
+    // in the identical grammar for the other lifts the recap names. Seated
+    // Row and Incline DB Press are partially logged AND still remaining —
+    // naming them in the enumeration is the truthful Session 3 shape.
+    const detail = 'Back Squat 225 x 5 @ RIR 2 Overhead Press 110 x 6 @ RIR 2 '
+      + 'Romanian Deadlift 185 x 5 @ RIR 2 Seated Row 120 x 8 @ RIR 3 '
+      + 'Incline DB Press 50 x 8 @ RIR 2 Face Pull 40 x 12 @ RIR 1.';
+    const cmp = replyMatchesExpectation(`${RECAP} ${detail} ${REMAINING_OK}`, session3());
+    assert.deepEqual(cmp, { ok: true, problems: [] });
+  });
+
+  it('A′ PASS — enumerations with load units, attached/spaced numbers, and set-count shapes', () => {
+    for (const detail of [
+      'Back Squat 100 kg 3x5, Overhead Press 60kg x 5.',
+      'Back Squat 225 lb x 5 @ RIR 2; Overhead Press 110 x 6.',
+      'Back Squat 102.5 x 5 @ RIR 2 and Overhead Press 110 x 6 @ RIR 2.',
+    ]) {
+      const cmp = replyMatchesExpectation(`${RECAP} ${detail} ${REMAINING_OK}`, session3());
+      assert.deepEqual(cmp, { ok: true, problems: [] }, detail);
+    }
+  });
+
+  it('A′ BITE — a detail sentence carrying a prose aside fails', () => {
+    // The parenthetical is prose, not a fact token: the sentence is no
+    // enumeration, so it is judged whole and the completed lift it names
+    // counts against the session.
+    const cmp = replyMatchesExpectation(`${RECAP} Romanian Deadlift 225 x 5 (last one was tough). ${REMAINING_OK}`, session3());
+    assert.equal(cmp.ok, false);
+    assert.match(cmp.problems.join(' '), /"Romanian Deadlift", which the declaration says is already complete/);
+  });
+
+  const aprimeStatusShapes = [
+    ['a negated-perfect status predicate — "hasn\'t been done yet"',
+      'Back Squat 225 x 5 @ RIR 2 Overhead Press hasn\'t been done yet.'],
+    ['a stative status predicate — "is unfinished"',
+      'Back Squat 225 x 5, Overhead Press is unfinished.'],
+    ['a passive status predicate — "was skipped"',
+      'Back Squat 225 x 5 @ RIR 2, Overhead Press was skipped.'],
+  ];
+  for (const [name, detail] of aprimeStatusShapes) {
+    it(`A′ BITE — an enumeration-shaped sentence containing ${name} fails`, () => {
+      // A status assertion necessarily contains non-fact alphabetic tokens,
+      // so it can never sit inside the enumeration shape: the sentence is
+      // judged whole, exactly as under strict A.
+      const cmp = replyMatchesExpectation(`${RECAP} ${detail} ${REMAINING_OK}`, session3());
+      assert.equal(cmp.ok, false, name);
+      assert.match(cmp.problems.join(' '), COMPLETE_PROBLEM, name);
+    });
+  }
+
+  it('A′ BITE — an enumeration naming a lift with no declared logged sets fails as a false logged claim', () => {
+    // Carved enumerations are judged as logged claims, exactly like carved
+    // lists: Bicep Curl is remaining and was never logged; Bench Press is
+    // retired and was never logged. Neither may be named here.
+    const unlogged = replyMatchesExpectation(`${RECAP} Bicep Curl 30 x 10 @ RIR 2. ${REMAINING_OK}`, session3());
+    assert.equal(unlogged.ok, false);
+    assert.match(unlogged.problems.join(' '), /"Bicep Curl" as logged, but the declaration records no logged sets for it/);
+    const retired = replyMatchesExpectation(`${RECAP} Bench Press 135 x 5 @ RIR 2. ${REMAINING_OK}`, session3());
+    assert.equal(retired.ok, false);
+    assert.match(retired.problems.join(' '), /"Bench Press" as logged, but the declaration records no logged sets for it/);
+    assert.doesNotMatch(retired.problems.join(' '), /accepted substitution removed from the plan/);
+  });
+
+  it('A′ BITE — a remaining lift named ONLY in an enumeration is not counted as stated remaining', () => {
+    // The enumeration is carved out of the judged text, like the recap: a
+    // truthful detail sentence can neither satisfy a remaining claim nor
+    // pollute its order.
+    const cmp = replyMatchesExpectation(
+      `${RECAP} Seated Row 120 x 8 @ RIR 3. You still have Incline DB Press and Bicep Curl left.`,
+      session3());
+    assert.equal(cmp.ok, false);
+    assert.match(cmp.problems.join(' '), /does not name remaining lift "Seated Row"/);
+  });
+
+  it('A′ BITE — the header logged-list sentence gains no facts allowance (a header carrying facts is neither shape)', () => {
+    const cmp = replyMatchesExpectation(`You've logged Back Squat 225 x 5 @ RIR 2. ${REMAINING_OK}`, session3());
+    assert.equal(cmp.ok, false);
+    assert.match(cmp.problems.join(' '), /"Back Squat", which the declaration says is already complete/);
+  });
+
+  it('A′ BITE — a fact-free headerless name list is not an enumeration and earns no carve-out', () => {
+    // The enumeration requires fact content; without it the sentence is a
+    // bare name list, which Option A's header requirement already governs.
+    const cmp = replyMatchesExpectation(`Back Squat, Overhead Press, Romanian Deadlift. ${REMAINING_OK}`, session3());
+    assert.equal(cmp.ok, false);
+    assert.match(cmp.problems.join(' '), COMPLETE_PROBLEM);
+  });
+
+  const aprimeExcludedTokens = [
+    ['the word "sets" — "for 2 sets"', 'Back Squat 225 for 2 sets.'],
+    ['"RPE" in place of "RIR"', 'Back Squat 225 x 5 @ RPE 8.'],
+    ['"lbs" in place of "lb"', 'Back Squat 225 lbs x 5.'],
+    ['a rep range — "5-6"', 'Back Squat 225 x 5-6.'],
+    ['a percent token — "80%"', 'Back Squat 225 x 5 @ 80%.'],
+  ];
+  for (const [name, detail] of aprimeExcludedTokens) {
+    it(`A′ BITE — an enumeration-shaped sentence carrying ${name} fails (ambiguous token classes stay excluded)`, () => {
+      const cmp = replyMatchesExpectation(`${RECAP} ${detail} ${REMAINING_OK}`, session3());
+      assert.equal(cmp.ok, false, name);
+      assert.match(cmp.problems.join(' '), /"Back Squat", which the declaration says is already complete/, name);
+    });
+  }
+});
+
 // ── the claim sweep: no constant may stand in for evidence ───────────────────
 
 describe('detectUnsupportedMutationWording — derived, phase-bounded, fails closed', () => {
