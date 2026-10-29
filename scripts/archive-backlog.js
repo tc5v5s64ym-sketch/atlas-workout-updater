@@ -2,11 +2,17 @@
 
 // Drift Guard 6 — AUTO-ARCHIVE JOB (Phase 2).
 //
-// Moves BACKLOG.md items that carry an explicit `[archive-ready: YYYY-MM-DD]` tag into
-// BACKLOG_ARCHIVE.md and ratchets the paper-weight cap (config/paper-weight.json
-// `backlog_max_lines`) down to the trimmed size. It is the companion to the staleness
-// sub-rule in scripts/check-paper-weight.js: when that check fails ("archive-ready item
-// older than N days"), run `npm run archive:backlog -- --apply` to clear it.
+// The backlog moved to the GitHub Issues board (owner ruling 2026-10-28, recorded in
+// docs/ATLAS_V1_EXECUTION_PLAN.md) and BACKLOG.md is now a frozen pointer stub, so this
+// job's role is historical: it remains the mechanical path for moving a BACKLOG.md item
+// that carries an explicit `[archive-ready: YYYY-MM-DD]` tag into BACKLOG_ARCHIVE.md,
+// using the marker-parsing helpers (`countLines`, `archiveReadyTags`) exported unchanged
+// from scripts/check-paper-weight.js. The staleness companion rule it once paired with —
+// the paper-weight check failing on an "archive-ready item older than N days" — was
+// retired with the migration; the narrowed Guard 6 enforces only stub integrity (the
+// `backlog_stub_max_lines` size bound plus the Issues-board pointer). The
+// `backlog_max_lines` value this job still ratchets in config/paper-weight.json survives
+// only as the archive job's historical ratchet record; it is no longer an enforced cap.
 //
 // SAFETY: the job acts ONLY on the explicit tag — never on a free-text ✅ / "shipped" /
 // "FIXED" heuristic. The 2026-07-20 archive reconciliation
