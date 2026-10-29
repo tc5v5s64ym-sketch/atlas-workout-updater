@@ -1272,6 +1272,87 @@ test('bodyweight dips: a multi-line session mixes bodyweight and weighted dips c
 });
 
 // ---------------------------------------------------------------------------
+// Bodyweight Pull-Up / Chin-Up (SC9-RAY-01 slice, issue #1607) — bare pull-ups
+// and chin-ups log as bodyweight; weighted forms preserved. Pull-Up and
+// Chin-Up had no bodyweight slash-pair path while Dips, Push-Up, and Hanging
+// Knee Raises did, so "pullups BW 8/2 x3" and even "pullups 8/2 x3" dead-ended
+// at needs_clarification / missing_sets. Like Dips, these lifts CAN carry
+// added load, so the bodyweight path engages only when the weighted slash
+// parser finds no sets — weighted forms below are byte-identical to base.
+// ---------------------------------------------------------------------------
+
+test('bodyweight pull-ups: "pullups BW 8/2 x3" → bodyweight Pull-Up, weight null, 3 sets of (8,2)', () => {
+  const r = parseWorkoutText('pullups BW 8/2 x3');
+  assert.equal(r.intent, 'log_sets');
+  assert.equal(r.canonical_name, 'Pull-Up');
+  assert.equal(r.sets.length, 3);
+  assert.ok(r.sets.every(s => s.weight === null && s.weight_unit === null), 'bodyweight → no weight');
+  assert.deepEqual(r.sets.map(s => [s.reps, s.rir]), [[8, 2], [8, 2], [8, 2]]);
+});
+
+test('bodyweight pull-ups: "pullups 8/2 x3" (no BW marker) → same bodyweight parse', () => {
+  const r = parseWorkoutText('pullups 8/2 x3');
+  assert.equal(r.intent, 'log_sets');
+  assert.equal(r.canonical_name, 'Pull-Up');
+  assert.equal(r.sets.length, 3);
+  assert.ok(r.sets.every(s => s.weight === null), 'bodyweight → no weight');
+  assert.deepEqual(r.sets.map(s => [s.reps, s.rir]), [[8, 2], [8, 2], [8, 2]]);
+});
+
+test('bodyweight chin-ups: "chin-ups 6/2 x3" → bodyweight Chin-Up, weight null, 3 sets of (6,2)', () => {
+  const r = parseWorkoutText('chin-ups 6/2 x3');
+  assert.equal(r.intent, 'log_sets');
+  assert.equal(r.canonical_name, 'Chin-Up');
+  assert.equal(r.sets.length, 3);
+  assert.ok(r.sets.every(s => s.weight === null && s.weight_unit === null), 'bodyweight → no weight');
+  assert.deepEqual(r.sets.map(s => [s.reps, s.rir]), [[6, 2], [6, 2], [6, 2]]);
+});
+
+test('bodyweight pull-ups: mixed distinct pairs "pullups BW 8/2 7/1 6/1" → 3 varied sets', () => {
+  const r = parseWorkoutText('pullups BW 8/2 7/1 6/1');
+  assert.equal(r.intent, 'log_sets');
+  assert.equal(r.canonical_name, 'Pull-Up');
+  assert.ok(r.sets.every(s => s.weight === null), 'bodyweight → no weight');
+  assert.deepEqual(r.sets.map(s => [s.reps, s.rir]), [[8, 2], [7, 1], [6, 1]]);
+});
+
+test('bodyweight pull-ups: sentence period "Pullups BW 8/2 x3." → 3 sets (PR #1615 xN punctuation carries through)', () => {
+  const r = parseWorkoutText('Pullups BW 8/2 x3.');
+  assert.equal(r.intent, 'log_sets');
+  assert.equal(r.canonical_name, 'Pull-Up');
+  assert.equal(r.sets.length, 3);
+  assert.deepEqual(r.sets.map(s => [s.weight, s.reps, s.rir]), [[null, 8, 2], [null, 8, 2], [null, 8, 2]]);
+});
+
+test('bodyweight pull-up/chin-up: every aliased variation resolves to its canonical and logs bodyweight', () => {
+  for (const alias of ['pullups', 'pull-ups', 'pullup', 'pull-up', 'pull up']) {
+    const r = parseWorkoutText(`${alias} 8/2 x3`);
+    assert.equal(r.intent, 'log_sets', `${alias}: expected log_sets, got ${r.intent}`);
+    assert.equal(r.canonical_name, 'Pull-Up', `${alias}: expected Pull-Up canonical`);
+    assert.ok(r.sets.every(s => s.weight === null), `${alias}: bodyweight → no weight`);
+  }
+  for (const alias of ['chin-ups', 'chinups', 'chin-up', 'chinup', 'chin up']) {
+    const r = parseWorkoutText(`${alias} 6/2 x3`);
+    assert.equal(r.intent, 'log_sets', `${alias}: expected log_sets, got ${r.intent}`);
+    assert.equal(r.canonical_name, 'Chin-Up', `${alias}: expected Chin-Up canonical`);
+    assert.ok(r.sets.every(s => s.weight === null), `${alias}: bodyweight → no weight`);
+  }
+});
+
+test('bodyweight pull-ups: weighted forms are UNCHANGED — added load still wins', () => {
+  // Pinned at base before this slice; must be byte-identical after it.
+  const w1 = parseWorkoutText('Pull-ups 25 8/2 x3');
+  assert.equal(w1.canonical_name, 'Pull-Up');
+  assert.deepEqual(w1.sets.map(s => [s.weight, s.reps, s.rir]), [[25, 8, 2], [25, 8, 2], [25, 8, 2]]);
+  const w2 = parseWorkoutText('Pull-ups +25 6/2');
+  assert.equal(w2.canonical_name, 'Pull-Up');
+  assert.deepEqual(w2.sets.map(s => [s.weight, s.reps, s.rir]), [[25, 6, 2]]);
+  const w3 = parseWorkoutText('Chin-ups 25 6/2 x3');
+  assert.equal(w3.canonical_name, 'Chin-Up');
+  assert.deepEqual(w3.sets.map(s => [s.weight, s.reps, s.rir]), [[25, 6, 2], [25, 6, 2], [25, 6, 2]]);
+});
+
+// ---------------------------------------------------------------------------
 // Seated Row plural aliases — BUG-20260629 (multiline freestyle "seated rows").
 // "seated row" already resolved; the plural "seated rows" fell through to an
 // unknown "Seated Rows" and got absorbed into the prior lift in a multi-entry.
