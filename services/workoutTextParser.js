@@ -999,6 +999,30 @@ function parseLogSets(rawText, context = {}) {
     }
   }
 
+  // Bare bodyweight Pull-Up / Chin-Up ("pullups BW 8/2 x3", "pullups 8/2 x3",
+  // "chin-ups 6/2 x3") logs as BODYWEIGHT (weight null). These lifts CAN carry
+  // added load, so — exactly like the Dips path above — the bodyweight path
+  // engages ONLY when the rest carries no external load, i.e. the weighted
+  // slash parser finds no sets. Weighted forms ("Pull-ups 25 8/2 x3",
+  // "Pull-ups +25 6/2") still parse weighted below, since parseSetGroups
+  // resolves their load. A leading "BW" marker is explicit bodyweight context,
+  // not a set token: strip it before parseBodyweightReps so the anchored
+  // slash-repeat form expands exactly like the bare form (without the strip,
+  // the "BW" prefix defeats the anchored match and the slash-pair fallback
+  // would log only one set of the xN repeat).
+  if ((resolvedExercise.canonicalName === 'Pull-Up' || resolvedExercise.canonicalName === 'Chin-Up')
+      && (parseSetGroups(resolvedExercise.rest) || []).length === 0) {
+    const bodyweightSets = parseBodyweightReps(resolvedExercise.rest.replace(/^\s*bw\b\s*/i, ''));
+    if (bodyweightSets.length) {
+      return buildLogResult({
+        rawText,
+        rawName: titleCaseFallback(resolvedExercise.rawName),
+        canonicalName: resolvedExercise.canonicalName,
+        sets: bodyweightSets,
+      });
+    }
+  }
+
   if (resolvedExercise.canonicalName === 'Push-Up') {
     // Slash/repeat formats (parseBodyweightReps), then bare space/comma-separated
     // integer lists ("40 40 40"). Push-Up is an unambiguously bodyweight move —
