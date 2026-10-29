@@ -6,7 +6,7 @@ Google Sheet itself carries no resolved/open status.
 
 This ledger is the human-readable join of three things that currently live apart:
 1. The `Bug_Reports` tab (read via `GET /api/bug-report`) — user-submitted rows, **no status column**.
-2. `BACKLOG.md` — where shipped fixes are recorded, **often under a different report ID** than the sheet row.
+2. the GitHub Issues backlog (label: backlog) — where shipped fixes are recorded (closed backlog issues), **often under a different report ID** than the sheet row.
 3. Git history — the authoritative record of what actually shipped.
 
 ---
@@ -28,7 +28,7 @@ When a fix merges, **update this ledger in the same PR**: set Status → ✅ and
 - **UTC bug IDs read a day ahead.** Bug IDs are stamped in **UTC**, so a report filed at
   8:40 PM Pacific on 06-28 gets ID `BUG-20260629-...`. The **Local (PT)** column is authoritative
   for "what day did I actually log this."
-- **The sheet ID ≠ the BACKLOG ID.** The owner often files the same bug as several rows across a
+- **The sheet ID ≠ the backlog-issue ID** (in the GitHub Issues backlog, label: backlog). The owner often files the same bug as several rows across a
   session; a fix may cite one of those IDs (e.g. BACKLOG cites `…-003415` for incline/decline)
   while the row still sitting in the sheet is a sibling (`…-002520`). Same bug, different row.
   This ledger maps the **sheet's current rows** to the fix regardless of which sibling ID shipped.

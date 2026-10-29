@@ -105,7 +105,7 @@ Routine implementation, tests, derivable wording/UX, and clean merges remain imp
 - No secret, `.env`, production Sheet ID, private evidence, or workout data in commits or PRs.
 - No schema migration, historical rewrite, approval-gate weakening, parser-contract change, or proof-field change unless explicitly scoped and approved.
 - Tests cover the live path or closest integration path.
-- One concern per PR; discoveries go to `BACKLOG.md`.
+- One concern per PR; discoveries go to the GitHub Issues backlog (label: backlog) — open a GitHub Issue labelled backlog with a disposition.
 
 ## Relationship to active documents
 

@@ -410,7 +410,7 @@ let sheetRowsCache = createTtlCache(SHEET_ROWS_TTL_MS);
 // undo-last delete, which MUST accept the same span the write produces — otherwise a
 // legitimate multi-set session closeout (>10 rows in one write) succeeds yet cannot
 // be verified or undone. (The JSON /api/log-workout path does not yet enforce this
-// same cap on log_rows.length — tracked in BACKLOG.md; unreachable for one session.)
+// same cap on log_rows.length — tracked in the GitHub Issues backlog (label: backlog); unreachable for one session.)
 const MAX_LOG_ROWS = 200;
 
 async function getSheetRows(tabName) {
