@@ -149,6 +149,25 @@ module.exports = {
     planState: { completedExercises: ['Back Squat', 'Bench Press', 'Romanian Deadlift'], remainingExercises: [] },
   },
 
+  // Variation declaration (§3.3 machinery, resolved by the Slice 2b driver):
+  // which slots the seeded draw may move, and the rule that resolves the
+  // back-off weight from the drawn top-set read. The corpus script read the
+  // top set one RIR over target and lifted the back-offs 285 → 290; the draw
+  // may also land at or under target, in which case the back-offs stay at
+  // the unrevised weight. Both branch weights are declared HERE, so the
+  // driver's expectation is computed from the declaration and the draw —
+  // never copied from the script and never read from the coach's reply.
+  variation: {
+    topRirDeltaChoices: [-1, 0, 1],
+    squatWarmups: [
+      { weight: 135, reps: 5, rir: 5 },
+      { weight: 225, reps: 3, rir: 4 },
+      { weight: 275, reps: 2, rir: 3 },
+    ],
+    backoff: { aboveTargetWeight: 290, atOrBelowTargetWeight: 285, reps: 5, rir: 2, sets: 3 },
+    closeoutMinutes: 58,
+  },
+
   // Human-review checklist (§3.4) — voice/feel, NEVER automated. Emitted with
   // the run artifact from Slice 2b on; a persona run is passed on facts by
   // the scorecard and accepted only when a human works this list.
