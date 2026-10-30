@@ -187,30 +187,52 @@ test('no spec in the e2e lane is gated behind a credentialed posture flag', () =
   });
   const offenders = walk(specDir).filter((f) => /ATLAS_GATE_SANDBOX_LIVE/.test(fs.readFileSync(f, 'utf8')));
 
-  // Under the recorded F-SB4B authorization exactly ONE spec may set the live flag:
-  // the rehearsal spec, which the plan names individually for F-SB4C removal. Even for
-  // that one file the mention is legal only in the safe form: (a) the plan currently
+  // Under the recorded authorizations exactly TWO specs may set the live flag, each
+  // named individually in the plan with its own sunset: the rehearsal spec (F-SB4B
+  // authorization, named for F-SB4C removal) and the persona spec (persona-lane
+  // authorization, named for removal at the persona campaign's close). Even for
+  // those files the mention is legal only in the safe form: (a) the plan currently
   // records the authorization and sunset, (b) the flag is set ONLY together with the
   // ledger flag (the combined posture — a standalone live server refuses to boot), and
   // (c) the spec self-skips out of the default lane, so a plain `playwright test` run
-  // never reaches the flag. Any other spec, or the rehearsal spec without those
-  // properties, still fails here. When F-SB4C removes the spec, `permitted` empties
-  // and this reverts to the plain no-offenders pin.
-  const REHEARSAL_SPEC = path.join(specDir, 'gate', 'rehearsal.spec.js');
-  const permitted = offenders.filter((f) => f === REHEARSAL_SPEC);
-  assert.deepStrictEqual(offenders.filter((f) => f !== REHEARSAL_SPEC), [],
+  // never reaches the flag. Any other spec, or a permitted spec without those
+  // properties, still fails here. When F-SB4C removes the rehearsal spec and the
+  // persona campaign's close removes the persona spec, `permitted` empties and this
+  // reverts to the plain no-offenders pin.
+  const SPEC_RULES = [
+    {
+      file: path.join(specDir, 'gate', 'rehearsal.spec.js'),
+      label: 'rehearsal',
+      planAuthorization: /F-SB4B — BLOCKER RESOLVED 2026-08-03/,
+      planSunset: /named individually for F-SB4C removal/,
+      sunsetMarker: /sunset: F-SB4C/,
+      selfSkip: /test\.skip\(process\.env\.ATLAS_REHEARSAL_RUN !== '1'/,
+    },
+    {
+      file: path.join(specDir, 'gate', 'persona.spec.js'),
+      label: 'persona',
+      planAuthorization: /PERSONA LANE — SANDBOX-LIVE AUTHORIZATION/,
+      planSunset: /named individually for removal at the persona campaign's close/,
+      sunsetMarker: /sunset: persona campaign close/,
+      selfSkip: /test\.skip\(process\.env\.ATLAS_PERSONA_RUN !== '1'/,
+    },
+  ];
+  const permittedFiles = new Set(SPEC_RULES.map((r) => r.file));
+  const permitted = offenders.filter((f) => permittedFiles.has(f));
+  assert.deepStrictEqual(offenders.filter((f) => !permittedFiles.has(f)), [],
     'a spec references the retired sandbox-live posture, so it may expect a real workbook');
+  const plan = fs.readFileSync(path.join(__dirname, '..', 'docs', 'ATLAS_V1_EXECUTION_PLAN.md'), 'utf8');
   for (const f of permitted) {
+    const rule = SPEC_RULES.find((r) => r.file === f);
     const spec = fs.readFileSync(f, 'utf8');
-    const plan = fs.readFileSync(path.join(__dirname, '..', 'docs', 'ATLAS_V1_EXECUTION_PLAN.md'), 'utf8');
-    assert.ok(/F-SB4B — BLOCKER RESOLVED 2026-08-03/.test(plan) && /named individually for F-SB4C removal/.test(plan),
-      'the rehearsal spec sets the live flag but the plan does not record the F-SB4B authorization');
-    assert.ok(/sunset: F-SB4C/.test(spec),
-      'the rehearsal spec must carry its F-SB4C sunset marker');
+    assert.ok(rule.planAuthorization.test(plan) && rule.planSunset.test(plan),
+      `the ${rule.label} spec sets the live flag but the plan does not record its authorization and sunset`);
+    assert.ok(rule.sunsetMarker.test(spec),
+      `the ${rule.label} spec must carry its sunset marker`);
     assert.match(spec, /ATLAS_GATE_SANDBOX_LIVE: '1',\n\s*ATLAS_GATE_LEDGER_SANDBOX: '1',/,
-      'the rehearsal spec may set the live flag only together with the ledger flag (the combined posture)');
-    assert.match(spec, /test\.skip\(process\.env\.ATLAS_REHEARSAL_RUN !== '1'/,
-      'the rehearsal spec must self-skip out of the default lane');
+      `the ${rule.label} spec may set the live flag only together with the ledger flag (the combined posture)`);
+    assert.match(spec, rule.selfSkip,
+      `the ${rule.label} spec must self-skip out of the default lane`);
   }
 });
 
