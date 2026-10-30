@@ -3774,6 +3774,38 @@ function looksLikeLogIt(text) {
   return /^\s*(?:(?:ok(?:ay)?|alright|cool|great|sweet|nice|yep|yeah|done|finished|that['’]?s\s+(?:it|all)|we['’]?re?\s+done)[,.\s]+){0,2}(log\s+it|log\s+that|log\s+the\s+session|log\s+this\s+session|log\s+this\s+workout|save\s+the\s+session|save\s+it|ok\s+log\s+it|alright\s+log\s+it|compile\s+(the\s+)?session|that['’]?s?\s+all|that['’]?s\s+it(\s+for\s+(today|now))?|we['’]?re?\s+done(\s+logging)?|done(\s+for\s+today)?|finish(\s+session)?|end\s+(the\s+)?session)\s*[.!]?\s*$/i.test(t);
 }
 
+// #1626: a natural finish line carrying a session-duration annotation —
+// "Done. 58 min." (Soul Corpus Session 6's close) — is a closeout command
+// with metadata attached, but the whole-string looksLikeLogIt vocabulary
+// above has no room for the annotation, so the line fell into the set
+// parser (needs_clarification) and — with the duration sitting in the
+// effort field, exactly as the athlete had entered it — the parse-error
+// catch's coach routing is gated off by hasAnyEffortInput(), leaving no
+// reply, no closeout card, no save and no seal (persona run
+// persona-marcus-20261030T002629-B6D931). This lane recognises the finish
+// statement once ONE duration annotation (trailing or leading) is removed;
+// the remainder must itself be a recognised finish statement, so a message
+// carrying sets, a question, or an in-progress sense of "done" ("done with
+// warmups, now squats", "finished my first set") can never match.
+const FINISH_DURATION_SRC = String.raw`(?:\d+\s*(?:min(?:ute)?s?|hrs?|hours?|sec(?:ond)?s?)|\d{1,2}:\d{2}(?::\d{2})?|an?\s+(?:hour|minute))`;
+const FINISH_DURATION_TAIL_RE = new RegExp(String.raw`[\s.!,:;—-]+(?:in\s+|took\s+|total\s+)?${FINISH_DURATION_SRC}\s*[.!]?\s*$`, 'i');
+const FINISH_DURATION_HEAD_RE = new RegExp(String.raw`^\s*(?:took\s+)?${FINISH_DURATION_SRC}\s*[.!,:;—-]+\s*`, 'i');
+// Bare finish heads the log-it vocabulary misses: there "finished" only
+// appears as an optional acknowledgment before a core phrase, and "all
+// done" / "i'm done" are not in the vocabulary at all.
+const BARE_FINISH_RE = /^\s*(?:finished|all\s+done|i['’]?m\s+done)\s*[.!]?\s*$/i;
+
+function looksLikeFinishLine(text) {
+  const t = String(text || '').trim();
+  if (!t) return false;
+  if (t.includes('?')) return false; // a question never closes out
+  if (/\d+\s*\/\s*\d+/.test(t)) return false; // a message carrying sets is a log
+  if (BARE_FINISH_RE.test(t)) return true;
+  const stripped = t.replace(FINISH_DURATION_TAIL_RE, '').replace(FINISH_DURATION_HEAD_RE, '');
+  if (stripped === t) return false;
+  return looksLikeLogIt(stripped) || BARE_FINISH_RE.test(stripped);
+}
+
 function showCorrectionPrompt(capturedText) {
   const thread = document.getElementById('thread-messages');
   if (!thread) return;
@@ -7504,6 +7536,17 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     return;
   }
 
+  // #1626: a natural finish line carrying a session-duration annotation
+  // ("Done. 58 min.") is the same closeout command with metadata attached.
+  // It routes through the SAME handleLogIt, at the same gate, before the
+  // parse — so a duration already sitting in the effort field can never
+  // gate the turn into the parse-error silence (see looksLikeFinishLine).
+  if (looksLikeFinishLine(workoutTextInput.value)) {
+    workoutTextInput.value = '';
+    await handleLogIt();
+    return;
+  }
+
   // After a successful save, correction language triggers a "Replace / Log as
   // new / Cancel" prompt rather than silently appending a second workout.
   if (lastWrite) {
@@ -7769,8 +7812,22 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       manualEffort = collectManualEffort(sessionId, date, location, notes);
     }
   } catch (err) {
-    setStatus(loggerStatus, err.message, 'error');
-    return;
+    // #1626: on the closeout RE-ENTRY this submit exists only to stage the
+    // closeout preview for the buffered session — the athlete's instruction
+    // was the finish line, not the effort form. A partially-filled effort
+    // form (e.g. duration only, as the corpus close carries) must not veto
+    // saving the whole workout: it held the closeout completely silent —
+    // no preview, no card, no save — behind a logger-panel error. The
+    // closeout proceeds without an effort row and the problem stays
+    // visible as a warning, so the fields can be completed and the session
+    // re-previewed to attach them (the closeout stage stays latched). A
+    // FRESH submit keeps the hard stop: there, completing the form is the
+    // athlete's actual task and the error is the point.
+    if (!sessionCompiledAwaitingPreview) {
+      setStatus(loggerStatus, err.message, 'error');
+      return;
+    }
+    setStatus(loggerStatus, `${err.message} Saving the session without effort data — complete the effort fields and re-preview to attach them.`, 'warn');
   }
 
   const closeoutAttachmentOnly = file && closeoutScreenshotFile === file && sessionCompiledAwaitingPreview;
