@@ -30,7 +30,7 @@ const {
   runIdentityRefusal, workoutIdentityRefusal, parseCanonicalRehearsalCount,
   evaluateRehearsalPreflight,
 } = require('../tests/e2e/gate/rehearsal-run-purpose');
-const { scoreRehearsalRun } = require('../tests/e2e/gate/rehearsal-scorecard');
+const { scoreRehearsalRun, renderMarkdown } = require('../tests/e2e/gate/rehearsal-scorecard');
 const { loadPersonaFixture, personaFixtureProblems } = require('../tests/e2e/gate/personas/load-persona');
 
 const HEAD = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678';
@@ -288,5 +288,75 @@ describe('the gate-server seam is wired to the loader (source pin)', () => {
     const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'atlas-rehearsal-session.js'), 'utf8');
     assert.match(src, /resolveRunPurpose\(\{ wantsQualifying, wantsDebug, personaSlug: PERSONA_SLUG \}\)/);
     assert.match(src, /persona\.spec\.js/);
+  });
+});
+
+describe('the scorecard\'s PERSONA_RUN branches (Slice 2b) — additive, rehearsal paths untouched', () => {
+  // A persona observation set with ONLY the identity/source branches filled:
+  // the other 23 conditions ERROR on missing evidence, which is fine — these
+  // cases judge conditions 1 and 2, the two that embed rehearsal assumptions.
+  function personaObs(over = {}) {
+    return {
+      run_purpose: PERSONA_RUN,
+      persona_slug: 'marcus',
+      run_id: 'persona-marcus-20261029T120000-AB12CD',
+      athlete_id: 'persona-athlete-AB12CD',
+      workout_session_id: '20261029-AM-01',
+      workout_id_preseeded: false,
+      session_number: undefined,
+      source: { branch: 's3-maintenance', clean: true, head_sha: HEAD, origin_head_sha: HEAD, prior_rehearsal_count: 5, prior_count_reason: null },
+      ...over,
+    };
+  }
+  const condition = (card, id) => card.conditions.find((c) => c.id === id);
+
+  it('source_tree_verified passes a persona run on the exact tree with NO session number', () => {
+    const card = scoreRehearsalRun(personaObs());
+    const c = condition(card, 'source_tree_verified');
+    assert.equal(c.status, 'PASS', c.detail);
+    assert.match(c.detail, /PERSONA run \(marcus\) ran at canonical count 5\/5 — recorded, never ordered against it/);
+  });
+
+  it('source_tree_verified still refuses a persona run on a dirty or off-branch tree', () => {
+    const dirty = scoreRehearsalRun(personaObs({ source: { branch: 's3-maintenance', clean: false, head_sha: HEAD, origin_head_sha: HEAD, prior_rehearsal_count: 5 } }));
+    assert.equal(condition(dirty, 'source_tree_verified').status, 'ERROR');
+    assert.match(condition(dirty, 'source_tree_verified').detail, /not clean/);
+    const offBranch = scoreRehearsalRun(personaObs({ source: { branch: 'agent/x', clean: true, head_sha: HEAD, origin_head_sha: HEAD, prior_rehearsal_count: 5 } }));
+    assert.equal(condition(offBranch, 'source_tree_verified').status, 'ERROR');
+    const noCount = scoreRehearsalRun(personaObs({ source: { branch: 's3-maintenance', clean: true, head_sha: HEAD, origin_head_sha: HEAD, prior_rehearsal_count: null, prior_count_reason: 'no marker' } }));
+    assert.equal(condition(noCount, 'source_tree_verified').status, 'ERROR',
+      'a persona run must still RECORD the count it ran at — unreadable count is an ERROR, not a pass');
+  });
+
+  it('fresh_identities passes a persona run id and refuses a rehearsal run id', () => {
+    const card = scoreRehearsalRun(personaObs());
+    assert.equal(condition(card, 'fresh_identities').status, 'PASS', condition(card, 'fresh_identities').detail);
+    const foreign = scoreRehearsalRun(personaObs({ run_id: 'fsb4b-s1-20261029T120000-AB12CD' }));
+    assert.equal(condition(foreign, 'fresh_identities').status, 'ERROR');
+    assert.match(condition(foreign, 'fresh_identities').detail, /persona marker/);
+    const noSlug = scoreRehearsalRun(personaObs({ persona_slug: undefined }));
+    assert.equal(condition(noSlug, 'fresh_identities').status, 'ERROR',
+      'a persona run that cannot name its persona cannot prove its identity family');
+  });
+
+  it('a persona card is never eligible, carries the persona note, and renders a persona banner', () => {
+    const card = scoreRehearsalRun(personaObs());
+    assert.equal(card.rehearsal_eligible, false);
+    assert.equal(card.persona_slug, 'marcus');
+    assert.match(card.rehearsal_note, /^PERSONA RUN — persona scenario evidence only/);
+    assert.match(renderMarkdown(card).split('\n')[0], /^# Persona rehearsal \(NON-COUNTING\) — marcus — /);
+  });
+
+  it('the rehearsal branches are unchanged: debug passes at any count, qualifying still ordered', () => {
+    const base = personaObs({ run_purpose: REHEARSAL_DEBUG, session_number: 2, run_id: 'fsb4b-s2-20261029T120000-AB12CD' });
+    const debug = scoreRehearsalRun(base);
+    assert.equal(condition(debug, 'source_tree_verified').status, 'PASS');
+    assert.match(condition(debug, 'source_tree_verified').detail, /DIAGNOSTIC \(REHEARSAL_DEBUG\) session 2 ran at canonical count 5\/5/);
+    const qualifying = scoreRehearsalRun({ ...base, run_purpose: REHEARSAL_SESSION });
+    assert.equal(condition(qualifying, 'source_tree_verified').status, 'FAIL',
+      'session 2 at prior count 5 is still illegal for a qualifying run');
+    const noNumber = scoreRehearsalRun({ ...base, session_number: undefined });
+    assert.equal(condition(noNumber, 'source_tree_verified').status, 'ERROR',
+      'a rehearsal-purpose run without a session number still ERRORs — only PERSONA_RUN skips the question');
   });
 });

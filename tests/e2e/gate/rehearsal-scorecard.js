@@ -22,9 +22,9 @@
 // shrinking the bar.
 
 const {
-  REHEARSAL_SESSION, REHEARSAL_DEBUG, REHEARSAL_STREAK_LENGTH, REQUIRED_BRANCH,
+  REHEARSAL_SESSION, REHEARSAL_DEBUG, PERSONA_RUN, REHEARSAL_STREAK_LENGTH, REQUIRED_BRANCH,
   normalizePurpose, isQualifyingPurpose, isRehearsalSessionNumber,
-  workoutIdentityRefusal, runIdentityRefusal,
+  workoutIdentityRefusal, runIdentityRefusal, personaRunIdentityRefusal,
 } = require('./rehearsal-run-purpose');
 const { sessionPlanSetsColumns } = require('../../../config/columns');
 // The ENGINE's own fail-closed ledger selectors decide chain validity — the scorecard
@@ -1335,16 +1335,25 @@ const CONDITIONS = Object.freeze([
       if (s.clean !== true) return err('the worktree was not clean');
       if (!SHA_RE.test(str(s.head_sha))) return err('HEAD did not resolve to a full sha');
       if (s.head_sha !== s.origin_head_sha) return err(`HEAD ${str(s.head_sha).slice(0, 7)} != origin/${REQUIRED_BRANCH} ${str(s.origin_head_sha).slice(0, 7)}`);
-      const n = obs.session_number;
-      if (!isRehearsalSessionNumber(n)) return err(`session number ${n} is not 1..${REHEARSAL_STREAK_LENGTH}`);
-
       const purpose = normalizePurpose(obs.run_purpose);
+      const n = obs.session_number;
+      // PERSONA_RUN (persona test rig, issue #1607 — Slice 2b): a persona run
+      // carries NO rehearsal session number by design — it is not a streak
+      // member, so the session-number legality question does not exist for it
+      // and is skipped, not answered. Everything else in this condition binds
+      // it unchanged: the tree facts above, and the duty below to RECORD the
+      // canonical count it ran at (recorded, never consulted for ordering).
+      if (purpose !== PERSONA_RUN && !isRehearsalSessionNumber(n)) return err(`session number ${n} is not 1..${REHEARSAL_STREAK_LENGTH}`);
+
       if (purpose === null) return err('the run declared no recognized purpose, so count legality cannot be judged');
       const prior = s.prior_rehearsal_count;
       if (!Number.isInteger(prior)) {
         return err(`the canonical rehearsal count was unreadable (${s.prior_count_reason || 'no reason recorded'}); every run must record the count it ran at`);
       }
       const head = `${REQUIRED_BRANCH} @ ${s.head_sha.slice(0, 12)} (= origin/${REQUIRED_BRANCH}, clean)`;
+      if (purpose === PERSONA_RUN) {
+        return pass(`${head}; PERSONA run (${str(obs.persona_slug) || 'persona'}) ran at canonical count ${prior}/${REHEARSAL_STREAK_LENGTH} — recorded, never ordered against it, and cannot advance it`);
+      }
       if (!isQualifyingPurpose(purpose)) {
         return pass(`${head}; DIAGNOSTIC (${purpose}) session ${n} ran at canonical count ${prior}/${REHEARSAL_STREAK_LENGTH} — not ordered against it, and cannot advance it`);
       }
@@ -1359,10 +1368,19 @@ const CONDITIONS = Object.freeze([
     id: 'fresh_identities',
     title: 'fresh run/athlete identities; the workout identity was SERVER-allocated, never pre-seeded',
     evaluate(obs) {
-      if (normalizePurpose(obs && obs.run_purpose) === null) {
-        return err(`the run declared no recognized purpose (got "${(obs && obs.run_purpose) || ''}"); expected ${REHEARSAL_SESSION} or ${REHEARSAL_DEBUG}`);
+      const purpose = normalizePurpose(obs && obs.run_purpose);
+      if (purpose === null) {
+        return err(`the run declared no recognized purpose (got "${(obs && obs.run_purpose) || ''}"); expected ${REHEARSAL_SESSION}, ${REHEARSAL_DEBUG} or ${PERSONA_RUN}`);
       }
-      const runRef = runIdentityRefusal({ sessionNumber: obs.session_number, runId: obs.run_id });
+      // PERSONA_RUN (persona test rig, issue #1607 — Slice 2b): the run identity
+      // must carry THIS persona's marker — the persona family check, disjoint
+      // from the rehearsal family in both directions (pinned in
+      // test/personaLane.test.js). A rehearsal run id presented here ERRORs
+      // exactly as a foreign session's run id does in the rehearsal lane: one
+      // lane's artifacts can never satisfy the other.
+      const runRef = purpose === PERSONA_RUN
+        ? personaRunIdentityRefusal({ slug: obs.persona_slug, runId: obs.run_id })
+        : runIdentityRefusal({ sessionNumber: obs.session_number, runId: obs.run_id });
       if (runRef) return err(runRef);
       if (!str(obs.athlete_id)) return missing('the synthetic athlete id');
       const wRef = workoutIdentityRefusal({ workoutSessionId: obs.workout_session_id });
@@ -1754,7 +1772,9 @@ function scoreRehearsalRun(observations) {
   if (!qualifying) {
     note = purpose === null
       ? 'this run declared no recognized purpose and can never advance the rehearsal streak'
-      : `DIAGNOSTIC RUN (${purpose}) — scenario evidence only. It can never advance or authorize the rehearsal count, and a full ${counts.PASS}/${conditions.length} score does not make it eligible.`;
+      : purpose === PERSONA_RUN
+        ? `PERSONA RUN — persona scenario evidence only. A persona run is not a rehearsal session: it can never advance or authorize the rehearsal count, and a full ${counts.PASS}/${conditions.length} score does not make it eligible.`
+        : `DIAGNOSTIC RUN (${purpose}) — scenario evidence only. It can never advance or authorize the rehearsal count, and a full ${counts.PASS}/${conditions.length} score does not make it eligible.`;
   } else if (eligible) {
     note = `this run qualifies as rehearsal session ${obs.session_number} — record the count advance in a reviewed status PR`;
   } else {
@@ -1768,6 +1788,7 @@ function scoreRehearsalRun(observations) {
     qualifying,
     diagnostic: !qualifying,
     session_number: obs.session_number ?? null,
+    persona_slug: (obs && typeof obs.persona_slug === 'string' && obs.persona_slug.trim()) ? obs.persona_slug.trim() : null,
     scenario: (obs.scenario && obs.scenario.id) || null,
     overall,
     counts,
@@ -1781,9 +1802,11 @@ function renderMarkdown(card) {
   // Every artifact states its purpose in its FIRST line. A diagnostic scorecard that
   // reads like a qualifying one is exactly how a non-counting run gets mistaken for a
   // counted one weeks later.
-  const banner = card.qualifying
-    ? `# F-SB4B QUALIFYING rehearsal session ${card.session_number ?? '?'} — ${card.overall}`
-    : `# F-SB4B DIAGNOSTIC (NON-COUNTING) rehearsal session ${card.session_number ?? '?'} — ${card.overall}`;
+  const banner = card.purpose === PERSONA_RUN
+    ? `# Persona rehearsal (NON-COUNTING) — ${card.persona_slug || 'persona'} — ${card.overall}`
+    : card.qualifying
+      ? `# F-SB4B QUALIFYING rehearsal session ${card.session_number ?? '?'} — ${card.overall}`
+      : `# F-SB4B DIAGNOSTIC (NON-COUNTING) rehearsal session ${card.session_number ?? '?'} — ${card.overall}`;
   const lines = [
     banner,
     '',
