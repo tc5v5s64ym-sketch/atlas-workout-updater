@@ -103,9 +103,11 @@ function checkPersonaFacts(input) {
 
   // ── Correction end-states (the Slice-1 correction goldens, end-to-end) ─────
   // For each declared correction: the durable rows for that lift are EXACTLY
-  // the corrected sets, and the fat-fingered weight appears NOWHERE in the
-  // session's durable rows — a correction that left the wrong weight standing
-  // in even one row did not land.
+  // the corrected sets, and no row OF THAT LIFT carries the fat-fingered
+  // weight. The scan is scoped to the lift, deliberately: another lift may
+  // legitimately use the same number (Marcus's squat back-offs ARE 285 in
+  // the unrevised draw — the same 285 that is forbidden on his RDL), and a
+  // session-wide ban would fail a correct run on a coincidence.
   const corrections = Array.isArray(facts.correctionEndStates) ? facts.correctionEndStates : [];
   if (!corrections.length) {
     add('persona-correction-end-state', false,
@@ -120,12 +122,12 @@ function checkPersonaFacts(input) {
     const off = rows.filter((s) => s.weight !== want.weight || s.reps !== want.reps || s.rir !== want.rir);
     if (off.length) problems.push(`${off.length} ${lift} row(s) off the corrected end-state: ${off.map(setLabel).join('; ')}`);
     if (c.forbiddenWeight !== undefined && c.forbiddenWeight !== null) {
-      const bad = durable.filter((s) => s.weight === num(c.forbiddenWeight));
-      if (bad.length) problems.push(`the forbidden weight ${c.forbiddenWeight} survives in ${bad.length} durable row(s): ${bad.map(setLabel).join('; ')}`);
+      const bad = rows.filter((s) => s.weight === num(c.forbiddenWeight));
+      if (bad.length) problems.push(`the forbidden weight ${c.forbiddenWeight} survives in ${bad.length} durable ${lift} row(s): ${bad.map(setLabel).join('; ')}`);
     }
     add(`persona-correction-end-state:${lift}`, problems.length === 0,
       problems.length === 0
-        ? `${lift} durable rows read ${want.weight}x${want.reps}@${want.rir} x${c.sets} — the corrected end-state, with no ${c.forbiddenWeight} anywhere`
+        ? `${lift} durable rows read ${want.weight}x${want.reps}@${want.rir} x${c.sets} — the corrected end-state, with no ${lift} row at ${c.forbiddenWeight}`
         : problems.join('; '));
   }
 

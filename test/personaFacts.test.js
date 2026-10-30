@@ -92,6 +92,18 @@ describe('persona fact checks — Marcus (design §3.4)', () => {
     assert.equal(check(facts, 'persona-plan-state-facts').ok, true);
   });
 
+  it('the forbidden weight is scoped to the corrected lift: squat back-offs AT 285 do not fail the RDL correction', () => {
+    // The unrevised draw (top set read at target): back-offs stay at 285 —
+    // the same number that is forbidden on the RDL. A session-wide ban would
+    // fail this correct end-state on a coincidence (found by the artifact
+    // control against run persona-marcus-20261030T002629-B6D931's own
+    // declaration, whose draw was exactly this shape).
+    const atTarget = EXPECTED_SETS.map((s) => (s.weight === 290 ? { ...s, weight: 285 } : s));
+    const facts = runFacts({ expectedSets: atTarget, bufferSets: atTarget, durableLogRows: durableRows(atTarget) });
+    assert.equal(facts.ok, true, JSON.stringify(facts.checks, null, 2));
+    assert.equal(check(facts, 'persona-correction-end-state:RDL01').ok, true);
+  });
+
   it('a tampered bench row fails equality but leaves the correction check green', () => {
     const wrong = EXPECTED_SETS.map((s, ix) => (ix === 7 ? { ...s, weight: 230 } : s));
     const facts = runFacts({ durableLogRows: durableRows(wrong) });
