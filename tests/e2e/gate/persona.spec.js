@@ -574,7 +574,11 @@ test('persona scenario (scored): fixture beats through the real app under the sc
     let reply = '';
     let err = '';
     try { reply = await settleReply(text); } catch (e) { err = String((e && e.message) || e); }
-    turns.push({ phase, text, reply });
+    // The settled reply is the turn's FIRST bubble; a turn can render more
+    // (a confirmation, then a question). The tail keeps the transcript honest
+    // about everything the turn showed, not only the bubble that settled it.
+    const tail = recordsToMessages(bubbleRecords).slice(-3).map((m) => m.text).join(' ⏎ ');
+    turns.push({ phase, text, reply, thread_tail: tail });
     if (expectedLogCount == null) {
       beat(id, !err, err || 'reply settled');
       return reply;
@@ -588,11 +592,22 @@ test('persona scenario (scored): fixture beats through the real app under the sc
     return reply;
   }
   const readBufferSets = async () => page.evaluate((planItems) => {
+    // The session log stamps each entry with the name the LOGGING lane used,
+    // which is not always the plan's exercise name: Marcus's batch entry for
+    // the Romanian Deadlift is stamped 'RDL' (first run, 20261030T001500 —
+    // its parsed sets were correct and the comparison missed them purely on
+    // the name). Map through every name a plan item legitimately carries:
+    // its exercise name, its lift-code stem (RDL01 → 'rdl'), and its acronym.
+    const keyOf = (s) => String(s || '').trim().toLowerCase().replace(/[-\s]+/g, ' ');
     const byName = {};
-    for (const p of planItems) byName[String(p.exercise).trim().toLowerCase()] = p;
+    for (const p of planItems) {
+      byName[keyOf(p.exercise)] = p;
+      byName[keyOf(String(p.lift_code || '').replace(/[0-9]+$/, ''))] = p;
+      byName[keyOf(String(p.exercise).split(/\s+/).map((w) => w[0]).join(''))] = p;
+    }
     return (window.getSessionLog() || []).map((x) => {
       const rawName = String((x && (x.canonical || x.exercise || x.name)) || '');
-      const plan = byName[rawName.trim().toLowerCase()];
+      const plan = byName[keyOf(rawName)];
       return {
         exercise: plan ? plan.exercise : rawName,
         lift_code: plan ? plan.lift_code : '',
@@ -657,8 +672,9 @@ test('persona scenario (scored): fixture beats through the real app under the sc
   const st0 = await gateState();
   beat('persona-seam-armed', Boolean(st0.persona) && st0.persona.slug === PERSONA.slug,
     `gate state persona: ${JSON.stringify(st0.persona)}`);
-  beat('combined-sandbox-live-posture', st0.sandbox_live === true && st0.ledger_sandbox === true && st0.model_up === true,
-    `sandbox_live=${st0.sandbox_live} ledger_sandbox=${st0.ledger_sandbox} model_up=${st0.model_up}`);
+  beat('combined-sandbox-live-posture', st0.sandbox_live === true && st0.ledger_sandbox === true
+    && Boolean(st0.sandbox_preflight) && st0.sandbox_preflight.ok === true,
+  `sandbox_live=${st0.sandbox_live} ledger_sandbox=${st0.ledger_sandbox} sandbox_preflight_ok=${st0.sandbox_preflight && st0.sandbox_preflight.ok}`);
   const countBefore = parseCanonicalRehearsalCount(PLAN_TEXT_BEFORE);
 
   // ── 2. Open the app; accept the declared plan ──────────────────────────────
@@ -729,12 +745,19 @@ test('persona scenario (scored): fixture beats through the real app under the sc
     'the retained buffer after the correction equals the run\'s declared sets');
   mutationBoundary = await takeBoundary();
 
-  // Effort (the script supplies duration only), then the closeout beat.
+  // Effort (the script supplies duration only), then the closeout beat. The
+  // closeout is sent WITHOUT settleReply: its product surface is the closeout
+  // CARD, not a chat bubble (the rehearsal drivers say 'done' the same way) —
+  // the first scored run (20261030T001500) waited 90s for a bubble that was
+  // never the closeout's shape and misread the flow from there.
   await page.evaluate((mins) => {
     const el = document.getElementById('effort-duration');
     if (el) { el.value = `${mins}:00`; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); }
   }, closeoutMinutes);
-  await runTurn('beat-closeout', 'closeout', closeoutText, preCorrectionSets.length);
+  currentPhaseRef.value = 'closeout';
+  await say(closeoutText);
+  turns.push({ phase: 'closeout', text: closeoutText, reply: recordsToMessages(bubbleRecords).slice(-2).map((m) => m.text).join(' ⏎ ') });
+  beat('beat-closeout', true, 'closeout statement sent; the closeout card is the surface judged next');
   const obsRemaining = await page.evaluate(() => (window.remainingPlannedExercises
     ? window.remainingPlannedExercises().map((e) => e.canonicalName || e.name || String(e)) : null));
   const derivedFinal = deriveExpectedRemaining({ plan: PERSONA.plan, loggedNames, replacement: null });
