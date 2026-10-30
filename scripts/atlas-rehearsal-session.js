@@ -4,10 +4,11 @@
 //
 //   npm run atlas:rehearsal-session -- --session=1 --model-up
 //
-//   Persona rehearsals (Slice 2a, persona test rig — issue #1607) ride the same
-//   command under their own purpose:
+//   Persona rehearsals (persona test rig — issue #1607) ride the same command
+//   under their own purpose:
 //
-//   npm run atlas:rehearsal-session -- --persona=marcus --model-up
+//   npm run atlas:rehearsal-session -- --persona=marcus --model-up           (Slice 2a smoke)
+//   npm run atlas:rehearsal-session -- --persona=marcus --model-up --scored  (Slice 2b scenario)
 //
 //   A persona run is structurally NON-COUNTING: it carries no session number,
 //   the preflight never consults the canonical count on its behalf, and its
@@ -99,6 +100,13 @@ const wantsDebug = argv.includes('--debug');
 const wantsQualifying = argv.includes('--qualifying');
 const personaArg = argv.find((a) => a.startsWith('--persona='));
 const PERSONA_SLUG = personaArg ? personaArg.slice('--persona='.length).trim().toLowerCase() : null;
+// `--scored` (Slice 2b) selects the persona SCENARIO in persona.spec.js — the
+// fixture's beats driven and judged — instead of the Slice 2a plumbing smoke.
+// It is a persona-lane mode, not a purpose: the purpose stays PERSONA_RUN.
+const WANTS_SCORED = argv.includes('--scored');
+if (WANTS_SCORED && !PERSONA_SLUG) {
+  fail('--scored applies only to a persona run (--persona=<slug>): the rehearsal lane has no scored/smoke distinction.');
+}
 // The DECISION is pure and unit-tested (resolveRunPurpose in
 // rehearsal-run-purpose.js): exactly one purpose per run, and a persona run
 // combined with a counting flag is refused there — this script only acts on it.
@@ -184,6 +192,7 @@ const childEnv = {
     ATLAS_PERSONA_RUN_ID: RUN_ID,
     ATLAS_PERSONA_ATHLETE_ID: ATHLETE_ID,
     ATLAS_PERSONA_ARTIFACT_DIR: ARTIFACT_DIR,
+    ...(WANTS_SCORED ? { ATLAS_PERSONA_SCORED: '1' } : {}),
   } : {
     ATLAS_REHEARSAL_RUN: '1',
     ATLAS_RUN_PURPOSE: RUN_PURPOSE,
@@ -272,7 +281,7 @@ fs.mkdirSync(ARTIFACT_DIR, { recursive: true });
 
 const ambientLast6 = process.env.GOOGLE_SHEETS_ID ? String(process.env.GOOGLE_SHEETS_ID).slice(-6) : null;
 if (IS_PERSONA) {
-  console.log(`[rehearsal-session] purpose  : ${RUN_PURPOSE} — persona "${PERSONA_SLUG}" (plumbing smoke; no beats run, nothing scored)`);
+  console.log(`[rehearsal-session] purpose  : ${RUN_PURPOSE} — persona "${PERSONA_SLUG}" ${WANTS_SCORED ? '(SCORED scenario: the fixture\'s beats, judged by the scorecard + persona fact checks)' : '(plumbing smoke; no beats run, nothing scored)'}`);
   console.log('[rehearsal-session] *** PERSONA RUN — NON-COUNTING. It exercises the same browser, provider, write');
   console.log('[rehearsal-session] *** and durable-evidence path as a qualifying run, with the athlete, plan and history');
   console.log('[rehearsal-session] *** supplied by the persona fixture. It has no session number, the canonical count is');
@@ -291,7 +300,9 @@ if (IS_PERSONA) {
 console.log(`[rehearsal-session] source   : ${gitFacts.branch} @ ${gitFacts.head.slice(0, 12)} (clean, = origin/${REQUIRED_BRANCH})`);
 console.log(`[rehearsal-session] run      : ${RUN_ID}`);
 console.log(IS_PERSONA
-  ? '[rehearsal-session] posture  : model-up operator command; the persona smoke\'s gate server runs the in-memory ledger posture (it submits no coach turn — see persona.spec.js)'
+  ? (WANTS_SCORED
+    ? '[rehearsal-session] posture  : model-up; the persona scenario\'s gate server runs the COMBINED sandbox-live posture under the persona lane\'s plan authorization (see persona.spec.js)'
+    : '[rehearsal-session] posture  : model-up operator command; the persona smoke\'s gate server runs the in-memory ledger posture (it submits no coach turn — see persona.spec.js)')
   : `[rehearsal-session] posture  : ${MODE} + combined sandbox-live/ledger (set by the spec's own gate-server spawn)`);
 console.log(`[rehearsal-session] athlete  : ${ATHLETE_ID}`);
 console.log('[rehearsal-session] workout  : NO pre-seeded id — the server allocator mints it at acceptance (isolation rule 3)');
@@ -299,7 +310,9 @@ console.log(`[rehearsal-session] workbook : declared sandbox last6 ${SANDBOX_SPR
 console.log(`[rehearsal-session] ambient  : ${ambientLast6 ? `GOOGLE_SHEETS_ID last6 ${ambientLast6} present and NOT passed to the child` : 'no ambient GOOGLE_SHEETS_ID'}`);
 console.log(`[rehearsal-session] artifacts: ${path.relative(process.cwd(), ARTIFACT_DIR)}`);
 console.log(IS_PERSONA
-  ? '[rehearsal-session] the smoke begins when the browser opens the app against the persona-armed harness.\n'
+  ? (WANTS_SCORED
+    ? '[rehearsal-session] the scenario begins when the browser opens the app against the persona-armed harness.\n'
+    : '[rehearsal-session] the smoke begins when the browser opens the app against the persona-armed harness.\n')
   : '[rehearsal-session] the session begins when the browser submits the first synthetic athlete turn.\n');
 
 // --retries=0 is load-bearing, not cosmetic: playwright.config.js grants CI
@@ -323,18 +336,40 @@ const runner = spawn(
 
 runner.on('exit', (code) => {
   if (IS_PERSONA) {
-    // A persona run publishes persona-evidence.json, never a scorecard: there
-    // is nothing to score in a plumbing smoke, and a scorecard-shaped artifact
-    // from a non-rehearsal purpose is exactly the confusion the separate
-    // purpose exists to prevent. No evidence = the smoke did not complete.
+    // A persona run's completion artifact is persona-evidence.json in both
+    // modes. The SMOKE (Slice 2a) scores nothing — a scorecard-shaped artifact
+    // from a plumbing run would be exactly the confusion the separate purpose
+    // exists to prevent. A SCORED run (Slice 2b) publishes the scorecard too,
+    // and its evidence folds the verdict in: ok means scorecard PASS and
+    // every persona fact check green. No evidence = the run did not complete.
     const evidencePath = path.join(ARTIFACT_DIR, 'persona-evidence.json');
     if (!fs.existsSync(evidencePath)) {
-      console.error('\n[rehearsal-session] NO PERSONA EVIDENCE — the smoke did not complete.');
+      console.error('\n[rehearsal-session] NO PERSONA EVIDENCE — the run did not complete.');
       console.error('[rehearsal-session] Nothing was scored, and a persona run has no count to affect either way.');
       console.error(`[rehearsal-session] evidence preserved at ${path.relative(process.cwd(), ARTIFACT_DIR)}`);
       process.exit(1);
     }
     const evidence = JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
+    if (evidence.kind === 'PERSONA_SCORECARD') {
+      const cardPath = path.join(ARTIFACT_DIR, 'scorecard.json');
+      const card = fs.existsSync(cardPath) ? JSON.parse(fs.readFileSync(cardPath, 'utf8')) : null;
+      if (!card) {
+        console.error('\n[rehearsal-session] SCORED PERSONA RUN WITHOUT A SCORECARD — the run did not reach scoring.');
+        console.error(`[rehearsal-session] evidence preserved at ${path.relative(process.cwd(), ARTIFACT_DIR)}`);
+        process.exit(1);
+      }
+      console.log(`\n[rehearsal-session] PERSONA SCORECARD: ${card.overall}  (PASS ${card.counts.PASS} · FAIL ${card.counts.FAIL} · ERROR ${card.counts.ERROR} · N/A ${card.counts.NOT_APPLICABLE})`);
+      for (const c of card.conditions) {
+        if (c.status !== 'PASS') console.log(`  ${c.status.padEnd(14)} ${c.id} — ${c.detail}`);
+      }
+      const factChecks = (evidence.persona_facts && evidence.persona_facts.checks) || [];
+      console.log(`[rehearsal-session] persona fact checks: ${factChecks.filter((c) => c.ok).length}/${factChecks.length} green`);
+      for (const c of factChecks) {
+        if (!c.ok) console.log(`  FAILED ${c.id} — ${c.detail}`);
+      }
+      console.log(`[rehearsal-session] rehearsal_eligible: ${card.rehearsal_eligible} (a persona run can never count)`);
+      process.exit(code === 0 && evidence.ok === true ? 0 : 1);
+    }
     const passed = (evidence.checks || []).filter((c) => c.ok).length;
     console.log(`\n[rehearsal-session] PERSONA SMOKE: ${evidence.ok ? 'OK' : 'NOT OK'} — ${passed}/${(evidence.checks || []).length} plumbing checks passed`);
     for (const c of evidence.checks || []) {
