@@ -2964,6 +2964,82 @@ function askIdentityCorrectionClarification(loggedName, targetName) {
   }));
 }
 
+// ── #1625: deterministic VALUE correction ("Typo. 275.") ─────────────────────
+// The identity lane above relabels a lift; it cannot touch a VALUE — its
+// classifier needs an exercise name and rejects a digit-led capture. A bare
+// value correction therefore fell through to the coach chat, the retained
+// sets kept the fat-fingered weight, and the model's recap asserted the sets
+// were "logged as planned" (persona run persona-marcus-20261030T002629-B6D931,
+// Soul Corpus Session 6). This lane owns the rewrite in app state, the same
+// shape as the identity lane: classify deterministically, mutate the retained
+// session log, and let the coach layer CONFIRM from the buffer's own
+// post-correction values — never from free prose.
+//
+// Targeting, fail-closed throughout:
+//   - the correction NAMES a lift → that lift's whole buffered group
+//     (resolved typo-tolerantly against the buffered names, like "X is Y");
+//   - it names none → the most-recently-logged lift's trailing contiguous
+//     group (the identity lane's convention) — but ONLY while the session is
+//     still the live topic: once the conversation has moved on (the ADD-5
+//     lesson), a bare value no longer unambiguously names that group, so we
+//     ASK instead of mutating;
+//   - the group's sets must AGREE on the corrected field. A fat-fingered
+//     group is uniform (285 ×3); warmups at 135/225/275 are not a typo, and
+//     one bare value cannot say which of them it corrects — ask, mutate
+//     nothing.
+function tryApplyValueCorrection(text) {
+  const VC = (typeof window !== 'undefined' && window.valueCorrection) || null;
+  if (!VC || !Array.isArray(getSessionLog()) || !getSessionLog().length) return false; // nothing logged to correct
+  const intent = VC.classifyValueCorrection(text);
+  if (!intent) return false;
+  const log = getSessionLog();
+  let targetName = null;
+  let indices = [];
+  if (intent.exercise) {
+    targetName = resolveBufferedLiftName(intent.exercise);
+    if (!targetName) { askValueCorrectionClarification(intent); return true; }
+    indices = log.reduce((acc, s, i) => (s.exercise === targetName ? [...acc, i] : acc), []);
+  } else {
+    if (getCoachDiscussionSinceLog()) { askValueCorrectionClarification(intent); return true; }
+    targetName = log[log.length - 1].exercise;
+    for (let i = log.length - 1; i >= 0 && log[i].exercise === targetName; i--) indices.unshift(i);
+  }
+  if (!indices.length) { askValueCorrectionClarification(intent); return true; }
+  const field = intent.field;
+  const held = indices.map(i => {
+    const v = log[i][field];
+    return (v === null || v === undefined || v === '') ? null : Number(v);
+  });
+  const from = held[0];
+  if (!held.every(v => v === from)) { askValueCorrectionClarification(intent); return true; }
+  const unchanged = from === intent.value;
+  if (!unchanged) {
+    for (const i of indices) getSessionLog()[i] = { ...getSessionLog()[i], [field]: intent.value };
+  }
+  announceValueCorrection({
+    exercise: targetName, field, from, to: intent.value, count: indices.length, unchanged
+  });
+  return true;
+}
+
+// Tell the coach layer a value correction landed so it can confirm it — the
+// detail is derived from the retained buffer itself (the value it held, the
+// value it holds now, the sets carrying it), so the confirmation can only
+// state what the buffer holds. Mirrors announceIdentityCorrection.
+function announceValueCorrection(detail) {
+  document.dispatchEvent(new CustomEvent('atlas:value-corrected', { detail }));
+}
+
+// A correction was clearly intended but its target cannot be proven: mutate
+// NOTHING and ask. Read-only, like askIdentityCorrectionClarification — the
+// lifter can re-state it naming the lift ("RDL was 275") to apply it
+// deliberately.
+function askValueCorrectionClarification(intent) {
+  document.dispatchEvent(new CustomEvent('atlas:value-correction-ambiguous', {
+    detail: { exercise: intent.exercise || '', field: intent.field, value: intent.value }
+  }));
+}
+
 function renderActiveSessionBanner() {
   const banner = document.getElementById('active-session-banner');
   if (!banner) return;
@@ -7652,6 +7728,15 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
         return;
       }
       if (submitSeq !== previewRequestSeq) return;
+      // #1625: an EXPLICIT value correction ("Typo. 275.") rewrites the retained
+      // sets' corrected field deterministically — before the suggest/coach routes,
+      // so it lands in app state and its confirmation is composed from the buffer,
+      // never from model prose. (Its captures are numeric-led, which the identity
+      // classifier below rejects by design, so the two lanes cannot contend.)
+      if (tryApplyValueCorrection(pendingChatText)) {
+        activeExercise = null;
+        return;
+      }
       // P0 PR 4: an EXPLICIT identity correction ("sorry that was squats") relabels
       // the just-logged lift deterministically — before the suggest/coach routes, so
       // it lands in app state even when the coach LLM is down.

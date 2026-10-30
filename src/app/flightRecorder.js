@@ -80,7 +80,8 @@ const _exports = (function (root) {
     'atlas:plan-edit-applied': 'session_state_changed',
     'atlas:plan-edit-proposed': 'session_state_changed',
     'atlas:session-reset': 'session_state_changed',
-    'atlas:identity-corrected': 'session_state_changed'
+    'atlas:identity-corrected': 'session_state_changed',
+    'atlas:value-corrected': 'session_state_changed'
   };
 
   // Build one event from a type + fields + per-session context. Pure (caller supplies

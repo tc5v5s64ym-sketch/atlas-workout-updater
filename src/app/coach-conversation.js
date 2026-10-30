@@ -2321,6 +2321,40 @@ import {
     }
   });
 
+  // #1625: a deterministic VALUE correction ("Typo. 275.") — app.js already
+  // rewrote the retained sets; confirm it in the thread with a line composed
+  // from the correction detail app.js derived from the buffer itself (the
+  // value it held, the value it holds now, the sets carrying it). Read-only
+  // narration; the engine OWNS the rewrite. Before this lane existed the turn
+  // fell to the free-form coach, whose recap asserted the sets were "logged
+  // as planned" while the buffer still held the fat-fingered weight.
+  document.addEventListener('atlas:value-corrected', e => {
+    const d = (e && e.detail) || {};
+    if (!d.exercise) return;
+    const VC = (typeof window !== 'undefined' && window.valueCorrection) || null;
+    const node = appendAtlasBubble();
+    if (node && node.body) {
+      node.body.textContent = (VC && VC.formatValueCorrection)
+        ? VC.formatValueCorrection(d)
+        : `✓ Corrected ${d.exercise}: ${d.from} → ${d.to} on all ${d.count} sets.`;
+    }
+  });
+
+  // #1625: a value correction whose target could NOT be proven (mixed-value
+  // group, a lift that is not in the buffer, or the conversation had moved
+  // on). app.js deliberately changed nothing; ask which sets were meant
+  // rather than guessing at a finished record. Read-only narration.
+  document.addEventListener('atlas:value-correction-ambiguous', e => {
+    const d = (e && e.detail) || {};
+    const VC = (typeof window !== 'undefined' && window.valueCorrection) || null;
+    const node = appendAtlasBubble();
+    if (node && node.body) {
+      node.body.textContent = (VC && VC.formatValueCorrectionAmbiguous)
+        ? VC.formatValueCorrectionAmbiguous(d)
+        : `I couldn't tell which sets you meant to correct — nothing changed. Name the lift, e.g. "RDL was 275".`;
+    }
+  });
+
   /* ===== Free-form chat (atlas:chat-message → /api/coach/chat) ===== */
 
   // In-session conversation memory only — resets on reload (no persistence, per

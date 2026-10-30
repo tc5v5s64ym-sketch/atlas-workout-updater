@@ -49,6 +49,7 @@ const SHELL_ASSETS = [
   '/app/planMutationIntent.js',
   '/app/activeReplacement.js',
   '/app/identityCorrection.js',
+  '/app/valueCorrection.js',
   '/app/sessionTally.js',
   '/app/pendingClarification.js',
   '/app/displayBlockNormalizer.js',
