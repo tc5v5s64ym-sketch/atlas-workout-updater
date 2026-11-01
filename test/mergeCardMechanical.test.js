@@ -202,11 +202,19 @@ expectRed(
 expectRed(
   'the required lane admits only its named reviewer identities',
   card({ review: { ...required, Reviewer: 'Codex' } }),
-  /Reviewer: ChatGPT or Muse/i
+  /Reviewer: ChatGPT, Muse, Hammy, or Sunny/i
 );
 expectGreen(
   'an independent Muse review on the exact head passes',
   card({ review: { ...required, Reviewer: 'Muse' } })
+);
+expectGreen(
+  'a lane-name peer review on the exact head passes',
+  card({ review: { ...required, Reviewer: 'Hammy' } })
+);
+expectGreen(
+  'a lane-name peer review on the exact head passes (Sunny)',
+  card({ review: { ...required, Reviewer: 'Sunny' } })
 );
 expectRed(
   'a blocking required review cannot merge',
