@@ -999,7 +999,9 @@ test('PR 486 frontend: modality logging mirrors the trust loop without altering 
   const approveBlock = appSource.slice(
     appSource.indexOf("getElementById('approve-btn').addEventListener('click'"),
     // F10D widened: the closeout seal-verdict capture sits above the branches.
-    appSource.indexOf("getElementById('approve-btn').addEventListener('click'") + 5200
+    // #1628 widened again: the partial-duplicate helper call sits in the
+    // screenshot branch above the typed branch. Assertions unchanged.
+    appSource.indexOf("getElementById('approve-btn').addEventListener('click'") + 5600
   );
   assert.match(approveBlock, /pendingWrite\.mode === 'modality'/);
   assert.match(approveBlock, /write_id: pendingWrite\.writeId/, 'live write carries the staged write_id');
@@ -3706,7 +3708,10 @@ test('approve success message: effortOnly is captured before invalidatePreview n
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   const approveSection = appSource.slice(
     appSource.indexOf(anchor),
-    appSource.indexOf(anchor) + 11400
+    // #1628 rebased onto #1627: the combined handler growth pushed the
+    // first post-capture invalidatePreview() to +11491, just past the old
+    // window. Widened to 12000; assertions unchanged.
+    appSource.indexOf(anchor) + 12000
   );
   const captureAt = approveSection.indexOf('const wasEffortOnly = pendingWrite.effortOnly');
   // Anchor on the real teardown CALL ('invalidatePreview();'), not the comment that
