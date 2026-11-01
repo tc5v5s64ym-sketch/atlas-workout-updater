@@ -8800,6 +8800,12 @@ const CLOSEOUT_RETRY_STATE = 'rows-written-ledger-unverified';
 // preview card to "✓ Saved" over a save that wrote zero rows.
 const WRITE_CONFIRMED_STATE = 'write-confirmed';
 const ALREADY_LOGGED_STATE = 'already-logged';
+// #1627 — a write whose receipt verdict is present but unverified. Never a
+// save claim: the logger status carries this marker (kind 'error', so the
+// review card's observer resets its Save instead of marking it done), and
+// the approve handler returns early on it instead of reaching the success
+// status/teardown.
+const WRITE_UNVERIFIED_STATE = 'write-unverified';
 const CLOSEOUT_NO_LEDGER_MSG = 'Plan tracking incomplete — this session had no plan-ledger rows to seal. Your sets are saved; there is nothing to retry.';
 // Appended UNDER the completed save's own message, the same way the readback verdict is
 // — the save really did succeed, and this names the one thing that did not.
@@ -8947,7 +8953,9 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
       // Capture undo details in a local — invalidatePreview() (called below) clears lastWrite.
       // On a blocked duplicate the original response is echoed back, so the
       // same undo details still point at the rows the first write appended.
-      if (writeData.logAppendedRange) {
+      // #1627 — capture the verdict even when no range returned (a no_range
+      // verdict has none): the gate below reads it from pendingLastWrite.
+      if (writeData.logAppendedRange || writeData.log_write_verification) {
         pendingLastWrite = {
           log_appended_range: writeData.logAppendedRange,
           // Server-reported identity first: it may have allocated one for a blank payload.
@@ -8962,6 +8970,20 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
       if (getActivePlannedSession()?.intentId === 'deload_reset' && !duplicateBlocked) {
         getActivePlannedSession().deloadWritten = true;
       }
+    }
+    // #1627 — gate the saved claim on the receipt verdict, BEFORE the
+    // closeout-seal retry (whose message also claims a write). A present
+    // but unverified verdict returns early with a not-saved error status
+    // and no teardown, so the preview, session, and snapshot survive and
+    // the card is never marked done. It deliberately records no QA-1
+    // lastWrite watermark: this was not a proven save, so a later re-log
+    // must not be refused as already saved. A same-id retry replays the
+    // original verdict without re-appending; repair is #1628, not here.
+    if (saveClaimBlockedByVerdict(pendingLastWrite?.log_write_verification)) {
+      approveBtn.disabled = false;
+      approveBtn.textContent = 'Write to Google Sheets';
+      setStatus(loggerStatus, `Not saved — the write could not be verified (${pendingLastWrite.log_write_verification.reason || 'unknown'}). Nothing is marked saved. Check Sheets before saving again.`, 'error', WRITE_UNVERIFIED_STATE);
+      return;
     }
     // F10D (Codex P2, PR #1069): keep the promised retry REACHABLE. The rows are
     // committed — only the ledger binding is unverified — so instead of tearing
@@ -9148,6 +9170,19 @@ function pendingBodyweightHasPreviewProof(write) {
 function duplicateEchoProvesRows(writeData) {
   const data = writeData || {};
   return Number(data.log_rows_written || 0) > 0 || Number(data.effort_rows_written || 0) > 0;
+}
+
+// #1627 — whether the receipt authority's verdict blocks a saved claim.
+// A present verdict blocks unless it is exactly verified:true: wrong_tab,
+// a row-count disagreement, a missing receipt, or a malformed verdict are
+// all negative answers from the authority, never a confirmation. A missing
+// verdict (null/undefined) does NOT block: that is a deployment older than
+// the verdict field, and the read-back fallback in reportWriteVerification
+// is the existing path for it. Response-only, like duplicateEchoProvesRows
+// above, so the verdict is unit-testable.
+function saveClaimBlockedByVerdict(verdict) {
+  if (!verdict) return false;
+  return verdict.verified !== true;
 }
 
 function hasBodyweightWriteProof(result) {
