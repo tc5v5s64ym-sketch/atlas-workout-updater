@@ -8806,6 +8806,10 @@ const ALREADY_LOGGED_STATE = 'already-logged';
 // the approve handler returns early on it instead of reaching the success
 // status/teardown.
 const WRITE_UNVERIFIED_STATE = 'write-unverified';
+// #1628 — a partial complete-workout write: Log rows landed, the Effort row
+// did not. Carried on an 'error' status, so the review card's observer
+// resets its Save instead of marking it done or already-logged.
+const WRITE_PARTIAL_STATE = 'write-partial';
 const CLOSEOUT_NO_LEDGER_MSG = 'Plan tracking incomplete — this session had no plan-ledger rows to seal. Your sets are saved; there is nothing to retry.';
 // Appended UNDER the completed save's own message, the same way the readback verdict is
 // — the save really did succeed, and this names the one thing that did not.
@@ -8858,6 +8862,10 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
       duplicateBlocked = writeData.duplicate_write === true &&
         writeData.sheet_write === 'skipped_duplicate' &&
         writeData.original_sheet_written === true;
+      // #1628 — a partial duplicate is surfaced + repaired, never
+      // already-logged. One call: the helper owns the status/button work
+      // so this branch stays short (the PR 486 test slices this handler).
+      if (handlePartialDuplicate(writeData, pendingWrite, approveBtn, loggerStatus)) return;
       // QA-3: this lane's duplicate acceptance carries no rows proof the card
       // may claim, so a duplicate here is surfaced as already-logged.
       if (duplicateBlocked) writeStatusState = ALREADY_LOGGED_STATE;
@@ -9096,9 +9104,22 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
     loadDashboard();
     approveBtn.textContent = 'Written ✓';
   } catch (err) {
-    setStatus(loggerStatus, `Write failed: ${err.message}`, 'error');
-    approveBtn.disabled = false;
-    approveBtn.textContent = 'Write to Google Sheets';
+    // #1628 — a screenshot/effort-only partial error is not a generic
+    // failure: Log landed, Effort did not. Surface the partial state and
+    // key the retry to the missing Effort only, with no teardown. Other
+    // modes and non-partial errors keep the generic failure path.
+    const partialError = (pendingWrite?.mode === 'screenshot' || pendingWrite?.mode === 'effort-only')
+      ? partialFromError(err) : null;
+    if (partialError) {
+      const repaired = keyPartialRepair(pendingWrite);
+      setStatus(loggerStatus, 'Partially saved — Log rows are in Sheets, but the Effort row is missing. Nothing is marked fully saved. Tap Write Effort to complete it.', 'error', WRITE_PARTIAL_STATE);
+      approveBtn.disabled = false;
+      approveBtn.textContent = repaired ? 'Write Effort to Google Sheets' : 'Write to Google Sheets';
+    } else {
+      setStatus(loggerStatus, `Write failed: ${err.message}`, 'error');
+      approveBtn.disabled = false;
+      approveBtn.textContent = 'Write to Google Sheets';
+    }
   } finally {
     writeInFlight = false;
   }
@@ -9183,6 +9204,74 @@ function duplicateEchoProvesRows(writeData) {
 function saveClaimBlockedByVerdict(verdict) {
   if (!verdict) return false;
   return verdict.verified !== true;
+}
+
+// #1628 — whether a complete-workout response is a partial write: Log rows
+// landed, the Effort row did not. The server already records this
+// component-level state (sheet_write 'partial', sheet_written true,
+// effort_written false); the client reuses it, it does not invent a
+// verdict. A partial whose Effort DID land (a later-step throw) is not
+// this case and must not be keyed as an Effort repair. Response-only,
+// like duplicateEchoProvesRows above, so the verdict is unit-testable.
+function isPartialCompleteWrite(data) {
+  const d = data || {};
+  return d.sheet_write === 'partial' && d.sheet_written === true && d.effort_written !== true;
+}
+
+// #1628 — whether a duplicate echo replays a PARTIAL original. The echo
+// overwrites sheet_write with 'skipped_duplicate', so the partial is read
+// from the original_* fields the server carries on the echo: Log written,
+// Effort not. Response-only, like duplicateEchoProvesRows above.
+function duplicateEchoIsPartialCompleteWrite(writeData) {
+  const d = writeData || {};
+  return d.duplicate_write === true && d.sheet_write === 'skipped_duplicate' &&
+    d.original_sheet_written === true && d.original_effort_written === false;
+}
+
+// #1628 — extract the partial record from a thrown complete-workout error.
+// api() carries the response body on err.body; standardError puts the
+// partial record at body.details. Returns the record, or null.
+function partialFromError(err) {
+  const d = err?.body?.details || err?.body?.data || null;
+  return isPartialCompleteWrite(d) ? d : null;
+}
+
+// #1628 — handle a duplicate echo of a PARTIAL original: surface the
+// partial state and key the retry to the missing Effort only, with no
+// teardown. The same-id dedupe refusal itself is unchanged — the repair
+// uses a fresh id. Returns true when the echo was partial (handled),
+// false otherwise, so the caller falls through to the normal duplicate
+// path. Kept out of the approve handler so that handler stays short.
+function handlePartialDuplicate(writeData, pendingWrite, approveBtn, loggerStatus) {
+  if (!duplicateEchoIsPartialCompleteWrite(writeData)) return false;
+  const repaired = keyPartialRepair(pendingWrite);
+  approveBtn.disabled = false;
+  approveBtn.textContent = repaired ? 'Write Effort to Google Sheets' : 'Write to Google Sheets';
+  setStatus(loggerStatus, 'Partially saved — Log rows are in Sheets, but the Effort row is missing. Nothing is marked fully saved. Tap Write Effort to complete it.', 'error', WRITE_PARTIAL_STATE);
+  return true;
+}
+
+// #1628 — key a screenshot/effort-only pending write to its Effort-only
+// repair: same session, date, and effort; no Log rows; no image (a
+// re-parse must never replace the reviewed effort); a FRESH write_id, so
+// the repair is not refused as the original's duplicate. The Effort tab
+// holds no row for this session (that append is what failed), so the
+// duplicate-session guard does not fire. Returns true when a repair was
+// keyed, false when no effort payload exists to repair with — in which
+// case the caller surfaces the partial state without a repair button.
+function keyPartialRepair(pending) {
+  if (!pending) return false;
+  const manualEffort = pending.mode === 'screenshot'
+    ? effortJsonFromParsedEffort(pending.parsedEffort)
+    : pending.manualEffort;
+  if (!manualEffort) return false;
+  pending.mode = 'effort-only';
+  pending.effortOnly = true;
+  pending.logRows = [];
+  pending.file = null;
+  pending.manualEffort = manualEffort;
+  pending.writeId = generateWriteId();
+  return true;
 }
 
 function hasBodyweightWriteProof(result) {
