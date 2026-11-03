@@ -90,7 +90,7 @@ Dale may merge anything or revoke authority, but routine PRs do not wait for him
 
 The desk does two separate things. ChatGPT helps Dale resolve genuinely non-derivable product, scope, and trust forks. Separately, the **Atlas Contract / Systems Review** is the one blocking architecture lane for a high-risk PR. There is no second lane.
 
-**ChatGPT performs a required review.** This is the owner-ratified authority boundary. The implementation agent may not satisfy its own architecture gate with a clean-context self-review. The review never authorizes a production write and is never a GitHub status, required check, reviewer account, or owner approval.
+**Peer-review model (effective 2026-11-01).** The two builder lanes review each other's work. The reviewer records the verdict as a GitHub comment and in the merge-card review block, on the exact reviewed head. The coordinator assigns the review, verifies the recorded PASS (exact head, green CI, mergeable), and merges; the coordinator does not review. The implementation agent may not satisfy its own architecture gate with a clean-context self-review. The review never authorizes a production write and is never a GitHub status, required check, reviewer account, or owner approval.
 
 #### When the review is required
 
@@ -120,7 +120,7 @@ The merge card records:
 
 - **Required** — `REQUIRED` with the trigger, or `NOT REQUIRED` with the reason;
 - **Exact reviewed head** — the current full commit SHA, or `N/A`;
-- **Reviewer** — `ChatGPT`, or `N/A`;
+- **Reviewer** — the reviewing lane's name, or `N/A`;
 - **Review outcome** — `PASS`, `BLOCKING`, or `N/A`;
 - **Findings and fix verification** — blockers and their disposition, follow-up verification, `none`, or `N/A`.
 
