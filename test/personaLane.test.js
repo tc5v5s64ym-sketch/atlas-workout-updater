@@ -360,3 +360,146 @@ describe('the scorecard\'s PERSONA_RUN branches (Slice 2b) — additive, rehears
       'a rehearsal-purpose run without a session number still ERRORs — only PERSONA_RUN skips the question');
   });
 });
+
+// ── Persona scored-scenario declarations (Slice 2b/2c+, issue #1607) ─────────
+// The driver computation extracted pure (persona-scenario.js): Marcus must
+// reproduce his Slice 2b declaration exactly on every draw, Priya's must be
+// computed from her own fixture, and a slug with no driver must throw
+// rather than borrow another persona's beats.
+const {
+  buildDeclaration, buildMarcusDeclaration, buildPriyaDeclaration, buildBufferNameMap, bufferKeyOf, mapBufferSets,
+} = require('../tests/e2e/gate/persona-scenario');
+const { compareSetMultisets, declaredSet } = require('../tests/e2e/gate/persona-facts');
+
+describe('persona scored-scenario declarations — slug-dispatched, pure', () => {
+  const MARCUS_FIXTURE = loadPersonaFixture('marcus');
+  const PRIYA_FIXTURE = loadPersonaFixture('priya');
+
+  it('the Priya fixture loads clean after the scored-slice additions', () => {
+    assert.deepEqual(personaFixtureProblems(PRIYA_FIXTURE, 'priya'), []);
+    assert.equal(PRIYA_FIXTURE.variation.closeoutMinutes, 45);
+    assert.equal(PRIYA_FIXTURE.expected.modality_rows, 1);
+    assert.equal(PRIYA_FIXTURE.expected.log_rows, 10);
+  });
+
+  it('Marcus reproduces his Slice 2b declaration exactly on all three draws', () => {
+    const set = (exercise, lift_code, weight, reps, rir) => ({ exercise, lift_code, weight, reps, rir });
+    const warmups = [
+      set('Back Squat', 'SQ01', 135, 5, 5),
+      set('Back Squat', 'SQ01', 225, 3, 4),
+      set('Back Squat', 'SQ01', 275, 2, 3),
+    ];
+    const bench = [1, 2, 3].map(() => set('Bench Press', 'BEN01', 225, 5, 2));
+    const rdlCorrected = [1, 2, 3].map(() => set('Romanian Deadlift', 'RDL01', 275, 6, 2));
+    const rdlLogged = [1, 2, 3].map(() => set('Romanian Deadlift', 'RDL01', 285, 6, 2));
+    for (const [delta, topRir, backoffWeight] of [[-1, 2, 285], [0, 3, 285], [1, 4, 290]]) {
+      const d = buildMarcusDeclaration(MARCUS_FIXTURE, { topRirDelta: delta });
+      const backoffs = [1, 2, 3].map(() => set('Back Squat', 'SQ01', backoffWeight, 5, 2));
+      assert.deepEqual(d.squatLineSets, [...warmups, set('Back Squat', 'SQ01', 315, 3, topRir)]);
+      assert.deepEqual(d.backoffSets, backoffs);
+      assert.deepEqual(d.benchSets, bench);
+      assert.deepEqual(d.rdlLoggedSets, rdlLogged);
+      assert.deepEqual(d.rdlCorrectedSets, rdlCorrected);
+      assert.deepEqual(d.expectedSets, [...warmups, set('Back Squat', 'SQ01', 315, 3, topRir), ...backoffs, ...bench, ...rdlCorrected]);
+      assert.equal(d.closeoutMinutes, 58);
+      assert.equal(d.closeoutText, 'Done. 58 min.');
+      assert.equal(d.declaration.top_rir_delta, delta);
+      assert.equal(d.declaration.backoff_weight, backoffWeight);
+      assert.equal(d.declaration.fat_finger_weight, 285);
+    }
+  });
+
+  it('Marcus without a drawn delta throws — the draw is the spec\'s job, never a default', () => {
+    assert.throws(() => buildMarcusDeclaration(MARCUS_FIXTURE, {}), /needs a drawn topRirDelta/);
+  });
+
+  it('Priya is computed from her own fixture: fixed values, revised bench, no correction shape', () => {
+    const d = buildPriyaDeclaration(PRIYA_FIXTURE);
+    const set = (exercise, lift_code, weight, reps, rir) => ({ exercise, lift_code, weight, reps, rir });
+    assert.deepEqual(d.squatSets, [
+      set('Goblet Squat', 'GSQ01', 35, 10, 2),
+      set('Goblet Squat', 'GSQ01', 35, 10, 2),
+      set('Goblet Squat', 'GSQ01', 35, 10, 1),
+    ]);
+    assert.deepEqual(d.benchSets, [
+      set('Dumbbell Bench Press', 'DBB01', 25, 8, null),
+      set('Dumbbell Bench Press', 'DBB01', 25, 8, null),
+      set('Dumbbell Bench Press', 'DBB01', 25, 8, null),
+    ]);
+    assert.deepEqual(d.rowSets, [
+      set('One-Arm Row', 'OAR01', 30, 10, 2),
+      set('One-Arm Row', 'OAR01', 30, 10, 2),
+      set('One-Arm Row', 'OAR01', 30, 10, 2),
+    ]);
+    assert.equal(d.expectedSets.length, 9);
+    assert.equal(d.closeoutMinutes, 45);
+    assert.equal(d.declaration.modality_rows, 1);
+    assert.deepEqual(d.declaration.bench_revised, { weight: 25, reps: 8, sets: 3, rir: null });
+    assert.equal(d.declaration.plank_seconds, 40);
+    // Turn texts are the fixture's own beat forms, never recomputed prose.
+    assert.equal(d.turnTexts.planAsk, PRIYA_FIXTURE.beats.find((b) => b.id === 'plan-ask').forms[0]);
+    assert.equal(d.turnTexts.benchBail, PRIYA_FIXTURE.beats.find((b) => b.id === 'bench-form-bail').forms[0]);
+    assert.equal(d.turnTexts.closeout, PRIYA_FIXTURE.beats.find((b) => b.id === 'closeout').forms[0]);
+  });
+
+  it('the dispatch refuses Tara and unknown slugs instead of borrowing beats', () => {
+    assert.throws(() => buildDeclaration('tara', loadPersonaFixture('tara'), {}), /no scored scenario for "tara"/);
+    assert.throws(() => buildDeclaration('nobody', MARCUS_FIXTURE, {}), /no scored scenario for slug "nobody"/);
+  });
+
+  it('the buffer name map is Marcus-identical and resolves Priya\'s messy names', () => {
+    const marcusMap = buildBufferNameMap(MARCUS_FIXTURE.plan, MARCUS_FIXTURE.catalogRows);
+    assert.equal(Object.keys(marcusMap).length, 9);
+    assert.equal(marcusMap[bufferKeyOf('RDL')].lift_code, 'RDL01');
+    const priyaMap = buildBufferNameMap(PRIYA_FIXTURE.plan, PRIYA_FIXTURE.catalogRows);
+    // Plan-derived keys preserved, plus the fixture's own catalog synonyms.
+    assert.equal(priyaMap[bufferKeyOf('Goblet Squat')].lift_code, 'GSQ01');
+    assert.equal(priyaMap[bufferKeyOf('Dumbbell Bench Press')].lift_code, 'DBB01');
+    assert.equal(priyaMap[bufferKeyOf('rows')].lift_code, 'OAR01');
+    assert.equal(priyaMap[bufferKeyOf('db bench')].lift_code, 'DBB01');
+    assert.equal(priyaMap[bufferKeyOf('Dumbbell Bench')].lift_code, 'DBB01');
+    assert.equal(priyaMap[bufferKeyOf('goblet squats')].lift_code, 'GSQ01');
+    assert.equal(priyaMap[bufferKeyOf('one-arm rows')].lift_code, 'OAR01');
+  });
+
+  it('buffer mapping uses num() semantics: a null RIR matches the declared null-RIR set', () => {
+    const priyaMap = buildBufferNameMap(PRIYA_FIXTURE.plan, PRIYA_FIXTURE.catalogRows);
+    const d = buildPriyaDeclaration(PRIYA_FIXTURE);
+    // A correctly parsed bench turn lands rir: null in the session log
+    // (app.js pushes o.rir verbatim; golden SC7-PRIYA-02 states S(25, 8, null)).
+    // The old Number() mapping turned that null into 0, which could never
+    // match the declared null-RIR sets — a driver artifact failing a
+    // parse-correct run. This runs the spec's real mapping, not a copy.
+    const log = [1, 2, 3].map(() => ({ canonical: 'Dumbbell Bench', weight: 25, reps: 8, rir: null }));
+    const mapped = mapBufferSets(log, priyaMap);
+    assert.equal(mapped.length, 3);
+    assert.equal(mapped[0].lift_code, 'DBB01');
+    assert.ok(Number.isNaN(mapped[0].rir));
+    // The exact comparison the spec's bufferCheck performs (both sides
+    // through declaredSet): a raw comparison would fail on "null" vs "NaN"
+    // even with the mapping fixed, so the test mirrors the spec path.
+    assert.equal(compareSetMultisets(mapped.map(declaredSet), d.benchSets.map(declaredSet)).ok, true);
+  });
+
+  it('buffer mapping keeps numeric RIR, keeps a real 0 RIR, and maps null/empty/missing to NaN', () => {
+    const marcusMap = buildBufferNameMap(MARCUS_FIXTURE.plan, MARCUS_FIXTURE.catalogRows);
+    const mapped = mapBufferSets([
+      { canonical: 'Romanian Deadlift', weight: 275, reps: 6, rir: 2 },
+      { canonical: 'Back Squat', weight: 315, reps: 3, rir: 0 },
+      { canonical: 'Back Squat', weight: 315, reps: 3, rir: '' },
+      { canonical: 'Back Squat', weight: 315, reps: 3 },
+      { canonical: 'Back Squat', weight: null, reps: 3, rir: 2 },
+    ], marcusMap);
+    assert.equal(mapped[0].rir, 2);
+    assert.equal(mapped[1].rir, 0); // 0 is a real RIR, not null
+    assert.ok(Number.isNaN(mapped[2].rir));
+    assert.ok(Number.isNaN(mapped[3].rir));
+    assert.ok(Number.isNaN(mapped[4].weight));
+    // A 0-RIR set and a null-RIR set are distinct under the spec-path comparison.
+    const set = (exercise, lift_code, weight, reps, rir) => ({ exercise, lift_code, weight, reps, rir });
+    assert.equal(compareSetMultisets(
+      [set('Back Squat', 'SQ01', 315, 3, 0)].map(declaredSet),
+      [set('Back Squat', 'SQ01', 315, 3, null)].map(declaredSet),
+    ).ok, false);
+  });
+});

@@ -153,3 +153,101 @@ describe('persona fact checks — Marcus (design §3.4)', () => {
     assert.match(corr.detail, /2 durable RDL01 row\(s\), declared 3/);
   });
 });
+
+// ── Priya (Slice 2c fixture, scored slice under #1607) ───────────────────────
+// No correction beat by design: the bench form-bail is a target revision,
+// not a correction — so the correction check must pass informationally
+// (not fail a correct run), and the bench end-state is judged by its own
+// check: DBB01 durable rows exactly 25 x 8 x3 with NO RIR recorded.
+const { buildPriyaDeclaration } = require('../tests/e2e/gate/persona-scenario');
+const PRIYA = loadPersonaFixture('priya');
+const PRIYA_SETS = buildPriyaDeclaration(PRIYA).expectedSets;
+const PRIYA_NAMES = PRIYA_SETS.map((s) => s.exercise);
+const PRIYA_MUSCLE = { GSQ01: 'Legs', DBB01: 'Chest', OAR01: 'Back' };
+function priyaDurableRows(sets) {
+  const perLift = {};
+  return sets.map((s) => {
+    perLift[s.lift_code] = (perLift[s.lift_code] || 0) + 1;
+    return ['2026-07-10', SESSION, s.exercise, s.exercise, PRIYA_MUSCLE[s.lift_code], s.lift_code,
+      String(perLift[s.lift_code]), String(s.weight), String(s.reps),
+      // A null RIR lands as an empty cell, which the checker reads as NaN —
+      // the same NaN the declaration's null maps to, so the tuple matches.
+      s.rir === null || s.rir === undefined ? '' : String(s.rir), '', ''];
+  });
+}
+function runPriyaFacts(over = {}) {
+  return checkPersonaFacts({
+    fixture: PRIYA,
+    expectedSets: PRIYA_SETS,
+    loggedNames: PRIYA_NAMES,
+    bufferSets: PRIYA_SETS,
+    durableLogRows: priyaDurableRows(PRIYA_SETS),
+    observedRemaining: [],
+    bufferContext: 'after the final log turn',
+    bufferNote: '(revised bench target in place, every other lift untouched)',
+    ...over,
+  });
+}
+
+describe('persona fact checks — Priya (no correction beat, revised bench target)', () => {
+  it('all checks pass on the true revised end-state, in check order', () => {
+    const facts = runPriyaFacts();
+    assert.equal(facts.ok, true, JSON.stringify(facts.checks, null, 2));
+    assert.deepEqual(facts.checks.map((c) => c.id), [
+      'persona-parsed-set-equality',
+      'persona-correction-end-state',
+      'persona-bench-revised-target:DBB01',
+      'persona-retained-buffer-corrected',
+      'persona-plan-state-facts',
+    ]);
+    assert.match(check(facts, 'persona-correction-end-state').detail, /no correction beat/);
+    assert.match(check(facts, 'persona-bench-revised-target:DBB01').detail, /25x8 with no RIR recorded x3/);
+    assert.match(check(facts, 'persona-retained-buffer-corrected').detail, /after the final log turn/);
+    assert.match(check(facts, 'persona-retained-buffer-corrected').detail, /revised bench target/);
+  });
+
+  it('the RIR-null bench sets match empty-RIR durable rows one-for-one (NaN tuples)', () => {
+    const facts = runPriyaFacts();
+    assert.equal(check(facts, 'persona-parsed-set-equality').ok, true);
+    assert.match(check(facts, 'persona-parsed-set-equality').detail, /9 durable Log_Cleaned rows/);
+  });
+
+  it('a correction beat with no declared end-state still fails (the authoring hole)', () => {
+    const withBeat = {
+      ...PRIYA,
+      beats: [...PRIYA.beats, { id: 'x-correction', kind: 'correction', forms: ['Typo. 1.'], slots: {} }],
+    };
+    const facts = runPriyaFacts({ fixture: withBeat });
+    assert.equal(check(facts, 'persona-correction-end-state').ok, false);
+    assert.match(check(facts, 'persona-correction-end-state').detail, /must declare its end-state/);
+    assert.equal(facts.ok, false);
+  });
+
+  it('bench rows at the unrevised 10s fail the revised-target check but leave equality to its own verdict', () => {
+    const unrevised = PRIYA_SETS.map((s) => (s.lift_code === 'DBB01' ? { ...s, reps: 10 } : s));
+    const facts = runPriyaFacts({ durableLogRows: priyaDurableRows(unrevised) });
+    const bench = check(facts, 'persona-bench-revised-target:DBB01');
+    assert.equal(bench.ok, false);
+    assert.match(bench.detail, /off the revised end-state/);
+  });
+
+  it('a recorded RIR on a bench row fails the revised-target check: the bail states none', () => {
+    const withRir = PRIYA_SETS.map((s) => (s.lift_code === 'DBB01' ? { ...s, rir: 2 } : s));
+    const facts = runPriyaFacts({ durableLogRows: priyaDurableRows(withRir) });
+    assert.equal(check(facts, 'persona-bench-revised-target:DBB01').ok, false);
+  });
+
+  it('two bench rows instead of three fail the revised-target check on count alone', () => {
+    const short = PRIYA_SETS.filter((s, ix) => !(s.lift_code === 'DBB01' && ix === 5));
+    const facts = runPriyaFacts({ durableLogRows: priyaDurableRows(short) });
+    const bench = check(facts, 'persona-bench-revised-target:DBB01');
+    assert.equal(bench.ok, false);
+    assert.match(bench.detail, /2 durable DBB01 row\(s\), declared 3/);
+  });
+
+  it('the default buffer wording still names the correction (Marcus path unchanged)', () => {
+    const facts = runFacts();
+    assert.match(check(facts, 'persona-retained-buffer-corrected').detail, /after the correction/);
+    assert.match(check(facts, 'persona-retained-buffer-corrected').detail, /corrected weight in place/);
+  });
+});

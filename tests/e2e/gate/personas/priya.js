@@ -23,7 +23,8 @@
 // lift codes GSQ01/DBB01/OAR01 (see catalogRows); plank as a finisher
 // beat, not a plan row, counted in expected.log_rows (see expected);
 // and variation as the script's fixed values, not a seeded draw (see
-// variation).
+// variation) — with ONE exception, declared in place: closeoutMinutes is
+// a test input, not a script value, because Session 7 states no duration.
 //
 // Source numbers, Session 7: plan issued — goblet squat 35 lb 3x10 @~2 RIR,
 // dumbbell bench 25s 3x10, one-arm rows 30 3x10/side, plank to finish.
@@ -157,6 +158,11 @@ module.exports = {
   // test/fixtures/personaLoggingGoldens.js: plank = durationSec); it
   // counts as one log row in the count above — the settled call for this
   // fixture, and the rows-and-plank finisher beat above declares it.
+  //   modality_rows: the plank hold lands (if at all) in Modality_Log, not
+  //   Log_Cleaned — so log_rows 10 splits as 9 Log_Cleaned + 1 modality.
+  //   The scored slice reads the modality tab through the durable verifier
+  //   and judges the split; a run landing 9 + 0 fails honestly on the
+  //   modality surface, which is a product finding, not a slice defect.
   //   session_plans_events: no item_outcome — Session 7 has no skip and no
   //   substitution, so none occurs (follow-up to #1636; the earlier
   //   item_outcome: 1 was carried over from the rehearsal scenario shape).
@@ -167,6 +173,7 @@ module.exports = {
     session_plans_events: { plan_accepted: 3, session_closeout: 1 },
     plan_set_rows: 9,
     log_rows: 10,
+    modality_rows: 1,
     effort_supplied: true,
     closeout_fully_verified: true,
   },
@@ -194,6 +201,16 @@ module.exports = {
     squatSet3Rir: 1,
     benchActualReps: 8,
     plankSeconds: 40,
+    // Closeout duration for the effort field (the scored driver sets the
+    // effort-duration element from this before the closeout beat; the
+    // effort check asserts only that exactly one Effort row lands, never
+    // the value). Session 7 states NO session duration — the session ends
+    // at the progress-doubt answer with state "session saved" — so 45 is a
+    // DECLARED TEST INPUT, not a script number: a plausible full-body
+    // beginner session length, stated here so a reviewer can see it is
+    // invented input rather than corpus evidence. (Marcus precedent: 58,
+    // script-stated under his 60-minute cap.)
+    closeoutMinutes: 45,
   },
 
   // Human-review checklist (§3.4) — voice/feel, NEVER automated. Emitted

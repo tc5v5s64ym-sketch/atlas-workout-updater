@@ -39,7 +39,11 @@
  * against the run's computed declaration, the correction end-states, the
  * retained-buffer correction, and the fixture's plan-state facts. The
  * fixture's voice/feel items ship in the evidence as a human checklist —
- * never automated prose assertions.
+ * never automated prose assertions. The declaration itself is
+ * slug-dispatched (persona-scenario.js): Marcus keeps his Slice 2b
+ * declaration exactly, Priya's is computed from her own fixture (fixed
+ * script values, a form-bail revision instead of a correction, a
+ * Modality_Log plank row alongside the Log_Cleaned sets).
  *
  * A persona run is structurally non-counting in BOTH modes — its purpose is
  * PERSONA_RUN, and eligibility is gated on REHEARSAL_SESSION alone
@@ -69,14 +73,15 @@ const {
   detectUnsupportedMutationWording, detectUnsupportedWriteClaim,
 } = require('./rehearsal-scorecard');
 const { evaluateTraceWriteJoin } = require('./rehearsal-write-proof-join');
-const { checkPersonaFacts, compareSetMultisets } = require('./persona-facts');
+const { checkPersonaFacts, compareSetMultisets, declaredSet } = require('./persona-facts');
+const { buildDeclaration, buildBufferNameMap, mapBufferSets } = require('./persona-scenario');
 const {
   OBSERVER_FLUSH_MS, bubbleObserverInitScript, BUBBLE_ID_ATTR, BUBBLE_SEQ_ATTR,
   ingestLiveObservation, reconcileSweep, redeemOnStoredEvidence, recordsToMessages,
   makeBoundary, pairLiveWriteChangeSeq, SEEN_ATTR, NEW_BUBBLE_SELECTOR, markExistingBubblesScript,
 } = require('./rehearsal-bubble-observer');
 const { SANDBOX_SPREADSHEET_ID, SANDBOX_SPREADSHEET_ID_LAST6 } = require('../../../config/sandboxSheet');
-const { logCleanedColumns, effortColumns } = require('../../../config/columns');
+const { logCleanedColumns, effortColumns, modalityLogColumns } = require('../../../config/columns');
 const crypto = require('node:crypto');
 const { sessionPlansColumns, sessionPlanSetsColumns } = require('../../../config/columns');
 
@@ -392,39 +397,26 @@ test('persona scenario (scored): fixture beats through the real app under the sc
   // ── Resolve the run: declaration + the seeded variation draw (§3.3) ────────
   // Drawn from the run id BEFORE the run and recorded here; every expectation
   // below is computed from the fixture and the draw — never read from a reply.
+  // The computation lives in persona-scenario.js, dispatched by slug: Marcus
+  // keeps his Slice 2b declaration exactly (unit-pinned against the
+  // pre-extraction inline block for all three draws); Priya's is computed
+  // from her own fixture. A slug with no driver (Tara, until her slice)
+  // throws here, before any server or browser work — never a fallback to
+  // another persona's beats.
   const seed = personaSeed(RUN_ID);
   const rng = personaRng(seed);
-  const [squatPlan, benchPlan, rdlPlan] = PERSONA.plan;
-  const topRirDelta = PERSONA.variation.topRirDeltaChoices[Math.floor(rng() * PERSONA.variation.topRirDeltaChoices.length)];
-  const topRir = Math.min(5, Math.max(1, squatPlan.target_rir + topRirDelta));
-  const bo = PERSONA.variation.backoff;
-  const backoffWeight = topRir > squatPlan.target_rir ? bo.aboveTargetWeight : bo.atOrBelowTargetWeight;
-  const correction = PERSONA.facts.correctionEndStates.find((c) => c.lift_code === rdlPlan.lift_code) || PERSONA.facts.correctionEndStates[0];
-  const fatFingerWeight = correction.forbiddenWeight;
-  const closeoutMinutes = PERSONA.variation.closeoutMinutes;
-  const asSet = (p, weight, reps, rir) => ({ exercise: p.exercise, lift_code: p.lift_code, weight, reps, rir });
-  const squatLineSets = [
-    ...PERSONA.variation.squatWarmups.map((w) => asSet(squatPlan, w.weight, w.reps, w.rir)),
-    asSet(squatPlan, squatPlan.target_weight, squatPlan.target_reps, topRir),
-  ];
-  const backoffSets = Array.from({ length: bo.sets }, () => asSet(squatPlan, backoffWeight, bo.reps, bo.rir));
-  const benchSets = Array.from({ length: benchPlan.target_sets }, () => asSet(benchPlan, benchPlan.target_weight, benchPlan.target_reps, benchPlan.target_rir));
-  const rdlLoggedSets = Array.from({ length: rdlPlan.target_sets }, () => asSet(rdlPlan, fatFingerWeight, rdlPlan.target_reps, rdlPlan.target_rir));
-  const rdlCorrectedSets = Array.from({ length: correction.sets }, () => asSet(rdlPlan, correction.weight, correction.reps, correction.rir));
-  const preCorrectionSets = [...squatLineSets, ...backoffSets, ...benchSets, ...rdlLoggedSets];
-  const expectedSets = [...squatLineSets, ...backoffSets, ...benchSets, ...rdlCorrectedSets];
+  const draw = SLUG === 'marcus'
+    ? { topRirDelta: PERSONA.variation.topRirDeltaChoices[Math.floor(rng() * PERSONA.variation.topRirDeltaChoices.length)] }
+    : {};
+  const scenario = buildDeclaration(SLUG, PERSONA, draw);
+  const expectedSets = scenario.expectedSets;
   const loggedNames = expectedSets.map((s) => s.exercise);
-  const declaration = {
-    persona_slug: SLUG, seed, top_rir_delta: topRirDelta, top_rir: topRir,
-    backoff_weight: backoffWeight, fat_finger_weight: fatFingerWeight,
-    closeout_minutes: closeoutMinutes, expected_sets: expectedSets,
-    expected_counts: PERSONA.expected,
-  };
-  const squatText = `Squat ${PERSONA.variation.squatWarmups.map((w) => `${w.weight} ${w.reps}/${w.rir}`).join(' ')} ${squatPlan.target_weight} ${squatPlan.target_reps}/${topRir}`;
-  const backoffText = `${backoffWeight} ${bo.reps}/${bo.rir} x${bo.sets}`;
-  const batchText = `Bench ${benchPlan.target_weight} ${benchPlan.target_reps}/${benchPlan.target_rir} x${benchPlan.target_sets}. RDL ${fatFingerWeight} ${rdlPlan.target_reps}/${rdlPlan.target_rir} x${rdlPlan.target_sets}.`;
-  const correctionText = `Typo. ${correction.weight}.`;
-  const closeoutText = `Done. ${closeoutMinutes} min.`;
+  const closeoutMinutes = scenario.closeoutMinutes;
+  const closeoutText = scenario.closeoutText;
+  const declaration = { persona_slug: SLUG, seed, ...scenario.declaration };
+  // The retained buffer the fact checks judge: Marcus's after the correction
+  // beat, Priya's after the final log turn. Each turn section sets it.
+  let finalBuffer = null;
 
   // ── The run-start marker: written and verified before the first turn ───────
   // A persona run declares NO rehearsal session number (null) — the marker
@@ -591,33 +583,26 @@ test('persona scenario (scored): fixture beats through the real app under the sc
       err || `session log holds ${count} set(s) after the beat (expected ${expectedLogCount})`);
     return reply;
   }
-  const readBufferSets = async () => page.evaluate((planItems) => {
-    // The session log stamps each entry with the name the LOGGING lane used,
-    // which is not always the plan's exercise name: Marcus's batch entry for
-    // the Romanian Deadlift is stamped 'RDL' (first run, 20261030T001500 —
-    // its parsed sets were correct and the comparison missed them purely on
-    // the name). Map through every name a plan item legitimately carries:
-    // its exercise name, its lift-code stem (RDL01 → 'rdl'), and its acronym.
-    const keyOf = (s) => String(s || '').trim().toLowerCase().replace(/[-\s]+/g, ' ');
-    const byName = {};
-    for (const p of planItems) {
-      byName[keyOf(p.exercise)] = p;
-      byName[keyOf(String(p.lift_code || '').replace(/[0-9]+$/, ''))] = p;
-      byName[keyOf(String(p.exercise).split(/\s+/).map((w) => w[0]).join(''))] = p;
-    }
-    return (window.getSessionLog() || []).map((x) => {
-      const rawName = String((x && (x.canonical || x.exercise || x.name)) || '');
-      const plan = byName[keyOf(rawName)];
-      return {
-        exercise: plan ? plan.exercise : rawName,
-        lift_code: plan ? plan.lift_code : '',
-        weight: Number(x && x.weight), reps: Number(x && x.reps), rir: Number(x && x.rir),
-      };
-    });
-  }, PERSONA.plan);
+  // The map is built in Node (persona-scenario.js, unit-pinned) and the
+  // session log is fetched from the page, then mapped in Node through the
+  // same mapBufferSets the unit tests exercise — so the mapping the run
+  // judges is the mapping the tests pin. Keys: the plan exercise name,
+  // the lift-code stem, the acronym, plus the fixture's own catalog
+  // synonyms for that lift (Priya: 'rows' → OAR01, 'db bench' → DBB01).
+  // Marcus's catalogRows is [], so his map is exactly the old one.
+  const bufferNameMap = buildBufferNameMap(PERSONA.plan, PERSONA.catalogRows);
+  const readBufferSets = async () => mapBufferSets(
+    await page.evaluate(() => window.getSessionLog() || []),
+    bufferNameMap,
+  );
   async function bufferCheck(id, expected) {
     const buf = await readBufferSets();
-    const cmp = compareSetMultisets(buf, expected);
+    // Both sides through declaredSet, the one comparable set shape: the
+    // declaration carries rir: null for Priya's bench bail, and only the
+    // num() normalization turns that null into the NaN the mapped buffer
+    // carries — a raw comparison would fail a parse-correct run on
+    // "null" vs "NaN". This mirrors the retained-buffer fact check.
+    const cmp = compareSetMultisets(buf.map(declaredSet), expected.map(declaredSet));
     beat(id, cmp.ok, cmp.ok
       ? `retained buffer equals the declared sets (${buf.length})`
       : `undeclared: [${cmp.unmatched.join('; ')}]; missing: [${cmp.missing.join('; ')}]`);
@@ -712,42 +697,87 @@ test('persona scenario (scored): fixture beats through the real app under the sc
   await page.screenshot({ path: path.join(artDir, '01-plan-accepted.png'), fullPage: true }).catch(() => {});
 
   // ── 3. The declared beats, in fixture order ────────────────────────────────
-  await runTurn('beat-plan-ask', 'eligible_question', 'Plan.', null);
-  await runTurn('beat-squat-line', 'squat-warmups-and-top', squatText, squatLineSets.length);
-  await bufferCheck('parsed-sets-after-squat', squatLineSets);
-  await runTurn('beat-backoffs', 'squat-backoffs', backoffText, squatLineSets.length + backoffSets.length);
-  await bufferCheck('parsed-sets-after-backoffs', [...squatLineSets, ...backoffSets]);
-  await runTurn('beat-batch', 'bench-rdl-batch', batchText, preCorrectionSets.length);
-  await bufferCheck('parsed-sets-after-batch', preCorrectionSets);
+  // Slug-dispatched: the turn section is the one persona-specific part of
+  // the driver (the instruments around it are shared). Marcus's branch is
+  // his Slice 2b sequence verbatim, re-indented only; Priya's follows her
+  // fixture's beats in script order. The dispatch above already refused
+  // any other slug, so the else branch is Marcus.
+  if (SLUG === 'priya') {
+    const { squatSets, benchSets, turnTexts } = scenario;
+    await runTurn('beat-plan-ask', 'eligible_question', turnTexts.planAsk, null);
+    await runTurn('beat-rir-question', 'eligible_question', turnTexts.rirQuestion, null);
+    await runTurn('beat-squat-log', 'squat-log', turnTexts.squatLog, squatSets.length);
+    await bufferCheck('parsed-sets-after-squat', squatSets);
+    // The bench turn is interrogative, not imperative ("Is that bad??") —
+    // the live path must log 25 x 8 x3 from the question plus the plan,
+    // with RIR null (golden SC7-PRIYA-02). If it cannot, this beat fails
+    // honestly and the run continues to judging: that is a parse-recovery
+    // finding, not a driver defect.
+    await runTurn('beat-bench-form-bail', 'bench-form-bail', turnTexts.benchBail, squatSets.length + benchSets.length);
+    await bufferCheck('parsed-sets-after-bench', [...squatSets, ...benchSets]);
+    // The revision moment: the bench target moves 10 → 8 on form here, so
+    // the mutation boundary is taken now — after it, a completed-change
+    // claim is earned; before it, it is not. (Marcus takes his at the
+    // correction beat; Priya has no correction beat, by design.)
+    mutationBoundary = await takeBoundary();
+    // The mixed turn: rows sets plus the plank hold in ONE message, the
+    // script's shape. The session-log count after it is NOT a declared
+    // quantity — a modality entry may or may not join the session log,
+    // and the live path decides that — so the turn asserts reply
+    // settlement only, and the buffer multiset check below is the
+    // assertion for the rows sets. A plank entry surfacing in the session
+    // log would fail that check honestly (unmapped entry), routing to a
+    // buffer-mapping follow-up rather than a silent pass.
+    await runTurn('beat-rows-and-plank', 'rows-and-plank', turnTexts.rowsPlank, null);
+    finalBuffer = await bufferCheck('parsed-sets-after-rows-plank', expectedSets);
+    stateCheck('buffer-equals-declaration-after-rows-plank',
+      beats.find((b) => b.id === 'parsed-sets-after-rows-plank')?.ok === true,
+      'the retained buffer after the final log turn equals the run\'s declared sets');
+    await runTurn('beat-progress-doubt', 'progress-doubt', turnTexts.progressDoubt, null);
+  } else {
+    const {
+      squatLineSets, backoffSets, preCorrectionSets,
+      squatText, backoffText, batchText, correctionText,
+      rdlPlan, correction, fatFingerWeight,
+    } = scenario;
+    await runTurn('beat-plan-ask', 'eligible_question', 'Plan.', null);
+    await runTurn('beat-squat-line', 'squat-warmups-and-top', squatText, squatLineSets.length);
+    await bufferCheck('parsed-sets-after-squat', squatLineSets);
+    await runTurn('beat-backoffs', 'squat-backoffs', backoffText, squatLineSets.length + backoffSets.length);
+    await bufferCheck('parsed-sets-after-backoffs', [...squatLineSets, ...backoffSets]);
+    await runTurn('beat-batch', 'bench-rdl-batch', batchText, preCorrectionSets.length);
+    await bufferCheck('parsed-sets-after-batch', preCorrectionSets);
 
-  // The correction beat: the retained buffer must reach the corrected
-  // end-state, and the mutation boundary is taken at that moment — after it,
-  // a completed-change claim is earned; before it, it is not. The poll below
-  // is scoped to the corrected lift's sets, matching the authoritative fact
-  // (persona-retained-buffer-corrected): another lift may legitimately use
-  // the fat-finger weight (the unrevised squat back-offs ARE 285), and a
-  // session-wide ban would fail a correct run on that coincidence (#1633).
-  await runTurn('beat-correction', 'rdl-correction', correctionText, preCorrectionSets.length);
-  let bufferCorrected = false;
-  try {
-    await expect.poll(async () => {
-      const buf = await readBufferSets();
-      const rdl = buf.filter((s) => s.lift_code === rdlPlan.lift_code);
-      bufferCorrected = rdl.length === correction.sets
-        && rdl.every((s) => s.weight === correction.weight)
-        && !rdl.some((s) => s.weight === fatFingerWeight);
-      return bufferCorrected;
-    }, { timeout: 30000 }).toBe(true);
-  } catch { /* recorded below */ }
-  const bufferAfterCorrection = await bufferCheck('parsed-sets-after-correction', expectedSets);
-  beat('correction-landed-in-buffer', bufferCorrected,
-    bufferCorrected
-      ? `retained buffer carries ${correction.weight} on all ${correction.sets} RDL sets and no ${fatFingerWeight} on any RDL set`
-      : 'the retained buffer did not reach the corrected end-state inside the poll window');
-  stateCheck('buffer-equals-declaration-after-correction',
-    beats.find((b) => b.id === 'parsed-sets-after-correction')?.ok === true,
-    'the retained buffer after the correction equals the run\'s declared sets');
-  mutationBoundary = await takeBoundary();
+    // The correction beat: the retained buffer must reach the corrected
+    // end-state, and the mutation boundary is taken at that moment — after it,
+    // a completed-change claim is earned; before it, it is not. The poll below
+    // is scoped to the corrected lift's sets, matching the authoritative fact
+    // (persona-retained-buffer-corrected): another lift may legitimately use
+    // the fat-finger weight (the unrevised squat back-offs ARE 285), and a
+    // session-wide ban would fail a correct run on that coincidence (#1633).
+    await runTurn('beat-correction', 'rdl-correction', correctionText, preCorrectionSets.length);
+    let bufferCorrected = false;
+    try {
+      await expect.poll(async () => {
+        const buf = await readBufferSets();
+        const rdl = buf.filter((s) => s.lift_code === rdlPlan.lift_code);
+        bufferCorrected = rdl.length === correction.sets
+          && rdl.every((s) => s.weight === correction.weight)
+          && !rdl.some((s) => s.weight === fatFingerWeight);
+        return bufferCorrected;
+      }, { timeout: 30000 }).toBe(true);
+    } catch { /* recorded below */ }
+    const bufferAfterCorrection = await bufferCheck('parsed-sets-after-correction', expectedSets);
+    beat('correction-landed-in-buffer', bufferCorrected,
+      bufferCorrected
+        ? `retained buffer carries ${correction.weight} on all ${correction.sets} RDL sets and no ${fatFingerWeight} on any RDL set`
+        : 'the retained buffer did not reach the corrected end-state inside the poll window');
+    stateCheck('buffer-equals-declaration-after-correction',
+      beats.find((b) => b.id === 'parsed-sets-after-correction')?.ok === true,
+      'the retained buffer after the correction equals the run\'s declared sets');
+    mutationBoundary = await takeBoundary();
+    finalBuffer = bufferAfterCorrection;
+  }
 
   // Effort (the script supplies duration only), then the closeout beat. The
   // closeout is sent WITHOUT settleReply: its product surface is the closeout
@@ -779,11 +809,12 @@ test('persona scenario (scored): fixture beats through the real app under the sc
     await expect(page.locator('.closeout-confirm')).toHaveCount(1, { timeout: 60000 });
     previewText = await page.locator('.closeout-confirm').innerText();
     let preState = null;
-    try { preState = await durableRows(workoutId); } catch (e) { preState = e.status === 403 ? { log_cleaned: { rows: [] }, effort: { rows: [] } } : null; }
+    try { preState = await durableRows(workoutId); } catch (e) { preState = e.status === 403 ? { log_cleaned: { rows: [] }, effort: { rows: [] }, modality: { rows: [] } } : null; }
     noWorkoutRowsPreApproval = Boolean(preState)
-      && preState.log_cleaned.rows.length === 0 && preState.effort.rows.length === 0;
+      && preState.log_cleaned.rows.length === 0 && preState.effort.rows.length === 0
+      && (preState.modality ? preState.modality.rows.length === 0 : true);
     beat('no-write-before-approval', noWorkoutRowsPreApproval,
-      preState ? `pre-approval durable state: ${preState.log_cleaned.rows.length} log, ${preState.effort.rows.length} effort rows` : 'pre-approval durable state unreadable');
+      preState ? `pre-approval durable state: ${preState.log_cleaned.rows.length} log, ${preState.effort.rows.length} effort rows${preState.modality ? `, ${preState.modality.rows.length} modality rows` : ''}` : 'pre-approval durable state unreadable');
     const saveControl = page.locator('.review:not(.done) .rv-save');
     await expect(saveControl).toBeVisible({ timeout: 40000 });
     await page.screenshot({ path: path.join(artDir, '02-preview.png'), fullPage: true }).catch(() => {});
@@ -799,13 +830,20 @@ test('persona scenario (scored): fixture beats through the real app under the sc
   beat('preview-observed', previewText.trim().length > 0, previewText ? 'the closeout preview rendered' : 'no closeout preview text captured');
 
   // ── 5. Durable state, session-filtered; repeat probe; foreign probe ────────
-  let d = { log_cleaned: { rows: [] }, effort: { rows: [] }, session_plans: { rows: [] }, session_plan_sets: { rows: [] } };
+  // The poll waits on the Log_Cleaned count only: the modality row (Priya's
+  // plank) lands through no turn the driver controls, and its absence is a
+  // scorecard verdict, not a reason to hang the run — the final durable
+  // read below carries whatever modality rows exist by judging time.
+  // expectedLogCleaned splits the fixture's log_rows on its declared
+  // modality_rows (Marcus: 13 − 0, unchanged).
+  const expectedLogCleaned = PERSONA.expected.log_rows - (PERSONA.expected.modality_rows || 0);
+  let d = { log_cleaned: { rows: [] }, effort: { rows: [] }, session_plans: { rows: [] }, session_plan_sets: { rows: [] }, modality: { rows: [] } };
   try {
     await expect.poll(async () => {
       try { d = await durableRows(workoutId); } catch { return -1; }
       return d.log_cleaned.rows.length;
-    }, { timeout: 240000, intervals: [8000, 12000, 15000, 20000] }).toBe(PERSONA.expected.log_rows);
-  } catch { beat('durable-log-rows-landed', false, `durable Log_Cleaned rows stuck at ${d.log_cleaned.rows.length} (expected ${PERSONA.expected.log_rows})`); }
+    }, { timeout: 240000, intervals: [8000, 12000, 15000, 20000] }).toBe(expectedLogCleaned);
+  } catch { beat('durable-log-rows-landed', false, `durable Log_Cleaned rows stuck at ${d.log_cleaned.rows.length} (expected ${expectedLogCleaned})`); }
   const liveWritesBefore = saveResponses.length;
   const repeatClick = await page.evaluate(() => {
     const b = document.getElementById('approve-btn');
@@ -834,7 +872,8 @@ test('persona scenario (scored): fixture beats through the real app under the sc
     dupRows = (dRetry.log_cleaned.rows.length - d.log_cleaned.rows.length)
       + (dRetry.effort.rows.length - d.effort.rows.length)
       + (dRetry.session_plans.rows.length - d.session_plans.rows.length)
-      + (dRetry.session_plan_sets.rows.length - d.session_plan_sets.rows.length);
+      + (dRetry.session_plan_sets.rows.length - d.session_plan_sets.rows.length)
+      + ((dRetry.modality ? dRetry.modality.rows.length : 0) - (d.modality ? d.modality.rows.length : 0));
     d = dRetry;
   } catch { dupRows = -1; }
   let foreignStatus = 0;
@@ -886,10 +925,17 @@ test('persona scenario (scored): fixture beats through the real app under the sc
     && reviewCorrIds.every((id) => id === workoutId);
 
   // ── 9. The eligible-question proof, completed if the first ask fell short ──
-  let geminiEligible = coachResponses.filter((r) => r.phase === 'eligible_question' && r.source === 'gemini');
+  // The proof phases are the ask turns: Marcus's plan-ask, Priya's plan-ask
+  // and RIR question (both 'eligible_question'), plus Priya's progress-doubt
+  // turn, which carries its own phase so the two distinct beats are never
+  // conflated — but a live Gemini reply on either ask family still proves a
+  // live provider turn was observed. Marcus never runs progress-doubt, so
+  // this filter behaves identically for him.
+  const ELIGIBLE_QUESTION_PHASES = new Set(['eligible_question', 'progress-doubt']);
+  let geminiEligible = coachResponses.filter((r) => ELIGIBLE_QUESTION_PHASES.has(r.phase) && r.source === 'gemini');
   if (geminiEligible.length === 0) {
     await runTurn('beat-eligible-retry', 'eligible_question', 'One more thing - anything I should focus on for recovery tonight?', null);
-    geminiEligible = coachResponses.filter((r) => r.phase === 'eligible_question' && r.source === 'gemini');
+    geminiEligible = coachResponses.filter((r) => ELIGIBLE_QUESTION_PHASES.has(r.phase) && r.source === 'gemini');
     try {
       const after = await durableRows(workoutId);
       beat('question-turn-writes-nothing', after.log_cleaned.rows.length === d.log_cleaned.rows.length,
@@ -930,13 +976,20 @@ test('persona scenario (scored): fixture beats through the real app under the sc
   };
 
   // ── 11. Persona fact checks (design §3.4) ──────────────────────────────────
+  // The buffer moment differs by persona (Marcus: after the correction;
+  // Priya: after the final log turn), so the detail names it — a Priya
+  // detail must never claim a correction that never happened.
   const personaFacts = checkPersonaFacts({
     fixture: PERSONA,
     expectedSets,
     loggedNames,
-    bufferSets: bufferAfterCorrection,
+    bufferSets: finalBuffer,
     durableLogRows: d.log_cleaned.rows,
     observedRemaining: obsRemaining,
+    ...(SLUG === 'priya' ? {
+      bufferContext: 'after the final log turn',
+      bufferNote: '(revised bench target in place, every other lift untouched)',
+    } : {}),
   });
   for (const c of personaFacts.checks) beat(c.id, c.ok, c.detail);
 
@@ -971,11 +1024,13 @@ test('persona scenario (scored): fixture beats through the real app under the sc
   const sidIdx = {
     log: logCleanedColumns.indexOf('session_id'), eff: effortColumns.indexOf('session_id'),
     sp: sessionPlansColumns.indexOf('session_id'), sps: sessionPlanSetsColumns.indexOf('session_id'),
+    mod: modalityLogColumns.indexOf('session_id'),
   };
   const foreignRows = d.log_cleaned.rows.filter((r) => String(r[sidIdx.log]).trim() !== workoutId).length
     + d.effort.rows.filter((r) => String(r[sidIdx.eff]).trim() !== workoutId).length
     + spRows.filter((r) => String(r[sidIdx.sp]).trim() !== workoutId).length
-    + spsRows.filter((r) => String(r[sidIdx.sps]).trim() !== workoutId).length;
+    + spsRows.filter((r) => String(r[sidIdx.sps]).trim() !== workoutId).length
+    + (d.modality ? d.modality.rows.filter((r) => String(r[sidIdx.mod]).trim() !== workoutId).length : 0);
   const previews = saveResponses.filter((r) => r.capture_failed !== true && r.test_mode === true);
   const lives = saveResponses.filter((r) => r.capture_failed !== true && r.test_mode !== true);
   const lastPreview = previews[previews.length - 1] || null;
@@ -1028,6 +1083,7 @@ test('persona scenario (scored): fixture beats through the real app under the sc
         rows_match_declaration: personaFacts.checks.find((c) => c.id === 'persona-parsed-set-equality')?.ok === true,
         detail: (personaFacts.checks.find((c) => c.id === 'persona-parsed-set-equality') || {}).detail || '',
       },
+      modality: { row_count: d.modality ? d.modality.rows.length : 0 },
       effort: { row_count: d.effort.rows.length },
       foreign_rows: foreignRows,
       foreign_id_probe_status: foreignStatus,
@@ -1037,7 +1093,8 @@ test('persona scenario (scored): fixture beats through the real app under the sc
       preview_no_write_confirmed: Boolean(lastPreview && lastPreview.sheet_written === false && lastPreview.no_write_confirmed === true) && noWorkoutRowsPreApproval,
       preview_before_write: Boolean(lastPreview && firstLive && lastPreview.at < firstLive.at),
       approvals_clicked: 1,
-      write_success: Boolean(firstLive && firstLive.sheet_write === 'success') && d.log_cleaned.rows.length === PERSONA.expected.log_rows,
+      write_success: Boolean(firstLive && firstLive.sheet_write === 'success')
+        && d.log_cleaned.rows.length + (d.modality ? d.modality.rows.length : 0) === PERSONA.expected.log_rows,
       repeat_attempted: repeatOutcome !== 'no-op-unproven',
       repeat_outcome: repeatOutcome,
       duplicate_rows: dupRows,

@@ -200,7 +200,7 @@ if (COACH_SCRIPT) {
   };
 }
 
-const { logCleanedColumns, effortColumns, sessionPlanSetsColumns, sessionPlansColumns } = require('../../../config/columns');
+const { logCleanedColumns, effortColumns, sessionPlanSetsColumns, sessionPlansColumns, modalityLogColumns } = require('../../../config/columns');
 
 // --- Synthetic training history (no owner data) ---------------------------------
 // Enough Log_Cleaned history that identity resolution, recommendations, and the
@@ -850,17 +850,36 @@ const stateServer = http.createServer((req, res) => {
           .filter(r => Array.isArray(r) && String(r[idx] || '').trim() === wantSession);
         return { rows, total };
       }
+      // Modality_Log (persona slice under #1607): a persona whose script
+      // ends a set block with a timed hold (Priya's plank) declares that
+      // hold as a modality row, not a Log_Cleaned row — the verifier must
+      // read the tab or the hold is unjudgeable. The tab is OPTIONAL in
+      // the sheet contract, so a workbook without it degrades to zero rows
+      // here (the sheets module's own range_unresolved class — the same
+      // degradation other optional-tab readers already depend on); any
+      // OTHER read failure still throws, so a real verifier failure can
+      // never masquerade as "no modality rows". The session-id column is
+      // index 1 in modalityLogColumns, so the same session filter and the
+      // same wrote-this-session guard above apply unchanged.
+      const readSessionOptional = async (tab, contract) => {
+        try { return await readSession(tab, contract); }
+        catch (e) {
+          if (real.sheetsReadFailureClass && real.sheetsReadFailureClass(e) === 'range_unresolved') return { rows: [], total: 0 };
+          throw e;
+        }
+      };
       try {
-        const [log, effort, plans, planSets] = await Promise.all([
+        const [log, effort, plans, planSets, modality] = await Promise.all([
           readSession('Log_Cleaned', logCleanedColumns),
           readSession('Effort', effortColumns),
           readSession('Session_Plans', sessionPlansColumns),
           readSession('Session_Plan_Sets', sessionPlanSetsColumns),
+          readSessionOptional('Modality_Log', modalityLogColumns),
         ]);
         res.end(JSON.stringify({
           sandbox_last6: SANDBOX_SPREADSHEET_ID_LAST6,
           session_id: wantSession,
-          log_cleaned: log, effort, session_plans: plans, session_plan_sets: planSets,
+          log_cleaned: log, effort, session_plans: plans, session_plan_sets: planSets, modality,
         }));
       } catch (error) {
         res.statusCode = 500;
