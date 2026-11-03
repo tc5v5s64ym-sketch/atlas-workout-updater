@@ -722,7 +722,11 @@ test('persona scenario (scored): fixture beats through the real app under the sc
 
   // The correction beat: the retained buffer must reach the corrected
   // end-state, and the mutation boundary is taken at that moment — after it,
-  // a completed-change claim is earned; before it, it is not.
+  // a completed-change claim is earned; before it, it is not. The poll below
+  // is scoped to the corrected lift's sets, matching the authoritative fact
+  // (persona-retained-buffer-corrected): another lift may legitimately use
+  // the fat-finger weight (the unrevised squat back-offs ARE 285), and a
+  // session-wide ban would fail a correct run on that coincidence (#1633).
   await runTurn('beat-correction', 'rdl-correction', correctionText, preCorrectionSets.length);
   let bufferCorrected = false;
   try {
@@ -731,14 +735,14 @@ test('persona scenario (scored): fixture beats through the real app under the sc
       const rdl = buf.filter((s) => s.lift_code === rdlPlan.lift_code);
       bufferCorrected = rdl.length === correction.sets
         && rdl.every((s) => s.weight === correction.weight)
-        && !buf.some((s) => s.weight === fatFingerWeight);
+        && !rdl.some((s) => s.weight === fatFingerWeight);
       return bufferCorrected;
     }, { timeout: 30000 }).toBe(true);
   } catch { /* recorded below */ }
   const bufferAfterCorrection = await bufferCheck('parsed-sets-after-correction', expectedSets);
   beat('correction-landed-in-buffer', bufferCorrected,
     bufferCorrected
-      ? `retained buffer carries ${correction.weight} on all ${correction.sets} RDL sets and no ${fatFingerWeight} anywhere`
+      ? `retained buffer carries ${correction.weight} on all ${correction.sets} RDL sets and no ${fatFingerWeight} on any RDL set`
       : 'the retained buffer did not reach the corrected end-state inside the poll window');
   stateCheck('buffer-equals-declaration-after-correction',
     beats.find((b) => b.id === 'parsed-sets-after-correction')?.ok === true,
