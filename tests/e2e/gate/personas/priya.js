@@ -157,8 +157,14 @@ module.exports = {
   // test/fixtures/personaLoggingGoldens.js: plank = durationSec); it
   // counts as one log row in the count above — the settled call for this
   // fixture, and the rows-and-plank finisher beat above declares it.
+  //   session_plans_events: no item_outcome — Session 7 has no skip and no
+  //   substitution, so none occurs (follow-up to #1636; the earlier
+  //   item_outcome: 1 was carried over from the rehearsal scenario shape).
+  //   The bench form-bail is a target revision (endorsed-revision class),
+  //   which emits no item_outcome; the scenario's lone "skip" is the idiom
+  //   "the part most people skip," not a plan-item skip.
   expected: {
-    session_plans_events: { plan_accepted: 3, item_outcome: 1, session_closeout: 1 },
+    session_plans_events: { plan_accepted: 3, session_closeout: 1 },
     plan_set_rows: 9,
     log_rows: 10,
     effort_supplied: true,
