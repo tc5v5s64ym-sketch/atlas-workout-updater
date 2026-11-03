@@ -128,8 +128,11 @@ module.exports = {
   // run the beats, so nothing here is asserted yet.
   //   plan_set_rows: 1 (squat top) + 3 (bench) + 3 (RDL) = 7 declared plan sets.
   //   log_rows: 3 warmups + 1 top + 3 back-offs + 3 bench + 3 RDL = 13.
+  //   session_plans_events: no item_outcome — this scenario has no skip and
+  //   no substitution, so none occurs (#1636; the earlier item_outcome: 1 was
+  //   carried over from the rehearsal scenario shape).
   expected: {
-    session_plans_events: { plan_accepted: 3, item_outcome: 1, session_closeout: 1 },
+    session_plans_events: { plan_accepted: 3, session_closeout: 1 },
     plan_set_rows: 7,
     log_rows: 13,
     effort_supplied: true,
