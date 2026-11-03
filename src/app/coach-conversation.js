@@ -32,6 +32,7 @@ import {
   isTurnResponseAuthoritative,
   mayContinueTurnResponse,
 } from './turnCorrelation.js';
+import { findPlanEntry, planMismatchForLift, formatPlanMismatchLine } from './planConformance.js';
 
 (function () {
   'use strict';
@@ -1579,12 +1580,49 @@ import {
     const { bubble, body } = handle;
 
     const activeSession = typeof getActivePlannedSession === 'function' ? getActivePlannedSession() : null;
+    // #1632: deterministic plan-conformance line for one logged lift, or null.
+    // Only an accepted plan carries a committed target; a lift with no plan
+    // entry is off-plan extra work (normal flow); a substituted lift's slot
+    // prescription changed, so the substitution flow already narrates it.
+    // Direct textContent, like the readback itself: a fact line, never prose
+    // that turn cancellation could drop.
+    const planMismatchLineFor = (exerciseName, sets) => {
+      const accepted = activeSession && activeSession.accepted === true;
+      if (!accepted) return null;
+      if (Array.isArray(substitutions)) {
+        const key = String(exerciseName).toLowerCase();
+        for (const sub of substitutions) {
+          const logged = sub && sub.logged && (sub.logged.name || sub.logged);
+          if (typeof logged === 'string' && logged.toLowerCase() === key) return null;
+        }
+      }
+      // The catalog bridges aliases to codes ("RDL" → RDL01), so a logged
+      // alias still reaches its plan slot; a missing catalog falls back to
+      // name matching alone.
+      const code = (typeof liftCodeForExercise === 'function') ? liftCodeForExercise(exerciseName) : null;
+      const entry = findPlanEntry(exerciseName, activeSession, code);
+      if (!entry) return null;
+      // Name the plan side by the plan entry (canonical), not the logged alias:
+      // "Plan had Romanian Deadlift at…" reads strictly more accurately than
+      // "Plan had RDL at…" when the athlete logged the shorthand.
+      return formatPlanMismatchLine(entry.canonicalName || entry.name || exerciseName, planMismatchForLift(sets, entry));
+    };
+    const appendPlanMismatch = (exerciseName, sets, beforeNode) => {
+      const line = planMismatchLineFor(exerciseName, sets);
+      if (!line) return;
+      const mm = document.createElement('div');
+      mm.className = 'coach-msg plan-mismatch';
+      mm.textContent = line;
+      if (beforeNode) bubble.insertBefore(mm, beforeNode);
+      else bubble.appendChild(mm);
+    };
     // FA: render per lift as [card -> coaching -> Next] in order. Primary card before
     // `body` so a single-lift entry is byte-identical; additional lifts append their own
     // blocks (slice(1) loop). Session handoff runs once at the end. (docs/INVESTIGATION_2026-06-25b.md)
     const primary = exercises[0];
     bubble.insertBefore(buildReadback(primary.exercise, primary.sets, planStepFor(primary.exercise, activeSession),
       isUnverifiedName(unverified, primary.exercise)), body);
+    appendPlanMismatch(primary.exercise, primary.sets, body);
     const code = liftCodeForExercise(primary.exercise);
     let rec = null;
     if (code) {
@@ -1673,6 +1711,7 @@ import {
       // after the primary block), then its coaching, then its Next.
       bubble.appendChild(buildReadback(ex.exercise, ex.sets, planStepFor(ex.exercise, activeSession),
         isUnverifiedName(unverified, ex.exercise)));
+      appendPlanMismatch(ex.exercise, ex.sets, null);
       const exCode = liftCodeForExercise(ex.exercise);
       let exRec = null;
       if (exCode) {
