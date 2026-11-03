@@ -76,6 +76,14 @@ const {
   exportLiveReceipts,
   importReceipts
 } = require('./services/idempotency');
+// #1629 — session-scoped claim around /api/log-workout's read-check-append
+// (services/sessionWriteClaim.js). beginWrite is write_id-keyed only; this
+// is the second admission gate, keyed on the session.
+const {
+  acquireSessionClaim,
+  releaseSessionClaim,
+  waitForSessionClaim,
+} = require('./services/sessionWriteClaim');
 // Supabase hot-path migration, PR S2 — the SHADOW write lane. TEMPORARY: S4
 // deletes it (docs/SUPABASE_HOT_PATH_MIGRATION.md §5.2, sunset in §5.4).
 // Google Sheets stays the sole live authority for every read and every write. The
@@ -3550,6 +3558,25 @@ app.post('/api/log-workout', async (req, res) => {
     return standardSuccess(req, res, message, duplicateBody, record.status === 'completed' ? 200 : 409);
   }
 
+  // #1629 — session-scoped uniqueness claim around the read-check-append
+  // below. beginWrite admits one record per write_id, so two overlapping
+  // saves with DIFFERENT write_ids are both admitted; without this claim
+  // both read the sheet before either appends and both append. The claim
+  // is held from here until the guarded section returns (every return
+  // below releases it next to its completeWrite/failWrite). A refused
+  // caller waits for the holder, then re-acquires and re-reads, so it
+  // lands on the route's existing truthful verdict instead of a copy.
+  const sessionClaimKey = String(session_id).toLowerCase();
+  let sessionClaim = acquireSessionClaim(sessionClaimKey);
+  while (!sessionClaim.acquired) {
+    const holderReleased = await waitForSessionClaim(sessionClaim.wait);
+    if (!holderReleased) {
+      if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+      return standardError(req, res, 'Duplicate session; another save for this session is already in progress. Retry after it completes.', null, 409);
+    }
+    sessionClaim = acquireSessionClaim(sessionClaimKey);
+  }
+
   if (formattedEffortRow) {
     let existingEffortSessionIds;
     try {
@@ -3557,11 +3584,13 @@ app.post('/api/log-workout', async (req, res) => {
     } catch (error) {
       console.error('❌ Failed to check duplicate session IDs:', error);
       if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+      releaseSessionClaim(sessionClaimKey, sessionClaim.token);
       return standardError(req, res, 'Failed to validate duplicate session.', null, 500);
     }
 
     if (existingEffortSessionIds.map(id => id.toLowerCase()).includes(String(session_id).toLowerCase())) {
       if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+      releaseSessionClaim(sessionClaimKey, sessionClaim.token);
       return standardError(req, res, 'Duplicate session.', null, 409);
     }
   }
@@ -3587,6 +3616,7 @@ app.post('/api/log-workout', async (req, res) => {
   } catch (error) {
     console.error('❌ Failed to check for duplicate log rows:', error);
     if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+    releaseSessionClaim(sessionClaimKey, sessionClaim.token);
     return standardError(req, res, 'Failed to validate duplicate log rows.', null, 500);
   }
 
@@ -3637,6 +3667,7 @@ app.post('/api/log-workout', async (req, res) => {
     if (duplicateBody.ledger_seal || duplicateBody.session_plans_closeout) {
       recordTurnWriteProof(payload, session_id, '/api/log-workout', duplicateBody);
     }
+    releaseSessionClaim(sessionClaimKey, sessionClaim.token);
     return standardSuccess(req, res, duplicateBody.message, duplicateBody, 200);
   }
 
@@ -3650,11 +3681,13 @@ app.post('/api/log-workout', async (req, res) => {
     });
     if (headerFailures.length > 0) {
       if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+      releaseSessionClaim(sessionClaimKey, sessionClaim.token);
       return standardError(req, res, schemaDriftMessage(headerFailures), schemaDriftDetails(headerFailures), 409);
     }
   } catch (error) {
     console.error('❌ Failed to validate sheet header contract:', error);
     if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+    releaseSessionClaim(sessionClaimKey, sessionClaim.token);
     return standardError(req, res, 'Failed to validate sheet header contract.', null, 500);
   }
 
@@ -3687,6 +3720,7 @@ app.post('/api/log-workout', async (req, res) => {
     } catch (error) {
       console.error('❌ Failed to append workout data:', error);
       if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+      releaseSessionClaim(sessionClaimKey, sessionClaim.token);
       return standardError(req, res, 'Failed to append workout data', process.env.NODE_ENV === 'production' ? null : error.message, 500);
     }
   }
@@ -3758,6 +3792,7 @@ app.post('/api/log-workout', async (req, res) => {
       if (logRowsWritten > 0) {
         recordTurnWriteProof(payload, session_id, '/api/log-workout', partialBody);
       }
+      releaseSessionClaim(sessionClaimKey, sessionClaim.token);
       return standardError(req, res, 'Effort row append failed after log rows were written.', partialBody, 500);
     }
   }
@@ -3861,12 +3896,16 @@ app.post('/api/log-workout', async (req, res) => {
     // or block the response, and the proof fields are copied verbatim (W1–W3 untouched).
     recordTurnWriteProof(payload, session_id, '/api/log-workout', responseBody);
 
+    releaseSessionClaim(sessionClaimKey, sessionClaim.token);
     return standardSuccess(req, res, 'log-workout processed', responseBody, 200);
   } catch (error) {
     console.error('❌ Failed to finalize workout response after append:', error);
     // The log (and any effort) rows are already on the sheet by this point, so
     // releasing the idempotency record would let a retried write_id re-append.
     // Record the write as completed instead (never failWrite a committed write).
+    // The session claim still releases: the rows are committed, so a waiter
+    // re-reading now sees them and lands on the duplicate verdict.
+    releaseSessionClaim(sessionClaimKey, sessionClaim.token);
     if (idempotency.enabled) {
       completeWrite(idempotency.write_id, idempotency.token, {
         message: 'Workout data appended; response finalization failed.',
