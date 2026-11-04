@@ -2604,3 +2604,51 @@ describe('ingest — a re-delivery of unchanged text cannot move a record (attri
     assert.equal(m.retroactive, true, 'a later-sequence re-delivery is not sequence proof');
   });
 });
+
+describe('durable_log_rows_exact — the modality split (Priya, Slice 2c fixture)', () => {
+  // The fixture's log_rows counts the plank hold (9 Log_Cleaned + 1
+  // Modality_Log = 10); the condition judges the SUM plus the modality
+  // count itself when declared. A scenario with no modality_rows declared
+  // (every rehearsal, Marcus) takes the old path exactly.
+  function modalityObs(logCleaned, modalityRows, modalityDeclared) {
+    const obs = greenObservations();
+    obs.scenario.expected = { ...obs.scenario.expected, log_rows: 12 };
+    if (modalityDeclared !== null) obs.scenario.expected.modality_rows = modalityDeclared;
+    obs.durable.log_cleaned = { row_count: logCleaned, rows_match_declaration: true };
+    if (modalityRows !== null) obs.durable.modality = { row_count: modalityRows };
+    return obs;
+  }
+
+  it('passes 11 Log_Cleaned + 1 modality against log_rows 12 with modality_rows 1', () => {
+    const card = scoreRehearsalRun(modalityObs(11, 1, 1));
+    const c = condition(card, 'durable_log_rows_exact');
+    assert.equal(c.status, 'PASS', c.detail);
+    assert.match(c.detail, /11 Log_Cleaned \+ 1 Modality_Log/);
+  });
+
+  it('fails 11 + 0 against modality_rows 1, naming the modality shortfall', () => {
+    const card = scoreRehearsalRun(modalityObs(11, 0, 1));
+    const c = condition(card, 'durable_log_rows_exact');
+    assert.equal(c.status, 'FAIL');
+    assert.match(c.detail, /expected 1 Modality_Log row\(s\), found 0/);
+  });
+
+  it('fails a missing modality observation against a declared modality_rows', () => {
+    const card = scoreRehearsalRun(modalityObs(11, null, 1));
+    assert.equal(condition(card, 'durable_log_rows_exact').status, 'FAIL');
+  });
+
+  it('fails 10 + 1 against log_rows 12 even when the modality count matches', () => {
+    const card = scoreRehearsalRun(modalityObs(10, 1, 1));
+    const c = condition(card, 'durable_log_rows_exact');
+    assert.equal(c.status, 'FAIL');
+    assert.match(c.detail, /expected 12 log rows \(Log_Cleaned \+ Modality_Log\), found 10 \+ 1/);
+  });
+
+  it('the undeclared path is unchanged: 12 + 0 passes with the old message', () => {
+    const card = scoreRehearsalRun(modalityObs(12, 0, null));
+    const c = condition(card, 'durable_log_rows_exact');
+    assert.equal(c.status, 'PASS', c.detail);
+    assert.equal(c.detail, '12 rows, matching the declared sets');
+  });
+});

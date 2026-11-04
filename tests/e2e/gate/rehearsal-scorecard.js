@@ -1561,9 +1561,29 @@ const CONDITIONS = Object.freeze([
       const ex = obs && obs.scenario && obs.scenario.expected;
       if (!d) return missing('the durable Log_Cleaned rows');
       if (!ex) return missing('the scenario declaration');
-      if (d.row_count !== ex.log_rows) return fail(`expected ${ex.log_rows} Log_Cleaned rows, found ${d.row_count}`);
+      // A persona whose script ends a set block with a timed hold (Priya's
+      // plank, Slice 2c) declares that hold as a Modality_Log row: the
+      // fixture's log_rows counts it (9 Log_Cleaned + 1 modality = 10),
+      // and the split is declared explicitly as modality_rows. The
+      // condition judges the SUM against log_rows, plus the modality
+      // count itself when declared — a strengthening, never a weakening:
+      // a run landing 9 + 0 fails here with both numbers named. A
+      // scenario with no modality_rows declared (every rehearsal, Marcus)
+      // takes the old path exactly: modality 0, same comparison, same
+      // pass message.
+      const modality = obs && obs.durable && obs.durable.modality;
+      const modalityRows = modality && Number.isFinite(modality.row_count) ? modality.row_count : 0;
+      const modalityDeclared = ex.modality_rows !== undefined && ex.modality_rows !== null ? ex.modality_rows : null;
+      if (modalityDeclared !== null && modalityRows !== modalityDeclared) {
+        return fail(`expected ${modalityDeclared} Modality_Log row(s), found ${modalityRows}`);
+      }
+      if (d.row_count + modalityRows !== ex.log_rows) {
+        return fail(`expected ${ex.log_rows} log rows (Log_Cleaned + Modality_Log), found ${d.row_count} + ${modalityRows}`);
+      }
       if (d.rows_match_declaration !== true) return fail(d.detail || 'the rows did not match the declared sets');
-      return pass(`${d.row_count} rows, matching the declared sets`);
+      return pass(modalityDeclared !== null
+        ? `${d.row_count} Log_Cleaned + ${modalityRows} Modality_Log rows, matching the declared sets`
+        : `${d.row_count} rows, matching the declared sets`);
     },
   },
   // (14) Effort behavior matches whether effort was supplied.

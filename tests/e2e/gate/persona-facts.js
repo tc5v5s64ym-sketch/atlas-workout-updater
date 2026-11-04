@@ -110,8 +110,18 @@ function checkPersonaFacts(input) {
   // session-wide ban would fail a correct run on a coincidence.
   const corrections = Array.isArray(facts.correctionEndStates) ? facts.correctionEndStates : [];
   if (!corrections.length) {
-    add('persona-correction-end-state', false,
-      'the fixture declares no correctionEndStates — a persona with a correction beat must declare its end-state');
+    // No correction declared. Whether that fails depends on whether the
+    // fixture HAS a correction beat: a correction beat with no declared
+    // end-state is an authoring hole (fail, as before); a fixture with no
+    // correction beat at all (Priya — no correction by design) has nothing
+    // to judge, so the check passes informationally instead of failing a
+    // correct run for lacking a beat it never promised.
+    const hasCorrectionBeat = Array.isArray(fixture.beats)
+      && fixture.beats.some((b) => b && b.kind === 'correction');
+    add('persona-correction-end-state', hasCorrectionBeat !== true,
+      hasCorrectionBeat
+        ? 'the fixture declares no correctionEndStates — a persona with a correction beat must declare its end-state'
+        : 'the fixture declares no correction beat and no correctionEndStates — no correction end-state to judge');
   }
   for (const c of corrections) {
     const lift = String(c.lift_code || '').trim().toUpperCase();
@@ -131,19 +141,50 @@ function checkPersonaFacts(input) {
         : problems.join('; '));
   }
 
+  // ── A declared revised target (Priya's form-bail end-state) ─────────────────
+  // The same shape as a correction end-state, for a revision that is NOT a
+  // correction: the bench target moves 10 → 8 on form, with no item_outcome
+  // (endorsed-revision class). The durable rows for that lift must be
+  // EXACTLY the revised sets. RIR: the fixture's benchRevisedTarget declares
+  // no rir (the bail turn states none, golden SC7-PRIYA-02 states null), so
+  // a recorded RIR fails — the row must carry no RIR at all. A fixture
+  // without benchRevisedTarget (Marcus) emits no check here, unchanged.
+  const revised = facts.benchRevisedTarget && typeof facts.benchRevisedTarget === 'object' ? facts.benchRevisedTarget : null;
+  if (revised) {
+    const lift = String(revised.lift_code || '').trim().toUpperCase();
+    const rows = durable.filter((s) => s.lift_code === lift);
+    const want = { weight: num(revised.weight), reps: num(revised.reps) };
+    const rirDeclared = revised.rir !== undefined && revised.rir !== null;
+    const problems = [];
+    if (rows.length !== num(revised.sets)) problems.push(`${rows.length} durable ${lift} row(s), declared ${revised.sets}`);
+    const off = rows.filter((s) => s.weight !== want.weight || s.reps !== want.reps
+      || (rirDeclared ? s.rir !== num(revised.rir) : !Number.isNaN(s.rir)));
+    if (off.length) problems.push(`${off.length} ${lift} row(s) off the revised end-state: ${off.map(setLabel).join('; ')}`);
+    add(`persona-bench-revised-target:${lift}`, problems.length === 0,
+      problems.length === 0
+        ? `${lift} durable rows read ${want.weight}x${want.reps}${rirDeclared ? `@${num(revised.rir)}` : ' with no RIR recorded'} x${revised.sets} — the revised target end-state`
+        : problems.join('; '));
+  }
+
   // ── The retained buffer carries the correction BEFORE any save ─────────────
   // The durable rows could in principle be repaired at write time; the script's
   // promise is stronger — the athlete's own session state is corrected the
   // moment the correction is accepted. Measured from the client's session log
   // after the correction beat, compared against the same declaration.
+  // For a persona with no correction beat (Priya), the buffer is measured
+  // after the final log turn instead; the caller names that moment via
+  // bufferContext/bufferNote so the detail never claims a correction that
+  // never happened. Marcus passes neither and gets the original wording.
+  const bufferContext = typeof i.bufferContext === 'string' ? i.bufferContext : 'after the correction';
+  const bufferNote = typeof i.bufferNote === 'string' ? i.bufferNote : '(corrected weight in place, every other lift untouched)';
   if (!Array.isArray(i.bufferSets)) {
     add('persona-retained-buffer-corrected', false,
-      'no retained-buffer measurement was recorded — the correction\'s in-session end-state is unproven');
+      `no retained-buffer measurement was recorded — the in-session end-state ${bufferContext} is unproven`);
   } else {
     const buf = compareSetMultisets(i.bufferSets.map(declaredSet), expected);
     add('persona-retained-buffer-corrected', buf.ok,
       buf.ok
-        ? 'the retained buffer after the correction equals the declared sets (corrected weight in place, every other lift untouched)'
+        ? `the retained buffer ${bufferContext} equals the declared sets ${bufferNote}`
         : `buffer sets not in the declaration: [${buf.unmatched.join('; ') || 'none'}]; declared sets missing from the buffer: [${buf.missing.join('; ') || 'none'}]`);
   }
 
