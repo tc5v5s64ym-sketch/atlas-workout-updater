@@ -26,7 +26,7 @@ Surface identity and model identity never change production-write, schema, secur
 
 `CLAUDE.md` keeps its historical filename and remains the canonical detailed rulebook. There is no second canonical brief.
 
-- **“Claude” as builder/merge operator** in any active governance document means **the approved active implementation agent**.
+- **“Claude” as builder** in any active governance document means **the approved active implementation agent**. The coordinator — not the implementation agent — is the merge operator.
 - **“Codex comments/review are advisory”** means **the optional advisory audit is advisory**. The peer review (Atlas Contract / Systems Review) is required on every PR and is never advisory. The reviewer is the other builder lane, never the PR's own builder.
 - **`claude/<concern>` branches** remain valid historical branches. New branches use **`agent/<concern>`**, on every surface, so handoffs are tool-neutral.
 - **`.claude/rules/*`** are retained filenames. Those rules bind every agent, but they auto-load only on a surface that reads that directory. On any other surface, read them directly when the matching file is in scope.

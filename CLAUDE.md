@@ -116,7 +116,7 @@ The blocking question is: **Is this exact head unsafe or architecturally wrong t
 
 The merge card records:
 
-- **Required** — `REQUIRED` with the trigger, or `NOT REQUIRED` with the reason;
+- **Required** — `REQUIRED` on every PR (exact head, reviewer, PASS); `NOT REQUIRED` is a retained mechanical form only — do not claim it;
 - **Exact reviewed head** — the current full commit SHA, or `N/A`;
 - **Reviewer** — the reviewing lane's name, or `N/A`;
 - **Review outcome** — `PASS`, `BLOCKING`, or `N/A`;
@@ -125,11 +125,12 @@ The merge card records:
 No round count is required.
 
 The merge-card check also has a small closed list of paths that are always
-mechanically high-risk. A PR touching one cannot claim `NOT REQUIRED`. Paths
-outside that list still use the trigger decision above. The check reads
-filenames only; it does not parse prose or try to infer meaning.
+mechanically high-risk. The list only determines blocking-architecture
+treatment — every PR is REQUIRED regardless of path, and no PR may claim
+`NOT REQUIRED`. The check reads filenames only; it does not parse prose or
+try to infer meaning.
 
-### The approved active implementation agent — implementation and merge operator
+### The approved active implementation agent — implementation agent
 
 **Definition (canonical; every other document points here).** The **approved active implementation agent** is the one agent Dale has approved to implement Atlas work at a given time. It is a role, not a product name. The role is held by whichever agent the owner approves, on whichever surface it runs — Claude Code, Codex, Cursor, or another owner-approved implementation surface — and whichever model that surface runs.
 

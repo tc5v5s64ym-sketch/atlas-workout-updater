@@ -94,7 +94,7 @@
     authorization to skip review.
 -->
 
-- **Required**: <!-- REQUIRED — trigger; or NOT REQUIRED — why no high-risk trigger fired -->
+- **Required**: <!-- REQUIRED — every PR requires an exact-head peer review -->
 - **Exact reviewed head**: <!-- 40-character SHA, or N/A -->
 - **Reviewer**: <!-- the reviewing lane's name, or N/A -->
 - **Review outcome**: <!-- PASS, BLOCKING, or N/A -->
