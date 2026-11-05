@@ -201,7 +201,7 @@ function curlCatalog() { return buildExerciseCatalogMap(curlCatalogRows); }
 
 test('plain/bicep curl aliases resolve to Bicep Curl / BC01', () => {
   const map = curlCatalog();
-  for (const input of ['curl', 'curls', 'Curls', 'bicep curl', 'bicep curls', 'biceps curl', 'biceps curls']) {
+  for (const input of ['curl', 'curls', 'Curls', 'bicep curl', 'bicep curls', 'biceps curl', 'biceps curls', 'dumbbell curl', 'dumbbell curls']) {
     const { enriched } = enrichLogRow({ exercise: input }, map);
     assert.equal(enriched.lift_code, 'BC01', `"${input}" must map to BC01`);
     assert.equal(enriched.canonical_exercise, 'Bicep Curl', `"${input}" canonical must be Bicep Curl`);
@@ -215,10 +215,10 @@ test('distinct curls keep their own codes (unrelated mappings unchanged)', () =>
     ['hammer curls', 'HAM01', 'Hammer Curls'],
     ['leg curl', 'LC01', 'Leg Curl'],
     ['preacher curl', 'PRC01', 'Preacher Curl'],
-    // Dumbbell Curl (CRL01) is deliberately NOT folded into Bicep Curl at the alias
-    // layer — that taxonomy decision is deferred to the owner (BACKLOG). It keeps its
-    // own catalog row; the plan-aware client layer disambiguates bare "curls".
-    ['dumbbell curl', 'CRL01', 'Dumbbell Curl'],
+    // Dumbbell Curl NO LONGER keeps its own code at the alias layer: Dale's
+    // 2026-11-04 ruling maps dumbbell curl (and its plural, same movement) to
+    // Bicep Curl via PREFERRED_ALIAS_TARGETS — no catalog merge, so the CRL01
+    // row remains and the distinct shorthand 'db curls' still resolves to it.
     ['db curls', 'CRL01', 'Dumbbell Curl']
   ];
   for (const [input, code, canon] of cases) {
