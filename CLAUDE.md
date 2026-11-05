@@ -213,6 +213,7 @@ Adopted by Dale on the coordinator's recommendation. These rules govern how the 
 - **Proven push path.** The push path is proven during lane setup, before the first build slice.
 - **Persistent evidence paths.** Long-running evidence (E2E runs and similar) writes to a persistent path under `~/workspace/`, never `/tmp`.
 - **Local-complete / PR-not-landed note.** When a build is complete locally but its Draft PR has not landed by the next queue check, the builder posts a one-line note naming the hold.
+- **Parked-card surfacing.** A lane run parked on a pending approval card surfaces that card — what it asks and when it was requested — in the channel immediately, not at the next queue check. (Adopted 2026-11-05, issue #1650 comment 6667052401; companion to the local-complete / PR-not-landed note. Case in point: an orphaned card blocked the 06:00/08:00/10:00 queue checks for ~4 hours before the hold was named.)
 - **Deflake probe-change rule.** When a deflake item survives two clean full-suite runs without reproducing, the next diagnosis step changes the probe (longer stress, tightened timing, or a different load shape) instead of repeating the same evidence run.
 
 ### Assignment, rulings, and direction
