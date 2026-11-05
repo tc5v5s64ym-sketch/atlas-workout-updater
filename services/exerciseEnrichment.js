@@ -23,8 +23,10 @@ const knownLiftCodeOverrides = new Map([
   ['hammer curl', 'HC01'], ['hammer curls', 'HC01'], ['hammers', 'HC01'],
   // Plain "curl"/"curls" and the bicep-curl synonyms default to BC01 when the catalog
   // has no code (mirrors the PREFERRED_ALIAS_TARGETS entry for plain curl/curls, defined
-  // below). The distinct "Dumbbell Curl" (CRL01) is intentionally NOT folded in — that's
-  // a separate owner taxonomy decision (filed in BACKLOG.md).
+  // below). The distinct "Dumbbell Curl" (CRL01) has no fallback override here — the
+  // catalog row exists, so the fallback is unused for it. (The alias layer DOES steer
+  // dumbbell curl to Bicep Curl per Dale's 2026-11-04 ruling on #1486; that steering
+  // lives in PREFERRED_ALIAS_TARGETS below, not in this fallback map.)
   ['bicep curl', 'BC01'], ['bicep curls', 'BC01'], ['biceps curl', 'BC01'], ['biceps curls', 'BC01'],
   ['curl', 'BC01'], ['curls', 'BC01'],
   ['knee raise', 'KR01'], ['knee raises', 'KR01']
@@ -141,11 +143,16 @@ const PREFERRED_ALIAS_TARGETS = {
   // ("Atlas doesn't know what curls are"). Steer the bare word to the "Bicep Curl"
   // canonical (BC01). Named variants already resolve on their own — "bicep curl" /
   // "biceps curl" exact-match the Bicep Curl row, and distinct curls (barbell /
-  // hammer / preacher / leg / dumbbell / cable / EZ-bar / …) keep their own codes.
-  // NOTE: folding the distinct "Dumbbell Curl" (CRL01) row into Bicep Curl is a
-  // separate product/taxonomy decision (owner-reserved) — filed in BACKLOG.md.
+  // hammer / preacher / leg / cable / EZ-bar / …) keep their own codes.
+  // Dale's 2026-11-04 ruling on #1486: "dumbbell curl" (and its plural, same
+  // movement) is alias-mapped to Bicep Curl here. The CRL01 catalog row is NOT
+  // merged (ruled out) and the multi-curl clarify step is NOT built (ruled out);
+  // the distinct shorthand 'db curl' / 'db curls' still resolves to CRL01 via
+  // the row's own variants.
   curl: ['bicep curl'],
-  curls: ['bicep curl']
+  curls: ['bicep curl'],
+  'dumbbell curl': ['bicep curl'],
+  'dumbbell curls': ['bicep curl']
 };
 
 const BLOCKED_AMBIGUOUS_ALIASES = new Set(['lats', 'row', 'rows']);

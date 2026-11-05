@@ -69,11 +69,15 @@ test('ANCHORED: parser/enrichment residuals exactly match the documented allowli
   const { anchored } = partitionType1(runAudit().type1);
   const doc = JSON.parse(fs.readFileSync(ALLOWLIST_PATH, 'utf8'));
 
-  // Every allowlist entry must cite a reason and a resolving PR.
+  // Every allowlist entry must cite a reason and a resolving PR — or, for a
+  // Dale-ruled permanent steering (enrichment deliberately diverges from the
+  // catalog by design, never removed by PR-14/PR-15), a "#1486-ruled" marker.
+  // #1486 is the first such case: dumbbell curl steers to Bicep Curl while
+  // the CRL01 row is deliberately retained, so the D-residual is permanent.
   for (const e of doc.allowlist) {
     assert.ok(e.alias, 'allowlist entry needs an alias');
     assert.ok(e.reason && e.reason.length > 10, `allowlist "${e.alias}" needs a reason`);
-    assert.ok(/PR-1[45]/.test(e.resolves_in), `allowlist "${e.alias}" must link its resolving PR (PR-14 / PR-15)`);
+    assert.ok(/PR-1[45]|#1486-ruled/.test(e.resolves_in), `allowlist "${e.alias}" must link its resolving PR (PR-14 / PR-15) or its ruling (#1486-ruled)`);
   }
 
   const anchoredSet = new Set(anchored.map(a => a.alias));

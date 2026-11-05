@@ -2,7 +2,8 @@
   "_meta": {
     "purpose": "Grandfathered parser/enrichment-anchored Type-1 exercise-truth residuals (PR-06). These are conflicts where the frozen parser (source A) and/or the live write-path enrichment module (source D) diverge from the reconciled catalog (B) + coaching (C) JSON. Editable sources B and C AGREE on every entry here; the divergent source is not editable within PR-06 scope (owner decision, Option 1).",
     "rule": "test/exerciseTruthAudit.test.js blocks on ANY catalog<->coaching (B<->C) Type-1 conflict, and requires the set of parser/enrichment-anchored residuals to EXACTLY equal this allowlist (new drift fails CI until consciously triaged here).",
-    "resolution": "PR-14 unifies the parser alias table with the catalog; PR-15 syncs the Exercise_Catalog sheet + enrichment from the JSON catalog. Those PRs remove entries here."
+    "resolution": "PR-14 unifies the parser alias table with the catalog; PR-15 syncs the Exercise_Catalog sheet + enrichment from the JSON catalog. Those PRs remove entries here.",
+    "_ruled": "Entries with resolves_in '#1486-ruled' are Dale-ruled permanent steering entries (first case: #1486 dumbbell curl -> Bicep Curl). They are NOT grandfathered PR-06 residuals and are NOT removed by PR-14/PR-15; the divergence is the ruled behavior."
   },
   "allowlist": [
     {
@@ -99,6 +100,24 @@
       },
       "reason": "Parser (A) and enrichment (D) both diverge from the reconciled catalog/coaching name; both are frozen in PR-06.",
       "resolves_in": "PR-14 & PR-15"
+    },
+    {
+      "alias": "dumbbell curl",
+      "sources": {
+        "B": "Dumbbell Curl",
+        "D": "Bicep Curl"
+      },
+      "reason": "Dale's 2026-11-04 ruling on #1486: dumbbell curl is alias-mapped to Bicep Curl in PREFERRED_ALIAS_TARGETS; the CRL01 catalog row is deliberately retained (no catalog merge), so enrichment (D) permanently diverges from the catalog (B) by design, not pending unification.",
+      "resolves_in": "#1486-ruled"
+    },
+    {
+      "alias": "dumbbell curls",
+      "sources": {
+        "B": "Dumbbell Curl",
+        "D": "Bicep Curl"
+      },
+      "reason": "Dale's 2026-11-04 ruling on #1486: dumbbell curls (same movement, plural) is alias-mapped to Bicep Curl in PREFERRED_ALIAS_TARGETS; the CRL01 catalog row is deliberately retained (no catalog merge), so enrichment (D) permanently diverges from the catalog (B) by design, not pending unification.",
+      "resolves_in": "#1486-ruled"
     },
     {
       "alias": "dumbbell shrugs",

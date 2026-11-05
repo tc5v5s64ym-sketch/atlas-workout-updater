@@ -56,14 +56,14 @@ history form):
 
 **D — Enrichment (exerciseEnrichment.js — PREFERRED_ALIAS_TARGETS + SHORTHAND_EXPANSIONS)**
 - Canonical count: 15
-- Alias-to-canonical entries: 21
+- Alias-to-canonical entries: 23
 
 ## Summary
 
 | Type | Count | Description |
 |------|------:|-------------|
 | 1 (blocking, B↔C) | 0 | Editable catalog↔coaching aliases resolving to different canonicals — **must be 0** |
-| 1 (anchored, A/D) | 32 | Parser/enrichment residuals, allowlisted for PR-14 / PR-15 |
+| 1 (anchored, A/D) | 34 | Parser/enrichment residuals, allowlisted for PR-14 / PR-15 |
 | 2 | 360 | Canonical exercises present in some sources but absent from others |
 | 3 | 4 | Case / punctuation / hyphenation-only mismatches between canonical names |
 
@@ -124,6 +124,14 @@ history form):
 - **A:** `Deadlift`
 - **B:** `Conventional Deadlift`
 - **D:** `Deadlift`
+
+### `dumbbell curl`
+- **B:** `Dumbbell Curl`
+- **D:** `Bicep Curl`
+
+### `dumbbell curls`
+- **B:** `Dumbbell Curl`
+- **D:** `Bicep Curl`
 
 ### `dumbbell shrugs`
 - **A:** `Shrug`
