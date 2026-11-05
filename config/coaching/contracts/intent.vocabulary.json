@@ -5,7 +5,7 @@
     "spec": "docs/COACHING_CONTRACTS_SPEC.md §1",
     "architecture": "docs/COACHING_ENGINE_ARCHITECTURE.md"
   },
-  "schema_version": 1,
+  "schema_version": 2,
   "intent_types": [
     "best_workout",
     "generate_workout",
@@ -14,6 +14,7 @@
     "explain_recommendation",
     "substitute_exercise",
     "log_intent",
+    "finish_session",
     "progress_query",
     "readiness_checkin",
     "ingest_signal",

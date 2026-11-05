@@ -13,10 +13,10 @@ const {
 
 before(() => _resetForTesting());
 
-// The 13 IntentEnvelope intent types (must each have a manifest entry).
+// The 14 IntentEnvelope intent types (must each have a manifest entry).
 const ALL_INTENTS = [
   'best_workout', 'generate_workout', 'modify_workout', 'progression_review',
-  'explain_recommendation', 'substitute_exercise', 'log_intent', 'progress_query',
+  'explain_recommendation', 'substitute_exercise', 'log_intent', 'finish_session', 'progress_query',
   'readiness_checkin', 'ingest_signal', 'nutrition_query', 'onboarding_step', 'clarify_intent',
 ];
 
@@ -151,6 +151,14 @@ describe('resolve — closure & topological order', () => {
     assert.strictEqual(r.brain, false);
     assert.strictEqual(r.decision_type, null);
     assert.strictEqual(r.routes_to, 'trust_loop');
+    assert.deepEqual(r.order, []);
+  });
+
+  it('brain:false intent (finish_session) resolves with routes_to and null decision_type', () => {
+    const r = resolve('finish_session');
+    assert.strictEqual(r.brain, false);
+    assert.strictEqual(r.decision_type, null);
+    assert.strictEqual(r.routes_to, 'session_closeout');
     assert.deepEqual(r.order, []);
   });
 
