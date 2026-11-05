@@ -12,6 +12,7 @@
 | Field | Value |
 |---|---|
 | **Canonical plan card** | <!-- card or recorded owner instruction --> |
+| **Closes** | <!-- `Closes #N` / `Fixes #N` for each issue this PR completes. The keyword creates the link and the merge reference. Auto-close does NOT fire on merges into `s3-maintenance` (non-default branch) — the coordinator closes the issue manually with a reconciliation note at merge. --> |
 | **Title** | <!-- one line --> |
 | **Primary risk** | <!-- one primary label + low/medium/high --> |
 | **Files / categories touched** | <!-- concise --> |
@@ -25,7 +26,7 @@
 | **Advisory audit** | <!-- not run / one pass with dispositions / second pass with its high-severity or systemic reason --> |
 | **Owner authorization required** | <!-- No, or exact reserved category and status --> |
 | **Live validation** | <!-- evidence/script needed, or N/A --> |
-| **Merge authority** | <!-- active builder merges exact passing head / blocked on owner authorization --> |
+| **Merge authority** | <!-- coordinator merges the exact reviewed head after verifying PASS + green CI + mergeable / blocked on owner authorization --> |
 
 ### Concern
 
@@ -72,18 +73,25 @@
 ### Atlas Contract / Systems Review
 
 <!--
-  CLAUDE.md owns the narrow trigger list and review protocol.
+  CLAUDE.md owns the review protocol: every PR requires an exact-head peer
+  review by the other builder lane. There is no high-risk-only trigger and no
+  category of PR that may claim the review is not required.
 
   The blocking question is: Is this exact head unsafe or architecturally wrong
-  to merge? Improvement ideas belong in the optional advisory audit.
+  to merge? Improvement ideas belong in the optional advisory audit. A newly
+  discovered, evidenced P0/P1 in the named categories blocks merge whenever
+  discovered, with the failure path recorded; advisory scope does not reopen.
 
   On follow-up, verify the named blocker fixes and the high-risk surface changed
-  by those fixes. Do not reopen the whole artifact for unlimited new findings.
+  by those fixes.
 
   Closed forms enforced by CI:
   - Required opens REQUIRED or NOT REQUIRED.
   - REQUIRED: exact current 40-character head, Reviewer = the reviewing lane's name, outcome PASS.
-  - NOT REQUIRED: head, reviewer, and outcome are each N/A.
+  - NOT REQUIRED: head, reviewer, and outcome are each N/A. Do not claim it:
+    under the peer-review model every PR is REQUIRED, and the NOT REQUIRED form
+    survives in the checker only as a retained mechanical tolerance, not as an
+    authorization to skip review.
 -->
 
 - **Required**: <!-- REQUIRED — trigger; or NOT REQUIRED — why no high-risk trigger fired -->

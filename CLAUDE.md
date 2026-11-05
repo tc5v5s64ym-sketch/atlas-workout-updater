@@ -88,13 +88,13 @@ Dale may merge anything or revoke authority, but routine PRs do not wait for him
 
 ### Project decision desk and the Atlas Contract / Systems Review
 
-The desk does two separate things. ChatGPT helps Dale resolve genuinely non-derivable product, scope, and trust forks. Separately, the **Atlas Contract / Systems Review** is the one blocking architecture lane for a high-risk PR. There is no second lane.
+The desk does two separate things. ChatGPT helps Dale resolve genuinely non-derivable product, scope, and trust forks. Separately, the **Atlas Contract / Systems Review** is the one blocking architecture lane for every PR. There is no second lane.
 
 **Peer-review model (effective 2026-11-01).** The two builder lanes review each other's work. The reviewer records the verdict as a GitHub comment and in the merge-card review block, on the exact reviewed head. The coordinator assigns the review, verifies the recorded PASS (exact head, green CI, mergeable), and merges; the coordinator does not review. The implementation agent may not satisfy its own architecture gate with a clean-context self-review. The review never authorizes a production write and is never a GitHub status, required check, reviewer account, or owner approval.
 
 #### When the review is required
 
-Require an exact-head review only when the change can alter one of these high-risk surfaces:
+Every PR requires an exact-head peer review by the other builder lane. There is no high-risk-only trigger and no category of PR that may claim the review is not required. The high-risk surfaces below still matter: a PR touching one gets the blocking-architecture treatment in the review (see "Blocking protocol"), and the merge-card check still treats those paths as mechanically high-risk.
 
 - the preview → approve → write path, `test_mode`, idempotency, or authoritative write proof;
 - a Supabase or Google Sheets schema, migration, data rewrite, destructive operation, storage-authority cutover, compatibility bridge, or bridge sunset;
@@ -104,8 +104,6 @@ Require an exact-head review only when the change can alter one of these high-ri
 - a hard gate that directly protects one of the surfaces above;
 - product direction, owner-reserved scope, or a genuine unresolved trust/architecture ambiguity.
 
-A campaign/status edit, ordinary documentation precision, scorecard wording, counter transcription, test-runner refactor, evidence-collector wiring, or identity/correlation plumbing does **not** trigger the review by category alone. It triggers only when it changes a high-risk contract or can produce a false product/trust green.
-
 #### Blocking protocol
 
 The blocking question is: **Is this exact head unsafe or architecturally wrong to merge?**
@@ -113,8 +111,8 @@ The blocking question is: **Is this exact head unsafe or architecturally wrong t
 - Report only a concrete P0/P1 safety, product-trust, authority, schema, security, write-path, invariant, or cutover blocker.
 - Put non-blocking improvements, polish, and speculative hardening in the optional advisory audit.
 - A `PASS` applies only to the exact reviewed 40-character head.
-- If a blocker is fixed, the follow-up review verifies the named fix and the high-risk surface changed by that fix. It does not reopen the whole artifact for unlimited new findings.
-- A genuinely new blocker may be raised on follow-up only when the fix created it or the original blocker made it impossible to observe.
+- If a blocker is fixed, the follow-up review verifies the named fix and the high-risk surface changed by that fix.
+- A newly discovered, evidenced P0/P1 in the named categories blocks merge whenever discovered, with the failure path recorded; advisory scope does not reopen. (Late-P0/P1 exception, adopted 2026-11-05; Astra finding 5, disposition on issue #1650.)
 
 The merge card records:
 
@@ -145,10 +143,10 @@ The approved active implementation agent:
 - verifies current state before editing;
 - implements one concern on a fresh branch;
 - tests the live path or closest integration path;
-- opens and completes the PR;
+- opens the PR and addresses review findings;
 - declares its builder surface and model in the merge card (see "Merge-card attribution");
 - handles real in-scope advisory findings;
-- merges the exact passing head under standing authority;
+- hands the PR to the coordinator for merge once the peer review records PASS on the exact head and all hard gates pass — the builder never merges;
 - updates campaign state, refreshes `main`, and continues.
 
 Do not stop merely to report that a routine PR is merge-ready.
@@ -157,7 +155,7 @@ Do not stop merely to report that a routine PR is merge-ready.
 
 GitHub Actions supplies deterministic hard gates. Required checks that are missing, stale, skipped, errored, timed out, cancelled, incomplete, or failed are failures.
 
-Independent agent review is an optional improvement audit. The default is **one advisory pass**. A second pass runs only when the first pass found a high-severity/systemic issue or its fix materially changed a high-risk surface. It verifies that issue. It is not run until clean. Low-severity suggestions never require another pass and do not block merge. A real P0/P1 product, trust, security, schema, write-path, invariant, or authority defect remains a blocker regardless of which lane discovered it.
+The required peer review and the optional improvement audit are different things. The peer review — the Atlas Contract / Systems Review performed by the other builder lane — is required on every PR and is never advisory. The optional improvement audit is separate: an independent agent review performed as an advisory audit. The default is **one advisory pass**. A second pass runs only when the first pass found a high-severity/systemic issue or its fix materially changed a high-risk surface. It verifies that issue. It is not run until clean. Low-severity suggestions never require another pass and do not block merge. A real P0/P1 product, trust, security, schema, write-path, invariant, or authority defect remains a blocker regardless of which lane discovered it.
 
 Never create a synthetic review status from bot wording, reactions, or identity. The optional audit is not a required status, account, marker, human sign-off, or substitute for the Atlas Contract / Systems Review.
 
@@ -185,28 +183,48 @@ Governance controls are not permanent by default. A focused governance PR may re
 
 Do not retire a proven write-path, schema/Supabase, security/secret, deterministic invariant, one-authority, owner-reserved, or current-state gate merely because it creates work. Do not add a new governance framework to track retirement.
 
-## Standing coordination rules (adopted 2026-11-03, issue #1650)
+## Standing coordination rules (adopted 2026-11-03, issue #1650; amended 2026-11-05 per the Astra disposition on #1650)
 
 Adopted by Dale on the coordinator's recommendation. These rules govern how the two builder lanes (Hammy, Sunny) and the coordinator work the queue. Issue #1650 is the adoption record; this section is the canonical home.
+
+**Supersession (Astra review, adopted 2026-11-05; disposition on issue #1650, comment 6647810597).** The peer-review model in force since 2026-11-01 supersedes every earlier instruction in this brief and its companion documents that says the implementation agent merges under standing authority, that independent review is advisory, or that the required Atlas Contract / Systems Review is performed by ChatGPT or is triggered only by high-risk surfaces. Where this brief, `AGENTS.md`, or `docs/BUILDER_PORTABILITY.md` still carried such instructions, the Astra fold-in removed them; any surviving copy is superseded by this paragraph and must not be followed.
 
 ### Authorization and pace
 
 - **Assignment is authorization.** A coordinator assignment in Slack, or direction from Dale anywhere, is the authorization to start. No lane waits for a separate go, a watch rule, or a confirmation in its own chat. A lane that believes an owner gate applies (deploys, spend, credentials, schema changes, S4 cutover, Phase 5 entry, the CIL ruling) names the gate in the Slack thread and keeps building anything not gated.
+- **Handback authorization.** Assignment authorizes routine delivery communications (handbacks, verdicts, merge-card updates, merge reports) with no separate approval; content-bearing decisions reach Dale only across a named owner gate. (Astra finding 2, adopted verbatim 2026-11-05.)
 - **Start-by and named blocker.** Every assignment carries an implicit start-by of the same working day. A lane that cannot start posts a named blocker instead. Silence is never a status. While an item is open, the lane posts a status at least every few hours during the day.
+- **Peer-review start-by and verdict-due.** Peer reviews carry an explicit start-by, the same as build assignments. The coordinator's ack of a handback names the review start-by (default: same working day); a reviewer who cannot meet it posts a named blocker before it passes. Every review also names a verdict-due as well as a start-by. When a reviewer begins a peer review, they post "started" in the review thread the same working day, so review state is visible before its start-by passes.
+- **Blockers and recovery.** A blocker names its resolution owner, next action, and next checkpoint. A missed deadline triggers a recorded recovery action at the next hourly check, not a repeated status.
 - **Named queue chains.** Assignments name the chain and blast radius (for example, a checker PR before the PR it unblocks), so dependencies are visible before they bite.
 - **Checker versus Dale's value.** When a checker rejects a value Dale set, the checker is fixed to accept it. Dale's value is never overridden or reverted to satisfy the checker. This is a narrow rule, not a blanket presumption that checkers are wrong.
 
+### Review eligibility and merge practice
+
+- **Review eligibility.** Anyone who implemented any part of a PR cannot supply its independent PASS. If no eligible independent reviewer exists, the coordinator records the capacity blocker and brings Dale a concrete recommendation. Self-review, role renaming, and coordinator code review remain prohibited. (Astra finding 3, adopted 2026-11-05.)
+- **Head/base pair evidence.** After any merge, a remaining PASSed PR whose target base moved gets fresh CI on the updated head/base pair plus a peer delta-confirmation (affected surfaces only) before merge; eligibility expires when either SHA changes. This is coordinator merge practice, effective 2026-11-04. The merge-queue / branch-protection machinery is DEFERRED (it brushes Dale's recorded #1572 deferral of branch protection); revisit if lane volume grows. (Astra finding 4, adopted in principle 2026-11-05.)
+
 ### Lane mechanics
 
-- **Standing authority for routine posts.** A lane may post routine status, named-blocker, and ack posts in its own threads without a per-post approval. Handbacks and content-bearing decisions still ride the normal approval path.
+- **Standing authority for routine posts.** A lane may post routine status, named-blocker, and ack posts in its own threads without a per-post approval. Handbacks, verdicts, merge-card updates, and merge reports are authorized by the assignment itself (see "Handback authorization" above); content-bearing decisions reach Dale only across a named owner gate.
 - **Design calls at kickoff.** Test-input design calls are settled at slice kickoff, or delegated to builder plus coordinator in-thread. They never stall a build mid-slice.
 - **Automatic named-blocker status.** A named-blocker status is posted automatically whenever a decision pends.
 - **Proven push path.** The push path is proven during lane setup, before the first build slice.
+- **Persistent evidence paths.** Long-running evidence (E2E runs and similar) writes to a persistent path under `~/workspace/`, never `/tmp`.
+- **Local-complete / PR-not-landed note.** When a build is complete locally but its Draft PR has not landed by the next queue check, the builder posts a one-line note naming the hold.
+- **Deflake probe-change rule.** When a deflake item survives two clean full-suite runs without reproducing, the next diagnosis step changes the probe (longer stress, tightened timing, or a different load shape) instead of repeating the same evidence run.
+
+### Assignment, rulings, and direction
+
+- **Assignment pre-check.** Before assigning any item, the coordinator reads the target issue's labels and gate text. If an owner gate exists, the assignment does not go out; the ruling question goes to Dale first, with the work sequenced behind the ruling.
+- **Rulings live on the issue.** Every owner ruling is written onto its GitHub issue the same hour, and any owner-decision label it lifts is removed with the ruling. Lanes verify rulings from the record, never from a relay.
+- **Direction rides fresh posts.** Coordinator direction goes in new top-level channel posts, not inside threads whose reads trip the platform safety screen (the flagged threads stay signal-only via channel/search surfaces).
+- **Deploy notices.** After each production deploy, the coordinator posts a one-line top-level notice naming the live commit, so lane sessions do not run on a stale picture of production.
 
 ### Work in progress and record hygiene
 
 - **WIP cap.** A lane does not open a third PR while two of its PRs await the peer lane's review. Peer reviews come before new builds.
-- **Closing keywords.** Every PR body carries `Fixes #N` / `Closes #N` for each issue it completes, so merged work closes its issues automatically.
+- **Closing keywords and manual close.** Every PR body carries `Fixes #N` / `Closes #N` for each issue it completes. The keyword creates the link and the merge reference — but it does not auto-close the issue: GitHub fires closing keywords only on merges into the repository's default branch, and the live line is the non-default `s3-maintenance`. The coordinator closes each completed issue manually with a reconciliation note at merge. (Diagnosis 2026-11-05: PRs #1651–#1655 all carried valid keywords and merged into `s3-maintenance`; all five issues were closed manually by the coordinator, #1565/#1573/#1583 with an explicit "did not auto-close" note; the #1633/#1636 precedent matches. No template or placement change can make auto-close fire on this branch.)
 - **Early draft visibility.** Within the first working session on an item, the lane pushes its branch and opens the Draft PR. Work in progress is visible on the GitHub record, not only on the lane's machine.
 
 ### Deploy practice
@@ -223,9 +241,9 @@ Adopted by Dale on the coordinator's recommendation. These rules govern how the 
 6. Run focused tests plus every applicable build/test/lint/wiring/secret/E2E/trust check.
 7. Inspect the diff, commits, secrets, and unrelated drift.
 8. Open one PR with the Atlas Merge Card and one primary risk label.
-9. Obtain the Atlas Contract / Systems Review when a trigger fires, and record it in the merge card.
+9. Obtain the peer review (Atlas Contract / Systems Review) on the exact head, and record it in the merge card.
 10. Address real in-scope blockers and use at most the bounded optional audit above.
-11. Merge the exact head after every hard gate passes and no owner authorization remains outstanding.
+11. Hand the PR to the coordinator for merge once every hard gate passes, the peer review records PASS on the exact head, and no owner authorization remains outstanding.
 12. Verify `main` and deployment, update the campaign card/completion record, and continue from a fresh branch.
 
 A conversation running out of context is not a project blocker. Start a new session and resume from repository state.
@@ -299,26 +317,26 @@ The merge-card completeness check fails a PR when any of the four fields is abse
 
 ## Merge gate
 
-The approved active implementation agent merges when:
+The coordinator merges a PR when:
 
 - every applicable required GitHub check passed on the exact current head;
 - no genuine P0/P1, invariant, trust-loop, schema, security, secret, or write-safety problem remains;
 - no real high-severity/systemic defect found by an advisory audit remains unresolved;
 - one-concern scope, branch hygiene, risk label, Vision Alignment Check, and merge card are complete;
-- the Atlas Contract / Systems Review is recorded in the merge card when a trigger above fires, and it read the exact merged head;
+- the peer review (Atlas Contract / Systems Review) is recorded in the merge card with PASS on the exact head — and, when the base moved after the PASS, fresh CI on the exact head/base pair plus a peer delta-confirmation (see "Standing coordination rules");
 - the PR is authorized by the campaign or explicit owner instruction; and
 - no owner-reserved authorization remains outstanding.
 
-Prefer GitHub auto-merge when available; otherwise merge the exact head SHA directly.
+The builder never merges. No PR merges under standing authority, and no PR merges on green checks alone without the recorded peer PASS.
 
-**Merge policy.** Every PR merges automatically under standing authority once all GitHub checks are green — the owner never clicks approve on any PR, including a governance PR. Owner-reserved items are gates (live-test workouts, dictated rulings, production setting changes), never merge approvals. The runtime preview → approve → write loop is unchanged and remains the data safety net.
+**Merge policy.** A PR merges only when the coordinator verifies the recorded peer PASS on the exact head, green CI on the exact head/base pair, and mergeability, and merges it. The owner never clicks approve on any PR, including a governance PR. Owner-reserved items are gates (live-test workouts, dictated rulings, production setting changes), never merge approvals. The runtime preview → approve → write loop is unchanged and remains the data safety net.
 
 ## Standing command — Atlas Recovery Campaign
 
 When the owner says **"execute Atlas Recovery Plan"** — or any clear variant such as "run the recovery plan" or "continue the recovery" — read the campaign in `docs/ATLAS_V1_EXECUTION_PLAN.md`, find the `CAMPAIGN STATE` block, and execute the next eligible step(s) of the current phase:
 
 - one concern per PR;
-- merge on green checks (no owner merge approval);
+- hand each PR to the coordinator for merge on green checks plus a recorded peer PASS (no owner merge approval);
 - advance the `CAMPAIGN STATE` tracker in the same PR;
 - continue until an **OWNER GATE**.
 
