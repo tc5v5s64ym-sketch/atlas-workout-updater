@@ -138,9 +138,19 @@ async function openApp(page, capture) {
 // still in flight — the test then read `lastWrite` before it had advanced to B. That made the
 // identity-guard assertion racy under load rather than deterministic (observed twice while landing
 // Phase 4 criterion 4 step (b); the spec's own contract is unchanged and no assertion is relaxed).
+//
+// The readback wait below had the same hole (#1559): `expect(... .readback).last()).toBeVisible()`
+// passes on the PREVIOUS cycle's readback when the bench turn is still being parsed, so 'done' was
+// submitted while the bench turn was in flight — and the review card then never appeared (30s
+// timeout at the save click). Reproduced deterministically by delaying the mocked parse response
+// 500ms: 20/20 failures in the two-cycle tests, both projects. The fix is a count guard: capture
+// the readback count BEFORE this turn's submit and wait for exactly one more readback, so 'done'
+// is only submitted after THIS turn's readback exists.
 async function logAndSave(page, expectedDone) {
+  const readbacksBefore = await page.locator('#thread-messages .readback').count();
   await page.locator('#workout-text').fill('bench 225 5/2 x3');
   await page.locator('#preview-btn').click();
+  await expect(page.locator('#thread-messages .readback')).toHaveCount(readbacksBefore + 1);
   await expect(page.locator('#thread-messages .readback').last()).toBeVisible();
   await page.locator('#workout-text').fill('done');
   await page.locator('#preview-btn').click();
