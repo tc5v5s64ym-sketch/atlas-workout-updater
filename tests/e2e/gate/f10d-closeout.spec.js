@@ -209,7 +209,11 @@ test('F10D-R: a rejected (abandoned) confirmation writes NOTHING — the ledger 
     expect(st.plan_set_rows).toHaveLength(1);
     expect(sealedIds(st)[0]).toBe('');
     // The session itself survived the rejection — nothing was lost client-side.
-    await expect(page.locator('#session-pin')).toBeVisible();
+    // #1583: the pin renders only once the reloaded session rehydrates and the
+    // app graph renders it; networkidle guarantees neither, and the default 5s
+    // expect timeout is too tight under load (hosted: "expected visible,
+    // received hidden"). 30s budget, in line with this file's other waits.
+    await expect(page.locator('#session-pin')).toBeVisible({ timeout: 30000 });
     const logged = await page.evaluate(() => window.getSessionLog().length);
     expect(logged).toBe(1);
     await snap(page, 'R-02-after-rejection-nothing-written.png');
