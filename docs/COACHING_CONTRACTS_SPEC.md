@@ -50,7 +50,7 @@ The single object every input source produces. Produced by the Intent Router; co
 
 ### 1.2 `type` enum (closed; extend by addition only)
 
-`best_workout`, `generate_workout`, `modify_workout`, `progression_review`, `explain_recommendation`, `substitute_exercise`, `log_intent`, `progress_query`, `readiness_checkin`, `ingest_signal`, `nutrition_query`, `onboarding_step`, `clarify_intent`.
+`best_workout`, `generate_workout`, `modify_workout`, `progression_review`, `explain_recommendation`, `substitute_exercise`, `log_intent`, `finish_session`, `progress_query`, `readiness_checkin`, `ingest_signal`, `nutrition_query`, `onboarding_step`, `clarify_intent`.
 
 ### 1.3 `constraints` key schema (flat, additive bag)
 
@@ -117,7 +117,7 @@ The single object every input source produces. Produced by the Intent Router; co
 
 ### 1.6 Tests to eventually prove
 
-- Each of the 13 intents builds a valid envelope; every `source`/`actor` enum accepted.
+- Each of the 14 intents builds a valid envelope; every `source`/`actor` enum accepted.
 - Unknown constraint key, out-of-range `duration_minutes`, bad `readiness_inputs` value → rejected with a field-specific error.
 - Cross-field rules 4–7 enforced (e.g. `ingest_signal` without `signal` rejected).
 - Structured passthrough (button) and LLM extraction (chat) yield **identical envelope shape** for the same intent — the lane-equivalence property.
@@ -138,8 +138,8 @@ Two declarative files that let the Orchestrator turn an intent into an ordered m
 | `intents[type].capabilities` | string[] | ✅ | the **requested** (top-level) capability ids; the resolver pulls in their `depends_on` closure and topo-sorts |
 | `intents[type].decision_type` | string (enum) | required when `brain:true` | the `decision_type` this intent yields (§3.2) |
 | `intents[type].read_only` | boolean | ✅ | `true` ⟹ no coaching decision, pure readout |
-| `intents[type].brain` | boolean | ⬜ (default `true`) | `false` marks a non-Brain intent routed elsewhere (e.g. `log_intent` → trust loop); carries `routes_to` and no `decision_type` |
-| `intents[type].routes_to` | string | required when `brain:false` | where a non-Brain intent is routed (e.g. `trust_loop`) |
+| `intents[type].brain` | boolean | ⬜ (default `true`) | `false` marks a non-Brain intent routed elsewhere (e.g. `log_intent` → trust loop, `finish_session` → session_closeout); carries `routes_to` and no `decision_type` |
+| `intents[type].routes_to` | string | required when `brain:false` | where a non-Brain intent is routed (e.g. `trust_loop`, `session_closeout`) |
 
 ### 2.2 `capabilities.json` — capability descriptors
 

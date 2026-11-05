@@ -98,10 +98,10 @@ describe('validateIntentEnvelope — five canonical examples all valid', () => {
 
 // ─── every intent type builds a valid envelope ───────────────────────────────
 
-describe('validateIntentEnvelope — all 13 intent types accepted', () => {
+describe('validateIntentEnvelope — all 14 intent types accepted', () => {
   const intents = [
     'best_workout', 'generate_workout', 'modify_workout', 'progression_review',
-    'explain_recommendation', 'substitute_exercise', 'log_intent', 'progress_query',
+    'explain_recommendation', 'substitute_exercise', 'log_intent', 'finish_session', 'progress_query',
     'readiness_checkin', 'ingest_signal', 'nutrition_query', 'onboarding_step', 'clarify_intent',
   ];
   for (const type of intents) {

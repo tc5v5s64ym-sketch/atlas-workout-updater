@@ -67,6 +67,10 @@
     "log_intent": {
       "brain": false, "read_only": false, "routes_to": "trust_loop",
       "capabilities": []
+    },
+    "finish_session": {
+      "brain": false, "read_only": false, "routes_to": "session_closeout",
+      "capabilities": []
     }
   }
 }

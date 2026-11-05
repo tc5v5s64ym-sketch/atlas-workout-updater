@@ -31,6 +31,10 @@ describe('orchestrate — guards', () => {
     const r = orchestrate({ envelope: env('log_intent'), snapshot: SNAPSHOT });
     assert.deepEqual(r, { intent: 'log_intent', brain: false, routed: 'trust_loop' });
   });
+  it('returns a routed marker for a non-Brain intent (finish_session)', () => {
+    const r = orchestrate({ envelope: env('finish_session'), snapshot: SNAPSHOT });
+    assert.deepEqual(r, { intent: 'finish_session', brain: false, routed: 'session_closeout' });
+  });
 });
 
 // ─── always produces a valid CoachingDecision ────────────────────────────────

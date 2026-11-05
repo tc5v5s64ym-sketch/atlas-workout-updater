@@ -79,6 +79,12 @@ const INTENT_GLOSSES = {
   // — so a model that emits them has those keys dropped+recorded (blocker 3: the
   // drop is expected, not a lost field).
   log_intent:             'states sets/work performed (normally the deterministic parser claims this — classify only; do NOT emit sets/reps/weight/rir)',
+  // finish_session is the IntentEnvelope namespace: the lifter says the session
+  // is over ("I'm done", "we're done"). Do NOT confuse with the deterministic
+  // workout-text parser's same-spelled 'finish_session' string
+  // (services/workoutTextParser.js) — a separate namespace, untouched here.
+  // The Brain does not handle it; the Orchestrator routes it to session_closeout.
+  finish_session:         'states the session is finished / the lifter is done ("I\'m done", "we\'re done") — session closeout; do NOT emit set details',
   progress_query:         'asks to see history: last session, weekly numbers, records',
   readiness_checkin:      'reports sleep/soreness/stress/energy as a readiness check-in (requires readiness_inputs)',
   ingest_signal:          'structured device/wearable signal — almost never typed chat (requires signal)',
@@ -142,7 +148,15 @@ function buildRouterSystemPrompt() {
     'Message: "it\'s face pulls next not back squats"',
     '{"type":"substitute_exercise","constraints":{"target_lift":"Face Pull","exclude_exercises":["Back Squat"]},"confidence":0.9}',
     'Message: "asdf lol"',
-    '{"type":"clarify_intent","constraints":{},"confidence":0.3}'
+    '{"type":"clarify_intent","constraints":{},"confidence":0.3}',
+    // A session-finish phrase ("I'm done" / "we're done") is finish_session, not
+    // clarify_intent — issue #1366. The UI-help question ("where's the session
+    // confirmation card?") stays clarify_intent: it asks about the app, it does
+    // not finish the session.
+    'Message: "I guess I\'m done"',
+    '{"type":"finish_session","constraints":{},"confidence":0.9}',
+    'Message: "Ok sure. We\'re done."',
+    '{"type":"finish_session","constraints":{},"confidence":0.9}'
   ].join('\n');
 }
 

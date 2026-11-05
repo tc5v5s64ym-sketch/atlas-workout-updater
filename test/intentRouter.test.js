@@ -253,7 +253,53 @@ test('router (blocker 3): log_intent drops set-detail keys (sets/reps/weight_kg/
   assert.equal(validateIntentEnvelope(result).valid, true);
 });
 
-test('router: the system prompt is built FROM the vocabulary (all 13 intents + constraint keys enumerated)', () => {
+// Issue #1366: "I guess I'm done" / "Ok sure. We're done." had no home enum and
+// fell back to clarify_intent 0.3. finish_session is the home: a brain:false
+// intent routed to session_closeout (the closeout marker), mirroring the
+// log_intent → trust_loop precedent. NOTE: this is the IntentEnvelope
+// namespace — services/workoutTextParser.js has its own same-spelled
+// 'finish_session' string in the deterministic parser namespace; the two must
+// not be conflated (the parser is untouched by this slice).
+test('router (#1366): "I guess I\'m done" classifies as finish_session, not clarify_intent', async () => {
+  const result = await withStub({
+    fetchImpl: async () => geminiReply({ type: 'finish_session', constraints: {}, confidence: 0.9 })
+  }, () => router.classifyIntent("I guess I'm done", { asOf: ASOF }));
+  assert.ok(result, 'must produce an envelope');
+  assert.equal(result.type, 'finish_session');
+  assert.deepEqual(result.constraints, {});
+  assert.equal(validateIntentEnvelope(result).valid, true);
+});
+
+test('router (#1366): finish_session builds a valid envelope from a classification (pure)', () => {
+  const env = router.buildEnvelopeFromClassification(
+    { type: 'finish_session', constraints: {}, confidence: 0.9 },
+    { text: "Ok sure. We're done.", source: 'chat', asOf: ASOF });
+  assert.ok(env, 'must produce an envelope');
+  assert.equal(env.type, 'finish_session');
+  assert.equal(validateIntentEnvelope(env).valid, true);
+});
+
+test('router (#1366): the system prompt gives finish_session a real gloss (not the "see contract" fallback)', () => {
+  const prompt = router.buildRouterSystemPrompt();
+  const line = prompt.split('\n').find(l => l.startsWith('- finish_session:'));
+  assert.ok(line, 'prompt must list finish_session');
+  assert.ok(!line.includes('see contract'), 'finish_session needs a gloss so the classifier can name it');
+  assert.match(line, /done|finish/i, 'gloss must say what a finish phrase looks like');
+});
+
+// Pre-review finding F1: the prompt example pairs are the slice's only
+// mechanism for changing live classification, but nothing asserted they exist.
+// Guard BOTH example pairs: if either pair is deleted from the prompt, this
+// test must fail. Asserting the gloss wording is not a substitute.
+test('router (#1366): the system prompt carries both finish_session example pairs', () => {
+  const prompt = router.buildRouterSystemPrompt();
+  const pair1 = 'Message: "I guess I\'m done"\n{"type":"finish_session","constraints":{},"confidence":0.9}';
+  const pair2 = 'Message: "Ok sure. We\'re done."\n{"type":"finish_session","constraints":{},"confidence":0.9}';
+  assert.ok(prompt.includes(pair1), 'prompt must carry the "I guess I\'m done" finish_session example pair');
+  assert.ok(prompt.includes(pair2), 'prompt must carry the "Ok sure. We\'re done." finish_session example pair');
+});
+
+test('router: the system prompt is built FROM the vocabulary (all 14 intents + constraint keys enumerated)', () => {
   const vocab = require('../config/coaching/contracts/intent.vocabulary.json');
   const prompt = router.buildRouterSystemPrompt();
   for (const t of vocab.intent_types) assert.ok(prompt.includes(`- ${t}:`), `prompt must list intent '${t}'`);
