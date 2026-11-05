@@ -185,6 +185,34 @@ Governance controls are not permanent by default. A focused governance PR may re
 
 Do not retire a proven write-path, schema/Supabase, security/secret, deterministic invariant, one-authority, owner-reserved, or current-state gate merely because it creates work. Do not add a new governance framework to track retirement.
 
+## Standing coordination rules (adopted 2026-11-03, issue #1650)
+
+Adopted by Dale on the coordinator's recommendation. These rules govern how the two builder lanes (Hammy, Sunny) and the coordinator work the queue. Issue #1650 is the adoption record; this section is the canonical home.
+
+### Authorization and pace
+
+- **Assignment is authorization.** A coordinator assignment in Slack, or direction from Dale anywhere, is the authorization to start. No lane waits for a separate go, a watch rule, or a confirmation in its own chat. A lane that believes an owner gate applies (deploys, spend, credentials, schema changes, S4 cutover, Phase 5 entry, the CIL ruling) names the gate in the Slack thread and keeps building anything not gated.
+- **Start-by and named blocker.** Every assignment carries an implicit start-by of the same working day. A lane that cannot start posts a named blocker instead. Silence is never a status. While an item is open, the lane posts a status at least every few hours during the day.
+- **Named queue chains.** Assignments name the chain and blast radius (for example, a checker PR before the PR it unblocks), so dependencies are visible before they bite.
+- **Checker versus Dale's value.** When a checker rejects a value Dale set, the checker is fixed to accept it. Dale's value is never overridden or reverted to satisfy the checker. This is a narrow rule, not a blanket presumption that checkers are wrong.
+
+### Lane mechanics
+
+- **Standing authority for routine posts.** A lane may post routine status, named-blocker, and ack posts in its own threads without a per-post approval. Handbacks and content-bearing decisions still ride the normal approval path.
+- **Design calls at kickoff.** Test-input design calls are settled at slice kickoff, or delegated to builder plus coordinator in-thread. They never stall a build mid-slice.
+- **Automatic named-blocker status.** A named-blocker status is posted automatically whenever a decision pends.
+- **Proven push path.** The push path is proven during lane setup, before the first build slice.
+
+### Work in progress and record hygiene
+
+- **WIP cap.** A lane does not open a third PR while two of its PRs await the peer lane's review. Peer reviews come before new builds.
+- **Closing keywords.** Every PR body carries `Fixes #N` / `Closes #N` for each issue it completes, so merged work closes its issues automatically.
+- **Early draft visibility.** Within the first working session on an item, the lane pushes its branch and opens the Draft PR. Work in progress is visible on the GitHub record, not only on the lane's machine.
+
+### Deploy practice
+
+- Deploys go in small trains (1–3 PRs with product changes) on Dale's per-deploy approval. The coordinator brings the ask with the merge report instead of letting batches accumulate.
+
 ## Campaign execution loop
 
 1. Verify current `main`, a clean worktree, prerequisites, and deployment when relevant.
