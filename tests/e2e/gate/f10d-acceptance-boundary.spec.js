@@ -243,8 +243,16 @@ test('AB-4: a reload-restored ACCEPTED plan never re-asks; no duplicate acceptan
 
     await page.reload();
     await page.waitForLoadState('networkidle');
-    const restored = await page.evaluate(() => { const s = window.getActivePlannedSession(); return Boolean(s && s.accepted === true); });
-    expect(restored).toBe(true);
+    // #1583: networkidle is a network proxy, not an app-readiness guarantee —
+    // under load the app module graph (which attaches getActivePlannedSession
+    // at the end of app.js evaluation) or the restored session can lag it, and
+    // the unguarded call threw TypeError on hosted runners. Poll the restored
+    // condition itself, typeof-safe, mirroring the #1581 rehearsal treatment
+    // (never call the global unguarded).
+    await expect.poll(() => page.evaluate(() => {
+      const s = (typeof window.getActivePlannedSession === 'function') ? window.getActivePlannedSession() : null;
+      return Boolean(s && s.accepted === true);
+    }), { timeout: 30000 }).toBe(true);
 
     await say(page, 'Overhead Press 110 x 7 @2');
     await expect.poll(() => loggedCount(page), { timeout: 20000 }).toBe(2);
