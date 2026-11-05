@@ -13,9 +13,9 @@ The approved active implementation agent has the same responsibilities and stand
 - run the Current-State Verification Gate before editing;
 - implement one concern on a fresh branch;
 - run the live path or closest integration path plus all applicable deterministic gates;
-- open and complete the PR, and declare the builder surface and model in the merge card;
+- open the PR, address review findings, and declare the builder surface and model in the merge card;
 - address real in-scope advisory findings without widening scope;
-- merge the exact passing head when authorized and all hard gates pass;
+- hand the PR to the coordinator for merge once the peer review records PASS on the exact head and all hard gates pass — the builder never merges;
 - verify `main` and deployment when applicable;
 - update campaign state/completion evidence when required; and
 - continue from refreshed `main` until an owner-reserved gate.
@@ -26,8 +26,8 @@ Surface identity and model identity never change production-write, schema, secur
 
 `CLAUDE.md` keeps its historical filename and remains the canonical detailed rulebook. There is no second canonical brief.
 
-- **“Claude” as builder/merge operator** in any active governance document means **the approved active implementation agent**.
-- **“Codex comments/review are advisory”** means **independent agent review is advisory**. The reviewer is any agent that is not the active builder.
+- **“Claude” as builder** in any active governance document means **the approved active implementation agent**. The coordinator — not the implementation agent — is the merge operator.
+- **“Codex comments/review are advisory”** means **the optional advisory audit is advisory**. The peer review (Atlas Contract / Systems Review) is required on every PR and is never advisory. The reviewer is the other builder lane, never the PR's own builder.
 - **`claude/<concern>` branches** remain valid historical branches. New branches use **`agent/<concern>`**, on every surface, so handoffs are tool-neutral.
 - **`.claude/rules/*`** are retained filenames. Those rules bind every agent, but they auto-load only on a surface that reads that directory. On any other surface, read them directly when the matching file is in scope.
 
@@ -65,7 +65,7 @@ The trial is a **deferred portability acceptance proof**. It runs when Dale elec
 
 - Claude is the current approved active implementation agent. Portability means the role *can* move on an owner instruction, not that it *has* moved.
 - Cursor portability is structurally ready and not live-proven.
-- A missing trial blocks nothing: not implementation, not testing, not opening a PR, not merging under standing authority, and not F-SB4B, qualifying Session 1, or any other campaign work.
+- A missing trial blocks nothing: not implementation, not testing, not opening a PR, not the coordinator merging, and not F-SB4B, qualifying Session 1, or any other campaign work.
 - No portability PASS may be claimed until the trial actually runs.
 
 The owner clarification recording this is in [`docs/ATLAS_V1_EXECUTION_PLAN.md`](./ATLAS_V1_EXECUTION_PLAN.md), which is where an owner instruction governs. This section restates the timing only; it creates no second authority.
@@ -108,13 +108,13 @@ No agent may perform or simulate this trial on its own initiative. An agent that
 
 ## Review and merge
 
-GitHub Actions and deterministic checks are the hard gates. Independent agent reviews are useful but advisory.
+GitHub Actions and deterministic checks are the hard gates. The peer review — the Atlas Contract / Systems Review performed by the other builder lane — is required on every PR and is never advisory. The optional advisory audit is advisory and never substitutes for the required peer review or for a required deterministic gate.
 
-- Any agent that is not the active builder may review the active builder's PR.
+- The other builder lane reviews the active builder's PR; anyone who implemented any part of a PR cannot supply its independent PASS.
 - A builder must not manufacture a required review status from its own identity, wording, reaction, or comment.
-- A missing optional agent review does not block an otherwise authorized routine PR.
+- A missing peer review blocks merge; a missing optional advisory audit does not.
 - Real P0/P1 or in-scope findings do block until fixed or truthfully dispositioned.
-- The trigger-based Atlas Contract / Systems Review and owner-reserved authorizations remain unchanged. ChatGPT performs that review; an independent builder-model review never substitutes for it, and never substitutes for a required deterministic gate.
+- Owner-reserved authorizations remain unchanged. Self-review, role renaming, and coordinator code review remain prohibited.
 
 ## Launcher
 
