@@ -261,6 +261,14 @@ const SET_NOTATION_WORD_RE = /^(x\d*|reps?|rir|rpe|lbs?|kgs?|for|at|by|to|of|wit
 // effort across them ("then 245", "6 and 6", "all around RIR", "three times").
 // Number words are included so "three times" is never read as an exercise name.
 const SET_CONTINUATION_WORD_RE = /^(today|i|did|was|were|then|and|another|next|same|again|also|plus|times?|all|around|about|roughly|approx|approximately|each|per|set|sets|one|two|three|four|five|six|seven|eight|nine|ten)$/i;
+// Compact weight-x-reps set token (G1 structural fix): "70x15", "70.5x15",
+// "70x15x3" (weight x reps x count), capital X, and the Unicode multiply sign
+// (normalizeParserText already folds × to x at every guard call site; the pattern
+// matches it directly too for any unnormalized caller). A single attached token
+// is unambiguous set data — never a name word — so the boundary guards treat it
+// exactly like a slash set. Spaced forms ("70 x 15") need no pattern: their bare
+// number tokens are already set tokens.
+const COMPACT_WXR_TOKEN_RE = /^\d+(?:\.\d+)?[x×]\d+(?:[x×]\d+)?$/i;
 
 // Refuse-to-merge guard (G1). Detect leftover set tokens that CANNOT be confidently
 // attributed to the recognized exercise: a trailing set-group separated from the
@@ -368,6 +376,11 @@ function hasLeadingUnattributableSets(preText) {
     .split(' ')
     .map(t => t.replace(/[,.;:]+$/, '').trim())
     .filter(Boolean);
+  // G1 structural fix: a single compact set token before a recognized name is
+  // as distinctive as a single slash set (a bare number alone is not — "did 3
+  // sets of" must never trip this), so it fires on its own. "70x15 Bench …"
+  // belongs to an earlier, unrecognized exercise, never to Bench.
+  if (tokens.some(t => COMPACT_WXR_TOKEN_RE.test(t))) return true;
   for (let i = 0; i + 1 < tokens.length; i += 1) {
     if (looksLikeSetToken(tokens[i]) && looksLikeSetToken(tokens[i + 1])) return true;
   }
@@ -944,7 +957,7 @@ function parseLogSets(rawText, context = {}) {
     return {
       intent: 'needs_clarification',
       raw_text: rawText,
-      message: `I logged sets for ${resolvedExercise.canonicalName}, but it looks like another exercise is stacked in the same entry and I can't tell its sets apart. Please re-enter that exercise on its own so nothing is mis-logged.`,
+      message: `I see sets for ${resolvedExercise.canonicalName} here, but it looks like another exercise is stacked in the same entry and I can't tell its sets apart. Please re-enter that exercise on its own so nothing is mis-logged.`,
       warnings: ['unattributable_trailing_sets'],
     };
   }
@@ -1164,7 +1177,7 @@ function parseUnknownExercise(rawText) {
     return {
       intent: 'needs_clarification',
       raw_text: rawText,
-      message: `I logged sets for ${titleCaseFallback(unknown.rawName)}, but it looks like another exercise is stacked in the same entry and I can't tell its sets apart. Please re-enter that exercise on its own so nothing is mis-logged.`,
+      message: `I see sets for ${titleCaseFallback(unknown.rawName)} here, but it looks like another exercise is stacked in the same entry and I can't tell its sets apart. Please re-enter that exercise on its own so nothing is mis-logged.`,
       warnings: ['unattributable_trailing_sets'],
     };
   }
@@ -1258,7 +1271,8 @@ function looksLikeProse(name) {
 function looksLikeSetToken(token) {
   return /^x\d+$/i.test(token)
     || /^\d+(?:\.\d+)?(?:lb|lbs|s)?$/i.test(token)
-    || /^\d+\/\d+(?:\.\d+)?$/i.test(token);
+    || /^\d+\/\d+(?:\.\d+)?$/i.test(token)
+    || COMPACT_WXR_TOKEN_RE.test(token);
 }
 
 function parseDumbbellSlashRepeats(text) {
