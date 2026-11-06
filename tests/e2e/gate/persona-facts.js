@@ -19,42 +19,86 @@
 // §3.3) — never copied from the corpus script's numbers and never read back
 // from the product's own output.
 
-const { logCleanedColumns } = require('../../../config/columns');
+const { logCleanedColumns, modalityLogColumns } = require('../../../config/columns');
 const { deriveExpectedRemaining } = require('./rehearsal-scorecard');
 
 const nameKey = (v) => String(v == null ? '' : v).trim().toLowerCase().replace(/[-\s]+/g, ' ');
 const num = (v) => (v === '' || v === null || v === undefined ? NaN : Number(v));
 
+// ── RIR cell state (#1663) ──────────────────────────────────────────────────
+// A durable RIR cell can be genuinely empty (no RIR recorded), a number,
+// or a non-numeric string ('INVALID'). Number() collapses the last two into
+// NaN, so the old comparison could not tell a malformed cell from a missing
+// one — and the bench 'no RIR recorded' check passed a malformed cell. The
+// state is carried alongside the number and encoded in the comparison tuple,
+// so malformed ≠ missing ≠ present. A declaration's RIR is a number or
+// null; a malformed declaration value is an authoring hole, encoded as
+// malformed so it can never match a durable row.
+function rirState(raw) {
+  // A JS NaN is missing too: the buffer mapping turns null/empty/missing
+  // into NaN by convention (personaLane: mapBufferSets), so a NaN input is
+  // a missing RIR, never a malformed one. Only a non-empty, non-numeric
+  // VALUE — a string cell like 'INVALID' — is malformed. A whitespace-only
+  // cell carries nothing, so it is missing, not a zero: Number(' ') is 0,
+  // and a blank cell must never read as a recorded RIR 0.
+  const trimmed = typeof raw === 'string' ? raw.trim() : raw;
+  if (trimmed === '' || trimmed === null || trimmed === undefined || (typeof trimmed === 'number' && Number.isNaN(trimmed))) return { state: 'missing', rir: NaN, raw: '' };
+  const n = Number(trimmed);
+  if (Number.isFinite(n)) return { state: 'present', rir: n, raw: String(trimmed) };
+  return { state: 'malformed', rir: NaN, raw: String(trimmed) };
+}
+
 // One comparable set shape across every surface: the declaration the spec
 // computes, the client's retained buffer, and the durable rows.
-//   { key, exercise, lift_code, weight, reps, rir }
+//   { key, exercise, lift_code, weight, reps, rir, rirState, rirRaw }
 function declaredSet(s) {
   const o = s && typeof s === 'object' ? s : {};
+  const rs = rirState(o.rir);
   return {
     key: nameKey(o.exercise),
     exercise: String(o.exercise || ''),
     lift_code: String(o.lift_code || '').trim().toUpperCase(),
     weight: num(o.weight),
     reps: num(o.reps),
-    rir: num(o.rir),
+    rir: rs.rir,
+    rirState: rs.state,
+    rirRaw: rs.raw,
   };
 }
 
 function durableRowSet(row) {
   const r = Array.isArray(row) ? row : [];
   const at = (name) => r[logCleanedColumns.indexOf(name)];
+  const rs = rirState(at('rir'));
   return {
     key: nameKey(at('canonical_exercise') || at('exercise')),
     exercise: String(at('canonical_exercise') || at('exercise') || ''),
     lift_code: String(at('lift_code') || '').trim().toUpperCase(),
     weight: num(at('weight')),
     reps: num(at('reps')),
-    rir: num(at('rir')),
+    rir: rs.rir,
+    rirState: rs.state,
+    rirRaw: rs.raw,
   };
 }
 
-const setTuple = (s) => `${s.key}|${s.lift_code}|${s.weight}|${s.reps}|${s.rir}`;
-const setLabel = (s) => `${s.exercise || s.key} ${s.weight}x${s.reps}@${s.rir}`;
+// One comparable modality shape: the session's Modality_Log rows, in
+// modalityLogColumns order.
+//   { modality, exercise, durationSec }
+function durableModalityRow(row) {
+  const r = Array.isArray(row) ? row : [];
+  const at = (name) => r[modalityLogColumns.indexOf(name)];
+  return {
+    modality: String(at('modality') || '').trim().toLowerCase(),
+    exercise: String(at('exercise') || '').trim(),
+    durationSec: num(at('duration_sec')),
+  };
+}
+
+const rirTuple = (s) => (s.rirState === 'present' ? String(s.rir)
+  : s.rirState === 'malformed' ? `malformed:${s.rirRaw}` : 'missing');
+const setTuple = (s) => `${s.key}|${s.lift_code}|${s.weight}|${s.reps}|${rirTuple(s)}`;
+const setLabel = (s) => `${s.exercise || s.key} ${s.weight}x${s.reps}@${s.rirState === 'malformed' ? `malformed '${s.rirRaw}'` : (s.rirState === 'missing' ? 'no RIR' : s.rir)}`;
 
 // Multiset comparison with named differences — counts alone cannot prove the
 // declared workout (the same rule the scorecard's durable comparison lives by).
@@ -83,6 +127,9 @@ function compareSetMultisets(observed, expected) {
 //   bufferSets        — the retained buffer's sets AFTER the correction beat
 //                       (declaredSet inputs), or null when unmeasured
 //   durableLogRows    — raw Log_Cleaned rows for THIS session only (arrays)
+//   durableModalityRows — raw Modality_Log rows for THIS session only
+//                       (arrays), or null when unmeasured; the plank check
+//                       judges their content, not just their count
 //   observedRemaining — the client's remaining-work names at the final probe,
 //                       or null when unmeasured
 function checkPersonaFacts(input) {
@@ -157,12 +204,101 @@ function checkPersonaFacts(input) {
     const rirDeclared = revised.rir !== undefined && revised.rir !== null;
     const problems = [];
     if (rows.length !== num(revised.sets)) problems.push(`${rows.length} durable ${lift} row(s), declared ${revised.sets}`);
+    // A malformed RIR is NOT a missing one (#1663): it gets its own problem
+    // line naming the cell, instead of passing as 'no RIR recorded'.
+    const malformed = rows.filter((s) => s.rirState === 'malformed');
+    if (malformed.length) problems.push(`${malformed.length} ${lift} row(s) carry a malformed RIR (not a missing one): ${malformed.map((s) => `malformed RIR '${s.rirRaw}'`).join('; ')}`);
     const off = rows.filter((s) => s.weight !== want.weight || s.reps !== want.reps
-      || (rirDeclared ? s.rir !== num(revised.rir) : !Number.isNaN(s.rir)));
+      || (rirDeclared ? s.rir !== num(revised.rir) : s.rirState === 'present'));
     if (off.length) problems.push(`${off.length} ${lift} row(s) off the revised end-state: ${off.map(setLabel).join('; ')}`);
     add(`persona-bench-revised-target:${lift}`, problems.length === 0,
       problems.length === 0
         ? `${lift} durable rows read ${want.weight}x${want.reps}${rirDeclared ? `@${num(revised.rir)}` : ' with no RIR recorded'} x${revised.sets} — the revised target end-state`
+        : problems.join('; '));
+  }
+
+  // ── The squat hold rule (Priya's declared hold: 35 stays until all sets
+  // reach target RIR) ───────────────────────────────────────────────────────
+  // Two halves, both judged: the durable rows for the lift are EXACTLY the
+  // held sets (the weight did not move), AND the hold is genuinely
+  // exercised — at least one set sits off the target RIR. A run where every
+  // set sits at target RIR meets the progression condition, so a hold claim
+  // on it is vacuous and fails. A fixture without squatHold (Marcus)
+  // emits no check here, unchanged.
+  const hold = facts.squatHold && typeof facts.squatHold === 'object' ? facts.squatHold : null;
+  if (hold) {
+    const lift = String(hold.lift_code || '').trim().toUpperCase();
+    const problems = [];
+    for (const f of ['weight', 'reps', 'sets', 'targetRir']) {
+      if (hold[f] === undefined || hold[f] === null || !Number.isFinite(num(hold[f]))) {
+        problems.push(`squatHold declares no usable ${f} — the hold cannot be judged`);
+      }
+    }
+    if (problems.length === 0) {
+      const rows = durable.filter((s) => s.lift_code === lift);
+      const want = { weight: num(hold.weight), reps: num(hold.reps) };
+      if (rows.length !== num(hold.sets)) problems.push(`${rows.length} durable ${lift} row(s), declared ${hold.sets}`);
+      const malformed = rows.filter((s) => s.rirState === 'malformed');
+      if (malformed.length) problems.push(`${malformed.length} ${lift} row(s) carry a malformed RIR: ${malformed.map((s) => `malformed RIR '${s.rirRaw}'`).join('; ')}`);
+      const unusable = rows.filter((s) => s.rirState === 'missing');
+      if (unusable.length) problems.push(`${unusable.length} ${lift} row(s) carry no usable RIR — the hold cannot be judged from them`);
+      const off = rows.filter((s) => s.weight !== want.weight || s.reps !== want.reps);
+      if (off.length) problems.push(`${off.length} ${lift} row(s) off the held end-state: ${off.map(setLabel).join('; ')}`);
+      const rirs = rows.filter((s) => s.rirState === 'present').map((s) => s.rir);
+      if (rows.length && rirs.length === rows.length && rirs.every((r) => r === num(hold.targetRir))) {
+        problems.push(`all ${rows.length} ${lift} sets sit at target RIR ${num(hold.targetRir)} — the hold is not exercised, the weight should progress`);
+      }
+      add(`persona-squat-hold:${lift}`, problems.length === 0,
+        problems.length === 0
+          ? `${lift} durable rows read ${want.weight}x${want.reps} x${rows.length} — the weight stays ${want.weight} with set RIRs: ${rows.map((s) => (s.rirState === 'present' ? s.rir : s.rirState)).join(', ')} (target ${num(hold.targetRir)}, so the hold is exercised)`
+          : problems.join('; '));
+    } else {
+      add(`persona-squat-hold:${lift || 'UNKNOWN'}`, false, problems.join('; '));
+    }
+  }
+
+  // ── The plank PB (Priya's declared finisher) ─────────────────────────────
+  // Split by what is measurable. Today's hold IS judged here: the session's
+  // Modality_Log rows must carry exactly one plank timed hold at todaySec —
+  // a count-only observation let a 5-second treadmill row stand in for the
+  // plank (the audit's counterexample), so the content is judged, not the
+  // count. The baseline comparison (previousBestSec) has no engine-visible
+  // history to judge it against — a timed hold has no GATE-H row shape —
+  // so the fixture must mark it human-judged; an unmarked baseline fails,
+  // naming the rule. A fixture without plankPb (Marcus) emits no check
+  // here, unchanged.
+  const pb = facts.plankPb && typeof facts.plankPb === 'object' ? facts.plankPb : null;
+  if (pb) {
+    const problems = [];
+    if (pb.todaySec === undefined || pb.todaySec === null || !Number.isFinite(num(pb.todaySec))) {
+      problems.push('plankPb declares no usable todaySec — the hold cannot be judged');
+    }
+    if (pb.previousBestSec !== undefined && pb.previousBestSec !== null) {
+      if (pb.previousBestJudgedBy !== 'human') {
+        problems.push(`previousBestSec ${pb.previousBestSec} has no automated consumer and is not marked human-judged — mark it previousBestJudgedBy: 'human' or remove it`);
+      } else if (Number.isFinite(num(pb.todaySec)) && num(pb.todaySec) <= num(pb.previousBestSec)) {
+        problems.push(`todaySec ${pb.todaySec} does not beat previousBestSec ${pb.previousBestSec} — the declared PB is not a PB`);
+      }
+    }
+    if (!Array.isArray(i.durableModalityRows)) {
+      problems.push('no modality observation was recorded — the plank hold is unproven');
+    } else if (problems.length === 0) {
+      const mods = i.durableModalityRows.map(durableModalityRow);
+      const named = mods.filter((m) => /plank/i.test(m.exercise || ''));
+      if (named.length === 0) {
+        const found = mods.map((m) => `${m.exercise || m.modality || 'unnamed'} ${Number.isFinite(m.durationSec) ? `${m.durationSec}s` : 'no duration'}`).join(', ') || 'none';
+        problems.push(`no plank row in Modality_Log — found [${found}]`);
+      } else if (named.length !== 1) {
+        problems.push(`${named.length} plank rows in Modality_Log, declared 1`);
+      } else {
+        const row = named[0];
+        if (row.modality !== 'timed_hold') problems.push(`the plank row is modality '${row.modality}', not a timed_hold`);
+        if (row.durationSec !== num(pb.todaySec)) problems.push(`plank row reads ${Number.isFinite(row.durationSec) ? `${row.durationSec}s` : 'no duration'}, declared ${num(pb.todaySec)}s`);
+      }
+    }
+    add('persona-plank-pb', problems.length === 0,
+      problems.length === 0
+        ? `Plank timed hold lands in Modality_Log at ${num(pb.todaySec)}s — today's PB; the ${pb.previousBestSec}s baseline comparison is human-judged (review checklist)`
         : problems.join('; '));
   }
 
@@ -227,4 +363,4 @@ function checkPersonaFacts(input) {
   return { ok: checks.every((c) => c.ok), checks };
 }
 
-module.exports = { checkPersonaFacts, compareSetMultisets, declaredSet, durableRowSet, nameKey };
+module.exports = { checkPersonaFacts, compareSetMultisets, declaredSet, durableRowSet, durableModalityRow, nameKey };

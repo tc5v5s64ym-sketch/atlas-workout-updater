@@ -186,10 +186,18 @@ module.exports = {
     // Bench end-state after the form bail: 25 x 8 x3, NOT the planned 10s.
     benchRevisedTarget: { exercise: 'Dumbbell Bench Press', lift_code: 'DBB01', weight: 25, sets: 3, reps: 8 },
     // Squat hold rule from the script: 35 stays until all three sets sit at 2.
+    // Judged automatically by persona-squat-hold (#1663): the durable squat
+    // rows must read 35 x 10 x3, with at least one set off target RIR 2 so
+    // the hold is genuinely exercised (set 3 is @1 in the scripted run).
     squatHold: { exercise: 'Goblet Squat', lift_code: 'GSQ01', weight: 35, sets: 3, reps: 10, targetRir: 2 },
     // Plank PB: previous best 32 s, today 40 s (+8). No history row carries
     // this (timed hold, no weight/reps shape) — it is a fact declaration.
-    plankPb: { previousBestSec: 32, todaySec: 40 },
+    // Split by what is judged where (#1663): todaySec IS judged
+    // automatically (persona-plank-pb reads the Modality_Log row), while the
+    // 32 s baseline comparison has no engine-visible history to judge it
+    // against, so it is explicitly marked human-judged here and rides the
+    // review checklist below ("plank PB by 8") instead of the scorecard.
+    plankPb: { previousBestSec: 32, todaySec: 40, previousBestJudgedBy: 'human' },
   },
 
   // Variation declaration (§3.3): Priya's script beats are fixed values
