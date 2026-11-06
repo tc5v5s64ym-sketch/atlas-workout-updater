@@ -120,9 +120,20 @@ async function runSessionOneToSubstitution(page, capture) {
   const benchItem = accept.items.find(it => String(it.planned_lift_code).toUpperCase() === SOURCE_LIFT);
   expect(benchItem, 'the accepted plan carries Bench Press with an immutable item id').toBeTruthy();
 
+  // #1656: serialize the log submits. Each submit's sets must be in the session log
+  // before the next fill lands: a fill fires the form `input` listener, which bumps
+  // previewRequestSeq, and the app's F07/CLIENT-3 supersede guard drops any parse
+  // still awaiting the backend — the sets are silently lost and the banner stalls
+  // on the first lift. The accept POST above does not prove the log landed (the
+  // acceptance runs on a separate path), so await the log length, not the accept.
+  const sessionLogLength = () => page.evaluate(() => window.getSessionLog().length);
+  await expect.poll(sessionLogLength).toBe(2);
+
   // The rest of the six pre-bench sets.
   await submit(page, 'overhead press 110 6/2 x2');
+  await expect.poll(sessionLogLength).toBe(4);
   await submit(page, 'romanian deadlift 235 5/2 x2');
+  await expect.poll(sessionLogLength).toBe(6);
   await expect(page.locator('#active-session-banner')).toContainText(SOURCE_NAME);
 
   // The constraint lane. The proposal is staged here; the observer records it at that
@@ -144,9 +155,12 @@ async function runSessionOneToSubstitution(page, capture) {
   await expect.poll(async () => (await planNames(page)).some(n => /bench press/i.test(n)), { timeout: 15000 }).toBe(false);
 
   // The athlete performs the substitute — two sets, exactly as the frozen Session 1
-  // conversation declares.
+  // conversation declares. Same #1656 serialization: each single-set submit must land
+  // before the next fill, or the supersede guard drops it.
   await submit(page, 'incline db press 90 10/2');
+  await expect.poll(() => page.evaluate(() => window.getSessionLog().length)).toBe(7);
   await submit(page, 'incline db press 90 10/2');
+  await expect.poll(() => page.evaluate(() => window.getSessionLog().length)).toBe(8);
 
   const loggedNames = [
     'back squat', 'back squat', 'overhead press', 'overhead press',
