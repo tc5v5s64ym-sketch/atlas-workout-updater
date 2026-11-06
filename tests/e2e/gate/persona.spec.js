@@ -73,7 +73,7 @@ const {
   detectUnsupportedMutationWording, detectUnsupportedWriteClaim,
 } = require('./rehearsal-scorecard');
 const { evaluateTraceWriteJoin } = require('./rehearsal-write-proof-join');
-const { checkPersonaFacts, compareSetMultisets, declaredSet } = require('./persona-facts');
+const { checkPersonaFacts, compareSetMultisets, declaredSet, durableModalityRow } = require('./persona-facts');
 const { buildDeclaration, buildBufferNameMap, mapBufferSets } = require('./persona-scenario');
 const {
   OBSERVER_FLUSH_MS, bubbleObserverInitScript, BUBBLE_ID_ATTR, BUBBLE_SEQ_ATTR,
@@ -979,12 +979,22 @@ test('persona scenario (scored): fixture beats through the real app under the sc
   // The buffer moment differs by persona (Marcus: after the correction;
   // Priya: after the final log turn), so the detail names it — a Priya
   // detail must never claim a correction that never happened.
+  // The modality rows for THIS session only, for the plank check (#1663):
+  // the fact checker judges the modality row's content (a plank timed hold
+  // at todaySec), not just the count a treadmill row could stand in for.
+  // Null when the verifier returned no modality surface at all — the check
+  // then fails closed on the unproven measurement.
+  const modSidIdx = modalityLogColumns.indexOf('session_id');
+  const sessionModalityRows = d.modality
+    ? d.modality.rows.filter((r) => String(r[modSidIdx]).trim() === workoutId)
+    : null;
   const personaFacts = checkPersonaFacts({
     fixture: PERSONA,
     expectedSets,
     loggedNames,
     bufferSets: finalBuffer,
     durableLogRows: d.log_cleaned.rows,
+    durableModalityRows: sessionModalityRows,
     observedRemaining: obsRemaining,
     ...(SLUG === 'priya' ? {
       bufferContext: 'after the final log turn',
@@ -1083,7 +1093,22 @@ test('persona scenario (scored): fixture beats through the real app under the sc
         rows_match_declaration: personaFacts.checks.find((c) => c.id === 'persona-parsed-set-equality')?.ok === true,
         detail: (personaFacts.checks.find((c) => c.id === 'persona-parsed-set-equality') || {}).detail || '',
       },
-      modality: { row_count: d.modality ? d.modality.rows.length : 0 },
+      modality: {
+        row_count: d.modality ? d.modality.rows.length : 0,
+        // The content, not just the count (#1663): a row_count-only
+        // observation let a 5-second treadmill row stand in for the plank.
+        plank: (() => {
+          const rows = (sessionModalityRows || []).map(durableModalityRow);
+          const named = rows.filter((m) => /plank/i.test(m.exercise || ''));
+          const row = named[0] || null;
+          return {
+            found: named.length === 1,
+            row_count: named.length,
+            duration_sec: row && Number.isFinite(row.durationSec) ? row.durationSec : null,
+            modality: row ? row.modality : null,
+          };
+        })(),
+      },
       effort: { row_count: d.effort.rows.length },
       foreign_rows: foreignRows,
       foreign_id_probe_status: foreignStatus,
