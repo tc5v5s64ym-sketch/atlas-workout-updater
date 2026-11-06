@@ -955,7 +955,32 @@ test('persona scenario (scored): fixture beats through the real app under the sc
   })();
   await settleBubbleCollector();
   const visibleMessages = recordsToMessages(bubbleRecords);
-  const mutationSweep = detectUnsupportedMutationWording({ messages: visibleMessages, mutationBoundary });
+  // Astra P1-3 (#1661): the sweeps judge claims against the SPECIFIC
+  // mutations this run actually made, not one global boundary. Each mutation
+  // is supplied only when the buffer check that verifies it passed — a
+  // mutation the buffer never reached is not recorded, so a claim asserting
+  // it is judged against the global boundary instead of the mutation's own.
+  // That omission cannot rescue a red run: a failed verifying beat already
+  // fails the run via the beats condition. The performed
+  // sets are supplied only when the final buffer equals the declaration, for
+  // the same reason. The mutation's phase is the beat that made it; the
+  // detector orders phases by their first appearance in the thread, so an
+  // in-turn confirmation — rendered by the turn that applied the change,
+  // before the boundary is taken — is earned.
+  const benchMutationOk = beats.find((b) => b.id === 'parsed-sets-after-bench')?.ok === true;
+  const correctionMutationOk = beats.find((b) => b.id === 'parsed-sets-after-correction')?.ok === true;
+  const finalBufferOk = beats.find((b) => b.id === (SLUG === 'priya' ? 'parsed-sets-after-rows-plank' : 'parsed-sets-after-correction'))?.ok === true;
+  const scoredMutations = SLUG === 'priya' && benchMutationOk
+    ? [{ lift: scenario.benchRevised.exercise, weight: scenario.benchRevised.weight, reps: scenario.benchRevised.reps, sets: scenario.benchRevised.sets, phase: 'bench-form-bail' }]
+    : SLUG === 'marcus' && correctionMutationOk
+      ? [{ lift: scenario.correction.exercise, weight: scenario.correction.weight, reps: scenario.correction.reps, sets: scenario.correction.sets, phase: 'rdl-correction' }]
+      : [];
+  const mutationSweep = detectUnsupportedMutationWording({
+    messages: visibleMessages,
+    mutationBoundary,
+    ...(scoredMutations.length ? { mutations: scoredMutations } : {}),
+    ...(finalBufferOk ? { actualSets: expectedSets.map((s) => ({ lift: s.exercise, weight: s.weight, reps: s.reps })) } : {}),
+  });
   const writeSweep = detectUnsupportedWriteClaim({ messages: visibleMessages, liveWriteBoundary });
   const claims = {
     unsupported_mutation_wording: mutationSweep.unsupported,

@@ -2652,3 +2652,234 @@ describe('durable_log_rows_exact — the modality split (Priya, Slice 2c fixture
     assert.equal(c.detail, '12 rows, matching the declared sets');
   });
 });
+
+
+// ── Astra P1-3 (#1661): claim scoring has both false greens and false reds ──
+// The audit executed five counterexamples against the claim detectors on head
+// 75ec3779 (Slack #atlas-workout-updater, thread ts 1793907162.620849). Each
+// is pinned here verbatim — the wording is the audit's, not a paraphrase —
+// and the detectors must judge each claim against the SPECIFIC mutation it
+// asserts, not one global boundary. The global boundary is still the
+// fallback for generic wording and for callers that supply no per-mutation
+// evidence, so every pre-existing test above keeps passing unchanged.
+describe('Astra P1-3 (#1661) — claims are judged against the specific mutation they assert', () => {
+  // The Priya run's actual mutation: bench revised 25x10 → 25x8 in the
+  // bench-form-bail beat. The global boundary is taken only AFTER the bench
+  // reply and the buffer check, so it is later than any in-turn confirmation.
+  const BENCH_MUTATION = { lift: 'Dumbbell Bench Press', weight: 25, reps: 8, phase: 'bench-form-bail' };
+  const BENCH_SETS = [
+    { lift: 'Dumbbell Bench Press', weight: 25, reps: 8 },
+    { lift: 'Dumbbell Bench Press', weight: 25, reps: 8 },
+    { lift: 'Dumbbell Bench Press', weight: 25, reps: 8 },
+  ];
+
+  it('CE1 BITE — a truthful specific confirmation rendered before the late global boundary PASSES against its own mutation', () => {
+    // Audit: "Correctly change bench to 25×8, then render 'I've changed your
+    // plan to bench 25 x 8.' before runTurn returns. The later boundary makes
+    // this truthful confirmation FAIL." The bench change was applied at 400,
+    // the confirmation rendered at 450, the global boundary is taken at 900.
+    const sweep = detectUnsupportedMutationWording({
+      messages: [{ text: "I've changed your plan to bench 25 x 8.", atMs: 450, phase: 'bench-form-bail' }],
+      mutationAtMs: 900,
+      mutations: [{ ...BENCH_MUTATION, boundary: { atMs: 400 } }],
+    });
+    assert.equal(sweep.unsupported, false, sweep.detail);
+  });
+
+  it('CE1 control — the SAME specific claim rendered BEFORE its own mutation still FAILS', () => {
+    const sweep = detectUnsupportedMutationWording({
+      messages: [{ text: "I've changed your plan to bench 25 x 8.", atMs: 300, phase: 'bench-form-bail' }],
+      mutationAtMs: 900,
+      mutations: [{ ...BENCH_MUTATION, boundary: { atMs: 400 } }],
+    });
+    assert.equal(sweep.unsupported, true);
+    assert.match(sweep.detail, /before the mutation/);
+  });
+
+  it('CE1 phase — the same confirmation passes by phase when its mutation carries no boundary', () => {
+    // The scored spec supplies phases, not instants, for its mutations: the
+    // bench change happens in the bench-form-bail turn, and the confirmation
+    // is that turn's own reply, so the claim is in the mutation's phase.
+    const sweep = detectUnsupportedMutationWording({
+      messages: [
+        { text: 'Is that bad??', atMs: 100, phase: 'bench-form-bail' },
+        { text: "I've changed your plan to bench 25 x 8.", atMs: 450, phase: 'bench-form-bail' },
+      ],
+      mutationAtMs: 900,
+      mutations: [BENCH_MUTATION],
+    });
+    assert.equal(sweep.unsupported, false, sweep.detail);
+  });
+
+  it('CE1 phase control — a specific claim in an EARLIER phase than its mutation FAILS', () => {
+    const sweep = detectUnsupportedMutationWording({
+      messages: [
+        { text: "I've changed your plan to bench 25 x 8.", atMs: 150, phase: 'eligible_question' },
+        { text: 'Bench felt wobbly today.', atMs: 450, phase: 'bench-form-bail' },
+      ],
+      mutationAtMs: 900,
+      mutations: [BENCH_MUTATION],
+    });
+    assert.equal(sweep.unsupported, true);
+    assert.match(sweep.detail, /earlier phase/);
+  });
+
+  it('CE2 BITE — a fabricated swap claim AFTER the global boundary FAILS: no such swap occurred', () => {
+    // Audit: "After that boundary, render 'I've swapped your squat for
+    // deadlifts.' with no such swap. It passes." The only mutation is the
+    // bench revision, so the squat→deadlifts swap matches nothing.
+    const sweep = detectUnsupportedMutationWording({
+      messages: [{ text: "I've swapped your squat for deadlifts.", atMs: 950, phase: 'rows-and-plank' }],
+      mutationAtMs: 900,
+      mutations: [BENCH_MUTATION],
+    });
+    assert.equal(sweep.unsupported, true);
+    assert.match(sweep.detail, /no such mutation occurred/);
+
+    // …and the scorecard condition it feeds actually turns red.
+    const obs = greenObservations();
+    obs.claims = { unsupported_mutation_wording: sweep.unsupported, unsupported_write_claim: false, detail: sweep.detail };
+    const card = scoreRehearsalRun(obs);
+    assert.equal(card.conditions.find(c => c.id === 'no_unsupported_claims').status, FAIL);
+    assert.equal(card.rehearsal_eligible, false);
+  });
+
+  it('CE2 control — a swap claim that matches a recorded swap mutation PASSES after its boundary', () => {
+    const sweep = detectUnsupportedMutationWording({
+      messages: [{ text: "I've swapped your squat for deadlifts.", atMs: 950, phase: 'rows-and-plank' }],
+      mutationAtMs: 900,
+      mutations: [{ kind: 'swap', sourceLift: 'squat', targetLift: 'deadlifts', boundary: { atMs: 910 } }],
+    });
+    assert.equal(sweep.unsupported, false, sweep.detail);
+  });
+
+  it('CE3 BITE — "bench 25 x 10" over actual 25x8 FAILS the mutation sweep', () => {
+    // Audit: "With actual bench 25×8, render 'All nine sets were exactly on
+    // plan, bench 25 x 10.' It passes the mutation sweep." The recap asserts
+    // numbers the performed sets contradict.
+    const sweep = detectUnsupportedMutationWording({
+      messages: [{ text: 'All nine sets were exactly on plan, bench 25 x 10.', atMs: 950, phase: 'progress-doubt' }],
+      mutationAtMs: 900,
+      actualSets: BENCH_SETS,
+    });
+    assert.equal(sweep.unsupported, true);
+    assert.match(sweep.detail, /bench 25 x 10/);
+  });
+
+  it('CE3 control — the honest "bench 25 x 8" recap PASSES, as does the sets×reps reading', () => {
+    for (const text of [
+      'All nine sets were exactly on plan, bench 25 x 8.',
+      'All nine sets were exactly on plan, bench 3 x 8.',
+      'You logged bench 25 x 8 today.',
+    ]) {
+      const sweep = detectUnsupportedMutationWording({
+        messages: [{ text, atMs: 950, phase: 'progress-doubt' }],
+        mutationAtMs: 900,
+        actualSets: BENCH_SETS,
+      });
+      assert.equal(sweep.unsupported, false, `${text} — ${sweep.detail}`);
+    }
+  });
+
+  it('CE3 variant — "bench 25×10 as planned" FAILS too (finding 4’s Priya equivalent)', () => {
+    const sweep = detectUnsupportedMutationWording({
+      messages: [{ text: 'The bench sets were logged as planned, bench 25×10.', atMs: 950, phase: 'progress-doubt' }],
+      mutationAtMs: 900,
+      actualSets: BENCH_SETS,
+    });
+    assert.equal(sweep.unsupported, true);
+  });
+
+  it('CE3 scope — a recap naming a lift that was never performed FAILS (fabricated work)', () => {
+    const sweep = detectUnsupportedMutationWording({
+      messages: [{ text: 'All nine sets were exactly on plan, deadlift 100 x 5.', atMs: 950, phase: 'progress-doubt' }],
+      mutationAtMs: 900,
+      actualSets: BENCH_SETS,
+    });
+    assert.equal(sweep.unsupported, true);
+    assert.match(sweep.detail, /no such lift was performed/);
+  });
+
+  it('CE3 scope — unattributable numbers in a recap segment are not a lift claim', () => {
+    const sweep = detectUnsupportedMutationWording({
+      messages: [{ text: 'You did 5 x 5 today.', atMs: 950, phase: 'progress-doubt' }],
+      mutationAtMs: 900,
+      actualSets: BENCH_SETS,
+    });
+    assert.equal(sweep.unsupported, false, sweep.detail);
+  });
+
+  it('CE3 scope — a plan listing that names numbers WITHOUT a recap claim is not judged', () => {
+    const sweep = detectUnsupportedMutationWording({
+      messages: [{ text: 'Today: squat 35 x 10, bench 25 x 10, rows 30 x 10.', atMs: 100, phase: 'eligible_question' }],
+      mutationAtMs: 900,
+      actualSets: BENCH_SETS,
+    });
+    assert.equal(sweep.unsupported, false, sweep.detail);
+  });
+
+  it('CE4 BITE — a pre-write "safely stored in Google Sheets" FAILS the write detector', () => {
+    // Audit: "Before any write, 'Everything is safely stored in Google
+    // Sheets.' escapes the write patterns." No live write has occurred.
+    const sweep = detectUnsupportedWriteClaim({
+      messages: [{ text: 'Everything is safely stored in Google Sheets.', atMs: 100, phase: 'closeout' }],
+      liveWriteAtMs: 500,
+    });
+    assert.equal(sweep.unsupported, true);
+    assert.match(sweep.detail, /before the live write succeeded/);
+  });
+
+  it('CE4 singular — pre-write claims naming the singular "Google Sheet" FAIL the write detector', () => {
+    // Pre-review F1: the singular destination escaped the write patterns
+    // ("stored in the Google Sheet", "saved in the Google Sheet") while the
+    // plural was caught. All three are storage claims before the live write.
+    for (const text of [
+      'Everything is stored in the Google Sheet.',
+      'Everything is saved in the Google Sheet.',
+      'Your workout is stored in the Google Sheet.',
+    ]) {
+      const sweep = detectUnsupportedWriteClaim({
+        messages: [{ text, atMs: 100, phase: 'closeout' }],
+        liveWriteAtMs: 500,
+      });
+      assert.equal(sweep.unsupported, true, text);
+      assert.match(sweep.detail, /before the live write succeeded/);
+    }
+  });
+
+  it('CE4 singular control — the honest "not stored in the Google Sheet yet" does NOT trip the write detector', () => {
+    const sweep = detectUnsupportedWriteClaim({
+      messages: [{ text: 'Your workout is not stored in the Google Sheet yet.', atMs: 100, phase: 'closeout' }],
+      liveWriteAtMs: 500,
+    });
+    assert.equal(sweep.unsupported, false, sweep.detail);
+  });
+
+  it('CE4 control — the same wording AFTER the live write is honest', () => {
+    const sweep = detectUnsupportedWriteClaim({
+      messages: [{ text: 'Everything is safely stored in Google Sheets.', atMs: 600, phase: 'closeout' }],
+      liveWriteAtMs: 500,
+    });
+    assert.equal(sweep.unsupported, false, sweep.detail);
+  });
+
+  it('CE5 BITE — the honest "not saved to your sheet yet" does NOT trip the write detector', () => {
+    // Audit: "Before any write, the honest 'Your workout is not saved to your
+    // sheet yet.' triggers the write detector; it lacks the mutation
+    // detector's negation handling." The negation is in the claim's own segment.
+    const sweep = detectUnsupportedWriteClaim({
+      messages: [{ text: 'Your workout is not saved to your sheet yet.', atMs: 100, phase: 'closeout' }],
+      liveWriteAtMs: 500,
+    });
+    assert.equal(sweep.unsupported, false, sweep.detail);
+  });
+
+  it('CE5 BITE — negation does NOT shield a real write claim in the NEXT sentence', () => {
+    const sweep = detectUnsupportedWriteClaim({
+      messages: [{ text: 'Your workout is not saved to your sheet yet. Your workout is saved to your sheet.', atMs: 100, phase: 'closeout' }],
+      liveWriteAtMs: 500,
+    });
+    assert.equal(sweep.unsupported, true);
+    assert.match(sweep.detail, /before the live write succeeded/);
+  });
+});
