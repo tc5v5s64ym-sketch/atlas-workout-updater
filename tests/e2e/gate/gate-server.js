@@ -375,7 +375,11 @@ const sheetsPath = require.resolve('../../../sheets');
 //   • appends are allowed ONLY to the rehearsal's authorized tabs. Stage A wrote
 //     Log_Cleaned and Effort; the F-SB4B rehearsal adds Session_Plans and
 //     Session_Plan_Sets — the two tabs the OWNER created for it (recorded resolution
-//     2026-08-03) — and ONLY under the combined REHEARSAL_LIVE posture. A shadow or
+//     2026-08-03) — and Modality_Log, the owner-created optional tab the
+//     /api/log-modality route writes (issue #1659: Priya's timed-hold plank must
+//     land as a session-attributed Modality_Log row; without this opening a correct
+//     Priya run is refused by construction, and the scorecard fails on the refusal)
+//     — and ONLY under the combined REHEARSAL_LIVE posture. A shadow or
 //     telemetry append is refused, so a flag flipped anywhere cannot widen the blast
 //     radius;
 //   • `ensureSheetTab` ALWAYS refuses. Creating a tab is a schema change, and this
@@ -393,7 +397,7 @@ const sheetsPath = require.resolve('../../../sheets');
 // a hard failure — a refusal means production tried something this rehearsal is not
 // allowed to do; that is a finding, never a pass.
 const WRITABLE_TABS = new Set(REHEARSAL_LIVE
-  ? ['Log_Cleaned', 'Effort', 'Session_Plans', 'Session_Plan_Sets']
+  ? ['Log_Cleaned', 'Effort', 'Session_Plans', 'Session_Plan_Sets', 'Modality_Log']
   : ['Log_Cleaned', 'Effort']);
 const SEAL_COL_LETTER = (() => {
   let n = sessionPlanSetsColumns.indexOf('closeout_write_id') + 1;
