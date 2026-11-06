@@ -22,6 +22,7 @@ const assert = require('node:assert');
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
+const os = require('node:os');
 
 const { SANDBOX_SPREADSHEET_ID, SANDBOX_SPREADSHEET_ID_LAST6, isSandboxSpreadsheetId } = require('../config/sandboxSheet');
 
@@ -176,9 +177,109 @@ test('the seal column is the ONLY writable cell class, and only under the combin
     'updateColumnCells must be limited to the Session_Plan_Sets seal column under REHEARSAL_LIVE');
 });
 
-test('the append allowlist widens to the plan-ledger tabs ONLY under the combined posture', () => {
-  assert.match(gateSrc, /const WRITABLE_TABS = new Set\(REHEARSAL_LIVE\s*\?\s*\['Log_Cleaned', 'Effort', 'Session_Plans', 'Session_Plan_Sets'\]\s*:\s*\['Log_Cleaned', 'Effort'\]\)/,
-    'the four-tab write set must be conditional on REHEARSAL_LIVE');
+test('the append allowlist widens to the plan-ledger and modality tabs ONLY under the combined posture', () => {
+  assert.match(gateSrc, /const WRITABLE_TABS = new Set\(REHEARSAL_LIVE\s*\?\s*\['Log_Cleaned', 'Effort', 'Session_Plans', 'Session_Plan_Sets', 'Modality_Log'\]\s*:\s*\['Log_Cleaned', 'Effort'\]\)/,
+    'the five-tab write set must be conditional on REHEARSAL_LIVE');
+});
+
+// ── the modality guard behavior, proven offline (#1659) ────────────────────────
+// The guard's live behavior previously needed a real workbook, so only its shape
+// was pinned at source level. The transport preload (tests/e2e/gate/
+// gate-sandbox-transport-preload.js) stands in for the Google transport behind
+// the REAL guard — the same seam the default in-memory stub posture uses — so
+// Priya's plank can be driven through the real route + real guard with no
+// network and no credentials. The preflight still runs against the fake
+// transport, so a harness that cannot verify its workbook still refuses to
+// serve (see the posture tests above).
+
+const TRANSPORT_PRELOAD = path.join(__dirname, '..', 'tests', 'e2e', 'gate', 'gate-sandbox-transport-preload.js');
+// Priya fixture, tests/e2e/gate/personas/priya.js — the rows-and-plank beat,
+// verbatim (plankSeconds: 40).
+const PRIYA_TURN = 'Rows done, 30 pounds, 10 each arm, 3 sets. Tank answer: 2. Plank 40 seconds!! That is a record for me.';
+const PRIYA_SESSION = '20261105-PRIYA-1659';
+
+// Like runHarness, but the child stays alive so the test can drive requests
+// against it; the caller kills it. Same explicit-env discipline: no
+// process.env spread.
+async function startGuardedHarness(env, { timeoutMs = 45000 } = {}) {
+  const child = spawn(process.execPath, [GATE_SERVER], {
+    env: { PATH: process.env.PATH, HOME: process.env.HOME, NODE_ENV: 'test', ...env },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let stdout = '';
+  let stderr = '';
+  const ports = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(
+      `harness did not publish ports in ${timeoutMs}ms; stdout=${stdout.slice(-1000)} stderr=${stderr.slice(-1000)}`,
+    )), timeoutMs);
+    child.stdout.on('data', (d) => {
+      stdout += String(d);
+      const app = stdout.match(/GATE_PORT=(\d+)/);
+      const state = stdout.match(/GATE_STATE_PORT=(\d+)/);
+      if (app && state) { clearTimeout(timer); resolve({ app: Number(app[1]), state: Number(state[1]) }); }
+    });
+    child.stderr.on('data', (d) => { stderr += String(d); });
+    child.on('exit', (code) => {
+      clearTimeout(timer);
+      reject(new Error(`harness exited early with code ${code}; stdout=${stdout.slice(-1000)} stderr=${stderr.slice(-1000)}`));
+    });
+  });
+  return { child, ...ports };
+}
+
+test("Priya's plank reaches a session-attributed Modality_Log row with zero Modality_Log refusals (#1659)", async () => {
+  // The write_id shield persists to a shared /tmp file by default (24h TTL),
+  // so this test gets its own file — a rerun must be a first write, not a
+  // replayed duplicate, and must not pollute other suites' ids.
+  const idempotencyFile = path.join(os.tmpdir(), `atlas-1659-idempotency-${process.pid}-${Date.now()}.json`);
+  const { child, app, state } = await startGuardedHarness({
+    ...REHEARSAL_FLAGS,
+    ...FAKE_CREDS,
+    ATLAS_GATE_KEY: 'playwright-gate-key',
+    ATLAS_IDEMPOTENCY_FILE: idempotencyFile,
+    SESSION_PLAN_SETS_WRITE_ENABLED: '1',
+    ATLAS_SESSION_PLANS_WRITE: '1',
+    NODE_OPTIONS: `--require ${TRANSPORT_PRELOAD}`,
+  });
+  try {
+    const appBase = `http://127.0.0.1:${app}`;
+    const stateBase = `http://127.0.0.1:${state}`;
+    const headers = { 'Content-Type': 'application/json', 'x-atlas-api-key': 'playwright-gate-key' };
+    const post = async (p, body) => {
+      const res = await fetch(`${appBase}${p}`, { method: 'POST', headers, body: JSON.stringify(body) });
+      return { status: res.status, body: await res.json().catch(() => null) };
+    };
+    // Priya's exact fixture turn, live write through the real route + real guard.
+    const plank = await post('/api/log-modality', {
+      text: PRIYA_TURN, session_id: PRIYA_SESSION, date: '2026-11-05', write_id: 'priya-1659-plank-turn',
+    });
+    assert.strictEqual(plank.status, 200, JSON.stringify(plank.body));
+    assert.strictEqual(plank.body.data.sheet_written, true);
+    assert.strictEqual(plank.body.data.modality, 'timed_hold');
+    // The guard must NOT have weakened: a non-writable tab is still refused.
+    const notes = await post('/api/coaching-notes', {
+      note: '1659 guard probe — Coaching_Notes must stay refused', write_id: 'priya-1659-notes-probe',
+    });
+    assert.strictEqual(notes.status, 500, JSON.stringify(notes.body));
+    const st = await (await fetch(`${stateBase}/__gate/state`)).json();
+    const modalityAppends = st.appends.filter((c) => c.tabName === 'Modality_Log');
+    assert.strictEqual(modalityAppends.length, 1, `expected one Modality_Log append, got ${JSON.stringify(st.appends)}`);
+    const row = modalityAppends[0].rows[0];
+    assert.strictEqual(String(row[1]), PRIYA_SESSION, 'the row must carry the session id at index 1');
+    assert.strictEqual(row[2], 'timed_hold');
+    assert.strictEqual(Number(row[4]), 40, "the row must carry Priya's 40-second plank");
+    // The durable verifier reads the row back for the session — the same
+    // read-back the scored run judges, not just the append log.
+    const durable = await (await fetch(`${stateBase}/durable-rows?session_id=${encodeURIComponent(PRIYA_SESSION)}`)).json();
+    assert.strictEqual(durable.modality.rows.length, 1, JSON.stringify(durable.modality));
+    assert.strictEqual(String(durable.modality.rows[0][1]), PRIYA_SESSION);
+    assert.strictEqual(Number(durable.modality.rows[0][4]), 40);
+    assert.deepEqual(st.refusals.map((r) => r.tabName), ['Coaching_Notes'],
+      'the only refusal must be the non-writable-tab probe — zero Modality_Log refusals');
+  } finally {
+    child.kill('SIGKILL');
+    try { fs.unlinkSync(idempotencyFile); } catch { /* best-effort cleanup */ }
+  }
 });
 
 test('the preflight requires the owner-created ledger tabs with EXACT contract headers', () => {
