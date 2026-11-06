@@ -46,6 +46,53 @@ test('#1626 gap (documents the defect): the base log-it matcher cannot see a dur
   assert.equal(looksLikeLogIt('Done, log it.'), true);
 });
 
+test('#1660 gap (documents the defect): the base log-it matcher cannot see Priya\'s compound closeout', () => {
+  const { looksLikeLogIt } = loadMatchers();
+  // The exact existing fixture closeout (tests/e2e/gate/personas/priya.js:147-149).
+  const priya = 'Done — squat held at 35, bench revised to 25 x 8, rows 30, plank PB 40 seconds.';
+  assert.equal(looksLikeLogIt(priya), false,
+    'the whole-string vocabulary has no room for the recap tail — this is the gap the recap lane closes');
+  // The #1634 duration-strip lane cannot see it either on its own: stripping
+  // the trailing "40 seconds" leaves "…plank PB", which is no finish
+  // statement — demonstrated failing-first on base (both matchers false, and
+  // the parser returns needs_clarification/multiple_exercises_in_input; see
+  // the build report). The recap lane below closes it.
+});
+
+test('#1660: a finish head with a dash-introduced recap tail is a closeout', () => {
+  const { looksLikeFinishLine } = loadMatchers();
+  const yes = [
+    'Done — squat held at 35, bench revised to 25 x 8, rows 30, plank PB 40 seconds.', // the fixture line itself
+    'Done — squat 35, bench 25 x 8, rows 30, plank 40 seconds',
+    'Done - squat 35, bench 25',
+    'Done – squat 35, rows 30',
+    'Finished — squat 35, bench 25',
+    "I'm done — squat 35, rows 30",
+    "that's it — squat 35, bench 25, rows 30",
+    'all done — squat 35, rows 30',
+    // A trailing session duration after the recap still closes out (the
+    // duration strip fires first; the recap check runs on the stripped text).
+    'Done — squat 35, bench 25. 58 min.',
+  ];
+  for (const p of yes) assert.equal(looksLikeFinishLine(p), true, `should close out: "${p}"`);
+});
+
+test('#1660: a recap tail must be a list of valued fragments, never prose or a lone value', () => {
+  const { looksLikeFinishLine } = loadMatchers();
+  const no = [
+    'Done — squat 35',                              // one fragment is not a recap list; it parses as a log
+    'Done — squat felt easy, rows 30',              // a fragment with no number is prose, not a recap
+    'Done — squat 35. Bench was heavy, rows 30',    // sentences in the tail are prose, not a recap
+    'Done, squat 35, bench 25, rows 30',            // a comma head is not the dash recap marker (boundary)
+    'Done. Squat 35, bench 25, rows 30',            // a period head is not the dash recap marker (boundary)
+    'Done — squat 35, bench 25 8/2',                // slash-set notation is a log, never a finish
+    'Done — squat 35, rows 30?',                    // a question never closes out
+    'Done — squat 35, now bench',                   // in-progress sense: more work follows
+    'Done — squat held at 35, bench revised',       // a valueless fragment breaks the recap
+  ];
+  for (const p of no) assert.equal(looksLikeFinishLine(p), false, `must NOT close out: "${p}"`);
+});
+
 test('#1626: a finish statement with a trailing duration annotation is a closeout', () => {
   const { looksLikeFinishLine } = loadMatchers();
   const yes = [

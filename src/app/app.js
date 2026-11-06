@@ -3802,8 +3802,40 @@ function looksLikeFinishLine(text) {
   if (/\d+\s*\/\s*\d+/.test(t)) return false; // a message carrying sets is a log
   if (BARE_FINISH_RE.test(t)) return true;
   const stripped = t.replace(FINISH_DURATION_TAIL_RE, '').replace(FINISH_DURATION_HEAD_RE, '');
-  if (stripped === t) return false;
-  return looksLikeLogIt(stripped) || BARE_FINISH_RE.test(stripped);
+  if (stripped !== t && (looksLikeLogIt(stripped) || BARE_FINISH_RE.test(stripped))) return true;
+  // #1660: a finish head + a dash-introduced recap of the session (below).
+  // The duration strip above may have eaten the recap's last value, so the
+  // recap check runs on the original text as well as the stripped text.
+  return looksLikeRecapCloseout(t) || (stripped !== t && looksLikeRecapCloseout(stripped));
+}
+
+// #1660: a finish head followed by a dash-introduced recap of the session —
+// "Done — squat held at 35, bench revised to 25 x 8, rows 30, plank PB 40
+// seconds." (Priya's fixture closeout, Soul Corpus Session 7) — is a
+// closeout command, not a log. The tail restates work already in the session
+// buffer as a flat comma list, and every fragment carries a numeric value,
+// so a prose tail ("Done. Bench felt heavy.") can never match, and a message
+// carrying slash-set notation is still a log (the guard in
+// looksLikeFinishLine above). The dash is the recap marker: a
+// period-separated tail stays a parse, so new sets written after "Done."
+// still reach the parser instead of being swallowed by the closeout. One
+// fragment is not a recap list — it parses as a log — and a fragment with no
+// number is prose, not a recap.
+const RECAP_FINISH_HEAD_RE = /^\s*(?:done|finished|all\s+done|i['’]?m\s+done|that['’]?s\s+(?:it|all)|we['’]?re?\s+done)\s*[—–-]\s*/i;
+
+function looksLikeRecapCloseout(text) {
+  const t = String(text || '').trim();
+  const head = t.match(RECAP_FINISH_HEAD_RE);
+  if (!head) return false;
+  const tail = t.slice(head[0].length);
+  // A recap is a flat comma list, not sentences: only one terminal period,
+  // at the very end.
+  if (/[.!?]\s+\S/.test(tail)) return false;
+  const fragments = tail.replace(/[.!]?\s*$/, '').split(',').map((f) => f.trim()).filter(Boolean);
+  if (fragments.length < 2) return false;
+  // Every fragment restates one piece of the session with a value: a word
+  // and a number. A fragment with no number is prose, not a recap.
+  return fragments.every((f) => /[A-Za-z]/.test(f) && /\d/.test(f));
 }
 
 function showCorrectionPrompt(capturedText) {
