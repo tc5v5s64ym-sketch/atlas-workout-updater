@@ -310,6 +310,158 @@ test('A16. plan_state.completed keeps a lift out of remaining regardless of the 
   assert.deepEqual(remaining, ['Incline DB Press']);
 });
 
+// ── Part C — recap-number grounding (Astra #1662, P1-4) ────────────────────
+//
+// services/coachResponseGrounding.js:494-563 checks completion / zero-load
+// invention / remaining lifts / historical counts — not nonzero per-set
+// numerical equivalence. The audit's constructed state (accepted RDL 275x6x3;
+// retained rows 285x6 @2 x3) lets both "The RDLs are also logged as planned."
+// and "You logged Romanian Deadlift at 275 for 6 reps across 3 sets." pass,
+// and "bench 25x10 as planned" passes over actual 25x8 rows. The coach is
+// instructed to use session_tally, but an instruction is not a validator.
+//
+// The detector judges recap/confirmation prose against the retained rows in
+// session_tally (the authoritative record) and, for "as planned" claims,
+// against the current_plan entry. Only an explicit completed-work assertion
+// counts — a bare set enumeration is prescription as often as performance
+// (A5b), so it is never judged here.
+
+function recapContext() {
+  return {
+    current_plan: [
+      { name: 'Romanian Deadlift', sets: 3, reps: 6, weight: 275, rir: 2 },
+      { name: 'Barbell Bench Press', sets: 3, reps: 8, weight: 25, rir: 2 },
+    ],
+    plan_state: {
+      planned: ['Romanian Deadlift', 'Barbell Bench Press'],
+      completed: ['Romanian Deadlift', 'Barbell Bench Press'],
+      remaining: [],
+      isComplete: true,
+    },
+    session_tally: {
+      exercises: [
+        { exercise: 'Romanian Deadlift', sets: 3, per_set: [{ weight: 285, reps: 6, rir: 2 }, { weight: 285, reps: 6, rir: 2 }, { weight: 285, reps: 6, rir: 2 }], planned: true },
+        { exercise: 'Barbell Bench Press', sets: 3, per_set: [{ weight: 25, reps: 8, rir: 2 }, { weight: 25, reps: 8, rir: 2 }, { weight: 25, reps: 8, rir: 2 }], planned: true },
+      ],
+      total_working_sets: 6,
+    },
+    session_count: 0,
+  };
+}
+
+test('C1. Astra #1662 — "logged as planned" is judged against the plan, not taken on trust', () => {
+  const ctx = recapContext();
+  // Accepted 275x6x3, retained 285x6 @2 x3: the tally does NOT match the plan.
+  const found = grounding.detectUngroundedRecapNumbers('The RDLs are also logged as planned.', ctx);
+  assert.ok(found.some((f) => f.kind === 'recap_as_planned'), 'as-planned over mismatched rows must be flagged');
+});
+
+test('C2. Astra #1662 — a recap asserting the accepted (wrong) weight is flagged', () => {
+  const ctx = recapContext();
+  const found = grounding.detectUngroundedRecapNumbers('You logged Romanian Deadlift at 275 for 6 reps across 3 sets.', ctx);
+  assert.ok(found.some((f) => f.kind === 'recap_numbers'), '275 asserted over retained 285 must be flagged');
+});
+
+test('C3. Astra #1662 — a recap asserting the retained numbers passes', () => {
+  const ctx = recapContext();
+  for (const ok of [
+    'You logged Romanian Deadlift at 285 for 6 reps across 3 sets.',
+    'You logged Barbell Bench Press at 25 for 8 reps across 3 sets.',
+  ]) {
+    assert.equal(grounding.detectUngroundedRecapNumbers(ok, ctx).length, 0, `must NOT flag: ${ok}`);
+  }
+});
+
+test('C4. Astra #1662 — the Priya equivalent: "bench 25x10 as planned" over 25x8 rows', () => {
+  const ctx = recapContext();
+  const found = grounding.detectUngroundedRecapNumbers('You logged bench 25x10 as planned.', ctx);
+  assert.ok(found.some((f) => f.kind === 'recap_numbers'), '10 reps asserted over retained 8 must be flagged');
+});
+
+test('C5. Astra #1662 — a wrong set count is flagged; an ambiguous NxN with a true reading passes', () => {
+  const ctx = recapContext();
+  assert.ok(grounding.detectUngroundedRecapNumbers('You logged Romanian Deadlift at 285 for 6 reps across 2 sets.', ctx).length > 0,
+    '2 sets asserted over 3 retained must be flagged');
+  // "25x8" is ambiguous (weight x reps vs sets x reps); the weight reading matches
+  // the retained rows, so the claim is grounded and must not be rejected.
+  assert.equal(grounding.detectUngroundedRecapNumbers('You logged bench 25x8.', ctx).length, 0,
+    'an ambiguous shape with a true reading is grounded');
+});
+
+test('C6. Astra #1662 — history is not this session: last-week numbers are never judged here', () => {
+  const ctx = recapContext();
+  assert.equal(grounding.detectUngroundedRecapNumbers('Last week you logged Romanian Deadlift at 315 for 5 reps across 3 sets.', ctx).length, 0,
+    'a historical recap is not a this-session claim');
+});
+
+test('C6b. pre-review F1 — "a moment ago" is this session, not history', () => {
+  const ctx = recapContext();
+  assert.ok(grounding.detectUngroundedRecapNumbers('You logged Romanian Deadlift at 275 for 6 reps a moment ago.', ctx).length > 0,
+    'a bare "ago" must not excuse a this-session recap');
+});
+
+test('C6c. pre-review F2 — "in the books" is a completion idiom and its numbers are judged', () => {
+  const ctx = recapContext();
+  assert.ok(grounding.detectUngroundedRecapNumbers('Romanian Deadlift 275 x 6 in the books.', ctx).length > 0,
+    'wrong numbers in the books must be flagged');
+  assert.equal(grounding.detectUngroundedRecapNumbers('Romanian Deadlift 285 x 6 in the books.', ctx).length, 0,
+    'the retained numbers in the books are grounded');
+});
+
+test('C7. Astra #1662 — prescription prose and bare enumeration are never recap claims (A5b)', () => {
+  const ctx = recapContext();
+  for (const ok of [
+    'The plan calls for 275 for 6 reps on Romanian Deadlift.',
+    'Romanian Deadlift: 285 x 6 @ RIR 2, three sets.',
+    'You logged Romanian Deadlift today.',
+  ]) {
+    assert.equal(grounding.detectUngroundedRecapNumbers(ok, ctx).length, 0, `must NOT flag: ${ok}`);
+  }
+});
+
+test('C8. Astra #1662 — fail closed: numbers asserted with no retained rows are ungrounded', () => {
+  const ctx = recapContext();
+  delete ctx.session_tally;
+  const found = grounding.detectUngroundedRecapNumbers('You logged Romanian Deadlift at 275 for 6 reps across 3 sets.', ctx);
+  assert.ok(found.some((f) => f.kind === 'recap_numbers'), 'no tally to check against is a failure, not permission to guess');
+});
+
+test('C9. Astra #1662 — a true "as planned" passes when tally and plan agree', () => {
+  const ctx = recapContext();
+  ctx.current_plan[0].weight = 285; // the plan itself now shows the retained load
+  assert.equal(grounding.detectUngroundedRecapNumbers('The RDLs are also logged as planned.', ctx).length, 0,
+    'tally matching the plan is a grounded as-planned claim');
+});
+
+test('C10. Astra #1662 — "as planned" fails for an off-plan extra, but its own rows still ground numbers', () => {
+  const ctx = recapContext();
+  ctx.session_tally.exercises.push({ exercise: 'Face Pull', sets: 2, per_set: [{ weight: 40, reps: 10, rir: 2 }, { weight: 40, reps: 10, rir: 2 }], planned: false });
+  assert.ok(grounding.detectUngroundedRecapNumbers('You logged Face Pull as planned.', ctx).length > 0,
+    'an off-plan lift was never planned, so as-planned is false');
+  assert.equal(grounding.detectUngroundedRecapNumbers('You logged Face Pull at 40 for 10 reps across 2 sets.', ctx).length, 0,
+    'the extra lift’s own retained rows still ground its numbers');
+});
+
+test('C11. Astra #1662 — a multi-lift clause is skipped rather than guessed at', () => {
+  const ctx = recapContext();
+  // Known limitation, pinned: numbers in a clause naming two lifts cannot be
+  // attributed to either, so the clause is not judged. Single-lift clauses are.
+  assert.equal(grounding.detectUngroundedRecapNumbers('You logged Romanian Deadlift at 275 for 6 reps and bench press at 25 for 8 reps.', ctx).length, 0);
+});
+
+test('C12. Astra #1662 — state-awareness: proposals, questions, quotations and negations are not recap claims', () => {
+  const ctx = recapContext();
+  for (const ok of [
+    'Do you want me to log Romanian Deadlift at 275 for 6 reps?',
+    'I can log Romanian Deadlift at 275 for you if you like.',
+    "You said you logged Romanian Deadlift at 275 for 6 reps.",
+    "You haven't logged Romanian Deadlift at 275 for 6 reps yet.",
+    'You logged Romanian Deadlift at 285 for 6 reps, so should we move on?',
+  ]) {
+    assert.equal(grounding.detectUngroundedRecapNumbers(ok, ctx).length, 0, `must NOT flag: ${ok}`);
+  }
+});
+
 // ── Part B — the production route ──────────────────────────────────────────
 
 process.env.ATLAS_API_KEY = 'test-api-key';
@@ -529,5 +681,26 @@ test('D2. parity: the model-empty path answers the same phrasing with the same g
   assert.equal(status, 200);
   assert.equal(data.source, 'engine');
   assert.match(String(data.message || ''), /Still remaining: Incline DB Press, Seated Row, Bicep Curl\./);
+  assert.equal(writeAttempts.length, 0);
+});
+
+test('D3. Astra #1662 — a recap asserting the wrong retained numbers is replaced on the live route', async () => {
+  // RDL is genuinely logged in this context (235 x 5 x 2), so the completion
+  // backstop passes the prose — only the recap-number backstop can catch it.
+  const { status, data } = await chatS3('How did the RDLs go?', 'You logged Romanian Deadlift at 275 for 5 reps across 2 sets. Nice work.');
+  assert.equal(status, 200);
+  assert.doesNotMatch(String(data.message || ''), /275/);
+  assert.equal(data.source, 'engine');
+  assert.equal(data.propose_edit, null);
+  assert.equal(data.propose_plan_edit, null);
+  assert.equal(writeAttempts.length, 0);
+});
+
+test('D4. Astra #1662 — a recap asserting the retained numbers passes through untouched', async () => {
+  const honest = 'You logged Romanian Deadlift at 235 for 5 reps across 2 sets. Nice work.';
+  const { status, data } = await chatS3('How did the RDLs go?', honest);
+  assert.equal(status, 200);
+  assert.equal(data.message, honest, 'an honest recap must not be rewritten');
+  assert.equal(data.source, 'gemini');
   assert.equal(writeAttempts.length, 0);
 });

@@ -300,8 +300,23 @@ function isCompletedMutationSegment(seg) {
 // Return the segment(s) that assert a completed plan/workout mutation by Atlas.
 // Empty array = no unsupported mutation claim. State-aware: proposals, questions,
 // athlete quotations, and negations are NOT claims.
+//
+// Clause-split (Astra #1662 sibling; Codex #1225 P1 pattern): a modal in a LATER
+// clause must not excuse a completed claim asserted in an EARLIER one —
+// "I changed it to 275, so you can save it." bypassed the guard because "can"
+// exempted the whole sentence as a proposal. Each clause is judged on its own
+// markers; clause findings are UNIONED with the whole-segment result, never
+// substituted for it, so splitting can only ever add a detection.
 function detectUnsupportedMutationClaim(text) {
-  return segments(text).filter(isCompletedMutationSegment);
+  const out = [];
+  for (const whole of segments(text)) {
+    if (isCompletedMutationSegment(whole)) { out.push(whole); continue; }
+    const parts = whole.split(CLAUSE_BOUNDARY).map((p) => p.trim()).filter(Boolean);
+    if (parts.length > 1) {
+      for (const p of parts) if (isCompletedMutationSegment(p) && !out.includes(p)) out.push(p);
+    }
+  }
+  return out;
 }
 
 // ── completed-work grounding ────────────────────────────────────────────────
@@ -558,6 +573,230 @@ function detectUngroundedCompletionClaim(text, context) {
       for (const seg of assertedClauses(whole)) {
         if (WORKOUT_COMPLETION_PATTERNS.some((re) => re.test(seg))) flag(seg, 'workout_completion');
       }
+    }
+  }
+  return out;
+}
+
+// ── recap-number grounding (Astra #1662, P1-4) ─────────────────────────────
+//
+// detectUngroundedCompletionClaim above checks completion / zero-load invention /
+// remaining lifts / historical counts — not nonzero per-set numerical
+// equivalence. The coach is instructed to use session_tally
+// (services/coach.js:973-978) but an instruction is not a validator: the
+// audit's constructed state (accepted RDL 275x6x3; retained rows 285x6 @2 x3)
+// lets BOTH "The RDLs are also logged as planned." and "You logged Romanian
+// Deadlift at 275 for 6 reps across 3 sets." pass, and "bench 25x10 as
+// planned" passes over actual 25x8 rows.
+//
+// This detector judges recap/confirmation prose against the retained rows in
+// session_tally (the authoritative record) and, for "as planned" claims,
+// against the current_plan entry. Only an explicit completed-work assertion
+// counts — a bare set enumeration is prescription as often as performance
+// (A5b), so it is never judged here. Single-lift clauses only: a clause
+// naming two lifts cannot attribute its numbers to either, so it is skipped
+// rather than guessed at. A number shape with two true readings (weight x
+// reps vs sets x reps — "25x8") is grounded when ANY reading matches the
+// retained rows; only a claim no reading matches is flagged. Fail-closed:
+// numbers asserted with no retained rows to check against are ungrounded.
+
+// An "as planned / as prescribed / as programmed" equivalence claim.
+const AS_PLANNED_RE = /\bas (?:planned|prescribed|programmed)\b/;
+// A historical framing — last week, yesterday, a previous session — is not a
+// this-session recap and is never judged here. "Ago" is deliberately NOT bare:
+// "a moment ago" / "minutes ago" is THIS session, only a days-or-more "ago"
+// is history.
+const RECAP_HISTORY_RE = /\b(?:last (?:week|session|workout|time|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|yesterday|previously|a week ago|days ago|weeks ago|months ago|years ago|in your last)\b/;
+// "In the books" is a completion idiom (cf. WORKOUT_COMPLETION_PATTERNS) —
+// a per-lift "in the books" claim asserts logged work just as "logged" does.
+const RECAP_IN_THE_BOOKS_RE = /\bin the books\b/;
+
+// Strict null-or-undefined checks — the file's `!= null` idiom trips eqeqeq,
+// so new code uses these helpers and adds no new lint warnings.
+function isNil(v) { return v === null || v === undefined; }
+function hasValue(v) { return !isNil(v); }
+
+const WORD_NUMBERS = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+  eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16,
+  seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20,
+};
+const WORD_NUM_RE = Object.keys(WORD_NUMBERS).join('|');
+
+function numToken(tok) {
+  if (/^\d+$/.test(tok)) return Number(tok);
+  return WORD_NUMBERS[tok] ?? null;
+}
+
+// The asserted numbers in a recap clause, as candidate readings. Explicit
+// tokens (N sets / N reps / N lb / N sets of M / at N) are fixed across
+// readings; each "AxB" shape branches into a weight reading and a sets
+// reading when neither is fixed, because "25x8" is genuinely ambiguous. A
+// three-part "AxBxC" reads as weight x reps x sets, the recap convention.
+// A pair whose reps contradict an explicit reps token marks every reading
+// contradictory — the clause asserts two different rep counts at once.
+function extractAssertedReadings(seg) {
+  let s = normalize(seg).replace(/×/g, 'x');
+  const fixed = {};
+  const strip = (re, fn) => {
+    s = s.replace(re, (...args) => { fn(args); return ' '; });
+  };
+  let m;
+  if ((m = s.match(/(\d+)\s*x\s*(\d+)\s*x\s*(\d+)/))) {
+    fixed.weight = Number(m[1]); fixed.reps = Number(m[2]); fixed.sets = Number(m[3]);
+    s = s.replace(/(\d+)\s*x\s*(\d+)\s*x\s*(\d+)/, ' ');
+  }
+  strip(/(\d+)\s+sets?\s+of\s+(\d+)/, (a) => { if (isNil(fixed.sets)) fixed.sets = Number(a[1]); if (isNil(fixed.reps)) fixed.reps = Number(a[2]); });
+  strip(new RegExp(`(\\d+|${WORD_NUM_RE})\\s*sets?\\b`), (a) => { const n = numToken(a[1]); if (hasValue(n) && isNil(fixed.sets)) fixed.sets = n; });
+  strip(new RegExp(`(\\d+|${WORD_NUM_RE})\\s*reps?\\b`), (a) => { const n = numToken(a[1]); if (hasValue(n) && isNil(fixed.reps)) fixed.reps = n; });
+  strip(/(\d+)\s*(?:lb|lbs|pounds?)\b/, (a) => { if (isNil(fixed.weight)) fixed.weight = Number(a[1]); });
+  strip(/at\s+(\d+)\b(?!\s*(?:reps?|sets?|rir)\b)/, (a) => { if (isNil(fixed.weight)) fixed.weight = Number(a[1]); });
+  const pairs = [];
+  s = s.replace(/(\d+)\s*x\s*(\d+)/g, (...args) => { pairs.push([Number(args[1]), Number(args[2])]); return ' '; });
+
+  let readings = [{ ...fixed }];
+  for (const [a, b] of pairs) {
+    if (hasValue(fixed.reps) && b !== fixed.reps) {
+      readings = readings.map((r) => ({ ...r, __conflict: true }));
+      continue;
+    }
+    const next = [];
+    for (const r of readings) {
+      if (r.__conflict) { next.push(r); continue; }
+      const candidates = [];
+      if (isNil(r.weight) && isNil(r.sets)) {
+        candidates.push({ ...r, weight: a, reps: b }, { ...r, sets: a, reps: b });
+      } else if (hasValue(r.sets) && isNil(r.weight)) {
+        candidates.push({ ...r, weight: a, reps: b });
+      } else if (hasValue(r.weight) && isNil(r.sets)) {
+        candidates.push({ ...r, sets: a, reps: b });
+      } else {
+        if (r.weight === a) candidates.push({ ...r, reps: b });
+        if (r.sets === a) candidates.push({ ...r, reps: b });
+      }
+      const surviving = candidates.filter(() => isNil(r.reps) || r.reps === b);
+      if (surviving.length) next.push(...surviving);
+      else next.push({ ...r, __conflict: true });
+    }
+    readings = next;
+  }
+  return readings;
+}
+
+// The lifts a recap clause may be about: plan + preview + the tally's own
+// logged lifts (an off-plan extra is judged against its own retained rows).
+function namedRecapLifts(seg, context) {
+  const c = context && typeof context === 'object' ? context : {};
+  const names = [];
+  for (const e of (Array.isArray(c.current_plan) ? c.current_plan : [])) {
+    if (e && (e.name || e.exercise)) names.push(String(e.name || e.exercise));
+  }
+  for (const e of (Array.isArray(c.current_preview) ? c.current_preview : [])) {
+    if (e && (e.exercise || e.name)) names.push(String(e.exercise || e.name));
+  }
+  const tally = c.session_tally && typeof c.session_tally === 'object' ? c.session_tally : null;
+  if (tally && Array.isArray(tally.exercises)) {
+    for (const e of tally.exercises) if (e && e.exercise) names.push(String(e.exercise));
+  }
+  return namedLiftsInMessage(seg, { current_plan: dedupeByKey(names).map((n) => ({ name: n })) });
+}
+
+function tallyEntryForLift(context, name) {
+  const key = canonicalKey(name);
+  const tally = context && context.session_tally && typeof context.session_tally === 'object' ? context.session_tally : null;
+  if (!tally || !Array.isArray(tally.exercises)) return null;
+  return tally.exercises.find((e) => e && canonicalKey(e.exercise) === key) || null;
+}
+
+function planEntryForLift(context, name) {
+  const key = canonicalKey(name);
+  const plan = context && Array.isArray(context.current_plan) ? context.current_plan : [];
+  return plan.find((e) => e && canonicalKey(e.name || e.exercise) === key) || null;
+}
+
+// Does one candidate reading match the retained rows? Every retained set
+// with a known weight/reps must equal the asserted value, and the set count
+// must equal the tally's. A field the tally carries no data for cannot be
+// verified, so a reading asserting it does not match — fail closed.
+function readingMatchesTally(reading, entry) {
+  if (!entry || reading.__conflict) return false;
+  const sets = Array.isArray(entry.per_set) ? entry.per_set : [];
+  if (hasValue(reading.weight)) {
+    const known = sets.map((s) => s && s.weight).filter((w) => hasValue(w));
+    if (!known.length || !known.every((w) => Number(w) === reading.weight)) return false;
+  }
+  if (hasValue(reading.reps)) {
+    const known = sets.map((s) => s && s.reps).filter((r) => hasValue(r));
+    if (!known.length || !known.every((r) => Number(r) === reading.reps)) return false;
+  }
+  if (hasValue(reading.sets)) {
+    const n = hasValue(entry.sets) ? Number(entry.sets) : sets.length;
+    if (!Number.isFinite(n) || n !== reading.sets) return false;
+  }
+  return true;
+}
+
+// Does the retained tally match the plan entry on every numeric field the
+// plan carries? An off-plan extra was never planned, and a plan entry with
+// no numeric field at all cannot verify an "as planned" claim — both fail.
+function tallyMatchesPlan(tally, plan) {
+  if (!tally || !plan) return false;
+  if (tally.planned === false) return false;
+  const sets = Array.isArray(tally.per_set) ? tally.per_set : [];
+  if (isNil(plan.sets) && isNil(plan.reps) && isNil(plan.weight)) return false;
+  if (hasValue(plan.weight)) {
+    const known = sets.map((s) => s && s.weight).filter((w) => hasValue(w));
+    if (!known.length || !known.every((w) => Number(w) === Number(plan.weight))) return false;
+  }
+  if (hasValue(plan.reps)) {
+    const known = sets.map((s) => s && s.reps).filter((r) => hasValue(r));
+    if (!known.length || !known.every((r) => Number(r) === Number(plan.reps))) return false;
+  }
+  if (hasValue(plan.sets)) {
+    const n = hasValue(tally.sets) ? Number(tally.sets) : sets.length;
+    if (!Number.isFinite(n) || n !== Number(plan.sets)) return false;
+  }
+  return true;
+}
+
+/**
+ * detectUngroundedRecapNumbers(text, context) → [{ segment, kind }]
+ *
+ * Flags recap/confirmation prose that asserts specific weights/reps/sets the
+ * retained rows do not carry, or an "as planned" equivalence the tally does
+ * not support against the plan. Empty array = grounded.
+ *
+ * Pure. Judges ONLY against `session_tally` and `current_plan`.
+ */
+function detectUngroundedRecapNumbers(text, context) {
+  const c = context && typeof context === 'object' ? context : {};
+  const out = [];
+  const seen = new Set();
+  const flag = (segment, kind) => {
+    const key = `${kind}::${segment}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ segment, kind });
+  };
+
+  for (const whole of segments(text)) {
+    for (const seg of assertedClauses(whole)) {
+      if (RECAP_HISTORY_RE.test(seg)) continue;
+      const isRecap = COMPLETED_WORK_VERB.test(seg) || AS_PLANNED_RE.test(seg) || RECAP_IN_THE_BOOKS_RE.test(seg);
+      if (!isRecap) continue;
+      const lifts = namedRecapLifts(seg, c);
+      if (lifts.length !== 1) continue;
+      const name = lifts[0];
+      const tally = tallyEntryForLift(c, name);
+      const plan = planEntryForLift(c, name);
+      if (AS_PLANNED_RE.test(seg) && !tallyMatchesPlan(tally, plan)) {
+        flag(seg, 'recap_as_planned');
+        continue;
+      }
+      const readings = extractAssertedReadings(seg);
+      const hasNumbers = readings.some((r) => hasValue(r.weight) || hasValue(r.reps) || hasValue(r.sets));
+      if (!hasNumbers) continue;
+      if (!tally || !readings.some((r) => readingMatchesTally(r, tally))) flag(seg, 'recap_numbers');
     }
   }
   return out;
@@ -1049,6 +1288,7 @@ module.exports = {
   narrowContextToPlanTurn,
   detectUnsupportedMutationClaim,
   detectUngroundedCompletionClaim,
+  detectUngroundedRecapNumbers,
   buildGroundedSessionStateStatement,
   isRemainingWorkQuestion,
   workoutIsComplete,
