@@ -1840,6 +1840,20 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
           configured: true, model: coach.coachModel(), source: 'engine'
         });
       }
+      // Recap-number BACKSTOP (Astra #1662, P1-4). The completion backstop below
+      // checks completion / zero-load / remaining / session counts — not nonzero
+      // per-set numerical equivalence. A recap that asserts specific weights/reps
+      // is validated against the retained rows in `session_tally`, and an "as
+      // planned" claim against the current plan; rejected prose is replaced with
+      // the engine's own logged-vs-remaining statement, and any proposal is
+      // dropped — a turn that misstates logged numbers is not a trustworthy proposal.
+      if (hasSafeReply && coachResponseGrounding.detectUngroundedRecapNumbers(reply, llmContext).length > 0) {
+        const grounded = coachResponseGrounding.buildGroundedSessionStateStatement(llmContext);
+        return standardSuccess(req, res, 'Coach chat — grounded (ungrounded recap numbers rejected)', {
+          message: grounded, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
+          configured: true, model: coach.coachModel(), source: 'engine'
+        });
+      }
       // Completed-work BACKSTOP (Soul Corpus V2 S12). The engine owns completion: the
       // deterministic `plan_state` verdict and `session_tally` decide what is done, and
       // `session_count` decides how many HISTORICAL sessions exist. Model prose may word

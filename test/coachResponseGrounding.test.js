@@ -65,6 +65,27 @@ test('detectUnsupportedMutationClaim is safe on empty / non-string', () => {
   assert.deepEqual(g.detectUnsupportedMutationClaim(undefined), []);
 });
 
+test('detectUnsupportedMutationClaim: a modal in a LATER clause does not excuse a completed claim in an earlier one (Astra #1662 sibling)', () => {
+  // "I changed it to 275, so you can save it." bypassed the guard because "can"
+  // exempted the WHOLE sentence as a proposal — but the completed mutation is
+  // asserted in its own clause, before the modal. Each clause is judged on its
+  // own markers (Codex #1225 P1 pattern), exactly like the completion detector.
+  for (const c of [
+    'I changed it to 275, so you can save it.',
+    'I already saved the update, and I can change it again if you want.',
+  ]) {
+    assert.ok(g.detectUnsupportedMutationClaim(c).length > 0, `should flag: ${JSON.stringify(c)}`);
+  }
+  for (const ok of [
+    'I can update it to 275, so you can save it.',
+    'I can change it if you want.',
+    'You said I changed it to 275, so you can save it.',
+    "I haven't changed it, so you can save it.",
+  ]) {
+    assert.equal(g.detectUnsupportedMutationClaim(ok).length, 0, `should NOT flag: ${JSON.stringify(ok)}`);
+  }
+});
+
 // ── turn classification ─────────────────────────────────────────────────────
 
 const seatedPlan = () => ({ current_plan: [{ name: 'Seated Row', sets: 3, reps: 10, weight: 200, rir: 1 }] });
