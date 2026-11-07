@@ -93,6 +93,43 @@ test('#1660: a recap tail must be a list of valued fragments, never prose or a l
   for (const p of no) assert.equal(looksLikeFinishLine(p), false, `must NOT close out: "${p}"`);
 });
 
+test('#1668 gap (documents the defect): the base log-it matcher cannot see Tara\'s compound closeout', () => {
+  const { looksLikeLogIt } = loadMatchers();
+  // The exact existing fixture closeout (tests/e2e/gate/personas/tara.js:160-163).
+  const tara = 'Done — landmine 70 x8 x3, bench stopped at set 2 rep 5 on the pinch, floor press 40s x8 x2 silent, rows and pull-ups as written, curls skipped for time.';
+  assert.equal(looksLikeLogIt(tara), false,
+    'the whole-string vocabulary has no room for the recap tail — this is the gap the recap lane closes');
+});
+
+test('#1668: a finish head with a recap tail carrying closed-status fragments is a closeout', () => {
+  const { looksLikeFinishLine } = loadMatchers();
+  const yes = [
+    'Done — landmine 70 x8 x3, bench stopped at set 2 rep 5 on the pinch, floor press 40s x8 x2 silent, rows and pull-ups as written, curls skipped for time.', // the fixture line itself
+    'Done — squat 35, bench 25, rows as written',
+    'Done — squat 35, bench 25, rows as planned',
+    'Done — squat 35, bench 25, curls skipped',
+    'Done — squat 35, bench 25, curls skipped for time',
+    'Done - squat 35, bench 25, rows as written',
+    'Finished — squat 35, bench 25, curls skipped',
+    'Done — squat 35, bench 25 x 8, rows as written, curls skipped',
+  ];
+  for (const p of yes) assert.equal(looksLikeFinishLine(p), true, `should close out: "${p}"`);
+});
+
+test('#1668: a closed-status fragment must be closed status, and the recap must still rest on values', () => {
+  const { looksLikeFinishLine } = loadMatchers();
+  const no = [
+    'Done — squat felt easy, rows 30',              // a prose fragment is still prose, not a recap
+    'Done — squat held at 35, bench revised',       // a valueless fragment outside the closed-status vocabulary still breaks the recap
+    'Done — squat 35, bench 25, rows felt heavy',   // a prose fragment breaks the recap even with two valued fragments
+    'Done — squat 35, bench skipped',               // one valued fragment plus a skip note is not a recap list; it parses as a log
+    'Done — squat 35, rows as written',             // one valued fragment plus a closed status is not a recap list
+    'Done — rows as written, curls skipped',        // no valued fragment at all is not a recap
+    'Done — squat 35, bench 25, rows skipped today, curls felt fine', // a prose fragment breaks the recap even beside a skip
+  ];
+  for (const p of no) assert.equal(looksLikeFinishLine(p), false, `must NOT close out: "${p}"`);
+});
+
 test('#1626: a finish statement with a trailing duration annotation is a closeout', () => {
   const { looksLikeFinishLine } = loadMatchers();
   const yes = [
