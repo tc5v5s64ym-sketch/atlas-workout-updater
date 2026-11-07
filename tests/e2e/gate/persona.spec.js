@@ -81,8 +81,10 @@ const {
   makeBoundary, pairLiveWriteChangeSeq, SEEN_ATTR, NEW_BUBBLE_SELECTOR, markExistingBubblesScript,
 } = require('./rehearsal-bubble-observer');
 const { SANDBOX_SPREADSHEET_ID, SANDBOX_SPREADSHEET_ID_LAST6 } = require('../../../config/sandboxSheet');
+const {
+  EVIDENCE_FILENAME, buildForbiddenSecrets, redactSecrets, sweepArtifactDir, verifyFinalArtifacts,
+} = require('./persona-artifacts');
 const { logCleanedColumns, effortColumns, modalityLogColumns } = require('../../../config/columns');
-const crypto = require('node:crypto');
 const { sessionPlansColumns, sessionPlanSetsColumns } = require('../../../config/columns');
 
 // Scored mode (Slice 2b): set by the runner's --scored flag in the spec worker
@@ -114,6 +116,10 @@ let base = '';
 let stateBase = '';
 let artDir = null;
 let serverStdout = '';
+// Set by the scored test once its artifacts are finalized (swept + hashed
+// over the final bytes, §13). afterAll must not rewrite them after that —
+// the old afterAll replaced the swept log with raw stdout (#1664).
+let artifactsFinalized = false;
 const pageErrors = [];
 const checks = [];
 function check(id, ok, detail) {
@@ -217,8 +223,15 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
   try {
-    if (artDir) {
-      fs.writeFileSync(path.join(artDir, 'server-log.txt'), serverStdout);
+    if (artDir && !artifactsFinalized) {
+      // Only when the scored test did NOT finalize its artifacts — an
+      // aborted run, or the smoke test, which publishes no sweep record.
+      // The log is published REDACTED (every forbidden value, not just the
+      // workbook id) — never raw stdout (#1664: the old afterAll replaced
+      // the swept log with the raw server output and added an unswept
+      // pageerrors file after the sweep had run).
+      const forbidden = buildForbiddenSecrets();
+      fs.writeFileSync(path.join(artDir, 'server-log.txt'), redactSecrets(serverStdout, forbidden));
       fs.writeFileSync(path.join(artDir, 'pageerrors.txt'), pageErrors.join('\n\n') || '(no page errors captured)');
     }
   } catch { /* best-effort */ }
@@ -391,7 +404,6 @@ test('persona scenario (scored): fixture beats through the real app under the sc
   const beat = (id, ok, detail) => { beats.push({ id, ok: ok === true, detail: detail || '' }); };
   const stateCheck = (id, ok, detail) => { stateChecks.push({ id, ok: ok === true, detail: detail || '' }); };
   const note = (id, detail) => { notes.push({ id, detail: detail || '' }); };
-  const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
   const durableRows = (sessionId) => readJson(`${stateBase}/durable-rows?session_id=${encodeURIComponent(sessionId)}`, 'durable row read');
 
   // ── Resolve the run: declaration + the seeded variation draw (§3.3) ────────
@@ -1166,15 +1178,30 @@ test('persona scenario (scored): fixture beats through the real app under the sc
     artifacts: { swept: false, leaks: [], files: [] },
   };
 
-  // ── 13. Evidence, privacy sweep + hashes, then score ───────────────────────
-  const forbidden = [
-    { kind: 'workbook_id', re: new RegExp(SANDBOX_SPREADSHEET_ID, 'i') },
-    { kind: 'private_key', re: /-----BEGIN[ A-Z]*PRIVATE KEY-----/ },
-    { kind: 'service_account_email', re: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL ? new RegExp(String(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') : null },
-    { kind: 'provider_key', re: process.env.GEMINI_API_KEY ? new RegExp(String(process.env.GEMINI_API_KEY).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) : null },
-  ].filter((f) => f.re);
-  fs.writeFileSync(path.join(artDir, 'server-log.txt'),
-    serverStdout.split(SANDBOX_SPREADSHEET_ID).join(`…${SANDBOX_SPREADSHEET_ID_LAST6}`));
+  // ── 13. Evidence, privacy sweep + hashes over FINAL bytes, then score ─────
+  // #1664: the sweep and the hashes must certify the bytes as published,
+  // after the last write. The old order swept first and wrote after — the
+  // scorecard files, the rewritten evidence, and afterAll's raw log +
+  // pageerrors were never swept or hashed, and the recorded hashes went
+  // stale. The new order:
+  //   1. write every content artifact (fully redacted log, pageerrors);
+  //   2. provisional sweep + score (conditions 23/24 judge this record);
+  //   3. write the scorecard files + the evidence (provisional record);
+  //   4. final sweep over every file except the evidence file itself, then
+  //      rewrite the evidence with the final record;
+  //   5. post-write verification: rescan + rehash every published byte.
+  // After step 5 nothing writes to the artifact dir (afterAll stands down —
+  // see artifactsFinalized). One disclosed limit: the scorecard's
+  // condition-24 detail names the provisional artifact count (the scorecard
+  // is written before the final sweep adds its own two files); the PASS
+  // status is identical under the final record, and the evidence file's
+  // final record is the verified authority. The log and pageerrors are the
+  // snapshot at finalization — output after that point is not published.
+  const forbidden = buildForbiddenSecrets();
+  // 1. Every content artifact is written before any sweep runs. The log is
+  // fully redacted (every forbidden value), not just the workbook id.
+  fs.writeFileSync(path.join(artDir, 'server-log.txt'), redactSecrets(serverStdout, forbidden));
+  fs.writeFileSync(path.join(artDir, 'pageerrors.txt'), pageErrors.join('\n\n') || '(no page errors captured)');
   const evidence = {
     kind: 'PERSONA_SCORECARD',
     ok: false, // replaced after scoring, below — the file on disk is rewritten
@@ -1198,29 +1225,48 @@ test('persona scenario (scored): fixture beats through the real app under the sc
     notes,
     observations,
   };
-  fs.writeFileSync(path.join(artDir, 'persona-evidence.json'), `${JSON.stringify(evidence, null, 2)}\n`);
-  const files = [];
-  const leaks = [];
-  for (const name of fs.readdirSync(artDir)) {
-    const full = path.join(artDir, name);
-    if (!fs.statSync(full).isFile()) continue;
-    const buf = fs.readFileSync(full);
-    for (const f of forbidden) if (f.re.test(buf.toString('latin1'))) leaks.push(`${f.kind} in ${name}`);
-    files.push({ name, sha256: sha256(buf), bytes: buf.length });
-  }
-  observations.artifacts = { swept: true, leaks, files };
+  // 2. Provisional sweep: the scoring input. Its leaks list and file hashes
+  // are re-verified over the final bytes in step 5; a file that changed
+  // between the sweeps fails the run in step 4.
+  const provisional = sweepArtifactDir(artDir, forbidden);
+  observations.artifacts = { ...provisional, self_excluded: EVIDENCE_FILENAME };
   const scorecard = scoreRehearsalRun(observations);
   const scorecardJson = JSON.stringify(scorecard, null, 2);
   const scorecardMd = renderMarkdown(scorecard);
   for (const [label, text] of [['scorecard.json', scorecardJson], ['SCORECARD.md', scorecardMd]]) {
-    const leak = forbidden.find((f) => f.re.test(text));
+    const leak = forbidden.scan.find((f) => f.re.test(text));
     expect(leak, `${label} would publish a forbidden value (${leak && leak.kind})`).toBeUndefined();
   }
+  // 3. The scorecard files and the evidence (provisional record).
   fs.writeFileSync(path.join(artDir, 'scorecard.json'), scorecardJson);
   fs.writeFileSync(path.join(artDir, 'SCORECARD.md'), scorecardMd);
   evidence.ok = scorecard.overall === 'PASS' && personaFacts.ok;
   evidence.scorecard = { overall: scorecard.overall, counts: scorecard.counts, rehearsal_eligible: scorecard.rehearsal_eligible };
   fs.writeFileSync(path.join(artDir, 'persona-evidence.json'), `${JSON.stringify(evidence, null, 2)}\n`);
+  // 4. Final sweep over the published bytes, except the evidence file
+  // itself: the record cannot hash its own container, so the evidence file
+  // is excluded from its own file list and the exclusion is recorded. A
+  // leak in the final bytes, or a file that changed since the provisional
+  // sweep, fails the run here — no clean record is published over them.
+  const finalRecord = sweepArtifactDir(artDir, forbidden, { excludeNames: [EVIDENCE_FILENAME] });
+  if (finalRecord.leaks.length) {
+    throw new Error(`persona artifacts leak in final bytes: ${finalRecord.leaks.join(', ')}`);
+  }
+  for (const f of provisional.files) {
+    const now = finalRecord.files.find((g) => g.name === f.name);
+    if (!now || now.sha256 !== f.sha256) {
+      throw new Error(`persona artifact ${f.name} changed after the provisional sweep — the scorecard judged stale bytes`);
+    }
+  }
+  observations.artifacts = { ...finalRecord, self_excluded: EVIDENCE_FILENAME };
+  fs.writeFileSync(path.join(artDir, 'persona-evidence.json'), `${JSON.stringify(evidence, null, 2)}\n`);
+  // 5. Post-write verification: rescan + rehash every published byte,
+  // including the rewritten evidence file. After this step nothing writes
+  // to the artifact dir on the success path (a failed verification leaves
+  // artifactsFinalized false, and afterAll publishes redacted diagnostics
+  // for the already-failed run instead).
+  verifyFinalArtifacts(artDir, observations.artifacts, forbidden, { selfExcludedName: EVIDENCE_FILENAME });
+  artifactsFinalized = true;
 
   const notPassing = scorecard.conditions.filter((c) => c.status !== 'PASS');
   if (notPassing.length) {
