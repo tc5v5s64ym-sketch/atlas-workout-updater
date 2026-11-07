@@ -1019,13 +1019,11 @@ function parseLogSets(rawText, context = {}) {
   // slash parser finds no sets. Weighted forms ("Pull-ups 25 8/2 x3",
   // "Pull-ups +25 6/2") still parse weighted below, since parseSetGroups
   // resolves their load. A leading "BW" marker is explicit bodyweight context,
-  // not a set token: strip it before parseBodyweightReps so the anchored
-  // slash-repeat form expands exactly like the bare form (without the strip,
-  // the "BW" prefix defeats the anchored match and the slash-pair fallback
-  // would log only one set of the xN repeat).
+  // not a set token: parseBodyweightReps strips it at the shared seam (#1620),
+  // so the anchored slash-repeat form expands exactly like the bare form.
   if ((resolvedExercise.canonicalName === 'Pull-Up' || resolvedExercise.canonicalName === 'Chin-Up')
       && (parseSetGroups(resolvedExercise.rest) || []).length === 0) {
-    const bodyweightSets = parseBodyweightReps(resolvedExercise.rest.replace(/^\s*bw\b\s*/i, ''));
+    const bodyweightSets = parseBodyweightReps(resolvedExercise.rest);
     if (bodyweightSets.length) {
       return buildLogResult({
         rawText,
@@ -1572,7 +1570,13 @@ function parseDaleShorthand(text) {
 }
 
 function parseBodyweightReps(text) {
-  const cleaned = stripMultiplierSentencePunctuation(normalizeParserText(text));
+  // A leading "BW" marker is explicit bodyweight context, not a set token:
+  // strip it here, at the shared seam, so the anchored repeat forms below
+  // match exactly like the bare form. Without the strip the marker defeats
+  // the anchored match and the slash-pair fallback logs only one set of an
+  // xN repeat (issue #1620 — Dips / Push-Up / Hanging Knee Raises); PR #1619
+  // stripped it only in the Pull-Up/Chin-Up call site. Same regex as #1619.
+  const cleaned = stripMultiplierSentencePunctuation(normalizeParserText(text)).replace(/^\s*bw\b\s*/i, '');
 
   // "15 x3" → 3 sets of 15 reps BW
   const repeatMatch = cleaned.match(/^(\d+)\s*x(\d+)$/i);
