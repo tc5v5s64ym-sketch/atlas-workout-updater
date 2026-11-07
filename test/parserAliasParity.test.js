@@ -66,8 +66,18 @@ const FROZEN_EXERCISE_ALIASES = [
   ['Shrug', ['shrugs', 'shrug', 'db shrugs', 'dumbbell shrugs', 'barbell shrugs']],
   ['Single-Leg Seated Leg Press', ['seated single leg press', 'single-leg press', 'single leg press', 'slp']],
   ['Leg Press', ['leg press', 'machine leg press']],
-  ['Pull-Up', ['pull-up', 'pull up', 'pullup', 'pullups', 'pull-ups']],
-  ['Chin-Up', ['chin-up', 'chin up', 'chinup', 'chinups', 'chin-ups']],
+  // RECONCILED 2026-11-07 (issue #1621, lane 3). 'pull ups' and 'chin ups'
+  // (spaced plurals) were absent from this table, so both forms logged through
+  // the unknown-exercise path ('Pull Ups' / 'Chin Ups', unknown_exercise) at
+  // base ae12c3a6 — confirmed failing-first on the unknown-exercise path before
+  // this change. Added as aliases of the EXISTING canonicals: the catalog
+  // (truth source B) already resolves 'pull ups' → pull_up and 'chin ups' →
+  // chin_up (alias_type pluralization, confidence 1), so the truth audit has a
+  // source and no taxonomy forks. Placed directly after the spaced singular
+  // each pluralizes ('pull up' → 'pull ups'), following this table's
+  // orthography-enumeration convention.
+  ['Pull-Up', ['pull-up', 'pull up', 'pull ups', 'pullup', 'pullups', 'pull-ups']],
+  ['Chin-Up', ['chin-up', 'chin up', 'chin ups', 'chinup', 'chinups', 'chin-ups']],
   ['Hip Thrust', ['hip thrust', 'hip thrusts', 'barbell hip thrust']],
   ['Hanging Knee Raises', ['hanging knee raises', 'captains chair', 'captain chair', 'knee raises', 'kr']],
   ['Lateral Raises', ['lateral raises', 'lateral raise', 'side raises', 'laterals', 'lateral']],
