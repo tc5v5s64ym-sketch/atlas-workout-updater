@@ -258,7 +258,17 @@ jobs:
   e2e-tests:
     name: E2E tests (Playwright)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # #1671: 20 minutes was too tight. The hosted E2E job was CANCELLED at
+    # the limit three times with no test failure (#1667, #1669, #1670 first
+    # runs). Step timings from those runs: the `Install Playwright system
+    # deps` (apt) step took 8.3 / 9.6 / 11.2 min (vs ~0.2 min normally),
+    # and the test step itself takes 14.1-15.0 min hosted. Worst observed
+    # job is therefore ~11.2 + ~15.0 + ~0.3 setup ~= 26.6 min, so 30 min
+    # covers the worst case with ~3.4 min of margin. The test suite is not
+    # the main problem (slowest spec is ~13% of test time), so trimming or
+    # splitting would not fix the cancellations; the apt-step variance is
+    # the real defect and is a separate follow-up, not this change.
+    timeout-minutes: 30
     needs: unit-tests
     permissions:
       contents: read
