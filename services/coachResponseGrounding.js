@@ -628,6 +628,12 @@ function numToken(tok) {
   return WORD_NUMBERS[tok] ?? null;
 }
 
+// Weight tokens are decimal-aware: the parser converts decimal kg to lb
+// rounded to 1 decimal (workoutTextParser.js:64), so every kg-logged lift
+// carries a decimal retained weight ("27.5", "60.6"). An integer-only token
+// would truncate "27.5" to 27 and flag every honest decimal recap.
+const DECIMAL_NUM = String.raw`\d+(?:\.\d+)?`;
+
 // The asserted numbers in a recap clause, as candidate readings. Explicit
 // tokens (N sets / N reps / N lb / N sets of M / at N) are fixed across
 // readings; each "AxB" shape branches into a weight reading and a sets
@@ -642,17 +648,17 @@ function extractAssertedReadings(seg) {
     s = s.replace(re, (...args) => { fn(args); return ' '; });
   };
   let m;
-  if ((m = s.match(/(\d+)\s*x\s*(\d+)\s*x\s*(\d+)/))) {
+  if ((m = s.match(new RegExp(`(${DECIMAL_NUM})\\s*x\\s*(\\d+)\\s*x\\s*(\\d+)`)))) {
     fixed.weight = Number(m[1]); fixed.reps = Number(m[2]); fixed.sets = Number(m[3]);
-    s = s.replace(/(\d+)\s*x\s*(\d+)\s*x\s*(\d+)/, ' ');
+    s = s.replace(new RegExp(`(${DECIMAL_NUM})\\s*x\\s*(\\d+)\\s*x\\s*(\\d+)`), ' ');
   }
   strip(/(\d+)\s+sets?\s+of\s+(\d+)/, (a) => { if (isNil(fixed.sets)) fixed.sets = Number(a[1]); if (isNil(fixed.reps)) fixed.reps = Number(a[2]); });
   strip(new RegExp(`(\\d+|${WORD_NUM_RE})\\s*sets?\\b`), (a) => { const n = numToken(a[1]); if (hasValue(n) && isNil(fixed.sets)) fixed.sets = n; });
   strip(new RegExp(`(\\d+|${WORD_NUM_RE})\\s*reps?\\b`), (a) => { const n = numToken(a[1]); if (hasValue(n) && isNil(fixed.reps)) fixed.reps = n; });
-  strip(/(\d+)\s*(?:lb|lbs|pounds?)\b/, (a) => { if (isNil(fixed.weight)) fixed.weight = Number(a[1]); });
-  strip(/at\s+(\d+)\b(?!\s*(?:reps?|sets?|rir)\b)/, (a) => { if (isNil(fixed.weight)) fixed.weight = Number(a[1]); });
+  strip(new RegExp(`(${DECIMAL_NUM})\\s*(?:lb|lbs|pounds?)\\b`), (a) => { if (isNil(fixed.weight)) fixed.weight = Number(a[1]); });
+  strip(new RegExp(`at\\s+(${DECIMAL_NUM})\\b(?!\\s*(?:reps?|sets?|rir)\\b)`), (a) => { if (isNil(fixed.weight)) fixed.weight = Number(a[1]); });
   const pairs = [];
-  s = s.replace(/(\d+)\s*x\s*(\d+)/g, (...args) => { pairs.push([Number(args[1]), Number(args[2])]); return ' '; });
+  s = s.replace(new RegExp(`(${DECIMAL_NUM})\\s*x\\s*(\\d+)`, 'g'), (...args) => { pairs.push([Number(args[1]), Number(args[2])]); return ' '; });
 
   let readings = [{ ...fixed }];
   for (const [a, b] of pairs) {

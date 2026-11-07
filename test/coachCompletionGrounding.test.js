@@ -449,6 +449,40 @@ test('C11. Astra #1662 — a multi-lift clause is skipped rather than guessed at
   assert.equal(grounding.detectUngroundedRecapNumbers('You logged Romanian Deadlift at 275 for 6 reps and bench press at 25 for 8 reps.', ctx).length, 0);
 });
 
+test('C13. Hammy review F1 — decimal weights are parsed, not truncated to integers', () => {
+  const ctx = recapContext();
+  // Decimal retained weights: the kg-conversion shape (workoutTextParser.js:64
+  // converts decimal kg to lb rounded to 1 decimal), so every kg-logged lift
+  // carries a decimal retained weight. The decimal lifts use names whose
+  // canonical keys collide with no other tally entry (see note below).
+  ctx.session_tally.exercises.push(
+    { exercise: 'Seated Row', sets: 3, per_set: [{ weight: 27.5, reps: 8, rir: 2 }, { weight: 27.5, reps: 8, rir: 2 }, { weight: 27.5, reps: 8, rir: 2 }], planned: true },
+    { exercise: 'Lat Pulldown', sets: 3, per_set: [{ weight: 60.6, reps: 8, rir: 2 }, { weight: 60.6, reps: 8, rir: 2 }, { weight: 60.6, reps: 8, rir: 2 }], planned: true },
+  );
+  // True decimals pass, in every weight-token shape: "at N", triple-x, "N lb".
+  for (const ok of [
+    'You logged Seated Row at 27.5 for 8 reps across 3 sets.',
+    'You logged Seated Row 27.5x8x3.',
+    'You logged Seated Row at 27.5 lb for 8 reps across 3 sets.',
+    'You logged Lat Pulldown at 60.6 for 8 reps across 3 sets.',
+  ]) {
+    assert.equal(grounding.detectUngroundedRecapNumbers(ok, ctx).length, 0, `must NOT flag: ${ok}`);
+  }
+  // Wrong decimals are still flagged — the decimal must match, not just be present.
+  assert.ok(grounding.detectUngroundedRecapNumbers('You logged Romanian Deadlift at 27.5 for 6 reps across 3 sets.', ctx)
+    .some((f) => f.kind === 'recap_numbers'), '27.5 asserted over retained 285 must be flagged');
+  assert.ok(grounding.detectUngroundedRecapNumbers('You logged bench 27.5x8.', ctx)
+    .some((f) => f.kind === 'recap_numbers'), '27.5x8 asserted over retained 25x8 must be flagged');
+});
+// NOTE (follow-up, not fixed here — one concern per PR): tallyEntryForLift /
+// planEntryForLift match by canonicalKey, and the KB canonicalizer maps both
+// "Dumbbell Bench Press" and "Barbell Bench Press" to "Bench Press", so a
+// session carrying both variants resolves the tally entry by tally order
+// (first match wins) — a true decimal recap can be flagged and a wrong one
+// skipped. Same collapse class as the pre-review collapse probe. Flagged to
+// the coordinator for its own issue; C13 pins the decimal tokens with
+// collision-free lift names so the two concerns stay separate.
+
 test('C12. Astra #1662 — state-awareness: proposals, questions, quotations and negations are not recap claims', () => {
   const ctx = recapContext();
   for (const ok of [
