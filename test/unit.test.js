@@ -6389,8 +6389,15 @@ test('set-effort wiring: handleSetLogged renders the effort line per lift (not p
   );
   assert.ok(block.length > 0, 'handleSetLogged must be found');
   // The engine-backed effort line is rendered, and the planned queue is forwarded to
-  // the coach facts.
-  assert.match(block, /planned_queue:\s*Array\.isArray\(detail\.plannedQueue\)/);
+  // the coach facts — G3: re-derived LIVE from the store at call time (the same
+  // selector the handoff re-derives from), never the emit-time snapshot, so the
+  // advisory's next_exercise can never name a lift the live store already passed.
+  // The snapshot survives only as the fallback when the bridged selector is
+  // unavailable (source/eval harnesses).
+  assert.match(block, /const liveQueue = \(typeof remainingPlannedExercises === 'function'\)/);
+  assert.match(block, /planned_queue: liveQueue/);
+  assert.match(block, /Array\.isArray\(detail\.plannedQueue\) \? detail\.plannedQueue : \[\]/,
+    'snapshot queue is only the fallback when the live selector is unavailable');
   assert.match(block, /reaction\.effort_note/);
   assert.match(block, /effort-note/);
   // The reroute suggestion is folded into the existing single handoff line.

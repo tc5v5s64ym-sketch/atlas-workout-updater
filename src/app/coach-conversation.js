@@ -1650,6 +1650,16 @@ import { findPlanEntry, planMismatchForLift, formatPlanMismatchLine } from './pl
     // plan needs the canonical per-slot set count (planSlotStatuses) and is a follow-up.
     const exerciseIsComplete = (sets) => Array.isArray(sets) && sets.length >= 2;
 
+    // G3 symptom 1 — the advisory's next_exercise comes from the planned_queue
+    // the client sends to /api/coach/message, so a stale emit-time snapshot
+    // names a lift the live store has already passed (advisory: Face Pull,
+    // handoff: Weighted Dips). Re-derive the queue LIVE here — the same
+    // selector the handoff re-derives from (SESS-1) — so the advisory and the
+    // handoff can never name different lifts. Falls back to the snapshot only
+    // when the bridged selector is unavailable (source/eval harnesses).
+    const liveQueue = (typeof remainingPlannedExercises === 'function')
+      ? remainingPlannedExercises()
+      : (Array.isArray(detail.plannedQueue) ? detail.plannedQueue : []);
     const reaction = await getInWorkoutNote({
       liftCode: code,
       exerciseName: primary.exercise,
@@ -1661,7 +1671,7 @@ import { findPlanEntry, planMismatchForLift, formatPlanMismatchLine } from './pl
       // Sourced via getActiveIntentId so an engaged-but-unmaterialized suggestion
       // (activePlannedSession still null) keeps its intent.
       intentId: (typeof getActiveIntentId === 'function' ? getActiveIntentId() : (activeSession && activeSession.intentId)) || null,
-      planned_queue: Array.isArray(detail.plannedQueue) ? detail.plannedQueue : [],
+      planned_queue: liveQueue,
       substitution: primarySub
     }, sessionId, exercises.length === 1 ? responseTicket : null);
     if (!responseMayRenderSelectedProse()) return;
