@@ -276,12 +276,14 @@ test('golden: Atlas parser handles a wider workout phrase matrix safely', () => 
       expectedSets: [[50, 15, 2], [50, 15, 2], [50, 15, 2]],
     },
     {
+      // RECONCILED 2026-11-07 (issue #1621): 'chin ups' is a resolved alias
+      // now (Pull-Up/Chin-Up spaced plurals added to the parser alias table),
+      // so this case logs as Chin-Up with no unknown-exercise warning — it
+      // used to pin the old unknown path ('Chin Ups', unknown_exercise).
       input: 'chin ups 8/2 x3',
       intent: 'log_sets',
-      canonical: 'Chin Ups',
+      canonical: 'Chin-Up',
       expectedSets: [[null, 8, 2], [null, 8, 2], [null, 8, 2]],
-      warning: 'unknown_exercise',
-      needsCatalogReview: true,
     },
     {
       input: 'hang cleans 135 3/2 x5',
@@ -388,7 +390,9 @@ test('golden: fuzz-style parser safety invariants hold across mixed workout phra
 
 test('golden: unknown exercises parse with review-needed metadata instead of clarification', () => {
   const cases = [
-    ['chin ups 8/2 x3', 'Chin Ups', [[null, 8, 2], [null, 8, 2], [null, 8, 2]]],
+    // 'chin ups 8/2 x3' was removed here by #1621 (2026-11-07): it is a
+    // resolved Chin-Up now, no longer an unknown exercise — see the matrix
+    // test above, which pins the resolved form.
     ['hang cleans 135 3/2 x5', 'Hang Cleans', [[135, 3, 2], [135, 3, 2], [135, 3, 2], [135, 3, 2], [135, 3, 2]]],
     ['db walking lunges 40s 12/2 x3', 'Db Walking Lunges', [[40, 12, 2], [40, 12, 2], [40, 12, 2]]],
     ['backflips 10 x3', 'Backflips', [[null, 10, null], [null, 10, null], [null, 10, null]]],
