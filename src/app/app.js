@@ -3821,7 +3821,18 @@ function looksLikeFinishLine(text) {
 // still reach the parser instead of being swallowed by the closeout. One
 // fragment is not a recap list — it parses as a log — and a fragment with no
 // number is prose, not a recap.
+//
+// #1668: Tara's fixture closeout carries two valueless fragments that are
+// closed statuses, not prose — "rows and pull-ups as written" (done per
+// plan) and "curls skipped for time" (explicitly not performed). A valueless
+// fragment is therefore a recap fragment ONLY when it states a closed
+// status in this narrow vocabulary ("as written" / "as planned" / "skipped");
+// any other valueless fragment is still prose and still breaks the recap.
+// The recap must also rest on values: at least two valued fragments are
+// required, so a single value plus a skip note ("Done — squat 35, bench
+// skipped") does not close out.
 const RECAP_FINISH_HEAD_RE = /^\s*(?:done|finished|all\s+done|i['’]?m\s+done|that['’]?s\s+(?:it|all)|we['’]?re?\s+done)\s*[—–-]\s*/i;
+const RECAP_CLOSED_STATUS_RE = /\b(?:as\s+(?:written|planned)|skipped)\b/i;
 
 function looksLikeRecapCloseout(text) {
   const t = String(text || '').trim();
@@ -3833,9 +3844,18 @@ function looksLikeRecapCloseout(text) {
   if (/[.!?]\s+\S/.test(tail)) return false;
   const fragments = tail.replace(/[.!]?\s*$/, '').split(',').map((f) => f.trim()).filter(Boolean);
   if (fragments.length < 2) return false;
-  // Every fragment restates one piece of the session with a value: a word
-  // and a number. A fragment with no number is prose, not a recap.
-  return fragments.every((f) => /[A-Za-z]/.test(f) && /\d/.test(f));
+  // Every fragment restates one piece of the session: a value (a word and a
+  // number) or a closed status ("as written" / "as planned" / "skipped").
+  // A valueless fragment outside that vocabulary is prose, not a recap.
+  // The recap must rest on values, so at least two valued fragments are
+  // required.
+  let valuedCount = 0;
+  for (const f of fragments) {
+    if (/[A-Za-z]/.test(f) && /\d/.test(f)) { valuedCount += 1; continue; }
+    if (RECAP_CLOSED_STATUS_RE.test(f)) continue;
+    return false;
+  }
+  return valuedCount >= 2;
 }
 
 function showCorrectionPrompt(capturedText) {
