@@ -130,6 +130,30 @@ test('#1668: a closed-status fragment must be closed status, and the recap must 
   for (const p of no) assert.equal(looksLikeFinishLine(p), false, `must NOT close out: "${p}"`);
 });
 
+test('#1681: a recap fragment opening with an addition/continuation command is new work, never a closeout', () => {
+  const { looksLikeFinishLine } = loadMatchers();
+  const no = [
+    'Done — squat 35, now bench 25',               // audit counterexample: "now" is a continuation, not a restatement
+    'Done — add bench 25 x 8, add rows 30 x 10',   // audit counterexample: "add" is an addition command
+    'Done — squat 35, add bench 25 x 8',           // a single add fragment breaks the recap
+    'Done — squat 35, and add bench 25',           // "and add" is still an addition command
+    'Done — squat 35, and now bench 25',           // "and now" is still a continuation
+    'Done — now bench 25, rows 30 x 10',           // the command may lead the tail
+    'Done — ADD bench 25, rows 30',                // the guard is case-insensitive
+    'Done — squat 35, now rows 30, bench 25',      // the command may sit in a middle fragment
+  ];
+  for (const p of no) assert.equal(looksLikeFinishLine(p), false, `must NOT close out: "${p}"`);
+});
+
+test('#1681: the addition guard does not widen to past-tense narration or plain recaps', () => {
+  const { looksLikeFinishLine } = loadMatchers();
+  const yes = [
+    'Done — squat 35, bench added to 25, rows 30', // "added" is past-tense narration, not the "add" command
+    'Done — squat 35, and bench 25, rows 30',      // a plain "and" recap is still a restatement
+  ];
+  for (const p of yes) assert.equal(looksLikeFinishLine(p), true, `should close out: "${p}"`);
+});
+
 test('#1626: a finish statement with a trailing duration annotation is a closeout', () => {
   const { looksLikeFinishLine } = loadMatchers();
   const yes = [

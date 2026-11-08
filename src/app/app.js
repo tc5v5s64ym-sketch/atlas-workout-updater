@@ -3832,7 +3832,17 @@ function looksLikeFinishLine(text) {
 // required, so a single value plus a skip note ("Done — squat 35, bench
 // skipped") does not close out.
 const RECAP_FINISH_HEAD_RE = /^\s*(?:done|finished|all\s+done|i['’]?m\s+done|that['’]?s\s+(?:it|all)|we['’]?re?\s+done)\s*[—–-]\s*/i;
+// #1681: a fragment that opens with an explicit addition/continuation
+// command ("add bench 25 x 8", "now bench 25", optionally after "and")
+// is new work to log, not a restatement of retained work — it breaks the
+// recap, so the message parses as a log instead of closing out. Past-tense
+// narration ("bench added to 25") is not a command: the word boundary keeps
+// "added" a restatement. A bare unmarked fragment ("bench 25 x 8") is still
+// read as a restatement — the text-only predicate cannot tell an unmarked
+// new fragment from a restatement; validating the tail against retained
+// rows is the stronger fix if the coordinator wants it.
 const RECAP_CLOSED_STATUS_RE = /\b(?:as\s+(?:written|planned)|skipped)\b/i;
+const RECAP_ADDITION_RE = /^(?:and\s+)?(?:add|now)\b/i;
 
 function looksLikeRecapCloseout(text) {
   const t = String(text || '').trim();
@@ -3851,6 +3861,7 @@ function looksLikeRecapCloseout(text) {
   // required.
   let valuedCount = 0;
   for (const f of fragments) {
+    if (RECAP_ADDITION_RE.test(f)) return false;
     if (/[A-Za-z]/.test(f) && /\d/.test(f)) { valuedCount += 1; continue; }
     if (RECAP_CLOSED_STATUS_RE.test(f)) continue;
     return false;
