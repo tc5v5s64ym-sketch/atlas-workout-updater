@@ -430,6 +430,13 @@ test('persona scenario (scored): fixture beats through the real app under the sc
   // beat, Priya's after the final log turn. Each turn section sets it.
   let finalBuffer = null;
 
+  // #1659 re-fix — the one modality row Priya's plank writes mid-run, by
+  // explicit approval of its staged preview (rows-and-plank beat). Null for
+  // a persona with no modality turn (Marcus): the no-write-before-approval
+  // beat then still requires zero modality rows. Recorded here so that beat
+  // can tell this approved write apart from a pre-approval leak.
+  let approvedModality = null;
+
   // ── The run-start marker: written and verified before the first turn ───────
   // A persona run declares NO rehearsal session number (null) — the marker
   // itself cannot be mistaken for a streak member's.
@@ -621,6 +628,76 @@ test('persona scenario (scored): fixture beats through the real app under the sc
     return buf;
   }
 
+  // #1659 re-fix — the mixed rows/plank turn stages a modality preview,
+  // not a coach bubble: the resistance half does not parse (prose turn),
+  // so the turn's product surface is the preview panel, and the plank's
+  // write is the driver's EXPLICIT approval of that preview — clicked
+  // here, before the next submit clears it (invalidatePreview nulls
+  // pendingWrite on every submit). Settlement for this turn is the preview
+  // staging (approve enabled, Timed hold preview rendered); the write is
+  // proven by the durable row, not by a reply. The turn records an empty
+  // reply — no coach bubble was served, and the preview text must never
+  // be scored as one.
+  async function runModalityTurn(id, phase, text) {
+    currentPhaseRef.value = phase;
+    await say(text);
+    let preview = '';
+    let staged = false;
+    try {
+      await expect.poll(async () => {
+        const st = await page.evaluate(() => {
+          const btn = document.getElementById('approve-btn');
+          const content = document.getElementById('preview-content');
+          return {
+            approveEnabled: Boolean(btn && !btn.disabled),
+            previewText: content ? content.innerText : '',
+          };
+        });
+        preview = st.previewText;
+        return st.approveEnabled && /Timed hold/i.test(st.previewText) && /Modality_Log/.test(st.previewText);
+      }, { timeout: 60000, intervals: [500] }).toBe(true);
+      staged = true;
+    } catch { staged = false; }
+    const tail = recordsToMessages(bubbleRecords).slice(-3).map((m) => m.text).join(' ⏎ ');
+    turns.push({ phase, text, reply: '', thread_tail: tail });
+    beat(id, staged, staged
+      ? 'modality preview staged: Timed hold to write (Modality_Log), approve enabled'
+      : 'no staged modality preview after the mixed turn (approve stayed disabled or no Timed hold preview rendered)');
+    if (!staged) return '';
+    // Explicit approval — the plank's write happens on this click. A click
+    // failure is recorded as a failed beat (not a thrown error) so the run
+    // still reaches its durable reads and judging with the failure on the
+    // record, like the closeout save flow below.
+    try {
+      await page.locator('#approve-btn').click();
+    } catch (e) {
+      beat('modality-write-approved', false, `the approve click failed: ${String((e && e.message) || e).slice(0, 200)}`);
+      return preview;
+    }
+    const wantSec = PERSONA.facts.plankPb.todaySec;
+    let landed = false;
+    try {
+      await expect.poll(async () => {
+        const d = await durableRows(workoutId).catch(() => null);
+        const rows = d && d.modality ? d.modality.rows : [];
+        const mine = rows.filter((r) => String(r[modalityLogColumns.indexOf('session_id')]).trim() === workoutId);
+        const good = mine.filter((r) => {
+          const m = durableModalityRow(r);
+          return m.modality === 'timed_hold' && /plank/i.test(m.exercise || '') && m.durationSec === wantSec;
+        });
+        return good.length;
+      }, { timeout: 60000, intervals: [2000] }).toBe(1);
+      landed = true;
+    } catch { landed = false; }
+    if (landed) {
+      approvedModality = { session_id: workoutId, modality: 'timed_hold', exercise: 'Plank', durationSec: wantSec };
+    }
+    beat('modality-write-approved', landed, landed
+      ? `approved modality write landed: 1 session-attributed timed_hold/Plank/${wantSec}s row`
+      : `the approved modality write did not land as exactly one session-attributed timed_hold/Plank/${wantSec}s row`);
+    return preview;
+  }
+
   // ── Network capture: coach responses + both save routes ────────────────────
   page.on('pageerror', (err) => { pageErrors.push(`[pageerror] ${err && err.message}`); });
   page.on('console', (msg) => { if (msg.type() === 'error') pageErrors.push(`[console.error] ${msg.text().slice(0, 500)}`); });
@@ -733,14 +810,15 @@ test('persona scenario (scored): fixture beats through the real app under the sc
     // correction beat; Priya has no correction beat, by design.)
     mutationBoundary = await takeBoundary();
     // The mixed turn: rows sets plus the plank hold in ONE message, the
-    // script's shape. The session-log count after it is NOT a declared
-    // quantity — a modality entry may or may not join the session log,
-    // and the live path decides that — so the turn asserts reply
-    // settlement only, and the buffer multiset check below is the
-    // assertion for the rows sets. A plank entry surfacing in the session
-    // log would fail that check honestly (unmapped entry), routing to a
-    // buffer-mapping follow-up rather than a silent pass.
-    await runTurn('beat-rows-and-plank', 'rows-and-plank', turnTexts.rowsPlank, null);
+    // script's shape. Its product surface is the MODALITY PREVIEW, not a
+    // coach bubble — the resistance half does not parse (prose turn; see
+    // the #1659 re-fix handback) so the turn stages the plank preview
+    // instead of logging, and the driver approves that preview explicitly
+    // here, before the next submit clears it (#1659). The buffer multiset
+    // check below is still the assertion for the rows sets; it fails
+    // honestly while the prose-parse finding stands, and the modality
+    // write is judged by the durable plank row + the plank fact check.
+    await runModalityTurn('beat-rows-and-plank', 'rows-and-plank', turnTexts.rowsPlank);
     finalBuffer = await bufferCheck('parsed-sets-after-rows-plank', expectedSets);
     stateCheck('buffer-equals-declaration-after-rows-plank',
       beats.find((b) => b.id === 'parsed-sets-after-rows-plank')?.ok === true,
@@ -822,11 +900,29 @@ test('persona scenario (scored): fixture beats through the real app under the sc
     previewText = await page.locator('.closeout-confirm').innerText();
     let preState = null;
     try { preState = await durableRows(workoutId); } catch (e) { preState = e.status === 403 ? { log_cleaned: { rows: [] }, effort: { rows: [] }, modality: { rows: [] } } : null; }
+    // #1659 re-fix — the plank's write is already durable by the time this
+    // beat runs: it was approved explicitly mid-run (rows-and-plank beat),
+    // before the closeout preview existed. That ONE session-attributed
+    // timed_hold/Plank row is the approved write, not a pre-approval leak —
+    // so the beat allows exactly it, and still requires zero Log_Cleaned
+    // and zero Effort rows, and zero modality rows when no mid-run approval
+    // was recorded (Marcus).
+    const modalityPre = preState && preState.modality && Array.isArray(preState.modality.rows) ? preState.modality.rows : [];
+    let approvedModalityPre = false;
+    if (approvedModality) {
+      approvedModalityPre = modalityPre.length === 1
+        && String(modalityPre[0][modalityLogColumns.indexOf('session_id')]).trim() === approvedModality.session_id
+        && durableModalityRow(modalityPre[0]).modality === approvedModality.modality
+        && /plank/i.test(durableModalityRow(modalityPre[0]).exercise || '')
+        && durableModalityRow(modalityPre[0]).durationSec === approvedModality.durationSec;
+    } else {
+      approvedModalityPre = modalityPre.length === 0;
+    }
     noWorkoutRowsPreApproval = Boolean(preState)
       && preState.log_cleaned.rows.length === 0 && preState.effort.rows.length === 0
-      && (preState.modality ? preState.modality.rows.length === 0 : true);
+      && approvedModalityPre;
     beat('no-write-before-approval', noWorkoutRowsPreApproval,
-      preState ? `pre-approval durable state: ${preState.log_cleaned.rows.length} log, ${preState.effort.rows.length} effort rows${preState.modality ? `, ${preState.modality.rows.length} modality rows` : ''}` : 'pre-approval durable state unreadable');
+      preState ? `pre-approval durable state: ${preState.log_cleaned.rows.length} log, ${preState.effort.rows.length} effort rows, ${modalityPre.length} modality rows${approvedModality ? ' (1 approved mid-run modality row allowed)' : ''}` : 'pre-approval durable state unreadable');
     const saveControl = page.locator('.review:not(.done) .rv-save');
     await expect(saveControl).toBeVisible({ timeout: 40000 });
     await page.screenshot({ path: path.join(artDir, '02-preview.png'), fullPage: true }).catch(() => {});

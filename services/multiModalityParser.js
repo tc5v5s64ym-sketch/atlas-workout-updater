@@ -74,9 +74,21 @@ function recognizeTimedHold(t) {
   const setsM = t.match(/(?:\bx\s*(\d+)|\b(\d+)\s*x)\b/i);
   const sets = setsM ? num(setsM[1] || setsM[2]) : null;
   const { rpe } = extractCommon(t);
+  // The exercise is the hold itself, not the message lead: a mixed turn
+  // ("Rows done, 30 pounds, 10 each arm, 3 sets. Tank answer: 2. Plank 40
+  // seconds!!") leads with the resistance work, so leadName returns null
+  // (or the wrong lead) and the plank lands unnamed — the persona-plank-pb
+  // fact check (#1659) requires a named plank. The lead wins only when it
+  // names a hold itself ("Wall sit 45 sec" → "Wall sit"), so a pure hold
+  // input is unchanged.
+  const holdMatch = t.match(HOLD_NAME);
+  const lead = leadName(t);
+  const exercise = (lead && HOLD_NAME.test(lead))
+    ? lead
+    : (holdMatch ? holdMatch[0].trim().replace(/\s+/g, ' ') : lead);
   return {
     modality: 'timed_hold',
-    exercise: leadName(t) || null,
+    exercise: exercise || null,
     duration_sec: dur,
     sets: sets != null ? sets : 1,
     rpe,

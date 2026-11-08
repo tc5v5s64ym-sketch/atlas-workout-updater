@@ -39,6 +39,32 @@ test('timed hold: a leading "3x" multiplier is captured too', () => {
   assert.equal(r.sets, 3);
 });
 
+// #1659 re-fix (Astra re-audit): a mixed turn leads with the resistance
+// work, so the hold must name itself — the message lead is not the hold.
+// Priya's exact fixture text must yield the named 40-second plank, or the
+// persona-plank-pb fact check (which requires a named plank) fails on a
+// blank exercise. Pure hold inputs are unchanged (see the tests above).
+test('timed hold: mixed turn names the hold itself, not the message lead (#1659)', () => {
+  assert.deepEqual(
+    recognizeModalityInput('Rows done, 30 pounds, 10 each arm, 3 sets. Tank answer: 2. Plank 40 seconds!! That is a record for me.'),
+    { modality: 'timed_hold', exercise: 'Plank', duration_sec: 40, sets: 1, rpe: null },
+  );
+});
+
+test('timed hold: mixed turn names the hold without the comma too (#1659)', () => {
+  const r = recognizeModalityInput('Rows done 30 pounds 10 each arm 3 sets Tank answer 2 Plank 40 seconds');
+  assert.equal(r.modality, 'timed_hold');
+  assert.equal(r.exercise, 'Plank');
+  assert.equal(r.duration_sec, 40);
+});
+
+test('timed hold: a multi-word hold names itself on a mixed turn (#1659)', () => {
+  const r = recognizeModalityInput('Rows done, 30 pounds, 10 each arm, 3 sets. Side plank 45 seconds!');
+  assert.equal(r.modality, 'timed_hold');
+  assert.equal(r.exercise, 'Side plank');
+  assert.equal(r.duration_sec, 45);
+});
+
 test('cardio (duration + RPE + HR): "Elliptical 30 min RPE 6 avg HR 142"', () => {
   assert.deepEqual(recognizeModalityInput('Elliptical 30 min RPE 6 avg HR 142'), {
     modality: 'cardio_steady', exercise: 'Elliptical', duration_min: 30,
