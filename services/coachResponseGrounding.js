@@ -466,11 +466,16 @@ function isAssertionSegment(seg) {
 // the workout, so you should cool down." both reached the athlete unchanged. Each clause
 // is judged on its own markers instead.
 //
-// Splits only on an explicit clause boundary — a semicolon, a dash, or a comma FOLLOWED
-// BY a conjunction — so an ordinary list ("Squat, Bench Press and Row are logged") stays
-// one clause. Clause findings are UNIONED with the whole-segment result, never substituted
-// for it, so splitting can only ever add a detection.
-const CLAUSE_BOUNDARY = /\s*(?:;|,\s*(?:so|but|and|then|although|though|while|yet)\b|\s+[—–]\s+)\s*/;
+// Splits only on an explicit clause boundary — a semicolon, a dash, a comma FOLLOWED
+// BY a conjunction, or a bare "so" opening a purpose clause with a subject pronoun
+// ("…so you can save it") — so an ordinary list ("Squat, Bench Press and Row are
+// logged") stays one clause. The bare-"so" alternative is the re-audit #1662 sibling:
+// "I changed it to 275 so you can save it." (no comma) escaped the mutation guard
+// because "can" exempted the whole sentence; the completed claim lives in its own
+// clause before the modal. The pronoun lookahead keeps "so far" / "so much" /
+// "so 3 sets" unsplit. Clause findings are UNIONED with the whole-segment result,
+// never substituted for it, so splitting can only ever add a detection.
+const CLAUSE_BOUNDARY = /\s*(?:;|,\s*(?:so|but|and|then|although|though|while|yet)\b|\s+[—–]\s+|so\s+(?=(?:you|we|i|it|they|he|she|that|this)\b))\s*/;
 
 function assertedClauses(seg) {
   const whole = String(seg || '').trim();
@@ -593,9 +598,10 @@ function detectUngroundedCompletionClaim(text, context) {
 // session_tally (the authoritative record) and, for "as planned" claims,
 // against the current_plan entry. Only an explicit completed-work assertion
 // counts — a bare set enumeration is prescription as often as performance
-// (A5b), so it is never judged here. Single-lift clauses only: a clause
-// naming two lifts cannot attribute its numbers to either, so it is skipped
-// rather than guessed at. A number shape with two true readings (weight x
+// (A5b), so it is never judged here. Multi-lift clauses are split on the
+// conjunctions joining the per-lift assertions and each piece is judged
+// against its own lift; a clause whose pieces cannot be attributed is flagged
+// rather than skipped. A number shape with two true readings (weight x
 // reps vs sets x reps — "25x8") is grounded when ANY reading matches the
 // retained rows; only a claim no reading matches is flagged. Fail-closed:
 // numbers asserted with no retained rows to check against are ungrounded.
@@ -607,6 +613,10 @@ const AS_PLANNED_RE = /\bas (?:planned|prescribed|programmed)\b/;
 // "a moment ago" / "minutes ago" is THIS session, only a days-or-more "ago"
 // is history.
 const RECAP_HISTORY_RE = /\b(?:last (?:week|session|workout|time|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|yesterday|previously|a week ago|days ago|weeks ago|months ago|years ago|in your last)\b/;
+// Conjunctions joining per-lift assertions in one recap clause ("…and…",
+// "…+…", "…,…"). Used only to attribute numbers per lift in a multi-lift
+// clause; the split is accepted only when every piece names exactly one lift.
+const MULTI_LIFT_JOIN = /,\s+|\s+and\s+|\s*\+\s*/;
 // "In the books" is a completion idiom (cf. WORKOUT_COMPLETION_PATTERNS) —
 // a per-lift "in the books" claim asserts logged work just as "logged" does.
 const RECAP_IN_THE_BOOKS_RE = /\bin the books\b/;
@@ -634,6 +644,13 @@ function numToken(tok) {
 // would truncate "27.5" to 27 and flag every honest decimal recap.
 const DECIMAL_NUM = String.raw`\d+(?:\.\d+)?`;
 
+// The parser's kg→lb conversion (services/workoutTextParser.js: KG_TO_LB,
+// normalizeWeightUnits): kilograms convert to pounds rounded to 0.1 lb, so
+// 27.5 kg is stored as 60.6 lb. The recap validator must apply the same
+// conversion, or honest kg recaps false-red and false kg recaps pass.
+const KG_TO_LB = 2.20462;
+function kgToLb(kg) { return Math.round(kg * KG_TO_LB * 10) / 10; }
+
 // The asserted numbers in a recap clause, as candidate readings. Explicit
 // tokens (N sets / N reps / N lb / N sets of M / at N) are fixed across
 // readings; each "AxB" shape branches into a weight reading and a sets
@@ -648,15 +665,27 @@ function extractAssertedReadings(seg) {
     s = s.replace(re, (...args) => { fn(args); return ' '; });
   };
   let m;
-  if ((m = s.match(new RegExp(`(${DECIMAL_NUM})\\s*x\\s*(\\d+)\\s*x\\s*(\\d+)`)))) {
-    fixed.weight = Number(m[1]); fixed.reps = Number(m[2]); fixed.sets = Number(m[3]);
-    s = s.replace(new RegExp(`(${DECIMAL_NUM})\\s*x\\s*(\\d+)\\s*x\\s*(\\d+)`), ' ');
+  // A three-part "AxBxC" reads as weight x reps x sets, the recap convention.
+  // The weight may carry its unit ("27.5 kg x 8 x 3"): a kg weight converts
+  // to the stored pounds before comparing, or the honest kg triple false-reds
+  // and the false kg triple passes on its reps/sets alone.
+  if ((m = s.match(new RegExp(`(${DECIMAL_NUM})\\s*(kg|kgs|kilos?|kilograms?|lb|lbs|pounds?)?\\s*x\\s*(\\d+)\\s*x\\s*(\\d+)`)))) {
+    fixed.weight = m[2] && /^(kg|kgs|kilos?|kilograms?)$/.test(m[2]) ? kgToLb(Number(m[1])) : Number(m[1]);
+    fixed.reps = Number(m[3]); fixed.sets = Number(m[4]);
+    s = s.replace(new RegExp(`(${DECIMAL_NUM})\\s*(kg|kgs|kilos?|kilograms?|lb|lbs|pounds?)?\\s*x\\s*(\\d+)\\s*x\\s*(\\d+)`), ' ');
   }
   strip(/(\d+)\s+sets?\s+of\s+(\d+)/, (a) => { if (isNil(fixed.sets)) fixed.sets = Number(a[1]); if (isNil(fixed.reps)) fixed.reps = Number(a[2]); });
   strip(new RegExp(`(\\d+|${WORD_NUM_RE})\\s*sets?\\b`), (a) => { const n = numToken(a[1]); if (hasValue(n) && isNil(fixed.sets)) fixed.sets = n; });
   strip(new RegExp(`(\\d+|${WORD_NUM_RE})\\s*reps?\\b`), (a) => { const n = numToken(a[1]); if (hasValue(n) && isNil(fixed.reps)) fixed.reps = n; });
+  // Kilograms convert to the stored pounds (see kgToLb above) so "at 27.5 kg"
+  // matches retained 60.6 lb and "at 60.6 kg" does not. Runs before the bare
+  // `at N` strip, or "at 27.5 kg" would be read as 27.5 lb.
+  strip(new RegExp(`(${DECIMAL_NUM})\\s*(?:kg|kgs|kilos?|kilograms?)\\b`), (a) => { if (isNil(fixed.weight)) fixed.weight = kgToLb(Number(a[1])); });
   strip(new RegExp(`(${DECIMAL_NUM})\\s*(?:lb|lbs|pounds?)\\b`), (a) => { if (isNil(fixed.weight)) fixed.weight = Number(a[1]); });
-  strip(new RegExp(`at\\s+(${DECIMAL_NUM})\\b(?!\\s*(?:reps?|sets?|rir)\\b)`), (a) => { if (isNil(fixed.weight)) fixed.weight = Number(a[1]); });
+  // The lookahead also excludes a following unit word the validator cannot
+  // normalize ("at 100 stone" must not be read as 100 lb); the unhandled-unit
+  // guard below fails such a clause closed instead.
+  strip(new RegExp(`at\\s+(${DECIMAL_NUM})\\b(?!\\s*(?:reps?|sets?|rir|kg|kgs|kilos?|kilograms?|lb|lbs|pounds?|stone|stones|oz|ounces?|grams?|g)\\b)`), (a) => { if (isNil(fixed.weight)) fixed.weight = Number(a[1]); });
   const pairs = [];
   s = s.replace(new RegExp(`(${DECIMAL_NUM})\\s*x\\s*(\\d+)`, 'g'), (...args) => { pairs.push([Number(args[1]), Number(args[2])]); return ' '; });
 
@@ -686,6 +715,13 @@ function extractAssertedReadings(seg) {
     }
     readings = next;
   }
+  // A weight asserted in a unit the validator cannot normalize (stone, oz,
+  // grams, …) is unvalidated, not absent: mark every reading contradictory so
+  // the clause fails closed instead of passing on its reps/sets alone. The
+  // `at N` lookahead above leaves such a token in place for this guard.
+  if (new RegExp(`(${DECIMAL_NUM})\\s*(?:stone|stones|oz|ounces?|grams?|g)\\b`).test(s)) {
+    readings = readings.map((r) => ({ ...r, __conflict: true }));
+  }
   return readings;
 }
 
@@ -704,20 +740,86 @@ function namedRecapLifts(seg, context) {
   if (tally && Array.isArray(tally.exercises)) {
     for (const e of tally.exercises) if (e && e.exercise) names.push(String(e.exercise));
   }
-  return namedLiftsInMessage(seg, { current_plan: dedupeByKey(names).map((n) => ({ name: n })) });
+  const found = namedLiftsInMessage(seg, { current_plan: dedupeByKey(names).map((n) => ({ name: n })) });
+  // Whole-message alias resolution returns a single canonical key, so a
+  // clause naming two lifts by alias ("RDLs and bench") resolves only one of
+  // them. Scan single tokens too: a token resolving to a known lift's
+  // canonical key adds that lift. Over-matching is safe here — the caller
+  // filters to lifts the clause actually distinguishes, and anything left
+  // ambiguous fails closed.
+  for (const tok of normalize(seg).split(/[^a-z0-9]+/).filter(Boolean)) {
+    const tk = canonicalKey(tok);
+    for (const n of dedupeByKey(names)) {
+      if (canonicalKey(n) === tk && !found.includes(n)) found.push(n);
+    }
+  }
+  return found;
+}
+
+// A named lift actually OCCURS in a recap clause only when the clause carries
+// a mention that distinguishes it from the other lifts named in the same
+// clause: its full name, a run of its significant words containing a word no
+// other named lift shares, or an alias token that resolves to it alone (a
+// token resolving to several candidates — "bench" → "Bench Press" for both
+// bench variants — does not discriminate). The loose word match in
+// namedLiftsInMessage otherwise returns BOTH variants whenever they share
+// words ("bench press" matches "Dumbbell Bench Press" even when the clause
+// says "Barbell Bench Press"), which would read a single-lift recap as
+// multi-lift and fail it closed. A lift with no discriminating mention is
+// dropped, not guessed at; the caller keeps the unfiltered list when the
+// filter empties it, so a wholly ambiguous clause still fails closed.
+function liftsOccurringInClause(lifts, seg) {
+  const m = normalize(seg);
+  const wordsOf = (name) => significantWords(name);
+  return lifts.filter((name) => {
+    if (normalize(name) && m.includes(normalize(name))) return true;
+    const mine = wordsOf(name);
+    const others = new Set(lifts.filter((n) => n !== name).flatMap(wordsOf));
+    for (let len = mine.length; len >= 1; len -= 1) {
+      for (let i = 0; i + len <= mine.length; i += 1) {
+        const run = mine.slice(i, i + len);
+        if (!run.some((w) => !others.has(w))) continue;
+        const re = new RegExp(`\\b${run.map((w) => `${escapeRe(w)}\\w*`).join('\\s+')}`);
+        if (re.test(m)) return true;
+      }
+    }
+    const myKey = canonicalKey(name);
+    const otherKeys = new Set(lifts.filter((n) => n !== name).map((n) => canonicalKey(n)));
+    for (const tok of m.split(/[^a-z0-9]+/).filter(Boolean)) {
+      if (canonicalKey(tok) === myKey && !otherKeys.has(myKey)) return true;
+    }
+    return false;
+  });
 }
 
 function tallyEntryForLift(context, name) {
-  const key = canonicalKey(name);
   const tally = context && context.session_tally && typeof context.session_tally === 'object' ? context.session_tally : null;
   if (!tally || !Array.isArray(tally.exercises)) return null;
-  return tally.exercises.find((e) => e && canonicalKey(e.exercise) === key) || null;
+  // Exact exercise identity first: the KB canonicalizer collapses variants
+  // ("Dumbbell Bench Press" and "Barbell Bench Press" both → "Bench Press"),
+  // so a canonical-only lookup resolves by tally order and judges a recap
+  // against the WRONG variant's rows. An exact-name hit is unambiguous.
+  const exact = nameKey(name);
+  const exactHit = tally.exercises.find((e) => e && nameKey(e.exercise) === exact);
+  if (exactHit) return exactHit;
+  // Alias fallback only when it resolves uniquely — an ambiguous canonical
+  // match (two variants in the tally) cannot verify the recap, so it fails
+  // closed (null → the caller flags the clause).
+  const key = canonicalKey(name);
+  const canonHits = tally.exercises.filter((e) => e && canonicalKey(e.exercise) === key);
+  return canonHits.length === 1 ? canonHits[0] : null;
 }
 
 function planEntryForLift(context, name) {
-  const key = canonicalKey(name);
   const plan = context && Array.isArray(context.current_plan) ? context.current_plan : [];
-  return plan.find((e) => e && canonicalKey(e.name || e.exercise) === key) || null;
+  // Same exact-first rule as the tally lookup: a canonical-only match must
+  // not silently resolve a variant recap against the other variant's plan.
+  const exact = nameKey(name);
+  const exactHit = plan.find((e) => e && nameKey(e.name || e.exercise) === exact);
+  if (exactHit) return exactHit;
+  const key = canonicalKey(name);
+  const canonHits = plan.filter((e) => e && canonicalKey(e.name || e.exercise) === key);
+  return canonHits.length === 1 ? canonHits[0] : null;
 }
 
 // Does one candidate reading match the retained rows? Every retained set
@@ -790,19 +892,64 @@ function detectUngroundedRecapNumbers(text, context) {
       if (RECAP_HISTORY_RE.test(seg)) continue;
       const isRecap = COMPLETED_WORK_VERB.test(seg) || AS_PLANNED_RE.test(seg) || RECAP_IN_THE_BOOKS_RE.test(seg);
       if (!isRecap) continue;
-      const lifts = namedRecapLifts(seg, c);
-      if (lifts.length !== 1) continue;
-      const name = lifts[0];
-      const tally = tallyEntryForLift(c, name);
-      const plan = planEntryForLift(c, name);
-      if (AS_PLANNED_RE.test(seg) && !tallyMatchesPlan(tally, plan)) {
-        flag(seg, 'recap_as_planned');
+      let lifts = namedRecapLifts(seg, c);
+      if (!lifts.length) continue;
+      // When several lifts match loosely, keep only the ones the clause
+      // actually distinguishes (see liftsOccurringInClause): shared words
+      // alone ("bench press") must not turn a single-lift recap into a
+      // multi-lift one. An emptied filter means wholly ambiguous — keep the
+      // unfiltered list so the clause still fails closed below.
+      if (lifts.length > 1) {
+        const occurring = liftsOccurringInClause(lifts, seg);
+        if (occurring.length) lifts = occurring;
+      }
+      if (lifts.length === 1) {
+        const name = lifts[0];
+        const tally = tallyEntryForLift(c, name);
+        const plan = planEntryForLift(c, name);
+        if (AS_PLANNED_RE.test(seg) && !tallyMatchesPlan(tally, plan)) {
+          flag(seg, 'recap_as_planned');
+          continue;
+        }
+        const readings = extractAssertedReadings(seg);
+        const hasNumbers = readings.some((r) => hasValue(r.weight) || hasValue(r.reps) || hasValue(r.sets) || r.__conflict);
+        if (!hasNumbers) continue;
+        if (!tally || !readings.some((r) => readingMatchesTally(r, tally))) flag(seg, 'recap_numbers');
         continue;
       }
-      const readings = extractAssertedReadings(seg);
-      const hasNumbers = readings.some((r) => hasValue(r.weight) || hasValue(r.reps) || hasValue(r.sets));
-      if (!hasNumbers) continue;
-      if (!tally || !readings.some((r) => readingMatchesTally(r, tally))) flag(seg, 'recap_numbers');
+      // Multi-lift clause (re-audit #1662): the numbers must be attributed per
+      // lift, not skipped — a false RDL number beside a true bench number
+      // passed every guard. "As planned" is judged per lift across the whole
+      // clause, because the equivalence claim spans the conjunction ("The RDLs
+      // and bench are also logged as planned").
+      if (AS_PLANNED_RE.test(seg)) {
+        let plannedOk = true;
+        for (const n of lifts) {
+          if (!tallyMatchesPlan(tallyEntryForLift(c, n), planEntryForLift(c, n))) { plannedOk = false; break; }
+        }
+        if (!plannedOk) { flag(seg, 'recap_as_planned'); continue; }
+      }
+      // Split on the conjunctions joining the per-lift assertions. The split
+      // is accepted only when EVERY piece names exactly one lift, so a number
+      // fragment can never be judged against the wrong lift. Anything
+      // unattributable fails closed: a clause asserting numbers no piece can
+      // own is flagged. Known residual: a comma-fragmented assertion ("…at
+      // 285, 6 reps, and bench…") does not split cleanly and fails closed.
+      const pieces = seg.split(MULTI_LIFT_JOIN).map((p) => p.trim()).filter(Boolean);
+      const pieceLifts = pieces.map((p) => namedRecapLifts(p, c));
+      if (pieces.length < 2 || !pieceLifts.every((ls) => ls.length === 1)) {
+        const readings = extractAssertedReadings(seg);
+        if (readings.some((r) => hasValue(r.weight) || hasValue(r.reps) || hasValue(r.sets) || r.__conflict)) flag(seg, 'recap_numbers');
+        continue;
+      }
+      for (let i = 0; i < pieces.length; i++) {
+        const name = pieceLifts[i][0];
+        const tally = tallyEntryForLift(c, name);
+        const readings = extractAssertedReadings(pieces[i]);
+        const hasNumbers = readings.some((r) => hasValue(r.weight) || hasValue(r.reps) || hasValue(r.sets) || r.__conflict);
+        if (!hasNumbers) continue;
+        if (!tally || !readings.some((r) => readingMatchesTally(r, tally))) { flag(seg, 'recap_numbers'); break; }
+      }
     }
   }
   return out;
