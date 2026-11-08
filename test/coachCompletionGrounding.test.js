@@ -442,11 +442,88 @@ test('C10. Astra #1662 — "as planned" fails for an off-plan extra, but its own
     'the extra lift’s own retained rows still ground its numbers');
 });
 
-test('C11. Astra #1662 — a multi-lift clause is skipped rather than guessed at', () => {
+test('C11. Re-audit #1662 — a multi-lift clause is judged per lift, not skipped', () => {
   const ctx = recapContext();
-  // Known limitation, pinned: numbers in a clause naming two lifts cannot be
-  // attributed to either, so the clause is not judged. Single-lift clauses are.
-  assert.equal(grounding.detectUngroundedRecapNumbers('You logged Romanian Deadlift at 275 for 6 reps and bench press at 25 for 8 reps.', ctx).length, 0);
+  // The re-audit counterexample: a false RDL number beside a true bench
+  // number passed every guard because the clause named two lifts. Each
+  // per-lift assertion is now judged against its own retained rows.
+  assert.ok(grounding.detectUngroundedRecapNumbers('You logged Romanian Deadlift at 275 for 6 reps and bench press at 25 for 8 reps.', ctx)
+    .some((f) => f.kind === 'recap_numbers'), 'false RDL number in a multi-lift clause must be flagged');
+  assert.ok(grounding.detectUngroundedRecapNumbers('You logged Romanian Deadlift at 285 for 6 reps and bench press at 99 for 8 reps.', ctx)
+    .some((f) => f.kind === 'recap_numbers'), 'false bench number in a multi-lift clause must be flagged');
+  assert.equal(grounding.detectUngroundedRecapNumbers('You logged Romanian Deadlift at 285 for 6 reps and bench press at 25 for 8 reps.', ctx).length, 0,
+    'both-true multi-lift recap is grounded');
+  // Alias-named lifts judge the same way ("RDLs" resolves per token — the
+  // whole-message alias resolution alone returns one canonical key).
+  assert.ok(grounding.detectUngroundedRecapNumbers('You logged RDLs at 275 for 6 reps and bench press at 25 for 8 reps.', ctx)
+    .some((f) => f.kind === 'recap_numbers'), 'false RDL number via alias in a multi-lift clause must be flagged');
+  assert.equal(grounding.detectUngroundedRecapNumbers('You logged RDLs at 285 for 6 reps and bench press at 25 for 8 reps.', ctx).length, 0,
+    'both-true alias multi-lift recap is grounded');
+  // Comma-joined per-lift assertions judge the same way.
+  assert.ok(grounding.detectUngroundedRecapNumbers('You logged Romanian Deadlift 275 x 6, bench press 25 x 8.', ctx)
+    .some((f) => f.kind === 'recap_numbers'), 'comma-joined false RDL number must be flagged');
+  assert.equal(grounding.detectUngroundedRecapNumbers('You logged Romanian Deadlift 285 x 6, bench press 25 x 8.', ctx).length, 0,
+    'comma-joined both-true recap is grounded');
+  // "As planned" is judged per lift across the conjunction: the plan shows
+  // RDL 275 against retained 285, so the joint claim is false for RDL.
+  assert.ok(grounding.detectUngroundedRecapNumbers('The RDLs and bench are also logged as planned.', ctx)
+    .some((f) => f.kind === 'recap_as_planned'), 'joint as-planned fails when one lift disagrees with its plan');
+  ctx.current_plan[0].weight = 285; // the plan itself now shows the retained load
+  assert.equal(grounding.detectUngroundedRecapNumbers('The RDLs and bench are also logged as planned.', ctx).length, 0,
+    'joint as-planned passes when every lift agrees with its plan');
+});
+
+test('C14. Re-audit #1662 — exact exercise identity first, no variant collapse', () => {
+  // Tally order: Barbell Bench Press 60.6x8x3 first, then Dumbbell Bench
+  // Press 27.5x8x3. The KB canonicalizer collapses both variants to
+  // "Bench Press", so a canonical-only lookup resolved by tally order and
+  // judged every recap against the barbell rows.
+  const ctx = recapContext();
+  ctx.current_plan = [
+    { name: 'Barbell Bench Press', sets: 3, reps: 8, weight: 60.6, rir: 2 },
+    { name: 'Dumbbell Bench Press', sets: 3, reps: 8, weight: 27.5, rir: 2 },
+  ];
+  ctx.session_tally.exercises = [
+    { exercise: 'Barbell Bench Press', sets: 3, per_set: [{ weight: 60.6, reps: 8, rir: 2 }, { weight: 60.6, reps: 8, rir: 2 }, { weight: 60.6, reps: 8, rir: 2 }], planned: true },
+    { exercise: 'Dumbbell Bench Press', sets: 3, per_set: [{ weight: 27.5, reps: 8, rir: 2 }, { weight: 27.5, reps: 8, rir: 2 }, { weight: 27.5, reps: 8, rir: 2 }], planned: true },
+  ];
+  assert.equal(grounding.detectUngroundedRecapNumbers('You logged Dumbbell Bench Press at 27.5 for 8 reps across 3 sets.', ctx).length, 0,
+    'true dumbbell recap must NOT be flagged');
+  assert.equal(grounding.detectUngroundedRecapNumbers('You logged Barbell Bench Press at 60.6 for 8 reps across 3 sets.', ctx).length, 0,
+    'true barbell recap must NOT be flagged');
+  assert.ok(grounding.detectUngroundedRecapNumbers('You logged Dumbbell Bench Press at 60.6 for 8 reps across 3 sets.', ctx)
+    .some((f) => f.kind === 'recap_numbers'), 'barbell weight asserted over the dumbbell rows must be flagged');
+  assert.ok(grounding.detectUngroundedRecapNumbers('You logged Barbell Bench Press at 27.5 for 8 reps across 3 sets.', ctx)
+    .some((f) => f.kind === 'recap_numbers'), 'dumbbell weight asserted over the barbell rows must be flagged');
+  // A bare "bench press" names neither variant distinctively while both are
+  // in the tally: fail closed rather than guessing a variant.
+  assert.ok(grounding.detectUngroundedRecapNumbers('You logged bench press at 27.5 for 8 reps across 3 sets.', ctx)
+    .some((f) => f.kind === 'recap_numbers'), 'ambiguous bare-variant recap fails closed');
+});
+
+test('C15. Re-audit #1662 — decimal tokens carry their units (kg normalizes to lb)', () => {
+  const ctx = recapContext();
+  ctx.session_tally.exercises.push(
+    { exercise: 'Seated Row', sets: 3, per_set: [{ weight: 60.6, reps: 8, rir: 2 }, { weight: 60.6, reps: 8, rir: 2 }, { weight: 60.6, reps: 8, rir: 2 }], planned: true },
+  );
+  // Retained Seated Row 60.6 lb x8x3 is 27.5 kg: the honest kg recap passes.
+  assert.equal(grounding.detectUngroundedRecapNumbers('You logged Seated Row at 27.5 kg for 8 reps across 3 sets.', ctx).length, 0,
+    'honest 27.5 kg recap (= 60.6 lb) must NOT be flagged');
+  assert.equal(grounding.detectUngroundedRecapNumbers('You logged Seated Row 27.5 kg x 8 x 3.', ctx).length, 0,
+    'honest kg triple-x recap must NOT be flagged');
+  // A kg number is not a lb number: 60.6 kg is 133.6 lb, 100 kg is 220.5 lb.
+  assert.ok(grounding.detectUngroundedRecapNumbers('You logged Seated Row at 60.6 kg for 8 reps across 3 sets.', ctx)
+    .some((f) => f.kind === 'recap_numbers'), 'false 60.6 kg recap must be flagged');
+  assert.ok(grounding.detectUngroundedRecapNumbers('You logged Seated Row 100 kg for 8 reps across 3 sets.', ctx)
+    .some((f) => f.kind === 'recap_numbers'), 'false 100 kg recap must be flagged (bare N kg is a weight, not a dropped token)');
+  assert.ok(grounding.detectUngroundedRecapNumbers('You logged Seated Row 60.6 kg x 8 x 3.', ctx)
+    .some((f) => f.kind === 'recap_numbers'), 'false kg triple-x recap must be flagged');
+  // A weight in a unit the validator cannot normalize is unvalidated, not absent.
+  assert.ok(grounding.detectUngroundedRecapNumbers('You logged Seated Row at 100 stone for 8 reps across 3 sets.', ctx)
+    .some((f) => f.kind === 'recap_numbers'), 'unhandled weight unit fails closed');
+  // Unitless / lb shapes are unchanged.
+  assert.equal(grounding.detectUngroundedRecapNumbers('You logged Seated Row at 60.6 for 8 reps across 3 sets.', ctx).length, 0,
+    'honest unitless recap still passes');
 });
 
 test('C13. Hammy review F1 — decimal weights are parsed, not truncated to integers', () => {
@@ -474,14 +551,12 @@ test('C13. Hammy review F1 — decimal weights are parsed, not truncated to inte
   assert.ok(grounding.detectUngroundedRecapNumbers('You logged bench 27.5x8.', ctx)
     .some((f) => f.kind === 'recap_numbers'), '27.5x8 asserted over retained 25x8 must be flagged');
 });
-// NOTE (follow-up, not fixed here — one concern per PR): tallyEntryForLift /
-// planEntryForLift match by canonicalKey, and the KB canonicalizer maps both
-// "Dumbbell Bench Press" and "Barbell Bench Press" to "Bench Press", so a
-// session carrying both variants resolves the tally entry by tally order
-// (first match wins) — a true decimal recap can be flagged and a wrong one
-// skipped. Same collapse class as the pre-review collapse probe. Flagged to
-// the coordinator for its own issue; C13 pins the decimal tokens with
-// collision-free lift names so the two concerns stay separate.
+// NOTE (re-audit #1662 re-fix, C14): tallyEntryForLift / planEntryForLift
+// now match by exact exercise identity first and fall back to the canonical
+// key only when it resolves uniquely, so a session carrying both bench
+// variants judges each recap against its own variant's rows. The decimal
+// tokens stay pinned here with collision-free lift names so the two concerns
+// stay separate in the tests.
 
 test('C12. Astra #1662 — state-awareness: proposals, questions, quotations and negations are not recap claims', () => {
   const ctx = recapContext();
