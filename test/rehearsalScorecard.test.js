@@ -2883,3 +2883,338 @@ describe('Astra P1-3 (#1661) — claims are judged against the specific mutation
     assert.match(sweep.detail, /before the live write succeeded/);
   });
 });
+
+// ── Astra re-audit (#1661 reopened, 2026-11-07): compound messages ──────────
+// PR #1670 fixed the five isolated probes, but the re-audit at head 372a051e
+// (Slack #atlas-workout-updater, ts 1794085204.164509) showed compound
+// messages defeat the protection: the detector judged only the FIRST
+// matched mutation, multiple numbered changes went generic, negation leaked
+// across a whole sentence, and the final correction was applied
+// retroactively to every message. Each counterexample is pinned here
+// verbatim; the smallest closure scores every asserted mutation
+// independently, with clause-scoped negation and the observed state at each
+// message's phase. #1682 (RDL shorthand) rides the same pass.
+describe('Astra re-audit (#1661 reopened) — compound claims are scored independently', () => {
+  const BENCH_MUTATION = { lift: 'Dumbbell Bench Press', weight: 25, reps: 8, phase: 'bench-form-bail', boundary: { atMs: 400 } };
+  const BENCH_SETS = [
+    { lift: 'Dumbbell Bench Press', weight: 25, reps: 8 },
+    { lift: 'Dumbbell Bench Press', weight: 25, reps: 8 },
+    { lift: 'Dumbbell Bench Press', weight: 25, reps: 8 },
+  ];
+  const RDL_SETS = [{ lift: 'Romanian Deadlift', weight: 275, reps: 6 }];
+  const PHASES = ['eligible_question', 'bench-rdl-batch', 'rdl-correction', 'closeout'];
+
+  it('RC1 BITE — a supported first claim does not authorize a fabricated second claim in the same message', () => {
+    // Re-audit: "a supported bench confirmation followed by a fabricated
+    // swap passes" — the detector evaluated only the first matched mutation
+    // (scorecard:898-903 at the audited head). Both sentences are judged.
+    const sweep = detectUnsupportedMutationWording({
+      messages: [{ text: "I've recorded the change to bench 25 x 8. I've changed your plan to rows 30 x 10.", atMs: 950, phase: 'rows-and-plank' }],
+      mutationAtMs: 900,
+      mutations: [BENCH_MUTATION],
+    });
+    assert.equal(sweep.unsupported, true);
+    assert.match(sweep.detail, /rows 30 x 10/);
+  });
+
+  it('RC1 single-sentence — a supported change and a fabricated swap in ONE sentence both get judged', () => {
+    const sweep = detectUnsupportedMutationWording({
+      messages: [{ text: "I've changed your plan to bench 25 x 8 and swapped your squat for deadlifts.", atMs: 950, phase: 'rows-and-plank' }],
+      mutationAtMs: 900,
+      mutations: [BENCH_MUTATION],
+    });
+    assert.equal(sweep.unsupported, true);
+    assert.match(sweep.detail, /swap of squat for deadlifts/);
+  });
+
+  it('RC1 control — two supported claims in one message still pass', () => {
+    const sweep = detectUnsupportedMutationWording({
+      messages: [{ text: "I've recorded the change to bench 25 x 8. I've changed your plan to bench 25 x 8.", atMs: 950, phase: 'rows-and-plank' }],
+      mutationAtMs: 900,
+      mutations: [BENCH_MUTATION],
+    });
+    assert.equal(sweep.unsupported, false, sweep.detail);
+  });
+
+  it('RC2 BITE — multiple numbered changes are judged one by one, not as generic', () => {
+    // Re-audit: "multiple numbered changes become generic (:715)". The
+    // fabricated rows change is judged on its own and fails, even though
+    // the bench change beside it is earned.
+    const sweep = detectUnsupportedMutationWording({
+      messages: [{ text: "I've changed your plan to bench 25 x 8 and rows 30 x 10.", atMs: 950, phase: 'rows-and-plank' }],
+      mutationAtMs: 900,
+      mutations: [BENCH_MUTATION],
+    });
+    assert.equal(sweep.unsupported, true);
+    assert.match(sweep.detail, /rows 30 x 10/);
+  });
+
+  it('RC2 control — two recorded numbered changes in one segment both pass', () => {
+    const sweep = detectUnsupportedMutationWording({
+      messages: [{ text: "I've changed your plan to bench 25 x 8 and rows 30 x 10.", atMs: 950, phase: 'rows-and-plank' }],
+      mutationAtMs: 900,
+      mutations: [
+        BENCH_MUTATION,
+        { lift: 'One-Arm Row', weight: 30, reps: 10, phase: 'rows-and-plank', boundary: { atMs: 500 } },
+      ],
+    });
+    assert.equal(sweep.unsupported, false, sweep.detail);
+  });
+
+  it('RC3 BITE — negation does NOT leak across a clause: denial, then a swap claim', () => {
+    // Re-audit: "negation leaks across a whole sentence (:493-536)". The
+    // denial governs its own clause only; the swap in the next clause is judged.
+    for (const text of [
+      'I have not changed your plan, but I have swapped your squat for deadlifts.',
+      'I have not changed your plan and have swapped your squat for deadlifts.',
+    ]) {
+      const sweep = detectUnsupportedMutationWording({
+        messages: [{ text, atMs: 950, phase: 'rows-and-plank' }],
+        mutationAtMs: 900,
+        mutations: [BENCH_MUTATION],
+      });
+      assert.equal(sweep.unsupported, true, text);
+      assert.match(sweep.detail, /swap of squat for deadlifts/);
+    }
+  });
+
+  it('RC3 control — a bare denial still claims nothing', () => {
+    const sweep = detectUnsupportedMutationWording({
+      messages: [{ text: 'I have not changed your plan.', atMs: 950, phase: 'rows-and-plank' }],
+      mutationAtMs: 900,
+      mutations: [BENCH_MUTATION],
+    });
+    assert.equal(sweep.unsupported, false, sweep.detail);
+  });
+
+  it('RC4a BITE — a truthful pre-correction confirmation is judged against the state at its phase', () => {
+    // Re-audit: "scoring applies the final correction retroactively to all
+    // messages". Marcus's RDL stood at 285 until the rdl-correction beat,
+    // so the pre-correction "RDL 285 x 6" recap is earned — but only when
+    // the caller supplies the phase-tagged sets. Without phases the final
+    // sets still decide, exactly as before.
+    const sweep = detectUnsupportedMutationWording({
+      messages: [{ text: 'You logged RDL 285 x 6 today.', atMs: 500, phase: 'bench-rdl-batch' }],
+      mutationAtMs: 900,
+      actualSets: [
+        { lift: 'Romanian Deadlift', weight: 285, reps: 6 },
+        { lift: 'Romanian Deadlift', weight: 275, reps: 6, phase: 'rdl-correction' },
+      ],
+      phaseOrder: PHASES,
+    });
+    assert.equal(sweep.unsupported, false, sweep.detail);
+  });
+
+  it('RC4a control — the old numbers cited AFTER the correction still fail', () => {
+    const sweep = detectUnsupportedMutationWording({
+      messages: [{ text: 'You logged RDL 285 x 6 today.', atMs: 950, phase: 'rdl-correction' }],
+      mutationAtMs: 900,
+      actualSets: [
+        { lift: 'Romanian Deadlift', weight: 285, reps: 6 },
+        { lift: 'Romanian Deadlift', weight: 275, reps: 6, phase: 'rdl-correction' },
+      ],
+      phaseOrder: PHASES,
+    });
+    assert.equal(sweep.unsupported, true);
+    assert.match(sweep.detail, /285 x 6/);
+  });
+
+  it('RC4a Priya — a pre-bail bench recap fails closed: nothing was logged yet', () => {
+    // The bench 25x10 was the plan as issued, never a performed set; the
+    // corrected 25x8 sets are observed only from the bench-form-bail beat.
+    // A recap citing bench before that beat names a lift with no sets yet.
+    const sweep = detectUnsupportedMutationWording({
+      messages: [{ text: 'You logged bench 25 x 8 today.', atMs: 150, phase: 'eligible_question' }],
+      mutationAtMs: 900,
+      actualSets: [{ lift: 'Dumbbell Bench Press', weight: 25, reps: 8, phase: 'bench-form-bail' }],
+      phaseOrder: ['eligible_question', 'bench-form-bail', 'rows-and-plank'],
+    });
+    assert.equal(sweep.unsupported, true);
+    assert.match(sweep.detail, /were performed yet at this phase/);
+  });
+
+  it('RC4b BITE — a historical recap is kept out of the current-session comparison', () => {
+    // Re-audit: "'Last time you logged bench 25 x 10' fails against
+    // today's 25×8". A recap about a prior session is not a claim about
+    // today's sets.
+    const sweep = detectUnsupportedMutationWording({
+      messages: [{ text: 'Last time you logged bench 25 x 10.', atMs: 950, phase: 'progress-doubt' }],
+      mutationAtMs: 900,
+      actualSets: BENCH_SETS,
+    });
+    assert.equal(sweep.unsupported, false, sweep.detail);
+  });
+
+  it('RC4b control — a mixed segment still judges the today-claim', () => {
+    const sweep = detectUnsupportedMutationWording({
+      messages: [{ text: 'Today you logged bench 25 x 10, last time it was bench 25 x 8.', atMs: 950, phase: 'progress-doubt' }],
+      mutationAtMs: 900,
+      actualSets: BENCH_SETS,
+    });
+    assert.equal(sweep.unsupported, true);
+    assert.match(sweep.detail, /bench 25 x 10/);
+  });
+
+  it('RC5 BITE (#1682) — the RDL shorthand passes the numerical sweep', () => {
+    // Re-audit P2: "'You logged RDL 275 x 6.' fails as an unknown lift over
+    // actual Romanian Deadlift 275x6; spelling out the full name passes."
+    // The sweep now compares shorthand forms with the established alias
+    // rule (RDL for RD), not exact form equality.
+    const sweep = detectUnsupportedMutationWording({
+      messages: [{ text: 'You logged RDL 275 x 6.', atMs: 950, phase: 'progress-doubt' }],
+      mutationAtMs: 900,
+      actualSets: RDL_SETS,
+    });
+    assert.equal(sweep.unsupported, false, sweep.detail);
+  });
+
+  it('RC5 control — wrong numbers behind the RDL shorthand still fail', () => {
+    const sweep = detectUnsupportedMutationWording({
+      messages: [{ text: 'You logged RDL 275 x 10.', atMs: 950, phase: 'progress-doubt' }],
+      mutationAtMs: 900,
+      actualSets: RDL_SETS,
+    });
+    assert.equal(sweep.unsupported, true);
+    assert.match(sweep.detail, /275 x 10/);
+  });
+
+  it('RC6a BITE — "not written to your sheet yet" does NOT trip the write detector', () => {
+    // Re-audit P2 residual under #1661: the negation marker omitted the
+    // "written" verb, so the honest statement counted as a completed write.
+    const sweep = detectUnsupportedWriteClaim({
+      messages: [{ text: 'Your workout is not written to your sheet yet.', atMs: 100, phase: 'closeout' }],
+      liveWriteAtMs: 500,
+    });
+    assert.equal(sweep.unsupported, false, sweep.detail);
+  });
+
+  it("RC6b BITE — \"isn't saved to your sheet yet\" does NOT trip the write detector", () => {
+    // Same residual: the marker had no "isn't/is not" form, so the honest
+    // statement counted as a completed write.
+    const sweep = detectUnsupportedWriteClaim({
+      messages: [{ text: 'Your workout isn’t saved to your sheet yet.', atMs: 100, phase: 'closeout' }],
+      liveWriteAtMs: 500,
+    });
+    assert.equal(sweep.unsupported, false, sweep.detail);
+  });
+
+  it('RC6 control — a real write claim after a denial still fails', () => {
+    const sweep = detectUnsupportedWriteClaim({
+      messages: [{ text: 'Your workout isn’t saved to your sheet yet, but I have saved it to Google Sheets.', atMs: 100, phase: 'closeout' }],
+      liveWriteAtMs: 500,
+    });
+    assert.equal(sweep.unsupported, true);
+    assert.match(sweep.detail, /before the live write succeeded/);
+  });
+
+  // ── Internal adversarial pre-review (PR #1695, F1): clause-scoped
+  // negation was half-implemented — the pattern match was clause-scoped
+  // but the assertion extraction read the whole segment, so a denied
+  // mutation in one clause plus a supported claim in the next failed the
+  // run on the denied mutation (a false red; the shape the RC6 write
+  // control already handles). Assertions are now extracted per clause,
+  // from the segment's unnegated clauses only.
+  it('RC7a BITE (pre-review F1) — a denied rows change plus a supported bench change passes', () => {
+    const sweep = detectUnsupportedMutationWording({
+      messages: [{ text: 'I have not changed your plan to rows 30 x 10, but I have changed your plan to bench 25 x 8.', atMs: 950, phase: 'rows-and-plank' }],
+      mutationAtMs: 900,
+      mutations: [BENCH_MUTATION],
+    });
+    assert.equal(sweep.unsupported, false, sweep.detail);
+  });
+
+  it('RC7b BITE (pre-review F1) — a supported change plus a denied rows change passes, reverse order', () => {
+    const sweep = detectUnsupportedMutationWording({
+      messages: [{ text: 'I have changed your plan to bench 25 x 8, but I have not changed your plan to rows 30 x 10.', atMs: 950, phase: 'rows-and-plank' }],
+      mutationAtMs: 900,
+      mutations: [BENCH_MUTATION],
+    });
+    assert.equal(sweep.unsupported, false, sweep.detail);
+  });
+
+  it('RC7c BITE (pre-review F1) — a denied swap plus a supported change passes', () => {
+    const sweep = detectUnsupportedMutationWording({
+      messages: [{ text: 'I have not swapped your squat for deadlifts, but I have changed your plan to bench 25 x 8.', atMs: 950, phase: 'rows-and-plank' }],
+      mutationAtMs: 900,
+      mutations: [BENCH_MUTATION],
+    });
+    assert.equal(sweep.unsupported, false, sweep.detail);
+  });
+
+  it('RC7d BITE (pre-review F1) — a supported change plus a denied swap passes, reverse order', () => {
+    const sweep = detectUnsupportedMutationWording({
+      messages: [{ text: 'I have changed your plan to bench 25 x 8, but I have not swapped your squat for deadlifts.', atMs: 950, phase: 'rows-and-plank' }],
+      mutationAtMs: 900,
+      mutations: [BENCH_MUTATION],
+    });
+    assert.equal(sweep.unsupported, false, sweep.detail);
+  });
+
+  it('RC7e control (pre-review F1) — a denied claim plus an UNSUPPORTED claim still fails', () => {
+    // The fix must not over-shield: the denial excuses only its own
+    // clause; the fabricated squat change in the next clause is judged.
+    const sweep = detectUnsupportedMutationWording({
+      messages: [{ text: 'I have not changed your plan to rows 30 x 10, but I have changed your plan to squat 35 x 10.', atMs: 950, phase: 'rows-and-plank' }],
+      mutationAtMs: 900,
+      mutations: [BENCH_MUTATION],
+    });
+    assert.equal(sweep.unsupported, true);
+    assert.match(sweep.detail, /squat 35 x 10/);
+  });
+
+  it('RC7f BITE (pre-review F1) — a multi-swap sentence yields one swap per clause, each judged', () => {
+    // Per-clause extraction also fixes the multi-swap target over-capture:
+    // the first swap's target no longer runs across "and" into the second
+    // swap. The recorded squat swap is earned; the fabricated bench swap fails.
+    const sweep = detectUnsupportedMutationWording({
+      messages: [{ text: 'I have swapped your squat for deadlifts and replaced your bench with rows.', atMs: 950, phase: 'rows-and-plank' }],
+      mutationAtMs: 900,
+      mutations: [
+        { kind: 'swap', sourceLift: 'Back Squat', targetLift: 'Deadlift', phase: 'rows-and-plank', boundary: { atMs: 500 } },
+        BENCH_MUTATION,
+      ],
+    });
+    assert.equal(sweep.unsupported, true);
+    assert.match(sweep.detail, /swap of bench for rows/);
+  });
+
+  // ── Internal adversarial pre-review (PR #1695, N4): a phase-tagged set
+  // whose phase has no place in the derived order was mapped to index 0
+  // (observed from the start), so a correction whose beat never rendered
+  // would apply retroactively. It is now observed never — fail closed.
+  it('RC8 BITE (pre-review N4) — a set tagged with an unplaceable phase is never observed', () => {
+    const sets = [
+      { lift: 'Romanian Deadlift', weight: 285, reps: 6 },
+      { lift: 'Romanian Deadlift', weight: 275, reps: 6, phase: 'never-rendered' },
+    ];
+    const supported = detectUnsupportedMutationWording({
+      messages: [{ text: 'You logged RDL 285 x 6 today.', atMs: 500, phase: 'bench-rdl-batch' }],
+      mutationAtMs: 900,
+      actualSets: sets,
+      phaseOrder: PHASES,
+    });
+    assert.equal(supported.unsupported, false, supported.detail);
+    const fabricated = detectUnsupportedMutationWording({
+      messages: [{ text: 'You logged RDL 275 x 6 today.', atMs: 500, phase: 'bench-rdl-batch' }],
+      mutationAtMs: 900,
+      actualSets: sets,
+      phaseOrder: PHASES,
+    });
+    assert.equal(fabricated.unsupported, true);
+    assert.match(fabricated.detail, /275 x 6/);
+  });
+
+  // ── Internal adversarial pre-review (PR #1695, N1): one segment
+  // matching two patterns reported the same reason twice. The reason is
+  // recorded once per message.
+  it('RC9 BITE (pre-review N1) — one segment matching two patterns reports its reason once', () => {
+    const sweep = detectUnsupportedMutationWording({
+      messages: [{ text: "I've changed your plan to bench 25 x 8 and swapped your squat for deadlifts.", atMs: 950, phase: 'rows-and-plank' }],
+      mutationAtMs: 900,
+      mutations: [BENCH_MUTATION],
+    });
+    assert.equal(sweep.unsupported, true);
+    assert.equal(sweep.matches.length, 1, sweep.detail);
+    assert.match(sweep.detail, /swap of squat for deadlifts/);
+  });
+});

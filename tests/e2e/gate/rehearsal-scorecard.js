@@ -371,38 +371,12 @@ function specificMutationTimingReason(order) {
   return 'the claim landed before the mutation it asserts';
 }
 
-function mutationClaimReason({ message, found, mutations, actualSets, mutationBoundary, mutationAtMs, phaseOrder }) {
-  const text = String((message && message.text) || '');
-  const spans = claimSegmentSpans(text);
-  const segmentText = (found.segmentIndex >= 0 && found.segmentIndex < spans.length)
-    ? text.slice(spans[found.segmentIndex][0], spans[found.segmentIndex][1]) : text;
-  const knownLifts = [
-    ...(Array.isArray(mutations) ? mutations.map((e) => (e && e.kind === 'swap' ? null : e && e.lift)).filter(Boolean) : []),
-    ...(Array.isArray(actualSets) ? actualSets.map((s) => s && s.lift).filter(Boolean) : []),
-  ];
-  const asserted = specificMutationAsserted(segmentText, knownLifts);
-  // Generic wording, or no per-mutation evidence to judge against: the
-  // global boundary decides — except that when mutations ARE supplied, a
-  // generic claim is also earned when at least one recorded mutation had
-  // occurred by the claim's phase. Within one beat the product applies the
-  // change while processing the turn and renders its reply after it, so an
-  // in-turn generic confirmation is earned; a claim in a phase before every
-  // recorded mutation is premature. An explicitly empty mutation record
-  // means no mutation occurred at all.
-  if (!asserted || mutations === null) {
-    if (mutations !== null) {
-      if (mutations.length === 0) return 'no mutation occurred in this run';
-      const phases = mutations.map((e) => e && e.phase).filter(Boolean);
-      const claimPhase = (message && message.phase) || '';
-      const comparisons = phases.map((p) => phaseAtOrAfter(claimPhase, p, phaseOrder));
-      if (comparisons.some((v) => v !== null)) {
-        return comparisons.some((v) => v === true)
-          ? null
-          : `the claim landed in phase '${claimPhase}' before any recorded mutation`;
-      }
-    }
-    return globalMutationReason(message, mutationBoundary, mutationAtMs);
-  }
+// The reason ONE asserted mutation is unsupported, or null when it is
+// earned: judged against the recorded mutation with the same lift and
+// values, on that mutation's own boundary or in that mutation's own phase.
+// A claim asserting a mutation that never occurred is unsupported however
+// late it renders.
+function reasonForAssertedMutation({ message, asserted, mutations, mutationBoundary, mutationAtMs, phaseOrder }) {
   const entry = findMatchingMutation(asserted, mutations);
   if (!entry) return `the claim asserts ${describeAsserted(asserted)} but no such mutation occurred in this run`;
   // The mutation's own boundary is the exact instant; its phase is the beat
@@ -419,6 +393,71 @@ function mutationClaimReason({ message, found, mutations, actualSets, mutationBo
     }
   }
   return globalMutationReason(message, mutationBoundary, mutationAtMs);
+}
+
+// The reasons a completed-mutation match is unsupported, one per asserted
+// mutation — or the single generic reason when the match's segment asserts
+// nothing specific. Generic wording, or no per-mutation evidence to judge
+// against: the global boundary decides — except that when mutations ARE
+// supplied, a generic claim is also earned when at least one recorded
+// mutation had occurred by the claim's phase. Within one beat the product
+// applies the change while processing the turn and renders its reply after
+// it, so an in-turn generic confirmation is earned; a claim in a phase
+// before every recorded mutation is premature. An explicitly empty mutation
+// record means no mutation occurred at all.
+function mutationClaimReasons({ message, found, mutations, actualSets, mutationBoundary, mutationAtMs, phaseOrder }) {
+  const text = String((message && message.text) || '');
+  const spans = claimSegmentSpans(text);
+  const knownLifts = [
+    ...(Array.isArray(mutations) ? mutations.map((e) => (e && e.kind === 'swap' ? null : e && e.lift)).filter(Boolean) : []),
+    ...(Array.isArray(actualSets) ? actualSets.map((s) => s && s.lift).filter(Boolean) : []),
+  ];
+  // Clause-scoped assertion extraction (internal adversarial pre-review,
+  // PR #1695 F1): a denial in one clause must not be read as an asserted
+  // mutation. specificMutationsAsserted reads the text it is given, so
+  // handing it the whole segment let a denied swap in clause 1 plus a
+  // supported change in clause 2 read as asserting the denied swap (a
+  // false red — the shape the RC6 write control already handles). Extract
+  // assertions per clause, from the segment's UNNEGATED clauses only; a
+  // multi-number claim keeps every mention because each clause is
+  // extracted on its own, and a multi-swap sentence now yields one swap
+  // per clause instead of over-capturing the first target across "and".
+  const segSpan = (found.segmentIndex >= 0 && found.segmentIndex < spans.length)
+    ? spans[found.segmentIndex] : [0, text.length];
+  const assertedList = [];
+  for (const [a, b] of claimClauseSpans(text)) {
+    if (a < segSpan[0] || b > segSpan[1]) continue;
+    const clauseText = text.slice(a, b);
+    if (isNegatedSegment(clauseText)) continue;
+    for (const asserted of specificMutationsAsserted(clauseText, knownLifts)) {
+      if (!assertedList.some((o) => o.kind === asserted.kind && o.lift === asserted.lift
+        && o.sourceLift === asserted.sourceLift && o.targetLift === asserted.targetLift
+        && o.weight === asserted.weight && o.reps === asserted.reps)) {
+        assertedList.push(asserted);
+      }
+    }
+  }
+  // Per-mutation judging needs the caller-supplied record: with no record
+  // (mutations null) a specific claim keeps the global boundary, exactly
+  // as before — a missing record must never read as "no such mutation".
+  if (assertedList.length && mutations !== null) {
+    return assertedList
+      .map((asserted) => reasonForAssertedMutation({ message, asserted, mutations, mutationBoundary, mutationAtMs, phaseOrder }))
+      .filter(Boolean);
+  }
+  if (mutations !== null) {
+    if (mutations.length === 0) return ['no mutation occurred in this run'];
+    const phases = mutations.map((e) => e && e.phase).filter(Boolean);
+    const claimPhase = (message && message.phase) || '';
+    const comparisons = phases.map((p) => phaseAtOrAfter(claimPhase, p, phaseOrder));
+    if (comparisons.some((v) => v !== null)) {
+      return comparisons.some((v) => v === true)
+        ? []
+        : [`the claim landed in phase '${claimPhase}' before any recorded mutation`];
+    }
+  }
+  const generic = globalMutationReason(message, mutationBoundary, mutationAtMs);
+  return generic ? [generic] : [];
 }
 
 // ── unsupported completed-mutation wording ─────────────────────────────────────
@@ -456,7 +495,16 @@ function mutationClaimReason({ message, found, mutations, actualSets, mutationBo
 //   actualSets — the performed sets, one { lift, weight, reps } per set.
 //     A recap segment claiming the sets were as planned is judged on its
 //     numbers as well as its wording (see numericRecapReason). Absent, no
-//     numeric judging happens.
+//     numeric judging happens. An entry may carry `phase`: the performed
+//     sets are the observed state at each message's phase, so the final
+//     correction is never applied retroactively — entries without a phase
+//     are observed from the start, and a message is judged against the
+//     latest state at or before its own phase.
+// Reopened follow-up (#1661, Astra re-audit 2026-11-07): every asserted
+// mutation in a message is judged independently (a supported first claim
+// never authorizes the claims after it); negation is clause-scoped (a
+// denial in one clause never shields a claim in the next); a recap about a
+// prior session is kept out of the current-session comparison.
 const COMPLETED_MUTATION_PATTERNS = Object.freeze([
   /i(?:'ve| have) (?:noted|recorded|logged|made|applied) (?:the |that )?(?:substitution|swap|replacement|change)/i,
   /(?:has|have) been (?:swapped|replaced|substituted|changed)/i,
@@ -484,13 +532,17 @@ const COMPLETED_MUTATION_PATTERNS = Object.freeze([
 // boundary rules, and the verdict plumbing are unchanged — the ONLY matches
 // removed are those inside a negated segment.
 // Verbatim mirror of the product's NEGATION_MARKER (coachResponseGrounding.js),
-// plus one word: "stored". The product's mutation table has no "stored" verb,
-// but the scorecard's write table does (Astra P1-3, #1661 — "safely stored in
-// Google Sheets" is a claim), so a negated "stored" statement must not be a
-// claim either, or the honest "not stored in the Google Sheet yet" false-reds.
+// plus three words the scorecard's tables need: "stored" (Astra P1-3, #1661 —
+// "safely stored in Google Sheets" is a claim), "written" and "logged"
+// (re-audit P2 residual, #1661 reopened — "not written to your sheet yet"
+// falsely counted as a completed write), and the "isn't/is not/aren't/are
+// not/wasn't/was not/weren't/were not + verb" forms (same residual — "isn't
+// saved to your sheet yet" is the honest statement that no write happened).
+// The product's marker still lacks written/logged/isn't — a known divergence,
+// same class as the "stored" one above; the product is a different concern.
 // The pre-existing write verbs "written"/"logged" share the same gap against
-// this marker and the product's — out of scope here, flagged as a follow-up.
-const NEGATION_MARKER = /\b(haven'?t|have not|hasn'?t|has not|hadn'?t|had not|didn'?t|did not|don'?t|do not|won'?t|will not|wouldn'?t|would not|never|nothing|no changes?|not (?:yet )?(?:been )?(?:updated|changed|saved|stored|switched|adjusted|modified|edited|revised|altered|swapped|replaced))\b/;
+// this marker and the product's — fixed here for the scorecard's tables.
+const NEGATION_MARKER = /\b(haven'?t|have not|hasn'?t|has not|hadn'?t|had not|didn'?t|did not|don'?t|do not|won'?t|will not|wouldn'?t|would not|never|nothing|no changes?|not (?:yet )?(?:been )?(?:updated|changed|saved|stored|written|logged|switched|adjusted|modified|edited|revised|altered|swapped|replaced)|(?:isn'?t|is not|aren'?t|are not|wasn'?t|was not|weren'?t|were not) (?:yet )?(?:been )?(?:updated|changed|saved|stored|written|logged|switched|adjusted|modified|edited|revised|altered|swapped|replaced))\b/;
 
 // [start, end) spans of the clause-ish segments of `text`, split on the same
 // boundaries as the product's segments(): sentence enders and newlines.
@@ -508,6 +560,31 @@ function claimSegmentSpans(text) {
   return spans;
 }
 
+// [start, end) spans of the CLAUSES of `text`: each sentence segment split
+// further on clause boundaries — semicolons and the coordinators "but",
+// "and", "however" — so a negation in one clause cannot shield a real claim
+// in the next clause of the same sentence (Astra re-audit, #1661 reopened:
+// "negation leaks across a whole sentence"). Clauses scope BOTH the
+// negation test AND the assertion extraction (mutationClaimReasons reads
+// each unnegated clause on its own): a denied clause contributes no
+// assertion, while a multi-number claim keeps every mention because each
+// of its clauses is extracted separately.
+function claimClauseSpans(text) {
+  const clauses = [];
+  for (const [a, b] of claimSegmentSpans(text)) {
+    const segment = text.slice(a, b);
+    const separator = /;\s*|\s*,?\s*\b(?:but|and|however)\b\s+/g;
+    let start = 0;
+    let m;
+    while ((m = separator.exec(segment)) !== null) {
+      clauses.push([a + start, a + m.index]);
+      start = m.index + m[0].length;
+    }
+    clauses.push([a + start, b]);
+  }
+  return clauses.filter(([s, e]) => e > s);
+}
+
 // The product judges the marker on normalized text (lowercased, typographic
 // apostrophes straightened — its normalize()) — mirror that, so "haven’t"
 // negates exactly like "haven't".
@@ -516,24 +593,59 @@ function isNegatedSegment(segmentText) {
   return NEGATION_MARKER.test(normalized);
 }
 
-// The first table pattern with a match OUTSIDE every negated segment, else
+// The clause containing `index`, else -1. A match is negated when its own
+// clause carries the marker — never by a marker in a neighbouring clause.
+function clauseIndexFor(spans, index) {
+  return spans.findIndex(([a, b]) => index >= a && index < b);
+}
+
+// The first table pattern with a match OUTSIDE every negated clause, else
 // null. A pattern may match several times in one message (a negated mention,
 // then a real claim in the next sentence) — every match is judged on the
-// segment that contains its start. The match's own segment is returned too,
+// CLAUSE that contains its start, so a denial in one clause cannot shield a
+// real claim in the next. The match's own SENTENCE segment is returned too,
 // so a claim can be read for the specific mutation it asserts.
 function firstUnnegatedPattern(text, patterns) {
   const spans = claimSegmentSpans(text);
-  const negated = spans.map(([a, b]) => isNegatedSegment(text.slice(a, b)));
+  const clauses = claimClauseSpans(text);
+  const negated = clauses.map(([a, b]) => isNegatedSegment(text.slice(a, b)));
   for (const re of patterns) {
     const global = new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`);
     let m;
     while ((m = global.exec(text)) !== null) {
       if (m[0].length === 0) { global.lastIndex += 1; continue; }
       const segIdx = spans.findIndex(([a, b]) => m.index >= a && m.index < b);
-      if (segIdx === -1 || !negated[segIdx]) return { pattern: re, index: m.index, segmentIndex: segIdx };
+      const clauseIdx = clauseIndexFor(clauses, m.index);
+      if (segIdx === -1 || (clauseIdx !== -1 && negated[clauseIdx])) continue;
+      return { pattern: re, index: m.index, segmentIndex: segIdx };
     }
   }
   return null;
+}
+
+// Every table-pattern match outside every negated clause, in text order.
+// A supported first claim must not authorize later claims in the same
+// message (Astra re-audit, #1661 reopened): the mutation detector judges
+// each match's asserted mutations independently, so a compound message
+// fails when ANY of its claims is unsupported.
+function allUnnegatedPatternMatches(text, patterns) {
+  const spans = claimSegmentSpans(text);
+  const clauses = claimClauseSpans(text);
+  const negated = clauses.map(([a, b]) => isNegatedSegment(text.slice(a, b)));
+  const out = [];
+  for (const re of patterns) {
+    const global = new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`);
+    let m;
+    while ((m = global.exec(text)) !== null) {
+      if (m[0].length === 0) { global.lastIndex += 1; continue; }
+      const segIdx = spans.findIndex(([a, b]) => m.index >= a && m.index < b);
+      const clauseIdx = clauseIndexFor(clauses, m.index);
+      if (segIdx === -1 || (clauseIdx !== -1 && negated[clauseIdx])) continue;
+      out.push({ pattern: re, index: m.index, segmentIndex: segIdx });
+    }
+  }
+  out.sort((x, y) => x.index - y.index);
+  return out;
 }
 
 function completedMutationPatternFor(text) {
@@ -635,6 +747,12 @@ function liftForms(liftName) {
 // none occurs. `windowWords` are the letter-words before a numbers pair,
 // in order — a lift name is the words right before the numbers ("bench
 // 25 x 8"), possibly with a verb between them ("bench was 25 x 8").
+// When no exact form occurs, a single window word may still name the lift
+// by the established alias rule (liftNameMatches: an acronym or its prefix,
+// "RDL" for "RD") — the numerical sweep used to require exact form
+// equality, so the correct "RDL 275 x 6" failed as an unknown lift (#1682).
+// The alias match is a fallback only: exact forms keep their ranking, and
+// the closest window word wins, so a nearer exact form is never displaced.
 function liftInWindow(windowWords, knownLifts) {
   const words = (Array.isArray(windowWords) ? windowWords : []).map(normalizeLiftWord);
   let best = null;
@@ -651,8 +769,17 @@ function liftInWindow(windowWords, knownLifts) {
       }
     }
   }
-  if (!best || best.ambiguous) return null;
-  return best.lift;
+  if (best && !best.ambiguous) return best.lift;
+  if (best && best.ambiguous) return null;
+  for (let wi = words.length - 1; wi >= 0; wi -= 1) {
+    const word = words[wi];
+    if (!word || word.length < 2) continue;
+    const hits = (Array.isArray(knownLifts) ? knownLifts : [])
+      .filter((lift) => liftNameMatches([word], lift));
+    if (hits.length === 1) return hits[0];
+    if (hits.length > 1) return null;
+  }
+  return null;
 }
 
 const LIFT_NUMBER_PAIR_RE = /(\d+(?:\.\d+)?)\s*[x×]\s*(\d+(?:\.\d+)?)/g;
@@ -668,7 +795,9 @@ const NOT_A_LIFT_WORD = new Set(['the', 'a', 'an', 'your', 'you', 'all', 'set', 
 // reported with its raw single preceding word, so a recap naming a lift
 // that was never performed is a claim about a lift with no record — but a
 // pair preceded only by a non-lift word ("plan", "did") is unattributable
-// prose, not a lift mention, and is skipped.
+// prose, not a lift mention, and is skipped. Each mention carries its
+// `index` in `text`, so the caller can tell what precedes it (a historical
+// marker — "last time" — makes a recap about a prior session, not today).
 function extractLiftNumberMentions(text, knownLifts) {
   const out = [];
   const lifts = Array.isArray(knownLifts) ? knownLifts : [];
@@ -679,40 +808,53 @@ function extractLiftNumberMentions(text, knownLifts) {
     const windowWords = (before.match(WORD_RE) || []).slice(-4).map(normalizeLiftWord);
     const lift = liftInWindow(windowWords, lifts);
     if (lift) {
-      out.push({ lift, weight: Number(pair[1]), reps: Number(pair[2]) });
+      out.push({ lift, weight: Number(pair[1]), reps: Number(pair[2]), index: pair.index });
       continue;
     }
     const raw = windowWords.length ? windowWords[windowWords.length - 1] : '';
-    if (raw && !NOT_A_LIFT_WORD.has(raw)) out.push({ lift: null, liftWords: [raw], weight: Number(pair[1]), reps: Number(pair[2]) });
+    if (raw && !NOT_A_LIFT_WORD.has(raw)) out.push({ lift: null, liftWords: [raw], weight: Number(pair[1]), reps: Number(pair[2]), index: pair.index });
   }
   return out;
 }
 
-// The specific mutation a completed-mutation segment asserts, if it names
-// one: a swap ("swapped your squat for deadlifts", "replaced squat with
+// The specific mutations a completed-mutation segment asserts, if it names
+// any: every swap ("swapped your squat for deadlifts", "replaced squat with
 // deadlifts", "substituted deadlifts for squat" — note the "substitute A
-// for B" direction is A replacing B), or a change carrying its new numbers
-// ("changed your plan to bench 25 x 8"), or a change naming only its lift
-// ("changed your plan to bench"). A segment naming two different numbered
-// changes asserts no single mutation and stays generic.
-function specificMutationAsserted(segmentText, knownLifts) {
+// for B" direction is A replacing B) and every numbered change ("changed
+// your plan to bench 25 x 8"), each judged independently against the
+// recorded mutations. A segment naming two different numbered changes used
+// to assert no single mutation and stay generic — a supported first claim
+// then authorized the second, fabricated one (Astra re-audit, #1661
+// reopened). A segment with no swap and no numbers may still name the
+// changed lift outright ("changed your plan to bench"); a segment naming
+// two lifts without numbers stays generic, as before.
+function specificMutationsAsserted(segmentText, knownLifts) {
   const text = String(segmentText || '');
-  const swapFor = /(?:swapped|replaced)\s+(?:your\s+|the\s+)?(.+?)\s+for\s+(.+?)(?:[.,]|$)/i.exec(text)
-    || /(?:swapped|replaced|substituted)\s+(?:your\s+|the\s+)?(.+?)\s+with\s+(.+?)(?:[.,]|$)/i.exec(text);
-  if (swapFor) {
-    return { kind: 'swap', sourceLift: swapFor[1].trim(), targetLift: swapFor[2].trim() };
-  }
-  const substitutedFor = /substituted\s+(?:your\s+|the\s+)?(.+?)\s+for\s+(.+?)(?:[.,]|$)/i.exec(text);
-  if (substitutedFor) {
-    return { kind: 'swap', sourceLift: substitutedFor[2].trim(), targetLift: substitutedFor[1].trim() };
+  const out = [];
+  const swapRes = [
+    /(?:swapped|replaced)\s+(?:your\s+|the\s+)?(.+?)\s+for\s+(.+?)(?:[.,]|$)/gi,
+    /(?:swapped|replaced|substituted)\s+(?:your\s+|the\s+)?(.+?)\s+with\s+(.+?)(?:[.,]|$)/gi,
+    /substituted\s+(?:your\s+|the\s+)?(.+?)\s+for\s+(.+?)(?:[.,]|$)/gi,
+  ];
+  for (let i = 0; i < swapRes.length; i += 1) {
+    const re = swapRes[i];
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      if (m[0].length === 0) { re.lastIndex += 1; continue; }
+      // "substituted A for B" reads A replacing B: source/target swap sides.
+      const swap = i === 2
+        ? { kind: 'swap', sourceLift: m[2].trim(), targetLift: m[1].trim() }
+        : { kind: 'swap', sourceLift: m[1].trim(), targetLift: m[2].trim() };
+      if (!out.some((o) => o.kind === 'swap' && o.sourceLift === swap.sourceLift && o.targetLift === swap.targetLift)) out.push(swap);
+    }
   }
   const mentions = extractLiftNumberMentions(text, knownLifts);
-  if (mentions.length === 1) {
-    const mention = mentions[0];
-    if (mention.lift) return { kind: 'change', lift: mention.lift, weight: mention.weight, reps: mention.reps };
-    return { kind: 'change', lift: mention.liftWords.join(' '), weight: mention.weight, reps: mention.reps };
+  for (const mention of mentions) {
+    if (mention.lift) out.push({ kind: 'change', lift: mention.lift, weight: mention.weight, reps: mention.reps });
+    else out.push({ kind: 'change', lift: mention.liftWords.join(' '), weight: mention.weight, reps: mention.reps });
   }
-  if (mentions.length > 1) return null;
+  if (out.length) return out;
   // No numbers: the segment may still name the changed lift outright.
   const words = (text.match(WORD_RE) || []).map(normalizeLiftWord);
   let best = null;
@@ -725,8 +867,8 @@ function specificMutationAsserted(segmentText, knownLifts) {
       }
     }
   }
-  if (!best || best.ambiguous) return null;
-  return { kind: 'change', lift: best.lift };
+  if (!best || best.ambiguous) return [];
+  return [{ kind: 'change', lift: best.lift }];
 }
 
 // The recorded mutation the asserted one describes, else null. A change
@@ -805,16 +947,67 @@ const NUMERIC_RECAP_PATTERNS = Object.freeze([
   /\bsets (?:were|are) exactly\b/i,
 ]);
 
-function numericRecapReason(text, actualSets) {
-  const sets = Array.isArray(actualSets) ? actualSets : [];
+// A recap segment that talks about a PRIOR session ("last time you logged
+// bench 25 x 10") is not a claim about today's performed sets, so it is
+// kept out of the current-session comparison (Astra re-audit, #1661
+// reopened). The marker must precede the numbers it excuses, so a mixed
+// segment ("today bench 25 x 8, last time 25 x 10") still judges the
+// today-claim.
+const HISTORICAL_RECAP_MARKER = /\b(last time|last session|last week|last workout|yesterday|previous (?:session|workout|time))\b/i;
+
+// The performed sets as observed at `messagePhase`: for each lift, the
+// entries carrying the greatest phase at or before the message's phase. An
+// entry with no phase is observed from the start (the first phase in the
+// order). An entry whose phase has no place in the order is observed never
+// (fail closed — a correction whose beat never rendered in the visible
+// thread cannot authorize a claim). When the message's phase has no place
+// in the order, or no entry carries a phase at all, every entry applies —
+// exactly as before. The final correction must not be applied
+// retroactively: a truthful pre-correction confirmation cites the numbers
+// that stood then (Marcus RDL 285 before the correction beat), and a
+// pre-correction claim about the corrected numbers fails closed (Priya
+// bench 25x8 before the bail).
+function applicableSetsAtPhase(sets, phaseOrder, messagePhase) {
+  const all = Array.isArray(sets) ? sets : [];
+  const order = Array.isArray(phaseOrder) ? phaseOrder : [];
+  const mi = order.indexOf(String(messagePhase || ''));
+  if (mi === -1) return all;
+  const phaseIndex = (s) => {
+    if (!s || s.phase === undefined || s.phase === null) return 0;
+    const i = order.indexOf(String(s.phase));
+    return i === -1 ? Infinity : i;
+  };
+  const byLift = new Map();
+  for (const s of all) {
+    if (!s || !s.lift) continue;
+    const key = String(s.lift);
+    const pi = phaseIndex(s);
+    if (pi > mi) continue;
+    const cur = byLift.get(key);
+    if (!cur || pi > cur.pi) byLift.set(key, { pi, entries: [s] });
+    else if (pi === cur.pi) cur.entries.push(s);
+  }
+  return [...byLift.values()].flatMap((v) => v.entries);
+}
+
+function numericRecapReason(text, actualSets, phaseOrder, messagePhase) {
+  const sets = applicableSetsAtPhase(actualSets, phaseOrder, messagePhase);
   const knownLifts = [...new Set(sets.map((s) => s && s.lift).filter(Boolean))];
+  const fullLifts = [...new Set((Array.isArray(actualSets) ? actualSets : []).map((s) => s && s.lift).filter(Boolean))];
   for (const [a, b] of claimSegmentSpans(text)) {
     const segment = text.slice(a, b);
     if (isNegatedSegment(segment)) continue;
     if (!NUMERIC_RECAP_PATTERNS.some((re) => re.test(segment))) continue;
     for (const mention of extractLiftNumberMentions(segment, knownLifts)) {
+      // A historical mention is about a prior session, not today's sets.
+      if (HISTORICAL_RECAP_MARKER.test(segment.slice(0, mention.index))) continue;
       const entries = sets.filter((s) => s && mention.lift && String(s.lift) === String(mention.lift));
       if (!mention.lift) {
+        // The mention names no lift in the state observed at this phase:
+        // either the lift was never performed, or its sets only appear in
+        // a later phase (a pre-correction claim about the corrected lift).
+        const named = fullLifts.find((l) => liftNameMatches(mention.liftWords, l));
+        if (named) return `recap asserts ${mention.liftWords.join(' ')} ${mention.weight} x ${mention.reps} but no ${named} sets were performed yet at this phase`;
         return `recap asserts ${mention.liftWords.join(' ')} ${mention.weight} x ${mention.reps} but no such lift was performed in this run`;
       }
       const weightReading = entries.some((s) => Number(s.weight) === mention.weight && Number(s.reps) === mention.reps);
@@ -875,6 +1068,9 @@ function detectUnsupportedMutationWording(input) {
   // `mutations` is null when the caller supplied none — the detector then
   // behaves exactly as before. An explicitly empty list means no mutation
   // occurred, and a specific claim against it is unsupported.
+  // `actualSets` entries may carry a `phase`: the performed sets are the
+  // observed state at each message's phase (see applicableSetsAtPhase), so
+  // the final correction is never applied retroactively.
   const mutations = Array.isArray(i.mutations) ? i.mutations : null;
   const actualSets = Array.isArray(i.actualSets) ? i.actualSets : null;
   const order = phaseOrderFor(messages, i.phaseOrder);
@@ -886,21 +1082,29 @@ function detectUnsupportedMutationWording(input) {
     const excerpt = text.replace(/\s+/g, ' ').slice(0, 120);
     const phase = (m && m.phase) || 'unknown';
     // A numeric recap is a claim about numbers, not wording: judge it
-    // first, on the performed sets. One unsupported reason per message is
-    // enough to fail it.
+    // first, on the performed sets observed at this message's phase. One
+    // unsupported reason per message is enough to fail it.
     if (actualSets) {
-      const numericReason = numericRecapReason(text, actualSets);
+      const numericReason = numericRecapReason(text, actualSets, order, phase);
       if (numericReason) {
         matches.push({ phase, atMs, excerpt, reason: numericReason });
         continue;
       }
     }
-    const found = firstUnnegatedPattern(text, COMPLETED_MUTATION_PATTERNS);
-    if (!found) continue;
-    const reason = mutationClaimReason({
-      message: m, found, mutations, actualSets, mutationBoundary, mutationAtMs, phaseOrder: order,
-    });
-    if (reason) matches.push({ phase, atMs, excerpt, reason });
+    // Every unnegated completed-mutation match in the message is judged on
+    // the mutations it asserts — a supported first claim never authorizes
+    // the claims that follow it in the same message. Two patterns can match
+    // the same segment (e.g. "changed your plan" and "swapped your"), so
+    // the same reason is recorded once, not once per pattern.
+    for (const found of allUnnegatedPatternMatches(text, COMPLETED_MUTATION_PATTERNS)) {
+      for (const reason of mutationClaimReasons({
+        message: m, found, mutations, actualSets, mutationBoundary, mutationAtMs, phaseOrder: order,
+      })) {
+        if (!matches.some((x) => x.phase === phase && x.excerpt === excerpt && x.reason === reason)) {
+          matches.push({ phase, atMs, excerpt, reason });
+        }
+      }
+    }
   }
   if (!matches.length) {
     return {
