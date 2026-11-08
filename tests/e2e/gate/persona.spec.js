@@ -1083,11 +1083,40 @@ test('persona scenario (scored): fixture beats through the real app under the sc
     : SLUG === 'marcus' && correctionMutationOk
       ? [{ lift: scenario.correction.exercise, weight: scenario.correction.weight, reps: scenario.correction.reps, sets: scenario.correction.sets, phase: 'rdl-correction' }]
       : [];
+  // Phase-tagged performed sets (Astra re-audit, #1661 reopened): the
+  // observed state at each message's phase. The correction/revision moves
+  // one lift's numbers mid-run; judging every message against the final
+  // sets false-reds a truthful pre-correction confirmation (Marcus RDL
+  // 285) and false-greens a pre-correction claim about the corrected
+  // numbers (Priya bench 25x8 before the bail). Baseline = the sets as
+  // they stood before the correction beat; the corrected lift's final
+  // numbers carry the correction phase, so messages at/after that phase
+  // are judged against them and earlier messages against the baseline.
+  // Marcus: the batch beat verified preCorrectionSets (RDL at the
+  // fat-finger weight). Priya: only the corrected bench sets are
+  // phase-tagged — the 25x10 plan was never a performed set, so a pre-bail
+  // bench recap fails closed as "no sets yet at this phase". Same
+  // finalBufferOk gate as before: no sets are supplied when the final
+  // buffer did not equal the declaration.
+  const scoredActualSets = (() => {
+    if (!finalBufferOk) return null;
+    const toActual = (s) => ({ lift: s.exercise, weight: s.weight, reps: s.reps });
+    if (SLUG === 'marcus') {
+      const corrected = Array.from({ length: scenario.correction.sets },
+        () => ({ lift: scenario.correction.exercise, weight: scenario.correction.weight, reps: scenario.correction.reps, phase: 'rdl-correction' }));
+      return [...scenario.preCorrectionSets.map(toActual), ...corrected];
+    }
+    if (SLUG === 'priya') {
+      const corrected = scenario.benchSets.map((s) => ({ ...toActual(s), phase: 'bench-form-bail' }));
+      return [...scenario.expectedSets.filter((s) => s.exercise !== scenario.benchPlan.exercise).map(toActual), ...corrected];
+    }
+    return expectedSets.map(toActual);
+  })();
   const mutationSweep = detectUnsupportedMutationWording({
     messages: visibleMessages,
     mutationBoundary,
     ...(scoredMutations.length ? { mutations: scoredMutations } : {}),
-    ...(finalBufferOk ? { actualSets: expectedSets.map((s) => ({ lift: s.exercise, weight: s.weight, reps: s.reps })) } : {}),
+    ...(scoredActualSets ? { actualSets: scoredActualSets } : {}),
   });
   const writeSweep = detectUnsupportedWriteClaim({ messages: visibleMessages, liveWriteBoundary });
   const claims = {
