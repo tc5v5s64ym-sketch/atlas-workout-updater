@@ -6233,10 +6233,17 @@ function renderSessionPin() {
       ? `${itemSets} of ${currentSlot.requiredSets} sets`
       : `${itemSets} set${itemSets === 1 ? '' : 's'} in`)
     : `${setsDone} set${setsDone === 1 ? '' : 's'} in`;
+  // #1345: a finished plan must not pair the session total with the last lift.
+  const planComplete = guided && !currentSlot && remaining.length === 0;
   pin.textContent = '';
-  if (current) pin.appendChild(el('span', { class: 'pin-lift', text: String(current) }));
-  pin.appendChild(el('span', { class: 'pin-sets', text: setsText }));
-  if (next) pin.appendChild(el('span', { class: 'pin-next', text: `next: ${next}` }));
+  if (planComplete) {
+    const doneWord = setsDone === 1 ? 'set' : 'sets';
+    pin.appendChild(el('span', { class: 'pin-sets', text: `Session done — ${setsDone} ${doneWord}` }));
+  } else {
+    if (current) pin.appendChild(el('span', { class: 'pin-lift', text: String(current) }));
+    pin.appendChild(el('span', { class: 'pin-sets', text: setsText }));
+    if (next) pin.appendChild(el('span', { class: 'pin-next', text: `next: ${next}` }));
+  }
   // The pin is the tap target for the collapsed plan card (dropdown) whenever a
   // live session exists. Wired once — the element persists across re-renders.
   const expandable = Boolean(getActivePlannedSession());
