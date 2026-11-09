@@ -249,7 +249,7 @@ test('#1626 wiring: the finish lane sits at the closeout gate, after the log-it 
   assert.match(block, /await handleLogIt\(\)/,
     'the finish lane must route through the EXISTING closeout machinery (handleLogIt), never a parallel path');
   // The clarification resolution still outranks closeout (existing order, unchanged).
-  const clarifyIdx = handler.indexOf('resolvePendingClarification(workoutTextInput.value.trim())');
+  const clarifyIdx = handler.indexOf('resolvePendingClarification(workoutTextInput.value.trim(), currentSessionKey())');
   assert.ok(clarifyIdx > 0 && clarifyIdx < finishIdx,
     'a held clarification still resolves before closeout routing');
 });

@@ -12,6 +12,13 @@
  * Pure logic + a single module-scoped slot — no DOM, so it unit-tests directly in Node.
  * app.js wires three points: capture (on a needs_clarification carrying sets), resolve
  * (an affirmation logs them), and clear (a fresh log / reset supersedes it).
+ *
+ * SESSION BINDING (#1687): the hold carries the session key it was captured under
+ * (supplied by the caller — app.js's session epoch, which steps at every session
+ * boundary). Resolve refuses AND clears on a key mismatch, so a bare "yes" in a
+ * later session can never commit a previous session's frozen rows into the new
+ * session's buffer. The module is the single owner of the hold's validity: the
+ * key is checked here, not left to callers to remember.
  */
 
 // A short, standalone confirmation that RESOLVES a pending clarification into a log.
@@ -59,12 +66,15 @@ export function pendingSetsToLogObjs(clarification) {
 // ── module-held single pending clarification ────────────────────────────────
 let _pending = null;
 
-// Hold a clarification (supersedes any prior). Returns the held record, or null when
-// there was nothing concrete to hold — in which case the slot is CLEARED so a stale
-// hold from an earlier turn can never linger behind a non-holdable clarification.
-export function setPendingClarification(source) {
+// Hold a clarification (supersedes any prior) under the caller's session key.
+// Returns the held record, or null when there was nothing concrete to hold — in
+// which case the slot is CLEARED so a stale hold from an earlier turn can never
+// linger behind a non-holdable clarification. A null key means "unbound" and only
+// matches a null key on resolve, so a hold captured without a key can never be
+// committed by a keyed session.
+export function setPendingClarification(source, sessionKey) {
   const c = clarificationFrom(source);
-  _pending = c ? { exercise: c.exercise, sets: c.sets, rows: pendingSetsToLogObjs(c) } : null;
+  _pending = c ? { exercise: c.exercise, sets: c.sets, rows: pendingSetsToLogObjs(c), sessionKey: sessionKey === undefined ? null : sessionKey } : null;
   return _pending;
 }
 
@@ -75,8 +85,16 @@ export function clearPendingClarification() { _pending = null; }
 // Resolve on an affirmation: when a clarification is held AND the text is a short
 // confirmation, return the rows to log and CLEAR the hold. Otherwise return null and
 // keep the hold (the caller proceeds with its normal routing for that message).
-export function resolvePendingClarification(text) {
+// #1687: a hold captured under a DIFFERENT session key is refused AND cleared —
+// the hold belongs to a session that has ended, so no affirmation in the current
+// session may ever commit it. The mismatch check runs before the affirmation check:
+// a stale hold is dead on any turn of the new session, not only on a "yes".
+export function resolvePendingClarification(text, sessionKey) {
   if (!_pending) return null;
+  if (_pending.sessionKey !== (sessionKey === undefined ? null : sessionKey)) {
+    _pending = null;
+    return null;
+  }
   if (!looksLikeClarificationYes(text)) return null;
   const rows = _pending.rows;
   _pending = null;

@@ -1100,7 +1100,7 @@ test('4b.Y4 (Codex P1) a newer submit revokes an older one BEFORE any early retu
     'parseBugCommand(submittedText)',
     'looksLikeSessionRequest(workoutTextInput.value)',
     'looksLikeArtifactRequest(workoutTextInput.value)',
-    'resolvePendingClarification(workoutTextInput.value.trim())',
+    'resolvePendingClarification(workoutTextInput.value.trim(), currentSessionKey())',
     'looksLikeLogIt(workoutTextInput.value)',
     'showCorrectionPrompt(correctionText)',
     'const pendingChatText =',
@@ -1330,7 +1330,7 @@ test('4b.27 no test in this file calls emitEndorsedSetRevision directly', () => 
 test('4b.R1 the follow-up lane is wired into the real composer message flow', () => {
   const bugIdx = appSrc.indexOf('parseBugCommand(submittedText)');
   const sessionIdx = appSrc.indexOf('looksLikeSessionRequest(workoutTextInput.value)');
-  const clarifyIdx = appSrc.indexOf('resolvePendingClarification(workoutTextInput.value.trim())');
+  const clarifyIdx = appSrc.indexOf('resolvePendingClarification(workoutTextInput.value.trim(), currentSessionKey())');
   const logItIdx = appSrc.indexOf('looksLikeLogIt(workoutTextInput.value)');
   const revIdx = appSrc.indexOf('trySetRevisionFollowup(pendingChatText, turnProposalId');
   const replIdx = appSrc.indexOf('tryResolvePendingReplacement(pendingChatText)');

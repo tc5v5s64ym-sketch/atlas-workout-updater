@@ -3191,7 +3191,24 @@ function advancePlannedSession() {
   startLift(next.canonicalName || next.name, next.liftCode, next.weight, next.reps, next.sets || 3);
 }
 
+// #1687 — session epoch: the live session identity for the pending-clarification
+// hold. It steps at every session boundary (endPlannedSession, startOverWorkout;
+// the confirmed-save and discard paths ride endPlannedSession), so a hold captured
+// in one session can never resolve in the next. It is NOT the #log-session-id:
+// generateSessionId is date + AM/PM only, so two same-day sessions share it, and
+// Start Over does not clear the field. The epoch resets with the page, which is
+// safe — the hold is module-scoped and never survives a reload.
+let sessionEpoch = 0;
+function currentSessionKey() { return `session-${sessionEpoch}`; }
+
 function endPlannedSession() {
+  // #1687: the planned session is ending — step the epoch so any clarification
+  // held under it can never resolve in the next session, and clear the hold
+  // outright (defense in depth; the identity check in resolvePendingClarification
+  // is the primary guard). Save/discard ride this function, so their boundaries
+  // are covered too.
+  sessionEpoch += 1;
+  clearPendingClarification();
   // Step 385: advance the deload machine exactly once per session (not per write).
   // The deloadWritten flag is set in the approve handler on the first confirmed
   // live write; firing here instead of per-write keeps the session-count correct.
@@ -7010,6 +7027,13 @@ function invalidatePreview() {
 document.getElementById('logger-form').addEventListener('input', invalidatePreview);
 
 function startOverWorkout() {
+  // #1687: a deliberate fresh start is a session boundary — step the epoch so a
+  // clarification held in the discarded session can never resolve in the new one,
+  // and clear the hold outright (the module header promises a session reset
+  // clears it; the identity check in resolvePendingClarification is the primary
+  // guard).
+  sessionEpoch += 1;
+  clearPendingClarification();
   workoutTextInput.value = '';
   lastParsedWorkoutText = '';
   // QA-1: a deliberate fresh start re-arms closeout — the prior save's watermark
@@ -7615,8 +7639,10 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
   // detected — BEFORE the closeout / "log it" routing, so those sets are never dropped
   // and "Just log it" is never mistaken for a session close. ("Done" is deliberately not
   // an affirmation here, so it still closes out.)
+  // #1687: the current session key rides along — a hold from an ended session is
+  // refused and cleared inside resolvePendingClarification, never committed here.
   {
-    const resolvedRows = resolvePendingClarification(workoutTextInput.value.trim());
+    const resolvedRows = resolvePendingClarification(workoutTextInput.value.trim(), currentSessionKey());
     if (resolvedRows) {
       const affirmText = workoutTextInput.value.trim();
       workoutTextInput.value = '';
@@ -7800,7 +7826,9 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       // Without this the partial.sets were discarded and the sets silently dropped from
       // the session buffer (and thus from the final confirmation). setPendingClarification
       // returns truthy only when there are usable detected sets to hold.
-      if (err.parsedIntent === 'needs_clarification' && setPendingClarification(err)) {
+      // #1687: the hold is captured under the current session key, so it can only ever
+      // resolve in this session.
+      if (err.parsedIntent === 'needs_clarification' && setPendingClarification(err, currentSessionKey())) {
         setStatus(loggerStatus, err.displayMessage, 'warn');
         activeExercise = null;
         return;
