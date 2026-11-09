@@ -1000,8 +1000,9 @@ test('PR 486 frontend: modality logging mirrors the trust loop without altering 
     appSource.indexOf("getElementById('approve-btn').addEventListener('click'"),
     // F10D widened: the closeout seal-verdict capture sits above the branches.
     // #1628 widened again: the partial-duplicate helper call sits in the
-    // screenshot branch above the typed branch. Assertions unchanged.
-    appSource.indexOf("getElementById('approve-btn').addEventListener('click'") + 5600
+    // screenshot branch above the typed branch. #1690 widened again: the
+    // duplicate acceptance now also requires the original success word.
+    appSource.indexOf("getElementById('approve-btn').addEventListener('click'") + 6200
   );
   assert.match(approveBlock, /pendingWrite\.mode === 'modality'/);
   assert.match(approveBlock, /write_id: pendingWrite\.writeId/, 'live write carries the staged write_id');
