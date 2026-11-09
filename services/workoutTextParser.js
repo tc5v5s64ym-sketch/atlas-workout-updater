@@ -1,4 +1,9 @@
 const { classifyMessageIntent } = require('./messageIntent');
+// The modality seam owns modality shapes (timed holds / cardio). The text
+// parser consults it only to defer a trailing modality sentence (e.g. a plank
+// clause inside a resistance turn) instead of letting it sink the resistance
+// half — multiModalityParser requires nothing, so this cannot cycle.
+const { recognizeModalityInput } = require('./multiModalityParser');
 
 const NUMBER_WORDS = {
   one: 1,
@@ -87,7 +92,7 @@ function titleCaseFallback(value) {
     .join(' ');
 }
 
-function setRecord({ weight = null, reps = null, rir = null, rpe = null, set_type = 'working', notes = null, weight_unit = 'lb', load_note = null }) {
+function setRecord({ weight = null, reps = null, rir = null, rpe = null, set_type = 'working', notes = null, weight_unit = 'lb', load_note = null, weight_source = null, rir_source = null }) {
   const row = {
     weight,
     weight_unit: weight == null ? null : weight_unit,
@@ -98,6 +103,13 @@ function setRecord({ weight = null, reps = null, rir = null, rpe = null, set_typ
     notes,
   };
   if (load_note) row.load_note = load_note;
+  // Provenance for plan-supplied values (issue #1685, C4 ruling): a weight or
+  // RIR that came from the session plan — not from anything the lifter typed —
+  // is marked on the set that carries it, so no consumer can mistake it for a
+  // user-typed number. Only set when provided; every existing caller is
+  // unaffected.
+  if (weight_source) row.weight_source = weight_source;
+  if (rir_source) row.rir_source = rir_source;
   return row;
 }
 
@@ -527,6 +539,14 @@ function parseWorkoutText(input, context = {}) {
     return skipped.length > 0 ? { ...result, prescribed: skipped } : result;
   }
 
+  // RIR-from-plan fill (issue #1685): a turn whose sets match the plan's
+  // prescription exactly reads unstated RIRs as prescribed — see
+  // applyPlanRirFill. Runs before the question floor so the floor sees the
+  // filled sets, never a half-parse.
+  if (result?.intent === 'log_sets') {
+    result = applyPlanRirFill(result, context);
+  }
+
   // AC8 credibility floor (CONVERSATION_DESIGN.md): never log a phantom set.
   // If the message reads as a question and did NOT resolve to a real logged set,
   // it is answered — never fabricated into an exercise from the question text
@@ -817,6 +837,441 @@ function parseMultilineLogSets(preNormalizedInput, rawText, context = {}, origin
   };
 }
 
+// ── Plan context (issue #1685) ─────────────────────────────────────────────
+// The parse endpoint receives the session plan as `context.todayPlan` — the
+// client sends its real plan (see planForParse in src/app/app.js); the unit
+// seam sends the golden's declared plan lines. Two shapes are accepted:
+//   - objects { name, weight, reps, sets, rir } (the client), and
+//   - slash-notation plan lines ('Goblet Squat 35 10/2 x3') (the goldens).
+// Both normalize to { name, weight, reps, rir, sets } with null for anything
+// the plan does not prescribe. A plan line that does not parse to sets (a
+// bare name, a finisher with no prescription) still yields a name-only entry
+// — family matching works off the name alone, and no value is ever invented.
+function numOrNullPlan(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function normalizeTodayPlan(todayPlan) {
+  if (!Array.isArray(todayPlan)) return [];
+  const out = [];
+  for (const entry of todayPlan) {
+    if (typeof entry === 'string') {
+      const line = entry.trim();
+      if (!line) continue;
+      // The plan line's OWN name (the words before the first number) is
+      // authoritative — it is the plan's declared name. The parse below is
+      // consulted only for the numbers: parsing the line through the alias
+      // tables would silently rename it ('Incline Dumbbell Bench Press …'
+      // resolves to 'Dumbbell Bench Press' because 'dumbbell bench press'
+      // is a longer alias inside it), losing the incline the plan declares.
+      const namePart = line.split(/\d/)[0].trim();
+      // Parse the plan line through the proven single-exercise parser, with an
+      // EMPTY context: a plan line never consults a plan of its own, so this
+      // cannot recurse into resolveExerciseFromPlan.
+      const parsed = parseLogSets(normalizeParserText(line), {});
+      if (parsed && parsed.intent === 'log_sets' && Array.isArray(parsed.sets) && parsed.sets.length) {
+        const first = parsed.sets[0];
+        out.push({
+          name: namePart || parsed.canonical_name,
+          weight: first.weight,
+          reps: first.reps,
+          rir: first.rir,
+          sets: parsed.sets.length,
+        });
+      } else {
+        out.push({ name: line, weight: null, reps: null, rir: null, sets: null });
+      }
+      continue;
+    }
+    if (entry && typeof entry === 'object') {
+      const name = entry.canonicalName || entry.name || entry.canonical || null;
+      if (!name) continue;
+      out.push({
+        name,
+        weight: numOrNullPlan(entry.weight),
+        reps: numOrNullPlan(entry.reps),
+        rir: numOrNullPlan(entry.rir),
+        sets: numOrNullPlan(entry.sets ?? entry.target_sets),
+      });
+    }
+  }
+  return out;
+}
+
+// The plan entry for one canonical exercise name — only when the plan holds
+// EXACTLY one entry by that name. Duplicate slots (two same-named entries)
+// are ambiguous by definition, so the lookup refuses rather than guessing
+// which slot a plan-supplied value belongs to. Compared singular-insensitive
+// ('Seated Rows' in the plan is the same lift as a parsed 'Seated Row').
+function planEntryFor(canonicalName, context) {
+  const plan = normalizeTodayPlan(context && context.todayPlan);
+  if (!plan.length || !canonicalName) return null;
+  const key = singularNameKey(canonicalName);
+  const matches = plan.filter(entry => singularNameKey(entry.name) === key);
+  return matches.length === 1 ? matches[0] : null;
+}
+
+function singularNameKey(name) {
+  return normalizeKey(name).split(' ').filter(Boolean).map(singularToken).join(' ');
+}
+
+// Singularize one token for family matching ('rows' → 'row', 'squats' →
+// 'squat'). Short words are left alone so a trailing 's' that is part of the
+// word ('press' has none; 'glass' is not a family word) is never stripped.
+function singularToken(word) {
+  const w = String(word || '').toLowerCase();
+  return w.length > 3 && w.endsWith('s') ? w.slice(0, -1) : w;
+}
+
+function planFamilyTokens(name) {
+  return normalizeKey(name).split(' ').filter(Boolean).map(singularToken);
+}
+
+function stripFamilyWord(text, word) {
+  return String(text || '')
+    .replace(new RegExp(`\\b${escapeRegExp(word)}\\b`, 'i'), ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Turn-initial discourse openers: words that open a turn but never form part
+// of an exercise name ('Ok squats done…', 'So bench felt heavy…'). The shared
+// PARSE-1 framing set (NON_QUALIFIER_LEAD_WORDS) lacks them because its alias
+// match cannot fire on a plural lead, so the plan path's singularized family
+// match is the first place they can look like qualifiers. Supplement only for
+// the plan-claim qualifier guard below — the shared set is untouched.
+const PLAN_DISCOURSE_OPENERS = new Set([
+  'ok', 'okay', 'so', 'yeah', 'yes', 'yep', 'alright', 'well', 'hey', 'hi', 'oh', 'um', 'uh',
+]);
+
+// Resolve the exercise from the session plan by the turn's lead family word
+// — the client rewrite's own rule (unique family match, never a guess), run
+// server-side because the client rewrite is anchored ^words-then-digit and
+// never fires on prose turns ('Ok squats done!!…', 'Bench question — …',
+// 'Rows done, …'). The family words BEFORE the first digit name the lift; a
+// family word after set data belongs to a later clause, never the lead. The
+// match is over the SET of distinct plan lifts named across all head words:
+// resolve only when the set has exactly one lift — a head naming two plan
+// lifts ('Squats destroyed me, rows …') names no single lift, so the turn
+// asks instead of attributing the numbers to the first-named lift
+// (pre-review finding 1). No match, an ambiguous family word (two plan lifts
+// share it), or a multi-lift set → null, and the existing alias/ask behaviour
+// stands untouched.
+function resolveExerciseFromPlan(text, context) {
+  const plan = normalizeTodayPlan(context && context.todayPlan);
+  if (!plan.length) return null;
+  const normalized = normalizeKey(text);
+  const firstDigit = normalized.search(/\d/);
+  const head = firstDigit === -1 ? normalized : normalized.slice(0, firstDigit);
+  const matched = new Map();
+  let firstWord = null;
+  const matchedWords = [];
+  const matchedIndices = [];
+  const headWords = head.split(' ').filter(Boolean);
+  for (let i = 0; i < headWords.length; i++) {
+    const word = headWords[i];
+    const singular = singularToken(word);
+    const matches = plan.filter(entry => planFamilyTokens(entry.name).includes(singular));
+    if (matches.length > 1) return null;
+    if (matches.length === 1) {
+      if (!matched.has(matches[0].name)) matched.set(matches[0].name, matches[0]);
+      if (firstWord === null) firstWord = word;
+      matchedWords.push(word);
+      matchedIndices.push(i);
+    }
+  }
+  if (matched.size !== 1 || firstWord === null) return null;
+  const entry = [...matched.values()][0];
+  // False-claim guard (PR #1699 follow-up, F10D-A / F10S-GATE): a family-word
+  // match must not claim a turn that names a DIFFERENT lift in full.
+  // 'Bench Press 215 x 5 @2' contains the family word 'press', so without
+  // this guard it resolves to the plan's Overhead Press and leaves 'Bench'
+  // in the rest — the x-shape then fails to log unplanned work. Likewise
+  // 'Front Squat 185 x 7 @2 instead of Back Squat' resolves to Back Squat
+  // and breaks the substitution. The alias tables already know the lead:
+  // when they resolve the head to a lift whose alias words are not all
+  // family words of the plan lift, the turn names another lift and the plan
+  // claim is refused — the alias path logs it instead. A bare lead
+  // ('Bench', 'press', 'squats') resolves to an alias whose words ARE the
+  // plan lift's family words (or is ambiguous), so the plan claim stands
+  // exactly as C1 intends. Only the head is consulted: a name word in a
+  // later clause ('…3 sets. Squats were brutal.') must not veto the lead.
+  const headExercise = findExerciseInText(head, { strictVariantGuard: true });
+  if (headExercise && !headExercise.ambiguous && headExercise.rawName) {
+    const ownTokens = new Set(planFamilyTokens(entry.name));
+    const aliasWords = normalizeKey(headExercise.rawName).split(' ').filter(Boolean).map(singularToken);
+    if (aliasWords.some((w) => !ownTokens.has(w))) return null;
+  }
+  // Variant-qualifier guard: the same PARSE-1 rule the alias path applies —
+  // a name-like word immediately before a matched family word makes it a
+  // DIFFERENT lift ('front squat' is not Back Squat, 'close grip bench' is
+  // not Bench Press), so the plan claim is refused and the alias/unknown
+  // path logs the typed lift. A preceding word that is itself a family word
+  // of the resolved lift ('romanian' before 'deadlift') is the same lift,
+  // and framing/effort words ('my', 'heavy', 'do') are not qualifiers —
+  // both keep the claim. Turn-initial discourse openers ('Ok squats done…')
+  // are likewise not qualifiers: PARSE-1 never sees them (its alias match
+  // cannot fire on a plural), so they are absent from the shared framing
+  // set — the plan guard carries its own supplement here. A discourse word
+  // missed from that supplement only errs toward asking (safe). Without
+  // this, 'Front Squat … instead of Back Squat' resolves to Back Squat and
+  // the substitution never binds (F10D-A / F10S-GATE). Checked on the head
+  // only, per matched word.
+  {
+    const ownFamily = new Set(planFamilyTokens(entry.name));
+    for (const idx of matchedIndices) {
+      if (idx === 0) continue;
+      const prev = headWords[idx - 1];
+      if (ownFamily.has(singularToken(prev))) continue;
+      if (PLAN_DISCOURSE_OPENERS.has(prev.toLowerCase())) continue;
+      if (isNameLikeWord(prev) && !NON_QUALIFIER_LEAD_WORDS.has(prev.toLowerCase())) return null;
+    }
+  }
+  return {
+    canonicalName: entry.name,
+    rawName: entry.name,
+    // Strip EVERY head word that matched the resolved lift, not just the
+    // first: stripping only the first leaves a name word behind for a
+    // multi-word lift ('Romanian Deadlift' → rest 'Deadlift 245 x 6 @3'),
+    // and parseSetGroups cannot read the `W x R @RIR` shape after a leftover
+    // word, so the turn asks with a live plan (PR #1699 BLOCKING, Hammy
+    // verdict 6732401425). Each matched word is stripped once, in head
+    // order, so a repeated word ('Bench … bench 25 x 8') loses both
+    // occurrences and the rest is the same text the no-plan path sees.
+    rest: matchedWords.reduce((acc, word) => stripFamilyWord(acc, word), text),
+    planEntry: entry,
+  };
+}
+
+// The text before a prose shape's weight must name no exercise but the
+// resolved one (pre-review finding 1): a narrative mention of another lift
+// ('Squats destroyed me, rows 30 pounds…') would otherwise attribute the
+// shape's numbers to the wrong lift. Narrative AFTER the shape is harmless
+// ('Rows done, 30 pounds… 3 sets. Squats were brutal.') and is never checked
+// here — only the before-text. A plan lift is mentioned when any of its
+// family tokens appears; any other parser-known lift is mentioned when an
+// ambiguous alias word ('rows', 'row', 'press') survives after the resolved
+// lift's own family words are stripped, or findExerciseInText still finds a
+// lift in what remains.
+function beforeNamesOtherExercise(before, resolvedCanonical, context) {
+  const words = normalizeKey(before).split(' ').filter(Boolean);
+  if (!words.length) return false;
+  const singularWords = words.map(singularToken);
+  const plan = normalizeTodayPlan(context && context.todayPlan);
+  for (const entry of plan) {
+    if (singularNameKey(entry.name) === singularNameKey(resolvedCanonical)) continue;
+    if (planFamilyTokens(entry.name).some((tok) => singularWords.includes(tok))) return true;
+  }
+  const ownTokens = new Set(planFamilyTokens(resolvedCanonical));
+  const remainderWords = words.filter((w) => !ownTokens.has(singularToken(w)));
+  if (!remainderWords.length) return false;
+  if (remainderWords.some((w) => Object.prototype.hasOwnProperty.call(AMBIGUOUS_ALIASES, w))) return true;
+  // The alias tables list singulars only ('deadlift', no 'deadlifts'), so the
+  // remainder is singularized before matching — otherwise a plural mention
+  // ('Rows and deadlifts done, …') is invisible to the matcher (delta
+  // pre-review finding 1). Known limit: plurals whose singular has no alias
+  // entry at all ('curls', 'lunges', 'raises', 'presses') still resolve to
+  // nothing — that needs alias-table work, out of scope for #1685.
+  let hit = null;
+  try { hit = findExerciseInText(remainderWords.map(singularToken).join(' ')); } catch { hit = null; }
+  return !!(hit && (hit.canonicalName || hit.ambiguous));
+}
+
+// RIR answer clauses, in the athlete's own register: 'Tank answer: 2' and
+// 'the answer was like... 1' (Atlas's tank question, answered in prose). The
+// clause is stripped from the text and its value + scope remembered.
+// A following restatement sentence ('Maybe 1.') that repeats the same number
+// carries no new information and is stripped with the RIR clause. Shared by
+// both RIR registers — the Tank branch once lacked it and a restated answer
+// sank the turn (pre-review finding 4).
+function stripMaybeRestatement(rest, rir) {
+  const restate = rest.match(new RegExp(`\\bmaybe\\s+${escapeRegExp(String(rir))}\\s*[.!?]?`, 'i'));
+  return restate ? rest.replace(restate[0], ' ') : rest;
+}
+
+function extractRirClause(text) {
+  let rest = String(text || '');
+  let rir = null;
+  let scope = null;
+  let m = rest.match(/\btank answer\s*:?\s*(\d+(?:\.\d+)?)\b/i);
+  if (m) {
+    rir = Number(m[1]);
+    scope = 'all';
+    rest = rest.replace(m[0], ' ');
+    rest = stripMaybeRestatement(rest, rir);
+  } else {
+    m = rest.match(/\b(?:honestly\s+)?(?:the\s+)?(?:last\s+set\s+)?(?:the\s+)?answer was (?:like\s*)?\.+\s*(\d+(?:\.\d+)?)/i);
+    if (m) {
+      rir = Number(m[1]);
+      scope = /\blast\s+set\b/i.test(m[0]) ? 'last' : 'all';
+      rest = rest.replace(m[0], ' ');
+      rest = stripMaybeRestatement(rest, rir);
+    }
+  }
+  return { rest, rir, scope };
+}
+
+// Sentences the text seam defers to the modality seam: a sentence the
+// modality recognizer claims (a timed hold / cardio interval) is dropped here
+// — the modality half of a mixed turn is the other parser's job, and its
+// presence must not sink the resistance half. A sentence the recognizer does
+// not claim is kept verbatim.
+function stripModalitySentences(text) {
+  const parts = String(text || '').split(/(?<=[.!?])\s+/);
+  const kept = parts.filter(sentence => {
+    try {
+      return !recognizeModalityInput(sentence);
+    } catch {
+      return true;
+    }
+  });
+  return kept.length === parts.length ? text : kept.join(' ');
+}
+
+// The attested prose set grammars (C2) + RIR register (C3) + the narrow
+// plan-deviation bail (C4, coordinator ruling on #1685, comment 6729942980).
+// Returns a log_sets result or null — null falls through to the existing
+// guards, never a partial log. A shape only claims the input when it accounts
+// for every number in the rest: the text before the shape's weight and after
+// the shape must carry no digits, so no set data is ever silently skipped —
+// and the before-text must name no exercise but the resolved one, so a
+// narrative mention of another lift never donates its numbers to this lift.
+function parseProsePlanShape(rawText, exercise, context) {
+  const rest0 = exercise.rest || '';
+  if (!rest0) return null;
+  const planEntry = (exercise.planEntry && exercise.planEntry.name === exercise.canonicalName)
+    ? exercise.planEntry
+    : planEntryFor(exercise.canonicalName, context);
+
+  // ── C4: plan-deviation bail. Weight-from-plan ONLY when all three hold:
+  // the turn names the plan's exercise family (this exercise arrived via the
+  // plan's unique-family match, or names the plan lift outright), states a
+  // reps deviation against the plan's reps ('stopped at 8 instead of 10'),
+  // and the plan has exactly one matching exercise (planEntryFor refuses
+  // duplicates). The turn must also state the set count ('all 3 sets'), and
+  // the weight must be absent from the turn itself (no weight token) with no
+  // slash set token competing — so the weight genuinely comes only from the
+  // plan. Anything missing → null, and the turn asks as before.
+  if (planEntry && planEntry.weight !== null && planEntry.reps !== null) {
+    const deviation = rest0.match(/\bstopped at\s+(\d+(?:\.\d+)?)\s+instead of\s+(\d+(?:\.\d+)?)\b/i);
+    const countMatch = rest0.match(/\ball\s+(\d+)\s+sets?\b/i);
+    const hasSlashSet = /\d+\s*\/\s*\d+/.test(rest0);
+    const hasWeightToken = /\b(pounds?|lbs?|kgs?)\b/i.test(rest0);
+    // The dumbbell shorthand the corpus itself uses ('did the 30s') states a
+    // weight without a unit word — C4 must refuse it too, or it logs the
+    // plan weight over a stated one (pre-review finding 2). A '10s rest'
+    // false positive only causes an ask, which is the fail-closed direction.
+    const hasShorthandWeight = /\b\d+(?:\.\d+)?s\b/i.test(rest0);
+    // Every set the turn states must be accounted for: a second set-count
+    // mention ('Also did 2 more sets at 20.') means sets C4 would silently
+    // drop (pre-review finding 3). The golden tolerates narrative 'rep 7'
+    // because that carries no 'sets' mention.
+    const setMentions = rest0.match(/\b\d+\s*(?:(?:more|extra|additional|another)\s+)?sets?\b/gi) || [];
+    if (deviation && countMatch && !hasSlashSet && !hasWeightToken && !hasShorthandWeight && setMentions.length <= 1) {
+      const performed = Number(deviation[1]);
+      const planned = Number(deviation[2]);
+      const count = Number(countMatch[1]);
+      if (planned === planEntry.reps && performed !== planned && count >= 1 && count <= 10) {
+        const sets = Array.from({ length: count }, () => setRecord({
+          weight: planEntry.weight, reps: performed, rir: null, weight_source: 'plan',
+        }));
+        return buildLogResult({
+          rawText,
+          rawName: titleCaseFallback(exercise.rawName),
+          canonicalName: exercise.canonicalName,
+          sets,
+        });
+      }
+    }
+  }
+
+  // ── Prose set shapes (C2) + RIR register (C3) ──
+  const { rest, rir, scope } = extractRirClause(rest0);
+  const deMod = stripModalitySentences(rest);
+  const applyRir = (sets) => {
+    if (rir === null) return sets;
+    if (scope === 'last' && sets.length) {
+      sets[sets.length - 1] = { ...sets[sets.length - 1], rir };
+      return sets;
+    }
+    return sets.map(s => ({ ...s, rir }));
+  };
+
+  // Shape A: '30 pounds, 10 each arm, 3 sets' — per-side load.
+  const shapeA = deMod.match(/(\d+(?:\.\d+)?)\s*pounds?,?\s*(\d+)\s*(?:each arm|per (?:arm|side)),?\s*(\d+)\s*sets?/i);
+  if (shapeA) {
+    const before = deMod.slice(0, shapeA.index);
+    const after = deMod.slice(shapeA.index + shapeA[0].length);
+    if (!/\d/.test(before) && !/\d/.test(after) && !beforeNamesOtherExercise(before, exercise.canonicalName, context)) {
+      const weight = Number(shapeA[1]);
+      const reps = Number(shapeA[2]);
+      const count = Number(shapeA[3]);
+      if (count >= 1 && count <= 10) {
+        const sets = applyRir(Array.from({ length: count }, () => setRecord({
+          weight, reps, rir: null, load_note: 'per_hand',
+        })));
+        return buildLogResult({
+          rawText,
+          rawName: titleCaseFallback(exercise.rawName),
+          canonicalName: exercise.canonicalName,
+          sets,
+        });
+      }
+    }
+    return null;
+  }
+
+  // Shape B: '35 pound one, 3 sets of 10' — 'the <W> pound one' is the dumbbell.
+  const shapeB = deMod.match(/(\d+(?:\.\d+)?)\s*pounds?,?\s*(?:one,?\s*)?(\d+)\s*sets?\s+of\s+(\d+)/i);
+  if (shapeB) {
+    const before = deMod.slice(0, shapeB.index);
+    const after = deMod.slice(shapeB.index + shapeB[0].length);
+    if (!/\d/.test(before) && !/\d/.test(after) && !beforeNamesOtherExercise(before, exercise.canonicalName, context)) {
+      const weight = Number(shapeB[1]);
+      const count = Number(shapeB[2]);
+      const reps = Number(shapeB[3]);
+      if (count >= 1 && count <= 10) {
+        const sets = applyRir(Array.from({ length: count }, () => setRecord({
+          weight, reps, rir: null,
+        })));
+        return buildLogResult({
+          rawText,
+          rawName: titleCaseFallback(exercise.rawName),
+          canonicalName: exercise.canonicalName,
+          sets,
+        });
+      }
+    }
+    return null;
+  }
+
+  return null;
+}
+
+// RIR-from-plan fill (issue #1685, C4-pattern): when a turn's sets match the
+// plan's prescription exactly — same exercise, same weight, same reps, same
+// set count — a set that states no RIR reads as prescribed: the plan's RIR
+// fills it, marked rir_source 'plan'. A turn that deviates from the plan
+// (different reps, weight, or count — e.g. a form bail that stopped short)
+// keeps its stated-or-null RIR; the plan's RIR describes the prescribed
+// sets, not other ones. A RIR the turn states itself always wins over the
+// fill. Applied only to single-exercise log_sets results.
+function applyPlanRirFill(result, context) {
+  if (!result || result.intent !== 'log_sets' || !Array.isArray(result.sets) || !result.sets.length) return result;
+  if (result.sets.every(s => s.rir !== null)) return result;
+  const entry = planEntryFor(result.canonical_name, context);
+  if (!entry || entry.rir === null) return result;
+  if (entry.weight !== null && result.sets.some(s => s.weight !== entry.weight)) return result;
+  if (entry.reps !== null && result.sets.some(s => s.reps !== entry.reps)) return result;
+  if (entry.sets !== null && result.sets.length !== entry.sets) return result;
+  return {
+    ...result,
+    sets: result.sets.map(s => (s.rir === null ? { ...s, rir: entry.rir, rir_source: 'plan' } : s)),
+  };
+}
+
 function parseLogSets(rawText, context = {}) {
   // Strip skip-note sentences before multi-exercise check and exercise lookup
   // so "Deadlift skipped." doesn't count as a second exercise when the user
@@ -851,8 +1306,14 @@ function parseLogSets(rawText, context = {}) {
     };
   }
 
-  const exercise = findExerciseInText(textForParsing, { strictVariantGuard: true });
-  if (exercise?.ambiguous) {
+  // Plan-context identity (issue #1685): a unique-family match against the
+  // session plan resolves the exercise before the alias tables are consulted,
+  // so a bare family lead ('Rows', 'Bench', 'squats') becomes the plan's lift
+  // instead of an ambiguity ask or the wrong base lift. With no plan, or no
+  // unique match, this is null and the existing behaviour stands untouched.
+  const planResolved = resolveExerciseFromPlan(textForParsing, context);
+  const exercise = planResolved || findExerciseInText(textForParsing, { strictVariantGuard: true });
+  if (!planResolved && exercise?.ambiguous) {
     return {
       intent: 'needs_clarification',
       raw_text: rawText,
@@ -928,6 +1389,15 @@ function parseLogSets(rawText, context = {}) {
         return text.replace(new RegExp(`\\b${escapeRegExp(key)}\\b`, 'gi'), ' ').replace(/\s+/g, ' ').trim();
       }, exercise.rest) }
     : exercise;
+
+  // Prose / plan shapes (issue #1685): the attested prose set grammars and
+  // the narrow plan-deviation bail run BEFORE the refuse-to-merge guards —
+  // the guards cannot read prose ('pounds' reads as a name word to them),
+  // and their job is preserved because these shapes only claim input they
+  // fully account for (any unaccounted set token refuses the match and falls
+  // through to the guards below).
+  const prose = parseProsePlanShape(rawText, resolvedExercise, context);
+  if (prose) return prose;
 
   // G1 leading analogue (fuzz suite 2026-07-03): in every accepted grammar a
   // lift's sets FOLLOW its name — so a slash-set token appearing BEFORE the

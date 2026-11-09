@@ -26,7 +26,27 @@ const FROZEN_EXERCISE_ALIASES = [
   ['Incline Bench Press', ['incline bench press', 'incline barbell bench', 'incline bench', 'ibp']],
   ['Decline Bench Press', ['decline bench press', 'decline barbell bench', 'decline bench']],
   ['Bench Press', ['bench press', 'barbell bench', 'flat bench', 'bb bench', 'bench', 'bp']],
+  // RECONCILED 2026-11-08 (issue #1685, lane 3). 'Dumbbell Bench Press' was
+  // absent from every parser table, so the plan lift behind Priya's bench bail
+  // (SC7-PRIYA-02) resolved to Bench Press and the plan's 25 lb could never be
+  // reached. Added as the catalog's EXISTING canonical: data/exercise_catalog
+  // .v1.json already lists 'Dumbbell Bench Press' (dumbbell_bench_press) and
+  // data/exercise_aliases.v1.json already resolves 'dumbbell bench press',
+  // 'dumbbell bench presses', 'db bench press' and 'db bench' to it, so the
+  // truth audit has a source and no taxonomy forks. 'dumbbell bench' is the
+  // bare shorthand the corpus plan uses; it appears in no other source.
+  ['Dumbbell Bench Press', ['dumbbell bench press', 'dumbbell bench presses', 'dumbbell bench', 'db bench press', 'db bench']],
   ['Back Squat', ['back squat', 'bb squat', 'squats', 'squat', 'bs']],
+  // RECONCILED 2026-11-08 (issue #1685, lane 3). 'Goblet Squat' was absent
+  // from every parser table, so the plan lift behind Priya's squat turn
+  // (SC7-PRIYA-01) had no identity at the parse seam. Added as the catalog's
+  // EXISTING canonical: data/exercise_catalog.v1.json already lists
+  // 'Goblet Squat' (goblet_squat) and data/exercise_aliases.v1.json already
+  // resolves 'goblet squat', 'goblet squats', 'dumbbell goblet squat' and
+  // 'db goblet squat' to it, so the truth audit has a source and no taxonomy
+  // forks. Bare 'squats' stays a Back Squat alias (unchanged) — the plan's
+  // unique-family rule, not this table, resolves a bare 'squats' lead.
+  ['Goblet Squat', ['goblet squat', 'goblet squats', 'dumbbell goblet squat', 'db goblet squat']],
   ['Deadlift', ['deadlift', 'dead', 'dl']],
   // RECONCILED 2026-10-29 (SC9-RAY-01 investigation, issue #1607, option B slice i).
   // 'Trap Bar Deadlift' was absent from every parser table, so the corpus log
@@ -57,6 +77,17 @@ const FROZEN_EXERCISE_ALIASES = [
   // (truth source B) already resolves 'barbell row' → 'Bent-Over Row'; minting a new
   // canonical would have forked the taxonomy and tripped the Exercise Truth Audit.
   ['Bent-Over Row', ['bent-over row', 'bent-over rows', 'bent over row', 'bent over rows', 'bent row', 'bent rows', 'reverse-grip row', 'reverse row', 'bor', 'barbell row', 'barbell rows', 'bb row', 'bb rows']],
+  // RECONCILED 2026-11-08 (issue #1685, lane 3). 'One-Arm Row' was absent from
+  // every parser table, so the plan lift behind Priya's rows turn (SC7-PRIYA-03)
+  // had no identity at the parse seam. Added as the plan/persona canonical
+  // (tests/e2e/gate/personas/priya.js, lift code OAR01) with ONLY the bare
+  // one-arm spellings: the catalog/coaching name for the movement is
+  // 'Dumbbell Row' (one_arm_dumbbell_row / config/coaching/exercises/
+  // dumbbell-row.json), which already owns 'one-arm dumbbell row' and
+  // 'dumbbell row' in its own sources — those spellings are deliberately NOT
+  // aliased here, so no shared alias forks the taxonomy. The bare 'one-arm
+  // row' / 'one arm row' spellings appear in no other source.
+  ['One-Arm Row', ['one-arm row', 'one-arm rows', 'one arm row', 'one arm rows']],
   ['Hammer Curl', ['hammer curls', 'hammer curl', 'hammers', 'hammer']],
   ['Bicep Curl', ['bicep curls', 'biceps curls', 'bicep curl', 'biceps curl']],
   ['Face Pull', ['face pulls', 'face pull']],

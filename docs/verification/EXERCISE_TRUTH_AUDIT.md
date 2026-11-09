@@ -43,8 +43,8 @@ history form):
 ## Sources
 
 **A — Parser (workoutTextParser.js — EXERCISE_ALIASES + CONTEXTUAL_ALIASES)**
-- Canonical count: 29
-- Alias-to-canonical entries: 140
+- Canonical count: 32
+- Alias-to-canonical entries: 151
 
 **B — Data JSON (exercise_catalog.v1.json + exercise_aliases.v1.json)**
 - Canonical count: 346
@@ -64,7 +64,7 @@ history form):
 |------|------:|-------------|
 | 1 (blocking, B↔C) | 0 | Editable catalog↔coaching aliases resolving to different canonicals — **must be 0** |
 | 1 (anchored, A/D) | 34 | Parser/enrichment residuals, allowlisted for PR-14 / PR-15 |
-| 2 | 360 | Canonical exercises present in some sources but absent from others |
+| 2 | 361 | Canonical exercises present in some sources but absent from others |
 | 3 | 4 | Case / punctuation / hyphenation-only mismatches between canonical names |
 
 ## Type 1 (blocking) — Catalog ↔ Coaching Conflicts
@@ -552,6 +552,8 @@ history form):
 |----------|-----------|
 | Bent-Over Row | A, B, C |
 | Chin-Up | A, B, C |
+| Dumbbell Bench Press | A, B, C |
+| Goblet Squat | A, B, C |
 | Hammer Curl | A, B, C |
 | Hip Thrust | A, B, C |
 | Incline Bench Press | A, B, C |
@@ -579,11 +581,9 @@ history form):
 | Calf Raise | B, C |
 | Conventional Deadlift | B, C |
 | Dip | B, C |
-| Dumbbell Bench Press | B, C |
 | Dumbbell Row | B, C |
 | Farmers Carry | B, C |
 | Front Squat | B, C |
-| Goblet Squat | B, C |
 | Good Morning | B, C |
 | Hack Squat | B, C |
 | Inverted Row | B, C |
@@ -609,6 +609,7 @@ history form):
 | Cable Tricep Pushdown | A |
 | Decline Bench Press | A |
 | Incline DB Press | A |
+| One-Arm Row | A |
 | RDL | A |
 | Seated Row | A |
 | Shrug | A |

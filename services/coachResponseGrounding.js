@@ -786,6 +786,14 @@ function liftsOccurringInClause(lifts, seg) {
     const myKey = canonicalKey(name);
     const otherKeys = new Set(lifts.filter((n) => n !== name).map((n) => canonicalKey(n)));
     for (const tok of m.split(/[^a-z0-9]+/).filter(Boolean)) {
+      // A token that is also a word of another lift's name cannot discriminate
+      // it (issue #1685 follow-up): 'bench' sits in both bench variants'
+      // names, so it must not single out either one even though the two
+      // variants now carry distinct canonical keys ('Dumbbell Bench Press'
+      // is a parser canonical; 'Barbell Bench Press' still resolves through
+      // the 'bench press' alias). Without this, a single-lift dumbbell recap
+      // reads as multi-lift and fails closed on its own true numbers.
+      if (others.has(tok)) continue;
       if (canonicalKey(tok) === myKey && !otherKeys.has(myKey)) return true;
     }
     return false;

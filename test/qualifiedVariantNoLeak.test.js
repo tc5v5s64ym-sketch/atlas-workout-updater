@@ -52,10 +52,12 @@ const HISTORY = [{ role: 'user', text: 'back squat 315 5/2' }];
 const ENGINE = (name) => ({ exercise_name: name, weight: 405, reps: 3, sets: 5, rir: 1 });
 
 // Each is a real, distinct exercise in the KB whose name contains a base lift's alias.
+// Goblet squat is deliberately NOT here: issue #1685 made it a known parser lift
+// (ontology + catalog + coaching + persona), so it now resolves to Goblet Squat
+// instead of being an unresolvable variant — see the test after 7.
 const QUALIFIED_VARIANTS = [
   'zercher squat', 'zercher squats',
   'front squat', 'front squats',
-  'goblet squat', 'goblet squats',
   'hack squat', 'hack squats',
   'close grip bench',
   'paused bench',
@@ -134,12 +136,27 @@ test('7. a named variant gets NO lift diagnostics, and never the base lift\'s', 
   for (const message of [
     'how much for zercher squat?',
     'why did you program front squat?',
-    'why did you program goblet squats?',
     'how much for close grip bench?',
     'how much for hack squats?',
   ]) {
     assert.deepEqual(grounding.resolveTurnExercises(message, PLAN), [], message);
   }
+});
+
+// 7b. Goblet squat is now a known lift of its own (issue #1685: parser ontology
+// + catalog + coaching + persona), so it resolves to Goblet Squat — never to
+// the base lift, and never to nothing. The variant guard above still holds for
+// the variants that remain unresolvable; this one graduated out of it.
+test('7b. goblet squat resolves to its own lift, never Back Squat', () => {
+  // The parser resolves it to its own canonical.
+  const hit = canonicalizeExerciseName('how much for goblet squat?');
+  assert.equal(hit && hit.canonicalName, 'Goblet Squat', 'goblet squat must resolve to Goblet Squat, not Back Squat');
+  // With a Goblet Squat plan the grounding narrows to it, not the base lift.
+  const gobletPlan = { current_plan: [{ name: 'Goblet Squat', sets: 3, reps: 10, weight: 35, rir: 2 }], plan_completed: [] };
+  assert.deepEqual(grounding.resolveTurnExercises('why did you program goblet squats?', gobletPlan), ['Goblet Squat']);
+  // With a plan that has no Goblet Squat there are no diagnostics for it —
+  // and crucially it never falls back to Back Squat.
+  assert.deepEqual(grounding.resolveTurnExercises('why did you program goblet squats?', PLAN), []);
 });
 
 test('8. grounding still narrows to a legitimately named lift, and still falls back', () => {
@@ -262,7 +279,7 @@ function preFixResolve(message) {
 
 test('10. the fixtures reproduce the leak: pre-fix, every variant resolved to the base lift', () => {
   const expectedBase = {
-    'zercher squat': 'Back Squat', 'front squat': 'Back Squat', 'goblet squat': 'Back Squat',
+    'zercher squat': 'Back Squat', 'front squat': 'Back Squat',
     'hack squat': 'Back Squat', 'close grip bench': 'Bench Press', 'paused bench': 'Bench Press',
     'deficit deadlift': 'Deadlift', 'sumo deadlift': 'Deadlift',
   };

@@ -1493,13 +1493,15 @@ test('golden PR-06: reconciled aliases still resolve to the frozen parser canoni
 // fix rejects an anywhere-match when a name-like word immediately precedes the
 // alias, so the input falls to the unknown-exercise path (typed name preserved,
 // needs_catalog_review) instead of corrupting the wrong lift's history.
+// Goblet squat used to be a case here; issue #1685 made it a known lift, so it
+// now parses as Goblet Squat — see the test right after this one.
 // ---------------------------------------------------------------------------
 
 test('PARSE-1: variant qualifiers do not collapse to the base lift (never silent)', () => {
   const bases = ['Back Squat', 'Bench Press', 'Deadlift'];
   const cases = [
     ['front squat 225 5/2', /front squat/i],
-    ['goblet squats 60 12/2 x3', /goblet squat/i],
+    ['zercher squats 60 12/2 x3', /zercher squat/i],
     ['close grip bench 185 8/2', /close grip bench/i],
     ['stiff leg deadlift 275 8/2', /stiff leg deadlift/i],
   ];
@@ -1522,6 +1524,17 @@ test('PARSE-1: variant qualifiers do not collapse to the base lift (never silent
         `"${text}" must be unknown-exercise or a clarification, got ${r.intent}`);
     }
   }
+});
+
+// PARSE-1 positive form (issue #1685): goblet squat graduated from the unknown
+// variant list to a known lift — it parses as Goblet Squat, never as Back Squat,
+// with no unknown-exercise warning and no catalog-review flag.
+test('PARSE-1: goblet squat is now a known lift, not an unknown variant', () => {
+  const r = parseWorkoutText('goblet squats 60 12/2 x3');
+  assert.equal(r.intent, 'log_sets', 'goblet squats must log sets');
+  assert.equal(r.canonical_name, 'Goblet Squat', 'goblet squats must resolve to Goblet Squat');
+  assert.ok(!(r.warnings || []).includes('unknown_exercise'), 'no unknown_exercise warning');
+  assert.ok(!r.needs_catalog_review, 'no catalog review flag');
 });
 
 test('PARSE-1: front squat preserves its sets on the unknown-exercise path', () => {
