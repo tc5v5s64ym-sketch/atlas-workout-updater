@@ -116,3 +116,22 @@ test('a slot with no known set count shows its own performed count, not the sess
   assert.equal(spanText('pin-lift'), 'Cable Row');
   assert.equal(spanText('pin-sets'), '0 sets in', 'no sets performed on the current item — never the off-plan total');
 });
+
+test('plan complete (#1345): the session total is not attributed to the last lift', () => {
+  const { api, spanText } = loadPinHarness();
+  api.setActiveSession({ accepted: true, session_id: 'S1', plan_version: 'pv_x', index: 2, exercises: [
+    { name: 'Back Squat', canonicalName: 'Back Squat', liftCode: 'SQ01', plan_item_id: 'pi_sq', sets: 3 },
+    { name: 'Bench Press', canonicalName: 'Bench Press', liftCode: 'BP01', plan_item_id: 'pi_bp', sets: 3 },
+    { name: 'Overhead Press', canonicalName: 'Overhead Press', liftCode: 'OHP01', plan_item_id: 'pi_ohp', sets: 3 },
+  ] });
+  const log = [];
+  for (const name of ['Back Squat', 'Bench Press', 'Overhead Press']) {
+    for (let i = 0; i < 3; i += 1) log.push(row(name));
+  }
+  api.setLog(log);
+  api.setCompleted(['Back Squat', 'Bench Press', 'Overhead Press']);
+  api.renderSessionPin();
+  assert.equal(spanText('pin-lift'), undefined, 'a finished plan does not name the last lift');
+  assert.equal(spanText('pin-sets'), 'Session done — 9 sets');
+  assert.equal(spanText('pin-next'), undefined);
+});
