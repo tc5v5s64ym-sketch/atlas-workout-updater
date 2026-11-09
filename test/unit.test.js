@@ -1430,10 +1430,9 @@ test('Step 373b: a declared swap is recorded and applied to the live session at 
   assert.match(helper, /if \(subKey === prescKey\) return/, 'logging the prescribed lift itself must be a no-op');
 
   // The declaration is cleared when the session ends.
-  const endFn = appSource.slice(
-    appSource.indexOf('function endPlannedSession()'),
-    appSource.indexOf('function endPlannedSession()') + 900
-  );
+  // Sliced to the next function — fixed windows kept breaking as the function grew.
+  const endFnStart = appSource.indexOf('function endPlannedSession()');
+  const endFn = appSource.slice(endFnStart, appSource.indexOf('function normalizePlanEditExercise(', endFnStart));
   assert.match(endFn, /setPendingSubstitution\(null\)/, 'ending the session must clear any pending swap');
 
   // Lifecycle symmetry: starting a session must not inherit a stale swap.
@@ -5307,7 +5306,8 @@ test('Step 385: approve handler marks deload session written; advance fires once
   // ── endPlannedSession: advance fires here, exactly once per session ─────────
   const endFnStart = app.indexOf('function endPlannedSession(');
   assert.ok(endFnStart !== -1, 'endPlannedSession must exist');
-  const endFnBody = app.slice(endFnStart, endFnStart + 700);
+  // Sliced to the next function — fixed windows kept breaking as the function grew.
+  const endFnBody = app.slice(endFnStart, app.indexOf('function normalizePlanEditExercise(', endFnStart));
 
   assert.match(endFnBody, /\/api\/deload\/advance/, 'advance must be called in endPlannedSession');
   assert.match(endFnBody, /deloadWritten/, 'endPlannedSession must check deloadWritten before advancing');

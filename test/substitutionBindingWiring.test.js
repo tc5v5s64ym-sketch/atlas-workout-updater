@@ -165,7 +165,10 @@ test('wiring: the parse consumer holds the directive one-shot and the chat commi
     'the backend-parse consumer captures parsed.substitution.for');
   assert.match(appSrc, /lastParseSubstitution = null; \/\/ F10S2: one-shot — every new parse starts clean/,
     'every new parse resets the directive');
-  const commit = appSrc.slice(appSrc.indexOf('clearPendingClarification();'), appSrc.indexOf('clearPendingClarification();') + 900);
+  // Anchor on the parse-path clear's own comment — the bare string now also matches
+  // the #1687 clears in endPlannedSession / startOverWorkout, which are different sites.
+  const commitStart = appSrc.indexOf('// F09G: a real set log supersedes');
+  const commit = appSrc.slice(commitStart, appSrc.indexOf('emitSetLogged(logRows,', commitStart));
   assert.match(commit, /if \(lastParseSubstitution && getActivePlannedSession\(\)\)/,
     'the chat-lane commit arms the swap only with an active plan');
   assert.match(commit, /setPendingSubstitution\(\{ prescribed: lastParseSubstitution, prescription: null \}\)/,
