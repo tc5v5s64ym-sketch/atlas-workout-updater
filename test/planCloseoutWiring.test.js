@@ -2,9 +2,12 @@
 
 // PR-H — structural wiring guards for explicit session-closeout capture, read
 // against the built shell (public/). Complements the pure planCloseout.test.js:
-// pins that closeout is emitted ONLY at the explicit Finish/End-session and
-// Start-over/discard affordances, gated on an accepted plan, and NEVER from the
-// implicit endPlannedSession cleanup paths or "Next" auto-advance.
+// pins that closeout is emitted ONLY at the explicit Start-over/discard
+// affordances (`abandoned`), gated on an accepted plan, and NEVER from the
+// implicit endPlannedSession cleanup paths or "Next" auto-advance. #1689:
+// `finalized` has NO client-side emit site at all — End session routes through
+// the same save flow as Finish, and the approve handler is the only emitter,
+// server-side under the approved write_id.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -33,21 +36,18 @@ test('emitPlanCloseout is a non-blocking sidecar POST to /closeout, gated on an 
   assert.match(emitBlock, /\.catch\(/, 'fire-and-forget — never blocks the close/discard');
 });
 
-test('finalized is emitted from End-session at click; the SAVE path records it server-side on approval (F10D)', () => {
-  assert.match(app, /endBtn\.addEventListener\('click', \(\) => \{ emitPlanCloseout\('finalized'\); endPlannedSession\(\); \}\)/,
-    'the banner "End session" button (no save flow) still emits finalized at the click');
+test('End session routes through the same closeout as Finish; NO client-side finalized emission remains (#1689)', () => {
+  assert.match(app, /endBtn\.addEventListener\('click', \(\) => \{ handleLogIt\(\); \}\)/,
+    'the banner "End session" button opens the closeout review WITHOUT emitting');
   // F10D — one approval governs the complete closeout: tapping Finish only OPENS
   // the confirmation; the finalized event is recorded by the SERVER inside the
   // approved /api/log-workout write (with the capture proof envelope), so a
-  // rejected confirmation writes nothing — including this event. No client-side
-  // finalized emission remains anywhere on the save path.
+  // rejected confirmation writes nothing — including this event. #1689 extends
+  // that rule to End session: no client-side finalized emission remains anywhere.
   assert.match(app, /finish-session-btn'\)\?\.addEventListener\('click', \(\) => \{ handleLogIt\(\); \}\)/,
     'the "Finish session" affordance opens the closeout WITHOUT emitting');
-  const idx = app.indexOf("emitPlanCloseout('finalized')");
-  const endBtnIdx = app.indexOf("endBtn.addEventListener");
-  assert.ok(idx > -1 && app.indexOf("emitPlanCloseout('finalized')", idx + 1) === -1,
-    'exactly ONE finalized emission remains (the non-save End-session affordance)');
-  assert.ok(Math.abs(idx - endBtnIdx) < 200, 'and it is the End-session click site');
+  assert.doesNotMatch(app, /emitPlanCloseout\('finalized'\)/,
+    'no client-side finalized emission remains — the approved save records it server-side with proof');
 });
 
 test('abandoned is emitted from the explicit Start-over and discard-restored affordances', () => {
@@ -64,10 +64,10 @@ test('the implicit cleanup paths never emit closeout (no inference)', () => {
   assert.doesNotMatch(advBody, /emitPlanCloseout/, '"Next" auto-advance/auto-end must not emit closeout');
 });
 
-test('exactly the three explicit closeout emit sites exist (the save path is server-recorded — F10D)', () => {
+test('exactly the two explicit closeout emit sites exist, both abandoned (finalized is server-recorded — #1689)', () => {
   const finalized = app.split("emitPlanCloseout('finalized')").length - 1;
   const abandoned = app.split("emitPlanCloseout('abandoned')").length - 1;
-  assert.equal(finalized, 1, 'finalized: End session only — the approved save records it server-side with proof');
+  assert.equal(finalized, 0, 'finalized: no client-side emit site — the approved save records it server-side with proof');
   assert.equal(abandoned, 2, 'abandoned: Start over + discard-restored');
 });
 
