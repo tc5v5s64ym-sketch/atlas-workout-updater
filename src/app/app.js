@@ -5009,6 +5009,22 @@ function rowsFromBackendParsedWorkout(parsed) {
   }));
 }
 
+// The session plan for the parse endpoint (issue #1685): the same authoritative
+// plan currentPlanForChat() hands the coach, reduced to the fields the parser
+// consults — name + prescribed weight/reps/sets/RIR. [] when no plan is live,
+// or when the plan reader is not in scope (a test slice that evals only part
+// of this file) — the parser treats that exactly like no plan.
+function planForParse() {
+  if (typeof currentPlanForChat !== 'function') return [];
+  return currentPlanForChat().map(p => ({
+    name: p.name,
+    weight: p.weight ?? null,
+    reps: p.reps ?? null,
+    sets: p.sets ?? null,
+    rir: p.rir ?? null,
+  }));
+}
+
 async function parseWorkoutTextWithBackend(workoutText) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8000);
@@ -5028,7 +5044,14 @@ async function parseWorkoutTextWithBackend(workoutText) {
           // rules are unchanged; with no plan context it keeps asking to clarify.
           activeExercise: activeExercise || firstUnloggedPlannedLift(),
           activeSessionType: null,
-          todayPlan: null
+          // Issue #1685: the session plan, so the parser can resolve a bare
+          // family lead ('Rows', 'Bench', 'squats') to the plan's unique lift
+          // and read a plan-prescribed weight/RIR where the turn states a
+          // deviation against it. Same authoritative plan currentPlanForChat
+          // hands the coach — name + prescribed weight/reps/sets/RIR only.
+          // [] when no plan is live; the parser treats that exactly like the
+          // previous null (no plan context, existing behaviour stands).
+          todayPlan: planForParse()
         },
         test_mode: true
       }),

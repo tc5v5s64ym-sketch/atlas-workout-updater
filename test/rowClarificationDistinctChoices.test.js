@@ -113,9 +113,11 @@ test('no new canonical exercise was created — the prompt names only lifts that
     const canonical = canonicalFor(group[0]);
     assert.ok(known.has(canonical), `${canonical} must already be a canonical exercise`);
   }
-  // Exactly the two row identities that existed before this change, and no third.
-  const rowCanonicals = [...known].filter((n) => /row/i.test(n)).sort();
-  assert.deepEqual(rowCanonicals, ['Bent-Over Row', 'Seated Row']);
+  // The prompt offers exactly the two row identities that existed before this
+  // change, and no third — other row lifts (e.g. One-Arm Row, issue #1685)
+  // exist in the parser now but are not offered by this prompt.
+  const promptCanonicals = [...new Set(displayedGroups(PROMPT).map((group) => canonicalFor(group[0])))].sort();
+  assert.deepEqual(promptCanonicals, ['Bent-Over Row', 'Seated Row']);
 });
 
 test('the pre-fix prompt would FAIL the distinctness invariant', () => {

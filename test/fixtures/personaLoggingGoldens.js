@@ -363,6 +363,12 @@ const GOLDENS = [
     source: { doc: DOC, ref: 'Session 7 (Priya)' },
     session: 7, persona: 'priya', kind: 'log',
     input: 'Ok squats done!! I did the 35 pound one, 3 sets of 10. Honestly the last set the answer was like... 1? Maybe 1.',
+    // Declared plan, Session 7 (Atlas's plan message, verbatim prescription):
+    // goblet squats 35 lb, 3 sets of 10 with about 2 reps left in the tank;
+    // dumbbell bench 25s for 3x10; one-arm rows 30 for 3x10 each side. The
+    // plank is a finisher with no prescribed load/sets, so it is not a plan
+    // row (same line as the E2E persona, tests/e2e/gate/personas/priya.js).
+    context: { plan: ['Goblet Squat 35 10/2 x3', 'Dumbbell Bench Press 25 10 x3', 'One-Arm Row 30 10 x3'] },
     expected: { exercises: [
       { name: 'Goblet Squat', sets: [S(35, 10, 2), S(35, 10, 2), S(35, 10, 1)] },
     ] },
@@ -377,6 +383,7 @@ const GOLDENS = [
     source: { doc: DOC, ref: 'Session 7 (Priya)' },
     session: 7, persona: 'priya', kind: 'log',
     input: 'Bench question — on like rep 7 my left arm got wobbly and I stopped at 8 instead of 10. Is that bad?? I did that on all 3 sets basically.',
+    context: { plan: ['Goblet Squat 35 10/2 x3', 'Dumbbell Bench Press 25 10 x3', 'One-Arm Row 30 10 x3'] },
     expected: { exercises: [
       { name: 'Dumbbell Bench', sets: T(3, S(25, 8, null)) },
     ] },
@@ -391,6 +398,7 @@ const GOLDENS = [
     source: { doc: DOC, ref: 'Session 7 (Priya)' },
     session: 7, persona: 'priya', kind: 'log',
     input: 'Rows done, 30 pounds, 10 each arm, 3 sets. Tank answer: 2. Plank 40 seconds!! That is a record for me.',
+    context: { plan: ['Goblet Squat 35 10/2 x3', 'Dumbbell Bench Press 25 10 x3', 'One-Arm Row 30 10 x3'] },
     expected: { exercises: [
       { name: 'One-Arm Rows', sets: T(3, S(30, 10, 2)) },
       { name: 'Plank', sets: [{ durationSec: 40 }] },
