@@ -80,6 +80,10 @@ function buildRestoredSessionHarness({ noticeText } = {}) {
     function clearPersistedSnapshot() { cleared.snapshot = true; }
     function renderActiveSessionBanner() {}
     function api() { return Promise.resolve({}); }
+    // #1687: endPlannedSession steps the session epoch and clears the held
+    // clarification — both live outside the sliced region, so stub them here.
+    let sessionEpoch = 0;
+    function clearPendingClarification() {}
 
     ${sliceEnd}
     ${sliceDiscard}
@@ -90,6 +94,7 @@ function buildRestoredSessionHarness({ noticeText } = {}) {
       setActivePlannedSession: s => { activePlannedSession = s; },
       getActivePlannedSession: () => activePlannedSession,
       discardRestoredSession,
+      getSessionEpoch: () => sessionEpoch,
     };
   `);
   const api = factory(fakeDoc, FakeCustomEvent, events, cleared);
@@ -104,6 +109,7 @@ function buildRestoredSessionHarness({ noticeText } = {}) {
     sessionIdValue: () => sessionIdEl.value,
     isSnapshotCleared: () => cleared.snapshot,
     getEvents: () => events.slice(),
+    getSessionEpoch: api.getSessionEpoch,
   };
 }
 

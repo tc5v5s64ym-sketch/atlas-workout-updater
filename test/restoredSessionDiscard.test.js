@@ -57,6 +57,10 @@ function loadDiscardHarness() {
     function clearPersistedSnapshot() { cleared.snapshot = true; }
     function renderActiveSessionBanner() {}
     function api() { return Promise.resolve({}); }
+    // #1687: endPlannedSession steps the session epoch and clears the held
+    // clarification — both live outside the sliced region, so stub them here.
+    let sessionEpoch = 0;
+    function clearPendingClarification() {}
 
     ${sliceEnd}
     ${sliceDiscard}
@@ -67,6 +71,7 @@ function loadDiscardHarness() {
       setActivePlannedSession: s => { activePlannedSession = s; },
       getActivePlannedSession: () => activePlannedSession,
       discardRestoredSession,
+      getSessionEpoch: () => sessionEpoch,
       state: () => ({ closeoutScreenshotFile }),
     };
   `);
@@ -80,6 +85,7 @@ test('ADD-1: discarding a restored session hides the pin and clears state', () =
   api.setSessionLog([{ exercise: 'Bench Press', weight: '185', reps: '8', rir: '2' }]);
   api.setActivePlannedSession({ label: 'Push day', exercises: [{ name: 'Bench Press' }], index: 0 });
   assert.equal(notice.hidden, false, 'precondition: the restored-session pin is visible');
+  assert.equal(api.getSessionEpoch(), 0, 'precondition: the session epoch starts at 0');
 
   api.discardRestoredSession();
 
@@ -90,6 +96,9 @@ test('ADD-1: discarding a restored session hides the pin and clears state', () =
   assert.equal(api.getActivePlannedSession(), null, 'the active plan is cleared');
   assert.equal(sessionIdEl.value, '', 'the session_id is cleared');
   assert.equal(cleared.snapshot, true, 'the persisted snapshot is removed');
+  // #1687: discarding ends the session (via endPlannedSession), so the epoch steps —
+  // a clarification held in the discarded session can never resolve in the next one.
+  assert.equal(api.getSessionEpoch(), 1, 'the session epoch steps on discard');
   // A session-reset is broadcast so every surface drops the stale session.
   assert.ok(events.some(e => e.type === 'atlas:session-reset'), 'atlas:session-reset is dispatched');
 });
