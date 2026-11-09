@@ -5,8 +5,11 @@ const { test, expect } = require('@playwright/test');
 // the exact owner canary: render Coach's Pick → Start this plan → log a set → Done with
 // <exercise> → substitute one item → skip one item → End session, and asserts every
 // sidecar call fires with a consistent session_id + plan_version and the expected
-// immutable plan_item_id values. No real key, no writes (flag-independent — the mocked
-// server records the payloads the client produces).
+// immutable plan_item_id values — and that End session routes through the closeout
+// review (#1689: no immediate finalized sidecar; the approved write carries
+// closeout_context and the server records finalized under the write_id). No real
+// key, no writes (flag-independent — the mocked server records the payloads the
+// client produces).
 
 const TEST_KEY = 'playwright-test-key';
 const SETS = [{ weight: 140, reps: 10, rir: 2 }, { weight: 140, reps: 10, rir: 2 }, { weight: 140, reps: 10, rir: 2 }];
@@ -71,6 +74,7 @@ async function mockApis(page, capture) {
         parsed: { intent: 'needs_clarification', message: 'no sets' } } }));
     }
     if (path === '/api/log-workout' && m === 'POST') {
+      capture.posts.push({ path, body });
       return route.fulfill(json({ status: 'success', data: { test_mode: true, sheet_write: 'skipped', sheet_written: false, no_write_confirmed: true,
         warnings: [], auto_matches: [], pending_exercises: [], rule_flags: [],
         log_rows_preview: SETS.map((s, i) => (['2026-06-12', 'PW', 'Seated Row', 'Seated Row', 'Back', 'ROW01', i + 1, s.weight, s.reps, s.rir, '', s.weight * s.reps])) } }));
@@ -85,7 +89,7 @@ async function submit(page, text) {
   await page.locator('#preview-btn').click();
 }
 
-test('full Session_Plans lifecycle fires accept + completed/substituted/skipped outcomes + finalized closeout with one identity', async ({ page }) => {
+test('full Session_Plans lifecycle fires accept + completed/substituted/skipped outcomes + End session routes through the closeout review with one identity', async ({ page }) => {
   const capture = {};
   await mockApis(page, capture);
   await page.addInitScript(k => localStorage.setItem('atlas_api_key', k), TEST_KEY);
@@ -128,23 +132,41 @@ test('full Session_Plans lifecycle fires accept + completed/substituted/skipped 
   await submit(page, 'skip overhead press');
   await expect.poll(() => capture.posts.filter(p => p.path === '/api/session-plans/outcome' && p.body?.item?.outcome === 'skipped').length).toBeGreaterThan(0);
 
-  // 5) End session (finalized closeout) via the banner (stays expanded).
+  // 5) End session now routes through the SAME closeout as Finish (#1689): no
+  //    immediate finalized sidecar — the review card opens; the dry-run for that
+  //    review carries closeout_context and the server would record finalized
+  //    under the write_id on approve. (The mocked server returns a no-write
+  //    proof, which the client correctly refuses as a closeout write — "Write
+  //    response did not confirm success" — so this posture stops at the review;
+  //    the approve → exactly-one-finalized half is proven by gate E2 in
+  //    f10d-end-session.spec.js, against the real server.)
+  //    (The mocked server returns no closeout summary, so the `.closeout-confirm`
+  //    block the gate posture renders is absent here — the `.review` card is the
+  //    closeout review in this posture.)
   await expect(page.locator('#active-session-banner')).toBeVisible();
   await page.locator('#active-session-banner').getByText('End session', { exact: true }).click();
+  await expect(page.locator('.review:not(.done)')).toHaveCount(1, { timeout: 25000 });
+  await expect(page.locator('.review:not(.done) .rv-save')).toBeVisible();
+  // No immediate sidecar closeout from the click itself.
+  expect(capture.posts.filter(p => p.path === '/api/session-plans/closeout')).toHaveLength(0);
+  // The dry-run for the review carries the closeout context.
+  await expect.poll(() => capture.posts.filter(p => p.path === '/api/log-workout' && p.body?.closeout_context).length).toBeGreaterThan(0);
 
   // Assert every lifecycle call fired with a consistent identity.
   const byKind = (path, pred) => (capture.posts.find(p => p.path === path && (!pred || pred(p.body))) || {}).body;
-  await expect.poll(() => capture.posts.filter(p => p.path === '/api/session-plans/closeout').length).toBeGreaterThan(0);
 
   const completed = byKind('/api/session-plans/outcome', b => b.item?.outcome === 'completed');
   const substituted = byKind('/api/session-plans/outcome', b => b.item?.outcome === 'substituted');
   const skipped = byKind('/api/session-plans/outcome', b => b.item?.outcome === 'skipped');
-  const closeout = byKind('/api/session-plans/closeout', b => b.closeout_status === 'finalized');
+  // The dry-run for the review is the /api/log-workout call carrying
+  // closeout_context (no approve is attempted in this posture — see step 5).
+  const logPosts = capture.posts.filter(p => p.path === '/api/log-workout' && p.body?.closeout_context);
+  const closeout = (logPosts[logPosts.length - 1] || {}).body;
 
   expect(completed, 'completed outcome fired').toBeTruthy();
   expect(substituted, 'substituted outcome fired').toBeTruthy();
   expect(skipped, 'skipped outcome fired').toBeTruthy();
-  expect(closeout, 'finalized closeout fired').toBeTruthy();
+  expect(closeout, 'dry-run carried closeout_context').toBeTruthy();
 
   // Identity: the right plan_item_id per outcome.
   expect(completed.item.plan_item_id).toBe(A);
@@ -153,8 +175,12 @@ test('full Session_Plans lifecycle fires accept + completed/substituted/skipped 
   expect(skipped.item.plan_item_id).toBe(C);
 
   // One session identity across the whole lifecycle.
-  for (const b of [completed, substituted, skipped, closeout]) {
+  for (const b of [completed, substituted, skipped]) {
     expect(b.session_id).toBe(SID);
     expect(b.plan_version).toBe(PV);
   }
+  // The dry-run's closeout context addresses the same plan version — the
+  // server would record finalized under this write_id on approve, not via a
+  // sidecar (the approve half is proven by gate E2).
+  expect(closeout.closeout_context.plan_version).toBe(PV);
 });

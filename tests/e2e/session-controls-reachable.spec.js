@@ -1,7 +1,7 @@
 const { test, expect } = require('@playwright/test');
 
 // PR-I3 (canary find, 2026-07-10) — the canary reported the "Done with this
-// exercise" (completed) and "End session" (finalized closeout) boundaries were
+// exercise" (completed) and "End session" (closeout review, #1689) boundaries were
 // never exercised. Both controls already exist; they live in the active-session
 // banner, which is COLLAPSED by default (owner UX directive 2026-07-03) behind the
 // always-visible session pin. This spec pins the VERIFIED reachability:

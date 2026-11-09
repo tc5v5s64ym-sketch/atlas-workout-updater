@@ -2256,11 +2256,15 @@ function emitPlanItemOutcome(outcomeInput) {
   }).catch(() => { /* runOutcome never throws; belt-and-suspenders */ });
 }
 
-// PR-H — fire an EXPLICIT session closeout (finalized / abandoned) for the current
+// PR-H — fire an EXPLICIT session closeout (abandoned) for the current
 // accepted plan, non-blocking. Reads the immutable session_id + plan_version off the
 // plan and fails closed for a non-accepted session. Wired ONLY at the explicit
-// Finish/End-session and Start-over/discard affordances — NEVER inside the implicit
-// endPlannedSession cleanup paths. Fire-and-forget: the local close/discard proceeds
+// Start-over/discard affordances — NEVER inside the implicit
+// endPlannedSession cleanup paths. (#1689: `finalized` is no longer emitted
+// client-side anywhere — the banner End-session button routes through handleLogIt
+// and the approve handler is the only emitter, server-side under the approved
+// write_id. This helper stays generic for the capture layer, but its only live
+// call sites emit `abandoned`.) Fire-and-forget: the local close/discard proceeds
 // regardless; a sidecar failure never blocks it, and retries reuse the same identity.
 function emitPlanCloseout(closeoutStatus) {
   const plan = getActivePlannedSession();
@@ -3086,10 +3090,15 @@ function renderActiveSessionBanner() {
     row.appendChild(doneBtn);
   }
   const endBtn = el('button', { type: 'button', class: 'secondary', text: 'End session' });
-  // PR-H: an explicit "End session" is a `finalized` closeout (emit BEFORE the plan
-  // is cleared, so its session_id/plan_version are still in scope). Gated on an
-  // accepted plan; the implicit endPlannedSession callers do NOT emit.
-  endBtn.addEventListener('click', () => { emitPlanCloseout('finalized'); endPlannedSession(); });
+  // #1689: End session runs the SAME closeout as "Finish session" (handleLogIt →
+  // runCloseout → preview → approve → write) instead of emitting `finalized`
+  // at click. The approve handler is the ONLY emitter of `finalized` (server-side,
+  // under the approved write_id); ending with nothing saved emits nothing, never
+  // `finalized` — so a dismissed save leaves no finalized event and undo-last
+  // stays unblocked. The plan is cleared by the approved write's session-reset
+  // (endPlannedSession there), not at click; a dismissed review leaves the
+  // session active, exactly like Finish.
+  endBtn.addEventListener('click', () => { handleLogIt(); });
   row.appendChild(endBtn);
   banner.appendChild(row);
   // Collapsed by default (owner directive 2026-07-03): the card takes space
@@ -7060,7 +7069,7 @@ document.getElementById('start-over-btn')?.addEventListener('click', () => { emi
 // Start Over — it previously only switched tabs (drawer.js data-tab delegation)
 // and left the prior save's lastWrite watermark in place. Deliberately NO
 // emitPlanCloseout here: PR-H pins the explicit closeout emit sites (Start
-// Over, discard-restored, End session), and widening them is a separate concern.
+// Over, discard-restored), and widening them is a separate concern.
 document.getElementById('drawer-new-session')?.addEventListener('click', () => { startOverWorkout(); });
 
 async function waitForLatestSetTurn() {
