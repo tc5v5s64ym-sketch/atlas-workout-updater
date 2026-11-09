@@ -64,6 +64,16 @@ const fakeSheetsState = {
   // When set to a tab name, appendRows throws for that tab AFTER recording the
   // call — simulates a partial-write failure between the two live appends.
   failAppendForTab: null,
+  // #1688: when set to a tab name, appendRows COMMITS the rows to the modeled
+  // sheet state and THEN throws — the ambiguous append (500/503/timeout after
+  // commit) whose response the client never sees.
+  commitThenFailAppendForTab: null,
+  // Committed Modality_Log rows (sheet state). Successful appends land here so a
+  // read-back sees them; the failAppendForTab path never lands rows.
+  modalityLogRows: [],
+  // #1688: when true, getSheetRows('Modality_Log') throws — the read-back itself
+  // fails, so the ambiguous append can neither be confirmed nor ruled out.
+  failModalityLogRead: false,
   // When set to a tab name, appendRows returns a MISMATCHED authoritative proof
   // (updatedRows off by one) for that tab — exercises the F02/WRITE-1 write-proof
   // verification gate (a success must never be emitted on inconsistent proof).
@@ -121,6 +131,17 @@ const fakeSheets = {
     if (fakeSheetsState.failAppendForTab === tabName) {
       throw new Error(`Simulated append failure for "${tabName}"`);
     }
+    // #1688: the ambiguous append — the rows ARE committed, then the response is
+    // lost (500/503/timeout after commit). The read-back must find them.
+    if (fakeSheetsState.commitThenFailAppendForTab === tabName) {
+      if (tabName === 'Modality_Log') {
+        for (const r of rows) fakeSheetsState.modalityLogRows.push([...r]);
+      }
+      throw new Error(`Simulated ambiguous append failure for "${tabName}" (row committed, response lost)`);
+    }
+    if (tabName === 'Modality_Log') {
+      for (const r of rows) fakeSheetsState.modalityLogRows.push([...r]);
+    }
     if (fakeSheetsState.miswriteAppendForTab === tabName) {
       // Authoritative append response disagrees with what was sent (one extra row).
       return { data: { updates: { updatedRange: `${tabName}!A100:K100`, updatedRows: rows.length + 1 } } };
@@ -164,6 +185,10 @@ const fakeSheets = {
     // getSheetRowsRaw is aliased to this stub, so the undo-last read-back sees it.
     if (tabName === 'Log_Cleaned') return fakeSheetsState.logRowsOverride || logRows;
     if (tabName === 'Effort') return [];
+    if (tabName === 'Modality_Log') {
+      if (fakeSheetsState.failModalityLogRead) throw new Error('Simulated Modality_Log read failure');
+      return fakeSheetsState.modalityLogRows.map(r => [...r]);
+    }
     if (tabName === 'Coaching_Notes') return fakeSheetsState.coachingNotesRows || [];
     if (tabName === 'Constraints') return fakeSheetsState.constraintsRows || [];
     if (tabName === 'Deload_State') {
@@ -334,6 +359,7 @@ test.after(async () => {
 
 test.beforeEach(() => {
   resetIdempotencyStore();
+  fakeSheetsState.modalityLogRows.length = 0;
   fakeCoachState.pingError = null;
   fakeCoachState.configured = false;
 });
@@ -3261,6 +3287,105 @@ test('api smoke: log-modality rejects a malformed date (400) and writes nothing'
     assert.deepEqual(fakeSheetsState.appendCalls, []);
   } finally {
     fakeSheetsState.allowAppend = false;
+  }
+});
+
+// #1688 (proving test 1): the append COMMITS and then the response is lost
+// (500 after commit — the sheets.js WRITE-5 ambiguous case). The route must
+// recover by read-back and report success, so a client retry replays the
+// completed write_id instead of appending a second identical row.
+test('api smoke (#1688): log-modality append-commits-then-500 — retry appends no second row', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  fakeSheetsState.commitThenFailAppendForTab = 'Modality_Log';
+  try {
+    const payload = JSON.stringify({ text: 'Plank 60 sec x3 RPE 7', session_id: 'S-AMBIG-1', date: '2026-06-23', write_id: 'mod-wid-ambig-1' });
+    const first = await requestJson('/api/log-modality', { method: 'POST', body: payload });
+
+    // The row landed but the append response was lost: the read-back finds it
+    // and the route reports success instead of releasing the write_id.
+    assert.equal(first.response.status, 200, JSON.stringify(first.body));
+    assert.equal(first.body.data.sheet_write, 'success');
+    assert.equal(first.body.data.sheet_written, true);
+    assert.equal(first.body.data.verified_by_readback, true);
+    assert.equal(fakeSheetsState.modalityLogRows.length, 1, 'the committed row is on the sheet');
+    assert.equal(fakeSheetsState.appendCalls.length, 1);
+
+    // The write_id is completed, so a client retry replays — it must not append.
+    fakeSheetsState.commitThenFailAppendForTab = null;
+    const second = await requestJson('/api/log-modality', { method: 'POST', body: payload });
+    assert.equal(second.response.status, 200, JSON.stringify(second.body));
+    assert.equal(second.body.data.duplicate_write, true);
+    assert.equal(fakeSheetsState.appendCalls.length, 1, 'a retry must not append a second row');
+    assert.equal(fakeSheetsState.modalityLogRows.length, 1, 'exactly one Modality_Log row');
+  } finally {
+    fakeSheetsState.allowAppend = false;
+    fakeSheetsState.commitThenFailAppendForTab = null;
+  }
+});
+
+// #1688 (proving test 2): the append fails BEFORE committing (proven absent on
+// read-back). The write_id is released, so the retry is admitted and appends
+// exactly once — no row is lost and none is duplicated.
+test('api smoke (#1688): log-modality proven-absent failure — retry admitted, appends exactly once', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  fakeSheetsState.failAppendForTab = 'Modality_Log';
+  try {
+    const payload = JSON.stringify({ text: 'Run 5 km 30:00', session_id: 'S-ABSENT-1', date: '2026-06-23', write_id: 'mod-wid-absent-1' });
+    const first = await requestJson('/api/log-modality', { method: 'POST', body: payload });
+
+    assert.equal(first.response.status, 500, JSON.stringify(first.body));
+    assert.equal(fakeSheetsState.modalityLogRows.length, 0, 'nothing landed');
+    assert.equal(fakeSheetsState.appendCalls.length, 1);
+
+    // Proven absent: the retry is admitted and appends exactly once.
+    fakeSheetsState.failAppendForTab = null;
+    const second = await requestJson('/api/log-modality', { method: 'POST', body: payload });
+    assert.equal(second.response.status, 200, JSON.stringify(second.body));
+    assert.equal(second.body.data.sheet_write, 'success');
+    assert.equal(second.body.data.duplicate_write, false);
+    assert.equal(fakeSheetsState.appendCalls.length, 2, 'the admitted retry appends once');
+    assert.equal(fakeSheetsState.modalityLogRows.length, 1, 'exactly one Modality_Log row');
+  } finally {
+    fakeSheetsState.allowAppend = false;
+    fakeSheetsState.failAppendForTab = null;
+  }
+});
+
+// #1688: the append fails AND the read-back itself fails, so the write can
+// neither be confirmed nor ruled out. It completes as unverified (the
+// /api/complete-workout vocabulary) — never failed — and a retry of the same
+// write_id fails closed instead of re-appending blind.
+test('api smoke (#1688): log-modality read-back failure completes as unverified and the retry fails closed', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  fakeSheetsState.failAppendForTab = 'Modality_Log';
+  fakeSheetsState.failModalityLogRead = true;
+  try {
+    const payload = JSON.stringify({ text: 'Run 5 km 30:00', session_id: 'S-UNVER-1', date: '2026-06-23', write_id: 'mod-wid-unver-1' });
+    const first = await requestJson('/api/log-modality', { method: 'POST', body: payload });
+
+    assert.equal(first.response.status, 500, JSON.stringify(first.body));
+    assert.ok(first.body.details, 'unverified proof is surfaced in the error details');
+    assert.equal(first.body.details.sheet_write, 'unverified');
+    assert.equal(first.body.details.proof_mismatch, true);
+    assert.equal(fakeSheetsState.appendCalls.length, 1);
+
+    // The write_id is completed-as-unverified: a retry must fail closed, never
+    // replay as a save and never re-append.
+    fakeSheetsState.failAppendForTab = null;
+    fakeSheetsState.failModalityLogRead = false;
+    const retry = await requestJson('/api/log-modality', { method: 'POST', body: payload });
+    assert.equal(retry.response.status, 500, JSON.stringify(retry.body));
+    assert.equal(retry.body.details.sheet_write, 'unverified', 'retry stays unverified, not skipped_duplicate');
+    assert.equal(retry.body.details.proof_mismatch, true);
+    assert.equal(fakeSheetsState.appendCalls.length, 1, 'an unverified retry must not append');
+    assert.equal(fakeSheetsState.modalityLogRows.length, 0);
+  } finally {
+    fakeSheetsState.allowAppend = false;
+    fakeSheetsState.failAppendForTab = null;
+    fakeSheetsState.failModalityLogRead = false;
   }
 });
 

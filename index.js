@@ -1510,6 +1510,20 @@ app.post('/api/constraints', async (req, res) => {
   }
 });
 
+// #1688: cell-wise Modality_Log row equality for the ambiguous-append
+// read-back. Sheet reads return strings while the built row carries numbers,
+// so compare stringified cells; pad short rows with '' so a trailing-blank row
+// still matches. The match is the full row (date, session_id and every metric
+// cell), so a different entry in the same session never counts as this row.
+function sameModalityRow(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b)) return false;
+  const len = Math.max(a.length, b.length);
+  for (let i = 0; i < len; i += 1) {
+    if (String(a[i] ?? '') !== String(b[i] ?? '')) return false;
+  }
+  return true;
+}
+
 // POST /api/log-modality — persist a NON-slash modality entry (timed hold /
 // steady cardio / cardio interval / circuit) to the Modality_Log tab (PR 486
 // slice 4b). The engine owns the structured fields: the route re-recognizes the
@@ -1594,6 +1608,16 @@ app.post('/api/log-modality', async (req, res) => {
   if (idempotency.duplicate) {
     const rec = idempotency.record || {};
     const original = rec.response || {};
+    // #1688 / F02: an original write whose Sheets append proof was never
+    // verified must NOT be replayed as a save on retry — the same fail-closed
+    // rule as /api/complete-workout. The row may be on the sheet, but the proof
+    // was unverified, so the retry fails closed with the unverified state.
+    if (original.sheet_write === 'unverified' || original.proof_mismatch === true) {
+      return standardError(req, res,
+        'Duplicate write_id; the original log-modality append proof was unverified and cannot be confirmed as saved.',
+        { ...original, duplicate_write: true, write_id: idempotency.write_id, sheet_written: false, sheet_write: 'unverified', proof_mismatch: true },
+        500);
+    }
     return standardSuccess(req, res,
       rec.status === 'completed'
         ? 'Duplicate write_id; modality was already saved.'
@@ -1631,7 +1655,73 @@ app.post('/api/log-modality', async (req, res) => {
     recordTurnWriteProof(payload, session_id, '/api/log-modality', responseBody);
     return standardSuccess(req, res, 'log-modality processed', responseBody, 200);
   } catch (err) {
-    if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+    if (idempotency.enabled) {
+      // #1688: the append failure is AMBIGUOUS (sheets.js WRITE-5) — a 500/503/
+      // timeout may already be committed — so a blind failWrite would mark the
+      // write retryable and a client re-tap would append a second identical row.
+      // Decide from evidence BEFORE releasing the write_id: read back the
+      // session's Modality_Log rows. getSheetRows('Modality_Log') is a live read
+      // (only Log_Cleaned/Effort are cached), so the read-back sees the commit.
+      let readback = null;
+      let readbackFailed = false;
+      try {
+        readback = await getSheetRows('Modality_Log');
+      } catch (readErr) {
+        readbackFailed = true;
+      }
+      if (!readbackFailed) {
+        const landed = (readback || []).some((existingRow) => sameModalityRow(existingRow, row));
+        if (landed) {
+          // The row IS on the sheet: complete the write with the success body so
+          // a retry replays it instead of appending again. No appendedRange: the
+          // append response was lost, so the read-back is the proof.
+          const responseBody = {
+            message: 'Modality logged successfully.',
+            test_mode: false,
+            sheet_write: 'success',
+            sheet_written: true,
+            modality_written: true,
+            modality: record.modality,
+            appendedRange: null,
+            verified_by_readback: true,
+            modality_row: row
+          };
+          responseBody.write_id = idempotency.write_id;
+          responseBody.duplicate_write = false;
+          responseBody.idempotency_status = 'completed';
+          completeWrite(idempotency.write_id, idempotency.token, responseBody);
+          recordTurnWriteProof(payload, session_id, '/api/log-modality', responseBody);
+          return standardSuccess(req, res, 'log-modality processed', responseBody, 200);
+        }
+        // Proven absent: nothing landed, so the write_id is safe to release and
+        // the retry is admitted.
+        failWrite(idempotency.write_id, idempotency.token);
+      } else {
+        // The read-back itself failed: the row may or may not be on the sheet.
+        // Complete as unverified (the /api/complete-workout vocabulary) — never
+        // failed — so a retry fails closed instead of re-appending blind.
+        // sheet_written:true here means "may have landed", not "confirmed saved":
+        // the 500 status and sheet_write:'unverified' carry the not-confirmed
+        // meaning, and the duplicate branch above fails closed on it.
+        const unverified = {
+          session_id,
+          date,
+          write_id: idempotency.write_id,
+          duplicate_write: false,
+          idempotency_status: 'completed',
+          sheet_write: 'unverified',
+          sheet_written: true,
+          modality_written: false,
+          modality: record.modality,
+          modality_row: row,
+          proof_mismatch: true,
+          readback_failed: true
+        };
+        completeWrite(idempotency.write_id, idempotency.token, unverified);
+        recordTurnWriteProof(payload, session_id, '/api/log-modality', unverified);
+        return standardError(req, res, 'Modality write could not be verified against the Sheets append proof.', unverified, 500);
+      }
+    }
     return standardError(req, res, 'Failed to append modality data', process.env.NODE_ENV === 'production' ? null : err.message, 500);
   }
 });
