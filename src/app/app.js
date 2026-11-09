@@ -7438,12 +7438,12 @@ function routeMessageToCoach(text) {
   // without plan_state, so later composer edits were based on a non-authoritative
   // transcript instead of the same plan state debug/composer use.
   if (plannedExerciseOrder().length > 0) context.plan_completed = [...getSessionCompleted()];
-  // F10S3 (owner smoke 2026-07-18) — the canonical selector's VERDICT travels with the
-  // question: planned/completed/remaining from the ONE multiplicity-aware selector the
-  // rail/pin/recap read, so the server's session-state answers ("what's next?",
-  // "are we done?") can never disagree with what the athlete sees. The server
-  // validates, bounds, and recomputes isComplete; old clients without this field fall
-  // back to the server-side name-matcher unchanged.
+  // F10S3 — plan_state still travels for old servers. It is NOT the authority
+  // on a server that reads slot_evidence (#1691): the server reruns the F10
+  // selector on the raw evidence below and that result wins, including when
+  // this verdict is wrong. The pin, rail, and handoff already render that same
+  // selector, so what the athlete sees is the rule the server now owns — the
+  // client does not get to declare a 1-of-3 slot finished.
   if (plannedExerciseOrder().length > 0) {
     const remaining = remainingPlannedExercises();
     context.plan_state = {
@@ -7451,6 +7451,25 @@ function routeMessageToCoach(text) {
       completed: completedPlannedExercises(),
       remaining,
       isComplete: remaining.length === 0,
+    };
+    const planForEvidence = activePlanForSlots();
+    const evidenceLog = getSessionLog();
+    context.slot_evidence = {
+      exercises: (planForEvidence.exercises || []).slice(0, 50).map(ex => ({
+        name: ex.canonicalName || ex.canonical || ex.name || '',
+        liftCode: ex.liftCode || ex.lift_code || '',
+        plan_item_id: ex.plan_item_id !== null && ex.plan_item_id !== undefined ? ex.plan_item_id : null,
+        sets: ex.sets !== null && ex.sets !== undefined ? ex.sets : null,
+      })),
+      items: (planForEvidence.items || []).slice(0, 50).map(it => ({
+        plan_item_id: it && it.plan_item_id !== null && it.plan_item_id !== undefined ? it.plan_item_id : null,
+        outcome: it && it.outcome || null,
+      })),
+      completed: [...getSessionCompleted()].slice(0, 50),
+      session_log: (Array.isArray(evidenceLog) ? evidenceLog : []).slice(0, 200).map(r => ({
+        exercise: (r && r.exercise) || '',
+        canonical: (r && r.canonical) || '',
+      })),
     };
   }
   // Phase 4 H-08A — carry the AUTHORITATIVE client active session (the same canonical
