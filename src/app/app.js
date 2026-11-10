@@ -8937,7 +8937,8 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
       // confirmed a sheet write.
       duplicateBlocked = writeData.duplicate_write === true &&
         writeData.sheet_write === 'skipped_duplicate' &&
-        writeData.original_sheet_written === true;
+        writeData.original_sheet_written === true &&
+        writeData.original_sheet_write === 'success';
       // #1628 — a partial duplicate is surfaced + repaired, never
       // already-logged. One call: the helper owns the status/button work
       // so this branch stays short (the PR 486 test slices this handler).
@@ -8976,9 +8977,12 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
         body: JSON.stringify(modalityPayload)
       });
       const writeData = writeResult?.data || {};
-      // Idempotent replay: a duplicate write_id is echoed back with sheet_written
-      // false; the original row is already on the sheet, so treat it as blocked.
-      duplicateBlocked = writeData.duplicate_write === true && writeData.sheet_written === false;
+      // Idempotent replay: a duplicate is a save only when the original was a
+      // verified success. sheet_written:false alone is not enough (#1690).
+      duplicateBlocked = writeData.duplicate_write === true
+        && writeData.sheet_written === false
+        && writeData.sheet_write === 'success'
+        && writeData.proof_mismatch !== true;
       // QA-3: as in the screenshot lane, a duplicate here is already-logged.
       if (duplicateBlocked) writeStatusState = ALREADY_LOGGED_STATE;
       if (!duplicateBlocked) {

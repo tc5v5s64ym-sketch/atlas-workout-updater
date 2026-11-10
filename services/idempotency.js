@@ -9,6 +9,11 @@ const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
 // duplicates so a fast crash-then-retry is still refused. Either way the
 // composite-key sheet dedupe (INVARIANTS W1–W3 second line of defense) guards
 // against an actual double-write; this only decides whether the retry proceeds.
+// `completed` is a verified finish only. `partial` and `unverified` are also
+// terminal — a retry must replay them, never append again — but they are not
+// success. Only `failed` is retryable.
+const TERMINAL_NON_SUCCESS = new Set(['partial', 'unverified']);
+const SETTLED_STATUSES = new Set(['completed', 'partial', 'unverified']);
 const STALE_IN_PROGRESS_MS = 5 * 60 * 1000;
 
 // Durable store: the writeRecords map is write-through persisted to a single
@@ -176,8 +181,9 @@ function beginWrite(writeId, metadata = {}, options = {}) {
     persist();
   }
   // A 'failed' record is retryable: a prior attempt released without committing,
-  // so fall through and start a clean attempt. Only 'in_progress' / 'completed'
-  // records are genuine duplicates that must be refused or replayed.
+  // so fall through and start a clean attempt. 'completed', 'partial', and
+  // 'unverified' are settled: replay them, never start a second append.
+  // 'in_progress' is a duplicate too.
   if (existing && existing.status !== 'failed') {
     persist(); // pruneExpired above may have dropped other expired records
     // Return a record isolated from the store: { ...existing } is only a shallow
@@ -215,6 +221,100 @@ function beginWrite(writeId, metadata = {}, options = {}) {
   };
 }
 
+function sheetWriteOf(response) {
+  if (!response || typeof response !== 'object') return null;
+  if (typeof response.sheet_write === 'string') return response.sheet_write;
+  const data = response.data;
+  if (data && typeof data === 'object' && typeof data.sheet_write === 'string') return data.sheet_write;
+  return null;
+}
+
+// A committed write whose finalization failed must not be stored as success.
+// The caller may still pass sheet_write:'success' (the historical lie). Rewrite
+// that word on the object the route returns and the object the receipt stores,
+// so the body and the record cannot disagree.
+function forceHonestOutcome(response) {
+  const targets = [];
+  if (response && typeof response === 'object') targets.push(response);
+  if (response && response.data && typeof response.data === 'object' && !Array.isArray(response.data)) {
+    targets.push(response.data);
+  }
+  for (const obj of targets) {
+    if (obj.post_processing_error !== true) continue;
+    const verdict = obj.log_write_verification;
+    if (verdict && verdict.verified === true) continue;
+    if (obj.sheet_write === 'partial' || obj.sheet_write === 'unverified') continue;
+    obj.sheet_write = 'unverified';
+    obj.proof_mismatch = true;
+  }
+}
+
+function receiptStatusFor(response) {
+  const sheetWrite = sheetWriteOf(response);
+  if (sheetWrite === 'partial') return 'partial';
+  if (sheetWrite === 'unverified') return 'unverified';
+  return 'completed';
+}
+
+function stampIdempotencyStatus(response, status) {
+  const touch = (obj) => {
+    if (!obj || typeof obj !== 'object') return;
+    if (typeof obj.idempotency_status === 'string') obj.idempotency_status = status;
+  };
+  touch(response);
+  if (response && response.data && typeof response.data === 'object') touch(response.data);
+}
+
+function isSettledReceipt(status) {
+  return SETTLED_STATUSES.has(status);
+}
+
+// How a retried write_id may be answered. A settled non-success replays as
+// that same word at HTTP 500 — never as a skipped_duplicate save.
+function duplicateReplay(record, writeId) {
+  const response = (record && record.response) || {};
+  const wrapped = response
+    && typeof response === 'object'
+    && typeof response.sheet_write !== 'string'
+    && response.data
+    && typeof response.data === 'object'
+    && typeof response.data.sheet_write === 'string';
+  const source = wrapped ? response.data : response;
+  const sheetWrite = sheetWriteOf(response);
+  const status = record && record.status;
+  const outcome = TERMINAL_NON_SUCCESS.has(status) || TERMINAL_NON_SUCCESS.has(sheetWrite)
+    ? ((status === 'partial' || sheetWrite === 'partial') ? 'partial' : 'unverified')
+    : ((source && source.proof_mismatch === true && sheetWrite !== 'success' && sheetWrite !== 'skipped_duplicate')
+      ? 'unverified'
+      : null);
+  if (outcome) {
+    const body = {
+      ...source,
+      duplicate_write: true,
+      write_id: writeId,
+      idempotency_status: outcome,
+      sheet_write: outcome
+    };
+    if (outcome === 'unverified') {
+      body.sheet_written = false;
+      body.proof_mismatch = true;
+    }
+    return {
+      terminal: true,
+      httpStatus: 500,
+      message: outcome === 'partial'
+        ? 'Duplicate write_id; the original write was only partial and is not a confirmed save.'
+        : 'Duplicate write_id; the original write was unverified and cannot be confirmed as saved.',
+      body
+    };
+  }
+  return {
+    terminal: false,
+    httpStatus: status === 'completed' ? 200 : 409,
+    completed: status === 'completed',
+    source
+  };
+}
 function completeWrite(writeId, token, response = {}, options = {}) {
   const normalizedWriteId = normalizeWriteId(writeId);
   if (!normalizedWriteId) return false;
@@ -223,13 +323,25 @@ function completeWrite(writeId, token, response = {}, options = {}) {
   const existing = writeRecords.get(normalizedWriteId);
   if (!existing || existing.token !== token) return false;
 
+  forceHonestOutcome(response);
+  const status = receiptStatusFor(response);
+  stampIdempotencyStatus(response, status);
+
   const now = options.now || Date.now();
+  const settledAt = new Date(now).toISOString();
+  const stored = {
+    ...response,
+    ...(response && response.data && typeof response.data === 'object' && !Array.isArray(response.data)
+      ? { data: { ...response.data } }
+      : {})
+  };
   writeRecords.set(normalizedWriteId, {
     ...existing,
-    status: 'completed',
-    completed_at_ms: now,
-    completed_at: new Date(now).toISOString(),
-    response: { ...response }
+    status,
+    ...(status === 'completed'
+      ? { completed_at_ms: now, completed_at: settledAt }
+      : { settled_at_ms: now, settled_at: settledAt }),
+    response: stored
   });
   persist();
   return true;
@@ -381,7 +493,7 @@ function exportLiveReceipts() {
   };
 }
 
-const IMPORTABLE_STATUSES = new Set(['in_progress', 'completed', 'failed']);
+const IMPORTABLE_STATUSES = new Set(['in_progress', 'completed', 'failed', 'partial', 'unverified']);
 
 // Validate ONE incoming record against the shape this store actually persists.
 // Returns null when valid, or the reason it is not.
@@ -397,10 +509,10 @@ function receiptRejectionReason(record) {
   if (record.response !== undefined && record.response !== null && (typeof record.response !== 'object' || Array.isArray(record.response))) {
     return 'response_invalid';
   }
-  // A completed record with no response body cannot replay a lost response, which
+  // A settled record with no response body cannot replay a lost response, which
   // is the one thing carrying it across the boundary is for.
-  if (record.status === 'completed' && (record.response === undefined || record.response === null)) {
-    return 'completed_without_response';
+  if (SETTLED_STATUSES.has(record.status) && (record.response === undefined || record.response === null)) {
+    return record.status === 'completed' ? 'completed_without_response' : 'settled_without_response';
   }
   return null;
 }
@@ -550,6 +662,8 @@ module.exports = {
   failWrite,
   normalizeWriteId,
   resetIdempotencyStore,
+  isSettledReceipt,
+  duplicateReplay,
 
   // The S3 receipt migration seam (§5.3). TEMPORARY — S4 deletes these two with
   // the store itself and proves no caller remains (§6.3 P16).
