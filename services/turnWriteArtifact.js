@@ -109,7 +109,7 @@ const SHEET_WRITE_STATES = new Set([
   'success',
   'unverified',
 ]);
-const IDEMPOTENCY_STATES = new Set(['completed', 'failed', 'in_progress', 'unknown']);
+const IDEMPOTENCY_STATES = new Set(['completed', 'failed', 'in_progress', 'unknown', 'partial', 'unverified']);
 const CLOSEOUT_STATES = new Set([
   'disabled',
   'error',
