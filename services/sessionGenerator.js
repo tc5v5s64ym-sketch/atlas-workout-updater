@@ -182,4 +182,4 @@ function buildSession(state, constraints) {
   return { payload, explanation_inputs, why_today, substitutions_applied, notes };
 }
 
-module.exports = { buildSession, FOCUS_PATTERNS, INJURY_AVOID };
+module.exports = { buildSession, FOCUS_PATTERNS, INJURY_AVOID, DEFAULT_SETS, DEFAULT_TARGET_RIR };
