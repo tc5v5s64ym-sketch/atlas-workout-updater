@@ -49,6 +49,10 @@ const SUPPRESSION_CODES = Object.freeze({
   // services/coach.js findRegisterViolations — celebration / PR vocabulary outside an
   // earned celebrate or praise moment.
   CELEBRATION_VOCAB_OUTSIDE_EARNED_MODE: 'celebration_vocab_outside_earned_mode',
+  // routes/coachOps.js finalizeCoachVoice — the message narration's numeric-grounding
+  // check (#1710): the prose asserted weights/reps/sets, or a plan change, that no
+  // deterministic fact on the /api/coach/message path binds.
+  MESSAGE_NUMERIC_GROUNDING: 'message_numeric_grounding',
   // routes/coachOps.js chat path — the register guard itself was unavailable, so the reply
   // was dropped rather than trusted. The route represents this as a bare string.
   REGISTER_GUARD_UNAVAILABLE: 'register_guard_unavailable',

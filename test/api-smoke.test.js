@@ -696,16 +696,22 @@ test('api smoke: coach/message returns null message when Gemini is unconfigured 
 test('api smoke: coach/message returns Gemini prose when configured', async () => {
   fakeCoachState.configured = true;
   fakeCoachState.throwError = null;
-  fakeCoachState.message = 'Strong work.\n\n* 225 × 5 @2\n\nNext: 235 × 5.';
+  fakeCoachState.message = 'Strong work.\n\n* 225 × 5 @1\n\nNext: 235 × 5.';
   try {
+    // #1710: the narration validator grounds model numbers against the facts —
+    // the fake prose's "Next: 235 × 5" must be bound by rec.next_target, or
+    // the prose suppresses to null. The facts below ground it. RIR 1 vs target
+    // 2 keeps the engine voice from owning the reaction (severity 'hard'), so
+    // the prose can survive finalizeSetVoice at all — RIR 2 vs target 2 would
+    // classify on_target and the deterministic voice would own the turn.
     const { response, body } = await requestJson('/api/coach/message', {
       method: 'POST',
-      body: JSON.stringify({ facts: { exerciseName: 'Bench Press', todaySets: [{ weight: 225, reps: 5, rir: 2 }] } })
+      body: JSON.stringify({ facts: { exerciseName: 'Bench Press', todaySets: [{ weight: 225, reps: 5, rir: 1 }], rec: { target_rir: 2, next_target: { weight: 235, reps: 5 } } } })
     });
     assert.equal(response.status, 200);
     assert.equal(body.data.configured, true);
     assert.equal(body.data.source, 'gemini');
-    assert.equal(body.data.message, 'Strong work.\n\n* 225 × 5 @2\n\nNext: 235 × 5.');
+    assert.equal(body.data.message, 'Strong work.\n\n* 225 × 5 @1\n\nNext: 235 × 5.');
   } finally {
     fakeCoachState.configured = false;
   }
