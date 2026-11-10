@@ -37,6 +37,7 @@ import {
   getPendingSetRevision, setPendingSetRevision,
   getAtlasLastError, setHistoryLoaded,
   persistSessionSnapshot, hydrateSessionSnapshot, clearPersistedSnapshot,
+  confirmResumedSession,
 } from './store.js';
 // PR-F — the "Start this plan" acceptance orchestrator (pure/DI; app.js injects the
 // real store/persist/start/api deps). Identity minting + snapshot + sidecar POST live
@@ -5959,10 +5960,24 @@ function renderResumeNotice(setCount, sets) {
   notice.hidden = false;
 }
 
+// #1692 D1 — ask the server whether a session id is finalized, in the
+// closeoutFinality answer shape. Any failure (network, non-2xx, malformed
+// body) is `{ unknown: true }`: the caller refuses the resume but KEEPS the
+// snapshot, so the next load retries once the check succeeds.
+async function fetchSessionFinality(sessionId) {
+  try {
+    const res = await api(`/api/session/finality?session_id=${encodeURIComponent(sessionId)}`);
+    const fin = res && res.data ? res.data.finalized : undefined;
+    if (typeof fin !== 'boolean') return { unknown: true };
+    return { finalized: fin };
+  } catch { return { unknown: true }; }
+}
+
 // Restore a recent in-progress session on load. Defensive: a malformed/old snapshot
 // is ignored (and cleared), never partially applied. Returns true when a session was
-// resumed (caller re-renders the banner). Read-only restore — no network, no writes.
-function restoreSessionSnapshot() {
+// resumed (caller re-renders the banner). Read-only restore — one finality
+// read (#1692), no writes.
+async function restoreSessionSnapshot() {
   // The store reads + validates the snapshot (recency gate, malformed guard, and the
   // "only resume genuinely-LOGGED work" rule — a snapshot carrying ONLY an engaged
   // plan with no logged sets must NOT silently reactivate guided mode on the next app
@@ -5972,6 +5987,18 @@ function restoreSessionSnapshot() {
   // DOM half: the session_id field, the resume notice, and re-arming guided mode.
   const res = hydrateSessionSnapshot();
   if (!res.resumed) return false;
+  // #1692 D1 — the server is the authority on finality: a snapshot the server
+  // holds finalized (closeout from another tab/device, or a finalize that never
+  // passed this tab's save-path clear) must not resume. Checked BEFORE the DOM
+  // half so no banner or session_id is ever shown for a finalized session.
+  // `unknown` fails closed the same way (the snapshot is kept — see
+  // confirmResumedSession — so the next load retries the check). A snapshot
+  // with no server session id has nothing to check; the local age + date
+  // gates already passed.
+  if (res.sessionId) {
+    const stands = await confirmResumedSession(res.sessionId, fetchSessionFinality);
+    if (!stands) return false;
+  }
   // Restore the stable session_id so re-preview after resume uses the same id.
   if (res.sessionId) {
     const sessionIdEl = typeof document !== 'undefined' ? document.getElementById('log-session-id') : null;
