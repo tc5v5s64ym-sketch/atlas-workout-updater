@@ -169,14 +169,19 @@ test('Failure 2 (Test 7): ambiguous evidence — a mutation-claim reply with no 
   assert.doesNotMatch(json.data.message, /was updated|now calls for/i);
 });
 
-test('Test 3: a genuine proposal ("I can change it… want me to?") passes through unchanged with its plan edit', async () => {
+test('Test 3: a genuine proposal ("I can change it… want me to?") reaches the model — its plan edit is re-resolved by the planner (#1707)', async () => {
   resetCoach();
   coachState.reply = 'I can change that to 3 sets of 8 if you want.';
   coachState.propose_plan_edit = { action: 'replace_plan', exercises: [{ name: 'Seated Row', sets: 3, reps: 8, weight: 200, rir: 1 }] };
   const { res, json } = await post({ message: 'Change it to 3 sets of 8.', context: SEATED_PLAN });
   assert.equal(res.status, 200);
   assert.equal(json.data.message, 'I can change that to 3 sets of 8 if you want.', 'a conditional proposal is not a mutation claim — prose preserved');
-  assert.deepEqual(json.data.propose_plan_edit, { action: 'replace_plan', exercises: [{ name: 'Seated Row', sets: 3, reps: 8, weight: 200, rir: 1 }] }, 'the proposal is preserved');
+  // #1707: the proposal is an operation request only — the planner re-resolves
+  // its numbers from logged history. This file's fixture logs Bench only, so
+  // Seated Row has no prescribable history and the edit drops, fail-closed.
+  // The survive path (planner numbers reach the approval flow) is covered by
+  // test/planEdit1707Route.test.js R1/R4.
+  assert.equal(json.data.propose_plan_edit, null, 'no Seated Row history in this fixture — the unprescribable edit drops');
   assert.equal(json.data.source, 'gemini');
 });
 
@@ -420,18 +425,20 @@ test('explanation ("why did you…") still reaches the model — only factual di
   assert.equal(json.data.source, 'gemini');
 });
 
-test('modification request ("change it to…") still reaches the model and its proposal passes through — not a dispute', async () => {
+test('modification request ("change it to…") still reaches the model and is not a dispute — its plan edit is re-resolved by the planner (#1707)', async () => {
   resetCoach();
   coachState.reply = 'I can change that to 3 sets of 8 if you want.';
   coachState.propose_plan_edit = { action: 'replace_plan', exercises: [{ name: 'Seated Row', sets: 3, reps: 8, weight: 200, rir: 1 }] };
   const { res, json } = await post({ message: 'Change it to 3 sets of 8.', context: SEATED_PLAN });
   assert.equal(res.status, 200);
   assert.equal(coachState.chatReplyCalls, 1, 'an explicit modification request is a proposal turn, not a factual dispute — the model runs');
-  assert.deepEqual(json.data.propose_plan_edit, { action: 'replace_plan', exercises: [{ name: 'Seated Row', sets: 3, reps: 8, weight: 200, rir: 1 }] }, 'the proposal survives to the approval flow');
+  // #1707: no Seated Row history in this fixture, so the planner cannot
+  // prescribe it and the edit drops (see Test 3 above for the survive path).
+  assert.equal(json.data.propose_plan_edit, null, 'the unprescribable edit drops — it never reaches the approval flow with model numbers');
   assert.equal(json.data.source, 'gemini');
 });
 
-test('natural-language change request ("Can we change the plan to 3x8?") reaches the model, not the dispute path (Codex #1126)', async () => {
+test('natural-language change request ("Can we change the plan to 3x8?") reaches the model, not the dispute path (Codex #1126) — its plan edit is re-resolved by the planner (#1707)', async () => {
   resetCoach();
   coachState.reply = 'Sure — I can change Seated Row to 3 sets of 8. Want me to?';
   coachState.propose_plan_edit = { action: 'replace_plan', exercises: [{ name: 'Seated Row', sets: 3, reps: 8, weight: 200, rir: 1 }] };
@@ -439,6 +446,8 @@ test('natural-language change request ("Can we change the plan to 3x8?") reaches
   assert.equal(res.status, 200);
   assert.equal(coachState.chatReplyCalls, 1, 'a request-framed change reaches the model — it is NOT short-circuited as a factual dispute');
   assert.doesNotMatch(json.data.message, /haven't changed it/i, 'the athlete is not wrongly told nothing changed on a change request');
-  assert.deepEqual(json.data.propose_plan_edit, { action: 'replace_plan', exercises: [{ name: 'Seated Row', sets: 3, reps: 8, weight: 200, rir: 1 }] }, 'the proposal is preserved so the approval flow can proceed');
+  // #1707: no Seated Row history in this fixture, so the planner cannot
+  // prescribe it and the edit drops (see Test 3 above for the survive path).
+  assert.equal(json.data.propose_plan_edit, null, 'the unprescribable edit drops — it never reaches the approval flow with model numbers');
   assert.equal(json.data.source, 'gemini');
 });
