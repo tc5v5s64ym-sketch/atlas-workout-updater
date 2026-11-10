@@ -14,7 +14,7 @@ Read in this order:
 4. [`docs/CONTROLLED_TECHNICAL_WRITING.md`](docs/CONTROLLED_TECHNICAL_WRITING.md) — the one writing standard for plans, reviews, failure reports, handoffs, and implementation summaries. Controlled technical writing inspired by ASD-STE100; no formal ASD-STE100 compliance is claimed. The rules live only in that file.
 5. Relevant specs, invariants, tests, and evidence ledgers.
 
-Standing coordination rules (adopted 2026-11-03, issue #1650; amended 2026-11-05 per the Astra disposition on #1650) live in [`CLAUDE.md`](CLAUDE.md); this file does not restate them.
+Standing coordination rules (adopted 2026-11-03, issue #1650; consolidated 2026-11-10, issue #1698) live in [`docs/OPERATING_RULES.md`](docs/OPERATING_RULES.md); this file does not restate them.
 
 Legacy wording map: wherever an active governance document says **Claude** as the implementation agent, read it as **the approved active implementation agent**. The coordinator — not the implementation agent — is the merge operator (see `CLAUDE.md`). Wherever it says **Codex review or comments are advisory**, read it as **the optional advisory audit is advisory**; the peer review (Atlas Contract / Systems Review) is required on every PR and is never advisory. No agent is reduced to reviewer status when it is the active builder. `CLAUDE.md` keeps its filename for historical continuity and stays the canonical brief. There is no second canonical brief.
 
