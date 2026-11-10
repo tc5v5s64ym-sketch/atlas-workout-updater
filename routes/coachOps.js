@@ -36,6 +36,7 @@ const { detectDiscouragement } = require('../services/discouragementSignal');
 const interactionTraceShadow = require('../services/interactionTraceShadow');
 const coachTurnPacketShadow = require('../services/coachTurnPacketShadow');
 const coachResponseSheet = require('../services/coachResponseSheet');
+const { resolvePlanEdit } = require('../services/planEditResolver');
 // Fixed, privacy-safe suppression classification. Only enum codes cross this boundary —
 // never the model draft, the matched phrase, or any free-form validator text.
 const { SUPPRESSION_CODES: CODES, classifyRegisterViolations } = require('../services/suppressionReason');
@@ -1790,6 +1791,13 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // on "Coach is unavailable." Stays under the client budget with network margin.
       const { reply, propose_edit, propose_note, propose_constraint, propose_plan_edit } =
         await coach.generateChatReply({ message, context: llmContext, history }, { timeoutMs: COACH_CHAT_TIMEOUT_MS });
+      // #1707 (Astra D-02): a model PROPOSE_PLAN_EDIT may identify a requested
+      // operation only — exercise choice and every prescription field are
+      // resolved here, from logged history, before the edit reaches the client.
+      // Model-supplied weight/reps/sets/RIR never survive this line; an
+      // exercise the planner cannot prescribe drops the edit (fail closed).
+      // Identity-only removes pass through unchanged (see planEditResolver).
+      const resolvedPlanEdit = resolvePlanEdit(propose_plan_edit, allLog, todayIso());
       const hasReply = Boolean(reply && String(reply).trim());
       const personalBestFacts = Object.entries(
         llmContext.athlete_identity && llmContext.athlete_identity.lift_prs
@@ -1903,9 +1911,9 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // proposal (edit/note/constraint) — a proposal must never be dropped just
       // because the prose came back empty. Only a truly empty result (no prose, no
       // proposal) falls through to the deterministic engine fallback below.
-      if (hasSafeReply || propose_edit || safeNote || safeConstraint || propose_plan_edit) {
+      if (hasSafeReply || propose_edit || safeNote || safeConstraint || resolvedPlanEdit) {
         return standardSuccess(req, res, 'Coach chat reply', {
-          message: hasSafeReply ? reply : null, propose_edit: propose_edit || null, propose_note: safeNote, propose_constraint: safeConstraint, propose_plan_edit: propose_plan_edit || null, configured: true, model: coach.coachModel(), source: 'gemini'
+          message: hasSafeReply ? reply : null, propose_edit: propose_edit || null, propose_note: safeNote, propose_constraint: safeConstraint, propose_plan_edit: resolvedPlanEdit || null, configured: true, model: coach.coachModel(), source: 'gemini'
         });
       }
       // Empty reply and no proposal → fall through to the deterministic fallback below.
