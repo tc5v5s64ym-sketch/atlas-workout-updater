@@ -115,7 +115,6 @@ const { success: standardSuccess, error: standardError } = require('./response')
 const sessionModule = require('./services/session');
 const { createTtlCache } = require('./services/cache');
 const { parseWorkoutScreenshot } = require('./services/vision');
-const coach = require('./services/coach');
 const coachPolish = require('./services/coachPolish');
 const { normalizeExerciseKey, generateLiftCode, hasCuratedLiftCode, makeLiftCodeRegistry, buildExerciseCatalogMap, enrichLogRow, closestExerciseMatches } = require('./services/exerciseEnrichment');
 const { normalizeDurationString } = require('./services/duration');
@@ -1321,32 +1320,6 @@ app.post('/api/suggest-substitute', async (req, res) => {
   return standardSuccess(req, res, 'Substitute recommendation', {
     recommendation: { ...rec, next_target }
   });
-});
-
-// POST /api/session/compile — extract logged sets from conversation history.
-// Called by the frontend when the lifter says "log it" at the end of a
-// conversational session. Gemini reads the chat turns and returns the sets in
-// Atlas slash notation so the normal parse → preview → approve flow can run.
-// READ-ONLY: no Sheets access, no writes.
-app.post('/api/session/compile', async (req, res) => {
-  const history = Array.isArray(req.body && req.body.history) ? req.body.history : [];
-  if (!history.length) {
-    return standardError(req, res, "history array required — log some sets in the chat first, then say 'log it'", null, 400);
-  }
-  if (!coach.isConfigured()) {
-    return standardSuccess(req, res, 'Session compile unavailable — Gemini not configured', {
-      workout_text: null, configured: false
-    });
-  }
-  try {
-    const { workout_text } = await coach.compileSessionFromHistory(history);
-    return standardSuccess(req, res, 'Session compiled', { workout_text });
-  } catch (error) {
-    console.log(JSON.stringify({ event: 'session_compile_error', error: error.message }));
-    return standardSuccess(req, res, 'Session compile failed', {
-      workout_text: null, error: error.message
-    });
-  }
 });
 
 // GET /api/coaching-notes — return all notes from the Coaching_Notes tab.

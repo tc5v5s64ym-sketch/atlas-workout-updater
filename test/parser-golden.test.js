@@ -1670,11 +1670,11 @@ test('PARSE-3 guard: warm-up bare pairs and single sets still parse (no over-rej
 // QA-2 — slash CHAIN shapes must parse as reps-per-set, not reps/RIR.
 //
 // Two producers emit chains the shorthand grammar used to drop or misread:
-//  (a) the session-compile prompt (services/coach.js buildCompileSystemPrompt)
-//      instructs "{exercise} {weight} {reps}/{rir}", "omit the /rir if not
-//      mentioned" — with no RIR mentioned the model emits slash-terminated
-//      segments ("115 8/ 115 8/ 115 7"), which parseDaleShorthand silently
-//      dropped (only the final, slash-free segment survived);
+//  (a) no-RIR slash notation ("{exercise} {weight} {reps}/{rir}", "/rir
+//      omitted when not mentioned") — with no RIR mentioned the emitted text
+//      carries slash-terminated segments ("115 8/ 115 8/ 115 7"), which
+//      parseDaleShorthand silently dropped (only the final, slash-free
+//      segment survived);
 //  (b) hand-typed chains ("115 8/8/7", "140 10/10") — multi-slash tokens were
 //      unparseable, and an equal pair was silently read as ONE set whose RIR
 //      equalled its reps.
@@ -1728,8 +1728,8 @@ test('QA-2: full defect sentence — both exercises, every set, nothing unresolv
   assert.deepEqual(byName['Seated Row'], [[140, 10, null], [140, 10, null]]);
 });
 
-test('QA-2: compile round-trip — the prompt\u2019s documented no-RIR output shape parses set-for-set', () => {
-  // buildCompileSystemPrompt documents "{exercise} {weight} {reps}/{rir}" with
+test('QA-2: no-RIR slash-chain round-trip — the documented no-RIR output shape parses set-for-set', () => {
+  // No-RIR slash notation documents "{exercise} {weight} {reps}/{rir}" with
   // the /rir omitted when not mentioned; emitted lines chain one segment per
   // set on a single line, one exercise per line. Feeding that exact shape
   // back through the parser must reproduce the session set-for-set.

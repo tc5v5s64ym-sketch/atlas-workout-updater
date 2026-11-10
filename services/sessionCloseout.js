@@ -24,6 +24,10 @@ const { computePlanState } = require('./sessionPlanExecutor');
  *   null  — plan is not yet complete (or no plan is active).
  *   object — all planned exercises are done; exerciseCount and planNames reflect
  *             the original plan (not the logged names).
+ *
+ * #1691 — planned entries that carry `sets` are held to that count by
+ * computePlanState. One logged set does not close out a 3-set slot. Callers
+ * that pass bare names (no prescribed count) keep the legacy contract.
  */
 function computeCloseout(planned, completed) {
   if (!Array.isArray(planned) || !planned.length) return null;
