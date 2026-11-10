@@ -170,6 +170,20 @@ const SNAPSHOT_KEY = 'atlas_session_snapshot_v1';
 const SNAPSHOT_SHAPE_VERSION = 6;
 const SNAPSHOT_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 
+// #1692 — the snapshot carries the training-day date (owner-device local
+// calendar date, YYYY-MM-DD, same convention as services/sessionId.js
+// getLocalDateString). Resume requires date equality: a snapshot saved at
+// 23:30 must not resume at 07:00 the next morning even though it is only
+// 7.5 h old. The date is derived from `ts` when the field is absent (pre-fix
+// snapshots), so the gate also covers snapshots written before this change.
+const SNAPSHOT_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+export function snapshotLocalDate(ts) {
+  const d = new Date(ts);
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${month}-${day}`;
+}
+
 function storage() {
   // Read the global at call time so browser (real localStorage) and Node tests
   // (which set globalThis.localStorage to a fake) both work.
@@ -194,6 +208,7 @@ export function persistSessionSnapshot(sessionId) {
     store.setItem(SNAPSHOT_KEY, JSON.stringify({
       v: SNAPSHOT_SHAPE_VERSION,
       ts: Date.now(),
+      session_date: snapshotLocalDate(Date.now()),
       sessionLog: log,
       sessionCompleted: _sessionCompleted.value,
       activePlannedSession: plan,
@@ -222,6 +237,18 @@ export function hydrateSessionSnapshot() {
     // newer fields (they restore as null/[]), never rejected on a deploy.
     const versionOk = snap && Number.isInteger(snap.v) && snap.v >= 1 && snap.v <= SNAPSHOT_SHAPE_VERSION;
     if (!versionOk || typeof snap.ts !== 'number' || (Date.now() - snap.ts) > SNAPSHOT_MAX_AGE_MS) {
+      clearPersistedSnapshot();
+      return { resumed: false };
+    }
+    // #1692 D2 — the 12 h wall-clock age is not a date test: a snapshot saved
+    // at 23:30 would otherwise resume at 07:00 the next morning as the same
+    // session. The snapshot's training-day date must equal today's date
+    // (owner-device local calendar). A pre-fix snapshot without the field
+    // derives its date from `ts`, so the gate covers it too.
+    const snapDate = (typeof snap.session_date === 'string' && SNAPSHOT_DATE_RE.test(snap.session_date))
+      ? snap.session_date
+      : snapshotLocalDate(snap.ts);
+    if (snapDate !== snapshotLocalDate(Date.now())) {
       clearPersistedSnapshot();
       return { resumed: false };
     }
@@ -263,6 +290,43 @@ export function hydrateSessionSnapshot() {
       hasPlan: !!_activePlannedSession.value,
     };
   } catch { clearPersistedSnapshot(); return { resumed: false }; }
+}
+
+// #1692 D1 — roll a locally-hydrated resume back out of the slice. The
+// caller (app.js restore) runs this when the server says the resumed session
+// is finalized — or when finality could not be established. `clearPersisted`
+// defaults to true (a finalized session's snapshot is garbage); pass false
+// for the unknown case so a transient check failure does not DELETE the
+// athlete's in-progress snapshot — the next load retries the check.
+export function rollbackResumedSnapshot({ clearPersisted = true } = {}) {
+  resetSessionStore();
+  if (clearPersisted) clearPersistedSnapshot();
+}
+
+// #1692 D1 — confirm a locally-hydrated resume against the server's closeout
+// finality. `checkFinality(sessionId)` resolves to the
+// services/closeoutFinality.js answer shape: `{ finalized: boolean }`, or
+// `{ unknown: true }` when finality could not be established. Returns true
+// when the resume stands. A snapshot with no server session id has nothing
+// to check (the local age + date gates already passed); a finalized session
+// is rolled back and its snapshot cleared; an UNKNOWN answer fails closed
+// (refuse the resume) but KEEPS the persisted snapshot so the next load can
+// retry once the check succeeds. A throwing checker is `unknown`.
+export async function confirmResumedSession(sessionId, checkFinality) {
+  if (!sessionId) return true;
+  let result;
+  try {
+    result = typeof checkFinality === 'function' ? await checkFinality(sessionId) : { unknown: true };
+  } catch { result = { unknown: true }; }
+  if (result && result.finalized === true) {
+    rollbackResumedSnapshot({ clearPersisted: true });
+    return false;
+  }
+  if (!result || result.unknown === true || result.finalized !== false) {
+    rollbackResumedSnapshot({ clearPersisted: false });
+    return false;
+  }
+  return true;
 }
 
 // Remove the persisted snapshot (storage only — the caller hides the resume notice).

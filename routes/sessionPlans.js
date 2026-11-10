@@ -22,6 +22,7 @@ const capture = require('../services/sessionPlanCapture');
 const setsCapture = require('../services/sessionPlanSetsCapture');
 const { deriveImplicitRecommendation } = require('../services/implicitRecommendation');
 const { ITEM_OUTCOMES, CLOSEOUT_STATUSES } = require('../services/sessionPlanEvents');
+const { isSessionFinalized } = require('../services/closeoutFinality');
 const { CONFIDENCE, REVISION_SOURCES } = require('../services/sessionPlanLedger');
 const { nextAvailableSessionId } = require('../services/sessionId');
 const { sessionPlansColumns, logCleanedColumns, effortColumns } = require('../config/columns');
@@ -315,6 +316,28 @@ module.exports = function registerSessionPlanRoutes(deps = {}) {
       target_rir: derivation.target_rir,
     }]);
     return standardSuccess(req, res, 'Session_Plan_Sets implicit', { session_plan_sets: result, derivation });
+  });
+
+  // ── Session finality read (#1692 D1) ──────────────────────────────────────
+  // GET /api/session/finality?session_id=… — the resume path's server check.
+  // Read-only: answers whether Session_Plans holds this session as `finalized`
+  // (services/closeoutFinality.js, the same reader the undo guard uses), so a
+  // snapshot finalized from another tab/device — or by a finalize that never
+  // passed this tab's save path — cannot resurrect locally. `unknown` fails
+  // closed with 503 (mirroring the undo route): the caller refuses the resume
+  // but KEEPS the snapshot so the next load can retry.
+  router.get('/api/session/finality', async (req, res) => {
+    const sessionId = _str(req.query && req.query.session_id);
+    if (!sessionId) return standardError(req, res, 'session_id is required', null, 400);
+    const finality = await isSessionFinalized(sessionId);
+    if (finality.unknown) {
+      return standardError(
+        req, res,
+        'Atlas could not verify whether this workout was already completed. Nothing was changed.',
+        { error_code: 'session_finality_check_unavailable' }, 503
+      );
+    }
+    return standardSuccess(req, res, 'Session finality', { session_id: sessionId, finalized: finality.finalized === true });
   });
 
   return router;
