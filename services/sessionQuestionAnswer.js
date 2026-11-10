@@ -15,6 +15,7 @@
 
 const { canonicalizeExerciseName } = require('./workoutTextParser');
 const { unresolvableExerciseReference, unresolvedExerciseAsk, namesDifferentExercise } = require('./explicitExerciseReference');
+const { planStateFromContext } = require('./sessionPlanExecutor');
 
 // Which session attribute(s) the message is asking about. A message may ask for
 // several at once ("how many reps and rir").
@@ -276,12 +277,25 @@ function currentLiftFromContext(clientContext) {
   const planLifts = [...new Set((Array.isArray(cc.current_plan) ? cc.current_plan : [])
     .map(p => p && p.name).filter(Boolean))];
   if (planLifts.length === 1) return { current: planLifts[0], candidates: planLifts };
+  // #1691 — raw slot_evidence, scored by the server, names the current lift.
+  // A client plan_state that already dropped a 1-of-3 slot does not. A valid
+  // evidence result with nothing remaining does not fall through to that list.
+  if (planLifts.length > 1 && cc.slot_evidence) {
+    const serverState = planStateFromContext(cc);
+    if (serverState && Array.isArray(serverState.remaining)) {
+      if (serverState.remaining.length) {
+        return { current: serverState.remaining[0], candidates: serverState.remaining };
+      }
+      return { current: null, candidates: [] };
+    }
+  }
   // F10S3 (owner smoke 2026-07-18): the canonical selector's verdict outranks the
   // name set-difference below — an IN-PROGRESS multi-set lift is still REMAINING
   // even though its name already appears in plan_completed (attribution evidence is
   // not completion), so a mid-set "RIR?" answers for the lift the athlete is
   // standing at, exactly like the rail/pin. plan_state.remaining is the client
-  // selector's output (validated shape only; strings, trimmed).
+  // selector's output (validated shape only; strings, trimmed). Old clients that
+  // send remaining without a planned array keep this path.
   if (planLifts.length > 1 && cc.plan_state && Array.isArray(cc.plan_state.remaining)) {
     const remaining = cc.plan_state.remaining
       .filter(x => typeof x === 'string' && x.trim())

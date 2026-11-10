@@ -14,6 +14,13 @@
  *      This covers the "Rows" (plan) vs "Barbell Row" (logged) identity mismatch
  *      when both carry the same lift_code.
  *
+ * SET-COUNT RULE (#1691): when ANY planned entry carries a positive integer
+ * `sets` (the prescription), that slot completes only once the performed-set
+ * count reaches it. One logged set does not finish a 3-set slot. Slots in the
+ * same plan with no `sets` still complete on the first attributed match. When
+ * NO planned entry carries `sets`, the legacy one-match-completes rule is
+ * unchanged (callers that pass bare names keep their contract).
+ *
  * planned[] and completed[] in the RETURN value are always string arrays
  * (names only) so downstream consumers see a stable shape.
  *
@@ -29,6 +36,11 @@
 // (remainingSlots/isComplete) instead of the lossy route-local plan_state name array.
 // Server-only module; the browser uses its own inline twins, so this require is safe.
 const { remainingSlots, isComplete: sessionIsComplete } = require('./workoutSession');
+// The F10 selector is the ONE completion rule (set-count, variant tiers, explicit
+// id outcomes). The server runs it; the client sends raw evidence and reconciles
+// to this result instead of having its plan_state verdict trusted. Same module the
+// browser already imports — not a second copy of the rule.
+const { planSlotStatuses } = require('../src/app/planSlotStatuses.js');
 
 function toRecord(entry) {
   if (typeof entry === 'string') {
@@ -38,7 +50,16 @@ function toRecord(entry) {
   if (entry && typeof entry === 'object') {
     const name = String(entry.name || '').trim();
     const liftCode = String(entry.liftCode || entry.lift_code || '').trim();
-    return name ? { name, liftCode } : null;
+    // `sets` is the prescribed count on a PLANNED entry. It is ignored for the
+    // legacy name-match path; computePlanState reads it only when deciding
+    // whether the set-count rule is engaged. `performedSets` is a completed-side
+    // count (one record standing for N logged sets). Absent, each completed
+    // record counts as one performed set.
+    const setsNum = Number(entry.sets);
+    const performedNum = Number(entry.performedSets !== null && entry.performedSets !== undefined ? entry.performedSets : entry.performed_sets);
+    const sets = Number.isInteger(setsNum) && setsNum >= 1 ? setsNum : null;
+    const performedSets = Number.isInteger(performedNum) && performedNum >= 0 ? performedNum : null;
+    return name ? { name, liftCode, sets, performedSets } : null;
   }
   return null;
 }
@@ -73,6 +94,39 @@ function normalizeExerciseName(name) {
 function computePlanState(planned, completed) {
   const planRecs  = toRecords(planned);
   const doneRecs  = toRecords(completed);
+
+  // #1691 — prescription is known. A slot with `sets` stays remaining until
+  // that many performed sets are attributed. Each completed record contributes
+  // `performedSets` when the caller counted already, otherwise 1. Attribution
+  // is still exact name, then lift code, and still claims at most one slot per
+  // record (two same-named slots do not both close from one log). No substring
+  // tier here — variant/abbreviation attribution lives in the F10 selector,
+  // which planStateFromContext runs when the client sends slot_evidence.
+  if (planRecs.some(r => r.sets !== null && r.sets !== undefined)) {
+    const performed = new Array(planRecs.length).fill(0);
+    const slotDone = new Array(planRecs.length).fill(false);
+    for (const d of doneRecs) {
+      const dName = normalizeExerciseName(d.name);
+      const dCode = d.liftCode ? d.liftCode.toLowerCase() : '';
+      const add = d.performedSets !== null && d.performedSets !== undefined ? d.performedSets : 1;
+      let idx = planRecs.findIndex((r, i) => !slotDone[i] && normalizeExerciseName(r.name) === dName);
+      if (idx === -1 && dCode) {
+        idx = planRecs.findIndex((r, i) => !slotDone[i] && r.liftCode && r.liftCode.toLowerCase() === dCode);
+      }
+      if (idx === -1) continue;
+      performed[idx] += add;
+      const need = planRecs[idx].sets;
+      if (need === null || need === undefined || performed[idx] >= need) slotDone[idx] = true;
+    }
+    const remaining = planRecs.filter((_r, i) => !slotDone[i]).map(r => r.name);
+    const planArr = planRecs.map(r => r.name);
+    return {
+      planned:    planArr,
+      completed:  doneRecs.map(r => r.name),
+      remaining,
+      isComplete: planArr.length > 0 && remaining.length === 0
+    };
+  }
 
   // F10 — authoritative completion identity: attribute each logged completion to AT
   // MOST ONE planned slot (greedy, in plan order), rather than broadcasting a done
@@ -271,16 +325,111 @@ function clampCursorAfterRemoval(index, removedIdx, newLength) {
  *
  * Returns the computePlanState result, or null when there is no authoritative
  * session state. Pure — no I/O.
+ *
+ * #1691 — when the client sends `slot_evidence` (the plan slots, the explicit
+ * item outcomes, the logged names, and the per-set log — NOT a completion
+ * verdict), that evidence is run through the F10 selector HERE and the result
+ * is the plan state. A client-sent `plan_state` does not outrank it. Old
+ * clients that omit slot_evidence keep the previous order: their plan_state
+ * verdict, else the name matcher.
  */
+const SLOT_EVIDENCE_MAX = 50;
+const SLOT_LOG_MAX = 200;
+const SLOT_OUTCOMES = new Set(['completed', 'skipped', 'substituted']);
+
+function _cleanEvidenceStr(v, max) {
+  if (typeof v !== 'string') return '';
+  const t = v.trim();
+  return t ? t.slice(0, max) : '';
+}
+
+function planStateFromSlotEvidence(evidence) {
+  if (!evidence || typeof evidence !== 'object' || Array.isArray(evidence)) return null;
+  if (!Array.isArray(evidence.exercises) || evidence.exercises.length === 0) return null;
+  const exercises = [];
+  for (const ex of evidence.exercises.slice(0, SLOT_EVIDENCE_MAX)) {
+    if (!ex || typeof ex !== 'object') continue;
+    const name = _cleanEvidenceStr(ex.name || ex.canonicalName || ex.canonical, 120);
+    if (!name) continue;
+    const setsNum = Number(ex.sets);
+    const slot = {
+      name,
+      canonicalName: name,
+      liftCode: _cleanEvidenceStr(ex.liftCode || ex.lift_code, 40),
+      plan_item_id: ex.plan_item_id !== null && ex.plan_item_id !== undefined ? _cleanEvidenceStr(String(ex.plan_item_id), 80) : null,
+    };
+    if (Number.isInteger(setsNum) && setsNum >= 1 && setsNum <= 99) slot.sets = setsNum;
+    exercises.push(slot);
+  }
+  if (!exercises.length) return null;
+
+  const items = [];
+  if (Array.isArray(evidence.items)) {
+    for (const it of evidence.items.slice(0, SLOT_EVIDENCE_MAX)) {
+      if (!it || typeof it !== 'object') continue;
+      const id = it.plan_item_id !== null && it.plan_item_id !== undefined ? _cleanEvidenceStr(String(it.plan_item_id), 80) : '';
+      const outcome = _cleanEvidenceStr(it.outcome, 20);
+      if (!id || !SLOT_OUTCOMES.has(outcome)) continue;
+      items.push({ plan_item_id: id, outcome });
+    }
+  }
+
+  const completed = [];
+  if (Array.isArray(evidence.completed)) {
+    for (const c of evidence.completed.slice(0, SLOT_EVIDENCE_MAX)) {
+      if (typeof c === 'string') {
+        const name = _cleanEvidenceStr(c, 120);
+        if (name) completed.push(name);
+      } else if (c && typeof c === 'object') {
+        const name = _cleanEvidenceStr(c.name || c.exercise, 120);
+        if (!name) continue;
+        const liftCode = _cleanEvidenceStr(c.liftCode || c.lift_code, 40);
+        completed.push(liftCode ? { name, liftCode } : name);
+      }
+    }
+  }
+
+  // Always an array, even when the client sent none. The selector's set-count
+  // rule engages only when sessionLog is an array; omitting it would let one
+  // attributed name complete a 3-set slot.
+  const sessionLog = [];
+  if (Array.isArray(evidence.session_log)) {
+    for (const row of evidence.session_log.slice(0, SLOT_LOG_MAX)) {
+      if (!row || typeof row !== 'object') continue;
+      const exercise = _cleanEvidenceStr(row.exercise || row.name, 120);
+      const canonical = _cleanEvidenceStr(row.canonical || row.canonical_exercise, 120);
+      if (!exercise && !canonical) continue;
+      sessionLog.push({ exercise: exercise || canonical, canonical: canonical || exercise });
+    }
+  }
+
+  const statuses = planSlotStatuses({ exercises, items }, completed, sessionLog);
+  const named = statuses.filter(s => s && s.name);
+  const planned = named.map(s => s.name);
+  if (!planned.length) return null;
+  const done = named.filter(s => s.status === 'completed').map(s => s.name);
+  const remaining = named.filter(s => s.status === 'pending').map(s => s.name);
+  return {
+    planned,
+    completed: done,
+    remaining,
+    isComplete: remaining.length === 0,
+  };
+}
+
 function planStateFromContext(context) {
   const cc = context && typeof context === 'object' ? context : {};
-  // F10S3 (owner smoke 2026-07-18) — SINGLE completion-state source: when the client
-  // sends the canonical selector's verdict (`plan_state`, computed by
-  // src/app/planSlotStatuses.js — multiplicity-aware, variant/ambiguity-safe), it is
-  // AUTHORITATIVE and this server-side name-matcher is bypassed, so a typed
-  // "what's next?" can never disagree with the rail/pin/recap. Validated + bounded
-  // (strings only, trimmed, capped) and `isComplete` is recomputed here — the client
-  // flag is never trusted. A malformed/absent plan_state falls back to the legacy
+  // #1691 — the server owns slot completion. Raw slot_evidence, run through the
+  // F10 selector, outranks a client-authored plan_state. One logged set on a
+  // 3-set slot stays remaining here even if the client claimed it was done.
+  const fromEvidence = planStateFromSlotEvidence(cc.slot_evidence);
+  if (fromEvidence) return fromEvidence;
+  // F10S3 (owner smoke 2026-07-18) — SINGLE completion-state source for OLD
+  // clients that do not send slot_evidence: when they send `plan_state`
+  // (computed by src/app/planSlotStatuses.js), it is AUTHORITATIVE and the
+  // name-matcher below is bypassed. Validated + bounded (strings only, trimmed,
+  // capped) and `isComplete` is recomputed here — the client flag is never
+  // trusted. A malformed/absent plan_state falls back to the legacy
   // recomputation below (old clients unchanged).
   const ps = cc.plan_state;
   if (ps && typeof ps === 'object' && Array.isArray(ps.planned) && Array.isArray(ps.remaining)) {
@@ -468,6 +617,7 @@ module.exports = {
   applySubstitution,
   clampCursorAfterRemoval,
   planStateFromContext,
+  planStateFromSlotEvidence,
   detectSessionCloseQuestion,
   buildSessionCloseAnswer,
   buildSessionCloseAnswerFromSession,
