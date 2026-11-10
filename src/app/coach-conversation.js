@@ -589,9 +589,8 @@ import { findPlanEntry, planMismatchForLift, formatPlanMismatchLine } from './pl
   //
   // QA-3 — the `ok` case is matched on the state attribute for the same reason,
   // and the unmarked version of it was the worse defect. app.js writes `.ok`
-  // into #logger-status for many actions that write nothing at all — a compile
-  // starting ('Compiling session from conversation…'), a set edit, a preview —
-  // and the observer used to call markReviewSaved() on ANY of them, flipping
+  // into #logger-status for many actions that write nothing at all — a set edit,
+  // a preview — and the observer used to call markReviewSaved() on ANY of them,
   // whatever card was current to "✓ Saved" with no write behind it (live
   // incident, 2026-10-26: an unsaved preview card claimed a save that had
   // written zero rows). Now the approve handler tags its outcome: an ok

@@ -29,7 +29,6 @@ const routeDefinitions = [
   { path: '/api/coach/ask', methods: ['POST'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/coach/health', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/suggest-substitute', methods: ['POST'], public: false, authRequired: true, readOnly: true, writeCapable: false },
-  { path: '/api/session/compile', methods: ['POST'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/debug/config', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/debug/intent-shadow', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/debug/brain-shadow', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },

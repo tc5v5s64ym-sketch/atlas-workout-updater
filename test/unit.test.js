@@ -1088,58 +1088,55 @@ test('live-audit PR2: a malformed SET surfaces a format hint instead of silently
   assert.doesNotMatch(guard, /routeMessageToCoach/, 'the guard itself never calls the coach');
 });
 
-test('live-audit PR3 + QA-1: "log it" with an empty buffer after a save tries the compile fallback before any "nothing new" refusal', () => {
+test('live-audit PR3 + QA-1 + #1706: "log it" with an empty buffer after a save routes to manual entry — never a model compile', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   // The closeout logic lives in runCloseout (handleLogIt is the never-silent wrapper).
   const fn = appSource.slice(
     appSource.indexOf('async function runCloseout()'),
-    appSource.indexOf('async function runCloseout()') + 6000
+    appSource.indexOf('function generateWriteId()')
   );
   assert.ok(fn.length > 0, 'runCloseout must exist');
   // The structured-buffer branch still wins first, so NEW sets logged after a save
   // (sessionLog non-empty) are unaffected.
   const bufferIdx = fn.indexOf('if (getSessionLog().length)');
-  const compileIdx = fn.indexOf('/api/session/compile');
-  assert.ok(bufferIdx >= 0 && bufferIdx < compileIdx, 'the sessionLog branch precedes the compile fallback');
-  // PR3's original pin put the lastWrite "nothing new" refusal BEFORE the compile
-  // fallback, on the premise that new post-save sets always buffer. QA-1 disproved
-  // the premise: a set message whose parse fails buffers nothing (it routes to the
-  // coach), so the refusal dead-ended loggable work the fallback could recover
-  // from the chat history. The refusal is now the TERMINAL status — present, but
-  // only reachable after the compile fallback found nothing new.
-  const nothingNewIdx = fn.lastIndexOf('Nothing new to log since your last save');
-  assert.ok(nothingNewIdx > compileIdx, '"nothing new" is only reached after the compile fallback runs');
+  assert.ok(bufferIdx >= 0, 'the sessionLog branch exists');
+  // #1706: the compile fallback is removed — generated text must never be an
+  // authority for workout rows (Astra D-01: invented `Bench Press 315 12/0`
+  // staged a real preview and a real write).
+  assert.ok(!fn.includes('/api/session/compile'), 'runCloseout must not call /api/session/compile');
+  // The empty-buffer terminal asks the athlete to re-enter the sets instead.
+  assert.match(fn, /Couldn't find any sets in the conversation/, 'the empty-buffer terminal asks for manual entry');
+  // The lastWrite "nothing new" refusal is still the terminal status for the
+  // post-save case.
+  assert.ok(fn.includes('Nothing new to log since your last save'), 'the nothing-new refusal is present');
 });
 
 test('QA-1 repair: a repeat "log it" after a save with no new chat turns refuses "nothing new" and stages no preview', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const fn = appSource.slice(
     appSource.indexOf('async function runCloseout()'),
-    appSource.indexOf('async function runCloseout()') + 6000
+    appSource.indexOf('function generateWriteId()')
   );
   assert.ok(fn.length > 0, 'runCloseout must exist');
   // Independent review of b0c1fd91 (BLOCKING, Finding 1): chat history survives
-  // a save and the compile extractor reads it whole, so the QA-1 ordering fix
-  // alone let a bare repeat "log it" recompile the already-saved sets and
-  // stage them as a fresh preview — approving it wrote the workout a second
-  // time under a NEW session id, where neither the per-preview write_id nor
-  // the per-session duplicate partition can catch it. The repair records a
-  // chat-history watermark (turn count) with every save and scopes closeout
-  // to the turns after it:
+  // a save, so the nothing-new check must scope to the turns after the save's
+  // watermark — otherwise a bare repeat "log it" could re-stage the saved
+  // workout as a fresh preview (under the old compile fallback, approving it
+  // wrote the workout a second time under a NEW session id, where neither the
+  // per-preview write_id nor the per-session duplicate partition can catch it).
+  // The repair records a chat-history watermark (turn count) with every save
+  // and scopes the check to the turns after it:
   const scopeIdx = fn.indexOf('turns.slice(lastWriteTurnCount)');
-  const compileIdx = fn.indexOf('/api/session/compile');
-  assert.ok(scopeIdx >= 0, 'runCloseout scopes the compile input to post-save turns via the save watermark');
-  assert.ok(scopeIdx < compileIdx, 'the post-save scoping is computed before the compile fallback');
-  // With no post-save turns the refusal fires BEFORE the compile call and
-  // returns — no preview is staged, so there is nothing to approve twice.
+  assert.ok(scopeIdx >= 0, 'runCloseout scopes the nothing-new check to post-save turns via the save watermark');
+  // With no post-save turns the refusal fires up front and returns — no preview
+  // is staged, so there is nothing to approve twice.
   const guardIdx = fn.indexOf('if (lastWrite && !newTurns.length)');
-  assert.ok(guardIdx >= 0 && guardIdx < compileIdx, 'the no-new-work refusal precedes the compile fallback');
-  const guardBlock = fn.slice(guardIdx, compileIdx);
+  assert.ok(guardIdx >= 0, 'the no-new-work refusal exists');
+  const guardBlock = fn.slice(guardIdx, guardIdx + 400);
   assert.match(guardBlock, /Nothing new to log since your last save/, 'the refusal is the nothing-new status');
   assert.match(guardBlock, /return;/, 'the refusal returns — it stages no preview');
-  // When new post-save work DOES exist, the compile receives only those turns,
-  // so the QA-1 recovery preview cannot re-stage the saved workout beside it.
-  assert.match(fn, /history: newTurns/, 'the compile fallback receives only post-save turns');
+  // #1706: no compile fallback exists to receive turns at all.
+  assert.ok(!fn.includes('/api/session/compile'), 'runCloseout must not call /api/session/compile');
   // The watermark is recorded at both approve-lane sites that record a save,
   // in lockstep with lastWrite itself.
   const watermarkSites = appSource.match(/lastWriteTurnCount = pendingLastWrite \? currentChatTurnCount\(\) : null;/g) || [];
@@ -1181,17 +1178,16 @@ test('P0 closeout: handleLogIt is a never-silent wrapper around runCloseout', ()
 test('P0 closeout: runCloseout reads the canonical buffer first and never gives a false "no sets" when work exists', () => {
   const src = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   // Window widened 3500 → 6000 (QA-1 repair): the post-save watermark guard now
-  // sits between the canonical check and the compile call, pushing the
-  // compile-failure copy past the old window. Assertions below are unchanged.
+  // sits between the canonical check and the manual-entry terminal.
   const fn = src.slice(src.indexOf('async function runCloseout()'), src.indexOf('async function runCloseout()') + 6000);
   // Canonical source: sessionLog buffer first (what the visible cards were built from).
   const bufIdx = fn.indexOf('if (getSessionLog().length)');
   assert.ok(bufIdx >= 0, 'closeout builds from the sessionLog buffer (canonical set data)');
   // When the buffer is empty it consults the canonical session before declaring nothing.
   assert.match(fn, /hasLoggedWork\(canon\)/, 'checks canonical hasLoggedWork before any "no sets" verdict');
-  // A coach-offline compile failure must NOT become a flat "no sets" — and never a
-  // false "no sets" while canonical work exists.
-  assert.match(fn, /coach may be offline/, 'compile failure says the coach is offline, not "no sets"');
+  // #1706: there is no compile fallback to fail — and no flat "no sets" while
+  // canonical work exists. The empty-buffer terminal is gated on canonHasWork.
+  assert.ok(!fn.includes('/api/session/compile'), 'no model compile in runCloseout (#1706)');
   assert.match(fn, /canonHasWork\s*\?/, 'the "no sets" copy is gated on whether canonical work exists');
 });
 
@@ -6734,12 +6730,9 @@ test('nextAvailableSessionId FAILS CLOSED on total exhaustion — never a reuse'
   );
 });
 
-test('session/compile route is registered as read-only', () => {
+test('session/compile route is REMOVED (#1706: generated text is never an authority for workout rows)', () => {
   const route = routeDefinitions.find(r => r.path === '/api/session/compile');
-  assert.ok(route, '/api/session/compile must be in routeDefinitions');
-  assert.ok(route.authRequired, 'must require auth');
-  assert.ok(route.readOnly, 'must be read-only');
-  assert.ok(!route.writeCapable, 'must not be write-capable');
+  assert.equal(route, undefined, '/api/session/compile must not be registered');
 });
 
 // ── PR 6 — Next-exercise handoff + composer advance ───────────────────────────

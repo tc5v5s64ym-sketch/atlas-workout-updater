@@ -10,9 +10,9 @@
 //
 //   (a) The review card's #logger-status MutationObserver (coach-conversation.js)
 //       called markReviewSaved() on ANY `.status-msg.ok` — including ok statuses
-//       emitted by unrelated actions (a later "log it" compile writes
-//       'Compiling session from conversation…' as `.ok`) — with no write at all
-//       required. The fix keys the Saved claim to the same `data-atlas-state`
+//       emitted by unrelated actions (a later "log it" used to write
+//       'Compiling session from conversation…' as `.ok` before #1706 removed the
+//       compile fallback) — with no write at all required. The fix keys the Saved
 //       marker discipline the ledger-unverified warn already uses: app.js tags
 //       its approve status `write-confirmed` only when that write's response
 //       proved its rows landed, and `already-logged` when the write appended

@@ -7119,25 +7119,22 @@ async function runCloseout() {
   }
 
   // QA-1: the Live-audit Bug #2 "nothing new" refusal used to sit here, ahead of
-  // the compile fallback, on the premise that new sets logged after a save always
-  // buffer (sessionLog non-empty → the branch above). That premise is false: a
-  // set message whose parse fails buffers nothing — it routes to the coach — so
-  // the refusal dead-ended loggable work the compile fallback below can recover
-  // from the chat history. The refusal is now reached only when there is provably
-  // nothing new to compile: as the terminal status at the end of this function
-  // when the fallback found nothing new, or — per the repair below — up front,
-  // when no chat turns exist after the last save's watermark.
+  // the (since removed, #1706) compile fallback, on the premise that new sets
+  // logged after a save always buffer (sessionLog non-empty → the branch
+  // above). That premise is false: a set message whose parse fails buffers
+  // nothing — it routes to the coach — so the refusal dead-ended loggable work.
+  // The refusal is now reached only when there is provably nothing new: as the
+  // terminal status at the end of this function, or — per the repair below —
+  // up front, when no chat turns exist after the last save's watermark.
   const turns = typeof window.getChatHistory === 'function' ? window.getChatHistory() : [];
 
-  // QA-1 repair (independent review of PR #1312, Finding 1): the fallback must
-  // never see the sets the last save already wrote. Chat history survives a
-  // save and the compile extractor reads it whole, so an unscoped compile let
-  // a bare repeat "log it" re-stage the saved workout as a fresh preview — and
-  // approving it wrote the workout a second time under a NEW session id, where
-  // neither the per-preview write_id nor the per-session duplicate partition
-  // can catch it. Scope the compile to the turns logged after the save's
-  // watermark (lastWriteTurnCount); when there are none, the nothing-new
-  // refusal is deterministic — no compile call, no staged preview.
+  // QA-1 repair (independent review of PR #1312, Finding 1): the nothing-new
+  // refusal must never fire while post-save work is still unaccounted for.
+  // Chat history survives a save, so the check scopes to the turns logged
+  // after the save's watermark (lastWriteTurnCount); when there are none, the
+  // refusal is deterministic — no staged preview. (#1706 removed the compile
+  // fallback that used to read those turns: generated text must never be an
+  // authority for workout rows.)
   const newTurns = (lastWrite && lastWriteTurnCount !== null)
     ? turns.slice(lastWriteTurnCount)
     : turns;
@@ -7146,63 +7143,40 @@ async function runCloseout() {
     return;
   }
 
-  // The buffer is empty. Before the LLM compile, check the
-  // canonical session: if it shows completed work (e.g. after a reload the plan +
-  // completions survived but the raw set buffer didn't), the set details aren't in
-  // memory to rebuild — say so honestly and route to manual entry, NEVER the false
-  // "no sets" while the lifter can see logged cards (P0 closeout trust).
+  // The buffer is empty. Check the canonical session: if it shows completed
+  // work (e.g. after a reload the plan + completions survived but the raw set
+  // buffer didn't), the set details aren't in memory to rebuild — say so
+  // honestly and route to manual entry, NEVER the false "no sets" while the
+  // lifter can see logged cards (P0 closeout trust).
   const canon = typeof getCanonicalSession === 'function' ? getCanonicalSession() : null;
   const AS = (typeof window !== 'undefined' && window.activeSession) || null;
   const canonHasWork = !!(canon && AS && typeof AS.hasLoggedWork === 'function' && AS.hasLoggedWork(canon));
 
   if (!turns.length) {
-    // With a prior save and no conversation to compile from, "nothing new" is
+    // With a prior save and no conversation to recover from, "nothing new" is
     // the accurate terminal status (QA-1: it is a conclusion, not a gate).
     setStatus(loggerStatus, lastWrite
       ? 'Nothing new to log since your last save — log some sets first.'
       : canonHasWork
-        ? "I can see your logged exercises, but their set details aren't in memory to compile (the app may have reloaded). Re-enter the sets in the composer and tap Save — nothing was lost on your sheet."
+        ? "I can see your logged exercises, but their set details aren't in memory to recover (the app may have reloaded). Re-enter the sets in the composer and tap Save — nothing was lost on your sheet."
         : "No conversation yet — log some sets in the chat first, then say 'log it'.", lastWrite ? 'warn' : 'error');
     return;
   }
 
-  setStatus(loggerStatus, 'Compiling session from conversation…', 'ok');
-
-  let workoutText;
-  try {
-    const res = await api('/api/session/compile', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ history: newTurns })
-    });
-    workoutText = res.data?.workout_text || null;
-  } catch (err) {
-    // Compile is the LLM fallback; when it's down, do NOT claim "no sets". Say the
-    // compile is unavailable and route to manual entry.
-    setStatus(loggerStatus, `Couldn't compile the session right now (the coach may be offline). Type your sets in the composer and tap Save — nothing was saved yet.`, 'error');
-    return;
-  }
-
-  if (!workoutText) {
-    // Distinguish a genuine empty conversation from "the compiler found nothing but
-    // the lifter clearly logged work" — never a flat false "no sets" when canonical
-    // state shows completed exercises. With a prior save and no canonical work
-    // outstanding, the compile found nothing new: that is the "nothing new"
-    // terminal status (QA-1), shown only now that the fallback has run.
-    setStatus(loggerStatus, canonHasWork
-      ? "I couldn't recompile your sets from the conversation, but I can see you logged exercises. Re-enter them in the composer and tap Save — nothing was saved yet."
-      : lastWrite
-        ? 'Nothing new to log since your last save — log some sets first.'
-        : "Couldn't find any sets in the conversation — did you log any exercises? You can type them in the composer directly.", lastWrite && !canonHasWork ? 'warn' : 'error');
-    return;
-  }
-
-  setStatus(loggerStatus, '', 'ok');
-  workoutTextInput.value = workoutText;
-  invalidatePreview();
-  // Signal the submit handler to run parse → preview instead of routing to coach.
-  sessionCompiledAwaitingPreview = true;
-  document.getElementById('logger-form').dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+  // #1706 — the model compile fallback is REMOVED. Generated text must never
+  // be an authority for workout rows (Astra D-01: history "I did some
+  // stretching" + invented `Bench Press 315 12/0` staged a real preview and
+  // a real write). The buffer is empty and the deterministic parser already
+  // had its chance on these turns when they were typed — a turn that failed
+  // to parse then will not parse now — so there is nothing deterministic to
+  // recover. Ask the athlete to re-enter the sets; never a flat false
+  // "no sets" when canonical state shows completed exercises.
+  setStatus(loggerStatus, canonHasWork
+    ? "I can see your logged exercises, but their set details aren't in memory to recover (the app may have reloaded). Re-enter the sets in the composer and tap Save — nothing was lost on your sheet."
+    : lastWrite
+      ? 'Nothing new to log since your last save — log some sets first.'
+      : "Couldn't find any sets in the conversation — did you log any exercises? You can type them in the composer directly.", lastWrite && !canonHasWork ? 'warn' : 'error');
+  return;
 }
 
 // One write_id per previewed workout: if the live write is retried (double
@@ -7988,47 +7962,19 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
   // Screenshot upload and manual effort form are end-of-session triggers.
   // If the lifter logged sets conversationally (the editor is empty because each
   // set went to the buffer), rebuild the FULL session so one preview covers both
-  // the workout rows AND the effort data. Prefer the structured buffer; fall back
-  // to the conversational compile only when the buffer is empty.
+  // the workout rows AND the effort data. The structured buffer is the only
+  // source for those rows.
   if (!logRows.length && (file || manualEffort) && getSessionLog().length) {
     const compileDate = mode === 'screenshot' ? '' : (date || getLocalDateString());
     const compileSessionId = mode === 'screenshot' ? '' : (sessionId || generateSessionId(date || getLocalDateString()));
     populateSetRows(buildRowsFromSessionLog());
     logRows = collectLogRows(compileSessionId, compileDate);
   }
-  if (!logRows.length && (file || manualEffort)) {
-    const turns = typeof window.getChatHistory === 'function' ? window.getChatHistory() : [];
-    if (turns.length) {
-      setStatus(loggerStatus, 'Compiling session…', 'ok');
-      try {
-        const compileRes = await api('/api/session/compile', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ history: turns })
-        });
-        const compiledText = compileRes.data?.workout_text;
-        if (compiledText) {
-          // Screenshot mode: leave date_clean and session_id blank so the
-          // server can stamp them with the screenshot-resolved date/session_id
-          // (normalizeLogRowObject falls back to topLevelDate/topLevelSessionId
-          // when the row fields are falsy). Manual effort uses the form date.
-          const compileDate = mode === 'screenshot' ? '' : (date || getLocalDateString());
-          const compileSessionId = mode === 'screenshot' ? '' : (sessionId || generateSessionId(compileDate));
-          workoutTextInput.value = compiledText;
-          try {
-            await rowsFromWorkoutInput();
-            logRows = collectLogRows(compileSessionId, compileDate);
-          } finally {
-            workoutTextInput.value = '';
-            lastParsedWorkoutText = '';
-          }
-        }
-      } catch {
-        // Compilation failed or Gemini unavailable — fall through to effort-only preview
-      }
-      setStatus(loggerStatus, '', 'ok');
-    }
-  }
+  // #1706 — the conversational-compile fallback that used to sit here is
+  // REMOVED: generated text must never be an authority for workout rows
+  // (Astra D-01). With no rows in the editor or the buffer, the closeout
+  // below proceeds as an effort-only preview; the athlete re-enters any sets
+  // in the composer if they want rows with the effort data.
 
   // F10D readiness — a screenshot uploaded WITH workout rows IS a session-closeout
   // signal and must run through the SAME single confirmation as "done" and typed

@@ -7,16 +7,14 @@ const {
   buildCoachSystemPrompt,
   buildPlanSystemPrompt,
   buildChatSystemPrompt,
-  buildCompileSystemPrompt,
 } = require('../services/coach');
 const { PERSONA_CORE, buildPersonaCore } = require('../services/coachPersonaCore');
 
-// The four prompt builders, by the name PR-A2 uses for them.
+// The three prompt builders, by the name PR-A2 uses for them.
 const BUILDERS = [
   ['set-reaction', () => buildCoachSystemPrompt()],
   ['chat', () => buildChatSystemPrompt()],
   ['plan', () => buildPlanSystemPrompt()],
-  ['compile', () => buildCompileSystemPrompt()],
 ];
 
 // ── (2) the module: one frozen persona + iron-rule block ──────────────────────

@@ -23,7 +23,6 @@ const {
   buildCoachSystemPrompt,
   buildPlanSystemPrompt,
   buildChatSystemPrompt,
-  buildCompileSystemPrompt,
 } = require('../services/coach');
 const { PERSONA_CORE } = require('../services/coachPersonaCore');
 const { buildAthleteIdentity } = require('../services/athleteIdentity');
@@ -129,7 +128,6 @@ const BUILDERS = [
   ['set-reaction', () => buildCoachSystemPrompt()],
   ['chat', () => buildChatSystemPrompt()],
   ['plan', () => buildPlanSystemPrompt()],
-  ['compile', () => buildCompileSystemPrompt()],
 ];
 
 for (const [name, build] of BUILDERS) {
