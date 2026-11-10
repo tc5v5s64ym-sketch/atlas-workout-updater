@@ -184,54 +184,10 @@ Governance controls are not permanent by default. A focused governance PR may re
 
 Do not retire a proven write-path, schema/Supabase, security/secret, deterministic invariant, one-authority, owner-reserved, or current-state gate merely because it creates work. Do not add a new governance framework to track retirement.
 
-## Standing coordination rules (adopted 2026-11-03, issue #1650; amended 2026-11-05 per the Astra disposition on #1650)
+## Standing coordination rules
 
-Adopted by Dale on the coordinator's recommendation. These rules govern how the two builder lanes (Hammy, Sunny) and the coordinator work the queue. Issue #1650 is the adoption record; this section is the canonical home.
+The standing coordination rules live in [`docs/OPERATING_RULES.md`](docs/OPERATING_RULES.md) — the single home, adopted 2026-11-03 (issue #1650) and consolidated 2026-11-10 (issue #1698). This brief does not restate them; future rule changes land as PRs to that file.
 
-**Supersession (Astra review, adopted 2026-11-05; disposition on issue #1650, comment 6647810597).** The peer-review model in force since 2026-11-01 supersedes every earlier instruction in this brief and its companion documents that says the implementation agent merges under standing authority, that independent review is advisory, or that the required Atlas Contract / Systems Review is performed by ChatGPT or is triggered only by high-risk surfaces. Where this brief, `AGENTS.md`, or `docs/BUILDER_PORTABILITY.md` still carried such instructions, the Astra fold-in removed them; any surviving copy is superseded by this paragraph and must not be followed.
-
-### Authorization and pace
-
-- **Assignment is authorization.** A coordinator assignment in Slack, or direction from Dale anywhere, is the authorization to start. No lane waits for a separate go, a watch rule, or a confirmation in its own chat. A lane that believes an owner gate applies (deploys, spend, credentials, schema changes, S4 cutover, Phase 5 entry, the CIL ruling) names the gate in the Slack thread and keeps building anything not gated.
-- **Handback authorization.** Assignment authorizes routine delivery communications (handbacks, verdicts, merge-card updates, merge reports) with no separate approval; content-bearing decisions reach Dale only across a named owner gate. (Astra finding 2, adopted verbatim 2026-11-05.)
-- **Start-by and named blocker.** Every assignment carries an implicit start-by of the same working day. A lane that cannot start posts a named blocker instead. Silence is never a status. While an item is open, the lane posts a status at least every few hours during the day.
-- **Peer-review start-by and verdict-due.** Peer reviews carry an explicit start-by, the same as build assignments. The coordinator's ack of a handback names the review start-by (default: same working day); a reviewer who cannot meet it posts a named blocker before it passes. Every review also names a verdict-due as well as a start-by. When a reviewer begins a peer review, they post "started" in the review thread the same working day, so review state is visible before its start-by passes.
-- **Blockers and recovery.** A blocker names its resolution owner, next action, and next checkpoint. A missed deadline triggers a recorded recovery action at the next hourly check, not a repeated status.
-- **Named queue chains.** Assignments name the chain and blast radius (for example, a checker PR before the PR it unblocks), so dependencies are visible before they bite.
-- **Checker versus Dale's value.** When a checker rejects a value Dale set, the checker is fixed to accept it. Dale's value is never overridden or reverted to satisfy the checker. This is a narrow rule, not a blanket presumption that checkers are wrong.
-
-### Review eligibility and merge practice
-
-- **Review eligibility.** Anyone who implemented any part of a PR cannot supply its independent PASS. If no eligible independent reviewer exists, the coordinator records the capacity blocker and brings Dale a concrete recommendation. Self-review, role renaming, and coordinator code review remain prohibited. (Astra finding 3, adopted 2026-11-05.)
-- **Head/base pair evidence.** After any merge, a remaining PASSed PR whose target base moved gets fresh CI on the updated head/base pair plus a peer delta-confirmation (affected surfaces only) before merge; eligibility expires when either SHA changes. This is coordinator merge practice, effective 2026-11-04. The merge-queue / branch-protection machinery is DEFERRED (it brushes Dale's recorded #1572 deferral of branch protection); revisit if lane volume grows. (Astra finding 4, adopted in principle 2026-11-05.)
-
-### Lane mechanics
-
-- **Standing authority for routine posts.** A lane may post routine status, named-blocker, and ack posts in its own threads without a per-post approval. Handbacks, verdicts, merge-card updates, and merge reports are authorized by the assignment itself (see "Handback authorization" above); content-bearing decisions reach Dale only across a named owner gate.
-- **Design calls at kickoff.** Test-input design calls are settled at slice kickoff, or delegated to builder plus coordinator in-thread. They never stall a build mid-slice.
-- **Automatic named-blocker status.** A named-blocker status is posted automatically whenever a decision pends.
-- **Proven push path.** The push path is proven during lane setup, before the first build slice.
-- **Persistent evidence paths.** Long-running evidence (E2E runs and similar) writes to a persistent path under `~/workspace/`, never `/tmp`.
-- **Local-complete / PR-not-landed note.** When a build is complete locally but its Draft PR has not landed by the next queue check, the builder posts a one-line note naming the hold.
-- **Parked-card surfacing.** A lane run parked on a pending approval card surfaces that card — what it asks and when it was requested — in the channel immediately, not at the next queue check. (Adopted 2026-11-05, issue #1650 comment 6667052401; companion to the local-complete / PR-not-landed note. Case in point: an orphaned card blocked the 06:00/08:00/10:00 queue checks for ~4 hours before the hold was named.)
-- **Deflake probe-change rule.** When a deflake item survives two clean full-suite runs without reproducing, the next diagnosis step changes the probe (longer stress, tightened timing, or a different load shape) instead of repeating the same evidence run.
-
-### Assignment, rulings, and direction
-
-- **Assignment pre-check.** Before assigning any item, the coordinator reads the target issue's labels and gate text. If an owner gate exists, the assignment does not go out; the ruling question goes to Dale first, with the work sequenced behind the ruling.
-- **Rulings live on the issue.** Every owner ruling is written onto its GitHub issue the same hour, and any owner-decision label it lifts is removed with the ruling. Lanes verify rulings from the record, never from a relay.
-- **Direction rides fresh posts.** Coordinator direction goes in new top-level channel posts, not inside threads whose reads trip the platform safety screen (the flagged threads stay signal-only via channel/search surfaces).
-- **Deploy notices.** After each production deploy, the coordinator posts a one-line top-level notice naming the live commit, so lane sessions do not run on a stale picture of production.
-
-### Work in progress and record hygiene
-
-- **WIP cap.** A lane does not open a third PR while two of its PRs await the peer lane's review. Peer reviews come before new builds.
-- **Closing keywords and manual close.** Every PR body carries `Fixes #N` / `Closes #N` for each issue it completes. The keyword creates the link and the merge reference — but it does not auto-close the issue: GitHub fires closing keywords only on merges into the repository's default branch, and the live line is the non-default `s3-maintenance`. The coordinator closes each completed issue manually with a reconciliation note at merge. (Diagnosis 2026-11-05: PRs #1651–#1655 all carried valid keywords and merged into `s3-maintenance`; all five issues were closed manually by the coordinator, #1565/#1573/#1583 with an explicit "did not auto-close" note; the #1633/#1636 precedent matches. No template or placement change can make auto-close fire on this branch.)
-- **Early draft visibility.** Within the first working session on an item, the lane pushes its branch and opens the Draft PR. Work in progress is visible on the GitHub record, not only on the lane's machine.
-
-### Deploy practice
-
-- Deploys go in small trains (1–3 PRs with product changes) on Dale's per-deploy approval. The coordinator brings the ask with the merge report instead of letting batches accumulate.
 
 ## Campaign execution loop
 
@@ -325,7 +281,7 @@ The coordinator merges a PR when:
 - no genuine P0/P1, invariant, trust-loop, schema, security, secret, or write-safety problem remains;
 - no real high-severity/systemic defect found by an advisory audit remains unresolved;
 - one-concern scope, branch hygiene, risk label, Vision Alignment Check, and merge card are complete;
-- the peer review (Atlas Contract / Systems Review) is recorded in the merge card with PASS on the exact head — and, when the base moved after the PASS, fresh CI on the exact head/base pair plus a peer delta-confirmation (see "Standing coordination rules");
+- the peer review (Atlas Contract / Systems Review) is recorded in the merge card with PASS on the exact head — and, when the base moved after the PASS, fresh CI on the exact head/base pair plus the carry rules in `docs/OPERATING_RULES.md` ("Head/base-pair evidence and merge routine");
 - the PR is authorized by the campaign or explicit owner instruction; and
 - no owner-reserved authorization remains outstanding.
 
