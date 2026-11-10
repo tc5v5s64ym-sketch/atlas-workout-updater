@@ -32,6 +32,25 @@ test('rejects wrong sets x reps (locked 3x6, explanation says 5x10)', () => {
   assert.ok(r.violations.some((v) => v.type === 'sets_reps'));
 });
 
+test('rejects a word-form sets/reps swap (locked 3x3-6, explanation says 5 sets, 2 reps)', () => {
+  // #1711 audit case C: every digit already appeared, so the digit-set guard passed;
+  // the word-form check must catch the swap the NxM check cannot see.
+  const r = validateCoachExplanation('Do 5 sets, 2 reps at 190 lb.', LOCKED);
+  assert.equal(r.valid, false);
+  assert.ok(r.violations.some((v) => v.type === 'sets_reps'));
+});
+
+test('rejects a reversed word-form sets/reps claim (locked 3x3-6, explanation says 2 reps in 5 sets)', () => {
+  const r = validateCoachExplanation('Do 2 reps in 5 sets at 190 lb.', LOCKED);
+  assert.equal(r.valid, false);
+  assert.ok(r.violations.some((v) => v.type === 'sets_reps'));
+});
+
+test('accepts a word-form sets/reps claim that matches the locked prescription', () => {
+  const r = validateCoachExplanation('Use 190 lb for 3 sets of 4-6 reps, leaving 1-2 reps in the tank.', LOCKED);
+  assert.equal(r.valid, true, JSON.stringify(r.violations));
+});
+
 test('rejects "to failure" when locked RIR is >= 1', () => {
   const r = validateCoachExplanation('Take that last set to failure.', LOCKED);
   assert.equal(r.valid, false);

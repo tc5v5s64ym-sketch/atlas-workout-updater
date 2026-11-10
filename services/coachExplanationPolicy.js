@@ -5,7 +5,8 @@
  *
  * The rule engine owns the numbers; a coach explanation may only *word* them. This module:
  *   - validateCoachExplanation(text, lockedNumbers): flags ONLY clear prescription contradictions
- *     (wrong weight, wrong sets×reps, training-to-failure when RIR is locked ≥ 1). It tolerates
+ *     (wrong weight, wrong sets×reps — in `NxM` form or in "N sets, M reps" word form,
+ *     training-to-failure when RIR is locked ≥ 1). It tolerates
  *     harmless context numbers (dates, percentages, lift codes, rep ranges, RIR ranges that overlap
  *     the locked band, "1–2 in the tank").
  *   - buildTemplatedExplanation(prescription): a short, safe sentence assembled only from locked
@@ -78,6 +79,37 @@ function validateCoachExplanation(text, lockedNumbers = {}) {
       if (setsBad || repsBad) {
         violations.push({ type: 'sets_reps', found: `${sets}x${reps}`, locked: `${lockedNumbers.targetSets}x${min}-${max}` });
       }
+    }
+  }
+  // 2b. Word-form sets × reps — "5 sets, 2 reps", "5 sets of 2-4 reps", "2 reps in 5 sets"
+  // must match the locked prescription exactly like the NxM form above: a swap that
+  // reuses only old digits ("2 sets, 3-5 reps" polished to "5 sets, 2 reps") is still
+  // a prescription contradiction, even though every digit already appeared.
+  if (Number.isFinite(lockedNumbers.targetSets) && lockedNumbers.targetRepRange) {
+    const { min, max } = lockedNumbers.targetRepRange;
+    const checkWordForm = (sets, repsLo, repsHi) => {
+      const setsBad = sets !== lockedNumbers.targetSets;
+      const repsBad = Number.isFinite(min) && Number.isFinite(max) &&
+        (repsLo < min || repsHi > max);
+      if (setsBad || repsBad) {
+        const repPart = repsLo === repsHi ? `${repsLo}` : `${repsLo}-${repsHi}`;
+        violations.push({ type: 'sets_reps', found: `${sets}x${repPart}`, locked: `${lockedNumbers.targetSets}x${min}-${max}` });
+      }
+    };
+    const wordA = /\b(\d{1,2})\s*sets?\s*(?:,|and|of)?\s*(\d{1,2})(?:\s*[-–]\s*(\d{1,2}))?\s*reps?\b/g;
+    let m;
+    while ((m = wordA.exec(scrub)) !== null) {
+      const sets = Number(m[1]);
+      const lo = Number(m[2]);
+      const hi = m[3] !== undefined ? Number(m[3]) : lo;
+      checkWordForm(sets, Math.min(lo, hi), Math.max(lo, hi));
+    }
+    const wordB = /\b(\d{1,2})(?:\s*[-–]\s*(\d{1,2}))?\s*reps?\s*(?:,|in|for|across|over)?\s*(\d{1,2})\s*sets?\b/g;
+    while ((m = wordB.exec(scrub)) !== null) {
+      const lo = Number(m[1]);
+      const hi = m[2] !== undefined ? Number(m[2]) : lo;
+      const sets = Number(m[3]);
+      checkWordForm(sets, Math.min(lo, hi), Math.max(lo, hi));
     }
   }
 
