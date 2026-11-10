@@ -435,7 +435,10 @@ const WORKOUT_COMPLETION_PATTERNS = [
 // PRESCRIPTION signal at least as often as a performance one ("the plan calls for 200 for
 // 10 reps at 1 RIR on Seated Row"), so keying on numerals would reject truthful planning
 // prose; the zero-load rule below covers the bare-enumeration fabrication instead.
-const COMPLETED_WORK_VERB = /\b(?:completed|finished|logged|did|done|hit|knocked out|got through|wrapped up)\b/;
+// "lifted" (#1710): the audit's set-lying probe — "You lifted 315 for 12 reps" —
+// escaped every detector because the verb was missing here, even though it asserts
+// completed work exactly as "logged" or "did" does.
+const COMPLETED_WORK_VERB = /\b(?:completed|finished|logged|did|done|hit|lifted|knocked out|got through|wrapped up)\b/;
 // Zero LOAD in an actual-set enumeration. Genuine bodyweight work carries weight `null`
 // and renders without a load (services/workoutTextParser), so a literal "0 x 8" is always
 // a null-coerced prescription rendered as work — never a real logged set. The lookbehinds
@@ -1751,6 +1754,221 @@ function buildDisputeAnswer(message, context, history, opts) {
   return `The current plan shows ${planLine}. I haven't changed it.`;
 }
 
+// ── message-narration numeric grounding (#1710) ─────────────────────────────
+//
+// /api/coach/message narrates deterministic facts (a just-logged set, or why
+// today's session fits) through the model, and — unlike /api/coach/chat — had
+// no numeric validator on the model prose: finalizeCoachVoice checked effort
+// contradictions and register only. The Astra audit's B1 probes reached the
+// athlete verbatim (plan: an invented Deadlift 315 5x12 + "add 20 next
+// session"; set: "You lifted 315 for 12" + "Next do Deadlift at 225" over a
+// logged 135x8).
+//
+// This enforces the B-02 binding mechanism on the message paths: the route's
+// deterministic facts are adapted into the grounding-context shape the B-02
+// detectors already judge, and the prose is validated with the recap,
+// prescription, and mutation detectors. Ungrounded prose suppresses (the
+// route's existing fail-closed shape — message null, client falls back to
+// templated copy), exactly like the other finalizeCoachVoice suppressors.
+//
+// What grounds what, on this route:
+//   - session_tally ← todaySets for the just-logged lift (the recap ground).
+//     A "You lifted N" claim must match the logged sets.
+//   - current_plan ← rec.next_target for the just-logged lift (the engine's
+//     next-target statement — the ONLY prescription numbers the model was
+//     shown) plus the planned_queue names (name only: the engine authorized
+//     no numbers for a queued lift, so a numeric prescription for one fails
+//     closed).
+//   - recent_sessions ← rec.last_working_sets (the most recent working sets
+//     the model was shown), so a "last time you did…" citation of them is
+//     judged against the real sets instead of failing closed.
+//   - The completion detector is NOT run here: this route has no plan_state /
+//     session_count to judge completion against, and the set voice's own
+//     prompt authorizes citing trend.sessions_analyzed as a session count —
+//     a claim that detector cannot verify. Completion-claim grounding on the
+//     message route needs plan_state plumbed into the route (follow-up).
+//   - A bare load-delta decision ("add 20 next session" with no other
+//     numbers) asserts no weight/reps/sets reading, so the prescription
+//     detector does not catch it on its own. Disclosed residual; the audit's
+//     plan probe is still caught whole via its prescription half.
+
+function numOrNullValue(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function normalizeMessageSet(s) {
+  if (Array.isArray(s)) {
+    return { weight: numOrNullValue(s[0]), reps: numOrNullValue(s[1]), rir: numOrNullValue(s[2]) };
+  }
+  if (s && typeof s === 'object') {
+    return { weight: numOrNullValue(s.weight), reps: numOrNullValue(s.reps), rir: numOrNullValue(s.rir) };
+  }
+  return null;
+}
+
+function normalizeMessageSets(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const s of list) {
+    const n = normalizeMessageSet(s);
+    if (n) out.push(n);
+  }
+  return out;
+}
+
+function queueEntryName(item) {
+  if (typeof item === 'string') return item.trim();
+  if (item && typeof item === 'object') {
+    return String(item.name || item.canonicalName || item.exercise || item.canonical_exercise || '').trim();
+  }
+  return '';
+}
+
+/**
+ * buildCoachMessageGroundingContext(facts, kind) → grounding context
+ *
+ * Adapts the /api/coach/message route's deterministic facts into the shape
+ * the B-02 detectors judge (session_tally / current_plan / recent_sessions).
+ * Pure. Only numbers the model was actually shown can ground a claim:
+ * todaySets, rec.next_target (+ target_rir), and rec.last_working_sets.
+ * Planned-queue entries carry a name and no numbers.
+ */
+function buildCoachMessageGroundingContext(facts, kind) {
+  const f = facts && typeof facts === 'object' ? facts : {};
+  const exerciseName = typeof f.exerciseName === 'string' ? f.exerciseName.trim() : '';
+  const rec = f.rec && typeof f.rec === 'object' ? f.rec : {};
+  const ctx = { session_tally: null, current_plan: [], current_preview: [], recent_sessions: [], plan_state: null, session_count: null };
+  // Recap ground: the just-logged sets for the just-logged lift.
+  const todaySets = normalizeMessageSets(f.todaySets);
+  if (exerciseName && todaySets.length) {
+    ctx.session_tally = { exercises: [{ exercise: exerciseName, sets: todaySets.length, per_set: todaySets }] };
+  }
+  // Prescription ground: the engine's next-target statement for the
+  // just-logged lift, plus the planned-queue names (name only).
+  const plan = [];
+  const target = rec.next_target && typeof rec.next_target === 'object' ? rec.next_target : null;
+  if (exerciseName && target) {
+    plan.push({
+      name: exerciseName,
+      weight: numOrNullValue(target.weight),
+      reps: numOrNullValue(target.reps),
+      sets: numOrNullValue(target.sets),
+      rir: numOrNullValue(rec.target_rir),
+    });
+  }
+  const queue = Array.isArray(f.planned_queue) ? f.planned_queue : [];
+  for (const item of queue) {
+    const name = queueEntryName(item);
+    if (name) plan.push({ name });
+  }
+  // Dedupe by name key, keeping the first (numbered) entry for a name.
+  const seenPlan = new Set();
+  ctx.current_plan = plan.filter((e) => {
+    const k = nameKey(e.name);
+    if (!k || seenPlan.has(k)) return false;
+    seenPlan.add(k);
+    return true;
+  });
+  // History ground: the most recent working sets the model was shown.
+  const lastWorking = normalizeMessageSets(rec.last_working_sets);
+  if (exerciseName && lastWorking.length) {
+    ctx.recent_sessions = [{ date: null, exercises: [exerciseName], lift_sets: { [exerciseName]: lastWorking } }];
+  }
+  return ctx;
+}
+
+/**
+ * detectUngroundedMessageNumbers(message, facts, kind) → [{ segment, kind }]
+ *
+ * Flags /api/coach/message narration prose whose numbers no deterministic
+ * fact on that route binds: ungrounded recap numbers, ungrounded
+ * prescription numbers, and unsupported plan-change claims (the B-02
+ * detectors, run over the adapted context). On kind 'plan' — where the model
+ * is given no per-lift numbers at all — a completed-work numeric claim
+ * naming a lift is ungrounded by construction and is flagged directly.
+ * Empty array = grounded. Pure.
+ */
+function detectUngroundedMessageNumbers(message, facts, kind) {
+  const ctx = buildCoachMessageGroundingContext(facts, kind);
+  const out = [];
+  const seen = new Set();
+  const flaggedSegments = new Set();
+  const flag = (segment, kind) => {
+    const key = `${kind}::${segment}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ segment, kind });
+    flaggedSegments.add(segment);
+  };
+  const pushAll = (findings) => {
+    for (const f of findings) flag(f.segment, f.kind);
+  };
+  pushAll(detectUngroundedRecapNumbers(message, ctx));
+  pushAll(detectUngroundedPrescriptionNumbers(message, ctx));
+  pushAll(detectUnsupportedMutationClaim(message).map((segment) => ({ segment, kind: 'unsupported_mutation' })));
+  // Plan voice: no per-lift numbers exist in the facts, so a completed-work
+  // numeric claim is ungrounded by construction — the recap detector skips it
+  // only because the lift is absent from the (empty) context names. The gate
+  // is a named lift OR a history framing: a bare weekly count ("did 12 sets
+  // this week") may cite a data_point and is left alone.
+  if (kind === 'plan' && typeof message === 'string' && message) {
+    for (const whole of segments(message)) {
+      for (const seg of assertedClauses(whole)) {
+        if (flaggedSegments.has(seg) || flaggedSegments.has(whole)) continue;
+        if (!COMPLETED_WORK_VERB.test(seg)) continue;
+        const readings = extractAssertedReadings(seg);
+        if (!readings.some((r) => hasValue(r.weight) || hasValue(r.reps) || hasValue(r.sets) || hasValue(r.rir) || r.__conflict)) continue;
+        if (!messageNamesALift(seg) && !RECAP_HISTORY_RE.test(seg)) continue;
+        flag(seg, 'message_plan_recap');
+      }
+    }
+  }
+  // Single-lift attribution (set/block): the message route narrates exactly
+  // ONE just-logged lift, so a numeric claim that names no lift is still
+  // attributable — it is about the just-logged lift. The B-02 detectors skip
+  // unattributed claims (right for chat, where a turn may span lifts); here
+  // skipping them would let the audit's bare recap ("You lifted 315 for 12
+  // reps") through. Clauses naming a lift outside the context are flagged
+  // outright (no binding exists for that lift); the rest are judged against
+  // the single lift's tally / next-target / history ground.
+  if ((kind === 'set' || kind === 'block') && ctx.session_tally
+    && Array.isArray(ctx.session_tally.exercises) && ctx.session_tally.exercises.length === 1) {
+    const single = ctx.session_tally.exercises[0];
+    const singleName = single && single.exercise;
+    const planEntry = singleName ? planEntryForLift(ctx, singleName) : null;
+    for (const whole of segments(message)) {
+      for (const seg of assertedClauses(whole)) {
+        if (flaggedSegments.has(seg) || flaggedSegments.has(whole)) continue;
+        if (namedRecapLifts(seg, ctx).length) continue; // named in-context → B-02 owned it
+        const readings = extractAssertedReadings(seg);
+        const hasNumbers = readings.some((r) => hasValue(r.weight) || hasValue(r.reps) || hasValue(r.sets) || hasValue(r.rir) || r.__conflict);
+        if (!hasNumbers) continue;
+        const namesOutsideLift = messageNamesALift(seg);
+        if (RECAP_HISTORY_RE.test(seg)) {
+          if (namesOutsideLift) { flag(seg, 'recap_history_numbers'); continue; }
+          const mostRecentOnly = LAST_SESSION_RE.test(seg);
+          const lists = historySetsForLift(ctx, singleName, mostRecentOnly);
+          const grounded = lists.some((list) => readings.some((r) => readingMatchesHistorySets(r, list)));
+          if (!grounded) flag(seg, 'recap_history_numbers');
+          continue;
+        }
+        if (isPrescriptionSegment(seg)) {
+          if (namesOutsideLift) { flag(seg, 'prescription_numbers'); continue; }
+          if (!planEntry || !readings.some((r) => readingMatchesPrescription(r, planEntry))) flag(seg, 'prescription_numbers');
+          continue;
+        }
+        if (COMPLETED_WORK_VERB.test(seg) || AS_PLANNED_RE.test(seg) || RECAP_IN_THE_BOOKS_RE.test(seg)) {
+          if (namesOutsideLift) { flag(seg, 'recap_numbers'); continue; }
+          if (AS_PLANNED_RE.test(seg) && !tallyMatchesPlan(single, planEntry)) { flag(seg, 'recap_as_planned'); continue; }
+          if (!readings.some((r) => readingMatchesTally(r, single))) flag(seg, 'recap_numbers');
+        }
+      }
+    }
+  }
+  return out;
+}
+
 module.exports = {
   normalize,
   nameKey,
@@ -1774,6 +1992,8 @@ module.exports = {
   detectUngroundedCompletionClaim,
   detectUngroundedRecapNumbers,
   detectUngroundedPrescriptionNumbers,
+  buildCoachMessageGroundingContext,
+  detectUngroundedMessageNumbers,
   buildGroundedSessionStateStatement,
   isRemainingWorkQuestion,
   workoutIsComplete,

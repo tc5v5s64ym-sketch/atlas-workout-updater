@@ -563,7 +563,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
   // code (finalizeSetVoice), OR the swap is a good pivot whose deterministic line
   // owns the acknowledgement / the prose would lecture it. Returns
   // { message, voice, sub_voice }. Read-only — never writes.
-  function finalizeCoachVoice(message, voiceBase, subVoiceBase, registerCtx = null) {
+  function finalizeCoachVoice(message, voiceBase, subVoiceBase, registerCtx = null, numericFindings = null) {
     const setFin = finalizeSetVoice(message, voiceBase);
     let outMessage = setFin.message;
     // The FIRST producer that nulled the prose is the true cause, so the code is only ever
@@ -598,6 +598,15 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
         noteSuppression(classifyRegisterViolations(violations));
         outMessage = null;
       }
+    }
+    // #1710 — numeric-grounding suppressor. The B-02 detectors (recap /
+    // prescription / mutation) already judged the prose against the route's
+    // deterministic facts at the call site; any finding means the prose
+    // asserted numbers (or a plan change) no fact binds, so it suppresses
+    // (→ null) like every other finalizeCoachVoice suppressor above.
+    if (outMessage && Array.isArray(numericFindings) && numericFindings.length > 0) {
+      noteSuppression(CODES.MESSAGE_NUMERIC_GROUNDING);
+      outMessage = null;
     }
     // A response that survived carries no suppression reason.
     if (outMessage !== null) suppression_code = null;
@@ -1040,10 +1049,14 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
         ? await coach.generatePlanMessage(facts)
         : await coach.generateCoachMessage(facts);
       modelStatus = 'ok'; // the LLM was called and returned
+      // #1710 — numeric grounding (B-02 detectors over the route's facts):
+      // the prose's weights/reps/sets and plan-change claims must be bound by
+      // a deterministic fact, or the prose suppresses to null below.
+      const numericFindings = coachResponseGrounding.detectUngroundedMessageNumbers(message, facts, kind);
       // Deterministic engine controls the coaching meaning: suppress the LLM prose
       // when it contradicts (or would speak over) a non-neutral set-effort signal,
       // or when it outruns its granted register (slice 3).
-      const fin = finalizeCoachVoice(message, voiceBase, subVoiceBase, registerCtx);
+      const fin = finalizeCoachVoice(message, voiceBase, subVoiceBase, registerCtx, numericFindings);
       res.locals.coachSuppressionCode = fin.suppression_code || null;
       validatorRan = true;
       return standardSuccess(req, res, 'Coach message', { message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: true, model: coach.coachModel(), source: 'gemini', kind, ...noteMeta, ...effortExtras, flight_recorder_context });
