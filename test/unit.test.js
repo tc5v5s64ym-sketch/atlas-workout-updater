@@ -5432,11 +5432,16 @@ test('closeout screenshot: plan-complete attachment parses effort without workou
   assert.doesNotMatch(guard, /submitCompleteWorkout|complete-workout/, 'closeout attachment must not call workout ingestion');
 });
 
-test('closeout screenshot: done save uses normal log-workout preview and includes parsed effort when available', () => {
+test('closeout screenshot: done save uses normal log-workout preview and never turns parsed effort into the payload (#1708)', () => {
   const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   assert.match(app, /const closeoutAttachmentOnly = file && closeoutScreenshotFile === file && sessionCompiledAwaitingPreview;/, 'done path must identify a closeout-only screenshot');
   assert.match(app, /if \(closeoutAttachmentOnly\) file = null;/, 'done path must not send the buffered screenshot to complete-workout');
-  assert.match(app, /if \(closeoutAttachmentOnly && closeoutScreenshotEffort\) \{[\s\S]*manualEffort = effortRowFromParsedEffort\(closeoutScreenshotEffort, sessionId, date, location, notes\);[\s\S]*\}/, 'parsed closeout effort must become the normal effort_row payload');
+  // #1708 — the closeout screenshot's parsed numbers are unverified model
+  // output: they must NOT become the effort_row payload. The done save
+  // proceeds rows-only; the owner enters effort values manually.
+  assert.doesNotMatch(app, /manualEffort = effortRowFromParsedEffort\(closeoutScreenshotEffort/, 'parsed closeout effort must not become the effort payload');
+  assert.doesNotMatch(app, /effortRowFromParsedEffort/, 'no vision-to-effort conversion may remain');
+  assert.doesNotMatch(app, /effortJsonFromParsedEffort/, 'no vision-to-effort conversion may remain');
   const previewStart = app.indexOf("const previewBtn = document.getElementById('preview-btn')");
   const previewBranch = app.slice(previewStart, app.indexOf("} else if (effortOnly)", previewStart));
   assert.match(previewBranch, /if \(mode === 'screenshot' && file\)/, 'screenshot ingestion must require an actual non-buffered file');

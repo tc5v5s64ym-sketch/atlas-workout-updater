@@ -171,6 +171,13 @@ function completeWorkoutForm(writeId) {
   form.append('write_id', writeId);
   form.append('date', '2026-08-09');
   form.append('image', new Blob(['watch'], { type: 'image/png' }), 'watch.png');
+  // #1708 — the body must carry explicit user-entered effort: vision-only
+  // effort is quarantined before the freeze gate and would 422 instead of
+  // reaching it. (Manual values win over the file re-parse.)
+  form.append('effort_json', JSON.stringify({
+    duration: '00:42:00', activeCalories: 410, totalCalories: 520,
+    averageHR: 148, peakHR: 171, workoutType: 'Traditional Strength Training'
+  }));
   return form;
 }
 

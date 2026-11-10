@@ -457,9 +457,9 @@ test('F10D-NL: a lost accept checkpoint reports the negative verdict honestly an
 // F10D readiness (owner directive) — the screenshot-with-rows closeout runs through
 // the SAME single confirmation. The vision parse is stubbed deterministically in
 // the gate server (48:22 · 389/512 cal · 131/168 HR · date 2026-07-18); the parse
-// is not under test — the ROUTING is. The scenario shape is the previously-
-// bypassing one: an accepted plan NOT complete at upload time (the plan-complete
-// shape already routed via the FB closeout lane).
+// is not under test — the ROUTING is. #1708: the stubbed parse's numbers are
+// unverified suggestions only — they never become the Effort row; the
+// screenshot-resolved DATE still stamps the rows.
 
 const SHOT_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
@@ -510,7 +510,7 @@ test('F10D-SS-R: a rejected screenshot-closeout confirmation writes NOTHING', as
   } finally { srv.stop(); }
 });
 
-test('F10D-SS-A: one approved screenshot-closeout writes and seals everything — parsed effort rides the one approval', async ({ page }) => {
+test('F10D-SS-A: one approved screenshot-closeout writes and seals everything — the Effort row stays unwritten (#1708)', async ({ page }) => {
   test.setTimeout(150000);
   const srv = await bootSandbox();
   try {
@@ -531,9 +531,11 @@ test('F10D-SS-A: one approved screenshot-closeout writes and seals everything �
     await expect(confirm).toContainText('Overhead Press');
     const foot = await confirm.locator('.cc-foot').innerText();
     expect(foot).toMatch(/Approving writes 2 set row/);
-    expect(foot).toMatch(/effort row/);
+    // #1708 — the parsed screenshot numbers are unverified suggestions, never
+    // the write: no effort row is promised on the confirmation.
+    expect(foot).not.toMatch(/effort row/);
     expect(foot).toMatch(/3 plan-ledger row/);
-    await snap(page, 'SS-A-01-confirmation-with-parsed-effort.png');
+    await snap(page, 'SS-A-01-confirmation-without-effort-row.png');
 
     const visible = await page.evaluate(() => window.getSessionLog().map(r => `${String(r.canonical || r.exercise).toLowerCase()}|${r.weight}|${r.reps}`));
     await page.locator('.review:not(.done) .rv-save').click();
@@ -546,19 +548,17 @@ test('F10D-SS-A: one approved screenshot-closeout writes and seals everything �
     expect(appended.map(r => `${String(r[3] || r[2]).toLowerCase()}|${r[7]}|${r[8]}`).sort()).toEqual(visible.sort());
     expect(appended.every(r => String(r[0]) === '2026-07-18')).toBe(true);   // the screenshot-resolved date stamps the rows
     const effort = rowsFor(st, 'Effort');
-    expect(effort).toHaveLength(1);
-    expect(String(effort[0][2])).toBe('00:48:22');   // the stubbed parse's metrics, route-normalized — what was previewed is what was written
-    expect(String(effort[0][3])).toBe('389');
-    expect(String(effort[0][4])).toBe('512');
-    expect(String(effort[0][5])).toBe('131');
-    expect(String(effort[0][6])).toBe('168');
-    expect(String(effort[0][1])).toBe(String(appended[0][1]));   // Log and Effort share the session identity
+    // #1708 — the stubbed parse's metrics (48:22 · 389/512 · 131/168) are
+    // unverified model output: they never become the Effort row. No Effort
+    // row is written; the owner enters effort values manually if wanted.
+    expect(effort).toHaveLength(0);
+    expect(String(appended[0][1])).toBeTruthy();   // Log rows still share one session identity
     expect(finalizedEvents(st)).toHaveLength(1);
     const ids = sealedIds(st);
     expect(ids).toHaveLength(3);
     expect(ids.every(id => id && id === ids[0])).toBe(true);
     expect((st.vision_calls || []).length).toBeGreaterThanOrEqual(1);
-    record('F10D-SS-A', `approved once: 2 Log rows (= visible actuals, screenshot-dated), the parsed effort row (48:22 · 389/512 · 131/168), 1 finalized event, 3 ledger rows sealed under ${ids[0]}`);
+    record('F10D-SS-A', `approved once: 2 Log rows (= visible actuals, screenshot-dated), NO Effort row (parsed effort is unverified, never the write), 1 finalized event, 3 ledger rows sealed under ${ids[0]}`);
   } finally { srv.stop(); }
 });
 
@@ -583,7 +583,10 @@ test('F10D-SS-RT: a seal outage on the screenshot closeout retries idempotently 
     }), { timeout: 25000 }).toBe('Retry ledger seal');
     const midState = await srv.state();
     expect(rowsFor(midState, 'Log_Cleaned')).toHaveLength(1);
-    expect(rowsFor(midState, 'Effort')).toHaveLength(1);
+    // #1708 — no Effort row is written for a screenshot closeout (parsed
+    // effort is unverified, never the write); the honest partial is 1 Log
+    // row + 0 Effort rows, and the seal retry must not invent one.
+    expect(rowsFor(midState, 'Effort')).toHaveLength(0);
     expect(sealedIds(midState)[0]).toBe('');
     await snap(page, 'SS-RT-01-honest-partial.png');
 
@@ -594,11 +597,11 @@ test('F10D-SS-RT: a seal outage on the screenshot closeout retries idempotently 
 
     const st = await srv.state();
     expect(rowsFor(st, 'Log_Cleaned')).toHaveLength(1);
-    expect(rowsFor(st, 'Effort')).toHaveLength(1);     // the screenshot effort row did NOT duplicate on retry
+    expect(rowsFor(st, 'Effort')).toHaveLength(0);     // #1708: no Effort row exists to duplicate on retry
     expect(finalizedEvents(st)).toHaveLength(1);
     const ids = sealedIds(st);
     expect(ids[0]).not.toBe('');
-    record('F10D-SS-RT', `screenshot closeout healed idempotently: still 1 Log row + 1 Effort row + 1 finalized event; sealed under ${ids[0]}`);
+    record('F10D-SS-RT', `screenshot closeout healed idempotently: still 1 Log row + 0 Effort rows + 1 finalized event; sealed under ${ids[0]}`);
     await snap(page, 'SS-RT-02-sealed-after-retry.png');
   } finally { srv.stop(); }
 });

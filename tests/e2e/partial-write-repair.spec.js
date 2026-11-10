@@ -14,8 +14,9 @@ const { test, expect } = require('@playwright/test');
 //
 // The manual effort-only preview is the UI-reachable complete-workout
 // lane; it shares the approve branch with the screenshot lane, whose
-// screenshot → effort-only transformation is pinned at unit level in
-// test/partialWriteRepair.test.js. The stubbed live partial stands in for
+// vision-derived effort no longer converts into a repair payload (#1708 —
+// only user-entered effort keys a repair, pinned at unit level in
+// test/partialWriteRepair.test.js). The stubbed live partial stands in for
 // the server partial the screenshot-with-rows API path produces
 // (sheet_write 'partial', sheet_written true, effort_written false).
 //
@@ -198,9 +199,10 @@ async function expectRepairSucceeds(page, capture) {
   expect(repair.sessionId).toBe(SESSION);
   expect(JSON.parse(repair.logRowsJson)).toEqual([]);
   expect(repair.effortJson).toBeTruthy();
-  // Manual effort travels snake_case (collectManualEffort); the screenshot
-  // conversion (effortJsonFromParsedEffort) is camelCase and is pinned at
-  // unit level. Either way the repair carries the same effort values.
+  // Manual effort travels snake_case (collectManualEffort); the repair keys
+  // only from user-entered effort (#1708 — vision-derived effort never
+  // converts into a repair payload). Either way the repair carries the same
+  // effort values.
   const effort = JSON.parse(repair.effortJson);
   expect(effort.active_calories ?? effort.activeCalories).toBe(410);
   expect(effort.total_calories ?? effort.totalCalories).toBe(520);

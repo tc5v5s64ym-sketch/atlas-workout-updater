@@ -6203,21 +6203,6 @@ function renderDateSourceNotice(source, date) {
   return null;
 }
 
-function effortRowFromParsedEffort(effort, sessionId, date, location, notes) {
-  if (!effort) return null;
-  return {
-    date,
-    session_id: sessionId,
-    duration: effort.duration,
-    active_calories: effort.activeCalories,
-    total_calories: effort.totalCalories,
-    average_hr: effort.averageHR,
-    peak_hr: effort.peakHR,
-    location: location || '',
-    notes: notes || ''
-  };
-}
-
 // Resolve a lift_code for an exercise NAME from the loaded catalog datalist
 // (option value = canonical_name, label = lift_code). This lets completion bridge
 // a logged catalog canonical ("Dips (Weighted)") to a planned lift BY CODE without
@@ -7982,9 +7967,10 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
 
   const closeoutAttachmentOnly = file && closeoutScreenshotFile === file && sessionCompiledAwaitingPreview;
   if (closeoutAttachmentOnly) file = null;
-  if (closeoutAttachmentOnly && closeoutScreenshotEffort) {
-    manualEffort = effortRowFromParsedEffort(closeoutScreenshotEffort, sessionId, date, location, notes);
-  }
+  // #1708 — the closeout screenshot's parsed numbers are unverified model
+  // output: they must NOT become the effort payload. The closeout proceeds
+  // rows-only (the screenshot's date still flows via closeoutScreenshotEffort
+  // above); the owner enters effort values manually if they want them saved.
 
   // Screenshot upload and manual effort form are end-of-session triggers.
   // If the lifter logged sets conversationally (the editor is empty because each
@@ -8050,9 +8036,11 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     screenshotResolvedDate = resolvedShot.date;
     if (getSessionLog().length) populateSetRows(buildRowsFromSessionLog());
     logRows = collectLogRows(resolvedShotSessionId, resolvedShot.date);
-    if (parsedShotEffort) {
-      manualEffort = effortRowFromParsedEffort(parsedShotEffort, resolvedShotSessionId, resolvedShot.date, location, notes);
-    }
+    // #1708 — the parsed screenshot numbers are unverified model output: do
+    // NOT fold them into the effort payload. The closeout proceeds rows-only
+    // (file stays null — the screenshot was already parsed once above); the
+    // server shows the numbers as unverified suggestions in the preview and
+    // the owner enters them manually if they want them saved.
     file = null;
     screenshotConvertedCloseout = true;
   }
@@ -8312,10 +8300,6 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
         effortOnly,
         writeId: generateWriteId(),
         correlationPreview,
-        // The effort metrics the owner is reviewing. On approval we write THESE,
-        // not a second vision parse of the same image — so what gets saved is
-        // exactly what was shown. See the approve handler's screenshot branch.
-        parsedEffort: resolvedData.parsed_effort || null,
         // Already-saved session (re-used dated screenshot): the dry-run flags it; the
         // live write would refuse it, so gate approve off rather than send the owner
         // into a "Duplicate session" error on tap.
@@ -8530,18 +8514,6 @@ function prefillEffortForm(effort) {
 // Map the previewed/normalized effort metrics back to the effort_json shape the
 // backend's manual-effort path accepts (normalizeManualEffortMetrics). A missing
 // peak HR is preserved as-is (null/'' is optional and survives the round trip).
-function effortJsonFromParsedEffort(effort) {
-  if (!effort) return null;
-  return {
-    duration: effort.duration,
-    activeCalories: effort.activeCalories,
-    totalCalories: effort.totalCalories,
-    averageHR: effort.averageHR,
-    peakHR: effort.peakHR,
-    workoutType: effort.workoutType
-  };
-}
-
 async function submitCompleteWorkout({
   file, logRows, sessionId, date, location, notes, manualEffort, testMode, writeId,
   correlationPreview
@@ -8971,11 +8943,9 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
   try {
     if (pendingWrite.mode === 'screenshot' || pendingWrite.mode === 'effort-only') {
       const writeArgs = { ...pendingWrite, testMode: false };
-      // Write the previewed metrics, not a re-parse: send effort_json, drop the image.
-      if (pendingWrite.mode === 'screenshot' && pendingWrite.parsedEffort) {
-        writeArgs.file = null;
-        writeArgs.manualEffort = effortJsonFromParsedEffort(pendingWrite.parsedEffort);
-      }
+// #1708 — approval writes the previewed ROWS only: no re-parse, no
+      // effort_json built from the preview's unverified suggestions.
+      writeArgs.file = null;
       const writeResult = await submitCompleteWorkout(writeArgs);
       const writeData = writeResult?.data?.data || {};
       // Server-side idempotency: a retried write_id is refused with proof the
@@ -9385,11 +9355,13 @@ function handlePartialDuplicate(writeData, pendingWrite, approveBtn, loggerStatu
 // duplicate-session guard does not fire. Returns true when a repair was
 // keyed, false when no effort payload exists to repair with — in which
 // case the caller surfaces the partial state without a repair button.
+// #1708 — only USER-ENTERED effort qualifies for repair. Vision-derived
+// effort is unverified and is never stored on the pending write anymore, so
+// a screenshot-mode partial whose effort was never typed has no repair to
+// key; the owner re-enters the values manually.
 function keyPartialRepair(pending) {
   if (!pending) return false;
-  const manualEffort = pending.mode === 'screenshot'
-    ? effortJsonFromParsedEffort(pending.parsedEffort)
-    : pending.manualEffort;
+  const manualEffort = pending.manualEffort;
   if (!manualEffort) return false;
   pending.mode = 'effort-only';
   pending.effortOnly = true;
