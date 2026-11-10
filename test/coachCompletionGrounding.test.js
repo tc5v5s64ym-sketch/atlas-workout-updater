@@ -388,10 +388,20 @@ test('C5. Astra #1662 — a wrong set count is flagged; an ambiguous NxN with a 
     'an ambiguous shape with a true reading is grounded');
 });
 
-test('C6. Astra #1662 — history is not this session: last-week numbers are never judged here', () => {
+test('C6. #1709 — history IS judged: last-week numbers must match a recorded session', () => {
   const ctx = recapContext();
-  assert.equal(grounding.detectUngroundedRecapNumbers('Last week you logged Romanian Deadlift at 315 for 5 reps across 3 sets.', ctx).length, 0,
-    'a historical recap is not a this-session claim');
+  // No recent_sessions in this context: a history claim has no recorded
+  // session to bind to, so it fails closed (the old "never judged here" rule
+  // is what let invented history reach the athlete).
+  assert.ok(grounding.detectUngroundedRecapNumbers('Last week you logged Romanian Deadlift at 315 for 5 reps across 3 sets.', ctx).length > 0,
+    'invented history with no recorded session must be flagged');
+  // The same numbers grounded by a recorded session pass.
+  const withHistory = { ...ctx, recent_sessions: [{ date: '2026-11-02', exercises: ['Romanian Deadlift'], sets: 3, volume: 4725, lift_sets: { 'Romanian Deadlift': [{ weight: 315, reps: 5, rir: 2 }, { weight: 315, reps: 5, rir: 2 }, { weight: 315, reps: 5, rir: 2 }] } }] };
+  assert.equal(grounding.detectUngroundedRecapNumbers('Last week you logged Romanian Deadlift at 315 for 5 reps across 3 sets.', withHistory).length, 0,
+    'history matching a recorded session is grounded');
+  // … and numbers contradicting that recorded session are flagged.
+  assert.ok(grounding.detectUngroundedRecapNumbers('Last week you logged Romanian Deadlift at 335 for 5 reps across 3 sets.', withHistory).length > 0,
+    'history contradicting the recorded session must be flagged');
 });
 
 test('C6b. pre-review F1 — "a moment ago" is this session, not history', () => {

@@ -1871,6 +1871,21 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
           configured: true, model: coach.coachModel(), source: 'engine'
         });
       }
+      // Prescription-number BACKSTOP (#1709). A forward-looking numeric
+      // prescription ("next up: Deadlift 315, 5x12") is none of the three
+      // backstops above — not a mutation, not a this-session recap, not a
+      // completion claim — so invented next loads reached the athlete. A
+      // prescription claim is grounded only by the current plan / preview;
+      // rejected prose is replaced with the engine's own statement of what is
+      // logged and what is actually still outstanding, and any proposal is
+      // dropped — a turn that invents the next load is not a trustworthy proposal.
+      if (hasSafeReply && coachResponseGrounding.detectUngroundedPrescriptionNumbers(reply, llmContext).length > 0) {
+        const grounded = coachResponseGrounding.buildGroundedSessionStateStatement(llmContext);
+        return standardSuccess(req, res, 'Coach chat — grounded (ungrounded prescription numbers rejected)', {
+          message: grounded, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
+          configured: true, model: coach.coachModel(), source: 'engine'
+        });
+      }
       // Return the Gemini result when it has usable prose OR carries a structured
       // proposal (edit/note/constraint) — a proposal must never be dropped just
       // because the prose came back empty. Only a truly empty result (no prose, no

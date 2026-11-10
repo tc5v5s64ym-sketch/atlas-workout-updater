@@ -609,9 +609,9 @@ function detectUngroundedCompletionClaim(text, context) {
 // An "as planned / as prescribed / as programmed" equivalence claim.
 const AS_PLANNED_RE = /\bas (?:planned|prescribed|programmed)\b/;
 // A historical framing — last week, yesterday, a previous session — is not a
-// this-session recap and is never judged here. "Ago" is deliberately NOT bare:
-// "a moment ago" / "minutes ago" is THIS session, only a days-or-more "ago"
-// is history.
+// this-session recap; it is judged against recent_sessions instead (#1709).
+// "Ago" is deliberately NOT bare: "a moment ago" / "minutes ago" is THIS
+// session, only a days-or-more "ago" is history.
 const RECAP_HISTORY_RE = /\b(?:last (?:week|session|workout|time|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|yesterday|previously|a week ago|days ago|weeks ago|months ago|years ago|in your last)\b/;
 // Conjunctions joining per-lift assertions in one recap clause ("…and…",
 // "…+…", "…,…"). Used only to attribute numbers per lift in a multi-lift
@@ -652,7 +652,7 @@ const KG_TO_LB = 2.20462;
 function kgToLb(kg) { return Math.round(kg * KG_TO_LB * 10) / 10; }
 
 // The asserted numbers in a recap clause, as candidate readings. Explicit
-// tokens (N sets / N reps / N lb / N sets of M / at N) are fixed across
+// tokens (N sets / N reps / N lb / N sets of M / at N / RIR) are fixed across
 // readings; each "AxB" shape branches into a weight reading and a sets
 // reading when neither is fixed, because "25x8" is genuinely ambiguous. A
 // three-part "AxBxC" reads as weight x reps x sets, the recap convention.
@@ -682,6 +682,16 @@ function extractAssertedReadings(seg) {
   // `at N` strip, or "at 27.5 kg" would be read as 27.5 lb.
   strip(new RegExp(`(${DECIMAL_NUM})\\s*(?:kg|kgs|kilos?|kilograms?)\\b`), (a) => { if (isNil(fixed.weight)) fixed.weight = kgToLb(Number(a[1])); });
   strip(new RegExp(`(${DECIMAL_NUM})\\s*(?:lb|lbs|pounds?)\\b`), (a) => { if (isNil(fixed.weight)) fixed.weight = Number(a[1]); });
+  // RIR (#1709): an asserted RIR ("0 RIR", "RIR 2", "@ 2") is a number the
+  // recap matcher must validate, exactly like weight/reps/sets — the tally's
+  // per_set carries rir, but the matcher never read it, so any invented RIR
+  // on an otherwise-true recap passed. "@ N" is RIR by the recap convention
+  // ("weight x reps @ RIR N"); it is stripped here, before the pairs pass,
+  // so it can never be re-read as a weight or a set count. Word numbers
+  // ("two RIR") resolve the same way sets/reps do.
+  strip(new RegExp(`\\brir\\s*(\\d+|${WORD_NUM_RE})\\b`), (a) => { const n = numToken(a[1]); if (hasValue(n) && isNil(fixed.rir)) fixed.rir = n; });
+  strip(new RegExp(`(\\d+|${WORD_NUM_RE})\\s*rir\\b`), (a) => { const n = numToken(a[1]); if (hasValue(n) && isNil(fixed.rir)) fixed.rir = n; });
+  strip(/@\s*(\d+(?:\.\d+)?)\b/, (a) => { if (isNil(fixed.rir)) fixed.rir = Number(a[1]); });
   // The lookahead also excludes a following unit word the validator cannot
   // normalize ("at 100 stone" must not be read as 100 lb); the unhandled-unit
   // guard below fails such a clause closed instead.
@@ -721,6 +731,17 @@ function extractAssertedReadings(seg) {
   // `at N` lookahead above leaves such a token in place for this guard.
   if (new RegExp(`(${DECIMAL_NUM})\\s*(?:stone|stones|oz|ounces?|grams?|g)\\b`).test(s)) {
     readings = readings.map((r) => ({ ...r, __conflict: true }));
+  }
+  // A second, different RIR asserted in the same clause contradicts the first
+  // ("at 0 RIR and 2 RIR") — the strips above take only the first, so a
+  // leftover RIR token with another value marks every reading contradictory,
+  // the same fail-closed rule the pairs pass applies to reps.
+  const leftoverRir = s.match(new RegExp(`(?:\\brir\\s*(\\d+|${WORD_NUM_RE})\\b|(\\d+|${WORD_NUM_RE})\\s*rir\\b|@\\s*(\\d+(?:\\.\\d+)?)\\b)`));
+  if (leftoverRir) {
+    const v = numToken(leftoverRir[1] || leftoverRir[2] || leftoverRir[3]);
+    if (hasValue(fixed.rir) && hasValue(v) && v !== fixed.rir) {
+      readings = readings.map((r) => ({ ...r, __conflict: true }));
+    }
   }
   return readings;
 }
@@ -831,9 +852,9 @@ function planEntryForLift(context, name) {
 }
 
 // Does one candidate reading match the retained rows? Every retained set
-// with a known weight/reps must equal the asserted value, and the set count
-// must equal the tally's. A field the tally carries no data for cannot be
-// verified, so a reading asserting it does not match — fail closed.
+// with a known weight/reps/rir must equal the asserted value, and the set
+// count must equal the tally's. A field the tally carries no data for cannot
+// be verified, so a reading asserting it does not match — fail closed.
 function readingMatchesTally(reading, entry) {
   if (!entry || reading.__conflict) return false;
   const sets = Array.isArray(entry.per_set) ? entry.per_set : [];
@@ -848,6 +869,13 @@ function readingMatchesTally(reading, entry) {
   if (hasValue(reading.sets)) {
     const n = hasValue(entry.sets) ? Number(entry.sets) : sets.length;
     if (!Number.isFinite(n) || n !== reading.sets) return false;
+  }
+  // RIR (#1709): the tally's per_set carries rir, and an asserted RIR is
+  // judged exactly like weight/reps — every known rir must equal it, and a
+  // tally with no rir data cannot verify one.
+  if (hasValue(reading.rir)) {
+    const known = sets.map((s) => s && s.rir).filter((r) => hasValue(r));
+    if (!known.length || !known.every((r) => Number(r) === reading.rir)) return false;
   }
   return true;
 }
@@ -875,6 +903,140 @@ function tallyMatchesPlan(tally, plan) {
   return true;
 }
 
+// ── history grounding (#1709) ──────────────────────────────────────────────
+//
+// A history-framed numeric claim ("last session you logged Bench at 315 for
+// 12") was skipped outright by the recap detector, and the completion detector
+// judges only historical *session counts* — so invented history passed every
+// backstop. The truth is in the context: recent_sessions[*].lift_sets maps
+// each exercise to its real logged sets (weight x reps @ RIR), most recent
+// session first (services/analytics.js buildRecentSessions sorts date
+// descending). History claims are judged against it: "last session /
+// yesterday / last time" binds to the most recent session carrying the lift;
+// vaguer framings ("last week", "previously", "ago") bind to any recorded
+// session carrying it. A lift with no recorded session, or numbers no
+// recorded session carries, fails closed.
+
+// "Last session / yesterday / last time" names the most recent session; the
+// other RECAP_HISTORY_RE framings name the past generally.
+const LAST_SESSION_RE = /\b(?:last (?:session|workout|time)|yesterday|in your last)\b/;
+
+// The recorded set lists for one lift, most recent first — one list per
+// session carrying it (a single-element array when mostRecentOnly). Empty
+// array = no recorded session carries the lift. Exact-name match first, then
+// a canonical match only when it resolves uniquely, the same rule as the
+// tally/plan lookups above.
+function historySetsForLift(context, name, mostRecentOnly) {
+  const c = context && typeof context === 'object' ? context : {};
+  const sessions = Array.isArray(c.recent_sessions) ? c.recent_sessions : [];
+  const exact = nameKey(name);
+  const key = canonicalKey(name);
+  const lists = [];
+  for (const s of sessions) {
+    const liftSets = s && s.lift_sets && typeof s.lift_sets === 'object' ? s.lift_sets : null;
+    if (!liftSets) continue;
+    let found = null;
+    for (const rawName of Object.keys(liftSets)) {
+      if (nameKey(rawName) === exact) { found = liftSets[rawName]; break; }
+    }
+    if (isNil(found)) {
+      const canonHits = Object.keys(liftSets).filter((n) => canonicalKey(n) === key);
+      if (canonHits.length === 1) found = liftSets[canonHits[0]];
+    }
+    if (Array.isArray(found) && found.length) lists.push(found);
+  }
+  return mostRecentOnly ? lists.slice(0, 1) : lists;
+}
+
+// Does one candidate reading match one recorded history set list? Same field
+// rules as readingMatchesTally, over a raw per_set list: every known
+// weight/reps/rir must equal the asserted value, and the set count must
+// equal the recorded count. A field the history carries no data for cannot
+// be verified, so a reading asserting it does not match — fail closed.
+function readingMatchesHistorySets(reading, sets) {
+  if (!sets || reading.__conflict) return false;
+  const list = Array.isArray(sets) ? sets : [];
+  if (hasValue(reading.weight)) {
+    const known = list.map((s) => s && s.weight).filter((w) => hasValue(w));
+    if (!known.length || !known.every((w) => Number(w) === reading.weight)) return false;
+  }
+  if (hasValue(reading.reps)) {
+    const known = list.map((s) => s && s.reps).filter((r) => hasValue(r));
+    if (!known.length || !known.every((r) => Number(r) === reading.reps)) return false;
+  }
+  if (hasValue(reading.sets)) {
+    if (!Number.isFinite(list.length) || list.length !== reading.sets) return false;
+  }
+  if (hasValue(reading.rir)) {
+    const known = list.map((s) => s && s.rir).filter((r) => hasValue(r));
+    if (!known.length || !known.every((r) => Number(r) === reading.rir)) return false;
+  }
+  return true;
+}
+
+// The lifts a history clause may be about: plan + preview + tally + the
+// recent sessions' own exercises — a lift done last session need not be in
+// today's plan or tally, and a history claim about it still needs judging.
+// (namedRecapLifts covers plan/preview/tally only, so it would miss it.)
+function namedHistoryLifts(seg, context) {
+  const c = context && typeof context === 'object' ? context : {};
+  const names = [...knownLiftNames(c)];
+  const tally = c.session_tally && typeof c.session_tally === 'object' ? c.session_tally : null;
+  if (tally && Array.isArray(tally.exercises)) {
+    for (const e of tally.exercises) if (e && e.exercise) names.push(String(e.exercise));
+  }
+  const found = namedLiftsInMessage(seg, { current_plan: dedupeByKey(names).map((n) => ({ name: n })) });
+  // Single-token scan, as in namedRecapLifts: an alias token ("RDLs") resolves
+  // a lift the loose word match missed.
+  for (const tok of normalize(seg).split(/[^a-z0-9]+/).filter(Boolean)) {
+    const tk = canonicalKey(tok);
+    for (const n of dedupeByKey(names)) {
+      if (canonicalKey(n) === tk && !found.includes(n)) found.push(n);
+    }
+  }
+  return found;
+}
+
+// True when a history-framed clause asserts numbers no recorded session
+// supports for the lift(s) it names. A clause asserting no numbers passes
+// (there is nothing to judge); a clause naming no lift passes (nothing
+// attributable — the recap/completion detectors own unattributable claims).
+function judgeHistoryClause(seg, context) {
+  const c = context && typeof context === 'object' ? context : {};
+  const mostRecentOnly = LAST_SESSION_RE.test(seg);
+  const hasNumbers = (readings) => readings.some((r) => hasValue(r.weight) || hasValue(r.reps) || hasValue(r.sets) || hasValue(r.rir) || r.__conflict);
+  const grounded = (name, readings) => {
+    const lists = historySetsForLift(c, name, mostRecentOnly);
+    if (!lists.length) return false;
+    return lists.some((list) => readings.some((r) => readingMatchesHistorySets(r, list)));
+  };
+  let lifts = namedHistoryLifts(seg, c);
+  if (!lifts.length) return false;
+  if (lifts.length > 1) {
+    const occurring = liftsOccurringInClause(lifts, seg);
+    if (occurring.length) lifts = occurring;
+  }
+  if (lifts.length === 1) {
+    const readings = extractAssertedReadings(seg);
+    if (!hasNumbers(readings)) return false;
+    return !grounded(lifts[0], readings);
+  }
+  // Multi-lift clause: split and judge per piece, the same attribution rule
+  // as the recap path. A piece that cannot be attributed is not judged here.
+  const pieces = seg.split(MULTI_LIFT_JOIN).map((p) => p.trim()).filter(Boolean);
+  const pieceLifts = pieces.map((p) => namedHistoryLifts(p, c));
+  if (pieces.length < 2 || !pieceLifts.every((ls) => ls.length === 1)) {
+    const readings = extractAssertedReadings(seg);
+    return hasNumbers(readings);
+  }
+  for (let i = 0; i < pieces.length; i++) {
+    const readings = extractAssertedReadings(pieces[i]);
+    if (!hasNumbers(readings)) continue;
+    if (!grounded(pieceLifts[i][0], readings)) return true;
+  }
+  return false;
+}
+
 /**
  * detectUngroundedRecapNumbers(text, context) → [{ segment, kind }]
  *
@@ -882,7 +1044,8 @@ function tallyMatchesPlan(tally, plan) {
  * retained rows do not carry, or an "as planned" equivalence the tally does
  * not support against the plan. Empty array = grounded.
  *
- * Pure. Judges ONLY against `session_tally` and `current_plan`.
+ * Pure. Judges against `session_tally` and `current_plan`, and
+ * history-framed claims against `recent_sessions`.
  */
 function detectUngroundedRecapNumbers(text, context) {
   const c = context && typeof context === 'object' ? context : {};
@@ -897,7 +1060,13 @@ function detectUngroundedRecapNumbers(text, context) {
 
   for (const whole of segments(text)) {
     for (const seg of assertedClauses(whole)) {
-      if (RECAP_HISTORY_RE.test(seg)) continue;
+      // History-framed claims are judged against recent_sessions, not
+      // skipped (#1709): "last session you logged Bench at 315 for 12"
+      // passed every backstop because no detector read history numbers.
+      if (RECAP_HISTORY_RE.test(seg)) {
+        if (judgeHistoryClause(seg, c)) flag(seg, 'recap_history_numbers');
+        continue;
+      }
       const isRecap = COMPLETED_WORK_VERB.test(seg) || AS_PLANNED_RE.test(seg) || RECAP_IN_THE_BOOKS_RE.test(seg);
       if (!isRecap) continue;
       let lifts = namedRecapLifts(seg, c);
@@ -920,7 +1089,7 @@ function detectUngroundedRecapNumbers(text, context) {
           continue;
         }
         const readings = extractAssertedReadings(seg);
-        const hasNumbers = readings.some((r) => hasValue(r.weight) || hasValue(r.reps) || hasValue(r.sets) || r.__conflict);
+        const hasNumbers = readings.some((r) => hasValue(r.weight) || hasValue(r.reps) || hasValue(r.sets) || hasValue(r.rir) || r.__conflict);
         if (!hasNumbers) continue;
         if (!tally || !readings.some((r) => readingMatchesTally(r, tally))) flag(seg, 'recap_numbers');
         continue;
@@ -947,16 +1116,170 @@ function detectUngroundedRecapNumbers(text, context) {
       const pieceLifts = pieces.map((p) => namedRecapLifts(p, c));
       if (pieces.length < 2 || !pieceLifts.every((ls) => ls.length === 1)) {
         const readings = extractAssertedReadings(seg);
-        if (readings.some((r) => hasValue(r.weight) || hasValue(r.reps) || hasValue(r.sets) || r.__conflict)) flag(seg, 'recap_numbers');
+        if (readings.some((r) => hasValue(r.weight) || hasValue(r.reps) || hasValue(r.sets) || hasValue(r.rir) || r.__conflict)) flag(seg, 'recap_numbers');
         continue;
       }
       for (let i = 0; i < pieces.length; i++) {
         const name = pieceLifts[i][0];
         const tally = tallyEntryForLift(c, name);
         const readings = extractAssertedReadings(pieces[i]);
-        const hasNumbers = readings.some((r) => hasValue(r.weight) || hasValue(r.reps) || hasValue(r.sets) || r.__conflict);
+        const hasNumbers = readings.some((r) => hasValue(r.weight) || hasValue(r.reps) || hasValue(r.sets) || hasValue(r.rir) || r.__conflict);
         if (!hasNumbers) continue;
         if (!tally || !readings.some((r) => readingMatchesTally(r, tally))) { flag(seg, 'recap_numbers'); break; }
+      }
+    }
+  }
+  return out;
+}
+
+// ── prescription-number grounding (#1709) ───────────────────────────────────
+//
+// A forward-looking numeric prescription ("Next up is Deadlift at 315 for 5
+// sets of 12") was none of the three backstops above — not a mutation, not a
+// this-session recap, not a completion claim — so invented next loads reached
+// the athlete. REMAINING_FRAMING correctly exempts prescription framings from
+// *completion* judging (they are not completed work), but nothing validated
+// the prescription numbers against the plan.
+//
+// A prescription claim is grounded only by the current plan, then the
+// current preview (the engine's next-target statement, which carries
+// weight/reps/rir but no sets). RIR is compared only when the binding entry
+// carries it — an RIR target with no plan RIR is legitimate coaching, not a
+// lie (the engine's own rule prescribes sets x reps @ RIR when there is no
+// snapshot load). A named lift with no plan or preview entry has no binding
+// and fails closed. Bare-number prescriptions with no lift named are not
+// judged here (nothing attributable — disclosed residual).
+
+// Future markers beyond REMAINING_FRAMING: a bare "next", tomorrow, up next.
+const FUTURE_PRESCRIPTION_RE = /\b(?:next|tomorrow|up next|for tomorrow|next (?:session|workout|week))\b/;
+// Explicit proposal verbs — an offered suggestion, not an asserted prescription.
+const PRESCRIPTION_PROPOSAL_RE = /\b(?:suggest(?:ed|ing)?|propos(?:e|ed|ing)|offer(?:ed|ing)?|want me to|would you like|if you (?:want|'?d like))\b/;
+
+// A clause that asserts a prescription: future/remaining/planned framing, and
+// not a question, an athlete quotation, a negation, or an explicit proposal.
+// Modal futures ("you'll do…", "you should do…") ARE prescription claims —
+// the modal is the prescription itself, not an excuse for it.
+function isPrescriptionSegment(seg) {
+  const s = String(seg || '').trim();
+  if (!s) return false;
+  if (s.includes('?')) return false;
+  if (ATTRIBUTION_MARKER.test(s)) return false;
+  if (NEGATION_MARKER.test(s)) return false;
+  if (PRESCRIPTION_PROPOSAL_RE.test(s)) return false;
+  if (!REMAINING_FRAMING.test(s) && !FUTURE_PRESCRIPTION_RE.test(s)) return false;
+  return true;
+}
+
+function prescriptionClauses(seg) {
+  const whole = String(seg || '').trim();
+  if (!whole) return [];
+  const out = [];
+  if (isPrescriptionSegment(whole)) out.push(whole);
+  const parts = whole.split(CLAUSE_BOUNDARY).map((p) => p.trim()).filter(Boolean);
+  if (parts.length > 1) {
+    for (const p of parts) if (isPrescriptionSegment(p) && !out.includes(p)) out.push(p);
+  }
+  return out;
+}
+
+// The plan entry for a lift, else the preview entry (same exact-then-unique-
+// canonical rule as planEntryForLift; the preview carries no sets).
+function previewEntryForLift(context, name) {
+  const preview = context && Array.isArray(context.current_preview) ? context.current_preview : [];
+  const exact = nameKey(name);
+  const exactHit = preview.find((e) => e && nameKey(e.exercise || e.name) === exact);
+  if (exactHit) return exactHit;
+  const key = canonicalKey(name);
+  const canonHits = preview.filter((e) => e && canonicalKey(e.exercise || e.name) === key);
+  return canonHits.length === 1 ? canonHits[0] : null;
+}
+
+function prescriptionEntryForLift(context, name) {
+  return planEntryForLift(context, name) || previewEntryForLift(context, name);
+}
+
+// Does one candidate reading match the prescription entry? Every asserted
+// weight/reps/sets must equal the entry's value, and a field the entry
+// carries no data for cannot verify the claim — fail closed. RIR is
+// compared only when the entry carries it.
+function readingMatchesPrescription(reading, entry) {
+  if (!entry || reading.__conflict) return false;
+  if (hasValue(reading.weight)) {
+    if (isNil(entry.weight) || Number(entry.weight) !== reading.weight) return false;
+  }
+  if (hasValue(reading.reps)) {
+    if (isNil(entry.reps) || Number(entry.reps) !== reading.reps) return false;
+  }
+  if (hasValue(reading.sets)) {
+    if (isNil(entry.sets) || Number(entry.sets) !== reading.sets) return false;
+  }
+  if (hasValue(reading.rir) && hasValue(entry.rir)) {
+    if (Number(entry.rir) !== reading.rir) return false;
+  }
+  return true;
+}
+
+/**
+ * detectUngroundedPrescriptionNumbers(text, context) → [{ segment, kind }]
+ *
+ * Flags forward-looking numeric prescriptions no deterministic source binds:
+ * a next/remaining/planned claim whose numbers differ from the current plan
+ * (or preview) entry for the named lift, or that names a lift with no plan
+ * or preview entry at all. Empty array = grounded.
+ *
+ * Pure. Judges ONLY against `current_plan` and `current_preview`. Only
+ * cleanly attributable single-lift claims are judged — a clause asserting
+ * numbers without a lift, or a multi-lift clause whose pieces cannot each
+ * be attributed to one lift, is left to the recap/completion detectors, so
+ * an honest recap riding the same sentence is never misjudged as a
+ * prescription.
+ */
+function detectUngroundedPrescriptionNumbers(text, context) {
+  const c = context && typeof context === 'object' ? context : {};
+  const out = [];
+  const seen = new Set();
+  const flag = (segment, kind) => {
+    const key = `${kind}::${segment}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ segment, kind });
+  };
+  const hasNumbers = (readings) => readings.some((r) => hasValue(r.weight) || hasValue(r.reps) || hasValue(r.sets) || r.__conflict);
+
+  for (const whole of segments(text)) {
+    for (const seg of prescriptionClauses(whole)) {
+      let lifts = namedRecapLifts(seg, c);
+      if (!lifts.length) {
+        // No in-snapshot lift named. If the clause still names a lift (the
+        // Exercise KB resolves one) and asserts numbers, the prescription
+        // names an exercise with no plan/preview binding — ungrounded.
+        const readings = extractAssertedReadings(seg);
+        if (hasNumbers(readings) && messageNamesALift(seg)) flag(seg, 'prescription_numbers');
+        continue;
+      }
+      if (lifts.length > 1) {
+        const occurring = liftsOccurringInClause(lifts, seg);
+        if (occurring.length) lifts = occurring;
+      }
+      if (lifts.length === 1) {
+        const readings = extractAssertedReadings(seg);
+        if (!hasNumbers(readings)) continue;
+        const entry = prescriptionEntryForLift(c, lifts[0]);
+        if (!entry || !readings.some((r) => readingMatchesPrescription(r, entry))) flag(seg, 'prescription_numbers');
+        continue;
+      }
+      // Multi-lift clause: judge only pieces that are themselves prescription
+      // claims naming exactly one lift — a recap piece riding the same
+      // sentence is judged by the recap detector, not here.
+      const pieces = seg.split(MULTI_LIFT_JOIN).map((p) => p.trim()).filter(Boolean);
+      const pieceLifts = pieces.map((p) => namedRecapLifts(p, c));
+      if (pieces.length < 2 || !pieceLifts.every((ls) => ls.length === 1)) continue;
+      for (let i = 0; i < pieces.length; i++) {
+        if (!isPrescriptionSegment(pieces[i])) continue;
+        const readings = extractAssertedReadings(pieces[i]);
+        if (!hasNumbers(readings)) continue;
+        const entry = prescriptionEntryForLift(c, pieceLifts[i][0]);
+        if (!entry || !readings.some((r) => readingMatchesPrescription(r, entry))) { flag(seg, 'prescription_numbers'); break; }
       }
     }
   }
@@ -1450,6 +1773,7 @@ module.exports = {
   detectUnsupportedMutationClaim,
   detectUngroundedCompletionClaim,
   detectUngroundedRecapNumbers,
+  detectUngroundedPrescriptionNumbers,
   buildGroundedSessionStateStatement,
   isRemainingWorkQuestion,
   workoutIsComplete,
