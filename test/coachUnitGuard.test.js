@@ -78,19 +78,19 @@ test('handles empty / non-string input without throwing', () => {
   assert.equal(stripFabricatedUnits(undefined), undefined);
 });
 
-// --- write-feeding path safety: compile slash notation is a no-op ---
+// --- the unit guard is a no-op on slash notation ---
 
-test('valid compile slash notation passes through unchanged (no-op on the write-feeding shape)', () => {
-  // compileSessionFromHistory emits numbers-only slash notation that feeds the
-  // parser → preview → approve → write path. Even though the guard is NOT wired on
-  // that path (see the wiring test below), prove it would be a no-op regardless.
+test('valid slash notation passes through unchanged (no-op on the write-feeding shape)', () => {
+  // Numbers-only slash notation feeds the parser → preview → approve → write
+  // path. Even though the guard is NOT wired on that path (see the wiring test
+  // below), prove it would be a no-op regardless.
   const compiled = 'Deadlift 135 10/4 185 10/2 225 8/2\nBench Press 140 15 190 10 230 5/2';
   assert.equal(stripFabricatedUnits(compiled), compiled);
 });
 
-// --- wiring: guard is on the DISPLAY voices, NOT the compile/write-feeding path ---
+// --- wiring: guard is on the DISPLAY voices, NOT the shared low-level layer ---
 
-test('the unit guard is wired on the display voices and NOT on the compile path', () => {
+test('the unit guard is wired on the display voices and NOT at the shared layer', () => {
   const fs = require('node:fs');
   const path = require('node:path');
   const src = fs.readFileSync(path.join(__dirname, '..', 'services', 'coach.js'), 'utf8');
@@ -109,10 +109,9 @@ test('the unit guard is wired on the display voices and NOT on the compile path'
   for (const voice of ['generateCoachMessage', 'generatePlanMessage', 'generateChatReply']) {
     assert.match(bodyOf(voice), /stripFabricatedUnits\(/, `${voice} must apply the unit guard`);
   }
-  // …the compile path (feeds preview→approve→write) must NOT.
-  assert.doesNotMatch(bodyOf('compileSessionFromHistory'), /stripFabricatedUnits/,
-    'compileSessionFromHistory must NOT call the guard — its slash-notation output feeds the write path');
-  // …and the shared low-level chokepoint must NOT (that would re-touch the compile path).
+  // …and the shared low-level chokepoint must NOT (a future write-feeding
+  // caller must never have its text altered there; #1706 removed the one
+  // that existed, the session compiler).
   assert.doesNotMatch(bodyOf('callGeminiContents'), /stripFabricatedUnits/,
-    'callGeminiContents must NOT call the guard — it is shared with the write-feeding compile path');
+    'callGeminiContents must NOT call the guard — the shared layer stays guard-free');
 });

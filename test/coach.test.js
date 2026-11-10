@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { buildCoachSystemPrompt, buildCoachUserPrompt, sanitizeFacts, sanitizeStimulusGrade, sanitizeNextMoveAdvisory, sanitizeRecoveryAdvisory, sanitizeSubstitution, sanitizeEvidenceContext, sanitizeTrend, sanitizeReadinessSignal, coachModel, buildPlanSystemPrompt, sanitizePlanFacts, buildPlanUserPrompt, buildChatSystemPrompt, sanitizeChatContext, sanitizeChatHistory, sanitizeConstraint, parseEditFromReply, parseNoteFromReply, parseReplyWithProposals, isValidEditSchema, isValidPlanEditSchema, buildCompileSystemPrompt, compileSessionFromHistory } = require('../services/coach');
+const { buildCoachSystemPrompt, buildCoachUserPrompt, sanitizeFacts, sanitizeStimulusGrade, sanitizeNextMoveAdvisory, sanitizeRecoveryAdvisory, sanitizeSubstitution, sanitizeEvidenceContext, sanitizeTrend, sanitizeReadinessSignal, coachModel, buildPlanSystemPrompt, sanitizePlanFacts, buildPlanUserPrompt, buildChatSystemPrompt, sanitizeChatContext, sanitizeChatHistory, sanitizeConstraint, parseEditFromReply, parseNoteFromReply, parseReplyWithProposals, isValidEditSchema, isValidPlanEditSchema } = require('../services/coach');
 const { TRAINING_PRINCIPLES, ANSWER_MODES, isColdStart, buildPrinciplesFragment, buildColdStartFragment, buildDataInformedFragment } = require('../services/coachBrain');
 
 test('coach system prompt carries the hard guardrails', () => {
@@ -1225,27 +1225,6 @@ test('parseNoteFromReply caps note text at 200 chars', () => {
   assert.equal(propose_note.note.length, 200, 'note is capped at 200 characters');
 });
 
-// ── Session compilation ────────────────────────────────────────────────────────
-
-test('buildCompileSystemPrompt carries the no-invent and output-only rules', () => {
-  const prompt = buildCompileSystemPrompt();
-  assert.match(prompt, /ONLY.*the lifter.*ACTUALLY/i, 'must restrict to lifter-logged sets');
-  assert.match(prompt, /NO_WORKOUT_FOUND/,             'must specify the no-sets sentinel');
-  assert.match(prompt, /no prose.*no explanations/i,   'must forbid prose in output');
-  assert.match(prompt, /one exercise per line/i,        'must specify line format');
-});
-
-test('compileSessionFromHistory returns null for empty or missing turns', async () => {
-  const r1 = await compileSessionFromHistory([]);
-  assert.equal(r1.workout_text, null, 'empty array → null');
-
-  const r2 = await compileSessionFromHistory(null);
-  assert.equal(r2.workout_text, null, 'null → null');
-
-  const r3 = await compileSessionFromHistory(undefined);
-  assert.equal(r3.workout_text, null, 'undefined → null');
-});
-
 // ── null-element crash guards ─────────────────────────────────────────────────
 // Regression: the rir guard `s && s.rir == null ? null : numOrNull(s.rir)`
 // short-circuits when s is null, then falls through to numOrNull(s.rir) → crash.
@@ -1288,20 +1267,6 @@ test('sanitizeChatContext does not crash on null / non-object elements in curren
   assert.equal(clean.current_plan.length, 1, 'null/non-object elements have no name and are filtered');
   assert.equal(clean.current_plan[0].name, 'Squat');
   assert.equal(clean.current_plan[0].rir, 2);
-});
-
-test('compileSessionFromHistory throws when Gemini is unconfigured (non-empty turns)', async () => {
-  const savedKey = process.env.GEMINI_API_KEY;
-  delete process.env.GEMINI_API_KEY;
-  try {
-    await assert.rejects(
-      () => compileSessionFromHistory([{ role: 'user', text: 'Bench 225 5/2' }]),
-      /GEMINI_API_KEY/i,
-      'should throw about missing key'
-    );
-  } finally {
-    if (savedKey !== undefined) process.env.GEMINI_API_KEY = savedKey;
-  }
 });
 
 // ── Substitution intent: voice may only word the engine's decision (PR 5) ─────
