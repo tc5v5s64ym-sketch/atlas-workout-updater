@@ -1976,9 +1976,8 @@ function parseDaleShorthand(text) {
       continue;
     }
     // QA-2: a weight followed by a slash-terminated segment ("115 8/") is one
-    // set with the RIR omitted — the exact shape the session-compile prompt
-    // (services/coach.js buildCompileSystemPrompt: "{reps}/{rir}", "omit the
-    // /rir if not mentioned") tells the extractor to emit for a no-RIR set.
+    // set with the RIR omitted — the no-RIR slash-notation shape ("{reps}/{rir}",
+    // "/rir omitted when not mentioned") for a no-RIR set.
     // The bare token matches no other branch, so without this the segment —
     // and its weight — was silently dropped and only a later slash-free
     // segment survived.
