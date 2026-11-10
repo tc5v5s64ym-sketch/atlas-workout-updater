@@ -976,6 +976,20 @@ function normalizeManualEffortMetrics(formFields) {
   return normalizeAndValidateParsedMetrics(parsedMetrics);
 }
 
+// #1708 — the vision numbers as the owner sees them: the raw parsed metrics
+// plus an explicit unverified-provenance marker, duration normalized for
+// display. Display-only; never a write payload.
+function provisionalVisionEffort(parsedMetrics) {
+  if (!parsedMetrics || typeof parsedMetrics !== 'object') return null;
+  const provisional = { ...parsedMetrics, provenance: 'vision-unverified' };
+  try {
+    provisional.duration = normalizeDurationString(parsedMetrics.duration);
+  } catch {
+    // leave the raw duration when normalization fails; it is a suggestion only
+  }
+  return provisional;
+}
+
 // Effort placeholder used when a screenshot can't be read (e.g. Gemini 429 /
 // timeout) but there ARE logged sets to save. The workout is saved without
 // effort data instead of failing the whole request; the effort row lands with
@@ -994,6 +1008,20 @@ const EMPTY_EFFORT_METRICS = Object.freeze({
 // logged sets are still saved.
 const SCREENSHOT_UNREADABLE_MESSAGE =
   "I couldn't read effort from the screenshot. I can still save the workout without effort data.";
+
+// #1708 — vision-extracted metrics are unverified: the model can invent
+// well-formed numbers from a blank image, and formatting validation cannot
+// establish provenance. Model-extracted metrics stay out of the authoritative
+// Effort row until deterministic extraction or explicit user-entered values
+// establish their source. They reach the owner only as explicitly-unverified
+// suggestions (parsed_effort with provenance 'vision-unverified').
+const VISION_UNVERIFIED_MESSAGE =
+  'Screenshot effort values are unverified — the model can invent numbers that are not in the image. Enter the duration, calories, and heart rate yourself to save them.';
+
+// #1708 — a request with workout rows but no effort source at all saves the
+// sets with a blank Effort row (B3 degrade precedent), and says so.
+const NO_EFFORT_MESSAGE =
+  'No effort values were provided, so the Effort row will be saved blank. Enter duration, calories, and heart rate to attach them.';
 
 // ── What HTTP status a failed Save actually deserves ──────────────────────────
 //
@@ -2440,7 +2468,10 @@ app.post('/api/parse-workout-image', upload.single('image'), async (req, res) =>
     const visionResult = await parseWorkoutScreenshot(req.file.path);
 
     // Prepare parsed object for the response; attempt to normalize duration for display.
-    const parsedForResponse = { ...visionResult.parsed_metrics };
+    // #1708 — the parsed numbers are unverified suggestions, never facts: mark
+    // their provenance so the owner (and the client) can see they were read by
+    // the model, not established.
+    const parsedForResponse = { ...visionResult.parsed_metrics, provenance: 'vision-unverified' };
     try {
       parsedForResponse.duration = normalizeDurationString(visionResult.parsed_metrics.duration);
     } catch (err) {
@@ -2451,7 +2482,18 @@ app.post('/api/parse-workout-image', upload.single('image'), async (req, res) =>
     // Parse-only endpoint: build the effort row for the response preview, but never
     // write it. Saving effort requires explicit owner approval via the
     // approve-before-save flow (/api/complete-workout). sheet_write is always 'skipped'.
-    const { effortRow, sessionId, dateValue } = buildEffortRowFromParsedMetrics(parsedForResponse, formFields);
+    // #1708 — the preview row's numeric fields stay blank: model-extracted metrics
+    // must not enter the authoritative-shaped row (the screenshot date and the
+    // workout-type note still flow; neither is a numeric metric).
+    const blankVisionMetrics = {
+      ...visionResult.parsed_metrics,
+      duration: '',
+      activeCalories: '',
+      totalCalories: '',
+      averageHR: '',
+      peakHR: ''
+    };
+    const { effortRow, sessionId, dateValue } = buildEffortRowFromParsedMetrics(blankVisionMetrics, formFields);
     const sheetWrite = 'skipped';
 
     const responseBody = {
@@ -2491,10 +2533,6 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
   let writeCommitted = false;
   let liveWriteRecorded = false;
 
-  if (!req.file && !hasManualEffortMetrics) {
-    return standardError(req, res, 'image file or manual effort metrics are required for complete-workout preview/write', null, 400);
-  }
-
   // log_rows_json is required
   if (!formFields.log_rows_json) {
     if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
@@ -2523,9 +2561,13 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
   }
 
   const effortOnly = parsedLogRows.length === 0;
+  // #1708 — an effort-only request still needs an effort source (an image or
+  // manual values). A request WITH workout rows may save the rows with a blank
+  // effort row (B3 degrade precedent), so rows-only is legitimate and no
+  // longer 400s here.
   if (effortOnly && !req.file && !hasManualEffortMetrics) {
     if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
-    return res.status(400).json({ error: 'Workout rows are required unless a screenshot or manual effort data is provided.' });
+    return standardError(req, res, 'image file or manual effort metrics are required for complete-workout preview/write', null, 400);
   }
 
   try {
@@ -2560,30 +2602,51 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
     }
 
     // 2) Validate parsed effort metrics (required before any writes)
+    // #1708 — precedence is explicit user-entered effort first: effort_json
+    // wins over any vision re-parse. A vision read is then checked in two
+    // layers: B3 (unchanged) asks "was the read well-formed?" — malformed
+    // output degrades exactly as before, and the rejected screenshot's date
+    // is discarded. #1708 then asks "are well-formed numbers proven?" —
+    // formatting cannot prove the model saw them, so the numbers are
+    // quarantined by policy and never reach the row (the validated result is
+    // computed only as the read-quality signal, then discarded).
     let normalizedMetrics;
     let metricWarnings = [];
+    let visionMetricsQuarantined = false;
     try {
       if (screenshotUnreadable) {
         // No effort to validate — save the sets with a blank effort row.
         normalizedMetrics = { ...EMPTY_EFFORT_METRICS };
         metricWarnings = [SCREENSHOT_UNREADABLE_MESSAGE];
-      } else {
-        const result = req.file
-          ? normalizeAndValidateParsedMetrics(visionResult.parsed_metrics)
-          : normalizeManualEffortMetrics(formFields);
+      } else if (hasManualEffortMetrics) {
+        const result = normalizeManualEffortMetrics(formFields);
         normalizedMetrics = result.normalized;
         metricWarnings = result.warnings || [];
+      } else if (req.file) {
+        // B3 read-quality check: malformed vision output throws into the
+        // degrade below. Well-formed output is quarantined, not used.
+        normalizeAndValidateParsedMetrics(visionResult.parsed_metrics);
+        visionMetricsQuarantined = true;
+        normalizedMetrics = { ...EMPTY_EFFORT_METRICS };
+        metricWarnings = [VISION_UNVERIFIED_MESSAGE];
+      } else {
+        // Rows with no effort source at all — save the sets with a blank effort row.
+        normalizedMetrics = { ...EMPTY_EFFORT_METRICS };
+        metricWarnings = [NO_EFFORT_MESSAGE];
       }
     } catch (error) {
-      // B3 effort-import isolation: a screenshot that PARSED but produced invalid
-      // or incomplete effort metrics (e.g. missing activeCalories) must not poison
-      // the workout save. If there are logged sets, degrade exactly like an
-      // unreadable screenshot — save the sets with a blank effort row and surface
-      // the specific owner-facing copy — instead of 400ing the whole request and
-      // losing the exercise rows. Manual effort entry and effort-only requests
-      // still fail honestly: there's nothing to fall back to (no sets to save) and
-      // a manual value the owner typed should be corrected, not silently dropped.
-      if (req.file && !effortOnly) {
+      // B3 effort-import isolation (unchanged): a screenshot that PARSED but
+      // produced invalid or incomplete effort metrics (e.g. missing
+      // activeCalories) must not poison the workout save. If there are logged
+      // sets, degrade exactly like an unreadable screenshot — save the sets
+      // with a blank effort row and surface the specific owner-facing copy —
+      // instead of 400ing the whole request and losing the exercise rows.
+      // Manual effort entry still fails honestly: a manual value the owner
+      // typed should be corrected, not silently dropped — so the degrade
+      // branches only fire when no manual effort was supplied (a vision
+      // error cannot occur alongside manual effort: the manual branch above
+      // runs instead).
+      if (!hasManualEffortMetrics && req.file && !effortOnly) {
         console.warn('⚠️ Screenshot effort metrics invalid; degrading to save sets without effort:', error.message);
         screenshotUnreadable = true;
         normalizedMetrics = { ...EMPTY_EFFORT_METRICS };
@@ -2594,7 +2657,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         // on a no-manual-date save. Source-date handling for screenshots is B5's
         // scope, not B3's — both degrade paths must behave identically here.
         visionResult.parsed_metrics = null;
-      } else if (req.file && effortOnly) {
+      } else if (!hasManualEffortMetrics && req.file && effortOnly) {
         // Effort-only screenshot whose metrics parsed but were invalid/out-of-range:
         // there are no logged sets to fall back to, so fail closed — but with the
         // SAME 422 + specific owner copy as the unreadable-screenshot effort-only
@@ -2613,6 +2676,22 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
         return standardError(req, res, 'Parsed metrics validation failed', process.env.NODE_ENV === 'production' ? null : error.message, 400);
       }
+    }
+
+    // #1708 — an effort-only request whose only numbers are unverified vision
+    // output has nothing saveable: fail closed (preview and live alike, so the
+    // preview never shows an approvable blank row the live write would refuse)
+    // and tell the owner to enter the values manually. With logged sets the
+    // sets save with a blank effort row instead.
+    if (effortOnly && visionMetricsQuarantined) {
+      if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
+      return standardError(
+        req,
+        res,
+        "I couldn't verify effort from the screenshot — enter the duration, calories, and heart rate manually to save them.",
+        { parsed_effort: provisionalVisionEffort(visionResult.parsed_metrics) },
+        422
+      );
     }
 
     // 3) Determine session/date — track the source so the preview can surface a
@@ -3090,9 +3169,24 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
           duplicate_session: duplicateSession,
           duplicate_log_rows: skippedDuplicates.length
         },
-        effort_source: req.file ? (screenshotUnreadable ? 'screenshot_unreadable' : 'screenshot') : 'manual',
+        // #1708 — the source names where the row's numbers came from: 'manual'
+        // is explicit user-entered effort; 'screenshot_unverified' is a file
+        // whose numbers were quarantined (the row is blank); 'none' is rows
+        // with no effort source at all. (An unreadable screenshot still wins
+        // over manual values, as before — its branch runs first in step 2.)
+        effort_source: screenshotUnreadable
+          ? 'screenshot_unreadable'
+          : hasManualEffortMetrics
+            ? 'manual'
+            : req.file
+              ? 'screenshot_unverified'
+              : 'none',
         screenshot_unreadable: screenshotUnreadable,
-        parsed_effort: normalizedMetrics,
+        // #1708 — when the vision numbers were quarantined, the owner still sees
+        // them as explicitly-unverified suggestions; otherwise the validated metrics.
+        parsed_effort: visionMetricsQuarantined
+          ? provisionalVisionEffort(visionResult.parsed_metrics)
+          : normalizedMetrics,
         quality_score: qualityScore,
         quality_breakdown: qualityBreakdown
       }

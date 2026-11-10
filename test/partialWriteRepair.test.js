@@ -59,7 +59,6 @@ function loadPartialHelpers() {
     sliceFunction(appSrc, 'isPartialCompleteWrite'),
     sliceFunction(appSrc, 'duplicateEchoIsPartialCompleteWrite'),
     sliceFunction(appSrc, 'partialFromError'),
-    sliceFunction(appSrc, 'effortJsonFromParsedEffort'),
     sliceFunction(appSrc, 'generateWriteId'),
     sliceFunction(appSrc, 'keyPartialRepair'),
   ];
@@ -118,12 +117,33 @@ test('#1628: a duplicate echo of a fully-written original is not partial', () =>
 
 // ── keyPartialRepair ────────────────────────────────────────────────────────
 
-test('#1628: a screenshot pending write is keyed to an effort-only repair', () => {
+// #1708 — only USER-ENTERED effort qualifies for repair. A screenshot
+// pending write whose effort was never typed (vision-derived values are no
+// longer stored on the pending write) has no repair to key: the owner
+// re-enters the values manually. Resurrecting the unverified preview
+// numbers as the repair payload would reintroduce the invented-effort hole.
+test('#1628 + #1708: a screenshot pending write with only vision-derived effort has no repair to key', () => {
   const { keyPartialRepair } = loadPartialHelpers();
   const pending = {
     mode: 'screenshot', file: 'image-blob', logRows: [{ exercise: 'Bench' }],
     sessionId: '20261030-AM-01', date: '2026-10-30', location: 'Home', notes: '',
-    parsedEffort: { duration: 42, activeCalories: 410, totalCalories: 520, averageHR: 148, peakHR: 171, workoutType: 'Traditional Strength Training' },
+    writeId: 'original-write-id',
+  };
+  assert.equal(keyPartialRepair(pending), false);
+  assert.equal(pending.mode, 'screenshot');
+  assert.equal(pending.writeId, 'original-write-id');
+  assert.deepEqual(pending.logRows, [{ exercise: 'Bench' }]);
+});
+
+test('#1628: a screenshot pending write WITH user-entered effort is keyed to an effort-only repair', () => {
+  const { keyPartialRepair } = loadPartialHelpers();
+  const manualEffort = {
+    duration: '00:42:00', active_calories: 410, total_calories: 520, average_hr: 148, peak_hr: 171,
+  };
+  const pending = {
+    mode: 'screenshot', file: 'image-blob', logRows: [{ exercise: 'Bench' }],
+    sessionId: '20261030-AM-01', date: '2026-10-30', location: 'Home', notes: '',
+    manualEffort,
     writeId: 'original-write-id',
   };
   assert.equal(keyPartialRepair(pending), true);
@@ -131,9 +151,7 @@ test('#1628: a screenshot pending write is keyed to an effort-only repair', () =
   assert.equal(pending.effortOnly, true);
   assert.deepEqual(pending.logRows, []);
   assert.equal(pending.file, null);
-  assert.deepEqual(pending.manualEffort, {
-    duration: 42, activeCalories: 410, totalCalories: 520, averageHR: 148, peakHR: 171, workoutType: 'Traditional Strength Training',
-  });
+  assert.equal(pending.manualEffort, manualEffort);
   assert.notEqual(pending.writeId, 'original-write-id');
   assert.equal(pending.sessionId, '20261030-AM-01');
   assert.equal(pending.date, '2026-10-30');
@@ -157,7 +175,7 @@ test('#1628: with no effort payload there is no repair to key — the write is l
   const { keyPartialRepair } = loadPartialHelpers();
   const pending = {
     mode: 'screenshot', file: null, logRows: [{ exercise: 'Bench' }],
-    sessionId: '20261030-AM-03', date: '2026-10-30', parsedEffort: null, writeId: 'no-effort-id',
+    sessionId: '20261030-AM-03', date: '2026-10-30', writeId: 'no-effort-id',
   };
   assert.equal(keyPartialRepair(pending), false);
   assert.equal(pending.mode, 'screenshot');

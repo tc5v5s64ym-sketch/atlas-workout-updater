@@ -4291,7 +4291,12 @@ test('api smoke: no prescribed pairs → no substitutions key (reason-wiring reg
   assert.deepEqual(fakeSheetsState.appendCalls, []);
 });
 
-test('api smoke: complete-workout allows effort-only screenshot preview with empty log rows', async () => {
+// #1708 — an effort-only screenshot preview no longer succeeds on vision
+// numbers alone: the values are quarantined as unverified, and with no
+// logged sets and no user-entered values there is nothing saveable — the
+// preview fails closed (422) and tells the owner to enter the values
+// manually. The suggestion stays visible in the error details.
+test('api smoke: complete-workout effort-only screenshot preview fails closed without user-entered effort (#1708)', async () => {
   fakeSheetsState.appendCalls.length = 0;
   fakeVisionParsedMetrics = {
     date: null,
@@ -4310,17 +4315,11 @@ test('api smoke: complete-workout allows effort-only screenshot preview with emp
   form.append('image', new Blob(['watch'], { type: 'image/png' }), 'watch.png');
 
   const { response, body } = await requestMultipart('/api/complete-workout', form);
-  const data = body.data.data;
 
-  assert.equal(response.status, 200, JSON.stringify(body));
-  assert.equal(body.status, 'ok');
-  assert.equal(data.test_mode, true);
-  assert.equal(data.no_write_confirmed, true);
-  assert.equal(data.sheet_written, false);
-  assert.equal(data.effort_only, true);
-  assert.equal(data.effort_source, 'screenshot');
-  assert.deepEqual(data.log_rows_preview, []);
-  assert.deepEqual(data.rows_to_write, []);
+  assert.equal(response.status, 422, JSON.stringify(body));
+  assert.match(body.message, /manually/i);
+  assert.equal(body.details.parsed_effort.duration, '00:42:00', 'the suggestion stays visible for the owner to verify');
+  assert.equal(body.details.parsed_effort.provenance, 'vision-unverified');
   assert.deepEqual(fakeSheetsState.appendCalls, []);
 });
 
@@ -4373,7 +4372,11 @@ test('api smoke: complete-workout screenshot preview uses parsed screenshot date
     workoutType: 'Traditional Strength Training'
   };
   const form = new FormData();
-  form.append('log_rows_json', JSON.stringify([]));
+  // #1708: one logged row keeps this preview reachable — an effort-only
+  // screenshot preview now fails closed on unverified vision numbers.
+  form.append('log_rows_json', JSON.stringify([
+    { exercise: 'Bench Press', set_number: 1, weight: 225, reps: 5, rir: 2, notes: '' }
+  ]));
   form.append('test_mode', 'true');
   form.append('image', new Blob(['watch'], { type: 'image/png' }), 'watch.png');
 
@@ -4401,7 +4404,11 @@ test('api smoke: complete-workout screenshot preview falls back to local today w
     workoutType: 'Traditional Strength Training'
   };
   const form = new FormData();
-  form.append('log_rows_json', JSON.stringify([]));
+  // #1708: one logged row keeps this preview reachable — an effort-only
+  // screenshot preview now fails closed on unverified vision numbers.
+  form.append('log_rows_json', JSON.stringify([
+    { exercise: 'Bench Press', set_number: 1, weight: 225, reps: 5, rir: 2, notes: '' }
+  ]));
   form.append('test_mode', 'true');
   form.append('image', new Blob(['watch'], { type: 'image/png' }), 'watch.png');
 
@@ -4430,7 +4437,11 @@ test('api smoke: complete-workout manual date overrides parsed screenshot date',
   };
   const form = new FormData();
   form.append('date', '2026-06-11');
-  form.append('log_rows_json', JSON.stringify([]));
+  // #1708: one logged row keeps this preview reachable — an effort-only
+  // screenshot preview now fails closed on unverified vision numbers.
+  form.append('log_rows_json', JSON.stringify([
+    { exercise: 'Bench Press', set_number: 1, weight: 225, reps: 5, rir: 2, notes: '' }
+  ]));
   form.append('test_mode', 'true');
   form.append('image', new Blob(['watch'], { type: 'image/png' }), 'watch.png');
 
@@ -5536,7 +5547,11 @@ test('api smoke: complete-workout still previews workout rows alongside screensh
 
   assert.equal(response.status, 200, JSON.stringify(body));
   assert.equal(data.effort_only, false);
-  assert.equal(data.effort_source, 'screenshot');
+  // #1708 — the screenshot's numbers are quarantined as unverified; the rows
+  // still preview and the suggestion stays visible in parsed_effort.
+  assert.equal(data.effort_source, 'screenshot_unverified');
+  assert.equal(data.parsed_effort.duration, '00:42:00');
+  assert.equal(data.parsed_effort.provenance, 'vision-unverified');
   assert.equal(data.no_write_confirmed, true);
   assert.equal(data.rows_to_write.length, 1);
   assert.equal(data.rows_to_write[0][3], 'Bench Press');
@@ -7812,7 +7827,11 @@ test('guard: an ancient screenshot date (hallucinated year) is rejected — toda
     workoutType: 'Traditional Strength Training'
   };
   const form = new FormData();
-  form.append('log_rows_json', JSON.stringify([]));
+  // #1708: one logged row keeps this preview reachable — an effort-only
+  // screenshot preview now fails closed on unverified vision numbers.
+  form.append('log_rows_json', JSON.stringify([
+    { exercise: 'Bench Press', set_number: 1, weight: 225, reps: 5, rir: 2, notes: '' }
+  ]));
   form.append('test_mode', 'true');
   form.append('image', new Blob(['watch'], { type: 'image/png' }), 'watch.png');
 
@@ -7842,7 +7861,11 @@ test('guard: a future screenshot date is rejected the same way', async () => {
     workoutType: 'Traditional Strength Training'
   };
   const form = new FormData();
-  form.append('log_rows_json', JSON.stringify([]));
+  // #1708: one logged row keeps this preview reachable — an effort-only
+  // screenshot preview now fails closed on unverified vision numbers.
+  form.append('log_rows_json', JSON.stringify([
+    { exercise: 'Bench Press', set_number: 1, weight: 225, reps: 5, rir: 2, notes: '' }
+  ]));
   form.append('test_mode', 'true');
   form.append('image', new Blob(['watch'], { type: 'image/png' }), 'watch.png');
 
@@ -7868,7 +7891,11 @@ test('guard: an explicit manual date still wins over a rejected screenshot date 
     workoutType: 'Traditional Strength Training'
   };
   const form = new FormData();
-  form.append('log_rows_json', JSON.stringify([]));
+  // #1708: one logged row keeps this preview reachable — an effort-only
+  // screenshot preview now fails closed on unverified vision numbers.
+  form.append('log_rows_json', JSON.stringify([
+    { exercise: 'Bench Press', set_number: 1, weight: 225, reps: 5, rir: 2, notes: '' }
+  ]));
   form.append('test_mode', 'true');
   form.append('date', '2026-06-28');
   form.append('image', new Blob(['watch'], { type: 'image/png' }), 'watch.png');

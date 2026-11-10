@@ -961,7 +961,10 @@ test('newer closeout screenshot selection survives an older image parse completi
     }
     if (requestPath === '/api/log-workout' && method === 'POST') {
       if (body?.test_mode === true || body?.test_mode === 'true') {
-        const isScreenshotCloseout = Boolean(body.closeout_context && body.effort_row);
+        // #1708 — the screenshot closeout is identified by its closeout
+        // context alone: parsed vision effort no longer rides the payload
+        // as effort_row, so it cannot identify the closeout anymore.
+        const isScreenshotCloseout = Boolean(body.closeout_context);
         if (isScreenshotCloseout) capture.previews.push(body);
         const rows = (body.log_rows || []).map(r => [
           r.date_clean, r.session_id, r.exercise, r.exercise, 'Chest', 'BEN01',
@@ -1058,7 +1061,9 @@ test('newer closeout screenshot selection survives an older image parse completi
   await expect.poll(() => capture.previews.length).toBe(1);
   expect(capture.imageCompletions).toEqual(['B']);
   const newerPreview = capture.previews[0];
-  expect(newerPreview.effort_row.active_calories).toBe(222);
+  // #1708 — the newer screenshot's parsed values never ride the preview
+  // payload as effort_row; the newer SELECTION still wins the correlation.
+  expect(newerPreview.effort_row).toBeUndefined();
   expect(newerPreview.correlation.turn_id).toBe(MESSAGE_TURN);
 
   capture.imageGates[0]();
