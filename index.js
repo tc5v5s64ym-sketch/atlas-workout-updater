@@ -72,6 +72,8 @@ const {
   completeWrite,
   failWrite,
   normalizeWriteId,
+  isSettledReceipt,
+  duplicateReplay,
   // The S3 receipt migration seam (§5.3) — TEMPORARY, deleted at S4 with the store.
   exportLiveReceipts,
   importReceipts
@@ -1606,24 +1608,20 @@ app.post('/api/log-modality', async (req, res) => {
 
   const idempotency = beginWrite(writeId, { endpoint: '/api/log-modality', session_id, date });
   if (idempotency.duplicate) {
-    const rec = idempotency.record || {};
-    const original = rec.response || {};
-    // #1688 / F02: an original write whose Sheets append proof was never
-    // verified must NOT be replayed as a save on retry — the same fail-closed
-    // rule as /api/complete-workout. The row may be on the sheet, but the proof
-    // was unverified, so the retry fails closed with the unverified state.
-    if (original.sheet_write === 'unverified' || original.proof_mismatch === true) {
-      return standardError(req, res,
-        'Duplicate write_id; the original log-modality append proof was unverified and cannot be confirmed as saved.',
-        { ...original, duplicate_write: true, write_id: idempotency.write_id, sheet_written: false, sheet_write: 'unverified', proof_mismatch: true },
-        500);
+    const record = idempotency.record || {};
+    const replay = duplicateReplay(record, idempotency.write_id);
+    // A partial or unverified original must stay that word on retry. Replaying
+    // it as a save is the lie #1690 removes.
+    if (replay.terminal) {
+      return standardError(req, res, replay.message, replay.body, replay.httpStatus);
     }
+    const original = replay.source || {};
     return standardSuccess(req, res,
-      rec.status === 'completed'
+      replay.completed
         ? 'Duplicate write_id; modality was already saved.'
         : 'Duplicate write_id; modality write is in progress.',
       { ...original, duplicate_write: true, write_id: idempotency.write_id, sheet_written: false },
-      rec.status === 'completed' ? 200 : 409
+      replay.httpStatus
     );
   }
 
@@ -1708,7 +1706,7 @@ app.post('/api/log-modality', async (req, res) => {
           date,
           write_id: idempotency.write_id,
           duplicate_write: false,
-          idempotency_status: 'completed',
+          idempotency_status: 'unverified',
           sheet_write: 'unverified',
           sheet_written: true,
           modality_written: false,
@@ -2299,21 +2297,25 @@ app.post('/api/bodyweight', async (req, res) => {
 
     if (idempotency.duplicate) {
       const record = idempotency.record || {};
-      const original = record.response || {};
+      const replay = duplicateReplay(record, idempotency.write_id);
+      if (replay.terminal) {
+        return standardError(req, res, replay.message, replay.body, replay.httpStatus);
+      }
+      const original = replay.source || {};
       const duplicateBody = {
         ...original,
         duplicate_write: true,
         write_id: idempotency.write_id,
         idempotency_status: record.status || 'unknown',
-        sheet_write: record.status === 'completed' ? 'skipped_duplicate' : 'skipped_duplicate_in_progress',
+        sheet_write: replay.completed ? 'skipped_duplicate' : 'skipped_duplicate_in_progress',
         sheet_written: false,
         original_sheet_write: original.sheet_write || null,
         original_completed_at: record.completed_at || null
       };
-      const message = record.status === 'completed'
+      const message = replay.completed
         ? 'Duplicate write_id; original bodyweight entry was already processed.'
         : 'Duplicate write_id; original bodyweight entry is already in progress.';
-      return standardSuccess(req, res, message, duplicateBody, record.status === 'completed' ? 200 : 409);
+      return standardSuccess(req, res, message, duplicateBody, replay.httpStatus);
     }
 
     // Tracks whether the row is already on the sheet. Once it flips true the
@@ -2347,12 +2349,13 @@ app.post('/api/bodyweight', async (req, res) => {
           completeWrite(idempotency.write_id, idempotency.token, {
             entry,
             test_mode: false,
-            sheet_write: 'success',
+            sheet_write: 'unverified',
             sheet_written: true,
             write_id: idempotency.write_id,
             duplicate_write: false,
-            idempotency_status: 'completed',
-            post_processing_error: true
+            idempotency_status: 'unverified',
+            post_processing_error: true,
+            proof_mismatch: true
           });
         } else {
           failWrite(idempotency.write_id, idempotency.token);
@@ -2696,15 +2699,14 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       sessionId = formFields.session_id;
     } else {
       const priorRecord = normalizeWriteId(writeId) ? peekWrite(writeId) : null;
-      // Only reuse the minted id for a NON-completed prior attempt (failed or a
-      // stale/in-progress reservation that beginWrite will downgrade) — that is the
-      // retry path that actually writes, where reuse keeps the dedupes effective. A
-      // COMPLETED record must instead fall through to beginWrite's idempotency
-      // replay (200 skipped_duplicate); reusing its id here would trip the
-      // duplicate-session hard-stop below and 409 a successful, already-saved
-      // workout on a lost-response retry.
+      // Only reuse the minted id for a NOT-YET-SETTLED prior attempt (failed, or a
+      // stale/in-progress reservation that beginWrite will downgrade). A settled
+      // receipt — completed, partial, or unverified — must fall through to
+      // beginWrite's replay. Reusing its id here would trip the duplicate-session
+      // hard-stop below and hide that replay. Partial and unverified are settled
+      // too: they are not a fresh attempt, and they are not a success.
       const priorMintedSessionId = priorRecord
-        && priorRecord.status !== 'completed'
+        && !isSettledReceipt(priorRecord.status)
         && priorRecord.metadata
         && priorRecord.metadata.session_id;
       if (priorMintedSessionId) {
@@ -2886,38 +2888,29 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
 
       if (idempotency.duplicate) {
         const record = idempotency.record || {};
-        const originalData = (record.response && record.response.data) || {};
+        const replay = duplicateReplay(record, idempotency.write_id);
+        if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
+        if (replay.terminal) {
+          return standardError(req, res, replay.message, replay.body, replay.httpStatus);
+        }
+        const originalData = replay.source || {};
         const duplicateData = {
           ...originalData,
           duplicate_write: true,
           write_id: idempotency.write_id,
           idempotency_status: record.status || 'unknown',
-          sheet_write: record.status === 'completed' ? 'skipped_duplicate' : 'skipped_duplicate_in_progress',
+          sheet_write: replay.completed ? 'skipped_duplicate' : 'skipped_duplicate_in_progress',
           sheet_written: false,
+          original_sheet_write: originalData.sheet_write || null,
           original_sheet_written: originalData.sheet_written === true,
           original_log_rows_written: originalData.log_rows_written ?? null,
           original_effort_written: originalData.effort_written === true,
           original_completed_at: record.completed_at || null
         };
-        // F02 / WRITE-1: an original write whose Sheets append proof was never
-        // verified must NOT be replayed as a save on retry. The rows may be on the
-        // sheet, but the proof was inconsistent — so a retried write_id keeps
-        // failing closed with the unverified state instead of returning the
-        // skipped_duplicate success shape the client accepts as saved.
-        if (originalData.sheet_write === 'unverified' || originalData.proof_mismatch === true) {
-          if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
-          return standardError(
-            req, res,
-            'Duplicate write_id; the original complete-workout append proof was unverified and cannot be confirmed as saved.',
-            { ...duplicateData, sheet_write: 'unverified', proof_mismatch: true },
-            500
-          );
-        }
-        if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
-        const dupMessage = record.status === 'completed'
+        const dupMessage = replay.completed
           ? 'Duplicate write_id; original complete-workout was already processed.'
           : 'Duplicate write_id; original complete-workout is already in progress.';
-        return standardSuccess(req, res, dupMessage, { status: 'ok', message: dupMessage, data: duplicateData }, record.status === 'completed' ? 200 : 409);
+        return standardSuccess(req, res, dupMessage, { status: 'ok', message: dupMessage, data: duplicateData }, replay.httpStatus);
       }
 
       // Header-drift guard: confirm the target tabs still match the column
@@ -2999,7 +2992,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
             date: dateValue,
             write_id: idempotency.write_id,
             duplicate_write: false,
-            idempotency_status: 'completed',
+            idempotency_status: 'partial',
             sheet_write: 'partial',
             sheet_written: true,
             log_rows_written: logRowsWritten,
@@ -3045,7 +3038,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
           date: dateValue,
           write_id: idempotency.write_id,
           duplicate_write: false,
-          idempotency_status: 'completed',
+          idempotency_status: 'unverified',
           sheet_write: 'unverified',
           sheet_written: true,
           log_rows_written: logRowsWritten,
@@ -3195,12 +3188,14 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         // Record the write as completed so a retried write_id replays this state
         // instead of appending a second time (never failWrite a committed write).
         completeWrite(idempotency.write_id, idempotency.token, {
-          status: 'ok',
-          message: 'complete-workout written; response post-processing failed',
+          status: 'error',
+          message: 'complete-workout written; response finalization failed and the write was not verified',
           data: {
             write_id: idempotency.write_id,
+            sheet_write: 'unverified',
             sheet_written: true,
-            idempotency_status: 'completed',
+            proof_mismatch: true,
+            idempotency_status: 'unverified',
             post_processing_error: true
           }
         });
@@ -3629,23 +3624,27 @@ app.post('/api/log-workout', async (req, res) => {
 
   if (idempotency.duplicate) {
     const record = idempotency.record || {};
-    const original = record.response || {};
+    const replay = duplicateReplay(record, idempotency.write_id);
+    if (replay.terminal) {
+      return standardError(req, res, replay.message, replay.body, replay.httpStatus);
+    }
+    const original = replay.source || {};
     const duplicateBody = {
       ...original,
       duplicate_write: true,
       write_id: idempotency.write_id,
       idempotency_status: record.status || 'unknown',
-      sheet_write: record.status === 'completed' ? 'skipped_duplicate' : 'skipped_duplicate_in_progress',
+      sheet_write: replay.completed ? 'skipped_duplicate' : 'skipped_duplicate_in_progress',
       sheet_written: false,
       original_sheet_write: original.sheet_write || null,
       original_completed_at: record.completed_at || null
     };
 
-    const message = record.status === 'completed'
+    const message = replay.completed
       ? 'Duplicate write_id; original write was already processed.'
       : 'Duplicate write_id; original write is already in progress.';
 
-    return standardSuccess(req, res, message, duplicateBody, record.status === 'completed' ? 200 : 409);
+    return standardSuccess(req, res, message, duplicateBody, replay.httpStatus);
   }
 
   // #1629 — session-scoped uniqueness claim around the read-check-append
@@ -3866,7 +3865,7 @@ app.post('/api/log-workout', async (req, res) => {
       if (idempotency.enabled) {
         partialBody.write_id = idempotency.write_id;
         partialBody.duplicate_write = false;
-        partialBody.idempotency_status = 'completed';
+        partialBody.idempotency_status = 'partial';
         completeWrite(idempotency.write_id, idempotency.token, partialBody);
       }
       // #1165 — a PARTIAL write is the outcome most worth correlating, not the least: the log
@@ -3992,21 +3991,29 @@ app.post('/api/log-workout', async (req, res) => {
     console.error('❌ Failed to finalize workout response after append:', error);
     // The log (and any effort) rows are already on the sheet by this point, so
     // releasing the idempotency record would let a retried write_id re-append.
-    // Record the write as completed instead (never failWrite a committed write).
+    // Record the write as unverified (never failWrite a committed write, and
+    // never completed/success — this attempt did not verify).
     // The session claim still releases: the rows are committed, so a waiter
     // re-reading now sees them and lands on the duplicate verdict.
     releaseSessionClaim(sessionClaimKey, sessionClaim.token);
     if (idempotency.enabled) {
+      // Rows are on the sheet, but this attempt never produced a verified
+      // success the client received. Store unverified — not success — so a
+      // retry replays the non-confirmation instead of a saved claim.
+      // Never failWrite: a released id would append the rows again.
       completeWrite(idempotency.write_id, idempotency.token, {
-        message: 'Workout data appended; response finalization failed.',
+        message: 'Workout data may have been appended; the write was not verified.',
         log_rows_written: Number(logResponse?.data?.updates?.updatedRows || 0),
         effort_rows_written: Number(effortResponse?.data?.updates?.updatedRows || 0),
         effortWritten: Boolean(formattedEffortRow),
         test_mode: false,
-        sheet_write: 'success',
+        sheet_write: 'unverified',
+        sheet_written: true,
+        proof_mismatch: true,
+        post_processing_error: true,
         write_id: idempotency.write_id,
         duplicate_write: false,
-        idempotency_status: 'completed'
+        idempotency_status: 'unverified'
       });
     }
     return standardError(req, res, 'Failed to append workout data', process.env.NODE_ENV === 'production' ? null : error.message, 500);

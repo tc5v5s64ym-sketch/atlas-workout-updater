@@ -4819,6 +4819,9 @@ test('api smoke (F02/WRITE-1): a retried write_id after an unverified proof stay
       const first = await requestMultipart('/api/complete-workout', mkForm());
       assert.equal(first.response.status, 500, JSON.stringify(first.body));
       assert.equal(first.body.details.sheet_write, 'unverified');
+      assert.equal(first.body.details.idempotency_status, 'unverified');
+      const stored = require('../services/idempotency').peekWrite(wid);
+      assert.equal(stored && stored.status, 'unverified', 'receipt status must be unverified, not completed');
       const logAppendsAfterFirst = fakeSheetsState.appendCalls.filter(c => c.tabName === 'Log_Cleaned').length;
 
       // Retry the SAME write_id — the original 500 was lost. It must NOT replay as
@@ -5310,22 +5313,25 @@ test('api smoke: complete-workout effort failure after log append is partial, re
       assert.equal(first.response.status, 500, JSON.stringify(first.body));
       assert.equal(first.body.status, 'error');
       assert.equal(first.body.details.sheet_write, 'partial');
+      assert.equal(first.body.details.idempotency_status, 'partial');
       assert.equal(first.body.details.sheet_written, true);
       assert.equal(first.body.details.log_rows_written, 1);
       assert.equal(first.body.details.effort_written, false);
       assert.equal(first.body.details.write_id, 'complete-partial-retry-01');
+      assert.equal(require('../services/idempotency').peekWrite('complete-partial-retry-01').status, 'partial');
       // One log append + one failed effort attempt (the stub records before throwing).
       assert.equal(fakeSheetsState.appendCalls.length, 2);
 
       // Outage clears; the client retries the SAME write_id. The log rows must
-      // not be appended a second time — the recorded partial result replays.
+      // not be appended a second time, and the retry must not read as a save.
       fakeSheetsState.failAppendForTab = null;
       const retry = await requestMultipart('/api/complete-workout', buildForm());
-      const dupData = retry.body.data.data;
-      assert.equal(retry.response.status, 200, JSON.stringify(retry.body));
-      assert.equal(dupData.duplicate_write, true);
-      assert.equal(dupData.sheet_write, 'skipped_duplicate');
-      assert.equal(dupData.original_sheet_written, true);
+      assert.equal(retry.response.status, 500, JSON.stringify(retry.body));
+      assert.equal(retry.body.details.duplicate_write, true);
+      assert.equal(retry.body.details.sheet_write, 'partial');
+      assert.equal(retry.body.details.idempotency_status, 'partial');
+      assert.notEqual(retry.body.details.sheet_write, 'skipped_duplicate');
+      assert.notEqual(retry.body.details.sheet_write, 'success');
       assert.equal(fakeSheetsState.appendCalls.length, 2, 'retry must not append again');
     });
   } finally {
@@ -6984,27 +6990,31 @@ test('api smoke: log-workout effort failure after log append is partial, retry n
     assert.equal(first.body.status, 'error');
     assert.equal(first.body.details.sheet_write, 'partial');
     assert.equal(first.body.details.sheet_written, true);
+    assert.equal(first.body.details.idempotency_status, 'partial');
     assert.equal(first.body.details.log_rows_written, 1);
     assert.ok(first.body.details.logAppendedRange, 'partial response must carry the appended range for undo');
     assert.equal(first.body.details.effortWritten, false);
     assert.equal(first.body.details.write_id, 'write-partial-retry-01');
+    const stored = require('../services/idempotency').peekWrite('write-partial-retry-01');
+    assert.equal(stored.status, 'partial', 'the receipt record must say partial, not completed');
     // One log append + one failed effort attempt.
     assert.equal(fakeSheetsState.appendCalls.length, 2);
 
     // Outage clears; the client retries the SAME write_id. The log rows must
-    // not be appended a second time — the recorded partial result replays.
+    // not be appended a second time, and the retry must not become a save.
     fakeSheetsState.failAppendForTab = null;
     const retry = await withMutedConsoleLog(() => requestJson('/api/log-workout', {
       method: 'POST',
       body: JSON.stringify(payload)
     }));
 
-    assert.equal(retry.response.status, 200, JSON.stringify(retry.body));
-    assert.equal(retry.body.data.duplicate_write, true);
-    assert.equal(retry.body.data.sheet_write, 'skipped_duplicate');
-    assert.equal(retry.body.data.sheet_written, false);
-    assert.equal(retry.body.data.original_sheet_write, 'partial');
-    assert.equal(retry.body.data.logAppendedRange, first.body.details.logAppendedRange);
+    assert.equal(retry.response.status, 500, JSON.stringify(retry.body));
+    assert.equal(retry.body.details.duplicate_write, true);
+    assert.equal(retry.body.details.sheet_write, 'partial');
+    assert.notEqual(retry.body.details.sheet_write, 'success');
+    assert.notEqual(retry.body.details.sheet_write, 'skipped_duplicate');
+    assert.equal(retry.body.details.idempotency_status, 'partial');
+    assert.equal(retry.body.details.logAppendedRange, first.body.details.logAppendedRange);
     assert.equal(fakeSheetsState.appendCalls.length, 2, 'retry must not append again');
   } finally {
     fakeSheetsState.allowAppend = false;
