@@ -115,7 +115,6 @@ const { success: standardSuccess, error: standardError } = require('./response')
 const sessionModule = require('./services/session');
 const { createTtlCache } = require('./services/cache');
 const { parseWorkoutScreenshot } = require('./services/vision');
-const coachPolish = require('./services/coachPolish');
 const { normalizeExerciseKey, generateLiftCode, hasCuratedLiftCode, makeLiftCodeRegistry, buildExerciseCatalogMap, enrichLogRow, closestExerciseMatches } = require('./services/exerciseEnrichment');
 const { normalizeDurationString } = require('./services/duration');
 const { buildWorkoutTextParseDryRunResponse, canonicalizeExerciseName } = require('./services/workoutTextParser');
@@ -2012,14 +2011,10 @@ app.get('/api/recommendation/preview', async (req, res) => {
       effortRows: allEffort,
       constraints: parseRecommendationConstraints(req.query)
     });
-    // Optional Gemini polish: natural wording, locked numbers enforced by the field-aware
-    // validator. Degrades to the deterministic templated explanation on any failure/drift.
-    let coachExplanation = rec.coachExplanation;
-    if (coachExplanation) {
-      try {
-        coachExplanation = await coachPolish.polishCoachExplanation(coachExplanation, rec.llmBrief && rec.llmBrief.lockedNumbers);
-      } catch { coachExplanation = rec.coachExplanation; }
-    }
+    // The deterministic templated explanation is served directly — no model
+    // polish. A polished rewrite can contradict the engine prescription while
+    // passing the number/field validators (#1728, Fable 5.2 re-audit).
+    const coachExplanation = rec.coachExplanation;
     const payload = {
       intent: rec.intent,
       source: rec.source,

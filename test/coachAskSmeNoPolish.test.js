@@ -52,9 +52,7 @@ require.cache[require.resolve('../services/coach')] = {
 };
 
 const smeState = { result: { answer: null, depth: 'explain', cards: ['rep_ranges'], confidenceLevel: 'high' } };
-const polishState = { transform: (a) => a }; // override per probe to simulate a hostile Gemini rewrite
 require.cache[require.resolve('../services/trainingSME')] = { id: require.resolve('../services/trainingSME'), filename: require.resolve('../services/trainingSME'), loaded: true, exports: { buildTrainingSMEAnswer: () => smeState.result } };
-require.cache[require.resolve('../services/coachPolish')] = { id: require.resolve('../services/coachPolish'), filename: require.resolve('../services/coachPolish'), loaded: true, exports: { polishSmeAnswer: async (a) => polishState.transform(a) } };
 
 const originalConsoleLog = console.log;
 const { app } = require('../index');
@@ -91,10 +89,8 @@ function assertCardTextServed(res, json, cardText, probe) {
 test('A1711-1: a polish that reverses the rep ranges is not served — the card text is', async (t) => {
   const cardText = 'For strength, use 1-6 reps; for hypertrophy, use 8-15 reps.';
   smeState.result = { answer: cardText, depth: 'explain', cards: ['rep_ranges'], confidenceLevel: 'high' };
-  polishState.transform = () => 'For hypertrophy, use 1-6 reps; for strength, use 8-15 reps.';
   const { res, json } = await ask('How many reps for strength vs hypertrophy?');
   assertCardTextServed(res, json, cardText, 'A1711-1');
-  polishState.transform = (a) => a;
 });
 
 // A1711-3: the set/rep swap — an engine prescription of 2 sets, 3-5 reps, 195 lb
@@ -103,10 +99,8 @@ test('A1711-1: a polish that reverses the rep ranges is not served — the card 
 test('A1711-3: a polish that swaps sets and reps is not served — the card text is', async (t) => {
   const cardText = 'Do 2 sets of 3-5 reps at 195 lb.';
   smeState.result = { answer: cardText, depth: 'explain', cards: ['rep_ranges'], confidenceLevel: 'high' };
-  polishState.transform = () => 'Do 2 reps of 3-5 sets at 195 lb.';
   const { res, json } = await ask('How many sets and reps at 195 lb?');
   assertCardTextServed(res, json, cardText, 'A1711-3');
-  polishState.transform = (a) => a;
 });
 
 // B-polish-2: wholesale replacement — labels, units and exercises swapped while the
@@ -115,8 +109,6 @@ test('A1711-3: a polish that swaps sets and reps is not served — the card text
 test('B-polish-2: a polish that swaps labels, units and exercises wholesale is not served — the card text is', async (t) => {
   const cardText = 'Squat: 3 sets of 5 reps at 100 kg. Rest 3 minutes between sets.';
   smeState.result = { answer: cardText, depth: 'explain', cards: ['rep_ranges'], confidenceLevel: 'high' };
-  polishState.transform = () => 'Bench press: 3 sets of 5 reps at 100 lb. Rest 3 minutes between sets.';
   const { res, json } = await ask('How should I squat 100 kg?');
   assertCardTextServed(res, json, cardText, 'B-polish-2');
-  polishState.transform = (a) => a;
 });
