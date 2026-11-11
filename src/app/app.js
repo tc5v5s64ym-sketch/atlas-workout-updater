@@ -4968,6 +4968,17 @@ function parserStatusNode(status) {
 }
 
 function rowsFromBackendParsedWorkout(parsed) {
+  // #1564: parser-supplied notes (the `warm-up` tag the backend parser sets on
+  // the climb, via services/warmupTag.js) ride through to the Log row; a
+  // load_note (e.g. 'per_hand') rides along so neither signal is dropped.
+  // Defined here, inside this function, so the test slice that evals this
+  // function alone stays self-contained (it cannot see the file-level
+  // WARMUP_LOG_NOTE). The token itself stays single-sourced in the parser.
+  const rowNotes = (set) => {
+    const base = set.notes ? String(set.notes) : '';
+    if (set.load_note) return base ? `${base}; ${set.load_note}` : String(set.load_note);
+    return base;
+  };
   // Multi-exercise log (several lifts in one message, split + parsed server-side):
   // flatten every exercise's sets into rows so they all land in the one preview →
   // approve → write card, exactly like a single-exercise log. Same row shape as
@@ -4983,7 +4994,7 @@ function rowsFromBackendParsedWorkout(parsed) {
         weight: set.weight == null ? '0' : String(set.weight),
         reps: set.reps == null ? '' : String(set.reps),
         rir: set.rir == null ? '' : String(set.rir),
-        notes: set.load_note ? set.load_note : ''
+        notes: rowNotes(set)
       }));
     }
     if (rows.length) return rows;
@@ -5032,7 +5043,7 @@ function rowsFromBackendParsedWorkout(parsed) {
     weight: set.weight == null ? '0' : String(set.weight),
     reps: set.reps == null ? '' : String(set.reps),
     rir: set.rir == null ? '' : String(set.rir),
-    notes: set.load_note ? set.load_note : ''
+    notes: rowNotes(set)
   }));
 }
 
