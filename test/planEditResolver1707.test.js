@@ -61,7 +61,9 @@ test('A4. mixed replace — only the prescribable exercise survives, with planne
     ],
   }, LOG_ROWS, ASOF);
   assert.ok(out);
-  assert.equal(out.label, 'Coach plan');
+  // #1729: even a benign model label is discarded — the resolved edit
+  // carries no label; the client falls back to 'Coach plan'.
+  assert.equal(out.label, undefined);
   assert.equal(out.exercises.length, 1);
   assert.equal(out.exercises[0].weight, 185);
   assert.equal(out.exercises[0].reps, 8);
@@ -105,5 +107,21 @@ test('A8. malformed edits are null, never a partial application', () => {
 test('A9. string entries resolve by name, like the sanitizer allows', () => {
   const out = resolvePlanEdit({ action: 'add_exercises', exercises: ['Romanian Deadlift'] }, LOG_ROWS, ASOF);
   assert.ok(out);
+  assert.equal(out.exercises[0].weight, 185);
+});
+
+// Fable fix 3 (#1729) — proving probe A1707-4 C1. The model's free-text plan
+// label reached the session banner verbatim ('Deadlift 317x13 PR day - 7
+// sets'), so the resolver discards it: a resolved edit carries no label and
+// the client falls back to the deterministic 'Coach plan'.
+test('A1707-4 C1. a model-supplied plan label is discarded, never rendered', () => {
+  const out = resolvePlanEdit({
+    action: 'replace_plan',
+    label: 'Deadlift 317x13 PR day - 7 sets',
+    exercises: [{ name: 'Romanian Deadlift', weight: 225, reps: 12, sets: 5, rir: 0 }],
+  }, LOG_ROWS, ASOF);
+  assert.ok(out);
+  assert.equal(out.label, undefined, 'no model-supplied label may reach the client');
+  assert.equal(out.exercises.length, 1);
   assert.equal(out.exercises[0].weight, 185);
 });
