@@ -4,6 +4,10 @@ const { classifyMessageIntent } = require('./messageIntent');
 // clause inside a resistance turn) instead of letting it sink the resistance
 // half — multiModalityParser requires nothing, so this cannot cycle.
 const { recognizeModalityInput } = require('./multiModalityParser');
+// #1564: the warm-up marker (services/warmupTag.js) — the single source of
+// truth for the `warm-up` notes token. warmupTag requires nothing, so this
+// cannot cycle.
+const { tagWarmupNote } = require('./warmupTag');
 
 const NUMBER_WORDS = {
   one: 1,
@@ -1904,6 +1908,10 @@ function parseDaleShorthand(text) {
     .split(/\s+/)
     .filter(Boolean);
   const sets = [];
+  // #1564: bare-pair sets this branch emits, by identity — the warm-up climb
+  // candidates. A bare pair is a warm-up ONLY when a slash (RIR) working set
+  // follows it in the same sequence; the post-pass after the loop decides.
+  const barePairSets = new Set();
   let currentWeight = null;
   let previousSet = null;
 
@@ -1932,7 +1940,11 @@ function parseDaleShorthand(text) {
       const totalInstances = Number(repeat[1]);
       if (totalInstances > 10) return null;
       for (let copy = 1; copy < totalInstances; copy += 1) {
-        sets.push({ ...previousSet });
+        const copySet = { ...previousSet };
+        // #1564: an xN repeat of a bare-pair set is the same set again — it
+        // stays a climb candidate with the original.
+        if (barePairSets.has(previousSet)) barePairSets.add(copySet);
+        sets.push(copySet);
       }
       continue;
     }
@@ -2030,9 +2042,28 @@ function parseDaleShorthand(text) {
       currentWeight = w;
       previousSet = setRecord({ weight: currentWeight, reps, rir: null });
       sets.push(previousSet);
+      barePairSets.add(previousSet);
       i += 1;
       continue;
     }
+  }
+
+  // #1564 (owner decision 2026-06-25): the bare-pair warm-up climb before the
+  // slash working sets is tagged warm-up — set_type 'warmup' + the `warm-up`
+  // marker in notes — so it logs as rows, counts in volume, and stays OUT of
+  // the progression / weight-bump decision. Only bare pairs BEFORE the first
+  // RIR (slash) set count: bare pairs with no slash working set after them
+  // stay working (no signal to call them warm-ups), and a bare pair after the
+  // first working set is a back-off, not a warm-up. Chain / open-slash sets
+  // carry no RIR and are not bare pairs, so they are never tagged here.
+  const firstWorkingIndex = sets.findIndex(set => set.rir !== null);
+  if (firstWorkingIndex > 0) {
+    sets.forEach((set, index) => {
+      if (index < firstWorkingIndex && barePairSets.has(set)) {
+        set.set_type = 'warmup';
+        set.notes = tagWarmupNote(set.notes);
+      }
+    });
   }
 
   return sets;
