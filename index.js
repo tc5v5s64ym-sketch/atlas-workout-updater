@@ -701,6 +701,17 @@ function normalizeEffortRow(row) {
       if (column === 'notes') {
         return '';
       }
+      // #1635 (Dale ruling 2026-11-10): a duration-only finish writes a
+      // partial Effort row — calories, heart rate and location are unknown,
+      // never invented, so an absent field is stored empty. date, session_id
+      // and duration stay required: the row's identity and its one supplied
+      // fact. #1708 is untouched: this is the genuine user-supplied duration
+      // path only; model/vision-invented durations stay blocked at the
+      // boundary.
+      if (column === 'active_calories' || column === 'total_calories'
+        || column === 'average_hr' || column === 'peak_hr' || column === 'location') {
+        return '';
+      }
       throw new Error(`Missing required effort row field: ${column}`);
     });
   }
@@ -716,12 +727,23 @@ function formatLogRows(logRows) {
 function validateEffortRowBounds(row) {
   // row is in effortColumns order: [date, session_id, duration, active_calories, total_calories, average_hr, peak_hr, location, notes]
   // Matches the bounds already enforced by /api/complete-workout via normalizeAndValidateParsedMetrics.
-  validateNumberField('active_calories', row[3], 1, 3000);
-  validateNumberField('total_calories', row[4], 1, 4000);
-  validateNumberField('average_hr', row[5], 40, 220);
-  if (row[6] !== null && row[6] !== undefined && row[6] !== '') {
-    validateNumberField('peak_hr', row[6], 40, 230);
+  // #1635: an unknown (null/undefined/'') field is not validated — it is absent,
+  // never invented. A supplied value is still bounds-checked, exactly as before.
+  validateOptionalNumberField('active_calories', row[3], 1, 3000);
+  validateOptionalNumberField('total_calories', row[4], 1, 4000);
+  validateOptionalNumberField('average_hr', row[5], 40, 220);
+  validateOptionalNumberField('peak_hr', row[6], 40, 230);
+}
+
+// An optional numeric field: unknown stays unknown (null); a supplied value is
+// bounds-checked by validateNumberField. Used only where the contract allows
+// the field to be absent (#1635 Effort rows); validateNumberField itself keeps
+// its required semantics for the paths that demand the value.
+function validateOptionalNumberField(name, rawValue, min, max) {
+  if (rawValue === null || rawValue === undefined || rawValue === '') {
+    return null;
   }
+  return validateNumberField(name, rawValue, min, max);
 }
 
 // `canonicalSessionId`, when given, is the identity the server RESOLVED for this
