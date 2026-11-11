@@ -82,7 +82,7 @@ const {
 } = require('./rehearsal-bubble-observer');
 const { SANDBOX_SPREADSHEET_ID, SANDBOX_SPREADSHEET_ID_LAST6 } = require('../../../config/sandboxSheet');
 const {
-  EVIDENCE_FILENAME, buildForbiddenSecrets, redactSecrets, sweepArtifactDir, verifyFinalArtifacts,
+  EVIDENCE_FILENAME, buildForbiddenSecrets, redactSecrets, sweepArtifactDir, finalizePersonaArtifacts,
 } = require('./persona-artifacts');
 const { logCleanedColumns, effortColumns, modalityLogColumns } = require('../../../config/columns');
 const { sessionPlansColumns, sessionPlanSetsColumns } = require('../../../config/columns');
@@ -1315,6 +1315,9 @@ test('persona scenario (scored): fixture beats through the real app under the sc
   //   4. final sweep over every file except the evidence file itself, then
   //      rewrite the evidence with the final record;
   //   5. post-write verification: rescan + rehash every published byte.
+  // On verifier failure the artifacts are repaired before the run fails:
+  // PASS is invalidated, the republished bytes are redacted, and the
+  // repaired set is re-verified (#1664, reopened).
   // After step 5 nothing writes to the artifact dir (afterAll stands down —
   // see artifactsFinalized). One disclosed limit: the scorecard's
   // condition-24 detail names the provisional artifact count (the scorecard
@@ -1362,36 +1365,23 @@ test('persona scenario (scored): fixture beats through the real app under the sc
     const leak = forbidden.scan.find((f) => f.re.test(text));
     expect(leak, `${label} would publish a forbidden value (${leak && leak.kind})`).toBeUndefined();
   }
-  // 3. The scorecard files and the evidence (provisional record).
-  fs.writeFileSync(path.join(artDir, 'scorecard.json'), scorecardJson);
-  fs.writeFileSync(path.join(artDir, 'SCORECARD.md'), scorecardMd);
   evidence.ok = scorecard.overall === 'PASS' && personaFacts.ok;
   evidence.scorecard = { overall: scorecard.overall, counts: scorecard.counts, rehearsal_eligible: scorecard.rehearsal_eligible };
-  fs.writeFileSync(path.join(artDir, 'persona-evidence.json'), `${JSON.stringify(evidence, null, 2)}\n`);
-  // 4. Final sweep over the published bytes, except the evidence file
-  // itself: the record cannot hash its own container, so the evidence file
-  // is excluded from its own file list and the exclusion is recorded. A
-  // leak in the final bytes, or a file that changed since the provisional
-  // sweep, fails the run here — no clean record is published over them.
-  const finalRecord = sweepArtifactDir(artDir, forbidden, { excludeNames: [EVIDENCE_FILENAME] });
-  if (finalRecord.leaks.length) {
-    throw new Error(`persona artifacts leak in final bytes: ${finalRecord.leaks.join(', ')}`);
-  }
-  for (const f of provisional.files) {
-    const now = finalRecord.files.find((g) => g.name === f.name);
-    if (!now || now.sha256 !== f.sha256) {
-      throw new Error(`persona artifact ${f.name} changed after the provisional sweep — the scorecard judged stale bytes`);
-    }
-  }
-  observations.artifacts = { ...finalRecord, self_excluded: EVIDENCE_FILENAME };
-  fs.writeFileSync(path.join(artDir, 'persona-evidence.json'), `${JSON.stringify(evidence, null, 2)}\n`);
-  // 5. Post-write verification: rescan + rehash every published byte,
-  // including the rewritten evidence file. After this step nothing writes
-  // to the artifact dir on the success path (a failed verification leaves
-  // artifactsFinalized false, and afterAll publishes redacted diagnostics
-  // for the already-failed run instead).
-  verifyFinalArtifacts(artDir, observations.artifacts, forbidden, { selfExcludedName: EVIDENCE_FILENAME });
+  // 3-5. Publish + verify over the final bytes (finalizePersonaArtifacts,
+  // tests/e2e/gate/persona-artifacts.js). On verifier failure the helper
+  // repairs the artifacts first — the evidence + scorecard files are
+  // rewritten to record FAIL (redacted), re-swept and re-verified — and
+  // returns { ok: false }, so the run still fails but the published bytes
+  // never claim a success it did not have (#1664, reopened). After this
+  // call — success or repaired failure — nothing writes to the artifact
+  // dir (afterAll stands down — see artifactsFinalized).
+  const finalization = finalizePersonaArtifacts(artDir, {
+    serverStdout, pageErrors, evidence, scorecard,
+    scorecardJson, scorecardMd, renderScorecardMarkdown: renderMarkdown,
+    forbidden, provisional,
+  });
   artifactsFinalized = true;
+  expect(finalization.ok, `persona final-artifact verification failed: ${finalization.reason || ''}`).toBe(true);
 
   const notPassing = scorecard.conditions.filter((c) => c.status !== 'PASS');
   if (notPassing.length) {
