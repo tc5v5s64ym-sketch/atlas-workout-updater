@@ -7,7 +7,10 @@
 // model-selected exercise name is a REQUEST; exercise choice and every
 // prescription field are resolved here, from the athlete's logged history,
 // before the edit reaches the client. Model-supplied weight/reps/sets/RIR
-// (and any model-supplied lift code) are discarded, never trusted.
+// (and any model-supplied lift code) are discarded, never trusted. The
+// model-supplied plan label is likewise discarded (Fable fix 3, #1729) —
+// the resolved edit carries no label and the client falls back to the
+// deterministic 'Coach plan' for the session banner.
 //
 //   resolvePlanEdit(edit, logRows, asOf) → resolved edit | null
 //
@@ -112,11 +115,11 @@ function resolvePlanEdit(edit, logRows, asOf) {
     });
   }
   if (!resolved.length) return null;
-  const out = { action, exercises: resolved };
-  if (action === 'replace_plan' && typeof edit.label === 'string' && edit.label.trim()) {
-    out.label = edit.label.trim();
-  }
-  return out;
+  // Fable fix 3 (#1729): the model-supplied plan label is discarded here —
+  // it reached the session banner verbatim with invented numbers
+  // ('Deadlift 317x13 PR day - 7 sets'). The resolved edit carries no label;
+  // the client falls back to the deterministic 'Coach plan'.
+  return { action, exercises: resolved };
 }
 
 module.exports = { resolvePlanEdit, resolveLiftCode };
