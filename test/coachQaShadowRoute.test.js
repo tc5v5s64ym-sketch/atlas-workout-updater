@@ -51,9 +51,7 @@ require.cache[require.resolve('../services/coach')] = {
 };
 
 const smeState = { result: { answer: 'RIR means reps in reserve.', depth: 'explain', cards: ['rir_basics'], confidenceLevel: 'high' } };
-const polishState = { transform: (a) => a }; // identity = no Gemini polish; override to simulate a real rewrite
 require.cache[require.resolve('../services/trainingSME')] = { id: require.resolve('../services/trainingSME'), filename: require.resolve('../services/trainingSME'), loaded: true, exports: { buildTrainingSMEAnswer: () => smeState.result } };
-require.cache[require.resolve('../services/coachPolish')] = { id: require.resolve('../services/coachPolish'), filename: require.resolve('../services/coachPolish'), loaded: true, exports: { polishSmeAnswer: async (a) => polishState.transform(a) } };
 
 const responseSheet = require('../services/coachResponseSheet');
 const packetShadow = require('../services/coachTurnPacketShadow');
@@ -201,7 +199,6 @@ test('E. error/fallback (chat): the FINAL athlete-facing fallback is captured; H
 test('ask: an athlete-facing SME answer is captured (data.answer → visible_message)', async () => {
   process.env.ATLAS_INTERACTION_TRACE = 'shadow';
   smeState.result = { answer: 'RIR means reps in reserve.', depth: 'explain', cards: ['rir_basics'], confidenceLevel: 'high' };
-  polishState.transform = (a) => a; // no rewrite → model not used
   const { res, json, respRow, shadowRow } = await post('/api/coach/ask', { message: 'What is RIR?', appVersion: 'v145' });
   assert.equal(res.status, 200);
   assert.ok(respRow && shadowRow);
@@ -216,12 +213,12 @@ test('ask: an athlete-facing SME answer is captured (data.answer → visible_mes
 
 test('ask: a would-be Gemini polish is never served — the card text is, and model usage stays skipped', async () => {
   // #1727: /api/coach/ask serves the deterministic card text; the polish call is
-  // deleted from the route, so even a rewrite the stub offers is never applied and
-  // no model runs on this path. (Previously this test asserted the polished text
+  // deleted from the route, and the polish module itself is deleted (#1728 amend),
+  // so there is no polish seam left for a rewrite to reach the athlete through,
+  // and no model runs on this path. (Previously this test asserted the polished text
   // was served and recorded as real model usage — that was the breach.)
   process.env.ATLAS_INTERACTION_TRACE = 'shadow';
   smeState.result = { answer: 'RIR means reps in reserve.', depth: 'explain', cards: ['rir_basics'], confidenceLevel: 'high' };
-  polishState.transform = () => 'Reps in reserve — how many clean reps you had left in the tank.'; // a rewrite the route must NOT serve
   const { res, json, respRow, shadowRow } = await post('/api/coach/ask', { message: 'What is RIR?', appVersion: 'v145' });
   assert.equal(res.status, 200);
   assert.ok(respRow && shadowRow);
@@ -230,7 +227,6 @@ test('ask: a would-be Gemini polish is never served — the card text is, and mo
   assert.equal(respRow[RESP.visible_source], 'training_sme');
   const stages = Object.fromEntries(shadowRow.trace.stages.map((s) => [s.stage, s.status]));
   assert.equal(stages.model_response, 'skipped', 'no model runs on the ask path, so usage stays skipped');
-  polishState.transform = (a) => a;
   delete process.env.ATLAS_INTERACTION_TRACE;
 });
 

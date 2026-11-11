@@ -64,7 +64,6 @@ require.cache[require.resolve('../services/coach')] = {
   },
 };
 require.cache[require.resolve('../services/trainingSME')] = { id: require.resolve('../services/trainingSME'), filename: require.resolve('../services/trainingSME'), loaded: true, exports: { buildTrainingSMEAnswer: () => ({ answer: null, depth: 'log_only', cards: [], confidenceLevel: 'low' }) } };
-require.cache[require.resolve('../services/coachPolish')] = { id: require.resolve('../services/coachPolish'), filename: require.resolve('../services/coachPolish'), loaded: true, exports: { polishSmeAnswer: async (a) => a } };
 
 // ── the instrument: count every canonical-session build, and capture what it returned ────────
 // A COUNTING WRAPPER around the REAL builder, injected before the app loads. Anything in the
