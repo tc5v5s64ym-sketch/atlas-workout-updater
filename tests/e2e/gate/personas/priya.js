@@ -189,7 +189,14 @@ module.exports = {
     // Judged automatically by persona-squat-hold (#1663): the durable squat
     // rows must read 35 x 10 x3, with at least one set off target RIR 2 so
     // the hold is genuinely exercised (set 3 is @1 in the scripted run).
-    squatHold: { exercise: 'Goblet Squat', lift_code: 'GSQ01', weight: 35, sets: 3, reps: 10, targetRir: 2 },
+    // The NEXT recommendation — what the coach tells Priya to do next time
+    // — has no automated consumer (reopened #1663): it is model prose in
+    // the reply, and the script declares no next squat weight, so no check
+    // can judge whether a recommended value is right. It is explicitly
+    // marked human-judged here and rides the review checklist below, which
+    // states the hold rule for the human judge; persona-facts enforces
+    // both the marking and the checklist item.
+    squatHold: { exercise: 'Goblet Squat', lift_code: 'GSQ01', weight: 35, sets: 3, reps: 10, targetRir: 2, nextRecommendationJudgedBy: 'human' },
     // Plank PB: previous best 32 s, today 40 s (+8). No history row carries
     // this (timed hold, no weight/reps shape) — it is a fact declaration.
     // Split by what is judged where (#1663): todaySec IS judged
@@ -229,6 +236,7 @@ module.exports = {
     'RIR is taught as a felt question ("how many more clean reps?"), not jargon; estimates stay approximate ("about", "like... 1").',
     'Stopping on form loss is praised as the right call, every time — the bench revision to 25 x 8 is stated, not smuggled in.',
     'Reassurance is built from her own numbers (squat 25→35, rows +10, plank PB by 8), never generic praise.',
+    'The next squat recommendation is checked by a human: the hold stays at 35 until all three sets sit at RIR 2 — "go up to 40 next time" is wrong while any set is off target RIR.',
     'No medical claim about the left-arm wobble: "usually stabilizers catching up" at most, with the form-check watch note held open.',
   ],
 };

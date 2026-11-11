@@ -213,6 +213,7 @@ describe('persona fact checks — Priya (no correction beat, revised bench targe
       'persona-correction-end-state',
       'persona-bench-revised-target:DBB01',
       'persona-squat-hold:GSQ01',
+      'persona-squat-hold-recommendation',
       'persona-plank-pb',
       'persona-retained-buffer-corrected',
       'persona-plan-state-facts',
@@ -220,6 +221,8 @@ describe('persona fact checks — Priya (no correction beat, revised bench targe
     assert.match(check(facts, 'persona-correction-end-state').detail, /no correction beat/);
     assert.match(check(facts, 'persona-bench-revised-target:DBB01').detail, /25x8 with no RIR recorded x3/);
     assert.match(check(facts, 'persona-squat-hold:GSQ01').detail, /weight stays 35/);
+    assert.match(check(facts, 'persona-squat-hold-recommendation').detail, /human-judged/);
+    assert.match(check(facts, 'persona-squat-hold-recommendation').detail, /hold stays 35 until all 3 sets sit at target RIR 2/);
     assert.match(check(facts, 'persona-plank-pb').detail, /40s/);
     assert.match(check(facts, 'persona-retained-buffer-corrected').detail, /after the final log turn/);
     assert.match(check(facts, 'persona-retained-buffer-corrected').detail, /revised bench target/);
@@ -320,6 +323,61 @@ describe('persona fact checks — Priya (no correction beat, revised bench targe
     const facts = runPriyaFacts({ durableLogRows: rows });
     assert.equal(check(facts, 'persona-parsed-set-equality').ok, true);
     assert.equal(check(facts, 'persona-bench-revised-target:DBB01').ok, true);
+  });
+
+  // ── #1663 reopened (Astra re-audit 2026-11-07): the NEXT squat hold
+  // recommendation is not judged. persona-squat-hold judges today's rows;
+  // the recommendation is model prose, and the script declares no next
+  // squat weight, so the smallest permitted closure is the plank-baseline
+  // pattern: mark it human-judged and carry the hold rule on the emitted
+  // review checklist, with a checker verdict enforcing both.
+
+  it('NEGATIVE CONTROL (audit counterexample): the next squat hold recommendation is judged — an unmarked recommendation fails', () => {
+    // Failing-first: before the fix there is no recommendation verdict at
+    // all, so a coach reply of "Increase squat to 40 next time" over
+    // 35x10x3 @2,2,1 passes silently. The unmarked fixture must fail.
+    const unmarked = { ...PRIYA, facts: { ...PRIYA.facts, squatHold: { exercise: 'Goblet Squat', lift_code: 'GSQ01', weight: 35, sets: 3, reps: 10, targetRir: 2 } } };
+    const facts = runPriyaFacts({ fixture: unmarked });
+    const rec = check(facts, 'persona-squat-hold-recommendation');
+    assert.ok(rec, 'no recommendation verdict — the gap reproduces');
+    assert.equal(rec.ok, false);
+    assert.match(rec.detail, /human-judged/);
+    assert.equal(facts.ok, false);
+  });
+
+  it('a recommendation marked anything but human fails: the marking must name the judge', () => {
+    // Collapse probe: 'human' and 'automated' must produce different
+    // verdicts — a non-human marking is not a human-judged designation.
+    const marked = { ...PRIYA, facts: { ...PRIYA.facts, squatHold: { ...PRIYA.facts.squatHold, nextRecommendationJudgedBy: 'automated' } } };
+    const facts = runPriyaFacts({ fixture: marked });
+    const rec = check(facts, 'persona-squat-hold-recommendation');
+    assert.equal(rec.ok, false);
+    assert.match(rec.detail, /not marked human-judged/);
+  });
+
+  it('a checklist with no squat-recommendation item fails: the closure requires the item on the emitted list', () => {
+    const noItem = { ...PRIYA, reviewChecklist: PRIYA.reviewChecklist.filter((i) => !/next squat recommendation/i.test(i)) };
+    const facts = runPriyaFacts({ fixture: noItem });
+    const rec = check(facts, 'persona-squat-hold-recommendation');
+    assert.equal(rec.ok, false);
+    assert.match(rec.detail, /review checklist carries no item/);
+    assert.equal(facts.ok, false);
+  });
+
+  it('a vague checklist item does not satisfy the closure: it must name the hold rule', () => {
+    // Collapse probe: an item naming squat but not the next recommendation
+    // or the hold rule must not pass — otherwise any squat mention would
+    // satisfy the check.
+    const vague = { ...PRIYA, reviewChecklist: [...PRIYA.reviewChecklist.filter((i) => !/next squat recommendation/i.test(i)), 'Check the squat form.'] };
+    const facts = runPriyaFacts({ fixture: vague });
+    const rec = check(facts, 'persona-squat-hold-recommendation');
+    assert.equal(rec.ok, false);
+    assert.match(rec.detail, /review checklist carries no item/);
+  });
+
+  it('Marcus emits no recommendation check: he declares no squat hold', () => {
+    const facts = runFacts();
+    assert.equal(check(facts, 'persona-squat-hold-recommendation'), undefined);
   });
 
   it('the plank PB is judged against the modality row: a 40s plank hold passes', () => {
