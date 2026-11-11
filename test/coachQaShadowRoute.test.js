@@ -214,16 +214,22 @@ test('ask: an athlete-facing SME answer is captured (data.answer → visible_mes
   delete process.env.ATLAS_INTERACTION_TRACE;
 });
 
-test('ask: a Gemini-polished SME answer records REAL model usage (not hidden as skipped)', async () => {
+test('ask: a would-be Gemini polish is never served — the card text is, and model usage stays skipped', async () => {
+  // #1727: /api/coach/ask serves the deterministic card text; the polish call is
+  // deleted from the route, so even a rewrite the stub offers is never applied and
+  // no model runs on this path. (Previously this test asserted the polished text
+  // was served and recorded as real model usage — that was the breach.)
   process.env.ATLAS_INTERACTION_TRACE = 'shadow';
   smeState.result = { answer: 'RIR means reps in reserve.', depth: 'explain', cards: ['rir_basics'], confidenceLevel: 'high' };
-  polishState.transform = () => 'Reps in reserve — how many clean reps you had left in the tank.'; // Gemini rewrote it
+  polishState.transform = () => 'Reps in reserve — how many clean reps you had left in the tank.'; // a rewrite the route must NOT serve
   const { res, json, respRow, shadowRow } = await post('/api/coach/ask', { message: 'What is RIR?', appVersion: 'v145' });
   assert.equal(res.status, 200);
   assert.ok(respRow && shadowRow);
-  assert.equal(respRow[RESP.visible_message], json.data.answer); // the polished text the athlete saw
+  assert.equal(json.data.answer, 'RIR means reps in reserve.', 'the deterministic card text is served');
+  assert.equal(respRow[RESP.visible_message], json.data.answer); // the card text the athlete saw
+  assert.equal(respRow[RESP.visible_source], 'training_sme');
   const stages = Object.fromEntries(shadowRow.trace.stages.map((s) => [s.stage, s.status]));
-  assert.equal(stages.model_response, 'ok', 'a successful Gemini polish is recorded as model usage');
+  assert.equal(stages.model_response, 'skipped', 'no model runs on the ask path, so usage stays skipped');
   polishState.transform = (a) => a;
   delete process.env.ATLAS_INTERACTION_TRACE;
 });

@@ -25,7 +25,6 @@ const {
 } = require('../sheets');
 const coach = require('../services/coach');
 const trainingSME = require('../services/trainingSME');
-const coachPolish = require('../services/coachPolish');
 const { scoreIntents, buildRecentSessions, detectStalls, computeFatigueStatus, recommendNextSet, suggestDeloads, todayIso, normalizeLogRow } = require('../services/analytics');
 const { enrichCoachFacts, confirmTodayNewGround, cleanLogForLift, buildLiveSetContext, flightRecorderContext } = require('../services/liveIntelligence');
 const { buildAthleteIdentity } = require('../services/athleteIdentity');
@@ -1950,17 +1949,14 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     // pre-check the client ignores is not a coach turn). Read-only, flag-gated, off-path.
     coachQaShadow.observeQaTurn(req, res, { route: '/api/coach/ask', source: 'coach_ask', intentType: 'coach_ask', captureWhen: coachQaShadow._askIsAthleteFacing });
     const result = trainingSME.buildTrainingSMEAnswer({ question: message });
-    // Optional Gemini polish: natural wording, numbers locked. Degrades to the deterministic
-    // card-grounded answer when Gemini is unconfigured, slow, or drifts a number.
-    let answer = result.answer;
-    if (answer) {
-      try { answer = await coachPolish.polishSmeAnswer(answer); } catch { answer = result.answer; }
-    }
-    // Observability signal (read by the Q&A shadow's response-finished hook): a polish that
-    // CHANGED the answer means Gemini produced the wording the athlete received, so the
-    // shadow records real model usage even though provenance stays 'training_sme'. An
-    // unchanged answer (unconfigured/degraded polish) conservatively stays "no model".
-    if (res.locals) res.locals.qaModelUsed = !!answer && answer !== result.answer;
+    // #1727: no polish on this route — the deterministic card text IS the answer.
+    // A polish rewrite that keeps the same numbers in the same order passes the
+    // numbersPreserved guard while swapping labels, units, exercises, or the goal a
+    // range belongs to, and the replaced text would still be served as training_sme
+    // with the card list the client renders as a 'Based on:' provenance line.
+    // No model runs on this path, so there is no qaModelUsed signal to set: the Q&A
+    // shadow records model usage as skipped for /api/coach/ask.
+    const answer = result.answer;
     return standardSuccess(req, res, 'Training SME answer', {
       depth: result.depth,
       answer,
