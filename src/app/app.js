@@ -5538,18 +5538,22 @@ function collectManualEffort(sessionId, date, location, notes) {
 
   const anyFilled = duration || activeCal || totalCal || avgHr || peakHr;
   if (!anyFilled) return null;
-  if (!duration || !activeCal || !totalCal || !avgHr || !peakHr) {
-    throw new Error('Effort needs duration, active calories, total calories, average HR, and peak HR (or leave all blank).');
+  // #1635 (Dale ruling 2026-11-10): a duration-only finish writes a partial
+  // Effort row — calories and heart rate may be left blank (unknown, never
+  // invented). Duration is the anchor: calories/HR without a duration is
+  // still refused, because the server requires it.
+  if (!duration) {
+    throw new Error('Effort needs a duration (calories and heart rate can be left blank).');
   }
 
   return {
     date,
     session_id: sessionId,
     duration,
-    active_calories: Number(activeCal),
-    total_calories: Number(totalCal),
-    average_hr: Number(avgHr),
-    peak_hr: Number(peakHr),
+    active_calories: activeCal === '' ? '' : Number(activeCal),
+    total_calories: totalCal === '' ? '' : Number(totalCal),
+    average_hr: avgHr === '' ? '' : Number(avgHr),
+    peak_hr: peakHr === '' ? '' : Number(peakHr),
     location: location || '',
     notes: notes || ''
   };
@@ -7949,15 +7953,17 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
   } catch (err) {
     // #1626: on the closeout RE-ENTRY this submit exists only to stage the
     // closeout preview for the buffered session — the athlete's instruction
-    // was the finish line, not the effort form. A partially-filled effort
-    // form (e.g. duration only, as the corpus close carries) must not veto
-    // saving the whole workout: it held the closeout completely silent —
-    // no preview, no card, no save — behind a logger-panel error. The
-    // closeout proceeds without an effort row and the problem stays
+    // was the finish line, not the effort form. An invalid effort form must
+    // not veto saving the whole workout: it held the closeout completely
+    // silent — no preview, no card, no save — behind a logger-panel error.
+    // The closeout proceeds without an effort row and the problem stays
     // visible as a warning, so the fields can be completed and the session
     // re-previewed to attach them (the closeout stage stays latched). A
     // FRESH submit keeps the hard stop: there, completing the form is the
-    // athlete's actual task and the error is the point.
+    // athlete's actual task and the error is the point. #1635: a
+    // duration-only form no longer throws at all — it submits a partial row —
+    // so this catch now guards only the remaining invalid shape (fields
+    // filled without a duration).
     if (!sessionCompiledAwaitingPreview) {
       setStatus(loggerStatus, err.message, 'error');
       return;

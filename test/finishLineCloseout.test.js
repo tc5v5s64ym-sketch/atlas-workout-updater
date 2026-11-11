@@ -254,14 +254,18 @@ test('#1626 wiring: the finish lane sits at the closeout gate, after the log-it 
     'a held clarification still resolves before closeout routing');
 });
 
-test('#1626 wiring: a partial effort form cannot veto the closeout re-entry, but still hard-stops a fresh submit', () => {
-  // The second half of the defect: with the finish line routed, the closeout
-  // re-entry submit computed the manual effort from a duration-only form and
-  // collectManualEffort's all-or-nothing throw aborted the submit — no
-  // preview, no card, no save — for EVERY closeout trigger in that state.
+test('#1626 wiring + #1635: a duration-only effort form submits a partial row and cannot veto the closeout re-entry; fields without a duration still hard-stop a fresh submit', () => {
+  // #1626: with the finish line routed, the closeout re-entry submit computed
+  // the manual effort from a duration-only form and collectManualEffort's
+  // throw aborted the submit — no preview, no card, no save — for EVERY
+  // closeout trigger in that state. #1635 (Dale ruling 2026-11-10) closes
+  // the underlying contract instead: a duration-only form now submits a
+  // partial Effort row (calories/HR unknown), so it cannot veto anything;
+  // the catch below guards only the remaining invalid shape (fields filled
+  // without a duration).
   const start = appSrc.indexOf('manualEffort = collectManualEffort(sessionId, date, location, notes);');
   assert.ok(start > 0, 'the manual-effort computation must exist in the submit handler');
-  const block = appSrc.slice(start, start + 1600);
+  const block = appSrc.slice(start, start + 2200);
   const guardIdx = block.indexOf('if (!sessionCompiledAwaitingPreview)');
   assert.ok(guardIdx > 0,
     'the effort-validation catch must consult the closeout re-entry flag before hard-stopping');
@@ -270,8 +274,16 @@ test('#1626 wiring: a partial effort form cannot veto the closeout re-entry, but
     'a fresh submit (not the closeout re-entry) keeps the hard stop and its error');
   assert.match(block, /Saving the session without effort data/,
     'the re-entry path must warn visibly that the session saves without the effort data');
-  // The all-or-nothing validation itself is unchanged — only its veto over
-  // the closeout re-entry is scoped.
-  assert.match(appSrc, /Effort needs duration, active calories, total calories, average HR, and peak HR/,
-    'collectManualEffort keeps its all-or-nothing contract');
+  // #1635: the partial-fill contract replaces the all-or-nothing one —
+  // duration present and the rest blank returns a row with '' unknowns;
+  // anything filled without a duration still throws.
+  const fnStart = appSrc.indexOf('function collectManualEffort(');
+  assert.ok(fnStart > 0, 'collectManualEffort must exist');
+  const fn = appSrc.slice(fnStart, fnStart + 1400);
+  assert.match(fn, /active_calories: activeCal === '' \? '' : Number\(activeCal\)/,
+    'a duration-only form returns a partial row with unknown calories');
+  assert.match(fn, /Effort needs a duration \(calories and heart rate can be left blank\)/,
+    'fields filled without a duration are still refused');
+  assert.doesNotMatch(appSrc, /Effort needs duration, active calories, total calories, average HR, and peak HR/,
+    'the all-or-nothing error is gone');
 });
