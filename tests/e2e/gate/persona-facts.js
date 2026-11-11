@@ -257,6 +257,42 @@ function checkPersonaFacts(input) {
     }
   }
 
+  // ── The next squat hold recommendation (reopened #1663) ─────────────────
+  // The squat-hold check above judges TODAY's rows; the recommendation —
+  // what the coach tells Priya to do NEXT time — is model prose in the
+  // reply, and the script declares no next squat weight, so no automated
+  // consumer can judge whether a recommended value is right. The smallest
+  // permitted closure is the plank-baseline pattern: the fixture marks
+  // the recommendation human-judged, the review checklist carries the
+  // hold rule for the human judge, and this check enforces BOTH — an
+  // unmarked recommendation, or a checklist with no squat-recommendation
+  // item, fails naming the rule. The checklist match is deliberately
+  // narrow (squat + next/recommend + hold/stay/progress) so a vague item
+  // cannot satisfy it. A fixture without squatHold (Marcus) emits no
+  // check here, unchanged.
+  if (hold) {
+    const lift = String(hold.lift_code || '').trim().toUpperCase();
+    const problems = [];
+    if (hold.nextRecommendationJudgedBy !== 'human') {
+      problems.push(`the next ${lift} hold recommendation has no automated consumer and is not marked human-judged — mark it nextRecommendationJudgedBy: 'human'`);
+    }
+    const checklist = Array.isArray(fixture.reviewChecklist) ? fixture.reviewChecklist : [];
+    const covers = checklist.some((item) => {
+      const t = String(item || '').toLowerCase();
+      return /squat/.test(t) && (/next/.test(t) || /recommend/.test(t)) && (/hold/.test(t) || /stay/.test(t) || /progress/.test(t));
+    });
+    if (!covers) {
+      problems.push('the review checklist carries no item naming the next squat hold recommendation — add one stating the hold rule for the human judge');
+    }
+    const rule = ['weight', 'sets', 'targetRir'].every((f) => Number.isFinite(num(hold[f])))
+      ? ` — the hold stays ${num(hold.weight)} until all ${num(hold.sets)} sets sit at target RIR ${num(hold.targetRir)}`
+      : '';
+    add('persona-squat-hold-recommendation', problems.length === 0,
+      problems.length === 0
+        ? `The next ${lift} hold recommendation is human-judged (review checklist)${rule}`
+        : problems.join('; '));
+  }
+
   // ── The plank PB (Priya's declared finisher) ─────────────────────────────
   // Split by what is measurable. Today's hold IS judged here: the session's
   // Modality_Log rows must carry exactly one plank timed hold at todaySec —
