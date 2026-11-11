@@ -118,10 +118,121 @@ function verifyFinalArtifacts(artDir, record, forbidden, { selfExcludedName = EV
   return { ok: true, checked: actual.files.length + 1 };
 }
 
+// Publish + verify the scored run's artifacts over their FINAL bytes, and
+// repair them on verifier failure (#1664, reopened 2026-11-07).
+//
+// The caller (persona.spec.js §13) writes the content artifacts (fully
+// redacted log, pageerrors), runs the provisional sweep, and scores —
+// conditions 23/24 judge that provisional record — then calls this helper
+// with the scored evidence + scorecard and the provisional record. This
+// helper then performs:
+//   3. write the scorecard files + the evidence (provisional record);
+//   4. final sweep over every file except the evidence file itself, then
+//      rewrite the evidence with the final record;
+//   5. post-write verification: rescan + rehash every published byte.
+// The reopened gap was what happened when step 4 or 5 failed: the
+// already-written scorecard + evidence still claimed PASS (ok:true), and
+// afterAll then rewrote the log + pageerrors after the final sweep, so the
+// published bytes claimed a success the run did not have and the recorded
+// hashes went stale. A forbidden value that appears only in
+// evidence.turns/notes reaches step 5 — the step-4 sweep cannot see the
+// self-excluded evidence file — so this is the case the repair must close.
+//
+// On any verification failure the repair runs BEFORE the caller fails the
+// run, and the caller must treat a returned { ok: false } as a failed run
+// (the outer process still fails):
+//   - the evidence + scorecard files are rewritten to record FAIL (overall
+//     FAIL, a `finalization` FAIL condition, the failure reason), with the
+//     evidence's `ok` set false — no published byte claims PASS;
+//   - the republished bytes are redacted, so a forbidden value that reached
+//     the evidence (e.g. only in turns/notes) does not survive in the
+//     published artifacts, and the failure diagnostics (log + pageerrors)
+//     are rewritten redacted after their last write;
+//   - the repaired set is re-swept and re-verified, so the published record
+//     certifies the repaired final bytes.
+// Returns { ok: true } on success, { ok: false, reason } after a repaired
+// failure. Throws only on unexpected I/O errors (the repair never ran);
+// the caller leaves artifactsFinalized false in that case, so afterAll
+// still publishes redacted diagnostics for the already-failed run.
+function finalizePersonaArtifacts(artDir, {
+  serverStdout, pageErrors, evidence, scorecard,
+  scorecardJson, scorecardMd, renderScorecardMarkdown, forbidden, provisional,
+}) {
+  const writeText = (name, text) => fs.writeFileSync(path.join(artDir, name), text);
+  const writeEvidence = (redact) => {
+    const text = `${JSON.stringify(evidence, null, 2)}\n`;
+    writeText(EVIDENCE_FILENAME, redact ? redactSecrets(text, forbidden) : text);
+  };
+  // 3. The scorecard files and the evidence (provisional record).
+  writeText('scorecard.json', scorecardJson);
+  writeText('SCORECARD.md', scorecardMd);
+  writeEvidence(false);
+  // 4. Final sweep over the published bytes, except the evidence file
+  // itself: the record cannot hash its own container, so the evidence file
+  // is excluded from its own file list and the exclusion is recorded. A
+  // leak in the final bytes, or a file that changed since the provisional
+  // sweep, fails the run here — no clean record is published over them.
+  // 5. Post-write verification: rescan + rehash every published byte,
+  // including the rewritten evidence file.
+  let failure = null;
+  try {
+    const finalRecord = sweepArtifactDir(artDir, forbidden, { excludeNames: [EVIDENCE_FILENAME] });
+    if (finalRecord.leaks.length) {
+      throw new Error(`persona artifacts leak in final bytes: ${finalRecord.leaks.join(', ')}`);
+    }
+    for (const f of provisional.files) {
+      const now = finalRecord.files.find((g) => g.name === f.name);
+      if (!now || now.sha256 !== f.sha256) {
+        throw new Error(`persona artifact ${f.name} changed after the provisional sweep — the scorecard judged stale bytes`);
+      }
+    }
+    evidence.observations = evidence.observations || {};
+    evidence.observations.artifacts = { ...finalRecord, self_excluded: EVIDENCE_FILENAME };
+    writeEvidence(false);
+    verifyFinalArtifacts(artDir, evidence.observations.artifacts, forbidden, { selfExcludedName: EVIDENCE_FILENAME });
+  } catch (err) {
+    failure = err.message;
+  }
+  if (!failure) return { ok: true };
+  // Repair: invalidate PASS, redact the republished bytes, re-verify the
+  // repaired set. The scorecard gains a FAIL condition (and its FAIL count)
+  // so the re-rendered markdown and the JSON agree that the run failed.
+  evidence.ok = false;
+  evidence.finalization_failure = failure;
+  if (evidence.scorecard) evidence.scorecard.overall = 'FAIL';
+  scorecard.overall = 'FAIL';
+  scorecard.finalization_failure = failure;
+  scorecard.counts = scorecard.counts || {};
+  scorecard.counts.FAIL = (scorecard.counts.FAIL || 0) + 1;
+  // The evidence's scorecard summary normally shares the counts object by
+  // reference (persona.spec.js §13) — bump a separate counts object too,
+  // but never twice.
+  if (evidence.scorecard && evidence.scorecard.counts && evidence.scorecard.counts !== scorecard.counts) {
+    evidence.scorecard.counts.FAIL = (evidence.scorecard.counts.FAIL || 0) + 1;
+  }
+  scorecard.conditions = scorecard.conditions || [];
+  scorecard.conditions.push({ id: 'finalization', status: 'FAIL', detail: `final-artifact verification failed: ${failure}` });
+  writeText('server-log.txt', redactSecrets(serverStdout, forbidden));
+  writeText('pageerrors.txt', (pageErrors || []).join('\n\n') || '(no page errors captured)');
+  writeText('scorecard.json', redactSecrets(JSON.stringify(scorecard, null, 2), forbidden));
+  writeText('SCORECARD.md', redactSecrets(renderScorecardMarkdown(scorecard), forbidden));
+  const repairedRecord = sweepArtifactDir(artDir, forbidden, { excludeNames: [EVIDENCE_FILENAME] });
+  evidence.observations = evidence.observations || {};
+  evidence.observations.artifacts = { ...repairedRecord, self_excluded: EVIDENCE_FILENAME };
+  writeEvidence(true);
+  try {
+    verifyFinalArtifacts(artDir, evidence.observations.artifacts, forbidden, { selfExcludedName: EVIDENCE_FILENAME });
+  } catch (err) {
+    return { ok: false, reason: `${failure}; repair verification failed: ${err.message}` };
+  }
+  return { ok: false, reason: failure };
+}
+
 module.exports = {
   EVIDENCE_FILENAME,
   buildForbiddenSecrets,
   redactSecrets,
   sweepArtifactDir,
   verifyFinalArtifacts,
+  finalizePersonaArtifacts,
 };
