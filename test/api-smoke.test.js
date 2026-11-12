@@ -7879,6 +7879,42 @@ test('guard: a future screenshot date is rejected the same way', async () => {
   assert.deepEqual(fakeSheetsState.appendCalls, []);
 });
 
+test('guard: an impossible calendar screenshot date (2026-02-30) is rejected — A1708-3 (#1731)', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  // 2026-02-30 names a day no calendar has. Date.parse rolls it to
+  // 2026-03-02, which sits inside the plausibility window — without a
+  // calendar round-trip check the impossible date is trusted and written.
+  fakeVisionParsedMetrics = {
+    date: '2026-02-30',
+    duration: '00:42:00',
+    activeCalories: 410,
+    totalCalories: 520,
+    averageHR: 148,
+    peakHR: 171,
+    workoutType: 'Traditional Strength Training'
+  };
+  const form = new FormData();
+  // #1708: one logged row keeps this preview reachable — an effort-only
+  // screenshot preview now fails closed on unverified vision numbers.
+  form.append('log_rows_json', JSON.stringify([
+    { exercise: 'Bench Press', set_number: 1, weight: 225, reps: 5, rir: 2, notes: '' }
+  ]));
+  form.append('test_mode', 'true');
+  form.append('image', new Blob(['watch'], { type: 'image/png' }), 'watch.png');
+
+  const { response, body } = await requestMultipart('/api/complete-workout', form);
+  const data = body.data.data;
+  const today = getLocalDateString();
+
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(data.date, today, 'an impossible calendar date must never drive the save');
+  assert.equal(data.date_source, 'today_fallback');
+  assert.equal(data.screenshot_date_rejected, '2026-02-30', 'the rejected date is reported for honest card copy');
+  assert.equal(data.effort_row[0], today, 'the effort row carries the fallback date, never the rejected one');
+  assertSingleCanonicalDate(data, today, 'impossible screenshot date rejected');
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
 test('guard: an explicit manual date still wins over a rejected screenshot date (no rejection reported)', async () => {
   fakeSheetsState.appendCalls.length = 0;
   fakeVisionParsedMetrics = {
