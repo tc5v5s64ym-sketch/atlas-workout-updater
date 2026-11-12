@@ -1592,6 +1592,21 @@ test('proposed edit: applyProposedEdit always calls invalidatePreview and never 
     'applyProposedEdit must never touch any write path');
 });
 
+// #1732 (B-02 / B-write-8): a model-applied edit value must never be marked
+// user-typed — the mark laundered the model value into the session buffer on
+// the next log's reconcile, replacing the athlete's honestly-logged value.
+// The programmatic .value set fires no 'input' event, so dropping the mark
+// leaves the field with no user-typed provenance at all.
+test('proposed edit: applyProposedEdit never marks a model-applied value user-edited', () => {
+  const ccSource = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  const applyBlock = ccSource.slice(
+    ccSource.indexOf('function applyProposedEdit(edit)'),
+    ccSource.indexOf('function getChatReply')
+  );
+  assert.doesNotMatch(applyBlock, /dataset\.userEdited/,
+    'applyProposedEdit must not stamp userEdited on model-applied values (B-02 buffer poisoning)');
+});
+
 test('routine ack: the in-session reaction is tier-gated (kind:block); a completed on-plan block gets a grounded line, an intermediate set stays silent', () => {
   const ccSource = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
   // The per-exercise reaction POSTs kind:'block' so the server returns note_tier
