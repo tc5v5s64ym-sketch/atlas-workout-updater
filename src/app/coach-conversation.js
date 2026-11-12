@@ -2463,8 +2463,12 @@ import { findPlanEntry, planMismatchForLift, formatPlanMismatchLine } from './pl
       if (edit.rir != null) markEdit('.set-rir', edit.rir);
     } else if (edit.action === 'add_set') {
       if (typeof addSetRow !== 'function') return false;
-      const lastRow = allRows[allRows.length - 1];
+      // #1737 (B-write-4): attach to the last row that carries a set — never
+      // plant an exercise-less row. With no such row there is nothing to
+      // attach to, so refuse (the server drops this case too).
+      const lastRow = rows[rows.length - 1] || null;
       const exercise = lastRow ? (lastRow.querySelector('.set-exercise')?.value || null) : null;
+      if (!exercise) return false;
       addSetRow({ exercise, weight: edit.weight, reps: edit.reps, rir: edit.rir });
     }
 
@@ -2745,6 +2749,95 @@ import { findPlanEntry, planMismatchForLift, formatPlanMismatchLine } from './pl
     });
   }
 
+  // Show an "Accept this edit?" card under Atlas's bubble. #1737 (Fable fix
+  // 11, P1 PROPOSE_EDIT): a model-proposed edit never applies on receipt —
+  // the lifter sees exactly what would change and accepts or declines.
+  // Only Accept calls applyProposedEdit; Decline leaves the preview
+  // untouched. The re-preview trust loop still holds after Accept.
+  function showProposeEditPrompt(bubble, edit) {
+    if (!edit || typeof edit !== 'object') return;
+    const table = (typeof setsTableBody !== 'undefined') ? setsTableBody : null;
+    const rows = table ? Array.from(table.children).filter(tr => {
+      const w = tr.querySelector('.set-weight')?.value;
+      const r = tr.querySelector('.set-reps')?.value;
+      return w || r;
+    }) : [];
+    const rowOf = (tr) => {
+      if (!tr) return null;
+      return {
+        exercise: tr.querySelector('.set-exercise')?.value || null,
+        weight: tr.querySelector('.set-weight')?.value || null,
+        reps: tr.querySelector('.set-reps')?.value || null,
+        rir: tr.querySelector('.set-rir')?.value || null,
+      };
+    };
+    const describe = (row) => {
+      if (!row) return '';
+      const parts = [];
+      if (row.exercise) parts.push(row.exercise);
+      if (row.weight !== null || row.reps !== null) {
+        parts.push(`${row.weight !== null ? `${row.weight} lb` : '?'} × ${row.reps !== null ? row.reps : '?'}`);
+      }
+      if (row.rir !== null) parts.push(`RIR ${row.rir}`);
+      return parts.join(' ');
+    };
+    const has = (v) => v !== null && v !== undefined;
+    const newValues = [];
+    if (has(edit.weight)) newValues.push(`${edit.weight} lb`);
+    if (has(edit.reps)) newValues.push(`${edit.reps} reps`);
+    if (has(edit.rir)) newValues.push(`RIR ${edit.rir}`);
+
+    let summary = '';
+    if (edit.action === 'update_set') {
+      const row = rowOf(rows[edit.index]);
+      summary = `Change set ${edit.index + 1}${row ? ` (${describe(row)})` : ''} to ${newValues.join(', ') || 'no change'}?`;
+    } else if (edit.action === 'delete_set') {
+      const row = rowOf(rows[edit.index]);
+      summary = `Delete set ${edit.index + 1}${row ? ` (${describe(row)})` : ''}?`;
+    } else if (edit.action === 'add_set') {
+      const row = rowOf(rows[rows.length - 1]);
+      summary = `Add a set${row && row.exercise ? ` for ${row.exercise}` : ''}${newValues.length ? ` (${newValues.join(', ')})` : ''}?`;
+    } else {
+      return;
+    }
+
+    const wrap = document.createElement('div');
+    wrap.className = 'propose-edit-wrap';
+
+    const label = document.createElement('p');
+    label.className = 'propose-edit-label';
+    label.textContent = `Atlas suggests: ${summary}`;
+
+    const acceptBtn = document.createElement('button');
+    acceptBtn.type = 'button';
+    acceptBtn.className = 'propose-edit-accept-btn';
+    acceptBtn.textContent = 'Accept edit';
+
+    const declineBtn = document.createElement('button');
+    declineBtn.type = 'button';
+    declineBtn.className = 'propose-edit-decline-btn';
+    declineBtn.textContent = 'Decline';
+
+    wrap.appendChild(label);
+    wrap.appendChild(acceptBtn);
+    wrap.appendChild(declineBtn);
+    bubble.appendChild(wrap);
+    softScroll(wrap);
+
+    declineBtn.addEventListener('click', () => { wrap.remove(); });
+
+    acceptBtn.addEventListener('click', () => {
+      const applied = applyProposedEdit(edit);
+      wrap.remove();
+      if (applied) {
+        const note = document.createElement('div');
+        note.className = 'edit-applied-note';
+        note.textContent = 'Preview updated — review and tap Save when ready.';
+        bubble.appendChild(note);
+      }
+    });
+  }
+
   // Deterministic fallback when the coach voice is unconfigured, slow, or errors.
   // Owner directive: when the LLM is down the lifter must NEVER be told — there is no
   // "coach unavailable" / "couldn't reach" / "ask again" reveal. Instead we answer
@@ -2847,18 +2940,17 @@ import { findPlanEntry, planMismatchForLift, formatPlanMismatchLine } from './pl
       setWorkoutPlaceholder(extractPlaceholderFromText(reply));
     }
 
-    // Apply the structured edit (if any) after prose is typed — the lifter sees
-    // the explanation first, then the preview updates. The trust loop is intact:
-    // invalidatePreview() forces a new dry-run before approve re-enables.
+    // Stage the structured edit (if any) after prose is typed — the lifter sees
+    // the explanation first, then the accept card. Nothing applies until the
+    // lifter accepts; the trust loop is intact: invalidatePreview() forces a
+    // new dry-run before approve re-enables.
     chatResult.propose_edit = mayApplyStructuredResult() ? chatResult.propose_edit : null;
     if (chatResult.propose_edit) {
-      const applied = applyProposedEdit(chatResult.propose_edit);
-      if (applied) {
-        const note = document.createElement('div');
-        note.className = 'edit-applied-note';
-        note.textContent = 'Preview updated — review and tap Save when ready.';
-        bubble.appendChild(note);
-      }
+      // #1737 (Fable fix 11, P1 PROPOSE_EDIT): a model-proposed edit is
+      // staged as an accept card — it never applies on receipt. The lifter
+      // sees exactly what would change and accepts or declines; only Accept
+      // calls applyProposedEdit, and the re-preview trust loop still holds.
+      showProposeEditPrompt(bubble, chatResult.propose_edit);
     }
 
     chatResult.propose_plan_edit = mayApplyStructuredResult() ? chatResult.propose_plan_edit : null;

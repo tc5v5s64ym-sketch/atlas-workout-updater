@@ -2070,7 +2070,9 @@ test('api smoke: coach/chat preserves a proposal even when the Gemini prose come
   try {
     const { response, body } = await requestJson('/api/coach/chat', {
       method: 'POST',
-      body: JSON.stringify({ message: 'change set 1 to 235x5' })
+      // #1737: the resolver validates the index against the forwarded preview
+      // and re-resolves values from the athlete message ('235x5' stated here).
+      body: JSON.stringify({ message: 'change set 1 to 235x5', context: { current_preview: [{ exercise: 'Bench Press', weight: 225, reps: 5, rir: 2 }] } })
     });
     assert.equal(response.status, 200);
     assert.equal(body.data.source, 'gemini', 'a returned proposal keeps the gemini source, not the engine fallback');
@@ -2103,7 +2105,9 @@ test('api smoke: coach/chat passes propose_edit through to the client', async ()
   try {
     const { response, body } = await requestJson('/api/coach/chat', {
       method: 'POST',
-      body: JSON.stringify({ message: 'change set 1 to 235×5' })
+      // #1737: the resolver validates the index against the forwarded preview
+      // and re-resolves values from the athlete message ('235×5' stated here).
+      body: JSON.stringify({ message: 'change set 1 to 235×5', context: { current_preview: [{ exercise: 'Bench Press', weight: 225, reps: 5, rir: 2 }] } })
     });
     assert.equal(response.status, 200);
     assert.equal(body.data.message, fakeCoachState.chatMessage, 'prose reply unchanged');
@@ -2653,12 +2657,16 @@ test('S5 B4-4: unsafe chat prose is suppressed without dropping a structured pro
   const originalMessage = fakeCoachState.chatMessage;
   fakeCoachState.configured = true;
   fakeCoachState.chatMessage = 'That was fucking huge.';
-  fakeCoachState.chatEditProposal = { exercise: 'Bench Press', change: 'hold load' };
+  // #1737: the surviving proposal must be a valid edit the resolver passes
+  // (identity-only delete_set with a forwarded preview row to validate
+  // against); an invalid-schema proposal is dropped at the resolver, so the
+  // old free-form placeholder no longer reaches the client.
+  fakeCoachState.chatEditProposal = { action: 'delete_set', index: 0 };
   fakeCoachState.registerViolations = ['profanity_not_granted'];
   try {
     const { response, body } = await requestJson('/api/coach/chat', {
       method: 'POST',
-      body: JSON.stringify({ message: 'should I hold the load?' })
+      body: JSON.stringify({ message: 'should I hold the load?', context: { current_preview: [{ exercise: 'Bench Press', weight: 225, reps: 5, rir: 2 }] } })
     });
     assert.equal(response.status, 200);
     assert.equal(body.data.message, null, 'violating prose is removed');

@@ -36,6 +36,7 @@ const interactionTraceShadow = require('../services/interactionTraceShadow');
 const coachTurnPacketShadow = require('../services/coachTurnPacketShadow');
 const coachResponseSheet = require('../services/coachResponseSheet');
 const { resolvePlanEdit } = require('../services/planEditResolver');
+const { resolveProposeEdit } = require('../services/proposeEditResolver');
 // Fixed, privacy-safe suppression classification. Only enum codes cross this boundary —
 // never the model draft, the matched phrase, or any free-form validator text.
 const { SUPPRESSION_CODES: CODES, classifyRegisterViolations } = require('../services/suppressionReason');
@@ -1797,6 +1798,14 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // exercise the planner cannot prescribe drops the edit (fail closed).
       // Identity-only removes pass through unchanged (see planEditResolver).
       const resolvedPlanEdit = resolvePlanEdit(propose_plan_edit, allLog, todayIso());
+      // #1737 (Fable fix 11, P1 PROPOSE_EDIT): the same discipline for a
+      // model PROPOSE_EDIT — it may identify the operation and row only.
+      // Every value is re-resolved here from the athlete's own message
+      // (proposeEditResolver); model-supplied weight/reps/RIR never survive
+      // this line, and an edit with no athlete-stated value is dropped
+      // (fail closed). delete_set is identity-only with a validated index;
+      // the client accept card is its guard.
+      const resolvedEdit = resolveProposeEdit(propose_edit, message, llmContext.current_preview);
       const hasReply = Boolean(reply && String(reply).trim());
       const personalBestFacts = Object.entries(
         llmContext.athlete_identity && llmContext.athlete_identity.lift_prs
@@ -1910,9 +1919,9 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // proposal (edit/note/constraint) — a proposal must never be dropped just
       // because the prose came back empty. Only a truly empty result (no prose, no
       // proposal) falls through to the deterministic engine fallback below.
-      if (hasSafeReply || propose_edit || safeNote || safeConstraint || resolvedPlanEdit) {
+      if (hasSafeReply || resolvedEdit || safeNote || safeConstraint || resolvedPlanEdit) {
         return standardSuccess(req, res, 'Coach chat reply', {
-          message: hasSafeReply ? reply : null, propose_edit: propose_edit || null, propose_note: safeNote, propose_constraint: safeConstraint, propose_plan_edit: resolvedPlanEdit || null, configured: true, model: coach.coachModel(), source: 'gemini'
+          message: hasSafeReply ? reply : null, propose_edit: resolvedEdit || null, propose_note: safeNote, propose_constraint: safeConstraint, propose_plan_edit: resolvedPlanEdit || null, configured: true, model: coach.coachModel(), source: 'gemini'
         });
       }
       // Empty reply and no proposal → fall through to the deterministic fallback below.

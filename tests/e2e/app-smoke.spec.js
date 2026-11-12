@@ -421,7 +421,7 @@ test('Chat: a coach outage falls back to a deterministic reply, still no write',
   expect(capture.writeRequests).toHaveLength(0);
 });
 
-test('Chat: propose_edit updates the preview row and still requires approve to write', async ({ page }) => {
+test('Chat: propose_edit stages an accept card and only applies on Accept (#1737 B-plan-1)', async ({ page }) => {
   const capture = {};
   await openApp(page, capture);
 
@@ -453,13 +453,92 @@ test('Chat: propose_edit updates the preview row and still requires approve to w
 
   // Prose typed out in Atlas bubble
   await expect(page.locator('#thread-messages .chat-bubble-atlas').last()).toContainText('solid bump');
-  // Edit-applied note visible below the reply
+  // Accept card is staged — the edit is NOT applied yet
+  await expect(page.locator('.propose-edit-accept-btn')).toBeVisible();
+  await expect(page.locator('.set-weight').first()).toHaveValue('225');
+  await expect(page.locator('.edit-applied-note')).toHaveCount(0);
+  // Approve button still disabled — lifter must re-preview before saving
+  await expect(page.locator('#approve-btn')).toBeDisabled();
+
+  // Accept the card → the edit applies, then the re-preview trust loop holds
+  await page.locator('.propose-edit-accept-btn').click();
   await expect(page.locator('.edit-applied-note')).toBeVisible();
   // Row 0 weight updated to 235
   await expect(page.locator('.set-weight').first()).toHaveValue('235');
-  // Approve button still disabled — lifter must re-preview before saving
+  // Approve still disabled — lifter must re-preview before saving
   await expect(page.locator('#approve-btn')).toBeDisabled();
   // Zero writes fired
+  expect(capture.writeRequests).toHaveLength(0);
+});
+
+test('Chat: declining a propose_edit card leaves the preview untouched (#1737 B-plan-1)', async ({ page }) => {
+  const capture = {};
+  await openApp(page, capture);
+
+  await page.evaluate(() => addSetRow({ exercise: 'Bench Press', weight: 225, reps: 5, rir: 2 }));
+
+  await page.route('**/api/parse-workout-text', route => route.fulfill(json({
+    status: 'success',
+    data: {
+      test_mode: true, sheet_written: false, no_write_confirmed: true, warnings: [],
+      parsed: { intent: 'needs_clarification', message: 'Could not find sets.' }
+    }
+  })));
+
+  await page.route('**/api/coach/chat', route => route.fulfill(json({
+    status: 'success',
+    data: {
+      message: 'Changed set 1 to 235 lbs — looks like a solid bump.',
+      propose_edit: { action: 'update_set', index: 0, weight: 235, reps: 5, rir: 2 },
+      configured: true,
+      source: 'gemini'
+    }
+  }, 200, { 'x-atlas-turn-id': TEST_TURN })));
+
+  await page.locator('#workout-text').fill('change set 1 to 235');
+  await page.locator('#preview-btn').click();
+
+  await expect(page.locator('.propose-edit-accept-btn')).toBeVisible();
+  await page.locator('.propose-edit-decline-btn').click();
+  // Card gone, row untouched, no applied note
+  await expect(page.locator('.propose-edit-accept-btn')).toHaveCount(0);
+  await expect(page.locator('.set-weight').first()).toHaveValue('225');
+  await expect(page.locator('.edit-applied-note')).toHaveCount(0);
+  expect(capture.writeRequests).toHaveLength(0);
+});
+
+test('Chat: a delete_set proposal only removes the row on Accept (#1737 A1706-2)', async ({ page }) => {
+  const capture = {};
+  await openApp(page, capture);
+
+  await page.evaluate(() => addSetRow({ exercise: 'Bench Press', weight: 225, reps: 5, rir: 2 }));
+
+  await page.route('**/api/parse-workout-text', route => route.fulfill(json({
+    status: 'success',
+    data: {
+      test_mode: true, sheet_written: false, no_write_confirmed: true, warnings: [],
+      parsed: { intent: 'needs_clarification', message: 'Could not find sets.' }
+    }
+  })));
+
+  await page.route('**/api/coach/chat', route => route.fulfill(json({
+    status: 'success',
+    data: {
+      message: 'Dropping that set for you.',
+      propose_edit: { action: 'delete_set', index: 0 },
+      configured: true,
+      source: 'gemini'
+    }
+  }, 200, { 'x-atlas-turn-id': TEST_TURN })));
+
+  await page.locator('#workout-text').fill('that set felt off');
+  await page.locator('#preview-btn').click();
+
+  await expect(page.locator('.propose-edit-accept-btn')).toBeVisible();
+  // Decline first: the athlete-logged set survives
+  await page.locator('.propose-edit-decline-btn').click();
+  await expect(page.locator('.set-weight')).toHaveCount(1);
+  await expect(page.locator('.edit-applied-note')).toHaveCount(0);
   expect(capture.writeRequests).toHaveLength(0);
 });
 
