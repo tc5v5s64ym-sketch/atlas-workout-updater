@@ -1969,6 +1969,87 @@ function detectUngroundedMessageNumbers(message, facts, kind) {
   return out;
 }
 
+// ── history-number grounding (#1719) ──────────────────────────────────────
+//
+// A model reply to a history question whose numbers do not match the bound
+// last-session facts (the most recent PRIOR session's sets, bound by the
+// #1719 history lane) is suppressed and replaced with the deterministic
+// history answer. Same shape as the #1709 prescription backstop.
+//
+// The bound facts come from the QUESTION (the lift the athlete asked about),
+// so every numeric claim in the reply is judged against them — a bare
+// set-count claim ("you did 3 sets") is the bound lift's count claim, not an
+// unattributable fragment. A clause naming a DIFFERENT lift is not judged
+// here (nothing attributable — the recap/completion detectors own it).
+//
+// Matching is per SET, not per session: a reading matches when some bound set
+// carries its asserted weight/reps/RIR and the asserted set count equals the
+// bound set count. This differs deliberately from readingMatchesHistorySets
+// (uniform-session rule): a ramped last session (135x12, 185x10, 225x6,
+// 225x5, 225x5) must ground a "225x5" claim. A multi-set enumeration is not
+// a single reading and fails closed here — the replacement is the same true
+// enumeration, so nothing true is lost.
+
+function readingMatchesHistoryFact(reading, sets) {
+  if (!sets || reading.__conflict) return false;
+  const list = Array.isArray(sets) ? sets : [];
+  if (hasValue(reading.sets)) {
+    if (!Number.isFinite(list.length) || list.length !== reading.sets) return false;
+  }
+  if (!hasValue(reading.weight) && !hasValue(reading.reps) && !hasValue(reading.rir)) return true;
+  return list.some((s) => {
+    if (!s) return false;
+    if (hasValue(reading.weight) && Number(s.weight) !== reading.weight) return false;
+    if (hasValue(reading.reps) && Number(s.reps) !== reading.reps) return false;
+    if (hasValue(reading.rir) && (isNil(s.rir) || Number(s.rir) !== reading.rir)) return false;
+    return true;
+  });
+}
+
+/**
+ * detectUngroundedHistoryNumbers(reply, facts) → [{ segment, kind }]
+ *
+ * Flags numeric history claims no bound last-session fact supports. `facts`
+ * is the bound object from the #1719 history lane ({ liftName, sessionId,
+ * date, sets: [{weight, reps, rir}] }) or null — null means nothing is bound
+ * and nothing is judged. Empty array = grounded.
+ *
+ * Pure. Judges ONLY the bound lift's numbers: a clause asserting no numbers
+ * passes, and a clause naming a different lift passes (other detectors own
+ * it). Only cleanly attributable single-lift claims are judged.
+ */
+function detectUngroundedHistoryNumbers(reply, facts) {
+  const f = facts && typeof facts === 'object' ? facts : null;
+  if (!f || !f.liftName || !Array.isArray(f.sets) || !f.sets.length) return [];
+  const out = [];
+  const seen = new Set();
+  const flag = (segment) => {
+    const key = `history_numbers::${segment}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ segment, kind: 'history_numbers' });
+  };
+  // The bound lift, as a one-lift context for the shared lift-naming helpers.
+  const ctx = { current_plan: [{ name: f.liftName }] };
+  const boundKey = canonicalKey(f.liftName);
+  for (const whole of segments(reply)) {
+    for (const seg of assertedClauses(whole)) {
+      let lifts = namedHistoryLifts(seg, ctx);
+      if (lifts.length > 1) {
+        const occurring = liftsOccurringInClause(lifts, seg);
+        if (occurring.length) lifts = occurring;
+      }
+      if (lifts.length === 1 && canonicalKey(lifts[0]) !== boundKey) continue;
+      if (lifts.length > 1) continue;
+      const readings = extractAssertedReadings(seg);
+      const hasNumbers = readings.some((r) => hasValue(r.weight) || hasValue(r.reps) || hasValue(r.sets) || hasValue(r.rir) || r.__conflict);
+      if (!hasNumbers) continue;
+      if (!readings.some((r) => readingMatchesHistoryFact(r, f.sets))) flag(seg);
+    }
+  }
+  return out;
+}
+
 module.exports = {
   normalize,
   nameKey,
@@ -1992,6 +2073,7 @@ module.exports = {
   detectUngroundedCompletionClaim,
   detectUngroundedRecapNumbers,
   detectUngroundedPrescriptionNumbers,
+  detectUngroundedHistoryNumbers,
   buildCoachMessageGroundingContext,
   detectUngroundedMessageNumbers,
   buildGroundedSessionStateStatement,

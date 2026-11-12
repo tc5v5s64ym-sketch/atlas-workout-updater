@@ -57,7 +57,7 @@ const { patternFor } = require('../services/movementPattern');
 const { musclesFor } = require('../services/muscleCoverage');
 const { assembleBatchNoteFacts } = require('../services/batchNoteFacts');
 const { detectExtraWork } = require('../services/extraWorkDetector');
-const { buildSessionQuestionAnswer, buildSessionAdviceFallback, answerBareShorthand, isBareSessionShorthand, isCurrentExercisePrescriptionQuestion, answerCurrentExercisePrescription, isWarmupQuestion, answerPlannedLiftQuestion, answerTotalRepsQuestion, answerUnresolvedExerciseQuestion } = require('../services/sessionQuestionAnswer');
+const { buildSessionQuestionAnswer, buildSessionAdviceFallback, answerBareShorthand, isBareSessionShorthand, isCurrentExercisePrescriptionQuestion, answerCurrentExercisePrescription, isWarmupQuestion, answerPlannedLiftQuestion, answerTotalRepsQuestion, answerUnresolvedExerciseQuestion, isHistoryQuestion, answerHistoryQuestion } = require('../services/sessionQuestionAnswer');
 const { isTurnPrecedenceEnabled } = require('../services/turnPrecedence');
 const { isTirednessExpression, buildTirednessRecoveryAnswer, buildTirednessRecoveryAnswerFromDecision } = require('../services/recoveryRouting');
 const { planStateFromContext, buildSessionCloseAnswer, buildSessionCloseAnswerFromSession, buildNextUpAnswer, buildNextUpAnswerFromSession } = require('../services/sessionPlanExecutor');
@@ -1296,6 +1296,19 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       : null;
     const history = Array.isArray(req.body && req.body.history) ? req.body.history : [];
 
+    // Fable fix 13 (#1719): the current in-progress session id for the history
+    // lane — an explicit client session id first, else the canonical
+    // session's id. Null when the client supplies neither (the common case:
+    // routeMessageToCoach sends no session_id) — the lane then excludes
+    // today's sessions instead, so today's partial sets are never "last time".
+    const currentSessionIdForHistory = () => {
+      const c = clientCtx && typeof clientCtx === 'object' ? clientCtx : {};
+      const explicit = c.session_id || c.sessionId;
+      if (explicit) return String(explicit);
+      const cs = res.locals.coachCanonicalSession;
+      return cs && cs.session_id ? String(cs.session_id) : null;
+    };
+
     // Message-scoped mode signals, computed up front (both are pure, message-only).
     //   - `tired`: a tiredness/recovery expression — the route resolves it before the
     //     LLM (recovery routing owns it), so recovery outranks reassure.
@@ -1512,6 +1525,23 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
           : buildNextUpAnswer(planStateFromContext(clientCtx));
         if (nextUp) return nextUp;
       }
+      // Fable fix 13 (#1719, design B): the history lane on the model-down
+      // path — a past-tense question is answered from the read rows, never
+      // from the plan. logRowsForTarget is null on the unconfigured path (no
+      // Sheets read), so the lane says plainly it cannot look history up.
+      // Runs BEFORE buildSessionQuestionAnswer, which now defers past-tense
+      // questions itself (B-11 backstop). lastDiscussedLift is out of scope
+      // here (declared inside the try block below), so the lane resolves the
+      // lift from the message, the prior turns, and the client context.
+      const historyAns = answerHistoryQuestion(message, {
+        history,
+        clientContext: clientCtx,
+        logRows: logRowsForTarget,
+        lastDiscussedLift: null,
+        currentSessionId: currentSessionIdForHistory(),
+        today: todayIso(),
+      });
+      if (historyAns) return historyAns.text;
       const valueAnswer = buildSessionQuestionAnswer(message, {
         history,
         clientContext: clientCtx,
@@ -1546,9 +1576,13 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // signals path.
       const offlineRecoveryDecisionSignal = { engine_grounded: false, ...offlineRecoverySignals };
       if (tired) { res.locals = res.locals || {}; res.locals.coachRecoveryDecision = offlineRecoveryDecisionSignal; }
+      // #1719: null (not []) marks "no Sheets read" for the history lane
+      // inside deterministicAnswer — it says plainly it cannot look history
+      // up, instead of answering from the plan. The engine target lookup
+      // treats null as no rows, exactly as [] did.
       const answer = tired
         ? wordRecoveryReply(offlineRecoveryDecisionSignal)
-        : ((recExplainOffline && wordRecommendationExplanation(recExplainOffline.snapshot)) || deterministicAnswer([]));
+        : ((recExplainOffline && wordRecommendationExplanation(recExplainOffline.snapshot)) || deterministicAnswer(null));
       return standardSuccess(req, res, answer
         ? 'Coach chat unavailable — deterministic engine answer'
         : 'Coach chat unavailable — Gemini not configured', {
@@ -1745,6 +1779,40 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
           configured: true, model: coach.coachModel(), source: 'engine'
         });
       }
+      // Fable fix 13 (#1719, design A + C): the deterministic history lane, in
+      // the same position as the dispute / substitution / remaining-work lanes
+      // above — after the Sheets read, before the model is consulted. A
+      // recognized history question (HISTORY_RE + a resolved lift) is answered
+      // from the most recent PRIOR session's rows, with explicit provenance;
+      // no rows → an honest "no logged last session"; no resolvable lift → a
+      // "which lift?" clarification. The lane claims only the narrow
+      // recognition: a phrasing variant it misses still binds its facts below
+      // (broad trigger) so backstop C can judge the model reply. The bound
+      // answer (with facts) survives in `historyAnswer` for backstop C; a
+      // clarify / no-record / unavailable answer carries facts: null, so the
+      // backstop is skipped. The model is never consulted for a recognized
+      // history question.
+      const historyQuestion = isHistoryQuestion(message);
+      const historyBroad = historyQuestion
+        || coachExplanationGrounding.isHistoryQuestion(coachResponseGrounding.normalize(message));
+      let historyAnswer = null;
+      if (historyBroad) {
+        historyAnswer = answerHistoryQuestion(message, {
+          history,
+          clientContext: clientCtx,
+          logRows: allLog,
+          lastDiscussedLift,
+          currentSessionId: currentSessionIdForHistory(),
+          today: todayIso(),
+          assumeHistory: historyBroad,
+        });
+      }
+      if (historyAnswer && historyQuestion) {
+        return standardSuccess(req, res, 'Coach chat — deterministic history answer', {
+          message: historyAnswer.text, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
+          configured: true, model: coach.coachModel(), source: 'engine'
+        });
+      }
       // Recommendation-explanation grounding (2026-07-22 production, FR-20260722231349).
       // "Why only 175 for bench?" asks why the DISPLAYED recommendation chose its numbers.
       // narrowContextToPlanTurn cannot fix it — the challenged lift IS the lift being asked
@@ -1849,6 +1917,22 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       const isPrClaim = typeof coach.looksLikePrClaim === 'function' && coach.looksLikePrClaim(message);
       const safeNote = isPrClaim ? null : (propose_note || null);
       const safeConstraint = isPrClaim ? null : (propose_constraint || null);
+      // History-number BACKSTOP (#1719, design C). Runs FIRST among the
+      // backstops: for a history question the bound last-session facts are
+      // the authoritative ground truth, and the recap detector binds "last
+      // time" to the most recent session INCLUDING today's in-progress
+      // session — so it would misjudge a true history answer, and its
+      // replacement (the session-state statement) does not answer the
+      // question. A reply whose numbers do not match the bound facts is
+      // suppressed and replaced with the deterministic history answer. Only
+      // fires when the lane bound facts (kind 'answer'); a clarify /
+      // no-record / unavailable turn carries facts: null.
+      if (hasSafeReply && historyAnswer && historyAnswer.facts && coachResponseGrounding.detectUngroundedHistoryNumbers(reply, historyAnswer.facts).length > 0) {
+        return standardSuccess(req, res, 'Coach chat — grounded (ungrounded history numbers rejected)', {
+          message: historyAnswer.text, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
+          configured: true, model: coach.coachModel(), source: 'engine'
+        });
+      }
       // Mutation-truth BACKSTOP (defense-in-depth). Factual disputes are now answered
       // deterministically above (fail-closed), so this only guards the remaining MODEL
       // paths — a "why did you…" explanation or free-form chat. /api/coach/chat is

@@ -88,7 +88,9 @@ const MAGNITUDE_RE = /\b(only|just|so\s+(?:light|heavy|low|high|easy|hard|little
 //
 //   STRONG — the athlete's own past action is the QUESTION'S SUBJECT: "did I [adverbs]
 //   <verb>" (tolerating up to three intervening adverbs — "did I only get", "did I just
-//   barely hit") or "when I did/last". This always means history.
+//   barely hit") or "when I did/last". This means history UNLESS the same clause carries
+//   a present cue ("what did I bench today?" asks about the current session, not the
+//   last one) — see the guard in isHistoryQuestion below.
 const ATHLETE_PAST_RE = /\b(?:when i (?:did|last)|did\s+i(?:\s+\w+){0,3}\s+(?:do|does|hit|get|got|gotten|use|used|run|ran|bench|squat|press(?:ed)?|lift(?:ed)?|pull(?:ed)?|row(?:ed)?|curl(?:ed)?|manage[d]?|perform(?:ed)?|finish(?:ed)?|complete[d]?|score[d]?))\b/;
 //
 //   WEAK — a bare temporal reference to a prior session ("last week", "before", "yesterday",
@@ -98,7 +100,9 @@ const WEAK_HISTORY_RE = /\b(?:last (?:time|week|session|month|year|workout|train
 //
 //   PRESENT cue — the question is about TODAY's prescription, so a cited prior session is
 //   context, not the subject ("why only 175 for bench today I benched 225 last week").
-const PRESENT_CUE_RE = /\b(?:today|tonight|right now|now|currently|this (?:session|workout|week|block|time))\b/;
+//   "This morning/afternoon/evening" are present-session cues too: a question about them
+//   asks about today's session, never the last one.
+const PRESENT_CUE_RE = /\b(?:today|tonight|right now|now|currently|this (?:session|workout|week|block|time|morning|afternoon|evening))\b/;
 
 // The clause the "why" question is actually asking about — the first segment (split on
 // sentence/clause punctuation) that contains "why". The history exclusion is tested against
@@ -112,9 +116,12 @@ function questionClause(normalizedMessage) {
 
 // True when the QUESTION (not a merely-cited prior session) is about the past — the strong
 // athlete-past-action subject, or a weak temporal reference with no present-session cue.
+// The strong branch is ALSO guarded by the present cue: "what did I bench today?" asks
+// about the current session, not the last one — the history lane must not own it, and
+// backstop C (#1719) must not judge today's numbers against last session's facts.
 function isHistoryQuestion(normalizedMessage) {
   const clause = questionClause(normalizedMessage);
-  if (ATHLETE_PAST_RE.test(clause)) return true;
+  if (ATHLETE_PAST_RE.test(clause) && !PRESENT_CUE_RE.test(clause)) return true;
   return WEAK_HISTORY_RE.test(clause) && !PRESENT_CUE_RE.test(clause);
 }
 
@@ -403,6 +410,7 @@ module.exports = {
   planEntries,
   resolveRecommendationTarget,
   isRecommendationExplanationTurn,
+  isHistoryQuestion,
   buildTargetHistory,
   buildRecommendationSnapshot,
   narrowContextForRecommendationExplanation,
