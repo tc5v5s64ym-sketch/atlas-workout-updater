@@ -957,9 +957,8 @@ test('sanitizeConstraint whitelists known fields and enforces the fixed vocabula
   assert.deepEqual(clean, {
     kind: 'injury',
     target: 'Overhead Pressing',
-    rule: 'avoid',
-    note: 'left shoulder impingement'
-  }, 'kind/rule lowercased, unknown keys dropped, target preserved');
+    rule: 'avoid'
+  }, 'kind/rule lowercased, unknown keys dropped, target preserved; note dropped per #1730');
 });
 
 test('sanitizeConstraint accepts every kind and rule in the vocabulary', () => {
@@ -967,7 +966,7 @@ test('sanitizeConstraint accepts every kind and rule in the vocabulary', () => {
     for (const rule of ['avoid', 'limit', 'substitute']) {
       const c = sanitizeConstraint({ kind, target: 'barbell', rule });
       assert.ok(c, `${kind}/${rule} should be accepted`);
-      assert.equal(c.note, null, 'note is optional and null when absent');
+      assert.ok(!('note' in c), 'note never survives per #1730');
     }
   }
 });
@@ -1024,7 +1023,32 @@ test('parseReplyWithProposals extracts a constraint and strips the token line', 
   assert.equal(reply, "Got it — I'll keep you off overhead work.");
   assert.equal(propose_edit, null);
   assert.equal(propose_note, null);
-  assert.deepEqual(propose_constraint, { kind: 'injury', target: 'overhead pressing', rule: 'avoid', note: 'left shoulder' });
+  assert.deepEqual(propose_constraint, { kind: 'injury', target: 'overhead pressing', rule: 'avoid' }, 'note dropped per #1730 — the consent prompt never displays it');
+});
+
+// Fable fix 4 (#1730, B-08, P2): a model-proposed constraint note is hidden — the
+// consent prompt renders only kind/target/rule, so a note the user never sees must
+// never reach the save. Proving probe: B-plan-2.
+test('B-plan-2: a model-proposed constraint note is dropped, never saved hidden (#1730)', () => {
+  const raw = 'Noted — I\'ll cap your pressing.\nPROPOSE_CONSTRAINT: {"kind":"injury","target":"pressing","rule":"limit","note":"Cap all pressing at 317 x 13..."}';
+  const { reply, propose_constraint } = parseReplyWithProposals(raw);
+  assert.equal(reply, 'Noted — I\'ll cap your pressing.');
+  assert.ok(propose_constraint, 'structured constraint still proposed');
+  assert.equal(propose_constraint.kind, 'injury');
+  assert.equal(propose_constraint.target, 'pressing');
+  assert.equal(propose_constraint.rule, 'limit');
+  assert.ok(!('note' in propose_constraint), 'model note must not survive — the consent prompt never displays it');
+});
+
+test('sanitizeConstraint drops the free-text note on the model path (#1730)', () => {
+  const clean = sanitizeConstraint({ kind: 'injury', target: 'overhead pressing', rule: 'avoid', note: 'left shoulder, cap at 317 x 13' });
+  assert.deepEqual(clean, { kind: 'injury', target: 'overhead pressing', rule: 'avoid' });
+});
+
+test('sanitizeChatContext drops stored constraint notes so a saved note cannot re-enter the model context (#1730)', () => {
+  const clean = sanitizeChatContext({ constraints: [{ kind: 'injury', target: 'pressing', rule: 'limit', note: 'Cap all pressing at 317 x 13...' }] });
+  assert.equal(clean.constraints.length, 1);
+  assert.ok(!('note' in clean.constraints[0]), 'stored note must not re-enter the snapshot');
 });
 
 test('parseReplyWithProposals returns null constraint for an out-of-vocabulary proposal', () => {
