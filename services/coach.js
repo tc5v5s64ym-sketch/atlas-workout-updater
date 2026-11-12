@@ -1137,6 +1137,14 @@ const CONSTRAINT_RULES = ['avoid', 'limit', 'substitute'];
 // Whitelist a single constraint fact for the model. Only known fields survive;
 // kind/rule must come from the fixed vocabularies; a malformed constraint → null.
 // Same discipline as sanitizeVerdict / sanitizeProgressionVerdict.
+// Fable fix 4 (#1730, B-08): the free-text `note` is DROPPED here, on purpose.
+// The consent prompt renders only kind/target/rule, so a model-proposed note the
+// user never sees must never reach the save — and a note already saved in the
+// Constraints tab must never re-enter the model context via the snapshot either
+// (sanitizeChatContext maps stored constraints through this same function). The
+// structured triple is the consented content; the note adds no meaning the
+// target does not already carry. POST /api/constraints still accepts a note for
+// direct user entry; the model path can no longer supply one.
 function sanitizeConstraint(v) {
   if (!v || typeof v !== 'object') return null;
   const kind = typeof v.kind === 'string' ? v.kind.trim().toLowerCase() : '';
@@ -1145,7 +1153,7 @@ function sanitizeConstraint(v) {
   if (!CONSTRAINT_KINDS.includes(kind)) return null;
   if (!CONSTRAINT_RULES.includes(rule)) return null;
   if (!target) return null;
-  return { kind, target, rule, note: clampText(v.note, 200) };
+  return { kind, target, rule };
 }
 
 // Forward ONLY a known, bounded snapshot — never arbitrary client object keys.
