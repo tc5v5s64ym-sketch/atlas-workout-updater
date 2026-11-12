@@ -824,10 +824,21 @@ const SCREENSHOT_DATE_MAX_FUTURE_DAYS = 2;
 const SCREENSHOT_DATE_MAX_PAST_DAYS = 400;
 function isPlausibleScreenshotDate(isoDate, todayIso = getLocalDateString()) {
   if (!isoDate) return false;
-  const d = new Date(`${isoDate}T00:00:00`);
+  // Calendar round-trip (#1731): Date.parse rolls an out-of-range day into
+  // the next month (2026-02-30 silently becomes 2026-03-02), so a window
+  // check on the parsed value trusts a day no calendar has. Reject unless
+  // the year/month/day components round-trip exactly — same check as
+  // normalizeWorkoutDateStrict, which already guards the manual-date path.
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate);
+  if (!match) return false;
+  const y = Number(match[1]);
+  const m = Number(match[2]);
+  const d = Number(match[3]);
+  const roundTrip = new Date(y, m - 1, d);
+  if (roundTrip.getFullYear() !== y || roundTrip.getMonth() !== m - 1 || roundTrip.getDate() !== d) return false;
   const t = new Date(`${todayIso}T00:00:00`);
-  if (Number.isNaN(d.getTime()) || Number.isNaN(t.getTime())) return false;
-  const diffDays = (d.getTime() - t.getTime()) / 86400000;
+  if (Number.isNaN(t.getTime())) return false;
+  const diffDays = (roundTrip.getTime() - t.getTime()) / 86400000;
   return diffDays <= SCREENSHOT_DATE_MAX_FUTURE_DAYS && diffDays >= -SCREENSHOT_DATE_MAX_PAST_DAYS;
 }
 
