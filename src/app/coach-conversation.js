@@ -2454,10 +2454,19 @@ import { findPlanEntry, planMismatchForLift, formatPlanMismatchLine } from './pl
       }
     } else if (edit.action === 'update_set') {
       const row = rows[edit.index];
-      // F06 / CLIENT-2: a coach-accepted correction is a preview edit too — mark each changed
-      // field user-edited so it is folded back into the session buffer on a later reparse/log
-      // (the programmatic .value set below fires no 'input' event, so mark it explicitly).
-      const markEdit = (cls, value) => { const i = row.querySelector(cls); i.value = String(value); i.dataset.userEdited = '1'; };
+      // #1732 (B-02): a model-applied value is NEVER marked user-edited. The
+      // programmatic .value set below fires no 'input' event, so the field
+      // carries no user-typed provenance — exactly right: the value came from
+      // the model, not from the lifter's hands. Marking it user-edited
+      // laundered it into the session buffer on the next log's reconcile
+      // (F06/CLIENT-2 fold-back), where it replaced the athlete's
+      // honestly-logged value and passed grounding as a 'fact'. The accepted
+      // correction still reaches the sheet when the lifter re-previews and
+      // Saves (the re-preview rebuilds from this table); it is NOT folded
+      // into the buffer, so logging another set first rebuilds from the
+      // buffer and the accepted value drops. Hand-edits still set userEdited
+      // via the input listener (app.js) and still fold.
+      const markEdit = (cls, value) => { const i = row.querySelector(cls); i.value = String(value); };
       if (edit.weight != null) markEdit('.set-weight', edit.weight);
       if (edit.reps != null) markEdit('.set-reps', edit.reps);
       if (edit.rir != null) markEdit('.set-rir', edit.rir);
