@@ -3020,6 +3020,19 @@ function tryApplyValueCorrection(text) {
   const unchanged = from === intent.value;
   if (!unchanged) {
     for (const i of indices) getSessionLog()[i] = { ...getSessionLog()[i], [field]: intent.value };
+    // B-14 (#1733): the correction rewrote the buffer AFTER the closeout
+    // preview was staged — the staged table still shows the pre-correction
+    // value, so the next re-preview would collect it and stage the stale
+    // write. Rebuild the staged table from the corrected buffer now.
+    // Hand-edits fold back first (F06), so they survive the rebuild; the
+    // staged write stays invalidated until the athlete re-previews, per the
+    // trust loop (this submit already invalidated it at entry). The typeof
+    // guard keeps the correction lane usable where the closeout latch is out
+    // of scope (the value-correction wiring harness evals this lane alone).
+    if (typeof closeoutPreviewStaged !== 'undefined' && closeoutPreviewStaged) {
+      reconcileSessionLogFromTable();
+      populateSetRows(buildRowsFromSessionLog());
+    }
   }
   announceValueCorrection({
     exercise: targetName, field, from, to: intent.value, count: indices.length, unchanged
