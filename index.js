@@ -507,6 +507,7 @@ const { logCleanedColumns, logRowFieldAliases, effortColumns, exerciseCatalogCol
 const { requiredSheetTabs, optionalSheetTabs, buildSheetContractStatus, validateHeaderRow } = require('./config/sheetContract');
 const { verifyAppendReceipt } = require('./services/appendWriteProof');
 const LOG_SESSION_ID_COLUMN = logCleanedColumns.indexOf('session_id');
+const EFFORT_SESSION_ID_COLUMN = effortColumns.indexOf('session_id');
 
 // --- Header-drift guard (trust-critical write protection) --------------------
 // Atlas appends rows to Google Sheets purely by column position. If the owner
@@ -4207,6 +4208,8 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
       rows_deleted: 0,
       original_deleted_range: original.deleted_range || null,
       original_rows_deleted: original.rows_deleted ?? null,
+      original_effort_deleted_range: original.effort_deleted_range || null,
+      original_effort_rows_deleted: original.effort_rows_deleted ?? null,
       original_completed_at: record.completed_at || null
     };
     const message = record.status === 'completed'
@@ -4249,21 +4252,80 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
     }
   }
 
-  // All rows verified — proceed with deletion
+  // #1736 (B-15): the write being undone also wrote one Effort row for the same
+  // session_id. Locate it BEFORE deleting anything: a success response while
+  // the Effort row survives leaves an orphan that 409s the re-save
+  // (B3-04-07) and replays 'success' for an undone write (B3-07b). This is a
+  // safety read — it must reflect the live sheet, never a cached snapshot.
+  // At most one Effort row per session_id can exist (the duplicate-session
+  // guard blocks a second), so a session_id lookup identifies exactly the
+  // row the undone write created. No Effort row (e.g. the #1628 partial
+  // write, where the Effort append failed) is fine — undo proceeds Log-only.
+  let effortRows;
   try {
+    effortRows = await getSheetRowsRaw(effortSheetName);
+  } catch (error) {
+    if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+    return standardError(req, res, 'Failed to read Effort rows for verification. Undo aborted — no rows were deleted.', null, 500);
+  }
+  const effortMatches = [];
+  for (let i = 0; i < effortRows.length; i++) {
+    const row = effortRows[i];
+    if (!row || row.every(cell => String(cell) === '')) continue;
+    if (String(row[EFFORT_SESSION_ID_COLUMN] || '').trim().toLowerCase() === normalizedExpected) {
+      effortMatches.push(i); // data index: sheet row i + 2
+    }
+  }
+  if (effortMatches.length > 1) {
+    if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+    return standardError(
+      req, res,
+      `Multiple Effort rows found for session "${session_id}" — undo refused, nothing was changed. Remove the duplicate Effort row in Sheets first.`,
+      { error_code: 'undo_multiple_effort_rows' }, 409
+    );
+  }
+  const effortDataIndex = effortMatches.length === 1 ? effortMatches[0] : null;
+  const effortSheetRow = effortDataIndex === null ? null : effortDataIndex + 2;
+  const effortLastColumn = String.fromCharCode(64 + effortColumns.length);
+  const effortDeletedRange = effortSheetRow === null
+    ? null
+    : `${effortSheetName}!A${effortSheetRow}:${effortLastColumn}${effortSheetRow}`;
+
+  // All rows verified — proceed with deletion. Effort FIRST, then Log: if the
+  // Effort delete fails, nothing has changed and the undo is retryable; if the
+  // Log delete fails after the Effort delete, the Log rows are still present,
+  // so a retry re-verifies and completes. (Log-first would strand the orphan:
+  // a retry 409s on the missing Log rows and the Effort row could never be
+  // removed.)
+  let effortRowsDeleted = 0;
+  try {
+    if (effortSheetRow !== null) {
+      await deleteRowsByRange(effortSheetName, effortSheetRow - 1, effortSheetRow);
+      effortRowsDeleted = 1;
+    }
     const startIndex = startRow - 1; // 0-based inclusive
     const endIndex = endRow;         // 0-based exclusive
     await deleteRowsByRange(logSheetName, startIndex, endIndex);
-    // Undo removes Log_Cleaned rows only; it never touches Effort.
-    invalidateSheetRowsCache(logSheetName);
+    invalidateSheetRowsCache(logSheetName, effortRowsDeleted > 0 ? effortSheetName : null);
   } catch (error) {
     if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+    // Effort-first means a failure here leaves the Log rows intact when the
+    // Effort delete failed, or the Effort row already removed when the Log
+    // delete failed — say which, never success.
+    if (effortRowsDeleted === 0 && effortSheetRow !== null) {
+      return standardError(req, res, 'Failed to delete the Effort row for this session. Undo aborted — no rows were deleted.', null, 500);
+    }
+    if (effortRowsDeleted > 0) {
+      return standardError(req, res, 'Failed to delete the Log rows, but the Effort row was already removed. Undo is incomplete — retry the undo; the Log rows are still present.', null, 500);
+    }
     return standardError(req, res, 'Failed to delete rows from sheet.', null, 500);
   }
 
   const responseBody = {
     deleted_range: log_appended_range,
     rows_deleted: rowSpan,
+    effort_deleted_range: effortDeletedRange,
+    effort_rows_deleted: effortRowsDeleted,
     sheet_write: 'success',
     sheet_written: true
   };

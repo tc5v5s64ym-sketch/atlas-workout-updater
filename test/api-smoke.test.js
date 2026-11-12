@@ -58,6 +58,16 @@ const fakeSheetsState = {
   // Rows returned by the stubbed getRecentRows for the Effort tab, in sheet
   // order (oldest first). Tests that need effort history set this and restore [].
   effortRecentRows: [],
+  // Modeled Effort sheet state (data rows, header excluded; effortRows[0] is
+  // sheet row 2). #1736: undo-last locates the session's Effort row here, and
+  // deleteRowsByRange splices it out, so an undo → re-save flow can be driven
+  // through the real endpoint. Default [] (no Effort rows) preserves prior
+  // behaviour for every test that does not set it.
+  effortRows: [],
+  // When set to a tab name, deleteRowsByRange throws for that tab AFTER
+  // recording the call — simulates a delete failure. #1736 exercises the
+  // undo-last refuse path (Effort delete failure → no success, nothing deleted).
+  failDeleteForTab: null,
   // Rows returned by the stubbed getRecentRows for the Bug_Reports tab (oldest
   // first). The GET /api/bug-report review feed reads these.
   bugReportRows: [],
@@ -161,12 +171,25 @@ const fakeSheets = {
   },
   deleteRowsByRange: async (tabName, startIndex, endIndex) => {
     fakeSheetsState.deleteCalls.push({ tabName, startIndex, endIndex });
+    if (fakeSheetsState.failDeleteForTab === tabName) {
+      throw new Error(`Simulated delete failure for "${tabName}"`);
+    }
+    // #1736: model the Effort delete so the undo → re-save flow is observable.
+    // Indices are 0-based sheet rows (row 1 = header); effortRows[0] is sheet row 2.
+    if (tabName === 'Effort') {
+      fakeSheetsState.effortRows.splice(startIndex - 1, endIndex - startIndex);
+    }
   },
   validateConfig: () => {},
   getExerciseCatalog: async () => exerciseCatalogRows,
   getEffortSessionIds: async () => {
     fakeSheetsState.safetyReadCalls.effortSessionIds += 1;
-    return [...fakeSheetsState.effortSessionIds];
+    // #1736: the modeled Effort rows are the same tab, so their session_ids
+    // count toward the duplicate-session guard exactly like the explicit list.
+    const fromRows = fakeSheetsState.effortRows
+      .map(row => String(row[1] || '').trim())
+      .filter(id => id !== '');
+    return [...new Set([...fakeSheetsState.effortSessionIds, ...fromRows])];
   },
   getLogCompositeKeys: async () => {
     fakeSheetsState.safetyReadCalls.logCompositeKeys += 1;
@@ -184,7 +207,7 @@ const fakeSheets = {
     fakeSheetsState.reads[tabName] = (fakeSheetsState.reads[tabName] || 0) + 1;
     // getSheetRowsRaw is aliased to this stub, so the undo-last read-back sees it.
     if (tabName === 'Log_Cleaned') return fakeSheetsState.logRowsOverride || logRows;
-    if (tabName === 'Effort') return [];
+    if (tabName === 'Effort') return fakeSheetsState.effortRows.map(r => [...r]);
     if (tabName === 'Modality_Log') {
       if (fakeSheetsState.failModalityLogRead) throw new Error('Simulated Modality_Log read failure');
       return fakeSheetsState.modalityLogRows.map(r => [...r]);
@@ -6649,6 +6672,82 @@ test('api smoke: undo-last with write_id deletes once and skips duplicate retry'
   assert.equal(duplicate.body.data.rows_deleted, 0);
   assert.equal(duplicate.body.data.original_rows_deleted, 1);
   assert.equal(fakeSheetsState.deleteCalls.length, 1);
+});
+
+test('api smoke: #1736 B3-04-07 undo-last deletes the session Effort row and the re-save no longer 409s', async () => {
+  // logRows fixture: sheet rows 3–5 → SESSION-NEW (Bench top set, backoff, Squat).
+  // The Effort row for the same session sits at sheet row 2.
+  fakeSheetsState.effortRows = [['2026-06-10', 'SESSION-NEW', '58', '300', '400', '120', '150', '', '']];
+  fakeSheetsState.deleteCalls.length = 0;
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  try {
+    const undo = await requestJson('/api/log-workout/undo-last', {
+      method: 'POST',
+      body: JSON.stringify({
+        log_appended_range: 'Log_Cleaned!A3:L5',
+        session_id: 'SESSION-NEW',
+        rows_to_delete: 3,
+        confirm_delete: true
+      })
+    });
+
+    assert.equal(undo.response.status, 200, JSON.stringify(undo.body));
+    assert.equal(undo.body.data.rows_deleted, 3);
+    // The undo must remove the Effort row too — an orphan Effort row 409s the re-save.
+    assert.equal(undo.body.data.effort_rows_deleted, 1, JSON.stringify(undo.body));
+    assert.equal(undo.body.data.effort_deleted_range, 'Effort!A2:I2');
+    // Effort delete first (so a Log-delete failure stays retryable), then Log.
+    assert.equal(fakeSheetsState.deleteCalls.length, 2);
+    assert.deepEqual(fakeSheetsState.deleteCalls[0], { tabName: 'Effort', startIndex: 1, endIndex: 2 });
+    assert.deepEqual(fakeSheetsState.deleteCalls[1], { tabName: 'Log_Cleaned', startIndex: 2, endIndex: 5 });
+    // The modeled Effort state no longer holds the session.
+    assert.deepEqual(fakeSheetsState.effortRows, []);
+
+    // Re-saving the same session_id must now succeed (was 409 Duplicate session).
+    const resave = await requestJson('/api/log-workout', {
+      method: 'POST',
+      body: JSON.stringify({
+        session_id: 'SESSION-NEW',
+        date: '2026-06-10',
+        write_id: 'write-1736-resave-01',
+        log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 135, reps: 10, rir: 2, notes: '' }]
+      })
+    });
+    assert.equal(resave.response.status, 200, JSON.stringify(resave.body));
+    assert.equal(resave.body.data.sheet_write, 'success');
+  } finally {
+    fakeSheetsState.allowAppend = false;
+    fakeSheetsState.effortRows = [];
+  }
+});
+
+test('api smoke: #1736 B3-07b undo-last refuses (no success) when the Effort row cannot be removed', async () => {
+  fakeSheetsState.effortRows = [['2026-06-10', 'SESSION-NEW', '58', '300', '400', '120', '150', '', '']];
+  fakeSheetsState.failDeleteForTab = 'Effort';
+  fakeSheetsState.deleteCalls.length = 0;
+  try {
+    const { response, body } = await requestJson('/api/log-workout/undo-last', {
+      method: 'POST',
+      body: JSON.stringify({
+        log_appended_range: 'Log_Cleaned!A3:L3',
+        session_id: 'SESSION-NEW',
+        rows_to_delete: 1,
+        confirm_delete: true
+      })
+    });
+
+    // Must NOT replay success while the Effort row survives: refuse, and delete nothing.
+    assert.equal(response.status, 500, JSON.stringify(body));
+    assert.equal(body.status, 'error');
+    assert.match(body.message, /Effort/i);
+    // The Effort delete was attempted and failed; no Log_Cleaned delete ran.
+    assert.equal(fakeSheetsState.deleteCalls.filter(c => c.tabName === 'Log_Cleaned').length, 0);
+    assert.equal(fakeSheetsState.effortRows.length, 1);
+  } finally {
+    fakeSheetsState.failDeleteForTab = null;
+    fakeSheetsState.effortRows = [];
+  }
 });
 
 test('api smoke: bodyweight dry-run returns no-write proof', async () => {
