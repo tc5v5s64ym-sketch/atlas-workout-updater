@@ -218,6 +218,24 @@ test('unit: a past-tense history question is NOT a recommendation-explanation tu
   assert.equal(explanationGrounding.isRecommendationExplanationTurn('why only 175 for bench? i did 225 before', ctx), true);
 });
 
+// #1719 (adversarial pre-review): the strong past-action branch is ALSO guarded by the
+// present cue — "what did I bench today?" asks about the current session, not the last
+// one. Without the guard, backstop C would bind last session's facts for a today question
+// and replace a true today answer with a wrong one.
+test('unit: a past-action question about TODAY is not a history question', () => {
+  const g = explanationGrounding;
+  assert.equal(g.isHistoryQuestion('what did i bench today?'), false);
+  assert.equal(g.isHistoryQuestion('what did i bench this morning?'), false);
+  assert.equal(g.isHistoryQuestion('what did i lift for bench tonight?'), false);
+  // Past-action questions WITHOUT a present cue are still history.
+  assert.equal(g.isHistoryQuestion('what did i lift for bench?'), true);
+  assert.equal(g.isHistoryQuestion('what did i bench yesterday?'), true);
+  assert.equal(g.isHistoryQuestion('what did i lift for bench last time?'), true);
+  // A why-turn about TODAY's prescription is a recommendation-explanation turn, not history.
+  const ctx = { current_plan: [{ name: 'Bench Press', weight: 175, reps: 9, sets: 3, rir: 5 }], recommended_label: 'Recovery / Pump' };
+  assert.equal(g.isRecommendationExplanationTurn('Why did I bench only 175 today?', ctx), true);
+});
+
 // D7: a clarification is recognized (broad review excluded) and its demote strips the broad
 // diagnostics + floors coach_mode off "challenge".
 test('unit: a clarification is recognized and its demote drops the standing challenge', () => {

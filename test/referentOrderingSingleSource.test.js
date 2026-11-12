@@ -127,7 +127,11 @@ test('criterion 4a — the shadow neither recomputes nor overlays a referent', (
 test('criterion 4a — the model-unavailable path takes no Sheet read and runs no referent resolution', () => {
   // Everything between the canonical-session build and the offline answer must stay read-free.
   const iBuild = routeSrc.indexOf('res.locals.coachCanonicalSession = isTurnPrecedenceEnabled()');
-  const iOffline = routeSrc.indexOf('|| deterministicAnswer([])');
+  // #1719: the offline call passes null (not []) — null marks "no Sheets
+  // read" for the history lane inside deterministicAnswer, so a history
+  // question says plainly it cannot look history up instead of answering
+  // from the plan. The span below is unchanged: still read-free.
+  const iOffline = routeSrc.indexOf('|| deterministicAnswer(null)');
   assert.ok(iBuild !== -1 && iOffline !== -1 && iOffline > iBuild);
   const offlineSpan = routeSrc.slice(iBuild, iOffline);
 

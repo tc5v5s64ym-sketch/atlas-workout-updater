@@ -203,6 +203,13 @@ function resolveAnswerTarget(planTarget, engineTarget) {
  * @returns {string|null} a deterministic answer, or null to defer to the caller's fallback.
  */
 function buildSessionQuestionAnswer(message, { history = [], clientContext = null, resolveTarget = null } = {}) {
+  const raw = String(message == null ? '' : message);
+  // #1719 (B-11): a past-tense question is NEVER answered from the plan /
+  // engine target — the history lane owns it. Without this guard a
+  // weight-asking past-tense shape ("how much did I bench last time?")
+  // answers from today's accepted plan ("Bench Press: 230 lbs") — the plan
+  // value presented as history.
+  if (HISTORY_RE.test(raw)) return null;
   const attrs = attributesAsked(message);
   if (!attrs.length) return null;
 
@@ -595,4 +602,199 @@ function answerTotalRepsQuestion(message, { history = [], clientContext = null }
   return `${name} today: ${total} total reps planned (${target.sets} sets × ${target.reps}).`;
 }
 
-module.exports = { buildSessionQuestionAnswer, buildSessionAdviceFallback, attributesAsked, resolveLiftName, namesUnresolvableLift, answerUnresolvedExerciseQuestion, answerBareShorthand, isBareSessionShorthand, isCurrentExercisePrescriptionQuestion, answerCurrentExercisePrescription, isWarmupQuestion, answerPlannedLiftQuestion, answerTotalRepsQuestion };
+// ── deterministic history answer (#1719, Fable fix 13) ────────────────────
+//
+// A history question ("What did I lift for bench last time?") is answered
+// from the deterministic record — the most recent PRIOR session's rows for
+// the lift — with explicit provenance. The pre-read plan lanes already defer
+// on HISTORY_RE; without this lane the turn reached the model, which
+// answered with a session-status summary (deflection, B-10) or the plan
+// value as history (fabrication, B-03).
+//
+// READ-ONLY: no Sheets access of its own — the caller passes the already-read
+// Log_Cleaned rows. No LLM, no writes, no invented numbers.
+
+function _isNil(v) { return v === null || v === undefined; }
+function _strOrEmpty(v) { return _isNil(v) ? '' : String(v); }
+
+function isHistoryQuestion(message) {
+  return HISTORY_RE.test(_strOrEmpty(message));
+}
+
+// One Log_Cleaned row, array or object shaped, as { date, sessionId,
+// exercise, canonical, setNumber, weight, reps, rir }. A blank numeric
+// cell is null, never 0 — Number('') is 0, and a 0 would format as a load.
+function _historyNum(v) {
+  if (_isNil(v) || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function _historyRowFields(row) {
+  if (Array.isArray(row)) {
+    return {
+      date: _strOrEmpty(row[0]),
+      sessionId: _strOrEmpty(row[1]),
+      exercise: _strOrEmpty(row[2]),
+      canonical: _strOrEmpty(row[3]),
+      setNumber: row[6],
+      weight: _historyNum(row[7]),
+      reps: _historyNum(row[8]),
+      rir: _historyNum(row[9]),
+    };
+  }
+  if (row && typeof row === 'object') {
+    return {
+      date: _strOrEmpty(row.date_clean),
+      sessionId: _strOrEmpty(row.session_id),
+      exercise: _strOrEmpty(row.exercise),
+      canonical: _strOrEmpty(row.canonical_exercise),
+      setNumber: row.set_number,
+      weight: _historyNum(row.weight),
+      reps: _historyNum(row.reps),
+      rir: _historyNum(row.rir),
+    };
+  }
+  return null;
+}
+
+// The bound last-session facts for a canonical lift name, or null when no
+// prior session carries it. "Prior" excludes the current in-progress session:
+// by explicit session id when the caller knows it, else any session dated
+// today — so today's partial sets are never "last time". Sessions order most
+// recent first (date desc, session id desc as tiebreak), mirroring
+// buildRecentSessions; the bound session's sets keep sheet order.
+function bindLastSessionFacts(liftName, logRows, { currentSessionId = null, today = null } = {}) {
+  const key = normName(liftName);
+  if (!key || !Array.isArray(logRows)) return null;
+  const bySession = new Map();
+  for (const row of logRows) {
+    const f = _historyRowFields(row);
+    if (!f || !f.sessionId) continue;
+    const rowName = normName(f.canonical || f.exercise);
+    if (rowName !== key) continue;
+    if (!bySession.has(f.sessionId)) bySession.set(f.sessionId, { sessionId: f.sessionId, date: f.date, sets: [] });
+    const group = bySession.get(f.sessionId);
+    if (f.date > group.date) group.date = f.date;
+    group.sets.push({
+      set_number: f.setNumber,
+      weight: f.weight,
+      reps: f.reps,
+      rir: f.rir,
+    });
+  }
+  const sessions = [...bySession.values()]
+    .filter((s) => {
+      if (currentSessionId && s.sessionId === String(currentSessionId)) return false;
+      if (!currentSessionId && today && s.date === String(today)) return false;
+      return s.sets.length > 0;
+    })
+    .sort((a, b) => (b.date !== a.date ? (b.date < a.date ? -1 : 1) : (b.sessionId < a.sessionId ? -1 : 1)));
+  if (!sessions.length) return null;
+  const picked = sessions[0];
+  return { liftName, sessionId: picked.sessionId, date: picked.date, sets: picked.sets };
+}
+
+function _formatHistorySet(set) {
+  const rir = !_isNil(set.rir) ? ` RIR${set.rir}` : '';
+  if (_isNil(set.weight)) return `${set.reps} reps${rir}`;
+  return `${set.weight}x${set.reps}${rir}`;
+}
+
+function formatHistoryAnswer(facts) {
+  const sets = facts.sets.map(_formatHistorySet).join(', ');
+  return `Last time (${facts.date}, session ${facts.sessionId}): ${facts.liftName} ${sets}.`;
+}
+
+// Resolve the lift a history question is about, in priority order:
+//   1. a lift named in the current message,
+//   2. a lift named in the most recent prior turns (closest first),
+//   3. the server-recorded discussion referent (lastDiscussedLift, a
+//      canonical key — matched against the plan/preview names, else parsed
+//      as a name itself),
+//   else null — the caller clarifies rather than guessing a lift. There is
+//   deliberately NO plan[0] fallback here: the bare-shorthand "current lift"
+//   is the lift being worked now, not necessarily the lift the athlete asks
+//   about last time. A message naming a lift Atlas cannot resolve fails
+//   closed at step 1, exactly as resolveLiftName does.
+function resolveHistoryLift(message, { history = [], clientContext = null, lastDiscussedLift = null } = {}) {
+  const fromMsg = canonicalizeForAnswer(message);
+  if (fromMsg && fromMsg.canonicalName) return fromMsg.canonicalName;
+  if (namesUnresolvableLift(message)) return null;
+
+  const turns = Array.isArray(history) ? history : [];
+  for (let i = turns.length - 1; i >= 0; i -= 1) {
+    const text = turns[i] && turns[i].text;
+    if (!text) continue;
+    const hit = canonicalizeForAnswer(text);
+    if (hit && hit.canonicalName) return hit.canonicalName;
+  }
+
+  if (lastDiscussedLift) {
+    const key = String(lastDiscussedLift);
+    const keyOf = (s) => _strOrEmpty(s).toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const cc = clientContext && typeof clientContext === 'object' ? clientContext : {};
+    const candidates = [];
+    for (const p of (Array.isArray(cc.current_preview) ? cc.current_preview : [])) {
+      if (p && p.exercise) candidates.push(String(p.exercise));
+    }
+    for (const p of (Array.isArray(cc.current_plan) ? cc.current_plan : [])) {
+      if (p && p.name) candidates.push(String(p.name));
+    }
+    const hit = candidates.find((n) => keyOf(n) === key);
+    if (hit) return hit;
+    const asName = canonicalizeForAnswer(key);
+    if (asName && asName.canonicalName) return asName.canonicalName;
+  }
+
+  return null;
+}
+
+/**
+ * Answer a history question deterministically from the already-read log rows.
+ *
+ * @param {string} message
+ * @param {object} opts
+ * @param {Array}  opts.history        prior chat turns [{role,text}]
+ * @param {object} opts.clientContext  the client-sent context (current_plan/current_preview)
+ * @param {Array|null} opts.logRows    the already-read Log_Cleaned rows — null when
+ *        no Sheets read happened (unconfigured path), so the lane says plainly
+ *        it cannot look history up instead of answering from the plan.
+ * @param {string|null} opts.lastDiscussedLift  the server-recorded referent (canonical key)
+ * @param {string|null} opts.currentSessionId   the in-progress session id, when known
+ * @param {string|null} opts.today     today's ISO date, for the no-id exclusion
+ * @returns {{kind:'answer'|'clarify'|'no-record'|'unavailable', text:string, facts:object|null}|null}
+ *   - 'answer'     : the bound last-session answer; facts ride along for backstop C
+ *   - 'clarify'    : no lift resolvable — ask which lift (never guess one)
+ *   - 'no-record'  : the lift resolves but no prior session logged it
+ *   - 'unavailable': no Sheets read — cannot look history up, never plan values
+ *   - null         : not a history question (caller handles)
+ */
+function answerHistoryQuestion(message, { history = [], clientContext = null, logRows = null, lastDiscussedLift = null, currentSessionId = null, today = null, assumeHistory = false } = {}) {
+  const raw = _strOrEmpty(message);
+  // The caller may already have recognized the turn as a history question
+  // with the broader recognizer (coachExplanationGrounding.isHistoryQuestion,
+  // which catches past-action phrasings HISTORY_RE misses, e.g. "what did I
+  // lift for bench?") — for backstop C binding only. The lane itself claims
+  // only HISTORY_RE phrasings; the route gates the early return on that.
+  if (!assumeHistory && !HISTORY_RE.test(raw)) return null;
+
+  const liftName = resolveHistoryLift(message, { history, clientContext, lastDiscussedLift });
+  if (!liftName) {
+    const { candidates } = currentLiftFromContext(clientContext);
+    const text = candidates.length
+      ? `For which lift — ${formatLiftChoices(candidates)}?`
+      : 'Which lift are you asking about?';
+    return { kind: 'clarify', text, facts: null };
+  }
+  if (!Array.isArray(logRows)) {
+    return { kind: 'unavailable', text: "I can't look up your training history right now — the coach isn't connected to your log.", facts: null };
+  }
+  const facts = bindLastSessionFacts(liftName, logRows, { currentSessionId, today });
+  if (!facts) {
+    return { kind: 'no-record', text: `I don't have a logged last session for ${liftName}.`, facts: null };
+  }
+  return { kind: 'answer', text: formatHistoryAnswer(facts), facts };
+}
+
+module.exports = { buildSessionQuestionAnswer, buildSessionAdviceFallback, attributesAsked, resolveLiftName, namesUnresolvableLift, answerUnresolvedExerciseQuestion, answerBareShorthand, isBareSessionShorthand, isCurrentExercisePrescriptionQuestion, answerCurrentExercisePrescription, isWarmupQuestion, answerPlannedLiftQuestion, answerTotalRepsQuestion, isHistoryQuestion, bindLastSessionFacts, resolveHistoryLift, answerHistoryQuestion };
