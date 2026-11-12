@@ -1400,6 +1400,24 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
         });
       }
 
+      // Logged set-count (#1525). "How many sets have I done?" is the count of sets
+      // actually in session_tally, not the prescribed count and not plan_completed's
+      // length. Claim it before the named-lift lane, which would answer the same
+      // words as today's prescription ("Bench Press today: 3 sets" when 1 is logged),
+      // and before the model, which is not held to the total by the backstops.
+      // Prescription shorthand ("how many sets?"), remaining, history, and warm-up
+      // do not match and keep their lanes. Read-only; no write, no plan mutation.
+      const tallyPresent = clientCtx && clientCtx.session_tally
+        && typeof clientCtx.session_tally === 'object' && !Array.isArray(clientCtx.session_tally);
+      if (coachResponseGrounding.isLoggedSetCountQuestion(message)
+          && (coachResponseGrounding.hasActiveSession(clientCtx) || tallyPresent)) {
+        return standardSuccess(req, res, 'Coach chat — logged set count (deterministic)', {
+          message: coachResponseGrounding.buildLoggedSetCountAnswer(message, clientCtx),
+          propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
+          configured: coach.isConfigured(), model: coach.coachModel(), source: 'engine'
+        });
+      }
+
       // Plan-first answer (2026-06-21): when the lifter NAMES a lift that is in today's
       // plan/preview and asks its prescribed value ("what's the RIR for bench?", "how
       // many reps for bench?"), answer from the CURRENT PLAN — before Gemini, which
@@ -1511,6 +1529,16 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
           ? buildNextUpAnswerFromSession(canonicalSession)
           : buildNextUpAnswer(planStateFromContext(clientCtx));
         if (nextUp) return nextUp;
+      }
+      // Same logged-count claim as the pre-model lane (#1525). Reached only when that
+      // lane did not return (reassure/warm-up skip, or the model then failed). A warm-up
+      // question already returned null above. Do not fall through to the prescription
+      // answer, which would report the planned set count as work done.
+      const tallyPresent = clientCtx && clientCtx.session_tally
+        && typeof clientCtx.session_tally === 'object' && !Array.isArray(clientCtx.session_tally);
+      if (coachResponseGrounding.isLoggedSetCountQuestion(message)
+          && (coachResponseGrounding.hasActiveSession(clientCtx) || tallyPresent)) {
+        return coachResponseGrounding.buildLoggedSetCountAnswer(message, clientCtx);
       }
       const valueAnswer = buildSessionQuestionAnswer(message, {
         history,

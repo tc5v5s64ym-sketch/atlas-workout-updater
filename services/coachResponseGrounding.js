@@ -41,7 +41,7 @@ const { deriveChatCoachMode } = require('./chatCoachMode');
 const { canonicalizeExerciseName } = require('./workoutTextParser');
 // Whether the message names a DIFFERENT real exercise than the one matched here — decided
 // by the Exercise KB, not by a modifier list this module would have to keep in step.
-const { namesDifferentExercise } = require('./explicitExerciseReference');
+const { namesDifferentExercise, unresolvableExerciseReference } = require('./explicitExerciseReference');
 
 // ── text utilities ──────────────────────────────────────────────────────────
 
@@ -1724,6 +1724,107 @@ function resolveDiscussedLift(message, context) {
   return null;
 }
 
+// ── logged set-count (issue #1525) ──────────────────────────────────────────
+//
+// "How many sets have I done?" is a count of sets logged THIS session. It is not
+// the prescribed set count, and it is not the number of exercise names in
+// plan_completed. Neither the bare-shorthand lane nor the named-lift lane claims
+// the past-tense phrasing, so the turn reached the model — which answered "2 sets"
+// for 2 squat sets + 1 bench set — and the model-down path answered the current
+// lift's prescription ("Back Squat: 4 sets."). The completion and recap backstops
+// do not judge a bare set total, so a wrong count was not replaced.
+//
+// This lane claims only the done/logged set-count question and reads session_tally.
+// Prescription ("how many sets?"), remaining ("how many sets left?"), history,
+// warm-up, and advice stay with the lanes that already own them.
+
+function isLoggedSetCountQuestion(message) {
+  const m = normalize(message);
+  if (!m) return false;
+  if (/\bwarm[\s-]?ups?\b/.test(m)) return false;
+  if (/\b(?:left|remaining|to go|to do)\b/.test(m)) return false;
+  if (/\b(?:should|planned|prescribed|prescription|target)\b/.test(m)) return false;
+  if (/\b(?:last time|last (?:week|session|month|workout|time)|previous(?:ly)?|history|used to)\b/.test(m)) return false;
+  if (/\b(?:why|explain|recommend)\b/.test(m)) return false;
+  if (/\b(?:reps?|weight|rir|rpe|load)\b/.test(m)) return false;
+  if (!/\bhow many(?:\s+\w+){0,4}\s+sets?\b/.test(m)) return false;
+  if (!/\b(?:have|did)\s+(?:i|we)\b|\b(?:i|we)(?:'ve| have| did)\b/.test(m)) return false;
+  if (!/\b(?:done|do|logged|log|completed|complete|finished|finish|got|gotten|put in)\b/.test(m)) return false;
+  return true;
+}
+
+function tallyExerciseRows(context) {
+  const tally = context && context.session_tally;
+  if (!tally || typeof tally !== 'object' || Array.isArray(tally)) return null;
+  if (!Array.isArray(tally.exercises)) return [];
+  return tally.exercises.filter((e) => e && e.exercise);
+}
+
+function contextWithTallyNames(context) {
+  const c = context && typeof context === 'object' ? context : {};
+  const rows = tallyExerciseRows(c);
+  if (!rows || !rows.length) return c;
+  const extra = rows.map((e) => ({ name: String(e.exercise) }));
+  return { ...c, current_plan: [...(Array.isArray(c.current_plan) ? c.current_plan : []), ...extra] };
+}
+
+function liftsAskedInLoggedCount(message, context) {
+  const named = namedLiftsInMessage(message, contextWithTallyNames(context));
+  if (named.length) return named;
+  let canon = null;
+  try { canon = canonicalizeExerciseName(message); } catch { canon = null; }
+  if (canon && canon.canonicalName && !namesDifferentExercise(message, canon.canonicalName)) {
+    return [canon.canonicalName];
+  }
+  return [];
+}
+
+function loggedSetsForName(rows, name) {
+  const key = nameKey(name);
+  const canon = canonicalKey(name);
+  const row = rows.find((e) => nameKey(e.exercise) === key || canonicalKey(e.exercise) === canon);
+  if (!row) return 0;
+  const n = Number(row.sets);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function setsPhrase(n) {
+  return n === 1 ? '1 set' : `${n} sets`;
+}
+
+function buildLoggedSetCountAnswer(message, context) {
+  const c = context && typeof context === 'object' ? context : {};
+  const rows = tallyExerciseRows(c);
+  const lifts = liftsAskedInLoggedCount(message, c);
+  let unresolved = null;
+  if (!lifts.length) {
+    try {
+      unresolved = unresolvableExerciseReference(message, (text) => {
+        try { return canonicalizeExerciseName(text); } catch { return null; }
+      });
+    } catch { unresolved = null; }
+  }
+  if (unresolved) return "I can't tell which lift that is, so I won't guess a set count.";
+  if (rows === null) {
+    if (lifts.length === 1) {
+      return `I don't have this session's set tally, so I can't say how many ${lifts[0]} sets are logged.`;
+    }
+    return "I don't have this session's set tally, so I can't say how many sets are logged.";
+  }
+  if (lifts.length === 1) {
+    return `${lifts[0]}: ${setsPhrase(loggedSetsForName(rows, lifts[0]))} logged this session.`;
+  }
+  if (lifts.length > 1) {
+    const total = lifts.reduce((n, name) => n + loggedSetsForName(rows, name), 0);
+    const parts = lifts.map((name) => `${name} ${loggedSetsForName(rows, name)}`);
+    return `${setsPhrase(total)} logged this session: ${parts.join(', ')}.`;
+  }
+  if (!rows.length) return 'No working sets logged this session yet.';
+  const total = rows.reduce((n, e) => n + loggedSetsForName(rows, e.exercise), 0);
+  const parts = rows.map((e) => `${e.exercise} ${loggedSetsForName(rows, e.exercise)}`);
+  return `${setsPhrase(total)} logged this session: ${parts.join(', ')}.`;
+}
+
 // The deterministic answer to a factual plan dispute: state what the plan currently
 // shows for the disputed lift, distinguish the athlete's claim, and state plainly that
 // nothing was changed. Never claims an update/save/switch/adjustment. When the plan (or
@@ -2003,6 +2104,8 @@ module.exports = {
   isNextUpQuestion,
   nextPlannedLiftName,
   resolveDiscussedLift,
+  isLoggedSetCountQuestion,
+  buildLoggedSetCountAnswer,
   buildGroundedPlanStatement,
   buildDisputeAnswer,
 };
