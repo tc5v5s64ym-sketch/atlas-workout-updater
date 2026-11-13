@@ -19,7 +19,7 @@ const { normalizeLogRow, localTodayIso } = require('./analytics');
 const { computeFatigueScore, estimateE1rm } = require('./deloadFatigueScore');
 const { evaluate } = require('./deloadEscalationLadder');
 const { PROTOCOLS } = require('./deloadProtocols');
-const { STATES, isActiveDeload, transition } = require('./deloadStateMachine');
+const { STATES, isState, isActiveDeload, transition } = require('./deloadStateMachine');
 const {
   defaultDeloadState, readCurrentDeloadState, appendDeloadState
 } = require('./deloadState');
@@ -105,6 +105,16 @@ function buildExposureView(logRows, { focusByLift = {}, frequency_per_week } = {
 function normalizeCurrentState(currentState) {
   const base = defaultDeloadState();
   if (!currentState || typeof currentState !== 'object') return base;
+  const ts = currentState.training_state;
+  // A present-but-unrecognized training_state is damaged persisted data — fail
+  // closed (throw) rather than evaluating a fresh prescription as if NORMAL
+  // (#1734, probe B3-08). Null/undefined/'' means "not specified" (callers pass
+  // partial states) and keeps the NORMAL default.
+  if (ts !== null && ts !== undefined && ts !== '' && !isState(ts)) {
+    throw new Error(
+      `Unrecognized Deload_State training_state: ${JSON.stringify(ts)} (refusing to evaluate as NORMAL)`
+    );
+  }
   return { ...base, ...currentState, training_state: currentState.training_state || base.training_state };
 }
 

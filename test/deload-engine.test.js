@@ -188,6 +188,24 @@ test('resolvePostDeload returns to NORMAL, and rejects from any other state', as
 
 /* ======================= read-contract fidelity ======================= */
 
+// B3-08 (#1734, Fable B-16): evaluating from a damaged persisted state must
+// fail closed — never evaluate a fresh prescription as if NORMAL. Probe text
+// re-expressed from the issue; the audit record lives with the coordinator.
+test('evaluateDeload throws on an unrecognized currentState.training_state (B3-08)', () => {
+  assert.throws(
+    () => evaluateDeload({ currentState: { training_state: 'WAT' } }),
+    /Unrecognized Deload_State training_state/
+  );
+});
+
+test('evaluateCurrentDeload rejects when the persisted last row is damaged mid-deload (B3-08)', async () => {
+  await beginDeload({ protocol: STRENGTH_DELOAD_V1, sessions_remaining: 2, currentState: { training_state: STATES.NORMAL } });
+  // Damage the last row in place (same shape as a hand-edited/corrupt sheet row).
+  const last = fakeSheetsState.rows[fakeSheetsState.rows.length - 1];
+  last[HEADER.indexOf('training_state')] = 'DELOAD_ACTIV';
+  await assert.rejects(() => evaluateCurrentDeload({}), /Unrecognized Deload_State training_state/);
+});
+
 test('a full begin → record → resolve cycle round-trips through the header-stripping read', async () => {
   await beginDeload({ protocol: STRENGTH_DELOAD_V1, sessions_remaining: 1, currentState: { training_state: STATES.NORMAL } });
   let cur = await evaluateCurrentDeload({});
