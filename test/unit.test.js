@@ -5469,36 +5469,83 @@ test('closeout screenshot: done save uses normal log-workout preview and never t
 // (2026-06-28) because the closeout path never read the screenshot's own date. The
 // fix resolves the date (manual > screenshot > today) and applies it to the date
 // field + session_id BEFORE the re-submit so every date surface matches.
-test('RC2: resolveCloseoutWorkoutDate prioritizes manual > screenshot > today', () => {
+// #1738 (Dale ruling 2026-11-10): the vision date is never auto-applied — the
+// fix resolves the date (manual > today) and surfaces the screenshot date as a
+// tappable suggestion; the resolver itself never consults it.
+test('RC2 (#1738): resolveCloseoutWorkoutDate prioritizes manual > today — a screenshot date never wins', () => {
   const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const fn = app.slice(app.indexOf('function resolveCloseoutWorkoutDate('), app.indexOf('function renderDateSourceNotice('));
   assert.ok(fn.length > 0, 'resolveCloseoutWorkoutDate must exist');
   // 1. An explicitly-entered manual date wins.
   assert.match(fn, /if \(manualEntered && typeof manualDate === 'string' && manualDate\.trim\(\)\) \{[\s\S]*source: 'manual'/,
     'an explicit manual date wins first');
-  // 2. Else a confidently-parsed screenshot date wins.
-  assert.match(fn, /if \(isConfidentScreenshotDate\(screenshotDate\)\) \{[\s\S]*source: 'screenshot'/,
-    'a confident screenshot date wins when no manual date');
+  // 2. A confidently-parsed screenshot date NEVER wins — it is a suggestion the
+  // athlete taps, which then arrives as the manual date.
+  assert.doesNotMatch(fn, /source: 'screenshot'/, 'no screenshot source may be returned');
+  assert.doesNotMatch(fn, /isConfidentScreenshotDate\(screenshotDate\)/, 'the resolver must not consult the screenshot date');
   // 3. Else fall back to today, flagged.
   assert.match(fn, /return \{ date: today, source: 'today_fallback' \}/, 'absent/ambiguous date falls back to today');
-  // The screenshot-date check is strict ISO (the vision parser only emits YYYY-MM-DD
-  // when unambiguous, else null), so ambiguity degrades to the today fallback.
+  // isConfidentScreenshotDate still gates the SUGGESTION: the vision parser only
+  // emits YYYY-MM-DD when unambiguous, else null, so ambiguity degrades to the
+  // today fallback with no suggestion offered.
   const validator = app.slice(app.indexOf('function isConfidentScreenshotDate('), app.indexOf('function resolveCloseoutWorkoutDate('));
   assert.match(validator, /\/\^\\d\{4\}-\\d\{2\}-\\d\{2\}\$\//, 'screenshot date must be strict YYYY-MM-DD');
+});
+
+test('#1738 (A1708-5): resolveCloseoutWorkoutDate never applies a screenshot date — manual wins, else today; the screenshot date is a suggestion only', () => {
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const fn = app.slice(app.indexOf('function resolveCloseoutWorkoutDate('), app.indexOf('function renderDateSourceNotice('));
+  assert.ok(fn.length > 0, 'resolveCloseoutWorkoutDate must exist');
+  // 1. An explicitly-entered manual date still wins.
+  assert.match(fn, /if \(manualEntered && typeof manualDate === 'string' && manualDate\.trim\(\)\) \{[\s\S]*source: 'manual'/,
+    'an explicit manual date wins first');
+  // 2. A confidently-parsed screenshot date NEVER wins — Dale's #1738 ruling:
+  // the vision date is not auto-applied; it is a suggestion the athlete taps.
+  assert.doesNotMatch(fn, /source: 'screenshot'/, 'no screenshot source may be returned');
+  assert.doesNotMatch(fn, /isConfidentScreenshotDate\(screenshotDate\)/, 'the resolver must not consult the screenshot date');
+  // 3. Else fall back to today, flagged.
+  assert.match(fn, /return \{ date: today, source: 'today_fallback' \}/, 'absent/ambiguous date falls back to today');
+});
+
+test('#1738 (A1708-5): the preview offers the screenshot date as a tappable chip — tapping it latches the manual date and re-runs the preview', () => {
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  // The notice takes the suggestion as a third argument and renders the chip
+  // only on the today-fallback path (a manual date has nothing to suggest).
+  const notice = app.slice(app.indexOf('function renderDateSourceNotice('), app.indexOf('function liftCodeFromCatalog('));
+  assert.match(notice, /function renderDateSourceNotice\(source, date, suggestedDate\)/, 'the notice accepts the suggestion');
+  assert.match(notice, /if \(suggestedDate\)/, 'the chip renders only when a suggestion exists');
+  assert.match(notice, /class: 'btn preview-date-suggestion'/, 'the suggestion is a button');
+  assert.match(notice, /Screenshot date: \$\{suggestedDate\} — tap to use/, 'the chip names the screenshot date');
+  assert.match(notice, /addEventListener\('click', \(\) => applyScreenshotDateSuggestion\(suggestedDate, chip\)\)/,
+    'tapping the chip applies the suggestion');
+  // The apply helper follows the buildDateFixRow correction pattern: set the
+  // field, latch manual via a REAL input event, clear the stale session id,
+  // then re-run the SAME preview flow via a submit event — never write directly.
+  const apply = app.slice(app.indexOf('function applyScreenshotDateSuggestion('), app.indexOf('function renderDateSourceNotice('));
+  assert.ok(apply.length > 0, 'applyScreenshotDateSuggestion must exist');
+  assert.match(apply, /logDate\.value = suggestedDate/, 'the tap sets the date field to the suggestion');
+  assert.match(apply, /logDate\.dispatchEvent\(new Event\('input', \{ bubbles: true \}\)\)/,
+    'the tap latches manual entry via a REAL input event');
+  assert.match(apply, /staleSid\.value = ''/, 'the tap clears the stale session_id before re-previewing');
+  assert.match(apply, /form\.dispatchEvent\(new Event\('submit'/, 'the tap re-runs the SAME preview flow');
 });
 
 test('RC2: the closeout branch resolves the date and applies it to #log-date + session_id before re-submit', () => {
   const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const guardStart = app.indexOf('if (file && !pendingChatText && !sessionCompiledAwaitingPreview && isPlanCloseoutAwaitingSave())');
   const guard = app.slice(guardStart, app.indexOf('await handleLogIt();', guardStart) + 30);
-  // It resolves using the screenshot's own date and the manual-entry flag…
-  assert.match(guard, /resolveCloseoutWorkoutDate\(\{[\s\S]*manualEntered: logDateManuallyEntered,[\s\S]*screenshotDate: closeoutScreenshotEffort && closeoutScreenshotEffort\.date/,
-    'resolves from the screenshot date + manual-entry flag');
+  // It resolves using the manual-entry flag (today unless the owner typed one)…
+  assert.match(guard, /resolveCloseoutWorkoutDate\(\{[\s\S]*manualEntered: logDateManuallyEntered,[\s\S]*today: getLocalDateString\(\)/,
+    'resolves from the manual-entry flag + today');
   // …then applies the chosen date to BOTH the date field and the session_id, and
   // records the source — all BEFORE handleLogIt() re-submits.
   assert.match(guard, /closeoutScreenshotDateSource = resolvedCloseout\.source/, 'records the date source for the preview banner');
+  // #1738: the screenshot's date is kept aside as the SUGGESTION (confident dates
+  // only) — the preview offers it as a tap-to-use chip; it never dates the rows.
+  assert.match(guard, /closeoutScreenshotDateSuggested = \(closeoutScreenshotEffort && isConfidentScreenshotDate\(closeoutScreenshotEffort\.date\)\)/,
+    'captures the confident screenshot date as the suggestion');
   assert.match(guard, /document\.getElementById\('log-date'\)\.value = resolvedCloseout\.date/, 'applies the chosen date to the date field');
-  // F10D acceptance-boundary corrective: the screenshot date may set the WORKOUT
+  // F10D acceptance-boundary corrective: the resolved date may set the WORKOUT
   // DATE but never the session IDENTITY — an accepted session keeps its accept-time
   // id (its Session_Plans + ledger checkpoint rows live under it; re-deriving from
   // a cross-day screenshot forked the closeout away from its own ledger). The
@@ -5533,8 +5580,8 @@ test('RC2: only an explicit keystroke marks the date as manually entered (defaul
 
 test('RC2: a manual date edit does not latch "manual" past a save (no stale-flag regression)', () => {
   // Regression for the #674 review catch: the post-save reset calls setDefaultDate(),
-  // which must clear logDateManuallyEntered so the NEXT closeout screenshot date wins
-  // again instead of being forced under today and mislabeled "Date (manual)".
+  // which must clear logDateManuallyEntered so the NEXT closeout starts from today
+  // again instead of being mislabeled "Date (manual)".
   const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   // The post-save success block resets the form and calls setDefaultDate().
   const saveResetIdx = app.indexOf('setDefaultDate();', app.indexOf("document.getElementById('logger-form').reset()"));
@@ -5551,10 +5598,10 @@ test('RC2: the log-workout preview surfaces the chosen date + source from the wr
   // The shown date is read from the write payload (pendingWrite.payload.date), so the
   // preview date and the saved date are the same value — they cannot drift.
   assert.match(fn, /pendingWrite && pendingWrite\.payload && pendingWrite\.payload\.date/, 'date banner reads the actual write-payload date');
-  assert.match(fn, /renderDateSourceNotice\(closeoutScreenshotDateSource, dsDate\)/, 'uses the shared date-source notice');
+  assert.match(fn, /renderDateSourceNotice\(closeoutScreenshotDateSource, dsDate, closeoutScreenshotDateSuggested\)/, 'uses the shared date-source notice (with the suggestion)');
   // The source is reset on save and on start-over so a later manual save shows no banner.
-  assert.match(app, /closeoutScreenshotDateSource = null;\n    clearSessionSnapshot\(\)/, 'date source resets after a successful save (ungated — fires on screenshot/effort-only saves too)');
-  assert.match(app, /closeoutScreenshotDateSource = null;\n  setsTableBody\.innerHTML/, 'date source resets on start-over');
+  assert.match(app, /closeoutScreenshotDateSource = null;\n    closeoutScreenshotDateSuggested = null;\n    clearSessionSnapshot\(\)/, 'date source resets after a successful save (ungated — fires on screenshot/effort-only saves too)');
+  assert.match(app, /closeoutScreenshotDateSource = null;\n  closeoutScreenshotDateSuggested = null;\n  setsTableBody\.innerHTML/, 'date source resets on start-over');
 });
 
 test('saved-no-restore: a confirmed save clears the in-memory session regardless of pendingLastWrite', () => {
@@ -5587,12 +5634,12 @@ test('saved-no-restore: a confirmed save clears the in-memory session regardless
 test('RC2: an abandoned closeout preview does not leak its date-source label onto a later normal save', () => {
   // Review catch (#674): closeoutScreenshotDateSource persisted if a closeout preview
   // was abandoned without Start Over, so a subsequent normal typed-workout preview
-  // rendered a stale "Date from screenshot" banner. A FRESH submit must clear it; the
+  // rendered a stale date-suggestion chip. A FRESH submit must clear it; the
   // closeout RE-ENTRY (sessionCompiledAwaitingPreview === true) must preserve it so the
   // banner still renders for the actual screenshot save.
   const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const submitStart = app.indexOf("document.getElementById('logger-form').addEventListener('submit'");
-  const clearIdx = app.indexOf('if (!sessionCompiledAwaitingPreview) closeoutScreenshotDateSource = null;', submitStart);
+  const clearIdx = app.indexOf('if (!sessionCompiledAwaitingPreview) { closeoutScreenshotDateSource = null; closeoutScreenshotDateSuggested = null; }', submitStart);
   const invalidateIdx = app.indexOf('invalidatePreview();', submitStart);
   const closeoutBranchIdx = app.indexOf('closeoutScreenshotDateSource = resolvedCloseout.source', submitStart);
   assert.ok(clearIdx > invalidateIdx, 'the fresh-submit clear runs after invalidatePreview');
@@ -7006,10 +7053,15 @@ test('B5: both preview renderers hand date + date_source to the review card even
     'log-workout preview must pass the closeout/manual source and null for plain logs');
 });
 
-test('B5: review card renders the date notice with a working today-fallback correction', () => {
+test('B5 (#1738): review card renders the date notice with a working today-fallback correction + a tappable screenshot-date suggestion', () => {
   const ccSource = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
   assert.match(ccSource, /function buildDateNotice\(dateInfo\)/);
-  assert.match(ccSource, /Date from screenshot: \$\{dateInfo\.date\}/, 'screenshot source renders a confirmation line');
+  // #1738: a vision date is never auto-applied, so no 'screenshot' confirmation
+  // line may be rendered — the screenshot date is a suggestion on the fallback.
+  assert.doesNotMatch(ccSource, /Date from screenshot:/, 'no screenshot source may render an applied-date line');
+  assert.doesNotMatch(ccSource, /source === 'screenshot'/, 'no screenshot source branch may remain');
+  assert.match(ccSource, /The screenshot's date reads \$\{dateInfo\.suggested\}/, 'today_fallback with a suggestion names the screenshot date');
+  assert.match(ccSource, /Use \$\{dateInfo\.suggested\}/, 'the suggestion is a tappable button carrying the screenshot date');
   assert.match(ccSource, /No date found on the screenshot — saving as \$\{dateInfo\.date\} \(today\)/,
     'today_fallback renders a warning');
   // The shared fix row (buildDateFixRow) sits just before buildDateNotice — slice both.
@@ -7108,11 +7160,14 @@ test('date guard: the card words a rejected screenshot date honestly and offers 
   assert.match(notice, /dateInfo\.rejected\s*\?/, 'fallback copy must branch on rejected');
 });
 
-test('date guard: an ACCEPTED screenshot date is still correctable on the card', () => {
+test('date guard (#1738): a suggested screenshot date is correctable on the card — tap to use it, or fix it to another date', () => {
   const ccSource = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
   const notice = ccSource.slice(ccSource.indexOf('function buildDateNotice'), ccSource.indexOf('function buildReviewCard'));
-  assert.match(notice, /Wrong date\? Fix it/, 'the screenshot-source line must offer a correction link');
-  assert.match(notice, /buildDateFixRow\(dateInfo\.date\)/, 'the link must reveal the shared date-fix row');
+  // #1738: no screenshot date is ever "accepted" — the plausible date is a
+  // suggestion with a one-tap apply button, and the fix row stays for another date.
+  assert.doesNotMatch(notice, /Wrong date\? Fix it/, 'no accepted-screenshot correction link may remain');
+  assert.match(notice, /Use \$\{dateInfo\.suggested\}/, 'the suggestion offers a one-tap apply button');
+  assert.match(notice, /buildDateFixRow\(dateInfo\.date\)/, 'the fix row is still offered below for a different date');
   const fixFn = ccSource.slice(ccSource.indexOf('function buildDateFixRow'), ccSource.indexOf('function buildDateNotice'));
   assert.match(fixFn, /staleSid\.value = ''/, 'the shared fix row keeps the session-id clear (PR #795 review)');
   assert.match(fixFn, /form\.dispatchEvent\(new Event\('submit'/, 'the shared fix row re-runs the preview, never writes');
