@@ -139,17 +139,45 @@ test('appendDeloadState throws on an unknown training_state', async () => {
 
 /* ===== row <-> state normalization ===== */
 
-test('rowToState maps columns, coerces sessions_remaining, and guards bad state', () => {
+test('rowToState maps columns and coerces sessions_remaining', () => {
   const row = ['2026-06-16T00:00:00Z', STATES.DELOAD_ACTIVE, 'STRENGTH_DELOAD_V1', 'reason', '2026-06-16', '2', 'exit'];
   const s = rowToState(row);
   assert.equal(s.training_state, STATES.DELOAD_ACTIVE);
   assert.equal(s.deload_sessions_remaining, 2); // numeric, not the string '2'
 
-  // Empty cells → null; unknown state → NORMAL; non-numeric sessions → 0.
-  const sparse = rowToState(['', 'WAT', '', '', '', 'n/a', '']);
-  assert.equal(sparse.training_state, STATES.NORMAL);
+  // Empty cells → null; non-numeric sessions → 0.
+  const sparse = rowToState(['', STATES.DELOAD_ACTIVE, '', '', '', 'n/a', '']);
   assert.equal(sparse.deload_protocol, null);
   assert.equal(sparse.deload_sessions_remaining, 0);
+});
+
+// B3-08 (#1734, Fable B-16): a damaged last Deload_State row must FAIL CLOSED —
+// never read as NORMAL mid-deload (that lifts the deload and serves a full-load
+// prescription). Probe text re-expressed from the issue: the audit record lives
+// with the coordinator, not in this repo.
+test('rowToState throws on an unrecognized training_state (B3-08)', () => {
+  assert.throws(
+    () => rowToState(['2026-06-16T00:00:00Z', 'WAT', '', '', '', '', '']),
+    /Unrecognized Deload_State training_state/
+  );
+});
+
+test('rowToState throws on a blank training_state cell (B3-08)', () => {
+  assert.throws(
+    () => rowToState(['2026-06-16T00:00:00Z', '', '', '', '', '', '']),
+    /Unrecognized Deload_State training_state/
+  );
+});
+
+test('readCurrentDeloadState rejects on a damaged last row instead of reading NORMAL (B3-08)', async () => {
+  // Mid-deload: a valid DELOAD_ACTIVE row, then a damaged last row.
+  await appendDeloadState({
+    training_state: STATES.DELOAD_ACTIVE,
+    deload_protocol: 'STRENGTH_DELOAD_V1',
+    deload_sessions_remaining: 2
+  });
+  fakeSheetsState.rows.push(['2026-06-17T00:00:00Z', 'DELOAD_ACTIV', 'STRENGTH_DELOAD_V1', '', '2026-06-16', '1', '']);
+  await assert.rejects(() => readCurrentDeloadState(), /Unrecognized Deload_State training_state/);
 });
 
 test('stateToRow renders null/missing fields as empty cells in column order', () => {
