@@ -76,7 +76,7 @@ const driftShadow = require('../services/driftShadow');
 const coachResponseGrounding = require('../services/coachResponseGrounding');
 const coachExplanationGrounding = require('../services/coachExplanationGrounding');
 const coachDiscussionReferent = require('../services/coachDiscussionReferent');
-const { beginDeload, recordDeloadSession, resolvePostDeload } = require('../services/deloadEngine');
+const { beginDeload, evaluateCurrentDeload, recordDeloadSession, resolvePostDeload } = require('../services/deloadEngine');
 const { selectProtocol } = require('../services/deloadProtocols');
 const { buildSheetContractStatus } = require('../config/sheetContract');
 
@@ -1865,7 +1865,33 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // Model-supplied weight/reps/sets/RIR never survive this line; an
       // exercise the planner cannot prescribe drops the edit (fail closed).
       // Identity-only removes pass through unchanged (see planEditResolver).
-      const resolvedPlanEdit = resolvePlanEdit(propose_plan_edit, allLog, todayIso());
+      // #1739 (Fable fix 14): the resolver runs the /api/recommend/next
+      // decision path — the deload is evaluated here (async Sheets read) and
+      // the already-fetched Constraints rows are passed in, so the resolver
+      // stays pure. The evaluation runs only when there is an add/replace
+      // edit to resolve — Deload_State is read fresh on every request that
+      // consumes it, so an unconditional evaluation would tax every chat
+      // turn. A failed deload evaluation fails the edit closed (null; the
+      // prose suggestion still stands) instead of breaking chat — a damaged
+      // Deload_State row must never degrade the turn to the deterministic
+      // fallback.
+      const planEditNeedsDecision = propose_plan_edit && typeof propose_plan_edit === 'object'
+        && !Array.isArray(propose_plan_edit)
+        && (propose_plan_edit.action === 'add_exercises' || propose_plan_edit.action === 'replace_plan')
+        && Array.isArray(propose_plan_edit.exercises) && propose_plan_edit.exercises.length > 0;
+      let planEditDeload = null;
+      let planEditDeloadFailed = false;
+      if (planEditNeedsDecision) {
+        try {
+          planEditDeload = await evaluateCurrentDeload({ logRows: allLog });
+        } catch {
+          planEditDeloadFailed = true;
+        }
+      }
+      const resolvedPlanEdit = resolvePlanEdit(propose_plan_edit, allLog, todayIso(), {
+        deload: planEditDeloadFailed ? { evaluationFailed: true } : planEditDeload,
+        constraints: constraintRows,
+      });
       // #1737 (Fable fix 11, P1 PROPOSE_EDIT): the same discipline for a
       // model PROPOSE_EDIT — it may identify the operation and row only.
       // Every value is re-resolved here from the athlete's own message
