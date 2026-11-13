@@ -1678,6 +1678,70 @@ app.post('/api/log-modality', async (req, res) => {
     return standardError(req, res, `Modality_Log tab not found — create it in Google Sheets first (columns: ${modalityLogColumns.join(', ')})`, null, 503);
   }
 
+  // #1735 (B-17): the receipt store can be lost (free-plan restart, #1363
+  // deferred) — a retry then arrives with a write_id that has no receipt, so
+  // beginWrite above starts a fresh attempt. Read back Modality_Log BEFORE
+  // appending: if this exact row is already on the sheet, the first attempt
+  // landed and only its response/receipt was lost — complete as success
+  // without appending. getSheetRows('Modality_Log') is a live read (only
+  // Log_Cleaned/Effort are cached), so the read-back sees the commit.
+  let preAppendRows = null;
+  let preAppendReadbackFailed = false;
+  try {
+    preAppendRows = await getSheetRows('Modality_Log');
+  } catch (readErr) {
+    preAppendReadbackFailed = true;
+  }
+  if (preAppendReadbackFailed) {
+    // The write can neither be confirmed present nor ruled out: complete as
+    // unverified (the /api/complete-workout vocabulary) — never failed — so a
+    // retry fails closed instead of appending blind. sheet_written:true here
+    // means "may have landed", not "confirmed saved": the 500 status and
+    // sheet_write:'unverified' carry the not-confirmed meaning, and the
+    // duplicate branch above fails closed on it.
+    const unverified = {
+      session_id,
+      date,
+      write_id: idempotency.write_id,
+      duplicate_write: false,
+      idempotency_status: 'unverified',
+      sheet_write: 'unverified',
+      sheet_written: true,
+      modality_written: false,
+      modality: record.modality,
+      modality_row: row,
+      proof_mismatch: true,
+      readback_failed: true
+    };
+    if (idempotency.enabled) completeWrite(idempotency.write_id, idempotency.token, unverified);
+    recordTurnWriteProof(payload, session_id, '/api/log-modality', unverified);
+    return standardError(req, res, 'Modality write could not be verified against the Sheets read-back.', unverified, 500);
+  }
+  if ((preAppendRows || []).some((existingRow) => sameModalityRow(existingRow, row))) {
+    // The row IS on the sheet: complete the write with the success body so a
+    // retry replays it instead of appending again. No appendedRange: no append
+    // happened on this attempt, so the read-back is the proof.
+    const responseBody = {
+      message: 'Modality logged successfully.',
+      test_mode: false,
+      sheet_write: 'success',
+      sheet_written: true,
+      modality_written: true,
+      modality: record.modality,
+      appendedRange: null,
+      verified_by_readback: true,
+      modality_row: row
+    };
+    if (idempotency.enabled) {
+      responseBody.write_id = idempotency.write_id;
+      responseBody.duplicate_write = false;
+      responseBody.idempotency_status = 'completed';
+      completeWrite(idempotency.write_id, idempotency.token, responseBody);
+    }
+    recordTurnWriteProof(payload, session_id, '/api/log-modality', responseBody);
+    return standardSuccess(req, res, 'log-modality processed', responseBody, 200);
+  }
+
   try {
     const appendResponse = await appendRows('Modality_Log', [row]);
     invalidateSheetRowsCache('Modality_Log');
