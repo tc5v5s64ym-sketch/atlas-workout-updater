@@ -685,7 +685,8 @@ test('real blank-session screenshot preview adopts the server session and approv
             effort_only: true,
             session_id: resolvedSessionId,
             date: '2026-07-25',
-            date_source: 'screenshot',
+            date_source: 'today_fallback',
+            screenshot_date_suggested: '2026-07-25',
             rows_to_write: [],
             parsed_effort: {
               duration: '00:30:00',
