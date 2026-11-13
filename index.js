@@ -946,19 +946,29 @@ function validateNumberField(name, rawValue, min, max) {
   return num;
 }
 
-function normalizeAndValidateParsedMetrics(parsedMetrics) {
+function normalizeAndValidateParsedMetrics(parsedMetrics, options = {}) {
   if (!parsedMetrics || typeof parsedMetrics !== 'object') {
     throw new Error('parsed_metrics is required');
   }
+
+  // #1743 (extends #1635, Dale ruling 2026-11-10): on the manual-effort
+  // path a duration-only finish is legitimate — absent calories/HR are
+  // unknown (''), never invented; a supplied value is still bounds-checked.
+  // The vision B3 read-quality check keeps the required semantics: it calls
+  // without the option, so a vision parse missing a number still fails.
+  const allowPartial = options.allowPartial === true;
+  const validateEffortNumber = (name, value, min, max) => (allowPartial
+    ? (validateOptionalNumberField(name, value, min, max) ?? '')
+    : validateNumberField(name, value, min, max));
 
   const normalized = {};
   // duration (required) -> normalize to HH:MM:SS
   normalized.duration = normalizeDurationString(parsedMetrics.duration);
 
-  // numeric validations (required)
-  normalized.activeCalories = validateNumberField('activeCalories', parsedMetrics.activeCalories, 1, 3000);
-  normalized.totalCalories = validateNumberField('totalCalories', parsedMetrics.totalCalories, 1, 4000);
-  normalized.averageHR = validateNumberField('averageHR', parsedMetrics.averageHR, 40, 220);
+  // numeric validations (required, unless the manual-effort partial contract applies)
+  normalized.activeCalories = validateEffortNumber('activeCalories', parsedMetrics.activeCalories, 1, 3000);
+  normalized.totalCalories = validateEffortNumber('totalCalories', parsedMetrics.totalCalories, 1, 4000);
+  normalized.averageHR = validateEffortNumber('averageHR', parsedMetrics.averageHR, 40, 220);
   // peakHR is optional: allow missing but warn; if present, validate range
   if (parsedMetrics.peakHR === null || parsedMetrics.peakHR === undefined || parsedMetrics.peakHR === '') {
     normalized.peakHR = '';
@@ -970,7 +980,8 @@ function normalizeAndValidateParsedMetrics(parsedMetrics) {
   normalized.workoutType = parsedMetrics.workoutType ?? null;
 
   const warnings = [];
-  if (normalized.totalCalories < normalized.activeCalories) {
+  if (typeof normalized.totalCalories === 'number' && typeof normalized.activeCalories === 'number' &&
+      normalized.totalCalories < normalized.activeCalories) {
     warnings.push('totalCalories is less than activeCalories');
   }
   if (typeof normalized.peakHR === 'number' &&
@@ -1006,7 +1017,9 @@ function normalizeManualEffortMetrics(formFields) {
     peakHR: effort.peakHR ?? effort.peak_hr ?? formFields.peakHR ?? formFields.peak_hr,
     workoutType: effort.workoutType ?? effort.workout_type ?? formFields.workout_type
   };
-  return normalizeAndValidateParsedMetrics(parsedMetrics);
+  // #1743: the manual-effort path accepts a duration-only finish (see
+  // normalizeAndValidateParsedMetrics) — the #1635 partial-Effort contract.
+  return normalizeAndValidateParsedMetrics(parsedMetrics, { allowPartial: true });
 }
 
 // #1708 — the vision numbers as the owner sees them: the raw parsed metrics
