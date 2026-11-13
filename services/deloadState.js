@@ -52,8 +52,19 @@ function rowToState(row) {
   // sessions_remaining is numeric; a missing/garbage value reads as 0.
   const n = Number(state.deload_sessions_remaining);
   state.deload_sessions_remaining = Number.isFinite(n) ? n : 0;
-  // training_state must be a real state; an unrecognized cell falls back to NORMAL.
-  if (!isState(state.training_state)) state.training_state = STATES.NORMAL;
+  // training_state must be a real state. An unrecognized cell is DAMAGED persisted
+  // data — fail closed (throw) rather than silently reading it as NORMAL: a
+  // damaged last row mid-deload would otherwise lift the deload and serve a
+  // full-load prescription (Fable B-16, #1734, probe B3-08). This mirrors the
+  // write side (appendDeloadState refuses to persist an unknown state): the read
+  // side must be equally loud. A missing/empty tab is still "no deload yet" —
+  // that case is handled by readCurrentDeloadState before this is reached — but
+  // a present row with no recognizable state is corrupt, never a default.
+  if (!isState(state.training_state)) {
+    throw new Error(
+      `Unrecognized Deload_State training_state: ${JSON.stringify(state.training_state)} (last row is damaged; refusing to assume NORMAL)`
+    );
+  }
   return state;
 }
 
@@ -90,7 +101,10 @@ async function ensureHeaderRow() {
 // tab (config/sheetContract.js): a missing or unreadable tab is simply "no deload
 // yet", so degrade to NORMAL rather than throw — otherwise read-only callers that
 // now consult deload state (e.g. /api/recommend/next) would 500 on a spreadsheet
-// where the tab was never created.
+// where the tab was never created. A present last row whose training_state is
+// unrecognized is different: that is damaged persisted data, and rowToState fails
+// closed (throws) rather than reading it as NORMAL (#1734, probe B3-08) — the
+// throw propagates from here so no caller can prescribe as if no deload existed.
 async function readCurrentDeloadState() {
   let rows;
   try {
