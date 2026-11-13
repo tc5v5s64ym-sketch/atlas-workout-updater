@@ -3394,6 +3394,9 @@ test('api smoke (#1688): log-modality proven-absent failure — retry admitted, 
 // neither be confirmed nor ruled out. It completes as unverified (the
 // /api/complete-workout vocabulary) — never failed — and a retry of the same
 // write_id fails closed instead of re-appending blind.
+// #1735: the pre-append read-back now runs BEFORE the append, so a failing
+// read-back fails closed before the append is attempted (appendCalls stays 0);
+// the unverified outcome and the closed retry are unchanged.
 test('api smoke (#1688): log-modality read-back failure completes as unverified and the retry fails closed', async () => {
   fakeSheetsState.appendCalls.length = 0;
   fakeSheetsState.allowAppend = true;
@@ -3407,7 +3410,8 @@ test('api smoke (#1688): log-modality read-back failure completes as unverified 
     assert.ok(first.body.details, 'unverified proof is surfaced in the error details');
     assert.equal(first.body.details.sheet_write, 'unverified');
     assert.equal(first.body.details.proof_mismatch, true);
-    assert.equal(fakeSheetsState.appendCalls.length, 1);
+    assert.equal(first.body.details.readback_failed, true);
+    assert.equal(fakeSheetsState.appendCalls.length, 0, 'the #1735 pre-append read-back fails closed before the append is attempted');
 
     // The write_id is completed-as-unverified: a retry must fail closed, never
     // replay as a save and never re-append.
@@ -3417,11 +3421,86 @@ test('api smoke (#1688): log-modality read-back failure completes as unverified 
     assert.equal(retry.response.status, 500, JSON.stringify(retry.body));
     assert.equal(retry.body.details.sheet_write, 'unverified', 'retry stays unverified, not skipped_duplicate');
     assert.equal(retry.body.details.proof_mismatch, true);
-    assert.equal(fakeSheetsState.appendCalls.length, 1, 'an unverified retry must not append');
+    assert.equal(fakeSheetsState.appendCalls.length, 0, 'an unverified retry must not append');
     assert.equal(fakeSheetsState.modalityLogRows.length, 0);
   } finally {
     fakeSheetsState.allowAppend = false;
     fakeSheetsState.failAppendForTab = null;
+    fakeSheetsState.failModalityLogRead = false;
+  }
+});
+
+// #1735 (B-17, proving probe B3-02 D, re-expressed from the issue — the audit
+// record's probe text lives with the coordinator): the receipt store is lost
+// (free-plan restart with the idempotency file gone, #1363 deferred), so a
+// retry of an already-appended modality write arrives with a write_id that has
+// no receipt and beginWrite starts a fresh attempt. The route must read back
+// Modality_Log before appending and find the row, so the retry completes as
+// success instead of appending a duplicate.
+test('api smoke (#1735): log-modality lost-receipt retry — read-back finds the row, no second append', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  try {
+    const payload = JSON.stringify({ text: 'Plank 60 sec x3 RPE 7', session_id: 'S-LOST-1', date: '2026-06-23', write_id: 'mod-wid-lost-1' });
+    const first = await requestJson('/api/log-modality', { method: 'POST', body: payload });
+    assert.equal(first.response.status, 200, JSON.stringify(first.body));
+    assert.equal(first.body.data.sheet_write, 'success');
+    assert.equal(fakeSheetsState.modalityLogRows.length, 1, 'the first write landed');
+    assert.equal(fakeSheetsState.appendCalls.length, 1);
+
+    // The receipt store is lost (restart with the file gone): the retry's
+    // write_id has no receipt.
+    resetIdempotencyStore();
+    assert.equal(require('../services/idempotency').peekWrite('mod-wid-lost-1'), null, 'receipt is gone');
+
+    const retry = await requestJson('/api/log-modality', { method: 'POST', body: payload });
+    assert.equal(retry.response.status, 200, JSON.stringify(retry.body));
+    assert.equal(retry.body.data.sheet_write, 'success');
+    assert.equal(retry.body.data.verified_by_readback, true);
+    assert.equal(fakeSheetsState.appendCalls.length, 1, 'the lost-receipt retry must not append');
+    assert.equal(fakeSheetsState.modalityLogRows.length, 1, 'exactly one Modality_Log row');
+  } finally {
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
+// #1735 control: the pre-append read-back must not block a genuinely distinct
+// second entry in the same session — a read-back miss still appends.
+test('api smoke (#1735): log-modality read-back miss — a distinct second entry still appends', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  try {
+    const first = await requestJson('/api/log-modality', { method: 'POST', body: JSON.stringify({ text: 'Plank 60 sec x3 RPE 7', session_id: 'S-LOST-2', date: '2026-06-23', write_id: 'mod-wid-distinct-1' }) });
+    assert.equal(first.response.status, 200, JSON.stringify(first.body));
+    const second = await requestJson('/api/log-modality', { method: 'POST', body: JSON.stringify({ text: 'Run 5 km 30:00', session_id: 'S-LOST-2', date: '2026-06-23', write_id: 'mod-wid-distinct-2' }) });
+    assert.equal(second.response.status, 200, JSON.stringify(second.body));
+    assert.equal(second.body.data.verified_by_readback, undefined);
+    assert.equal(fakeSheetsState.appendCalls.length, 2, 'a distinct entry appends');
+    assert.equal(fakeSheetsState.modalityLogRows.length, 2, 'two distinct rows');
+  } finally {
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
+// #1735 fail-closed: the pre-append read-back itself fails, so the write can
+// neither be confirmed present nor ruled out. It completes as unverified (the
+// /api/complete-workout vocabulary) — never failed, never appended blind.
+test('api smoke (#1735): log-modality pre-append read-back failure completes as unverified, no append', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  fakeSheetsState.failModalityLogRead = true;
+  try {
+    const payload = JSON.stringify({ text: 'Run 5 km 30:00', session_id: 'S-LOST-3', date: '2026-06-23', write_id: 'mod-wid-lost-3' });
+    const first = await requestJson('/api/log-modality', { method: 'POST', body: payload });
+    assert.equal(first.response.status, 500, JSON.stringify(first.body));
+    assert.ok(first.body.details, 'unverified proof is surfaced in the error details');
+    assert.equal(first.body.details.sheet_write, 'unverified');
+    assert.equal(first.body.details.proof_mismatch, true);
+    assert.equal(first.body.details.readback_failed, true);
+    assert.equal(fakeSheetsState.appendCalls.length, 0, 'nothing appended when the read-back fails');
+    assert.equal(fakeSheetsState.modalityLogRows.length, 0);
+  } finally {
+    fakeSheetsState.allowAppend = false;
     fakeSheetsState.failModalityLogRead = false;
   }
 });
