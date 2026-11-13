@@ -257,8 +257,12 @@ test("Priya's plank reaches a session-attributed Modality_Log row with zero Moda
     assert.strictEqual(plank.body.data.sheet_written, true);
     assert.strictEqual(plank.body.data.modality, 'timed_hold');
     // The guard must NOT have weakened: a non-writable tab is still refused.
+    // Note text carries no numbers: POST /api/coaching-notes grounds numbers
+    // against today's logged session (#1742 B-18), so a numbered probe would
+    // be refused by the grounding gate (400) before reaching the append whose
+    // refusal this case asserts (500). The write_id still names the probe.
     const notes = await post('/api/coaching-notes', {
-      note: '1659 guard probe — Coaching_Notes must stay refused', write_id: 'priya-1659-notes-probe',
+      note: 'guard probe — Coaching_Notes must stay refused', write_id: 'priya-1659-notes-probe',
     });
     assert.strictEqual(notes.status, 500, JSON.stringify(notes.body));
     const st = await (await fetch(`${stateBase}/__gate/state`)).json();

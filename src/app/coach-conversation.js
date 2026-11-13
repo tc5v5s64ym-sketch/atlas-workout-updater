@@ -2690,10 +2690,16 @@ import { findPlanEntry, planMismatchForLift, formatPlanMismatchLine } from './pl
         label.textContent = 'Note saved.';
         saveBtn.remove();
         skipBtn.remove();
-      } catch {
+      } catch (err) {
         saveBtn.textContent = 'Save note';
         saveBtn.disabled = false;
         skipBtn.disabled = false;
+        // B-18 (#1742): a grounding refusal (400) keeps the prompt open and
+        // shows the server's reason with the note text, so the athlete can
+        // edit the numbers out and save again instead of losing the note.
+        if (err && err.status === 400) {
+          label.textContent = `${err.message || 'Note not saved.'} Note: "${noteText}"`;
+        }
       }
     });
   }

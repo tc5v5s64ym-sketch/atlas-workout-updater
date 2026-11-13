@@ -7374,3 +7374,42 @@ test('artifact route: nav.js exports both renderers and they stay read-only', ()
   const reportFn = nav.slice(nav.indexOf('function chipAnswerReport('), nav.indexOf('function chipAnswerReport(') + 1600);
   assert.match(reportFn, /\/api\/summary\/weekly/, 'weekly artifact reads the existing summary endpoint');
 });
+
+// ── #1742 B-18: coaching-note save grounding (pure helpers) ────────────────────
+const {
+  extractNoteNumbers,
+  collectSessionBoundNumbers,
+  findUngroundedNumbers,
+  groundCoachingNote,
+} = require('../services/coachingNoteGrounding');
+
+test('coaching-note grounding: extractNoteNumbers splits "135x8" into both numbers', () => {
+  assert.deepEqual(extractNoteNumbers('Bench 135x8 felt solid'), [135, 8]);
+  assert.deepEqual(extractNoteNumbers('Cap all pressing at 317 x 13'), [317, 13]);
+  assert.deepEqual(extractNoteNumbers('No numbers here'), []);
+  assert.deepEqual(extractNoteNumbers('2.5kg plates'), [2.5]);
+  assert.deepEqual(extractNoteNumbers('135.0'), [135]);
+});
+
+test('coaching-note grounding: bound facts come from today only, not other days', () => {
+  const bound = collectSessionBoundNumbers({
+    logRows: [
+      ['2026-11-13', 'S-TODAY', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '135', '8', '2', '', '1080'],
+      ['2026-11-10', 'S-OLD', 'Back Squat', 'Back Squat', 'Legs', 'SQ01', '1', '315', '3', '2', '', '945'],
+    ],
+    effortRows: [['2026-11-13', 'S-TODAY', '3480', '410', '520', '148', '171', '', '']],
+    date: '2026-11-13',
+  });
+  assert.ok(bound.has(135) && bound.has(8) && bound.has(2) && bound.has(1080), 'today logged values are bound');
+  assert.ok(bound.has(410) && bound.has(520), 'today effort values are bound');
+  assert.ok(!bound.has(315) && !bound.has(3) && !bound.has(945), 'last week numbers are not bound');
+});
+
+test('coaching-note grounding: groundCoachingNote judges the B-18 probe shapes', () => {
+  const bound = new Set([1, 135, 8, 2, 1080]);
+  assert.deepEqual(groundCoachingNote('Cap all pressing at 317 x 13', bound).ungrounded, [317, 13]);
+  assert.equal(groundCoachingNote('Cap all pressing at 317 x 13', bound).ok, false);
+  assert.equal(groundCoachingNote('Bench 135x8 felt solid', bound).ok, true);
+  assert.equal(groundCoachingNote('prefers morning sessions', bound).ok, true);
+  assert.deepEqual(findUngroundedNumbers('317 and 317 again', bound), [317]);
+});

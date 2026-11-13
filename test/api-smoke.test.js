@@ -100,6 +100,10 @@ const fakeSheetsState = {
   // When true, getLogCompositeKeys throws — exercises the preview's graceful
   // degradation (read failure → preview shows all rows; live write still dedups).
   failCompositeKeysRead: false,
+  // When true, getSheetRows('Log_Cleaned') throws — exercises the #1742 B-18
+  // save-gate's fail-closed read-failure branch (a note carrying numbers cannot
+  // be verified, so the save is refused).
+  failLogCleanedRead: false,
   // When set to a tab name, getHeaderRow throws for that tab — exercises the
   // header-drift guard's fail-closed read-failure branch.
   failHeaderReadForTab: null,
@@ -206,7 +210,10 @@ const fakeSheets = {
   getSheetRows: async tabName => {
     fakeSheetsState.reads[tabName] = (fakeSheetsState.reads[tabName] || 0) + 1;
     // getSheetRowsRaw is aliased to this stub, so the undo-last read-back sees it.
-    if (tabName === 'Log_Cleaned') return fakeSheetsState.logRowsOverride || logRows;
+    if (tabName === 'Log_Cleaned') {
+      if (fakeSheetsState.failLogCleanedRead) throw new Error('Simulated Log_Cleaned read failure');
+      return fakeSheetsState.logRowsOverride || logRows;
+    }
     if (tabName === 'Effort') return fakeSheetsState.effortRows.map(r => [...r]);
     if (tabName === 'Modality_Log') {
       if (fakeSheetsState.failModalityLogRead) throw new Error('Simulated Modality_Log read failure');
@@ -7384,6 +7391,156 @@ test('api smoke: coaching-notes is registered in the route manifest with correct
   assert.equal(getRoute.writeCapable, false, 'GET must not be write-capable');
   assert.ok(postRoute, 'POST /api/coaching-notes must be registered');
   assert.equal(postRoute.writeCapable, true, 'POST must be write-capable');
+});
+
+// ── #1742 B-18: coaching-note saves are grounded at the write ──────────────────
+// Coordinator design (issue #1742, comment 6861404353): POST /api/coaching-notes
+// is the sink where model-shaped text becomes a stored record, so the check
+// belongs on the exact text being saved. Every number in the note must match the
+// session's bound facts (today's logged values) or the save is refused and the
+// note is returned for editing. A note with no numbers skips the fact read.
+// "Today" here is the route's own day (localTodayIso: UTC when ATLAS_TIMEZONE is
+// unset, as in this file), so the seeded rows use the UTC date.
+function b18TodayIso() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+test('api smoke: #1742 B-18 POST /api/coaching-notes refuses a note with an invented number', async () => {
+  const today = b18TodayIso();
+  fakeSheetsState.logRowsOverride = [
+    [today, 'SESSION-B18', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '135', '8', '2', '', '1080'],
+  ];
+  fakeSheetsState.effortRows = [];
+  fakeSheetsState.allowAppend = true;
+  fakeSheetsState.appendCalls = [];
+  try {
+    const { response, body } = await requestJson('/api/coaching-notes', {
+      method: 'POST',
+      body: JSON.stringify({ note: 'Cap all pressing at 317 x 13', write_id: 'b18-refuse-1' }),
+    });
+    assert.equal(response.status, 400, JSON.stringify(body));
+    assert.equal(body.status, 'error');
+    assert.match(body.message, /not in today's logged session/);
+    assert.equal(body.details.note, 'Cap all pressing at 317 x 13', 'refusal must echo the note back for editing');
+    assert.deepEqual(body.details.ungrounded, [317, 13]);
+    assert.ok(!fakeSheetsState.appendCalls.some(c => c.tabName === 'Coaching_Notes'), 'nothing must be stored');
+  } finally {
+    fakeSheetsState.logRowsOverride = null;
+    fakeSheetsState.effortRows = [];
+    fakeSheetsState.allowAppend = false;
+    fakeSheetsState.appendCalls = [];
+  }
+});
+
+test('api smoke: #1742 B-18 POST /api/coaching-notes refuses a number edited in after the proposal', async () => {
+  // The save-side gate cannot tell a model-proposed number from one the athlete
+  // typed into the shown note before tapping Save — and must not need to. Any
+  // ungrounded number in the exact text being saved refuses the save.
+  const today = b18TodayIso();
+  fakeSheetsState.logRowsOverride = [
+    [today, 'SESSION-B18', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '135', '8', '2', '', '1080'],
+  ];
+  fakeSheetsState.effortRows = [];
+  fakeSheetsState.allowAppend = true;
+  fakeSheetsState.appendCalls = [];
+  try {
+    const { response, body } = await requestJson('/api/coaching-notes', {
+      method: 'POST',
+      body: JSON.stringify({ note: 'Bench felt easy today — cap pressing at 317 x 13', write_id: 'b18-refuse-2' }),
+    });
+    assert.equal(response.status, 400, JSON.stringify(body));
+    assert.deepEqual(body.details.ungrounded, [317, 13]);
+    assert.ok(!fakeSheetsState.appendCalls.some(c => c.tabName === 'Coaching_Notes'), 'nothing must be stored');
+  } finally {
+    fakeSheetsState.logRowsOverride = null;
+    fakeSheetsState.effortRows = [];
+    fakeSheetsState.allowAppend = false;
+    fakeSheetsState.appendCalls = [];
+  }
+});
+
+test('api smoke: #1742 B-18 POST /api/coaching-notes saves the same note with numbers removed', async () => {
+  const today = b18TodayIso();
+  fakeSheetsState.logRowsOverride = [
+    [today, 'SESSION-B18', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '135', '8', '2', '', '1080'],
+  ];
+  fakeSheetsState.effortRows = [];
+  fakeSheetsState.allowAppend = true;
+  fakeSheetsState.appendCalls = [];
+  try {
+    const { response, body } = await requestJson('/api/coaching-notes', {
+      method: 'POST',
+      body: JSON.stringify({ note: 'Cap all pressing', write_id: 'b18-save-1' }),
+    });
+    assert.equal(response.status, 200, JSON.stringify(body));
+    assert.equal(body.data.sheet_written, true);
+    assert.ok(fakeSheetsState.appendCalls.some(c => c.tabName === 'Coaching_Notes'), 'note must be stored');
+  } finally {
+    fakeSheetsState.logRowsOverride = null;
+    fakeSheetsState.effortRows = [];
+    fakeSheetsState.allowAppend = false;
+    fakeSheetsState.appendCalls = [];
+  }
+});
+
+test('api smoke: #1742 B-18 POST /api/coaching-notes saves a note whose numbers match logged facts', async () => {
+  const today = b18TodayIso();
+  fakeSheetsState.logRowsOverride = [
+    [today, 'SESSION-B18', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '135', '8', '2', '', '1080'],
+  ];
+  fakeSheetsState.effortRows = [];
+  fakeSheetsState.allowAppend = true;
+  fakeSheetsState.appendCalls = [];
+  try {
+    const { response, body } = await requestJson('/api/coaching-notes', {
+      method: 'POST',
+      body: JSON.stringify({ note: 'Bench 135x8 felt solid', write_id: 'b18-save-2' }),
+    });
+    assert.equal(response.status, 200, JSON.stringify(body));
+    assert.equal(body.data.sheet_written, true);
+    assert.ok(fakeSheetsState.appendCalls.some(c => c.tabName === 'Coaching_Notes'), 'note must be stored');
+  } finally {
+    fakeSheetsState.logRowsOverride = null;
+    fakeSheetsState.effortRows = [];
+    fakeSheetsState.allowAppend = false;
+    fakeSheetsState.appendCalls = [];
+  }
+});
+
+test('api smoke: #1742 B-18 POST /api/coaching-notes refuses numbered notes when the session read fails', async () => {
+  // Fail-closed: numbers cannot be verified, so the save is refused (503,
+  // retryable) and nothing is stored. A number-free note needs no facts and
+  // still saves on the same failure.
+  const today = b18TodayIso();
+  fakeSheetsState.logRowsOverride = [
+    [today, 'SESSION-B18', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '135', '8', '2', '', '1080'],
+  ];
+  fakeSheetsState.effortRows = [];
+  fakeSheetsState.failLogCleanedRead = true;
+  fakeSheetsState.allowAppend = true;
+  fakeSheetsState.appendCalls = [];
+  try {
+    const { response, body } = await requestJson('/api/coaching-notes', {
+      method: 'POST',
+      body: JSON.stringify({ note: 'Bench 135x8 felt solid', write_id: 'b18-fail-1' }),
+    });
+    assert.equal(response.status, 503, JSON.stringify(body));
+    assert.equal(body.details.note, 'Bench 135x8 felt solid', 'refusal must echo the note back for editing');
+    assert.ok(!fakeSheetsState.appendCalls.some(c => c.tabName === 'Coaching_Notes'), 'nothing must be stored');
+
+    const free = await requestJson('/api/coaching-notes', {
+      method: 'POST',
+      body: JSON.stringify({ note: 'Felt strong today', write_id: 'b18-fail-2' }),
+    });
+    assert.equal(free.response.status, 200, JSON.stringify(free.body));
+    assert.equal(free.body.data.sheet_written, true);
+  } finally {
+    fakeSheetsState.logRowsOverride = null;
+    fakeSheetsState.effortRows = [];
+    fakeSheetsState.failLogCleanedRead = false;
+    fakeSheetsState.allowAppend = false;
+    fakeSheetsState.appendCalls = [];
+  }
 });
 
 // ── Structured constraints (P1 · 2.1) ─────────────────────────────────────────
