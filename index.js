@@ -41,6 +41,7 @@ const { decideTurnPrecedence, isTurnPrecedenceEnabled } = require('./services/tu
 const { recommendSubstitute } = require('./services/substitutionRecommender');
 const { scoreSubstitutionQuality } = require('./services/substitutionQuality');
 const { buildRecommendation, parseRecommendationConstraints } = require('./services/recommendationPipeline');
+const { extractNoteNumbers, collectSessionBoundNumbers, findUngroundedNumbers } = require('./services/coachingNoteGrounding');
 const { getProfileGoal } = require('./services/profileGoal');
 const { normalizeTrainingGoal } = require('./services/trainingKnowledge');
 const { computeBenchmark, resolveWorkingWeight } = require('./services/exerciseBenchmark');
@@ -1447,6 +1448,39 @@ app.post('/api/coaching-notes', async (req, res) => {
   // F09I: stamp the owner's LOCAL day (ATLAS_TIMEZONE), not the UTC day — an evening-Pacific
   // note was being dated tomorrow. localTodayIso falls back to UTC until the zone is set.
   const dateStr = localTodayIso();
+
+  // Fable P3 B-18 (coordinator design, issue #1742 comment 6861404353): ground
+  // the saved text at the write. POST /api/coaching-notes is the sink where
+  // model-shaped text becomes a stored record, so the check belongs here, on
+  // the exact text being saved — a proposal-side gate alone cannot catch a
+  // number edited into the shown note between proposal and save. Every number
+  // in the note must match the session's bound facts (today's logged values)
+  // or the save is refused (400) and the note is returned for editing; nothing
+  // is written. Number-free notes skip the fact read entirely (old path, zero
+  // new reads). The fact read is live (getSheetRowsRaw, not the cached
+  // getSheetRows) — a trust gate judges the sheet as it stands now, same as
+  // the undo pre-delete read-back and the duplicate-protection reads. A fact
+  // read failure refuses numbered notes fail-closed (503, retryable).
+  const noteNumbers = extractNoteNumbers(note);
+  if (noteNumbers.length > 0) {
+    let boundNumbers;
+    try {
+      const [todayLog, todayEffort] = await Promise.all([
+        getSheetRowsRaw(logSheetName),
+        getSheetRowsRaw(effortSheetName),
+      ]);
+      boundNumbers = collectSessionBoundNumbers({ logRows: todayLog, effortRows: todayEffort, date: dateStr });
+    } catch (err) {
+      if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+      return standardError(req, res, 'Coaching note not saved: today\'s session could not be read, so numbers in the note cannot be verified. Edit the note and try again.', { note }, 503);
+    }
+    const ungrounded = findUngroundedNumbers(note, boundNumbers);
+    if (ungrounded.length > 0) {
+      if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+      return standardError(req, res, `Coaching note not saved: number(s) ${ungrounded.join(', ')} are not in today's logged session. Edit the note and save again.`, { note, ungrounded }, 400);
+    }
+  }
+
   try {
     await appendRows('Coaching_Notes', [[dateStr, note.slice(0, 200)]]);
     invalidateSheetRowsCache('Coaching_Notes');
