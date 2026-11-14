@@ -31,6 +31,7 @@
     "check:paper-weight": "node scripts/check-paper-weight.js",
     "check:ladder": "node scripts/check-completion-ladder.js",
     "check:packet-trace": "node scripts/check-packet-trace.js",
+   "check:shadow-no-read": "node scripts/check-shadow-no-read.js",
     "check:supabase-safety": "node scripts/check-supabase-migration-safety.js",
     "atlas:p8b": "node scripts/atlas-p8b-checkpoint.js",
     "archive:backlog": "node scripts/archive-backlog.js",

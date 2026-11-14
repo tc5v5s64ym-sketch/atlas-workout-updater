@@ -45,6 +45,28 @@ const exerciseCatalogRows = [
   ['Back Squat', 'Legs', 'SQ01', 'Back Squat', 'squat|squats']
 ];
 
+// B-21 (#1742): poisoned shadow rows. The fake's read surfaces return these
+// for Coach_Response / Intent_Shadow so that ANY runtime read of either tab
+// surfaces the marker in a response or a sheet write — and the B-21 tests at
+// the end of this file assert it never does. The poison is a fake fact
+// (Back Squat 987x1) no genuine route could produce, so a leak is
+// unambiguous. Nothing else in this file reads the shadow tabs, so these
+// branches are inert for every other test.
+const B21_POISON_RESP = 'B21POISON-RESP';
+const B21_POISON_INTENT = 'B21POISON-INTENT';
+const coachResponsePoisonRow = [
+  '2026-11-13T00:00:00.000Z', 'turn-poison', '20261113', '/api/coach/chat', 'log',
+  'test', 'message', 'TRUE',
+  `Poison fact: Back Squat ${B21_POISON_RESP} 987x1 RIR 0 — must never surface`,
+  'FALSE', '', 'test', '',
+];
+const intentShadowPoisonRow = [
+  '2026-11-13T00:00:00.000Z',
+  `Poison fact: Back Squat ${B21_POISON_INTENT} 987x1 RIR 0 — must never surface`,
+  'log', 0.99, '[]', '[]', 'TRUE', 1, 'test', '/api/coach/chat', 'test',
+  'unreviewed', '', 'synthetic', 'FALSE', 'test',
+];
+
 const fakeSheetsState = {
   appendCalls: [],
   // Set to true only inside tests that intentionally exercise the live-write branch.
@@ -159,6 +181,10 @@ const fakeSheets = {
     return { data: { updates: { updatedRange: `${tabName}!A100:K100`, updatedRows: rows.length } } };
   },
   readRange: async (range) => {
+    // B-21 (#1742): poison surface — an A1-range read of a shadow tab returns
+    // the poison row, so a leak is observable.
+    if (String(range).startsWith('Coach_Response')) return [coachResponsePoisonRow].map((r) => [...r]);
+    if (String(range).startsWith('Intent_Shadow')) return [intentShadowPoisonRow].map((r) => [...r]);
     // ensureHeaderRow reads A1 of Deload_State to decide whether a header exists.
     if (String(range).startsWith('Deload_State')) {
       return fakeSheetsState.deloadStateSheet.length ? [fakeSheetsState.deloadStateSheet[0]] : [];
@@ -197,6 +223,10 @@ const fakeSheets = {
     return [...fakeSheetsState.logCompositeKeys];
   },
   getRecentRows: async (tabName, maxRows = 100) => {
+    // B-21 (#1742): poison surface — a recent-rows read of a shadow tab
+    // returns the poison row, so a leak is observable.
+    if (tabName === 'Coach_Response') return [coachResponsePoisonRow].map((r) => [...r]).slice(-maxRows);
+    if (tabName === 'Intent_Shadow') return [intentShadowPoisonRow].map((r) => [...r]).slice(-maxRows);
     if (tabName === 'Log_Cleaned') return logRows;
     // Mirror the real client: return the LAST maxRows in sheet order.
     if (tabName === 'Effort') return fakeSheetsState.effortRecentRows.slice(-maxRows);
@@ -214,6 +244,10 @@ const fakeSheets = {
     }
     if (tabName === 'Coaching_Notes') return fakeSheetsState.coachingNotesRows || [];
     if (tabName === 'Constraints') return fakeSheetsState.constraintsRows || [];
+    // B-21 (#1742): poison surface — a row read of a shadow tab returns the
+    // poison row, so a leak is observable.
+    if (tabName === 'Coach_Response') return [coachResponsePoisonRow].map((r) => [...r]);
+    if (tabName === 'Intent_Shadow') return [intentShadowPoisonRow].map((r) => [...r]);
     if (tabName === 'Deload_State') {
       // Simulate a missing/unreadable tab (real values.get throws "Unable to parse
       // range") so the graceful-degrade path can be exercised.
@@ -223,6 +257,14 @@ const fakeSheets = {
         ? fakeSheetsState.deloadStateSheet.slice(1).map(r => [...r])
         : [];
     }
+    return [];
+  },
+  getColumnValues: async (tabName) => {
+    // B-21 (#1742): poison surface — a column read of a shadow tab returns the
+    // poison text, so a leak is observable. No exercised route reads a column
+    // today; this stub exists so the poison surface is complete.
+    if (tabName === 'Coach_Response') return [coachResponsePoisonRow[8]];
+    if (tabName === 'Intent_Shadow') return [intentShadowPoisonRow[1]];
     return [];
   },
   getHeaderRow: async tabName => {
@@ -8580,4 +8622,176 @@ test('complete-workout: malformed manual date → 400 invalid-date, never the ex
     fakeSheetsState.effortSessionIds = [];
     fakeVisionParsedMetrics = null;
   }
+});
+
+// ── #1742 B-21 shadow no-read-path probe ─────────────────────────────────────
+// Coach_Response / Intent_Shadow store model output verbatim in shadow form
+// (production flags confirmed by the coordinator, issue #1742 comment
+// 6860065167). The static half of the probe — scripts/check-shadow-no-read.js,
+// tested in test/b21ShadowNoReadPath.test.js — proves no runtime code reads
+// either tab. This is the runtime half: with the production shadow flags ON
+// and both tabs seeded with poison rows (a fake fact no genuine route could
+// produce), exercise the answer paths and the live write paths and assert the
+// poison marker surfaces NOWHERE — in no response, in no sheet write, and in
+// no captured shadow row — and that neither tab was read at all.
+//
+// The one designed exception is GET /api/debug/intent-shadow: it serves the
+// in-memory classification RING (owner-only debug surface), never the Sheet
+// tab — so it must carry the ring entry for the chat turn below and still
+// contain no poison marker.
+const { describe: describeBlock, before: beforeBlock, after: afterBlock } = require('node:test');
+describeBlock('api smoke: #1742 B-21 shadow no-read-path probe', () => {
+  const intentShadow = require('../services/intentShadow');
+  const responseSheet = require('../services/coachResponseSheet');
+
+  const MARKERS = [B21_POISON_RESP, B21_POISON_INTENT];
+  const capturedResponseRows = [];
+  const capturedIntentRows = [];
+  let savedEnv;
+
+  function assertNoPoison(value, where) {
+    const text = typeof value === 'string' ? value : JSON.stringify(value);
+    for (const marker of MARKERS) {
+      assert.ok(!text.includes(marker), `${where} must not carry shadow poison (${marker})`);
+    }
+  }
+
+  // Exercises the answer paths and the live write paths once; returns every
+  // response body seen, in call order.
+  async function exerciseRoutes() {
+    const seen = [];
+    const collect = async (name, promise) => {
+      const r = await promise;
+      seen.push({ name, status: r.response.status, body: r.body });
+      return r;
+    };
+    const ringBefore = intentShadow.getShadowLog().count;
+    fakeCoachState.configured = true;
+    await collect('coach/chat', requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'How is my bench press progressing?' }),
+    }));
+    // The composer chokepoint that feeds the intent-shadow ring: POST
+    // /api/debug/intent-observe observes EVERY free-text submission (the
+    // /api/coach/chat route itself does not call observeChatMessage).
+    await collect('debug/intent-observe', requestJson('/api/debug/intent-observe', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'How is my bench press progressing?', app_version: 'test' }),
+    }));
+    await collect('coach/message', requestJson('/api/coach/message', {
+      method: 'POST',
+      body: JSON.stringify({ facts: { exerciseName: 'Bench Press', todaySets: [{ weight: 225, reps: 5, rir: 2 }] } }),
+    }));
+    await collect('recommend/next', requestJson('/api/recommend/next/BEN01'));
+    await collect('plan/today', requestJson('/api/plan/today'));
+    await collect('history/recent', requestJson('/api/history/recent?limit=10'));
+    await collect('health/sheets', requestJson('/api/health/sheets'));
+    await collect('log-workout dry-run', requestJson('/api/log-workout', {
+      method: 'POST',
+      body: JSON.stringify({
+        session_id: 'B21-DRY-RUN', date: '2026-06-11', test_mode: true,
+        log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 225, reps: 5, rir: 2, notes: 'b21 dry-run' }],
+      }),
+    }));
+    // Live writes: a real log-workout append and a real coaching-notes append.
+    fakeSheetsState.allowAppend = true;
+    try {
+      await collect('log-workout live', requestJson('/api/log-workout', {
+        method: 'POST',
+        body: JSON.stringify({
+          session_id: 'B21-LIVE-RUN', date: '2026-06-11',
+          log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 225, reps: 5, rir: 2, notes: 'b21 live' }],
+          write_id: 'b21-log-live-1',
+        }),
+      }));
+      await collect('coaching-notes live', requestJson('/api/coaching-notes', {
+        method: 'POST',
+        body: JSON.stringify({ note: 'B21 probe note: bench felt strong today', write_id: 'b21-note-live-1' }),
+      }));
+    } finally {
+      fakeSheetsState.allowAppend = false;
+    }
+    // Let the fire-and-forget shadow captures drain BEFORE reading the debug
+    // endpoint: observeChatMessage classifies off the reply path, so the ring
+    // entry lands after the chat POST returns. Wait for the ring to grow.
+    for (let i = 0; i < 500; i++) {
+      await new Promise((r) => setImmediate(r));
+      if (intentShadow.getShadowLog().count > ringBefore) break;
+    }
+    await responseSheet._flushForTesting();
+    // Debug endpoint last, after the chat turn above has populated the ring.
+    await collect('debug/intent-shadow', requestJson('/api/debug/intent-shadow'));
+    return seen;
+  }
+
+  beforeBlock(() => {
+    savedEnv = {
+      ATLAS_INTENT_ROUTER: process.env.ATLAS_INTENT_ROUTER,
+      ATLAS_INTERACTION_TRACE: process.env.ATLAS_INTERACTION_TRACE,
+      ATLAS_COACH_SHADOW_PERSIST: process.env.ATLAS_COACH_SHADOW_PERSIST,
+    };
+    // Production shadow flag state (coordinator-confirmed, #1742).
+    process.env.ATLAS_INTENT_ROUTER = 'shadow';
+    process.env.ATLAS_INTERACTION_TRACE = 'shadow';
+    process.env.ATLAS_COACH_SHADOW_PERSIST = '1';
+    capturedResponseRows.length = 0;
+    capturedIntentRows.length = 0;
+    fakeSheetsState.reads = {};
+    fakeSheetsState.appendCalls = [];
+    // Capture what the shadow write modules would append (never a real sheet),
+    // so the probe can assert the captured rows carry no poison either.
+    intentShadow._resetForTesting({
+      append: async (tab, rows) => { for (const r of rows) capturedIntentRows.push(r); },
+    });
+    responseSheet._resetForTesting({
+      ensure: async () => {},
+      getHeader: async () => responseSheet.RESPONSE_HEADERS.slice(),
+      append: async (tab, rows) => { for (const r of rows) capturedResponseRows.push(r); },
+    });
+  });
+
+  afterBlock(() => {
+    intentShadow._resetForTesting({});
+    responseSheet._resetForTesting({});
+    for (const [key, value] of Object.entries(savedEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  test('B-21: no exercised route reads either shadow tab', async () => {
+    const seen = await exerciseRoutes();
+    // Every exercised route answered (no 500 from a poisoned read blowing up).
+    for (const { name, status } of seen) {
+      assert.ok(status < 500, `${name} must not 500 (got ${status})`);
+    }
+    assert.equal(fakeSheetsState.reads.Coach_Response || 0, 0, 'no route may read Coach_Response');
+    assert.equal(fakeSheetsState.reads.Intent_Shadow || 0, 0, 'no route may read Intent_Shadow');
+  });
+
+  test('B-21: no response, sheet write, or captured shadow row carries the poison', async () => {
+    const seen = await exerciseRoutes();
+    for (const { name, body } of seen) assertNoPoison(body, `${name} response`);
+    for (const call of fakeSheetsState.appendCalls) {
+      assertNoPoison(call, `append to ${call.tabName}`);
+    }
+    for (const row of capturedResponseRows) assertNoPoison(row, 'captured Coach_Response row');
+    for (const row of capturedIntentRows) assertNoPoison(row, 'captured Intent_Shadow row');
+  });
+
+  test('B-21: the intent-shadow debug endpoint serves the ring only, never sheet rows', async () => {
+    const seen = await exerciseRoutes();
+    const debug = seen.find((s) => s.name === 'debug/intent-shadow');
+    assert.equal(debug.status, 200, JSON.stringify(debug.body));
+    assertNoPoison(debug.body, 'debug/intent-shadow response');
+    // The ring DOES carry the chat turn (the endpoint works), so this is not
+    // a vacuous pass: the turn's own message preview is present, the sheet
+    // poison is not.
+    const entries = (debug.body.data && debug.body.data.entries) || [];
+    assert.ok(entries.length >= 1, 'the ring must hold the chat turn');
+    assert.ok(
+      entries.some((e) => String(e.message_preview || '').includes('bench press progressing')),
+      'the ring entry must be the chat turn just taken'
+    );
+  });
 });
