@@ -366,14 +366,17 @@ jobs:
           key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
 
       # Cache miss (or a new Playwright version): full install — browser + OS deps.
+      # #1715: wrapped in scripts/ci/playwright-install.sh, which rewrites the
+      # apt sources away from the Azure mirror when it stops resolving and
+      # retries the install, so a mirror outage no longer fails the job here.
       - name: Install Playwright (browser + system deps)
         if: steps.e2e_policy.outputs.should_run == 'true' && steps.playwright-cache.outputs.cache-hit != 'true'
-        run: npx playwright install --with-deps chromium
+        run: scripts/ci/playwright-install.sh install --with-deps chromium
 
       # Cache hit: the browser is restored; only the apt system deps need (re)installing.
       - name: Install Playwright system deps
         if: steps.e2e_policy.outputs.should_run == 'true' && steps.playwright-cache.outputs.cache-hit == 'true'
-        run: npx playwright install-deps chromium
+        run: scripts/ci/playwright-install.sh install-deps chromium
 
       - name: E2E tests
         if: steps.e2e_policy.outputs.should_run == 'true'
