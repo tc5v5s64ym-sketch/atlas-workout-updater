@@ -5626,9 +5626,16 @@ test('saved-no-restore: a confirmed save clears the in-memory session regardless
   assert.match(block, /clearSessionSnapshot\(\);/, 'the persisted snapshot is still cleared on save');
   // PR-10: the "drop the snapshot when nothing is in progress" guard moved into the
   // store's persist seam, so an empty buffer + null plan can never be re-persisted.
+  // #1779: the guard is now content-aware — an empty in-memory buffer must never
+  // delete a persisted snapshot that still carries logged work (a refused resume
+  // leaves exactly that shape behind, and the unconditional persist on
+  // beforeunload / tab-hide used to destroy the athlete's only copy). The
+  // removal fires only when the persisted snapshot itself has nothing to keep.
   const storeSrc = fs.readFileSync(path.join(repoRoot, 'public', 'store.js'), 'utf8');
-  assert.match(storeSrc, /if \(!\(Array\.isArray\(log\) && log\.length\) && !plan\) \{ store\.removeItem\(SNAPSHOT_KEY\)/,
-    'persistSessionSnapshot drops the snapshot once the buffer and plan are clear');
+  assert.match(storeSrc, /if \(!\(Array\.isArray\(log\) && log\.length\) && !plan\) \{\s*\n\s*if \(persistedSnapshotHasContent\(store\)\) return;/,
+    'persistSessionSnapshot keeps a content-bearing snapshot when the buffer is empty (refused resume)');
+  assert.match(storeSrc, /if \(persistedSnapshotHasContent\(store\)\) return;\s*\n\s*store\.removeItem\(SNAPSHOT_KEY\);/,
+    'persistSessionSnapshot still drops the snapshot once nothing is in progress anywhere');
 });
 
 test('RC2: an abandoned closeout preview does not leak its date-source label onto a later normal save', () => {

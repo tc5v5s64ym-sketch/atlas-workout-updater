@@ -37,7 +37,7 @@ import {
   getPendingSetRevision, setPendingSetRevision,
   getAtlasLastError, setHistoryLoaded,
   persistSessionSnapshot, hydrateSessionSnapshot, clearPersistedSnapshot,
-  confirmResumedSession,
+  confirmResumedSession, getResumeRefusalReason,
 } from './store.js';
 // PR-F — the "Start this plan" acceptance orchestrator (pure/DI; app.js injects the
 // real store/persist/start/api deps). Identity minting + snapshot + sidecar POST live
@@ -5963,6 +5963,46 @@ function wireResumeNoticeGestures(content) {
   });
 }
 
+// #1779 — surface the resume state while the server finality check runs, and
+// when it cannot be established. A cold start used to show an empty app with no
+// signal while the only copy of the session sat unresumed in storage; the
+// athlete read that as data loss. The pending notice is replaced by the
+// restored-session banner on success, by the retry notice on an `unknown`
+// refusal (tap re-runs the restore against the kept snapshot), and hidden when
+// the server says the session is finalized. Neither notice touches the write
+// path — they only read the kept snapshot.
+function renderResumePendingNotice() {
+  const notice = typeof document !== 'undefined' ? document.getElementById('session-resume-notice') : null;
+  if (!notice) return;
+  notice.innerHTML = '';
+  const content = el('div', { class: 'resume-content' }, [
+    el('span', { class: 'resume-notice-text', text: 'Restoring your session…' }),
+  ]);
+  notice.appendChild(content);
+  notice.hidden = false;
+}
+
+function renderResumeRetryNotice() {
+  const notice = typeof document !== 'undefined' ? document.getElementById('session-resume-notice') : null;
+  if (!notice) return;
+  notice.innerHTML = '';
+  const content = el('div', { class: 'resume-content' }, [
+    el('span', { class: 'resume-notice-text', text: 'Couldn’t reach the server — your session is saved on this device.' }),
+    el('span', { class: 'resume-hint', text: 'tap to retry' }),
+  ]);
+  content.addEventListener('click', () => {
+    renderResumePendingNotice();
+    restoreSessionSnapshot();
+  });
+  notice.appendChild(content);
+  notice.hidden = false;
+}
+
+function hideResumeNotice() {
+  const notice = typeof document !== 'undefined' ? document.getElementById('session-resume-notice') : null;
+  if (notice) notice.hidden = true;
+}
+
 // Show a banner when the previous session is restored. The owner can TAP it to bring the
 // recovered workout into view, or SWIPE it to reveal a trash can and discard the session.
 // (A saved workout never reaches here — see the post-write reset; restore is only for an
@@ -6007,11 +6047,27 @@ async function fetchSessionFinality(sessionId) {
   } catch { return { unknown: true }; }
 }
 
+// #1779 — a retry re-enters this function from the retry notice's tap (and a
+// fast double-tap would stack two concurrent restores over the same snapshot),
+// so a restore already in flight is a no-op. Cleared in `finally` so a later
+// tap always gets a fresh attempt.
+let resumeRestoreInFlight = false;
+
 // Restore a recent in-progress session on load. Defensive: a malformed/old snapshot
 // is ignored (and cleared), never partially applied. Returns true when a session was
 // resumed (caller re-renders the banner). Read-only restore — one finality
 // read (#1692), no writes.
 async function restoreSessionSnapshot() {
+  if (resumeRestoreInFlight) return false;
+  resumeRestoreInFlight = true;
+  try {
+    return await restoreSessionSnapshotInner();
+  } finally {
+    resumeRestoreInFlight = false;
+  }
+}
+
+async function restoreSessionSnapshotInner() {
   // The store reads + validates the snapshot (recency gate, malformed guard, and the
   // "only resume genuinely-LOGGED work" rule — a snapshot carrying ONLY an engaged
   // plan with no logged sets must NOT silently reactivate guided mode on the next app
@@ -6030,8 +6086,19 @@ async function restoreSessionSnapshot() {
   // with no server session id has nothing to check; the local age + date
   // gates already passed.
   if (res.sessionId) {
+    // #1779 — show the pending state while the check runs (with its retries):
+    // a cold start must never read as an empty app while the session is still
+    // being restored.
+    renderResumePendingNotice();
     const stands = await confirmResumedSession(res.sessionId, fetchSessionFinality);
-    if (!stands) return false;
+    if (!stands) {
+      // `unknown` (retries exhausted, server unreachable): the snapshot is
+      // kept, so offer a tap-to-retry against it. `finalized`: the session is
+      // done — hide the notice, never resurrect it.
+      if (getResumeRefusalReason() === 'unknown') renderResumeRetryNotice();
+      else hideResumeNotice();
+      return false;
+    }
   }
   // Restore the stable session_id so re-preview after resume uses the same id.
   if (res.sessionId) {
