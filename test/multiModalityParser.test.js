@@ -303,3 +303,65 @@ test('F-1: spaced dashes stay separators; plus stays positive; dates do not fals
   assert.equal(recognizeModalityInput('Plank 60 sec RPE 0').rpe, 0);
   assert.equal(recognizeModalityInput('Elliptical 30 min level 0').level, 0);
 });
+
+// ---------------------------------------------------------------------------
+// Pre-review (B1–B4) — the first fix was a denylist with systematic gaps:
+// a spaced sign, other minus lookalikes, word ranges, spelled-out signs.
+// ---------------------------------------------------------------------------
+
+test('F-1 pre-review B1: a spaced sign refuses unless it separates two stated quantities', () => {
+  const spacedSign = [
+    'Plank - 45 sec',
+    'Run - 2 km',
+    'Run 5 km in - 20 min',
+    'AMRAP - 12 min: push-ups, squats',
+    '8 x - 400m / 90 sec',
+    '- 8 x 400m / 90 sec',
+    'Run - 32:10',
+    'Dead hang \u2212 45 seconds', // spaced U+2212
+    'Plank 60 sec RPE - 7', // a dash after a rating keyword is never a separator
+    'Plank 60 sec x -3',
+    'Plank 60 sec x-3',
+  ];
+  for (const t of spacedSign) {
+    assert.equal(recognizeModalityInput(t), null, `spaced sign must refuse: ${JSON.stringify(t)}`);
+  }
+  // The dash BETWEEN two stated quantities stays a separator — including
+  // duration-then-sets ("60 sec - 3x" reads as 3 sets, not negative sets).
+  assert.equal(recognizeModalityInput('Plank 60 sec - 3x').sets, 3);
+  assert.equal(recognizeModalityInput('Run 5 km - 30 min').duration_min, 30);
+  assert.equal(recognizeModalityInput('AMRAP 12 min: push-ups, squats - 6 rounds RPE 8').rounds, 6);
+});
+
+test('F-1 pre-review B2: every hyphen/minus lookalike is a sign', () => {
+  const lookalikes = [
+    'Dead hang \u201045 seconds', // U+2010 HYPHEN
+    'Dead hang \u201145 seconds', // U+2011 NON-BREAKING HYPHEN
+    'Dead hang \uFF0D45 seconds', // U+FF0D FULLWIDTH HYPHEN-MINUS
+    'Dead hang \uFE5845 seconds', // U+FE58 SMALL EM DASH
+    'Dead hang \u02D745 seconds', // U+02D7 MODIFIER LETTER MINUS SIGN
+    'Dead hang \u00AD45 seconds', // U+00AD SOFT HYPHEN
+    'Plank 30\u201045 sec',
+    'Plank 30\uFF0D45 sec',
+  ];
+  for (const t of lookalikes) {
+    assert.equal(recognizeModalityInput(t), null, `lookalike sign must refuse: ${JSON.stringify(t)}`);
+  }
+});
+
+test('F-1 pre-review B3: word ranges refuse', () => {
+  for (const t of ['Plank 30 to 45 sec', 'Run 5 to 10 km', 'Plank 30 or 45 sec', 'Plank 30 through 45 sec', 'Plank 60 sec RPE 7 to 8', 'Plank 60 sec RPE 7 - 8']) {
+    assert.equal(recognizeModalityInput(t), null, `word range must refuse: ${JSON.stringify(t)}`);
+  }
+  // "to" as a connector between two complete quantities is not a range.
+  assert.equal(recognizeModalityInput('Run 5 km to 30 min').distance_km, 5);
+  assert.equal(recognizeModalityInput('Plank 60 sec to failure').duration_sec, 60);
+});
+
+test('F-1 pre-review B4: spelled-out signs refuse', () => {
+  for (const t of ['Dead hang minus 45 seconds', 'Plank negative 45 sec']) {
+    assert.equal(recognizeModalityInput(t), null, `spelled sign must refuse: ${JSON.stringify(t)}`);
+  }
+  // "plus"/"positive" state the true value and still parse.
+  assert.equal(recognizeModalityInput('Dead hang plus 45 seconds').duration_sec, 45);
+});

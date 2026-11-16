@@ -36,19 +36,31 @@ const SLASH_SET = /\d+\s*\/\s*\d+/;
 // Two guards enforce that at the single entry point (recognizeModalityInput
 // is the only export that reads input, so the preview, the row builder, and
 // sentence stripping all see the same refusal):
-//   1. hasSignedOrRangedQuantity(t): a minus/dash character (ASCII hyphen,
-//      U+2212 minus, en/em dash) attached directly to a quantity's digits, or
-//      a digits–dash–digits range feeding a unit. A SPACED dash stays a
-//      separator ("Run 5 km - 30 min", "AMRAP 12 min: … - 6 rounds") and
-//      still parses; a spaced dash is this module's own separator idiom
-//      (circuits split movements on it), so only an ATTACHED sign refuses.
+//   1. hasSignedOrRangedQuantity(t): a minus/dash character attached directly
+//      to a quantity's digits, a SPACED sign that is not acting as a
+//      separator (see below), a digits–dash–digits range feeding a unit, a
+//      word range ("30 to 45 sec", "30 or 45 sec"), or a spelled-out sign
+//      ("minus 45 seconds", "negative 45 sec"). A spaced dash IS a separator
+//      — and still parses — only when it sits between two stated quantities:
+//      the text before it ends with a unit word or a number ("Run 5 km -
+//      30 min", "situps 20 - 6 rounds", "Plank 60 sec - 3x" — the last reads
+//      as duration, then sets), or the dash is inside a circuit movement
+//      list ("AMRAP 12 min: … - 6 rounds"). Any other spaced sign (start of
+//      input, after a name, after a preposition or `x`, after a rating
+//      keyword) is a sign and refuses.
 //   2. hasNonpositiveWork(rec): a recognized record whose work quantity is
 //      zero (duration / distance / rounds / work / sets / cap). Signs never
 //      survive extraction (the regexes match digits only), so zero is the
 //      only nonpositive value a record can carry. Ratings (RPE/HR/level) may
 //      legitimately be zero and are not work; a zero rest is meaningful
-//      (no rest between intervals) and is allowed.
-const SIGN_CHARS = '[-\\u2212\\u2013\\u2014]';
+//      (no rest between intervals) and is allowed. Ratings refuse only when
+//      signed or ranged — a literal zero rating is recorded as stated.
+// SIGN_CHARS is every Unicode hyphen/minus/dash lookalike (pre-review B2):
+// ASCII hyphen-minus, soft hyphen, modifier-letter minus, hyphen,
+// non-breaking hyphen, figure dash, en/em dash, horizontal bar, Unicode
+// minus, small em dash, small hyphen-minus, fullwidth hyphen-minus. Any
+// one of them in front of a quantity is a sign, never a new separator.
+const SIGN_CHARS = '[-\\u00AD\\u02D7\\u2010\\u2011\\u2012\\u2013\\u2014\\u2015\\u2212\\uFE58\\uFE63\\uFF0D]';
 // What may follow a quantity's digits: a unit, the "x" multiplier, a rounds
 // count, or the ":" of an mm:ss elapsed time. The unit list is what makes a
 // bare "2026-11-16" date (no unit follows either number) and a "Nov 3-5"
@@ -64,19 +76,62 @@ const SIGN_CHARS = '[-\\u2212\\u2013\\u2014]';
 const QUANTITY_FOLLOW = '(?:\\s*(?:km|miles?|mi|meters?|m|min(?:ute)?s?|mins|sec(?:ond)?s?|secs)\\b|\\s*x\\b|\\s*rounds?\\b|:)';
 const RANGE_FOLLOW = '(?:\\s*(?:km|miles?|mi|meters?|m|min(?:ute)?s?|mins|sec(?:ond)?s?|secs)\\b|\\s*x\\b|:)';
 const SIGNED_QUANTITY = new RegExp(`${SIGN_CHARS}(\\d+(?:\\.\\d+)?)(?=${QUANTITY_FOLLOW})`);
+const SIGNED_QUANTITY_SPACED = new RegExp(`${SIGN_CHARS}\\s+(\\d+(?:\\.\\d+)?)(?=${QUANTITY_FOLLOW})`, 'g');
 const RANGED_QUANTITY = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*${SIGN_CHARS}\\s*(\\d+(?:\\.\\d+)?)(?=${RANGE_FOLLOW})`);
+// Word ranges: "30 to 45 sec", "5 or 10 km", "30 through 45 sec". The
+// digits must sit directly around the word — "Run 5 km to 30 min" does not
+// match (a unit sits between the first number and "to"), and "Plank 60 sec
+// to failure" does not match (no digits after "to").
+const RANGE_WORDS = '(?:to|or|through|thru)';
+const RANGED_WORD_QUANTITY = new RegExp(`(\\d+(?:\\.\\d+)?)\\s+${RANGE_WORDS}\\s+(\\d+(?:\\.\\d+)?)(?=${RANGE_FOLLOW})`);
+// A signed sets multiplier: "x -3" / "x-3" (the "x" sits before the sign,
+// so the quantity-follow lookahead cannot see it — the digits end the
+// input). The \b stops a word ending in "x" ("Box", "Relax") from matching.
+const SETS_SIGN = new RegExp(`\\bx\\s*${SIGN_CHARS}\\s*\\d`, 'i');
+// A spelled-out sign in front of a quantity: "minus 45 seconds",
+// "negative 45 sec". "plus"/"positive" are not refused — the value is right.
+const SPELLED_SIGN = new RegExp(`\\b(?:minus|negative)\\s+(\\d+(?:\\.\\d+)?)(?=${QUANTITY_FOLLOW})`, 'i');
 // A signed or ranged rating (RPE / HR / level): the keyword anchors it, so
 // "RPE -7" and "HR 140-150" refuse while "Plank 60 sec - RPE 7" (spaced
-// separator, no sign on the number) still parses.
+// separator, no sign on the number) still parses. Spaced forms ("RPE - 7",
+// "RPE 7 - 8") refuse too — a dash after a rating keyword is never a
+// separator between quantities.
 const RATING_WORD = '(?:rpe|avg(?:erage)?\\s*hr|hr|level)';
 const SIGNED_RATING = new RegExp(`\\b${RATING_WORD}\\s*${SIGN_CHARS}\\d`, 'i');
+const SIGNED_RATING_SPACED = new RegExp(`\\b${RATING_WORD}\\s*${SIGN_CHARS}\\s*\\d`, 'i');
 const RANGED_RATING = new RegExp(`\\b${RATING_WORD}\\s*\\d+(?:\\.\\d+)?\\s*${SIGN_CHARS}\\s*\\d`, 'i');
+const RANGED_RATING_SPACED = new RegExp(`\\b${RATING_WORD}\\s*\\d+(?:\\.\\d+)?\\s*${SIGN_CHARS}\\s*\\d`, 'i');
+const RANGED_RATING_WORDS = new RegExp(`\\b${RATING_WORD}\\s*\\d+(?:\\.\\d+)?\\s+${RANGE_WORDS}\\s*\\d`, 'i');
+// The text before a spaced sign ends with a unit word or a number, or the
+// sign sits inside a circuit movement list (circuit keyword + colon before
+// it). Anything else before the sign means the sign is not separating two
+// stated quantities. The \b guards stop a trailing letter from reading as a
+// unit ("Gym - 5 sec" ends with "m" of Gym, not the metre unit).
+const SEPARATOR_BEFORE = /(?:\b(?:km|miles?|mi|meters?|m|min(?:ute)?s?|mins|sec(?:ond)?s?|secs)|\d)\s*$/i;
+const CIRCUIT_LIST_BEFORE = /\b(?:amrap|emom|circuit|wod|metcon)\b[^:]*:/i;
+
+function hasNonSeparatorSpacedSign(t) {
+  SIGNED_QUANTITY_SPACED.lastIndex = 0;
+  let m;
+  while ((m = SIGNED_QUANTITY_SPACED.exec(t)) !== null) {
+    const before = t.slice(0, m.index);
+    if (!SEPARATOR_BEFORE.test(before) && !CIRCUIT_LIST_BEFORE.test(before)) return true;
+  }
+  return false;
+}
 
 function hasSignedOrRangedQuantity(t) {
   return SIGNED_QUANTITY.test(t)
+    || hasNonSeparatorSpacedSign(t)
     || RANGED_QUANTITY.test(t)
+    || RANGED_WORD_QUANTITY.test(t)
+    || SETS_SIGN.test(t)
+    || SPELLED_SIGN.test(t)
     || SIGNED_RATING.test(t)
-    || RANGED_RATING.test(t);
+    || SIGNED_RATING_SPACED.test(t)
+    || RANGED_RATING.test(t)
+    || RANGED_RATING_SPACED.test(t)
+    || RANGED_RATING_WORDS.test(t);
 }
 
 // "mm:ss" / "h:mm:ss" → total seconds (null if unparseable). Mirrors the
