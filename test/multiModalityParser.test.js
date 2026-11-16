@@ -237,3 +237,69 @@ test('every recognized modality is in the MODALITIES vocabulary', () => {
   }
   assert.ok(Object.isFrozen(MODALITIES));
 });
+
+// ---------------------------------------------------------------------------
+// #1767 (Astra F-1) — a signed quantity must never become positive work.
+// The extractors match digits only, so the sign was silently dropped; the
+// entire signed, dimensional quantity is now consumed and nonpositive or
+// ambiguous work is refused before an approvable row exists.
+// ---------------------------------------------------------------------------
+
+test('F-1: signed quantities are refused (no positive row)', () => {
+  const signed = [
+    'Dead hang \u221245 seconds', // U+2212 minus — the audit payload
+    'Dead hang -45 seconds',
+    'Run -2 km in 20 min',
+    'Run 5 km in -20 min',
+    '8 x -400m / 90 sec',
+    '-8 x 400m / 90 sec',
+    'Run 6 x -2 min / 60 sec',
+    '8 x 400m / -90 sec',
+    'Plank 60 sec -3x',
+    'AMRAP -12 min: push-ups, squats',
+    'Plank 60 sec RPE -7',
+    'Run -32:10',
+    'Run 5 km - level -7',
+  ];
+  for (const t of signed) {
+    assert.equal(recognizeModalityInput(t), null, `signed quantity must refuse: ${JSON.stringify(t)}`);
+  }
+});
+
+test('F-1: ranged quantities are refused (ambiguous work)', () => {
+  for (const t of ['Plank 30-45 sec', 'Plank 30 - 45 sec', 'Run 5-10 km', 'Run 3-4 miles', 'Plank 60 sec RPE 7-8']) {
+    assert.equal(recognizeModalityInput(t), null, `ranged quantity must refuse: ${JSON.stringify(t)}`);
+  }
+});
+
+test('F-1: zero work quantities are refused', () => {
+  for (const t of ['Plank 0 sec', 'Run 0 km', 'Run 5 km in 0 min', '8 x 0m / 90 sec', '0 x 400m / 90 sec', 'Run 0:00', 'Plank 60 sec x0', 'AMRAP 0 min: push-ups, squats']) {
+    assert.equal(recognizeModalityInput(t), null, `zero quantity must refuse: ${JSON.stringify(t)}`);
+  }
+});
+
+test('F-1: zero rest is meaningful (no rest between intervals) and stays', () => {
+  const r = recognizeModalityInput('8 x 400m / 0 sec');
+  assert.equal(r.modality, 'cardio_interval');
+  assert.equal(r.rest_sec, 0);
+});
+
+test('F-1: spaced dashes stay separators; plus stays positive; dates do not false-trigger', () => {
+  // Spaced dash = this module's own separator idiom (circuits split on it).
+  assert.equal(recognizeModalityInput('Run 5 km - 30 min').distance_km, 5);
+  assert.equal(recognizeModalityInput('Run 5 km - 30 min').duration_min, 30);
+  assert.equal(recognizeModalityInput('AMRAP 12 min: push-ups, squats - 6 rounds RPE 8').rounds, 6);
+  assert.equal(recognizeModalityInput('Plank 60 sec - RPE 7').rpe, 7);
+  // Explicit plus is positive work, unchanged.
+  assert.equal(recognizeModalityInput('Dead hang +45 seconds').duration_sec, 45);
+  // A date range carries no modality unit, so it is not a ranged quantity.
+  assert.equal(recognizeModalityInput('Plank 60 sec on 2026-11-16').duration_sec, 60);
+  assert.equal(recognizeModalityInput('Run 5 km, Nov 16-17').distance_km, 5);
+  // Hyphenated names and non-unit signed numbers are untouched.
+  assert.equal(recognizeModalityInput('L-sit 45 sec').duration_sec, 45);
+  assert.equal(recognizeModalityInput('side-plank 30 sec').duration_sec, 30);
+  assert.equal(recognizeModalityInput('Plank 60 sec, temp -5C').duration_sec, 60);
+  // Zero ratings are legitimate (Borg 0; machine level 0).
+  assert.equal(recognizeModalityInput('Plank 60 sec RPE 0').rpe, 0);
+  assert.equal(recognizeModalityInput('Elliptical 30 min level 0').level, 0);
+});

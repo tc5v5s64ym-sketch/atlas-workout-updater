@@ -28,6 +28,92 @@ const CARDIO_NAME = /\b(run(?:ning)?|jog(?:ging)?|walk(?:ing)?|hike|row(?:ing)?|
 // set). If present, this is the resistance workflow → not ours.
 const SLASH_SET = /\d+\s*\/\s*\d+/;
 
+// F-1 (#1767): the quantity extractors below match digits only — a sign
+// character in front of a number was silently dropped, so a signed quantity
+// was recorded as positive work ("Dead hang −45 seconds" → a 45s timed_hold
+// row). The entire signed, dimensional quantity must be consumed, and
+// nonpositive or ambiguous work rejected before an approvable row exists.
+// Two guards enforce that at the single entry point (recognizeModalityInput
+// is the only export that reads input, so the preview, the row builder, and
+// sentence stripping all see the same refusal):
+//   1. hasSignedOrRangedQuantity(t): a minus/dash character (ASCII hyphen,
+//      U+2212 minus, en/em dash) attached directly to a quantity's digits, or
+//      a digits–dash–digits range feeding a unit. A SPACED dash stays a
+//      separator ("Run 5 km - 30 min", "AMRAP 12 min: … - 6 rounds") and
+//      still parses; a spaced dash is this module's own separator idiom
+//      (circuits split movements on it), so only an ATTACHED sign refuses.
+//   2. hasNonpositiveWork(rec): a recognized record whose work quantity is
+//      zero (duration / distance / rounds / work / sets / cap). Signs never
+//      survive extraction (the regexes match digits only), so zero is the
+//      only nonpositive value a record can carry. Ratings (RPE/HR/level) may
+//      legitimately be zero and are not work; a zero rest is meaningful
+//      (no rest between intervals) and is allowed.
+const SIGN_CHARS = '[-\\u2212\\u2013\\u2014]';
+// What may follow a quantity's digits: a unit, the "x" multiplier, a rounds
+// count, or the ":" of an mm:ss elapsed time. The unit list is what makes a
+// bare "2026-11-16" date (no unit follows either number) and a "Nov 3-5"
+// (no unit) NOT a range, and a "-5C" / "-5 degrees" (no modality unit)
+// NOT a signed quantity.
+// The range check deliberately omits "rounds": a movement list ends in a
+// spaced-dash separator before the rounds count ("situps 20 - 6 rounds"),
+// which is digits–dash–digits feeding "rounds" and must keep parsing. An
+// attached rounds range ("6-8 rounds") or signed rounds ("-6 rounds") is
+// still refused by the sign check below; only a SPACED rounds range
+// ("6 - 8 rounds") is a known residual — the spaced dash is this module's
+// separator idiom.
+const QUANTITY_FOLLOW = '(?:\\s*(?:km|miles?|mi|meters?|m|min(?:ute)?s?|mins|sec(?:ond)?s?|secs)\\b|\\s*x\\b|\\s*rounds?\\b|:)';
+const RANGE_FOLLOW = '(?:\\s*(?:km|miles?|mi|meters?|m|min(?:ute)?s?|mins|sec(?:ond)?s?|secs)\\b|\\s*x\\b|:)';
+const SIGNED_QUANTITY = new RegExp(`${SIGN_CHARS}(\\d+(?:\\.\\d+)?)(?=${QUANTITY_FOLLOW})`);
+const RANGED_QUANTITY = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*${SIGN_CHARS}\\s*(\\d+(?:\\.\\d+)?)(?=${RANGE_FOLLOW})`);
+// A signed or ranged rating (RPE / HR / level): the keyword anchors it, so
+// "RPE -7" and "HR 140-150" refuse while "Plank 60 sec - RPE 7" (spaced
+// separator, no sign on the number) still parses.
+const RATING_WORD = '(?:rpe|avg(?:erage)?\\s*hr|hr|level)';
+const SIGNED_RATING = new RegExp(`\\b${RATING_WORD}\\s*${SIGN_CHARS}\\d`, 'i');
+const RANGED_RATING = new RegExp(`\\b${RATING_WORD}\\s*\\d+(?:\\.\\d+)?\\s*${SIGN_CHARS}\\s*\\d`, 'i');
+
+function hasSignedOrRangedQuantity(t) {
+  return SIGNED_QUANTITY.test(t)
+    || RANGED_QUANTITY.test(t)
+    || SIGNED_RATING.test(t)
+    || RANGED_RATING.test(t);
+}
+
+// "mm:ss" / "h:mm:ss" → total seconds (null if unparseable). Mirrors the
+// row builder's elapsedToSec; kept local so this module stays dependency-free.
+function elapsedTotalSec(s) {
+  if (typeof s !== 'string') return null;
+  const parts = s.split(':');
+  if (parts.length < 2 || parts.length > 3) return null;
+  const nums = parts.map(Number);
+  if (nums.some((n) => !Number.isFinite(n) || n < 0)) return null;
+  return parts.length === 2 ? nums[0] * 60 + nums[1] : nums[0] * 3600 + nums[1] * 60 + nums[2];
+}
+
+function hasNonpositiveWork(rec) {
+  if (!rec || typeof rec !== 'object') return false;
+  const bad = (v) => v !== null && v !== undefined && !(v > 0);
+  if (rec.modality === 'timed_hold') {
+    return bad(rec.duration_sec) || bad(rec.sets);
+  }
+  if (rec.modality === 'cardio_steady') {
+    if (bad(rec.duration_min) || bad(rec.distance_km)) return true;
+    if (rec.elapsed !== null && rec.elapsed !== undefined) {
+      const total = elapsedTotalSec(rec.elapsed);
+      if (total !== null && total <= 0) return true;
+    }
+    return false;
+  }
+  if (rec.modality === 'cardio_interval') {
+    // rest_sec is deliberately unchecked: zero rest is meaningful.
+    return bad(rec.rounds) || bad(rec.work_distance_m) || bad(rec.work_sec);
+  }
+  if (rec.modality === 'circuit') {
+    return bad(rec.cap_min) || bad(rec.rounds);
+  }
+  return false;
+}
+
 function num(s) { const n = Number(s); return Number.isFinite(n) ? n : null; }
 
 // Shared scalar extractors (all optional, all null when absent).
@@ -234,11 +320,15 @@ function recognizeCircuit(t) {
 function recognizeModalityInput(text) {
   const t = String(text == null ? '' : text).trim();
   if (!t) return null;
-  return recognizeCircuit(t)
+  // F-1 (#1767): a signed, ranged, or zero quantity never becomes a row.
+  if (hasSignedOrRangedQuantity(t)) return null;
+  const rec = recognizeCircuit(t)
     || recognizeTimedHold(t)
     || recognizeIntervals(t)
     || recognizeCardio(t)
     || null;
+  if (rec && hasNonpositiveWork(rec)) return null;
+  return rec;
 }
 
 module.exports = { recognizeModalityInput, MODALITIES };
