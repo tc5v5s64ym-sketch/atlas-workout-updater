@@ -336,32 +336,41 @@ import { findPlanEntry, planMismatchForLift, formatPlanMismatchLine } from './pl
   function buildDateNotice(dateInfo) {
     if (!dateInfo || !dateInfo.date || !dateInfo.source) return null;
     const wrap = elc('div', 'rv-date');
-    if (dateInfo.source === 'screenshot') {
-      // The screenshot date passed the plausibility guard, but the model can still
-      // read a wrong (plausible) year off a cropped or odd header — so the accepted
-      // date is correctable here too, not just on the fallback path (07-02 incident:
-      // an invented year was shown truthfully but couldn't be fixed on the card).
-      wrap.appendChild(elc('div', 'rv-date-ok', `Date from screenshot: ${dateInfo.date}`));
-      const fixLink = elc('a', 'rv-date-edit', 'Wrong date? Fix it');
-      fixLink.href = '#';
-      fixLink.addEventListener('click', e => {
-        e.preventDefault();
-        if (wrap.querySelector('.rv-date-fix')) return;
-        wrap.appendChild(buildDateFixRow(dateInfo.date));
-      });
-      wrap.appendChild(fixLink);
-      return wrap;
-    }
     if (dateInfo.source === 'manual') {
       wrap.appendChild(elc('div', 'rv-date-ok', `Date: ${dateInfo.date}`));
       return wrap;
     }
     if (dateInfo.source !== 'today_fallback') return null;
     // Honest fallback copy: distinguish "no date seen" from "a date was seen but
-    // rejected as implausible" (e.g. a weekday-matched wrong year like 2020-06-28).
-    wrap.appendChild(elc('div', 'rv-date-warn', dateInfo.rejected
-      ? `⚠️ The screenshot's date reads ${dateInfo.rejected}, which doesn't look right — saving as ${dateInfo.date} (today) unless you set the real date:`
-      : `⚠️ No date found on the screenshot — saving as ${dateInfo.date} (today). Wrong? Set the real date:`));
+    // rejected as implausible" (e.g. a weekday-matched wrong year like 2020-06-28),
+    // and from "a plausible date was seen but not applied" (#1738: the screenshot
+    // date is a suggestion the athlete taps to accept, never an auto-apply).
+    if (dateInfo.suggested) {
+      wrap.appendChild(elc('div', 'rv-date-warn', `The screenshot's date reads ${dateInfo.suggested} — saving as ${dateInfo.date} (today) unless you use it:`));
+      const useBtn = elc('button', 'btn rv-date-apply', `Use ${dateInfo.suggested}`);
+      useBtn.type = 'button';
+      useBtn.addEventListener('click', () => {
+        const logDate = document.getElementById('log-date');
+        const form = document.getElementById('logger-form');
+        if (!logDate || !form) return;
+        logDate.value = dateInfo.suggested;
+        // A REAL input event — app.js listens for it to latch logDateManuallyEntered,
+        // which makes the tapped date win the server-side resolution on re-preview.
+        logDate.dispatchEvent(new Event('input', { bubbles: true }));
+        // Drop the stale server-resolved session_id so the re-preview re-derives
+        // the id from the tapped date (Review PR #795).
+        const staleSid = document.getElementById('log-session-id');
+        if (staleSid) staleSid.value = '';
+        useBtn.textContent = 'Re-previewing…';
+        useBtn.disabled = true;
+        form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+      });
+      wrap.appendChild(useBtn);
+    } else {
+      wrap.appendChild(elc('div', 'rv-date-warn', dateInfo.rejected
+        ? `⚠️ The screenshot's date reads ${dateInfo.rejected}, which doesn't look right — saving as ${dateInfo.date} (today) unless you set the real date:`
+        : `⚠️ No date found on the screenshot — saving as ${dateInfo.date} (today). Wrong? Set the real date:`));
+    }
     wrap.appendChild(buildDateFixRow(dateInfo.date));
     return wrap;
   }
