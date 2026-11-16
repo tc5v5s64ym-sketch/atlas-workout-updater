@@ -274,6 +274,9 @@ const state = {
   updateCalls: [],   // every updateColumnCells call (the seal stamp primitive)
   planSetRows: [],   // sandbox: the materialized Session_Plan_Sets tab (appends + seal stamps)
   failNextSeal: false, // sandbox: armed via the state server; the next seal attempt throws once
+  failFinalityReads: false, // #1779: armed via the state server; Session_Plans row reads throw
+                          // while set, so isSessionFinalized answers `unknown` — the cold-start
+                          // finality outage the resume hardening must survive
   losePlanSetRows: false, // sandbox: armed via the state server; Session_Plan_Sets appends report
                           // success but never materialize — a LOST accept checkpoint
   visionCalls: [],   // every stubbed vision parse (the F10D screenshot scenario's evidence)
@@ -339,6 +342,13 @@ const fakeSheets = {
     return [];
   },
   getSheetRows: async tabName => {
+    // #1779 — while the finality fault is armed, the Session_Plans row read
+    // throws, so isSessionFinalized returns `unknown` (the client reads that as
+    // a refused resume). Other tabs are unaffected: only the finality answer
+    // is faulted, never the workbook.
+    if (tabName === 'Session_Plans' && state.failFinalityReads) {
+      throw new Error('Simulated finality outage (armed via /fail-finality)');
+    }
     if (tabName === 'Log_Cleaned') return servedLogRows.concat(appendedRowsFor('Log_Cleaned'));
     if (tabName === 'Effort') return appendedRowsFor('Effort');
     if (tabName === 'Session_Plans') return appendedRowsFor('Session_Plans');
@@ -776,6 +786,18 @@ const stateServer = http.createServer((req, res) => {
     res.end(JSON.stringify({ armed: true }));
     return;
   }
+  // #1779 harness control: fault the finality read (`/fail-finality?on=1` arms,
+  // `?on=0` disarms). While armed, Session_Plans row reads throw, so the
+  // server answers `unknown` to the resume's finality check — the cold-start
+  // outage the resume hardening must survive. The fault is armed on the
+  // REBOOTED server (state is process-local), after the reboot, before the
+  // reopen.
+  if (String(req.url || '').startsWith('/fail-finality')) {
+    const u = new URL(req.url, 'http://127.0.0.1');
+    state.failFinalityReads = u.searchParams.get('on') === '1';
+    res.end(JSON.stringify({ armed: state.failFinalityReads }));
+    return;
+  }
   // Harness control (scripted-coach posture only): arm the exact prose the stubbed model
   // will return on the next chat turn, so a spec can feed the real route a known
   // fabrication. Refused unless the posture is explicitly enabled.
@@ -947,7 +969,13 @@ const stateServer = http.createServer((req, res) => {
   // LOOPBACK ONLY, both ports (Codex P2, PR #1251): an unspecified host binds beyond
   // 127.0.0.1, and in the live posture the state server can read real sandbox rows —
   // a reachable peer must not get that surface. The specs always dial 127.0.0.1.
-  const server = app.listen(0, '127.0.0.1', () => {
+  // #1779 — ATLAS_GATE_PORT pins the app port for a restart-resume spec: the
+  // client snapshot lives in localStorage, which is origin-scoped (port
+  // included), so a rebooted server must come back on the SAME port or the
+  // reopened client cannot see its snapshot. Default 0 keeps the dynamic
+  // parallel-safe port everywhere else; the state port always stays dynamic.
+  const GATE_PORT = Number(process.env.ATLAS_GATE_PORT || 0);
+  const server = app.listen(GATE_PORT, '127.0.0.1', () => {
     stateServer.listen(0, '127.0.0.1', () => {
       // The spec parses these lines to find the dynamic ports. The posture line is
       // printed first so a rerun transcript records which model posture served it,
