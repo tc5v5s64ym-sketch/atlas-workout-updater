@@ -36,18 +36,21 @@ const SLASH_SET = /\d+\s*\/\s*\d+/;
 // Two guards enforce that at the single entry point (recognizeModalityInput
 // is the only export that reads input, so the preview, the row builder, and
 // sentence stripping all see the same refusal):
-//   1. hasSignedOrRangedQuantity(t): a minus/dash character attached directly
-//      to a quantity's digits, a SPACED sign that is not acting as a
-//      separator (see below), a digits–dash–digits range feeding a unit, a
-//      word range ("30 to 45 sec", "30 or 45 sec"), or a spelled-out sign
-//      ("minus 45 seconds", "negative 45 sec"). A spaced dash IS a separator
-//      — and still parses — only when it sits between two stated quantities:
-//      the text before it ends with a unit word or a number ("Run 5 km -
-//      30 min", "situps 20 - 6 rounds", "Plank 60 sec - 3x" — the last reads
-//      as duration, then sets), or the dash is inside a circuit movement
-//      list ("AMRAP 12 min: … - 6 rounds"). Any other spaced sign (start of
+//   1. hasSignedOrRangedQuantity(t): an attached or spaced sign on a
+//      quantity, a digits–dash–digits range feeding a unit, a word range
+//      ("30 to 45 sec", "between 30 and 45 sec"), a tilde/dot range
+//      ("30~45 sec", "30..45 sec"), a spelled-out sign ("minus 45 seconds",
+//      "negative 45 sec"), or a signed sets multiplier ("x -3", "3x -3").
+//      A spaced dash IS a separator — and still parses — only when it sits
+//      between two stated quantities: the text before it ends with a unit
+//      word or a number ("Run 5 km - 30 min", "situps 20 - 6 rounds",
+//      "Plank 60 sec - 3x" — the last reads as duration, then sets), or the
+//      dash is inside a circuit movement list and the rounds count follows
+//      it ("AMRAP 12 min: … - 6 rounds"). Any other spaced sign (start of
 //      input, after a name, after a preposition or `x`, after a rating
-//      keyword) is a sign and refuses.
+//      keyword) is a sign and refuses. A spaced dash between two quantities
+//      of the SAME dimension is a range, not a separator ("60 sec - 45 sec",
+//      "5 km - 10 km") — hasSameDimensionPair refuses those.
 //   2. hasNonpositiveWork(rec): a recognized record whose work quantity is
 //      zero (duration / distance / rounds / work / sets / cap). Signs never
 //      survive extraction (the regexes match digits only), so zero is the
@@ -55,12 +58,23 @@ const SLASH_SET = /\d+\s*\/\s*\d+/;
 //      legitimately be zero and are not work; a zero rest is meaningful
 //      (no rest between intervals) and is allowed. Ratings refuse only when
 //      signed or ranged — a literal zero rating is recorded as stated.
-// SIGN_CHARS is every Unicode hyphen/minus/dash lookalike (pre-review B2):
-// ASCII hyphen-minus, soft hyphen, modifier-letter minus, hyphen,
-// non-breaking hyphen, figure dash, en/em dash, horizontal bar, Unicode
-// minus, small em dash, small hyphen-minus, fullwidth hyphen-minus. Any
-// one of them in front of a quantity is a sign, never a new separator.
-const SIGN_CHARS = '[-\\u00AD\\u02D7\\u2010\\u2011\\u2012\\u2013\\u2014\\u2015\\u2212\\uFE58\\uFE63\\uFF0D]';
+// SIGN_CHARS is the Unicode dash category (\p{Pd} — every hyphen/dash) plus
+// the minus signs that live outside it: U+2212 minus, U+207B superscript
+// minus, U+208B subscript minus, U+2796 heavy minus, U+02D7 modifier-letter
+// minus, U+00AD soft hyphen, U+2043 hyphen bullet. Any one of them in front
+// of a quantity is a sign. A new dash added to Unicode is covered by \p{Pd}
+// automatically; the explicit list is only the non-Pd stragglers. All
+// patterns using it carry the `u` flag. (Pre-review B6: the previous
+// 13-char denylist leaked U+207B/U+208B/U+2796/U+2043/U+2E3A/U+2E3B/U+058A/
+// U+05BE/U+1806/U+2E17/U+2E40.)
+const SIGN_CHARS = '[\\p{Pd}\\u2212\\u207B\\u208B\\u2796\\u02D7\\u00AD\\u2043]';
+// A signed number may lead with the decimal point ("-.5 sec" reads as 5 in
+// the extractors — the sign is dropped AND the point is skipped — so the
+// guard must match it; the unsigned ".5 sec" magnitude quirk is pre-existing
+// and out of scope). Plain numbers have no leading dot.
+const SIGNED_NUMBER = '(?:\\d+(?:\\.\\d+)?|\\.\\d+)';
+const PLAIN_NUMBER = '(?:\\d+(?:\\.\\d+)?)';
+const UNIT = '(?:km|miles?|mi|meters?|m|min(?:ute)?s?|mins|sec(?:ond)?s?|secs)';
 // What may follow a quantity's digits: a unit, the "x" multiplier, a rounds
 // count, or the ":" of an mm:ss elapsed time. The unit list is what makes a
 // bare "2026-11-16" date (no unit follows either number) and a "Nov 3-5"
@@ -73,49 +87,97 @@ const SIGN_CHARS = '[-\\u00AD\\u02D7\\u2010\\u2011\\u2012\\u2013\\u2014\\u2015\\
 // still refused by the sign check below; only a SPACED rounds range
 // ("6 - 8 rounds") is a known residual — the spaced dash is this module's
 // separator idiom.
-const QUANTITY_FOLLOW = '(?:\\s*(?:km|miles?|mi|meters?|m|min(?:ute)?s?|mins|sec(?:ond)?s?|secs)\\b|\\s*x\\b|\\s*rounds?\\b|:)';
-const RANGE_FOLLOW = '(?:\\s*(?:km|miles?|mi|meters?|m|min(?:ute)?s?|mins|sec(?:ond)?s?|secs)\\b|\\s*x\\b|:)';
-const SIGNED_QUANTITY = new RegExp(`${SIGN_CHARS}(\\d+(?:\\.\\d+)?)(?=${QUANTITY_FOLLOW})`);
-const SIGNED_QUANTITY_SPACED = new RegExp(`${SIGN_CHARS}\\s+(\\d+(?:\\.\\d+)?)(?=${QUANTITY_FOLLOW})`, 'g');
-const RANGED_QUANTITY = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*${SIGN_CHARS}\\s*(\\d+(?:\\.\\d+)?)(?=${RANGE_FOLLOW})`);
-// Word ranges: "30 to 45 sec", "5 or 10 km", "30 through 45 sec". The
-// digits must sit directly around the word — "Run 5 km to 30 min" does not
-// match (a unit sits between the first number and "to"), and "Plank 60 sec
-// to failure" does not match (no digits after "to").
-const RANGE_WORDS = '(?:to|or|through|thru)';
-const RANGED_WORD_QUANTITY = new RegExp(`(\\d+(?:\\.\\d+)?)\\s+${RANGE_WORDS}\\s+(\\d+(?:\\.\\d+)?)(?=${RANGE_FOLLOW})`);
+const QUANTITY_FOLLOW = `(?:\\s*${UNIT}\\b|\\s*x\\b|\\s*rounds?\\b|:)`;
+const RANGE_FOLLOW = `(?:\\s*${UNIT}\\b|\\s*x\\b|:)`;
+const SIGNED_QUANTITY = new RegExp(`${SIGN_CHARS}(${SIGNED_NUMBER})(?=${QUANTITY_FOLLOW})`, 'u');
+const SIGNED_QUANTITY_SPACED = new RegExp(`${SIGN_CHARS}\\s+(${SIGNED_NUMBER})(?=${QUANTITY_FOLLOW})`, 'gu');
+// The (?<![\d:]) on every range's first number stops an mm:ss elapsed time
+// from reading as a range start ("Run 32:10 - 5 km" — the "10" is the
+// seconds half, not a range start; the lookbehind also stops a suffix of a
+// longer number from matching as the start).
+const RANGED_QUANTITY = new RegExp(`(?<![\\d:])(${PLAIN_NUMBER})\\s*${SIGN_CHARS}\\s*(${PLAIN_NUMBER})(?=${RANGE_FOLLOW})`, 'u');
+// Word ranges: "30 to 45 sec", "5 or 10 km", "30 through 45 sec",
+// "30 and 45 sec". The digits must sit directly around the word —
+// "Run 5 km to 30 min" does not match (a unit sits between the first number
+// and "to"), and "Plank 60 sec to failure" does not match (no digits after
+// "to"). "between X and Y" is its own pattern below (the word comes first).
+const RANGE_WORDS = '(?:to|or|through|thru|and)';
+const RANGED_WORD_QUANTITY = new RegExp(`(?<![\\d:])(${PLAIN_NUMBER})\\s+${RANGE_WORDS}\\s+(${PLAIN_NUMBER})(?=${RANGE_FOLLOW})`, 'u');
+const BETWEEN_RANGE = new RegExp(`\\bbetween\\s+(${PLAIN_NUMBER})\\s*(?:${UNIT})?\\s+and\\s+(${PLAIN_NUMBER})\\s*(?:${UNIT})\\b`, 'iu');
+// Tilde / dot ranges: "30~45 sec", "30..45 sec" (and "..."). A lone "~45"
+// (approximate, no digits before it) does not match — that stays the
+// pre-existing approx-nominal residual.
+const TILDE_RANGE = new RegExp(`(?<![\\d:])(${PLAIN_NUMBER})\\s*~\\s*(${PLAIN_NUMBER})(?=${RANGE_FOLLOW})`, 'u');
+const DOT_RANGE = new RegExp(`(?<![\\d:])(${PLAIN_NUMBER})\\s*\\.\\.+\\s*(${PLAIN_NUMBER})(?=${RANGE_FOLLOW})`, 'u');
 // A signed sets multiplier: "x -3" / "x-3" (the "x" sits before the sign,
 // so the quantity-follow lookahead cannot see it — the digits end the
-// input). The \b stops a word ending in "x" ("Box", "Relax") from matching.
-const SETS_SIGN = new RegExp(`\\bx\\s*${SIGN_CHARS}\\s*\\d`, 'i');
+// input). The "x" may follow a digit ("3x -3") or a word boundary — but a
+// word merely ending in "x" ("Box", "Relax") must not match.
+const SETS_SIGN = new RegExp(`(?:\\b|(?<=\\d))x\\s*${SIGN_CHARS}\\s*${SIGNED_NUMBER}`, 'iu');
 // A spelled-out sign in front of a quantity: "minus 45 seconds",
 // "negative 45 sec". "plus"/"positive" are not refused — the value is right.
-const SPELLED_SIGN = new RegExp(`\\b(?:minus|negative)\\s+(\\d+(?:\\.\\d+)?)(?=${QUANTITY_FOLLOW})`, 'i');
+const SPELLED_SIGN = new RegExp(`\\b(?:minus|negative)\\s+(${SIGNED_NUMBER})(?=${QUANTITY_FOLLOW})`, 'iu');
 // A signed or ranged rating (RPE / HR / level): the keyword anchors it, so
 // "RPE -7" and "HR 140-150" refuse while "Plank 60 sec - RPE 7" (spaced
 // separator, no sign on the number) still parses. Spaced forms ("RPE - 7",
-// "RPE 7 - 8") refuse too — a dash after a rating keyword is never a
-// separator between quantities.
+// "RPE 7 - 8") and spelled forms ("RPE minus 7") refuse too — a dash after
+// a rating keyword is never a separator between quantities.
 const RATING_WORD = '(?:rpe|avg(?:erage)?\\s*hr|hr|level)';
-const SIGNED_RATING = new RegExp(`\\b${RATING_WORD}\\s*${SIGN_CHARS}\\d`, 'i');
-const SIGNED_RATING_SPACED = new RegExp(`\\b${RATING_WORD}\\s*${SIGN_CHARS}\\s*\\d`, 'i');
-const RANGED_RATING = new RegExp(`\\b${RATING_WORD}\\s*\\d+(?:\\.\\d+)?\\s*${SIGN_CHARS}\\s*\\d`, 'i');
-const RANGED_RATING_SPACED = new RegExp(`\\b${RATING_WORD}\\s*\\d+(?:\\.\\d+)?\\s*${SIGN_CHARS}\\s*\\d`, 'i');
-const RANGED_RATING_WORDS = new RegExp(`\\b${RATING_WORD}\\s*\\d+(?:\\.\\d+)?\\s+${RANGE_WORDS}\\s*\\d`, 'i');
-// The text before a spaced sign ends with a unit word or a number, or the
-// sign sits inside a circuit movement list (circuit keyword + colon before
-// it). Anything else before the sign means the sign is not separating two
-// stated quantities. The \b guards stop a trailing letter from reading as a
-// unit ("Gym - 5 sec" ends with "m" of Gym, not the metre unit).
-const SEPARATOR_BEFORE = /(?:\b(?:km|miles?|mi|meters?|m|min(?:ute)?s?|mins|sec(?:ond)?s?|secs)|\d)\s*$/i;
+const SIGNED_RATING = new RegExp(`\\b${RATING_WORD}\\s*${SIGN_CHARS}${SIGNED_NUMBER}`, 'iu');
+const SIGNED_RATING_SPACED = new RegExp(`\\b${RATING_WORD}\\s*${SIGN_CHARS}\\s*${SIGNED_NUMBER}`, 'iu');
+const RANGED_RATING = new RegExp(`\\b${RATING_WORD}\\s*${PLAIN_NUMBER}\\s*${SIGN_CHARS}\\s*${PLAIN_NUMBER}`, 'iu');
+const RANGED_RATING_SPACED = new RegExp(`\\b${RATING_WORD}\\s*${PLAIN_NUMBER}\\s*${SIGN_CHARS}\\s*${PLAIN_NUMBER}`, 'iu');
+const RANGED_RATING_WORDS = new RegExp(`\\b${RATING_WORD}\\s*${PLAIN_NUMBER}\\s+${RANGE_WORDS}\\s*${PLAIN_NUMBER}`, 'iu');
+const SPELLED_RATING = new RegExp(`\\b${RATING_WORD}\\s+(?:minus|negative)\\s+${SIGNED_NUMBER}`, 'iu');
+// The text before a spaced sign ends with a unit word or a number — where
+// the unit may be glued to its digits ("5km", "60sec": the unit is preceded
+// by a digit, not a word boundary) or be a bare "k" after a digit ("5k").
+// The \b guards stop a trailing letter from reading as a unit ("Gym - 5 sec"
+// ends with "m" of Gym, not the metre unit; "Plank - 45 sec" ends with "k"
+// of Plank, not the kilo shorthand).
+const SEPARATOR_BEFORE = /(?:(?:\b|(?<=\d))(?:km|miles?|mi|meters?|m|min(?:ute)?s?|mins|sec(?:ond)?s?|secs)|(?<=\d)k|\d)\s*$/i;
 const CIRCUIT_LIST_BEFORE = /\b(?:amrap|emom|circuit|wod|metcon)\b[^:]*:/i;
+
+// A spaced dash between two quantities of the SAME dimension is a range,
+// not a separator ("60 sec - 45 sec", "5 km - 10 km", "30 sec to 45 sec"):
+// the row would record the first end as definite and silently drop the
+// second. Different dimensions ("5 km - 30 min") and sets/rounds/RPE after
+// the dash stay separators.
+function dimensionOf(unit) {
+  const u = String(unit || '').toLowerCase();
+  if (/^(min|mins|minute|minutes|sec|secs|second|seconds)$/.test(u)) return 'duration';
+  if (/^(km|mi|mile|miles|m|meter|meters)$/.test(u)) return 'distance';
+  return null;
+}
+const PAIR_DASH = new RegExp(`(?<![\\d:])(${PLAIN_NUMBER})\\s*(${UNIT})\\s*${SIGN_CHARS}\\s*(${PLAIN_NUMBER})\\s*(${UNIT})\\b`, 'gu');
+const PAIR_WORD = new RegExp(`(?<![\\d:])(${PLAIN_NUMBER})\\s*(${UNIT})\\s+${RANGE_WORDS}\\s+(${PLAIN_NUMBER})\\s*(${UNIT})\\b`, 'giu');
+function hasSameDimensionPair(t) {
+  for (const re of [PAIR_DASH, PAIR_WORD]) {
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(t)) !== null) {
+      const d1 = dimensionOf(m[2]);
+      const d2 = dimensionOf(m[4]);
+      if (d1 && d1 === d2) return true;
+    }
+  }
+  return false;
+}
 
 function hasNonSeparatorSpacedSign(t) {
   SIGNED_QUANTITY_SPACED.lastIndex = 0;
   let m;
   while ((m = SIGNED_QUANTITY_SPACED.exec(t)) !== null) {
     const before = t.slice(0, m.index);
-    if (!SEPARATOR_BEFORE.test(before) && !CIRCUIT_LIST_BEFORE.test(before)) return true;
+    if (SEPARATOR_BEFORE.test(before)) continue;
+    // Inside a circuit movement list the dash is the list/metadata
+    // separator — but only for the rounds count that legitimately follows
+    // it ("... - 6 rounds"). Any other spaced quantity there is a signed
+    // quantity the splitter would silently drop ("dead hang - 45 sec"),
+    // so it refuses instead of dropping.
+    const after = t.slice(m.index + m[0].length);
+    if (/^\s*rounds?\b/i.test(after) && CIRCUIT_LIST_BEFORE.test(before)) continue;
+    return true;
   }
   return false;
 }
@@ -123,15 +185,20 @@ function hasNonSeparatorSpacedSign(t) {
 function hasSignedOrRangedQuantity(t) {
   return SIGNED_QUANTITY.test(t)
     || hasNonSeparatorSpacedSign(t)
+    || hasSameDimensionPair(t)
     || RANGED_QUANTITY.test(t)
     || RANGED_WORD_QUANTITY.test(t)
+    || BETWEEN_RANGE.test(t)
+    || TILDE_RANGE.test(t)
+    || DOT_RANGE.test(t)
     || SETS_SIGN.test(t)
     || SPELLED_SIGN.test(t)
     || SIGNED_RATING.test(t)
     || SIGNED_RATING_SPACED.test(t)
     || RANGED_RATING.test(t)
     || RANGED_RATING_SPACED.test(t)
-    || RANGED_RATING_WORDS.test(t);
+    || RANGED_RATING_WORDS.test(t)
+    || SPELLED_RATING.test(t);
 }
 
 // "mm:ss" / "h:mm:ss" → total seconds (null if unparseable). Mirrors the

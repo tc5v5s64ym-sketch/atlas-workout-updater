@@ -365,3 +365,81 @@ test('F-1 pre-review B4: spelled-out signs refuse', () => {
   // "plus"/"positive" state the true value and still parse.
   assert.equal(recognizeModalityInput('Dead hang plus 45 seconds').duration_sec, 45);
 });
+
+// Pre-review round 2 (B5–B10) — the B1–B4 fix left holes of its own: a
+// leading-decimal sign, more minus lookalikes, "between" ranges,
+// same-dimension spaced pairs, and two false-refusal regressions on common
+// shorthand (glued units, elapsed-then-quantity separators).
+// ---------------------------------------------------------------------------
+
+test('F-1 pre-review B5: a leading-decimal sign refuses', () => {
+  for (const t of ['Dead hang -.5 seconds', 'Plank -.5 sec', 'Plank - .5 sec', 'Plank -.05 sec', 'Run -.5 km', 'Plank -0.5 sec']) {
+    assert.equal(recognizeModalityInput(t), null, `leading-decimal sign must refuse: ${JSON.stringify(t)}`);
+  }
+  // The unsigned ".5 sec" magnitude quirk (reads 5) is pre-existing and
+  // out of scope — only the SIGNED form is F-1.
+});
+
+test('F-1 pre-review B6: the sign class is the Unicode dash category, not a denylist', () => {
+  const lookalikes = [
+    'Dead hang \u207B45 seconds', // U+207B SUPERSCRIPT MINUS
+    'Dead hang \u208B45 seconds', // U+208B SUBSCRIPT MINUS
+    'Dead hang \u279645 seconds', // U+2796 HEAVY MINUS SIGN
+    'Dead hang \u204345 seconds', // U+2043 HYPHEN BULLET
+    'Dead hang \u2E3A45 seconds', // U+2E3A TWO-EM DASH
+    'Dead hang \u2E3B45 seconds', // U+2E3B THREE-EM DASH
+    'Dead hang \u058A45 seconds', // U+058A ARMENIAN HYPHEN
+    'Dead hang \u05BE45 seconds', // U+05BE HEBREW MAQAF
+    'Dead hang \u180645 seconds', // U+1806 MONGOLIAN TODO HYPHEN
+    'Dead hang \u2E1745 seconds', // U+2E17 DOUBLE OBLIQUE HYPHEN
+    'Dead hang \u2E4045 seconds', // U+2E40 DOUBLE HYPHEN
+    'Dead hang \u207B 45 seconds', // spaced superscript minus
+    'Plank 30\u2E3A45 sec', // two-em dash range
+  ];
+  for (const t of lookalikes) {
+    assert.equal(recognizeModalityInput(t), null, `lookalike sign must refuse: ${JSON.stringify(t)}`);
+  }
+  // Characters that are NOT minuses still parse: U+2019 right single quote
+  // and U+00AF macron in front of the number are punctuation, not signs.
+  assert.equal(recognizeModalityInput('Dead hang \u201945 seconds').duration_sec, 45);
+  assert.equal(recognizeModalityInput('Dead hang \u00AF45 seconds').duration_sec, 45);
+});
+
+test('F-1 pre-review B7: "between X and Y" ranges refuse', () => {
+  for (const t of ['Plank between 30 and 45 sec', 'Run between 5 and 10 km', 'Run 5 km between 20 and 30 min', 'Plank between 5 km and 10 km']) {
+    assert.equal(recognizeModalityInput(t), null, `between-range must refuse: ${JSON.stringify(t)}`);
+  }
+});
+
+test('F-1 pre-review B8: a spaced dash between same-dimension quantities is a range', () => {
+  for (const t of ['Plank 60 sec - 45 sec', 'Dead hang 45 sec - 30 sec', 'Run 5 km - 10 km', 'Run 5 km - 500 m', 'Plank 60 sec - 3 min', 'Plank 30 sec to 45 sec', 'Run 5 km to 10 km']) {
+    assert.equal(recognizeModalityInput(t), null, `same-dimension pair must refuse: ${JSON.stringify(t)}`);
+  }
+  // Different dimensions stay separators.
+  assert.equal(recognizeModalityInput('Run 5 km - 30 min').duration_min, 30);
+  assert.equal(recognizeModalityInput('Run 5 km to 30 min').distance_km, 5);
+});
+
+test('F-1 pre-review B9: a unit glued to its digits still separates', () => {
+  assert.equal(recognizeModalityInput('Run 5km - 30 min').distance_km, 5);
+  assert.equal(recognizeModalityInput('Run 5km - 30 min').duration_min, 30);
+  assert.equal(recognizeModalityInput('Run 10km - 45 min').distance_km, 10);
+  assert.equal(recognizeModalityInput('Plank 60sec - 3x').sets, 3);
+  assert.equal(recognizeModalityInput('Plank 45sec - 2x').duration_sec, 45);
+  // Bare "5k" was never a distance, but the real 30-min row must survive.
+  assert.equal(recognizeModalityInput('Run 5k - 30 min').duration_min, 30);
+});
+
+test('F-1 pre-review B10: an elapsed time before the separator is not a range start', () => {
+  assert.equal(recognizeModalityInput('Run 32:10 - 5 km').distance_km, 5);
+  assert.equal(recognizeModalityInput('Run 32:10 - 30 min').duration_min, 30);
+  assert.equal(recognizeModalityInput('Run 5 km - 32:10').distance_km, 5);
+});
+
+test('F-1 pre-review N9/N10/N11/N12: range spellings and rating signs folded in', () => {
+  for (const t of ['Plank 30 and 45 sec', 'Plank 30~45 sec', 'Plank 30..45 sec', 'Plank 30 ... 45 sec', 'Plank 60 sec 3x -3', 'Plank 60 sec 3x - 3', 'Plank 60 sec RPE minus 7', 'Plank 60 sec RPE negative 7', 'AMRAP 12 min: dead hang - 45 sec', 'Plank 60 sec - 0 sec']) {
+    assert.equal(recognizeModalityInput(t), null, `must refuse: ${JSON.stringify(t)}`);
+  }
+  // The rounds count after a circuit list still separates.
+  assert.equal(recognizeModalityInput('AMRAP 12 min: - 6 rounds').rounds, 6);
+});
