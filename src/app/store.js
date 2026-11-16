@@ -191,16 +191,44 @@ function storage() {
   catch { return null; }
 }
 
+// #1779 — does the PERSISTED snapshot itself carry in-progress work (logged
+// sets, or an explicitly accepted plan)? Read-only; a malformed snapshot has
+// nothing to keep (hydrate clears it on the next load anyway).
+function persistedSnapshotHasContent(store) {
+  try {
+    const raw = store.getItem(SNAPSHOT_KEY);
+    if (!raw) return false;
+    const snap = JSON.parse(raw);
+    if (!snap || typeof snap !== 'object') return false;
+    if (Array.isArray(snap.sessionLog) && snap.sessionLog.length) return true;
+    const plan = snap.activePlannedSession;
+    if (plan && plan.accepted === true && Array.isArray(plan.exercises)) return true;
+    return false;
+  } catch { return false; }
+}
+
 // Persist ONLY an in-progress session (logged sets OR an active plan). `sessionId`
 // is the stable server session id (the caller reads it from the DOM). Best-effort:
 // a storage failure never throws into the workout flow.
+//
+// #1779 — an empty in-memory buffer must NEVER delete a persisted snapshot that
+// still carries logged work. After a refused resume (finality `unknown` on a cold
+// start) the slice holds nothing while the snapshot is the only copy of the
+// athlete's sets; the unconditional persist on beforeunload / tab-hide used to
+// delete it permanently. Deliberate clears (save, Start Over, explicit discard,
+// finalized, stale) all go through clearPersistedSnapshot(); this branch only
+// drops a snapshot that itself has nothing to keep.
 export function persistSessionSnapshot(sessionId) {
   try {
     const store = storage();
     if (!store) return;
     const log = _sessionLog.value;
     const plan = _activePlannedSession.value;
-    if (!(Array.isArray(log) && log.length) && !plan) { store.removeItem(SNAPSHOT_KEY); return; }
+    if (!(Array.isArray(log) && log.length) && !plan) {
+      if (persistedSnapshotHasContent(store)) return;
+      store.removeItem(SNAPSHOT_KEY);
+      return;
+    }
     const revs = _sessionRevisions.value;
     const implicit = _sessionImplicitRecs.value;
     const pendingReplacement = _pendingReplacement.value;
@@ -303,6 +331,14 @@ export function rollbackResumedSnapshot({ clearPersisted = true } = {}) {
   if (clearPersisted) clearPersistedSnapshot();
 }
 
+// #1779 — why the last confirmResumedSession call refused a resume, so the
+// shell can tell the athlete: 'finalized' (the session is done — hide the
+// notice, never resurrect it) or 'unknown' (the check could not be
+// established — offer a tap-to-retry). Null when the last resume stood (or no
+// resume was ever confirmed). Reset by resetSessionStore().
+const _resumeRefusal = signal(null);
+export function getResumeRefusalReason() { return _resumeRefusal.value; }
+
 // #1692 D1 — confirm a locally-hydrated resume against the server's closeout
 // finality. `checkFinality(sessionId)` resolves to the
 // services/closeoutFinality.js answer shape: `{ finalized: boolean }`, or
@@ -312,21 +348,37 @@ export function rollbackResumedSnapshot({ clearPersisted = true } = {}) {
 // is rolled back and its snapshot cleared; an UNKNOWN answer fails closed
 // (refuse the resume) but KEEPS the persisted snapshot so the next load can
 // retry once the check succeeds. A throwing checker is `unknown`.
-export async function confirmResumedSession(sessionId, checkFinality) {
+//
+// #1779 — a cold start is exactly when the finality read is most likely to
+// fail (server still booting, Sheets read failing), so one `unknown` no longer
+// refuses the whole resume: the check is retried (`options.retries`, default
+// 2 — three attempts total) with linear backoff (`options.retryDelayMs`,
+// default 400 ms) before the resume is refused. The refusal reason is
+// recorded for the shell's retry affordance.
+export async function confirmResumedSession(sessionId, checkFinality, options = {}) {
   if (!sessionId) return true;
-  let result;
-  try {
-    result = typeof checkFinality === 'function' ? await checkFinality(sessionId) : { unknown: true };
-  } catch { result = { unknown: true }; }
-  if (result && result.finalized === true) {
-    rollbackResumedSnapshot({ clearPersisted: true });
-    return false;
+  const retries = Number.isInteger(options.retries) && options.retries >= 0 ? options.retries : 2;
+  const retryDelayMs = Number.isInteger(options.retryDelayMs) && options.retryDelayMs >= 0 ? options.retryDelayMs : 400;
+  _resumeRefusal.value = null;
+  for (let attempt = 0; ; attempt++) {
+    let result;
+    try {
+      result = typeof checkFinality === 'function' ? await checkFinality(sessionId) : { unknown: true };
+    } catch { result = { unknown: true }; }
+    if (result && result.finalized === true) {
+      rollbackResumedSnapshot({ clearPersisted: true });
+      // Set AFTER the rollback: rollback resets the slice (which clears the
+      // reason), so the reason must be recorded last to survive it.
+      _resumeRefusal.value = 'finalized';
+      return false;
+    }
+    if (result && result.finalized === false) return true;
+    if (attempt >= retries) break;
+    await new Promise((resolve) => setTimeout(resolve, retryDelayMs * (attempt + 1)));
   }
-  if (!result || result.unknown === true || result.finalized !== false) {
-    rollbackResumedSnapshot({ clearPersisted: false });
-    return false;
-  }
-  return true;
+  rollbackResumedSnapshot({ clearPersisted: false });
+  _resumeRefusal.value = 'unknown';
+  return false;
 }
 
 // Remove the persisted snapshot (storage only — the caller hides the resume notice).
@@ -348,4 +400,5 @@ export function resetSessionStore() {
   _coachDiscussionSinceLog.value = false;
   _pendingReplacement.value = null;
   _pendingSetRevision.value = null;
+  _resumeRefusal.value = null;
 }

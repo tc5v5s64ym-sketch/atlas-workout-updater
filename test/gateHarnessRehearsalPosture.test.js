@@ -309,7 +309,13 @@ test('the durable verifier answers only for one explicit session identity (isola
 });
 
 test('both harness servers bind to loopback and the default lane scrubs the live flag (Codex P1/P2)', () => {
-  assert.match(gateSrc, /app\.listen\(0, '127\.0\.0\.1'/, 'the app server must bind loopback only');
+  assert.match(gateSrc, /app\.listen\(GATE_PORT, '127\.0\.0\.1'/, 'the app server must bind loopback only');
+  // #1779: the app port is pinned only when ATLAS_GATE_PORT is set (a restart-
+  // resume spec needs the rebooted server on the SAME origin, or the reopened
+  // client cannot see its localStorage snapshot); otherwise it stays dynamic
+  // (0), parallel-safe exactly as before.
+  assert.match(gateSrc, /const GATE_PORT = Number\(process\.env\.ATLAS_GATE_PORT \|\| 0\);/,
+    'the app port defaults to dynamic (0) — pinned only by explicit opt-in');
   assert.match(gateSrc, /stateServer\.listen\(0, '127\.0\.0\.1'/, 'the state server must bind loopback only');
   const cfg = fs.readFileSync(path.join(__dirname, '..', 'playwright.config.js'), 'utf8');
   assert.match(cfg, /delete process\.env\.ATLAS_GATE_SANDBOX_LIVE;/,
