@@ -59,6 +59,152 @@ test('PARSE-5: precision — only fires when the parser actually emitted that ti
   assert.equal(out.intent, 'log_sets');
 });
 
+// --- A-01 (#1765): Unicode ×, multi-exercise children, zero-value sets ------
+
+function logSetsMulti(exercises, extra = {}) {
+  return { intent: 'log_sets_multi', raw_text: 'x', exercises, warnings: [], ...extra };
+}
+
+function child(name, sets, rawText) {
+  return { exercise: name, canonical_name: name, raw_text: rawText, sets, warnings: [] };
+}
+
+test('A-01: Unicode × mixed notation refuses (gate shares the parser normalization)', () => {
+  const parsed = logSets([{ weight: 165, reps: 8, rir: null }, { weight: 165, reps: 8, rir: null }, { weight: 165, reps: 8, rir: null }]);
+  for (const text of [
+    'bench 185 5/2 and 3×8@165',
+    'bench 185 5/2 3×8@165',
+    'bench 185 5/2 then 3×8@165',
+    'bench 185 5/2 and 3×8 @165',
+  ]) {
+    const out = applyFullConsumptionGate(logSets(parsed.sets), text);
+    assert.equal(out.intent, 'needs_clarification', text);
+    assert.ok(out.warnings.includes('mixed_set_format'), text);
+    assert.equal(out.sets, undefined, text);
+  }
+});
+
+test('A-01: ambiguous @ scans every @ in the text, not just the first', () => {
+  const parsed = logSets([{ weight: 2, reps: 10, rir: null }]);
+  const out = applyFullConsumptionGate(parsed, 'bench 3x5 @205 3x10 @2');
+  assert.equal(out.intent, 'needs_clarification');
+  assert.ok(out.warnings.includes('ambiguous_at_value'));
+});
+
+test('A-01: zero weight / zero reps refuse (RIR 0 stays legal)', () => {
+  const zeroReps = applyFullConsumptionGate(
+    logSets([{ weight: 165, reps: 0, rir: null }, { weight: 165, reps: 0, rir: null }, { weight: 165, reps: 0, rir: null }]),
+    'bench 3x0@165');
+  assert.equal(zeroReps.intent, 'needs_clarification');
+  assert.ok(zeroReps.warnings.includes('zero_set_value'));
+  assert.equal(zeroReps.sets, undefined);
+
+  const zeroWeight = applyFullConsumptionGate(
+    logSets([{ weight: 0, reps: 8, rir: 2 }]), 'bench 0 8/2');
+  assert.equal(zeroWeight.intent, 'needs_clarification');
+  assert.ok(zeroWeight.warnings.includes('zero_set_value'));
+
+  const rirZero = applyFullConsumptionGate(
+    logSets([{ weight: 185, reps: 5, rir: 0 }]), 'bench 185 5/0');
+  assert.equal(rirZero.intent, 'log_sets', 'RIR 0 means to failure — a real set');
+});
+
+test('A-01: mixed notation inside a multi-exercise child refuses the whole turn', () => {
+  const bench = child('Bench Press',
+    [{ weight: 165, reps: 8, rir: null }, { weight: 165, reps: 8, rir: null }, { weight: 165, reps: 8, rir: null }],
+    'bench 185 5/2 and 3×8@165');
+  const squat = child('Back Squat', [{ weight: 225, reps: 5, rir: 2 }], 'squat 225 5/2');
+  const out = applyFullConsumptionGate(
+    logSetsMulti([bench, squat], { raw_text: 'bench 185 5/2 and 3×8@165\nsquat 225 5/2' }),
+    'bench 185 5/2 and 3×8@165\nsquat 225 5/2');
+  assert.equal(out.intent, 'needs_clarification');
+  assert.ok(out.warnings.includes('mixed_set_format'));
+  assert.equal(out.exercises, undefined, 'no partial child list survives the refusal');
+});
+
+test('A-01: ambiguous @ inside a multi-exercise child refuses the whole turn', () => {
+  const bench = child('Bench Press',
+    [{ weight: 2, reps: 10, rir: null }, { weight: 2, reps: 10, rir: null }, { weight: 2, reps: 10, rir: null }],
+    'bench 3x10 @2');
+  const squat = child('Back Squat', [{ weight: 225, reps: 5, rir: 2 }], 'squat 225 5/2');
+  const out = applyFullConsumptionGate(
+    logSetsMulti([bench, squat], { raw_text: 'bench 3x10 @2\nsquat 225 5/2' }),
+    'bench 3x10 @2\nsquat 225 5/2');
+  assert.equal(out.intent, 'needs_clarification');
+  assert.ok(out.warnings.includes('ambiguous_at_value'));
+  assert.equal(out.exercises, undefined);
+});
+
+test('A-01: zero-rep sets inside a multi-exercise child refuse the whole turn', () => {
+  const bench = child('Bench Press',
+    [{ weight: 165, reps: 0, rir: null }], 'bench 3x0@165');
+  const squat = child('Back Squat', [{ weight: 225, reps: 5, rir: 2 }], 'squat 225 5/2');
+  const out = applyFullConsumptionGate(
+    logSetsMulti([bench, squat], { raw_text: 'bench 3x0@165\nsquat 225 5/2' }),
+    'bench 3x0@165\nsquat 225 5/2');
+  assert.equal(out.intent, 'needs_clarification');
+  assert.ok(out.warnings.includes('zero_set_value'));
+});
+
+test('A-01: clean multi-exercise turns pass untouched (one family per child)', () => {
+  const bench = child('Bench Press', [{ weight: 185, reps: 5, rir: 2 }], 'bench 185 5/2');
+  const squat = child('Back Squat',
+    [{ weight: 165, reps: 8, rir: null }, { weight: 165, reps: 8, rir: null }, { weight: 165, reps: 8, rir: null }],
+    'squat 3x8@165');
+  const parsed = logSetsMulti([bench, squat], { raw_text: 'bench 185 5/2\nsquat 3x8@165' });
+  const out = applyFullConsumptionGate(parsed, 'bench 185 5/2\nsquat 3x8@165');
+  assert.equal(out.intent, 'log_sets_multi');
+  assert.deepEqual(out, parsed, 'the parsed object is returned unchanged');
+});
+
+test('A-01: dumbbell @ stays an RIR in multi turns, including Unicode ×', () => {
+  const db = child('Incline DB Press', [{ weight: 55, reps: 10, rir: 3 }], 'incline db press 55s x10 @3');
+  const squat = child('Back Squat', [{ weight: 225, reps: 5, rir: 2 }], 'squat 225 5/2');
+  const parsed = logSetsMulti([db, squat], { raw_text: 'incline db press 55s x10 @3\nsquat 225 5/2' });
+  assert.equal(applyFullConsumptionGate(parsed, 'incline db press 55s x10 @3\nsquat 225 5/2').intent, 'log_sets_multi');
+
+  const dbX = child('Incline DB Press', [{ weight: 55, reps: 8, rir: 2 }], 'incline db press 55s ×8 @2');
+  const parsedX = logSetsMulti([dbX, squat], { raw_text: 'incline db press 55s ×8 @2\nsquat 225 5/2' });
+  assert.equal(applyFullConsumptionGate(parsedX, 'incline db press 55s ×8 @2\nsquat 225 5/2').intent, 'log_sets_multi');
+});
+
+test('A-01: per-line backstop catches a mixed line whose segment merged away', () => {
+  // Same exercise in two segments: the merged child keeps only the first
+  // segment's raw_text, so the mixed second line is invisible per-child — the
+  // per-line backstop over the whole turn still refuses.
+  const bench = child('Bench Press',
+    [{ weight: 225, reps: 5, rir: 2 },
+     { weight: 165, reps: 8, rir: null }, { weight: 165, reps: 8, rir: null }, { weight: 165, reps: 8, rir: null }],
+    'bench 225 5/2');
+  const out = applyFullConsumptionGate(
+    logSetsMulti([bench], { raw_text: 'bench 225 5/2\nbench 185 5/2 and 3×8@165' }),
+    'bench 225 5/2\nbench 185 5/2 and 3×8@165');
+  assert.equal(out.intent, 'needs_clarification');
+  assert.ok(out.warnings.includes('mixed_set_format'));
+});
+
+test('A-01: an already-unresolved line never discards its clean siblings', () => {
+  const bench = child('Bench Press', [{ weight: 225, reps: 5, rir: 2 }], 'bench 225 5/2');
+  const unresolved = [{ line: 'bench 185 5/2 and 3×8@165', message: 'Could not read this line as sets.', warnings: ['missing_exercise'] }];
+  const parsed = logSetsMulti([bench],
+    { raw_text: 'bench 225 5/2\nbench 185 5/2 and 3×8@165', unresolved });
+  const out = applyFullConsumptionGate(parsed, 'bench 225 5/2\nbench 185 5/2 and 3×8@165');
+  assert.equal(out.intent, 'log_sets_multi', 'the unresolved line emitted no sets, so nothing was silently dropped from it');
+  assert.deepEqual(out, parsed);
+});
+
+test('A-01: a multi refusal preserves the unresolved lines', () => {
+  const bench = child('Bench Press',
+    [{ weight: 165, reps: 8, rir: null }], 'bench 185 5/2 and 3×8@165');
+  const unresolved = [{ line: 'mystery lift here', message: 'Could not read this line as sets.', warnings: ['missing_exercise'] }];
+  const out = applyFullConsumptionGate(
+    logSetsMulti([bench], { raw_text: 'bench 185 5/2 and 3×8@165\nmystery lift here', unresolved }),
+    'bench 185 5/2 and 3×8@165\nmystery lift here');
+  assert.equal(out.intent, 'needs_clarification');
+  assert.ok(out.warnings.includes('mixed_set_format'));
+  assert.deepEqual(out.unresolved, unresolved);
+});
+
 // --- No over-rejection of valid terse notation ------------------------------
 
 test('valid: the 225 5/2 slash contract and repeated slash sets pass untouched', () => {
