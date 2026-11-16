@@ -2161,6 +2161,7 @@ module.exports = {
   parseWorkoutText,
   buildWorkoutTextParseDryRunResponse,
   normalizeParserText,
+  normalizeWeightUnits,
   canonicalizeExerciseName: findExerciseInText,
   splitMultiExerciseSegments,
   looksLikeCorrection,
