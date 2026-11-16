@@ -535,3 +535,67 @@ test('F-1 pre-review N18: a signed number dangling after a count word refuses', 
   // A rounds count after a dash still parses (elided-guard carve-out).
   assert.equal(recognizeModalityInput('Plank 60 sec - 3 rounds').duration_sec, 60);
 });
+
+test('F-1 pre-review D1: capitalized word ranges refuse (case-insensitive class)', () => {
+  for (const t of ['Plank 30 VS 45 sec', 'Plank 30 Vs 45 sec', 'Plank 30 Versus 45 sec', 'Plank 30 TO 45 sec', 'Plank 30 OR 45 sec', 'Plank 30 And 45 sec', 'Plank 30 PLUS 45 sec', 'Plank 30 Plus 45 sec', 'Plank 30 THROUGH 45 sec', 'Run 5 km VS 30 min VS 10 km', 'Plank 30 sec VS 45', 'Run 5 km TO 10', 'Plank 30 sec TO 45']) {
+    assert.equal(recognizeModalityInput(t), null, `capitalized word range must refuse: ${JSON.stringify(t)}`);
+  }
+  // Calibrations: the pair and rating forms already refused; they still do.
+  assert.equal(recognizeModalityInput('Plank 30 sec VS 45 sec'), null);
+  assert.equal(recognizeModalityInput('Plank 60 sec RPE 7 TO 8'), null);
+});
+
+test('F-1 pre-review D1: case-sensitivity sweep of every range word', () => {
+  // Mechanical sweep: every word in the range-word class refuses in
+  // uppercase and titlecase, in the single-unit shape.
+  const words = ['and/or', 'up to', 'compared to', 'versus', 'against', 'vs', 'v/s', 'v', 'over', 'plus', 'to', 'or', 'through', 'thru', 'and'];
+  const title = (w) => w.split(' ').map((p) => p[0].toUpperCase() + p.slice(1)).join(' ');
+  for (const w of words) {
+    for (const form of [w.toUpperCase(), title(w)]) {
+      const t = `Plank 30 ${form} 45 sec`;
+      assert.equal(recognizeModalityInput(t), null, `range word must refuse in form ${JSON.stringify(form)}: ${JSON.stringify(t)}`);
+    }
+  }
+  // Abbreviated forms with a period, capitalized.
+  for (const t of ['Plank 30 VS. 45 sec', 'Plank 30 V. 45 sec']) {
+    assert.equal(recognizeModalityInput(t), null, `abbreviated range word must refuse: ${JSON.stringify(t)}`);
+  }
+});
+
+test('F-1 pre-review D1b: more versus/comparison words refuse', () => {
+  for (const t of ['Plank 30 against 45 sec', 'Plank 30 AGAINST 45 sec', 'Plank 30 compared to 45 sec', 'Plank 30 over 45 sec', 'Plank 30 OVER 45 sec', 'Plank 30 v/s 45 sec']) {
+    assert.equal(recognizeModalityInput(t), null, `comparison word range must refuse: ${JSON.stringify(t)}`);
+  }
+  // A unit between the first number and the word keeps parsing (separator).
+  assert.equal(recognizeModalityInput('Run 5 km OVER 30 min').distance_km, 5);
+  assert.equal(recognizeModalityInput('Run 5 km OVER 30 min').duration_min, 30);
+});
+
+test('F-1 pre-review D2: more arithmetic symbols refuse', () => {
+  for (const t of ['Plank 30\u00D745 sec', 'Plank 30 \u00D7 45 sec', 'Plank 30\u00F745 sec', 'Plank 30 \u00F7 45 sec', 'Plank 30=45 sec', 'Plank 30 = 45 sec', 'Plank 30\u22C545 sec', 'Plank 30\u221945 sec', 'Plank 30%45 sec', 'Plank 30 sec \u00D7 45 sec', 'Plank 30 sec \u00F7 45 sec', 'Plank 30 sec = 45 sec']) {
+    assert.equal(recognizeModalityInput(t), null, `symbol connector must refuse: ${JSON.stringify(t)}`);
+  }
+});
+
+test('F-1 pre-review D3: more approx operators refuse', () => {
+  for (const t of ['Plank 30\u225245 sec', 'Plank 30\u225345 sec', 'Plank 30\u224D45 sec', 'Plank 30\u224E45 sec', 'Plank 30\u224F45 sec', 'Plank 30\u225045 sec', 'Plank 30\u225145 sec', 'Plank 30\u224245 sec', 'Plank 30\u224645 sec', 'Plank 30\u224A45 sec', 'Plank 30\u224B45 sec', 'Plank 30\u223F45 sec', 'Plank 30\u223E45 sec', 'Plank 30\u223A45 sec', 'Plank 30\u223B45 sec', 'Plank 30 \u2252 45 sec', 'Plank 30\u223F 45 sec']) {
+    assert.equal(recognizeModalityInput(t), null, `approx-operator range must refuse: ${JSON.stringify(t)}`);
+  }
+});
+
+test('F-1 pre-review D3b: tilde/dot pair, chain, and elided forms refuse', () => {
+  for (const t of ['Plank 30 sec \u2248 45 sec', 'Plank 30 sec \u223C 45 sec', 'Run 5 km \u2248 10 km', 'Plank 30 sec ~ 45 sec', 'Plank 30 sec .. 45 sec', 'Plank 30 sec ... 45 sec', 'Run 5 km ~ 30 min ~ 10 km', 'Run 5 km .. 30 min .. 10 km', 'Plank 30 sec \u2248 45', 'Plank 30 sec .. 45']) {
+    assert.equal(recognizeModalityInput(t), null, `tilde/dot pair/chain/elided must refuse: ${JSON.stringify(t)}`);
+  }
+  // Distinct-dimension tilde/dot separators still parse.
+  assert.equal(recognizeModalityInput('Run 5 km ~ 30 min').distance_km, 5);
+  assert.equal(recognizeModalityInput('Run 5 km ~ 30 min').duration_min, 30);
+});
+
+test('F-1 pre-review D4: singular and other count words refuse a dangling sign', () => {
+  for (const t of ['Plank 60 sec 3 set -3', 'Plank 60 sec 3 rep -3', 'Plank 60 sec 3 round -3', 'Plank 60 sec 3 repetitions -3', 'Plank 60 sec 3 repetitions - 3']) {
+    assert.equal(recognizeModalityInput(t), null, `dangling signed count must refuse: ${JSON.stringify(t)}`);
+  }
+  // The elided-guard carve-out now matches the count vocabulary (N25).
+  assert.equal(recognizeModalityInput('Plank 60 sec - 3 repetitions').duration_sec, 60);
+});

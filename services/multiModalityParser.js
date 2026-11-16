@@ -119,41 +119,53 @@ const RANGED_QUANTITY = new RegExp(`(?<![\\d:])(${PLAIN_NUMBER})\\s*${SIGN_CHARS
 // Word ranges: "30 to 45 sec", "5 or 10 km", "30 through 45 sec",
 // "30 and 45 sec", "30 and/or 45 sec", "30 up to 45 sec", "30 vs 45 sec",
 // "30 versus 45 sec", "30 v 45 sec", "30 plus 45 sec" (C1/C2: the versus
-// family and "plus" were missing, so those ranges recorded the upper end).
+// family and "plus" were missing, so those ranges recorded the upper end;
+// D1b: "against", "compared to", "over", and "v/s" were missing too).
 // The digits must sit directly around the word —
 // "Run 5 km to 30 min" does not match (a unit sits between the first number
 // and "to"), and "Plank 60 sec to failure" does not match (no digits after
 // "to"). "between X and Y" is its own pattern below (the word comes first).
-// Longest first ("versus" before "vs" before "v"; "and/or" before "and"/"or")
+// Longest first ("versus" before "vs" before "v"; "and/or" before "and"/"or";
+// "compared to" before "to"; "over" before "or"; "v/s" before "v")
 // so the longer form wins; "vs."/"v." allow the abbreviated period.
-const RANGE_WORDS = '(?:and/or|up to|versus|vs\\.?|v\\.?|plus|to|or|through|thru|and)';
-const RANGED_WORD_QUANTITY = new RegExp(`(?<![\\d:])(${PLAIN_NUMBER})\\s+${RANGE_WORDS}\\s+(${PLAIN_NUMBER})(?=${RANGE_FOLLOW})`, 'u');
+const RANGE_WORDS = '(?:and/or|up to|compared to|versus|against|vs\\.?|v/s|v\\.?|over|plus|to|or|through|thru|and)';
+const RANGED_WORD_QUANTITY = new RegExp(`(?<![\\d:])(${PLAIN_NUMBER})\\s+${RANGE_WORDS}\\s+(${PLAIN_NUMBER})(?=${RANGE_FOLLOW})`, 'iu');
 const BETWEEN_RANGE = new RegExp(`\\bbetween\\s+(${PLAIN_NUMBER})\\s*(?:${UNIT})?\\s+and\\s+(${PLAIN_NUMBER})\\s*(?:${UNIT})\\b`, 'iu');
 // Tilde / dot ranges: "30~45 sec", "30..45 sec" (and "..."). A lone "~45"
 // (approximate, no digits before it) does not match — that stays the
 // pre-existing approx-nominal residual. The tilde class also holds the
 // Unicode approx operators (C3: "30≈45 sec", "30∼45 sec", "30∽45 sec",
 // "30～45 sec", "30≃45 sec", "30≅45 sec" all recorded the upper end —
-// the same rewording applied to the tilde range).
-const TILDE_CHARS = '[~\\u223C\\u223D\\uFF5E\\u2248\\u2243\\u2245]';
+// the same rewording applied to the tilde range; D3 adds the remaining
+// U+2242–U+2253 approx operators plus the U+223E–U+223F sine-wave forms).
+const TILDE_CHARS = '[~\\u223C\\u223D\\uFF5E\\u2248\\u2243\\u2245\\u2252\\u2253\\u224D\\u224E\\u224F\\u2250\\u2251\\u2242\\u2246\\u224A\\u224B\\u223F\\u223E\\u223A\\u223B]';
 const TILDE_RANGE = new RegExp(`(?<![\\d:])(${PLAIN_NUMBER})\\s*${TILDE_CHARS}\\s*(${PLAIN_NUMBER})(?=${RANGE_FOLLOW})`, 'u');
 const DOT_RANGE = new RegExp(`(?<![\\d:])(${PLAIN_NUMBER})\\s*\\.\\.+\\s*(${PLAIN_NUMBER})(?=${RANGE_FOLLOW})`, 'u');
 // Symbol connectors between two numbers feeding one unit ("30+45 sec",
 // "30 & 45 sec", "30 * 45 sec" — C2: recorded the upper end, wrong under
-// every reading, since as arithmetic 30+45 is 75, not 45). Attached forms
+// every reading, since as arithmetic 30+45 is 75, not 45; D2 adds the
+// multiplication/division/equality/dot operators "×", "÷", "=", "⋅", "∙",
+// "%" — the same rewording, same wrong upper end). Attached forms
 // exist, so the connector takes \s* on both sides. "/" is deliberately NOT
 // in this class — it is the interval separator ("8 x 400m / 90 sec").
 // "x" is not in this class either — "30 x 45 sec" is the legitimate sets
 // multiplier. A leading "+45" stays positive: a two-number pattern needs a
 // number before the connector, so "Dead hang +45 seconds" cannot match.
-const SYMBOL_CHARS = '[+&*]';
+const SYMBOL_CHARS = '[+&*\\u00D7\\u00F7=\\u22C5\\u2219%]';
 const RANGED_SYMBOL_QUANTITY = new RegExp(`(?<![\\d:])(${PLAIN_NUMBER})\\s*${SYMBOL_CHARS}\\s*(${PLAIN_NUMBER})(?=${RANGE_FOLLOW})`, 'u');
 const PAIR_SYMBOL = new RegExp(`(?<![\\d:])(${PLAIN_NUMBER})\\s*(${UNIT})\\s*${SYMBOL_CHARS}\\s*(${PLAIN_NUMBER})\\s*(${UNIT})\\b`, 'gu');
+// A tilde/dot-connected same-dimension pair ("30 sec ≈ 45 sec",
+// "30 sec ~ 45 sec", "30 sec .. 45 sec" — D3b: the tilde/dot classes were
+// never wired into the pair check, so even operators already in the class
+// rowed the first end as definite). Same shape as PAIR_SYMBOL, same
+// dimension check in hasSameDimensionPair.
+const PAIR_TILDE = new RegExp(`(?<![\\d:])(${PLAIN_NUMBER})\\s*(${UNIT})\\s*(?:${TILDE_CHARS}|\\.\\.+)\\s*(${PLAIN_NUMBER})\\s*(${UNIT})\\b`, 'gu');
 // A signed number dangling after a count word ("3 sets -3", "3 reps -3",
 // "3 rounds -3" — N18: the "-3" recorded nothing, so no false work, but
 // the spaced-sign principle is refuse-instead-of-drop; the word-form count
-// itself is still dropped as before, only the dangling sign now refuses).
-const COUNT_SIGN = new RegExp(`\\b(?:sets|reps|rounds)\\s*${SIGN_CHARS}\\s*${SIGNED_NUMBER}`, 'iu');
+// itself is still dropped as before, only the dangling sign now refuses;
+// D4: singular "set"/"rep"/"round" and "repetitions" were missing).
+const COUNT_SIGN = new RegExp(`\\b(?:sets?|reps?|rounds?|repetitions?)\\s*${SIGN_CHARS}\\s*${SIGNED_NUMBER}`, 'iu');
 // A signed sets multiplier: "x -3" / "x-3" (the "x" sits before the sign,
 // so the quantity-follow lookahead cannot see it — the digits end the
 // input). The "x" may follow a digit ("3x -3") or a word boundary — but a
@@ -203,7 +215,7 @@ function dimensionOf(unit) {
 const PAIR_DASH = new RegExp(`(?<![\\d:])(${PLAIN_NUMBER})\\s*(${UNIT})\\s*${SIGN_CHARS}\\s*(${PLAIN_NUMBER})\\s*(${UNIT})\\b`, 'gu');
 const PAIR_WORD = new RegExp(`(?<![\\d:])(${PLAIN_NUMBER})\\s*(${UNIT})\\s+${RANGE_WORDS}\\s+(${PLAIN_NUMBER})\\s*(${UNIT})\\b`, 'giu');
 function hasSameDimensionPair(t) {
-  for (const re of [PAIR_DASH, PAIR_WORD, PAIR_SYMBOL]) {
+  for (const re of [PAIR_DASH, PAIR_WORD, PAIR_SYMBOL, PAIR_TILDE]) {
     re.lastIndex = 0;
     let m;
     while ((m = re.exec(t)) !== null) {
@@ -223,8 +235,8 @@ function hasSameDimensionPair(t) {
 // one chain. Only dash- or word-connected quantities count — "5 km in
 // 30 min" and "60 sec rest 30 sec" are not chains and keep parsing.
 const CHAIN_QUANTITY = `(?:${PLAIN_NUMBER}\\s*${UNIT}\\b|\\d{1,2}:\\d{2}(?::\\d{2})?)`;
-const CHAIN_SEPARATOR = `(?:\\s*${SIGN_CHARS}\\s*|\\s*${SYMBOL_CHARS}\\s*|\\s+${RANGE_WORDS}\\s+)`;
-const CHAIN_RE = new RegExp(`(?<![\\d:])${CHAIN_QUANTITY}(?:${CHAIN_SEPARATOR}${CHAIN_QUANTITY})+`, 'gu');
+const CHAIN_SEPARATOR = `(?:\\s*${SIGN_CHARS}\\s*|\\s*${SYMBOL_CHARS}\\s*|\\s*${TILDE_CHARS}\\s*|\\s*\\.\\.+\\s*|\\s+${RANGE_WORDS}\\s+)`;
+const CHAIN_RE = new RegExp(`(?<![\\d:])${CHAIN_QUANTITY}(?:${CHAIN_SEPARATOR}${CHAIN_QUANTITY})+`, 'giu');
 function chainDimension(q) {
   // An mm:ss elapsed time is its own dimension: "32:10 - 30 min" is an
   // elapsed time plus a duration and keeps parsing, while "32:10 - 45:20"
@@ -255,13 +267,17 @@ function hasRepeatedDimensionChain(t) {
 // the elided end was dropped while the first end recorded as definite
 // (B16). A bare number after a dash or range word refuses — unless it is
 // a sets/reps/rounds count ("60 sec - 3 sets", "60 sec - 3 reps",
-// "60 sec - 3x"), an elapsed time ("5 km - 32:10"), or a quantity with
-// its own unit ("5 km - 30 min", which the chain check then judges).
+// "60 sec - 3x", "60 sec - 3 repetitions" — N25: the carve-out list now
+// matches COUNT_SIGN's vocabulary), an elapsed time ("5 km - 32:10"), or a
+// quantity with its own unit ("5 km - 30 min", which the chain check then
+// judges). The connector class mirrors the chain separator (dash, symbol,
+// tilde, dot-run, word — D3b wired the tilde/dot classes in here too),
+// and the pattern is case-insensitive (D1: capitalized word ranges).
 // Dates ("2026-11-16", "Nov 3-5") have no unit on the first number, so
 // they never match.
 const ELIDED_SECOND_END = new RegExp(
-  `(?<![\\d:])(?:${PLAIN_NUMBER}\\s*${UNIT}\\b|\\d{1,2}:\\d{2}(?::\\d{2})?)(?:\\s*${SIGN_CHARS}\\s*|\\s*${SYMBOL_CHARS}\\s*|\\s+${RANGE_WORDS}\\s+)${PLAIN_NUMBER}(?![\\d.,])(?!\\s*(?:${UNIT}\\b|x\\b|rounds?\\b|reps?\\b|sets?\\b|:))`,
-  'u',
+  `(?<![\\d:])(?:${PLAIN_NUMBER}\\s*${UNIT}\\b|\\d{1,2}:\\d{2}(?::\\d{2})?)(?:\\s*${SIGN_CHARS}\\s*|\\s*${SYMBOL_CHARS}\\s*|\\s*${TILDE_CHARS}\\s*|\\s*\\.\\.+\\s*|\\s+${RANGE_WORDS}\\s+)${PLAIN_NUMBER}(?![\\d.,])(?!\\s*(?:${UNIT}\\b|x\\b|rounds?\\b|reps?\\b|sets?\\b|repetitions?\\b|:))`,
+  'iu',
 );
 
 function hasNonSeparatorSpacedSign(t) {
