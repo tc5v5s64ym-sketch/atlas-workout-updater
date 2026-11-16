@@ -205,6 +205,72 @@ test('A-01: a multi refusal preserves the unresolved lines', () => {
   assert.deepEqual(out.unresolved, unresolved);
 });
 
+// --- B1 (pre-review blocker): multipliers the parser never recognizes ------
+
+test('B1: a group joined by ✕ / Ｘ / * / ＊ refuses (gate detects, never folds)', () => {
+  // The parser folds only U+00D7 ×. Each of these glyphs drops its group on
+  // base and on the first commit — the turn must ask, with zero rows.
+  for (const glyph of ['✕', 'Ｘ', '*', '＊']) {
+    const parsed = logSets([{ weight: 185, reps: 5, rir: 2 }]);
+    const out = applyFullConsumptionGate(parsed, `bench 185 5/2 and 3${glyph}8@165`);
+    assert.equal(out.intent, 'needs_clarification', glyph);
+    assert.ok(out.warnings.includes('unrecognized_set_notation'), glyph);
+    assert.equal(out.sets, undefined, glyph);
+  }
+});
+
+test('B1: same-family repeat with an unrecognized multiplier refuses (a fold would miss this)', () => {
+  // Folding ✕ to x would make this look like one clean x@ family while the
+  // 135 group is still dropped — the detector, not a fold, is the fix.
+  const parsed = logSets([
+    { weight: 165, reps: 8, rir: null },
+    { weight: 165, reps: 8, rir: null },
+    { weight: 165, reps: 8, rir: null },
+  ]);
+  const out = applyFullConsumptionGate(parsed, 'bench 3x8@165 and 3✕8@135');
+  assert.equal(out.intent, 'needs_clarification');
+  assert.ok(out.warnings.includes('unrecognized_set_notation'));
+  assert.equal(out.sets, undefined);
+});
+
+test('B1: an unrecognized multiplier inside a multi-exercise child refuses the whole turn', () => {
+  const bench = child('Bench Press', [{ weight: 185, reps: 5, rir: 2 }], 'bench 185 5/2 and 3✕8@165');
+  const squat = child('Back Squat', [{ weight: 225, reps: 5, rir: 2 }], 'squat 225 5/2');
+  const out = applyFullConsumptionGate(
+    logSetsMulti([bench, squat], { raw_text: 'bench 185 5/2 and 3✕8@165\nsquat 225 5/2' }),
+    'bench 185 5/2 and 3✕8@165\nsquat 225 5/2');
+  assert.equal(out.intent, 'needs_clarification');
+  assert.ok(out.warnings.includes('unrecognized_set_notation'));
+  assert.equal(out.exercises, undefined);
+});
+
+test('B1: an unrecognized multiplier on its own line in a multi turn refuses (backstop)', () => {
+  // Gate-level: a glyph line the parser did NOT surface as unresolved is
+  // refused by the backstop. At the route, the real parser surfaces this
+  // line as unresolved ("Could not find sets for Bench Press."), so the
+  // turn logs its siblings WITH that unresolved line flagged in the
+  // response — flagged, not silent. Tightening that to a refusal would
+  // change the unresolved UX and is coordinator direction, not this fix.
+  const bench = child('Bench Press', [{ weight: 185, reps: 5, rir: 2 }], 'bench 185 5/2');
+  const squat = child('Back Squat', [{ weight: 225, reps: 5, rir: 2 }], 'squat 225 5/2');
+  const out = applyFullConsumptionGate(
+    logSetsMulti([bench, squat], { raw_text: 'bench 185 5/2\nsquat 225 5/2\nbench 3✕8@165' }),
+    'bench 185 5/2\nsquat 225 5/2\nbench 3✕8@165');
+  assert.equal(out.intent, 'needs_clarification');
+  assert.ok(out.warnings.includes('unrecognized_set_notation'));
+});
+
+test('B1: digit–multiplier–@ (no reps between glyph and @) refuses; a trailing markdown asterisk does not trip', () => {
+  const atAfterGlyph = applyFullConsumptionGate(
+    logSets([{ weight: 185, reps: 5, rir: 2 }]), 'bench 185 5/2 and 3✕ @165');
+  assert.equal(atAfterGlyph.intent, 'needs_clarification');
+  assert.ok(atAfterGlyph.warnings.includes('unrecognized_set_notation'));
+
+  const trailingStar = applyFullConsumptionGate(
+    logSets([{ weight: 165, reps: 8, rir: null }]), 'bench 3x8@165*');
+  assert.equal(trailingStar.intent, 'log_sets', 'a trailing * is emphasis, not a multiplier');
+});
+
 // --- No over-rejection of valid terse notation ------------------------------
 
 test('valid: the 225 5/2 slash contract and repeated slash sets pass untouched', () => {

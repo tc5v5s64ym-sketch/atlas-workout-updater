@@ -31,6 +31,16 @@
 //     including every child of multi-exercise output. Any unconsumed set-bearing
 //     text causes clarification, never a partial preview.
 //
+//   B1 (pre-review blocker, fixed in the second commit) — multipliers other
+//     than ASCII x / U+00D7 × are never folded by the parser, so a group
+//     written with one (✕ U+2715, ✗ U+2717, ✖ U+2716, * U+002A, ＊ U+FF0A,
+//     full-width Ｘ U+FF38 / ｘ U+FF58) is silently dropped even when the rest
+//     of the turn logs — and a fold-in-the-gate would MISS the same-family
+//     shape (`bench 3x8@165 and 3✕8@135` folds to one family, still drops
+//     the 135 group). The gate therefore refuses any digit–multiplier–digit
+//     (or digit–multiplier–@) pattern using a glyph the parser does not
+//     recognize, in every span it checks.
+//
 // All paths only ever REDUCE what reaches the preview (parsed →
 // needs_clarification with zero rows). Pure, read-only, and it never throws —
 // a garbage input returns the parsed object unchanged. It needs the ORIGINAL
@@ -59,6 +69,14 @@ const FAMILY_FOR = /\b\d+\s+for\s+\d+\b/;    // `175 for 5`
 // The ambiguous @ band: a value this small in the barbell form is a lifter's RIR,
 // never a real barbell weight.
 const AMBIGUOUS_AT_MAX = 10;
+
+// B1 — multipliers the parser never folds or recognizes. The parser folds only
+// U+00D7 × to x, so a set group written with any of these glyphs is invisible
+// to both parser and gate families — it must be refused outright, never
+// folded: folding would hide the same-family drop (`3x8@165 and 3✕8@135`).
+// A digit must precede the glyph and a digit or @ must follow it, so a
+// trailing markdown asterisk (`3x8@165*`) does not trip.
+const UNRECOGNIZED_MULTIPLIER = /\d+\s*[*✕✗✖＊Ｘｘ]\s*[\d@]/;
 
 function ask(message, code, parsed, rawText) {
   return {
@@ -122,9 +140,21 @@ function zeroValueMessage() {
   return "That includes a set with a zero weight or zero reps, which isn't a real set. Mind re-sending it? (nothing's logged yet)";
 }
 
+function unrecognizedSetNotationMessage() {
+  return "That includes a set written with a multiplier I don't recognize, so I can't tell what it means. Mind re-sending it with x, like 3x8@165? (nothing's logged yet)";
+}
+
+// A set group joined by a multiplier the parser never recognizes (B1). The
+// group is unconsumed by definition — the parser has no grammar for it — so
+// the turn asks instead of previewing the rest without it.
+function hasUnrecognizedSetNotation(text) {
+  return UNRECOGNIZED_MULTIPLIER.test(String(text || ''));
+}
+
 // The single-exercise checks (PARSE-4, PARSE-5, zero-value) over one span of
 // normalized text and the sets emitted from it. Returns the refusal, or null.
 function checkSpan(parsed, rawText, text, sets) {
+  if (hasUnrecognizedSetNotation(text)) return ask(unrecognizedSetNotationMessage(), 'unrecognized_set_notation', parsed, rawText);
   const atValue = findAmbiguousAt(text, sets);
   if (atValue) return ask(ambiguousAtMessage(atValue), 'ambiguous_at_value', parsed, rawText);
   if (countFamilies(text) >= 2) return ask(mixedFormatMessage(), 'mixed_set_format', parsed, rawText);
