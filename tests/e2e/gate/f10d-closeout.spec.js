@@ -50,6 +50,13 @@ function record(step, note) {
   transcript.push({ at: new Date().toISOString(), step, note });
 }
 
+// The sandbox server and this process share the VM's local timezone, so the
+// server's getLocalDateString() (today) equals this local YYYY-MM-DD.
+function localToday() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 test.describe.configure({ mode: 'serial' });
 
 test.beforeAll(async ({}, testInfo) => {
@@ -458,8 +465,9 @@ test('F10D-NL: a lost accept checkpoint reports the negative verdict honestly an
 // the SAME single confirmation. The vision parse is stubbed deterministically in
 // the gate server (48:22 · 389/512 cal · 131/168 HR · date 2026-07-18); the parse
 // is not under test — the ROUTING is. #1708: the stubbed parse's numbers are
-// unverified suggestions only — they never become the Effort row; the
-// screenshot-resolved DATE still stamps the rows.
+// unverified suggestions only — they never become the Effort row. #1738: the
+// stubbed parse's DATE is a suggestion only — today stamps the rows unless the
+// athlete taps the suggestion to use it.
 
 const SHOT_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
@@ -546,7 +554,9 @@ test('F10D-SS-A: one approved screenshot-closeout writes and seals everything �
     const appended = rowsFor(st, 'Log_Cleaned');
     expect(appended).toHaveLength(2);
     expect(appended.map(r => `${String(r[3] || r[2]).toLowerCase()}|${r[7]}|${r[8]}`).sort()).toEqual(visible.sort());
-    expect(appended.every(r => String(r[0]) === '2026-07-18')).toBe(true);   // the screenshot-resolved date stamps the rows
+    // #1738: the vision date is never auto-applied — today stamps the rows; the
+    // stubbed screenshot date (2026-07-18) is only a suggestion until tapped.
+    expect(appended.every(r => String(r[0]) === localToday())).toBe(true);
     const effort = rowsFor(st, 'Effort');
     // #1708 — the stubbed parse's metrics (48:22 · 389/512 · 131/168) are
     // unverified model output: they never become the Effort row. No Effort
@@ -558,7 +568,50 @@ test('F10D-SS-A: one approved screenshot-closeout writes and seals everything �
     expect(ids).toHaveLength(3);
     expect(ids.every(id => id && id === ids[0])).toBe(true);
     expect((st.vision_calls || []).length).toBeGreaterThanOrEqual(1);
-    record('F10D-SS-A', `approved once: 2 Log rows (= visible actuals, screenshot-dated), NO Effort row (parsed effort is unverified, never the write), 1 finalized event, 3 ledger rows sealed under ${ids[0]}`);
+    record('F10D-SS-A', `approved once: 2 Log rows (= visible actuals, today-dated), NO Effort row (parsed effort is unverified, never the write), 1 finalized event, 3 ledger rows sealed under ${ids[0]}`);
+  } finally { srv.stop(); }
+});
+
+test('F10D-SS-S (#1738, A1708-5): tapping the screenshot-date suggestion applies it — rows then stamp with the suggested date', async ({ page }) => {
+  test.setTimeout(150000);
+  const srv = await bootSandbox();
+  try {
+    await openApp(page, srv.base);
+    await acceptPlan(page, [
+      { exercise: 'Romanian Deadlift', lift_code: 'RDL01', target_weight: 245, target_reps: 6, target_sets: 2, target_rir: 3 },
+      { exercise: 'Overhead Press', lift_code: 'OHP01', target_weight: 115, target_reps: 6, target_sets: 1, target_rir: 2 }
+    ]);
+    await waitForCheckpoint(srv, 3);
+    await logSet(page, 'Romanian Deadlift 245 x 6 @3');
+    await expectLoggedCount(page, 1);
+    await logSet(page, 'Romanian Deadlift 245 x 6 @3');
+    await expectLoggedCount(page, 2);
+    await uploadShot(page);
+
+    // The stubbed screenshot date (2026-07-18) is offered, never applied: the
+    // review card shows it as a tappable suggestion while the save defaults to today.
+    const review = page.locator('.review:not(.done)');
+    await expect(review.locator('.rv-date-apply', { hasText: 'Use 2026-07-18' })).toBeVisible();
+    await expect(page.locator('#log-date')).toHaveValue(localToday());
+
+    // One tap applies the suggestion: the date field becomes the screenshot date
+    // and the preview re-runs with it as the manual date.
+    await review.locator('.rv-date-apply', { hasText: 'Use 2026-07-18' }).click();
+    await expect(page.locator('#log-date')).toHaveValue('2026-07-18');
+    await expect(page.locator('.review:not(.done)')).toContainText('Date: 2026-07-18');
+
+    const visible = await page.evaluate(() => window.getSessionLog().map(r => `${String(r.canonical || r.exercise).toLowerCase()}|${r.weight}|${r.reps}`));
+    await page.locator('.review:not(.done) .rv-save').click();
+    await expect(page.locator('.review.done')).toBeVisible({ timeout: 25000 });
+
+    const st = await srv.state();
+    const appended = rowsFor(st, 'Log_Cleaned');
+    expect(appended).toHaveLength(2);
+    expect(appended.map(r => `${String(r[3] || r[2]).toLowerCase()}|${r[7]}|${r[8]}`).sort()).toEqual(visible.sort());
+    expect(appended.every(r => String(r[0]) === '2026-07-18')).toBe(true);   // the TAPPED suggestion dates the rows
+    expect(rowsFor(st, 'Effort')).toHaveLength(0);   // #1708: no Effort row from unverified vision numbers
+    expect(finalizedEvents(st)).toHaveLength(1);
+    record('F10D-SS-S', 'suggestion tapped: 2 Log rows dated 2026-07-18 (the tapped screenshot date), NO Effort row, 1 finalized event');
   } finally { srv.stop(); }
 });
 
