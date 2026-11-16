@@ -122,6 +122,10 @@ const fakeSheetsState = {
   // When true, getLogCompositeKeys throws — exercises the preview's graceful
   // degradation (read failure → preview shows all rows; live write still dedups).
   failCompositeKeysRead: false,
+  // When true, getSheetRows('Log_Cleaned') throws — exercises the #1742 B-18
+  // save-gate's fail-closed read-failure branch (a note carrying numbers cannot
+  // be verified, so the save is refused).
+  failLogCleanedRead: false,
   // When set to a tab name, getHeaderRow throws for that tab — exercises the
   // header-drift guard's fail-closed read-failure branch.
   failHeaderReadForTab: null,
@@ -236,7 +240,10 @@ const fakeSheets = {
   getSheetRows: async tabName => {
     fakeSheetsState.reads[tabName] = (fakeSheetsState.reads[tabName] || 0) + 1;
     // getSheetRowsRaw is aliased to this stub, so the undo-last read-back sees it.
-    if (tabName === 'Log_Cleaned') return fakeSheetsState.logRowsOverride || logRows;
+    if (tabName === 'Log_Cleaned') {
+      if (fakeSheetsState.failLogCleanedRead) throw new Error('Simulated Log_Cleaned read failure');
+      return fakeSheetsState.logRowsOverride || logRows;
+    }
     if (tabName === 'Effort') return fakeSheetsState.effortRows.map(r => [...r]);
     if (tabName === 'Modality_Log') {
       if (fakeSheetsState.failModalityLogRead) throw new Error('Simulated Modality_Log read failure');
@@ -4509,11 +4516,13 @@ test('api smoke: complete-workout returns a clean 413 (not 500) when log_rows_js
   assert.deepEqual(fakeSheetsState.appendCalls, [], 'an oversized field must never reach the append path');
 });
 
-test('api smoke: complete-workout screenshot preview uses parsed screenshot date when form date is omitted', async () => {
+test('api smoke (#1738, A1708-4): complete-workout screenshot preview defaults to today when a plausible screenshot date exists and no manual date is given — the screenshot date is a suggestion, never applied', async () => {
   fakeSheetsState.appendCalls.length = 0;
   // A recent date (23 days back) computed relative to today so this test never ages
   // out of the screenshot-date plausibility window (2 days ahead / 400 days back).
   const recentDate = getLocalDateString(new Date(Date.now() - 23 * 86400000));
+  const today = getLocalDateString();
+  assert.notEqual(recentDate, today);
   fakeVisionParsedMetrics = {
     date: recentDate,
     duration: '00:42:00',
@@ -4536,11 +4545,12 @@ test('api smoke: complete-workout screenshot preview uses parsed screenshot date
   const data = body.data.data;
 
   assert.equal(response.status, 200, JSON.stringify(body));
-  assert.equal(data.date, recentDate);
-  assert.equal(data.date_source, 'screenshot', 'date_source must be "screenshot" when vision extracted the date');
+  assert.equal(data.date, today, 'the save defaults to today — a vision date is never auto-applied (#1738 ruling)');
+  assert.equal(data.date_source, 'today_fallback', 'date_source is today_fallback when no manual date is given, even with a plausible screenshot date');
+  assert.equal(data.screenshot_date_suggested, recentDate, 'the plausible screenshot date is surfaced as a suggestion for the athlete to tap');
   assert.equal(data.screenshot_date_rejected, undefined, 'a plausible date is never reported as rejected');
-  assert.equal(data.effort_row[0], recentDate);
-  assert.match(data.session_id, new RegExp(`^${recentDate.replace(/-/g, '')}-(AM|PM)-01$`));
+  assert.equal(data.effort_row[0], today);
+  assert.match(data.session_id, new RegExp(`^${today.replace(/-/g, '')}-(AM|PM)-01$`));
   assert.deepEqual(fakeSheetsState.appendCalls, []);
 });
 
@@ -4614,7 +4624,10 @@ test('api smoke: complete-workout manual date overrides parsed screenshot date',
 // per-row `date_clean` (the client's today auto-fill) first — so a prior-day
 // screenshot wrote the Effort row on the screenshot date while the Log rows kept
 // today. These prove Log and Effort share the single resolved date (dry-run
-// preview = what Approve writes). RED before the fix (log rows keep today).
+// preview = what Approve writes). #1738: the canonical date is TODAY unless the
+// athlete typed one — a screenshot date is never applied; it is surfaced as
+// screenshot_date_suggested for the athlete to tap. RED before the fix (log rows
+// keep today while the Effort row takes the screenshot date).
 function assertSingleCanonicalDate(data, expectedDate, msgPrefix) {
   assert.ok(Array.isArray(data.log_rows_preview) && data.log_rows_preview.length > 0,
     `${msgPrefix}: preview must carry the non-empty Log rows`);
@@ -4638,7 +4651,7 @@ function todayStampedBenchRows(today) {
   ];
 }
 
-test('api smoke: F08 complete-workout — a PRIOR-DAY screenshot dates BOTH Log and Effort rows (not just Effort)', async () => {
+test('api smoke (#1738): F08 complete-workout — a PRIOR-DAY screenshot does NOT date the rows; today does, and the screenshot date is a suggestion', async () => {
   fakeSheetsState.appendCalls.length = 0;
   const today = getLocalDateString();
   const screenshotDate = getLocalDateString(new Date(Date.now() - 3 * 86400000)); // 3 days back, in-window
@@ -4655,12 +4668,13 @@ test('api smoke: F08 complete-workout — a PRIOR-DAY screenshot dates BOTH Log 
   const { response, body } = await requestMultipart('/api/complete-workout', form);
   const data = body.data.data;
   assert.equal(response.status, 200, JSON.stringify(body));
-  assert.equal(data.date_source, 'screenshot');
-  assertSingleCanonicalDate(data, screenshotDate, 'prior-day screenshot');
+  assert.equal(data.date_source, 'today_fallback');
+  assert.equal(data.screenshot_date_suggested, screenshotDate, 'the prior-day screenshot date is surfaced as a suggestion, not applied');
+  assertSingleCanonicalDate(data, today, 'prior-day screenshot');
   assert.deepEqual(fakeSheetsState.appendCalls, [], 'dry-run never appends');
 });
 
-test('api smoke: F08 complete-workout — MONTH-boundary screenshot date carries to Log + Effort verbatim', async () => {
+test('api smoke (#1738): F08 complete-workout — MONTH-boundary screenshot date is a suggestion; today dates Log + Effort', async () => {
   fakeSheetsState.appendCalls.length = 0;
   const today = getLocalDateString();
   const now = new Date();
@@ -4678,12 +4692,13 @@ test('api smoke: F08 complete-workout — MONTH-boundary screenshot date carries
   const { response, body } = await requestMultipart('/api/complete-workout', form);
   const data = body.data.data;
   assert.equal(response.status, 200, JSON.stringify(body));
-  assert.equal(data.date_source, 'screenshot');
-  assertSingleCanonicalDate(data, monthBoundary, 'month boundary');
-  assert.match(data.session_id, new RegExp(`^${monthBoundary.replace(/-/g, '')}-(AM|PM)-01$`));
+  assert.equal(data.date_source, 'today_fallback');
+  assert.equal(data.screenshot_date_suggested, monthBoundary);
+  assertSingleCanonicalDate(data, today, 'month boundary');
+  assert.match(data.session_id, new RegExp(`^${today.replace(/-/g, '')}-(AM|PM)-01$`));
 });
 
-test('api smoke: F08 complete-workout — YEAR-boundary (prior-year Dec 31) screenshot date carries to Log + Effort', async () => {
+test('api smoke (#1738): F08 complete-workout — YEAR-boundary (prior-year Dec 31) screenshot date is a suggestion; today dates Log + Effort', async () => {
   fakeSheetsState.appendCalls.length = 0;
   const today = getLocalDateString();
   const yearBoundary = `${new Date().getFullYear() - 1}-12-31`; // ≤366 days back → inside the window
@@ -4699,8 +4714,9 @@ test('api smoke: F08 complete-workout — YEAR-boundary (prior-year Dec 31) scre
   const { response, body } = await requestMultipart('/api/complete-workout', form);
   const data = body.data.data;
   assert.equal(response.status, 200, JSON.stringify(body));
-  assert.equal(data.date_source, 'screenshot');
-  assertSingleCanonicalDate(data, yearBoundary, 'year boundary');
+  assert.equal(data.date_source, 'today_fallback');
+  assert.equal(data.screenshot_date_suggested, yearBoundary);
+  assertSingleCanonicalDate(data, today, 'year boundary');
 });
 
 test('api smoke: F08 complete-workout — timezone edge: the LOCAL today fallback dates BOTH Log and Effort (no UTC drift)', async () => {
@@ -4780,7 +4796,7 @@ test('api smoke: F08 complete-workout — ordinary same-day MANUAL (non-screensh
   assert.deepEqual(fakeSheetsState.appendCalls, []);
 });
 
-test('api smoke: F08 complete-workout LIVE write — appended Log AND Effort rows share the canonical screenshot date', async () => {
+test('api smoke (#1738): F08 complete-workout LIVE write — appended Log AND Effort rows share the canonical date (today; the screenshot date is only a suggestion)', async () => {
   fakeSheetsState.appendCalls.length = 0;
   fakeSheetsState.allowAppend = true;
   const today = getLocalDateString();
@@ -4801,16 +4817,18 @@ test('api smoke: F08 complete-workout LIVE write — appended Log AND Effort row
       const data = body.data.data;
       assert.equal(response.status, 200, JSON.stringify(body));
       assert.equal(data.sheet_write, 'success');
-      assert.equal(data.date, screenshotDate);
+      assert.equal(data.date, today, 'the live save defaults to today — a vision date is never applied (#1738)');
+      assert.equal(data.date_source, 'today_fallback');
+      assert.equal(data.screenshot_date_suggested, screenshotDate);
 
       const logAppend = fakeSheetsState.appendCalls.find(c => c.tabName === 'Log_Cleaned');
       const effortAppend = fakeSheetsState.appendCalls.find(c => c.tabName === 'Effort');
       assert.ok(logAppend && effortAppend, 'both Log_Cleaned and Effort were appended');
       assert.ok(logAppend.rows.length >= 2, 'the two bench sets were written');
       for (const row of logAppend.rows) {
-        assert.equal(row[0], screenshotDate, 'each WRITTEN Log row carries the canonical screenshot date, not today');
+        assert.equal(row[0], today, 'each WRITTEN Log row carries the canonical date (today), not the screenshot date');
       }
-      assert.equal(effortAppend.rows[0][0], screenshotDate, 'the WRITTEN Effort row carries the same canonical date');
+      assert.equal(effortAppend.rows[0][0], today, 'the WRITTEN Effort row carries the same canonical date');
     });
   } finally {
     fakeSheetsState.allowAppend = false;
@@ -5343,8 +5361,9 @@ test('api smoke: invalid parsed screenshot metrics degrade discards the rejected
     await withMutedConsoleLog(async () => {
       const form = new FormData();
       form.append('session_id', 'SHOT-INVALID-NODATE-01');
-      // No `date` field → resolveWorkoutDate would otherwise fall back to the
-      // screenshot's date if parsed_metrics were left intact.
+      // No `date` field → the rejected screenshot's metrics are discarded (see the
+      // degrade path) so nothing parsed from it can reach the save; the date
+      // resolver itself also never accepts a vision date (#1738).
       form.append('test_mode', 'true');
       form.append('log_rows_json', JSON.stringify([
         ['', 'SHOT-INVALID-NODATE-01', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '135', '5', '2', '', '675']
@@ -7426,6 +7445,156 @@ test('api smoke: coaching-notes is registered in the route manifest with correct
   assert.equal(getRoute.writeCapable, false, 'GET must not be write-capable');
   assert.ok(postRoute, 'POST /api/coaching-notes must be registered');
   assert.equal(postRoute.writeCapable, true, 'POST must be write-capable');
+});
+
+// ── #1742 B-18: coaching-note saves are grounded at the write ──────────────────
+// Coordinator design (issue #1742, comment 6861404353): POST /api/coaching-notes
+// is the sink where model-shaped text becomes a stored record, so the check
+// belongs on the exact text being saved. Every number in the note must match the
+// session's bound facts (today's logged values) or the save is refused and the
+// note is returned for editing. A note with no numbers skips the fact read.
+// "Today" here is the route's own day (localTodayIso: UTC when ATLAS_TIMEZONE is
+// unset, as in this file), so the seeded rows use the UTC date.
+function b18TodayIso() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+test('api smoke: #1742 B-18 POST /api/coaching-notes refuses a note with an invented number', async () => {
+  const today = b18TodayIso();
+  fakeSheetsState.logRowsOverride = [
+    [today, 'SESSION-B18', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '135', '8', '2', '', '1080'],
+  ];
+  fakeSheetsState.effortRows = [];
+  fakeSheetsState.allowAppend = true;
+  fakeSheetsState.appendCalls = [];
+  try {
+    const { response, body } = await requestJson('/api/coaching-notes', {
+      method: 'POST',
+      body: JSON.stringify({ note: 'Cap all pressing at 317 x 13', write_id: 'b18-refuse-1' }),
+    });
+    assert.equal(response.status, 400, JSON.stringify(body));
+    assert.equal(body.status, 'error');
+    assert.match(body.message, /not in today's logged session/);
+    assert.equal(body.details.note, 'Cap all pressing at 317 x 13', 'refusal must echo the note back for editing');
+    assert.deepEqual(body.details.ungrounded, [317, 13]);
+    assert.ok(!fakeSheetsState.appendCalls.some(c => c.tabName === 'Coaching_Notes'), 'nothing must be stored');
+  } finally {
+    fakeSheetsState.logRowsOverride = null;
+    fakeSheetsState.effortRows = [];
+    fakeSheetsState.allowAppend = false;
+    fakeSheetsState.appendCalls = [];
+  }
+});
+
+test('api smoke: #1742 B-18 POST /api/coaching-notes refuses a number edited in after the proposal', async () => {
+  // The save-side gate cannot tell a model-proposed number from one the athlete
+  // typed into the shown note before tapping Save — and must not need to. Any
+  // ungrounded number in the exact text being saved refuses the save.
+  const today = b18TodayIso();
+  fakeSheetsState.logRowsOverride = [
+    [today, 'SESSION-B18', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '135', '8', '2', '', '1080'],
+  ];
+  fakeSheetsState.effortRows = [];
+  fakeSheetsState.allowAppend = true;
+  fakeSheetsState.appendCalls = [];
+  try {
+    const { response, body } = await requestJson('/api/coaching-notes', {
+      method: 'POST',
+      body: JSON.stringify({ note: 'Bench felt easy today — cap pressing at 317 x 13', write_id: 'b18-refuse-2' }),
+    });
+    assert.equal(response.status, 400, JSON.stringify(body));
+    assert.deepEqual(body.details.ungrounded, [317, 13]);
+    assert.ok(!fakeSheetsState.appendCalls.some(c => c.tabName === 'Coaching_Notes'), 'nothing must be stored');
+  } finally {
+    fakeSheetsState.logRowsOverride = null;
+    fakeSheetsState.effortRows = [];
+    fakeSheetsState.allowAppend = false;
+    fakeSheetsState.appendCalls = [];
+  }
+});
+
+test('api smoke: #1742 B-18 POST /api/coaching-notes saves the same note with numbers removed', async () => {
+  const today = b18TodayIso();
+  fakeSheetsState.logRowsOverride = [
+    [today, 'SESSION-B18', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '135', '8', '2', '', '1080'],
+  ];
+  fakeSheetsState.effortRows = [];
+  fakeSheetsState.allowAppend = true;
+  fakeSheetsState.appendCalls = [];
+  try {
+    const { response, body } = await requestJson('/api/coaching-notes', {
+      method: 'POST',
+      body: JSON.stringify({ note: 'Cap all pressing', write_id: 'b18-save-1' }),
+    });
+    assert.equal(response.status, 200, JSON.stringify(body));
+    assert.equal(body.data.sheet_written, true);
+    assert.ok(fakeSheetsState.appendCalls.some(c => c.tabName === 'Coaching_Notes'), 'note must be stored');
+  } finally {
+    fakeSheetsState.logRowsOverride = null;
+    fakeSheetsState.effortRows = [];
+    fakeSheetsState.allowAppend = false;
+    fakeSheetsState.appendCalls = [];
+  }
+});
+
+test('api smoke: #1742 B-18 POST /api/coaching-notes saves a note whose numbers match logged facts', async () => {
+  const today = b18TodayIso();
+  fakeSheetsState.logRowsOverride = [
+    [today, 'SESSION-B18', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '135', '8', '2', '', '1080'],
+  ];
+  fakeSheetsState.effortRows = [];
+  fakeSheetsState.allowAppend = true;
+  fakeSheetsState.appendCalls = [];
+  try {
+    const { response, body } = await requestJson('/api/coaching-notes', {
+      method: 'POST',
+      body: JSON.stringify({ note: 'Bench 135x8 felt solid', write_id: 'b18-save-2' }),
+    });
+    assert.equal(response.status, 200, JSON.stringify(body));
+    assert.equal(body.data.sheet_written, true);
+    assert.ok(fakeSheetsState.appendCalls.some(c => c.tabName === 'Coaching_Notes'), 'note must be stored');
+  } finally {
+    fakeSheetsState.logRowsOverride = null;
+    fakeSheetsState.effortRows = [];
+    fakeSheetsState.allowAppend = false;
+    fakeSheetsState.appendCalls = [];
+  }
+});
+
+test('api smoke: #1742 B-18 POST /api/coaching-notes refuses numbered notes when the session read fails', async () => {
+  // Fail-closed: numbers cannot be verified, so the save is refused (503,
+  // retryable) and nothing is stored. A number-free note needs no facts and
+  // still saves on the same failure.
+  const today = b18TodayIso();
+  fakeSheetsState.logRowsOverride = [
+    [today, 'SESSION-B18', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '135', '8', '2', '', '1080'],
+  ];
+  fakeSheetsState.effortRows = [];
+  fakeSheetsState.failLogCleanedRead = true;
+  fakeSheetsState.allowAppend = true;
+  fakeSheetsState.appendCalls = [];
+  try {
+    const { response, body } = await requestJson('/api/coaching-notes', {
+      method: 'POST',
+      body: JSON.stringify({ note: 'Bench 135x8 felt solid', write_id: 'b18-fail-1' }),
+    });
+    assert.equal(response.status, 503, JSON.stringify(body));
+    assert.equal(body.details.note, 'Bench 135x8 felt solid', 'refusal must echo the note back for editing');
+    assert.ok(!fakeSheetsState.appendCalls.some(c => c.tabName === 'Coaching_Notes'), 'nothing must be stored');
+
+    const free = await requestJson('/api/coaching-notes', {
+      method: 'POST',
+      body: JSON.stringify({ note: 'Felt strong today', write_id: 'b18-fail-2' }),
+    });
+    assert.equal(free.response.status, 200, JSON.stringify(free.body));
+    assert.equal(free.body.data.sheet_written, true);
+  } finally {
+    fakeSheetsState.logRowsOverride = null;
+    fakeSheetsState.effortRows = [];
+    fakeSheetsState.failLogCleanedRead = false;
+    fakeSheetsState.allowAppend = false;
+    fakeSheetsState.appendCalls = [];
+  }
 });
 
 // ── Structured constraints (P1 · 2.1) ─────────────────────────────────────────

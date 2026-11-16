@@ -41,6 +41,7 @@ const { decideTurnPrecedence, isTurnPrecedenceEnabled } = require('./services/tu
 const { recommendSubstitute } = require('./services/substitutionRecommender');
 const { scoreSubstitutionQuality } = require('./services/substitutionQuality');
 const { buildRecommendation, parseRecommendationConstraints } = require('./services/recommendationPipeline');
+const { extractNoteNumbers, collectSessionBoundNumbers, findUngroundedNumbers } = require('./services/coachingNoteGrounding');
 const { getProfileGoal } = require('./services/profileGoal');
 const { normalizeTrainingGoal } = require('./services/trainingKnowledge');
 const { computeBenchmark, resolveWorkingWeight } = require('./services/exerciseBenchmark');
@@ -804,12 +805,17 @@ function toDateOnly(value) {
   return normalizeDateCandidate(value) || String(value).trim();
 }
 
-function resolveWorkoutDate({ manualDate, screenshotDate } = {}) {
+// #1738 (Dale ruling 2026-11-10): a vision-read date is NEVER auto-applied.
+// The workout date defaults to today unless the athlete explicitly entered one;
+// a screenshot date is only ever a SUGGESTION the athlete taps to accept, which
+// then arrives here as the manual date. The screenshotDate argument is gone:
+// any caller that used to pass a vision date now surfaces it as
+// screenshot_date_suggested on the response instead of letting it date the save.
+function resolveWorkoutDate({ manualDate } = {}) {
   if (manualDate !== undefined && manualDate !== null && String(manualDate).trim() !== '') {
     return toDateOnly(manualDate);
   }
-  return normalizeDateCandidate(screenshotDate) ||
-    getLocalDateString();
+  return getLocalDateString();
 }
 
 // Plausibility window for a screenshot-sourced workout date (live incident
@@ -905,10 +911,9 @@ function normalizeWorkoutDateStrict(value) {
   return norm;
 }
 
-function buildEffortRowFromParsedMetrics(parsedMetrics, formFields) {
+  function buildEffortRowFromParsedMetrics(parsedMetrics, formFields) {
   const dateValue = resolveWorkoutDate({
-    manualDate: formFields.date,
-    screenshotDate: formFields.screenshot_date ?? parsedMetrics?.date
+    manualDate: formFields.date
   });
   const sessionId = formFields.session_id || generateSessionId(dateValue);
 
@@ -1447,6 +1452,39 @@ app.post('/api/coaching-notes', async (req, res) => {
   // F09I: stamp the owner's LOCAL day (ATLAS_TIMEZONE), not the UTC day — an evening-Pacific
   // note was being dated tomorrow. localTodayIso falls back to UTC until the zone is set.
   const dateStr = localTodayIso();
+
+  // Fable P3 B-18 (coordinator design, issue #1742 comment 6861404353): ground
+  // the saved text at the write. POST /api/coaching-notes is the sink where
+  // model-shaped text becomes a stored record, so the check belongs here, on
+  // the exact text being saved — a proposal-side gate alone cannot catch a
+  // number edited into the shown note between proposal and save. Every number
+  // in the note must match the session's bound facts (today's logged values)
+  // or the save is refused (400) and the note is returned for editing; nothing
+  // is written. Number-free notes skip the fact read entirely (old path, zero
+  // new reads). The fact read is live (getSheetRowsRaw, not the cached
+  // getSheetRows) — a trust gate judges the sheet as it stands now, same as
+  // the undo pre-delete read-back and the duplicate-protection reads. A fact
+  // read failure refuses numbered notes fail-closed (503, retryable).
+  const noteNumbers = extractNoteNumbers(note);
+  if (noteNumbers.length > 0) {
+    let boundNumbers;
+    try {
+      const [todayLog, todayEffort] = await Promise.all([
+        getSheetRowsRaw(logSheetName),
+        getSheetRowsRaw(effortSheetName),
+      ]);
+      boundNumbers = collectSessionBoundNumbers({ logRows: todayLog, effortRows: todayEffort, date: dateStr });
+    } catch (err) {
+      if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+      return standardError(req, res, 'Coaching note not saved: today\'s session could not be read, so numbers in the note cannot be verified. Edit the note and try again.', { note }, 503);
+    }
+    const ungrounded = findUngroundedNumbers(note, boundNumbers);
+    if (ungrounded.length > 0) {
+      if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+      return standardError(req, res, `Coaching note not saved: number(s) ${ungrounded.join(', ')} are not in today's logged session. Edit the note and save again.`, { note, ungrounded }, 400);
+    }
+  }
+
   try {
     await appendRows('Coaching_Notes', [[dateStr, note.slice(0, 200)]]);
     invalidateSheetRowsCache('Coaching_Notes');
@@ -2589,8 +2627,9 @@ app.post('/api/parse-workout-image', upload.single('image'), async (req, res) =>
     // write it. Saving effort requires explicit owner approval via the
     // approve-before-save flow (/api/complete-workout). sheet_write is always 'skipped'.
     // #1708 — the preview row's numeric fields stay blank: model-extracted metrics
-    // must not enter the authoritative-shaped row (the screenshot date and the
-    // workout-type note still flow; neither is a numeric metric).
+    // must not enter the authoritative-shaped row. The workout-type note still
+    // flows (not a numeric metric); the screenshot DATE does not (#1738 — a vision
+    // date is never applied, it is only ever a suggestion the athlete taps).
     const blankVisionMetrics = {
       ...visionResult.parsed_metrics,
       duration: '',
@@ -2759,9 +2798,10 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         metricWarnings = [SCREENSHOT_UNREADABLE_MESSAGE];
         // Converge with the throw-based degrade (line ~3026), which sets
         // parsed_metrics to null: discard the REJECTED screenshot's fields so its
-        // date can't flow into resolveWorkoutDate / buildEffortRowFromParsedMetrics
-        // on a no-manual-date save. Source-date handling for screenshots is B5's
-        // scope, not B3's — both degrade paths must behave identically here.
+        // date can't flow into the save. (Belt and braces with #1738: the date
+        // resolver no longer accepts a vision date at all.) Source-date handling
+        // for screenshots is B5's scope, not B3's — both degrade paths must
+        // behave identically here.
         visionResult.parsed_metrics = null;
       } else if (!hasManualEffortMetrics && req.file && effortOnly) {
         // Effort-only screenshot whose metrics parsed but were invalid/out-of-range:
@@ -2807,18 +2847,22 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
     // the vision model can weekday-match a wrong year onto a yearless header) is
     // REJECTED: never used for the save, reported via screenshot_date_rejected so
     // the review card can say what was seen and why it wasn't trusted.
+    // #1738 (Dale ruling 2026-11-10): a PLAUSIBLE screenshot date is not applied
+    // either — the save defaults to today and the screenshot date is surfaced as
+    // screenshot_date_suggested, a suggestion the athlete taps to accept (which
+    // then arrives as the manual date on the re-preview). date_source is therefore
+    // manual or today_fallback only; 'screenshot' is never a date source again.
     const screenshotDateRaw = visionResult.parsed_metrics?.date;
     const screenshotDateNormalized = normalizeDateCandidate(screenshotDateRaw);
     const screenshotDateUsable = screenshotDateNormalized && isPlausibleScreenshotDate(screenshotDateNormalized);
     const screenshotDateRejected = (screenshotDateNormalized && !screenshotDateUsable) ? screenshotDateNormalized : null;
     const manualDateRaw = formFields.date;
+    const manualDateGiven = manualDateRaw !== undefined && manualDateRaw !== null && String(manualDateRaw).trim() !== '';
+    const screenshotDateSuggested = (!manualDateGiven && screenshotDateUsable) ? screenshotDateNormalized : null;
     const dateValue = resolveWorkoutDate({
-      manualDate: manualDateRaw,
-      screenshotDate: screenshotDateUsable ? screenshotDateNormalized : null
+      manualDate: manualDateRaw
     });
-    const dateSource = (manualDateRaw !== undefined && manualDateRaw !== null && String(manualDateRaw).trim() !== '')
-      ? 'manual'
-      : screenshotDateUsable ? 'screenshot' : 'today_fallback';
+    const dateSource = manualDateGiven ? 'manual' : 'today_fallback';
 
     // 4) Check duplicate session protection — fetch existing IDs first so we
     // can auto-increment the counter when two sessions share the same day/period.
@@ -2972,12 +3016,11 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
     }
 
     // 6) Build effort_row from normalized metrics. `date` (the guarded dateValue)
-    // always wins inside the builder; pass only a plausibility-checked screenshot
-    // date as the fallback so a rejected (weekday-matched wrong-year) date can
-    // never reach an Effort row through any path.
+    // always wins inside the builder; it is the manual date or today (#1738 — a
+    // screenshot date is never passed here anymore, so no vision date can reach
+    // an Effort row through any path).
     const { effortRow } = buildEffortRowFromParsedMetrics(normalizedMetrics, {
       date: dateValue,
-      screenshot_date: screenshotDateUsable ? screenshotDateNormalized : null,
       session_id: sessionId,
       location: formFields.location,
       notes: formFields.notes
@@ -3265,6 +3308,10 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         // weekday-matched wrong year) — lets the review card say what was seen
         // and why it wasn't trusted. Absent when no date was rejected.
         ...(screenshotDateRejected ? { screenshot_date_rejected: screenshotDateRejected } : {}),
+        // #1738: the plausible screenshot date, surfaced as a SUGGESTION for the
+        // athlete to tap — never applied to the save. Absent when no manual date
+        // is needed (a manual date was given) or no usable screenshot date exists.
+        ...(screenshotDateSuggested ? { screenshot_date_suggested: screenshotDateSuggested } : {}),
         test_mode: testMode,
         effort_only: effortOnly,
         sheet_written: !testMode && effortWritten,
