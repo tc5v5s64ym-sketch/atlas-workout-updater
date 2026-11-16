@@ -112,6 +112,13 @@ jobs:
         # or a packet reported valid that is not (H-05/H-15). Self-test: test/packetTraceGuard.test.js.
         run: npm run -s check:packet-trace
 
+      - name: Shadow no-read-path guard (Fable P3 B-21)
+        # Fails if any runtime write/answer path reads Coach_Response or
+        # Intent_Shadow as a source of facts, or if the intent-shadow ring gains
+        # a consumer other than GET /api/debug/intent-shadow. Self-test:
+        # test/b21ShadowNoReadPath.test.js; runtime half in test/api-smoke.test.js.
+        run: npm run -s check:shadow-no-read
+
       - name: Supabase migration safety guard (§6.1 P10, repository half)
         # Fails if any GitHub-triggered path could apply schema to Atlas Production,
         # if a workflow holds a production Supabase credential, or if the from-empty
