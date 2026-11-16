@@ -180,9 +180,15 @@ const fakeSheets = {
     }
     if (fakeSheetsState.miswriteAppendForTab === tabName) {
       // Authoritative append response disagrees with what was sent (one extra row).
-      return { data: { updates: { updatedRange: `${tabName}!A100:K100`, updatedRows: rows.length + 1 } } };
+      // The range stays span-correct for the rows actually sent, so the only
+      // defect is the count — the verdict names row_count_disagrees_with_request.
+      return { data: { updates: { updatedRange: `${tabName}!A100:K${99 + rows.length}`, updatedRows: rows.length + 1 } } };
     }
-    return { data: { updates: { updatedRange: `${tabName}!A100:K100`, updatedRows: rows.length } } };
+    // #1762: the range must be self-consistent (span == updatedRows), as a real
+    // Sheets append returns — the old fixed A100:K100 claimed a 1-row span for
+    // any row count, which the canonical append-proof verdict now rightly
+    // refuses. One row still reads A100:K100, so the 1-row pins are unchanged.
+    return { data: { updates: { updatedRange: `${tabName}!A100:K${99 + rows.length}`, updatedRows: rows.length } } };
   },
   readRange: async (range) => {
     // B-21 (#1742): poison surface — an A1-range read of a shadow tab returns
@@ -4901,7 +4907,7 @@ test('api smoke (F02/WRITE-1): complete-workout live write reports exact per-tab
       assert.equal(response.status, 200, JSON.stringify(body));
       assert.equal(data.sheet_write, 'success');
       assert.equal(data.log_rows_written, 2, 'authoritative log count comes from the append response');
-      assert.equal(data.logAppendedRange, 'Log_Cleaned!A100:K100', 'exact log appended range is reported');
+      assert.equal(data.logAppendedRange, 'Log_Cleaned!A100:K101', 'exact log appended range is reported (2-row span)');
       assert.equal(data.effort_rows_written, 1, 'authoritative effort count comes from the append response');
       assert.equal(data.effortAppendedRange, 'Effort!A100:K100', 'exact effort appended range is reported');
     });

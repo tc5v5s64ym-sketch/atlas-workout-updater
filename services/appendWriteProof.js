@@ -51,6 +51,31 @@
  *            rows_written:number|null, rows_submitted:number}}
  */
 function verifyAppendReceipt({ receipt, tab, sessionId, rowsSubmitted, sessionIdColumnIndex }) {
+  return adjudicateAppendReceipt({ receipt, tab, rowsSubmitted, sessionId, sessionIdColumnIndex });
+}
+
+/**
+ * Adjudicate an append receipt for a writer whose rows carry no session_id
+ * column (POST /api/coaching-notes appends [date, note]). Every check of the
+ * session-owning variant applies — tab, A-start, range parse, span, row count
+ * against the request — except session ownership, which the row cannot carry.
+ * A note receipt that fails any of those checks is a failed write, same as a
+ * session-owned one; the absence of a session column never reads as proof.
+ *
+ * @param {object}   args
+ * @param {object}   args.receipt        the `updates` envelope from values.append
+ * @param {string}   args.tab            the tab the rows were appended to
+ * @param {Array[]}  args.rowsSubmitted  the exact row arrays handed to values.append
+ * @returns {{verified:boolean, authority:string, reason:string|null, range:string|null,
+ *            rows_written:number|null, rows_submitted:number}}
+ */
+function verifyAppendReceiptWithoutSession({ receipt, tab, rowsSubmitted }) {
+  return adjudicateAppendReceipt({ receipt, tab, rowsSubmitted, sessionId: null, sessionIdColumnIndex: null });
+}
+
+// Shared core: the range/count/span checks, then session ownership only when
+// the writer's rows carry a session_id column (sessionIdColumnIndex !== null).
+function adjudicateAppendReceipt({ receipt, tab, rowsSubmitted, sessionId, sessionIdColumnIndex }) {
   const submitted = Array.isArray(rowsSubmitted) ? rowsSubmitted : [];
   const base = {
     verified: false,
@@ -81,6 +106,12 @@ function verifyAppendReceipt({ receipt, tab, sessionId, rowsSubmitted, sessionId
   if (span !== rowsWritten) return { ...out, reason: 'range_span_disagrees_with_row_count' };
   if (rowsWritten !== submitted.length) return { ...out, reason: 'row_count_disagrees_with_request' };
 
+  // No session column on this writer's rows: the receipt is adjudicated on the
+  // range and the count alone, and ownership is not claimed.
+  if (sessionIdColumnIndex === null || sessionIdColumnIndex === undefined) {
+    return { ...out, verified: true };
+  }
+
   const expected = String(sessionId || '').trim().toLowerCase();
   if (!expected) return { ...out, reason: 'no_session_id' };
   for (const row of submitted) {
@@ -91,4 +122,4 @@ function verifyAppendReceipt({ receipt, tab, sessionId, rowsSubmitted, sessionId
   return { ...out, verified: true };
 }
 
-module.exports = { verifyAppendReceipt };
+module.exports = { verifyAppendReceipt, verifyAppendReceiptWithoutSession };

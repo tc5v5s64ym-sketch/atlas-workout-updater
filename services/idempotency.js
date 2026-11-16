@@ -229,6 +229,29 @@ function sheetWriteOf(response) {
   return null;
 }
 
+// #1762 — the verdict keys every writer attaches to its response. A failed
+// verdict attached anywhere on the receipt is the receipt's own word that the
+// write is not established.
+const APPEND_VERDICT_KEYS = [
+  'log_write_verification',
+  'effort_write_verification',
+  'modality_write_verification',
+  'note_write_verification',
+];
+
+// The attached failed append-proof verdict on an object, or null when no
+// verdict on it says the write is unestablished. A verified verdict is not a
+// failure; an absent verdict is not a failure either — only an explicit
+// verified:false counts, so routes that never attach a verdict are untouched.
+function attachedFailedVerdict(obj) {
+  if (!obj || typeof obj !== 'object') return null;
+  for (const key of APPEND_VERDICT_KEYS) {
+    const verdict = obj[key];
+    if (verdict && typeof verdict === 'object' && verdict.verified === false) return verdict;
+  }
+  return null;
+}
+
 // A committed write whose finalization failed must not be stored as success.
 // The caller may still pass sheet_write:'success' (the historical lie). Rewrite
 // that word on the object the route returns and the object the receipt stores,
@@ -240,10 +263,16 @@ function forceHonestOutcome(response) {
     targets.push(response.data);
   }
   for (const obj of targets) {
-    if (obj.post_processing_error !== true) continue;
-    const verdict = obj.log_write_verification;
-    if (verdict && verdict.verified === true) continue;
     if (obj.sheet_write === 'partial' || obj.sheet_write === 'unverified') continue;
+    // #1762: a failed append-proof verdict attached to the receipt is decisive
+    // on its own — the post_processing_error gate used to be the only trigger,
+    // so a route that attached a failed verdict and still claimed success
+    // stored the lie (log-workout attached log_write_verification verified:false
+    // and still completed as success).
+    const failedVerdict = attachedFailedVerdict(obj);
+    const postProcessingFailed = obj.post_processing_error === true
+      && !(obj.log_write_verification && obj.log_write_verification.verified === true);
+    if (!failedVerdict && !postProcessingFailed) continue;
     obj.sheet_write = 'unverified';
     obj.proof_mismatch = true;
   }
@@ -282,11 +311,18 @@ function duplicateReplay(record, writeId) {
   const source = wrapped ? response.data : response;
   const sheetWrite = sheetWriteOf(response);
   const status = record && record.status;
-  const outcome = TERMINAL_NON_SUCCESS.has(status) || TERMINAL_NON_SUCCESS.has(sheetWrite)
+  let outcome = TERMINAL_NON_SUCCESS.has(status) || TERMINAL_NON_SUCCESS.has(sheetWrite)
     ? ((status === 'partial' || sheetWrite === 'partial') ? 'partial' : 'unverified')
     : ((source && source.proof_mismatch === true && sheetWrite !== 'success' && sheetWrite !== 'skipped_duplicate')
       ? 'unverified'
       : null);
+  // #1762 — reconcile before receipt replay: a receipt stored as completed
+  // before this fix (or by a route that attached a failed verdict) replays as
+  // the unverified outcome its own verdict states, never as the saved success
+  // its stored status claims. The attached verdict is the receipt's own word.
+  if (!outcome && (attachedFailedVerdict(source) || attachedFailedVerdict(response))) {
+    outcome = 'unverified';
+  }
   if (outcome) {
     const body = {
       ...source,
