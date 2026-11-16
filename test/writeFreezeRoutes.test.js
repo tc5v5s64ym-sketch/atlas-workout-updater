@@ -47,7 +47,15 @@ const fakeSheets = {
     const last = 1 + rows.length;
     return { data: { updates: { updatedRows: rows.length, updatedRange: `${tabName}!A2:L${last}` } } };
   },
-  deleteRowsByRange: async (...args) => { sheetCalls.delete.push(args); return { rowsDeleted: 1 }; },
+  // #1763: model the delete so the post-delete verification read-back sees the
+  // rows gone. LOG_ROWS excludes the header; startIndex is a 0-based sheet row
+  // including it, so the data index is startIndex - 1.
+  deleteRowsByRange: async (...args) => {
+    sheetCalls.delete.push(args);
+    const [tabName, startIndex, endIndex] = args;
+    if (tabName === 'Log_Cleaned') LOG_ROWS.splice(startIndex - 1, endIndex - startIndex);
+    return { rowsDeleted: 1 };
+  },
   updateColumnCells: async (...args) => { sheetCalls.update.push(args); return { updatedCells: 1 }; },
   getExerciseCatalog: async () => [
     ['exercise', 'muscle_group', 'lift_code', 'canonical_exercise'],
@@ -232,6 +240,11 @@ function resetCounters() {
   sheetCalls.delete.length = 0;
   sheetCalls.update.length = 0;
   supabaseState.readCount = 0;
+  // #1763: the undo deletes land in LOG_ROWS now, so restore the fixture row
+  // between calls — the P12 loop sends the same undo twice (dormant, then
+  // armed-open) and each must be a genuine first undo with an identical body.
+  LOG_ROWS.length = 0;
+  LOG_ROWS.push(['2026-08-09', '20260809-AM-01', 'Back Squat', 'Back Squat', 'legs', 'SQ01', 1, 225, 5, 2, '', 1125]);
 }
 
 /* ══════════ §6.2 P10 — all seven fail closed, with ZERO side effects ══════════ */

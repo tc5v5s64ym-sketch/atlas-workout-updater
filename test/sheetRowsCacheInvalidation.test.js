@@ -71,8 +71,23 @@ function valuesFor(range) {
 
 const fake = {
   spreadsheets: {
-    get: async () => ({ data: { sheets: Object.keys(SHEET).map(title => ({ properties: { title, sheetId: 1 } })) } }),
-    batchUpdate: async () => ({ data: {} }),
+    get: async () => ({ data: { sheets: Object.keys(SHEET).map((title, i) => ({ properties: { title, sheetId: i + 1 } })) } }),
+    // #1763: model the deleteDimension the undo path issues, so the
+    // post-delete verification read-back sees the rows gone. sheetIds are
+    // distinct per tab (see get above); the indices are 0-based sheet rows
+    // INCLUDING the header, and SHEET[tab] keeps its header at [0]. Requests
+    // without a deleteDimension pass through untouched.
+    batchUpdate: async ({ requestBody } = {}) => {
+      const requests = requestBody?.requests || [];
+      for (const req of requests) {
+        const dim = req?.deleteDimension?.range;
+        if (!dim || dim.dimension !== 'ROWS') continue;
+        const title = Object.keys(SHEET).find((t, i) => i + 1 === dim.sheetId);
+        if (!title || !SHEET[title]) continue;
+        SHEET[title].splice(dim.startIndex, dim.endIndex - dim.startIndex);
+      }
+      return { data: {} };
+    },
     values: {
       get: async ({ range }) => { record(range); return { data: { values: valuesFor(range) } }; },
       batchGet: async ({ ranges }) => {

@@ -430,6 +430,68 @@ function peekWrite(writeId, options = {}) {
   };
 }
 
+// #1763 — find every record whose metadata matches every key in `match`
+// (exact === on the stored values). Returned newest-first, cloned like
+// beginWrite's duplicate return so a caller cannot mutate the store through
+// the result. The undo route uses it to find a prior undo for the same
+// (session_id, log_appended_range) when a retry arrives under a different
+// write_id (or none): the write_id is the retry's identity, but the
+// (session, range) pair is the undone write's identity, and the prior
+// record's stored fingerprint is what makes the retry safe.
+function findWritesByMetadata(match = {}) {
+  ensureLoaded();
+  const keys = Object.keys(match);
+  const found = [];
+  for (const record of writeRecords.values()) {
+    const metadata = record.metadata || {};
+    let matches = true;
+    for (const key of keys) {
+      if (metadata[key] !== match[key]) { matches = false; break; }
+    }
+    if (matches) {
+      found.push({
+        ...record,
+        metadata: { ...metadata },
+        ...(record.response ? { response: { ...record.response } } : {}),
+      });
+    }
+  }
+  found.sort((a, b) => (b.created_at_ms || 0) - (a.created_at_ms || 0));
+  return found;
+}
+
+// #1763 — reopen a settled record so a reconciling retry can complete it
+// honestly. Only 'unverified' and 'completed' reopen, and only when the
+// caller has established BY READ-BACK that re-running is safe: 'unverified'
+// reopens when the stored fingerprint still matches the rows at the range
+// (the delete provably did not commit); 'completed' reopens only when the
+// generation check proved the rows at the range belong to a NEW write
+// (re-save after an undo). 'failed' is already retryable via beginWrite;
+// 'in_progress' belongs to a live attempt. The fresh token invalidates any
+// stale completeWrite, exactly like beginWrite's token.
+function reopenWrite(writeId) {
+  const normalizedWriteId = normalizeWriteId(writeId);
+  if (!normalizedWriteId) return { reopened: false };
+
+  ensureLoaded();
+  const existing = writeRecords.get(normalizedWriteId);
+  if (!existing || (existing.status !== 'unverified' && existing.status !== 'completed')) {
+    return { reopened: false };
+  }
+
+  const now = Date.now();
+  const token = `${normalizedWriteId}:${now}:${Math.random().toString(36).slice(2)}`;
+  writeRecords.set(normalizedWriteId, {
+    ...existing,
+    status: 'in_progress',
+    token,
+    reopened_at_ms: now,
+    reopened_at: new Date(now).toISOString(),
+  });
+  persist();
+  return { enabled: true, reopened: true, write_id: normalizedWriteId, token };
+}
+
 // ── THE RECEIPT MIGRATION SEAM — TEMPORARY, S3 ONLY ──────────────────────────
 //
 // Design authority: docs/SUPABASE_HOT_PATH_MIGRATION.md §5.3 ("The receipt
@@ -696,6 +758,8 @@ module.exports = {
   peekWrite,
   completeWrite,
   failWrite,
+  findWritesByMetadata,
+  reopenWrite,
   normalizeWriteId,
   resetIdempotencyStore,
   isSettledReceipt,

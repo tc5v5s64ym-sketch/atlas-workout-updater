@@ -122,6 +122,12 @@ const fakeSheets = {
   },
   deleteRowsByRange: async (tab, startIndex, endIndex) => {
     state.deletes.push({ tab, startIndex, endIndex });
+    // #1763: model the delete so the post-delete verification read-back sees
+    // the rows gone. Indices are 0-based sheet rows (row 1 = header), and
+    // state.logRows excludes the header, so the data index is startIndex - 1.
+    if (tab === 'Log_Cleaned') {
+      state.logRows.splice(startIndex - 1, endIndex - startIndex);
+    }
     return { data: {} };
   },
   appendRows: async (tab, rows) => {
