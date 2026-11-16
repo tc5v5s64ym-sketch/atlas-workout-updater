@@ -39,14 +39,17 @@ const SLASH_SET = /\d+\s*\/\s*\d+/;
 //   1. hasSignedOrRangedQuantity(t): an attached or spaced sign on a
 //      quantity, a digits–dash–digits range feeding a unit, a word range
 //      ("30 to 45 sec", "between 30 and 45 sec", "30 and/or 45 sec",
-//      "30 up to 45 sec"), a tilde/dot range
-//      ("30~45 sec", "30..45 sec"), a spelled-out sign ("minus 45 seconds",
-//      "negative 45 sec"), a signed sets multiplier ("x -3", "3x -3",
-//      "x3-3"), a plus-minus sign ("±45 sec", "∓45 sec"), a signed
-//      decimal-comma quantity ("-5,5 sec"), a chained separator stating one
-//      dimension twice ("5 km - 30 min - 45 sec"), a second end with its
-//      unit elided ("30 sec to 45", "5 km - 10"), or an elapsed-time pair
-//      ("32:10 - 45:20").
+//      "30 up to 45 sec", "30 vs 45 sec", "30 versus 45 sec",
+//      "30 v 45 sec", "30 plus 45 sec"), a symbol range ("30+45 sec",
+//      "30 & 45 sec", "30 * 45 sec"), a tilde/dot range
+//      ("30~45 sec", "30..45 sec", "30≈45 sec"), a spelled-out sign
+//      ("minus 45 seconds", "negative 45 sec"), a signed sets multiplier
+//      ("x -3", "3x -3", "x3-3"), a signed number dangling after a count
+//      word ("3 sets -3"), a plus-minus sign ("±45 sec", "∓45 sec"), a
+//      signed decimal-comma quantity ("-5,5 sec"), a chained separator
+//      stating one dimension twice ("5 km - 30 min - 45 sec"), a second
+//      end with its unit elided ("30 sec to 45", "5 km - 10"), or an
+//      elapsed-time pair ("32:10 - 45:20").
 //      A spaced dash IS a separator — and still parses — only when it sits
 //      between two stated quantities: the text before it ends with a unit
 //      word or a number ("Run 5 km - 30 min", "AMRAP 12 min: … - 6 rounds",
@@ -114,21 +117,43 @@ const SIGNED_QUANTITY_SPACED = new RegExp(`${SIGN_CHARS}\\s+(${SIGNED_NUMBER})(?
 // longer number from matching as the start).
 const RANGED_QUANTITY = new RegExp(`(?<![\\d:])(${PLAIN_NUMBER})\\s*${SIGN_CHARS}\\s*(${PLAIN_NUMBER})(?=${RANGE_FOLLOW})`, 'u');
 // Word ranges: "30 to 45 sec", "5 or 10 km", "30 through 45 sec",
-// "30 and 45 sec", "30 and/or 45 sec", "30 up to 45 sec" (B13: "and/or"
-// and "up to" were missing, so those ranges recorded the upper end).
+// "30 and 45 sec", "30 and/or 45 sec", "30 up to 45 sec", "30 vs 45 sec",
+// "30 versus 45 sec", "30 v 45 sec", "30 plus 45 sec" (C1/C2: the versus
+// family and "plus" were missing, so those ranges recorded the upper end).
 // The digits must sit directly around the word —
 // "Run 5 km to 30 min" does not match (a unit sits between the first number
 // and "to"), and "Plank 60 sec to failure" does not match (no digits after
 // "to"). "between X and Y" is its own pattern below (the word comes first).
-// "and/or" sorts before "and"/"or" so the two-word form wins.
-const RANGE_WORDS = '(?:and/or|up to|to|or|through|thru|and)';
+// Longest first ("versus" before "vs" before "v"; "and/or" before "and"/"or")
+// so the longer form wins; "vs."/"v." allow the abbreviated period.
+const RANGE_WORDS = '(?:and/or|up to|versus|vs\\.?|v\\.?|plus|to|or|through|thru|and)';
 const RANGED_WORD_QUANTITY = new RegExp(`(?<![\\d:])(${PLAIN_NUMBER})\\s+${RANGE_WORDS}\\s+(${PLAIN_NUMBER})(?=${RANGE_FOLLOW})`, 'u');
 const BETWEEN_RANGE = new RegExp(`\\bbetween\\s+(${PLAIN_NUMBER})\\s*(?:${UNIT})?\\s+and\\s+(${PLAIN_NUMBER})\\s*(?:${UNIT})\\b`, 'iu');
 // Tilde / dot ranges: "30~45 sec", "30..45 sec" (and "..."). A lone "~45"
 // (approximate, no digits before it) does not match — that stays the
-// pre-existing approx-nominal residual.
-const TILDE_RANGE = new RegExp(`(?<![\\d:])(${PLAIN_NUMBER})\\s*~\\s*(${PLAIN_NUMBER})(?=${RANGE_FOLLOW})`, 'u');
+// pre-existing approx-nominal residual. The tilde class also holds the
+// Unicode approx operators (C3: "30≈45 sec", "30∼45 sec", "30∽45 sec",
+// "30～45 sec", "30≃45 sec", "30≅45 sec" all recorded the upper end —
+// the same rewording applied to the tilde range).
+const TILDE_CHARS = '[~\\u223C\\u223D\\uFF5E\\u2248\\u2243\\u2245]';
+const TILDE_RANGE = new RegExp(`(?<![\\d:])(${PLAIN_NUMBER})\\s*${TILDE_CHARS}\\s*(${PLAIN_NUMBER})(?=${RANGE_FOLLOW})`, 'u');
 const DOT_RANGE = new RegExp(`(?<![\\d:])(${PLAIN_NUMBER})\\s*\\.\\.+\\s*(${PLAIN_NUMBER})(?=${RANGE_FOLLOW})`, 'u');
+// Symbol connectors between two numbers feeding one unit ("30+45 sec",
+// "30 & 45 sec", "30 * 45 sec" — C2: recorded the upper end, wrong under
+// every reading, since as arithmetic 30+45 is 75, not 45). Attached forms
+// exist, so the connector takes \s* on both sides. "/" is deliberately NOT
+// in this class — it is the interval separator ("8 x 400m / 90 sec").
+// "x" is not in this class either — "30 x 45 sec" is the legitimate sets
+// multiplier. A leading "+45" stays positive: a two-number pattern needs a
+// number before the connector, so "Dead hang +45 seconds" cannot match.
+const SYMBOL_CHARS = '[+&*]';
+const RANGED_SYMBOL_QUANTITY = new RegExp(`(?<![\\d:])(${PLAIN_NUMBER})\\s*${SYMBOL_CHARS}\\s*(${PLAIN_NUMBER})(?=${RANGE_FOLLOW})`, 'u');
+const PAIR_SYMBOL = new RegExp(`(?<![\\d:])(${PLAIN_NUMBER})\\s*(${UNIT})\\s*${SYMBOL_CHARS}\\s*(${PLAIN_NUMBER})\\s*(${UNIT})\\b`, 'gu');
+// A signed number dangling after a count word ("3 sets -3", "3 reps -3",
+// "3 rounds -3" — N18: the "-3" recorded nothing, so no false work, but
+// the spaced-sign principle is refuse-instead-of-drop; the word-form count
+// itself is still dropped as before, only the dangling sign now refuses).
+const COUNT_SIGN = new RegExp(`\\b(?:sets|reps|rounds)\\s*${SIGN_CHARS}\\s*${SIGNED_NUMBER}`, 'iu');
 // A signed sets multiplier: "x -3" / "x-3" (the "x" sits before the sign,
 // so the quantity-follow lookahead cannot see it — the digits end the
 // input). The "x" may follow a digit ("3x -3") or a word boundary — but a
@@ -151,6 +176,10 @@ const RANGED_RATING = new RegExp(`\\b${RATING_WORD}\\s*${PLAIN_NUMBER}\\s*${SIGN
 const RANGED_RATING_SPACED = new RegExp(`\\b${RATING_WORD}\\s*${PLAIN_NUMBER}\\s*${SIGN_CHARS}\\s*${PLAIN_NUMBER}`, 'iu');
 const RANGED_RATING_WORDS = new RegExp(`\\b${RATING_WORD}\\s*${PLAIN_NUMBER}\\s+${RANGE_WORDS}\\s*${PLAIN_NUMBER}`, 'iu');
 const SPELLED_RATING = new RegExp(`\\b${RATING_WORD}\\s+(?:minus|negative)\\s+${SIGNED_NUMBER}`, 'iu');
+// A symbol-connected rating range ("RPE 7+8", "RPE 7 + 8", "HR 140&150" —
+// C2, rating form: the second number is dropped and the first recorded as
+// definite, the same shape as the quantity form).
+const RANGED_RATING_SYMBOL = new RegExp(`\\b${RATING_WORD}\\s*${PLAIN_NUMBER}\\s*${SYMBOL_CHARS}\\s*${PLAIN_NUMBER}`, 'iu');
 // The text before a spaced sign ends with a unit word or a number — where
 // the unit may be glued to its digits ("5km", "60sec": the unit is preceded
 // by a digit, not a word boundary) or be a bare "k" after a digit ("5k").
@@ -174,7 +203,7 @@ function dimensionOf(unit) {
 const PAIR_DASH = new RegExp(`(?<![\\d:])(${PLAIN_NUMBER})\\s*(${UNIT})\\s*${SIGN_CHARS}\\s*(${PLAIN_NUMBER})\\s*(${UNIT})\\b`, 'gu');
 const PAIR_WORD = new RegExp(`(?<![\\d:])(${PLAIN_NUMBER})\\s*(${UNIT})\\s+${RANGE_WORDS}\\s+(${PLAIN_NUMBER})\\s*(${UNIT})\\b`, 'giu');
 function hasSameDimensionPair(t) {
-  for (const re of [PAIR_DASH, PAIR_WORD]) {
+  for (const re of [PAIR_DASH, PAIR_WORD, PAIR_SYMBOL]) {
     re.lastIndex = 0;
     let m;
     while ((m = re.exec(t)) !== null) {
@@ -194,7 +223,7 @@ function hasSameDimensionPair(t) {
 // one chain. Only dash- or word-connected quantities count — "5 km in
 // 30 min" and "60 sec rest 30 sec" are not chains and keep parsing.
 const CHAIN_QUANTITY = `(?:${PLAIN_NUMBER}\\s*${UNIT}\\b|\\d{1,2}:\\d{2}(?::\\d{2})?)`;
-const CHAIN_SEPARATOR = `(?:\\s*${SIGN_CHARS}\\s*|\\s+${RANGE_WORDS}\\s+)`;
+const CHAIN_SEPARATOR = `(?:\\s*${SIGN_CHARS}\\s*|\\s*${SYMBOL_CHARS}\\s*|\\s+${RANGE_WORDS}\\s+)`;
 const CHAIN_RE = new RegExp(`(?<![\\d:])${CHAIN_QUANTITY}(?:${CHAIN_SEPARATOR}${CHAIN_QUANTITY})+`, 'gu');
 function chainDimension(q) {
   // An mm:ss elapsed time is its own dimension: "32:10 - 30 min" is an
@@ -231,7 +260,7 @@ function hasRepeatedDimensionChain(t) {
 // Dates ("2026-11-16", "Nov 3-5") have no unit on the first number, so
 // they never match.
 const ELIDED_SECOND_END = new RegExp(
-  `(?<![\\d:])(?:${PLAIN_NUMBER}\\s*${UNIT}\\b|\\d{1,2}:\\d{2}(?::\\d{2})?)(?:\\s*${SIGN_CHARS}\\s*|\\s+${RANGE_WORDS}\\s+)${PLAIN_NUMBER}(?![\\d.,])(?!\\s*(?:${UNIT}\\b|x\\b|rounds?\\b|reps?\\b|sets?\\b|:))`,
+  `(?<![\\d:])(?:${PLAIN_NUMBER}\\s*${UNIT}\\b|\\d{1,2}:\\d{2}(?::\\d{2})?)(?:\\s*${SIGN_CHARS}\\s*|\\s*${SYMBOL_CHARS}\\s*|\\s+${RANGE_WORDS}\\s+)${PLAIN_NUMBER}(?![\\d.,])(?!\\s*(?:${UNIT}\\b|x\\b|rounds?\\b|reps?\\b|sets?\\b|:))`,
   'u',
 );
 
@@ -260,6 +289,8 @@ function hasSignedOrRangedQuantity(t) {
     || hasRepeatedDimensionChain(t)
     || ELIDED_SECOND_END.test(t)
     || RANGED_QUANTITY.test(t)
+    || RANGED_SYMBOL_QUANTITY.test(t)
+    || COUNT_SIGN.test(t)
     || RANGED_WORD_QUANTITY.test(t)
     || BETWEEN_RANGE.test(t)
     || TILDE_RANGE.test(t)
@@ -271,6 +302,7 @@ function hasSignedOrRangedQuantity(t) {
     || RANGED_RATING.test(t)
     || RANGED_RATING_SPACED.test(t)
     || RANGED_RATING_WORDS.test(t)
+    || RANGED_RATING_SYMBOL.test(t)
     || SPELLED_RATING.test(t);
 }
 

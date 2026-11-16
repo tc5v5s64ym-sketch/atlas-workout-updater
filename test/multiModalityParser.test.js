@@ -503,3 +503,35 @@ test('F-1 pre-review B11-B17: the elided/chain carve-outs still parse', () => {
   assert.equal(recognizeModalityInput('Run 5 km to 30 min').duration_min, 30);
   assert.equal(recognizeModalityInput('Plank 60 sec - 3x').sets, 3);
 });
+
+test('F-1 pre-review C1: "vs" / "versus" / "v" word ranges refuse', () => {
+  for (const t of ['Plank 30 vs 45 sec', 'Plank 30 versus 45 sec', 'Plank 30 v 45 sec', 'Plank 30 vs. 45 sec', 'Run 5 vs 10 km', 'Plank 30 sec vs 45 sec', 'Run 5 km vs 10 km']) {
+    assert.equal(recognizeModalityInput(t), null, `versus range must refuse: ${JSON.stringify(t)}`);
+  }
+});
+
+test('F-1 pre-review C2: arithmetic/symbol connectors refuse', () => {
+  for (const t of ['Plank 30 + 45 sec', 'Plank 30+45 sec', 'Run 5+10 km', 'Plank 30 plus 45 sec', 'Plank 30 & 45 sec', 'Plank 30 * 45 sec', 'Plank 30 sec + 45 sec', 'Plank 30 sec & 45 sec', 'Plank 30 sec + 45', 'Run 5 km + 10', 'Plank 60 sec RPE 7+8', 'Plank 60 sec RPE 7 + 8']) {
+    assert.equal(recognizeModalityInput(t), null, `symbol connector must refuse: ${JSON.stringify(t)}`);
+  }
+  // A leading "+" stays positive, and "+" between distinct dimensions is a separator.
+  assert.equal(recognizeModalityInput('Dead hang +45 seconds').duration_sec, 45);
+  assert.equal(recognizeModalityInput('Run 5 km + 30 min').distance_km, 5);
+  assert.equal(recognizeModalityInput('Run 5 km + 30 min').duration_min, 30);
+  // "x" is not a symbol connector: sets multiplier still parses.
+  assert.equal(recognizeModalityInput('Plank 30 x 45 sec').sets, 30);
+});
+
+test('F-1 pre-review C3: Unicode approx-operator ranges refuse', () => {
+  for (const t of ['Plank 30≈45 sec', 'Plank 30∼45 sec', 'Plank 30∽45 sec', 'Plank 30～45 sec', 'Plank 30≃48 sec', 'Plank 30≅45 sec', 'Plank 30 ≈ 45 sec', 'Plank 30 ∼ 45 sec']) {
+    assert.equal(recognizeModalityInput(t), null, `approx-operator range must refuse: ${JSON.stringify(t)}`);
+  }
+});
+
+test('F-1 pre-review N18: a signed number dangling after a count word refuses', () => {
+  for (const t of ['Plank 60 sec 3 sets -3', 'Plank 60 sec 3 reps -3', 'Plank 60 sec 3 rounds -3']) {
+    assert.equal(recognizeModalityInput(t), null, `dangling signed count must refuse: ${JSON.stringify(t)}`);
+  }
+  // A rounds count after a dash still parses (elided-guard carve-out).
+  assert.equal(recognizeModalityInput('Plank 60 sec - 3 rounds').duration_sec, 60);
+});
