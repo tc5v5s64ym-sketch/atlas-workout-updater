@@ -257,7 +257,13 @@ jobs:
 
   e2e-tests:
     name: E2E tests (Playwright)
-    runs-on: ubuntu-latest
+    # #1715: pinned to ubuntu-24.04 — Playwright 1.60.0 does not support
+    # chromium on ubuntu-26.04 ("Playwright does not support chromium on
+    # ubuntu26.04-x64"), which failed the install step on every hosted E2E
+    # run 2026-11-13..15 while ubuntu-latest resolved to 26.04. Keep the
+    # mirror-fallback script as well: it still covers the 2026-11-11 Azure
+    # mirror DNS incident. Revisit when Playwright supports 26.04.
+    runs-on: ubuntu-24.04
     # #1671: 20 minutes was too tight. The hosted E2E job was CANCELLED at
     # the limit three times with no test failure (#1667, #1669, #1670 first
     # runs). Step timings from those runs: the `Install Playwright system
@@ -366,14 +372,17 @@ jobs:
           key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
 
       # Cache miss (or a new Playwright version): full install — browser + OS deps.
+      # #1715: wrapped in scripts/ci/playwright-install.sh, which rewrites the
+      # apt sources away from the Azure mirror when it stops resolving and
+      # retries the install, so a mirror outage no longer fails the job here.
       - name: Install Playwright (browser + system deps)
         if: steps.e2e_policy.outputs.should_run == 'true' && steps.playwright-cache.outputs.cache-hit != 'true'
-        run: npx playwright install --with-deps chromium
+        run: scripts/ci/playwright-install.sh install --with-deps chromium
 
       # Cache hit: the browser is restored; only the apt system deps need (re)installing.
       - name: Install Playwright system deps
         if: steps.e2e_policy.outputs.should_run == 'true' && steps.playwright-cache.outputs.cache-hit == 'true'
-        run: npx playwright install-deps chromium
+        run: scripts/ci/playwright-install.sh install-deps chromium
 
       - name: E2E tests
         if: steps.e2e_policy.outputs.should_run == 'true'
