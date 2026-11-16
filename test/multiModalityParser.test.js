@@ -443,3 +443,63 @@ test('F-1 pre-review N9/N10/N11/N12: range spellings and rating signs folded in'
   // The rounds count after a circuit list still separates.
   assert.equal(recognizeModalityInput('AMRAP 12 min: - 6 rounds').rounds, 6);
 });
+
+test('F-1 pre-review B11: plus-minus signs are signs, not decoration', () => {
+  for (const t of ['Plank ±45 sec', 'Plank 30 ± 45 sec', 'Plank ∓45 sec', 'Plank 30 ∓ 45 sec', 'Run ±5 km']) {
+    assert.equal(recognizeModalityInput(t), null, `plus-minus sign must refuse: ${JSON.stringify(t)}`);
+  }
+});
+
+test('F-1 pre-review B12: signed decimal-comma quantities refuse', () => {
+  for (const t of ['Dead hang -5,5 seconds', 'Dead hang -,5 seconds', 'Dead hang - 5,5 seconds', 'Plank -30,5 sec', 'Run -2,5 km', 'Plank 30,5-45,5 sec', 'Plank 30,5 - 45,5 sec']) {
+    assert.equal(recognizeModalityInput(t), null, `signed comma-decimal must refuse: ${JSON.stringify(t)}`);
+  }
+});
+
+test('F-1 pre-review B13: "and/or" and "up to" word ranges refuse', () => {
+  for (const t of ['Plank 30 and/or 45 sec', 'Plank 30 up to 45 sec']) {
+    assert.equal(recognizeModalityInput(t), null, `word range must refuse: ${JSON.stringify(t)}`);
+  }
+});
+
+test('F-1 pre-review B14: a sets count between "x" and the sign still refuses', () => {
+  for (const t of ['Plank 60 sec x3-3', 'Plank 60 sec x3 -3', 'Plank 60 sec x3 - 3', 'Plank 60 sec x 3-3', 'Plank 60 sec x2 -3', 'Plank 60 sec x3−3']) {
+    assert.equal(recognizeModalityInput(t), null, `prefix-order sets sign must refuse: ${JSON.stringify(t)}`);
+  }
+});
+
+test('F-1 pre-review B15: a separator chain stating one dimension twice refuses', () => {
+  for (const t of ['Run 5 km - 30 min - 45 sec', 'Run 5 km - 30 min - 45 min', 'Run 5 km - 30 min - 500 m', 'Run 5 km - 30 min - 10 km', 'Run 5 km - 30 min - 10 mi', 'Plank 60 sec - 2 min - 45 sec', 'Run 5 km in 20 min - 30 min']) {
+    assert.equal(recognizeModalityInput(t), null, `repeated-dimension chain must refuse: ${JSON.stringify(t)}`);
+  }
+});
+
+test('F-1 pre-review B16: a second end with its unit elided refuses', () => {
+  for (const t of ['Plank 30 sec to 45', 'Run 5 km and 10', 'Plank 60 sec or 45', 'Run 5 km or 10', 'Plank 30 sec and 45', 'Plank between 30 sec and 45', 'Run between 5 km and 10', 'Run 5 km - 10', 'Plank 60 sec - 45', 'Plank 30sec-45', 'Run 5km-10', 'Plank 30sec - 45', 'Plank 30sec to 45', 'Run 5km and 10']) {
+    assert.equal(recognizeModalityInput(t), null, `elided second end must refuse: ${JSON.stringify(t)}`);
+  }
+});
+
+test('F-1 pre-review B17: two elapsed times refuse', () => {
+  for (const t of ['Run 32:10 - 45:20', 'Run 5 km - 32:10 - 45:20']) {
+    assert.equal(recognizeModalityInput(t), null, `elapsed-time pair must refuse: ${JSON.stringify(t)}`);
+  }
+});
+
+test('F-1 pre-review B11-B17: the elided/chain carve-outs still parse', () => {
+  // Word-form sets/reps after a dash are dropped, never parsed (pre-existing).
+  assert.equal(recognizeModalityInput('Plank 60 sec - 3 sets').duration_sec, 60);
+  assert.equal(recognizeModalityInput('Plank 60 sec - 3 sets').sets, 1);
+  assert.equal(recognizeModalityInput('Plank 60 sec - 3 reps').duration_sec, 60);
+  assert.equal(recognizeModalityInput('Plank 60 sec - 3 reps').sets, 1);
+  // An elapsed time after the dash is a second quantity, not a range end.
+  assert.equal(recognizeModalityInput('Run 5 km - 32:10').distance_km, 5);
+  assert.equal(recognizeModalityInput('Run 5 km - 32:10').elapsed, '32:10');
+  // Elapsed plus duration are different dimensions and both survive.
+  assert.equal(recognizeModalityInput('Run 32:10 - 30 min').duration_min, 30);
+  assert.equal(recognizeModalityInput('Run 32:10 - 30 min').elapsed, '32:10');
+  // Distinct-dimension separators still parse.
+  assert.equal(recognizeModalityInput('Run 5 km - 30 min').distance_km, 5);
+  assert.equal(recognizeModalityInput('Run 5 km to 30 min').duration_min, 30);
+  assert.equal(recognizeModalityInput('Plank 60 sec - 3x').sets, 3);
+});
