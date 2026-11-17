@@ -77,7 +77,7 @@
 // entry), so a notation family the parser consumes is always visible to the gate.
 // Required from the parser itself, never re-implemented here, so the two cannot
 // drift apart again.
-const { normalizeParserText, normalizeWeightUnits } = require('./workoutTextParser');
+const { normalizeParserText, normalizeWeightUnits, looksLikeSetToken, isNameLikeWord } = require('./workoutTextParser');
 
 // The barbell sets-first form `NxM@W`. A leading digit must sit immediately before
 // `x` (word boundary), so the dumbbell form `55s x8 @2` — where `s ` precedes `x`
@@ -208,7 +208,10 @@ function repeatedSetGroupMessage() {
 //   - a lone WxR token with no other group (`185x5`, `185x5 165x8`) tiles;
 //   - a trailing `xN` beside a slash/for/dumbbell group is that grammar's own
 //     repeat/count (`185 5/2 x3`, `60s 10/3 x3`), never a second group;
-//   - a trailing `xN` that IS the WxRxN count (`185x5 x3` parses as 3× 185x5);
+//   - a trailing `xN` that IS the WxRxN count (`185x5 x3` parses as 3× 185x5),
+//     spaced included (`185 x 5 x 3` — the WxRxN match is stripped before
+//     counting bare tokens, so its inner `5 x 3` tail never reads as a
+//     second group);
 //   - a slash-chain tail's `xN` (`225 5/2 8/8/7 x3` repeats the last chain
 //     element) — chain tails are stripped before counting, so the RIR digit
 //     never reads as a WxR leader;
@@ -216,13 +219,15 @@ function repeatedSetGroupMessage() {
 //     matchAll: `55s x10 @3 60s x8 @2`, `60s 10/3 65s 8/2`).
 // Everything else below is a group `parseSetsFirst` / `parseWeightRepsSets`
 // claims once and then drops: a second x@ group, a WxRxN group beside a
-// sets-first group, two WxRxN groups, a bare WxR token beside any other
-// group (slash / for / dumbbell / sets-first / WxRxN), a trailing `xN`
-// beside a single-claim group, a stray `@N` no group owns, a unit-glued
-// group (`85kgx5`, `185lbx5` — the unit survives normalization unconverted,
-// so it counts as a group token of the same family), or a dumbbell group
-// beside any barbell group (`parseDumbbellGroups` is tried first and claims
-// the text: `bench 185 5/2 55s x10 @3`, `bench 3x8@165 55s x10 @3`).
+// sets-first group, two WxRxN groups, a WxRxN group beside a slash or `for`
+// group (`185x8x3 165 8/2`, `185x8x3 175 for 5` — the WxRxN group is claimed
+// and the other drops), a bare WxR token beside any other group (slash /
+// for / dumbbell / sets-first / WxRxN), a trailing `xN` beside a
+// single-claim group, a stray `@N` no group owns, a unit-glued group
+// (`85kgx5`, `185lbx5` — the unit survives normalization unconverted, so it
+// counts as a group token of the same family), or a dumbbell group beside
+// any barbell group (`parseDumbbellGroups` is tried first and claims the
+// text: `bench 185 5/2 55s x10 @3`, `bench 3x8@165 55s x10 @3`).
 function hasRepeatedSetGroup(text) {
   const t = String(text || '');
   // A slash set is `weight reps/rir` — the shorthand path consumes the pair
@@ -242,21 +247,36 @@ function hasRepeatedSetGroup(text) {
   const xAt = [...g.matchAll(X_AT_GROUP_GLOBAL)];
   const setsFirst = xAt.filter(m => Number(m[0].match(/^\d+/)[0]) <= 10);
   const wxrN = [...g.matchAll(WXR_N_GROUP_GLOBAL), ...g.matchAll(UNIT_WXR_N_GROUP_GLOBAL)];
-  const bareWxr = [...g.matchAll(BARE_WXR_TOKEN_GLOBAL), ...g.matchAll(UNIT_WXR_TOKEN_GLOBAL)];
+  // F1 (pre-review round 2): a spaced WxRxN group's inner tail (`5 x 3` in
+  // `185 x 5 x 3`) matches the bare-WxR regex, and the `wxrN >= 1` arm of
+  // the bare-WxR rule then fires on a turn the parser logs whole. Strip
+  // matched WxRxN groups before counting bare tokens, so the count of a
+  // claimed group never reads as a second group. The trailing-repeat test
+  // below uses the same stripped text.
+  const withoutWxrN = g.replace(WXR_N_GROUP_GLOBAL, ' ').replace(UNIT_WXR_N_GROUP_GLOBAL, ' ');
+  const bareWxr = [...withoutWxrN.matchAll(BARE_WXR_TOKEN_GLOBAL), ...withoutWxrN.matchAll(UNIT_WXR_TOKEN_GLOBAL)];
   const hasSlash = FAMILY_SLASH.test(t);
   const hasFor = FAMILY_FOR.test(t);
+  // F2 (pre-review round 2): a `for` GROUP (`175 for 5`) — not bare prose
+  // (`for the record`, which a logging WxRxN turn tolerates) — beside a
+  // WxRxN group, which the parser drops.
+  const hasForGroup = /\bfor\s+\d+/.test(t);
   const hasDumbbell = DUMBBELL_GROUP.test(t);
   const hasOtherGroup = setsFirst.length > 0 || wxrN.length > 0 || bareWxr.length > 0
     || hasSlash || hasFor || hasDumbbell;
   if (xAt.length >= 2 && setsFirst.length >= 1) return 'repeated_set_group';
   if (setsFirst.length >= 1 && wxrN.length >= 1) return 'repeated_set_group';
   if (wxrN.length >= 2) return 'repeated_set_group';
+  // F2: a WxRxN group beside a slash or `for` group — the parser claims the
+  // WxRxN group and drops the other (`185x8x3 165 8/2`, either order, and
+  // `185x8x3 175 for 5`). The bare-WxR analog already refuses; `wxrN` was
+  // checked only against setsFirst and itself.
+  if (wxrN.length >= 1 && (hasSlash || hasForGroup)) return 'repeated_set_group';
   if (bareWxr.length >= 1 && (setsFirst.length >= 1 || wxrN.length >= 1 || hasSlash || hasFor || hasDumbbell)) return 'repeated_set_group';
   // A trailing `xN` beside a single-claim group is unconsumed (`3x8@165 x3`)
   // — unless the `xN` is already the count of a WxRxN group the parser
   // claims whole (`185x5 x3` parses as 3× 185x5: the WxRxN match absorbs
   // the repeat token, so strip matched WxRxN groups before testing).
-  const withoutWxrN = g.replace(WXR_N_GROUP_GLOBAL, ' ').replace(UNIT_WXR_N_GROUP_GLOBAL, ' ');
   if ((setsFirst.length >= 1 || wxrN.length >= 1) && TRAILING_REPEAT_TOKEN.test(withoutWxrN)) return 'repeated_set_group';
   const stripped = g.replace(X_AT_GROUP_GLOBAL, ' ').replace(DUMBBELL_X_AT_GROUP_GLOBAL, ' ');
   if (/@\s*\d/.test(stripped) && hasOtherGroup) return 'repeated_set_group';
@@ -358,6 +378,46 @@ function applyMultiGate(parsed, rawText) {
   return parsed;
 }
 
+// Did the parser resolve this multiline turn per-line (rescue) rather than
+// as one blob? The rescue runs only when the collapsed blob dead-ends — for a
+// single-exercise turn, exactly when the G1 refuse-to-merge guard fires: a
+// name-like word run sits between set tokens in the rest
+// (`bench 185x8x3 bench 165 8/2` → the repeated `bench` between the WxRxN
+// group and the slash group). Mirror that guard on the collapsed text: some
+// name-like word appears at least twice, with a set token before its later
+// occurrence and another set token after it. Two details make the mirror
+// exact: (1) x@ groups are NOT set tokens (`looksLikeSetToken('3x8@165')`
+// is false), so an x@-first turn never matches — the blob claims the first
+// x@ group and later groups drop, a true positive the whole-text check must
+// keep; (2) the repeated word must be name-like — a contextual-alias word
+// (`press` in `bench press 185x5` / `press 165 8/2`) or a continuation word
+// (`and`) does not trip the guard, the blob logs, and the dropped group must
+// still refuse. The parser's own classifiers are used (exported from
+// workoutTextParser) so the two never drift apart.
+function isMultilineRescueShape(text) {
+  const tokens = String(text || '').split(/\s+/).filter(Boolean);
+  // The parser's guard runs on the rest (after the exercise name is stripped),
+  // where a prose lead's numbers are gone. Mirror that: start the window at
+  // the first name-like word — a prose number before it must not count as the
+  // set token before the repeated name (`did 3 sets of bench 3x8@165 bench
+  // 165 8/2` drops the slash; the `3` is not a set token in the rest).
+  const start = tokens.findIndex(isNameLikeWord);
+  if (start < 0) return false;
+  const window = tokens.slice(start);
+  for (let i = 0; i < window.length; i += 1) {
+    const word = window[i];
+    if (!isNameLikeWord(word)) continue;
+    if (window.indexOf(word) !== i) continue; // only the first occurrence can start the run
+    for (let j = i + 1; j < window.length; j += 1) {
+      if (window[j] !== word) continue;
+      const setBefore = window.slice(0, j).some(looksLikeSetToken);
+      const setAfter = window.slice(j + 1).some(looksLikeSetToken);
+      if (setBefore && setAfter) return true;
+    }
+  }
+  return false;
+}
+
 function applyFullConsumptionGate(parsed, rawText) {
   if (!parsed || typeof parsed !== 'object') return parsed;
   // A-01: the multi-exercise output carries sets too — every child is checked,
@@ -372,6 +432,30 @@ function applyFullConsumptionGate(parsed, rawText) {
   if (!text) return parsed;
 
   const sets = Array.isArray(parsed.sets) ? parsed.sets : [];
+  // Multiline turns resolve per-line when the blob dead-ends (rescue): each
+  // line is the parser's consumption unit, so check each line on its own
+  // first — a within-line drop (two x@ groups on one line, a WxRxN beside a
+  // slash on one line) still refuses there. The whole-text check still runs,
+  // but a refusal it produces is suppressed when the turn has the rescue
+  // shape AND every line passes on its own: the parser logged each line
+  // separately and nothing was dropped (`bench 185x8x3` + `bench 165 8/2`
+  // logs 4 sets; `bench 175 for 5` + `bench 165 8/2` logs both families).
+  // A blob-flattened turn keeps its whole-text refusal: x@-first (no rescue
+  // shape — x@ is not a set token) and a contextual-alias-only repeat
+  // (`press` alone) both still drop.
+  const lines = String(rawText || '')
+    .split(/\r?\n/)
+    .map(line => normalizeGateText(line).trim())
+    .filter(Boolean);
+  if (lines.length > 1) {
+    for (const line of lines) {
+      const refused = checkSpan(parsed, rawText, line, sets);
+      if (refused) return refused;
+    }
+    const whole = checkSpan(parsed, rawText, text, sets);
+    if (whole && !isMultilineRescueShape(text)) return whole;
+    return parsed;
+  }
   return checkSpan(parsed, rawText, text, sets) || parsed;
 }
 

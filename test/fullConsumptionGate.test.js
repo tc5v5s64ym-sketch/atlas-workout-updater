@@ -518,6 +518,109 @@ test('pre-review B4: unit-glued groups refuse — 85kgx5 / 185lbx5 survive norma
   }
 });
 
+// --- Pre-review round 2 (FIX FIRST): F1–F2 + multiline rescue -------------
+
+test('pre-review F1: spaced WxRxN logs — the inner tail is the group count, never a second group', () => {
+  const three = [
+    { weight: 185, reps: 5, rir: null },
+    { weight: 185, reps: 5, rir: null },
+    { weight: 185, reps: 5, rir: null },
+  ];
+  for (const text of ['bench 185 x 5 x 3', 'bench 185 x 5x3', 'bench 185 x 5 x3', 'bench 187.5 x 5 x 3']) {
+    const sets = text.startsWith('bench 187.5')
+      ? three.map(s => ({ ...s, weight: 187.5 }))
+      : three;
+    const parsed = logSets(sets);
+    const out = applyFullConsumptionGate(parsed, text);
+    assert.equal(out.intent, 'log_sets', text);
+    assert.deepEqual(out, parsed, text);
+  }
+  // Two spaced WxRxN groups still refuse — the second really drops.
+  const two = applyFullConsumptionGate(logSets(three), 'bench 185 x 5 x 3 165 x 8 x 3');
+  assert.equal(two.intent, 'needs_clarification');
+  assert.ok(two.warnings.includes('repeated_set_group'));
+});
+
+test('pre-review F2: WxRxN beside a slash or for group refuses (one line)', () => {
+  const wxrN = [
+    { weight: 185, reps: 8, rir: null },
+    { weight: 185, reps: 8, rir: null },
+    { weight: 185, reps: 8, rir: null },
+  ];
+  for (const text of [
+    'bench 185x8x3 165 8/2',
+    'bench 165 8/2 185x8x3',
+    'bench 185x8x3 and 165 8/2',
+    'bench 185x8x3 225 5/2 8/8/7',
+    'bench 185x8x3 175 for 5',
+    'bench 175 for 5 185x8x3',
+    'bench 185 5/2 165x8x3',
+  ]) {
+    const out = applyFullConsumptionGate(logSets(wxrN), text);
+    assert.equal(out.intent, 'needs_clarification', text);
+    assert.ok(out.warnings.includes('repeated_set_group'), text);
+    assert.equal(out.sets, undefined, text);
+  }
+  // Prose `for` is not a for-group: the turn still logs.
+  const prose = applyFullConsumptionGate(logSets(wxrN), 'bench 185x8x3 for the record');
+  assert.equal(prose.intent, 'log_sets');
+});
+
+test('multiline rescue: cross-family groups on separate lines log — the parser resolves per-line', () => {
+  const cases = [
+    ['bench 185x8x3\nbench 165 8/2',
+      [{ weight: 185, reps: 8, rir: null }, { weight: 185, reps: 8, rir: null }, { weight: 185, reps: 8, rir: null }, { weight: 165, reps: 8, rir: 2 }]],
+    ['bench 185 5/2\nbench 165x8x3',
+      [{ weight: 185, reps: 5, rir: 2 }, { weight: 165, reps: 8, rir: null }, { weight: 165, reps: 8, rir: null }, { weight: 165, reps: 8, rir: null }]],
+    ['bench 185x8x3\nbench 175 for 5',
+      [{ weight: 185, reps: 8, rir: null }, { weight: 185, reps: 8, rir: null }, { weight: 185, reps: 8, rir: null }, { weight: 175, reps: 5, rir: null }]],
+    ['bench 175 for 5\nbench 165 8/2',
+      [{ weight: 175, reps: 5, rir: null }, { weight: 165, reps: 8, rir: 2 }]],
+    ['bench 185x5\nbench 165 8/2',
+      [{ weight: 185, reps: 5, rir: null }, { weight: 165, reps: 8, rir: 2 }]],
+    ['bench 185x5 x3\nbench 165 8/2',
+      [{ weight: 185, reps: 5, rir: null }, { weight: 185, reps: 5, rir: null }, { weight: 185, reps: 5, rir: null }, { weight: 165, reps: 8, rir: 2 }]],
+    ['bench 185x5\nbench press 165 8/2',
+      [{ weight: 185, reps: 5, rir: null }, { weight: 165, reps: 8, rir: 2 }]],
+    ['bench 185x5\nbench 165 8/2 175 5/2',
+      [{ weight: 185, reps: 5, rir: null }, { weight: 165, reps: 8, rir: 2 }, { weight: 175, reps: 5, rir: 2 }]],
+  ];
+  for (const [text, sets] of cases) {
+    const parsed = logSets(sets);
+    const out = applyFullConsumptionGate(parsed, text);
+    assert.equal(out.intent, 'log_sets', text);
+    assert.deepEqual(out, parsed, text);
+  }
+});
+
+test('multiline blob: a later group still refuses when the parser flattens to one blob', () => {
+  // x@-first: x@ groups are not set tokens, so the blob claims the first
+  // group and later groups drop — no rescue shape, whole-text refusal stands.
+  // A contextual-alias-only repeat (`press` alone) does not trip the G1
+  // guard either, so the blob logs and the dropped group still refuses.
+  // A repeated continuation word (`and`) is not a name-like repeat.
+  const cases = [
+    ['bench 3x8@165\nbench 3x8@135', X165_SETS],
+    ['bench 185x5\nbench 3x8@165', X165_SETS],
+    ['bench 3x8@165\nbench 165 8/2', X165_SETS],
+    ['bench press 185x5\npress 165 8/2', [{ weight: 165, reps: 8, rir: 2 }]],
+    ['bench 185x5\npress 165 8/2', [{ weight: 165, reps: 8, rir: 2 }]],
+    ['did 3 sets of bench 3x8@165 bench 165 8/2', X165_SETS],
+  ];
+  for (const [text, sets] of cases) {
+    const out = applyFullConsumptionGate(logSets(sets), text);
+    assert.equal(out.intent, 'needs_clarification', text);
+    assert.ok(out.warnings.length > 0, text);
+    assert.equal(out.sets, undefined, text);
+  }
+  // A within-line drop on one line of a rescue turn still refuses.
+  const within = applyFullConsumptionGate(
+    logSets([{ weight: 185, reps: 8, rir: null }, { weight: 185, reps: 8, rir: null }, { weight: 185, reps: 8, rir: null }, { weight: 225, reps: 5, rir: 2 }]),
+    'bench 185x8x3 165 8/2\nbench 225 5/2');
+  assert.equal(within.intent, 'needs_clarification');
+  assert.ok(within.warnings.includes('repeated_set_group'));
+});
+
 // --- Robustness -------------------------------------------------------------
 
 test('gate is a no-op for non-log_sets intents and garbage input', () => {

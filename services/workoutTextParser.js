@@ -2172,4 +2172,11 @@ module.exports = {
   EXERCISE_ALIASES,
   CONTEXTUAL_ALIASES,
   AMBIGUOUS_ALIASES,
+  // Pure set-token / name-word classifiers for the full-consumption gate
+  // (services/fullConsumptionGate.js): the gate mirrors the G1
+  // refuse-to-merge guard to tell a multiline per-line rescue from a
+  // blob-flattened drop. Exported so the gate and the parser never drift
+  // apart on what counts as a set token or a name-like word.
+  looksLikeSetToken,
+  isNameLikeWord,
 };
