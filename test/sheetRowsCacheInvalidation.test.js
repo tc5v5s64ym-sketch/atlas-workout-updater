@@ -69,6 +69,21 @@ function valuesFor(range) {
   return rows;
 }
 
+// #1762 refix: the Sheets append response reports the ACTUAL updated range,
+// so its end column is the submitted rows' width. A fixed end column (the old
+// :L) is a receipt the append-proof verdict now rightly refuses.
+function endColumnFor(rows) {
+  const width = Math.max(0, ...rows.map((r) => (Array.isArray(r) ? r.length : 0)));
+  let letters = '';
+  let n = width;
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    letters = String.fromCharCode(65 + rem) + letters;
+    n = Math.floor((n - 1) / 26);
+  }
+  return letters || 'A';
+}
+
 const fake = {
   spreadsheets: {
     get: async () => ({ data: { sheets: Object.keys(SHEET).map((title, i) => ({ properties: { title, sheetId: i + 1 } })) } }),
@@ -101,7 +116,7 @@ const fake = {
         for (const row of requestBody.values) SHEET[tab].push(row.map(v => (v == null ? '' : String(v))));
         const n = requestBody.values.length;
         const last = SHEET[tab].length;
-        return { data: { updates: { updatedRows: n, updatedRange: `${tab}!A${last - n + 1}:L${last}` } } };
+        return { data: { updates: { updatedRows: n, updatedRange: `${tab}!A${last - n + 1}:${endColumnFor(requestBody.values)}${last}` } } };
       },
       update: async () => ({ data: {} }),
       batchUpdate: async () => ({ data: { totalUpdatedCells: 0 } }),

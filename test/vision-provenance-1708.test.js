@@ -76,13 +76,28 @@ const sheetsState = {
   logCompositeKeys: []
 };
 
+// #1762 refix: the Sheets append response reports the ACTUAL updated range,
+// so its end column is the submitted rows' width. A fixed end column (the old
+// :K) is a receipt the append-proof verdict now rightly refuses.
+function endColumnFor(rows) {
+  const width = Math.max(0, ...rows.map((r) => (Array.isArray(r) ? r.length : 0)));
+  let letters = '';
+  let n = width;
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    letters = String.fromCharCode(65 + rem) + letters;
+    n = Math.floor((n - 1) / 26);
+  }
+  return letters || 'A';
+}
+
 const fakeSheets = {
   appendRows: async (tabName, rows) => {
     sheetsState.appendCalls.push({ tabName, rows });
     if (!sheetsState.allowAppend) {
       throw new Error('appendRows should not be called by tests that do not allow live writes');
     }
-    return { data: { updates: { updatedRange: `${tabName}!A100:K100`, updatedRows: rows.length } } };
+    return { data: { updates: { updatedRange: `${tabName}!A100:${endColumnFor(rows)}100`, updatedRows: rows.length } } };
   },
   readRange: async () => [],
   deleteRowsByRange: async () => {},

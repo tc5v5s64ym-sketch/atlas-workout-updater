@@ -234,6 +234,21 @@ function recordRead(kind, ranges) {
   if (countingOn) reads.push({ at: Date.now(), kind, ranges });
 }
 
+// #1762 refix: the Sheets append response reports the ACTUAL updated range,
+// so its end column is the submitted rows' width. A fixed end column (the old
+// :Z) is a receipt the append-proof verdict now rightly refuses.
+function endColumnFor(rows) {
+  const width = Math.max(0, ...rows.map((r) => (Array.isArray(r) ? r.length : 0)));
+  let letters = '';
+  let n = width;
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    letters = String.fromCharCode(65 + rem) + letters;
+    n = Math.floor((n - 1) / 26);
+  }
+  return letters || 'A';
+}
+
 const fakeSheetsClient = {
   spreadsheets: {
     // COUNTED. `spreadsheets.get` retrieves spreadsheet data, so Google meters it against
@@ -272,7 +287,7 @@ const fakeSheetsClient = {
         const tab = String(range).split('!')[0];
         if (!SHEET[tab]) SHEET[tab] = [];
         for (const row of requestBody.values) SHEET[tab].push(row.map(v => (v == null ? '' : String(v))));
-        return { data: { updates: { updatedRows: requestBody.values.length, updatedRange: `${tab}!A2:Z2` } } };
+        return { data: { updates: { updatedRows: requestBody.values.length, updatedRange: `${tab}!A2:${endColumnFor(requestBody.values)}2` } } };
       },
       update: async () => ({ data: {} }),
       // Truthfully APPLIES the update and reports the real cell count. A fake that always

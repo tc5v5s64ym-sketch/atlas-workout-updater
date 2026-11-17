@@ -19,9 +19,15 @@
 //
 // WHAT THE RECEIPT ESTABLISHES, exactly, and nothing beyond it:
 //   • exact appended range — `updatedRange`, reported by the append itself;
+//     the range must start at column A, name 1-based rows (row 0 cannot be
+//     an append), and end at the column of the submitted rows' width, so a
+//     receipt for a narrower, wider, or row-zero range is NOT the append
+//     that was requested;
 //   • exact row count — `updatedRows`, cross-checked against the row span of that range
 //     AND against the number of rows the server actually submitted, so a receipt that
-//     disagrees with itself or with the request is NOT verified;
+//     disagrees with itself or with the request is NOT verified; the count
+//     must arrive as a JSON number — a boolean, string, or array count is
+//     not a row count, and nothing here coerces one into being one;
 //   • session ownership — every submitted row is checked to carry this session_id in the
 //     session_id column BEFORE the receipt is accepted. The rows Google appended are the
 //     values the server submitted, so ownership of the submitted rows is ownership of the
@@ -73,6 +79,13 @@ function verifyAppendReceiptWithoutSession({ receipt, tab, rowsSubmitted }) {
   return adjudicateAppendReceipt({ receipt, tab, rowsSubmitted, sessionId: null, sessionIdColumnIndex: null });
 }
 
+// Column letters <-> 1-based column numbers (A=1, Z=26, AA=27, ...).
+function columnLettersToNumber(letters) {
+  let n = 0;
+  for (const ch of letters) n = n * 26 + (ch.charCodeAt(0) - 64);
+  return n;
+}
+
 // Shared core: the range/count/span checks, then session ownership only when
 // the writer's rows carry a session_id column (sessionIdColumnIndex !== null).
 function adjudicateAppendReceipt({ receipt, tab, rowsSubmitted, sessionId, sessionIdColumnIndex }) {
@@ -89,7 +102,13 @@ function adjudicateAppendReceipt({ receipt, tab, rowsSubmitted, sessionId, sessi
   if (!receipt || typeof receipt !== 'object') return { ...base, reason: 'no_receipt' };
 
   const range = typeof receipt.updatedRange === 'string' ? receipt.updatedRange : null;
-  const rowsWritten = Number(receipt.updatedRows);
+  // The row count must ARRIVE as a number. Number() would coerce true -> 1,
+  // '1' -> 1, [1] -> 1, ' 1 ' -> 1 — each a receipt shape the re-audit
+  // proved mints success — so no coercion happens here: a non-number count
+  // is no row count at all.
+  const rowsWritten = typeof receipt.updatedRows === 'number' && Number.isInteger(receipt.updatedRows)
+    ? receipt.updatedRows
+    : NaN;
   const out = { ...base, range, rows_written: Number.isFinite(rowsWritten) ? rowsWritten : null };
 
   if (!range) return { ...out, reason: 'no_range' };
@@ -102,7 +121,22 @@ function adjudicateAppendReceipt({ receipt, tab, rowsSubmitted, sessionId, sessi
   if (match[1] !== tab) return { ...out, reason: 'wrong_tab' };
   if (match[2] !== 'A') return { ...out, reason: 'range_does_not_start_at_column_a' };
 
-  const span = Number(match[5]) - Number(match[3]) + 1;
+  // Sheets rows are 1-based: a range naming row 0 cannot be an append, even
+  // when its span and count agree.
+  const startRow = Number(match[3]);
+  const endRow = Number(match[5]);
+  if (startRow < 1 || endRow < 1) return { ...out, reason: 'range_row_not_one_based' };
+
+  // The end column must equal the submitted rows' width (max row length;
+  // writers submit uniform full-width rows). A receipt for a narrower or
+  // wider range is not the append that was requested, even when its row
+  // count agrees.
+  const submittedWidth = Math.max(...submitted.map((row) => (Array.isArray(row) ? row.length : 0)));
+  if (columnLettersToNumber(match[4]) !== submittedWidth) {
+    return { ...out, reason: 'range_end_column_disagrees_with_row_width' };
+  }
+
+  const span = endRow - startRow + 1;
   if (span !== rowsWritten) return { ...out, reason: 'range_span_disagrees_with_row_count' };
   if (rowsWritten !== submitted.length) return { ...out, reason: 'row_count_disagrees_with_request' };
 

@@ -289,6 +289,21 @@ function appendedRowsFor(tab) {
   return state.appendCalls.filter(c => c.tabName === tab).flatMap(c => c.rows);
 }
 
+// #1762 refix: the Sheets append response reports the ACTUAL updated range,
+// so its end column is the submitted rows' width. A fixed end column (the old
+// :L) is a receipt the append-proof verdict now rightly refuses.
+function endColumnFor(rows) {
+  const width = Math.max(0, ...rows.map((r) => (Array.isArray(r) ? r.length : 0)));
+  let letters = '';
+  let n = width;
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    letters = String.fromCharCode(65 + rem) + letters;
+    n = Math.floor((n - 1) / 26);
+  }
+  return letters || 'A';
+}
+
 const fakeSheets = {
   appendRows: async (tabName, rows) => {
     state.appendCalls.push({ at: new Date().toISOString(), tabName, rows: rows.map(r => [...r]) });
@@ -301,7 +316,7 @@ const fakeSheets = {
     if (tabName === 'Session_Plan_Sets' && !state.losePlanSetRows) {
       for (const r of rows) state.planSetRows.push([...r]);
     }
-    return { data: { updates: { updatedRange: `${tabName}!A100:L${99 + rows.length}`, updatedRows: rows.length } } };
+    return { data: { updates: { updatedRange: `${tabName}!A100:${endColumnFor(rows)}${99 + rows.length}`, updatedRows: rows.length } } };
   },
   readRange: async range => {
     if (!LEDGER_SANDBOX) return [];

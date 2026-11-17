@@ -36,6 +36,21 @@ const sheetCalls = { append: [], delete: [], update: [] };
 const LOG_ROWS = [
   ['2026-08-09', '20260809-AM-01', 'Back Squat', 'Back Squat', 'legs', 'SQ01', 1, 225, 5, 2, '', 1125],
 ];
+// #1762 refix: the Sheets append response reports the ACTUAL updated range,
+// so its end column is the submitted rows' width. A fixed end column (the old
+// :L) is a receipt the append-proof verdict now rightly refuses.
+function endColumnFor(rows) {
+  const width = Math.max(0, ...rows.map((r) => (Array.isArray(r) ? r.length : 0)));
+  let letters = '';
+  let n = width;
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    letters = String.fromCharCode(65 + rem) + letters;
+    n = Math.floor((n - 1) / 26);
+  }
+  return letters || 'A';
+}
+
 const fakeSheets = {
   validateConfig: () => {},
   // sheets.js:664-696 returns the RAW googleapis response, so the stub must too —
@@ -45,7 +60,7 @@ const fakeSheets = {
   appendRows: async (tabName, rows) => {
     sheetCalls.append.push({ tabName, rows });
     const last = 1 + rows.length;
-    return { data: { updates: { updatedRows: rows.length, updatedRange: `${tabName}!A2:L${last}` } } };
+    return { data: { updates: { updatedRows: rows.length, updatedRange: `${tabName}!A2:${endColumnFor(rows)}${last}` } } };
   },
   // #1763: model the delete so the post-delete verification read-back sees the
   // rows gone. LOG_ROWS excludes the header; startIndex is a 0-based sheet row
