@@ -152,6 +152,21 @@ function getLocalDateString(dateTime = new Date()) {
   return `${year}-${month}-${day}`;
 }
 
+// #1762 refix: the Sheets append response reports the ACTUAL updated range,
+// so its end column is the submitted rows' width. A fixed end column (the old
+// :K) is a receipt the append-proof verdict now rightly refuses.
+function endColumnFor(rows) {
+  const width = Math.max(0, ...rows.map((r) => (Array.isArray(r) ? r.length : 0)));
+  let letters = '';
+  let n = width;
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    letters = String.fromCharCode(65 + rem) + letters;
+    n = Math.floor((n - 1) / 26);
+  }
+  return letters || 'A';
+}
+
 const fakeSheets = {
   appendRows: async (tabName, rows) => {
     fakeSheetsState.appendCalls.push({ tabName, rows });
@@ -182,13 +197,14 @@ const fakeSheets = {
       // Authoritative append response disagrees with what was sent (one extra row).
       // The range stays span-correct for the rows actually sent, so the only
       // defect is the count — the verdict names row_count_disagrees_with_request.
-      return { data: { updates: { updatedRange: `${tabName}!A100:K${99 + rows.length}`, updatedRows: rows.length + 1 } } };
+      return { data: { updates: { updatedRange: `${tabName}!A100:${endColumnFor(rows)}${99 + rows.length}`, updatedRows: rows.length + 1 } } };
     }
     // #1762: the range must be self-consistent (span == updatedRows), as a real
     // Sheets append returns — the old fixed A100:K100 claimed a 1-row span for
     // any row count, which the canonical append-proof verdict now rightly
-    // refuses. One row still reads A100:K100, so the 1-row pins are unchanged.
-    return { data: { updates: { updatedRange: `${tabName}!A100:K${99 + rows.length}`, updatedRows: rows.length } } };
+    // refuses. #1762 refix: the end column is the submitted rows' width too,
+    // so one row reads A100:<width>100 (Log_Cleaned L, Effort I, Notes B).
+    return { data: { updates: { updatedRange: `${tabName}!A100:${endColumnFor(rows)}${99 + rows.length}`, updatedRows: rows.length } } };
   },
   readRange: async (range) => {
     // B-21 (#1742): poison surface — an A1-range read of a shadow tab returns
@@ -3751,7 +3767,7 @@ test('api smoke (B1): all duplicate log rows still allow a new Effort row append
     assert.equal(body.data.effort_rows_written, 1, 'new Effort row count is reported as proof');
     assert.equal(body.data.skipped_duplicates, 1);
     assert.equal(body.data.effortWritten, true, 'new Effort row is still appended');
-    assert.equal(body.data.effortAppendedRange, 'Effort!A100:K100');
+    assert.equal(body.data.effortAppendedRange, 'Effort!A100:I100');
     assert.equal(fakeSheetsState.appendCalls.length, 1, 'only the Effort append fires');
     assert.equal(fakeSheetsState.appendCalls[0].tabName, 'Effort');
     assert.equal(fakeSheetsState.appendCalls[0].rows[0][1], 'b1-effort-new');
@@ -4921,9 +4937,9 @@ test('api smoke (F02/WRITE-1): complete-workout live write reports exact per-tab
       assert.equal(response.status, 200, JSON.stringify(body));
       assert.equal(data.sheet_write, 'success');
       assert.equal(data.log_rows_written, 2, 'authoritative log count comes from the append response');
-      assert.equal(data.logAppendedRange, 'Log_Cleaned!A100:K101', 'exact log appended range is reported (2-row span)');
+      assert.equal(data.logAppendedRange, 'Log_Cleaned!A100:L101', 'exact log appended range is reported (2-row span)');
       assert.equal(data.effort_rows_written, 1, 'authoritative effort count comes from the append response');
-      assert.equal(data.effortAppendedRange, 'Effort!A100:K100', 'exact effort appended range is reported');
+      assert.equal(data.effortAppendedRange, 'Effort!A100:I100', 'exact effort appended range is reported');
     });
   } finally {
     fakeSheetsState.allowAppend = false;

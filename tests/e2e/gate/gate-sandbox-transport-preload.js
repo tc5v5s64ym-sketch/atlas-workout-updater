@@ -91,11 +91,26 @@ function readMaterialized({ tab, startCol, startRow, endCol, endRow }) {
   return out;
 }
 
+// #1762 refix: the Sheets append response reports the ACTUAL updated range,
+// so its end column is the submitted rows' width. A fixed end column (the old
+// :L) is a receipt the append-proof verdict now rightly refuses.
+function endColumnFor(rows) {
+  const width = Math.max(0, ...rows.map((r) => (Array.isArray(r) ? r.length : 0)));
+  let letters = '';
+  let n = width;
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    letters = String.fromCharCode(65 + rem) + letters;
+    n = Math.floor((n - 1) / 26);
+  }
+  return letters || 'A';
+}
+
 const fakeSheets = {
   appendRows: async (tabName, rows) => {
     materialize(tabName, rows);
     return {
-      data: { updates: { updatedRange: `${tabName}!A100:L${99 + rows.length}`, updatedRows: rows.length } },
+      data: { updates: { updatedRange: `${tabName}!A100:${endColumnFor(rows)}${99 + rows.length}`, updatedRows: rows.length } },
     };
   },
   readRange: async (range) => {
