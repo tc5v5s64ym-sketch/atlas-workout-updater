@@ -300,6 +300,48 @@ function isSettledReceipt(status) {
 
 // How a retried write_id may be answered. A settled non-success replays as
 // that same word at HTTP 500 — never as a skipped_duplicate save.
+// #1764 Part 1 — a save receipt superseded by a confirmed undo. `reverted`
+// is terminal like `completed`, but it is NOT a success: the rows the receipt
+// claims are gone, so the receipt must never replay as a saved state. It
+// keeps its stored response for audit; `duplicateReplay` answers for it.
+const SAVE_RECEIPT_ENDPOINTS = new Set(['/api/log-workout', '/api/complete-workout']);
+
+// #1764 Part 1 — supersede every completed save receipt for one session
+// after a CONFIRMED undo deleted its rows. Only `completed` records are
+// marked: a `partial`/`unverified` record never claimed success, and an
+// `in_progress`/`failed` record is not a settled save. Only the two save
+// routes that write Log+Effort rows under a session_id are in scope — the
+// undo route deletes exactly those rows, so no other endpoint's receipt can
+// be invalidated by it. Returns the write_ids marked (empty when nothing
+// matched, e.g. the receipt was already lost to a restart — the replay-time
+// reverify is the backstop then). Persistence is best-effort like the rest
+// of this store: a failed persist still leaves the mark live in memory.
+function markSavesRevertedForSession(sessionId, options = {}) {
+  const normalizedSession = typeof sessionId === 'string' ? sessionId.trim().toLowerCase() : '';
+  if (!normalizedSession) return { marked: [], count: 0 };
+  ensureLoaded();
+  const now = Date.now();
+  const marked = [];
+  for (const [writeId, record] of writeRecords.entries()) {
+    if (record.status !== 'completed') continue;
+    if (!record.metadata || !SAVE_RECEIPT_ENDPOINTS.has(record.metadata.endpoint)) continue;
+    const metaSession = typeof record.metadata.session_id === 'string'
+      ? record.metadata.session_id.trim().toLowerCase()
+      : '';
+    if (metaSession !== normalizedSession) continue;
+    writeRecords.set(writeId, {
+      ...record,
+      status: 'reverted',
+      reverted_at_ms: now,
+      reverted_at: new Date(now).toISOString(),
+      reverted_reason: options.reason || 'undo-last'
+    });
+    marked.push(writeId);
+  }
+  if (marked.length > 0) persist();
+  return { marked, count: marked.length };
+}
+
 function duplicateReplay(record, writeId) {
   const response = (record && record.response) || {};
   const wrapped = response
@@ -311,6 +353,37 @@ function duplicateReplay(record, writeId) {
   const source = wrapped ? response.data : response;
   const sheetWrite = sheetWriteOf(response);
   const status = record && record.status;
+  // #1764 Part 1 — a reverted save answers as reverted, never as the success
+  // it once was. The stored response is NOT spread: it carries the original
+  // verified:true verdict, and presenting that as the current state is the
+  // D04 lie. The body states the save no longer stands and names the
+  // historical claim only as history (original_*).
+  if (status === 'reverted') {
+    const body = {
+      duplicate_write: true,
+      write_id: writeId,
+      idempotency_status: 'reverted',
+      sheet_write: 'reverted',
+      sheet_written: false,
+      save_reverted: true,
+      reverted_at: record.reverted_at || null,
+      original_sheet_write: (source && source.sheet_write) || null,
+      original_completed_at: record.completed_at || null
+    };
+    if (source && source.log_write_verification) {
+      body.log_write_verification = { verified: false, reason: 'save_reverted' };
+    }
+    if (source && source.effort_write_verification) {
+      body.effort_write_verification = { verified: false, reason: 'save_reverted' };
+    }
+    return {
+      terminal: true,
+      httpStatus: 200,
+      reverted: true,
+      message: 'Duplicate write_id; the original save was undone and no longer stands.',
+      body
+    };
+  }
   let outcome = TERMINAL_NON_SUCCESS.has(status) || TERMINAL_NON_SUCCESS.has(sheetWrite)
     ? ((status === 'partial' || sheetWrite === 'partial') ? 'partial' : 'unverified')
     : ((source && source.proof_mismatch === true && sheetWrite !== 'success' && sheetWrite !== 'skipped_duplicate')
@@ -591,7 +664,7 @@ function exportLiveReceipts() {
   };
 }
 
-const IMPORTABLE_STATUSES = new Set(['in_progress', 'completed', 'failed', 'partial', 'unverified']);
+const IMPORTABLE_STATUSES = new Set(['in_progress', 'completed', 'failed', 'partial', 'unverified', 'reverted']);
 
 // Validate ONE incoming record against the shape this store actually persists.
 // Returns null when valid, or the reason it is not.
@@ -764,6 +837,8 @@ module.exports = {
   resetIdempotencyStore,
   isSettledReceipt,
   duplicateReplay,
+  // #1764 Part 1 — supersede a session's save receipts after a confirmed undo.
+  markSavesRevertedForSession,
 
   // The S3 receipt migration seam (§5.3). TEMPORARY — S4 deletes these two with
   // the store itself and proves no caller remains (§6.3 P16).
