@@ -431,9 +431,11 @@ test('#1764 Part 1: different session, undo, same-ID retry reports reverted', as
   assertReverted(retry.res, retry.body, writeId);
 });
 
-// ── Double undo: the receipt stays reverted, the second undo refuses ──────
+// ── Double undo: the receipt stays reverted, the second undo is an
+// idempotent no-op (fe4a6998 / #1787: a repeat undo of the same target
+// replays as already_undone, 200, rows_deleted 0 — never a second delete) ──
 
-test('#1764 Part 1: double undo keeps the receipt reverted; second undo refuses', async () => {
+test('#1764 Part 1: double undo keeps the receipt reverted; second undo is an idempotent no-op', async () => {
   const sessionId = '1764-DOUBLE-UNDO';
   const writeId = 'write-1764-double';
   const { payload, save } = await saveAndUndo(sessionId, writeId);
@@ -444,7 +446,9 @@ test('#1764 Part 1: double undo keeps the receipt reverted; second undo refuses'
     rows_to_delete: 2,
     confirm_delete: true,
   });
-  assert.equal(secondUndo.res.status, 409, JSON.stringify(secondUndo.body));
+  assert.equal(secondUndo.res.status, 200, JSON.stringify(secondUndo.body));
+  assert.equal(secondUndo.body.data.already_undone, true, JSON.stringify(secondUndo.body));
+  assert.equal(secondUndo.body.data.rows_deleted, 0, JSON.stringify(secondUndo.body));
 
   const retry = await postJson('/api/log-workout', payload);
   assertReverted(retry.res, retry.body, writeId);
