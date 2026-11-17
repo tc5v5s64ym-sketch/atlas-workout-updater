@@ -23,7 +23,7 @@
 const { getSheetRows } = require('../sheets');
 
 function normalizeSessionId(value) {
-  return String(value == null ? '' : value).trim().toLowerCase();
+  return String(value === null || value === undefined ? '' : value).trim().toLowerCase();
 }
 
 async function verifySaveReceiptAgainstWorkbook({
