@@ -215,6 +215,14 @@ const fakeSheets = {
     if (tabName === 'Effort') {
       fakeSheetsState.effortRows.splice(startIndex - 1, endIndex - startIndex);
     }
+    // #1763: model the Log delete too, so the post-delete verification
+    // read-back sees the rows gone. The rows live in logRowsOverride when a
+    // test plants one, else in the shared logRows fixture — tests that delete
+    // from the shared fixture restore it in a finally block.
+    if (tabName === 'Log_Cleaned') {
+      const rows = fakeSheetsState.logRowsOverride || logRows;
+      rows.splice(startIndex - 1, endIndex - startIndex);
+    }
   },
   validateConfig: () => {},
   getExerciseCatalog: async () => exerciseCatalogRows,
@@ -6713,29 +6721,36 @@ test('api smoke: undo-last returns 409 and does not delete when target row is mi
 
 test('api smoke: undo-last happy path deletes one Log_Cleaned row and returns rows_deleted: 1', async () => {
   fakeSheetsState.deleteCalls.length = 0;
-  // Sheet row 3 → logRows[1] → SESSION-NEW; ownership verified → delete proceeds
-  const { response, body } = await requestJson('/api/log-workout/undo-last', {
-    method: 'POST',
-    body: JSON.stringify({
-      log_appended_range: 'Log_Cleaned!A3:L3',
-      session_id: 'SESSION-NEW',
-      rows_to_delete: 1,
-      confirm_delete: true
-    })
-  });
+  // Sheet row 3 → logRows[1] → SESSION-NEW; ownership verified → delete proceeds.
+  // #1763: the delete lands in the shared fixture, so restore it afterwards.
+  const savedLogRows = logRows.map((r) => [...r]);
+  try {
+    const { response, body } = await requestJson('/api/log-workout/undo-last', {
+      method: 'POST',
+      body: JSON.stringify({
+        log_appended_range: 'Log_Cleaned!A3:L3',
+        session_id: 'SESSION-NEW',
+        rows_to_delete: 1,
+        confirm_delete: true
+      })
+    });
 
-  assert.equal(response.status, 200);
-  assert.equal(body.status, 'ok');
-  assert.equal(body.data.rows_deleted, 1);
-  assert.equal(body.data.deleted_range, 'Log_Cleaned!A3:L3');
+    assert.equal(response.status, 200);
+    assert.equal(body.status, 'ok');
+    assert.equal(body.data.rows_deleted, 1);
+    assert.equal(body.data.deleted_range, 'Log_Cleaned!A3:L3');
 
-  // Exactly one deleteRowsByRange call with correct 0-based indices
-  // sheet row 3 → startIndex=2 (inclusive), endIndex=3 (exclusive)
-  assert.equal(fakeSheetsState.deleteCalls.length, 1);
-  const call = fakeSheetsState.deleteCalls[0];
-  assert.equal(call.tabName, 'Log_Cleaned');
-  assert.equal(call.startIndex, 2);
-  assert.equal(call.endIndex, 3);
+    // Exactly one deleteRowsByRange call with correct 0-based indices
+    // sheet row 3 → startIndex=2 (inclusive), endIndex=3 (exclusive)
+    assert.equal(fakeSheetsState.deleteCalls.length, 1);
+    const call = fakeSheetsState.deleteCalls[0];
+    assert.equal(call.tabName, 'Log_Cleaned');
+    assert.equal(call.startIndex, 2);
+    assert.equal(call.endIndex, 3);
+  } finally {
+    logRows.length = 0;
+    for (const r of savedLogRows) logRows.push([...r]);
+  }
 });
 
 // Regression — malformed verify/undo range 400 after a MULTI-SET log.
@@ -6788,41 +6803,49 @@ test('api smoke: verify-range accepts a 12-row span (multi-set closeout, >10 row
 
 test('api smoke: undo-last with write_id deletes once and skips duplicate retry', async () => {
   fakeSheetsState.deleteCalls.length = 0;
+  // #1763: the delete lands in the shared fixture, so restore it afterwards.
+  const savedLogRows = logRows.map((r) => [...r]);
+  try {
+    const payload = {
+      log_appended_range: 'Log_Cleaned!A3:L3',
+      session_id: 'SESSION-NEW',
+      rows_to_delete: 1,
+      confirm_delete: true,
+      write_id: 'undo-write-idem-01'
+    };
 
-  const payload = {
-    log_appended_range: 'Log_Cleaned!A3:L3',
-    session_id: 'SESSION-NEW',
-    rows_to_delete: 1,
-    confirm_delete: true,
-    write_id: 'undo-write-idem-01'
-  };
+    const first = await requestJson('/api/log-workout/undo-last', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+    assert.equal(first.response.status, 200, JSON.stringify(first.body));
+    assert.equal(first.body.data.sheet_write, 'success');
+    assert.equal(first.body.data.sheet_written, true);
+    assert.equal(first.body.data.duplicate_write, false);
+    assert.equal(fakeSheetsState.deleteCalls.length, 1);
 
-  const first = await requestJson('/api/log-workout/undo-last', {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  });
-  assert.equal(first.response.status, 200, JSON.stringify(first.body));
-  assert.equal(first.body.data.sheet_write, 'success');
-  assert.equal(first.body.data.sheet_written, true);
-  assert.equal(first.body.data.duplicate_write, false);
-  assert.equal(fakeSheetsState.deleteCalls.length, 1);
-
-  const duplicate = await requestJson('/api/log-workout/undo-last', {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  });
-  assert.equal(duplicate.response.status, 200, JSON.stringify(duplicate.body));
-  assert.equal(duplicate.body.data.duplicate_write, true);
-  assert.equal(duplicate.body.data.sheet_write, 'skipped_duplicate');
-  assert.equal(duplicate.body.data.sheet_written, false);
-  assert.equal(duplicate.body.data.rows_deleted, 0);
-  assert.equal(duplicate.body.data.original_rows_deleted, 1);
-  assert.equal(fakeSheetsState.deleteCalls.length, 1);
+    const duplicate = await requestJson('/api/log-workout/undo-last', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+    assert.equal(duplicate.response.status, 200, JSON.stringify(duplicate.body));
+    assert.equal(duplicate.body.data.duplicate_write, true);
+    assert.equal(duplicate.body.data.sheet_write, 'skipped_duplicate');
+    assert.equal(duplicate.body.data.sheet_written, false);
+    assert.equal(duplicate.body.data.rows_deleted, 0);
+    assert.equal(duplicate.body.data.original_rows_deleted, 1);
+    assert.equal(fakeSheetsState.deleteCalls.length, 1);
+  } finally {
+    logRows.length = 0;
+    for (const r of savedLogRows) logRows.push([...r]);
+  }
 });
 
 test('api smoke: #1736 B3-04-07 undo-last deletes the session Effort row and the re-save no longer 409s', async () => {
   // logRows fixture: sheet rows 3–5 → SESSION-NEW (Bench top set, backoff, Squat).
   // The Effort row for the same session sits at sheet row 2.
+  // #1763: the delete lands in the shared fixture, so restore it afterwards.
+  const savedLogRows = logRows.map((r) => [...r]);
   fakeSheetsState.effortRows = [['2026-06-10', 'SESSION-NEW', '58', '300', '400', '120', '150', '', '']];
   fakeSheetsState.deleteCalls.length = 0;
   fakeSheetsState.appendCalls.length = 0;
@@ -6865,6 +6888,8 @@ test('api smoke: #1736 B3-04-07 undo-last deletes the session Effort row and the
   } finally {
     fakeSheetsState.allowAppend = false;
     fakeSheetsState.effortRows = [];
+    logRows.length = 0;
+    for (const r of savedLogRows) logRows.push([...r]);
   }
 });
 

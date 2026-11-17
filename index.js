@@ -72,6 +72,8 @@ const {
   peekWrite,
   completeWrite,
   failWrite,
+  findWritesByMetadata,
+  reopenWrite,
   normalizeWriteId,
   isSettledReceipt,
   duplicateReplay,
@@ -79,6 +81,15 @@ const {
   exportLiveReceipts,
   importReceipts
 } = require('./services/idempotency');
+// #1763 — undo reconciliation by row identity: the target rows are
+// fingerprinted at verification time, and every retry decision compares
+// against those fingerprints instead of a stored sheet position.
+const {
+  fingerprintsForRange,
+  hasTwinOutsideRange,
+  reconcileDeleteOutcome,
+  isNewGenerationAfterCompletedUndo,
+} = require('./services/undoReconcile');
 // #1629 — session-scoped claim around /api/log-workout's read-check-append
 // (services/sessionWriteClaim.js). beginWrite is write_id-keyed only; this
 // is the second admission gate, keyed on the session.
@@ -4508,12 +4519,158 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
   const frozen = await refuseIfWritesFrozen(req, res, '/api/log-workout/undo-last');
   if (frozen) return frozen;
 
-  const idempotency = beginWrite(write_id, {
+  const normalizedExpected = String(session_id).trim().toLowerCase();
+
+  // #1763 — the writer boundary (design-proof Q2 standing condition: no
+  // deletion without a valid writer boundary). The undo's verify → delete →
+  // verify sequence holds the session claim, so no other writer for this
+  // session can shift rows between verification and deletion. Same wait/409
+  // shape as /api/log-workout. Every return past here releases the claim
+  // (explicit, next to its completeWrite/failWrite — the #1629 pattern).
+  const sessionClaimKey = normalizedExpected;
+  let sessionClaim = acquireSessionClaim(sessionClaimKey);
+  while (!sessionClaim.acquired) {
+    const holderReleased = await waitForSessionClaim(sessionClaim.wait);
+    if (!holderReleased) {
+      return standardError(req, res, 'Another write for this workout is still in progress. Undo was not attempted and nothing was changed.', { error_code: 'session_write_in_progress' }, 409);
+    }
+    sessionClaim = acquireSessionClaim(sessionClaimKey);
+  }
+
+  // #1763 — the production client sends no write_id, so an undo without one
+  // would leave no receipt: a commit-then-error retry could not be told from
+  // a fresh undo, and it would re-delete by position. Derive a stable id from
+  // the undone write's identity (session + range): the retry of the same
+  // logical undo derives the same id, and a different write's undo derives a
+  // different one. An explicit client write_id always wins.
+  const derivedWriteId = !normalizeWriteId(write_id);
+  const effectiveWriteId = derivedWriteId
+    ? `undo:${normalizedExpected}:${String(log_appended_range).trim()}`
+    : write_id;
+
+  // #1763 — a retry under a FRESH write_id must still reconcile: find the
+  // prior undo for this (session, range) BEFORE beginWrite creates this
+  // attempt's record, so the lookup sees only prior attempts. The claim
+  // above serializes same-session attempts, so no concurrent attempt can slip
+  // in between the lookup and beginWrite.
+  const priorUndos = findWritesByMetadata({
     endpoint: '/api/log-workout/undo-last',
-    session_id,
-    log_appended_range,
-    rows_to_delete: rowSpan
+    session_id: normalizedExpected,
+    log_appended_range: String(log_appended_range).trim(),
   });
+  const priorUnverified = priorUndos.find((r) => r.status === 'unverified');
+  const priorCompleted = priorUndos.find((r) => r.status === 'completed');
+
+  let idempotency = beginWrite(effectiveWriteId, {
+    endpoint: '/api/log-workout/undo-last',
+    session_id: normalizedExpected,
+    log_appended_range: String(log_appended_range).trim(),
+    rows_to_delete: rowSpan,
+  });
+
+  // The prior unverified receipt governing this attempt (its stored target
+  // fingerprint), when this attempt is a retry of one — set by the duplicate
+  // branch or the fresh-lookup path below. A pre-delete failure under a
+  // governing target must keep the receipt unverified (never failWrite): the
+  // fingerprint is what the next retry reconciles against.
+  let governingTarget = null;
+  // Fingerprints the normal flow must match before deleting, when this
+  // attempt is proceeding under a prior unverified receipt.
+  let expectedTargets = null;
+  // beginWrite's duplicate verdict, captured before the duplicate branch may
+  // reopen the record: the fresh-lookup path below runs only for an attempt
+  // that was NOT a duplicate (a reopened duplicate was already reconciled).
+  const wasDuplicate = idempotency.duplicate === true;
+
+  // Live read-back of both tabs plus the Effort presence for this session.
+  // Throws on a read failure — the caller answers unverified, never success.
+  async function readUndoState() {
+    const logRowsNow = await getSheetRowsRaw(logSheetName);
+    const effortRowsNow = await getSheetRowsRaw(effortSheetName);
+    let effortPresentNow = false;
+    for (const row of effortRowsNow) {
+      if (!row || row.every((cell) => String(cell) === '')) continue;
+      if (String(row[EFFORT_SESSION_ID_COLUMN] || '').trim().toLowerCase() === normalizedExpected) {
+        effortPresentNow = true;
+        break;
+      }
+    }
+    return { logRowsNow, effortRowsNow, effortPresentNow };
+  }
+
+  // Settle this attempt as unverified: the outcome could not be established
+  // by read-back. Never failWrite here — releasing the id would let a retry
+  // re-delete by position. `target` is the stored undo_target (fingerprints
+  // + Effort expectation) so a later retry can reconcile against it.
+  function settleUnverified(target, reason, detail) {
+    const unverified = {
+      deleted_range: log_appended_range,
+      rows_deleted: 0,
+      effort_deleted_range: null,
+      effort_rows_deleted: 0,
+      sheet_write: 'unverified',
+      sheet_written: false,
+      proof_mismatch: true,
+      undo_target: target || null,
+      delete_verification: { verified: false, reason, ...(detail || {}) },
+    };
+    if (idempotency.enabled) {
+      unverified.write_id = idempotency.write_id;
+      unverified.duplicate_write = false;
+      unverified.idempotency_status = 'unverified';
+      completeWrite(idempotency.write_id, idempotency.token, unverified);
+    }
+    return unverified;
+  }
+
+  // A pre-delete failure (nothing was attempted yet). Under a governing
+  // target the receipt stays unverified; otherwise failWrite is safe because
+  // nothing changed and the retry re-verifies from scratch.
+  function releasePreDeleteFailure(target, reason) {
+    if (target) return settleUnverified(target, reason, { stage: 'pre_delete' });
+    if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+    return null;
+  }
+
+  function releaseClaim() {
+    releaseSessionClaim(sessionClaimKey, sessionClaim.token);
+  }
+
+  // The 200 body for an undo that already landed (reconciled, not re-run).
+  function alreadyUndoneBody(original, record) {
+    return {
+      duplicate_write: true,
+      write_id: idempotency.write_id,
+      idempotency_status: 'completed',
+      sheet_write: 'skipped_duplicate',
+      sheet_written: false,
+      rows_deleted: 0,
+      already_undone: true,
+      original_deleted_range: original.deleted_range || null,
+      original_rows_deleted: original.rows_deleted ?? null,
+      original_effort_deleted_range: original.effort_deleted_range || null,
+      original_effort_rows_deleted: original.effort_rows_deleted ?? null,
+      original_completed_at: record.completed_at || record.settled_at || null,
+    };
+  }
+
+  // Reconcile a prior unverified receipt against the live sheet. Returns the
+  // reconcileDeleteOutcome string, or null when the stored target carries no
+  // fingerprints to reconcile against (a pre-fix receipt). Throws on a read
+  // failure — the caller answers unverified.
+  async function reconcilePriorTarget(priorTarget) {
+    if (!priorTarget || !Array.isArray(priorTarget.targets) || priorTarget.targets.length === 0) return null;
+    const currentState = await readUndoState();
+    const outcome = reconcileDeleteOutcome({
+      targets: priorTarget.targets,
+      effortWasPresent: priorTarget.effort_present_before === true,
+      logRowsNow: currentState.logRowsNow,
+      effortRowsNow: currentState.effortRowsNow,
+      effortSessionColumn: EFFORT_SESSION_ID_COLUMN,
+      normalizedSessionId: normalizedExpected,
+    });
+    return { outcome, currentState };
+  }
 
   if (idempotency.duplicate) {
     const record = idempotency.record || {};
@@ -4531,10 +4688,166 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
       original_effort_rows_deleted: original.effort_rows_deleted ?? null,
       original_completed_at: record.completed_at || null
     };
-    const message = record.status === 'completed'
-      ? 'Duplicate write_id; original undo was already processed.'
-      : 'Duplicate write_id; original undo is already in progress.';
-    return standardSuccess(req, res, message, duplicateBody, record.status === 'completed' ? 200 : 409);
+    if (record.status === 'in_progress') {
+      releaseClaim();
+      return standardSuccess(req, res, 'Duplicate write_id; original undo is already in progress.', duplicateBody, 409);
+    }
+    if (record.status === 'completed' && !derivedWriteId) {
+      // Explicit id, same logical undo: replay the stored outcome.
+      releaseClaim();
+      return standardSuccess(req, res, 'Duplicate write_id; original undo was already processed.', duplicateBody, 200);
+    }
+    if (record.status === 'completed' && derivedWriteId) {
+      // Derived id, so the id identifies (session, range) rather than one
+      // operation: a re-save may have put a NEW write at the same range.
+      // Only a recreated Effort row proves a new generation (the completed
+      // undo removed the old one); anything else is the shifted leftovers
+      // of the undone write, and the undo is already done.
+      let currentState;
+      try {
+        currentState = await readUndoState();
+      } catch (error) {
+        releaseClaim();
+        return standardError(req, res, 'Undo could not be verified against the sheet. Nothing was changed.', { error_code: 'undo_unverified' }, 500);
+      }
+      const effortDeleted = (original.effort_rows_deleted || 0) > 0;
+      if (!isNewGenerationAfterCompletedUndo({ effortDeleted, effortPresentNow: currentState.effortPresentNow })) {
+        releaseClaim();
+        return standardSuccess(req, res, 'Undo already completed — the target rows were already removed.', { ...duplicateBody, already_undone: true }, 200);
+      }
+      // New generation: reopen the completed receipt and fall through to the
+      // normal flow, which re-verifies the new rows by identity.
+      const reopened = reopenWrite(idempotency.write_id);
+      if (!reopened.reopened) {
+        releaseClaim();
+        return standardError(req, res, 'Undo could not be verified against the sheet. Nothing was changed.', { error_code: 'undo_unverified' }, 500);
+      }
+      idempotency = { enabled: true, write_id: idempotency.write_id, token: reopened.token };
+    }
+    if (record.status === 'unverified' || record.status === 'partial') {
+      // Reconcile the original attempt against the live sheet instead of
+      // replaying its unverified receipt: the stored fingerprint decides
+      // whether the undo landed, is still pending, or is ambiguous.
+      const priorTarget = original.undo_target || null;
+      let reconciled;
+      try {
+        reconciled = await reconcilePriorTarget(priorTarget);
+      } catch (error) {
+        releaseClaim();
+        return standardError(req, res, 'Undo could not be verified against the sheet. Nothing was changed.', { error_code: 'undo_unverified' }, 500);
+      }
+      if (reconciled === null) {
+        releaseClaim();
+        return standardError(req, res, 'The original undo could not be verified, and no record of its target rows survives. Check the sheet before retrying; nothing was changed.', { error_code: 'undo_unverified' }, 500);
+      }
+      if (reconciled.outcome === 'completed') {
+        // The original undo landed. Settle the receipt as the completed undo
+        // and answer the verified success — without deleting anything.
+        const reopened = reopenWrite(idempotency.write_id);
+        const completedBody = {
+          deleted_range: priorTarget.log_appended_range,
+          rows_deleted: priorTarget.targets.length,
+          effort_deleted_range: priorTarget.effort_deleted_range || null,
+          effort_rows_deleted: priorTarget.effort_present_before ? 1 : 0,
+          sheet_write: 'success',
+          sheet_written: true,
+          undo_target: priorTarget,
+          delete_verification: { verified: true, reconciled: true, log_targets_removed: true, effort_removed: priorTarget.effort_present_before === true },
+          duplicate_write: true,
+          write_id: idempotency.write_id,
+          idempotency_status: 'completed',
+        };
+        if (reopened.reopened) completeWrite(idempotency.write_id, reopened.token, completedBody);
+        releaseClaim();
+        return standardSuccess(req, res, 'Rows deleted', completedBody, 200);
+      }
+      if (reconciled.outcome === 'ambiguous') {
+        releaseClaim();
+        return standardError(req, res, 'The original undo could not be verified — its target rows moved or cannot be told apart from their neighbours. Check the sheet before retrying; nothing was changed.', { error_code: 'undo_unverified' }, 500);
+      }
+      // 'unchanged' or 'partial': the targets are still present with
+      // matching identity, so the delete is safe to run. Reopen and fall
+      // through to the normal flow, which re-verifies the identity before
+      // deleting; the governing target is what a failure must preserve.
+      const reopened = reopenWrite(idempotency.write_id);
+      if (!reopened.reopened) {
+        releaseClaim();
+        return standardError(req, res, 'Undo could not be verified against the sheet. Nothing was changed.', { error_code: 'undo_unverified' }, 500);
+      }
+      idempotency = { enabled: true, write_id: idempotency.write_id, token: reopened.token };
+      governingTarget = priorTarget;
+      expectedTargets = priorTarget.targets;
+    }
+  }
+
+  // A FRESH write_id (or a derived one that beginWrite did not flag as a
+  // duplicate) still has a prior undo to answer for: reconcile against it
+  // instead of deleting by position. 'failed' and 'in_progress' priors carry
+  // no established outcome, so only 'unverified' and 'completed' govern.
+  if (!wasDuplicate && priorUnverified) {
+    const priorTarget = priorUnverified.response?.undo_target || null;
+    let reconciled;
+    try {
+      reconciled = await reconcilePriorTarget(priorTarget);
+    } catch (error) {
+      releasePreDeleteFailure(null, 'reconcile_read_failed');
+      releaseClaim();
+      return standardError(req, res, 'Undo could not be verified against the sheet. Nothing was changed.', { error_code: 'undo_unverified' }, 500);
+    }
+    if (reconciled === null) {
+      releasePreDeleteFailure(null, 'reconcile_no_target');
+      releaseClaim();
+      return standardError(req, res, 'A previous undo for this workout could not be verified, and no record of its target rows survives. Check the sheet before retrying; nothing was changed.', { error_code: 'undo_unverified' }, 500);
+    }
+    if (reconciled.outcome === 'completed') {
+      const completedBody = {
+        deleted_range: priorTarget.log_appended_range,
+        rows_deleted: priorTarget.targets.length,
+        effort_deleted_range: priorTarget.effort_deleted_range || null,
+        effort_rows_deleted: priorTarget.effort_present_before ? 1 : 0,
+        sheet_write: 'success',
+        sheet_written: true,
+        undo_target: priorTarget,
+        delete_verification: { verified: true, reconciled: true, log_targets_removed: true, effort_removed: priorTarget.effort_present_before === true },
+        duplicate_write: true,
+        write_id: idempotency.write_id,
+        idempotency_status: 'completed',
+        already_undone: true,
+      };
+      if (idempotency.enabled) completeWrite(idempotency.write_id, idempotency.token, completedBody);
+      releaseClaim();
+      return standardSuccess(req, res, 'Undo already completed — the target rows were already removed.', completedBody, 200);
+    }
+    if (reconciled.outcome === 'ambiguous') {
+      settleUnverified(priorTarget, 'reconcile_ambiguous', { prior_outcome: 'ambiguous' });
+      releaseClaim();
+      return standardError(req, res, 'A previous undo for this workout could not be verified — its target rows moved or cannot be told apart from their neighbours. Check the sheet before retrying; nothing was changed.', { error_code: 'undo_unverified' }, 500);
+    }
+    // 'unchanged' or 'partial': proceed; the normal flow re-verifies the
+    // identity before deleting, and this attempt is governed by the prior
+    // target from here on.
+    governingTarget = priorTarget;
+    expectedTargets = priorTarget.targets;
+  }
+  if (!wasDuplicate && priorCompleted && !priorUnverified) {
+    // A prior undo completed for this (session, range). Only a recreated
+    // Effort row proves a new write has since landed at the same range.
+    let currentState;
+    try {
+      currentState = await readUndoState();
+    } catch (error) {
+      releasePreDeleteFailure(null, 'reconcile_read_failed');
+      releaseClaim();
+      return standardError(req, res, 'Undo could not be verified against the sheet. Nothing was changed.', { error_code: 'undo_unverified' }, 500);
+    }
+    const effortDeleted = (priorCompleted.response?.effort_rows_deleted || 0) > 0;
+    if (!isNewGenerationAfterCompletedUndo({ effortDeleted, effortPresentNow: currentState.effortPresentNow })) {
+      const completedBody = alreadyUndoneBody(priorCompleted.response || {}, priorCompleted);
+      if (idempotency.enabled) completeWrite(idempotency.write_id, idempotency.token, completedBody);
+      releaseClaim();
+      return standardSuccess(req, res, 'Undo already completed — the target rows were already removed.', completedBody, 200);
+    }
+    // New generation: proceed as a fresh undo of the new rows.
   }
 
   // Read back rows before deleting to verify session_id ownership. This is a
@@ -4543,17 +4856,18 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
   try {
     allRows = await getSheetRowsRaw(logSheetName);
   } catch (error) {
-    if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+    releasePreDeleteFailure(governingTarget, 'verification_read_failed');
+    releaseClaim();
     return standardError(req, res, 'Failed to read sheet rows for verification.', null, 500);
   }
 
-  const normalizedExpected = String(session_id).trim().toLowerCase();
   for (let r = startRow; r <= endRow; r++) {
     // allRows is 0-indexed with header excluded: sheet row 2 → allRows[0], row N → allRows[N-2]
     const dataIndex = r - 2;
     const row = allRows[dataIndex];
     if (!row || row.every(cell => String(cell) === '')) {
-      if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+      releasePreDeleteFailure(governingTarget, 'target_row_missing');
+      releaseClaim();
       return standardError(
         req, res,
         `Target sheet row ${r} is missing or empty — cannot verify session_id ownership. Undo aborted — no rows were deleted.`,
@@ -4562,12 +4876,40 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
     }
     const rowSessionId = String(row[1] || '').trim();
     if (rowSessionId.toLowerCase() !== normalizedExpected) {
-      if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+      releasePreDeleteFailure(governingTarget, 'session_id_mismatch');
+      releaseClaim();
       return standardError(
         req, res,
         `session_id mismatch at sheet row ${r}: expected "${session_id}", found "${rowSessionId}". Undo aborted — no rows were deleted.`,
         null, 409
       );
+    }
+  }
+
+  // #1763 — fingerprint the target rows NOW, while they are verified in
+  // place: this is the identity every later decision compares against. A
+  // stored range is never authority again — a retry must find these exact
+  // rows, not whatever has shifted into the range since.
+  const targets = fingerprintsForRange(allRows, startRow, endRow);
+  if (!targets) {
+    releasePreDeleteFailure(governingTarget, 'target_row_missing');
+    releaseClaim();
+    return standardError(
+      req, res,
+      'Target rows could not be identified for verification. Undo aborted — no rows were deleted.',
+      null, 409
+    );
+  }
+  if (expectedTargets) {
+    const expected = expectedTargets.map((t) => `${t.dataIndex}:${t.fingerprint}`).join('|');
+    const actual = targets.map((t) => `${t.dataIndex}:${t.fingerprint}`).join('|');
+    if (expected !== actual) {
+      // The rows at the range are NOT the ones the prior attempt targeted —
+      // they shifted or were replaced. Refuse; deleting by position here is
+      // exactly the filed defect.
+      settleUnverified(governingTarget, 'target_identity_mismatch', { stage: 'verification' });
+      releaseClaim();
+      return standardError(req, res, 'The rows at the undo target are no longer the ones the original undo targeted — they moved or were replaced. Undo refused; nothing was deleted.', { error_code: 'undo_unverified' }, 500);
     }
   }
 
@@ -4584,7 +4926,8 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
   try {
     effortRows = await getSheetRowsRaw(effortSheetName);
   } catch (error) {
-    if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+    releasePreDeleteFailure(governingTarget, 'effort_read_failed');
+    releaseClaim();
     return standardError(req, res, 'Failed to read Effort rows for verification. Undo aborted — no rows were deleted.', null, 500);
   }
   const effortMatches = [];
@@ -4596,7 +4939,8 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
     }
   }
   if (effortMatches.length > 1) {
-    if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+    releasePreDeleteFailure(governingTarget, 'multiple_effort_rows');
+    releaseClaim();
     return standardError(
       req, res,
       `Multiple Effort rows found for session "${session_id}" — undo refused, nothing was changed. Remove the duplicate Effort row in Sheets first.`,
@@ -4609,6 +4953,28 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
   const effortDeletedRange = effortSheetRow === null
     ? null
     : `${effortSheetName}!A${effortSheetRow}:${effortLastColumn}${effortSheetRow}`;
+
+  // #1763 — the undo_target is the receipt's memory of what this undo must
+  // delete: the fingerprinted rows (identity, not position) plus whether an
+  // Effort row existed. It is stored on every settled receipt so a retry —
+  // same id, fresh id, or none — can reconcile against it.
+  const undoTarget = {
+    log_appended_range: String(log_appended_range).trim(),
+    session_id: normalizedExpected,
+    targets,
+    effort_present_before: effortSheetRow !== null,
+    effort_deleted_range: effortDeletedRange,
+  };
+
+  // #1763 — identical twins: when a target row's content also occurs outside
+  // the target range, no positional delete can tell the twin apart from the
+  // target. Refuse (design-proof Q2: twins cause refusal) and store the
+  // target as unverified, so a later retry reconciles instead of deleting.
+  if (hasTwinOutsideRange(allRows, targets)) {
+    settleUnverified(undoTarget, 'ambiguous_target_twins', { stage: 'verification' });
+    releaseClaim();
+    return standardError(req, res, 'The rows to undo cannot be told apart from identical rows elsewhere in the workout — undo refused, nothing was changed. Remove the duplicate rows in Sheets first.', { error_code: 'undo_ambiguous_target' }, 409);
+  }
 
   // All rows verified — proceed with deletion. Effort FIRST, then Log: if the
   // Effort delete fails, nothing has changed and the undo is retryable; if the
@@ -4627,17 +4993,86 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
     await deleteRowsByRange(logSheetName, startIndex, endIndex);
     invalidateSheetRowsCache(logSheetName, effortRowsDeleted > 0 ? effortSheetName : null);
   } catch (error) {
-    if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
-    // Effort-first means a failure here leaves the Log rows intact when the
-    // Effort delete failed, or the Effort row already removed when the Log
-    // delete failed — say which, never success.
-    if (effortRowsDeleted === 0 && effortSheetRow !== null) {
-      return standardError(req, res, 'Failed to delete the Effort row for this session. Undo aborted — no rows were deleted.', null, 500);
+    // #1763 — a delete that throws may already have committed, so the id is
+    // NEVER released here: failWrite would let a retry re-delete by position
+    // and take the next same-session row. Reconcile by read-back instead —
+    // the error text must match the read-back state, never the assumed one.
+    let currentState;
+    try {
+      currentState = await readUndoState();
+    } catch (readError) {
+      settleUnverified(undoTarget, 'reconcile_read_failed', { delete_error: error.message });
+      releaseClaim();
+      return standardError(req, res, 'Undo could not be verified against the sheet — the delete may or may not have landed. Retry the undo with the same write_id; nothing further was deleted.', { error_code: 'undo_unverified' }, 500);
     }
-    if (effortRowsDeleted > 0) {
-      return standardError(req, res, 'Failed to delete the Log rows, but the Effort row was already removed. Undo is incomplete — retry the undo; the Log rows are still present.', null, 500);
+    const outcome = reconcileDeleteOutcome({
+      targets,
+      effortWasPresent: undoTarget.effort_present_before,
+      logRowsNow: currentState.logRowsNow,
+      effortRowsNow: currentState.effortRowsNow,
+      effortSessionColumn: EFFORT_SESSION_ID_COLUMN,
+      normalizedSessionId: normalizedExpected,
+    });
+    if (outcome === 'completed') {
+      // The delete landed despite the error: answer the verified success.
+      const responseBody = {
+        deleted_range: log_appended_range,
+        rows_deleted: rowSpan,
+        effort_deleted_range: effortDeletedRange,
+        effort_rows_deleted: undoTarget.effort_present_before ? 1 : 0,
+        sheet_write: 'success',
+        sheet_written: true,
+        undo_target: undoTarget,
+        delete_verification: { verified: true, reconciled: true, log_targets_removed: true, effort_removed: undoTarget.effort_present_before },
+      };
+      if (idempotency.enabled) {
+        responseBody.write_id = idempotency.write_id;
+        responseBody.duplicate_write = false;
+        responseBody.idempotency_status = 'completed';
+        completeWrite(idempotency.write_id, idempotency.token, responseBody);
+      }
+      releaseClaim();
+      return standardSuccess(req, res, 'Rows deleted', responseBody, 200);
     }
-    return standardError(req, res, 'Failed to delete rows from sheet.', null, 500);
+    const message = outcome === 'partial'
+      ? 'The Effort row was already removed, but the Log rows are still present. Undo is incomplete — retry the undo to remove the Log rows.'
+      : outcome === 'unchanged'
+        ? 'The delete did not land — the Log rows and the Effort row are still present. Retry the undo.'
+        : 'Undo could not be verified against the sheet — the delete may or may not have landed. Retry the undo with the same write_id; nothing further was deleted.';
+    settleUnverified(undoTarget, `reconcile_${outcome}`, {
+      outcome,
+      log_targets_present: outcome !== 'completed',
+      effort_present: currentState.effortPresentNow,
+      effort_present_before: undoTarget.effort_present_before,
+    });
+    releaseClaim();
+    return standardError(req, res, message, { error_code: 'undo_unverified' }, 500);
+  }
+
+  // #1763 — verify the deletion afterwards: the fingerprinted rows must be
+  // gone from Log and the Effort row gone (when one existed). A verification
+  // read failure, or targets still present, means the success is unproven —
+  // answer unverified, never success.
+  let verifyState;
+  try {
+    verifyState = await readUndoState();
+  } catch (error) {
+    settleUnverified(undoTarget, 'verification_read_failed', { stage: 'post_delete' });
+    releaseClaim();
+    return standardError(req, res, 'Undo could not be verified against the sheet — the delete may or may not have landed. Retry the undo with the same write_id; nothing further was deleted.', { error_code: 'undo_unverified' }, 500);
+  }
+  const verifyOutcome = reconcileDeleteOutcome({
+    targets,
+    effortWasPresent: undoTarget.effort_present_before,
+    logRowsNow: verifyState.logRowsNow,
+    effortRowsNow: verifyState.effortRowsNow,
+    effortSessionColumn: EFFORT_SESSION_ID_COLUMN,
+    normalizedSessionId: normalizedExpected,
+  });
+  if (verifyOutcome !== 'completed') {
+    settleUnverified(undoTarget, 'verification_failed', { outcome: verifyOutcome, stage: 'post_delete' });
+    releaseClaim();
+    return standardError(req, res, 'Undo could not be verified against the sheet — the target rows may still be present. Retry the undo with the same write_id; nothing further was deleted.', { error_code: 'undo_unverified' }, 500);
   }
 
   const responseBody = {
@@ -4646,7 +5081,9 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
     effort_deleted_range: effortDeletedRange,
     effort_rows_deleted: effortRowsDeleted,
     sheet_write: 'success',
-    sheet_written: true
+    sheet_written: true,
+    undo_target: undoTarget,
+    delete_verification: { verified: true, log_targets_removed: true, effort_removed: effortRowsDeleted > 0, effort_present_before: undoTarget.effort_present_before },
   };
   if (idempotency.enabled) {
     responseBody.write_id = idempotency.write_id;
@@ -4655,6 +5092,7 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
     completeWrite(idempotency.write_id, idempotency.token, responseBody);
   }
 
+  releaseClaim();
   return standardSuccess(req, res, 'Rows deleted', responseBody);
 });
 
