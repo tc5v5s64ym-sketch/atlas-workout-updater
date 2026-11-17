@@ -87,7 +87,21 @@ const SLASH_SET = /\d+\s*\/\s*\d+/;
 // patterns using it carry the `u` flag. (Pre-review B6: the previous
 // 13-char denylist leaked U+207B/U+208B/U+2796/U+2043/U+2E3A/U+2E3B/U+058A/
 // U+05BE/U+1806/U+2E17/U+2E40.)
-const SIGN_CHARS = '[\\p{Pd}\\u2212\\u207B\\u208B\\u2796\\u02D7\\u00AD\\u2043\\u00B1\\u2213]';
+// Round-8 fix (Hammy BLOCKING review on #1786, exact head c3398453): the
+// explicit list is an enumeration, not a category — and it was incomplete.
+// 15 standalone Unicode minus/dash glyphs still recorded positive work as
+// lone signs, so they join the list: U+2238 dot minus, U+2296 circled
+// minus, U+229F squared minus, U+229D circled dash, U+2052 commercial
+// minus, U+2216 set minus, U+2242 minus tilde (already in TILDE_CHARS),
+// U+2053 swung dash, U+2448 OCR dash, U+2A29/U+2A2A/U+2A2B/U+2A2C minus
+// with comma above / dot below / falling dots / rising dots, U+2A3A minus
+// in triangle, U+2E43 dash with left upturn. Completeness is now checked
+// by enumeration, not claimed by category: the round-8 probe runs all 95
+// Unicode-named MINUS/HYPHEN/DASH characters as lone signs (attached +
+// spaced) and the only remaining rowers are the non-sign categories
+// (arrows, box-drawing, compound operators, combining U+0320, hyphenation
+// point U+2027, decorative/emoji/musical, line decorations, tag U+E002D).
+const SIGN_CHARS = '[\\p{Pd}\\u2212\\u207B\\u208B\\u2796\\u02D7\\u00AD\\u2043\\u00B1\\u2213\\u2238\\u2296\\u229F\\u229D\\u2052\\u2216\\u2242\\u2053\\u2448\\u2A29\\u2A2A\\u2A2B\\u2A2C\\u2A3A\\u2E43]';
 // A signed number may lead with the decimal point ("-.5 sec" reads as 5 in
 // the extractors — the sign is dropped AND the point is skipped — so the
 // guard must match it; the unsigned ".5 sec" magnitude quirk is pre-existing

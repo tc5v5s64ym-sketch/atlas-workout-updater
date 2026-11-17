@@ -759,7 +759,12 @@ test('F-1 round-7 A03-hour: hour compounds refuse (guard-side, no hour vocabular
   for (const t of ['Run 1 hr 15 min', 'Run 2 hr 30 min', 'Run 1 hr 15 min RPE 7', 'Run 1h 30min', 'Run 2h 15min', 'Run 1h30min', 'Run 1 hour 30 min', 'Run 1 hr 5 km', 'Run 1 hr 15 sec']) {
     assert.equal(recognizeModalityInput(t), null, `hour compound must refuse: ${JSON.stringify(t)}`);
   }
-  // Hour forms with no second quantity keep their existing behavior.
+  // Hour forms with no second quantity also refuse (CORRECTED round 8:
+  // the earlier comment said they keep their existing behavior, but the
+  // head refuses them — base recorded distance 5 for `Run 5 km in 1 hr`.
+  // The refusal is the safe direction: the hour is a stated quantity the
+  // parser cannot represent, consistent with the whitelist's disclosed
+  // over-refusal family. Only the sentence was wrong; the asserts pin it.)
   assert.equal(recognizeModalityInput('Run 5 km in 1 hr'), null);
   assert.equal(recognizeModalityInput('Plank 1 hr'), null);
   // The HR extractor never reads `hr <N> <unit>` as a heart rate: the
@@ -773,4 +778,41 @@ test('F-1 round-7 A03-hour: hour compounds refuse (guard-side, no hour vocabular
   // Dot-decimals still record exactly as stated.
   assert.equal(recognizeModalityInput('Run 1.5 km').distance_km, 1.5);
   assert.equal(recognizeModalityInput('Plank 30.5 sec').duration_sec, 30.5);
+});
+
+test('F-1 round-8 BLOCKING fix: 15 standalone Unicode minus/dash glyphs are signs', () => {
+  // Hammy's BLOCKING review on PR #1786 (exact head c3398453, verdict
+  // comment 6938779018): these 15 Unicode-named minus/dash glyphs still
+  // recorded positive work as lone signs — the extractors drop them and
+  // the quantity records as positive. They join SIGN_CHARS; the
+  // round-8 probe (hidden_files/1767-probe-round8.js) re-verifies the
+  // complete enumeration (all 95 Unicode-named MINUS/HYPHEN/DASH chars,
+  // attached + spaced) on the new head.
+  const glyphs = [
+    '\u2238', // DOT MINUS
+    '\u2296', // CIRCLED MINUS
+    '\u229F', // SQUARED MINUS
+    '\u229D', // CIRCLED DASH
+    '\u2052', // COMMERCIAL MINUS SIGN
+    '\u2216', // SET MINUS
+    '\u2242', // MINUS TILDE
+    '\u2053', // SWUNG DASH
+    '\u2448', // OCR DASH
+    '\u2A29', // MINUS SIGN WITH COMMA ABOVE
+    '\u2A2A', // MINUS SIGN WITH DOT BELOW
+    '\u2A2B', // MINUS SIGN WITH FALLING DOTS
+    '\u2A2C', // MINUS SIGN WITH RISING DOTS
+    '\u2A3A', // MINUS SIGN IN TRIANGLE
+    '\u2E43', // DASH WITH LEFT UPTURN
+  ];
+  for (const g of glyphs) {
+    for (const t of [
+      `Plank ${g}45 sec`, `Plank ${g} 45 sec`,
+      `Run ${g}5 km`, `Run 5 km ${g}30 min`,
+      `Dead hang ${g}45 seconds`,
+      `Plank 60 sec RPE ${g}7`, `Plank 60 sec RPE ${g} 7`,
+    ]) {
+      assert.equal(recognizeModalityInput(t), null, `standalone minus/dash sign must refuse: ${JSON.stringify(t)}`);
+    }
+  }
 });
