@@ -599,3 +599,117 @@ test('F-1 pre-review D4: singular and other count words refuse a dangling sign',
   // The elided-guard carve-out now matches the count vocabulary (N25).
   assert.equal(recognizeModalityInput('Plank 60 sec - 3 repetitions').duration_sec, 60);
 });
+
+// Structural whitelist (coordinator direction 2026-11-16, round 6): a
+// two-numbers-one-unit shape refuses unless its separator is a known
+// legitimate one — no new glyph or synonym can leak through the
+// enumerations. The E1–E7 variant lists below are verbatim from the
+// round-5 pre-review report (hidden_files/1767-prereview-round5.md).
+test('F-1 structural whitelist E1: remaining approx/equality operators refuse', () => {
+  const ops = [0x2244, 0x2247, 0x2249, 0x224C, 0x2254, 0x2255, 0x2256, 0x2257, 0x2258, 0x2259, 0x225A, 0x225B, 0x225C, 0x225D, 0x225E, 0x225F, 0x2260, 0x2261, 0x2262, 0x2263, 0x2264, 0x2265];
+  for (const cp of ops) {
+    const op = String.fromCodePoint(cp);
+    for (const t of [`Plank 30${op}45 sec`, `Plank 30 ${op} 45 sec`, `Plank 30 sec ${op} 45 sec`, `Plank 30 sec ${op} 45`]) {
+      assert.equal(recognizeModalityInput(t), null, `E1 operator U+${cp.toString(16).toUpperCase()} must refuse: ${JSON.stringify(t)}`);
+    }
+  }
+  for (const op of ['<', '>']) {
+    for (const t of [`Plank 30${op}45 sec`, `Plank 30 ${op} 45 sec`, `Plank 30 sec ${op} 45 sec`, `Plank 30 sec ${op} 45`]) {
+      assert.equal(recognizeModalityInput(t), null, `E1 operator ${op} must refuse: ${JSON.stringify(t)}`);
+    }
+  }
+});
+
+test('F-1 structural whitelist E2: symbol lookalikes and slash pair/elided refuse', () => {
+  for (const cp of [0x2217, 0x00B7, 0x2022, 0x2715, 0x2716, 0x2215, 0x2044]) {
+    const op = String.fromCodePoint(cp);
+    for (const t of [`Plank 30${op}45 sec`, `Plank 30 ${op} 45 sec`, `Plank 30 sec ${op} 45 sec`, `Plank 30 sec ${op} 45`]) {
+      assert.equal(recognizeModalityInput(t), null, `E2 symbol U+${cp.toString(16).toUpperCase()} must refuse: ${JSON.stringify(t)}`);
+    }
+  }
+  assert.equal(recognizeModalityInput('Run 5 km \u2217 30 min \u2217 10 km'), null);
+  assert.equal(recognizeModalityInput('Plank 30 sec / 45 sec'), null);
+  assert.equal(recognizeModalityInput('Plank 30 sec / 45'), null);
+  // The interval slash is the only legitimate `/` pair (sets multiplier
+  // before the first quantity), and single-unit `/` already refused.
+  assert.equal(recognizeModalityInput('6 x 2 min / 60 sec').rest_sec, 60);
+  assert.equal(recognizeModalityInput('Plank 30/45 sec'), null);
+});
+
+test('F-1 structural whitelist E3: approx words refuse in all five shapes', () => {
+  for (const w of ['about', 'around', 'approx', 'approximately', 'roughly', 'nearly', 'circa', 'or so', 'give or take']) {
+    for (const t of [`Plank 30 ${w} 45 sec`, `Plank 30 sec ${w} 45 sec`, `Run 5 km ${w} 30 min ${w} 10 km`, `Plank 30 sec ${w} 45`, `Run 5 km ${w} 10`]) {
+      assert.equal(recognizeModalityInput(t), null, `E3 approx word ${w} must refuse: ${JSON.stringify(t)}`);
+    }
+  }
+  assert.equal(recognizeModalityInput('Plank 30 c. 45 sec'), null);
+  assert.equal(recognizeModalityInput('Plank 30 sec c. 45 sec'), null);
+});
+
+test('F-1 structural whitelist E4: rating form refuses every connector class', () => {
+  for (const w of ['\u2248', '~', '..', '\u2252', '\u2264', '\u2265', '\u2260', '\u2261', '\u224C', '\u2217', '\u00B7', '<', '>', 'about', 'around', 'approx', 'roughly', 'till', 'until', 'compared with', 'rather than', 'instead of', 'contra']) {
+    assert.equal(recognizeModalityInput(`Plank 60 sec RPE 7 ${w} 8`), null, `E4 rating connector ${w} must refuse`);
+  }
+  // The legitimate rating separator is an attached sets `x`; a spaced `x`
+  // misreads the rating number itself as sets, so it refuses too.
+  assert.equal(recognizeModalityInput('Plank 60 sec RPE 7 x8').sets, 8);
+  assert.equal(recognizeModalityInput('Plank 60 sec RPE 7 x 8'), null);
+  // A dot-decimal rating is one number, not a separator.
+  assert.equal(recognizeModalityInput('Plank 60 sec RPE 7.8').rpe, 7.8);
+});
+
+test('F-1 structural whitelist E5: more comparison words refuse in all four shapes', () => {
+  for (const w of ['compared with', 'compared against', 'in comparison to', 'as opposed to', 'rather than', 'instead of', 'opposed to', 'contra', 'next to', 'alongside', 'beside', 'till', 'until', 'upto', 'versus.', 'v.s.', 'vers', 'in contrast to', 'contrasted with', 'set against', 'pitted against', 'matched against']) {
+    for (const t of [`Plank 30 ${w} 45 sec`, `Plank 30 sec ${w} 45 sec`, `Run 5 km ${w} 30 min ${w} 10 km`, `Plank 30 sec ${w} 45`]) {
+      assert.equal(recognizeModalityInput(t), null, `E5 comparison word ${w} must refuse: ${JSON.stringify(t)}`);
+    }
+  }
+});
+
+test('F-1 structural whitelist E6: extended count vocabulary refuses a dangling sign', () => {
+  for (const w of ['circuits', 'circuit', 'lap', 'laps', 'cycle', 'cycles', 'series', 'interval', 'intervals']) {
+    assert.equal(recognizeModalityInput(`Plank 60 sec 3 ${w} -3`), null, `E6 count word ${w} attached must refuse`);
+    assert.equal(recognizeModalityInput(`Plank 60 sec 3 ${w} - 3`), null, `E6 count word ${w} spaced must refuse`);
+  }
+  for (const w of ['round.', 'sets.', 'reps.']) {
+    assert.equal(recognizeModalityInput(`Plank 60 sec 3 ${w} -3`), null, `E6 trailing period ${w} must refuse`);
+  }
+  assert.equal(recognizeModalityInput('Plank 60 sec 3 sets, -3'), null);
+  assert.equal(recognizeModalityInput('Plank 60 sec 3 sets of -3'), null);
+});
+
+test('F-1 structural whitelist E7: punctuation separators refuse', () => {
+  for (const t of ['Plank 30, 45 sec', 'Plank 30,45 sec', 'Plank 30;45 sec', 'Plank 30:45 sec']) {
+    assert.equal(recognizeModalityInput(t), null, `E7 punctuation must refuse: ${JSON.stringify(t)}`);
+  }
+  for (const cp of [0x00B0, 0x00A7, 0x2020, 0x2021]) {
+    const op = String.fromCodePoint(cp);
+    for (const t of [`Plank 30${op}45 sec`, `Plank 30 ${op} 45 sec`, `Plank 30 sec ${op} 45 sec`, `Plank 30 sec ${op} 45`]) {
+      assert.equal(recognizeModalityInput(t), null, `E7 punctuation U+${cp.toString(16).toUpperCase()} must refuse: ${JSON.stringify(t)}`);
+    }
+  }
+  // A comma-decimal is not honored by the extractors, so it refuses;
+  // a dot-decimal is one number and keeps parsing.
+  assert.equal(recognizeModalityInput('Plank 30.45 sec').duration_sec, 30.45);
+});
+
+test('F-1 structural whitelist: legitimate separators and prose boundaries still parse', () => {
+  assert.equal(recognizeModalityInput('Plank 30 x 45 sec').sets, 30);
+  assert.equal(recognizeModalityInput('Plank 30 x 45 sec').duration_sec, 45);
+  assert.equal(recognizeModalityInput('Plank 30x 45 sec').sets, 30);
+  assert.equal(recognizeModalityInput('Plank 60 sec rest 30 sec').duration_sec, 60);
+  assert.equal(recognizeModalityInput('Plank 30 sec x 45 sec').sets, 45);
+  assert.equal(recognizeModalityInput('Plank 30 sec rest 45').duration_sec, 30);
+  assert.equal(recognizeModalityInput('Plank 30 sec x 45').sets, 45);
+  assert.equal(recognizeModalityInput('Plank 60 sec - 3x').sets, 3);
+  assert.equal(recognizeModalityInput('Plank 60 sec - 3 sets').duration_sec, 60);
+  assert.equal(recognizeModalityInput('Run 5 km 32:10 RPE 7 avg HR 151').distance_km, 5);
+  assert.equal(recognizeModalityInput('Run 5 km 32:10 RPE 7 avg HR 151').elapsed, '32:10');
+  assert.equal(recognizeModalityInput('Stairmaster 20 min level 7 RPE 8').rpe, 8);
+  assert.equal(recognizeModalityInput('Stairmaster 20 min level 7 RPE 8').level, 7);
+  assert.equal(recognizeModalityInput('Plank 60 sec on 2026-11-16').duration_sec, 60);
+  assert.equal(recognizeModalityInput('Run 5 km, Nov 16-17').distance_km, 5);
+  assert.equal(recognizeModalityInput('Run 10km - 45 min').distance_km, 10);
+  assert.equal(recognizeModalityInput('Run 5k - 30 min').duration_min, 30);
+  assert.equal(recognizeModalityInput('Rows done, 30 pounds, 10 each arm, 3 sets. Tank answer: 2. Plank 40 seconds!!').duration_sec, 40);
+});

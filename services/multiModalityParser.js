@@ -49,7 +49,12 @@ const SLASH_SET = /\d+\s*\/\s*\d+/;
 //      signed decimal-comma quantity ("-5,5 sec"), a chained separator
 //      stating one dimension twice ("5 km - 30 min - 45 sec"), a second
 //      end with its unit elided ("30 sec to 45", "5 km - 10"), or an
-//      elapsed-time pair ("32:10 - 45:20").
+//      elapsed-time pair ("32:10 - 45:20") — plus the structural whitelist
+//      (coordinator direction 2026-11-16): any two-numbers-one-unit shape
+//      whose separator is not a known legitimate one refuses, so no new
+//      glyph or synonym can leak through the enumerations above. See
+//      hasUnlistedTwoNumberSeparator for the legitimate set (drawn from
+//      the passing controls/tests) and the shape boundaries.
 //      A spaced dash IS a separator — and still parses — only when it sits
 //      between two stated quantities: the text before it ends with a unit
 //      word or a number ("Run 5 km - 30 min", "AMRAP 12 min: … - 6 rounds",
@@ -298,6 +303,212 @@ function hasNonSeparatorSpacedSign(t) {
   return false;
 }
 
+// ── Structural whitelist (coordinator direction 2026-11-16, #1767) ──────────
+// Five rounds of enumeration each leaked: every fix closed its listed
+// variants and the next hunt found the next glyph or synonym, and E7 has no
+// clean enumeration at all. So the guard inverts: a two-numbers-one-unit
+// shape refuses UNLESS its separator is a known legitimate one. The
+// legitimate set is drawn from the passing controls / tests — nothing is
+// invented — and was verified firsthand on this head before the fix
+// (hidden_files/1767-survey-whitelist.js):
+//   single-unit `N SEP N UNIT` — `x` with a trailing space (the sets
+//     multiplier: `30 x 45 sec` → sets 30, duration 45; `30x 45 sec` the
+//     same). Attached `x` (`30x45 sec`) and `x` with no trailing space
+//     (`30 x45 sec`) drop the first number, so they refuse. A dot-decimal
+//     (`30.45 sec`) is one number, not a separator; a comma-decimal
+//     (`30,45 sec`) is not honored by the extractors, so it refuses.
+//   pair `N U SEP N U`, same dimension — `rest` (the second number is
+//     rest, not work: `60 sec rest 30 sec`); `x` with a leading space
+//     (sets: `30 sec x 45 sec` → duration 30, sets 45); `/` when the pair
+//     is preceded by a sets multiplier (`6 x 2 min / 60 sec` — the interval
+//     rest). Different-dimension pairs are never this shape's business.
+//   elided `N U SEP N` (bare second number) — `rest`, or `x` with a
+//     leading space (sets). The existing carve-outs (second number followed
+//     by a unit, `x`, a count word, or `:`) still apply first.
+//   rating `RATING N SEP N` — `x` with NO trailing space (attached sets:
+//     `RPE 7 x3` → rpe 7, sets 3). Spaced `x` (`RPE 7 x 8`) misreads the
+//     rating number itself as sets, so it refuses.
+//   chain (3+ unit quantities, a dimension repeats) — no legitimate
+//     separator: any repeated-dimension run refuses, whatever joins it.
+// A span is NOT a connector (the shape is skipped, not refused) when it is
+// prose between statements: it contains a sentence terminator (`.`/`!`/`?`
+// followed by space + uppercase — abbreviated periods such as `v.s.` and
+// decimals do not terminate, and a period glued to the next number
+// (`30 sec.45 sec`) is a separator, not a terminator, so it refuses), a colon followed by a
+// word (a list introducer: `AMRAP 8 min: plank 30 sec`), a rating keyword
+// (two separate ratings: `level 7 RPE 8`), a circuit-list comma (inside a
+// colon-delimited circuit list body, commas separate movement items:
+// `Bike circuit: sprint 30 sec, easy 60 sec`), a date fragment
+// (`2026-11-16`, `Nov 16-17`, or a year / number-plus-dash split across
+// the separator and the second number), or more than three tokens.
+// A colon in the span is a list introducer when a circuit keyword
+// precedes the shape or the colon is followed by a word; a lone colon is
+// a connector (`30:45 sec` refuses); any other colon use — an
+// elapsed-time fragment such as `:10` in `32:10 - 5 km` — is not a
+// connector either. The first number of the single-unit shape must be a
+// complete token (not glued to a digit or a letter other than the sets
+// `x`: `10km - 45 min` is a pair, `5k - 30 min` keeps its 30-min row);
+// the elided second number must be bare (not glued to a letter, and not
+// the first half of a date or range: `on 11-16` keeps parsing).
+// Over-refusals this creates (a multi-activity sentence with a repeated
+// dimension, a same-dimension pair joined by `then`/`in`/`,`) are the safe
+// direction — the parser would otherwise record one end and silently drop
+// the other — and are disclosed as residuals, never as recorded work.
+const STRUCT_NUM = '\\d+(?:\\.\\d+)?';
+const SENTENCE_END = /[.!?](?=\s+[A-Z])/;
+// A count word followed by a sign at the end of the separator (`3 sets -`,
+// `3 sets of -`, `3 sets, -`, `3 circuits -`): the signed number after it
+// is a dangling count (E6 family), not a second quantity — the separator is
+// a connector, never prose, however many tokens it carries. The extended
+// count vocabulary (circuits/laps/cycles/series/intervals) rides along;
+// the enumerated COUNT_SIGN pattern still refuses the covered words first.
+const DANGLING_COUNT_WL = new RegExp(
+  `\\b(?:sets?|reps?|rounds?|repetitions?|circuits?|laps?|cycles?|series|intervals?)\\b.{0,20}${SIGN_CHARS}\\s*$`,
+  'iu',
+);
+function spanIsBoundary(sep, t, shapeStart) {
+  if (SENTENCE_END.test(sep)) return true;
+  if (RATING_KW.test(sep)) return true;
+  // A date fragment is prose, not a connector (`Plank 60 sec on 2026-11-16`,
+  // `Run 5 km, Nov 16-17` — the date's last component would otherwise read
+  // as a bare second number).
+  if (/\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\b/i.test(sep)) return true;
+  if (/\d{4}[-/]\d{1,2}[-/]/.test(sep) || /\b\d{1,2}[-/]\d{1,2}[-/]/.test(sep)) return true;
+  // A date split across the separator and the second number (`on 2026-11-`
+  // + `16`, `on 11-` + `16`): the separator ends in a year or a
+  // number-plus-dash, so the second number is the date's last component,
+  // not a bare quantity. A range the separator's dash would otherwise
+  // join (`45-50`) is still refused by the enumerated ranged patterns.
+  if (/\b\d{4}[-/]/.test(sep) || /\d{1,2}[-/]\s*$/.test(sep)) return true;
+  // A dangling count overrides the token rule below: `3 sets of -` is four
+  // tokens but a connector (E6), not prose.
+  if (DANGLING_COUNT_WL.test(sep)) return false;
+  const tokens = sep.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length > 3) return true;
+  if (sep.includes(':')) {
+    // A colon introduces a list when a circuit keyword precedes the shape
+    // (`EMOM 10 min: 5 pullups`, `AMRAP 12 min: pushups 10`) or is followed
+    // by a word (`AMRAP 8 min: plank 30 sec`); a lone colon is a connector
+    // (`30:45 sec`, `30 sec: 45 sec` refuse); any other colon use — an
+    // elapsed-time fragment such as `:10` in `32:10 - 5 km` or ` - 32:` in
+    // `5 km - 32:10` — is not a connector either.
+    const before = t.slice(0, shapeStart);
+    if (/\b(?:amrap|emom|circuit|wod|metcon)\b/i.test(before)) return true;
+    if (/:\s*[A-Za-z]/.test(sep)) return true;
+    if (sep.trim() !== ':') return true;
+  }
+  // A comma inside a colon-delimited circuit list body separates movement
+  // items, not quantities (`Bike circuit: sprint 30 sec, easy 60 sec`).
+  if (tokens.length > 0 && tokens[0].startsWith(',')) {
+    const before = t.slice(0, shapeStart);
+    if (/\b(?:amrap|emom|circuit|wod|metcon)\b/i.test(before) && before.includes(':')) return true;
+  }
+  return false;
+}
+function isLegitSingleSep(sep) {
+  return sep.trim().toLowerCase() === 'x' && /\s$/.test(sep);
+}
+function isLegitPairSep(sep, t, matchStart) {
+  const trimmed = sep.trim().toLowerCase();
+  if (trimmed === 'rest') return true;
+  if (trimmed === 'x' && /^\s/.test(sep)) return true;
+  // The interval rest: `6 x 2 min / 60 sec` — a `/` pair is the rest token
+  // only inside a `<rounds> x <work> / <rest>` interval specification.
+  if (trimmed === '/' && /\d+\s*x\s*$/.test(t.slice(0, matchStart))) return true;
+  return false;
+}
+function isLegitElidedSep(sep) {
+  const trimmed = sep.trim().toLowerCase();
+  if (trimmed === 'rest') return true;
+  if (trimmed === 'x' && /^\s/.test(sep)) return true;
+  return false;
+}
+function isLegitRatingSep(sep) {
+  return /^\s*x$/i.test(sep);
+}
+const RATING_KW = /\b(?:rpe|avg(?:erage)?\s*hr|hr|level)\b/i;
+const SINGLE_WL = new RegExp(`(?<![\\d:])(${STRUCT_NUM})(?![\\da-wyzA-WYZ])(?!\\.\\d)(.{1,80}?)(${STRUCT_NUM})(?=\\s*(?:${UNIT})\\b)`, 'giu');
+const PAIR_WL = new RegExp(`(?<![\\d:])(${STRUCT_NUM})\\s*(${UNIT})\\b(.{0,80}?)(${STRUCT_NUM})\\s*(${UNIT})\\b`, 'giu');
+const ELIDED_WL = new RegExp(
+  `(?<![\\d:])(?:${STRUCT_NUM}\\s*${UNIT}\\b|\\d{1,2}:\\d{2}(?::\\d{2})?)(.{0,80}?)(${STRUCT_NUM})(?![\\d.,A-Za-z])(?![-/]\\d)(?![-/]\\d{1,2}[-/])(?!\\s*(?:${UNIT}\\b|x\\b|rounds?\\b|reps?\\b|sets?\\b|repetitions?\\b|:))`,
+  'giu',
+);
+const RATING_WL = new RegExp(`\\b(?:${RATING_WORD})\\s*(${STRUCT_NUM})(?!\\.\\d)(.{1,80}?)(${STRUCT_NUM})`, 'giu');
+const CHAIN_QTY_WL = new RegExp(`(?<![\\d:])(${STRUCT_NUM})\\s*(${UNIT})\\b`, 'giu');
+function hasUnlistedTwoNumberSeparator(t) {
+  // Single-unit: `N SEP N UNIT`. A unit word inside the separator means
+  // the first number already has its unit — that is a pair, not this shape.
+  SINGLE_WL.lastIndex = 0;
+  let m;
+  while ((m = SINGLE_WL.exec(t)) !== null) {
+    const sep = m[2];
+    if (new RegExp(`\\b(?:${UNIT})\\b`, 'i').test(sep)) continue;
+    if (spanIsBoundary(sep, t, m.index)) continue;
+    if (isLegitSingleSep(sep)) continue;
+    return true;
+  }
+  // Pair: `N U SEP N U`, same dimension only.
+  PAIR_WL.lastIndex = 0;
+  while ((m = PAIR_WL.exec(t)) !== null) {
+    const d1 = dimensionOf(m[2]);
+    const d2 = dimensionOf(m[5]);
+    if (!d1 || d1 !== d2) continue;
+    const sep = m[3];
+    if (spanIsBoundary(sep, t, m.index)) continue;
+    if (isLegitPairSep(sep, t, m.index)) continue;
+    return true;
+  }
+  // Elided: `N U SEP N` with a bare second number.
+  ELIDED_WL.lastIndex = 0;
+  while ((m = ELIDED_WL.exec(t)) !== null) {
+    const sep = m[1];
+    if (spanIsBoundary(sep, t, m.index)) continue;
+    if (isLegitElidedSep(sep)) continue;
+    return true;
+  }
+  // Rating: `RATING N SEP N`.
+  RATING_WL.lastIndex = 0;
+  while ((m = RATING_WL.exec(t)) !== null) {
+    const sep = m[2];
+    if (spanIsBoundary(sep, t, m.index)) continue;
+    if (isLegitRatingSep(sep)) continue;
+    return true;
+  }
+  // Chain: a run of 3+ unit quantities joined by non-boundary spans, with
+  // a repeated dimension. Spans that are boundaries split the run into
+  // separate statements.
+  CHAIN_QTY_WL.lastIndex = 0;
+  const qs = [];
+  while ((m = CHAIN_QTY_WL.exec(t)) !== null) {
+    qs.push({ start: m.index, end: m.index + m[0].length, dim: dimensionOf(m[2]) });
+  }
+  let run = [];
+  const flushRun = () => {
+    if (run.length >= 3) {
+      const seen = new Set();
+      for (const q of run) {
+        if (!q.dim) continue;
+        if (seen.has(q.dim)) return true;
+        seen.add(q.dim);
+      }
+    }
+    return false;
+  };
+  for (let i = 0; i < qs.length; i++) {
+    if (run.length === 0) { run.push(qs[i]); continue; }
+    const prev = run[run.length - 1];
+    const span = t.slice(prev.end, qs[i].start);
+    if (spanIsBoundary(span, t, prev.end)) {
+      if (flushRun()) return true;
+      run = [qs[i]];
+    } else {
+      run.push(qs[i]);
+    }
+  }
+  if (flushRun()) return true;
+  return false;
+}
+
 function hasSignedOrRangedQuantity(t) {
   return SIGNED_QUANTITY.test(t)
     || hasNonSeparatorSpacedSign(t)
@@ -319,7 +530,8 @@ function hasSignedOrRangedQuantity(t) {
     || RANGED_RATING_SPACED.test(t)
     || RANGED_RATING_WORDS.test(t)
     || RANGED_RATING_SYMBOL.test(t)
-    || SPELLED_RATING.test(t);
+    || SPELLED_RATING.test(t)
+    || hasUnlistedTwoNumberSeparator(t);
 }
 
 // "mm:ss" / "h:mm:ss" → total seconds (null if unparseable). Mirrors the
