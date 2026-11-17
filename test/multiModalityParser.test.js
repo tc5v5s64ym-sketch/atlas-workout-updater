@@ -713,3 +713,56 @@ test('F-1 structural whitelist: legitimate separators and prose boundaries still
   assert.equal(recognizeModalityInput('Run 5k - 30 min').duration_min, 30);
   assert.equal(recognizeModalityInput('Rows done, 30 pounds, 10 each arm, 3 sets. Tank answer: 2. Plank 40 seconds!!').duration_sec, 40);
 });
+
+test('F-1 round-6 pre-review F1: line-terminator separators refuse', () => {
+  // `.` never matches \n / \r / U+2028 / U+2029, so the whitelist shapes
+  // never saw a newline-joined two-number shape; the separator captures
+  // now use [\s\S]. A second statement after a line break now refuses
+  // (previously dropped); a different-dimension multi-line pair still
+  // parses (both quantities are real, neither is dropped).
+  for (const t of ['Plank 30\n45 sec', 'Plank 30 \n 45 sec', 'Plank 30\r45 sec', 'Plank 30\r\n45 sec', 'Plank 30\u202845 sec', 'Plank 30\u202945 sec', 'Plank 30 sec\n45 sec', 'Plank 30 sec\r45 sec', 'Plank 30 sec\u202845 sec', 'Plank 60 sec RPE 7\n8', 'Plank 60 sec RPE 7\r8']) {
+    assert.equal(recognizeModalityInput(t), null, `line-terminator separator must refuse: ${JSON.stringify(t)}`);
+  }
+  assert.equal(recognizeModalityInput('Run 5 km\n30 min').distance_km, 5);
+  assert.equal(recognizeModalityInput('Run 5 km\n30 min').duration_min, 30);
+});
+
+test('F-1 round-6 pre-review F2: 3+-digit ratings standing alone parse', () => {
+  // RATING_WL split a 3+-digit rating number into a phantom two-number
+  // shape (150 -> 1 <5> 0) and refused ordinary HR-only logs; the first
+  // number now carries the complete-token guard SINGLE_WL already had.
+  assert.equal(recognizeModalityInput('Run 5 km avg HR 150').avg_hr, 150);
+  assert.equal(recognizeModalityInput('Run 5 km avg HR 150').distance_km, 5);
+  assert.equal(recognizeModalityInput('Run 5 km HR 150').avg_hr, 150);
+  assert.equal(recognizeModalityInput('Run 5 km avg HR 100').avg_hr, 100);
+  assert.equal(recognizeModalityInput('Run 5 km avg HR 1000').avg_hr, 1000);
+  assert.equal(recognizeModalityInput('Run 30 min hr 140').avg_hr, 140);
+  assert.equal(recognizeModalityInput('Run 30 min hr 140').duration_min, 30);
+  assert.equal(recognizeModalityInput('Run 5 km 20 min avg HR 150').avg_hr, 150);
+  assert.equal(recognizeModalityInput('Plank 60 sec RPE 100').rpe, 100);
+  assert.equal(recognizeModalityInput('Stairmaster 20 min level 100').level, 100);
+  // Real two-number rating shapes still refuse.
+  for (const t of ['Plank 60 sec RPE 7 150', 'Plank 60 sec RPE 7 8', 'Plank 60 sec RPE 7 ~ 8', 'Plank 60 sec RPE 7 \u2248 8', 'Plank 60 sec RPE 7 \u2264 8']) {
+    assert.equal(recognizeModalityInput(t), null, `two-number rating must still refuse: ${JSON.stringify(t)}`);
+  }
+  // Attached-x and dot-decimal ratings still parse.
+  assert.equal(recognizeModalityInput('Plank 60 sec RPE 7 x8').rpe, 7);
+  assert.equal(recognizeModalityInput('Plank 60 sec RPE 7.8').rpe, 7.8);
+});
+
+test('F-1 round-7 A03-hour: hour compounds refuse (guard-side, no hour vocabulary)', () => {
+  // The parser has no hour unit, so `1 hr 15 min` recorded 15 min and
+  // dropped the hour (plus a phantom avg_hr 15 from the HR extractor),
+  // and `1h 30min` recorded 30 min for a stated 90. Both now refuse
+  // instead of recording a changed quantity; hour vocabulary is a
+  // follow-up feature, not invented here.
+  for (const t of ['Run 1 hr 15 min', 'Run 2 hr 30 min', 'Run 1 hr 15 min RPE 7', 'Run 1h 30min', 'Run 2h 15min', 'Run 1h30min', 'Run 1 hour 30 min', 'Run 1 hr 5 km', 'Run 1 hr 15 sec']) {
+    assert.equal(recognizeModalityInput(t), null, `hour compound must refuse: ${JSON.stringify(t)}`);
+  }
+  // Hour forms with no second quantity keep their existing behavior.
+  assert.equal(recognizeModalityInput('Run 5 km in 1 hr'), null);
+  assert.equal(recognizeModalityInput('Plank 1 hr'), null);
+  // Dot-decimals still record exactly as stated.
+  assert.equal(recognizeModalityInput('Run 1.5 km').distance_km, 1.5);
+  assert.equal(recognizeModalityInput('Plank 30.5 sec').duration_sec, 30.5);
+});

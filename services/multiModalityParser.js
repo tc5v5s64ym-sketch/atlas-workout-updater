@@ -427,13 +427,13 @@ function isLegitRatingSep(sep) {
   return /^\s*x$/i.test(sep);
 }
 const RATING_KW = /\b(?:rpe|avg(?:erage)?\s*hr|hr|level)\b/i;
-const SINGLE_WL = new RegExp(`(?<![\\d:])(${STRUCT_NUM})(?![\\da-wyzA-WYZ])(?!\\.\\d)(.{1,80}?)(${STRUCT_NUM})(?=\\s*(?:${UNIT})\\b)`, 'giu');
-const PAIR_WL = new RegExp(`(?<![\\d:])(${STRUCT_NUM})\\s*(${UNIT})\\b(.{0,80}?)(${STRUCT_NUM})\\s*(${UNIT})\\b`, 'giu');
+const SINGLE_WL = new RegExp(`(?<![\\d:])(${STRUCT_NUM})(?![\\da-wyzA-WYZ])(?!\\.\\d)([\\s\\S]{1,80}?)(${STRUCT_NUM})(?=\\s*(?:${UNIT})\\b)`, 'giu');
+const PAIR_WL = new RegExp(`(?<![\\d:])(${STRUCT_NUM})\\s*(${UNIT})\\b([\\s\\S]{0,80}?)(${STRUCT_NUM})\\s*(${UNIT})\\b`, 'giu');
 const ELIDED_WL = new RegExp(
-  `(?<![\\d:])(?:${STRUCT_NUM}\\s*${UNIT}\\b|\\d{1,2}:\\d{2}(?::\\d{2})?)(.{0,80}?)(${STRUCT_NUM})(?![\\d.,A-Za-z])(?![-/]\\d)(?![-/]\\d{1,2}[-/])(?!\\s*(?:${UNIT}\\b|x\\b|rounds?\\b|reps?\\b|sets?\\b|repetitions?\\b|:))`,
+  `(?<![\\d:])(?:${STRUCT_NUM}\\s*${UNIT}\\b|\\d{1,2}:\\d{2}(?::\\d{2})?)([\\s\\S]{0,80}?)(${STRUCT_NUM})(?![\\d.,A-Za-z])(?![-/]\\d)(?![-/]\\d{1,2}[-/])(?!\\s*(?:${UNIT}\\b|x\\b|rounds?\\b|reps?\\b|sets?\\b|repetitions?\\b|:))`,
   'giu',
 );
-const RATING_WL = new RegExp(`\\b(?:${RATING_WORD})\\s*(${STRUCT_NUM})(?!\\.\\d)(.{1,80}?)(${STRUCT_NUM})`, 'giu');
+const RATING_WL = new RegExp(`\\b(?:${RATING_WORD})\\s*(${STRUCT_NUM})(?![\\da-wyzA-WYZ])(?!\\.\\d)([\\s\\S]{1,80}?)(${STRUCT_NUM})`, 'giu');
 const CHAIN_QTY_WL = new RegExp(`(?<![\\d:])(${STRUCT_NUM})\\s*(${UNIT})\\b`, 'giu');
 function hasUnlistedTwoNumberSeparator(t) {
   // Single-unit: `N SEP N UNIT`. A unit word inside the separator means
@@ -509,12 +509,26 @@ function hasUnlistedTwoNumberSeparator(t) {
   return false;
 }
 
+// An hour compound ("1 hr 15 min", "1h 30min", "1h30min", "2 hr 30 min"):
+// the parser has no hour vocabulary, so the hour is dropped and the second
+// number is recorded as the whole quantity (A03) — and, for the spaced
+// form, re-read as a heart rate (A1). Refuse the compound instead of
+// recording a changed quantity. Guard-side only: no hour unit is invented
+// (a follow-up can add hour vocabulary as a feature), and hour forms with
+// no second quantity ("Run 5 km in 1 hr", "Plank 1 hr") keep their
+// existing behavior.
+const HOUR_COMPOUND = new RegExp(
+  `\\b(${PLAIN_NUMBER})\\s*(?:hours?|hrs?|h)\\s*(${PLAIN_NUMBER})\\s*(?:${UNIT})\\b`,
+  'iu',
+);
+
 function hasSignedOrRangedQuantity(t) {
   return SIGNED_QUANTITY.test(t)
     || hasNonSeparatorSpacedSign(t)
     || hasSameDimensionPair(t)
     || hasRepeatedDimensionChain(t)
     || ELIDED_SECOND_END.test(t)
+    || HOUR_COMPOUND.test(t)
     || RANGED_QUANTITY.test(t)
     || RANGED_SYMBOL_QUANTITY.test(t)
     || COUNT_SIGN.test(t)
@@ -574,7 +588,13 @@ function num(s) { const n = Number(s); return Number.isFinite(n) ? n : null; }
 // Shared scalar extractors (all optional, all null when absent).
 function extractCommon(t) {
   const rpe = t.match(/\brpe\s*(\d+(?:\.\d+)?)/i);
-  const hr = t.match(/\bavg(?:erage)?\s*hr\s*(\d+)/i) || t.match(/\bhr\s*(\d+)/i);
+  // A03/A1: `hr <N>` is not a heart rate when <N> is followed by a duration
+  // or distance unit (`Run 1 hr 15 min` — the 15 is minutes, not a heart
+  // rate). The hour compound itself refuses via HOUR_COMPOUND; this guard
+  // keeps the extractor honest wherever the shape appears.
+  const hrNotUnit = `(?!\\s*(?:${UNIT})\\b)`;
+  const hr = t.match(new RegExp(`\\bavg(?:erage)?\\s*hr\\s*(\\d+)${hrNotUnit}`, 'i'))
+    || t.match(new RegExp(`\\bhr\\s*(\\d+)${hrNotUnit}`, 'i'));
   const level = t.match(/\blevel\s*(\d+)/i);
   return {
     rpe: rpe ? num(rpe[1]) : null,
