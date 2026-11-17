@@ -41,6 +41,30 @@
 //     (or digit–multiplier–@) pattern using a glyph the parser does not
 //     recognize, in every span it checks.
 //
+//   A-01 re-fix (#1765 regression, Astra re-audit #3) — seven NEW incomplete-
+//     parse forms reach the write sink that the original probe set did not
+//     cover. Every one is a SECOND set-group token the parser's first-claim
+//     grammars never consume: `parseSetsFirst` and `parseWeightRepsSets` match
+//     only the FIRST group (`bench 3x8@165 3x8@135`, `bench 185x8x3 165x8x3`),
+//     `parseSetsFirst` claims the text before a WxR group is ever seen
+//     (`bench 185x5 3x8@165`, either order), a bare `NxM` token after a group
+//     (`bench 3x8@165 3x8`), a second group on a later line of a one-exercise
+//     turn (newlines collapse to one blob) or inside one segment (segments
+//     split on FIRST exercise mention only), and a trailing `xN` repeat or
+//     stray `@N` beside a group. The gate therefore counts set-group tokens
+//     per span and refuses when a second group is present that no grammar
+//     consumes as a whole — separator-agnostic, so it closes the class, not
+//     just the listed separators. Forms the parser DOES consume whole are
+//     exempt: slash repeats (shorthand token loop), `for` repeats
+//     (`parseNaturalSets` matchAll), dumbbell repeats (`parseDumbbellGroups`
+//     matchAll), WxR@RIR tiling pairs (`245 x 6 @3 225 x 5 @2`, both
+//     leaders > 10 — a weight, never a set count), slash-chain repeats
+//     (`225 5/2 8/8/7 x3` — the `xN` repeats the last chain element), WxR
+//     repeats (`185x5 x3` — the `xN` is the WxRxN count), and one-line
+//     multi-exercise turns (`bench 3x8@165 squat 3x8@135` — the parser
+//     segments per exercise and consumes both; the per-line backstop checks
+//     only line content no child's raw_text already covers).
+//
 // All paths only ever REDUCE what reaches the preview (parsed →
 // needs_clarification with zero rows). Pure, read-only, and it never throws —
 // a garbage input returns the parsed object unchanged. It needs the ORIGINAL
@@ -77,6 +101,34 @@ const AMBIGUOUS_AT_MAX = 10;
 // A digit must precede the glyph and a digit or @ must follow it, so a
 // trailing markdown asterisk (`3x8@165*`) does not trip.
 const UNRECOGNIZED_MULTIPLIER = /\d+\s*[*✕✗✖＊Ｘｘ]\s*[\d@]/;
+
+// A-01 re-fix — set-group tokens, counted per span. The parser's first-claim
+// grammars each consume at most ONE group of their own shape, so a second
+// group token in the same span is dropped by construction:
+//
+//   X_AT_GROUP — `NxM@W`, any leader. A leader ≤ 10 is a set count (the shape
+//     `parseSetsFirst` claims); a leader > 10 is a weight (the WxR@RIR shape
+//     `parseWeightRepsAtRir` tiles whole). Spacing is free (`3 x 8 @ 165`).
+//   WXR_N_GROUP — `WxRxN` (`185x8x3`), the shape `parseWeightRepsSets` claims
+//     once. A bare `WxR` token (`185x5`, `3x8`) is the same family without the
+//     count; the lookaheads keep it from double-counting the `WxR` prefix of
+//     an x@ group (`3x8` in `3x8@165`) or of a WxRxN group (`185x8` in
+//     `185x8x3`). Dumbbell groups (`55s x10 @3`) never match any of these:
+//     the `s` sits between the digits and the `x`.
+const X_AT_GROUP_GLOBAL = /\b\d+\s*x\s*\d+\s*@\s*\d+(?:\.\d+)?/g;
+const DUMBBELL_X_AT_GROUP_GLOBAL = /\b\d+(?:\.\d+)?s\s+x\d+\s*@\s*\d+(?:\.\d+)?/g;
+const DUMBBELL_SLASH_GROUP_GLOBAL = /\b\d+(?:\.\d+)?s\s+\d+\s*\/\s*\d+(?:\.\d+)?(?:\s+x\d+)?/g;
+const WXR_N_GROUP_GLOBAL = /\b\d+(?:\.\d+)?\s*x\s*\d+\s*x\s*\d+\b/g;
+const BARE_WXR_TOKEN_GLOBAL = /\b\d+(?:\.\d+)?\s*x\s*\d+\b(?!\s*@)(?!\s*x\s*\d)/g;
+const TRAILING_REPEAT_TOKEN = /\bx\d+\b/;
+const DUMBBELL_GROUP = /\b\d+(?:\.\d+)?s\s+(?:\d+\s*\/\s*\d+|x\d+\s*@\s*\d+)/;
+// Unit-glued groups (B4): `normalizeWeightUnits` converts `85kg` only when a
+// word boundary follows the unit, so in `85kgx5` / `185lbx5` the unit survives
+// unconverted and the token matches neither bare-WxR nor WxRxN above — the
+// group then drops silently beside a group the parser does claim. Count the
+// glued forms as group tokens of the same family.
+const UNIT_WXR_TOKEN_GLOBAL = /\b\d+(?:\.\d+)?\s*(?:kgs?|lbs?)\s*x\s*\d+\b(?!\s*@)(?!\s*x\s*\d)/g;
+const UNIT_WXR_N_GROUP_GLOBAL = /\b\d+(?:\.\d+)?\s*(?:kgs?|lbs?)\s*x\s*\d+\s*x\s*\d+\b/g;
 
 function ask(message, code, parsed, rawText) {
   return {
@@ -144,6 +196,86 @@ function unrecognizedSetNotationMessage() {
   return "That includes a set written with a multiplier I don't recognize, so I can't tell what it means. Mind re-sending it with x, like 3x8@165? (nothing's logged yet)";
 }
 
+function repeatedSetGroupMessage() {
+  return "That looks like two sets in one entry, and I can only read the first — I don't want to drop the second. Mind re-sending each set on its own line? (nothing's logged yet)";
+}
+
+// A-01 re-fix — a second set-group token in one span that no parser grammar
+// consumes whole. Returns the refusal code, or null. The shapes the parser
+// consumes whole are exempt by construction:
+//   - two x@ groups with NO sets-first claimant (both leaders > 10) are the
+//     WxR@RIR tiling pair (`245 x 6 @3 225 x 5 @2`);
+//   - a lone WxR token with no other group (`185x5`, `185x5 165x8`) tiles;
+//   - a trailing `xN` beside a slash/for/dumbbell group is that grammar's own
+//     repeat/count (`185 5/2 x3`, `60s 10/3 x3`), never a second group;
+//   - a trailing `xN` that IS the WxRxN count (`185x5 x3` parses as 3× 185x5);
+//   - a slash-chain tail's `xN` (`225 5/2 8/8/7 x3` repeats the last chain
+//     element) — chain tails are stripped before counting, so the RIR digit
+//     never reads as a WxR leader;
+//   - two dumbbell groups together are consumed whole (`parseDumbbellGroups`
+//     matchAll: `55s x10 @3 60s x8 @2`, `60s 10/3 65s 8/2`).
+// Everything else below is a group `parseSetsFirst` / `parseWeightRepsSets`
+// claims once and then drops: a second x@ group, a WxRxN group beside a
+// sets-first group, two WxRxN groups, a bare WxR token beside any other
+// group (slash / for / dumbbell / sets-first / WxRxN), a trailing `xN`
+// beside a single-claim group, a stray `@N` no group owns, a unit-glued
+// group (`85kgx5`, `185lbx5` — the unit survives normalization unconverted,
+// so it counts as a group token of the same family), or a dumbbell group
+// beside any barbell group (`parseDumbbellGroups` is tried first and claims
+// the text: `bench 185 5/2 55s x10 @3`, `bench 3x8@165 55s x10 @3`).
+function hasRepeatedSetGroup(text) {
+  const t = String(text || '');
+  // A slash set is `weight reps/rir` — the shorthand path consumes the pair
+  // whole, so its digits must not participate in any other group's count:
+  // without this, the RIR digit reads as a WxR leader (`185 5/2 x3` looks
+  // like a `2 x 3` group, and the legit repeat `bench 185 5/2 x3` would
+  // falsely refuse; same for a dumbbell slash pair, `60s 10/3 x3`, and for a
+  // slash-chain tail, `225 5/2 8/8/7 x3` — the `xN` repeats the last chain
+  // element, and the unstripped `7 x3` would read as a phantom group).
+  // Strip weight+slash pairs, dumbbell groups, and slash-chain tails before
+  // counting groups; the family checks below still run on the original text.
+  const g = t
+    .replace(/\b\d+(?:\.\d+)?\s+\d+\s*\/\s*\d+(?:\.\d+)?/g, ' ')
+    .replace(DUMBBELL_SLASH_GROUP_GLOBAL, ' ')
+    .replace(DUMBBELL_X_AT_GROUP_GLOBAL, ' ')
+    .replace(/\b\d+(?:\/\d+)+/g, ' ');
+  const xAt = [...g.matchAll(X_AT_GROUP_GLOBAL)];
+  const setsFirst = xAt.filter(m => Number(m[0].match(/^\d+/)[0]) <= 10);
+  const wxrN = [...g.matchAll(WXR_N_GROUP_GLOBAL), ...g.matchAll(UNIT_WXR_N_GROUP_GLOBAL)];
+  const bareWxr = [...g.matchAll(BARE_WXR_TOKEN_GLOBAL), ...g.matchAll(UNIT_WXR_TOKEN_GLOBAL)];
+  const hasSlash = FAMILY_SLASH.test(t);
+  const hasFor = FAMILY_FOR.test(t);
+  const hasDumbbell = DUMBBELL_GROUP.test(t);
+  const hasOtherGroup = setsFirst.length > 0 || wxrN.length > 0 || bareWxr.length > 0
+    || hasSlash || hasFor || hasDumbbell;
+  if (xAt.length >= 2 && setsFirst.length >= 1) return 'repeated_set_group';
+  if (setsFirst.length >= 1 && wxrN.length >= 1) return 'repeated_set_group';
+  if (wxrN.length >= 2) return 'repeated_set_group';
+  if (bareWxr.length >= 1 && (setsFirst.length >= 1 || wxrN.length >= 1 || hasSlash || hasFor || hasDumbbell)) return 'repeated_set_group';
+  // A trailing `xN` beside a single-claim group is unconsumed (`3x8@165 x3`)
+  // — unless the `xN` is already the count of a WxRxN group the parser
+  // claims whole (`185x5 x3` parses as 3× 185x5: the WxRxN match absorbs
+  // the repeat token, so strip matched WxRxN groups before testing).
+  const withoutWxrN = g.replace(WXR_N_GROUP_GLOBAL, ' ').replace(UNIT_WXR_N_GROUP_GLOBAL, ' ');
+  if ((setsFirst.length >= 1 || wxrN.length >= 1) && TRAILING_REPEAT_TOKEN.test(withoutWxrN)) return 'repeated_set_group';
+  const stripped = g.replace(X_AT_GROUP_GLOBAL, ' ').replace(DUMBBELL_X_AT_GROUP_GLOBAL, ' ');
+  if (/@\s*\d/.test(stripped) && hasOtherGroup) return 'repeated_set_group';
+  // A dumbbell group beside any other group: `parseDumbbellGroups` is tried
+  // before every barbell grammar, so it claims the text and the other group
+  // drops (`bench 185 5/2 55s x10 @3`, `bench 3x8@165 55s x10 @3`). Two
+  // dumbbell groups together are consumed whole (matchAll) and stay exempt:
+  // the slash test below runs on the text with dumbbell groups removed, so a
+  // dumbbell slash group (`60s 10/3`) never counts as a barbell slash group.
+  if (hasDumbbell) {
+    const withoutDumbbell = t
+      .replace(DUMBBELL_X_AT_GROUP_GLOBAL, ' ')
+      .replace(DUMBBELL_SLASH_GROUP_GLOBAL, ' ');
+    const hasNonDumbbellSlash = FAMILY_SLASH.test(withoutDumbbell);
+    if (setsFirst.length >= 1 || wxrN.length >= 1 || bareWxr.length >= 1 || hasNonDumbbellSlash || hasFor) return 'repeated_set_group';
+  }
+  return null;
+}
+
 // A set group joined by a multiplier the parser never recognizes (B1). The
 // group is unconsumed by definition — the parser has no grammar for it — so
 // the turn asks instead of previewing the rest without it.
@@ -157,6 +289,8 @@ function checkSpan(parsed, rawText, text, sets) {
   if (hasUnrecognizedSetNotation(text)) return ask(unrecognizedSetNotationMessage(), 'unrecognized_set_notation', parsed, rawText);
   const atValue = findAmbiguousAt(text, sets);
   if (atValue) return ask(ambiguousAtMessage(atValue), 'ambiguous_at_value', parsed, rawText);
+  const repeated = hasRepeatedSetGroup(text);
+  if (repeated) return ask(repeatedSetGroupMessage(), repeated, parsed, rawText);
   if (countFamilies(text) >= 2) return ask(mixedFormatMessage(), 'mixed_set_format', parsed, rawText);
   if (hasZeroValueSet(sets)) return ask(zeroValueMessage(), 'zero_set_value', parsed, rawText);
   return null;
@@ -186,17 +320,34 @@ function applyMultiGate(parsed, rawText) {
   // refuses. Lines already surfaced as unresolved emitted no sets, so nothing
   // was silently dropped from them — skip those, so one ambiguous line never
   // discards its clean siblings.
+  //
+  // B3 (re-fix): a one-line multi-exercise turn (`bench 3x8@165 squat 3x8@135`)
+  // is ONE line holding two exercises' groups, and the parser segments per
+  // exercise and consumes both whole — but the backstop counted groups across
+  // the whole line and refused a fully-logged turn. So a line is checked only
+  // for content NO child's raw_text already covers: remove each child's
+  // normalized raw_text from the line first; a line left empty is fully
+  // verified per-child and skipped. A merged second segment is in no child's
+  // raw_text, so it still reaches the check whole.
   const unresolvedLines = new Set(
     (Array.isArray(parsed.unresolved) ? parsed.unresolved : [])
       .map(u => normalizeGateText(u.line || '').trim()),
   );
+  const childTexts = exercises
+    .map(e => normalizeGateText(e.raw_text || ''))
+    .filter(Boolean);
   const lines = normalizeWeightUnits(String(rawText || ''))
     .split(/\r?\n/)
     .map(line => normalizeGateText(line).trim())
     .filter(Boolean);
   for (const line of lines) {
     if (unresolvedLines.has(line)) continue;
-    const refused = checkSpan(parsed, rawText, line, allSets);
+    let uncovered = line;
+    for (const childText of childTexts) {
+      if (uncovered.includes(childText)) uncovered = uncovered.replace(childText, ' ');
+    }
+    if (!uncovered.trim()) continue;
+    const refused = checkSpan(parsed, rawText, uncovered, allSets);
     if (refused) return refused;
   }
 
