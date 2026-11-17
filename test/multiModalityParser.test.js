@@ -851,3 +851,32 @@ test('F-1 round-8 pre-review follow-up: 13 more lone-sign glyphs are signs', () 
     }
   }
 });
+
+test('F-1 round-9 pre-review follow-up: 6 box-drawing half-line glyphs are signs', () => {
+  // Round-9 pre-review FIX FIRST on head c233b311: the F2 fix covered
+  // the full-width box-drawing horizontals but missed the half-width and
+  // mixed-weight horizontals. Their names say only LEFT/RIGHT, so no
+  // name search could catch them; font-outline geometry proves they are
+  // the same strokes as refused U+2500/U+2501 at the same height. All 6
+  // join SIGN_CHARS; the probe sweeps the full box-drawing block
+  // U+2500–U+257F. (Vertical half-lines, corners/junctions, and the
+  // double horizontal U+2550 are not minus-like — no action.)
+  const glyphs = [
+    '\u2574', // BOX DRAWINGS LIGHT LEFT
+    '\u2576', // BOX DRAWINGS LIGHT RIGHT
+    '\u2578', // BOX DRAWINGS HEAVY LEFT
+    '\u257A', // BOX DRAWINGS HEAVY RIGHT
+    '\u257C', // BOX DRAWINGS LIGHT LEFT AND HEAVY RIGHT
+    '\u257E', // BOX DRAWINGS HEAVY LEFT AND LIGHT RIGHT
+  ];
+  for (const g of glyphs) {
+    for (const t of [
+      `Plank ${g}45 sec`, `Plank ${g} 45 sec`,
+      `Run ${g}5 km`, `Run 5 km ${g}30 min`,
+      `Dead hang ${g}45 seconds`,
+      `Plank 60 sec RPE ${g}7`, `Plank 60 sec RPE ${g} 7`,
+    ]) {
+      assert.equal(recognizeModalityInput(t), null, `box-drawing half-line sign must refuse: ${JSON.stringify(t)}`);
+    }
+  }
+});

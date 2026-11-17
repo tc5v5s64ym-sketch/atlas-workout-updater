@@ -87,25 +87,22 @@ const SLASH_SET = /\d+\s*\/\s*\d+/;
 // patterns using it carry the `u` flag. (Pre-review B6: the previous
 // 13-char denylist leaked U+207B/U+208B/U+2796/U+2043/U+2E3A/U+2E3B/U+058A/
 // U+05BE/U+1806/U+2E17/U+2E40.)
-// Round-8 pre-review follow-up (FIX FIRST on head 7358ea2b): the
-// enumeration was run against Unicode 15.0 while the runtime is Unicode
-// 16.0 (Node 24 / ICU 78) — that version skew hid three more lone-sign
-// rows. 13 more glyphs join the list: U+10D8F Garay minus sign (a named
-// Sm minus added in Unicode 16.0); the horizontal-stroke family — plain
-// mid-height strokes visually indistinguishable from U+2015 HORIZONTAL
-// BAR (refused, Pd): U+2500/U+2501 light/heavy horizontal, U+2504/U+2505
-// triple-dash horizontal, U+2508/U+2509 quadruple-dash horizontal,
-// U+254C/U+254D double-dash horizontal, U+23AF horizontal line extension,
-// U+1CE0D/U+1CE0E left/right half triple-dash horizontal (the vertical
-// box-drawing and corner/junction characters are not minus-like — no
-// action); and U+E002D tag hyphen-minus (a named hyphen-minus; the R18
-// carve-out is withdrawn — one character, zero legitimate-use risk).
-// The horizontal strokes U+2500/U+2501/U+23AF carry no MINUS/HYPHEN/DASH
-// in their Unicode names, so the name-enumeration alone cannot catch
-// them — the probe now also pins the plain-horizontal-stroke family
-// explicitly. The enumeration is re-based to 104 named characters
-// (Unicode 16.0 data); see the round-8 probe.
-const SIGN_CHARS = '[\\p{Pd}\\u2212\\u207B\\u208B\\u2796\\u02D7\\u00AD\\u2043\\u00B1\\u2213\\u2238\\u2296\\u229F\\u229D\\u2052\\u2216\\u2242\\u2053\\u2448\\u2A29\\u2A2A\\u2A2B\\u2A2C\\u2A3A\\u2E43\\u{10D8F}\\u2500\\u2501\\u2504\\u2505\\u2508\\u2509\\u254C\\u254D\\u23AF\\u{1CE0D}\\u{1CE0E}\\u{E002D}]';
+// Round-9 pre-review follow-up (FIX FIRST on head c233b311): the F2 fix
+// covered the full-width box-drawing horizontals but missed the
+// half-width and mixed-weight horizontals in the same block. Six more
+// plain horizontal strokes join the list: U+2574 light left, U+2576
+// light right, U+2578 heavy left, U+257A heavy right, U+257C light left
+// and heavy right, U+257E heavy left and light right. Their names say
+// only LEFT/RIGHT — the horizontal direction is implicit in the
+// box-drawing vocabulary, so neither the name-enumeration nor the
+// HORIZONTAL search could catch them. Font-outline geometry (round-9
+// report) proves they are the same strokes as refused U+2500/U+2501 at
+// the same height. The vertical half-lines (U+2575/U+2577/U+2579/U+257B/
+// U+257D/U+257F), corners/junctions, and the double horizontal U+2550
+// (two parallel bands — an equals-like double rule, distinguishable
+// from a minus) are not minus-like — no action. The probe now sweeps
+// the full box-drawing block U+2500–U+257F as a permanent check.
+const SIGN_CHARS = '[\\p{Pd}\\u2212\\u207B\\u208B\\u2796\\u02D7\\u00AD\\u2043\\u00B1\\u2213\\u2238\\u2296\\u229F\\u229D\\u2052\\u2216\\u2242\\u2053\\u2448\\u2A29\\u2A2A\\u2A2B\\u2A2C\\u2A3A\\u2E43\\u{10D8F}\\u2500\\u2501\\u2504\\u2505\\u2508\\u2509\\u254C\\u254D\\u23AF\\u{1CE0D}\\u{1CE0E}\\u{E002D}\\u2574\\u2576\\u2578\\u257A\\u257C\\u257E]';
 // NOTE: the four astral code points use the brace escape (\u{...}).
 // A bare \u10D8F would parse as U+10D8 + literal 'F' — the first form of
 // this fix made exactly that mistake and the four astral glyphs still
