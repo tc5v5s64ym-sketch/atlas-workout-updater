@@ -591,8 +591,11 @@ function extractCommon(t) {
   // A03/A1: `hr <N>` is not a heart rate when <N> is followed by a duration
   // or distance unit (`Run 1 hr 15 min` — the 15 is minutes, not a heart
   // rate). The hour compound itself refuses via HOUR_COMPOUND; this guard
-  // keeps the extractor honest wherever the shape appears.
-  const hrNotUnit = `(?!\\s*(?:${UNIT})\\b)`;
+  // keeps the extractor honest wherever the shape appears. The (?!\d)
+  // after the number is load-bearing: without it the engine backtracks
+  // `(\d+)` to a prefix (`hr 15 min` -> avg_hr 1) instead of failing the
+  // match, so the guard must consume the whole number atomically.
+  const hrNotUnit = `(?!\\d)(?!\\s*(?:${UNIT})\\b)`;
   const hr = t.match(new RegExp(`\\bavg(?:erage)?\\s*hr\\s*(\\d+)${hrNotUnit}`, 'i'))
     || t.match(new RegExp(`\\bhr\\s*(\\d+)${hrNotUnit}`, 'i'));
   const level = t.match(/\blevel\s*(\d+)/i);

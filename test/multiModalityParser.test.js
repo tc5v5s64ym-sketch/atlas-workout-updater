@@ -762,6 +762,14 @@ test('F-1 round-7 A03-hour: hour compounds refuse (guard-side, no hour vocabular
   // Hour forms with no second quantity keep their existing behavior.
   assert.equal(recognizeModalityInput('Run 5 km in 1 hr'), null);
   assert.equal(recognizeModalityInput('Plank 1 hr'), null);
+  // The HR extractor never reads `hr <N> <unit>` as a heart rate: the
+  // number after `hr` is a quantity, not a heart rate. (The guard must
+  // consume the whole number: without (?!\d) the engine backtracks
+  // `(\d+)` to a prefix and `hr 15 min` fabricates avg_hr 1.)
+  assert.equal(recognizeModalityInput('Run 5 km hr 15 min').avg_hr, null);
+  assert.equal(recognizeModalityInput('Run 5 km hr 15 min').duration_min, 15);
+  assert.equal(recognizeModalityInput('Run 5 km avg HR 150 min').avg_hr, null);
+  assert.equal(recognizeModalityInput('Run 5 km avg HR 150 min').duration_min, 150);
   // Dot-decimals still record exactly as stated.
   assert.equal(recognizeModalityInput('Run 1.5 km').distance_km, 1.5);
   assert.equal(recognizeModalityInput('Plank 30.5 sec').duration_sec, 30.5);
