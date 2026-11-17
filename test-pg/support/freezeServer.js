@@ -28,12 +28,29 @@ process.env.ATLAS_IDEMPOTENCY_FILE =
 // Every Sheets mutation is counted in-process and reported on demand, so the
 // parent can prove a frozen request produced NO append without trusting the
 // child's word about its own control flow.
+// #1762 refix: the Sheets append response reports the ACTUAL updated range,
+// so its end column is the submitted rows' width. A fixed end column (the old
+// :L) is a receipt the append-proof verdict now rightly refuses — for a
+// 2-column [date, note] Coaching_Notes row it minted A2:L2, which the real
+// Sheets envelope never returns (a 2-column append reports A2:B2).
+function endColumnFor(rows) {
+  const width = Math.max(0, ...rows.map((r) => (Array.isArray(r) ? r.length : 0)));
+  let letters = '';
+  let n = width;
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    letters = String.fromCharCode(65 + rem) + letters;
+    n = Math.floor((n - 1) / 26);
+  }
+  return letters || 'A';
+}
+
 const calls = { append: [], delete: [], update: [] };
 const fakeSheets = {
   validateConfig: () => {},
   appendRows: async (tabName, rows) => {
     calls.append.push({ tabName, rows });
-    return { data: { updates: { updatedRows: rows.length, updatedRange: `${tabName}!A2:L${1 + rows.length}` } } };
+    return { data: { updates: { updatedRows: rows.length, updatedRange: `${tabName}!A2:${endColumnFor(rows)}${1 + rows.length}` } } };
   },
   deleteRowsByRange: async (...args) => { calls.delete.push(args); return { rowsDeleted: 1 }; },
   updateColumnCells: async (...args) => { calls.update.push(args); return { updatedCells: 1 }; },
