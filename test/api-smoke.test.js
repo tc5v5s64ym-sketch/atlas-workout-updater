@@ -3925,6 +3925,11 @@ test('api smoke (B1): a replayed write_id (double-tap) appends exactly once', as
       log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 225, reps: 5, rir: 2 }]
     });
     const first = await requestJson('/api/log-workout', { method: 'POST', body: payload });
+    // #1764 Part 1: the retry re-verifies the receipt against the workbook, so
+    // the row the first save appended must be visible to the read-back. The
+    // fake appends do not land in readable state, so plant it (the file's
+    // established pattern for modeled sheet state).
+    fakeSheetsState.logRowsOverride = [['2026-06-26', 'b1-doubletap', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '225', '5', '2', '']];
     const second = await requestJson('/api/log-workout', { method: 'POST', body: payload });
 
     assert.equal(first.body.data.sheet_write, 'success');
@@ -3932,6 +3937,7 @@ test('api smoke (B1): a replayed write_id (double-tap) appends exactly once', as
     assert.equal(second.body.data.sheet_written, false);
     assert.equal(fakeSheetsState.appendCalls.length, 1, 'a replayed write_id must not append twice');
   } finally {
+    fakeSheetsState.logRowsOverride = null;
     fakeSheetsState.allowAppend = false;
   }
 });
@@ -5102,6 +5108,11 @@ test('api smoke (F03/WRITE-2 guard): a completed lost-response retry idempotency
   fakeSheetsState.appendCalls.length = 0;
   fakeSheetsState.allowAppend = true;
   fakeSheetsState.effortSessionIds = [S1];
+  // #1764 Part 1: the fabricated completed receipt claims 1 Log row and an
+  // Effort row for S1, and the retry re-verifies those claims against the
+  // workbook — so the workbook must hold them (planted, as elsewhere here).
+  fakeSheetsState.logRowsOverride = [['2026-06-12', S1, 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '185', '5', '2', '']];
+  fakeSheetsState.effortRows = [['2026-06-12', S1, '40', '400', '500', '145', '168', '', '']];
   try {
     await withMutedConsoleLog(async () => {
       const form = new FormData();
@@ -5125,6 +5136,8 @@ test('api smoke (F03/WRITE-2 guard): a completed lost-response retry idempotency
   } finally {
     idem.resetIdempotencyStore();
     fakeSheetsState.effortSessionIds = [];
+    fakeSheetsState.logRowsOverride = null;
+    fakeSheetsState.effortRows = [];
     fakeSheetsState.allowAppend = false;
   }
 });
@@ -5443,9 +5456,9 @@ test('api smoke: live complete-workout with write_id appends once and skips dupl
   fakeSheetsState.appendCalls.length = 0;
   fakeSheetsState.allowAppend = true;
 
-  const buildForm = () => {
+  const buildForm = (omitSessionId = false) => {
     const form = new FormData();
-    form.append('session_id', 'COMPLETE-IDEMPOTENT-01');
+    if (!omitSessionId) form.append('session_id', 'COMPLETE-IDEMPOTENT-01');
     form.append('date', '2026-06-11');
     form.append('log_rows_json', JSON.stringify([]));
     form.append('write_id', 'complete-write-idem-01');
@@ -5469,7 +5482,15 @@ test('api smoke: live complete-workout with write_id appends once and skips dupl
       assert.equal(firstData.idempotency_status, 'completed');
       assert.equal(fakeSheetsState.appendCalls.length, 1);
 
-      const duplicate = await requestMultipart('/api/complete-workout', buildForm());
+      // #1764 Part 1: the retry re-verifies the receipt against the workbook,
+      // and this save wrote an Effort row — so the workbook must hold it. The
+      // fake appends do not land in readable state, so plant it. The retry
+      // omits session_id on purpose: a client-supplied id whose Effort row
+      // exists is 409-guarded before the idempotency replay (the route's
+      // duplicate-session hard-stop runs first), so the replay is reached via
+      // the server-minted path, as in the F03 guard test above.
+      fakeSheetsState.effortRows = [['2026-06-11', 'COMPLETE-IDEMPOTENT-01', '42', '410', '520', '148', '171', '', '']];
+      const duplicate = await requestMultipart('/api/complete-workout', buildForm(true));
       const dupData = duplicate.body.data.data;
       assert.equal(duplicate.response.status, 200, JSON.stringify(duplicate.body));
       assert.equal(dupData.duplicate_write, true);
@@ -5481,6 +5502,7 @@ test('api smoke: live complete-workout with write_id appends once and skips dupl
       assert.equal(fakeSheetsState.appendCalls.length, 1);
     });
   } finally {
+    fakeSheetsState.effortRows = [];
     fakeSheetsState.allowAppend = false;
   }
 });
@@ -6513,6 +6535,10 @@ test('api smoke: live log-workout with write_id appends once and skips duplicate
     assert.equal(first.body.data.idempotency_status, 'completed');
     assert.equal(fakeSheetsState.appendCalls.length, 1);
 
+    // #1764 Part 1: the retry re-verifies the receipt against the workbook, so
+    // the row the first save appended must be visible to the read-back. The
+    // fake appends do not land in readable state, so plant it.
+    fakeSheetsState.logRowsOverride = [['2026-06-11', 'LIVE-WRITE-IDEMPOTENT-01', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '135', '10', '5', '']];
     const duplicate = await requestJson('/api/log-workout', {
       method: 'POST',
       body: JSON.stringify(payload)
@@ -6528,6 +6554,7 @@ test('api smoke: live log-workout with write_id appends once and skips duplicate
     assert.equal(duplicate.body.data.logAppendedRange, first.body.data.logAppendedRange);
     assert.equal(fakeSheetsState.appendCalls.length, 1);
   } finally {
+    fakeSheetsState.logRowsOverride = null;
     fakeSheetsState.allowAppend = false;
   }
 });

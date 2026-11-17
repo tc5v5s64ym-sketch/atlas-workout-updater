@@ -86,6 +86,11 @@ const fakeSheets = {
     // Serve appended Session_Plans rows back, so the capture layer's read-before-
     // append idempotency works exactly as against the real sheet.
     if (tab === 'Session_Plans') return state.appends.filter(a => a.tab === 'Session_Plans').flatMap(a => a.rows).map(r => [...r]);
+    // #1764 Part 1: serve appended Log/Effort rows back too — the retry
+    // re-verifies the receipt against the workbook, so rows the save wrote
+    // must be visible to the read-back.
+    if (tab === 'Log_Cleaned') return state.appends.filter(a => a.tab === 'Log_Cleaned').flatMap(a => a.rows).map(r => [...r]);
+    if (tab === 'Effort') return state.appends.filter(a => a.tab === 'Effort').flatMap(a => a.rows).map(r => [...r]);
     return [];
   },
   getHeaderRow: async tab => {

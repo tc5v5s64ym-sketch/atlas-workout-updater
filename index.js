@@ -77,6 +77,8 @@ const {
   normalizeWriteId,
   isSettledReceipt,
   duplicateReplay,
+  // #1764 Part 1 — supersede a session's save receipts after a confirmed undo.
+  markSavesRevertedForSession,
   // The S3 receipt migration seam (§5.3) — TEMPORARY, deleted at S4 with the store.
   exportLiveReceipts,
   importReceipts
@@ -518,6 +520,9 @@ const { logCleanedColumns, logRowFieldAliases, effortColumns, exerciseCatalogCol
 // eslint-disable-next-line no-unused-vars -- requiredSheetTabs, optionalSheetTabs unused here; used in startup health-check via buildSheetContractStatus
 const { requiredSheetTabs, optionalSheetTabs, buildSheetContractStatus, validateHeaderRow } = require('./config/sheetContract');
 const { verifyAppendReceipt, verifyAppendReceiptWithoutSession } = require('./services/appendWriteProof');
+// #1764 Part 1 — reverify a completed save receipt against the live workbook
+// before the retry path replays it as success.
+const { verifySaveReceiptAgainstWorkbook } = require('./services/saveReceiptReverify');
 const LOG_SESSION_ID_COLUMN = logCleanedColumns.indexOf('session_id');
 const EFFORT_SESSION_ID_COLUMN = effortColumns.indexOf('session_id');
 
@@ -1448,6 +1453,12 @@ app.post('/api/coaching-notes', async (req, res) => {
     const replay = duplicateReplay(record, idempotency.write_id);
     // #1762: a partial or unverified original must stay that word on retry —
     // replaying it as a 200 save is the lie. (Same shape as /api/log-modality.)
+    // #1764 Part 1 — a reverted save answers as reverted (unreachable for
+    // this endpoint's receipts, which undo never supersedes; handled uniformly
+    // so a reverted record can never fall through to a success replay).
+    if (replay.reverted) {
+      return standardSuccess(req, res, replay.message, replay.body, 200);
+    }
     if (replay.terminal) {
       return standardError(req, res, replay.message, replay.body, replay.httpStatus);
     }
@@ -1745,6 +1756,12 @@ app.post('/api/log-modality', async (req, res) => {
     const replay = duplicateReplay(record, idempotency.write_id);
     // A partial or unverified original must stay that word on retry. Replaying
     // it as a save is the lie #1690 removes.
+    // #1764 Part 1 — a reverted save answers as reverted (unreachable for
+    // this endpoint's receipts, which undo never supersedes; handled uniformly
+    // so a reverted record can never fall through to a success replay).
+    if (replay.reverted) {
+      return standardSuccess(req, res, replay.message, replay.body, 200);
+    }
     if (replay.terminal) {
       return standardError(req, res, replay.message, replay.body, replay.httpStatus);
     }
@@ -2524,6 +2541,13 @@ app.post('/api/bodyweight', async (req, res) => {
     if (idempotency.duplicate) {
       const record = idempotency.record || {};
       const replay = duplicateReplay(record, idempotency.write_id);
+      // #1764 Part 1 — a reverted save answers as reverted (unreachable for
+      // this endpoint's receipts, which undo never supersedes; handled
+      // uniformly so a reverted record can never fall through to a success
+      // replay).
+      if (replay.reverted) {
+        return standardSuccess(req, res, replay.message, replay.body, 200);
+      }
       if (replay.terminal) {
         return standardError(req, res, replay.message, replay.body, replay.httpStatus);
       }
@@ -3182,10 +3206,55 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         const record = idempotency.record || {};
         const replay = duplicateReplay(record, idempotency.write_id);
         if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
+        // #1764 Part 1 — a reverted save answers as reverted (HTTP 200,
+        // explicit body), never as the success it once was. Before the
+        // terminal branch: the reverted outcome is terminal with httpStatus
+        // 200, and the terminal branch answers errors.
+        if (replay.reverted) {
+          return standardSuccess(req, res, replay.message, { status: 'ok', message: replay.message, data: replay.body }, 200);
+        }
         if (replay.terminal) {
           return standardError(req, res, replay.message, replay.body, replay.httpStatus);
         }
         const originalData = replay.source || {};
+        // #1764 Part 1 — reverify before replaying success (same contract as
+        // /api/log-workout): the workbook is the current state, the receipt
+        // is history. A contradiction reports unverified, never success.
+        if (replay.completed) {
+          const reverify = await verifySaveReceiptAgainstWorkbook({
+            // The RECEIPT's session, not the request's: a server-minted retry
+            // resolves a fresh id before reaching this branch (settled records
+            // must not reuse the minted id — see the WRITE-2 comment above),
+            // so the request's id is not the save the receipt claims.
+            sessionId: originalData.session_id || sessionId,
+            logRowsWritten: Number(originalData.log_rows_written) || 0,
+            effortWritten: Boolean(originalData.effort_written === true || (Number(originalData.effort_rows_written) || 0) > 0),
+            logSheetName,
+            effortSheetName,
+            logSessionIdColumn: LOG_SESSION_ID_COLUMN,
+            effortSessionIdColumn: EFFORT_SESSION_ID_COLUMN,
+          });
+          if (!reverify.verified) {
+            const unverifiedData = {
+              ...originalData,
+              message: 'The original save could not be confirmed against the workbook.',
+              duplicate_write: true,
+              write_id: idempotency.write_id,
+              idempotency_status: 'unverified',
+              sheet_write: 'unverified',
+              sheet_written: false,
+              proof_mismatch: true,
+              receipt_reverification: reverify,
+              log_write_verification: { verified: false, reason: reverify.reason },
+              ...(originalData.effort_write_verification
+                ? { effort_write_verification: { verified: false, reason: reverify.reason } }
+                : {}),
+              original_sheet_write: originalData.sheet_write || null,
+              original_completed_at: record.completed_at || null
+            };
+            return standardError(req, res, 'Duplicate write_id; the original save could not be confirmed against the workbook.', unverifiedData, 500);
+          }
+        }
         const duplicateData = {
           ...originalData,
           duplicate_write: true,
@@ -4003,10 +4072,57 @@ app.post('/api/log-workout', async (req, res) => {
   if (idempotency.duplicate) {
     const record = idempotency.record || {};
     const replay = duplicateReplay(record, idempotency.write_id);
+    // #1764 Part 1 — a reverted save answers as reverted (HTTP 200, explicit
+    // body), never as the success it once was. Before the terminal branch:
+    // the reverted outcome is terminal with httpStatus 200, and the terminal
+    // branch answers errors.
+    if (replay.reverted) {
+      return standardSuccess(req, res, replay.message, replay.body, 200);
+    }
     if (replay.terminal) {
       return standardError(req, res, replay.message, replay.body, replay.httpStatus);
     }
     const original = replay.source || {};
+    // #1764 Part 1 — reverify before replaying success. A completed receipt
+    // is historical proof; the workbook is the current state. When the rows
+    // the receipt claims are gone (undone before this fix, deleted outside
+    // the app), the retry reports unverified — never a verified success over
+    // an empty record. A failed read-back refuses the same way.
+    if (replay.completed) {
+      const reverify = await verifySaveReceiptAgainstWorkbook({
+        // The RECEIPT's session, not the request's: a server-minted retry
+        // resolves a fresh id before reaching this branch (settled records
+        // must not reuse the minted id — see the WRITE-2 comment above), so
+        // the request's id is not the save the receipt claims.
+        sessionId: original.session_id || session_id,
+        logRowsWritten: Number(original.log_rows_written) || 0,
+        effortWritten: Boolean(original.effort_written === true || (Number(original.effort_rows_written) || 0) > 0),
+        logSheetName,
+        effortSheetName,
+        logSessionIdColumn: LOG_SESSION_ID_COLUMN,
+        effortSessionIdColumn: EFFORT_SESSION_ID_COLUMN,
+      });
+      if (!reverify.verified) {
+        const unverifiedBody = {
+          ...original,
+          message: 'The original save could not be confirmed against the workbook.',
+          duplicate_write: true,
+          write_id: idempotency.write_id,
+          idempotency_status: 'unverified',
+          sheet_write: 'unverified',
+          sheet_written: false,
+          proof_mismatch: true,
+          receipt_reverification: reverify,
+          log_write_verification: { verified: false, reason: reverify.reason },
+          ...(original.effort_write_verification
+            ? { effort_write_verification: { verified: false, reason: reverify.reason } }
+            : {}),
+          original_sheet_write: original.sheet_write || null,
+          original_completed_at: record.completed_at || null
+        };
+        return standardError(req, res, 'Duplicate write_id; the original save could not be confirmed against the workbook.', unverifiedBody, 500);
+      }
+    }
     const duplicateBody = {
       ...original,
       duplicate_write: true,
@@ -5075,11 +5191,31 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
     return standardError(req, res, 'Undo could not be verified against the sheet — the target rows may still be present. Retry the undo with the same write_id; nothing further was deleted.', { error_code: 'undo_unverified' }, 500);
   }
 
+  // #1764 Part 1 — the rows this undo just deleted belonged to a save whose
+  // receipt still claims success. A confirmed delete supersedes that receipt:
+  // a later retry of the original save ID reports the reverted state instead
+  // of replaying the success. Success path only — a failed or partial delete
+  // marks nothing (the save still stands, in whole or in part, and the
+  // replay-time reverify answers for it instead). Best-effort like the receipt
+  // persist: the undo already happened, so a marking failure must not fail
+  // it — it is logged, and the reverify is the backstop for the unmarked
+  // receipt.
+  let receiptsSuperseded = 0;
+  try {
+    receiptsSuperseded = markSavesRevertedForSession(session_id, {
+      reason: 'undo-last',
+      undoWriteId: idempotency.write_id || null
+    }).count;
+  } catch (error) {
+    console.error('❌ Failed to supersede save receipts after undo:', error);
+  }
+
   const responseBody = {
     deleted_range: log_appended_range,
     rows_deleted: rowSpan,
     effort_deleted_range: effortDeletedRange,
     effort_rows_deleted: effortRowsDeleted,
+    receipts_superseded: receiptsSuperseded,
     sheet_write: 'success',
     sheet_written: true,
     undo_target: undoTarget,

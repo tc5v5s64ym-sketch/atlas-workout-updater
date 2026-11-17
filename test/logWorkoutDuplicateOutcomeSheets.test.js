@@ -50,6 +50,11 @@ process.env.ATLAS_IDEMPOTENCY_FILE = path.join(os.tmpdir(), 'atlas-qa3-bp-duplic
 const state = {
   appends: [],           // every appendRows call: { tab, rows }
   logCompositeKeys: [],  // keys the sheet already holds: session||exercise||set
+  // #1764 Part 1: modeled sheet state — the retry re-verifies the receipt
+  // against the workbook, so appended rows must be visible to the read-back.
+  // The fake appends never landed anywhere readable before; now they do.
+  logRows: [],           // Log_Cleaned data rows actually appended
+  effortRows: [],        // Effort data rows actually appended
 };
 
 const exerciseCatalogRows = [
@@ -60,6 +65,8 @@ const exerciseCatalogRows = [
 const fakeSheets = {
   appendRows: async (tab, rows) => {
     state.appends.push({ tab, rows: rows.map(r => [...r]) });
+    if (tab === 'Log_Cleaned') for (const r of rows) state.logRows.push([...r]);
+    if (tab === 'Effort') for (const r of rows) state.effortRows.push([...r]);
     return { data: { updates: { updatedRange: `${tab}!A100:L${99 + rows.length}`, updatedRows: rows.length } } };
   },
   readRange: async () => [],
@@ -70,7 +77,11 @@ const fakeSheets = {
   getEffortSessionIds: async () => [],
   getLogCompositeKeys: async () => [...state.logCompositeKeys],
   getRecentRows: async () => [],
-  getSheetRows: async () => [],
+  getSheetRows: async (tabName) => {
+    if (tabName === 'Log_Cleaned') return state.logRows.map(r => [...r]);
+    if (tabName === 'Effort') return state.effortRows.map(r => [...r]);
+    return [];
+  },
   getHeaderRow: async tab => {
     if (tab === 'Log_Cleaned') return [...logCleanedColumns];
     if (tab === 'Effort') return [...effortColumns];
@@ -95,6 +106,8 @@ function reset() {
   resetIdempotencyStore();
   state.appends = [];
   state.logCompositeKeys = [];
+  state.logRows = [];
+  state.effortRows = [];
 }
 
 let server;
