@@ -122,6 +122,21 @@ const WXR_N_GROUP_GLOBAL = /\b\d+(?:\.\d+)?\s*x\s*\d+\s*x\s*\d+\b/g;
 const BARE_WXR_TOKEN_GLOBAL = /\b\d+(?:\.\d+)?\s*x\s*\d+\b(?!\s*@)(?!\s*x\s*\d)/g;
 const TRAILING_REPEAT_TOKEN = /\bx\d+\b/;
 const DUMBBELL_GROUP = /\b\d+(?:\.\d+)?s\s+(?:\d+\s*\/\s*\d+|x\d+\s*@\s*\d+)/;
+// P4 (pack-only, #1790 follow-up) — a prose set group: `N sets of M at W`
+// (`3 sets of 8 at 165`, `3 sets of 8 reps @ 165`). No parser grammar consumes
+// it (`parseNaturalSets` matches only `\d+ for \d+`), so beside any other
+// group it is a dropped second group. A lone prose group never reaches the
+// gate: the parser refuses it first (needs_clarification), so the gate only
+// ever sees it beside a consumed group.
+const PROSE_SET_GROUP = /\b\d+\s+sets?\s+of\s+\d+\s+(?:reps?\s+)?(?:at|@)\s*\d+(?:\.\d+)?\b/;
+const PROSE_SET_GROUP_GLOBAL = /\b\d+\s+sets?\s+of\s+\d+\s+(?:reps?\s+)?(?:at|@)\s*\d+(?:\.\d+)?\b/g;
+// P8/P9 (pack-only, #1790 follow-up) — zero-quantity directives the parser
+// drops: a trailing `x0` repeat, and prose `for zero sets` / `zero sets` /
+// `0 sets`. The shorthand consumes a trailing `xN` as the slash group's own
+// repeat count, but `x0` is silently ignored instead of applied; "zero" is a
+// word, not a digit, so no `for` grammar emits from it either.
+const ZERO_REPEAT_DIRECTIVE = /\bx\s*0\b/;
+const ZERO_SETS_PROSE = /\b(?:for\s+)?(?:zero|0)\s+sets?\b/;
 // Unit-glued groups (B4): `normalizeWeightUnits` converts `85kg` only when a
 // word boundary follows the unit, so in `85kgx5` / `185lbx5` the unit survives
 // unconverted and the token matches neither bare-WxR nor WxRxN above — the
@@ -190,6 +205,14 @@ function mixedFormatMessage() {
 
 function zeroValueMessage() {
   return "That includes a set with a zero weight or zero reps, which isn't a real set. Mind re-sending it? (nothing's logged yet)";
+}
+
+function zeroRepeatMessage() {
+  return "That repeats a set zero times (x0), which isn't a real set. Mind re-sending it with the sets you mean? (nothing's logged yet)";
+}
+
+function zeroSetsMessage() {
+  return "That says zero sets, which isn't a real set. Mind re-sending it with the sets you mean? (nothing's logged yet)";
 }
 
 function unrecognizedSetNotationMessage() {
@@ -293,6 +316,13 @@ function hasRepeatedSetGroup(text) {
     const hasNonDumbbellSlash = FAMILY_SLASH.test(withoutDumbbell);
     if (setsFirst.length >= 1 || wxrN.length >= 1 || bareWxr.length >= 1 || hasNonDumbbellSlash || hasFor) return 'repeated_set_group';
   }
+  // P4: a prose set group beside any other group token — no grammar consumes
+  // the prose form, so the second group drops (`bench 185 5/2 then 3 sets of
+  // 8 at 165` logs only 185x5; `bench 3 sets of 8 at 165 and 2x5@185` logs
+  // only the 185 sets). The `at` form is the gap: the `@` form already
+  // refuses via the stray-@ arm above.
+  const proseGroups = [...t.matchAll(PROSE_SET_GROUP_GLOBAL)];
+  if (proseGroups.length >= 1 && (setsFirst.length >= 1 || wxrN.length >= 1 || bareWxr.length >= 1 || hasSlash || hasFor || hasDumbbell)) return 'repeated_set_group';
   return null;
 }
 
@@ -301,6 +331,33 @@ function hasRepeatedSetGroup(text) {
 // the turn asks instead of previewing the rest without it.
 function hasUnrecognizedSetNotation(text) {
   return UNRECOGNIZED_MULTIPLIER.test(String(text || ''));
+}
+
+// P8/P9 — a zero-quantity directive beside a consumed set group: the parser
+// logs the group and silently drops the zero instruction. Returns the
+// clarification message, or null. The group check mirrors
+// hasRepeatedSetGroup (slash pairs stripped before bare-WxR counting, so the
+// RIR digit of a slash group never reads as a WxR leader beside the `x0`).
+// Runs after hasZeroValueSet in checkSpan, so a zero set the parser DID emit
+// (`bench 185 5/2 for 0 sets` → a 2x0 set) keeps its `zero_set_value` verdict.
+function zeroSetDirectiveMessage(text) {
+  const t = String(text || '');
+  const hasZeroRepeat = ZERO_REPEAT_DIRECTIVE.test(t);
+  const hasZeroSets = ZERO_SETS_PROSE.test(t);
+  if (!hasZeroRepeat && !hasZeroSets) return null;
+  const g = t
+    .replace(/\b\d+(?:\.\d+)?\s+\d+\s*\/\s*\d+(?:\.\d+)?/g, ' ')
+    .replace(DUMBBELL_SLASH_GROUP_GLOBAL, ' ')
+    .replace(DUMBBELL_X_AT_GROUP_GLOBAL, ' ')
+    .replace(/\b\d+(?:\/\d+)+/g, ' ');
+  const withoutWxrN = g.replace(WXR_N_GROUP_GLOBAL, ' ').replace(UNIT_WXR_N_GROUP_GLOBAL, ' ');
+  const hasGroup = FAMILY_SLASH.test(t) || FAMILY_FOR.test(t) || DUMBBELL_GROUP.test(t)
+    || [...g.matchAll(X_AT_GROUP_GLOBAL)].length > 0
+    || [...g.matchAll(WXR_N_GROUP_GLOBAL)].length > 0
+    || [...withoutWxrN.matchAll(BARE_WXR_TOKEN_GLOBAL)].length > 0
+    || PROSE_SET_GROUP.test(t);
+  if (!hasGroup) return null;
+  return hasZeroRepeat ? zeroRepeatMessage() : zeroSetsMessage();
 }
 
 // The single-exercise checks (PARSE-4, PARSE-5, zero-value) over one span of
@@ -313,6 +370,8 @@ function checkSpan(parsed, rawText, text, sets) {
   if (repeated) return ask(repeatedSetGroupMessage(), repeated, parsed, rawText);
   if (countFamilies(text) >= 2) return ask(mixedFormatMessage(), 'mixed_set_format', parsed, rawText);
   if (hasZeroValueSet(sets)) return ask(zeroValueMessage(), 'zero_set_value', parsed, rawText);
+  const zdm = zeroSetDirectiveMessage(text);
+  if (zdm) return ask(zdm, 'zero_set_directive', parsed, rawText);
   return null;
 }
 

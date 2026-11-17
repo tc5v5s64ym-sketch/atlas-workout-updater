@@ -621,6 +621,78 @@ test('multiline blob: a later group still refuses when the parser flattens to on
   assert.ok(within.warnings.includes('repeated_set_group'));
 });
 
+// --- Pack follow-up (Hammy BLOCKING on #1790, P4/P8/P9) ----------------------
+// The coordinator's 11-input pack set: three pack-only forms still logged a
+// partial preview at head 9ad3ca73 — a prose set group, a trailing x0 repeat,
+// and a word-number zero group. All three refuse here; the legit `x3`
+// repeats and the `10 sets` fragment still log untouched.
+
+test('pack follow-up P4: a prose "N sets of M at W" group beside a consumed group refuses', () => {
+  for (const [text, sets] of [
+    ['bench 185 5/2 then 3 sets of 8 at 165', [{ weight: 185, reps: 5, rir: 2 }]],
+    ['bench 3 sets of 8 at 165 and 2x5@185', [{ weight: 185, reps: 5, rir: 2 }, { weight: 185, reps: 5, rir: 2 }]],
+    ['bench 185 5/2 then 3 sets of 8 @ 165', [{ weight: 185, reps: 5, rir: 2 }]],
+    ['bench 185 5/2 then 3 sets of 8 reps at 165', [{ weight: 185, reps: 5, rir: 2 }]],
+    ['bench 185 5/2\n3 sets of 8 at 165', [{ weight: 185, reps: 5, rir: 2 }]],
+  ]) {
+    const out = applyFullConsumptionGate(logSets(sets), text);
+    assert.equal(out.intent, 'needs_clarification', text);
+    assert.ok(out.warnings.includes('repeated_set_group'), text);
+    assert.equal(out.sets, undefined, text);
+    assert.match(out.message, /two sets/i, text);
+  }
+});
+
+test('pack follow-up P4: a "sets of <word>" phrase is not a prose group', () => {
+  // `did 3 sets of bench` carries no second group (no digits after "of"),
+  // so beside a consumed slash group it must not trip the prose arm.
+  const out = applyFullConsumptionGate(
+    logSets([{ weight: 185, reps: 5, rir: 2 }]), 'bench 185 5/2 did 3 sets of bench');
+  assert.equal(out.intent, 'log_sets');
+});
+
+test('pack follow-up P8/P9: zero-quantity directives beside a consumed group refuse', () => {
+  for (const [text, sets] of [
+    ['bench 185 5/2 x0', [{ weight: 185, reps: 5, rir: 2 }]],
+    ['bench 185 5/2 x 0', [{ weight: 185, reps: 5, rir: 2 }]],
+    ['bench 60s 10/3 x0', [{ weight: 60, reps: 10, rir: 3 }]],
+    ['bench 185 5/2 for zero sets', [{ weight: 185, reps: 5, rir: 2 }]],
+    ['bench 185 5/2 zero sets', [{ weight: 185, reps: 5, rir: 2 }]],
+    ['bench 185 5/2 0 sets', [{ weight: 185, reps: 5, rir: 2 }]],
+  ]) {
+    const out = applyFullConsumptionGate(logSets(sets), text);
+    assert.equal(out.intent, 'needs_clarification', text);
+    assert.ok(out.warnings.includes('zero_set_directive'), text);
+    assert.equal(out.sets, undefined, text);
+    assert.match(out.message, /zero/i, text);
+  }
+  // A `for` group beside x0 refuses through the repeated-group arm (the bare
+  // WxR token `5 x0` beside the for-group); an x@ group beside x0 already
+  // refused that way. The code differs; the outcome (refuse, 0 sets) is the same.
+  for (const [text, sets, code] of [
+    ['bench 175 for 5 x0', [{ weight: 175, reps: 5, rir: null }], 'repeated_set_group'],
+    ['bench 3x8@165 x0', X165_SETS, 'repeated_set_group'],
+  ]) {
+    const out = applyFullConsumptionGate(logSets(sets), text);
+    assert.equal(out.intent, 'needs_clarification', text);
+    assert.ok(out.warnings.includes(code), text);
+    assert.equal(out.sets, undefined, text);
+  }
+});
+
+test('pack follow-up: legit repeats and non-zero counts still log untouched', () => {
+  const three = [
+    { weight: 185, reps: 5, rir: 2 },
+    { weight: 185, reps: 5, rir: 2 },
+    { weight: 185, reps: 5, rir: 2 },
+  ];
+  const slashRepeat = applyFullConsumptionGate(logSets(three), 'bench 185 5/2 x3');
+  assert.equal(slashRepeat.intent, 'log_sets', 'x3 is the slash group\'s own repeat count');
+  assert.deepEqual(slashRepeat, logSets(three));
+  const tenSets = applyFullConsumptionGate(logSets(X165_SETS), 'bench 3x8@165 10 sets');
+  assert.equal(tenSets.intent, 'log_sets', '"10 sets" states no zero quantity');
+});
+
 // --- Robustness -------------------------------------------------------------
 
 test('gate is a no-op for non-log_sets intents and garbage input', () => {
