@@ -724,6 +724,62 @@ test('pack follow-up round 2 P8/P9: zero-directive spellings refuse', () => {
   assert.equal(fiveRepeat.intent, 'log_sets', 'x05 is a 5-repeat');
 });
 
+test('pack follow-up round 3 P8: unicode-dash zero repeats refuse', () => {
+  // Pre-review on b9fa078d (G1): the zero repeat joined by a non-ASCII
+  // dash — en dash, em dash, hyphen, non-breaking hyphen, U+2012, U+2212
+  // minus — dropped just as silently as the ASCII `x-0`. All eight refuse
+  // here; the dash glyphs are spelled out with escapes so the source stays
+  // ASCII-readable.
+  for (const text of [
+    'bench 185 5/2 x \u2013 0',
+    'bench 185 5/2 x \u2014 0',
+    'bench 185 5/2 x\u20130',
+    'bench 185 5/2 x\u20140',
+    'bench 185 5/2 x\u22120',
+    'bench 185 5/2 x \u2212 0',
+    'bench 185 5/2 x\u20100',
+    'bench 185 5/2 x\u20110',
+  ]) {
+    const out = applyFullConsumptionGate(logSets([{ weight: 185, reps: 5, rir: 2 }]), text);
+    assert.equal(out.intent, 'needs_clarification', text);
+    assert.ok(out.warnings.includes('zero_set_directive'), text);
+    assert.equal(out.sets, undefined, text);
+    assert.match(out.message, /zero/i, text);
+  }
+});
+
+test('pack follow-up round 3: spaced/dashed non-zero repeats beside a slash or for group refuse', () => {
+  // Builder probe while verifying G1: the parser takes a slash group's
+  // repeat only in the tight `xN` form, and never takes a dashed repeat
+  // beside a `for` group — the spaced/dashed spellings previewed one set.
+  for (const text of [
+    'bench 185 5/2 x 3',
+    'bench 185 5/2 x-3',
+    'bench 185 5/2 x \u2013 3',
+    'bench 185 5/2 x 10',
+    'bench 175 for 5 x-3',
+  ]) {
+    const sets = text.includes('175 for 5')
+      ? [{ weight: 175, reps: 5, rir: null }]
+      : [{ weight: 185, reps: 5, rir: 2 }];
+    const out = applyFullConsumptionGate(logSets(sets), text);
+    assert.equal(out.intent, 'needs_clarification', text);
+    assert.ok(out.warnings.includes('repeated_set_group'), text);
+    assert.equal(out.sets, undefined, text);
+  }
+  // The x@ and WxR families consume their spaced/dashed repeats, so the
+  // gate must not fire there: the parser logs these whole.
+  const xat = applyFullConsumptionGate(logSets(X165_SETS), 'bench 3x8@165 x-3');
+  assert.equal(xat.intent, 'log_sets', 'x@ group consumes x-3');
+  const wxr = applyFullConsumptionGate(
+    logSets([{ weight: 185, reps: 5, rir: null }]), 'bench 185x5 x 3');
+  assert.equal(wxr.intent, 'log_sets', 'WxR group consumes x 3');
+  // A 1-repeat is indistinguishable from no repeat: it still logs.
+  const one = applyFullConsumptionGate(
+    logSets([{ weight: 185, reps: 5, rir: 2 }]), 'bench 185 5/2 x 1');
+  assert.equal(one.intent, 'log_sets', 'x 1 is one set either way');
+});
+
 test('pack follow-up: legit repeats and non-zero counts still log untouched', () => {
   const three = [
     { weight: 185, reps: 5, rir: 2 },

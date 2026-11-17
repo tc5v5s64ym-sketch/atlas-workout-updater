@@ -121,6 +121,14 @@ const DUMBBELL_SLASH_GROUP_GLOBAL = /\b\d+(?:\.\d+)?s\s+\d+\s*\/\s*\d+(?:\.\d+)?
 const WXR_N_GROUP_GLOBAL = /\b\d+(?:\.\d+)?\s*x\s*\d+\s*x\s*\d+\b/g;
 const BARE_WXR_TOKEN_GLOBAL = /\b\d+(?:\.\d+)?\s*x\s*\d+\b(?!\s*@)(?!\s*x\s*\d)/g;
 const TRAILING_REPEAT_TOKEN = /\bx\d+\b/;
+// Round 3 (pre-review on b9fa078d, G1 follow-on): a repeat count separated
+// from its `x` by a space or a dash — `x 3`, `x-3`, `x – 3` — which the
+// parser consumes only in the tight `xN` form beside a slash group (and
+// never beside a `for` group in the dashed form). The count must be 2 or
+// more: a 1-repeat changes nothing, so `x 1` still logs, and zero repeats
+// (`x 0`, `x-0`) keep falling through to the zero-directive arm below
+// instead of changing code.
+const SPACED_OR_DASHED_REPEAT_TOKEN = /\bx[\s\-\u2010\u2011\u2012\u2013\u2014\u2212]+(?:[2-9]\d*|1\d+)\b/;
 const DUMBBELL_GROUP = /\b\d+(?:\.\d+)?s\s+(?:\d+\s*\/\s*\d+|x\d+\s*@\s*\d+)/;
 // P4 (pack-only, #1790 follow-up) — a prose set group: `N sets of M at W`
 // (`3 sets of 8 at 165`, `3 sets of 8 reps @ 165`). No parser grammar consumes
@@ -149,7 +157,13 @@ const PROSE_SET_GROUP_GLOBAL = new RegExp(PROSE_SET_GROUP.source, 'g');
 // same zero repeat spelled with a doubled zero or a hyphen. The repeat
 // directive takes one-or-more zeros with an optional hyphen, so `x05`
 // (a 5-repeat, not a zero repeat) still does not match.
-const ZERO_REPEAT_DIRECTIVE = /\bx\s*-?\s*0+\b/;
+// Round 3 (pre-review on b9fa078d, G1): the same zero repeat joined by a
+// non-ASCII dash — en/em dash, hyphen, non-breaking hyphen, U+2012, or the
+// U+2212 minus sign — dropped just as silently. iOS smart punctuation turns
+// a typed `x - 0` into `x – 0`, so the ASCII-only hyphen was a behavioral
+// cliff driven by the keyboard, not user intent. The dash class covers
+// U+2010–U+2014 and U+2212.
+const ZERO_REPEAT_DIRECTIVE = /\bx\s*[-\u2010\u2011\u2012\u2013\u2014\u2212]?\s*0+\b/;
 const ZERO_SETS_PROSE = /\b(?:for\s+)?(?:zero|0|no|none)\s+sets?\b/;
 // Unit-glued groups (B4): `normalizeWeightUnits` converts `85kg` only when a
 // word boundary follows the unit, so in `85kgx5` / `185lbx5` the unit survives
@@ -315,6 +329,15 @@ function hasRepeatedSetGroup(text) {
   // claims whole (`185x5 x3` parses as 3× 185x5: the WxRxN match absorbs
   // the repeat token, so strip matched WxRxN groups before testing).
   if ((setsFirst.length >= 1 || wxrN.length >= 1) && TRAILING_REPEAT_TOKEN.test(withoutWxrN)) return 'repeated_set_group';
+  // A spaced or dashed repeat beside a slash or `for` group is unconsumed:
+  // the parser takes a slash group's repeat only in the tight `xN` form
+  // (`bench 185 5/2 x3` logs 3 sets; `x 3`, `x-3`, `x – 3` all preview
+  // one set) and never takes a dashed repeat beside a `for` group
+  // (`bench 175 for 5 x-3` previews one set; the spaced form is already
+  // caught by the bare-WxR arm above). The x@ and WxR families are exempt:
+  // the parser consumes their spaced repeats (`3x8@165 x-3`, `185x5 x 3`
+  // both log whole), so the guard is slash/`for` only.
+  if ((hasSlash || hasFor) && SPACED_OR_DASHED_REPEAT_TOKEN.test(t)) return 'repeated_set_group';
   const stripped = g.replace(X_AT_GROUP_GLOBAL, ' ').replace(DUMBBELL_X_AT_GROUP_GLOBAL, ' ');
   if (/@\s*\d/.test(stripped) && hasOtherGroup) return 'repeated_set_group';
   // A dumbbell group beside any other group: `parseDumbbellGroups` is tried
