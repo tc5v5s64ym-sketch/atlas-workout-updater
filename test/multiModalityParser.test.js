@@ -816,3 +816,38 @@ test('F-1 round-8 BLOCKING fix: 15 standalone Unicode minus/dash glyphs are sign
     }
   }
 });
+
+test('F-1 round-8 pre-review follow-up: 13 more lone-sign glyphs are signs', () => {
+  // Round-8 pre-review FIX FIRST on head 7358ea2b: the round-8 probe
+  // enumerated with Python 15.0 (Unicode 15.0) while the runtime is
+  // Unicode 16.0, hiding U+10D8F Garay minus; the horizontal-stroke
+  // family (plain mid-height strokes, visually indistinguishable from
+  // U+2015 HORIZONTAL BAR) rows as lone signs; and U+E002D tag
+  // hyphen-minus rows (the R18 carve-out is withdrawn). All 13 join
+  // SIGN_CHARS; the probe enumeration is re-based to 104 (Unicode 16.0).
+  const glyphs = [
+    '\u{10D8F}', // GARAY MINUS SIGN
+    '\u2500', // BOX DRAWINGS LIGHT HORIZONTAL
+    '\u2501', // BOX DRAWINGS HEAVY HORIZONTAL
+    '\u2504', // BOX DRAWINGS LIGHT TRIPLE DASH HORIZONTAL
+    '\u2505', // BOX DRAWINGS HEAVY TRIPLE DASH HORIZONTAL
+    '\u2508', // BOX DRAWINGS LIGHT QUADRUPLE DASH HORIZONTAL
+    '\u2509', // BOX DRAWINGS HEAVY QUADRUPLE DASH HORIZONTAL
+    '\u254C', // BOX DRAWINGS LIGHT DOUBLE DASH HORIZONTAL
+    '\u254D', // BOX DRAWINGS HEAVY DOUBLE DASH HORIZONTAL
+    '\u23AF', // HORIZONTAL LINE EXTENSION
+    '\u{1CE0D}', // LEFT HALF TRIPLE DASH HORIZONTAL
+    '\u{1CE0E}', // RIGHT HALF TRIPLE DASH HORIZONTAL
+    '\u{E002D}', // TAG HYPHEN-MINUS
+  ];
+  for (const g of glyphs) {
+    for (const t of [
+      `Plank ${g}45 sec`, `Plank ${g} 45 sec`,
+      `Run ${g}5 km`, `Run 5 km ${g}30 min`,
+      `Dead hang ${g}45 seconds`,
+      `Plank 60 sec RPE ${g}7`, `Plank 60 sec RPE ${g} 7`,
+    ]) {
+      assert.equal(recognizeModalityInput(t), null, `standalone lone-sign glyph must refuse: ${JSON.stringify(t)}`);
+    }
+  }
+});
