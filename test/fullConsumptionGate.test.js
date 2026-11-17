@@ -680,6 +680,50 @@ test('pack follow-up P8/P9: zero-quantity directives beside a consumed group ref
   }
 });
 
+test('pack follow-up round 2 P4: prose set-group spellings refuse', () => {
+  // Pre-review on 3a9eff2c (F1–F4): the same prose group spelled with a
+  // `with` preposition, an `x` separator, or number-words in the count/rep
+  // slots dropped just as silently. All four refuse here.
+  for (const text of [
+    'bench 185 5/2 then 3 sets of 8 with 165',
+    'bench 185 5/2 then 3 sets x 8 at 165',
+    'bench 185 5/2 then 3 sets of eight at 165',
+    'bench 185 5/2 then three sets of 8 at 165',
+  ]) {
+    const out = applyFullConsumptionGate(logSets([{ weight: 185, reps: 5, rir: 2 }]), text);
+    assert.equal(out.intent, 'needs_clarification', text);
+    assert.ok(out.warnings.includes('repeated_set_group'), text);
+    assert.equal(out.sets, undefined, text);
+  }
+  // The rep slot must still be numeric: a word after "of" is not a group.
+  const words = applyFullConsumptionGate(
+    logSets([{ weight: 185, reps: 5, rir: 2 }]), 'bench 185 5/2 did three sets of bench');
+  assert.equal(words.intent, 'log_sets');
+});
+
+test('pack follow-up round 2 P8/P9: zero-directive spellings refuse', () => {
+  // Pre-review on 3a9eff2c (F5–F8): `no`/`none` state zero sets as plainly
+  // as `zero`; `x00`, `x 00`, and `x-0` are the same zero repeat spelled
+  // with a doubled zero or a hyphen. All refuse here.
+  for (const text of [
+    'bench 185 5/2 for no sets',
+    'bench 185 5/2 for none sets',
+    'bench 185 5/2 x00',
+    'bench 185 5/2 x 00',
+    'bench 185 5/2 x-0',
+  ]) {
+    const out = applyFullConsumptionGate(logSets([{ weight: 185, reps: 5, rir: 2 }]), text);
+    assert.equal(out.intent, 'needs_clarification', text);
+    assert.ok(out.warnings.includes('zero_set_directive'), text);
+    assert.equal(out.sets, undefined, text);
+    assert.match(out.message, /zero/i, text);
+  }
+  // `x05` is a 5-repeat, not a zero repeat: it still logs untouched.
+  const fiveRepeat = applyFullConsumptionGate(
+    logSets([{ weight: 185, reps: 5, rir: 2 }]), 'bench 185 5/2 x05');
+  assert.equal(fiveRepeat.intent, 'log_sets', 'x05 is a 5-repeat');
+});
+
 test('pack follow-up: legit repeats and non-zero counts still log untouched', () => {
   const three = [
     { weight: 185, reps: 5, rir: 2 },

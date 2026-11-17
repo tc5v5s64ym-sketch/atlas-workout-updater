@@ -128,15 +128,29 @@ const DUMBBELL_GROUP = /\b\d+(?:\.\d+)?s\s+(?:\d+\s*\/\s*\d+|x\d+\s*@\s*\d+)/;
 // group it is a dropped second group. A lone prose group never reaches the
 // gate: the parser refuses it first (needs_clarification), so the gate only
 // ever sees it beside a consumed group.
-const PROSE_SET_GROUP = /\b\d+\s+sets?\s+of\s+\d+\s+(?:reps?\s+)?(?:at|@)\s*\d+(?:\.\d+)?\b/;
-const PROSE_SET_GROUP_GLOBAL = /\b\d+\s+sets?\s+of\s+\d+\s+(?:reps?\s+)?(?:at|@)\s*\d+(?:\.\d+)?\b/g;
+// Round 2 (pre-review on 3a9eff2c, F1–F4): the same group spelled with a
+// `with` weight preposition (`3 sets of 8 with 165`), an `x` separator
+// (`3 sets x 8 at 165`), or number-words in the count/rep slots
+// (`three sets of 8 at 165`, `3 sets of eight at 165`) dropped just as
+// silently. The count and rep slots accept digits or number-words zero–
+// twenty; the rep slot must still be numeric, so `did 3 sets of bench`
+// (a word after "of") is not a prose group.
+const NUMBER_WORD = '(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)';
+const PROSE_COUNT = `(?:\\d+|${NUMBER_WORD})`;
+const PROSE_SET_GROUP = new RegExp(`\\b${PROSE_COUNT}\\s+sets?\\s+(?:of|x)\\s+${PROSE_COUNT}\\s+(?:reps?\\s+)?(?:at|@|with)\\s*\\d+(?:\\.\\d+)?\\b`);
+const PROSE_SET_GROUP_GLOBAL = new RegExp(PROSE_SET_GROUP.source, 'g');
 // P8/P9 (pack-only, #1790 follow-up) — zero-quantity directives the parser
 // drops: a trailing `x0` repeat, and prose `for zero sets` / `zero sets` /
 // `0 sets`. The shorthand consumes a trailing `xN` as the slash group's own
 // repeat count, but `x0` is silently ignored instead of applied; "zero" is a
 // word, not a digit, so no `for` grammar emits from it either.
-const ZERO_REPEAT_DIRECTIVE = /\bx\s*0\b/;
-const ZERO_SETS_PROSE = /\b(?:for\s+)?(?:zero|0)\s+sets?\b/;
+// Round 2 (pre-review on 3a9eff2c, F5–F8): `for no sets` / `for none sets`
+// state zero sets as plainly as `zero`; `x00`, `x 00`, and `x-0` are the
+// same zero repeat spelled with a doubled zero or a hyphen. The repeat
+// directive takes one-or-more zeros with an optional hyphen, so `x05`
+// (a 5-repeat, not a zero repeat) still does not match.
+const ZERO_REPEAT_DIRECTIVE = /\bx\s*-?\s*0+\b/;
+const ZERO_SETS_PROSE = /\b(?:for\s+)?(?:zero|0|no|none)\s+sets?\b/;
 // Unit-glued groups (B4): `normalizeWeightUnits` converts `85kg` only when a
 // word boundary follows the unit, so in `85kgx5` / `185lbx5` the unit survives
 // unconverted and the token matches neither bare-WxR nor WxRxN above — the
@@ -339,7 +353,10 @@ function hasUnrecognizedSetNotation(text) {
 // hasRepeatedSetGroup (slash pairs stripped before bare-WxR counting, so the
 // RIR digit of a slash group never reads as a WxR leader beside the `x0`).
 // Runs after hasZeroValueSet in checkSpan, so a zero set the parser DID emit
-// (`bench 185 5/2 for 0 sets` → a 2x0 set) keeps its `zero_set_value` verdict.
+// keeps its existing verdict — never a logged zero set. (E.g. `bench 185 5/2
+// for 0 sets` refuses as `mixed_set_format`: the `5/2` + `2 for 0` families
+// fire before the zero-value arm. The zero-directive arm only fires when the
+// parser dropped the directive entirely.)
 function zeroSetDirectiveMessage(text) {
   const t = String(text || '');
   const hasZeroRepeat = ZERO_REPEAT_DIRECTIVE.test(t);
