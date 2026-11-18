@@ -344,6 +344,8 @@ test('EVERY read helper retries a transient failure', async () => {
     ['getEffortSessionIds', () => sheets.getEffortSessionIds(), 'valuesGet'],
     ['getLogCompositeKeys', () => sheets.getLogCompositeKeys(), 'valuesGet'],
     ['getSpreadsheetTabs', () => sheets.getSpreadsheetTabs(), 'spreadsheetsGet'],
+    // #1780: the ledger's fence-marker read. Same wrapper, same retry.
+    ['getNamedRanges', () => sheets.getNamedRanges(), 'spreadsheetsGet'],
     // The batch read is issued by the first read inside a request that declared ranges.
     // It reaches the same API through the same wrapper, so a transient failure must cost
     // it a retry and not a request.
@@ -392,9 +394,21 @@ test('the exported read surface is exactly the set proven to retry', () => {
     'getSheetRows',
     'getHeaderRow',
     'getSpreadsheetTabs',
+    // #1780: the ledger's fence-marker read, wrapped in readWithRetry.
+    'getNamedRanges',
   ];
   const NON_READ_EXPORTS = [
     'appendRows', 'updateColumnCells', 'deleteRowsByRange', 'ensureSheetTab',
+    // #1780: the ledger's atomic commit primitive. A WRITE helper — one
+    // batchUpdate carrying data + outcome + marker — governed by the
+    // WRITE-5 pre-write-rejection rule, like appendRows.
+    'commitAtomicBatch',
+    // #1780: tab title -> numeric sheetId for building grid requests. A
+    // write-path helper that happens to read: its metadata probe is
+    // deliberately unretried (meterUnretried), like ensureSheetTab's
+    // pre-mutation probes — a commit decision must see the ids as they
+    // stand now, and retrying the probe would change when a mutation runs.
+    'getSpreadsheetSheetIds',
     // Request-scoped read batching. None of these reaches the network: the first
     // establishes the per-request context, the second drops cached values for a tab
     // after a write, and the last three are the catalog cache's constant and its
