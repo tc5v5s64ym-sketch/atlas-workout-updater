@@ -947,6 +947,56 @@ test('pack follow-up round 6 J1/J2: prose set-group with `*` in either slot refu
   assert.equal(starTime.intent, 'log_sets', 'reps * time is not a prose group');
 });
 
+test('pack follow-up round 7 K1: prose set-group with enumerated multiplier glyphs and `*` runs refuses', () => {
+  // Hammy BLOCKING on f5e4d374 (K1): round 6 widened the prose slots to
+  // ASCII `*` only, but the gate's own enumerated multiplier glyphs
+  // (`✕ ✗ ✖ ＊ Ｘ ｘ`) still dropped the group in both slots, as did
+  // runs of `*` (`**`, `***`, `* *`, `x*`, `×*`) and markdown-bolded
+  // numbers (`**8**`, `**165**`). Full enumeration, both slots:
+  for (const glyph of ['✕', '✗', '✖', '＊', 'Ｘ', 'ｘ']) {
+    for (const text of [
+      `bench 185 5/2 then 3 sets ${glyph} 8 at 165`,
+      `bench 185 5/2 then 3 sets of 8 reps ${glyph} 165`,
+    ]) {
+      const out = applyFullConsumptionGate(logSets([{ weight: 185, reps: 5, rir: 2 }]), text);
+      assert.equal(out.intent, 'needs_clarification', text);
+      assert.ok(out.warnings.includes('repeated_set_group'), text);
+      assert.equal(out.sets, undefined, text);
+    }
+  }
+  for (const text of [
+    'bench 185 5/2 then 3 sets ** 8 at 165',
+    'bench 185 5/2 then 3 sets *** 8 at 165',
+    'bench 185 5/2 then 3 sets * * 8 at 165',
+    'bench 185 5/2 then 3 sets **8** at 165',
+    'bench 185 5/2 then 3 sets of **8** at 165',
+    'bench 185 5/2 then 3 sets x* 8 at 165',
+    'bench 185 5/2 then 3 sets ×* 8 at 165',
+    'bench 185 5/2 then 3 sets of 8 reps ** 165',
+    'bench 185 5/2 then 3 sets of 8 reps * **165**',
+    // A bold marker separated from its number by a space is the same
+    // dropped group, not a tight multiplier.
+    'bench 185 5/2 then 3 sets of 8 ** at 165',
+    'bench 185 5/2 then 3 sets of ** 8 at 165',
+  ]) {
+    const out = applyFullConsumptionGate(logSets([{ weight: 185, reps: 5, rir: 2 }]), text);
+    assert.equal(out.intent, 'needs_clarification', text);
+    assert.ok(out.warnings.includes('repeated_set_group'), text);
+    assert.equal(out.sets, undefined, text);
+  }
+  // The disclosed tight forms stay out of scope: only a run of two or
+  // more glyphs may abut the count, because `**8**` is bolded reps.
+  for (const text of [
+    'bench 185 5/2 then 3 sets*8 at 165',
+    'bench 185 5/2 then 3 sets *8 at 165',
+    'bench 185 5/2 then 3 sets* 8 at 165',
+    'bench 185 5/2 then 3 sets of 8-165',
+  ]) {
+    const out = applyFullConsumptionGate(logSets([{ weight: 185, reps: 5, rir: 2 }]), text);
+    assert.equal(out.intent, 'log_sets', text);
+  }
+});
+
 test('pack follow-up: legit repeats and non-zero counts still log untouched', () => {
   const three = [
     { weight: 185, reps: 5, rir: 2 },

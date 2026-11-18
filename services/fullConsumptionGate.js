@@ -169,10 +169,31 @@ const DUMBBELL_GROUP = /\b\d+(?:\.\d+)?s\s+(?:\d+\s*\/\s*\d+|x\d+\s*@\s*\d+)/;
 // The bare `8 * 165` form already refuses via `unrecognized_set_notation`
 // and is unaffected; the tight/half-spaced forms (`3 sets*8`,
 // `3 sets *8`) stay out of scope, parallel to tight-`x`.
+// Round 7 (Hammy BLOCKING on f5e4d374, K1): the gate's own enumerated
+// multiplier glyphs (`✕` U+2715, `✗` U+2717, `✖` U+2716, `＊` U+FF0A,
+// `Ｘ` U+FF38, `ｘ` U+FF58 — the UNRECOGNIZED_MULTIPLIER class) in both
+// prose slots, plus runs of `*` (`**`, `***`, `* *`, `x*`, `×*`) and
+// markdown-bolded numbers (`**8**` in the count slot, `**165**` in the
+// weight slot). A single glyph still needs the space the J1 form has,
+// so the disclosed tight forms (`3 sets *8`, `3 sets*8`) stay out of
+// scope; only a run of two or more glyphs may abut the count, because
+// `**8**` is bolded reps, not a tight multiplier. The count and weight
+// slots still require digits or a number-word, so stray asterisks
+// (markdown emphasis, bullets) cannot form a group, and the weight slot
+// still requires digits, so `3 sets of 8 reps ✕ time` is not a prose
+// group. `*x`/`*×` already refuse and are unaffected. The bold wrap
+// around the count allows whitespace on either side (`3 sets of 8 ** at
+// 165`, `3 sets of ** 8 at 165`) — a bold marker separated from its
+// number by a space is the same dropped group, not a tight multiplier:
+// the tight forms above have one marker tight against the number,
+// these have two.
+const PROSE_MULT_GLYPH = '[*✕✗✖＊Ｘｘ]';
+const PROSE_MULT_RUN = `(?:[x×]?${PROSE_MULT_GLYPH}(?:\\s*${PROSE_MULT_GLYPH})*)`;
+const PROSE_MULT_RUN_MULTI = `(?:${PROSE_MULT_GLYPH}(?:\\s*${PROSE_MULT_GLYPH})+)`;
 const NUMBER_WORD = '(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)';
 const PROSE_COUNT = `(?:\\d+|${NUMBER_WORD})`;
 const PROSE_DASH = '[\\-\\u2010\\u2011\\u2012\\u2013\\u2014\\u2212]';
-const PROSE_SET_GROUP = new RegExp(`\\b${PROSE_COUNT}\\s+sets?\\s+(?:of|x|for|\\*)\\s+${PROSE_COUNT}(?:\\s+(?:reps?\\s+)?(?:at|@|with|for|\\*)\\s*|\\s*(?:reps?\\s+)?${PROSE_DASH}\\s+|\\s+(?:reps?\\s+)?${PROSE_DASH}\\s*)\\d+(?:\\.\\d+)?\\b`);
+const PROSE_SET_GROUP = new RegExp(`\\b${PROSE_COUNT}\\s+sets?\\s+(?:(?:of|for|x)\\s+|${PROSE_MULT_GLYPH}\\s+|[x×]${PROSE_MULT_GLYPH}\\s+|${PROSE_MULT_RUN_MULTI}\\s*)(?:\\s*\\*\\*\\s*)?${PROSE_COUNT}(?:\\s*\\*\\*)?(?:\\s+(?:reps?\\s+)?(?:at|@|with|for|${PROSE_MULT_RUN})\\s*|\\s*(?:reps?\\s+)?${PROSE_DASH}\\s+|\\s+(?:reps?\\s+)?${PROSE_DASH}\\s*)(?:\\*\\*)?\\d+(?:\\.\\d+)?\\b`);
 const PROSE_SET_GROUP_GLOBAL = new RegExp(PROSE_SET_GROUP.source, 'g');
 // P8/P9 (pack-only, #1790 follow-up) — zero-quantity directives the parser
 // drops: a trailing `x0` repeat, and prose `for zero sets` / `zero sets` /
