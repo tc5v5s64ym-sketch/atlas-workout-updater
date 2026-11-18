@@ -187,14 +187,73 @@ const DUMBBELL_GROUP = /\b\d+(?:\.\d+)?s\s+(?:\d+\s*\/\s*\d+|x\d+\s*@\s*\d+)/;
 // number by a space is the same dropped group, not a tight multiplier:
 // the tight forms above have one marker tight against the number,
 // these have two.
-const PROSE_MULT_GLYPH = '[*✕✗✖＊Ｘｘ]';
-const PROSE_MULT_RUN = `(?:[x×]?${PROSE_MULT_GLYPH}(?:\\s*${PROSE_MULT_GLYPH})*)`;
-const PROSE_MULT_RUN_MULTI = `(?:${PROSE_MULT_GLYPH}(?:\\s*${PROSE_MULT_GLYPH})+)`;
+// Round 8 (Hammy BLOCKING on d1c77884, L1–L3): the round-7 enumeration is
+// replaced by a generic separator class — the multiplier-like glyphs are
+// open-ended in Unicode (✘ ❌ ∗ ✳ ✱ ╳ ⨯ ⋅ · in L1 alone), so the durable
+// fix is a generic non-alphanumeric separator treatment, not one more
+// enumeration. A separator atom is any character that is not a letter, not a
+// number, and not whitespace (Unicode property classes, so the `u` flag) —
+// plus fullwidth x/X, which are letters but multipliers here (the gate text
+// is lowercased, so Ｘ arrives as ｘ). The run rule, unchanged from round 7:
+// a run of one atom must be spaced from the number it separates (a single
+// atom abutting a number stays the disclosed tight form), while a run of two
+// or more atoms may abut it (`**8**` is bolded reps, not a tight multiplier).
+// The run may also sit after the word separator (`of ✘ 8`) — the count slot
+// takes an optional run before the count — and after the word/dash weight
+// preposition (`with ✕ 165`, `- ✕ 165`, L3). L2: a count or weight wrapped in
+// one or two `*`/`_` markers on BOTH sides (`*8*`, `_8_`, `__8__`,
+// `**8 reps**`, `*165*`) is the same stated group — the wrap arm requires
+// the closer, so a lone opener (`*8`, `*165`) still logs, and a wrapped count
+// needs no separator of its own (the lookahead alternative). Consequence of
+// the generic class: sentence punctuation in a separator slot (`.`, `,`, `:`)
+// now refuses too — fail-closed, the user re-sends. The tight forms stay out
+// of scope (`*8`, `with✕165`, `8-165`); `-✕165` refuses, because `-✕` is a
+// two-atom run and two-atom runs may abut the weight, parallel to `**165`.
+const PROSE_SYMBOL = '[^\\p{L}\\p{N}\\s]';
+const PROSE_MULT_ATOM = `(?:${PROSE_SYMBOL}|[\\uFF38\\uFF58])`;
+const PROSE_MULT_SPACED = `(?:[x×]?${PROSE_MULT_ATOM}(?:\\s*${PROSE_MULT_ATOM})*\\s+)`;
+const PROSE_MULT_MULTI = `(?:${PROSE_MULT_ATOM}(?:\\s*${PROSE_MULT_ATOM})+\\s*)`;
 const NUMBER_WORD = '(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)';
 const PROSE_COUNT = `(?:\\d+|${NUMBER_WORD})`;
 const PROSE_DASH = '[\\-\\u2010\\u2011\\u2012\\u2013\\u2014\\u2212]';
-const PROSE_SET_GROUP = new RegExp(`\\b${PROSE_COUNT}\\s+sets?\\s+(?:(?:of|for|x)\\s+|${PROSE_MULT_GLYPH}\\s+|[x×]${PROSE_MULT_GLYPH}\\s+|${PROSE_MULT_RUN_MULTI}\\s*)(?:\\s*\\*\\*\\s*)?${PROSE_COUNT}(?:\\s*\\*\\*)?(?:\\s+(?:reps?\\s+)?(?:at|@|with|for|${PROSE_MULT_RUN})\\s*|\\s*(?:reps?\\s+)?${PROSE_DASH}\\s+|\\s+(?:reps?\\s+)?${PROSE_DASH}\\s*)(?:\\*\\*)?\\d+(?:\\.\\d+)?\\b`);
-const PROSE_SET_GROUP_GLOBAL = new RegExp(PROSE_SET_GROUP.source, 'g');
+// Pre-review (round 8) findings, fixed on this head before handback:
+// (1) Bracket-wrapped numbers — `(8)`, `[8]`, `{8}`, `(165)` — are the same
+// L2 class as the markdown wraps: a stated count/weight in brackets, not
+// emphasis. The wrap arm takes bracket pairs as well as `*`/`_` markers.
+// (2) Clause punctuation tight against the word it follows — `sets: 8`,
+// `sets, 8`, `sets. 8`, `reps: 165` — is the same L1 separator class with
+// the space on the wrong side of the mark: `: , . ; ! ?` end a clause and
+// never multiply, so they may abut the word (`sets:`) where a multiplier
+// glyph may not (`sets* 8` still logs — the seam lookahead admits only
+// clause punctuation, never `*`/`×`/glyphs). The seams are after `sets`,
+// after `of`/`for`/`x`, and after `reps`. (A word followed by a glyph and
+// then the number — `at: 165`, `with: 165` — already refused via the
+// word+run arm, verified firsthand.) Fullwidth digits are NOT a hole: the
+// parser itself returns needs_clarification with no sets for fullwidth
+// input, so no partial preview is emitted — disclosed, no gate change.
+// `8 x 165` refuses via the pre-existing spaced-repeat arm (verified with a
+// `for` group in place of the slash group), not the prose arm.
+// (3) Quoted numbers — `"8"`, `'8'`, `"165"` (curly quotes fold to straight
+// ones in normalization) — are the same L2 class: the wrap takes quotes.
+// (4) Wraps around the structural words themselves — `**sets**`, `**of**`,
+// `**reps**`, `**at**` (and the quoted/paren forms `"of"`, `(at)`), and the
+// sets-count (`**3**`, `(3)`, `"3"`) — are the same L2 class one position
+// out: every position in the prose pattern (sets-count, `sets`, separator,
+// count, `reps`, preposition, weight) may carry a wrap. The word arms take
+// optional wrap markers; the anchor takes an optional wrapped count. The
+// whole-phrase wrap (`**3 sets of 8 at 165**`) already refused via the `\b`
+// anchor. A possessive before the count (`Ben's 8`) and a parenthetical note
+// after it (`8 (warm-up)`) still log — neither is a structural word or a
+// wrapped number.
+const PROSE_CLAUSE_PUNCT = '[:,.;!?]';
+const PROSE_WRAP_OPEN = `(?:[*_]{1,2}|["'\\u0028\\u005B\\u007B])`;
+const PROSE_WRAP_CLOSE = `(?:[*_]{1,2}|["'\\u0029\\u005D\\u007D])`;
+const PROSE_MARK_OPEN = `(?:${PROSE_WRAP_OPEN})?`;
+const PROSE_MARK_CLOSE = `(?:${PROSE_WRAP_CLOSE})?`;
+const PROSE_COUNT_SLOT = `(?:(?:${PROSE_MULT_SPACED}|${PROSE_MULT_MULTI})?(?:${PROSE_WRAP_OPEN}\\s*${PROSE_COUNT}(?:\\s+reps?)?\\s*${PROSE_WRAP_CLOSE}|(?:\\s*\\*\\*\\s*)?${PROSE_COUNT}(?:\\s*\\*\\*)?))`;
+const PROSE_WEIGHT_SLOT = `(?:${PROSE_WRAP_OPEN}\\s*\\d+(?:\\.\\d+)?\\s*${PROSE_WRAP_CLOSE}|(?:\\*\\*)?\\d+(?:\\.\\d+)?\\b)`;
+const PROSE_SET_GROUP = new RegExp(`(?:\\b|(?=${PROSE_WRAP_OPEN}))(?:${PROSE_WRAP_OPEN}\\s*)?${PROSE_COUNT}(?:\\s*${PROSE_WRAP_CLOSE})?\\s+${PROSE_MARK_OPEN}sets?${PROSE_MARK_CLOSE}(?:\\s+|(?=${PROSE_CLAUSE_PUNCT}))(?:${PROSE_MARK_OPEN}(?:of|for|x)${PROSE_MARK_CLOSE}(?:\\s+|(?=${PROSE_CLAUSE_PUNCT}))|${PROSE_MULT_SPACED}|${PROSE_MULT_MULTI}|(?=${PROSE_WRAP_OPEN}))${PROSE_COUNT_SLOT}(?:\\s+(?:${PROSE_MARK_OPEN}reps?${PROSE_MARK_CLOSE}(?:\\s+|(?=${PROSE_CLAUSE_PUNCT})))?(?:(?:${PROSE_MARK_OPEN}(?:at|with|for)${PROSE_MARK_CLOSE}|@)(?:\\s*${PROSE_MULT_SPACED}|\\s*${PROSE_MULT_MULTI})?|${PROSE_MULT_SPACED}|${PROSE_MULT_MULTI})\\s*|\\s*(?:${PROSE_MARK_OPEN}reps?${PROSE_MARK_CLOSE}(?:\\s+|(?=${PROSE_CLAUSE_PUNCT})))?${PROSE_DASH}\\s+(?:${PROSE_MULT_SPACED}|${PROSE_MULT_MULTI})?|\\s+(?:${PROSE_MARK_OPEN}reps?${PROSE_MARK_CLOSE}(?:\\s+|(?=${PROSE_CLAUSE_PUNCT})))?${PROSE_DASH}\\s*(?:${PROSE_MULT_SPACED}|${PROSE_MULT_MULTI})?)${PROSE_WEIGHT_SLOT}`, 'u');
+const PROSE_SET_GROUP_GLOBAL = new RegExp(PROSE_SET_GROUP.source, 'gu');
 // P8/P9 (pack-only, #1790 follow-up) — zero-quantity directives the parser
 // drops: a trailing `x0` repeat, and prose `for zero sets` / `zero sets` /
 // `0 sets`. The shorthand consumes a trailing `xN` as the slash group's own

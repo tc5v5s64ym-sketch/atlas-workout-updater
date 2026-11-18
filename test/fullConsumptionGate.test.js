@@ -997,6 +997,120 @@ test('pack follow-up round 7 K1: prose set-group with enumerated multiplier glyp
   }
 });
 
+test('pack follow-up round 8 L1/L2/L3: prose set-group with other multiplier glyphs, markdown wraps, and glyph after a preposition refuses', () => {
+  // Hammy BLOCKING on d1c77884 (round 7, L1–L3): the round-7 fix enumerated
+  // the gate's own six glyphs, but twenty same-class bypasses still dropped
+  // the group — other multiplier-like glyphs (L1), markdown-wrapped numbers
+  // (L2), and a glyph after a preposition/dash (L3). Fix direction: a broader
+  // multiplier-like class (a generic non-alphanumeric separator run), balanced
+  // markdown wraps, and an optional glyph run after the word/dash preposition
+  // — not one more enumeration.
+  // L1 — other multiplier-like glyphs, both slots (9 glyphs; ✘ and ∗ in both
+  // slots, the other seven in the count slot — 11 cases in the verdict).
+  for (const glyph of ['✘', '❌', '∗', '✳', '✱', '╳', '⨯', '⋅', '·']) {
+    for (const text of [
+      `bench 185 5/2 then 3 sets ${glyph} 8 at 165`,
+      `bench 185 5/2 then 3 sets of 8 reps ${glyph} 165`,
+    ]) {
+      const out = applyFullConsumptionGate(logSets([{ weight: 185, reps: 5, rir: 2 }]), text);
+      assert.equal(out.intent, 'needs_clarification', text);
+      assert.ok(out.warnings.includes('repeated_set_group'), text);
+      assert.equal(out.sets, undefined, text);
+    }
+  }
+  // L2 — markdown wraps (5): single-`*`/`_`-wrapped numbers, and the
+  // `**8 reps**` form where the closer follows "reps".
+  for (const text of [
+    'bench 185 5/2 then 3 sets __8__ at 165',
+    'bench 185 5/2 then 3 sets _8_ at 165',
+    'bench 185 5/2 then 3 sets *8* at 165',
+    'bench 185 5/2 then 3 sets of 8 reps at *165*',
+    'bench 185 5/2 then 3 sets of **8 reps** at 165',
+  ]) {
+    const out = applyFullConsumptionGate(logSets([{ weight: 185, reps: 5, rir: 2 }]), text);
+    assert.equal(out.intent, 'needs_clarification', text);
+    assert.ok(out.warnings.includes('repeated_set_group'), text);
+    assert.equal(out.sets, undefined, text);
+  }
+  // L3 — glyph after a preposition/dash (4).
+  for (const text of [
+    'bench 185 5/2 then 3 sets of 8 with ✕ 165',
+    'bench 185 5/2 then 3 sets of 8 for ✕ 165',
+    'bench 185 5/2 then 3 sets of 8 at ✕ 165',
+    'bench 185 5/2 then 3 sets of 8 - ✕ 165',
+    // A two-atom run may abut the weight, parallel to `**165`: `-✕` is a
+    // dash-plus-glyph run, so `-✕165` refuses even with no space before the
+    // digits. A single atom abutting the weight still logs (below).
+    'bench 185 5/2 then 3 sets of 8 -✕165',
+  ]) {
+    const out = applyFullConsumptionGate(logSets([{ weight: 185, reps: 5, rir: 2 }]), text);
+    assert.equal(out.intent, 'needs_clarification', text);
+    assert.ok(out.warnings.includes('repeated_set_group'), text);
+    assert.equal(out.sets, undefined, text);
+  }
+  // Pre-review findings on this head, fixed before handback: bracket-wrapped
+  // numbers are the same L2 class, and clause punctuation tight against its
+  // word is the same L1 separator class (see the Round 8 comment in the gate).
+  // A second hunt round found the same wrap class on quoted numbers and on
+  // the structural words themselves (sets-count, `sets`, separator, `reps`,
+  // preposition) — every position in the prose pattern may carry a wrap.
+  for (const text of [
+    'bench 185 5/2 then 3 sets (8) at 165',
+    'bench 185 5/2 then 3 sets [8] at 165',
+    'bench 185 5/2 then 3 sets {8} at 165',
+    'bench 185 5/2 then 3 sets of 8 reps at (165)',
+    'bench 185 5/2 then 3 sets of 8 reps at [165]',
+    'bench 185 5/2 then 3 sets: 8 at 165',
+    'bench 185 5/2 then 3 sets, 8 at 165',
+    'bench 185 5/2 then 3 sets. 8 at 165',
+    'bench 185 5/2 then 3 sets of: 8 at 165',
+    'bench 185 5/2 then 3 sets of 8 reps: 165',
+    'bench 185 5/2 then 3 sets of 8 reps, 165',
+    'bench 185 5/2 then 3 sets "8" at 165',
+    "bench 185 5/2 then 3 sets '8' at 165",
+    'bench 185 5/2 then 3 sets of 8 reps at "165"',
+    'bench 185 5/2 then 3 **sets** of 8 at 165',
+    'bench 185 5/2 then 3 *sets* of 8 at 165',
+    'bench 185 5/2 then **3** sets of 8 at 165',
+    'bench 185 5/2 then *3* sets of 8 at 165',
+    'bench 185 5/2 then (3) sets of 8 at 165',
+    'bench 185 5/2 then "3" sets of 8 at 165',
+    'bench 185 5/2 then 3 sets **of** 8 at 165',
+    'bench 185 5/2 then 3 sets "of" 8 at 165',
+    'bench 185 5/2 then 3 sets (of) 8 at 165',
+    'bench 185 5/2 then 3 sets of 8 **reps** at 165',
+    'bench 185 5/2 then 3 sets of 8 *reps* at 165',
+    'bench 185 5/2 then 3 sets of 8 reps **at** 165',
+    'bench 185 5/2 then 3 sets of 8 reps *at* 165',
+    'bench 185 5/2 then 3 sets of 8 reps _at_ 165',
+    'bench 185 5/2 then 3 sets of 8 reps "at" 165',
+    'bench 185 5/2 then 3 sets of 8 reps (at) 165',
+    'bench 185 5/2 then 3 sets of 8 reps **at 165**',
+  ]) {
+    const out = applyFullConsumptionGate(logSets([{ weight: 185, reps: 5, rir: 2 }]), text);
+    assert.equal(out.intent, 'needs_clarification', text);
+    assert.ok(out.warnings.includes('repeated_set_group'), text);
+    assert.equal(out.sets, undefined, text);
+  }
+  // Scope holds: a single marker that abuts a number with no closer is still
+  // the disclosed tight form — it logs, exactly as `3 sets *8` does. The
+  // wrap refuses only when the closer is present; a glyph run abutting the
+  // weight with no space before the digits is likewise out of scope.
+  for (const text of [
+    'bench 185 5/2 then 3 sets of *8 at 165',
+    'bench 185 5/2 then 3 sets of 8 reps at *165',
+    'bench 185 5/2 then 3 sets of 8 with✕165',
+    'bench 185 5/2 then 3 sets.8 at 165',
+    'bench 185 5/2 then 3 sets (8 at 165',
+    "bench 185 5/2 then 3 sets of 8's at 165",
+    'bench 185 5/2 then 3 sets of 8 (warm-up) at 165',
+    "bench 185 5/2 then 3 sets of Ben's 8 at 165",
+  ]) {
+    const out = applyFullConsumptionGate(logSets([{ weight: 185, reps: 5, rir: 2 }]), text);
+    assert.equal(out.intent, 'log_sets', text);
+  }
+});
+
 test('pack follow-up: legit repeats and non-zero counts still log untouched', () => {
   const three = [
     { weight: 185, reps: 5, rir: 2 },
