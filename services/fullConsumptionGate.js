@@ -245,14 +245,105 @@ const PROSE_DASH = '[\\-\\u2010\\u2011\\u2012\\u2013\\u2014\\u2212]';
 // anchor. A possessive before the count (`Ben's 8`) and a parenthetical note
 // after it (`8 (warm-up)`) still log — neither is a structural word or a
 // wrapped number.
+// Round 9 (Hammy BLOCKING on 7544ac18, M1–M4; Dale direction 2026-11-18
+// 12:18:52 MST — "the enumeration stops here"): the prose slots are no
+// longer enumerations. Rounds 1–8 each widened a spelling list (word lists
+// `of`/`for`/`x` and `at`/`with`/`for`, glyph lists, wrap lists); every round
+// the reviewer listed more spellings in the same slots — the exact failure
+// mode the outside review named. The fix is structural: a prose set group is
+// defined by its skeleton — COUNT, the word `sets`, a reps number, a weight
+// number — joined by connectors, and a connector is ANY short run of
+// connector tokens (words, multiplier atoms, clause punctuation), at most
+// four tokens. An unlisted word (`by`, `via`, `approx`, `around`) or glyph
+// (`÷`, `→`, `≠`, `~`) in a connector slot is a prose group by construction,
+// so it fails closed instead of reopening the hole. What still keeps a shape
+// out is structure, not spelling:
+// - a connector must be present (at least one token) between `sets` and the
+//   reps number — `3 sets 8 at 165` (no connector) is not a multiplier
+//   expression, it logs;
+// - a connector is at most four tokens — a four-word preposition (`at a
+//   weight of 165`) already refuses via `unattributable_trailing_sets`,
+//   and a mixed glyph+word four-unit connector (`✕ of about roughly`) is
+//   the longest a multiplier phrase runs; five or more tokens is a clause,
+//   not a connector;
+// - tight-abut rules, unchanged in kind from round 8: a single atom may
+//   abut the number it separates only when it IS the whole connector — a
+//   bare glyph preposition (`reps ✕165`, `reps *165`, M1/M2 — round 7
+//   allowed this, round 8 narrowed it, the regression is restored here) or
+//   a run of two or more atoms (`**8**`, `-✕165`); a single atom tight
+//   against a number after a WORD preposition (`at *165`, `with✕165`,
+//   `at ~165`) still logs, as do clause punctuation tight against a number
+//   (`sets.8`, `sets:8`, `of:8`, `reps:165`, `8-165`);
+// - clause punctuation MAY join the numbers when spaced from the following
+//   one (`sets: 8`, `reps: 165`, and now `8: 165`, `8, 165` — the O3
+//   colon/dash/`per` continuum closes: a spaced colon between the reps and
+//   the weight is a connector, same as a spaced word);
+// - a connector may sit between the sets-count and `sets` (`3 ✕ sets`,
+//   M4; `3 total sets`) — the count and the keyword are anchors, and junk
+//   between them is still the same group.
+// Pre-review (round 9) findings, fixed on this head before handback:
+// (1) P4 sibling gap — the prose arm fired only beside a sibling group
+// token, but the parser consumes a bare `W R` pair (`225 3`) as a set while
+// no group token counts it, so a prose group beside a bare pair dropped
+// silently (`bench 185 3 sets of 8 at 165` logged 185x3). The prose arm
+// now fires on a prose group beside ANY emitted set, not only beside a
+// sibling token — the sets array is the ground truth for what the parser
+// consumed, and no parser grammar consumes the prose numbers themselves
+// (the `for` overlap, `8 for 165`, still drops the `3 sets of`, so
+// refusing there stays correct).
+// (2) Word↔number fusion — a letter↔digit transition is a token boundary
+// by itself: a word may abut a number (`of8`, `8reps`, `3sets`, `8reps165`
+// — `reps` then reads as the preposition word) because the characters
+// delimit the tokens; an atom may not (`*8`, `✕8`, `of:8` still log).
+// The seams are digit→letter at the count↔`sets` join and before the
+// weight part, and letter→digit at the separator↔count join — except a
+// lone multiplier `x`: `x8` is a repeat token the parser consumes (`3
+// sets x8 at 165` logs eight repeats of the slash group whole), so a
+// standalone `x` fused to the count is not a connector. A
+// letter↔letter fusion (`threesets`, `totalsets`) is one word, not a
+// boundary, so it still logs.
+// (3) Clause punctuation before a WORD preposition (`8, at 165`, `8: at
+// 165`, `8. at 165`) — the punct weight arm now takes an optional word
+// preposition after the mark, same as the punct-before-weight arm.
+// Disclosed, not fixed here: a weight spelled out in words (`at one
+// hundred sixty-five`) needs number-word weights — a design item for the
+// coordinator; a weightless prose group (`3 sets of 8, then squat 225 x3`)
+// is the same R2 family.
+// The anchors stay enumerated (`sets`, `reps`, the number-words, the
+// digits) — they are the shape, not the spelling list. The weight slot
+// still requires digits, so `3 sets of 8 reps ✕ time` is not a prose
+// group; the rep slot still requires digits or a number-word.
 const PROSE_CLAUSE_PUNCT = '[:,.;!?]';
 const PROSE_WRAP_OPEN = `(?:[*_]{1,2}|["'\\u0028\\u005B\\u007B])`;
 const PROSE_WRAP_CLOSE = `(?:[*_]{1,2}|["'\\u0029\\u005D\\u007D])`;
 const PROSE_MARK_OPEN = `(?:${PROSE_WRAP_OPEN})?`;
 const PROSE_MARK_CLOSE = `(?:${PROSE_WRAP_CLOSE})?`;
+// A connector token: one word (optionally wrapped, any spelling — the
+// word lists are gone) or a run of multiplier atoms (glyphs, dashes,
+// clause punctuation — the glyph lists are gone, the generic class from
+// round 8 stays). A connector is 1–4 tokens. In the separator slot the
+// connector must be followed by whitespace (or a clause-punctuation seam)
+// before the reps number, so a single atom abutting the count still logs
+// (`3 sets *8`, `3 sets of *8`); a run of two or more atoms may abut it
+// (`**8**`), as in round 8. In the weight slot the connector is spelled
+// out instead of reused, because the tight-abut rule differs there: a
+// single atom may abut the weight only when it IS the whole preposition
+// (M1/M2, below) or part of a two-atom run — never tight after a word
+// (`at *165`, `with✕165` still log).
+const PROSE_CONN_WORD = `(?:${PROSE_MARK_OPEN}[a-z]+${PROSE_MARK_CLOSE})`;
+const PROSE_CONN_WORDS = `(?:${PROSE_CONN_WORD}(?:\\s+${PROSE_CONN_WORD}){0,2})`;
+const PROSE_CONN_ATOMS = `(?:${PROSE_MULT_ATOM}(?:\\s*${PROSE_MULT_ATOM})*)`;
+const PROSE_CONN_UNIT = `(?:${PROSE_CONN_WORD}|${PROSE_CONN_ATOMS})`;
+const PROSE_CONNECTOR = `(?:${PROSE_CONN_UNIT}(?:\\s+${PROSE_CONN_UNIT}){0,3})`;
+// A single multiplier atom that is NOT clause punctuation, allowed to abut
+// the weight when it is the whole preposition (M1/M2). Clause punctuation
+// (`:`, `,`, `.`) may join the numbers only when spaced — `reps:165` still
+// logs, `reps: 165` still refuses.
+const PROSE_MULT_ATOM_TIGHT = `(?:[^\\p{L}\\p{N}\\s:,.;!?]|[\\uFF38\\uFF58])`;
+const PROSE_MULT_TIGHT = `(?:${PROSE_MULT_ATOM_TIGHT}\\s*)`;
 const PROSE_COUNT_SLOT = `(?:(?:${PROSE_MULT_SPACED}|${PROSE_MULT_MULTI})?(?:${PROSE_WRAP_OPEN}\\s*${PROSE_COUNT}(?:\\s+reps?)?\\s*${PROSE_WRAP_CLOSE}|(?:\\s*\\*\\*\\s*)?${PROSE_COUNT}(?:\\s*\\*\\*)?))`;
 const PROSE_WEIGHT_SLOT = `(?:${PROSE_WRAP_OPEN}\\s*\\d+(?:\\.\\d+)?\\s*${PROSE_WRAP_CLOSE}|(?:\\*\\*)?\\d+(?:\\.\\d+)?\\b)`;
-const PROSE_SET_GROUP = new RegExp(`(?:\\b|(?=${PROSE_WRAP_OPEN}))(?:${PROSE_WRAP_OPEN}\\s*)?${PROSE_COUNT}(?:\\s*${PROSE_WRAP_CLOSE})?\\s+${PROSE_MARK_OPEN}sets?${PROSE_MARK_CLOSE}(?:\\s+|(?=${PROSE_CLAUSE_PUNCT}))(?:${PROSE_MARK_OPEN}(?:of|for|x)${PROSE_MARK_CLOSE}(?:\\s+|(?=${PROSE_CLAUSE_PUNCT}))|${PROSE_MULT_SPACED}|${PROSE_MULT_MULTI}|(?=${PROSE_WRAP_OPEN}))${PROSE_COUNT_SLOT}(?:\\s+(?:${PROSE_MARK_OPEN}reps?${PROSE_MARK_CLOSE}(?:\\s+|(?=${PROSE_CLAUSE_PUNCT})))?(?:(?:${PROSE_MARK_OPEN}(?:at|with|for)${PROSE_MARK_CLOSE}|@)(?:\\s*${PROSE_MULT_SPACED}|\\s*${PROSE_MULT_MULTI})?|${PROSE_MULT_SPACED}|${PROSE_MULT_MULTI})\\s*|\\s*(?:${PROSE_MARK_OPEN}reps?${PROSE_MARK_CLOSE}(?:\\s+|(?=${PROSE_CLAUSE_PUNCT})))?${PROSE_DASH}\\s+(?:${PROSE_MULT_SPACED}|${PROSE_MULT_MULTI})?|\\s+(?:${PROSE_MARK_OPEN}reps?${PROSE_MARK_CLOSE}(?:\\s+|(?=${PROSE_CLAUSE_PUNCT})))?${PROSE_DASH}\\s*(?:${PROSE_MULT_SPACED}|${PROSE_MULT_MULTI})?)${PROSE_WEIGHT_SLOT}`, 'u');
+const PROSE_SET_GROUP = new RegExp(`(?:\\b|(?=${PROSE_WRAP_OPEN}))(?:${PROSE_WRAP_OPEN}\\s*)?${PROSE_COUNT}(?:\\s*${PROSE_WRAP_CLOSE})?(?:\\s+${PROSE_CONNECTOR})?(?:\\s+|(?<=\\d)(?=[a-z]))${PROSE_MARK_OPEN}sets?${PROSE_MARK_CLOSE}(?:\\s+|(?=${PROSE_CLAUSE_PUNCT}))(?:${PROSE_CONNECTOR}(?:\\s+|(?=${PROSE_CLAUSE_PUNCT})|(?<=[a-z])(?=\\d)(?<!\\sx))|${PROSE_MULT_MULTI}|(?=${PROSE_WRAP_OPEN}))${PROSE_COUNT_SLOT}(?:(?:\\s+|(?<=\\d)(?=[a-z]))(?:${PROSE_MARK_OPEN}reps?${PROSE_MARK_CLOSE}(?:\\s+|(?=${PROSE_CLAUSE_PUNCT})))?(?:${PROSE_CONN_WORDS}(?:\\s*${PROSE_MULT_SPACED}|\\s*${PROSE_MULT_MULTI})?|@|${PROSE_MULT_SPACED}(?:${PROSE_CONN_WORDS})?|${PROSE_MULT_MULTI}(?:${PROSE_CONN_WORDS})?|${PROSE_MULT_TIGHT})\\s*|\\s*(?:${PROSE_MARK_OPEN}reps?${PROSE_MARK_CLOSE}(?:\\s+|(?=${PROSE_CLAUSE_PUNCT})))?${PROSE_DASH}\\s+(?:${PROSE_MULT_SPACED}|${PROSE_MULT_MULTI})?|\\s+(?:${PROSE_MARK_OPEN}reps?${PROSE_MARK_CLOSE}(?:\\s+|(?=${PROSE_CLAUSE_PUNCT})))?${PROSE_DASH}\\s*(?:${PROSE_MULT_SPACED}|${PROSE_MULT_MULTI})?|\\s*(?:${PROSE_MARK_OPEN}reps?${PROSE_MARK_CLOSE}(?:\\s+|(?=${PROSE_CLAUSE_PUNCT})))?${PROSE_CLAUSE_PUNCT}\\s+(?:${PROSE_CONN_WORDS}\\s+)?)${PROSE_WEIGHT_SLOT}`, 'u');
 const PROSE_SET_GROUP_GLOBAL = new RegExp(PROSE_SET_GROUP.source, 'gu');
 // P8/P9 (pack-only, #1790 follow-up) — zero-quantity directives the parser
 // drops: a trailing `x0` repeat, and prose `for zero sets` / `zero sets` /
@@ -386,7 +477,7 @@ function repeatedSetGroupMessage() {
 // counts as a group token of the same family), or a dumbbell group beside
 // any barbell group (`parseDumbbellGroups` is tried first and claims the
 // text: `bench 185 5/2 55s x10 @3`, `bench 3x8@165 55s x10 @3`).
-function hasRepeatedSetGroup(text) {
+function hasRepeatedSetGroup(text, sets) {
   const t = String(text || '');
   // A slash set is `weight reps/rir` — the shorthand path consumes the pair
   // whole, so its digits must not participate in any other group's count:
@@ -470,9 +561,14 @@ function hasRepeatedSetGroup(text) {
   // the prose form, so the second group drops (`bench 185 5/2 then 3 sets of
   // 8 at 165` logs only 185x5; `bench 3 sets of 8 at 165 and 2x5@185` logs
   // only the 185 sets). The `at` form is the gap: the `@` form already
-  // refuses via the stray-@ arm above.
+  // refuses via the stray-@ arm above. Pre-review round 9: beside ANY
+  // emitted set, not only a sibling token — a bare `W R` pair (`225 3`)
+  // is consumed as a set by the parser but no group token counts it, so
+  // `squat 225 3 sets of 8 at 165` logged 225x3 and dropped the prose
+  // group. The sets array is the ground truth, so it is the trigger.
   const proseGroups = [...t.matchAll(PROSE_SET_GROUP_GLOBAL)];
-  if (proseGroups.length >= 1 && (setsFirst.length >= 1 || wxrN.length >= 1 || bareWxr.length >= 1 || hasSlash || hasFor || hasDumbbell)) return 'repeated_set_group';
+  const emittedSets = Array.isArray(sets) && sets.length > 0;
+  if (proseGroups.length >= 1 && (setsFirst.length >= 1 || wxrN.length >= 1 || bareWxr.length >= 1 || hasSlash || hasFor || hasDumbbell || emittedSets)) return 'repeated_set_group';
   return null;
 }
 
@@ -519,7 +615,7 @@ function checkSpan(parsed, rawText, text, sets) {
   if (hasUnrecognizedSetNotation(text)) return ask(unrecognizedSetNotationMessage(), 'unrecognized_set_notation', parsed, rawText);
   const atValue = findAmbiguousAt(text, sets);
   if (atValue) return ask(ambiguousAtMessage(atValue), 'ambiguous_at_value', parsed, rawText);
-  const repeated = hasRepeatedSetGroup(text);
+  const repeated = hasRepeatedSetGroup(text, sets);
   if (repeated) return ask(repeatedSetGroupMessage(), repeated, parsed, rawText);
   if (countFamilies(text) >= 2) return ask(mixedFormatMessage(), 'mixed_set_format', parsed, rawText);
   if (hasZeroValueSet(sets)) return ask(zeroValueMessage(), 'zero_set_value', parsed, rawText);

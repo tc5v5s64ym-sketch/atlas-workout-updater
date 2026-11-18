@@ -1111,6 +1111,144 @@ test('pack follow-up round 8 L1/L2/L3: prose set-group with other multiplier gly
   }
 });
 
+test('pack follow-up round 9 M1–M4: structural prose-slot fix refuses any connector spelling', () => {
+  // Hammy BLOCKING on 7544ac18 (round 8, M1–M4) + Dale direction 2026-11-18
+  // 12:18:52 MST ("the enumeration stops here"): the prose slots are no
+  // longer enumerations — a connector is any short run of words, multiplier
+  // atoms, or clause punctuation (at most four tokens) between the anchors
+  // COUNT / `sets` / reps / weight. M1 is a regression (tight glyph after
+  // `reps` refused at d1c77884, logged at 7544ac18); M2 the same class;
+  // M3 word separators/prepositions; M4 a glyph between the count and
+  // `sets`. Every case below refuses `repeated_set_group` with 0 sets.
+  // Pre-review (round 9) fix, on this head before handback: the prose arm
+  // fires beside ANY emitted set (a bare `W R` pair consumes a set but no
+  // group token counts it); a letter↔digit transition is a token boundary
+  // (`of8`, `8reps`, `3sets`, `8reps165`); clause punctuation may be
+  // followed by words before the weight (`8, at 165`); a connector is at
+  // most four tokens (`✕ of about roughly`).
+  for (const text of [
+    // M1 — tight glyph after `reps` (regression).
+    'bench 185 5/2 then 3 sets of 8 reps ✕165',
+    'bench 185 5/2 then 3 sets of 8 reps *165',
+    // M2 — same tight-after-`reps` class, pre-existing.
+    'bench 185 5/2 then 3 sets of 8 reps ~165',
+    'bench 185 5/2 then 3 sets of 8 reps ≈165',
+    // M3 — word separators / prepositions.
+    'bench 185 5/2 then 3 sets by 8 at 165',
+    'bench 185 5/2 then 3 sets with 8 at 165',
+    'bench 185 5/2 then 3 sets per 8 at 165',
+    'bench 185 5/2 then 3 sets to 8 at 165',
+    'bench 185 5/2 then 3 sets of 8 by 165',
+    'bench 185 5/2 then 3 sets of 8 around 165',
+    'bench 185 5/2 then 3 sets of 8 at about 165',
+    'bench 185 5/2 then 3 sets of 8 at around 165',
+    // M4 — glyph between the sets-count and `sets`.
+    'bench 185 5/2 then 3 ✕ sets of 8 at 165',
+    // Fresh variants (unlisted by either lane): unlisted words in either
+    // slot, unlisted glyphs, mixed connectors, count<->sets variants.
+    'bench 185 5/2 then 3 sets times 8 at 165',
+    'bench 185 5/2 then 3 sets each 8 at 165',
+    'bench 185 5/2 then 3 sets of about 8 at 165',
+    'bench 185 5/2 then 3 sets of 8 reps approx 165',
+    'bench 185 5/2 then 3 sets of 8 reps at approximately 165',
+    'bench 185 5/2 then 3 sets of 8 reps at roughly 165',
+    'bench 185 5/2 then 3 sets of 8 reps at close to 165',
+    'bench 185 5/2 then 3 sets of 8 reps for about 165',
+    'bench 185 5/2 then 3 sets of 8 reps with about 165',
+    'bench 185 5/2 then 3 sets of 8 reps plus 165',
+    'bench 185 5/2 then 3 sets ÷ 8 at 165',
+    'bench 185 5/2 then 3 sets of 8 reps ÷ 165',
+    'bench 185 5/2 then 3 sets → 8 at 165',
+    'bench 185 5/2 then 3 sets of 8 reps ≠165',
+    'bench 185 5/2 then 3 sets ± 8 at 165',
+    'bench 185 5/2 then 3 sets • 8 at 165',
+    'bench 185 5/2 then 3 sets – 8 at 165',
+    'bench 185 5/2 then 3 sets of 8 reps — 165',
+    'bench 185 5/2 then 3 sets ✕ of 8 at 165',
+    'bench 185 5/2 then 3 sets of 8 reps at ✕ 165',
+    'bench 185 5/2 then 3 sets of 8 reps - about 165',
+    'bench 185 5/2 then 3 * sets of 8 at 165',
+    'bench 185 5/2 then 3 total sets of 8 at 165',
+    'bench 185 5/2 then 3 ** sets of 8 at 165',
+    'bench 185 5/2 then three sets via eight at 165',
+    'bench 185 5/2 then 3 sets of 8 reps at 165 lbs',
+    // Observation flips, disclosed: O5 (`per` as the weight preposition)
+    // and O3 (`8: 165`, `8, 165` — spaced clause punctuation between the
+    // reps and the weight is a connector, same as a spaced word).
+    'bench 185 5/2 then 3 sets of 8 per 165',
+    'bench 185 5/2 then 3 sets of 8: 165',
+    'bench 185 5/2 then 3 sets of 8, 165',
+    // Pre-review fix: prose group beside a bare `W R` pair (Finding 1 —
+    // the pair consumes a set but no group token counts it; the fake
+    // emitted sets here stand in for the pair's set, the real route is
+    // verified by the diag probe).
+    'bench 185 3 sets of 8 at 165',
+    'bench 185 5/2 then squat 225 3 sets of 8 at 165',
+    // Pre-review fix: four-unit mixed connector (Finding 2).
+    'bench 185 5/2 then 3 sets ✕ of about roughly 8 at 165',
+    // Pre-review fix: word↔number fusion (Finding 3).
+    'bench 185 5/2 then 3 sets of8 at 165',
+    'bench 185 5/2 then 3 sets of 8reps at 165',
+    'bench 185 5/2 then 3 sets of 8reps165',
+    'bench 185 5/2 then 3sets of 8 at 165',
+    'bench 185 5/2 then 3 sets of8reps165',
+    // Pre-review fix: clause punctuation before a word preposition
+    // (Finding 4).
+    'bench 185 5/2 then 3 sets of 8, at 165',
+    'bench 185 5/2 then 3 sets of 8: at 165',
+    'bench 185 5/2 then 3 sets of 8. at 165',
+    'bench 185 5/2 then 3 sets of 8. at about 165',
+  ]) {
+    const out = applyFullConsumptionGate(logSets([{ weight: 185, reps: 5, rir: 2 }]), text);
+    assert.equal(out.intent, 'needs_clarification', text);
+    assert.ok(out.warnings.includes('repeated_set_group'), text);
+    assert.equal(out.sets, undefined, text);
+  }
+  // Scope holds, unchanged: a single atom tight against a number after a
+  // WORD preposition still logs, as does clause punctuation tight against a
+  // number and a glyph tight against a word (`sets* 8`, `sets ✕8`).
+  for (const text of [
+    'bench 185 5/2 then 3 sets of 8 reps at *165',
+    'bench 185 5/2 then 3 sets of 8 with✕165',
+    'bench 185 5/2 then 3 sets of 8 at✕165',
+    'bench 185 5/2 then 3 sets of 8 reps at ~165',
+    'bench 185 5/2 then 3 sets of 8 reps:165',
+    'bench 185 5/2 then 3 sets.8 at 165',
+    'bench 185 5/2 then 3 sets:8 at 165',
+    'bench 185 5/2 then 3 sets of:8 at 165',
+    'bench 185 5/2 then 3 sets of 8-165',
+    'bench 185 5/2 then 3 sets *8 at 165',
+    'bench 185 5/2 then 3 sets*8 at 165',
+    'bench 185 5/2 then 3 sets of *8 at 165',
+    'bench 185 5/2 then 3 sets ✕8 at 165',
+    'bench 185 5/2 then 3 sets of 8 (warm-up) at 165',
+    "bench 185 5/2 then 3 sets of Ben's 8 at 165",
+    "bench 185 5/2 then 3 sets of 8's at 165",
+    'bench 185 5/2 then 3 sets (8 at 165',
+    // Fusion boundary holds, pre-review fix: a letter↔letter fusion is
+    // one word, not a boundary (`threesets`, `totalsets`); an atom between
+    // the count and `sets` (`3x sets`) still logs, as does a word fused to
+    // a wrapped count (`of**8**`) and a wrapped count fused to `sets`
+    // (`**3**sets`). A five-token connector is beyond the gate's bound —
+    // the parser refuses it pre-gate in the real route, so the gate itself
+    // leaves it standing here.
+    'bench 185 5/2 then threesets of 8 at 165',
+    'bench 185 5/2 then 3 totalsets of 8 at 165',
+    'bench 185 5/2 then 3x sets of 8 at 165',
+    'bench 185 5/2 then 3 sets of**8** at 165',
+    'bench 185 5/2 then **3**sets of 8 at 165',
+    'bench 185 5/2 then 3 sets ✕ of about roughly maybe 8 at 165',
+    // A lone multiplier `x` fused to the count is a repeat token the
+    // parser consumes whole (`3 sets x8 at 165` logs eight repeats of the
+    // slash group), not a connector — the fusion seam excludes it.
+    'bench 185 5/2 then 3 sets x8 at 165',
+    'bench 185 5/2 then 3 sets, x8 at 165',
+  ]) {
+    const out = applyFullConsumptionGate(logSets([{ weight: 185, reps: 5, rir: 2 }]), text);
+    assert.equal(out.intent, 'log_sets', text);
+  }
+});
+
 test('pack follow-up: legit repeats and non-zero counts still log untouched', () => {
   const three = [
     { weight: 185, reps: 5, rir: 2 },
