@@ -125,10 +125,15 @@ const TRAILING_REPEAT_TOKEN = /\bx\d+\b/;
 // from its `x` by a space or a dash — `x 3`, `x-3`, `x – 3` — which the
 // parser consumes only in the tight `xN` form beside a slash group (and
 // never beside a `for` group in the dashed form). The count must be 2 or
-// more: a 1-repeat changes nothing, so `x 1` still logs, and zero repeats
-// (`x 0`, `x-0`) keep falling through to the zero-directive arm below
-// instead of changing code.
-const SPACED_OR_DASHED_REPEAT_TOKEN = /\bx[\s\-\u2010\u2011\u2012\u2013\u2014\u2212]+(?:[2-9]\d*|1\d+)\b/;
+// more as a NUMBER: a 1-repeat changes nothing, so `x 1` still logs beside
+// a slash group (the `for` form `175 for 5 x 1` refuses via the pre-existing
+// bare-WxR arm — fail-closed, not this token), and zero repeats (`x 0`,
+// `x-0`) keep falling through to the zero-directive arm below instead of
+// changing code.
+// Round 4 (pre-review on 1e83793e, H3): the count may carry leading zeros —
+// `x 03` is 3, one space from the parser-accepted tight `x03` — so the
+// pattern allows them while still excluding value 1 (`x 01` keeps logging).
+const SPACED_OR_DASHED_REPEAT_TOKEN = /\bx[\s\-\u2010\u2011\u2012\u2013\u2014\u2212]+(?:0*[2-9]|0*[1-9]\d+)\b/;
 const DUMBBELL_GROUP = /\b\d+(?:\.\d+)?s\s+(?:\d+\s*\/\s*\d+|x\d+\s*@\s*\d+)/;
 // P4 (pack-only, #1790 follow-up) — a prose set group: `N sets of M at W`
 // (`3 sets of 8 at 165`, `3 sets of 8 reps @ 165`). No parser grammar consumes
@@ -143,9 +148,17 @@ const DUMBBELL_GROUP = /\b\d+(?:\.\d+)?s\s+(?:\d+\s*\/\s*\d+|x\d+\s*@\s*\d+)/;
 // silently. The count and rep slots accept digits or number-words zero–
 // twenty; the rep slot must still be numeric, so `did 3 sets of bench`
 // (a word after "of") is not a prose group.
+// Round 4 (pre-review on 1e83793e, H2): a dash as the weight separator
+// (`3 sets of 8 - 165`, en/em dash, any spacing with whitespace on at
+// least one side of the dash) dropped just as silently — a dash is the most
+// ordinary free-text separator. The fully-tight form (`8-165`) reads as a
+// range and stays out of scope: both dash alternatives require whitespace
+// on at least one side. The weight slot still requires digits, so
+// `3 sets of 8 - felt good` is not a prose group.
 const NUMBER_WORD = '(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)';
 const PROSE_COUNT = `(?:\\d+|${NUMBER_WORD})`;
-const PROSE_SET_GROUP = new RegExp(`\\b${PROSE_COUNT}\\s+sets?\\s+(?:of|x)\\s+${PROSE_COUNT}\\s+(?:reps?\\s+)?(?:at|@|with)\\s*\\d+(?:\\.\\d+)?\\b`);
+const PROSE_DASH = '[\\-\\u2010\\u2011\\u2012\\u2013\\u2014\\u2212]';
+const PROSE_SET_GROUP = new RegExp(`\\b${PROSE_COUNT}\\s+sets?\\s+(?:of|x)\\s+${PROSE_COUNT}(?:\\s+(?:reps?\\s+)?(?:at|@|with)\\s*|\\s*(?:reps?\\s+)?${PROSE_DASH}\\s+|\\s+(?:reps?\\s+)?${PROSE_DASH}\\s*)\\d+(?:\\.\\d+)?\\b`);
 const PROSE_SET_GROUP_GLOBAL = new RegExp(PROSE_SET_GROUP.source, 'g');
 // P8/P9 (pack-only, #1790 follow-up) — zero-quantity directives the parser
 // drops: a trailing `x0` repeat, and prose `for zero sets` / `zero sets` /
@@ -329,15 +342,21 @@ function hasRepeatedSetGroup(text) {
   // claims whole (`185x5 x3` parses as 3× 185x5: the WxRxN match absorbs
   // the repeat token, so strip matched WxRxN groups before testing).
   if ((setsFirst.length >= 1 || wxrN.length >= 1) && TRAILING_REPEAT_TOKEN.test(withoutWxrN)) return 'repeated_set_group';
-  // A spaced or dashed repeat beside a slash or `for` group is unconsumed:
-  // the parser takes a slash group's repeat only in the tight `xN` form
-  // (`bench 185 5/2 x3` logs 3 sets; `x 3`, `x-3`, `x – 3` all preview
-  // one set) and never takes a dashed repeat beside a `for` group
+  // A spaced or dashed repeat beside a slash, `for`, or dumbbell group is
+  // unconsumed: the parser takes a slash group's repeat only in the tight
+  // `xN` form (`bench 185 5/2 x3` logs 3 sets; `x 3`, `x-3`, `x – 3` all
+  // preview one set), never takes a dashed repeat beside a `for` group
   // (`bench 175 for 5 x-3` previews one set; the spaced form is already
-  // caught by the bare-WxR arm above). The x@ and WxR families are exempt:
-  // the parser consumes their spaced repeats (`3x8@165 x-3`, `185x5 x 3`
-  // both log whole), so the guard is slash/`for` only.
-  if ((hasSlash || hasFor) && SPACED_OR_DASHED_REPEAT_TOKEN.test(t)) return 'repeated_set_group';
+  // caught by the bare-WxR arm above), and takes a dumbbell repeat only
+  // tight as well (`60s x10 @3 x3` logs 3 sets; `x 3`, `x-3` preview one).
+  // The barbell x@ and WxR families are exempt: the parser consumes their
+  // spaced repeats (`3x8@165 x-3`, `185x5 x 3` both log whole), so the
+  // guard is slash/`for`/dumbbell only.
+  // Round 4 (pre-review on 1e83793e, H1): the dumbbell x@ family joins the
+  // guard — the round-3 arm fired only on slash/`for`, so `60s x10 @3 x 3`
+  // previewed one set. The token still requires a space or dash after `x`,
+  // so tight dumbbell repeats (`x3`, `x10`) never match.
+  if ((hasSlash || hasFor || hasDumbbell) && SPACED_OR_DASHED_REPEAT_TOKEN.test(t)) return 'repeated_set_group';
   const stripped = g.replace(X_AT_GROUP_GLOBAL, ' ').replace(DUMBBELL_X_AT_GROUP_GLOBAL, ' ');
   if (/@\s*\d/.test(stripped) && hasOtherGroup) return 'repeated_set_group';
   // A dumbbell group beside any other group: `parseDumbbellGroups` is tried

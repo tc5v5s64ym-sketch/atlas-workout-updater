@@ -780,6 +780,93 @@ test('pack follow-up round 3: spaced/dashed non-zero repeats beside a slash or f
   assert.equal(one.intent, 'log_sets', 'x 1 is one set either way');
 });
 
+test('pack follow-up round 4 H1: spaced/dashed repeats beside a dumbbell x@ group refuse', () => {
+  // Pre-review round 3 on 1e83793e (H1): the round-3 arm fired only on
+  // slash/`for` groups, so a spaced/dashed repeat beside a dumbbell x@
+  // group previewed one set though the parser takes the repeat only tight.
+  for (const text of [
+    'bench 60s x10 @3 x 3',
+    'bench 60s x10 @3 x-3',
+    'bench 60s x10 @3 x \u2013 3',
+    'bench 60s x10 @3 x 2',
+    'bench 60s x10 @3\nx 3',
+  ]) {
+    const out = applyFullConsumptionGate(
+      logSets([{ weight: 60, reps: 10, rir: 3 }]), text);
+    assert.equal(out.intent, 'needs_clarification', text);
+    assert.ok(out.warnings.includes('repeated_set_group'), text);
+    assert.equal(out.sets, undefined, text);
+  }
+  // Tight repeats and a 1-repeat still log: the parser consumes those.
+  const three = [
+    { weight: 60, reps: 10, rir: 3 },
+    { weight: 60, reps: 10, rir: 3 },
+    { weight: 60, reps: 10, rir: 3 },
+  ];
+  const tight = applyFullConsumptionGate(logSets(three), 'bench 60s x10 @3 x3');
+  assert.equal(tight.intent, 'log_sets', 'dumbbell group consumes tight x3');
+  const one = applyFullConsumptionGate(
+    logSets([{ weight: 60, reps: 10, rir: 3 }]), 'bench 60s x10 @3 x 1');
+  assert.equal(one.intent, 'log_sets', 'x 1 is one set either way');
+});
+
+test('pack follow-up round 4 H2: prose set-group with a dash weight separator refuses', () => {
+  // Pre-review round 3 on 1e83793e (H2): PROSE_SET_GROUP's weight
+  // preposition was `at`/`@`/`with` only, so a dash separator dropped the
+  // group in every spacing. The fully-tight form (`8-165`) reads as a
+  // range and stays out of scope.
+  for (const text of [
+    'bench 185 5/2 then 3 sets of 8 - 165',
+    'bench 185 5/2 then 3 sets of 8 \u2013 165',
+    'bench 185 5/2 then 3 sets of 8 \u2014 165',
+    'bench 185 5/2 then 3 sets of 8- 165',
+    'bench 185 5/2 then 3 sets of 8 -165',
+    'bench 185 5/2 then 3 sets of 8 - 165 lbs',
+    'bench 185 5/2\n3 sets of 8 - 165',
+    'bench 185 5/2 then 3 sets of eight - 165',
+  ]) {
+    const out = applyFullConsumptionGate(logSets([{ weight: 185, reps: 5, rir: 2 }]), text);
+    assert.equal(out.intent, 'needs_clarification', text);
+    assert.ok(out.warnings.includes('repeated_set_group'), text);
+    assert.equal(out.sets, undefined, text);
+  }
+  // A dash with no weight after it names no group: the turn still logs.
+  const noWeight = applyFullConsumptionGate(
+    logSets([{ weight: 185, reps: 5, rir: 2 }]), 'bench 185 5/2 then 3 sets of 8 - felt good');
+  assert.equal(noWeight.intent, 'log_sets', 'dash without a weight is not a prose group');
+});
+
+test('pack follow-up round 4 H3: leading-zero repeat counts refuse', () => {
+  // Pre-review round 3 on 1e83793e (H3): the repeat count pattern
+  // defeated itself on a leading zero (`05` starts with `0`), so
+  // `x 03` previewed one set though the parser accepts tight `x03`.
+  for (const text of [
+    'bench 185 5/2 x 03',
+    'bench 185 5/2 x 02',
+    'bench 185 5/2 x 05',
+    'bench 185 5/2 x-05',
+  ]) {
+    const out = applyFullConsumptionGate(logSets([{ weight: 185, reps: 5, rir: 2 }]), text);
+    assert.equal(out.intent, 'needs_clarification', text);
+    assert.ok(out.warnings.includes('repeated_set_group'), text);
+    assert.equal(out.sets, undefined, text);
+  }
+  // Value 1 with a leading zero is still a no-op repeat: it logs.
+  const one = applyFullConsumptionGate(
+    logSets([{ weight: 185, reps: 5, rir: 2 }]), 'bench 185 5/2 x 01');
+  assert.equal(one.intent, 'log_sets', 'x 01 is one set either way');
+  // The tight leading-zero form is consumed by the parser: it logs whole.
+  const five = [
+    { weight: 185, reps: 5, rir: 2 },
+    { weight: 185, reps: 5, rir: 2 },
+    { weight: 185, reps: 5, rir: 2 },
+    { weight: 185, reps: 5, rir: 2 },
+    { weight: 185, reps: 5, rir: 2 },
+  ];
+  const tight = applyFullConsumptionGate(logSets(five), 'bench 185 5/2 x05');
+  assert.equal(tight.intent, 'log_sets', 'x05 is a 5-repeat');
+});
+
 test('pack follow-up: legit repeats and non-zero counts still log untouched', () => {
   const three = [
     { weight: 185, reps: 5, rir: 2 },
