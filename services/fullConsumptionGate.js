@@ -155,10 +155,22 @@ const DUMBBELL_GROUP = /\b\d+(?:\.\d+)?s\s+(?:\d+\s*\/\s*\d+|x\d+\s*@\s*\d+)/;
 // range and stays out of scope: both dash alternatives require whitespace
 // on at least one side. The weight slot still requires digits, so
 // `3 sets of 8 - felt good` is not a prose group.
+// Round 5 (pre-review on d55dcdb3, I1/I2): `for` in both prose slots —
+// the count/reps separator (`3 sets for 8 at 165`, "do 3 sets for 8 reps")
+// and the weight preposition (`3 sets of 8 reps for 165`, "8 reps for 165
+// pounds") — dropped just as silently. `for` is the third natural English
+// word for both slots, beside `of`/`x` and `at`/`with`. The weight slot
+// still requires digits, so `3 sets for 8` with no weight still logs whole
+// and `3 sets for time` is not a prose group. A lone `for`-separator group
+// never reaches the gate: the parser refuses it first (`missing_sets`), so
+// the gate only ever sees it beside a consumed group, exactly like the
+// `of`/`x` forms. The bare `8 for 165` form (no `reps`) already refuses via
+// `mixed_set_format` — the parser consumes `8 for 165` as a set — and is
+// unaffected except that the prose arm now names it first.
 const NUMBER_WORD = '(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)';
 const PROSE_COUNT = `(?:\\d+|${NUMBER_WORD})`;
 const PROSE_DASH = '[\\-\\u2010\\u2011\\u2012\\u2013\\u2014\\u2212]';
-const PROSE_SET_GROUP = new RegExp(`\\b${PROSE_COUNT}\\s+sets?\\s+(?:of|x)\\s+${PROSE_COUNT}(?:\\s+(?:reps?\\s+)?(?:at|@|with)\\s*|\\s*(?:reps?\\s+)?${PROSE_DASH}\\s+|\\s+(?:reps?\\s+)?${PROSE_DASH}\\s*)\\d+(?:\\.\\d+)?\\b`);
+const PROSE_SET_GROUP = new RegExp(`\\b${PROSE_COUNT}\\s+sets?\\s+(?:of|x|for)\\s+${PROSE_COUNT}(?:\\s+(?:reps?\\s+)?(?:at|@|with|for)\\s*|\\s*(?:reps?\\s+)?${PROSE_DASH}\\s+|\\s+(?:reps?\\s+)?${PROSE_DASH}\\s*)\\d+(?:\\.\\d+)?\\b`);
 const PROSE_SET_GROUP_GLOBAL = new RegExp(PROSE_SET_GROUP.source, 'g');
 // P8/P9 (pack-only, #1790 follow-up) — zero-quantity directives the parser
 // drops: a trailing `x0` repeat, and prose `for zero sets` / `zero sets` /

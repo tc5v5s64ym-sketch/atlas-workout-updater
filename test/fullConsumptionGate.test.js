@@ -867,6 +867,49 @@ test('pack follow-up round 4 H3: leading-zero repeat counts refuse', () => {
   assert.equal(tight.intent, 'log_sets', 'x05 is a 5-repeat');
 });
 
+test('pack follow-up round 5 I1/I2: prose set-group with `for` in either slot refuses', () => {
+  // Pre-review round 4 on d55dcdb3 (I1/I2): `for` in the count/reps
+  // separator (`3 sets for 8 at 165`) and in the weight preposition with
+  // `reps` (`3 sets of 8 reps for 165`) both dropped the group — `for` is
+  // the third natural English word for both prose slots.
+  for (const text of [
+    'bench 185 5/2 then 3 sets for 8 at 165',
+    'bench 185 5/2 then 3 sets for 8 reps at 165',
+    'bench 185 5/2 then 3 sets for eight at 165',
+    'bench 185 5/2 then three sets for 8 at 165',
+    'bench 185 5/2 then 3 sets for 8 - 165',
+    'bench 185 5/2 then 3 sets for 8 with 165',
+    'bench 185 5/2\n3 sets for 8 at 165',
+    'bench 175 for 5 then 3 sets for 8 at 165',
+    'bench 185 5/2 then 3 sets for 8 at 165 lbs',
+    'bench 185 5/2 then 3 sets of 8 reps for 165',
+    'bench 185 5/2 then 3 sets for eight reps for 165',
+  ]) {
+    const sets = text.includes('175 for 5')
+      ? [{ weight: 175, reps: 5, rir: null }]
+      : [{ weight: 185, reps: 5, rir: 2 }];
+    const out = applyFullConsumptionGate(logSets(sets), text);
+    assert.equal(out.intent, 'needs_clarification', text);
+    assert.ok(out.warnings.includes('repeated_set_group'), text);
+    assert.equal(out.sets, undefined, text);
+  }
+  // The bare `8 for 165` form already refused before this round (via
+  // `mixed_set_format`, the parser consuming `8 for 165` as a set); the
+  // prose arm now names it first. Same fail-closed outcome either way.
+  const bare = applyFullConsumptionGate(
+    logSets([{ weight: 185, reps: 5, rir: 2 }]), 'bench 185 5/2 then 3 sets of 8 for 165');
+  assert.equal(bare.intent, 'needs_clarification', 'bare 8 for 165 still refuses');
+  assert.ok(bare.warnings.includes('repeated_set_group'), 'bare 8 for 165');
+  assert.equal(bare.sets, undefined, 'bare 8 for 165');
+  // `for` with no weight after it names no group: the turn still logs.
+  const noWeight = applyFullConsumptionGate(
+    logSets([{ weight: 185, reps: 5, rir: 2 }]), 'bench 185 5/2 then 3 sets for 8');
+  assert.equal(noWeight.intent, 'log_sets', 'for without a weight is not a prose group');
+  const forTime = applyFullConsumptionGate(
+    logSets([{ weight: 185, reps: 5, rir: 2 }]), 'bench 185 5/2 then 3 sets for time');
+  assert.equal(forTime.intent, 'log_sets', 'for time is not a prose group');
+});
+
 test('pack follow-up: legit repeats and non-zero counts still log untouched', () => {
   const three = [
     { weight: 185, reps: 5, rir: 2 },
