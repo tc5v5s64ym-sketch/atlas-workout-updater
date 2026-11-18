@@ -910,6 +910,43 @@ test('pack follow-up round 5 I1/I2: prose set-group with `for` in either slot re
   assert.equal(forTime.intent, 'log_sets', 'for time is not a prose group');
 });
 
+test('pack follow-up round 6 J1/J2: prose set-group with `*` in either slot refuses', () => {
+  // Pre-review round 5 on b3298d8f (J1/J2): `*` (U+002A, the ASCII
+  // multiplication sign) in the count/reps separator
+  // (`3 sets * 8 at 165`) and in the weight preposition with `reps`
+  // (`3 sets of 8 reps * 165`) both dropped the group — `*` is listed
+  // in the gate's own multiplier-glyph comment and in
+  // UNRECOGNIZED_MULTIPLIER, and its siblings `x`/`×` already refuse
+  // in both slots.
+  for (const text of [
+    'bench 185 5/2 then 3 sets * 8 at 165',
+    'bench 185 5/2 then 3 sets * eight at 165',
+    'bench 185 5/2 then three sets * 8 at 165',
+    'bench 185 5/2\n3 sets * 8 at 165',
+    'bench 185 5/2 then 3 sets of 8 reps * 165',
+    'bench 185 5/2 then 3 sets for 8 reps * 165',
+  ]) {
+    const out = applyFullConsumptionGate(logSets([{ weight: 185, reps: 5, rir: 2 }]), text);
+    assert.equal(out.intent, 'needs_clarification', text);
+    assert.ok(out.warnings.includes('repeated_set_group'), text);
+    assert.equal(out.sets, undefined, text);
+  }
+  // The bare `8 * 165` form already refused before this round (via
+  // `unrecognized_set_notation`); unaffected by this change.
+  const bare = applyFullConsumptionGate(
+    logSets([{ weight: 185, reps: 5, rir: 2 }]), 'bench 185 5/2 then 3 sets of 8 * 165');
+  assert.equal(bare.intent, 'needs_clarification', 'bare 8 * 165 still refuses');
+  assert.ok(bare.warnings.includes('unrecognized_set_notation'), 'bare 8 * 165');
+  assert.equal(bare.sets, undefined, 'bare 8 * 165');
+  // `*` with no weight after it names no group: the turn still logs.
+  const noWeight = applyFullConsumptionGate(
+    logSets([{ weight: 185, reps: 5, rir: 2 }]), 'bench 185 5/2 then 3 sets * 8');
+  assert.equal(noWeight.intent, 'log_sets', 'star without a weight is not a prose group');
+  const starTime = applyFullConsumptionGate(
+    logSets([{ weight: 185, reps: 5, rir: 2 }]), 'bench 185 5/2 then 3 sets of 8 reps * time');
+  assert.equal(starTime.intent, 'log_sets', 'reps * time is not a prose group');
+});
+
 test('pack follow-up: legit repeats and non-zero counts still log untouched', () => {
   const three = [
     { weight: 185, reps: 5, rir: 2 },
