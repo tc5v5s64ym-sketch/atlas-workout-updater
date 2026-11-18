@@ -7338,6 +7338,44 @@ function generateWriteId() {
   return `w-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+// #1780 — the Write_Outcomes ledger operation ID: one per deliberate save,
+// minted before the first submission, preserved on the payload through the
+// dry-run preview into the approve re-send, and reused on transport retries.
+// A deliberate identical second save gets a NEW one (minted with its fresh
+// write_id). The cutover epoch comes from the server's public status doc,
+// fetched once per page load; when the server advertises none (or the fetch
+// fails, or this browser has no randomUUID), minting returns null and the
+// save omits operation_id, taking the legacy path. Never blocks a save.
+let writeOutcomesCutoverPromise = null;
+function getWriteOutcomesCutover() {
+  if (!writeOutcomesCutoverPromise) {
+    writeOutcomesCutoverPromise = fetch('/.well-known/atlas-status.json')
+      .then((res) => (res && res.ok ? res.json() : null))
+      .then((doc) => (doc && typeof doc.write_outcomes_cutover_id === 'string' && doc.write_outcomes_cutover_id
+        ? doc.write_outcomes_cutover_id
+        : null))
+      .catch(() => null);
+  }
+  return writeOutcomesCutoverPromise;
+}
+
+async function mintOperationId() {
+  const cutover = await getWriteOutcomesCutover();
+  if (!cutover) return null;
+  if (window.crypto && typeof crypto.randomUUID === 'function') return `atlas-op-v1:${cutover}:${crypto.randomUUID()}`;
+  return null;
+}
+
+// #1780 — a fresh write_id is a fresh deliberate attempt, so it gets a fresh
+// operation ID with it: reusing the old one under a changed payload would be
+// refused as a payload mismatch. When the server advertises no cutover, drop
+// the field and the retry takes the legacy path.
+async function refreshOperationId(payload) {
+  const fresh = await mintOperationId();
+  if (fresh) payload.operation_id = fresh;
+  else delete payload.operation_id;
+}
+
 function hasLogWorkoutNoWriteProof(result) {
   const data = result?.data || {};
   return data.test_mode === true &&
@@ -8495,6 +8533,13 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       // payload — the same identity its re-stamped rows and effort row carry —
       // so the summary, seal, and finalized event address the same session the
       // appends are stamped with (Codex P1, this PR).
+      // #1780 — mint the ledger operation ID for this deliberate save, when
+      // the server advertises a cutover. It rides the payload through the
+      // dry-run preview into the approve re-send, so the live write and its
+      // retries all carry the same operation; a fresh preview mints a fresh
+      // one. When the server advertises none, the field stays absent and
+      // the save takes the legacy path.
+      const operationId = await mintOperationId();
       const payload = {
         // Blank when no identity is established yet — the server allocates and returns
         // it, and the preview pins it below before anything can be approved. `sessionId`
@@ -8502,7 +8547,8 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
         // to a write path as though it were a decided identity.
         session_id: screenshotResolvedSessionId || explicitSessionId,
         date: screenshotResolvedDate || date,
-        log_rows: logRows, test_mode: 'true', write_id: generateWriteId()
+        log_rows: logRows, test_mode: 'true', write_id: generateWriteId(),
+        ...(operationId ? { operation_id: operationId } : {})
       };
       if (effortRow) payload.effort_row = effortRow;
       // F10D — the session closeout sends the confirmation context, so the dry-run
@@ -9256,6 +9302,7 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
       lastWriteTurnCount = pendingLastWrite ? currentChatTurnCount() : null;
       if (pendingWrite && pendingWrite.payload) {
         pendingWrite.payload.write_id = generateWriteId();
+        await refreshOperationId(pendingWrite.payload);
         delete pendingWrite.payload.effort_row;
       }
       approveBtn.disabled = false;

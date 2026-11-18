@@ -21,6 +21,13 @@ const {
   // Default to "no Sheets provenance" so a test that injects a partial sheets.js stub
   // keeps exactly today's behaviour instead of crashing on an absent export.
   sheetsReadFailureClass = () => null,
+  // #1780 — the Write_Outcomes ledger transport. Absent on a partial stub,
+  // the ledger lookup/commit throws inside its try and the route refuses
+  // 500; the legacy path never touches these.
+  ensureSheetTab,
+  getSpreadsheetSheetIds,
+  getNamedRanges,
+  commitAtomicBatch,
   logSheetName,
   effortSheetName
 } = require('./sheets');
@@ -523,6 +530,28 @@ const { verifyAppendReceipt, verifyAppendReceiptWithoutSession } = require('./se
 // #1764 Part 1 — reverify a completed save receipt against the live workbook
 // before the retry path replays it as success.
 const { verifySaveReceiptAgainstWorkbook } = require('./services/saveReceiptReverify');
+// #1780 — Write_Outcomes ledger (owner-approved Candidate B): durable
+// operation identity for saves. Wired by POST /api/log-workout below;
+// undo-last and the remaining writers follow in the next slice.
+const {
+  commitOperation: commitLedgerOperation,
+  lookupOperation: lookupLedgerOperation,
+  parseOperationId,
+  isOperationId,
+  getCutoverId,
+  canonicalPayloadHash,
+} = require('./services/writeOutcomes');
+// The sheets.js surface the ledger prepares and commits against. The ledger
+// reads must be live (getSheetRowsRaw, not the cached getSheetRows wrapper):
+// a commit decision reads the generation as it stands now.
+const writeOutcomesSheets = {
+  ensureSheetTab,
+  getHeaderRow,
+  getSheetRows: getSheetRowsRaw,
+  getSpreadsheetSheetIds,
+  getNamedRanges,
+  commitAtomicBatch,
+};
 const LOG_SESSION_ID_COLUMN = logCleanedColumns.indexOf('session_id');
 const EFFORT_SESSION_ID_COLUMN = effortColumns.indexOf('session_id');
 
@@ -3782,6 +3811,35 @@ async function recordCloseoutEvent(session_id, session_date, closeoutContext) {
   }
 }
 
+// #1780 — the body a ledger replay answers with: the committed/reverted
+// outcome of the original save, never a fresh success. `outcome` is the
+// decoded Write_Outcomes row as lookupOperation returns it.
+function buildLedgerReplayBody({ outcome, sessionId, writeId }) {
+  const reverted = outcome.status === 'reverted';
+  const body = {
+    message: reverted
+      ? 'The original save was undone and no longer stands.'
+      : 'Duplicate operation_id; the original save already committed.',
+    session_id: sessionId,
+    duplicate_write: true,
+    operation_id: outcome.operationId,
+    ledger_outcome: outcome.status,
+    ledger_marker: (outcome.evidence && outcome.evidence.marker) || null,
+    ...(outcome.revertedBy ? { reverted_by: outcome.revertedBy } : {}),
+    sheet_write: reverted ? 'reverted' : 'skipped_duplicate',
+    sheet_written: false,
+    log_rows_written: Number((outcome.evidence && outcome.evidence.log_rows) || 0),
+    effort_rows_written: outcome.evidence && outcome.evidence.effort ? 1 : 0,
+    effortWritten: Boolean(outcome.evidence && outcome.evidence.effort),
+    test_mode: false,
+  };
+  if (writeId) {
+    body.write_id = writeId;
+    body.idempotency_status = 'completed';
+  }
+  return body;
+}
+
 app.post('/api/log-workout', async (req, res) => {
 
   const payload = req.body;
@@ -4056,6 +4114,40 @@ app.post('/api/log-workout', async (req, res) => {
     return standardError(req, res, 'write_id is required', null, 400);
   }
 
+  // #1780 — a save may carry the operation_id the client minted for the
+  // Write_Outcomes ledger (atlas-op-v1:<cutover>:<operation>). Absent, the
+  // save takes the legacy path unchanged. Present, the ledger path is
+  // mandatory: a malformed ID is a 400, an ID from another cutover is a 409,
+  // and an unconfigured cutover is a 500 — never a silent legacy fallback,
+  // which would write data the ledger cannot answer for. Validated here,
+  // after the dry-run return, so a preview never touches the ledger.
+  const operationId = typeof payload.operation_id === 'string' && payload.operation_id !== '' ? payload.operation_id : null;
+  let cutoverId = null;
+  if (operationId) {
+    if (!isOperationId(operationId)) {
+      return standardError(req, res, 'operation_id is not a valid operation ID (atlas-op-v1:<cutover-UUID>:<operation-UUID>).', { code: 'operation_id_invalid', operation_id: operationId }, 400);
+    }
+    try {
+      cutoverId = getCutoverId();
+    } catch (error) {
+      return standardError(req, res, 'Write_Outcomes cutover is not configured; a ledger save cannot commit.', { code: 'cutover_unconfigured' }, 500);
+    }
+    if (parseOperationId(operationId).cutoverId !== cutoverId) {
+      return standardError(req, res, 'operation_id belongs to another Write_Outcomes cutover and cannot commit here.', { code: 'operation_id_cutover_mismatch', operation_id: operationId }, 409);
+    }
+  }
+  // The ledger payload is the deliberate save as the client submitted it:
+  // resolved session, date, and the raw rows. A retry resends the identical
+  // body, so the hash matches; a different body under the same ID is refused.
+  // test_mode and correlation are deliberately excluded — the approve
+  // re-send drops test_mode, and correlation is turn metadata, not the save.
+  const ledgerPayload = operationId ? {
+    session_id,
+    date: workoutDate,
+    log_rows: payload.log_rows,
+    effort_row: payload.effort_row !== undefined ? payload.effort_row : null,
+  } : null;
+
   // Write-admission gate 6 of 7 (§3.10, §5.3). The dry-run returned above, so a
   // preview is never refused here; nothing has been appended yet.
   const frozen = await refuseIfWritesFrozen(req, res, '/api/log-workout');
@@ -4158,6 +4250,36 @@ app.post('/api/log-workout', async (req, res) => {
       return standardError(req, res, 'Duplicate session; another save for this session is already in progress. Retry after it completes.', null, 409);
     }
     sessionClaim = acquireSessionClaim(sessionClaimKey);
+  }
+
+  // #1780 — the ledger answers before any sheet read below can mistake the
+  // retry for a fresh save. Placed here, after the session claim (so a
+  // concurrent same-operation save serializes and then replays) and before
+  // the Effort duplicate guard and the row dedupe (so a committed save does
+  // not 409 as a duplicate session, and a reverted save is not resurrected
+  // as an all-duplicate replay). A lookup only reads: a failure here wrote
+  // nothing, so failWrite is safe.
+  if (operationId) {
+    let existing = null;
+    try {
+      existing = await lookupLedgerOperation(writeOutcomesSheets, operationId);
+    } catch (error) {
+      console.error('❌ Write_Outcomes ledger lookup failed:', error);
+      if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+      releaseSessionClaim(sessionClaimKey, sessionClaim.token);
+      return standardError(req, res, 'Write_Outcomes ledger could not be read; the save is refused.', { code: error.code || 'ledger_read_failed', operation_id: operationId }, 500);
+    }
+    if (existing) {
+      if (existing.payloadHash !== canonicalPayloadHash(ledgerPayload)) {
+        if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+        releaseSessionClaim(sessionClaimKey, sessionClaim.token);
+        return standardError(req, res, 'operation_id already committed with a different payload; the same ID with different data is refused.', { code: 'operation_id_payload_mismatch', operation_id: operationId }, 409);
+      }
+      const ledgerBody = buildLedgerReplayBody({ outcome: existing, sessionId: session_id, writeId: idempotency.write_id });
+      if (idempotency.enabled) completeWrite(idempotency.write_id, idempotency.token, ledgerBody);
+      releaseSessionClaim(sessionClaimKey, sessionClaim.token);
+      return standardSuccess(req, res, ledgerBody.message, ledgerBody, 200);
+    }
   }
 
   if (formattedEffortRow) {
@@ -4274,14 +4396,87 @@ app.post('/api/log-workout', async (req, res) => {
     return standardError(req, res, 'Failed to validate sheet header contract.', null, 500);
   }
 
+  // #1780 — the ledger path commits Log + Effort + outcome + marker in ONE
+  // atomic batchUpdate. A failure commits nothing: either every row lands
+  // with its outcome row or none does, so the split-append partial states
+  // the legacy path below still handles cannot occur here. The commit reads
+  // the outcome row back before returning success; that read-back is the
+  // verification, so no append receipt is adjudicated on this path.
+  let ledgerResult = null;
+  if (operationId) {
+    const dataAppends = [];
+    if (rowsToWrite.length > 0) dataAppends.push({ tab: logSheetName, rows: rowsToWrite });
+    if (formattedEffortRow) dataAppends.push({ tab: effortSheetName, rows: [formattedEffortRow] });
+    try {
+      ledgerResult = await commitLedgerOperation(writeOutcomesSheets, {
+        cutoverId,
+        operationId,
+        kind: 'save',
+        payload: ledgerPayload,
+        evidence: {
+          session_id,
+          write_id: idempotency.write_id,
+          route: '/api/log-workout',
+          log_rows: rowsToWrite.length,
+          effort: Boolean(formattedEffortRow),
+        },
+        dataAppends,
+      });
+    } catch (error) {
+      console.error('❌ Write_Outcomes ledger commit failed:', error);
+      // Never failWrite a ledger commit: a 5xx or a post-send timeout is
+      // AMBIGUOUS (WRITE-5) — the batch may have committed on Google's side
+      // while the response was lost. Record unverified, so a same-write_id
+      // retry replays the non-confirmation instead of re-appending, and a
+      // retry under the same operation_id reconciles from the ledger.
+      releaseSessionClaim(sessionClaimKey, sessionClaim.token);
+      if (idempotency.enabled) {
+        completeWrite(idempotency.write_id, idempotency.token, {
+          message: 'Write_Outcomes ledger commit could not be confirmed; the save is unverified.',
+          session_id,
+          log_rows_written: 0,
+          effort_rows_written: 0,
+          effortWritten: Boolean(formattedEffortRow),
+          test_mode: false,
+          sheet_write: 'unverified',
+          sheet_written: false,
+          operation_id: operationId,
+          ledger_outcome: 'unknown',
+          write_id: idempotency.write_id,
+          duplicate_write: false,
+          idempotency_status: 'unverified',
+        });
+      }
+      return standardError(req, res, 'Write_Outcomes ledger commit could not be confirmed; nothing is claimed as saved.', { code: error.code || 'ledger_commit_failed', operation_id: operationId }, 500);
+    }
+    if (ledgerResult.replayed) {
+      // A concurrent commit landed this operation between the lookup above
+      // and this commit; the commit replayed it instead of writing twice.
+      // Answer the replay truthfully. The seal belongs to the commit that
+      // landed it, so this request does not seal.
+      try {
+        const replayed = await lookupLedgerOperation(writeOutcomesSheets, operationId);
+        const replayBody = buildLedgerReplayBody({ outcome: replayed, sessionId: session_id, writeId: idempotency.write_id });
+        if (idempotency.enabled) completeWrite(idempotency.write_id, idempotency.token, replayBody);
+        releaseSessionClaim(sessionClaimKey, sessionClaim.token);
+        return standardSuccess(req, res, replayBody.message, replayBody, 200);
+      } catch (lookupError) {
+        console.error('❌ Write_Outcomes ledger replay lookup failed:', lookupError);
+        releaseSessionClaim(sessionClaimKey, sessionClaim.token);
+        return standardError(req, res, 'Write_Outcomes ledger commit replayed, but the committed outcome could not be read back.', { code: lookupError.code || 'ledger_read_failed', operation_id: operationId }, 500);
+      }
+    }
+  }
+
   // The two appends are split so a failure between them cannot release the
   // idempotency record while rows are already on the sheet. Log append fails
   // → nothing was written, failWrite is safe, a retry starts clean. Effort
   // append fails AFTER the log append → the write_id is recorded as completed
   // with a partial result, so a retried write_id replays that honest partial
   // response instead of appending the log rows a second time.
+  // (Legacy path only: a ledger save commits above and skips both appends.)
   let logResponse = null;
-  if (rowsToWrite.length > 0) {
+  if (!operationId && rowsToWrite.length > 0) {
     try {
       console.log(JSON.stringify({
         event: 'append_log_rows',
@@ -4309,7 +4504,7 @@ app.post('/api/log-workout', async (req, res) => {
   }
 
   let effortResponse = null;
-  if (formattedEffortRow) {
+  if (!operationId && formattedEffortRow) {
     try {
       console.log(JSON.stringify({
         event: 'append_effort_row',
@@ -4380,6 +4575,12 @@ app.post('/api/log-workout', async (req, res) => {
     }
   }
 
+  // #1780 — rows this request actually wrote. The ledger commit returns no
+  // appended ranges (a batchUpdate has none), so its counts are the rows the
+  // commit carried; the legacy path reads them off the append receipts.
+  const logRowsWritten = ledgerResult ? rowsToWrite.length : Number(logResponse?.data?.updates?.updatedRows || 0);
+  const effortRowsWritten = ledgerResult ? (formattedEffortRow ? 1 : 0) : Number(effortResponse?.data?.updates?.updatedRows || 0);
+
   // F10D — seal the recommendation ledger under the SAME approved write_id (the
   // shared closeout_write_id). The Log/Effort appends above are already committed,
   // so a seal failure must NEVER fail the response, release the write_id, or claim
@@ -4425,55 +4626,90 @@ app.post('/api/log-workout', async (req, res) => {
       // verify-range, undo, the closeout seal, correlation — without being told which
       // session it got. A client that supplied an id sees its own value back.
       session_id,
-      logAppendedRange: logResponse?.data?.updates?.updatedRange || null,
-      log_rows_written: Number(logResponse?.data?.updates?.updatedRows || 0),
-      effort_rows_written: Number(effortResponse?.data?.updates?.updatedRows || 0),
+      // A batchUpdate returns no appended range, so a ledger save claims none.
+      logAppendedRange: ledgerResult ? null : (logResponse?.data?.updates?.updatedRange || null),
+      log_rows_written: logRowsWritten,
+      effort_rows_written: effortRowsWritten,
       effortWritten: Boolean(formattedEffortRow),
       test_mode: false,
       sheet_write: 'success'
     };
-    // The append's own receipt, adjudicated. This is the write-verification AUTHORITY:
-    // it establishes the exact appended range, the exact row count and session ownership
-    // from the operation that performed the write, so the client no longer spends a
-    // metered read on `GET /api/log-workout/verify-range` at closeout. The verdict is
-    // derived — a missing or self-contradicting receipt yields verified:false with an
-    // exact reason, never a fabricated confirmation. See services/appendWriteProof.js.
-    if (rowsToWrite.length > 0) {
-      responseBody.log_write_verification = verifyAppendReceipt({
-        receipt: logResponse?.data?.updates,
-        tab: logSheetName,
-        sessionId: session_id,
-        rowsSubmitted: rowsToWrite,
-        sessionIdColumnIndex: LOG_SESSION_ID_COLUMN,
-      });
-    }
-    // #1762: the Effort append gets the same adjudication — its receipt was
-    // never verified at all, so a zero-row Effort append still minted success.
-    if (effortResponse) {
-      responseBody.effort_write_verification = verifyAppendReceipt({
-        receipt: effortResponse?.data?.updates,
-        tab: effortSheetName,
-        sessionId: session_id,
-        rowsSubmitted: [formattedEffortRow],
-        sessionIdColumnIndex: EFFORT_SESSION_ID_COLUMN,
-      });
+    if (ledgerResult) {
+      // #1780 — the ledger read-back IS the verification: commitOperation
+      // returns only after the outcome row reads back with the matching
+      // payload hash, so no append receipt is adjudicated on this path.
+      responseBody.operation_id = operationId;
+      responseBody.ledger_outcome = 'committed';
+      responseBody.ledger_marker = ledgerResult.marker;
+      if (rowsToWrite.length > 0) {
+        responseBody.log_write_verification = {
+          verified: true,
+          method: 'write_outcomes_ledger',
+          authority: 'write_outcomes_ledger',
+          operation_id: operationId,
+          marker: ledgerResult.marker,
+          rows_written: rowsToWrite.length,
+          rows_submitted: rowsToWrite.length,
+          reason: null,
+        };
+      }
+      if (formattedEffortRow) {
+        responseBody.effort_write_verification = {
+          verified: true,
+          method: 'write_outcomes_ledger',
+          authority: 'write_outcomes_ledger',
+          operation_id: operationId,
+          marker: ledgerResult.marker,
+          rows_written: 1,
+          rows_submitted: 1,
+          reason: null,
+        };
+      }
+    } else {
+      // The append's own receipt, adjudicated. This is the write-verification AUTHORITY:
+      // it establishes the exact appended range, the exact row count and session ownership
+      // from the operation that performed the write, so the client no longer spends a
+      // metered read on `GET /api/log-workout/verify-range` at closeout. The verdict is
+      // derived — a missing or self-contradicting receipt yields verified:false with an
+      // exact reason, never a fabricated confirmation. See services/appendWriteProof.js.
+      if (rowsToWrite.length > 0) {
+        responseBody.log_write_verification = verifyAppendReceipt({
+          receipt: logResponse?.data?.updates,
+          tab: logSheetName,
+          sessionId: session_id,
+          rowsSubmitted: rowsToWrite,
+          sessionIdColumnIndex: LOG_SESSION_ID_COLUMN,
+        });
+      }
+      // #1762: the Effort append gets the same adjudication — its receipt was
+      // never verified at all, so a zero-row Effort append still minted success.
+      if (effortResponse) {
+        responseBody.effort_write_verification = verifyAppendReceipt({
+          receipt: effortResponse?.data?.updates,
+          tab: effortSheetName,
+          sessionId: session_id,
+          rowsSubmitted: [formattedEffortRow],
+          sessionIdColumnIndex: EFFORT_SESSION_ID_COLUMN,
+        });
+      }
     }
     // #1762: the verdict GATES the outcome. A failed verdict is a failed write,
     // everywhere — the old path attached the verdict and still returned
     // sheet_write:'success' with idempotency_status:'completed', and the retry
     // replayed that success. Unverified, never failed: the rows may be on the
     // sheet, so a retry must replay the non-confirmation, not re-append.
-    const logProofOk = rowsToWrite.length === 0
-      || (responseBody.log_write_verification && responseBody.log_write_verification.verified === true);
-    const effortProofOk = !effortResponse
-      || (responseBody.effort_write_verification && responseBody.effort_write_verification.verified === true);
+    // (On the ledger path the commit's own read-back already gated it.)
+    const logProofOk = ledgerResult ? true : (rowsToWrite.length === 0
+      || (responseBody.log_write_verification && responseBody.log_write_verification.verified === true));
+    const effortProofOk = ledgerResult ? true : (!effortResponse
+      || (responseBody.effort_write_verification && responseBody.effort_write_verification.verified === true));
     if (!logProofOk || !effortProofOk) {
       const unverified = {
         message: 'Workout write could not be verified against the Sheets append proof.',
         session_id,
         logAppendedRange: logResponse?.data?.updates?.updatedRange || null,
-        log_rows_written: Number(logResponse?.data?.updates?.updatedRows || 0),
-        effort_rows_written: Number(effortResponse?.data?.updates?.updatedRows || 0),
+        log_rows_written: logRowsWritten,
+        effort_rows_written: effortRowsWritten,
         effortWritten: Boolean(formattedEffortRow),
         test_mode: false,
         sheet_write: 'unverified',
@@ -4545,8 +4781,8 @@ app.post('/api/log-workout', async (req, res) => {
       // Never failWrite: a released id would append the rows again.
       completeWrite(idempotency.write_id, idempotency.token, {
         message: 'Workout data may have been appended; the write was not verified.',
-        log_rows_written: Number(logResponse?.data?.updates?.updatedRows || 0),
-        effort_rows_written: Number(effortResponse?.data?.updates?.updatedRows || 0),
+        log_rows_written: logRowsWritten,
+        effort_rows_written: effortRowsWritten,
         effortWritten: Boolean(formattedEffortRow),
         test_mode: false,
         sheet_write: 'unverified',

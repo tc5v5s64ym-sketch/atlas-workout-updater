@@ -62,6 +62,12 @@ const ALLOWED_KEYS = [
   'owner_action_required',
   'owner_action_codes',
   'source_freshness',
+  // #1780 — the Write_Outcomes ledger cutover epoch. The client reads this
+  // to mint operation IDs (atlas-op-v1:<cutover>:<operation>); null when the
+  // cutover is not configured, in which case the client sends no operation
+  // ID and saves take the legacy path. A UUID, not a secret: it names the
+  // ledger epoch, and it is validated before it is emitted.
+  'write_outcomes_cutover_id',
   // Supabase hot-path migration (PR S2). §3.8 names `npm run atlas:status` as an
   // immediate consumer of atlas.migration_divergences: staleness and drift must be
   // visible before they are fatal. TEMPORARY in part — the divergence counters go
@@ -86,6 +92,15 @@ function toBoolOrNull(value) {
   if (value === true) return true;
   if (value === false) return false;
   return null;
+}
+
+// #1780 — the Write_Outcomes cutover epoch, echoed only when it is a
+// well-formed UUIDv4. Anything else (unset, truncated, a pasted secret that
+// is not a UUID) degrades to null, never to a fabricated epoch.
+const CUTOVER_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+function normalizeCutoverId(value) {
+  const s = value == null ? '' : String(value).trim();
+  return CUTOVER_ID_RE.test(s) ? s : null;
 }
 
 // The Supabase migration block, normalised so it can never report a FALSE GREEN.
@@ -407,6 +422,7 @@ function assembleStatus(input = {}) {
     synthetic_rows_remaining: synthetic,
     owner_action_required: overall.owner_action_required,
     owner_action_codes: overall.owner_action_codes,
+    write_outcomes_cutover_id: normalizeCutoverId(input.write_outcomes_cutover_id),
     source_freshness: {
       execution_plan: plan.available ? 'available' : 'unavailable',
       test_queue: test.available ? 'available' : 'unavailable',
@@ -440,12 +456,22 @@ function deriveServiceFacts() {
     flight = require('./flightRecorder').isFlightRecorderEnabled() === true;
   } catch (_) { /* flag reader unavailable → treat as off */ }
 
+  // #1780 — the ledger cutover epoch, from the deploy sequence that creates
+  // the Write_Outcomes tab. Unset or malformed → null (the client then sends
+  // no operation ID and saves take the legacy path).
+  const cutoverId = normalizeCutoverId(
+    typeof process.env.ATLAS_WRITE_OUTCOMES_CUTOVER_ID === 'string'
+      ? process.env.ATLAS_WRITE_OUTCOMES_CUTOVER_ID
+      : ''
+  );
+
   return {
     sheets_configured: sheetsConfigured,
     llm_configured: llmConfigured,
     llm_provider: 'gemini',
     llm_model: llmModel,
-    flight_recorder_enabled: flight
+    flight_recorder_enabled: flight,
+    write_outcomes_cutover_id: cutoverId
   };
 }
 
@@ -468,6 +494,7 @@ function buildServerStatus(deploy = {}) {
     llm_provider: facts.llm_provider,
     llm_model: facts.llm_model,
     flight_recorder_enabled: facts.flight_recorder_enabled,
+    write_outcomes_cutover_id: facts.write_outcomes_cutover_id,
     synthetic_rows_remaining: null,
     // The public endpoint never opens a database connection — its contract is
     // read-only over the deployed checkout and env presence. The divergence
@@ -502,6 +529,7 @@ function buildLocalCliStatus(opts = {}) {
     llm_provider: facts.llm_provider,
     llm_model: facts.llm_model,
     flight_recorder_enabled: facts.flight_recorder_enabled,
+    write_outcomes_cutover_id: facts.write_outcomes_cutover_id,
     synthetic_rows_remaining: null,
     supabase_migration: opts.supabase_migration || null,
     unavailable_sources: unavailable

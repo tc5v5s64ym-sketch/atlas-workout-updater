@@ -2586,5 +2586,6 @@ Before implementation, report only:
 - Git history is the archive. Completed-plan prose does not need to remain in the live documentation tree.
 
 > **Owner-gate note (2026-11-18, #1780):** the wiring-allowlist shrink-only ratchet ceiling was raised 8 → 9 to stage `services/writeOutcomes.js` (Write_Outcomes ledger mechanism, owner-approved Candidate B, issue #1780). The module is staged for imminent wiring in the same PR's next slice (route/client writer wiring); the entry expires 2026-11-30 and the ceiling ratchets back down in the same PR that wires it out. No other entry was touched.
+> **Update (2026-11-18, #1780 slice 2a):** `services/writeOutcomes.js` is now wired — `index.js` requires it and POST /api/log-workout commits through it — so the allowlist entry is removed and the ceiling ratchets back 9 → 8 in the same PR. Undo-last and the remaining writers (complete-workout, log-modality, coaching-notes) wire in the next slice of the same PR.
 
 > **Finish. Prove. Declare. Then make it pretty.**

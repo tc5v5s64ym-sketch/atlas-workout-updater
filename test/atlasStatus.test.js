@@ -241,6 +241,22 @@ test('computeOverall reports unknown (not healthy) when the build is unknown', (
 
 // --- assembleStatus (redaction + shape) -------------------------------------
 
+test('assembleStatus echoes a well-formed Write_Outcomes cutover id and nulls anything else (#1780)', () => {
+  const cutover = '11111111-2222-4333-8444-555555555555';
+  const base = {
+    now: NOW,
+    generated_by: 'endpoint',
+    deployed_commit: 'abc123def456789',
+    plan_text: '### F09 — thing\n**Status:** QUEUED',
+    test_text: '### LT-010 — x\n| **Owner result** | ✅ PASS 2026-07-16 |',
+  };
+  assert.equal(assembleStatus({ ...base, write_outcomes_cutover_id: cutover }).write_outcomes_cutover_id, cutover);
+  assert.equal(assembleStatus({ ...base }).write_outcomes_cutover_id, null);
+  assert.equal(assembleStatus({ ...base, write_outcomes_cutover_id: 'not-a-uuid' }).write_outcomes_cutover_id, null);
+  assert.equal(assembleStatus({ ...base, write_outcomes_cutover_id: '11111111-2222-3333-8444-555555555555' }).write_outcomes_cutover_id, null,
+    'a version-3 UUID is not a cutover epoch');
+});
+
 test('assembleStatus only ever emits whitelisted keys', () => {
   const status = assembleStatus({
     now: NOW,
