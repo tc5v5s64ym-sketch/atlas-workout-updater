@@ -134,10 +134,25 @@ async function postLogWorkout(t, payload) {
   // response, and NO append.
   require('../services/idempotency').resetIdempotencyStore();
   const { base } = await serverPromise;
+  // #1791 — a live write requires the signed preview digest: preview first
+  // (same write_id — a preview never consumes it) and carry the digest on
+  // the live write, exactly as the app's approve flow does.
+  const preview = await fetch(`${base}/api/log-workout`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-atlas-api-key': 'test-api-key' },
+    body: JSON.stringify({ ...payload, test_mode: true }),
+  });
+  const previewBody = await preview.json();
+  // A refused preview (e.g. an invalid effort row) fails at validation the
+  // live write would fail at identically — return it as the response, so
+  // refusal tests keep asserting the same status + message.
+  if (preview.status !== 200) return { res: preview, body: previewBody };
+  const digest = previewBody.data && previewBody.data.preview_digest;
+  assert.equal(typeof digest, 'string', 'preview must mint a preview_digest');
   const res = await fetch(`${base}/api/log-workout`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-atlas-api-key': 'test-api-key' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ ...payload, preview_digest: digest }),
   });
   return { res, body: await res.json() };
 }

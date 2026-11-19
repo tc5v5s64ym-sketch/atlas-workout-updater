@@ -52,6 +52,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { resetIdempotencyStore } = require('../services/idempotency');
 const { resetSessionClaims } = require('../services/sessionWriteClaim');
+// #1791 — a live /api/log-workout write requires the signed preview digest:
+// seed saves preview first via this helper, exactly as the app's approve does.
+const { postLiveLogWorkout } = require('./helpers/previewDigest');
 const {
   logCleanedColumns,
   effortColumns,
@@ -372,7 +375,7 @@ function saveBody(sessionId, writeId, operationId, rows = BENCH_ROWS, effort = E
 }
 
 async function seedLedgerSave(sessionId, writeId, operationId) {
-  const res = await post('/api/log-workout', saveBody(sessionId, writeId, operationId));
+  const res = await postLiveLogWorkout(post, saveBody(sessionId, writeId, operationId), 'seedLedgerSave');
   assert.equal(res.status, 200, JSON.stringify(res.body));
   assert.equal(res.body.data.ledger_outcome, 'committed');
   return res.body.data;
@@ -533,7 +536,7 @@ test('#1780 slice 3a: an undo with a positional range AND an operation_id + targ
     name: 'atlas_receipt_commit_1',
     range: { sheetId: 10, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: 1 },
   });
-  const save = await post('/api/log-workout', saveBody('1780-UNDO-RANGE', '1780-undo-w-range', null));
+  const save = await postLiveLogWorkout(post, saveBody('1780-UNDO-RANGE', '1780-undo-w-range', null), 'undo-range seed');
   assert.equal(save.status, 200, JSON.stringify(save.body));
   // The legacy save above appended the rows at sheet rows 2-3; the undo
   // targets them by that range. (The seeded outcome row is what the undo
@@ -555,7 +558,7 @@ test('#1780 slice 3a: an undo with a positional range AND an operation_id + targ
 
 test('#1780 slice 3a: an undo with no operation_id takes the legacy path and mints no undo outcome row', async () => {
   reset();
-  const save = await post('/api/log-workout', saveBody('1780-UNDO-LEGACY', '1780-undo-w-legacy', null));
+  const save = await postLiveLogWorkout(post, saveBody('1780-UNDO-LEGACY', '1780-undo-w-legacy', null), 'undo-legacy seed');
   assert.equal(save.status, 200, JSON.stringify(save.body));
   assert.equal(logRowsOnSheet(), 2);
   assert.equal(effortRowsOnSheet(), 1);
