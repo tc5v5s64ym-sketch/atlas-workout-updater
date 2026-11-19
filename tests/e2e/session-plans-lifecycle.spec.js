@@ -75,7 +75,7 @@ async function mockApis(page, capture) {
     }
     if (path === '/api/log-workout' && m === 'POST') {
       capture.posts.push({ path, body });
-      return route.fulfill(json({ status: 'success', data: { test_mode: true, sheet_write: 'skipped', sheet_written: false, no_write_confirmed: true,
+      return route.fulfill(json({ status: 'success', data: { test_mode: true, sheet_write: 'skipped', sheet_written: false, no_write_confirmed: true, preview_digest: 'pd1.e2e-mock-digest', 
         warnings: [], auto_matches: [], pending_exercises: [], rule_flags: [],
         log_rows_preview: SETS.map((s, i) => (['2026-06-12', 'PW', 'Seated Row', 'Seated Row', 'Back', 'ROW01', i + 1, s.weight, s.reps, s.rir, '', s.weight * s.reps])) } }));
     }

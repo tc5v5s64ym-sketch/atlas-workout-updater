@@ -122,7 +122,9 @@ async function installCoachLaneMocks(page, capture, fixture) {
     if (path === '/api/log-workout' && method === 'POST') {
       capture.posts.push({ path, body });
       return route.fulfill(json({ status: 'success', data: {
-        ...dryRunEnvelope, sheet_write: 'skipped',
+        // #1791 — the real /api/log-workout preview returns preview_digest, and
+        // the manual approve gate requires it; the mock models it.
+        ...dryRunEnvelope, sheet_write: 'skipped', preview_digest: 'pd1.e2e-mock-digest',
         auto_matches: [], pending_exercises: [], rule_flags: [],
         log_rows_preview: f.logPreview || [],
       } }));

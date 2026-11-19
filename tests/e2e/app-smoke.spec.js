@@ -81,6 +81,7 @@ async function mockAtlasApis(page, capture = {}) {
             sheet_write: 'skipped',
             sheet_written: false,
             no_write_confirmed: true,
+            preview_digest: 'pd1.e2e-mock-digest',
             warnings: [],
             auto_matches: ['bench -> Bench Press'],
             pending_exercises: [],
@@ -708,6 +709,7 @@ test('Session review surfaces the substitution verdict as a read-only note, and 
           sheet_write: 'skipped',
           sheet_written: false,
           no_write_confirmed: true,
+          preview_digest: 'pd1.e2e-mock-digest',
           warnings: [], auto_matches: [], pending_exercises: [], rule_flags: [],
           log_rows_preview: BENCH_ROWS,
           substitutions: [{
@@ -1212,7 +1214,7 @@ async function mockSixExerciseSession(page, capture) {
           r.set_number, r.weight, r.reps, r.rir, r.notes || '', (Number(r.weight) || 0) * (Number(r.reps) || 0)];
       });
       return route.fulfill(json({ status: 'success', data: {
-        test_mode: true, sheet_write: 'skipped', sheet_written: false, no_write_confirmed: true,
+        test_mode: true, sheet_write: 'skipped', sheet_written: false, no_write_confirmed: true, preview_digest: 'pd1.e2e-mock-digest', 
         warnings: [], auto_matches: [], pending_exercises: [], rule_flags: [], log_rows_preview: preview
       } }));
     }
