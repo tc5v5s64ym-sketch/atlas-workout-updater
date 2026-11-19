@@ -3449,6 +3449,61 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
     // the client shows a graceful "already saved" note instead of a red "Preview failed".
     // This is the re-used-screenshot case: same screenshot → same screenshot-date
     // session_id → that session is already in Effort.
+    // #1780 — the ledger answers BEFORE the hard-stop below can mistake a
+    // committed save's retry for a fresh duplicate session (the same reason
+    // /api/log-workout's lookup sits before its Effort duplicate guard). A
+    // preview never reaches this block: test_mode ignores operation_id
+    // entirely, and a preview never touches the ledger. The lookup only
+    // reads; the commit below re-verifies, so a concurrent commit between
+    // here and there still replays instead of writing twice. Declared here
+    // so the live-write block below reuses the resolved operation and the
+    // payload it hashed.
+    let operationId = null;
+    let cutoverId = null;
+    let ledgerPayload = null;
+    if (!testMode && formFields.operation_id) {
+      const ledgerId = resolveLedgerOperationId(formFields);
+      if (ledgerId.error) {
+        if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
+        return standardError(req, res, ledgerId.error.message, { code: ledgerId.error.code, operation_id: formFields.operation_id }, ledgerId.error.status);
+      }
+      operationId = ledgerId.operationId;
+      cutoverId = ledgerId.cutoverId;
+      // The ledger payload is the deliberate save as the client submitted
+      // it: resolved session, date, the raw rows, and the effort source as
+      // submitted. A retry resends the identical form, so the hash matches;
+      // a different body under the same ID is refused. Normalized metrics
+      // are deliberately excluded — a screenshot's numbers are quarantined
+      // and never reach the row, so they are not the save.
+      ledgerPayload = {
+        session_id: sessionId,
+        date: dateValue,
+        log_rows: parsedLogRows,
+        effort_json: formFields.effort_json !== undefined && formFields.effort_json !== null ? String(formFields.effort_json) : null,
+        effort: formFields.effort !== undefined && formFields.effort !== null ? String(formFields.effort) : null,
+        duration: formFields.duration !== undefined && formFields.duration !== null ? String(formFields.duration) : null,
+        location: formFields.location !== undefined && formFields.location !== null ? String(formFields.location) : null,
+        notes: formFields.notes !== undefined && formFields.notes !== null ? String(formFields.notes) : null,
+        image: Boolean(req.file),
+      };
+      let existing = null;
+      try {
+        existing = await lookupLedgerOperation(writeOutcomesSheets, operationId);
+      } catch (error) {
+        console.error('❌ Write_Outcomes ledger lookup failed:', error);
+        if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
+        return standardError(req, res, 'Write_Outcomes ledger could not be read; the save is refused.', { code: error.code || 'ledger_read_failed', operation_id: operationId }, 500);
+      }
+      if (existing) {
+        if (existing.payloadHash !== canonicalPayloadHash(ledgerPayload)) {
+          if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
+          return standardError(req, res, 'operation_id already committed with a different payload; the same ID with different data is refused.', { code: 'operation_id_payload_mismatch', operation_id: operationId }, 409);
+        }
+        const ledgerBody = buildLedgerReplayBody({ outcome: existing, sessionId, writeId });
+        if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
+        return standardSuccess(req, res, ledgerBody.message, { status: 'ok', message: ledgerBody.message, data: ledgerBody }, 200);
+      }
+    }
     if (duplicateSession && !testMode) {
       if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
       return standardError(req, res, 'Duplicate session.', null, 409);
@@ -3556,6 +3611,9 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
     // block; the body is built after it closes).
     let logVerdict = null;
     let effortVerdict = null;
+    // #1780 — the ledger commit result, declared here so the F02 gate and
+    // the success body below can read it (same shape as the verdicts above).
+    let ledgerResult = null;
     if (!testMode) {
       // Live writes must carry a write_id so a lost-response retry is deduplicated
       // instead of appending the same session twice. Dry-runs never write, so they
@@ -3675,26 +3733,83 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         return standardError(req, res, 'Failed to validate sheet header contract.', null, 500);
       }
 
-      try {
-        if (rowsToWrite.length > 0) {
-          const logResponse = await appendRows(logSheetName, rowsToWrite);
-          logUpdates = logResponse?.data?.updates || null;
-          logAppendedRange = logUpdates?.updatedRange || null;
-          logRowsWritten = Number(logUpdates?.updatedRows || 0);
-          // Log rows have landed. From here a failure must never release the
-          // write_id (a retry would re-append these rows) — mark the write
-          // committed so the catch records a partial completion instead.
-          writeCommitted = true;
+      // #1780 — the ledger path replaces BOTH sequential appends with ONE
+      // atomic batchUpdate: Log + Effort + outcome + marker, or nothing.
+      // That is the multipart partial-commit fix: there is no window
+      // between the Log append and the Effort append for a crash to leave
+      // a half-written save, and the ledger read-back is the verification,
+      // so no append receipt is adjudicated on this path. The legacy path
+      // below (and its partial-commit recovery) is unchanged.
+      if (operationId) {
+        const dataAppends = [];
+        if (rowsToWrite.length > 0) dataAppends.push({ tab: logSheetName, rows: rowsToWrite });
+        dataAppends.push({ tab: effortSheetName, rows: [effortRow] });
+        try {
+          ledgerResult = await commitLedgerOperation(writeOutcomesSheets, {
+            cutoverId,
+            operationId,
+            kind: 'save',
+            payload: ledgerPayload,
+            evidence: {
+              session_id: sessionId,
+              write_id: idempotency.write_id,
+              route: '/api/complete-workout',
+              log_rows: rowsToWrite.length,
+              effort: true,
+            },
+            dataAppends,
+          });
+        } catch (error) {
+          console.error('❌ Write_Outcomes ledger commit failed:', error);
+          // Never failWrite a ledger commit: a 5xx or a post-send timeout
+          // is AMBIGUOUS (WRITE-5) — the batch may have committed on
+          // Google's side while the response was lost. Record unverified,
+          // so a same-write_id retry replays the non-confirmation instead
+          // of re-appending, and a retry under the same operation_id
+          // reconciles from the ledger.
+          if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
+          if (idempotency.enabled) {
+            completeWrite(idempotency.write_id, idempotency.token, {
+              message: 'Write_Outcomes ledger commit could not be confirmed; the save is unverified.',
+              session_id: sessionId,
+              log_rows_written: 0,
+              effort_rows_written: 0,
+              effortWritten: true,
+              test_mode: false,
+              sheet_write: 'unverified',
+              sheet_written: false,
+              operation_id: operationId,
+              ledger_outcome: 'unknown',
+              write_id: idempotency.write_id,
+              duplicate_write: false,
+              idempotency_status: 'unverified',
+            });
+          }
+          return standardError(req, res, 'Write_Outcomes ledger commit could not be confirmed; nothing is claimed as saved.', { code: error.code || 'ledger_commit_failed', operation_id: operationId }, ledgerErrorStatus(error));
         }
-        const effortResponse = await appendRows(effortSheetName, [effortRow]);
-        effortUpdates = effortResponse?.data?.updates || null;
-        effortAppendedRange = effortUpdates?.updatedRange || null;
-        effortRowsWritten = Number(effortUpdates?.updatedRows || 0);
+        if (ledgerResult.replayed) {
+          // A concurrent commit landed this operation between the lookup
+          // above and this commit; the commit replayed it instead of
+          // writing twice. Answer the replay truthfully.
+          try {
+            const replayed = await lookupLedgerOperation(writeOutcomesSheets, operationId);
+            const replayBody = buildLedgerReplayBody({ outcome: replayed, sessionId, writeId: idempotency.write_id });
+            if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
+            if (idempotency.enabled) completeWrite(idempotency.write_id, idempotency.token, replayBody);
+            return standardSuccess(req, res, replayBody.message, { status: 'ok', message: replayBody.message, data: replayBody }, 200);
+          } catch (lookupError) {
+            console.error('❌ Write_Outcomes ledger replay lookup failed:', lookupError);
+            if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
+            return standardError(req, res, 'Write_Outcomes ledger commit replayed, but the committed outcome could not be read back.', { code: lookupError.code || 'ledger_read_failed', operation_id: operationId }, 500);
+          }
+        }
+        logRowsWritten = rowsToWrite.length;
+        effortRowsWritten = 1;
         effortWritten = true;
         writeCommitted = true;
-        // Both appends succeeded on this path (the log one only when there were rows).
         invalidateSheetRowsCache(rowsToWrite.length > 0 ? logSheetName : null, effortSheetName);
-        // S2 shadow: mirror exactly what the Sheets append committed. Fire-and-forget.
+        // S2 shadow: mirror exactly what the atomic batch committed.
+        // Fire-and-forget; the response below is decided entirely by Sheets.
         migrationShadow.shadowSave({
           sessionId,
           logCells: rowsToWrite,
@@ -3702,174 +3817,207 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
           route: '/api/complete-workout',
           writeId: idempotency.write_id || null,
         });
-      } catch (error) {
-        if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
-        // WHATEVER LANDED BEFORE THE THROW IS ON THE SHEET, so the cache holding a pre-write
-        // copy of it must go — before any branch below, and whether or not idempotency is
-        // enabled. Both facts matter: the throw is usually the Effort append, but it can also
-        // come from a later step with BOTH appends already done, and the recovery branch
-        // below only runs when idempotency is on. Keyed on what actually landed, so this
-        // stays honest rather than reverting to a flush.
-        invalidateSheetRowsCache(
-          logRowsWritten > 0 ? logSheetName : null,
-          effortWritten ? effortSheetName : null
-        );
-        // S2 shadow: whatever landed before the throw IS on the sheet, so the
-        // mirror must carry it too. Keyed on what actually landed, exactly as the
-        // cache invalidation above is.
-        if (writeCommitted) {
+      } else {
+        try {
+          if (rowsToWrite.length > 0) {
+            const logResponse = await appendRows(logSheetName, rowsToWrite);
+            logUpdates = logResponse?.data?.updates || null;
+            logAppendedRange = logUpdates?.updatedRange || null;
+            logRowsWritten = Number(logUpdates?.updatedRows || 0);
+            // Log rows have landed. From here a failure must never release the
+            // write_id (a retry would re-append these rows) — mark the write
+            // committed so the catch records a partial completion instead.
+            writeCommitted = true;
+          }
+          const effortResponse = await appendRows(effortSheetName, [effortRow]);
+          effortUpdates = effortResponse?.data?.updates || null;
+          effortAppendedRange = effortUpdates?.updatedRange || null;
+          effortRowsWritten = Number(effortUpdates?.updatedRows || 0);
+          effortWritten = true;
+          writeCommitted = true;
+          // Both appends succeeded on this path (the log one only when there were rows).
+          invalidateSheetRowsCache(rowsToWrite.length > 0 ? logSheetName : null, effortSheetName);
+          // S2 shadow: mirror exactly what the Sheets append committed. Fire-and-forget.
           migrationShadow.shadowSave({
             sessionId,
-            logCells: logRowsWritten > 0 ? rowsToWrite : [],
-            effortCells: effortWritten ? effortRow : null,
+            logCells: rowsToWrite,
+            effortCells: effortRow,
             route: '/api/complete-workout',
             writeId: idempotency.write_id || null,
           });
-        }
-        if (idempotency.enabled && writeCommitted) {
-          // #1762: the partial claim is only honest if the Log receipt itself
-          // proves the rows — a wrong-tab or zero-row Log receipt means the
-          // "log rows written" half of the partial is unestablished, so the
-          // write records as unverified, not partial.
-          const logVerdict = rowsToWrite.length === 0 ? null : verifyAppendReceipt({
-            receipt: logUpdates,
-            tab: logSheetName,
-            sessionId,
-            rowsSubmitted: rowsToWrite,
-            sessionIdColumnIndex: LOG_SESSION_ID_COLUMN,
-          });
-          if (logVerdict && logVerdict.verified === false) {
-            const unverified = {
+        } catch (error) {
+          if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
+          // WHATEVER LANDED BEFORE THE THROW IS ON THE SHEET, so the cache holding a pre-write
+          // copy of it must go — before any branch below, and whether or not idempotency is
+          // enabled. Both facts matter: the throw is usually the Effort append, but it can also
+          // come from a later step with BOTH appends already done, and the recovery branch
+          // below only runs when idempotency is on. Keyed on what actually landed, so this
+          // stays honest rather than reverting to a flush.
+          invalidateSheetRowsCache(
+            logRowsWritten > 0 ? logSheetName : null,
+            effortWritten ? effortSheetName : null
+          );
+          // S2 shadow: whatever landed before the throw IS on the sheet, so the
+          // mirror must carry it too. Keyed on what actually landed, exactly as the
+          // cache invalidation above is.
+          if (writeCommitted) {
+            migrationShadow.shadowSave({
+              sessionId,
+              logCells: logRowsWritten > 0 ? rowsToWrite : [],
+              effortCells: effortWritten ? effortRow : null,
+              route: '/api/complete-workout',
+              writeId: idempotency.write_id || null,
+            });
+          }
+          if (idempotency.enabled && writeCommitted) {
+            // #1762: the partial claim is only honest if the Log receipt itself
+            // proves the rows — a wrong-tab or zero-row Log receipt means the
+            // "log rows written" half of the partial is unestablished, so the
+            // write records as unverified, not partial.
+            const logVerdict = rowsToWrite.length === 0 ? null : verifyAppendReceipt({
+              receipt: logUpdates,
+              tab: logSheetName,
+              sessionId,
+              rowsSubmitted: rowsToWrite,
+              sessionIdColumnIndex: LOG_SESSION_ID_COLUMN,
+            });
+            if (logVerdict && logVerdict.verified === false) {
+              const unverified = {
+                session_id: sessionId,
+                date: dateValue,
+                write_id: idempotency.write_id,
+                duplicate_write: false,
+                idempotency_status: 'unverified',
+                sheet_write: 'unverified',
+                sheet_written: true,
+                log_rows_written: logRowsWritten,
+                logAppendedRange,
+                effort_written: effortWritten,
+                post_processing_error: true,
+                proof_mismatch: true,
+                log_write_verification: logVerdict,
+              };
+              completeWrite(idempotency.write_id, idempotency.token, {
+                status: 'error',
+                message: 'complete-workout log append proof missing or inconsistent',
+                data: unverified
+              });
+              liveWriteRecorded = true;
+              recordTurnWriteProof(
+                correlationPayload,
+                sessionId,
+                '/api/complete-workout',
+                unverified,
+                { correlationPayload },
+              );
+              return standardError(req, res, 'Workout write could not be verified against the Sheets append proof.', unverified, 500);
+            }
+            // The log rows are already on the sheet but the effort append (or a
+            // later step) threw. Record the write as completed with a partial body
+            // so a retried write_id replays this state instead of re-appending the
+            // log rows. Mirrors /api/log-workout's partial-write contract.
+            const partialData = {
               session_id: sessionId,
               date: dateValue,
               write_id: idempotency.write_id,
               duplicate_write: false,
-              idempotency_status: 'unverified',
-              sheet_write: 'unverified',
+              idempotency_status: 'partial',
+              sheet_write: 'partial',
               sheet_written: true,
               log_rows_written: logRowsWritten,
               logAppendedRange,
+              // Report what actually landed: normally false here (the effort append
+              // is what threw), but use the flag so an unlikely throw from a later
+              // step after a successful effort append can't understate the row.
               effort_written: effortWritten,
-              post_processing_error: true,
-              proof_mismatch: true,
-              log_write_verification: logVerdict,
+              post_processing_error: true
             };
             completeWrite(idempotency.write_id, idempotency.token, {
-              status: 'error',
-              message: 'complete-workout log append proof missing or inconsistent',
-              data: unverified
+              status: 'ok',
+              message: 'complete-workout log rows written; effort append failed',
+              data: partialData
             });
             liveWriteRecorded = true;
             recordTurnWriteProof(
               correlationPayload,
               sessionId,
               '/api/complete-workout',
-              unverified,
+              partialData,
               { correlationPayload },
             );
-            return standardError(req, res, 'Workout write could not be verified against the Sheets append proof.', unverified, 500);
+            return standardError(req, res, 'Effort row append failed after log rows were written.', partialData, 500);
           }
-          // The log rows are already on the sheet but the effort append (or a
-          // later step) threw. Record the write as completed with a partial body
-          // so a retried write_id replays this state instead of re-appending the
-          // log rows. Mirrors /api/log-workout's partial-write contract.
-          const partialData = {
+          if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+          return standardError(req, res, 'Failed to append workout data.', null, 500);
+        }
+      }
+
+      // #1780 — the F02 adjudication runs on the legacy path only: a ledger
+      // save commits above, and its read-back is the verification.
+      if (!ledgerResult) {
+        // F02 / WRITE-1: a success response must never claim a write the Sheets
+        // append response did not confirm. #1762: the old check — range present
+        // and count equal — passed a wrong-tab range ('Wrong_Tab!A2:L2' with the
+        // right count) as success with the target table empty. Both appends are
+        // now adjudicated by the one canonical verdict (tab, A-start, range
+        // parse, span, count, session ownership). The rows have already landed
+        // here, so record the write committed (a retry must not re-append) and
+        // surface the anomaly instead of reporting 'success' — a proof mismatch
+        // freezes the save into an explicit unverified state rather than a false
+        // success.
+        logVerdict = rowsToWrite.length === 0 ? null : verifyAppendReceipt({
+          receipt: logUpdates,
+          tab: logSheetName,
+          sessionId,
+          rowsSubmitted: rowsToWrite,
+          sessionIdColumnIndex: LOG_SESSION_ID_COLUMN,
+        });
+        effortVerdict = verifyAppendReceipt({
+          receipt: effortUpdates,
+          tab: effortSheetName,
+          sessionId,
+          rowsSubmitted: [effortRow],
+          sessionIdColumnIndex: EFFORT_SESSION_ID_COLUMN,
+        });
+        const logProofOk = rowsToWrite.length === 0
+          || (logVerdict && logVerdict.verified === true);
+        const effortProofOk = effortVerdict && effortVerdict.verified === true;
+        if (!logProofOk || !effortProofOk) {
+          const unverified = {
             session_id: sessionId,
             date: dateValue,
             write_id: idempotency.write_id,
             duplicate_write: false,
-            idempotency_status: 'partial',
-            sheet_write: 'partial',
+            idempotency_status: 'unverified',
+            sheet_write: 'unverified',
             sheet_written: true,
             log_rows_written: logRowsWritten,
             logAppendedRange,
-            // Report what actually landed: normally false here (the effort append
-            // is what threw), but use the flag so an unlikely throw from a later
-            // step after a successful effort append can't understate the row.
+            expected_log_rows: rowsToWrite.length,
             effort_written: effortWritten,
-            post_processing_error: true
+            effort_rows_written: effortRowsWritten,
+            effortAppendedRange,
+            proof_mismatch: true,
+            log_write_verification: logVerdict,
+            effort_write_verification: effortVerdict
           };
-          completeWrite(idempotency.write_id, idempotency.token, {
-            status: 'ok',
-            message: 'complete-workout log rows written; effort append failed',
-            data: partialData
-          });
-          liveWriteRecorded = true;
+          if (idempotency.enabled) {
+            completeWrite(idempotency.write_id, idempotency.token, {
+              status: 'error',
+              message: 'complete-workout append proof missing or inconsistent',
+              data: unverified
+            });
+            liveWriteRecorded = true;
+          }
           recordTurnWriteProof(
             correlationPayload,
             sessionId,
             '/api/complete-workout',
-            partialData,
+            unverified,
             { correlationPayload },
           );
-          return standardError(req, res, 'Effort row append failed after log rows were written.', partialData, 500);
+          return standardError(req, res, 'Workout write could not be verified against the Sheets append proof.', unverified, 500);
         }
-        if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
-        return standardError(req, res, 'Failed to append workout data.', null, 500);
-      }
-
-      // F02 / WRITE-1: a success response must never claim a write the Sheets
-      // append response did not confirm. #1762: the old check — range present
-      // and count equal — passed a wrong-tab range ('Wrong_Tab!A2:L2' with the
-      // right count) as success with the target table empty. Both appends are
-      // now adjudicated by the one canonical verdict (tab, A-start, range
-      // parse, span, count, session ownership). The rows have already landed
-      // here, so record the write committed (a retry must not re-append) and
-      // surface the anomaly instead of reporting 'success' — a proof mismatch
-      // freezes the save into an explicit unverified state rather than a false
-      // success.
-      logVerdict = rowsToWrite.length === 0 ? null : verifyAppendReceipt({
-        receipt: logUpdates,
-        tab: logSheetName,
-        sessionId,
-        rowsSubmitted: rowsToWrite,
-        sessionIdColumnIndex: LOG_SESSION_ID_COLUMN,
-      });
-      effortVerdict = verifyAppendReceipt({
-        receipt: effortUpdates,
-        tab: effortSheetName,
-        sessionId,
-        rowsSubmitted: [effortRow],
-        sessionIdColumnIndex: EFFORT_SESSION_ID_COLUMN,
-      });
-      const logProofOk = rowsToWrite.length === 0
-        || (logVerdict && logVerdict.verified === true);
-      const effortProofOk = effortVerdict && effortVerdict.verified === true;
-      if (!logProofOk || !effortProofOk) {
-        const unverified = {
-          session_id: sessionId,
-          date: dateValue,
-          write_id: idempotency.write_id,
-          duplicate_write: false,
-          idempotency_status: 'unverified',
-          sheet_write: 'unverified',
-          sheet_written: true,
-          log_rows_written: logRowsWritten,
-          logAppendedRange,
-          expected_log_rows: rowsToWrite.length,
-          effort_written: effortWritten,
-          effort_rows_written: effortRowsWritten,
-          effortAppendedRange,
-          proof_mismatch: true,
-          log_write_verification: logVerdict,
-          effort_write_verification: effortVerdict
-        };
-        if (idempotency.enabled) {
-          completeWrite(idempotency.write_id, idempotency.token, {
-            status: 'error',
-            message: 'complete-workout append proof missing or inconsistent',
-            data: unverified
-          });
-          liveWriteRecorded = true;
-        }
-        recordTurnWriteProof(
-          correlationPayload,
-          sessionId,
-          '/api/complete-workout',
-          unverified,
-          { correlationPayload },
-        );
-        return standardError(req, res, 'Workout write could not be verified against the Sheets append proof.', unverified, 500);
       }
     }
 
@@ -3955,13 +4103,46 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
     // F02 / WRITE-1: report the authoritative per-tab append proof on the live
     // write (dry runs never append, so they carry no range/count proof).
     if (!testMode) {
-      responseBody.data.logAppendedRange = logAppendedRange;
-      responseBody.data.effortAppendedRange = effortAppendedRange;
+      // A batchUpdate returns no appended range, so a ledger save claims
+      // none (mirrors /api/log-workout).
+      responseBody.data.logAppendedRange = ledgerResult ? null : logAppendedRange;
+      responseBody.data.effortAppendedRange = ledgerResult ? null : effortAppendedRange;
       responseBody.data.effort_rows_written = effortRowsWritten;
-      // #1762: the adjudicated verdicts ride with the ranges, so the stored
-      // receipt carries its own proof — replay reconciliation reads them.
-      responseBody.data.log_write_verification = logVerdict;
-      responseBody.data.effort_write_verification = effortVerdict;
+      if (ledgerResult) {
+        // #1780 — the ledger read-back IS the verification: commitOperation
+        // returns only after the outcome row reads back with the matching
+        // payload hash, so no append receipt is adjudicated on this path.
+        responseBody.data.operation_id = operationId;
+        responseBody.data.ledger_outcome = 'committed';
+        responseBody.data.ledger_marker = ledgerResult.marker;
+        if (rowsToWrite.length > 0) {
+          responseBody.data.log_write_verification = {
+            verified: true,
+            method: 'write_outcomes_ledger',
+            authority: 'write_outcomes_ledger',
+            operation_id: operationId,
+            marker: ledgerResult.marker,
+            rows_written: rowsToWrite.length,
+            rows_submitted: rowsToWrite.length,
+            reason: null,
+          };
+        }
+        responseBody.data.effort_write_verification = {
+          verified: true,
+          method: 'write_outcomes_ledger',
+          authority: 'write_outcomes_ledger',
+          operation_id: operationId,
+          marker: ledgerResult.marker,
+          rows_written: 1,
+          rows_submitted: 1,
+          reason: null,
+        };
+      } else {
+        // #1762: the adjudicated verdicts ride with the ranges, so the stored
+        // receipt carries its own proof — replay reconciliation reads them.
+        responseBody.data.log_write_verification = logVerdict;
+        responseBody.data.effort_write_verification = effortVerdict;
+      }
     }
 
     if (testMode) {

@@ -8443,6 +8443,14 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
   const explicitSessionId = sessionIdInput.value.trim() || acceptedPlanSessionId;
   const completeWorkoutSessionId = explicitSessionId;
 
+  // #1780 — mint the ledger operation ID for this deliberate complete-workout
+  // save, when the server advertises a cutover. It rides the form through
+  // the dry-run preview into the approve re-send, so the live write and its
+  // retries all carry the same operation; a fresh preview mints a fresh one.
+  // When the server advertises none, the field stays absent and the save
+  // takes the legacy path.
+  const completeWorkoutOperationId = await mintOperationId();
+
   try {
     // F07 / CLIENT-3: a newer preview submit superseded this one during the parse — abandon
     // this stale request before issuing its dry-run so it can't overwrite the newer preview.
@@ -8468,7 +8476,8 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       activePreviewCorrelation = correlationPreview;
       const result = await submitCompleteWorkout({ file, logRows, sessionId: completeWorkoutSessionId,
         date: screenshotDateField,
-        location, notes, testMode: true, correlationPreview
+        location, notes, testMode: true, correlationPreview,
+        operationId: completeWorkoutOperationId
       });
       if (!hasCompleteWorkoutNoWriteProof(result)) {
         throw new Error('Preview did not prove no-write safety. Nothing can be written.');
@@ -8507,6 +8516,7 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
         effortOnly,
         writeId: generateWriteId(),
         correlationPreview,
+        operationId: completeWorkoutOperationId,
         // Already-saved session (re-used dated screenshot): the dry-run flags it; the
         // live write would refuse it, so gate approve off rather than send the owner
         // into a "Duplicate session" error on tap.
@@ -8522,7 +8532,8 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       activePreviewCorrelation = correlationPreview;
       const result = await submitCompleteWorkout({ logRows, sessionId: completeWorkoutSessionId, date,
         location, notes,
-        manualEffort, testMode: true, correlationPreview
+        manualEffort, testMode: true, correlationPreview,
+        operationId: completeWorkoutOperationId
       });
       if (!hasCompleteWorkoutNoWriteProof(result)) {
         throw new Error('Preview did not prove no-write safety. Nothing can be written.');
@@ -8540,6 +8551,7 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       }
       sessionIdInput.value = resolvedEffortSessionId;
       pendingWrite = { mode: 'effort-only', logRows, sessionId: resolvedEffortSessionId, date, location, notes, manualEffort, effortOnly: true, writeId: generateWriteId(), correlationPreview,
+        operationId: completeWorkoutOperationId,
         // Mirror the screenshot path: an already-saved session disables approve so the
         // graceful "already saved" preview note doesn't lead to a live 409 on tap.
         duplicateSession: Boolean(result?.data?.data?.duplicate_check?.duplicate_session),
@@ -8731,7 +8743,7 @@ function prefillEffortForm(effort) {
 // peak HR is preserved as-is (null/'' is optional and survives the round trip).
 async function submitCompleteWorkout({
   file, logRows, sessionId, date, location, notes, manualEffort, testMode, writeId,
-  correlationPreview
+  correlationPreview, operationId
 }) {
   const form = new FormData();
   if (file) form.append('image', file);
@@ -8741,10 +8753,13 @@ async function submitCompleteWorkout({
   if (location) form.append('location', location);
   if (notes) form.append('notes', notes);
   if (manualEffort) form.append('effort_json', JSON.stringify(manualEffort));
-  if (testMode) form.append('test_mode', 'true');
   // Only the live write carries the write_id; the server uses it to refuse a
   // retried append. Dry-run previews never consume idempotency state.
   if (writeId && !testMode) form.append('write_id', writeId);
+  if (testMode) form.append('test_mode', 'true');
+  // #1780 — the ledger operation rides the form into the approve re-send;
+  // absent, the save takes the legacy path.
+  if (operationId) form.append('operation_id', operationId);
   const correlation = testMode
     ? correlationPreview?.correlation
     : approvalCorrelation(correlationPreview);
