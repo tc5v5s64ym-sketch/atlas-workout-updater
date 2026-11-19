@@ -99,7 +99,8 @@ test('gate REJECTS a manual proof with no preview_digest (#1791)', () => {
   // approve gate must refuse to send one: a digest-less manual proof is a
   // pre-#1791 preview (or a forged one), never an approvable one. Other
   // modes do not post /api/log-workout and are unaffected.
-  const { preview_digest, ...withoutDigest } = DRY_RUN_DATA;
+  // Destructure the digest away: a pre-#1791 preview response had no digest field.
+  const { preview_digest: _droppedDigest, ...withoutDigest } = DRY_RUN_DATA;
   assert.equal(pendingWriteHasPreviewProof({ previewProof: previewProofFromResult({ data: withoutDigest }, 'manual') }), false);
   assert.equal(pendingWriteHasPreviewProof({ previewProof: { mode: 'manual', ...DRY_RUN_DATA, preview_digest: '' } }), false);
   assert.equal(pendingWriteHasPreviewProof({ previewProof: { mode: 'manual', ...DRY_RUN_DATA, preview_digest: 42 } }), false);
