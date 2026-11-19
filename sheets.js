@@ -993,6 +993,77 @@ async function deleteRowsByRange(tabName, startIndex, endIndex) {
   invalidateTabCache(tabName);
 }
 
+// ── #1780 Write_Outcomes ledger transport ─────────────────────────────────
+//
+// `commitAtomicBatch` is the ONE atomic commit primitive: a single
+// spreadsheets.batchUpdate carrying the data mutations + the outcome row +
+// the generation marker. Google applies a batchUpdate atomically — the whole
+// request list lands or nothing does — so a failed commit writes no data
+// and no outcome. That atomicity is what the ledger's fence relies on, and
+// it is why this helper exists beside appendRows instead of reusing it:
+// values.append is a separate API that cannot share a batch with a named
+// range.
+//
+// Retry discipline is the WRITE-5 rule, unchanged: only unambiguous
+// pre-write rejections (429 / 403 quota) are retried in-request. A 5xx or
+// a post-send timeout is AMBIGUOUS — the batch may have committed on
+// Google's side — so it propagates and the caller reconciles by reading
+// the ledger (a retry replays the committed outcome instead of writing
+// twice). The same predicate governs both, for the same reason.
+async function commitAtomicBatch(requests, opts = {}) {
+  if (!Array.isArray(requests) || requests.length === 0) {
+    throw new Error('commitAtomicBatch: requests must be a non-empty array.');
+  }
+  const sheets = await getSheetsClient();
+  const response = await retryWithBackoff(
+    () => sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: { requests }
+    }),
+    {
+      isRetryable: isTransientAppendError,
+      onRetry: (error, attempt, delay) => {
+        console.warn(`[sheets.js] Transient batch error (attempt ${attempt}): ${error.message}. Retrying in ${delay}ms`);
+      }
+    }
+  );
+  for (const tab of (opts.tabs || [])) invalidateTabCache(tab);
+  return response;
+}
+
+// The permanent fence markers, read from spreadsheet metadata. A caller
+// that needs the generation reads this; a caller that needs tab existence
+// uses getSpreadsheetTabs. Uncached like the other pre-mutation metadata
+// probes (ensureSheetTab, deleteRowsByRange): a commit decision must see
+// the generation as it stands now, not as a request-scoped cache saw it.
+async function getNamedRanges() {
+  const response = await readWithRetry('named ranges', async () => {
+    const sheets = await getSheetsClient();
+    return sheets.spreadsheets.get({
+      spreadsheetId,
+      fields: 'namedRanges'
+    });
+  }, { meta: { api: 'spreadsheets.get', ranges: ['named ranges'] } });
+  return (response.data.namedRanges || []).map(nr => ({ name: nr.name, range: nr.range || {} }));
+}
+
+// Tab title -> numeric sheetId, for building grid requests (appendCells,
+// deleteDimension, addNamedRange) that address sheets by id rather than
+// by A1 name. Same uncached pre-mutation probe pattern as above.
+async function getSpreadsheetSheetIds() {
+  const sheets = await getSheetsClient();
+  const meta = await meterUnretried('spreadsheets.get', ['spreadsheet metadata'], () =>
+    sheets.spreadsheets.get({
+      spreadsheetId,
+      fields: 'sheets.properties'
+    }));
+  const map = new Map();
+  for (const s of (meta.data.sheets || [])) {
+    map.set(String(s.properties.title), s.properties.sheetId);
+  }
+  return map;
+}
+
 module.exports = {
   appendRows,
   readRange,
@@ -1007,6 +1078,12 @@ module.exports = {
   getHeaderRow,
   getSpreadsheetTabs,
   ensureSheetTab,
+  // #1780 Write_Outcomes ledger transport: one atomic batchUpdate commit of
+  // data + outcome + generation marker, plus the fence-marker and sheet-id
+  // reads the ledger prepares against.
+  commitAtomicBatch,
+  getNamedRanges,
+  getSpreadsheetSheetIds,
   getSafeSpreadsheetConfig,
   isTransientAppendError,
   retryWithBackoff,

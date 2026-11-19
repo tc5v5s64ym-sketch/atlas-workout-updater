@@ -35,13 +35,25 @@ export function buildCloseoutPayload(activePlan, closeoutStatus) {
 }
 
 // Orchestrate one explicit closeout. DEPS: postCloseout(payload) → resolves the
-// response body (or rejects). Returns { emitted, captured, reason }. `emitted:false`
+// response body (or rejects). mintOperationId() mints a #1780 ledger operation
+// ID for the event (optional; absent ⇒ the field stays absent and the capture
+// takes the legacy path). Returns { emitted, captured, reason }. `emitted:false`
 // = failed closed (not an accepted session) — never an error. A POST failure is
 // caught → { emitted:true, captured:false }; the local close/discard is never blocked.
 export async function runCloseout(activePlan, closeoutStatus, deps) {
   const payload = buildCloseoutPayload(activePlan, closeoutStatus);
   if (!payload) return { emitted: false, captured: false, reason: 'no_identity' };
   const d = deps || {};
+  // #1780 — mint the ledger operation ID for this deliberate event once,
+  // before the first submission. The minter arrives as a dep (app.js
+  // injects the app.js minter); absent, the field stays absent and the
+  // capture takes the legacy path. Never blocks the closeout.
+  if (typeof d.mintOperationId === 'function') {
+    try {
+      const operationId = await d.mintOperationId();
+      if (operationId) payload.operation_id = operationId;
+    } catch { /* a mint failure leaves the field absent — legacy path */ }
+  }
   try {
     const resp = typeof d.postCloseout === 'function' ? await d.postCloseout(payload) : null;
     const env = resp && resp.data && resp.data.session_plans ? resp.data.session_plans

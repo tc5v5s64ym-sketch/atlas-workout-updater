@@ -27,10 +27,28 @@ const sheets = require('../sheets');
 const migrationShadow = require('./migrationShadow');
 const { sessionPlansColumns } = require('../config/columns');
 const {
+  commitOperation: commitLedgerOperation,
+  lookupOperation: lookupLedgerOperation,
+  canonicalPayloadHash,
+  LedgerError,
+} = require('./writeOutcomes');
+const {
   buildPlanAcceptedEvents,
   buildItemOutcomeEvent,
   buildSessionCloseoutEvent,
 } = require('./sessionPlanEvents');
+
+// #1780 — the sheets.js surface the ledger prepares and commits against.
+// The ledger reads must be live (sheets.getSheetRows is a live read in
+// sheets.js; the cached wrapper lives in index.js and is never used here).
+const ledgerSheets = {
+  ensureSheetTab: sheets.ensureSheetTab,
+  getHeaderRow: sheets.getHeaderRow,
+  getSheetRows: sheets.getSheetRows,
+  getSpreadsheetSheetIds: sheets.getSpreadsheetSheetIds,
+  getNamedRanges: sheets.getNamedRanges,
+  commitAtomicBatch: sheets.commitAtomicBatch,
+};
 
 const SESSION_PLANS_TAB = process.env.SESSION_PLANS_SHEET_NAME || 'Session_Plans';
 const KEY_IDX = sessionPlansColumns.indexOf('idempotency_key');
@@ -77,7 +95,11 @@ async function _ensureHeaderRow() {
 }
 
 // Append event rows idempotently. Returns { written, skipped, tab_missing }.
-async function _append(rows) {
+// With opts.ledger ({ operationId, cutoverId }) the rows commit through the
+// #1780 Write_Outcomes ledger instead: the event rows + outcome + marker in
+// ONE atomic batchUpdate, and the return also carries `ledger`
+// ({ operation_id, outcome, marker, replayed }).
+async function _append(rows, opts = {}) {
   const out = { written: 0, skipped: 0, tab_missing: false };
   if (!rows.length) return out;
 
@@ -110,6 +132,26 @@ async function _append(rows) {
   const seen = new Map(); // within-batch dedup / collision detection
   const toAppend = [];
 
+  // #1780 — reconcile the ledger identity BEFORE the store's own dedup: a
+  // retry under the same operation with changed content is a payload
+  // mismatch, not a revision collision — the operation is the stronger
+  // signal, and the ledger's refusal is the precise answer. The payload is
+  // the FULL event set with recorded_at blanked: recorded_at is provenance,
+  // and a retry rebuilds it with a new timestamp — the hash must still
+  // match.
+  let ledgerPayload = null;
+  if (opts.ledger) {
+    ledgerPayload = {
+      tab: SESSION_PLANS_TAB,
+      events: rows.map((row) => CONTENT_COLS.map((i) => String(row[i] ?? ''))),
+    };
+    const existingOutcome = await lookupLedgerOperation(ledgerSheets, opts.ledger.operationId);
+    if (existingOutcome && existingOutcome.payloadHash !== canonicalPayloadHash(ledgerPayload)) {
+      throw new LedgerError('operation_id_payload_mismatch',
+        `Operation ${opts.ledger.operationId} already committed with a different payload. The same ID with different data is refused.`);
+    }
+  }
+
   for (const row of rows) {
     const key = String(row[KEY_IDX] == null ? '' : row[KEY_IDX]).trim();
     const prior = existing.get(key) || seen.get(key);
@@ -121,6 +163,43 @@ async function _append(rows) {
     }
     seen.set(key, row);
     toAppend.push(row);
+  }
+
+  // #1780 — the ledger path commits the event rows + outcome + marker in ONE
+  // atomic batchUpdate (or an outcome-only batch when the store's
+  // idempotency_key already captured the event — a deliberate second operation
+  // for the same event records the already-captured outcome, never a second
+  // row). The payload is the FULL event set with recorded_at blanked:
+  // recorded_at is provenance, and a retry rebuilds it with a new timestamp
+  // — the hash must still match. The capture layer already validated the
+  // exact header, so no separate header-row append runs here (it would break
+  // atomicity). This branch runs even when toAppend is empty: the outcome
+  // row is still owed for a fresh operation.
+  if (opts.ledger) {
+    const result = await commitLedgerOperation(ledgerSheets, {
+      cutoverId: opts.ledger.cutoverId,
+      operationId: opts.ledger.operationId,
+      kind: 'save',
+      payload: ledgerPayload,
+      evidence: {
+        written: toAppend.length,
+        skipped: out.skipped,
+        keys: rows.map((row) => String(row[KEY_IDX] ?? '')),
+        route: SESSION_PLANS_TAB,
+      },
+      dataAppends: toAppend.length ? [{ tab: SESSION_PLANS_TAB, rows: toAppend }] : [],
+    });
+    out.written = toAppend.length;
+    out.ledger = {
+      operation_id: result.operationId,
+      outcome: result.outcome,
+      marker: result.marker || null,
+      replayed: result.replayed === true,
+    };
+    if (toAppend.length) {
+      migrationShadow.shadowPlanEvents(toAppend, { route: SESSION_PLANS_TAB });
+    }
+    return out;
   }
 
   if (toAppend.length) {
@@ -142,17 +221,17 @@ async function _append(rows) {
 
 async function writePlanAccepted(session, items, opts = {}) {
   const recordedAt = opts.recordedAt || _nowIso();
-  return _append(buildPlanAcceptedEvents(session, items, { ...opts, recordedAt }));
+  return _append(buildPlanAcceptedEvents(session, items, { ...opts, recordedAt }), { ledger: opts.ledger || null });
 }
 
 async function writeItemOutcome(session, item, opts = {}) {
   const recordedAt = opts.recordedAt || _nowIso();
-  return _append([buildItemOutcomeEvent(session, item, { ...opts, recordedAt })]);
+  return _append([buildItemOutcomeEvent(session, item, { ...opts, recordedAt })], { ledger: opts.ledger || null });
 }
 
 async function writeSessionCloseout(session, closeoutStatus, opts = {}) {
   const recordedAt = opts.recordedAt || _nowIso();
-  return _append([buildSessionCloseoutEvent(session, closeoutStatus, { ...opts, recordedAt })]);
+  return _append([buildSessionCloseoutEvent(session, closeoutStatus, { ...opts, recordedAt })], { ledger: opts.ledger || null });
 }
 
 module.exports = {

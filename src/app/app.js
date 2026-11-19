@@ -2176,6 +2176,8 @@ async function acceptDisplayedPlan(rec) {
       : (typeof crypto !== 'undefined' ? crypto : null);
     const accepted = await runAcceptance({ label: rec && rec.label, id: rec && rec.id, exercises }, {
       crypto: cryptoObj,
+      // #1780 — the ledger operation minter for the acceptance event.
+      mintOperationId,
       guard: {},
       // The ESTABLISHED identity only — never a derived one. A hardcoded
       // `${date}-{AM|PM}-01` mint here re-used the first same-period session's
@@ -2251,6 +2253,8 @@ function emitPlanItemOutcome(outcomeInput) {
   const plan = getActivePlannedSession();
   if (!plan || plan.accepted !== true) return; // only accepted plans carry identity
   runOutcome(plan, outcomeInput, {
+    // #1780 — the ledger operation minter for the outcome event.
+    mintOperationId,
     postOutcome: (payload) => api('/api/session-plans/outcome', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
     }),
@@ -2271,6 +2275,8 @@ function emitPlanCloseout(closeoutStatus) {
   const plan = getActivePlannedSession();
   if (!plan || plan.accepted !== true) return; // closeout only for an accepted session
   runPlanCloseout(plan, closeoutStatus, {
+    // #1780 — the ledger operation minter for the closeout event.
+    mintOperationId,
     postCloseout: (payload) => api('/api/session-plans/closeout', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
     }),
@@ -7338,6 +7344,49 @@ function generateWriteId() {
   return `w-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+// #1780 — the Write_Outcomes ledger operation ID: one per deliberate save,
+// minted before the first submission, preserved on the payload through the
+// dry-run preview into the approve re-send, and reused on transport retries.
+// A deliberate identical second save gets a NEW one (minted with its fresh
+// write_id). The cutover epoch comes from the server's public status doc,
+// fetched once per page load; when the server advertises none (or the fetch
+// fails, or this browser has no randomUUID), minting returns null and the
+// save omits operation_id, taking the legacy path. Never blocks a save.
+let writeOutcomesCutoverPromise = null;
+function getWriteOutcomesCutover() {
+  if (!writeOutcomesCutoverPromise) {
+    writeOutcomesCutoverPromise = fetch('/.well-known/atlas-status.json')
+      .then((res) => (res && res.ok ? res.json() : null))
+      .then((doc) => (doc && typeof doc.write_outcomes_cutover_id === 'string' && doc.write_outcomes_cutover_id
+        ? doc.write_outcomes_cutover_id
+        : null))
+      .catch(() => null);
+  }
+  return writeOutcomesCutoverPromise;
+}
+
+async function mintOperationId() {
+  const cutover = await getWriteOutcomesCutover();
+  if (!cutover) return null;
+  if (window.crypto && typeof crypto.randomUUID === 'function') return `atlas-op-v1:${cutover}:${crypto.randomUUID()}`;
+  return null;
+}
+
+// #1780 — a fresh write_id is a fresh deliberate attempt, so it gets a fresh
+// operation ID with it: reusing the old one under a changed payload would be
+// refused as a payload mismatch. When the server advertises no cutover, drop
+// the field and the retry takes the legacy path.
+async function refreshOperationId(payload) {
+  const fresh = await mintOperationId();
+  if (fresh) payload.operation_id = fresh;
+  else delete payload.operation_id;
+}
+
+// #1780 — coach-conversation.js mints note operations through this seam
+// (the established window.atlas* pattern): the minter lives in this module,
+// and the note prompt is a deliberate save like any other.
+window.atlasMintOperationId = mintOperationId;
+
 function hasLogWorkoutNoWriteProof(result) {
   const data = result?.data || {};
   return data.test_mode === true &&
@@ -7446,8 +7495,21 @@ async function tryPreviewModality(text, sessionId, date, submitSeq) {
   let result;
   const correlationPreview = beginCorrelatedPreview({ sessionId });
   activePreviewCorrelation = correlationPreview;
+  // #1780 — the ledger operation minted for this deliberate save (see the
+  // preview call below); null when the server advertises no cutover.
+  let operationId = null;
   try {
-    const previewPayload = { text, session_id: sessionId, date, test_mode: true };
+    // #1780 — mint the ledger operation ID for this deliberate save, when
+    // the server advertises a cutover. It rides the payload through the
+    // dry-run preview into the approve re-send (the preview ignores it), so
+    // the live write and its retries all carry the same operation. When the
+    // server advertises none, the field stays absent and the save takes the
+    // legacy path.
+    operationId = await mintOperationId();
+    const previewPayload = {
+      text, session_id: sessionId, date, test_mode: true,
+      ...(operationId ? { operation_id: operationId } : {}),
+    };
     if (correlationPreview) previewPayload.correlation = correlationPreview.correlation;
     result = await api('/api/log-modality', {
       method: 'POST',
@@ -7481,6 +7543,7 @@ async function tryPreviewModality(text, sessionId, date, submitSeq) {
     sessionId,
     date,
     writeId: generateWriteId(),
+    operationId,
     correlationPreview,
     previewProof: previewProofFromResult(result, 'modality')
   };
@@ -8386,6 +8449,14 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
   const explicitSessionId = sessionIdInput.value.trim() || acceptedPlanSessionId;
   const completeWorkoutSessionId = explicitSessionId;
 
+  // #1780 — mint the ledger operation ID for this deliberate complete-workout
+  // save, when the server advertises a cutover. It rides the form through
+  // the dry-run preview into the approve re-send, so the live write and its
+  // retries all carry the same operation; a fresh preview mints a fresh one.
+  // When the server advertises none, the field stays absent and the save
+  // takes the legacy path.
+  const completeWorkoutOperationId = await mintOperationId();
+
   try {
     // F07 / CLIENT-3: a newer preview submit superseded this one during the parse — abandon
     // this stale request before issuing its dry-run so it can't overwrite the newer preview.
@@ -8411,7 +8482,8 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       activePreviewCorrelation = correlationPreview;
       const result = await submitCompleteWorkout({ file, logRows, sessionId: completeWorkoutSessionId,
         date: screenshotDateField,
-        location, notes, testMode: true, correlationPreview
+        location, notes, testMode: true, correlationPreview,
+        operationId: completeWorkoutOperationId
       });
       if (!hasCompleteWorkoutNoWriteProof(result)) {
         throw new Error('Preview did not prove no-write safety. Nothing can be written.');
@@ -8450,6 +8522,7 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
         effortOnly,
         writeId: generateWriteId(),
         correlationPreview,
+        operationId: completeWorkoutOperationId,
         // Already-saved session (re-used dated screenshot): the dry-run flags it; the
         // live write would refuse it, so gate approve off rather than send the owner
         // into a "Duplicate session" error on tap.
@@ -8465,7 +8538,8 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       activePreviewCorrelation = correlationPreview;
       const result = await submitCompleteWorkout({ logRows, sessionId: completeWorkoutSessionId, date,
         location, notes,
-        manualEffort, testMode: true, correlationPreview
+        manualEffort, testMode: true, correlationPreview,
+        operationId: completeWorkoutOperationId
       });
       if (!hasCompleteWorkoutNoWriteProof(result)) {
         throw new Error('Preview did not prove no-write safety. Nothing can be written.');
@@ -8483,6 +8557,7 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       }
       sessionIdInput.value = resolvedEffortSessionId;
       pendingWrite = { mode: 'effort-only', logRows, sessionId: resolvedEffortSessionId, date, location, notes, manualEffort, effortOnly: true, writeId: generateWriteId(), correlationPreview,
+        operationId: completeWorkoutOperationId,
         // Mirror the screenshot path: an already-saved session disables approve so the
         // graceful "already saved" preview note doesn't lead to a live 409 on tap.
         duplicateSession: Boolean(result?.data?.data?.duplicate_check?.duplicate_session),
@@ -8495,6 +8570,13 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       // payload — the same identity its re-stamped rows and effort row carry —
       // so the summary, seal, and finalized event address the same session the
       // appends are stamped with (Codex P1, this PR).
+      // #1780 — mint the ledger operation ID for this deliberate save, when
+      // the server advertises a cutover. It rides the payload through the
+      // dry-run preview into the approve re-send, so the live write and its
+      // retries all carry the same operation; a fresh preview mints a fresh
+      // one. When the server advertises none, the field stays absent and
+      // the save takes the legacy path.
+      const operationId = await mintOperationId();
       const payload = {
         // Blank when no identity is established yet — the server allocates and returns
         // it, and the preview pins it below before anything can be approved. `sessionId`
@@ -8502,7 +8584,8 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
         // to a write path as though it were a decided identity.
         session_id: screenshotResolvedSessionId || explicitSessionId,
         date: screenshotResolvedDate || date,
-        log_rows: logRows, test_mode: 'true', write_id: generateWriteId()
+        log_rows: logRows, test_mode: 'true', write_id: generateWriteId(),
+        ...(operationId ? { operation_id: operationId } : {})
       };
       if (effortRow) payload.effort_row = effortRow;
       // F10D — the session closeout sends the confirmation context, so the dry-run
@@ -8666,7 +8749,7 @@ function prefillEffortForm(effort) {
 // peak HR is preserved as-is (null/'' is optional and survives the round trip).
 async function submitCompleteWorkout({
   file, logRows, sessionId, date, location, notes, manualEffort, testMode, writeId,
-  correlationPreview
+  correlationPreview, operationId
 }) {
   const form = new FormData();
   if (file) form.append('image', file);
@@ -8676,10 +8759,13 @@ async function submitCompleteWorkout({
   if (location) form.append('location', location);
   if (notes) form.append('notes', notes);
   if (manualEffort) form.append('effort_json', JSON.stringify(manualEffort));
-  if (testMode) form.append('test_mode', 'true');
   // Only the live write carries the write_id; the server uses it to refuse a
   // retried append. Dry-run previews never consume idempotency state.
   if (writeId && !testMode) form.append('write_id', writeId);
+  if (testMode) form.append('test_mode', 'true');
+  // #1780 — the ledger operation rides the form into the approve re-send;
+  // absent, the save takes the legacy path.
+  if (operationId) form.append('operation_id', operationId);
   const correlation = testMode
     ? correlationPreview?.correlation
     : approvalCorrelation(correlationPreview);
@@ -8968,6 +9054,15 @@ async function handleUndoLastWrite(expected) {
     setStatus(loggerStatus, 'That workout is no longer your most recent save — Undo only affects your latest write.', 'error');
     return;
   }
+  // #1780 — the same stale-card guard, by ledger operation: a card bound to
+  // an older save's operation must never undo the newer write. A ledger save
+  // returns no appended range, so the operation is the sole discriminator
+  // there; a legacy save has no operation, so the range check above stands.
+  if (expected && expected.operation_id && lastWrite.operation_id
+      && expected.operation_id !== lastWrite.operation_id) {
+    setStatus(loggerStatus, 'That workout is no longer your most recent save — Undo only affects your latest write.', 'error');
+    return;
+  }
   const { log_appended_range, session_id, log_rows_written } = lastWrite;
   const undoBtn = loggerStatus.querySelector('.undo-write-btn');
   if (undoBtn) {
@@ -8975,6 +9070,10 @@ async function handleUndoLastWrite(expected) {
     undoBtn.textContent = 'Undoing…';
   }
   try {
+    // #1780 — a ledger save is undone by operation, not by position: mint
+    // a fresh undo operation and name the save it reverts. A legacy save
+    // (no operation_id) sends neither field and takes the legacy path.
+    const undoOperationId = lastWrite.operation_id ? await mintOperationId() : null;
     await api('/api/log-workout/undo-last', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -8982,7 +9081,8 @@ async function handleUndoLastWrite(expected) {
         log_appended_range,
         session_id,
         rows_to_delete: log_rows_written,
-        confirm_delete: true
+        confirm_delete: true,
+        ...(undoOperationId ? { operation_id: undoOperationId, target_operation_id: lastWrite.operation_id } : {})
       })
     });
     lastWrite = null;
@@ -9007,9 +9107,19 @@ window.atlasUndoLastWrite = handleUndoLastWrite;
 // CLIENT-1: review cards bind their write identity at save time so their Undo can
 // be refused once a newer write supersedes it. Returns a snapshot copy (never the
 // live ref) of the current write's identity, or null when there is no undoable write.
-window.atlasCurrentWriteIdentity = () => (lastWrite && lastWrite.log_appended_range)
-  ? { log_appended_range: lastWrite.log_appended_range, session_id: lastWrite.session_id }
-  : null;
+// A ledger save carries no appended range — its operation is the identity.
+window.atlasCurrentWriteIdentity = () => {
+  if (!lastWrite) return null;
+  if (lastWrite.log_appended_range) {
+    return {
+      log_appended_range: lastWrite.log_appended_range,
+      session_id: lastWrite.session_id,
+      operation_id: lastWrite.operation_id || null,
+    };
+  }
+  if (lastWrite.operation_id) return { session_id: lastWrite.session_id, operation_id: lastWrite.operation_id };
+  return null;
+};
 
 // F-SB1 (Stage B workout 1, 2026-08-01). `closeout_fully_verified:false` covers three
 // different situations, and only some are RETRYABLE. When a planned session simply had no
@@ -9138,7 +9248,8 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
         text: pendingWrite.text,
         session_id: pendingWrite.sessionId,
         date: pendingWrite.date,
-        write_id: pendingWrite.writeId
+        write_id: pendingWrite.writeId,
+        ...(pendingWrite.operationId ? { operation_id: pendingWrite.operationId } : {})
       };
       const correlation = approvalCorrelation(pendingWrite.correlationPreview);
       if (correlation) modalityPayload.correlation = correlation;
@@ -9220,6 +9331,10 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
           // Server-reported identity first: it may have allocated one for a blank payload.
           session_id: writeData.session_id || realPayload.session_id,
           log_rows_written: writeData.log_rows_written,
+          // #1780 — the save's ledger operation, when it committed through
+          // the Write_Outcomes ledger: the undo targets this operation, not
+          // a position. Null for legacy saves.
+          operation_id: writeData.operation_id || null,
           // Carried verbatim — the client never derives or upgrades a verdict.
           log_write_verification: writeData.log_write_verification || null
         };
@@ -9256,6 +9371,7 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
       lastWriteTurnCount = pendingLastWrite ? currentChatTurnCount() : null;
       if (pendingWrite && pendingWrite.payload) {
         pendingWrite.payload.write_id = generateWriteId();
+        await refreshOperationId(pendingWrite.payload);
         delete pendingWrite.payload.effort_row;
       }
       approveBtn.disabled = false;
@@ -9615,6 +9731,12 @@ document.getElementById('bw-form').addEventListener('submit', async e => {
       weight: Number(weight),
       notes,
       write_id: generateWriteId(),
+      // #1780 — mint the ledger operation ID for this deliberate save at
+      // preview time, alongside the write_id: the approve re-send carries
+      // the same operation, and a retry reuses it; a fresh preview mints a
+      // fresh one. Null when the server advertises no cutover — the save
+      // then takes the legacy path. Never blocks a save.
+      operation_id: await mintOperationId(),
       correlationSessionId,
       correlationPreview,
       previewProof: {
@@ -9662,7 +9784,10 @@ document.getElementById('bw-approve-btn').addEventListener('click', async () => 
       date: pendingBwWrite.date,
       weight: pendingBwWrite.weight,
       notes: pendingBwWrite.notes,
-      write_id: pendingBwWrite.write_id
+      write_id: pendingBwWrite.write_id,
+      // #1780 — the ledger operation minted at preview time rides the
+      // approve re-send; a retry re-sends the same one.
+      ...(pendingBwWrite.operation_id ? { operation_id: pendingBwWrite.operation_id } : {}),
     };
     const correlation = approvalCorrelation(pendingBwWrite.correlationPreview);
     if (correlation) {

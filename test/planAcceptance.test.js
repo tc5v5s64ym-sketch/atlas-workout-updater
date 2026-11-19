@@ -407,3 +407,25 @@ test('established: the identity is sent, the checkpoint fires immediately under 
   assert.deepEqual(adopted, [], 'an echoed established identity is not an adoption');
   assert.equal(r.session_id, '20260710-AM-01');
 });
+
+// ── #1780: ledger operation minting ─────────────────────────────────────────
+
+test('#1780: runAcceptance mints the ledger operation ID once via the dep and carries it on the payload (recovery retry reuses it); without the dep the field stays absent', async () => {
+  const OP = 'atlas-op-v1:11111111-2222-4333-8444-555555555555:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const REC = {
+    label: 'Push', id: 'i1',
+    exercises: [{ name: 'Bench Press', liftCode: 'BEN01', sets: 3, weight: 100, reps: 5, rir: 2 }],
+  };
+  const { deps, calls } = harness({ mintOperationId: async () => OP });
+  const r = await mod.runAcceptance(REC, deps);
+  assert.equal(r.started, true);
+  assert.equal(calls.postAccept.length, 1);
+  assert.equal(calls.postAccept[0].operation_id, OP);
+  assert.equal(r.payload.operation_id, OP);
+
+  const second = harness();
+  const r2 = await mod.runAcceptance(REC, second.deps);
+  assert.equal(r2.started, true);
+  assert.equal(second.calls.postAccept.length, 1);
+  assert.equal(second.calls.postAccept[0].operation_id, undefined);
+});
