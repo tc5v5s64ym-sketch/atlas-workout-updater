@@ -254,6 +254,7 @@ const { captureCloseout } = require('./services/sessionPlanCapture');
 const { isSessionFinalized } = require('./services/closeoutFinality');
 const { validateLogRowsBounds } = require('./rules/validationRules');
 const { evaluateSessionSafety } = require('./rules/safetyRules');
+const { mintPreviewDigest, verifyPreviewDigest } = require('./services/previewDigest');
 const { holdUntilClean } = require('./rules/progressionRules');
 
 async function runStartupDiagnostics() {
@@ -4977,6 +4978,19 @@ app.post('/api/log-workout', async (req, res) => {
     if (autoMatchesForPreview.length > 0) previewBody.auto_matches = autoMatchesForPreview;
     if (ruleFlags.length > 0) previewBody.rule_flags = ruleFlags;
     if (substitutions.length > 0) previewBody.substitutions = substitutions;
+    // #1791 — the preview returns a signed digest of the exact rows it showed
+    // (formatted, post-dedupe). The approve must present it, and the live path
+    // recomputes it over the rows the write would actually append before any
+    // append happens. The digest is an opaque server-signed token: it is NOT
+    // added to PROOF_KEYS, so the turn-write-proof record never carries a
+    // bearer capability (mirroring the pairing token), and it is never logged.
+    previewBody.preview_digest = mintPreviewDigest({
+      sessionId: session_id,
+      date: workoutDate,
+      logRows: previewLogRows,
+      effortRow: formattedEffortRow || null,
+      closeoutContext: payload.closeout_context,
+    });
     // #1165 — a dry-run is a correlated turn outcome too: its W1–W3 no-write proof
     // (sheet_written:false / no_write_confirmed:true) is exactly what a reviewer needs to see
     // that a turn previewed rather than wrote. The row previews on this body are arrays and
@@ -5216,6 +5230,54 @@ app.post('/api/log-workout', async (req, res) => {
     if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
     releaseSessionClaim(sessionClaimKey, sessionClaim.token);
     return standardError(req, res, 'Failed to validate duplicate log rows.', null, 500);
+  }
+
+  // #1791 — server-enforced preview-to-approve. A live write must present the
+  // signed digest of the exact rows a dry-run preview showed, and the server
+  // recomputes it over the rows this write would actually append (the
+  // partition result) before anything is written. A direct write that skips
+  // the preview, or edits the rows after previewing, is refused — never
+  // written. The all-duplicates replay below skips verification: it appends
+  // nothing, so there is nothing to bind. A committed ledger operation
+  // replays above, before this check: safe, because a commit can only exist
+  // if its first attempt passed this check (the commit sits below it).
+  // Both refusals release the write_id (failWrite) and the session claim, so
+  // a re-preview + retry proceeds cleanly.
+  const willWrite = rowsToWrite.length > 0 || Boolean(formattedEffortRow);
+  if (willWrite) {
+    const digestOk = verifyPreviewDigest(payload.preview_digest, {
+      sessionId: session_id,
+      date: workoutDate,
+      logRows: rowsToWrite,
+      effortRow: formattedEffortRow || null,
+      closeoutContext: payload.closeout_context,
+    });
+    if (!digestOk) {
+      const missing = typeof payload.preview_digest !== 'string' || payload.preview_digest === '';
+      if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+      releaseSessionClaim(sessionClaimKey, sessionClaim.token);
+      return standardError(req, res,
+        missing
+          ? 'This write was not previewed: a live /api/log-workout write requires the signed preview digest from a dry-run preview of the exact rows. Preview again and approve.'
+          : 'The previewed rows changed since the preview: the signed preview digest does not match the rows this write would append. Preview again and approve.',
+        { code: missing ? 'preview_digest_required' : 'preview_digest_mismatch' },
+        409);
+    }
+
+    // #1791 — the history guards run on whatever is actually written. The
+    // preview ran them on the submitted rows; the live path runs them on the
+    // partition survivors (the enriched objects are parallel to the formatted
+    // rows, and the partition names its skipped indices). Best-effort, as on
+    // the preview: a history read failure never blocks the write — the
+    // row-local flags computed above still stand. The flags are advisory
+    // (never refuse) and ride the success response as rule_flags, so the
+    // client and coaching layer can surface the cautions the preview showed.
+    try {
+      const skippedIdx = new Set(skippedDuplicates.map(d => d.index));
+      const writtenEnriched = enrichedRowObjects.filter((_, i) => !skippedIdx.has(i));
+      const historyRows = (await getSheetRows(logSheetName)).map(normalizeAnalyticsLogRow);
+      ruleFlags = evaluateSessionSafety(writtenEnriched, payload.notes || '', historyRows);
+    } catch { /* keep the row-local ruleFlags already computed above */ }
   }
 
   // Every intended log row is already on the sheet for this session. When there

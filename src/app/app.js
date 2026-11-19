@@ -7422,6 +7422,11 @@ function previewProofFromResult(result, mode) {
     sheet_write: data.sheet_write,
     sheet_written: data.sheet_written,
     no_write_confirmed: data.no_write_confirmed,
+    // #1791 — the signed digest of the exact rows the dry-run preview showed.
+    // The approve handler sends it back on the live write; the server refuses
+    // any live write whose digest is missing or does not match the rows it
+    // would append. Opaque server-signed token, carried in memory only.
+    preview_digest: data.preview_digest,
     created_at_ms: Date.now()
   };
 }
@@ -7433,6 +7438,11 @@ function pendingWriteHasPreviewProof(write) {
   if (proof.mode === 'manual' && proof.sheet_write !== 'skipped') return false;
   if (proof.mode === 'modality' && proof.sheet_write !== 'skipped') return false;
   if ((proof.mode === 'screenshot' || proof.mode === 'effort-only') && proof.sheet_write !== 'skipped') return false;
+  // #1791 — a manual (slash) approval must carry the signed digest of the
+  // exact rows the preview showed; without it the server refuses the live
+  // write. Approve stays disabled until a preview that returns one. Other
+  // lanes do not use /api/log-workout's digest and are unaffected.
+  if (proof.mode === 'manual' && (typeof proof.preview_digest !== 'string' || !proof.preview_digest)) return false;
   return true;
 }
 
@@ -9275,6 +9285,14 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
     } else {
       const realPayload = { ...pendingWrite.payload };
       delete realPayload.test_mode;
+      // #1791 — the approve presents the signed digest of the exact rows the
+      // preview showed. The server recomputes it over the rows the write
+      // would append and refuses a missing or mismatched digest (409), so a
+      // live write can never skip the preview. pendingWriteHasPreviewProof
+      // already gated approve on the digest being present.
+      if (pendingWrite.previewProof && typeof pendingWrite.previewProof.preview_digest === 'string' && pendingWrite.previewProof.preview_digest) {
+        realPayload.preview_digest = pendingWrite.previewProof.preview_digest;
+      }
       const correlation = approvalCorrelation(pendingWrite.correlationPreview);
       if (correlation) realPayload.correlation = correlation;
       else delete realPayload.correlation;
