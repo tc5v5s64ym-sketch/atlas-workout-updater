@@ -1002,7 +1002,10 @@ test('PR 486 frontend: modality logging mirrors the trust loop without altering 
     // #1628 widened again: the partial-duplicate helper call sits in the
     // screenshot branch above the typed branch. #1690 widened again: the
     // duplicate acceptance now also requires the original success word.
-    appSource.indexOf("getElementById('approve-btn').addEventListener('click'") + 6200
+    // #1791 widened again: the manual branch carries preview_digest on the
+    // live write (the closing quote of '/api/log-workout' sat 1 char past
+    // the old window edge).
+    appSource.indexOf("getElementById('approve-btn').addEventListener('click'") + 7000
   );
   assert.match(approveBlock, /pendingWrite\.mode === 'modality'/);
   assert.match(approveBlock, /write_id: pendingWrite\.writeId/, 'live write carries the staged write_id');
@@ -1013,6 +1016,9 @@ test('PR 486 frontend: modality logging mirrors the trust loop without altering 
   assert.match(approveBlock, /const realPayload = \{ \.\.\.pendingWrite\.payload \}/);
   assert.match(approveBlock, /delete realPayload\.test_mode/);
   assert.match(approveBlock, /'\/api\/log-workout'/);
+  // #1791: the one deliberate change to that branch — the approve carries the
+  // signed preview digest from the preview proof, which the server requires.
+  assert.match(approveBlock, /realPayload\.preview_digest = pendingWrite\.previewProof\.preview_digest/);
 
   // The modality hook lives ONLY in the coach-fallback branch (input the slash
   // parser rejected), so strength-set logging never routes through it.
@@ -3722,7 +3728,10 @@ test('approve success message: effortOnly is captured before invalidatePreview n
     // #1628 rebased onto #1627: the combined handler growth pushed the
     // first post-capture invalidatePreview() to +11491, just past the old
     // window. Widened to 12000; assertions unchanged.
-    appSource.indexOf(anchor) + 12000
+    // #1791 widened again: the manual branch carries preview_digest on the
+    // live write, pushing the first post-capture invalidatePreview() to
+    // +12513. Assertions unchanged.
+    appSource.indexOf(anchor) + 13000
   );
   const captureAt = approveSection.indexOf('const wasEffortOnly = pendingWrite.effortOnly');
   // Anchor on the real teardown CALL ('invalidatePreview();'), not the comment that
