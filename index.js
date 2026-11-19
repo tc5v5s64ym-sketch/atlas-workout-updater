@@ -1471,6 +1471,23 @@ app.post('/api/coaching-notes', async (req, res) => {
   if (!note) return standardError(req, res, 'note string is required', null, 400);
   if (!writeId) return standardError(req, res, 'write_id is required', null, 400);
 
+  // #1780 — a note may carry the operation_id the client minted for the
+  // Write_Outcomes ledger. Absent, the legacy path runs unchanged. Present,
+  // the ledger path is mandatory: a malformed ID is a 400, an ID from
+  // another cutover is a 409, and an unconfigured cutover is a 500 — never
+  // a silent legacy fallback, which would write data the ledger cannot
+  // answer for.
+  const ledgerId = resolveLedgerOperationId(req.body);
+  if (ledgerId.error) {
+    return standardError(req, res, ledgerId.error.message, { code: ledgerId.error.code, operation_id: req.body.operation_id }, ledgerId.error.status);
+  }
+  const operationId = ledgerId.operationId;
+  const cutoverId = ledgerId.cutoverId;
+  // The ledger payload is the note as the client submitted it. The stored
+  // date is server-derived (localTodayIso), so it rides in the evidence, not
+  // the payload: a retry across midnight must hash the same.
+  const ledgerPayload = operationId ? { note } : null;
+
   // Write-admission gate 1 of 7 (§3.10, §5.3). Nothing has been appended yet.
   const frozen = await refuseIfWritesFrozen(req, res, '/api/coaching-notes');
   if (frozen) return frozen;
@@ -1504,6 +1521,52 @@ app.post('/api/coaching-notes', async (req, res) => {
   if (!tabs.includes('Coaching_Notes')) {
     if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
     return standardError(req, res, 'Coaching_Notes tab not found — create it in Google Sheets first (columns: date, note)', null, 503);
+  }
+
+  // #1780 — the body a ledger replay answers with: the committed note, never
+  // a fresh append.
+  function noteLedgerReplayBody(outcome) {
+    const evidence = (outcome && outcome.evidence) || {};
+    const body = {
+      message: 'Duplicate operation_id; the original note already saved.',
+      sheet_written: true,
+      note_written: true,
+      date: evidence.date || null,
+      note: evidence.note || null,
+      duplicate_write: true,
+      operation_id: outcome.operationId,
+      ledger_outcome: outcome.status,
+      ledger_marker: evidence.marker || null,
+      note_write_verification: { verified: true, method: 'write_outcomes_ledger' },
+    };
+    if (idempotency.enabled) {
+      body.write_id = idempotency.write_id;
+      body.idempotency_status = 'completed';
+    }
+    return body;
+  }
+
+  // #1780 — the ledger answers before any sheet read below can mistake the
+  // retry for a fresh note. A lookup only reads: a failure here wrote
+  // nothing, so failWrite is safe.
+  if (operationId) {
+    let existing = null;
+    try {
+      existing = await lookupLedgerOperation(writeOutcomesSheets, operationId);
+    } catch (error) {
+      console.error('❌ Write_Outcomes ledger lookup failed:', error);
+      if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+      return standardError(req, res, 'Write_Outcomes ledger could not be read; the note is refused.', { code: error.code || 'ledger_read_failed', operation_id: operationId }, 500);
+    }
+    if (existing) {
+      if (existing.payloadHash !== canonicalPayloadHash(ledgerPayload)) {
+        if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+        return standardError(req, res, 'operation_id already committed with a different payload; the same ID with different data is refused.', { code: 'operation_id_payload_mismatch', operation_id: operationId }, 409);
+      }
+      const ledgerBody = noteLedgerReplayBody(existing);
+      if (idempotency.enabled) completeWrite(idempotency.write_id, idempotency.token, ledgerBody);
+      return standardSuccess(req, res, ledgerBody.message, ledgerBody);
+    }
   }
 
   // F09I: stamp the owner's LOCAL day (ATLAS_TIMEZONE), not the UTC day — an evening-Pacific
@@ -1543,6 +1606,77 @@ app.post('/api/coaching-notes', async (req, res) => {
   }
 
   try {
+    // #1780 — the ledger path commits the note row + outcome + marker in
+    // ONE atomic batchUpdate. The commit reads the outcome row back before
+    // returning success; that read-back is the verification, so no append
+    // receipt is adjudicated on this path.
+    if (operationId) {
+      let ledgerResult = null;
+      try {
+        ledgerResult = await commitLedgerOperation(writeOutcomesSheets, {
+          cutoverId,
+          operationId,
+          kind: 'save',
+          payload: ledgerPayload,
+          evidence: {
+            date: dateStr,
+            note: note.slice(0, 200),
+            write_id: idempotency.write_id,
+            route: '/api/coaching-notes',
+          },
+          dataAppends: [{ tab: 'Coaching_Notes', rows: [[dateStr, note.slice(0, 200)]] }],
+        });
+      } catch (error) {
+        console.error('❌ Write_Outcomes ledger commit failed:', error);
+        // Never failWrite a ledger commit: a 5xx or a post-send timeout is
+        // AMBIGUOUS (WRITE-5) — the batch may have committed on Google's
+        // side while the response was lost. Record unverified, so a retry
+        // under the same operation_id reconciles from the ledger.
+        if (idempotency.enabled) {
+          completeWrite(idempotency.write_id, idempotency.token, {
+            sheet_written: true,
+            note_written: false,
+            date: dateStr,
+            note: note.slice(0, 200),
+            sheet_write: 'unverified',
+            proof_mismatch: true,
+            operation_id: operationId,
+            ledger_outcome: 'unknown',
+            write_id: idempotency.write_id,
+            duplicate_write: false,
+            idempotency_status: 'unverified',
+          });
+        }
+        return standardError(req, res, 'Write_Outcomes ledger commit could not be confirmed; nothing is claimed as saved.', { code: error.code || 'ledger_commit_failed', operation_id: operationId }, ledgerErrorStatus(error));
+      }
+      if (ledgerResult.replayed) {
+        // A concurrent commit landed this operation between the lookup above
+        // and this commit; the commit replayed it instead of writing twice.
+        // Answer the replay truthfully.
+        try {
+          const replayed = await lookupLedgerOperation(writeOutcomesSheets, operationId);
+          const replayBody = noteLedgerReplayBody(replayed);
+          if (idempotency.enabled) completeWrite(idempotency.write_id, idempotency.token, replayBody);
+          return standardSuccess(req, res, replayBody.message, replayBody);
+        } catch (lookupError) {
+          console.error('❌ Write_Outcomes ledger replay lookup failed:', lookupError);
+          return standardError(req, res, 'Write_Outcomes ledger commit replayed, but the committed outcome could not be read back.', { code: lookupError.code || 'ledger_read_failed', operation_id: operationId }, 500);
+        }
+      }
+      const responseBody = {
+        sheet_written: true, note_written: true, date: dateStr, note: note.slice(0, 200),
+        note_write_verification: { verified: true, method: 'write_outcomes_ledger' },
+        operation_id: operationId,
+        ledger_outcome: 'committed',
+        ledger_marker: ledgerResult.marker,
+      };
+      if (idempotency.enabled) {
+        responseBody.write_id = idempotency.write_id;
+        responseBody.duplicate_write = false;
+        completeWrite(idempotency.write_id, idempotency.token, responseBody);
+      }
+      return standardSuccess(req, res, 'Coaching note saved', responseBody);
+    }
     // #1762: the append's return was discarded entirely — no receipt check at
     // all — so a zero-row or wrong-tab note append still minted a success
     // receipt. Note rows carry no session_id column, so the verdict adjudicates
@@ -1768,6 +1902,22 @@ app.post('/api/log-modality', async (req, res) => {
     return standardSuccess(req, res, 'log-modality dry-run', previewBody, 200);
   }
 
+  // #1780 — a modality save may carry the operation_id the client minted
+  // for the Write_Outcomes ledger. Validated here, after the dry-run return,
+  // so a preview never touches the ledger. Absent, the legacy path runs
+  // unchanged. Present, the ledger path is mandatory (see
+  // resolveLedgerOperationId).
+  const ledgerId = resolveLedgerOperationId(payload);
+  if (ledgerId.error) {
+    return standardError(req, res, ledgerId.error.message, { code: ledgerId.error.code, operation_id: payload.operation_id }, ledgerId.error.status);
+  }
+  const operationId = ledgerId.operationId;
+  const cutoverId = ledgerId.cutoverId;
+  // The ledger payload is the deliberate save as the client submitted it:
+  // session, date, text, notes. A retry resends the identical body, so the
+  // hash matches; a different body under the same ID is refused.
+  const ledgerPayload = operationId ? { session_id, date, text, notes } : null;
+
   // Live writes carry a write_id so a lost-response retry is deduplicated instead
   // of appending the same row twice.
   if (!normalizeWriteId(writeId)) {
@@ -1808,6 +1958,58 @@ app.post('/api/log-modality', async (req, res) => {
   if (!tabs.includes('Modality_Log')) {
     if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
     return standardError(req, res, `Modality_Log tab not found — create it in Google Sheets first (columns: ${modalityLogColumns.join(', ')})`, null, 503);
+  }
+
+  // #1780 — the body a ledger replay answers with: the committed modality,
+  // never a fresh append. The row is re-derived from the same text, so it
+  // matches the committed one.
+  function modalityLedgerReplayBody(outcome) {
+    const evidence = (outcome && outcome.evidence) || {};
+    const body = {
+      message: 'Duplicate operation_id; the original modality already saved.',
+      test_mode: false,
+      sheet_write: 'success',
+      sheet_written: true,
+      modality_written: true,
+      modality: evidence.modality || record.modality,
+      appendedRange: null,
+      verified_by_readback: true,
+      modality_row: row,
+      modality_write_verification: { verified: true, method: 'write_outcomes_ledger' },
+      duplicate_write: true,
+      operation_id: outcome.operationId,
+      ledger_outcome: outcome.status,
+      ledger_marker: evidence.marker || null,
+    };
+    if (idempotency.enabled) {
+      body.write_id = idempotency.write_id;
+      body.idempotency_status = 'completed';
+    }
+    return body;
+  }
+
+  // #1780 — the ledger answers before the pre-append read-back below can
+  // mistake the retry for a fresh save. A lookup only reads: a failure here
+  // wrote nothing, so failWrite is safe.
+  if (operationId) {
+    let existing = null;
+    try {
+      existing = await lookupLedgerOperation(writeOutcomesSheets, operationId);
+    } catch (error) {
+      console.error('❌ Write_Outcomes ledger lookup failed:', error);
+      if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+      return standardError(req, res, 'Write_Outcomes ledger could not be read; the modality save is refused.', { code: error.code || 'ledger_read_failed', operation_id: operationId }, 500);
+    }
+    if (existing) {
+      if (existing.payloadHash !== canonicalPayloadHash(ledgerPayload)) {
+        if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+        return standardError(req, res, 'operation_id already committed with a different payload; the same ID with different data is refused.', { code: 'operation_id_payload_mismatch', operation_id: operationId }, 409);
+      }
+      const ledgerBody = modalityLedgerReplayBody(existing);
+      if (idempotency.enabled) completeWrite(idempotency.write_id, idempotency.token, ledgerBody);
+      recordTurnWriteProof(payload, session_id, '/api/log-modality', ledgerBody);
+      return standardSuccess(req, res, 'log-modality processed', ledgerBody, 200);
+    }
   }
 
   // #1735 (B-17): the receipt store can be lost (free-plan restart, #1363
@@ -1853,6 +2055,66 @@ app.post('/api/log-modality', async (req, res) => {
     // The row IS on the sheet: complete the write with the success body so a
     // retry replays it instead of appending again. No appendedRange: no append
     // happened on this attempt, so the read-back is the proof.
+    // #1780 — on the ledger path, record the outcome for this operation
+    // (an outcome-only batch — no second row) so a retry replays from the
+    // ledger instead of re-deriving it from the read-back.
+    let ledgerResult = null;
+    if (operationId) {
+      try {
+        ledgerResult = await commitLedgerOperation(writeOutcomesSheets, {
+          cutoverId,
+          operationId,
+          kind: 'save',
+          payload: ledgerPayload,
+          evidence: {
+            session_id,
+            write_id: idempotency.write_id,
+            route: '/api/log-modality',
+            modality: record.modality,
+            verified_by_readback: true,
+          },
+          dataAppends: [],
+        });
+      } catch (error) {
+        console.error('❌ Write_Outcomes ledger commit failed:', error);
+        // Never failWrite a ledger commit: a 5xx or a post-send timeout is
+        // AMBIGUOUS (WRITE-5) — the batch may have committed on Google's
+        // side while the response was lost. Record unverified, so a retry
+        // under the same operation_id reconciles from the ledger.
+        if (idempotency.enabled) {
+          completeWrite(idempotency.write_id, idempotency.token, {
+            session_id,
+            date,
+            write_id: idempotency.write_id,
+            duplicate_write: false,
+            idempotency_status: 'unverified',
+            sheet_write: 'unverified',
+            sheet_written: true,
+            modality_written: false,
+            modality: record.modality,
+            modality_row: row,
+            proof_mismatch: true,
+            operation_id: operationId,
+            ledger_outcome: 'unknown',
+          });
+        }
+        return standardError(req, res, 'Write_Outcomes ledger commit could not be confirmed; nothing is claimed as saved.', { code: error.code || 'ledger_commit_failed', operation_id: operationId }, ledgerErrorStatus(error));
+      }
+      if (ledgerResult.replayed) {
+        // A concurrent commit landed this operation between the lookup above
+        // and this commit; the commit replayed it instead of writing twice.
+        try {
+          const replayed = await lookupLedgerOperation(writeOutcomesSheets, operationId);
+          const replayBody = modalityLedgerReplayBody(replayed);
+          if (idempotency.enabled) completeWrite(idempotency.write_id, idempotency.token, replayBody);
+          recordTurnWriteProof(payload, session_id, '/api/log-modality', replayBody);
+          return standardSuccess(req, res, 'log-modality processed', replayBody, 200);
+        } catch (lookupError) {
+          console.error('❌ Write_Outcomes ledger replay lookup failed:', lookupError);
+          return standardError(req, res, 'Write_Outcomes ledger commit replayed, but the committed outcome could not be read back.', { code: lookupError.code || 'ledger_read_failed', operation_id: operationId }, 500);
+        }
+      }
+    }
     const responseBody = {
       message: 'Modality logged successfully.',
       test_mode: false,
@@ -1862,7 +2124,15 @@ app.post('/api/log-modality', async (req, res) => {
       modality: record.modality,
       appendedRange: null,
       verified_by_readback: true,
-      modality_row: row
+      modality_row: row,
+      ...(operationId
+        ? {
+            operation_id: operationId,
+            ledger_outcome: 'committed',
+            ledger_marker: ledgerResult.marker,
+            modality_write_verification: { verified: true, method: 'write_outcomes_ledger' },
+          }
+        : {}),
     };
     if (idempotency.enabled) {
       responseBody.write_id = idempotency.write_id;
@@ -1875,6 +2145,88 @@ app.post('/api/log-modality', async (req, res) => {
   }
 
   try {
+    // #1780 — the ledger path commits the modality row + outcome + marker
+    // in ONE atomic batchUpdate. The commit reads the outcome row back
+    // before returning success; that read-back is the verification, so no
+    // append receipt is adjudicated on this path.
+    if (operationId) {
+      let ledgerResult = null;
+      try {
+        ledgerResult = await commitLedgerOperation(writeOutcomesSheets, {
+          cutoverId,
+          operationId,
+          kind: 'save',
+          payload: ledgerPayload,
+          evidence: {
+            session_id,
+            write_id: idempotency.write_id,
+            route: '/api/log-modality',
+            modality: record.modality,
+          },
+          dataAppends: [{ tab: 'Modality_Log', rows: [row] }],
+        });
+      } catch (error) {
+        console.error('❌ Write_Outcomes ledger commit failed:', error);
+        // Never failWrite a ledger commit: a 5xx or a post-send timeout is
+        // AMBIGUOUS (WRITE-5) — the batch may have committed on Google's
+        // side while the response was lost. Record unverified, so a retry
+        // under the same operation_id reconciles from the ledger.
+        if (idempotency.enabled) {
+          completeWrite(idempotency.write_id, idempotency.token, {
+            session_id,
+            date,
+            write_id: idempotency.write_id,
+            duplicate_write: false,
+            idempotency_status: 'unverified',
+            sheet_write: 'unverified',
+            sheet_written: true,
+            modality_written: false,
+            modality: record.modality,
+            modality_row: row,
+            proof_mismatch: true,
+            operation_id: operationId,
+            ledger_outcome: 'unknown',
+          });
+        }
+        return standardError(req, res, 'Write_Outcomes ledger commit could not be confirmed; nothing is claimed as saved.', { code: error.code || 'ledger_commit_failed', operation_id: operationId }, ledgerErrorStatus(error));
+      }
+      if (ledgerResult.replayed) {
+        // A concurrent commit landed this operation between the lookup above
+        // and this commit; the commit replayed it instead of writing twice.
+        try {
+          const replayed = await lookupLedgerOperation(writeOutcomesSheets, operationId);
+          const replayBody = modalityLedgerReplayBody(replayed);
+          if (idempotency.enabled) completeWrite(idempotency.write_id, idempotency.token, replayBody);
+          recordTurnWriteProof(payload, session_id, '/api/log-modality', replayBody);
+          return standardSuccess(req, res, 'log-modality processed', replayBody, 200);
+        } catch (lookupError) {
+          console.error('❌ Write_Outcomes ledger replay lookup failed:', lookupError);
+          return standardError(req, res, 'Write_Outcomes ledger commit replayed, but the committed outcome could not be read back.', { code: lookupError.code || 'ledger_read_failed', operation_id: operationId }, 500);
+        }
+      }
+      const responseBody = {
+        message: 'Modality logged successfully.',
+        test_mode: false,
+        sheet_write: 'success',
+        sheet_written: true,
+        modality_written: true,
+        modality: record.modality,
+        appendedRange: null,
+        modality_row: row,
+        modality_write_verification: { verified: true, method: 'write_outcomes_ledger' },
+        operation_id: operationId,
+        ledger_outcome: 'committed',
+        ledger_marker: ledgerResult.marker,
+      };
+      if (idempotency.enabled) {
+        responseBody.write_id = idempotency.write_id;
+        responseBody.duplicate_write = false;
+        responseBody.idempotency_status = 'completed';
+        completeWrite(idempotency.write_id, idempotency.token, responseBody);
+      }
+      recordTurnWriteProof(payload, session_id, '/api/log-modality', responseBody);
+      return standardSuccess(req, res, 'log-modality processed', responseBody, 200);
+    }
     const appendResponse = await appendRows('Modality_Log', [row]);
     invalidateSheetRowsCache('Modality_Log');
     // #1762: the happy path never adjudicated the receipt — a zero-row or
@@ -3811,6 +4163,91 @@ async function recordCloseoutEvent(session_id, session_date, closeoutContext) {
   }
 }
 
+// #1780 — resolve a ledger operation_id carried by a writer route. Absent,
+// the route takes the legacy path unchanged ({ operationId: null }). Present,
+// the ledger path is mandatory: a malformed ID is a 400, an ID from another
+// cutover is a 409, and an unconfigured cutover is a 500 — never a silent
+// legacy fallback, which would write data the ledger cannot answer for.
+// Pure: the caller answers the returned error with standardError.
+function resolveLedgerOperationId(payload) {
+  const raw = payload && typeof payload.operation_id === 'string' && payload.operation_id !== '' ? payload.operation_id : null;
+  if (!raw) return { operationId: null, cutoverId: null };
+  if (!isOperationId(raw)) {
+    return { error: { status: 400, code: 'operation_id_invalid', message: 'operation_id is not a valid operation ID (atlas-op-v1:<cutover-UUID>:<operation-UUID>).' } };
+  }
+  let cutoverId;
+  try {
+    cutoverId = getCutoverId();
+  } catch (error) {
+    return { error: { status: 500, code: 'cutover_unconfigured', message: 'Write_Outcomes cutover is not configured; a ledger write cannot commit.' } };
+  }
+  if (parseOperationId(raw).cutoverId !== cutoverId) {
+    return { error: { status: 409, code: 'operation_id_cutover_mismatch', message: 'operation_id belongs to another Write_Outcomes cutover and cannot commit here.' } };
+  }
+  return { operationId: raw, cutoverId };
+}
+
+// #1780 — resolve a ledger undo's target_operation_id against the same
+// cutover the undo operation was validated against. Pure; same error shape
+// as resolveLedgerOperationId.
+function resolveLedgerTargetId(payload, cutoverId) {
+  const raw = payload && typeof payload.target_operation_id === 'string' && payload.target_operation_id !== '' ? payload.target_operation_id : null;
+  if (!raw) return { targetOperationId: null };
+  if (!isOperationId(raw)) {
+    return { error: { status: 400, code: 'operation_id_invalid', message: 'target_operation_id is not a valid operation ID (atlas-op-v1:<cutover-UUID>:<operation-UUID>).' } };
+  }
+  if (parseOperationId(raw).cutoverId !== cutoverId) {
+    return { error: { status: 409, code: 'operation_id_cutover_mismatch', message: 'target_operation_id belongs to another Write_Outcomes cutover and cannot commit here.' } };
+  }
+  return { targetOperationId: raw };
+}
+
+// #1780 — the HTTP status a ledger failure answers with. Client-caused
+// conflicts (a malformed ID, an undo with no target, a payload mismatch, a
+// missing or legacy undo target) are 4xx; a ledger read/commit that could
+// not be established is a 500, so the caller retries and reconciles.
+function ledgerErrorStatus(error) {
+  switch (error && error.code) {
+    case 'operation_id_invalid':
+    case 'undo_without_target':
+      return 400;
+    case 'operation_id_cutover_mismatch':
+    case 'operation_id_payload_mismatch':
+    case 'undo_target_missing':
+    case 'legacy_undo_refused':
+      return 409;
+    default:
+      return 500;
+  }
+}
+
+// #1780 — the body a ledger undo replay answers with: the committed undo's
+// outcome, never a fresh delete. `outcome` is the decoded Write_Outcomes
+// row as lookupOperation returns it.
+function buildLedgerUndoReplayBody({ outcome, writeId }) {
+  const evidence = (outcome && outcome.evidence) || {};
+  const body = {
+    message: 'Undo already completed — the target rows were already removed.',
+    duplicate_write: true,
+    already_undone: true,
+    operation_id: outcome.operationId,
+    ledger_outcome: 'reverted',
+    ledger_marker: evidence.marker || null,
+    ...(outcome.revertedBy ? { reverted_by: outcome.revertedBy } : {}),
+    deleted_range: evidence.deleted_range || null,
+    rows_deleted: Number(evidence.log_rows || 0),
+    effort_deleted_range: evidence.effort_deleted_range || null,
+    effort_rows_deleted: evidence.effort ? 1 : 0,
+    sheet_write: 'skipped_duplicate',
+    sheet_written: false,
+  };
+  if (writeId) {
+    body.write_id = writeId;
+    body.idempotency_status = 'completed';
+  }
+  return body;
+}
+
 // #1780 — the body a ledger replay answers with: the committed/reverted
 // outcome of the original save, never a fresh success. `outcome` is the
 // decoded Write_Outcomes row as lookupOperation returns it.
@@ -4447,7 +4884,7 @@ app.post('/api/log-workout', async (req, res) => {
           idempotency_status: 'unverified',
         });
       }
-      return standardError(req, res, 'Write_Outcomes ledger commit could not be confirmed; nothing is claimed as saved.', { code: error.code || 'ledger_commit_failed', operation_id: operationId }, 500);
+      return standardError(req, res, 'Write_Outcomes ledger commit could not be confirmed; nothing is claimed as saved.', { code: error.code || 'ledger_commit_failed', operation_id: operationId }, ledgerErrorStatus(error));
     }
     if (ledgerResult.replayed) {
       // A concurrent commit landed this operation between the lookup above
@@ -4814,36 +5251,92 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
   if (confirm_delete !== true) {
     return standardError(req, res, 'confirm_delete must be true to proceed with deletion.', null, 400);
   }
-  if (!log_appended_range || typeof log_appended_range !== 'string') {
-    return standardError(req, res, 'log_appended_range is required.', null, 400);
-  }
   if (!session_id || typeof session_id !== 'string') {
     return standardError(req, res, 'session_id is required.', null, 400);
   }
 
-  // Parse A1 range: TabName!A{startRow}:{col}{endRow}
-  const rangeMatch = log_appended_range.match(/^([^!]+)!A(\d+):[A-Z]+(\d+)$/);
-  if (!rangeMatch) {
-    return standardError(req, res, `log_appended_range is not a valid A1 range (expected e.g. Log_Cleaned!A847:L847), got "${log_appended_range}".`, null, 400);
+  // #1780 — an undo may carry the operation_id the client minted for the
+  // Write_Outcomes ledger plus the target_operation_id of the save it
+  // reverts. Absent, the legacy positional path runs unchanged. Present,
+  // the ledger path is mandatory: a malformed ID is a 400, an ID from
+  // another cutover is a 409, and an unconfigured cutover is a 500 — never
+  // a silent legacy fallback. An undo operation without a target names
+  // nothing to revert (400); a target without an undo operation is not a
+  // ledger undo (400). A ledger save returns no appended range (a
+  // batchUpdate returns none), so a ledger undo carries no range: the
+  // target rows are derived from the ledger evidence + the live sheet
+  // below, never from a position the client guesses.
+  const ledgerId = resolveLedgerOperationId(payload);
+  if (ledgerId.error) {
+    return standardError(req, res, ledgerId.error.message, { code: ledgerId.error.code, operation_id: payload.operation_id }, ledgerId.error.status);
+  }
+  const operationId = ledgerId.operationId;
+  const cutoverId = ledgerId.cutoverId;
+  let targetOperationId = null;
+  if (operationId) {
+    const targetId = resolveLedgerTargetId(payload, cutoverId);
+    if (targetId.error) {
+      return standardError(req, res, targetId.error.message, { code: targetId.error.code, operation_id: payload.target_operation_id }, targetId.error.status);
+    }
+    targetOperationId = targetId.targetOperationId;
+    if (!targetOperationId) {
+      return standardError(req, res, 'An undo operation_id must name the save it reverts via target_operation_id.', { code: 'undo_without_target', operation_id: operationId }, 400);
+    }
+  } else if (payload.target_operation_id) {
+    return standardError(req, res, 'target_operation_id without an undo operation_id is not a ledger undo.', { code: 'undo_without_target' }, 400);
   }
 
-  const rangeTab = rangeMatch[1];
-  const startRow = Number(rangeMatch[2]); // 1-indexed, inclusive
-  const endRow = Number(rangeMatch[3]);   // 1-indexed, inclusive
-  const rowSpan = endRow - startRow + 1;
-
-  if (rangeTab !== logSheetName) {
-    return standardError(req, res, `log_appended_range must target "${logSheetName}", got "${rangeTab}".`, null, 400);
+  // Parse A1 range when one is given (the legacy path, and a ledger undo
+  // that still carries one): TabName!A{startRow}:{col}{endRow}. A range-less
+  // ledger undo derives its range below, from the target save's rows.
+  let rangeTab = null;
+  let startRow = null;
+  let endRow = null;
+  let rowSpan = null;
+  if (log_appended_range !== undefined && log_appended_range !== null && log_appended_range !== '') {
+    if (typeof log_appended_range !== 'string') {
+      return standardError(req, res, 'log_appended_range must be a string.', null, 400);
+    }
+    const rangeMatch = log_appended_range.match(/^([^!]+)!A(\d+):[A-Z]+(\d+)$/);
+    if (!rangeMatch) {
+      return standardError(req, res, `log_appended_range is not a valid A1 range (expected e.g. Log_Cleaned!A847:L847), got "${log_appended_range}".`, null, 400);
+    }
+    rangeTab = rangeMatch[1];
+    startRow = Number(rangeMatch[2]); // 1-indexed, inclusive
+    endRow = Number(rangeMatch[3]);   // 1-indexed, inclusive
+    rowSpan = endRow - startRow + 1;
+    if (rangeTab !== logSheetName) {
+      return standardError(req, res, `log_appended_range must target "${logSheetName}", got "${rangeTab}".`, null, 400);
+    }
+    // Undo the inverse of a single write: the range may span up to the same
+    // MAX_LOG_ROWS a single /api/log-workout append can produce. A tighter cap here
+    // silently broke undo for a full multi-set session closeout (>10 rows in one write).
+    if (rowSpan < 1 || rowSpan > MAX_LOG_ROWS) {
+      return standardError(req, res, `Row span must be between 1 and ${MAX_LOG_ROWS}, got ${rowSpan}.`, null, 400);
+    }
+    if (Number(rows_to_delete) !== rowSpan) {
+      return standardError(req, res, `rows_to_delete (${rows_to_delete}) does not match range row span (${rowSpan}).`, null, 400);
+    }
+  } else if (!operationId) {
+    return standardError(req, res, 'log_appended_range is required.', null, 400);
+  } else if (!Number.isInteger(Number(rows_to_delete)) || Number(rows_to_delete) < 1 || Number(rows_to_delete) > MAX_LOG_ROWS) {
+    // Range-less ledger undo: the client always knows the count from the
+    // save response (log_rows_written); the derivation cross-checks it.
+    return standardError(req, res, `rows_to_delete is required for a range-less undo (1–${MAX_LOG_ROWS}).`, null, 400);
   }
-  // Undo the inverse of a single write: the range may span up to the same
-  // MAX_LOG_ROWS a single /api/log-workout append can produce. A tighter cap here
-  // silently broke undo for a full multi-set session closeout (>10 rows in one write).
-  if (rowSpan < 1 || rowSpan > MAX_LOG_ROWS) {
-    return standardError(req, res, `Row span must be between 1 and ${MAX_LOG_ROWS}, got ${rowSpan}.`, null, 400);
-  }
-  if (Number(rows_to_delete) !== rowSpan) {
-    return standardError(req, res, `rows_to_delete (${rows_to_delete}) does not match range row span (${rowSpan}).`, null, 400);
-  }
+  // The ledger payload is the deliberate undo as the client submitted it:
+  // the session, the row count, and the save it reverts. The range is
+  // positional, not identity: a retry re-derives it, so it is excluded —
+  // a retry after rows shifted must hash the same.
+  const ledgerPayload = operationId ? {
+    session_id: String(session_id).trim().toLowerCase(),
+    rows_to_delete: Number(rows_to_delete),
+    target_operation_id: targetOperationId,
+  } : null;
+  // The range this undo deletes: the client's range when given, the derived
+  // range once a range-less undo locates its rows. Receipts and responses
+  // report this, never the raw payload field.
+  let effectiveRange = log_appended_range ? String(log_appended_range).trim() : null;
 
   // #1164 V1 safety contract — a workout that reached a durable `finalized` closeout can no longer
   // be undone. Checked BEFORE beginWrite on purpose: a rejection never enters the idempotency
@@ -4895,9 +5388,14 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
   // the undone write's identity (session + range): the retry of the same
   // logical undo derives the same id, and a different write's undo derives a
   // different one. An explicit client write_id always wins.
+  // #1780 — a range-less ledger undo derives its stable id from the save it
+  // reverts instead: the retry of the same logical undo derives the same id,
+  // and the undo of a different save derives a different one.
   const derivedWriteId = !normalizeWriteId(write_id);
   const effectiveWriteId = derivedWriteId
-    ? `undo:${normalizedExpected}:${String(log_appended_range).trim()}`
+    ? (operationId && !log_appended_range
+        ? `undo:${normalizedExpected}:${targetOperationId}`
+        : `undo:${normalizedExpected}:${String(log_appended_range).trim()}`)
     : write_id;
 
   // #1763 — a retry under a FRESH write_id must still reconcile: find the
@@ -4905,19 +5403,24 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
   // attempt's record, so the lookup sees only prior attempts. The claim
   // above serializes same-session attempts, so no concurrent attempt can slip
   // in between the lookup and beginWrite.
-  const priorUndos = findWritesByMetadata({
+  // #1780 — a range-less ledger undo keys its priors on the save it
+  // reverts, not on a position.
+  const priorUndoMatch = {
     endpoint: '/api/log-workout/undo-last',
     session_id: normalizedExpected,
-    log_appended_range: String(log_appended_range).trim(),
-  });
+  };
+  if (operationId && !log_appended_range) priorUndoMatch.target_operation_id = targetOperationId;
+  else priorUndoMatch.log_appended_range = String(log_appended_range).trim();
+  const priorUndos = findWritesByMetadata(priorUndoMatch);
   const priorUnverified = priorUndos.find((r) => r.status === 'unverified');
   const priorCompleted = priorUndos.find((r) => r.status === 'completed');
 
   let idempotency = beginWrite(effectiveWriteId, {
     endpoint: '/api/log-workout/undo-last',
     session_id: normalizedExpected,
-    log_appended_range: String(log_appended_range).trim(),
-    rows_to_delete: rowSpan,
+    log_appended_range: effectiveRange,
+    rows_to_delete: Number(rows_to_delete),
+    ...(operationId ? { target_operation_id: targetOperationId } : {}),
   });
 
   // The prior unverified receipt governing this attempt (its stored target
@@ -4933,6 +5436,78 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
   // reopen the record: the fresh-lookup path below runs only for an attempt
   // that was NOT a duplicate (a reopened duplicate was already reconciled).
   const wasDuplicate = idempotency.duplicate === true;
+
+  // #1780 — the ledger answers before the local receipt machinery below
+  // can mistake a receipt-store loss for a fresh undo. Placed here, after
+  // beginWrite (so the replay can settle this attempt's record) and before
+  // the duplicate branch (so a lost receipt store still replays from the
+  // ledger, the durable authority). A lookup only reads: a failure here
+  // deleted nothing, so failWrite is safe.
+  let ledgerTarget = null;
+  if (operationId) {
+    let existingUndo = null;
+    try {
+      existingUndo = await lookupLedgerOperation(writeOutcomesSheets, operationId);
+    } catch (error) {
+      console.error('❌ Write_Outcomes ledger lookup failed:', error);
+      if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+      releaseClaim();
+      return standardError(req, res, 'Write_Outcomes ledger could not be read; the undo is refused.', { code: error.code || 'ledger_read_failed', operation_id: operationId }, 500);
+    }
+    if (existingUndo) {
+      if (existingUndo.payloadHash !== canonicalPayloadHash(ledgerPayload)) {
+        if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+        releaseClaim();
+        return standardError(req, res, 'operation_id already committed with a different payload; the same ID with different data is refused.', { code: 'operation_id_payload_mismatch', operation_id: operationId }, 409);
+      }
+      // The undo already committed: answer the committed outcome, never
+      // delete twice.
+      const replayBody = buildLedgerUndoReplayBody({ outcome: existingUndo, writeId: idempotency.write_id });
+      if (idempotency.enabled) completeWrite(idempotency.write_id, idempotency.token, replayBody);
+      releaseClaim();
+      return standardSuccess(req, res, replayBody.message, replayBody, 200);
+    }
+    // The target save must stand in the ledger, committed and not yet
+    // reverted: a ledger undo reverts exactly one committed save.
+    let target = null;
+    try {
+      target = await lookupLedgerOperation(writeOutcomesSheets, targetOperationId);
+    } catch (error) {
+      console.error('❌ Write_Outcomes ledger target lookup failed:', error);
+      if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+      releaseClaim();
+      return standardError(req, res, 'Write_Outcomes ledger could not be read; the undo is refused.', { code: error.code || 'ledger_read_failed', operation_id: targetOperationId }, 500);
+    }
+    if (!target) {
+      if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+      releaseClaim();
+      return standardError(req, res, `Undo refused: no committed save with operation ID ${targetOperationId} exists in the ledger.`, { code: 'undo_target_missing', operation_id: operationId, target_operation_id: targetOperationId }, 409);
+    }
+    if (target.status === 'reverted') {
+      // Another undo already reverted this save: the effect already
+      // stands, so this undo answers already-undone and deletes nothing.
+      const alreadyBody = {
+        message: 'Undo already completed — the target rows were already removed.',
+        duplicate_write: true,
+        already_undone: true,
+        operation_id: operationId,
+        target_operation_id: targetOperationId,
+        ledger_outcome: 'reverted',
+        reverted_by: target.revertedBy || null,
+        ledger_marker: (target.evidence && target.evidence.marker) || null,
+        sheet_write: 'skipped_duplicate',
+        sheet_written: false,
+      };
+      if (idempotency.enabled) {
+        alreadyBody.write_id = idempotency.write_id;
+        alreadyBody.idempotency_status = 'completed';
+        completeWrite(idempotency.write_id, idempotency.token, alreadyBody);
+      }
+      releaseClaim();
+      return standardSuccess(req, res, alreadyBody.message, alreadyBody, 200);
+    }
+    ledgerTarget = target;
+  }
 
   // Live read-back of both tabs plus the Effort presence for this session.
   // Throws on a read failure — the caller answers unverified, never success.
@@ -4956,7 +5531,7 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
   // + Effort expectation) so a later retry can reconcile against it.
   function settleUnverified(target, reason, detail) {
     const unverified = {
-      deleted_range: log_appended_range,
+      deleted_range: effectiveRange,
       rows_deleted: 0,
       effort_deleted_range: null,
       effort_rows_deleted: 0,
@@ -5202,6 +5777,46 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
     // New generation: proceed as a fresh undo of the new rows.
   }
 
+  // #1780 — a range-less ledger undo derives its target rows from the save
+  // it reverts: the ledger evidence names the session and the row count,
+  // and the live sheet names the positions. The rows must form ONE
+  // contiguous block for that session, exactly rows_to_delete long and
+  // exactly the count the save committed — otherwise the target cannot be
+  // located honestly and the undo is refused. The derivation reads live
+  // (getSheetRowsRaw, not a cache): a commit decision reads the sheet as it
+  // stands now.
+  if (operationId && !log_appended_range) {
+    let logRowsForDerivation;
+    try {
+      logRowsForDerivation = await getSheetRowsRaw(logSheetName);
+    } catch (error) {
+      releasePreDeleteFailure(governingTarget, 'derivation_read_failed');
+      releaseClaim();
+      return standardError(req, res, 'Failed to read sheet rows to locate the undo target.', null, 500);
+    }
+    const sessionRows = [];
+    for (let i = 0; i < logRowsForDerivation.length; i++) {
+      const row = logRowsForDerivation[i];
+      if (!row || row.every((cell) => String(cell) === '')) continue;
+      if (String(row[LOG_SESSION_ID_COLUMN] || '').trim().toLowerCase() === normalizedExpected) {
+        sessionRows.push(i); // data index: sheet row i + 2
+      }
+    }
+    const expectedCount = Number(rows_to_delete);
+    const evidenceCount = ledgerTarget && ledgerTarget.evidence ? Number(ledgerTarget.evidence.log_rows || 0) : 0;
+    const contiguous = sessionRows.length > 0
+      && sessionRows.every((idx, k) => k === 0 || idx === sessionRows[k - 1] + 1);
+    if (!contiguous || sessionRows.length !== expectedCount || (evidenceCount > 0 && sessionRows.length !== evidenceCount)) {
+      releasePreDeleteFailure(governingTarget, 'target_rows_not_located');
+      releaseClaim();
+      return standardError(req, res, 'The rows for the save being undone could not be located as one contiguous block. Undo refused; nothing was deleted.', { error_code: 'undo_target_rows_not_found' }, 409);
+    }
+    startRow = sessionRows[0] + 2;
+    endRow = sessionRows[sessionRows.length - 1] + 2;
+    rowSpan = sessionRows.length;
+    effectiveRange = `${logSheetName}!A${startRow}:${String.fromCharCode(64 + logCleanedColumns.length)}${endRow}`;
+  }
+
   // Read back rows before deleting to verify session_id ownership. This is a
   // safety read — it must reflect the live sheet, never a cached snapshot.
   let allRows;
@@ -5311,7 +5926,7 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
   // Effort row existed. It is stored on every settled receipt so a retry —
   // same id, fresh id, or none — can reconcile against it.
   const undoTarget = {
-    log_appended_range: String(log_appended_range).trim(),
+    log_appended_range: effectiveRange,
     session_id: normalizedExpected,
     targets,
     effort_present_before: effortSheetRow !== null,
@@ -5334,7 +5949,148 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
   // so a retry re-verifies and completes. (Log-first would strand the orphan:
   // a retry 409s on the missing Log rows and the Effort row could never be
   // removed.)
+  //
+  // The 200 body for a delete that landed despite its call erroring
+  // (verified by read-back). The normal path builds its own body below
+  // (with receipts_superseded); this one answers from the reconcile branch.
+  function completedUndoBody(ledger) {
+    const body = {
+      deleted_range: effectiveRange,
+      rows_deleted: rowSpan,
+      effort_deleted_range: effortDeletedRange,
+      effort_rows_deleted: undoTarget.effort_present_before ? 1 : 0,
+      sheet_write: 'success',
+      sheet_written: true,
+      undo_target: undoTarget,
+      delete_verification: { verified: true, reconciled: true, log_targets_removed: true, effort_removed: undoTarget.effort_present_before },
+    };
+    if (ledger) {
+      body.operation_id = operationId;
+      body.target_operation_id = targetOperationId;
+      body.ledger_outcome = 'reverted';
+      body.ledger_marker = ledger.marker;
+    }
+    if (idempotency.enabled) {
+      body.write_id = idempotency.write_id;
+      body.duplicate_write = false;
+      body.idempotency_status = 'completed';
+    }
+    return body;
+  }
+
   let effortRowsDeleted = 0;
+  let ledgerResult = null;
+  if (operationId) {
+    // #1780 — the ledger path commits the Effort + Log deletes + the undo
+    // outcome + the generation marker in ONE atomic batchUpdate. The commit
+    // reads the outcome row back before returning success; that read-back is
+    // the first verification, and the route's post-delete read-back below
+    // still runs as the second. A failed commit writes nothing — neither
+    // the deletes nor the outcome — so the legacy partial-delete states
+    // below cannot occur on this path.
+    const startIndex = startRow - 1; // 0-based inclusive
+    const endIndex = endRow;         // 0-based exclusive
+    let sheetIds;
+    try {
+      sheetIds = await writeOutcomesSheets.getSpreadsheetSheetIds();
+    } catch (error) {
+      console.error('❌ Write_Outcomes sheet IDs could not be read:', error);
+      settleUnverified(undoTarget, 'ledger_sheet_ids_failed', { stage: 'delete' });
+      releaseClaim();
+      return standardError(req, res, 'Undo could not be verified against the sheet — the delete may or may not have landed. Retry the undo with the same write_id; nothing further was deleted.', { error_code: 'undo_unverified' }, 500);
+    }
+    const dataRequests = [];
+    if (effortSheetRow !== null) {
+      dataRequests.push({ deleteDimension: { range: { sheetId: sheetIds.get(effortSheetName), dimension: 'ROWS', startIndex: effortSheetRow - 1, endIndex: effortSheetRow } } });
+    }
+    dataRequests.push({ deleteDimension: { range: { sheetId: sheetIds.get(logSheetName), dimension: 'ROWS', startIndex, endIndex } } });
+    try {
+      ledgerResult = await commitLedgerOperation(writeOutcomesSheets, {
+        cutoverId,
+        operationId,
+        kind: 'undo',
+        payload: ledgerPayload,
+        targetOperationId,
+        evidence: {
+          session_id: normalizedExpected,
+          write_id: idempotency.write_id,
+          route: '/api/log-workout/undo-last',
+          log_rows: rowSpan,
+          effort: effortSheetRow !== null,
+          deleted_range: effectiveRange,
+          effort_deleted_range: effortDeletedRange,
+        },
+        dataRequests,
+      });
+    } catch (error) {
+      console.error('❌ Write_Outcomes ledger undo commit failed:', error);
+      // The batch is AMBIGUOUS (WRITE-5): it may have committed on
+      // Google's side while the response was lost. Reconcile from the
+      // ledger — the durable authority — instead of guessing: a committed
+      // undo answers the verified success; anything else settles
+      // unverified and the retry reconciles from the ledger.
+      let reconciled = null;
+      try {
+        reconciled = await lookupLedgerOperation(writeOutcomesSheets, operationId);
+      } catch (lookupError) {
+        reconciled = null;
+      }
+      if (reconciled && reconciled.status === 'reverted' && reconciled.payloadHash === canonicalPayloadHash(ledgerPayload)) {
+        let currentState;
+        try {
+          currentState = await readUndoState();
+        } catch (readError) {
+          settleUnverified(undoTarget, 'reconcile_read_failed', { delete_error: error.message });
+          releaseClaim();
+          return standardError(req, res, 'Undo could not be verified against the sheet — the delete may or may not have landed. Retry the undo with the same write_id; nothing further was deleted.', { error_code: 'undo_unverified' }, 500);
+        }
+        const outcome = reconcileDeleteOutcome({
+          targets,
+          effortWasPresent: undoTarget.effort_present_before,
+          logRowsNow: currentState.logRowsNow,
+          effortRowsNow: currentState.effortRowsNow,
+          effortSessionColumn: EFFORT_SESSION_ID_COLUMN,
+          normalizedSessionId: normalizedExpected,
+        });
+        if (outcome === 'completed') {
+          // The undo committed despite the error: answer the verified
+          // success, with the ledger's marker as the proof.
+          const responseBody = completedUndoBody({ marker: (reconciled.evidence && reconciled.evidence.marker) || null });
+          if (idempotency.enabled) completeWrite(idempotency.write_id, idempotency.token, responseBody);
+          releaseClaim();
+          return standardSuccess(req, res, 'Rows deleted', responseBody, 200);
+        }
+        settleUnverified(undoTarget, 'reconcile_partial', {
+          outcome,
+          log_targets_present: outcome !== 'completed',
+          effort_present: currentState.effortPresentNow,
+          effort_present_before: undoTarget.effort_present_before,
+        });
+        releaseClaim();
+        return standardError(req, res, 'Undo could not be verified against the sheet — the target rows may still be present. Retry the undo with the same write_id; nothing further was deleted.', { error_code: 'undo_unverified' }, 500);
+      }
+      settleUnverified(undoTarget, 'ledger_commit_failed', { delete_error: error.message, code: error.code || 'ledger_commit_failed' });
+      releaseClaim();
+      return standardError(req, res, 'Write_Outcomes ledger commit could not be confirmed; nothing is claimed as undone.', { code: error.code || 'ledger_commit_failed', operation_id: operationId }, ledgerErrorStatus(error));
+    }
+    if (ledgerResult.replayed) {
+      // A concurrent commit landed this undo between the lookup above and
+      // this commit; the commit replayed it instead of deleting twice.
+      // Answer the replay truthfully (the rows are already gone).
+      try {
+        const replayed = await lookupLedgerOperation(writeOutcomesSheets, operationId);
+        const replayBody = buildLedgerUndoReplayBody({ outcome: replayed, writeId: idempotency.write_id });
+        if (idempotency.enabled) completeWrite(idempotency.write_id, idempotency.token, replayBody);
+        releaseClaim();
+        return standardSuccess(req, res, replayBody.message, replayBody, 200);
+      } catch (lookupError) {
+        console.error('❌ Write_Outcomes ledger replay lookup failed:', lookupError);
+        releaseClaim();
+        return standardError(req, res, 'Write_Outcomes ledger commit replayed, but the committed outcome could not be read back.', { code: lookupError.code || 'ledger_read_failed', operation_id: operationId }, 500);
+      }
+    }
+    effortRowsDeleted = effortSheetRow !== null ? 1 : 0;
+  } else {
   try {
     if (effortSheetRow !== null) {
       await deleteRowsByRange(effortSheetName, effortSheetRow - 1, effortSheetRow);
@@ -5367,22 +6123,8 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
     });
     if (outcome === 'completed') {
       // The delete landed despite the error: answer the verified success.
-      const responseBody = {
-        deleted_range: log_appended_range,
-        rows_deleted: rowSpan,
-        effort_deleted_range: effortDeletedRange,
-        effort_rows_deleted: undoTarget.effort_present_before ? 1 : 0,
-        sheet_write: 'success',
-        sheet_written: true,
-        undo_target: undoTarget,
-        delete_verification: { verified: true, reconciled: true, log_targets_removed: true, effort_removed: undoTarget.effort_present_before },
-      };
-      if (idempotency.enabled) {
-        responseBody.write_id = idempotency.write_id;
-        responseBody.duplicate_write = false;
-        responseBody.idempotency_status = 'completed';
-        completeWrite(idempotency.write_id, idempotency.token, responseBody);
-      }
+      const responseBody = completedUndoBody(null);
+      if (idempotency.enabled) completeWrite(idempotency.write_id, idempotency.token, responseBody);
       releaseClaim();
       return standardSuccess(req, res, 'Rows deleted', responseBody, 200);
     }
@@ -5399,6 +6141,7 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
     });
     releaseClaim();
     return standardError(req, res, message, { error_code: 'undo_unverified' }, 500);
+  }
   }
 
   // #1763 — verify the deletion afterwards: the fingerprinted rows must be
@@ -5447,7 +6190,7 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
   }
 
   const responseBody = {
-    deleted_range: log_appended_range,
+    deleted_range: effectiveRange,
     rows_deleted: rowSpan,
     effort_deleted_range: effortDeletedRange,
     effort_rows_deleted: effortRowsDeleted,
@@ -5456,6 +6199,14 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
     sheet_written: true,
     undo_target: undoTarget,
     delete_verification: { verified: true, log_targets_removed: true, effort_removed: effortRowsDeleted > 0, effort_present_before: undoTarget.effort_present_before },
+    ...(operationId
+      ? {
+          operation_id: operationId,
+          target_operation_id: targetOperationId,
+          ledger_outcome: 'reverted',
+          ledger_marker: ledgerResult ? ledgerResult.marker : null,
+        }
+      : {}),
   };
   if (idempotency.enabled) {
     responseBody.write_id = idempotency.write_id;

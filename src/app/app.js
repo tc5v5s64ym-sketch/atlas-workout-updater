@@ -7376,6 +7376,11 @@ async function refreshOperationId(payload) {
   else delete payload.operation_id;
 }
 
+// #1780 — coach-conversation.js mints note operations through this seam
+// (the established window.atlas* pattern): the minter lives in this module,
+// and the note prompt is a deliberate save like any other.
+window.atlasMintOperationId = mintOperationId;
+
 function hasLogWorkoutNoWriteProof(result) {
   const data = result?.data || {};
   return data.test_mode === true &&
@@ -7484,8 +7489,21 @@ async function tryPreviewModality(text, sessionId, date, submitSeq) {
   let result;
   const correlationPreview = beginCorrelatedPreview({ sessionId });
   activePreviewCorrelation = correlationPreview;
+  // #1780 — the ledger operation minted for this deliberate save (see the
+  // preview call below); null when the server advertises no cutover.
+  let operationId = null;
   try {
-    const previewPayload = { text, session_id: sessionId, date, test_mode: true };
+    // #1780 — mint the ledger operation ID for this deliberate save, when
+    // the server advertises a cutover. It rides the payload through the
+    // dry-run preview into the approve re-send (the preview ignores it), so
+    // the live write and its retries all carry the same operation. When the
+    // server advertises none, the field stays absent and the save takes the
+    // legacy path.
+    operationId = await mintOperationId();
+    const previewPayload = {
+      text, session_id: sessionId, date, test_mode: true,
+      ...(operationId ? { operation_id: operationId } : {}),
+    };
     if (correlationPreview) previewPayload.correlation = correlationPreview.correlation;
     result = await api('/api/log-modality', {
       method: 'POST',
@@ -7519,6 +7537,7 @@ async function tryPreviewModality(text, sessionId, date, submitSeq) {
     sessionId,
     date,
     writeId: generateWriteId(),
+    operationId,
     correlationPreview,
     previewProof: previewProofFromResult(result, 'modality')
   };
@@ -9014,6 +9033,15 @@ async function handleUndoLastWrite(expected) {
     setStatus(loggerStatus, 'That workout is no longer your most recent save — Undo only affects your latest write.', 'error');
     return;
   }
+  // #1780 — the same stale-card guard, by ledger operation: a card bound to
+  // an older save's operation must never undo the newer write. A ledger save
+  // returns no appended range, so the operation is the sole discriminator
+  // there; a legacy save has no operation, so the range check above stands.
+  if (expected && expected.operation_id && lastWrite.operation_id
+      && expected.operation_id !== lastWrite.operation_id) {
+    setStatus(loggerStatus, 'That workout is no longer your most recent save — Undo only affects your latest write.', 'error');
+    return;
+  }
   const { log_appended_range, session_id, log_rows_written } = lastWrite;
   const undoBtn = loggerStatus.querySelector('.undo-write-btn');
   if (undoBtn) {
@@ -9021,6 +9049,10 @@ async function handleUndoLastWrite(expected) {
     undoBtn.textContent = 'Undoing…';
   }
   try {
+    // #1780 — a ledger save is undone by operation, not by position: mint
+    // a fresh undo operation and name the save it reverts. A legacy save
+    // (no operation_id) sends neither field and takes the legacy path.
+    const undoOperationId = lastWrite.operation_id ? await mintOperationId() : null;
     await api('/api/log-workout/undo-last', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -9028,7 +9060,8 @@ async function handleUndoLastWrite(expected) {
         log_appended_range,
         session_id,
         rows_to_delete: log_rows_written,
-        confirm_delete: true
+        confirm_delete: true,
+        ...(undoOperationId ? { operation_id: undoOperationId, target_operation_id: lastWrite.operation_id } : {})
       })
     });
     lastWrite = null;
@@ -9053,9 +9086,19 @@ window.atlasUndoLastWrite = handleUndoLastWrite;
 // CLIENT-1: review cards bind their write identity at save time so their Undo can
 // be refused once a newer write supersedes it. Returns a snapshot copy (never the
 // live ref) of the current write's identity, or null when there is no undoable write.
-window.atlasCurrentWriteIdentity = () => (lastWrite && lastWrite.log_appended_range)
-  ? { log_appended_range: lastWrite.log_appended_range, session_id: lastWrite.session_id }
-  : null;
+// A ledger save carries no appended range — its operation is the identity.
+window.atlasCurrentWriteIdentity = () => {
+  if (!lastWrite) return null;
+  if (lastWrite.log_appended_range) {
+    return {
+      log_appended_range: lastWrite.log_appended_range,
+      session_id: lastWrite.session_id,
+      operation_id: lastWrite.operation_id || null,
+    };
+  }
+  if (lastWrite.operation_id) return { session_id: lastWrite.session_id, operation_id: lastWrite.operation_id };
+  return null;
+};
 
 // F-SB1 (Stage B workout 1, 2026-08-01). `closeout_fully_verified:false` covers three
 // different situations, and only some are RETRYABLE. When a planned session simply had no
@@ -9184,7 +9227,8 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
         text: pendingWrite.text,
         session_id: pendingWrite.sessionId,
         date: pendingWrite.date,
-        write_id: pendingWrite.writeId
+        write_id: pendingWrite.writeId,
+        ...(pendingWrite.operationId ? { operation_id: pendingWrite.operationId } : {})
       };
       const correlation = approvalCorrelation(pendingWrite.correlationPreview);
       if (correlation) modalityPayload.correlation = correlation;
@@ -9266,6 +9310,10 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
           // Server-reported identity first: it may have allocated one for a blank payload.
           session_id: writeData.session_id || realPayload.session_id,
           log_rows_written: writeData.log_rows_written,
+          // #1780 — the save's ledger operation, when it committed through
+          // the Write_Outcomes ledger: the undo targets this operation, not
+          // a position. Null for legacy saves.
+          operation_id: writeData.operation_id || null,
           // Carried verbatim — the client never derives or upgrades a verdict.
           log_write_verification: writeData.log_write_verification || null
         };
