@@ -328,8 +328,8 @@ the acceptance figures. Removing the replay fails three tests.
 | Client | Session total | **Peak rolling-60s** (trace-derived lower bound) |
 |---|---|---|
 | merged `main` (42ee7b3), captured manifest | 62 | **51 — over the 50 budget** |
-| this branch's server, captured (pre-correction) client | 56 | 46 |
-| this branch, **corrected** client (**shipped**) | 48 | **39** |
+| this branch's server, captured (pre-correction) client | 57 | 46 |
+| this branch, **corrected** client (**shipped**) | 49 | **39** |
 
 > **39 is a corrected trace-derived lower bound ≤ 50. The production budget is NOT yet
 > proven.** The timing is now honest, so the one thing still missing is the live run's
@@ -337,6 +337,16 @@ the acceptance figures. Removing the replay fails three tests.
 > them at all. That omission only ever adds, which is what makes 39 a floor rather than a
 > guess. The production verdict remains the post-deploy non-counting debug run. Campaign
 > status stays 0/5 until that run passes.
+>
+> **Why the totals moved (PR #1791, server-enforced preview-to-approve).** A live
+> `/api/log-workout` write now requires the signed preview digest, and the history guards
+> (e1RM jump / RIR drift) run on the rows actually written — one extra `Log_Cleaned` read
+> on the live closeout write. The closeout preview itself adds no net reads (its reads
+> warm the 30-second row cache the live write reuses). Every total rose by exactly 1
+> (captured 56 → 57, corrected 48 → 49); both peaks are unchanged (46 / 39). The
+> counterfactual table below was re-measured in the same change, and the per-correction
+> peaks are now pinned by a test (`counterfactual table` in
+> `test/liveSessionReadBudget.test.js`), so the next move fails there first.
 
 **These figures replaced an earlier set, and the earlier set was wrong.** Under the collapsed
 timeline this document previously published 60 / 55 / 46. Every one of those was measured
@@ -396,13 +406,13 @@ and re-running:
 
 | Correction disabled | Session total | Peak rolling-60s |
 |---|---|---|
-| C4 — repeated recommendation | 54 | **45** |
-| C2 — intent-recommendation duplicate | 49 | 40 |
-| C3 — verify-range retired | 49 | 39 |
-| C2 — coaching/insights duplicate | 48 | 39 |
-| C2 — prs/recent duplicate | 48 | 39 |
-| *(none disabled — shipped)* | 48 | **39** |
-| all five disabled (the captured client) | 56 | 46 |
+| C4 — repeated recommendation | 55 | **45** |
+| C2 — intent-recommendation duplicate | 50 | 40 |
+| C3 — verify-range retired | 50 | 40 |
+| C2 — coaching/insights duplicate | 49 | 39 |
+| C2 — prs/recent duplicate | 49 | 39 |
+| *(none disabled — shipped)* | 49 | **39** |
+| all five disabled (the captured client) | 57 | 46 |
 
 **The earlier "C4 alone is load-bearing" claim is withdrawn.** Under the collapsed timeline
 C4 measured 52 against a budget of 50, and this document said the session did not fit without
@@ -412,10 +422,12 @@ collapse that inflated every other figure.
 
 What the table does show is where the weight sits. C4 is worth 6 reads in the worst minute
 and 6 across the session — far more than anything else. C2's intent-recommendation duplicate
-is worth 1 in the peak. C3 and the other two C2 removals do not move the peak at all, and C3
-still removes a real request from the session total; they buy total headroom and cache
-pressure rather than peak headroom. All five together are worth 7 in the peak and 8 in the
-total.
+is worth 1 in the peak. C3 is worth 1 in the peak and 1 in the total (it was 0 in the peak
+before #1791: the closeout's history-guard read lands in the same worst minute the
+verify-range request sits in, so removing C3 now costs a peak read as well as a total one).
+The other two C2 removals do not move the peak at all, and still remove a real request from
+the session total; they buy total headroom and cache pressure rather than peak headroom.
+All five together are worth 7 in the peak and 8 in the total.
 
 ## The guard
 
@@ -429,13 +441,13 @@ against the real `sheets.js` and the real Express app, faking only `googleapis`,
 - the harness **replays** the manifest — nothing compressed, nothing dropped, thirteen
   previews and one twelve-row closeout write;
 - the captured **timing** is replayed too: the corrected peak is pinned at 39 and its total at
-  48, and the peak must be strictly below the total, which is only true of a session spread
+  49, and the peak must be strictly below the total, which is only true of a session spread
   across more than one rolling minute;
 - **collapsing the timeline changes the answer and cannot pass** — a guard runs the collapsed
-  model deliberately and proves it disagrees (47 vs 39), that its peak equals its total, and
+  model deliberately and proves it disagrees (48 vs 39), that its peak equals its total, and
   that it cannot satisfy the pinned acceptance figures;
 - the **captured** client costs measurably more than the corrected one under identical
-  timing — 46 against 39 in the peak, 56 against 48 across the session;
+  timing — 46 against 39 in the peak, 57 against 49 across the session;
 - the **corrected** client fits 50, with all fourteen Saves answering 200 and twelve rows of
   the session genuinely on the sheet — a budget met by failing requests would be no
   achievement;

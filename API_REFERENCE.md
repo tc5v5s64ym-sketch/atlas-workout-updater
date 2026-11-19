@@ -85,6 +85,27 @@ POST /api/log-workout
 # Reusing the same write_id after a completed live write returns duplicate_write=true
 # and does not append rows again. V1 stores write_id state in process memory, so it
 # resets on service restart/deploy.
+#
+# Server-enforced preview-to-approve (#1791): a live write must carry the signed
+# preview digest of the exact rows a dry-run preview showed.
+# - A preview (test_mode=true) returns data.preview_digest: an HMAC over the exact
+#   rows previewed (formatted, post-dedupe), the resolved session_id, the normalized
+#   date, and the closeout_context when present. The digest is opaque and is never
+#   logged; it is minted per preview and is valid only for the rows it covers.
+# - A live write sends that digest as preview_digest. The server recomputes it over
+#   the rows it would actually append (after its own partition) before any append.
+# - Missing digest -> 409 preview_digest_required. Mismatched digest (the rows
+#   changed since the preview) -> 409 preview_digest_mismatch. Both release the
+#   write_id and the session claim, so re-preview + retry proceed cleanly.
+# - A write that would append nothing (every row already logged) needs no digest
+#   and returns the already-logged verdict. A committed ledger operation replays
+#   before the digest check.
+# - The live response carries data.rule_flags when the history guards fire on the
+#   rows actually written (e1RM jump, RIR drift) — advisory flags, never refusals.
+# - Catalog drift between preview and approve is NOT detected: the digest covers
+#   the formatted rows as derived at preview time. If the preview degraded (its
+#   dedupe read failed, so it showed rows the live dedupe then drops), the live
+#   write is refused with 409 preview_digest_mismatch and the client must re-preview.
 ```
 
 ## Catalog Endpoints
