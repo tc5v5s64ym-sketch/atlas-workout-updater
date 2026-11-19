@@ -434,7 +434,7 @@ require.cache[coachPath] = {
   exports: fakeCoach
 };
 
-const { app } = require('../index');
+const { app, invalidateSheetRowsCache } = require('../index');
 
 let server;
 let baseUrl;
@@ -464,6 +464,13 @@ test.beforeEach(() => {
   fakeSheetsState.modalityLogRows.length = 0;
   fakeCoachState.pingError = null;
   fakeCoachState.configured = false;
+  // #1791 — every test starts with a cold sheet-rows cache. The live-write
+  // history-guard read and the preview's e1RM read both cache Log_Cleaned rows,
+  // and tests that plant fakeSheetsState.logRowsOverride change the readable
+  // rows out-of-band: without this, a replay test's cached override view leaks
+  // into the next test's history read and its substitution classification
+  // degrades to 'baseline' (the override holds one row, no Back Squat history).
+  invalidateSheetRowsCache();
 });
 
 async function requestJson(path, options = {}) {
@@ -477,6 +484,25 @@ async function requestJson(path, options = {}) {
   });
   const body = await response.json();
   return { response, body };
+}
+
+// #1791 — a live /api/log-workout write requires the signed preview digest.
+// Preview first (same write_id — a preview never consumes it) and carry the
+// digest on the live write, exactly as the app's approve flow does. A refused
+// preview is returned as the response: the preview and the live write share
+// the validation path, so a preview refusal IS the live refusal.
+async function postLiveLogWorkout(payload, label = 'postLiveLogWorkout') {
+  const preview = await requestJson('/api/log-workout', {
+    method: 'POST',
+    body: JSON.stringify({ ...payload, test_mode: true }),
+  });
+  if (preview.response.status !== 200) return preview;
+  const digest = preview.body.data && preview.body.data.preview_digest;
+  assert.equal(typeof digest, 'string', `${label}: preview must mint a preview_digest`);
+  return requestJson('/api/log-workout', {
+    method: 'POST',
+    body: JSON.stringify({ ...payload, preview_digest: digest }),
+  });
 }
 
 async function requestMultipart(path, formData) {
@@ -3740,9 +3766,7 @@ test('api smoke (B1): all duplicate log rows still allow a new Effort row append
   fakeSheetsState.logCompositeKeys = ['b1-effort-new||bench press||1'];
   fakeSheetsState.effortSessionIds = [];
   try {
-    const { response, body } = await requestJson('/api/log-workout', {
-      method: 'POST',
-      body: JSON.stringify({
+    const { response, body } = await postLiveLogWorkout({
         session_id: 'b1-effort-new',
         date: '2026-06-26',
         write_id: 'b1-effort-new-write-id',
@@ -3758,8 +3782,7 @@ test('api smoke (B1): all duplicate log rows still allow a new Effort row append
           location: '',
           notes: 'watch import'
         }
-      })
-    });
+      }, 'api-smoke:3756');
 
     assert.equal(response.status, 200);
     assert.equal(body.data.sheet_write, 'success');
@@ -3847,10 +3870,7 @@ test('FB parity: preview row count equals the live write row count for the same 
 
     fakeSheetsState.appendCalls.length = 0;
     fakeSheetsState.allowAppend = true;
-    const write = await requestJson('/api/log-workout', {
-      method: 'POST',
-      body: JSON.stringify({ session_id: 'fb-parity2-pm-01', date: '2026-06-28', write_id: 'fb-parity2-write', log_rows: payloadRows })
-    });
+    const write = await postLiveLogWorkout({ session_id: 'fb-parity2-pm-01', date: '2026-06-28', write_id: 'fb-parity2-write', log_rows: payloadRows }, 'api-smoke:3852');
     assert.equal(write.body.data.log_rows_written, 1, 'live write appends exactly the previewed count');
     assert.equal(write.body.data.skipped_duplicates, 1);
     assert.equal(preview.body.data.log_rows_preview.length, write.body.data.log_rows_written,
@@ -3864,20 +3884,30 @@ test('FB parity: preview row count equals the live write row count for the same 
 // Graceful degradation: a duplicate-read failure must never block the dry-run.
 // The preview falls back to showing ALL rows (the live write still applies the
 // authoritative dedup before any append), so a preview is never a hard dead-end.
+// #1791: the degraded digest now BOUNDS the live write — a digest minted over the
+// degraded (all-rows) preview no longer matches once the live dedup drops the
+// already-logged rows, so the live write is refused with 409 and the client must
+// re-preview. The old "live write still dedups" line is retired: the dedup still
+// happens, but the write no longer proceeds on a stale preview.
 test('FB parity: preview degrades to all rows when the duplicate-read fails (live write still dedups)', async () => {
   fakeSheetsState.failCompositeKeysRead = true;
+  fakeSheetsState.appendCalls.length = 0;
+  // Bench set 1 is already logged — the degraded preview cannot see that.
+  fakeSheetsState.logCompositeKeys = ['fb-degrade-pm-01||bench press||1'];
+  fakeSheetsState.allowAppend = true;
+  const payload = {
+    session_id: 'fb-degrade-pm-01',
+    date: '2026-06-28',
+    write_id: 'fb-degrade-write',
+    log_rows: [
+      { exercise: 'Bench Press', set_number: 1, weight: 225, reps: 5, rir: 2 },
+      { exercise: 'Bench Press', set_number: 2, weight: 225, reps: 5, rir: 2 }
+    ]
+  };
   try {
     const { response, body } = await requestJson('/api/log-workout', {
       method: 'POST',
-      body: JSON.stringify({
-        session_id: 'fb-degrade-pm-01',
-        date: '2026-06-28',
-        test_mode: 'true',
-        log_rows: [
-          { exercise: 'Bench Press', set_number: 1, weight: 225, reps: 5, rir: 2 },
-          { exercise: 'Bench Press', set_number: 2, weight: 225, reps: 5, rir: 2 }
-        ]
-      })
+      body: JSON.stringify({ ...payload, test_mode: 'true' })
     });
 
     assert.equal(response.status, 200);
@@ -3886,8 +3916,30 @@ test('FB parity: preview degrades to all rows when the duplicate-read fails (liv
     // Read failed → show all rows rather than block; the live write still dedups.
     assert.equal(body.data.log_rows_preview.length, 2, 'preview degrades to all rows on a read failure');
     assert.equal(body.data.skipped_duplicates, undefined, 'no skipped count is claimed when the dedup read failed');
+
+    // The degraded digest covers BOTH rows. Once the read recovers, the live
+    // dedup drops set 1 — so the digest no longer matches the rows the write
+    // would append, and the write is refused rather than silently writing fewer
+    // rows than the athlete approved.
+    fakeSheetsState.failCompositeKeysRead = false;
+    const stale = await requestJson('/api/log-workout', {
+      method: 'POST',
+      body: JSON.stringify({ ...payload, preview_digest: body.data.preview_digest })
+    });
+    assert.equal(stale.response.status, 409, JSON.stringify(stale.body));
+    assert.equal(stale.body.details.code, 'preview_digest_mismatch');
+    assert.equal(fakeSheetsState.appendCalls.length, 0, 'a refused write appends nothing');
+
+    // Re-preview (read recovered, dedup applies) and approve: the fresh digest
+    // covers the one new row, and the write succeeds with exactly that row.
+    const fresh = await postLiveLogWorkout(payload, 'api-smoke:degraded-repreview');
+    assert.equal(fresh.response.status, 200, JSON.stringify(fresh.body));
+    assert.equal(fresh.body.data.log_rows_written, 1);
+    assert.equal(fresh.body.data.skipped_duplicates, 1);
   } finally {
     fakeSheetsState.failCompositeKeysRead = false;
+    fakeSheetsState.logCompositeKeys = [];
+    fakeSheetsState.allowAppend = false;
   }
 });
 
@@ -3899,9 +3951,7 @@ test('api smoke (B1): partial duplicate appends only the new rows; totals match 
   // Bench set 1 already logged; Back Squat set 1 is new.
   fakeSheetsState.logCompositeKeys = ['b1-partial||bench press||1'];
   try {
-    const { response, body } = await requestJson('/api/log-workout', {
-      method: 'POST',
-      body: JSON.stringify({
+    const { response, body } = await postLiveLogWorkout({
         session_id: 'b1-partial',
         date: '2026-06-26',
         write_id: 'b1-partial-write-id',
@@ -3909,8 +3959,7 @@ test('api smoke (B1): partial duplicate appends only the new rows; totals match 
           { exercise: 'Bench Press', set_number: 1, weight: 225, reps: 5, rir: 2 },
           { exercise: 'Back Squat', set_number: 1, weight: 315, reps: 5, rir: 2 }
         ]
-      })
-    });
+      }, 'api-smoke:3915');
 
     assert.equal(response.status, 200);
     assert.equal(body.data.sheet_write, 'success');
@@ -3940,13 +3989,13 @@ test('api smoke (B1): a replayed write_id (double-tap) appends exactly once', as
       write_id: 'b1-doubletap-write-id',
       log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 225, reps: 5, rir: 2 }]
     });
-    const first = await requestJson('/api/log-workout', { method: 'POST', body: payload });
+    const first = await postLiveLogWorkout(JSON.parse(payload), 'api-smoke:3951');
     // #1764 Part 1: the retry re-verifies the receipt against the workbook, so
     // the row the first save appended must be visible to the read-back. The
     // fake appends do not land in readable state, so plant it (the file's
     // established pattern for modeled sheet state).
     fakeSheetsState.logRowsOverride = [['2026-06-26', 'b1-doubletap', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '225', '5', '2', '']];
-    const second = await requestJson('/api/log-workout', { method: 'POST', body: payload });
+    const second = await postLiveLogWorkout(JSON.parse(payload), 'api-smoke:3951');
 
     assert.equal(first.body.data.sheet_write, 'success');
     assert.equal(second.body.data.duplicate_write, true);
@@ -3998,9 +4047,7 @@ test('api smoke (B3): all log rows duplicate + a new effort row → effort appen
   // The first save already wrote the log rows; the effort tab has no row for it yet.
   fakeSheetsState.logCompositeKeys = ['b3-effort-repair||bench press||1'];
   try {
-    const { response, body } = await withMutedConsoleLog(() => requestJson('/api/log-workout', {
-      method: 'POST',
-      body: JSON.stringify({
+    const { response, body } = await withMutedConsoleLog(() => postLiveLogWorkout({
         session_id: 'b3-effort-repair',
         date: '2026-06-26',
         write_id: 'b3-effort-repair-write-id',
@@ -4015,8 +4062,7 @@ test('api smoke (B3): all log rows duplicate + a new effort row → effort appen
           peak_hr: 165,
           location: 'Gym'
         }
-      })
-    }));
+      }, 'api-smoke:4014'));
 
     assert.equal(response.status, 200, JSON.stringify(body));
     assert.equal(body.data.sheet_write, 'success');
@@ -6259,15 +6305,16 @@ test('api smoke: exercise-detail returns stable read shape through read layer', 
 
 // Missing test_mode currently means live-write branch.
 // This test pins the current behavior: absent test_mode = real append to Log_Cleaned.
+// #1791: the live write now also requires the signed preview digest, so the test
+// previews first (same write_id) and carries the digest — the approve flow's shape.
 // A future PR may add an explicit confirm_write gate, but this task does not change that contract.
 test('api smoke: live log-workout without test_mode appends one row to Log_Cleaned', async () => {
   fakeSheetsState.appendCalls.length = 0;
   fakeSheetsState.allowAppend = true;
 
   try {
-    const { response, body } = await requestJson('/api/log-workout', {
-      method: 'POST',
-      body: JSON.stringify({
+    // #1791: a live write previews first (same write_id) and carries the digest.
+    const { response, body } = await postLiveLogWorkout({
         session_id: 'LIVE-WRITE-SMOKE-01',
         date: '2026-06-11',
         write_id: 'live-write-smoke-01',
@@ -6282,8 +6329,7 @@ test('api smoke: live log-workout without test_mode appends one row to Log_Clean
             notes: ''
           }
         ]
-      })
-    });
+      }, 'api-smoke:6282');
 
     // Response must indicate success with confirmed write
     assert.equal(response.status, 200);
@@ -6332,9 +6378,7 @@ test('api smoke: live log-workout ignores a client-supplied volume_calc and reco
   fakeSheetsState.allowAppend = true;
 
   try {
-    const { response, body } = await requestJson('/api/log-workout', {
-      method: 'POST',
-      body: JSON.stringify({
+    const { response, body } = await postLiveLogWorkout({
         session_id: 'ME4-VOLUME-01',
         date: '2026-06-11',
         write_id: 'me4-volume-01',
@@ -6342,8 +6386,7 @@ test('api smoke: live log-workout ignores a client-supplied volume_calc and reco
           // Bogus volume_calc (and volume alias) that disagree with weight × reps.
           { exercise: 'Bench Press', set_number: 1, weight: 135, reps: 10, rir: 5, notes: '', volume_calc: 99999, volume: 88888 }
         ]
-      })
-    });
+      }, 'api-smoke:6349');
 
     assert.equal(response.status, 200, JSON.stringify(body));
     assert.equal(body.data.sheet_write, 'success');
@@ -6367,15 +6410,12 @@ test('api smoke: live log-workout is blocked when Log_Cleaned header is reordere
   fakeSheetsState.headerRows['Log_Cleaned'] = drifted;
 
   try {
-    const { response, body } = await requestJson('/api/log-workout', {
-      method: 'POST',
-      body: JSON.stringify({
+    const { response, body } = await postLiveLogWorkout({
         session_id: 'DRIFT-LOG-01',
         date: '2026-06-11',
         write_id: 'drift-log-01',
         log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 135, reps: 10, rir: 5, notes: '' }]
-      })
-    });
+      }, 'api-smoke:6380');
 
     assert.equal(response.status, 409);
     assert.equal(body.status, 'error');
@@ -6434,15 +6474,12 @@ test('api smoke: live log-workout proceeds when header is a valid casing/alias v
     'Muscle Group', 'Lift Code', 'Set Number', 'Weight', 'Reps', 'RIR', 'Notes', 'Volume'];
 
   try {
-    const { response, body } = await requestJson('/api/log-workout', {
-      method: 'POST',
-      body: JSON.stringify({
+    const { response, body } = await postLiveLogWorkout({
         session_id: 'DRIFT-VARIANT-01',
         date: '2026-06-11',
         write_id: 'drift-variant-01',
         log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 135, reps: 10, rir: 5, notes: '' }]
-      })
-    });
+      }, 'api-smoke:6448');
 
     assert.equal(response.status, 200);
     assert.equal(body.data.sheet_write, 'success');
@@ -6494,15 +6531,12 @@ test('api smoke: live log-workout fails closed (500, no append) when the header 
 
   try {
     await withMutedConsoleLog(async () => {
-      const { response, body } = await requestJson('/api/log-workout', {
-        method: 'POST',
-        body: JSON.stringify({
+      const { response, body } = await postLiveLogWorkout({
           session_id: 'HDR-READ-FAIL-01',
           date: '2026-06-11',
           write_id: 'hdr-read-fail-01',
           log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 135, reps: 10, rir: 5, notes: '' }]
-        })
-      });
+        }, 'api-smoke:6509');
 
       assert.equal(response.status, 500, JSON.stringify(body));
       assert.equal(body.status, 'error');
@@ -6538,10 +6572,7 @@ test('api smoke: live log-workout with write_id appends once and skips duplicate
   };
 
   try {
-    const first = await requestJson('/api/log-workout', {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    });
+    const first = await postLiveLogWorkout(payload, 'api-smoke:6539');
 
     assert.equal(first.response.status, 200, JSON.stringify(first.body));
     assert.equal(first.body.status, 'ok');
@@ -6555,10 +6586,7 @@ test('api smoke: live log-workout with write_id appends once and skips duplicate
     // the row the first save appended must be visible to the read-back. The
     // fake appends do not land in readable state, so plant it.
     fakeSheetsState.logRowsOverride = [['2026-06-11', 'LIVE-WRITE-IDEMPOTENT-01', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '135', '10', '5', '']];
-    const duplicate = await requestJson('/api/log-workout', {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    });
+    const duplicate = await postLiveLogWorkout(payload, 'api-smoke:6539');
 
     assert.equal(duplicate.response.status, 200, JSON.stringify(duplicate.body));
     assert.equal(duplicate.body.status, 'ok');
@@ -6611,10 +6639,7 @@ test('api smoke: dry-run with write_id does not consume idempotency state', asyn
     const livePayload = { ...payload };
     delete livePayload.test_mode;
 
-    const live = await requestJson('/api/log-workout', {
-      method: 'POST',
-      body: JSON.stringify(livePayload)
-    });
+    const live = await postLiveLogWorkout(livePayload, 'api-smoke:6597');
 
     assert.equal(live.response.status, 200, JSON.stringify(live.body));
     assert.equal(live.body.data.sheet_write, 'success');
@@ -6645,14 +6670,8 @@ test('api smoke: different write_id values write normally', async () => {
   };
 
   try {
-    const first = await requestJson('/api/log-workout', {
-      method: 'POST',
-      body: JSON.stringify({ ...basePayload, write_id: 'write-live-idempotent-02a' })
-    });
-    const second = await requestJson('/api/log-workout', {
-      method: 'POST',
-      body: JSON.stringify({ ...basePayload, write_id: 'write-live-idempotent-02b' })
-    });
+    const first = await postLiveLogWorkout({ ...basePayload, write_id: 'write-live-idempotent-02a' }, 'api-smoke:6647');
+    const second = await postLiveLogWorkout({ ...basePayload, write_id: 'write-live-idempotent-02b' }, 'api-smoke:6647');
 
     assert.equal(first.response.status, 200, JSON.stringify(first.body));
     assert.equal(second.response.status, 200, JSON.stringify(second.body));
@@ -6917,15 +6936,12 @@ test('api smoke: #1736 B3-04-07 undo-last deletes the session Effort row and the
     assert.deepEqual(fakeSheetsState.effortRows, []);
 
     // Re-saving the same session_id must now succeed (was 409 Duplicate session).
-    const resave = await requestJson('/api/log-workout', {
-      method: 'POST',
-      body: JSON.stringify({
+    const resave = await postLiveLogWorkout({
         session_id: 'SESSION-NEW',
         date: '2026-06-10',
         write_id: 'write-1736-resave-01',
         log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 135, reps: 10, rir: 2, notes: '' }]
-      })
-    });
+      }, 'api-smoke:6906');
     assert.equal(resave.response.status, 200, JSON.stringify(resave.body));
     assert.equal(resave.body.data.sheet_write, 'success');
   } finally {
@@ -7222,13 +7238,10 @@ test('read-path cache: analytics reads are cached within the TTL and a live writ
 
       // A LOG write is the mirror image.
       fakeSheetsState.reads = {};
-      const { response } = await requestJson('/api/log-workout', {
-        method: 'POST',
-        body: JSON.stringify({
+      const { response } = await postLiveLogWorkout({
           date: '2026-06-11', session_id: 'CACHE-RESET-03', write_id: 'live-log-CACHE-RESET-03',
           log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 225, reps: 5, rir: 2 }],
-        }),
-      });
+        }, 'api-smoke:7216');
       assert.equal(response.status, 200);
       fakeSheetsState.reads = {};
       await requestJson('/api/plan/today');
@@ -7322,10 +7335,7 @@ test('api smoke: log-workout effort failure after log append is partial, retry n
   };
 
   try {
-    const first = await withMutedConsoleLog(() => requestJson('/api/log-workout', {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    }));
+    const first = await withMutedConsoleLog(() => postLiveLogWorkout(payload, 'api-smoke:7319'));
 
     // Log rows landed, effort append failed → honest partial error, not a clean 500.
     assert.equal(first.response.status, 500, JSON.stringify(first.body));
@@ -7345,10 +7355,7 @@ test('api smoke: log-workout effort failure after log append is partial, retry n
     // Outage clears; the client retries the SAME write_id. The log rows must
     // not be appended a second time, and the retry must not become a save.
     fakeSheetsState.failAppendForTab = null;
-    const retry = await withMutedConsoleLog(() => requestJson('/api/log-workout', {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    }));
+    const retry = await withMutedConsoleLog(() => postLiveLogWorkout(payload, 'api-smoke:7319'));
 
     assert.equal(retry.response.status, 500, JSON.stringify(retry.body));
     assert.equal(retry.body.details.duplicate_write, true);
@@ -7379,19 +7386,13 @@ test('api smoke: log-workout log-append failure releases write_id so a clean ret
   };
 
   try {
-    const first = await withMutedConsoleLog(() => requestJson('/api/log-workout', {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    }));
+    const first = await withMutedConsoleLog(() => postLiveLogWorkout(payload, 'api-smoke:7386'));
     // Nothing was written — the write_id must be released, not poisoned.
     assert.equal(first.response.status, 500, JSON.stringify(first.body));
     assert.equal(fakeSheetsState.appendCalls.length, 1);
 
     fakeSheetsState.failAppendForTab = null;
-    const retry = await withMutedConsoleLog(() => requestJson('/api/log-workout', {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    }));
+    const retry = await withMutedConsoleLog(() => postLiveLogWorkout(payload, 'api-smoke:7386'));
 
     assert.equal(retry.response.status, 200, JSON.stringify(retry.body));
     assert.equal(retry.body.data.sheet_write, 'success');
@@ -8644,14 +8645,11 @@ test('F10D: a malformed closeout_context never blocks the preview — bounded to
 test('F10D: the approved closeout write carries ledger_seal + closeout_fully_verified (dry-run seal while the owner gate is closed)', async () => {
   fakeSheetsState.allowAppend = true;
   try {
-    const { response, body } = await requestJson('/api/log-workout', {
-      method: 'POST',
-      body: JSON.stringify({
+    const { response, body } = await postLiveLogWorkout({
         session_id: 'F10D-CO-3', date: '2026-07-18', write_id: 'w-f10d-co3',
         log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 135, reps: 8, rir: 3 }],
         closeout_context: { items: [] }
-      })
-    });
+      }, 'api-smoke:8663');
     assert.equal(response.status, 200);
     const d = body.data;
     assert.equal(d.sheet_write, 'success');
