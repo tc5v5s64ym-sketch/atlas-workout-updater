@@ -31,6 +31,7 @@
 
 const sheets = require('../sheets');
 const { sessionPlansColumns } = require('../config/columns');
+const { isOperationId } = require('./writeOutcomes');
 const store = require('./sessionPlanStore');
 
 const SESSION_PLANS_TAB = store.SESSION_PLANS_TAB; // 'Session_Plans' (env-overridable, shared with the writer)
@@ -56,6 +57,10 @@ function _envelope(status, captured, extra = {}) {
     skipped: extra.skipped || 0,
     plan_version: extra.plan_version || null,
     reason: extra.reason || null,
+    // #1780 — the ledger commit that established this event, when the
+    // capture carried an operation_id ({ operation_id, outcome, marker,
+    // replayed }); null on the legacy path and whenever nothing committed.
+    ledger: extra.ledger || null,
   };
 }
 
@@ -89,10 +94,23 @@ async function validateHeader() {
   return { ok: true };
 }
 
+// #1780 — validate a ledger operation pair before any sheet access. The
+// routes resolve first (400/409 there), so this is defense in depth for
+// server-side callers (recordCloseoutEvent mints): an invalid pair is an
+// error envelope, never a throw — the capture layer never throws.
+function _ledgerError(ledger) {
+  if (!ledger) return null;
+  if (!isOperationId(ledger.operationId)) return 'operation_id_invalid';
+  if (!ledger.cutoverId) return 'cutover_unconfigured';
+  return null;
+}
+
 // Shared: flag gate → header validation → writer, all failure-isolated. `writerFn`
 // returns the store's { written, skipped, tab_missing } shape.
-async function _capture(planVersion, writerFn) {
+async function _capture(planVersion, writerFn, ledger = null) {
   if (!isEnabled()) return _envelope('disabled', false, { plan_version: planVersion });
+  const ledgerErr = _ledgerError(ledger);
+  if (ledgerErr) return _envelope('error', false, { plan_version: planVersion, reason: ledgerErr });
   let hv;
   try {
     hv = await validateHeader();
@@ -101,12 +119,12 @@ async function _capture(planVersion, writerFn) {
   }
   if (!hv.ok) return _envelope(hv.status, false, { plan_version: planVersion, reason: hv.reason });
   try {
-    const r = await writerFn();
+    const r = await writerFn(ledger);
     if (r && r.tab_missing) return _envelope('tab_missing', false, { plan_version: planVersion, reason: 'Session_Plans tab missing at write time' });
     const written = (r && r.written) || 0;
     const skipped = (r && r.skipped) || 0;
     const captured = (written + skipped) > 0;
-    return _envelope(written > 0 ? 'written' : 'skipped', captured, { plan_version: planVersion, written, skipped });
+    return _envelope(written > 0 ? 'written' : 'skipped', captured, { plan_version: planVersion, written, skipped, ledger: (r && r.ledger) || null });
   } catch (e) {
     const reason = /revision collision/i.test(e.message || '') ? 'revision_collision' : (e.message || 'sidecar write failed');
     return _envelope('error', false, { plan_version: planVersion, reason });
@@ -114,17 +132,22 @@ async function _capture(planVersion, writerFn) {
 }
 
 // ── public API — one call per explicit lifecycle event (spec §4.1–4.3) ─────────
+// opts.ledger ({ operationId, cutoverId }) commits the event through the
+// #1780 Write_Outcomes ledger; absent, the legacy store path runs unchanged.
 
-async function captureAccept(session, items) {
-  return _capture(session && session.plan_version, () => store.writePlanAccepted(session, items));
+async function captureAccept(session, items, opts = {}) {
+  const ledger = (opts && opts.ledger) || null;
+  return _capture(session && session.plan_version, (l) => store.writePlanAccepted(session, items, { ledger: l }), ledger);
 }
 
-async function captureOutcome(session, item) {
-  return _capture(session && session.plan_version, () => store.writeItemOutcome(session, item));
+async function captureOutcome(session, item, opts = {}) {
+  const ledger = (opts && opts.ledger) || null;
+  return _capture(session && session.plan_version, (l) => store.writeItemOutcome(session, item, { ledger: l }), ledger);
 }
 
-async function captureCloseout(session, closeoutStatus) {
-  return _capture(session && session.plan_version, () => store.writeSessionCloseout(session, closeoutStatus));
+async function captureCloseout(session, closeoutStatus, opts = {}) {
+  const ledger = (opts && opts.ledger) || null;
+  return _capture(session && session.plan_version, (l) => store.writeSessionCloseout(session, closeoutStatus, { ledger: l }), ledger);
 }
 
 module.exports = {

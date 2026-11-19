@@ -2176,6 +2176,8 @@ async function acceptDisplayedPlan(rec) {
       : (typeof crypto !== 'undefined' ? crypto : null);
     const accepted = await runAcceptance({ label: rec && rec.label, id: rec && rec.id, exercises }, {
       crypto: cryptoObj,
+      // #1780 — the ledger operation minter for the acceptance event.
+      mintOperationId,
       guard: {},
       // The ESTABLISHED identity only — never a derived one. A hardcoded
       // `${date}-{AM|PM}-01` mint here re-used the first same-period session's
@@ -2251,6 +2253,8 @@ function emitPlanItemOutcome(outcomeInput) {
   const plan = getActivePlannedSession();
   if (!plan || plan.accepted !== true) return; // only accepted plans carry identity
   runOutcome(plan, outcomeInput, {
+    // #1780 — the ledger operation minter for the outcome event.
+    mintOperationId,
     postOutcome: (payload) => api('/api/session-plans/outcome', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
     }),
@@ -2271,6 +2275,8 @@ function emitPlanCloseout(closeoutStatus) {
   const plan = getActivePlannedSession();
   if (!plan || plan.accepted !== true) return; // closeout only for an accepted session
   runPlanCloseout(plan, closeoutStatus, {
+    // #1780 — the ledger operation minter for the closeout event.
+    mintOperationId,
     postCloseout: (payload) => api('/api/session-plans/closeout', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
     }),
@@ -9725,6 +9731,12 @@ document.getElementById('bw-form').addEventListener('submit', async e => {
       weight: Number(weight),
       notes,
       write_id: generateWriteId(),
+      // #1780 — mint the ledger operation ID for this deliberate save at
+      // preview time, alongside the write_id: the approve re-send carries
+      // the same operation, and a retry reuses it; a fresh preview mints a
+      // fresh one. Null when the server advertises no cutover — the save
+      // then takes the legacy path. Never blocks a save.
+      operation_id: await mintOperationId(),
       correlationSessionId,
       correlationPreview,
       previewProof: {
@@ -9772,7 +9784,10 @@ document.getElementById('bw-approve-btn').addEventListener('click', async () => 
       date: pendingBwWrite.date,
       weight: pendingBwWrite.weight,
       notes: pendingBwWrite.notes,
-      write_id: pendingBwWrite.write_id
+      write_id: pendingBwWrite.write_id,
+      // #1780 — the ledger operation minted at preview time rides the
+      // approve re-send; a retry re-sends the same one.
+      ...(pendingBwWrite.operation_id ? { operation_id: pendingBwWrite.operation_id } : {}),
     };
     const correlation = approvalCorrelation(pendingBwWrite.correlationPreview);
     if (correlation) {

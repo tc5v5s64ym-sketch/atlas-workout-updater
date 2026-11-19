@@ -567,6 +567,30 @@ async function commitOperation(sheets, args) {
   throw lastFenceError;
 }
 
+// #1780 — resolve a ledger operation_id carried by a writer route. Absent,
+// the route takes the legacy path unchanged ({ operationId: null }). Present,
+// the ledger path is mandatory: a malformed ID is a 400, an ID from another
+// cutover is a 409, and an unconfigured cutover is a 500 — never a silent
+// legacy fallback, which would write data the ledger cannot answer for.
+// Pure: the caller answers the returned error with standardError.
+function resolveLedgerOperationId(payload) {
+  const raw = payload && typeof payload.operation_id === 'string' && payload.operation_id !== '' ? payload.operation_id : null;
+  if (!raw) return { operationId: null, cutoverId: null };
+  if (!isOperationId(raw)) {
+    return { error: { status: 400, code: 'operation_id_invalid', message: 'operation_id is not a valid operation ID (atlas-op-v1:<cutover-UUID>:<operation-UUID>).' } };
+  }
+  let cutoverId;
+  try {
+    cutoverId = getCutoverId();
+  } catch (error) {
+    return { error: { status: 500, code: 'cutover_unconfigured', message: 'Write_Outcomes cutover is not configured; a ledger write cannot commit.' } };
+  }
+  if (parseOperationId(raw).cutoverId !== cutoverId) {
+    return { error: { status: 409, code: 'operation_id_cutover_mismatch', message: 'operation_id belongs to another Write_Outcomes cutover and cannot commit here.' } };
+  }
+  return { operationId: raw, cutoverId };
+}
+
 module.exports = {
   WRITE_OUTCOMES_TAB,
   WRITE_OUTCOMES_HEADER,
@@ -578,6 +602,7 @@ module.exports = {
   parseOperationId,
   isOperationId,
   getCutoverId,
+  resolveLedgerOperationId,
   stableStringify,
   canonicalPayloadHash,
   encodeOutcomeRow,

@@ -111,3 +111,27 @@ test('runOutcome: a disabled/non-captured envelope → emitted:true, captured:fa
   assert.equal(r.emitted, true);
   assert.equal(r.captured, false);
 });
+
+// ── #1780: ledger operation minting ─────────────────────────────────────────
+
+test('#1780: runOutcome mints the ledger operation ID once via the dep and carries it on the payload; without the dep the field stays absent', async () => {
+  const OP = 'atlas-op-v1:11111111-2222-4333-8444-555555555555:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const posted = [];
+  const postOutcome = async (p) => { posted.push(p); return { data: { session_plans: { captured: true, status: 'written' } } }; };
+  const r = await mod.runOutcome(PLAN, { plan_item_id: 'pi_a', outcome: 'skipped' }, {
+    mintOperationId: async () => OP,
+    postOutcome,
+  });
+  assert.equal(r.emitted, true);
+  assert.equal(posted.length, 1);
+  assert.equal(posted[0].operation_id, OP);
+  assert.equal(r.payload.operation_id, OP);
+
+  const postedLegacy = [];
+  const r2 = await mod.runOutcome(PLAN, { plan_item_id: 'pi_a', outcome: 'skipped' }, {
+    postOutcome: async (p) => { postedLegacy.push(p); return { data: { session_plans: { captured: true, status: 'written' } } }; },
+  });
+  assert.equal(r2.emitted, true);
+  assert.equal(postedLegacy.length, 1);
+  assert.equal(postedLegacy[0].operation_id, undefined);
+});

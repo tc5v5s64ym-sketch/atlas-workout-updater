@@ -536,9 +536,11 @@ const { verifySaveReceiptAgainstWorkbook } = require('./services/saveReceiptReve
 const {
   commitOperation: commitLedgerOperation,
   lookupOperation: lookupLedgerOperation,
+  mintOperationId: mintLedgerOperationId,
   parseOperationId,
   isOperationId,
   getCutoverId,
+  resolveLedgerOperationId,
   canonicalPayloadHash,
 } = require('./services/writeOutcomes');
 // The sheets.js surface the ledger prepares and commits against. The ledger
@@ -1771,6 +1773,16 @@ app.post('/api/constraints', async (req, res) => {
   }
   if (!writeId) return standardError(req, res, 'write_id is required', null, 400);
 
+  // #1780 — a constraint save may carry the operation_id the client minted
+  // for the Write_Outcomes ledger. Absent, the legacy path runs unchanged.
+  // Present, the ledger path is mandatory (see resolveLedgerOperationId).
+  const ledgerId = resolveLedgerOperationId(body);
+  if (ledgerId.error) {
+    return standardError(req, res, ledgerId.error.message, { code: ledgerId.error.code, operation_id: body.operation_id }, ledgerId.error.status);
+  }
+  const operationId = ledgerId.operationId;
+  const cutoverId = ledgerId.cutoverId;
+
   // Write-admission gate 2 of 7 (§3.10, §5.3). Nothing has been appended yet.
   const frozen = await refuseIfWritesFrozen(req, res, '/api/constraints');
   if (frozen) return frozen;
@@ -1798,7 +1810,132 @@ app.post('/api/constraints', async (req, res) => {
   const dateStr = localTodayIso();
   const cleanTarget = target.slice(0, 100);
   const cleanNote = note.slice(0, 200);
+  // The ledger payload is the constraint as cleaned server-side. The stored
+  // date is server-derived (localTodayIso), so it rides in the evidence, not
+  // the payload: a retry across midnight must hash the same.
+  const ledgerPayload = operationId ? { kind, target: cleanTarget, rule, note: cleanNote } : null;
+
+  // #1780 — the body a ledger replay answers with: the committed constraint,
+  // never a fresh append.
+  function constraintLedgerReplayBody(outcome) {
+    const evidence = (outcome && outcome.evidence) || {};
+    const body = {
+      message: 'Duplicate operation_id; the original constraint already saved.',
+      sheet_written: true,
+      constraint_written: true,
+      date: evidence.date || null,
+      constraint: evidence.constraint || { kind, target: cleanTarget, rule, note: cleanNote },
+      duplicate_write: true,
+      operation_id: outcome.operationId,
+      ledger_outcome: outcome.status,
+      ledger_marker: evidence.marker || null,
+      constraint_write_verification: { verified: true, method: 'write_outcomes_ledger' },
+    };
+    if (idempotency.enabled) {
+      body.write_id = idempotency.write_id;
+      body.idempotency_status = 'completed';
+    }
+    return body;
+  }
+
+  // #1780 — the ledger answers before any append below can mistake the
+  // retry for a fresh constraint. A lookup only reads: a failure here wrote
+  // nothing, so failWrite is safe.
+  if (operationId) {
+    let existing = null;
+    try {
+      existing = await lookupLedgerOperation(writeOutcomesSheets, operationId);
+    } catch (error) {
+      console.error('❌ Write_Outcomes ledger lookup failed:', error);
+      if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+      return standardError(req, res, 'Write_Outcomes ledger could not be read; the constraint is refused.', { code: error.code || 'ledger_read_failed', operation_id: operationId }, 500);
+    }
+    if (existing) {
+      if (existing.payloadHash !== canonicalPayloadHash(ledgerPayload)) {
+        if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+        return standardError(req, res, 'operation_id already committed with a different payload; the same ID with different data is refused.', { code: 'operation_id_payload_mismatch', operation_id: operationId }, 409);
+      }
+      const ledgerBody = constraintLedgerReplayBody(existing);
+      if (idempotency.enabled) completeWrite(idempotency.write_id, idempotency.token, ledgerBody);
+      return standardSuccess(req, res, ledgerBody.message, ledgerBody);
+    }
+  }
+
   try {
+    // #1780 — the ledger path commits the constraint row + outcome + marker
+    // in ONE atomic batchUpdate. The commit reads the outcome row back
+    // before returning success; that read-back is the verification, so no
+    // append receipt is adjudicated on this path.
+    if (operationId) {
+      let ledgerResult = null;
+      try {
+        ledgerResult = await commitLedgerOperation(writeOutcomesSheets, {
+          cutoverId,
+          operationId,
+          kind: 'save',
+          payload: ledgerPayload,
+          evidence: {
+            date: dateStr,
+            constraint: { kind, target: cleanTarget, rule, note: cleanNote },
+            write_id: idempotency.write_id,
+            route: '/api/constraints',
+          },
+          dataAppends: [{ tab: 'Constraints', rows: [[dateStr, kind, cleanTarget, rule, cleanNote]] }],
+        });
+      } catch (error) {
+        console.error('❌ Write_Outcomes ledger commit failed:', error);
+        // Never failWrite a ledger commit: a 5xx or a post-send timeout is
+        // AMBIGUOUS (WRITE-5) — the batch may have committed on Google's
+        // side while the response was lost. Record unverified, so a retry
+        // under the same operation_id reconciles from the ledger.
+        if (idempotency.enabled) {
+          completeWrite(idempotency.write_id, idempotency.token, {
+            sheet_written: true,
+            constraint_written: false,
+            date: dateStr,
+            constraint: { kind, target: cleanTarget, rule, note: cleanNote },
+            sheet_write: 'unverified',
+            proof_mismatch: true,
+            operation_id: operationId,
+            ledger_outcome: 'unknown',
+            write_id: idempotency.write_id,
+            duplicate_write: false,
+            idempotency_status: 'unverified',
+          });
+        }
+        return standardError(req, res, 'Write_Outcomes ledger commit could not be confirmed; nothing is claimed as saved.', { code: error.code || 'ledger_commit_failed', operation_id: operationId }, ledgerErrorStatus(error));
+      }
+      if (ledgerResult.replayed) {
+        // A concurrent commit landed this operation between the lookup above
+        // and this commit; the commit replayed it instead of writing twice.
+        // Answer the replay truthfully.
+        try {
+          const replayed = await lookupLedgerOperation(writeOutcomesSheets, operationId);
+          const replayBody = constraintLedgerReplayBody(replayed);
+          if (idempotency.enabled) completeWrite(idempotency.write_id, idempotency.token, replayBody);
+          return standardSuccess(req, res, replayBody.message, replayBody);
+        } catch (lookupError) {
+          console.error('❌ Write_Outcomes ledger replay lookup failed:', lookupError);
+          return standardError(req, res, 'Write_Outcomes ledger commit replayed, but the committed outcome could not be read back.', { code: lookupError.code || 'ledger_read_failed', operation_id: operationId }, 500);
+        }
+      }
+      const responseBody = {
+        sheet_written: true,
+        constraint_written: true,
+        date: dateStr,
+        constraint: { kind, target: cleanTarget, rule, note: cleanNote },
+        constraint_write_verification: { verified: true, method: 'write_outcomes_ledger' },
+        operation_id: operationId,
+        ledger_outcome: 'committed',
+        ledger_marker: ledgerResult.marker,
+      };
+      if (idempotency.enabled) {
+        responseBody.write_id = idempotency.write_id;
+        responseBody.duplicate_write = false;
+        completeWrite(idempotency.write_id, idempotency.token, responseBody);
+      }
+      return standardSuccess(req, res, 'Constraint saved', responseBody);
+    }
     await appendRows('Constraints', [[dateStr, kind, cleanTarget, rule, cleanNote]]);
     invalidateSheetRowsCache('Constraints');
     const responseBody = {
@@ -2902,6 +3039,22 @@ app.post('/api/bodyweight', async (req, res) => {
       return standardSuccess(req, res, 'Bodyweight dry-run', previewBody);
     }
 
+    // #1780 — a bodyweight save may carry the operation_id the client minted
+    // for the Write_Outcomes ledger. Validated here, after the dry-run return,
+    // so a preview never touches the ledger. Absent, the legacy path runs
+    // unchanged. Present, the ledger path is mandatory (see
+    // resolveLedgerOperationId).
+    const ledgerId = resolveLedgerOperationId(req.body);
+    if (ledgerId.error) {
+      return standardError(req, res, ledgerId.error.message, { code: ledgerId.error.code, operation_id: req.body.operation_id }, ledgerId.error.status);
+    }
+    const operationId = ledgerId.operationId;
+    const cutoverId = ledgerId.cutoverId;
+    // The ledger payload is the entry as normalized server-side: the client
+    // submits the raw date/weight, so a retry resends the identical body and
+    // the hash matches; a different entry under the same ID is refused.
+    const ledgerPayload = operationId ? { date: normalizedDate, weight: weightValue, notes: notes || '' } : null;
+
     // Live writes must carry a write_id so a lost-response retry is deduplicated
     // instead of appending the same entry twice. Dry-runs (above) are exempt.
     if (!normalizeWriteId(writeId)) {
@@ -2949,12 +3102,133 @@ app.post('/api/bodyweight', async (req, res) => {
       return standardSuccess(req, res, message, duplicateBody, replay.httpStatus);
     }
 
+    // #1780 — the body a ledger replay answers with: the committed entry,
+    // never a fresh append.
+    function bodyweightLedgerReplayBody(outcome) {
+      const evidence = (outcome && outcome.evidence) || {};
+      const body = {
+        message: 'Duplicate operation_id; the original bodyweight entry already saved.',
+        entry: evidence.entry || entry,
+        test_mode: false,
+        sheet_write: 'success',
+        sheet_written: true,
+        duplicate_write: true,
+        operation_id: outcome.operationId,
+        ledger_outcome: outcome.status,
+        ledger_marker: evidence.marker || null,
+        bodyweight_write_verification: { verified: true, method: 'write_outcomes_ledger' },
+      };
+      if (idempotency.enabled) {
+        body.write_id = idempotency.write_id;
+        body.idempotency_status = 'completed';
+      }
+      return body;
+    }
+
+    // #1780 — the ledger answers before any append below can mistake the
+    // retry for a fresh entry. A lookup only reads: a failure here wrote
+    // nothing, so failWrite is safe.
+    if (operationId) {
+      let existing = null;
+      try {
+        existing = await lookupLedgerOperation(writeOutcomesSheets, operationId);
+      } catch (error) {
+        console.error('❌ Write_Outcomes ledger lookup failed:', error);
+        if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+        return standardError(req, res, 'Write_Outcomes ledger could not be read; the bodyweight entry is refused.', { code: error.code || 'ledger_read_failed', operation_id: operationId }, 500);
+      }
+      if (existing) {
+        if (existing.payloadHash !== canonicalPayloadHash(ledgerPayload)) {
+          if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+          return standardError(req, res, 'operation_id already committed with a different payload; the same ID with different data is refused.', { code: 'operation_id_payload_mismatch', operation_id: operationId }, 409);
+        }
+        const ledgerBody = bodyweightLedgerReplayBody(existing);
+        if (idempotency.enabled) completeWrite(idempotency.write_id, idempotency.token, ledgerBody);
+        recordTurnWriteProof(req.body, correlationSessionId, '/api/bodyweight', ledgerBody);
+        return standardSuccess(req, res, ledgerBody.message, ledgerBody);
+      }
+    }
+
     // Tracks whether the row is already on the sheet. Once it flips true the
     // idempotency record must never be released (failWrite) — a released record
     // lets a retried write_id append the same entry a second time. Mirrors the
     // committed-guard in /api/complete-workout.
     let writeCommitted = false;
     try {
+      // #1780 — the ledger path commits the entry row + outcome + marker in
+      // ONE atomic batchUpdate. The commit reads the outcome row back before
+      // returning success; that read-back is the verification, so no append
+      // receipt is adjudicated on this path.
+      if (operationId) {
+        let ledgerResult = null;
+        try {
+          ledgerResult = await commitLedgerOperation(writeOutcomesSheets, {
+            cutoverId,
+            operationId,
+            kind: 'save',
+            payload: ledgerPayload,
+            evidence: {
+              entry,
+              write_id: idempotency.write_id,
+              route: '/api/bodyweight',
+            },
+            dataAppends: [{ tab: 'Bodyweight', rows: [[normalizedDate, weightValue, notes || '']] }],
+          });
+        } catch (error) {
+          console.error('❌ Write_Outcomes ledger commit failed:', error);
+          // Never failWrite a ledger commit: a 5xx or a post-send timeout is
+          // AMBIGUOUS (WRITE-5) — the batch may have committed on Google's
+          // side while the response was lost. Record unverified, so a retry
+          // under the same operation_id reconciles from the ledger.
+          if (idempotency.enabled) {
+            completeWrite(idempotency.write_id, idempotency.token, {
+              entry,
+              test_mode: false,
+              sheet_write: 'unverified',
+              sheet_written: true,
+              write_id: idempotency.write_id,
+              duplicate_write: false,
+              idempotency_status: 'unverified',
+              operation_id: operationId,
+              ledger_outcome: 'unknown',
+            });
+          }
+          return standardError(req, res, 'Write_Outcomes ledger commit could not be confirmed; nothing is claimed as saved.', { code: error.code || 'ledger_commit_failed', operation_id: operationId }, ledgerErrorStatus(error));
+        }
+        if (ledgerResult.replayed) {
+          // A concurrent commit landed this operation between the lookup above
+          // and this commit; the commit replayed it instead of writing twice.
+          // Answer the replay truthfully.
+          try {
+            const replayed = await lookupLedgerOperation(writeOutcomesSheets, operationId);
+            const replayBody = bodyweightLedgerReplayBody(replayed);
+            if (idempotency.enabled) completeWrite(idempotency.write_id, idempotency.token, replayBody);
+            recordTurnWriteProof(req.body, correlationSessionId, '/api/bodyweight', replayBody);
+            return standardSuccess(req, res, replayBody.message, replayBody);
+          } catch (lookupError) {
+            console.error('❌ Write_Outcomes ledger replay lookup failed:', lookupError);
+            return standardError(req, res, 'Write_Outcomes ledger commit replayed, but the committed outcome could not be read back.', { code: lookupError.code || 'ledger_read_failed', operation_id: operationId }, 500);
+          }
+        }
+        const responseBody = {
+          entry,
+          test_mode: false,
+          sheet_write: 'success',
+          sheet_written: true,
+          bodyweight_write_verification: { verified: true, method: 'write_outcomes_ledger' },
+          operation_id: operationId,
+          ledger_outcome: 'committed',
+          ledger_marker: ledgerResult.marker,
+        };
+        if (idempotency.enabled) {
+          responseBody.write_id = idempotency.write_id;
+          responseBody.duplicate_write = false;
+          responseBody.idempotency_status = 'completed';
+          completeWrite(idempotency.write_id, idempotency.token, responseBody);
+        }
+        recordTurnWriteProof(req.body, correlationSessionId, '/api/bodyweight', responseBody);
+        return standardSuccess(req, res, 'Bodyweight entry appended', responseBody);
+      }
       await appendRows('Bodyweight', [[normalizedDate, weightValue, notes || '']]);
       writeCommitted = true;
       const responseBody = {
@@ -4337,40 +4611,30 @@ function closeoutPlanVersion(closeoutContext) {
 async function recordCloseoutEvent(session_id, session_date, closeoutContext) {
   const pv = closeoutPlanVersion(closeoutContext);
   if (!pv) return { status: 'no_plan', captured: false };
+  // #1780 — the finalized closeout is its own durable event, so it mints its
+  // own fresh ledger operation when the cutover is configured: the closeout
+  // row + outcome + marker commit in ONE atomic batch through the capture
+  // layer, and an approve retry (which re-runs this function) commits
+  // outcome-only once the event row is already captured. When the cutover is
+  // unconfigured the event takes the legacy store path, as before. Minting
+  // never blocks the save: a mint failure falls back to the legacy call.
+  let ledger = null;
   try {
-    return await captureCloseout({ session_id, session_date, plan_version: pv }, 'finalized');
+    const cutoverId = getCutoverId();
+    ledger = { operationId: mintLedgerOperationId(cutoverId), cutoverId };
+  } catch (error) {
+    ledger = null;
+  }
+  try {
+    return await captureCloseout({ session_id, session_date, plan_version: pv }, 'finalized', ledger ? { ledger } : {});
   } catch (error) {
     return { status: 'error', captured: false, reason: String((error && error.message) || error) };
   }
 }
 
-// #1780 — resolve a ledger operation_id carried by a writer route. Absent,
-// the route takes the legacy path unchanged ({ operationId: null }). Present,
-// the ledger path is mandatory: a malformed ID is a 400, an ID from another
-// cutover is a 409, and an unconfigured cutover is a 500 — never a silent
-// legacy fallback, which would write data the ledger cannot answer for.
-// Pure: the caller answers the returned error with standardError.
-function resolveLedgerOperationId(payload) {
-  const raw = payload && typeof payload.operation_id === 'string' && payload.operation_id !== '' ? payload.operation_id : null;
-  if (!raw) return { operationId: null, cutoverId: null };
-  if (!isOperationId(raw)) {
-    return { error: { status: 400, code: 'operation_id_invalid', message: 'operation_id is not a valid operation ID (atlas-op-v1:<cutover-UUID>:<operation-UUID>).' } };
-  }
-  let cutoverId;
-  try {
-    cutoverId = getCutoverId();
-  } catch (error) {
-    return { error: { status: 500, code: 'cutover_unconfigured', message: 'Write_Outcomes cutover is not configured; a ledger write cannot commit.' } };
-  }
-  if (parseOperationId(raw).cutoverId !== cutoverId) {
-    return { error: { status: 409, code: 'operation_id_cutover_mismatch', message: 'operation_id belongs to another Write_Outcomes cutover and cannot commit here.' } };
-  }
-  return { operationId: raw, cutoverId };
-}
-
 // #1780 — resolve a ledger undo's target_operation_id against the same
 // cutover the undo operation was validated against. Pure; same error shape
-// as resolveLedgerOperationId.
+// as resolveLedgerOperationId (which lives in services/writeOutcomes.js).
 function resolveLedgerTargetId(payload, cutoverId) {
   const raw = payload && typeof payload.target_operation_id === 'string' && payload.target_operation_id !== '' ? payload.target_operation_id : null;
   if (!raw) return { targetOperationId: null };
@@ -4894,6 +5158,17 @@ app.post('/api/log-workout', async (req, res) => {
         return standardError(req, res, 'operation_id already committed with a different payload; the same ID with different data is refused.', { code: 'operation_id_payload_mismatch', operation_id: operationId }, 409);
       }
       const ledgerBody = buildLedgerReplayBody({ outcome: existing, sessionId: session_id, writeId: idempotency.write_id });
+      // #1780 slice 3c — heal the finalized closeout on a replayed save:
+      // the first attempt may have committed the save and then crashed
+      // before the closeout event (the save batch and the event are separate
+      // commits). A replay that skipped the event would leave a committed
+      // save with no finalized record. Re-attempting here mints a fresh
+      // closeout operation and commits outcome-only once the event is already
+      // captured. Never for a reverted save: an undone session must not gain
+      // a finalized closeout.
+      if (payload.closeout_context !== undefined && existing.status !== 'reverted') {
+        ledgerBody.session_plans_closeout = await recordCloseoutEvent(session_id, workoutDate, payload.closeout_context);
+      }
       if (idempotency.enabled) completeWrite(idempotency.write_id, idempotency.token, ledgerBody);
       releaseSessionClaim(sessionClaimKey, sessionClaim.token);
       return standardSuccess(req, res, ledgerBody.message, ledgerBody, 200);
@@ -5075,6 +5350,12 @@ app.post('/api/log-workout', async (req, res) => {
       try {
         const replayed = await lookupLedgerOperation(writeOutcomesSheets, operationId);
         const replayBody = buildLedgerReplayBody({ outcome: replayed, sessionId: session_id, writeId: idempotency.write_id });
+        // #1780 slice 3c — same closeout heal as the lookup replay above:
+        // a concurrent commit may have landed the save and then crashed
+        // before its closeout event. Never for a reverted save.
+        if (payload.closeout_context !== undefined && replayed.status !== 'reverted') {
+          replayBody.session_plans_closeout = await recordCloseoutEvent(session_id, workoutDate, payload.closeout_context);
+        }
         if (idempotency.enabled) completeWrite(idempotency.write_id, idempotency.token, replayBody);
         releaseSessionClaim(sessionClaimKey, sessionClaim.token);
         return standardSuccess(req, res, replayBody.message, replayBody, 200);
