@@ -41,6 +41,8 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { logCleanedColumns, effortColumns, sessionPlansColumns } = require('../config/columns');
+// #1791 — a live /api/log-workout write requires the signed preview digest.
+const { postLiveLogWorkout } = require('./helpers/previewDigest');
 
 const DATE = '2026-11-16';
 const LOG_SESSION_COL = logCleanedColumns.indexOf('session_id');
@@ -280,7 +282,7 @@ function effortRowsFor(sessionId) {
 async function saveAndUndo(sessionId, writeId, extra = {}) {
   const payload = logWorkoutPayload(sessionId, writeId, extra);
   const before = appendCalls.length;
-  const save = await postJson('/api/log-workout', payload);
+  const save = await postLiveLogWorkout(postJson, payload);
   assert.equal(save.res.status, 200, JSON.stringify(save.body));
   assert.equal(save.body.status, 'ok');
   assert.equal(save.body.data.sheet_write, 'success', JSON.stringify(save.body));
@@ -343,11 +345,11 @@ test('#1764 Part 1: no-Effort save, undo, same-ID retry reports reverted; fresh 
   const writeId = 'write-1764-v1';
   const { payload } = await saveAndUndo(sessionId, writeId);
 
-  const retry = await postJson('/api/log-workout', payload);
+  const retry = await postLiveLogWorkout(postJson, payload);
   assertReverted(retry.res, retry.body, writeId);
   assert.equal(appendCalls.filter((c) => c.tab === 'Log_Cleaned').length, 1, 'retry appended nothing');
 
-  const resave = await postJson('/api/log-workout', { ...payload, write_id: 'write-1764-v1-resave' });
+  const resave = await postLiveLogWorkout(postJson, { ...payload, write_id: 'write-1764-v1-resave' });
   assert.equal(resave.res.status, 200, JSON.stringify(resave.body));
   assert.equal(resave.body.data.sheet_write, 'success', JSON.stringify(resave.body));
   assert.equal(resave.body.data.duplicate_write, false, JSON.stringify(resave.body));
@@ -361,10 +363,10 @@ test('#1764 Part 1: with-Effort save, undo, same-ID retry reports reverted; fres
   const writeId = 'write-1764-v2';
   const { payload } = await saveAndUndo(sessionId, writeId, { effort_row: effortRow(sessionId) });
 
-  const retry = await postJson('/api/log-workout', payload);
+  const retry = await postLiveLogWorkout(postJson, payload);
   assertReverted(retry.res, retry.body, writeId);
 
-  const resave = await postJson('/api/log-workout', { ...payload, write_id: 'write-1764-v2-resave' });
+  const resave = await postLiveLogWorkout(postJson, { ...payload, write_id: 'write-1764-v2-resave' });
   assert.equal(resave.res.status, 200, JSON.stringify(resave.body));
   assert.equal(resave.body.data.sheet_write, 'success', JSON.stringify(resave.body));
   assert.equal(logRowsFor(sessionId).length, 2, 'resave landed exactly once');
@@ -380,7 +382,7 @@ test('#1764 Part 1: decimal loads, undo, same-ID retry reports reverted', async 
       { exercise: 'Back Squat', set_number: 2, weight: 137.5, reps: 5, rir: 2 },
     ],
   });
-  const save = await postJson('/api/log-workout', payload);
+  const save = await postLiveLogWorkout(postJson, payload);
   assert.equal(save.res.status, 200, JSON.stringify(save.body));
   const undo = await postJson('/api/log-workout/undo-last', {
     log_appended_range: save.body.data.logAppendedRange,
@@ -391,7 +393,7 @@ test('#1764 Part 1: decimal loads, undo, same-ID retry reports reverted', async 
   assert.equal(undo.res.status, 200, JSON.stringify(undo.body));
   assert.equal(logRowsFor(sessionId).length, 0, 'undo removed the decimal-load rows');
 
-  const retry = await postJson('/api/log-workout', payload);
+  const retry = await postLiveLogWorkout(postJson, payload);
   assertReverted(retry.res, retry.body, writeId);
 });
 
@@ -404,7 +406,7 @@ test('#1764 Part 1: string loads, undo, same-ID retry reports reverted', async (
       { exercise: 'Back Squat', set_number: 2, weight: '225.5', reps: '5', rir: 2 },
     ],
   });
-  const save = await postJson('/api/log-workout', payload);
+  const save = await postLiveLogWorkout(postJson, payload);
   assert.equal(save.res.status, 200, JSON.stringify(save.body));
   const undo = await postJson('/api/log-workout/undo-last', {
     log_appended_range: save.body.data.logAppendedRange,
@@ -415,7 +417,7 @@ test('#1764 Part 1: string loads, undo, same-ID retry reports reverted', async (
   assert.equal(undo.res.status, 200, JSON.stringify(undo.body));
   assert.equal(logRowsFor(sessionId).length, 0, 'undo removed the string-load rows');
 
-  const retry = await postJson('/api/log-workout', payload);
+  const retry = await postLiveLogWorkout(postJson, payload);
   assertReverted(retry.res, retry.body, writeId);
 });
 
@@ -423,7 +425,7 @@ test('#1764 Part 1: different date, undo, same-ID retry reports reverted', async
   const sessionId = '1764-V5-DATE';
   const writeId = 'write-1764-v5';
   const payload = logWorkoutPayload(sessionId, writeId, { date: '2026-11-15' });
-  const save = await postJson('/api/log-workout', payload);
+  const save = await postLiveLogWorkout(postJson, payload);
   assert.equal(save.res.status, 200, JSON.stringify(save.body));
   const undo = await postJson('/api/log-workout/undo-last', {
     log_appended_range: save.body.data.logAppendedRange,
@@ -433,7 +435,7 @@ test('#1764 Part 1: different date, undo, same-ID retry reports reverted', async
   });
   assert.equal(undo.res.status, 200, JSON.stringify(undo.body));
 
-  const retry = await postJson('/api/log-workout', payload);
+  const retry = await postLiveLogWorkout(postJson, payload);
   assertReverted(retry.res, retry.body, writeId);
 });
 
@@ -442,7 +444,7 @@ test('#1764 Part 1: different session, undo, same-ID retry reports reverted', as
   const writeId = 'write-1764-v6';
   const { payload } = await saveAndUndo(sessionId, writeId);
 
-  const retry = await postJson('/api/log-workout', payload);
+  const retry = await postLiveLogWorkout(postJson, payload);
   assertReverted(retry.res, retry.body, writeId);
 });
 
@@ -465,7 +467,7 @@ test('#1764 Part 1: double undo keeps the receipt reverted; second undo is an id
   assert.equal(secondUndo.body.data.already_undone, true, JSON.stringify(secondUndo.body));
   assert.equal(secondUndo.body.data.rows_deleted, 0, JSON.stringify(secondUndo.body));
 
-  const retry = await postJson('/api/log-workout', payload);
+  const retry = await postLiveLogWorkout(postJson, payload);
   assertReverted(retry.res, retry.body, writeId);
 });
 
@@ -475,7 +477,7 @@ test('#1764 Part 1: receipt contradicts the workbook (rows deleted outside undo)
   const sessionId = '1764-CONTRADICTION';
   const writeId = 'write-1764-contradiction';
   const payload = logWorkoutPayload(sessionId, writeId, { effort_row: effortRow(sessionId) });
-  const save = await postJson('/api/log-workout', payload);
+  const save = await postLiveLogWorkout(postJson, payload);
   assert.equal(save.res.status, 200, JSON.stringify(save.body));
   assert.equal(logRowsFor(sessionId).length, 2);
   assert.equal(effortRowsFor(sessionId).length, 1);
@@ -487,7 +489,7 @@ test('#1764 Part 1: receipt contradicts the workbook (rows deleted outside undo)
   assert.equal(logRowsFor(sessionId).length, 0);
   assert.equal(effortRowsFor(sessionId).length, 0);
 
-  const retry = await postJson('/api/log-workout', payload);
+  const retry = await postLiveLogWorkout(postJson, payload);
   assertContradictionUnverified(retry.res, retry.body);
 });
 
@@ -495,7 +497,7 @@ test('#1764 Part 1: Effort row deleted outside undo — retry is unverified, nev
   const sessionId = '1764-CONTRADICTION-EFFORT';
   const writeId = 'write-1764-contradiction-effort';
   const payload = logWorkoutPayload(sessionId, writeId, { effort_row: effortRow(sessionId) });
-  const save = await postJson('/api/log-workout', payload);
+  const save = await postLiveLogWorkout(postJson, payload);
   assert.equal(save.res.status, 200, JSON.stringify(save.body));
   assert.equal(effortRowsFor(sessionId).length, 1);
 
@@ -506,7 +508,7 @@ test('#1764 Part 1: Effort row deleted outside undo — retry is unverified, nev
   assert.equal(effortRowsFor(sessionId).length, 0);
   assert.equal(logRowsFor(sessionId).length, 2);
 
-  const retry = await postJson('/api/log-workout', payload);
+  const retry = await postLiveLogWorkout(postJson, payload);
   assertContradictionUnverified(retry.res, retry.body);
 });
 
@@ -522,7 +524,7 @@ test('#1764 Part 1: receipt-destroying restart after undo — same-ID retry re-s
   // free plan, and a crashed process may hold a receipt only in memory).
   require('../services/idempotency').resetIdempotencyStore();
 
-  const retry = await postJson('/api/log-workout', payload);
+  const retry = await postLiveLogWorkout(postJson, payload);
   assert.equal(retry.res.status, 200, JSON.stringify(retry.body));
   // No receipt survives, so this is a FRESH write, not a replay: it re-saves
   // the workout (the rows are genuinely on the sheet again) and says so.

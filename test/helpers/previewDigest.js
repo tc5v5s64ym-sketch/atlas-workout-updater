@@ -9,9 +9,9 @@
 // fake sheets and its own post shape.
 //
 // `post(path, payload)` is the file's helper. It may return either the
-// fetch idiom `{ response, body }` (response.status, body.data) or the
-// compact idiom `{ status, body }`. The preview uses the SAME write_id as
-// the live write (mirroring the client): a preview never consumes the id
+// fetch idiom `{ response, body }` (response.status, body.data), the
+// node-fetch idiom `{ res, body }`, or the compact idiom `{ status, body }`.
+// The preview uses the SAME write_id as the live write (mirroring the client): a preview never consumes the id
 // (test_mode returns before beginWrite), so idempotency-retry tests keep
 // their semantics.
 //
@@ -22,6 +22,7 @@ const assert = require('node:assert/strict');
 
 function statusOf(result) {
   if (result && result.response && typeof result.response.status === 'number') return result.response.status;
+  if (result && result.res && typeof result.res.status === 'number') return result.res.status;
   if (result && typeof result.status === 'number') return result.status;
   return undefined;
 }

@@ -187,10 +187,26 @@ test.after(async () => {
 });
 
 async function postLogWorkout(body) {
+  // #1791 — a live write requires the signed preview digest: preview first
+  // (same write_id — a preview never consumes it) and carry the digest on
+  // the live write, exactly as the app's approve flow does. The two racers
+  // preview concurrently and mint the SAME digest (deterministic over the
+  // same rows), so the digest does not decide the race — the session claim
+  // still does. A refused preview fails at validation the live write would
+  // fail at identically, so it is returned as the response.
+  const preview = await fetch(`${baseUrl}/api/log-workout`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-atlas-api-key': 'test-api-key' },
+    body: JSON.stringify({ ...body, test_mode: true }),
+  });
+  const previewBody = await preview.json();
+  if (preview.status !== 200) return { status: preview.status, body: previewBody };
+  const digest = previewBody.data && previewBody.data.preview_digest;
+  assert.equal(typeof digest, 'string', 'preview must mint a preview_digest');
   const res = await fetch(`${baseUrl}/api/log-workout`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-atlas-api-key': 'test-api-key' },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ ...body, preview_digest: digest }),
   });
   return { status: res.status, body: await res.json() };
 }

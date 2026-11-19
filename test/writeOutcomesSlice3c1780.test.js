@@ -59,6 +59,8 @@ const os = require('node:os');
 const path = require('node:path');
 const { resetIdempotencyStore } = require('../services/idempotency');
 const { resetSessionClaims } = require('../services/sessionWriteClaim');
+// #1791 — a live /api/log-workout write requires the signed preview digest.
+const { postLiveLogWorkout } = require('./helpers/previewDigest');
 const {
   logCleanedColumns,
   effortColumns,
@@ -735,7 +737,7 @@ test('#1780 slice 3c: a ledger log-workout with closeout_context commits the ser
     operation_id: OP_SAVE,
     closeout_context: { plan_version: 'pv_sp1' },
   };
-  const res = await post('/api/log-workout', saveBody);
+  const res = await postLiveLogWorkout(post, saveBody, 'slice-3c closeout save');
   assert.equal(res.status, 200, JSON.stringify(res.body));
   const data = res.body.data;
   assert.equal(data.ledger_outcome, 'committed');
@@ -755,7 +757,7 @@ test('#1780 slice 3c: a ledger log-workout with closeout_context commits the ser
   // A retry of the same save operation replays the save and commits the
   // closeout outcome-only — still exactly one closeout row.
   resetIdempotencyStore();
-  const retry = await post('/api/log-workout', saveBody);
+  const retry = await postLiveLogWorkout(post, saveBody, 'slice-3c closeout retry');
   assert.equal(retry.status, 200, JSON.stringify(retry.body));
   assert.equal(sessionPlanRowsOnSheet(), 1, 'no second closeout row');
   assert.equal(outcomeRows().length, 3, 'save + first closeout op + retry closeout op');

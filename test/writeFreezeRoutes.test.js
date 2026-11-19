@@ -142,6 +142,8 @@ require.cache[require.resolve('../services/vision')] = {
 
 const writeFreeze = require('../services/writeFreeze');
 const { peekWrite, resetIdempotencyStore } = require('../services/idempotency');
+// #1791 — a live /api/log-workout write requires the signed preview digest.
+const { postLiveLogWorkout } = require('./helpers/previewDigest');
 const session = require('../services/session');
 const { app } = require('../index');
 
@@ -235,10 +237,10 @@ const ROUTES = [
   {
     name: '/api/log-workout',
     liveStatus: 200,
-    send: (id) => post('/api/log-workout', {
+    send: (id) => postLiveLogWorkout(post, {
       session_id: '20260809-AM-01', date: '2026-08-09', write_id: id,
       log_rows: [{ exercise: 'Back Squat', set_number: 1, weight: 225, reps: 5, rir: 2 }],
-    }),
+    }, 'P12 log-workout'),
   },
   {
     name: '/api/log-workout/undo-last',
@@ -328,10 +330,10 @@ test('P11 — an instance that has NEVER read the row successfully refuses from 
   armed([], new Error('ECONNREFUSED'));
   resetIdempotencyStore();
   resetCounters();
-  const { status } = await post('/api/log-workout', {
+  const { status } = await postLiveLogWorkout(post, {
     session_id: '20260809-AM-01', date: '2026-08-09', write_id: 'never-read-ok',
     log_rows: [{ exercise: 'Back Squat', set_number: 1, weight: 225, reps: 5, rir: 2 }],
-  });
+  }, 'P11 never-read log-workout');
   assert.equal(status, 503);
   assert.deepEqual(sheetCalls.append, []);
 });
