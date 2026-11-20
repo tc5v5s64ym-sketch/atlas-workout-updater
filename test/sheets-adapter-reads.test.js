@@ -221,8 +221,15 @@ test('READ BUDGET: a single Save stays within its Google Sheets read budget', as
   await sheets.getLogCompositeKeys();                // row dedup: 1 (Log_Cleaned!B:G)
   await sheets.getHeaderRow('Log_Cleaned');          // header-drift guard: 1
   await sheets.getHeaderRow('Effort');               // header-drift guard: 1
+  // #1792 — a server-minted live write re-validates the allocated slot AFTER
+  // the session claim, against FRESH reads (both memos cleared, then re-read):
+  // a concurrent append between allocation and the claim is exactly the race,
+  // and no in-process signal can see it. An explicit-id write never allocates
+  // and never re-validates, so it stays at 5.
+  await sheets.getEffortSessionIds();                // #1792 re-validation: 1 (Effort!B:B, fresh)
+  await sheets.getLogCompositeKeys();                // #1792 re-validation: 1 (Log_Cleaned!B:G, fresh)
 
-  const SAVE_READ_BUDGET = 5;
+  const SAVE_READ_BUDGET = 7;
   assert.ok(
     calls.valuesGet.length <= SAVE_READ_BUDGET,
     `one Save must not exceed ${SAVE_READ_BUDGET} Sheets reads; made ${calls.valuesGet.length}`
