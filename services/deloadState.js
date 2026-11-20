@@ -11,8 +11,11 @@
 // deloaded → the default NORMAL state.
 //
 // SEPARATE FROM THE WORKOUT TRUST LOOP. These are system-state writes, not
-// logged sets: they do not go through preview→approve→write, carry no write_id,
-// and never touch Log_Cleaned/Effort. Wired into request handling in a later PR.
+// logged sets: they do not go through preview→approve→write and never touch
+// Log_Cleaned/Effort. Since #1794 they DO carry an optional client write_id
+// (idempotency), answer the write-freeze gate, and ride the tight write rate
+// limit — the same write discipline as the other write routes. Wired into
+// request handling in routes/coachOps.js.
 
 const sheets = require('../sheets');
 const { deloadStateColumns } = require('../config/columns');

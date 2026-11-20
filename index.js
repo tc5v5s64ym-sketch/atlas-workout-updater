@@ -118,10 +118,12 @@ const migrationShadow = require('./services/migrationShadow');
 // Supabase hot-path migration, PR S3 — the WRITE-ADMISSION control (§3.10, §5.3).
 // PERMANENT (owner ruling D7, 2026-08-09), unlike the shadow lane above: it is
 // Atlas safety infrastructure with no sunset, and S4 does not delete it. Each of
-// the seven beginWrite routes below asks it, per request, before any side effect;
-// a write proceeds only on a successful current-request read of exactly one valid
-// row saying frozen = false. It is DORMANT until the runtime Supabase role is
-// configured, so this build behaves exactly as the pre-S3 build does today.
+// the ten beginWrite routes asks it, per request, before any side effect — the
+// seven in this file and the three deload routes in routes/coachOps.js, which
+// receive refuseIfWritesFrozen as a dependency; a write proceeds only on a
+// successful current-request read of exactly one valid row saying frozen = false.
+// It is DORMANT until the runtime Supabase role is configured, so this build
+// behaves exactly as the pre-S3 build does today.
 const writeFreeze = require('./services/writeFreeze');
 const { normalizeDate, parseNumber, calculateQualityScore, qualityScoreBreakdown } = require('./services/validation');
 const {
@@ -375,7 +377,7 @@ app.use(['/api/parse-workout-image', '/api/complete-workout'], createRateLimiter
   windowMs: Number(process.env.ATLAS_VISION_RATE_LIMIT_WINDOW_MS || 10 * 60 * 1000),
   max: Number(process.env.ATLAS_VISION_RATE_LIMIT_MAX || 20)
 }));
-app.use(['/api/log-workout', '/api/bodyweight', '/api/log-workout/undo-last', '/api/coaching-notes', '/api/constraints', '/api/log-modality', '/api/bug-report'], createRateLimiter({
+app.use(['/api/log-workout', '/api/bodyweight', '/api/log-workout/undo-last', '/api/coaching-notes', '/api/constraints', '/api/log-modality', '/api/bug-report', '/api/deload/begin', '/api/deload/advance', '/api/deload/resolve'], createRateLimiter({
   name: 'write',
   windowMs: Number(process.env.ATLAS_WRITE_RATE_LIMIT_WINDOW_MS || 10 * 60 * 1000),
   max: Number(process.env.ATLAS_WRITE_RATE_LIMIT_MAX || 60)
@@ -515,7 +517,7 @@ function invalidateSheetRowsCache(...tabsWritten) {
 // Router. Mounted after the global /api middleware; the shared sheet-rows cache is
 // injected so writes still invalidate what these reads see.
 app.use(registerReadRoutes({ getSheetRows }));
-app.use(registerCoachOpsRoutes({ getSheetRows }));
+app.use(registerCoachOpsRoutes({ getSheetRows, refuseIfWritesFrozen }));
 // Session_Plans capture routes (Decision Desk #952 → Option A, PR-E) — explicit,
 // feature-flagged (ATLAS_SESSION_PLANS_WRITE, default OFF) sidecar endpoints. Global
 // /api auth + rate limiting run before this router; it writes only the Session_Plans
@@ -1216,14 +1218,16 @@ async function enrichAndFormatLogRows(logRows, topLevelSessionId, topLevelDate, 
 //
 // docs/SUPABASE_HOT_PATH_MIGRATION.md §3.10 / §5.3; owner ruling D7 (2026-08-09).
 //
-// Every one of the seven beginWrite routes calls this IMMEDIATELY BEFORE its
+// Every one of the ten beginWrite routes calls this IMMEDIATELY BEFORE its
 // `beginWrite`, which is the write-admission point itself. That placement is what
 // makes §6.2 P10's "no side effect" literal rather than approximate: at that line
 // no Sheets append has been issued, no shadow write has run, and no receipt has
-// been claimed on any of the seven routes, so a refusal leaves nothing behind.
+// been claimed on any of the ten routes, so a refusal leaves nothing behind.
+// (Seven live here; the three deload routes in routes/coachOps.js receive this
+// gate as a dependency and call it at the same point.)
 //
 // It is deliberately NOT at the top of each handler. §5.3 bounds the dependency to
-// the seven write routes and says every read path, preview, coaching reply and
+// the write routes and says every read path, preview, coaching reply and
 // unaffected write is untouched — and on four of these routes the dry-run preview
 // returns BEFORE this line, so a `test_mode` preview is never refused by a freeze.
 // A preview writes nothing, so freezing one would widen the outage past the scope
@@ -1491,7 +1495,7 @@ app.post('/api/coaching-notes', async (req, res) => {
   // the payload: a retry across midnight must hash the same.
   const ledgerPayload = operationId ? { note } : null;
 
-  // Write-admission gate 1 of 7 (§3.10, §5.3). Nothing has been appended yet.
+  // Write-admission gate 1 of 10 (§3.10, §5.3). Nothing has been appended yet.
   const frozen = await refuseIfWritesFrozen(req, res, '/api/coaching-notes');
   if (frozen) return frozen;
 
@@ -1784,7 +1788,7 @@ app.post('/api/constraints', async (req, res) => {
   const operationId = ledgerId.operationId;
   const cutoverId = ledgerId.cutoverId;
 
-  // Write-admission gate 2 of 7 (§3.10, §5.3). Nothing has been appended yet.
+  // Write-admission gate 2 of 10 (§3.10, §5.3). Nothing has been appended yet.
   const frozen = await refuseIfWritesFrozen(req, res, '/api/constraints');
   if (frozen) return frozen;
 
@@ -2062,7 +2066,7 @@ app.post('/api/log-modality', async (req, res) => {
     return standardError(req, res, 'write_id is required', null, 400);
   }
 
-  // Write-admission gate 3 of 7 (§3.10, §5.3). The dry-run returned above, so a
+  // Write-admission gate 3 of 10 (§3.10, §5.3). The dry-run returned above, so a
   // preview is never refused here; nothing has been appended yet.
   const frozen = await refuseIfWritesFrozen(req, res, '/api/log-modality');
   if (frozen) return frozen;
@@ -3062,7 +3066,7 @@ app.post('/api/bodyweight', async (req, res) => {
       return standardError(req, res, 'write_id is required', null, 400);
     }
 
-    // Write-admission gate 4 of 7 (§3.10, §5.3). The dry-run returned above, so a
+    // Write-admission gate 4 of 10 (§3.10, §5.3). The dry-run returned above, so a
     // preview is never refused here; nothing has been appended yet.
     const frozen = await refuseIfWritesFrozen(req, res, '/api/bodyweight');
     if (frozen) return frozen;
@@ -3897,7 +3901,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
         return standardError(req, res, 'write_id is required', null, 400);
       }
-      // Write-admission gate 5 of 7 (§3.10, §5.3). Inside the live-write branch, so
+      // Write-admission gate 5 of 10 (§3.10, §5.3). Inside the live-write branch, so
       // a `test_mode` preview never reaches it; nothing has been appended yet, and
       // the uploaded screenshot is cleaned up exactly as every other refusal here does.
       const frozen = await refuseIfWritesFrozen(req, res, '/api/complete-workout');
@@ -5044,7 +5048,7 @@ app.post('/api/log-workout', async (req, res) => {
     effort_row: payload.effort_row !== undefined ? payload.effort_row : null,
   } : null;
 
-  // Write-admission gate 6 of 7 (§3.10, §5.3). The dry-run returned above, so a
+  // Write-admission gate 6 of 10 (§3.10, §5.3). The dry-run returned above, so a
   // preview is never refused here; nothing has been appended yet.
   const frozen = await refuseIfWritesFrozen(req, res, '/api/log-workout');
   if (frozen) return frozen;
@@ -5980,7 +5984,7 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
     );
   }
 
-  // Write-admission gate 7 of 7 (§3.10, §5.3). After the finality refusal above —
+  // Write-admission gate 7 of 10 (§3.10, §5.3). After the finality refusal above —
   // which is the more specific answer and writes nothing either — and before the
   // read-back, the delete and the receipt claim.
   const frozen = await refuseIfWritesFrozen(req, res, '/api/log-workout/undo-last');
