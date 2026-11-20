@@ -199,8 +199,8 @@ Currently unlimited (no rate limiting implemented).
 ```bash
 GOOGLE_SHEETS_ID=<spreadsheet-id>
 GOOGLE_SERVICE_ACCOUNT_EMAIL=<service-account-email>
-GOOGLE_PRIVATE_KEY=<service-account-private-key>
-ATLAS_API_KEY=<your-api-key>
+  GOOGLE_PRIVATE_KEY=<service-account-private-key>
+  ATLAS_API_KEY=<your-api-key>
 OPENAI_API_KEY=<openai-api-key>
 LOG_SHEET_NAME=Log_Cleaned
 EFFORT_SHEET_NAME=Effort
