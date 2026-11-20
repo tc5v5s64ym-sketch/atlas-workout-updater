@@ -264,6 +264,20 @@ async function previewForToken(extra = {}) {
   return headers.get(tc.PAIRING_TOKEN_HEADER);
 }
 
+// #1791 — the signed digest of the exact rows a preview showed. A preview
+// with NO correlation mints a digest but records no turn-write proof (there
+// is no claim to pair), so minting one here does not disturb the record
+// counts the tests below assert. Used where the sheet state moved between
+// the pairing preview and the approve, so the digest must be minted over the
+// rows the write will actually append.
+async function digestForLiveWrite(payload) {
+  const { body } = await post({ ...payload, test_mode: true });
+  assert.equal(body.status, 'ok', JSON.stringify(body));
+  const digest = body.data && body.data.preview_digest;
+  assert.equal(typeof digest, 'string', 'preview must mint a preview_digest');
+  return digest;
+}
+
 test('the duplicate-closeout branch: a REAL seal + closeout event, with the projected evidence to prove it', async () => {
   reset();
   tc.issueTurn(TURN_ID, SESSION_ID);
@@ -369,8 +383,15 @@ test('a real Effort append is reviewable through its own canonical nine-column r
   assert.ok(pairingToken, 'the dry-run must hand back a pairing token');
   state.logCompositeKeys = everyLogRowAlreadyLogged();
 
+  // #1791 — the pairing preview above ran BEFORE the rows became duplicates,
+  // so its digest covers rows the write will no longer append. Mint a fresh
+  // digest over the rows the write will actually append (none, plus the
+  // Effort row); the pairing token still rides from the original preview.
+  const previewDigest = await digestForLiveWrite(effortOnly({}));
+
   const { response, body } = await post(effortOnly({
     write_id: 'w-effort-live-1',
+    preview_digest: previewDigest,
     correlation: { turn_id: TURN_ID, pairing_token: pairingToken },
   }));
 

@@ -78,7 +78,7 @@ async function mockApis(page, capture) {
       return route.fulfill(json({
         status: 'success',
         data: {
-          test_mode: true, sheet_write: 'skipped', sheet_written: false, no_write_confirmed: true,
+          test_mode: true, sheet_write: 'skipped', sheet_written: false, no_write_confirmed: true, preview_digest: 'pd1.e2e-mock-digest', 
           warnings: [], auto_matches: [], pending_exercises: [], rule_flags: [], log_rows_preview: rowsFor(name, code),
         },
       }));

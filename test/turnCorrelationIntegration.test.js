@@ -138,10 +138,31 @@ function logRows() {
 }
 
 async function postWrite(body) {
+  // #1791 — a live write requires the signed preview digest: preview first
+  // and carry the digest on the live write, exactly as the app's approve flow
+  // does. The inner preview strips `correlation`: a correlation-less preview
+  // records no turn-write proof (miss ABSENT), so it cannot disturb the
+  // pairing the tests below assert on — and the digest it mints is over the
+  // rows this write will actually append. A preview (test_mode) posts
+  // directly; it mints the digest itself.
+  let liveBody = body;
+  if (!body || body.test_mode !== true) {
+    const { correlation: _correlation, preview_digest: _digest, ...previewBody } = body || {};
+    const preview = await fetch(`${baseUrl}/api/log-workout`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-atlas-api-key': 'test-api-key' },
+      body: JSON.stringify({ ...previewBody, test_mode: true }),
+    });
+    const previewJson = await preview.json();
+    if (preview.status !== 200) return { status: preview.status, body: previewJson, headers: preview.headers };
+    const digest = previewJson.data && previewJson.data.preview_digest;
+    assert.equal(typeof digest, 'string', 'preview must mint a preview_digest');
+    liveBody = { ...body, preview_digest: digest };
+  }
   const res = await fetch(`${baseUrl}/api/log-workout`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-atlas-api-key': 'test-api-key' },
-    body: JSON.stringify(body),
+    body: JSON.stringify(liveBody),
   });
   return { status: res.status, body: await res.json(), headers: res.headers };
 }
@@ -315,6 +336,11 @@ test('a live write correlates its success proof, including the appended range', 
   assert.ok(!JSON.stringify(rec).includes('stub-sheet'), 'no Sheet ID in the record');
   assert.equal(rec.pairing.established_at_preview, true);
   assert.equal(rec.pairing.previewed_write_id_match, true, 'this really is the previewed write');
+  // #1791 — the approve carries preview_digest (absent on the preview). It is
+  // excluded from the payload fingerprint (IDENTITY_EXCLUDED_FIELDS), so the
+  // approved write stays payload-bound; without the exclusion the live payload
+  // would PAYLOAD_MISMATCH and record nothing at all.
+  assert.equal(rec.pairing.payload_bound, true, 'the digest-carrying approve stays payload-bound');
 });
 
 // ─── #1173 item 1 — the binding is established at preview, through the real route ───────

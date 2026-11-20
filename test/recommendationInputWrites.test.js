@@ -215,10 +215,28 @@ test('only a live Save writes a tab a recommendation is computed from', async ()
   // Replay the CAPTURED manifest — the pre-correction client, so no route the session really
   // used is missing from this audit.
   for (const [method, url, body] of liveSessionSequence({ runId: 'inputs' })) {
+    // #1791 — the manifest predates server-enforced preview-to-approve, so its
+    // one live closeout write carries no digest. The client previews before
+    // every approve: insert that preview here (same body, test_mode) and
+    // carry its digest on the live write. The thirteen manifest previews
+    // already carry test_mode and pass through untouched. A preview writes
+    // nothing, so it cannot appear in writesByRequest and cannot move the
+    // `touched` assertion below.
+    let liveBody = body;
+    if (method === 'POST' && url === '/api/log-workout' && body && !body.test_mode) {
+      const preview = await fetch(`${baseUrl}/api/log-workout`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-atlas-api-key': 'test-api-key' },
+        body: JSON.stringify({ ...body, test_mode: true }),
+      }).then(r => r.json()).catch(() => null);
+      assert.ok(preview && preview.data && typeof preview.data.preview_digest === 'string',
+        'the closeout preview must mint a preview_digest');
+      liveBody = { ...body, preview_digest: preview.data.preview_digest };
+    }
     await fetch(`${baseUrl}${url}`, {
       method,
       headers: { 'Content-Type': 'application/json', 'x-atlas-api-key': 'test-api-key' },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      ...(liveBody === undefined ? {} : { body: JSON.stringify(liveBody) }),
     }).then(r => r.json()).catch(() => null);
   }
   // Fire-and-forget shadow appends land after their response. Wait for quiet so they are

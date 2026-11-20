@@ -799,8 +799,34 @@ async function runSession({ coldCatalogPerRequest = false, omitCloseout = false,
   const realRunWithReadContext = sheets.runWithReadContext;
   if (!requestContext) sheets.runWithReadContext = (fn) => fn();
   try {
+    // #1791 — a live /api/log-workout write requires the signed preview
+    // digest. The closeout's preview is already a sequence step, so its
+    // digest is captured when it runs and reused by the live closeout write
+    // that follows. Each per-set Save gets a preview inserted here (same
+    // write_id — a preview never consumes it); the inserted preview is not
+    // a sequence step, so it is not recorded in `results`.
+    let pendingDigest = null;
     for (const [method, path, body] of ownerPatternSequence({ omitCloseout })) {
       if (coldCatalogPerRequest) sheets._resetExerciseCatalogCache();
+      if (method === 'POST' && path === '/api/log-workout' && body && body.test_mode) {
+        const preview = await call(method, path, body);
+        assert.equal(preview.status, 200, `sequence preview must succeed: ${JSON.stringify(preview.body).slice(0, 300)}`);
+        pendingDigest = preview.body && preview.body.data && preview.body.data.preview_digest;
+        assert.equal(typeof pendingDigest, 'string', 'sequence preview must mint a preview_digest');
+        results.push(preview);
+        continue;
+      }
+      if (method === 'POST' && path === '/api/log-workout' && body && !body.test_mode) {
+        const digest = pendingDigest || await call(method, path, { ...body, test_mode: true })
+          .then((preview) => {
+            assert.equal(preview.status, 200, `inserted preview must succeed: ${JSON.stringify(preview.body).slice(0, 300)}`);
+            assert.equal(typeof preview.body.data.preview_digest, 'string', 'inserted preview must mint a preview_digest');
+            return preview.body.data.preview_digest;
+          });
+        pendingDigest = null;
+        results.push(await call(method, path, { ...body, preview_digest: digest }));
+        continue;
+      }
       results.push(await call(method, path, body));
     }
     // Deferred reads (intent-observe) must land INSIDE the same posture, or a

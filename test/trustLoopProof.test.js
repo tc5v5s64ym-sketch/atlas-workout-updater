@@ -40,8 +40,10 @@ const previewProofFromResult = extractFn('previewProofFromResult');
 const pendingWriteHasPreviewProof = extractFn('pendingWriteHasPreviewProof');
 const pendingBodyweightHasPreviewProof = extractFn('pendingBodyweightHasPreviewProof');
 
-// A server dry-run response that proves no write happened.
-const DRY_RUN_DATA = { test_mode: true, sheet_write: 'skipped', sheet_written: false, no_write_confirmed: true };
+// A server dry-run response that proves no write happened. #1791: the
+// preview also mints preview_digest — the manual approve gate requires it,
+// so the fixture carries one, exactly as a real preview response does.
+const DRY_RUN_DATA = { test_mode: true, sheet_write: 'skipped', sheet_written: false, no_write_confirmed: true, preview_digest: 'pd1.test-manual-digest' };
 
 // ---------------------------------------------------------------------------
 // previewProofFromResult — reads the right nesting per mode and stamps a time
@@ -92,6 +94,26 @@ test('gate REJECTS a missing write or missing previewProof', () => {
   assert.equal(pendingWriteHasPreviewProof({ previewProof: null }), false);
 });
 
+test('gate REJECTS a manual proof with no preview_digest (#1791)', () => {
+  // The server refuses a live manual write without the signed digest, so the
+  // approve gate must refuse to send one: a digest-less manual proof is a
+  // pre-#1791 preview (or a forged one), never an approvable one. Other
+  // modes do not post /api/log-workout and are unaffected.
+  // Destructure the digest away: a pre-#1791 preview response had no digest field.
+  const { preview_digest: _droppedDigest, ...withoutDigest } = DRY_RUN_DATA;
+  assert.equal(pendingWriteHasPreviewProof({ previewProof: previewProofFromResult({ data: withoutDigest }, 'manual') }), false);
+  assert.equal(pendingWriteHasPreviewProof({ previewProof: { mode: 'manual', ...DRY_RUN_DATA, preview_digest: '' } }), false);
+  assert.equal(pendingWriteHasPreviewProof({ previewProof: { mode: 'manual', ...DRY_RUN_DATA, preview_digest: 42 } }), false);
+  // And the digest does not rescue a proof that fails the no-write checks.
+  assert.equal(pendingWriteHasPreviewProof({ previewProof: { mode: 'manual', ...DRY_RUN_DATA, sheet_written: true } }), false);
+  // Non-manual modes still pass without a digest (their writes do not go
+  // through the digest-checked route).
+  for (const mode of ['modality', 'screenshot', 'effort-only']) {
+    const nested = mode === 'modality' ? { data: withoutDigest } : { data: { data: withoutDigest } };
+    assert.equal(pendingWriteHasPreviewProof({ previewProof: previewProofFromResult(nested, mode) }), true, `${mode} needs no digest`);
+  }
+});
+
 test('gate REJECTS a proof that does not prove no-write (the live-write guard)', () => {
   const base = { mode: 'manual', sheet_write: 'skipped', sheet_written: false, no_write_confirmed: true };
   // test_mode not strictly true
@@ -129,7 +151,7 @@ test('bodyweight gate ACCEPTS a valid dry-run proof and REJECTS missing/live var
 // round-trip — the proof a successful dry-run produces always satisfies the gate
 // ---------------------------------------------------------------------------
 test('round-trip: a dry-run proof captured by previewProofFromResult passes the approve gate', () => {
-  const serverDryRun = { data: { test_mode: true, sheet_write: 'skipped', sheet_written: false, no_write_confirmed: true } };
+  const serverDryRun = { data: { test_mode: true, sheet_write: 'skipped', sheet_written: false, no_write_confirmed: true, preview_digest: 'pd1.test-manual-digest' } };
   const write = { previewProof: previewProofFromResult(serverDryRun, 'manual') };
   assert.equal(pendingWriteHasPreviewProof(write), true);
 });

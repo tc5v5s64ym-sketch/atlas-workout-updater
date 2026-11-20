@@ -131,6 +131,8 @@ require.cache[googleapisPath] = {
 };
 
 const { resetIdempotencyStore } = require('../services/idempotency');
+// #1791 — a live /api/log-workout write requires the signed preview digest.
+const { postLiveLogWorkout } = require('./helpers/previewDigest');
 const { app } = require('../index');
 
 let server; let baseUrl;
@@ -139,6 +141,9 @@ test.before(async () => {
   baseUrl = `http://127.0.0.1:${server.address().port}`;
 });
 test.after(() => new Promise(resolve => server.close(resolve)));
+
+// POST adapter for the shared preview-first helper (same {status, body} shape).
+const postJson = (path, body) => call('POST', path, body);
 
 async function call(method, path, body) {
   const res = await fetch(`${baseUrl}${path}`, {
@@ -174,9 +179,9 @@ const logRow = { exercise: 'Back Squat', set_number: 1, weight: 235, reps: 5, ri
 test('a log-only Save evicts Log_Cleaned and KEEPS the Effort rows it did not touch', async () => {
   await warmCaches();
 
-  const write = await call('POST', '/api/log-workout', {
+  const write = await postLiveLogWorkout(postJson, {
     date: '2026-08-06', session_id: 'S-NEW', write_id: 'w_log_only', log_rows: [logRow],
-  });
+  }, 'cache log-only save');
   assert.equal(write.status, 200, JSON.stringify(write.body));
   assert.equal(write.body.data.effort_rows_written, 0, 'this Save must write no Effort row');
 
@@ -193,14 +198,14 @@ test('a log-only Save evicts Log_Cleaned and KEEPS the Effort rows it did not to
 test('a Save that writes an Effort row makes it visible to the very next read', async () => {
   await warmCaches();
 
-  const write = await call('POST', '/api/log-workout', {
+  const write = await postLiveLogWorkout(postJson, {
     date: '2026-08-06', session_id: 'S-EFFORT', write_id: 'w_with_effort',
     log_rows: [logRow],
     effort_row: {
       date: '2026-08-06', session_id: 'S-EFFORT', duration: 55, active_calories: 380,
       total_calories: 520, average_hr: 128, peak_hr: 161, location: 'gym',
     },
-  });
+  }, 'cache effort save');
   assert.equal(write.status, 200, JSON.stringify(write.body));
   assert.equal(write.body.data.effort_rows_written, 1, 'this Save must write an Effort row');
 
@@ -231,9 +236,9 @@ test('a write to an uncached tab evicts neither cached tab', async () => {
 test('an undo evicts Log_Cleaned — the rows it deleted must not be served again', async () => {
   await warmCaches();
 
-  const write = await call('POST', '/api/log-workout', {
+  const write = await postLiveLogWorkout(postJson, {
     date: '2026-08-06', session_id: 'S-UNDO', write_id: 'w_undo_target', log_rows: [logRow],
-  });
+  }, 'cache undo target save');
   assert.equal(write.status, 200, JSON.stringify(write.body));
   const range = write.body.data.logAppendedRange;
 

@@ -258,6 +258,8 @@ require.cache[require.resolve('../services/vision')] = {
 
 const sheets = require('../sheets');
 const { resetIdempotencyStore } = require('../services/idempotency');
+// #1791 — a live /api/log-workout write requires the signed preview digest.
+const { postLiveLogWorkout } = require('./helpers/previewDigest');
 const { app } = require('../index');
 
 let server; let baseUrl;
@@ -353,6 +355,7 @@ let runSeq = 0;
  */
 async function runLiveSession({
   requestContext = true, coldCatalogPerRequest = false, corrected = false, compressed = false,
+  skipCorrection = null,
 } = {}) {
   runSeq += 1;
   resetIdempotencyStore();
@@ -370,14 +373,31 @@ async function runLiveSession({
   setVirtualOffset(base, 0);
   virtualClockOn = true;
   try {
-    for (const [method, url, body, meta] of liveSessionSequence({ runId: `r${runSeq}`, corrected })) {
+    for (const [method, url, body, meta] of liveSessionSequence({ runId: `r${runSeq}`, corrected, skipCorrection })) {
       // The request is dispatched AT its captured offset. Deferred work it triggers (the
       // fire-and-forget shadow appends) settles at that same simulated instant, which is
       // where the live run's own deferred work landed too — within milliseconds of its
       // request.
       setVirtualOffset(base, compressed ? 0 : (meta && meta.offsetMs) || 0);
       if (coldCatalogPerRequest) sheets._resetExerciseCatalogCache();
-      results.push(await call(method, url, body));
+      // #1791 — the manifest predates server-enforced preview-to-approve, so
+      // its one live closeout write carries no digest. The client previews
+      // before every approve: insert that preview here, at the SAME virtual
+      // offset as the live write (so its reads land in the same rolling
+      // minute the real client would pay for them), and carry its digest on
+      // the live write. The thirteen manifest previews already carry
+      // test_mode and pass through untouched. The inserted preview is not a
+      // manifest request, so it is not recorded in `results` — but its reads
+      // ARE counted, which is why the published captured/corrected figures
+      // below moved (see the #1791 note at the acceptance guard).
+      let liveBody = body;
+      if (method === 'POST' && url === '/api/log-workout' && body && !body.test_mode) {
+        const preview = await call(method, url, { ...body, test_mode: true });
+        assert.equal(preview.status, 200, `closeout preview must succeed: ${JSON.stringify(preview.body).slice(0, 300)}`);
+        assert.equal(typeof preview.body.data.preview_digest, 'string', 'closeout preview must mint a preview_digest');
+        liveBody = { ...body, preview_digest: preview.body.data.preview_digest };
+      }
+      results.push(await call(method, url, liveBody));
     }
     // Anything still in flight settles at the end of the captured session, not beyond it.
     await settle();
@@ -519,8 +539,13 @@ test('the captured client costs measurably more than the corrected one, same tim
 
   assert.equal(captured.peak, 46,
     `the published captured peak is 46; measured ${captured.peak}\n  ${captured.breakdown}`);
-  assert.equal(captured.total, 56,
-    `the published captured total is 56; measured ${captured.total}`);
+  // #1791: the total is 57, not 56 — the live closeout write now reads Log_Cleaned
+  // once more for the history guards (e1RM jump / RIR drift) that run on the rows
+  // actually written. The inserted closeout preview adds no net reads: its reads
+  // warm the 30-second row cache the live write then reuses. The peak is unchanged
+  // (46) — the extra read lands outside the worst rolling minute.
+  assert.equal(captured.total, 57,
+    `the published captured total is 57; measured ${captured.total}`);
 
   assert.ok(captured.peak > corrected.peak,
     `the corrections must reduce the worst minute: captured ${captured.peak}, corrected ` +
@@ -558,7 +583,7 @@ test('collapsing the captured timing into one instant changes the answer and fai
 
   // And it fails acceptance: the published figures are the replayed ones, so a collapsed
   // measurement cannot satisfy the guard that pins them. This is the assertion that bites
-  // if the replay is ever removed — the acceptance test pins 39/48, and collapsed is 47/47.
+  // if the replay is ever removed — the acceptance test pins 39/49, and collapsed is 48/48.
   assert.notEqual(collapsed.peak, 39,
     'the acceptance guard pins the replayed peak of 39; a collapsed run must not be able ' +
     'to satisfy it');
@@ -771,15 +796,17 @@ test(`corrected trace-derived lower bound <= ${BUDGET}; production budget not ye
 
   // THE EXACT PUBLISHED FIGURES, pinned. Every number in docs/READ_BUDGET.md and the merge
   // card is one of these two, and both depend on the captured timing being replayed: drive
-  // the same requests back to back instead and the peak reads 47, not 39. Pinning them is
+  // the same requests back to back instead and the peak reads 48, not 39. Pinning them is
   // what makes a silent return to a collapsed timeline fail here rather than quietly
   // re-publish a figure nobody re-derived.
   assert.equal(run.peak, 39,
     `the published corrected peak is 39; measured ${run.peak}. If this changed legitimately, ` +
     'every figure in docs/READ_BUDGET.md and the merge card must be re-derived and updated ' +
     'in the same change.');
-  assert.equal(run.total, 48,
-    `the published corrected total is 48; measured ${run.total}`);
+  // #1791: the total is 49, not 48 — the live closeout write's history-guard read
+  // (see the captured test above). The peak is unchanged at 39.
+  assert.equal(run.total, 49,
+    `the published corrected total is 49; measured ${run.total}`);
 
   // The timeline really is spread. A session whose peak equals its total is one where every
   // request landed inside a single rolling minute — the collapsed model this replaced.
@@ -842,10 +869,11 @@ test('POST /api/debug/intent-observe performs zero Sheets reads', async () => {
   // answered — so with the cache warm this guard would pass even if the route DID read.
   // A live Save is the public way to invalidate it: after this, any read the route performs
   // must reach the API to be answered, and the count below means what it says.
-  const priming = await call('POST', '/api/log-workout', {
+  // #1791: the priming Save previews first (same write_id) and carries the digest.
+  const priming = await postLiveLogWorkout((path, body) => call('POST', path, body), {
     date: SESSION_DATE, session_id: 'GUARD-COLD-CACHE', write_id: `w_guard_cold_${runSeq}_x`,
     log_rows: [{ exercise: LIFTS[0].name, set_number: 1, weight: 100, reps: 5, rir: 2 }],
-  });
+  }, 'intent-observe guard priming');
   assert.equal(priming.status, 200, JSON.stringify(priming.body));
   await settle({ quietMs: 300, maxMs: 5000 });
   reads.length = 0;
@@ -1044,3 +1072,34 @@ test('S3/P4(a): the residual in-request Sheets reads on the migrated Save path a
 });
 
 module.exports = { runLiveSession, BUDGET, GOOGLE_LIMIT, SESSION_ID };
+
+// ── the counterfactual table ────────────────────────────────────────────────────
+//
+// docs/READ_BUDGET.md publishes one row per correction disabled, plus the shipped
+// and captured rows. Those figures are pinned here, so a server change that moves
+// them fails here rather than quietly re-publishing a stale table. The rows are
+// measured through the same runLiveSession the acceptance guard uses.
+// (First pinned: #1791, which added the live closeout write's history-guard read:
+// every total rose by 1, and C3-disabled's peak rose 39 -> 40 because the extra
+// read lands in that variant's worst minute — the closeout window.)
+test('counterfactual table: one correction disabled at a time', async () => {
+  const expected = [
+    // [correction id (null = shipped), total, peak]
+    ['C4-repeated-recommendation', 55, 45],
+    ['C2-intent-recommendation-duplicate', 50, 40],
+    ['C3-verify-range-retired', 50, 40],
+    ['C2-coaching-insights-duplicate', 49, 39],
+    ['C2-prs-recent-duplicate', 49, 39],
+    [null, 49, 39],
+  ];
+  for (const [id, total, peak] of expected) {
+    const run = await runLiveSession({ corrected: true, skipCorrection: id });
+    assert.equal(run.total, total,
+      `counterfactual ${id || 'shipped'}: published total is ${total}; measured ${run.total}`);
+    assert.equal(run.peak, peak,
+      `counterfactual ${id || 'shipped'}: published peak is ${peak}; measured ${run.peak}`);
+  }
+  const captured = await runLiveSession();
+  assert.equal(captured.total, 57, `captured total is 57; measured ${captured.total}`);
+  assert.equal(captured.peak, 46, `captured peak is 46; measured ${captured.peak}`);
+});

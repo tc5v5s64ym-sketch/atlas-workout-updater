@@ -80,7 +80,7 @@ async function mockAtlasApis(page, capture) {
         return route.fulfill(json({
           status: 'success',
           data: {
-            test_mode: true, sheet_write: 'skipped', sheet_written: false, no_write_confirmed: true,
+            test_mode: true, sheet_write: 'skipped', sheet_written: false, no_write_confirmed: true, preview_digest: 'pd1.e2e-mock-digest', 
             warnings: [], auto_matches: ['bench -> Bench Press'], pending_exercises: [], rule_flags: [],
             log_rows_preview: benchRows(body.session_id || TEST_SESSION)
           }

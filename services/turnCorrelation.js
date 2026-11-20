@@ -165,10 +165,18 @@ const MAX_IDENTITY_INPUT_CHARS = 200_000;
 //   • `test_mode`   — deleted on approve (app.js:7507); the one field that ALWAYS differs;
 //   • `write_id`    — re-minted on the documented seal retry (app.js:7566);
 //   • `correlation` — the envelope carrying the pairing token, which differs by construction.
+//   • `preview_digest` — #1791: the server-issued signed digest of the previewed rows,
+//     absent on the preview and present on the approve by construction. It is NOT
+//     write-affecting content: the server verifies it by HMAC recompute over the
+//     rows (services/previewDigest.js) before any append, which binds the rows
+//     strictly more strongly than this fingerprint could. Excluding it keeps an
+//     approved write payload-bound; including it would unbind EVERY approved
+//     write (PAYLOAD_MISMATCH, no proof record) for a field that differs by
+//     construction, exactly the failure the exclusions exist to prevent.
 // `effort_row` is NOT excluded. It is write-affecting, so its documented REMOVAL on the seal
 // retry (app.js:7567) is handled as one explicit permitted TRANSITION below — which still
 // refuses a CHANGED or newly-ADDED effort row.
-const IDENTITY_EXCLUDED_FIELDS = Object.freeze(['test_mode', 'write_id', 'correlation']);
+const IDENTITY_EXCLUDED_FIELDS = Object.freeze(['test_mode', 'write_id', 'correlation', 'preview_digest']);
 
 // The ONLY proof keys that may be copied into a correlation record. A closed whitelist, not
 // a denylist: a field added to a write response in future is excluded by default rather than
