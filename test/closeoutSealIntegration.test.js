@@ -14,6 +14,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { resetIdempotencyStore } = require('../services/idempotency');
+// #1791 — a live /api/log-workout write requires the signed preview digest.
+const { postLiveLogWorkout } = require('./helpers/previewDigest');
 const { logCleanedColumns, effortColumns, sessionPlanSetsColumns, sessionPlansColumns } = require('../config/columns');
 
 process.env.ATLAS_API_KEY = 'test-api-key';
@@ -215,7 +217,7 @@ test('closeout DRY-RUN with a stored ledger: both truths, per-set diffs, seal pr
 
 test('APPROVED closeout: Log rows append verbatim AND the ledger seals under the SAME write_id', async () => {
   reset();
-  const { response, body } = await post('/api/log-workout', closeoutPayload({ write_id: 'w-co-live-1' }));
+  const { response, body } = await postLiveLogWorkout(post, closeoutPayload({ write_id: 'w-co-live-1' }));
   assert.equal(response.status, 200);
   const d = body.data;
   assert.equal(d.sheet_write, 'success');
@@ -240,10 +242,10 @@ test('APPROVED closeout: Log rows append verbatim AND the ledger seals under the
 
 test('same-write_id retry replays idempotently: no second append, no second seal, original response echoed', async () => {
   reset();
-  await post('/api/log-workout', closeoutPayload({ write_id: 'w-co-live-2' }));
+  await postLiveLogWorkout(post, closeoutPayload({ write_id: 'w-co-live-2' }));
   const appendsAfterFirst = state.appends.length;
   const updatesAfterFirst = state.updates.length;
-  const { response, body } = await post('/api/log-workout', closeoutPayload({ write_id: 'w-co-live-2' }));
+  const { response, body } = await postLiveLogWorkout(post, closeoutPayload({ write_id: 'w-co-live-2' }));
   assert.equal(response.status, 200);
   assert.equal(body.data.duplicate_write, true);
   assert.equal(body.data.sheet_write, 'skipped_duplicate');
@@ -256,7 +258,7 @@ test('same-write_id retry replays idempotently: no second append, no second seal
 test('seal failure after committed appends: honest partial — closeout_fully_verified false, write still reported truthfully', async () => {
   reset();
   state.updateCellsResult = { totalUpdatedCells: 2 }; // server claims 2 of 5 → proof mismatch
-  const { response, body } = await post('/api/log-workout', closeoutPayload({ write_id: 'w-co-live-3' }));
+  const { response, body } = await postLiveLogWorkout(post, closeoutPayload({ write_id: 'w-co-live-3' }));
   assert.equal(response.status, 200);
   const d = body.data;
   assert.equal(d.sheet_write, 'success', 'the committed Log append is still reported');
@@ -269,7 +271,7 @@ test('seal failure after committed appends: honest partial — closeout_fully_ve
 test('a fresh-write_id retry HEALS an unsealed closeout through the all-duplicate lane — zero re-appends', async () => {
   reset();
   state.updateCellsResult = { totalUpdatedCells: 2 };
-  await post('/api/log-workout', closeoutPayload({ write_id: 'w-co-live-4' }));
+  await postLiveLogWorkout(post, closeoutPayload({ write_id: 'w-co-live-4' }));
   // The mismatch path stamped cells in the fake regardless of the claimed count —
   // reset the stamps so the heal genuinely has blank cells to stamp.
   for (const r of state.planSetRows) r[SEAL_IDX] = '';
@@ -277,7 +279,7 @@ test('a fresh-write_id retry HEALS an unsealed closeout through the all-duplicat
   // The rows are on the sheet now; the retry sees them as duplicates.
   state.logCompositeKeys = DIP_ACTUALS.map(a => `${SESSION_ID.toLowerCase()}||weighted dip||${a.set_number}`);
   const appendsBefore = state.appends.length;
-  const { response, body } = await post('/api/log-workout', closeoutPayload({ write_id: 'w-co-live-4-retry' }));
+  const { response, body } = await postLiveLogWorkout(post, closeoutPayload({ write_id: 'w-co-live-4-retry' }));
   assert.equal(response.status, 200);
   const d = body.data;
   assert.equal(d.all_rows_duplicate, true, 'nothing new to append');
@@ -291,8 +293,7 @@ test('a fresh-write_id retry HEALS an unsealed closeout through the all-duplicat
 test('partial append failure (Effort fails after Log): fail-closed 500, no seal attempted; the ledger stays unbound for the heal', async () => {
   reset();
   state.failEffortAppend = true;
-  const { response, body } = await post('/api/log-workout', closeoutPayload({
-    write_id: 'w-co-live-5',
+  const { response, body } = await postLiveLogWorkout(post, closeoutPayload({ write_id: 'w-co-live-5',
     effort_row: {
       date: '2026-07-18', session_id: SESSION_ID, duration: '00:40:00',
       active_calories: 400, total_calories: 500, average_hr: 140, peak_hr: 165, location: 'Work'
@@ -310,7 +311,7 @@ test('malformed ledger chain: the summary flags it and the live seal fails close
   state.planSetRows.push(state.planSetRows[0].slice()); // duplicate (item,set,version)
   const dry = await post('/api/log-workout', closeoutPayload({ test_mode: true }));
   assert.equal(dry.body.data.closeout_summary.malformed, true, 'the confirmation SHOWS the malformed history');
-  const live = await post('/api/log-workout', closeoutPayload({ write_id: 'w-co-live-6' }));
+  const live = await postLiveLogWorkout(post, closeoutPayload({ write_id: 'w-co-live-6' }));
   assert.equal(live.response.status, 200);
   assert.equal(live.body.data.sheet_write, 'success', 'the actuals still saved');
   assert.equal(live.body.data.ledger_seal.sealed_ok, false);
@@ -325,7 +326,7 @@ test('malformed ledger chain: the summary flags it and the live seal fails close
 test('P1-A: a ledger READ OUTAGE during the approved closeout fails closed — never a verified closeout', async () => {
   reset();
   state.failTabsProbe = true;
-  const { response, body } = await post('/api/log-workout', closeoutPayload({ write_id: 'w-co-p1a' }));
+  const { response, body } = await postLiveLogWorkout(post, closeoutPayload({ write_id: 'w-co-p1a' }));
   assert.equal(response.status, 200);
   const d = body.data;
   assert.equal(d.sheet_write, 'success', 'the committed Log append is still reported truthfully');
@@ -339,7 +340,7 @@ test('P1-A: a ledger READ OUTAGE during the approved closeout fails closed — n
 test('P1-B: a PLANNED closeout with zero ledger rows is NOT fully verified (a lost checkpoint never masquerades)', async () => {
   reset();
   state.planSetRows = []; // the tab exists, but this session checkpointed nothing
-  const { response, body } = await post('/api/log-workout', closeoutPayload({ write_id: 'w-co-p1b' }));
+  const { response, body } = await postLiveLogWorkout(post, closeoutPayload({ write_id: 'w-co-p1b' }));
   assert.equal(response.status, 200);
   const d = body.data;
   assert.equal(d.sheet_write, 'success');
@@ -351,8 +352,7 @@ test('P1-B: a PLANNED closeout with zero ledger rows is NOT fully verified (a lo
 test('P1-B guard: a FREESTYLE closeout (no planned items) with no ledger rows stays fully verified', async () => {
   reset();
   state.planSetRows = [];
-  const { response, body } = await post('/api/log-workout', {
-    session_id: SESSION_ID, date: '2026-07-18', write_id: 'w-co-p1b2',
+  const { response, body } = await postLiveLogWorkout(post, { session_id: SESSION_ID, date: '2026-07-18', write_id: 'w-co-p1b2',
     log_rows: DIP_ACTUALS, closeout_context: { items: [] }
   });
   assert.equal(response.status, 200);
@@ -367,7 +367,7 @@ const PLANNED_CONTEXT = { plan_version: 'pv_gate1', items: CLOSEOUT_CONTEXT.item
 
 test('approved planned closeout records the finalized event server-side with proof, inside the same approval', async () => {
   reset();
-  const { response, body } = await post('/api/log-workout', closeoutPayload({ write_id: 'w-co-ev-1', closeout_context: PLANNED_CONTEXT }));
+  const { response, body } = await postLiveLogWorkout(post, closeoutPayload({ write_id: 'w-co-ev-1', closeout_context: PLANNED_CONTEXT }));
   assert.equal(response.status, 200);
   const d = body.data;
   const ev = d.session_plans_closeout;
@@ -380,7 +380,7 @@ test('approved planned closeout records the finalized event server-side with pro
 
 test('a freestyle closeout (no pv_ token) records no event and stays verified', async () => {
   reset();
-  const { body } = await post('/api/log-workout', closeoutPayload({ write_id: 'w-co-ev-2' }));
+  const { body } = await postLiveLogWorkout(post, closeoutPayload({ write_id: 'w-co-ev-2' }));
   assert.equal(body.data.session_plans_closeout.status, 'no_plan');
   assert.equal(body.data.session_plans_closeout.captured, false);
   assert.equal(body.data.closeout_fully_verified, true, 'nothing was planned — nothing is missing');
@@ -393,7 +393,7 @@ test('the fresh-write_id heal lane re-attempts BOTH the event (idempotent) and t
   // honest partial. (The fake stamps regardless of the claimed count, so blank
   // the stamps to model rows the failed seal never actually bound.)
   state.updateCellsResult = { totalUpdatedCells: 2 };
-  const first = await post('/api/log-workout', closeoutPayload({ write_id: 'w-co-ev-3', closeout_context: PLANNED_CONTEXT }));
+  const first = await postLiveLogWorkout(post, closeoutPayload({ write_id: 'w-co-ev-3', closeout_context: PLANNED_CONTEXT }));
   assert.equal(first.body.data.session_plans_closeout.captured, true, 'the event recorded on the first approval');
   assert.equal(first.body.data.closeout_fully_verified, false, 'the failed seal keeps the closeout unverified');
   for (const r of state.planSetRows) r[SEAL_IDX] = '';
@@ -403,7 +403,7 @@ test('the fresh-write_id heal lane re-attempts BOTH the event (idempotent) and t
   // all-duplicate lane: zero re-appends anywhere, the event folds idempotently,
   // the seal binds, and the closeout is finally fully verified.
   state.logCompositeKeys = DIP_ACTUALS.map(a => `${SESSION_ID.toLowerCase()}||weighted dip||${a.set_number}`);
-  const { body } = await post('/api/log-workout', closeoutPayload({ write_id: 'w-co-ev-3-retry', closeout_context: PLANNED_CONTEXT }));
+  const { body } = await postLiveLogWorkout(post, closeoutPayload({ write_id: 'w-co-ev-3-retry', closeout_context: PLANNED_CONTEXT }));
   assert.equal(body.data.all_rows_duplicate, true);
   const ev = body.data.session_plans_closeout;
   assert.equal(ev.captured, true, 'the idempotent replay still reports a captured event');
@@ -415,9 +415,9 @@ test('the fresh-write_id heal lane re-attempts BOTH the event (idempotent) and t
 
 test('a fresh-write_id retry on an ALREADY-sealed closeout fails closed (never re-seal under a new id)', async () => {
   reset();
-  await post('/api/log-workout', closeoutPayload({ write_id: 'w-co-ev-4', closeout_context: PLANNED_CONTEXT }));
+  await postLiveLogWorkout(post, closeoutPayload({ write_id: 'w-co-ev-4', closeout_context: PLANNED_CONTEXT }));
   state.logCompositeKeys = DIP_ACTUALS.map(a => `${SESSION_ID.toLowerCase()}||weighted dip||${a.set_number}`);
-  const { body } = await post('/api/log-workout', closeoutPayload({ write_id: 'w-co-ev-4-new', closeout_context: PLANNED_CONTEXT }));
+  const { body } = await postLiveLogWorkout(post, closeoutPayload({ write_id: 'w-co-ev-4-new', closeout_context: PLANNED_CONTEXT }));
   assert.equal(body.data.ledger_seal.sealed_ok, false);
   assert.equal(body.data.ledger_seal.reason, 'conflicting_seal', 'the ledger stays bound to the ORIGINAL approved closeout');
   assert.equal(body.data.closeout_fully_verified, false, 'a new id can never claim an already-sealed closeout');
@@ -439,8 +439,7 @@ const IDB_ACTUALS = [
 
 test('F-SB3: the owner\'s exact contradictory state is NOT fully verified', async () => {
   reset();
-  const { response, body } = await post('/api/log-workout', {
-    session_id: SESSION_ID, date: '2026-07-18', write_id: 'w-co-fsb3-1',
+  const { response, body } = await postLiveLogWorkout(post, { session_id: SESSION_ID, date: '2026-07-18', write_id: 'w-co-fsb3-1',
     log_rows: IDB_ACTUALS,
     closeout_context: {
       // Bench Press was accepted and stayed PENDING — no outcome at all.
@@ -462,8 +461,7 @@ test('F-SB3: the owner\'s exact contradictory state is NOT fully verified', asyn
 
 test('F-SB3: an honestly disclosed UNFINISHED lift still passes (incompleteness is not a contradiction)', async () => {
   reset();
-  const { body } = await post('/api/log-workout', closeoutPayload({
-    write_id: 'w-co-fsb3-2',
+  const { body } = await postLiveLogWorkout(post, closeoutPayload({ write_id: 'w-co-fsb3-2',
     closeout_context: {
       items: [
         { plan_item_id: 'pi_dip', planned_lift_code: 'DIP01', name: 'Weighted Dip', outcome: 'completed' },
@@ -476,8 +474,7 @@ test('F-SB3: an honestly disclosed UNFINISHED lift still passes (incompleteness 
 
 test('F-SB3: a proposal the athlete declined by DOING the original lift is coherent', async () => {
   reset();
-  const { body } = await post('/api/log-workout', closeoutPayload({
-    write_id: 'w-co-fsb3-3',
+  const { body } = await postLiveLogWorkout(post, closeoutPayload({ write_id: 'w-co-fsb3-3',
     closeout_context: {
       items: [{ plan_item_id: 'pi_dip', planned_lift_code: 'DIP01', name: 'Weighted Dip', outcome: 'completed' }],
       pending_substitution: {
@@ -492,8 +489,7 @@ test('F-SB3: a proposal the athlete declined by DOING the original lift is coher
 
 test('F-SB3: a substitution outcome that binds no performed lift is NOT fully verified', async () => {
   reset();
-  const { body } = await post('/api/log-workout', closeoutPayload({
-    write_id: 'w-co-fsb3-4',
+  const { body } = await postLiveLogWorkout(post, closeoutPayload({ write_id: 'w-co-fsb3-4',
     closeout_context: {
       items: [{ plan_item_id: 'pi_dip', planned_lift_code: '', name: 'Weighted Dip', outcome: 'substituted' }],
     },
@@ -504,8 +500,7 @@ test('F-SB3: a substitution outcome that binds no performed lift is NOT fully ve
 
 test('F-SB3: a resolved substitution (bound performed lift) stays fully verified', async () => {
   reset();
-  const { body } = await post('/api/log-workout', closeoutPayload({
-    write_id: 'w-co-fsb3-5',
+  const { body } = await postLiveLogWorkout(post, closeoutPayload({ write_id: 'w-co-fsb3-5',
     closeout_context: {
       items: [{ plan_item_id: 'pi_dip', planned_lift_code: '', performed_lift_code: 'IDB01', name: 'Incline Dumbbell Press', outcome: 'substituted' }],
     },

@@ -230,6 +230,28 @@ test('a real Save publishes an adjudicated receipt that matches the append', asy
   t.after(() => new Promise(resolve => server.close(resolve)));
   const base = `http://127.0.0.1:${server.address().port}`;
 
+  // #1791 — a live write requires the signed preview digest: preview first
+  // and carry the digest on the live write, exactly as the app's approve
+  // flow does.
+  const previewRes = await fetch(`${base}/api/log-workout`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-atlas-api-key': 'test-api-key' },
+    body: JSON.stringify({
+      date: '2026-08-06',
+      session_id: SESSION,
+      write_id: 'w_append_proof_1',
+      test_mode: true,
+      log_rows: [
+        { exercise: 'Back Squat', set_number: 1, weight: 225, reps: 5, rir: 2 },
+        { exercise: 'Back Squat', set_number: 2, weight: 225, reps: 5, rir: 2 },
+      ],
+    }),
+  });
+  const previewBody = await previewRes.json();
+  assert.equal(previewRes.status, 200, JSON.stringify(previewBody));
+  const previewDigest = previewBody.data && previewBody.data.preview_digest;
+  assert.equal(typeof previewDigest, 'string', 'preview must mint a preview_digest');
+
   const res = await fetch(`${base}/api/log-workout`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-atlas-api-key': 'test-api-key' },
@@ -237,6 +259,7 @@ test('a real Save publishes an adjudicated receipt that matches the append', asy
       date: '2026-08-06',
       session_id: SESSION,
       write_id: 'w_append_proof_1',
+      preview_digest: previewDigest,
       log_rows: [
         { exercise: 'Back Squat', set_number: 1, weight: 225, reps: 5, rir: 2 },
         { exercise: 'Back Squat', set_number: 2, weight: 225, reps: 5, rir: 2 },

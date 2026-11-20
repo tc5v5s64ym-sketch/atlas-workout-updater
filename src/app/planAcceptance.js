@@ -157,6 +157,9 @@ export function acceptCopy(envelope) {
 //   startWorkout(plan)     — begin the workout (banner + first lift)
 //   postAccept(payload)    — POST /api/session-plans/accept → resolves the response
 //                            body (or rejects on transport/HTTP error)
+//   mintOperationId()      — mint a #1780 ledger operation ID for the event
+//                            (optional; absent ⇒ the field stays absent and the
+//                            capture takes the legacy path)
 //
 // Returns { started, blocked, ignored, captured, message, plan_version, session_id }.
 // The workout is started for EVERY non-blocked acceptance, before and independent of
@@ -247,6 +250,18 @@ export async function runAcceptance(rec, deps) {
     plan_version: planVersion,
     items: built.items.map(toAcceptPayloadItem),
   };
+
+  // #1780 — mint the ledger operation ID for this deliberate event once,
+  // before the first submission: the bounded recovery retry below re-posts
+  // this same payload, so it reuses the same operation. The minter arrives
+  // as a dep (app.js injects the app.js minter); absent, the field stays
+  // absent and the capture takes the legacy path. Never blocks acceptance.
+  if (typeof d.mintOperationId === 'function') {
+    try {
+      const operationId = await d.mintOperationId();
+      if (operationId) payload.operation_id = operationId;
+    } catch { /* a mint failure leaves the field absent — legacy path */ }
+  }
 
   let captured = false;
   let copy = acceptCopy(null); // neutral by default (covers flag OFF / no response)

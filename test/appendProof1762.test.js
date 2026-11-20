@@ -34,6 +34,8 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { logCleanedColumns, effortColumns, modalityLogColumns } = require('../config/columns');
+// #1791 — a live /api/log-workout write requires the signed preview digest.
+const { postLiveLogWorkout } = require('./helpers/previewDigest');
 
 const DATE = '2026-11-16';
 const LOG_SESSION_COL = logCleanedColumns.indexOf('session_id');
@@ -278,7 +280,7 @@ test('#1762 log-workout: a zero-row append is a failed write, not a success rece
   const sessionId = '20261116-D02-ZERO-1';
   appendOverrides.set('Log_Cleaned', zeroRows('Log_Cleaned'));
   try {
-    const { res, body } = await postJson(t, '/api/log-workout',
+    const { res, body } = await postLiveLogWorkout((path, body) => postJson(t, path, body),
       logWorkoutPayload(sessionId, 'w_1762_zero_1'));
     assertUnverified(t, res, body, 'no_row_count');
     assert.equal(logRowsFor(sessionId).length, 0, 'nothing landed in the Log table');
@@ -291,7 +293,7 @@ test('#1762 log-workout: a wrong-tab append is a failed write', async (t) => {
   const sessionId = '20261116-D02-TAB-1';
   appendOverrides.set('Log_Cleaned', wrongTab('Log_Cleaned'));
   try {
-    const { res, body } = await postJson(t, '/api/log-workout',
+    const { res, body } = await postLiveLogWorkout((path, body) => postJson(t, path, body),
       logWorkoutPayload(sessionId, 'w_1762_tab_1'));
     assertUnverified(t, res, body, 'wrong_tab');
     assert.equal(logRowsFor(sessionId).length, 0, 'nothing landed in the Log table');
@@ -304,7 +306,7 @@ test('#1762 log-workout: a string row count is a failed write', async (t) => {
   const sessionId = '20261116-D02-STR-1';
   appendOverrides.set('Log_Cleaned', stringRows('Log_Cleaned'));
   try {
-    const { res, body } = await postJson(t, '/api/log-workout',
+    const { res, body } = await postLiveLogWorkout((path, body) => postJson(t, path, body),
       logWorkoutPayload(sessionId, 'w_1762_str_1'));
     assertUnverified(t, res, body, 'no_row_count');
   } finally {
@@ -316,7 +318,7 @@ test('#1762 log-workout: a missing row count is a failed write', async (t) => {
   const sessionId = '20261116-D02-MISS-1';
   appendOverrides.set('Log_Cleaned', missingRows('Log_Cleaned'));
   try {
-    const { res, body } = await postJson(t, '/api/log-workout',
+    const { res, body } = await postLiveLogWorkout((path, body) => postJson(t, path, body),
       logWorkoutPayload(sessionId, 'w_1762_miss_1'));
     assertUnverified(t, res, body, 'no_row_count');
   } finally {
@@ -328,7 +330,7 @@ test('#1762 log-workout: a non-A start is a failed write', async (t) => {
   const sessionId = '20261116-D02-NONA-1';
   appendOverrides.set('Log_Cleaned', nonAStart('Log_Cleaned'));
   try {
-    const { res, body } = await postJson(t, '/api/log-workout',
+    const { res, body } = await postLiveLogWorkout((path, body) => postJson(t, path, body),
       logWorkoutPayload(sessionId, 'w_1762_nona_1'));
     assertUnverified(t, res, body, 'range_does_not_start_at_column_a');
   } finally {
@@ -340,7 +342,7 @@ test('#1762 log-workout: a range span disagreeing with the row count is a failed
   const sessionId = '20261116-D02-SPAN-1';
   appendOverrides.set('Log_Cleaned', wrongSpan('Log_Cleaned'));
   try {
-    const { res, body } = await postJson(t, '/api/log-workout',
+    const { res, body } = await postLiveLogWorkout((path, body) => postJson(t, path, body),
       logWorkoutPayload(sessionId, 'w_1762_span_1'));
     assertUnverified(t, res, body, 'range_span_disagrees_with_row_count');
   } finally {
@@ -352,7 +354,7 @@ test('#1762 log-workout: an unparseable range is a failed write', async (t) => {
   const sessionId = '20261116-D02-RANGE-1';
   appendOverrides.set('Log_Cleaned', unparseableRange('Log_Cleaned'));
   try {
-    const { res, body } = await postJson(t, '/api/log-workout',
+    const { res, body } = await postLiveLogWorkout((path, body) => postJson(t, path, body),
       logWorkoutPayload(sessionId, 'w_1762_range_1'));
     assertUnverified(t, res, body, 'range_unparseable');
   } finally {
@@ -364,7 +366,7 @@ test('#1762 log-workout: a zero-row Effort append is a failed write even when th
   const sessionId = '20261116-D02-EFF-1';
   appendOverrides.set('Effort', zeroRows('Effort'));
   try {
-    const { res, body } = await postJson(t, '/api/log-workout',
+    const { res, body } = await postLiveLogWorkout((path, body) => postJson(t, path, body),
       logWorkoutPayload(sessionId, 'w_1762_eff_1', {
         effort_row: { date: DATE, session_id: sessionId, duration: '00:45:00', active_calories: 400 },
       }));
@@ -380,13 +382,13 @@ test('#1762 log-workout: a retry of a zero-row first write replays unverified, n
   const writeId = 'w_1762_retry_1';
   appendOverrides.set('Log_Cleaned', zeroRows('Log_Cleaned'));
   try {
-    const first = await postJson(t, '/api/log-workout', logWorkoutPayload(sessionId, writeId));
+    const first = await postLiveLogWorkout((path, body) => postJson(t, path, body), logWorkoutPayload(sessionId, writeId));
     assertUnverified(t, first.res, first.body, 'no_row_count');
   } finally {
     appendOverrides.delete('Log_Cleaned');
   }
   const callsBefore = appendCalls.filter((c) => c.tab === 'Log_Cleaned').length;
-  const retry = await postJson(t, '/api/log-workout', logWorkoutPayload(sessionId, writeId));
+  const retry = await postLiveLogWorkout((path, body) => postJson(t, path, body), logWorkoutPayload(sessionId, writeId));
   assert.equal(retry.res.status, 500, JSON.stringify(retry.body));
   assert.ok(retry.body.details, 'the retry outcome is surfaced in the error details');
   assert.equal(retry.body.details.sheet_write, 'unverified', 'retry stays unverified, not skipped_duplicate');

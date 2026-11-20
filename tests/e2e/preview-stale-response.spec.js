@@ -44,7 +44,7 @@ async function openApp(page, capture) {
         capture.previewRequests.push(body);
         await new Promise(res => capture.gates.push(res)); // hold until the test releases it
         const preview = (body.log_rows || []).map(r => [r.date_clean, r.session_id, r.exercise, r.exercise, 'Chest', 'BEN01', r.set_number, r.weight, r.reps, r.rir, r.notes, '']);
-        return route.fulfill(json({ status: 'success', data: { test_mode: true, sheet_write: 'skipped', sheet_written: false, no_write_confirmed: true, warnings: [], auto_matches: [], pending_exercises: [], rule_flags: [], log_rows_preview: preview } }));
+        return route.fulfill(json({ status: 'success', data: { test_mode: true, sheet_write: 'skipped', sheet_written: false, no_write_confirmed: true, preview_digest: 'pd1.e2e-mock-digest',  warnings: [], auto_matches: [], pending_exercises: [], rule_flags: [], log_rows_preview: preview } }));
       }
       capture.writeRequests.push(body);
       return route.fulfill(json({ status: 'success', data: { sheet_write: 'success', sheet_written: true, log_rows_written: (body.log_rows || []).length, logAppendedRange: 'Log_Cleaned!A200:L202' } }));

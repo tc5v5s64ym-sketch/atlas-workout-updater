@@ -130,6 +130,7 @@ async function mock(page, capture) {
             sheet_write: 'skipped',
             sheet_written: false,
             no_write_confirmed: true,
+            preview_digest: 'pd1.e2e-mock-digest',
             warnings: [],
             log_rows_preview: rows,
           },

@@ -375,7 +375,7 @@ const CLIENT_CORRECTIONS = [
  * `corrected: true` applies CLIENT_CORRECTIONS, giving the request list the corrected
  * client issues. Everything else — order, multiplicity, bodies — is identical.
  */
-function liveSessionSequence({ runId = 'r1', appendedRange = 'Log_Cleaned!A2:L13', corrected = false } = {}) {
+function liveSessionSequence({ runId = 'r1', appendedRange = 'Log_Cleaned!A2:L13', corrected = false, skipCorrection = null } = {}) {
   // Occurrence numbers come from the FULL manifest, never from the filtered list, so a
   // correction that removes SOME occurrences of a path cannot silently renumber the rest
   // and hand a later request an earlier request's body.
@@ -385,8 +385,11 @@ function liveSessionSequence({ runId = 'r1', appendedRange = 'Log_Cleaned!A2:L13
     occurrence.set(entry.path, n + 1);
     return { entry, n, index };
   });
+  // `skipCorrection` re-applies every correction EXCEPT the named one: the single-
+  // disabled counterfactual the docs/READ_BUDGET.md table is derived from. It is how
+  // that table is re-measured after a server change moves the figures (first use: #1791).
   const requests = corrected
-    ? numbered.filter(({ entry, n, index }) => !CLIENT_CORRECTIONS.some(c => c.match(entry, n, index)))
+    ? numbered.filter(({ entry, n, index }) => !CLIENT_CORRECTIONS.some(c => (skipCorrection === null || c.id !== skipCorrection) && c.match(entry, n, index)))
     : numbered;
   return requests.map(({ entry, n }) => {
     const query = entry.query

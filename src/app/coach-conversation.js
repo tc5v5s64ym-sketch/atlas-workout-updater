@@ -2691,10 +2691,21 @@ import { findPlanEntry, planMismatchForLift, formatPlanMismatchLine } from './pl
       saveBtn.textContent = 'Saving…';
       try {
         const writeId = `note-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        // #1780 — mint the ledger operation ID for this deliberate save
+        // through the app.js seam; when the server advertises no cutover
+        // (or the seam is absent) the field stays absent and the save
+        // takes the legacy path. Never blocks a save.
+        const operationId = typeof window.atlasMintOperationId === 'function'
+          ? await window.atlasMintOperationId().catch(() => null)
+          : null;
         await api('/api/coaching-notes', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ note: noteText, write_id: writeId })
+          body: JSON.stringify({
+            note: noteText,
+            write_id: writeId,
+            ...(operationId ? { operation_id: operationId } : {}),
+          })
         });
         label.textContent = 'Note saved.';
         saveBtn.remove();
@@ -2751,6 +2762,13 @@ import { findPlanEntry, planMismatchForLift, formatPlanMismatchLine } from './pl
       saveBtn.textContent = 'Saving…';
       try {
         const writeId = `constraint-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        // #1780 — mint the ledger operation ID for this deliberate save
+        // through the app.js seam; when the server advertises no cutover
+        // (or the seam is absent) the field stays absent and the save
+        // takes the legacy path. Never blocks a save.
+        const operationId = typeof window.atlasMintOperationId === 'function'
+          ? await window.atlasMintOperationId().catch(() => null)
+          : null;
         await api('/api/constraints', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -2759,7 +2777,8 @@ import { findPlanEntry, planMismatchForLift, formatPlanMismatchLine } from './pl
             target: constraint.target,
             rule: constraint.rule,
             note: constraint.note || '',
-            write_id: writeId
+            write_id: writeId,
+            ...(operationId ? { operation_id: operationId } : {}),
           })
         });
         label.textContent = 'Constraint saved.';

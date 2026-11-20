@@ -180,6 +180,12 @@ require.cache[realAdapterPath] = {
 };
 
 // ── Boot the real app and perform a real Save ─────────────────────────────────
+//
+// #1791 — a live write requires the signed preview digest, so the child
+// previews first (same write_id, test_mode dry run) and carries the digest
+// on the live write, exactly as the app's approve flow does and as the E2E
+// supabase-shadow fix does. The preview appends nothing, so the death window
+// is still only reachable by the live write below.
 
 const { app } = require('../../index');
 
@@ -199,10 +205,25 @@ const PAYLOAD = {
 const server = app.listen(0, '127.0.0.1', async () => {
   const { port } = server.address();
   try {
+    // Preview first (dry run, same write_id): the live write below must
+    // present the signed digest of exactly these rows. The PREVIEW line is
+    // deliberately not a RESPONSE line — the pgproof harnesses parse the live
+    // response from the RESPONSE line, and the byte-identity comparison is on
+    // the LIVE response only.
+    const preview = await fetch(`http://127.0.0.1:${port}/api/log-workout`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-atlas-api-key': 'death-proof-key' },
+      body: JSON.stringify({ ...PAYLOAD, test_mode: true }),
+    });
+    const previewBody = await preview.json();
+    if (preview.status !== 200 || typeof previewBody?.data?.preview_digest !== 'string') {
+      process.stdout.write(`PREVIEW_FAILED ${preview.status} ${JSON.stringify(previewBody)}\n`);
+      process.exit(4);
+    }
     const response = await fetch(`http://127.0.0.1:${port}/api/log-workout`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-atlas-api-key': 'death-proof-key' },
-      body: JSON.stringify(PAYLOAD),
+      body: JSON.stringify({ ...PAYLOAD, preview_digest: previewBody.data.preview_digest }),
     });
     // The RAW body text, so a byte-identity comparison is genuinely a
     // byte comparison rather than a comparison of two re-serialisations.

@@ -70,7 +70,9 @@ export function buildOutcomePayload(activePlan, { plan_item_id, outcome, perform
 }
 
 // Orchestrate one explicit outcome. DEPS: postOutcome(payload) → resolves the
-// response body (or rejects on transport/HTTP error). Returns
+// response body (or rejects on transport/HTTP error); mintOperationId() mints a
+// #1780 ledger operation ID for the event (optional; absent ⇒ the field stays
+// absent and the capture takes the legacy path). Returns
 // { emitted, captured, reason }. `emitted:false` = failed closed (no identity / not
 // accepted) — never an error. A POST failure is caught → { emitted:true,
 // captured:false }; the workout is never blocked.
@@ -78,6 +80,16 @@ export async function runOutcome(activePlan, outcomeInput, deps) {
   const payload = buildOutcomePayload(activePlan, outcomeInput || {});
   if (!payload) return { emitted: false, captured: false, reason: 'no_identity' };
   const d = deps || {};
+  // #1780 — mint the ledger operation ID for this deliberate event once,
+  // before the first submission. The minter arrives as a dep (app.js
+  // injects the app.js minter); absent, the field stays absent and the
+  // capture takes the legacy path. Never blocks the outcome.
+  if (typeof d.mintOperationId === 'function') {
+    try {
+      const operationId = await d.mintOperationId();
+      if (operationId) payload.operation_id = operationId;
+    } catch { /* a mint failure leaves the field absent — legacy path */ }
+  }
   try {
     const resp = typeof d.postOutcome === 'function' ? await d.postOutcome(payload) : null;
     const env = resp && resp.data && resp.data.session_plans ? resp.data.session_plans

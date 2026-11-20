@@ -22,6 +22,7 @@ const capture = require('../services/sessionPlanCapture');
 const setsCapture = require('../services/sessionPlanSetsCapture');
 const { deriveImplicitRecommendation } = require('../services/implicitRecommendation');
 const { ITEM_OUTCOMES, CLOSEOUT_STATUSES } = require('../services/sessionPlanEvents');
+const { resolveLedgerOperationId } = require('../services/writeOutcomes');
 const { isSessionFinalized } = require('../services/closeoutFinality');
 const { CONFIDENCE, REVISION_SOURCES } = require('../services/sessionPlanLedger');
 const { nextAvailableSessionId } = require('../services/sessionId');
@@ -135,6 +136,17 @@ module.exports = function registerSessionPlanRoutes(deps = {}) {
       if (!LIFT_CODE_SHAPE.test(_str(item.planned_lift_code))) return standardError(req, res, 'each item requires a canonical planned_lift_code (non-empty, no spaces)', null, 400);
     }
 
+    // #1780 — an acceptance may carry the operation_id the client minted for
+    // the Write_Outcomes ledger. Validated before any identity allocation, so
+    // a malformed ID fails fast without touching the sheet. Absent, the
+    // legacy path runs unchanged. Present, the ledger path is mandatory (see
+    // resolveLedgerOperationId).
+    const ledgerId = resolveLedgerOperationId(body);
+    if (ledgerId.error) {
+      return standardError(req, res, ledgerId.error.message, { code: ledgerId.error.code, operation_id: body.operation_id }, ledgerId.error.status);
+    }
+    const ledger = ledgerId.operationId ? { operationId: ledgerId.operationId, cutoverId: ledgerId.cutoverId } : null;
+
     if (!session.session_id) {
       if (typeof getSheetRows !== 'function') {
         return standardError(req, res, 'Cannot allocate a session id: no durable-record access.', null, 503);
@@ -188,7 +200,7 @@ module.exports = function registerSessionPlanRoutes(deps = {}) {
       }
     }
 
-    const result = await capture.captureAccept(session, items);
+    const result = await capture.captureAccept(session, items, { ledger });
     // The identity the acceptance was written under, echoed verbatim — for an
     // allocating request this is the client's ONLY source of the session identity.
     return standardSuccess(req, res, 'Session_Plans accept', { session_plans: result, session_id: session.session_id });
@@ -210,7 +222,15 @@ module.exports = function registerSessionPlanRoutes(deps = {}) {
     if (outcome === 'substituted' && !LIFT_CODE_SHAPE.test(_str(item.performed_lift_code))) {
       return standardError(req, res, 'a substituted outcome requires a canonical performed_lift_code (non-empty, no spaces)', null, 400);
     }
-    const result = await capture.captureOutcome(session, item);
+    // #1780 — an outcome may carry the operation_id the client minted for
+    // the Write_Outcomes ledger. Absent, the legacy path runs unchanged.
+    // Present, the ledger path is mandatory (see resolveLedgerOperationId).
+    const ledgerId = resolveLedgerOperationId(body);
+    if (ledgerId.error) {
+      return standardError(req, res, ledgerId.error.message, { code: ledgerId.error.code, operation_id: body.operation_id }, ledgerId.error.status);
+    }
+    const ledger = ledgerId.operationId ? { operationId: ledgerId.operationId, cutoverId: ledgerId.cutoverId } : null;
+    const result = await capture.captureOutcome(session, item, { ledger });
     return standardSuccess(req, res, 'Session_Plans outcome', { session_plans: result });
   });
 
@@ -225,7 +245,15 @@ module.exports = function registerSessionPlanRoutes(deps = {}) {
     if (!CLOSEOUT_STATUSES.includes(closeoutStatus)) {
       return standardError(req, res, `closeout_status must be one of ${CLOSEOUT_STATUSES.join('|')}`, null, 400);
     }
-    const result = await capture.captureCloseout(session, closeoutStatus);
+    // #1780 — a closeout may carry the operation_id the client minted for
+    // the Write_Outcomes ledger. Absent, the legacy path runs unchanged.
+    // Present, the ledger path is mandatory (see resolveLedgerOperationId).
+    const ledgerId = resolveLedgerOperationId(body);
+    if (ledgerId.error) {
+      return standardError(req, res, ledgerId.error.message, { code: ledgerId.error.code, operation_id: body.operation_id }, ledgerId.error.status);
+    }
+    const ledger = ledgerId.operationId ? { operationId: ledgerId.operationId, cutoverId: ledgerId.cutoverId } : null;
+    const result = await capture.captureCloseout(session, closeoutStatus, { ledger });
     return standardSuccess(req, res, 'Session_Plans closeout', { session_plans: result });
   });
 

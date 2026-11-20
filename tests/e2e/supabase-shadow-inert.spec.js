@@ -87,6 +87,26 @@ async function saveFromBrowser(page, base, writeId) {
   await page.waitForLoadState('networkidle');
 
   return page.evaluate(async ({ apiKey, id }) => {
+    // #1791 — a live write requires the signed preview digest: preview first
+    // (same write_id) and carry the digest, exactly as the app's approve flow
+    // does. The comparison below is on the LIVE response only; the preview is
+    // the same shape in both runs.
+    const preview = await fetch('/api/log-workout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-atlas-api-key': apiKey },
+      body: JSON.stringify({
+        session_id: '20260808-AM-04',
+        date: '2026-08-08',
+        write_id: id,
+        test_mode: true,
+        log_rows: [
+          { date_clean: '2026-08-08', session_id: '20260808-AM-04', exercise: 'Back Squat', set_number: 1, weight: 225, reps: 5, rir: 2, notes: '' },
+          { date_clean: '2026-08-08', session_id: '20260808-AM-04', exercise: 'Back Squat', set_number: 2, weight: 225, reps: 5, rir: 2, notes: '' },
+        ],
+      }),
+    });
+    const previewBody = await preview.json();
+    if (preview.status !== 200) return { status: preview.status, raw: JSON.stringify(previewBody) };
     const response = await fetch('/api/log-workout', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-atlas-api-key': apiKey },
@@ -94,6 +114,7 @@ async function saveFromBrowser(page, base, writeId) {
         session_id: '20260808-AM-04',
         date: '2026-08-08',
         write_id: id,
+        preview_digest: previewBody.data.preview_digest,
         log_rows: [
           { date_clean: '2026-08-08', session_id: '20260808-AM-04', exercise: 'Back Squat', set_number: 1, weight: 225, reps: 5, rir: 2, notes: '' },
           { date_clean: '2026-08-08', session_id: '20260808-AM-04', exercise: 'Back Squat', set_number: 2, weight: 225, reps: 5, rir: 2, notes: '' },

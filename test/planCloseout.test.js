@@ -66,3 +66,27 @@ test('runCloseout: a disabled/non-captured envelope → emitted:true, captured:f
   assert.equal(r.emitted, true);
   assert.equal(r.captured, false);
 });
+
+// ── #1780: ledger operation minting ─────────────────────────────────────────
+
+test('#1780: runCloseout mints the ledger operation ID once via the dep and carries it on the payload; without the dep the field stays absent', async () => {
+  const OP = 'atlas-op-v1:11111111-2222-4333-8444-555555555555:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const posted = [];
+  const postCloseout = async (p) => { posted.push(p); return { data: { session_plans: { captured: true, status: 'written' } } }; };
+  const r = await mod.runCloseout(PLAN, 'finalized', {
+    mintOperationId: async () => OP,
+    postCloseout,
+  });
+  assert.equal(r.emitted, true);
+  assert.equal(posted.length, 1);
+  assert.equal(posted[0].operation_id, OP);
+  assert.equal(r.payload.operation_id, OP);
+
+  const postedLegacy = [];
+  const r2 = await mod.runCloseout(PLAN, 'finalized', {
+    postCloseout: async (p) => { postedLegacy.push(p); return { data: { session_plans: { captured: true, status: 'written' } } }; },
+  });
+  assert.equal(r2.emitted, true);
+  assert.equal(postedLegacy.length, 1);
+  assert.equal(postedLegacy[0].operation_id, undefined);
+});

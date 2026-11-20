@@ -3,7 +3,7 @@
 // THE FREEZE, THROUGH THE REAL ROUTES.
 //
 // Design authority: docs/SUPABASE_HOT_PATH_MIGRATION.md §3.10, §5.3.
-// Gates: §6.2 P10 (all seven fail closed with NO side effect, proven PER ROUTE —
+// Gates: §6.2 P10 (all ten fail closed with NO side effect, proven PER ROUTE —
 // not on one representative), P11 (control loss cannot reopen writes), P12
 // (dormant), and P13's auth negative for the receipt migration seam.
 // Owner ruling D7 — APPROVED 2026-08-09.
@@ -82,7 +82,7 @@ const fakeSheets = {
   getSheetRows: async (name) => (name === 'Log_Cleaned' ? LOG_ROWS.map((r) => [...r]) : []),
   getSpreadsheetTabs: async () => [
     'Log_Cleaned', 'Effort', 'Coaching_Notes', 'Constraints', 'Modality_Log', 'Bodyweight',
-    'Session_Plans', 'Session_Plan_Sets',
+    'Session_Plans', 'Session_Plan_Sets', 'Deload_State',
   ],
   invalidateTabCache: () => {},
   ensureSheetTab: async () => {},
@@ -142,6 +142,8 @@ require.cache[require.resolve('../services/vision')] = {
 
 const writeFreeze = require('../services/writeFreeze');
 const { peekWrite, resetIdempotencyStore } = require('../services/idempotency');
+// #1791 — a live /api/log-workout write requires the signed preview digest.
+const { postLiveLogWorkout } = require('./helpers/previewDigest');
 const session = require('../services/session');
 const { app } = require('../index');
 
@@ -184,10 +186,18 @@ async function postForm(path, form, headers = {}) {
   return { status: res.status, body: await res.json().catch(() => null) };
 }
 
-// ── THE SEVEN beginWrite ROUTES, each with a genuinely valid live-write body ──
+// ── THE TEN beginWrite ROUTES, each with a genuinely valid live-write body ──
 //
 // Valid on purpose: a request rejected for a bad body would 4xx with no append
 // whether or not the freeze exists, and would prove nothing about the freeze.
+//
+// #1794 — the three deload routes join here (gates 8–10 of 10). This file's
+// fixture models NO active deload (getSheetRows('Deload_State') is empty, so the
+// state reads NORMAL): begin takes its real live-write path (200), while advance
+// and resolve are refused by the state machine (409) — the engine's real answer
+// for a lifter not in a deload, identical dormant and armed-open, which is what
+// P12 pins. Their happy paths (advance/resolve applying) are pinned by
+// test/deloadDoubleSubmit.test.js P1–P6, which seeds the deload state.
 function completeWorkoutForm(writeId) {
   const form = new FormData();
   form.append('log_rows_json', JSON.stringify([]));
@@ -235,10 +245,10 @@ const ROUTES = [
   {
     name: '/api/log-workout',
     liveStatus: 200,
-    send: (id) => post('/api/log-workout', {
+    send: (id) => postLiveLogWorkout(post, {
       session_id: '20260809-AM-01', date: '2026-08-09', write_id: id,
       log_rows: [{ exercise: 'Back Squat', set_number: 1, weight: 225, reps: 5, rir: 2 }],
-    }),
+    }, 'P12 log-workout'),
   },
   {
     name: '/api/log-workout/undo-last',
@@ -247,6 +257,21 @@ const ROUTES = [
       log_appended_range: 'Log_Cleaned!A2:L2', session_id: '20260809-AM-01',
       rows_to_delete: 1, confirm_delete: true, write_id: id,
     }),
+  },
+  {
+    name: '/api/deload/begin',
+    liveStatus: 200,
+    send: (id) => post('/api/deload/begin', { focus: 'strength', sessions_remaining: 3, write_id: id }),
+  },
+  {
+    name: '/api/deload/advance',
+    liveStatus: 409,
+    send: (id) => post('/api/deload/advance', { write_id: id }),
+  },
+  {
+    name: '/api/deload/resolve',
+    liveStatus: 409,
+    send: (id) => post('/api/deload/resolve', { write_id: id }),
   },
 ];
 
@@ -262,7 +287,7 @@ function resetCounters() {
   LOG_ROWS.push(['2026-08-09', '20260809-AM-01', 'Back Squat', 'Back Squat', 'legs', 'SQ01', 1, 225, 5, 2, '', 1125]);
 }
 
-/* ══════════ §6.2 P10 — all seven fail closed, with ZERO side effects ══════════ */
+/* ══════════ §6.2 P10 — all ten fail closed, with ZERO side effects ══════════ */
 
 for (const route of ROUTES) {
   test(`P10 — ${route.name} refuses with an explicit 503 and no side effect while frozen`, async () => {
@@ -328,10 +353,10 @@ test('P11 — an instance that has NEVER read the row successfully refuses from 
   armed([], new Error('ECONNREFUSED'));
   resetIdempotencyStore();
   resetCounters();
-  const { status } = await post('/api/log-workout', {
+  const { status } = await postLiveLogWorkout(post, {
     session_id: '20260809-AM-01', date: '2026-08-09', write_id: 'never-read-ok',
     log_rows: [{ exercise: 'Back Squat', set_number: 1, weight: 225, reps: 5, rir: 2 }],
-  });
+  }, 'P11 never-read log-workout');
   assert.equal(status, 503);
   assert.deepEqual(sheetCalls.append, []);
 });

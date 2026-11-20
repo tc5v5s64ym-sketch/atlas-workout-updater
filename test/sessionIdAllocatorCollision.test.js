@@ -34,6 +34,8 @@ const assert = require('node:assert/strict');
 const { resetIdempotencyStore } = require('../services/idempotency');
 const { logCleanedColumns, effortColumns } = require('../config/columns');
 const { formatAmPmSuffix } = require('../services/sessionId');
+// #1791 — a live /api/log-workout write requires the signed preview digest.
+const { postLiveLogWorkout } = require('./helpers/previewDigest');
 
 process.env.ATLAS_API_KEY = 'test-api-key';
 process.env.GOOGLE_SHEETS_ID = 'stub-sheet';
@@ -173,13 +175,13 @@ const slot = n => `20260802-${PERIOD}-${String(n).padStart(2, '0')}`;
 // payload carries no session_id and the server allocates. See the app.js source
 // assertions in test/unit.test.js for the client half.
 async function logNewWorkoutWithoutEffort(exercise, weight) {
-  return post('/api/log-workout', {
+  return postLiveLogWorkout(post, {
     date: DATE,
     write_id: crypto.randomUUID(),   // a DISTINCT approval each time, never a retry
     log_rows: [{ exercise, set_number: 1, weight, reps: 5, rir: 2 }],
     // No session_id: "this is a new workout — you decide."
     // No effort payload: no Effort row, which is entirely legitimate.
-  });
+  }, 'logNewWorkoutWithoutEffort');
 }
 
 // Two workouts in the SAME AM/PM period, each logged WITHOUT Apple Watch effort — an
@@ -218,7 +220,7 @@ test('an explicitly supplied session_id is still honoured — explicit beats imp
   // Widening what the allocator READS must not change who DECIDES when the owner (or an
   // accepted plan, or a preview the client already pinned) has already decided.
   reset();
-  const { response } = await post('/api/log-workout', {
+  const { response } = await postLiveLogWorkout(post, {
     session_id: '20260802-PM-07', date: DATE, write_id: crypto.randomUUID(),
     log_rows: [{ exercise: 'Back Squat', set_number: 1, weight: 225, reps: 5, rir: 2 }],
   });
@@ -235,7 +237,7 @@ test('continuing an established session appends to it rather than forking a new 
   const established = first.body?.data?.session_id;
   assert.equal(established, slot(1));
 
-  const { response } = await post('/api/log-workout', {
+  const { response } = await postLiveLogWorkout(post, {
     session_id: established, date: DATE, write_id: crypto.randomUUID(),
     log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 185, reps: 5, rir: 2 }],
   });
@@ -252,7 +254,7 @@ test('a stale row-level session_id cannot override the allocated identity', asyn
   reset();
   await logNewWorkoutWithoutEffort('Back Squat', 225);
 
-  const { response, body } = await post('/api/log-workout', {
+  const { response, body } = await postLiveLogWorkout(post, {
     date: DATE, write_id: crypto.randomUUID(),
     // No top-level session_id, but the rows carry the stale one.
     log_rows: [{ session_id: slot(1), exercise: 'Bench Press', set_number: 1, weight: 185, reps: 5, rir: 2 }],
@@ -271,7 +273,7 @@ test('the Effort row is written under the allocated identity, not the one the cl
   reset();
   await logNewWorkoutWithoutEffort('Back Squat', 225);   // occupies …-01
 
-  const { response } = await post('/api/log-workout', {
+  const { response } = await postLiveLogWorkout(post, {
     date: DATE, write_id: crypto.randomUUID(),
     log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 185, reps: 5, rir: 2 }],
     // No top-level session_id, and the effort row carries the stale one.
@@ -289,7 +291,7 @@ test('a duplicate Effort session is still refused — the pre-existing guard is 
   // append an Effort row, so the payload has to carry one for the guard to apply.
   reset();
   state.effortSessionIds.push('20260802-PM-01');
-  const { response } = await post('/api/log-workout', {
+  const { response } = await postLiveLogWorkout(post, {
     session_id: '20260802-PM-01', date: DATE, write_id: crypto.randomUUID(),
     log_rows: [{ exercise: 'Back Squat', set_number: 1, weight: 225, reps: 5, rir: 2 }],
     effort_row: { date: DATE, session_id: '20260802-PM-01', duration: 60, active_calories: 400, total_calories: 500, average_hr: 120, peak_hr: 160, location: 'Gym', notes: '' },
@@ -304,7 +306,7 @@ test('an unreadable Log_Cleaned refuses to allocate rather than guessing a free 
   // Sheets is flaky, which is when a retry storm makes a collision most likely.
   reset();
   state.failLogRead = true;
-  const { response, body } = await post('/api/log-workout', {
+  const { response, body } = await postLiveLogWorkout(post, {
     date: DATE, write_id: crypto.randomUUID(),
     log_rows: [{ exercise: 'Back Squat', set_number: 1, weight: 225, reps: 5, rir: 2 }],
   });
