@@ -92,6 +92,31 @@ Only the *internal* per-column fan-out of `getLogCompositeKeys` was wasteful.
 subset (catalog + composite keys, plus a best-effort history read for the
 safety flags) and stays under the same ceiling.
 
+## #1792 — post-claim re-validation on a server-minted live write
+
+A blank-`session_id` live write allocates its id BEFORE the session claim,
+on per-request memoized reads — and the guards below the claim read those
+same memos. Two overlapping blank-id saves both mint …-01, and the loser
+appends under …-01 on the stale snapshot: two real workouts merged onto one
+identity. The fix re-validates the minted slot AFTER the claim, against
+FRESH reads (both memos cleared, then re-read), and steps to the next free
+slot when a concurrent save took it. That costs **+2 reads on a
+server-minted live write only** (`Effort!B:B` + `Log_Cleaned!B:G`, fresh) —
+an explicit-id write never allocates and never re-validates, so its budget
+is unchanged:
+
+| Save shape | Budget |
+|---|---|
+| `/api/log-workout` live write, server-minted id, no effort | **5 reads** |
+| `/api/log-workout` live write, server-minted id, with effort | **7 reads** |
+| `/api/log-workout` live write, explicit id (either) | **5 reads** (unchanged) |
+
+`SAVE_READ_BUDGET = 7` (the server-minted with-effort live write). The two
+re-validation reads are not redundant: the first pair proves the slot free
+at allocation time, the second proves it still free after the claim — a
+concurrent append between them is exactly the race, and no in-process
+signal can see it (the claim serializes the write, not the read).
+
 The saving repeats on **every** Save request in a session's burst, so the
 per-minute read pressure drops by ~2 reads × (previews + writes).
 

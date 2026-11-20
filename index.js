@@ -5135,9 +5135,12 @@ app.post('/api/log-workout', async (req, res) => {
   // both read the sheet before either appends and both append. The claim
   // is held from here until the guarded section returns (every return
   // below releases it next to its completeWrite/failWrite). A refused
-  // caller waits for the holder, then re-acquires and re-reads, so it
-  // lands on the route's existing truthful verdict instead of a copy.
-  const sessionClaimKey = String(session_id).toLowerCase();
+  // caller waits for the holder, then re-acquires — and a server-minted id
+  // is re-validated against fresh reads below (#1792), while a named id's
+  // guards read fresh because the memos are first populated after the wait —
+  // so the waiter lands on the route's existing truthful verdict instead of
+  // a copy.
+  let sessionClaimKey = String(session_id).toLowerCase();
   let sessionClaim = acquireSessionClaim(sessionClaimKey);
   while (!sessionClaim.acquired) {
     const holderReleased = await waitForSessionClaim(sessionClaim.wait);
@@ -5186,6 +5189,88 @@ app.post('/api/log-workout', async (req, res) => {
       if (idempotency.enabled) completeWrite(idempotency.write_id, idempotency.token, ledgerBody);
       releaseSessionClaim(sessionClaimKey, sessionClaim.token);
       return standardSuccess(req, res, ledgerBody.message, ledgerBody, 200);
+    }
+  }
+
+  // #1792 — re-validate a SERVER-MINTED id after the claim. The allocator ran
+  // BEFORE the claim, on per-request memoized reads — and the guards below read
+  // those same memos, which are never cleared. Two overlapping blank-id saves
+  // both mint …-01, the loser waits on the …-01 claim, then appends its rows
+  // under …-01 on the stale snapshot: two real workouts merged onto one
+  // identity. (On the named-id path the memos are first populated AFTER the
+  // wait, so the #1629 tests pass and this block is skipped: explicit beats
+  // implicit, and a supplied id is never re-allocated.)
+  //
+  // So, for a server-minted id only: clear both memos, re-read the durable
+  // union fresh, and check the minted slot is still free. If a concurrent save
+  // took it while this request waited, step to the next free slot, move the
+  // claim with it, and re-stamp the formatted rows — then loop, because the
+  // new slot's holder may itself still be writing. Bounded: after the last
+  // round the request fails closed with a re-preview refusal rather than
+  // looping under a retry storm. The fresh reads also heal the guards below:
+  // they now run on post-claim state, not the pre-claim snapshot. Cost is +2
+  // Sheets reads on a server-minted live write only (see docs/READ_BUDGET.md);
+  // an explicit-id write is unchanged.
+  let reallocatedSessionId = null;
+  if (!clientSessionId) {
+    const allocatedSessionId = session_id;
+    let revalidated = false;
+    for (let round = 0; round < 5 && !revalidated; round++) {
+      let freshIds;
+      try {
+        cachedLogCompositeKeys = null;
+        cachedEffortSessionIds = null;
+        freshIds = (await effortSessionIds())
+          .concat(sessionIdsFromLogCompositeKeys(await logCompositeKeys()));
+      } catch (error) {
+        console.error('❌ Failed to re-validate the allocated session id:', error);
+        if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+        releaseSessionClaim(sessionClaimKey, sessionClaim.token);
+        return standardError(req, res, 'Failed to validate duplicate session.', null, 500);
+      }
+      const occupied = freshIds.map(id => String(id).toLowerCase())
+        .includes(String(session_id).toLowerCase());
+      if (!occupied) {
+        revalidated = true;
+        break;
+      }
+      if (round === 4) {
+        if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+        releaseSessionClaim(sessionClaimKey, sessionClaim.token);
+        return standardError(req, res, 'The session slot was taken by a concurrent save; preview again and approve.', { code: 'session_slot_retaken' }, 409);
+      }
+      let nextId;
+      try {
+        nextId = nextAvailableSessionId(workoutDate, freshIds);
+      } catch (error) {
+        console.error('❌ Session-id re-allocation refused:', error);
+        if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+        releaseSessionClaim(sessionClaimKey, sessionClaim.token);
+        if (error && error.code === 'SESSION_SLOTS_EXHAUSTED') {
+          return standardError(req, res, 'Cannot allocate a session id: every slot for this date and period is occupied.', null, 503);
+        }
+        return standardError(req, res, 'Failed to allocate a session id.', null, 500);
+      }
+      // Move the claim to the new slot before the next validation round: the
+      // old slot's holder may still be writing, and the new slot may have a
+      // holder of its own. A refused caller waits, then re-acquires.
+      releaseSessionClaim(sessionClaimKey, sessionClaim.token);
+      session_id = nextId;
+      sessionClaimKey = String(session_id).toLowerCase();
+      sessionClaim = acquireSessionClaim(sessionClaimKey);
+      while (!sessionClaim.acquired) {
+        const holderReleased = await waitForSessionClaim(sessionClaim.wait);
+        if (!holderReleased) {
+          if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+          return standardError(req, res, 'Duplicate session; another save for this session is already in progress. Retry after it completes.', null, 409);
+        }
+        sessionClaim = acquireSessionClaim(sessionClaimKey);
+      }
+      // The write must land under the id the claim now holds, not the one the
+      // rows were formatted with: re-stamp the formatted rows to the new id.
+      for (const row of formattedLogRows) row[LOG_SESSION_ID_COLUMN] = session_id;
+      if (formattedEffortRow) formattedEffortRow[EFFORT_SESSION_ID_COLUMN] = session_id;
+      reallocatedSessionId = allocatedSessionId;
     }
   }
 
@@ -5245,11 +5330,24 @@ app.post('/api/log-workout', async (req, res) => {
   // a re-preview + retry proceeds cleanly.
   const willWrite = rowsToWrite.length > 0 || Boolean(formattedEffortRow);
   if (willWrite) {
+    // #1792 — when the slot moved after the claim, the digest still binds the
+    // rows the preview showed, under the id the preview minted. Verify against
+    // those rows (re-stamped to the original id); the write itself lands under
+    // the new id. The content is identical — only the server-minted identity
+    // moved, because a concurrent save took the previewed slot — so the client
+    // gains no ability to aim a preview at a session it did not preview.
+    const digestSessionId = reallocatedSessionId || session_id;
+    const digestLogRows = reallocatedSessionId
+      ? rowsToWrite.map(row => { const copy = [...row]; copy[LOG_SESSION_ID_COLUMN] = reallocatedSessionId; return copy; })
+      : rowsToWrite;
+    const digestEffortRow = reallocatedSessionId && formattedEffortRow
+      ? (() => { const copy = [...formattedEffortRow]; copy[EFFORT_SESSION_ID_COLUMN] = reallocatedSessionId; return copy; })()
+      : (formattedEffortRow || null);
     const digestOk = verifyPreviewDigest(payload.preview_digest, {
-      sessionId: session_id,
+      sessionId: digestSessionId,
       date: workoutDate,
-      logRows: rowsToWrite,
-      effortRow: formattedEffortRow || null,
+      logRows: digestLogRows,
+      effortRow: digestEffortRow,
       closeoutContext: payload.closeout_context,
     });
     if (!digestOk) {
