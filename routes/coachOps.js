@@ -77,6 +77,9 @@ const coachResponseGrounding = require('../services/coachResponseGrounding');
 const coachExplanationGrounding = require('../services/coachExplanationGrounding');
 const coachDiscussionReferent = require('../services/coachDiscussionReferent');
 const { beginDeload, evaluateCurrentDeload, recordDeloadSession, resolvePostDeload } = require('../services/deloadEngine');
+// #1794 — the deload lifecycle writes use the same write_id idempotency store
+// as the other write routes (services/idempotency.js).
+const { beginWrite, duplicateReplay, completeWrite, failWrite } = require('../services/idempotency');
 const { selectProtocol } = require('../services/deloadProtocols');
 const { buildSheetContractStatus } = require('../config/sheetContract');
 
@@ -163,7 +166,7 @@ function coachChatSessionKey(clientCtx) {
   return fingerprint.length ? `plan:${fingerprint.join('|')}` : 'owner-session';
 }
 
-module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
+module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesFrozen }) {
   const router = express.Router();
 
   // GET /api/health/sheets
@@ -2271,9 +2274,19 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
   // ---- Deload lifecycle (engine-driven, system-state) -------------------------
   // These read/write the Deload_State tab via the deload engine. They are NOT
   // logged sets: append-only system state, outside the preview→approve→write trust
-  // loop, no write_id (see CLAUDE.md "Deload_State tab"). Illegal lifecycle moves
-  // (begin while already deloading, advance when not deloading, resolve outside
-  // post-evaluation) are rejected by the state machine and surface as 409.
+  // loop. Illegal lifecycle moves (begin while already deloading, advance when not
+  // deloading, resolve outside post-evaluation) are rejected by the state machine
+  // and surface as 409.
+  //
+  // #1794 — the three lifecycle writes ARE under the write discipline: each
+  // carries an optional client write_id (beginWrite — a retried write_id replays
+  // instead of re-applying; a concurrent duplicate answers 200 "in progress"
+  // without touching the sheet), the write-freeze gate (gates 8–10 of 10), and
+  // the tight write rate-limit bucket. write_id stays OPTIONAL so the in-app
+  // call sites, which send none yet, keep working: without one the write
+  // proceeds unguarded, exactly as before. The client follow-up — a stable
+  // per-session write_id at the three call sites — is named on #1794; until it
+  // lands, an in-app double-tap without a write_id is not deduped.
 
   // GET /api/deload/status — the lifter's current training state.
   router.get('/api/deload/status', async (req, res) => {
@@ -2311,6 +2324,48 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     return standardError(req, res, 'Failed to update deload state', error.message, 500);
   }
 
+  // #1794 — answer a retried write_id from the stored receipt, never by
+  // re-applying. Same shape as the other write routes: a settled duplicate
+  // replays its stored state; a concurrent duplicate (record still
+  // in_progress) answers 200 "in progress" at once, without touching the
+  // sheet — the caller re-reads GET /api/deload/status for the settled state.
+  // A partial/unverified original stays that word (terminal 500), and a
+  // reverted receipt answers as reverted (unreachable for deload — undo never
+  // supersedes these receipts — handled uniformly so one can never fall
+  // through to a success replay).
+  function sendDeloadDuplicate(req, res, idempotency, verb) {
+    const record = idempotency.record || {};
+    const replay = duplicateReplay(record, idempotency.write_id);
+    if (replay.reverted) {
+      return standardSuccess(req, res, replay.message, replay.body, 200);
+    }
+    if (replay.terminal) {
+      return standardError(req, res, replay.message, replay.body, replay.httpStatus);
+    }
+    const original = replay.source || {};
+    const duplicateBody = {
+      ...original,
+      duplicate_write: true,
+      write_id: idempotency.write_id,
+      idempotency_status: record.status || 'unknown',
+      sheet_write: replay.completed ? 'skipped_duplicate' : 'skipped_duplicate_in_progress',
+      sheet_written: false,
+      original_sheet_write: original.sheet_write || null,
+      original_completed_at: record.completed_at || null
+    };
+    const message = replay.completed
+      ? `Duplicate write_id; deload ${verb} was already applied.`
+      : `Duplicate write_id; deload ${verb} is in progress.`;
+    return standardSuccess(req, res, message, duplicateBody);
+  }
+
+  // The write_id a lifecycle write carries, if the caller sent one. Absent →
+  // beginWrite is disabled and the write proceeds unguarded (the in-app call
+  // sites send none yet — see the section header).
+  function deloadWriteId(body) {
+    return body && typeof body.write_id === 'string' ? body.write_id.trim() : '';
+  }
+
   // POST /api/deload/begin — owner invokes a deload. The protocol is selected from
   // the training focus (deterministic); nothing is invented.
   router.post('/api/deload/begin', async (req, res) => {
@@ -2325,39 +2380,84 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     const exit_criteria = typeof body.exit_criteria === 'string' && body.exit_criteria.trim()
       ? body.exit_criteria.trim().slice(0, 200)
       : protocol.exit;
+    // #1794 — write-admission gate 8 of 10 (§3.10, §5.3). Nothing has been appended yet.
+    const frozen = await refuseIfWritesFrozen(req, res, '/api/deload/begin');
+    if (frozen) return frozen;
+    const idempotency = beginWrite(deloadWriteId(body), { endpoint: '/api/deload/begin' });
+    if (idempotency.duplicate) {
+      return sendDeloadDuplicate(req, res, idempotency, 'begin');
+    }
     if (!(await deloadStateTabPresent())) {
+      if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
       return standardError(req, res, DELOAD_STATE_MISSING_MSG, null, 503);
     }
     try {
       const state = await beginDeload({ protocol, reason, sessions_remaining, exit_criteria });
-      return standardSuccess(req, res, 'Deload started', { state });
+      const responseBody = { state };
+      if (idempotency.enabled) {
+        responseBody.write_id = idempotency.write_id;
+        responseBody.duplicate_write = false;
+        completeWrite(idempotency.write_id, idempotency.token, responseBody);
+      }
+      return standardSuccess(req, res, 'Deload started', responseBody);
     } catch (error) {
+      if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
       return sendDeloadError(req, res, error, 'Cannot start a deload from the current training state');
     }
   });
 
   // POST /api/deload/advance — record that a deload session was completed.
   router.post('/api/deload/advance', async (req, res) => {
+    // #1794 — write-admission gate 9 of 10 (§3.10, §5.3). Nothing has been appended yet.
+    const frozen = await refuseIfWritesFrozen(req, res, '/api/deload/advance');
+    if (frozen) return frozen;
+    const idempotency = beginWrite(deloadWriteId(req.body), { endpoint: '/api/deload/advance' });
+    if (idempotency.duplicate) {
+      return sendDeloadDuplicate(req, res, idempotency, 'advance');
+    }
     if (!(await deloadStateTabPresent())) {
+      if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
       return standardError(req, res, DELOAD_STATE_MISSING_MSG, null, 503);
     }
     try {
       const state = await recordDeloadSession({});
-      return standardSuccess(req, res, 'Deload session recorded', { state });
+      const responseBody = { state };
+      if (idempotency.enabled) {
+        responseBody.write_id = idempotency.write_id;
+        responseBody.duplicate_write = false;
+        completeWrite(idempotency.write_id, idempotency.token, responseBody);
+      }
+      return standardSuccess(req, res, 'Deload session recorded', responseBody);
     } catch (error) {
+      if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
       return sendDeloadError(req, res, error, 'No active deload to advance');
     }
   });
 
   // POST /api/deload/resolve — close out the post-deload evaluation back to NORMAL.
   router.post('/api/deload/resolve', async (req, res) => {
+    // #1794 — write-admission gate 10 of 10 (§3.10, §5.3). Nothing has been appended yet.
+    const frozen = await refuseIfWritesFrozen(req, res, '/api/deload/resolve');
+    if (frozen) return frozen;
+    const idempotency = beginWrite(deloadWriteId(req.body), { endpoint: '/api/deload/resolve' });
+    if (idempotency.duplicate) {
+      return sendDeloadDuplicate(req, res, idempotency, 'resolve');
+    }
     if (!(await deloadStateTabPresent())) {
+      if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
       return standardError(req, res, DELOAD_STATE_MISSING_MSG, null, 503);
     }
     try {
       const state = await resolvePostDeload({});
-      return standardSuccess(req, res, 'Deload resolved', { state });
+      const responseBody = { state };
+      if (idempotency.enabled) {
+        responseBody.write_id = idempotency.write_id;
+        responseBody.duplicate_write = false;
+        completeWrite(idempotency.write_id, idempotency.token, responseBody);
+      }
+      return standardSuccess(req, res, 'Deload resolved', responseBody);
     } catch (error) {
+      if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
       return sendDeloadError(req, res, error, 'No post-deload evaluation to resolve');
     }
   });

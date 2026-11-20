@@ -203,7 +203,7 @@ const REFUSAL_MESSAGE =
 //
 // The seam's second condition: "a successful current-request read of
 // atlas.write_freeze returning frozen = true, by the same fail-closed rule that
-// gates the seven write routes". It is the SAME read and the SAME control — one
+// gates the ten write routes". It is the SAME read and the SAME control — one
 // mechanism, asked a different question — which is why this is four lines rather
 // than a second implementation.
 //
