@@ -830,10 +830,15 @@ test('pack follow-up round 4 H2: prose set-group with a dash weight separator re
     assert.ok(out.warnings.includes('repeated_set_group'), text);
     assert.equal(out.sets, undefined, text);
   }
-  // A dash with no weight after it names no group: the turn still logs.
+  // Astra 6.2 design (comment 7049597345 on #1765) retires the "no weight,
+  // no group" carve-out: `3 sets of 8` is a Q-S-Q frame (3, sets, 8) and no
+  // documented native form covers the span, so it refuses — one of the
+  // design's 41 disclosed log→refuse flips.
   const noWeight = applyFullConsumptionGate(
     logSets([{ weight: 185, reps: 5, rir: 2 }]), 'bench 185 5/2 then 3 sets of 8 - felt good');
-  assert.equal(noWeight.intent, 'log_sets', 'dash without a weight is not a prose group');
+  assert.equal(noWeight.intent, 'needs_clarification', 'dash without a weight is a prose frame under the design');
+  assert.ok(noWeight.warnings.includes('repeated_set_group'), 'dash without a weight');
+  assert.equal(noWeight.sets, undefined, 'dash without a weight');
 });
 
 test('pack follow-up round 4 H3: leading-zero repeat counts refuse', () => {
@@ -901,10 +906,16 @@ test('pack follow-up round 5 I1/I2: prose set-group with `for` in either slot re
   assert.equal(bare.intent, 'needs_clarification', 'bare 8 for 165 still refuses');
   assert.ok(bare.warnings.includes('repeated_set_group'), 'bare 8 for 165');
   assert.equal(bare.sets, undefined, 'bare 8 for 165');
-  // `for` with no weight after it names no group: the turn still logs.
+  // Astra 6.2 design (comment 7049597345 on #1765) retires the "no weight,
+  // no group" carve-out: `3 sets for 8` is a Q-S-Q frame with no covering
+  // native form, so it refuses — one of the design's 41 disclosed
+  // log→refuse flips. `3 sets for time` still logs: `time` is no quantity,
+  // so there is no R2 and the predicate is inactive.
   const noWeight = applyFullConsumptionGate(
     logSets([{ weight: 185, reps: 5, rir: 2 }]), 'bench 185 5/2 then 3 sets for 8');
-  assert.equal(noWeight.intent, 'log_sets', 'for without a weight is not a prose group');
+  assert.equal(noWeight.intent, 'needs_clarification', 'for without a weight is a prose frame under the design');
+  assert.ok(noWeight.warnings.includes('repeated_set_group'), 'for without a weight');
+  assert.equal(noWeight.sets, undefined, 'for without a weight');
   const forTime = applyFullConsumptionGate(
     logSets([{ weight: 185, reps: 5, rir: 2 }]), 'bench 185 5/2 then 3 sets for time');
   assert.equal(forTime.intent, 'log_sets', 'for time is not a prose group');
@@ -938,13 +949,20 @@ test('pack follow-up round 6 J1/J2: prose set-group with `*` in either slot refu
   assert.equal(bare.intent, 'needs_clarification', 'bare 8 * 165 still refuses');
   assert.ok(bare.warnings.includes('unrecognized_set_notation'), 'bare 8 * 165');
   assert.equal(bare.sets, undefined, 'bare 8 * 165');
-  // `*` with no weight after it names no group: the turn still logs.
+  // Astra 6.2 design (comment 7049597345 on #1765) retires the "no weight,
+  // no group" carve-out: both are Q-S-Q frames (3, sets, 8) with no covering
+  // native form, so they refuse — two of the design's 41 disclosed
+  // log→refuse flips.
   const noWeight = applyFullConsumptionGate(
     logSets([{ weight: 185, reps: 5, rir: 2 }]), 'bench 185 5/2 then 3 sets * 8');
-  assert.equal(noWeight.intent, 'log_sets', 'star without a weight is not a prose group');
+  assert.equal(noWeight.intent, 'needs_clarification', 'star without a weight is a prose frame under the design');
+  assert.ok(noWeight.warnings.includes('repeated_set_group'), 'star without a weight');
+  assert.equal(noWeight.sets, undefined, 'star without a weight');
   const starTime = applyFullConsumptionGate(
     logSets([{ weight: 185, reps: 5, rir: 2 }]), 'bench 185 5/2 then 3 sets of 8 reps * time');
-  assert.equal(starTime.intent, 'log_sets', 'reps * time is not a prose group');
+  assert.equal(starTime.intent, 'needs_clarification', 'reps * time is a prose frame under the design');
+  assert.ok(starTime.warnings.includes('repeated_set_group'), 'reps * time');
+  assert.equal(starTime.sets, undefined, 'reps * time');
 });
 
 test('pack follow-up round 7 K1: prose set-group with enumerated multiplier glyphs and `*` runs refuses', () => {
@@ -984,8 +1002,10 @@ test('pack follow-up round 7 K1: prose set-group with enumerated multiplier glyp
     assert.ok(out.warnings.includes('repeated_set_group'), text);
     assert.equal(out.sets, undefined, text);
   }
-  // The disclosed tight forms stay out of scope: only a run of two or
-  // more glyphs may abut the count, because `**8**` is bolded reps.
+  // Astra 6.2 design (comment 7049597345 on #1765) retires the disclosed
+  // tight-form carve-out: each is a Q-S-Q frame with no covering native
+  // form, so all four refuse — four of the design's 41 disclosed
+  // log→refuse flips.
   for (const text of [
     'bench 185 5/2 then 3 sets*8 at 165',
     'bench 185 5/2 then 3 sets *8 at 165',
@@ -993,7 +1013,9 @@ test('pack follow-up round 7 K1: prose set-group with enumerated multiplier glyp
     'bench 185 5/2 then 3 sets of 8-165',
   ]) {
     const out = applyFullConsumptionGate(logSets([{ weight: 185, reps: 5, rir: 2 }]), text);
-    assert.equal(out.intent, 'log_sets', text);
+    assert.equal(out.intent, 'needs_clarification', text);
+    assert.ok(out.warnings.includes('repeated_set_group'), text);
+    assert.equal(out.sets, undefined, text);
   }
 });
 
@@ -1092,10 +1114,9 @@ test('pack follow-up round 8 L1/L2/L3: prose set-group with other multiplier gly
     assert.ok(out.warnings.includes('repeated_set_group'), text);
     assert.equal(out.sets, undefined, text);
   }
-  // Scope holds: a single marker that abuts a number with no closer is still
-  // the disclosed tight form — it logs, exactly as `3 sets *8` does. The
-  // wrap refuses only when the closer is present; a glyph run abutting the
-  // weight with no space before the digits is likewise out of scope.
+  // Astra 6.2 design (comment 7049597345 on #1765) retires the tight-form
+  // scope hold: each is a Q-S-Q frame with no covering native form, so all
+  // eight refuse — eight of the design's 41 disclosed log→refuse flips.
   for (const text of [
     'bench 185 5/2 then 3 sets of *8 at 165',
     'bench 185 5/2 then 3 sets of 8 reps at *165',
@@ -1107,7 +1128,9 @@ test('pack follow-up round 8 L1/L2/L3: prose set-group with other multiplier gly
     "bench 185 5/2 then 3 sets of Ben's 8 at 165",
   ]) {
     const out = applyFullConsumptionGate(logSets([{ weight: 185, reps: 5, rir: 2 }]), text);
-    assert.equal(out.intent, 'log_sets', text);
+    assert.equal(out.intent, 'needs_clarification', text);
+    assert.ok(out.warnings.includes('repeated_set_group'), text);
+    assert.equal(out.sets, undefined, text);
   }
 });
 
@@ -1204,9 +1227,9 @@ test('pack follow-up round 9 M1–M4: structural prose-slot fix refuses any conn
     assert.ok(out.warnings.includes('repeated_set_group'), text);
     assert.equal(out.sets, undefined, text);
   }
-  // Scope holds, unchanged: a single atom tight against a number after a
-  // WORD preposition still logs, as does clause punctuation tight against a
-  // number and a glyph tight against a word (`sets* 8`, `sets ✕8`).
+  // Astra 6.2 design (comment 7049597345 on #1765) retires the scope hold:
+  // each is a Q-S-Q frame with no covering native form, so all 25 refuse
+  // — 25 of the design's 41 disclosed log→refuse flips.
   for (const text of [
     'bench 185 5/2 then 3 sets of 8 reps at *165',
     'bench 185 5/2 then 3 sets of 8 with✕165',
@@ -1225,27 +1248,24 @@ test('pack follow-up round 9 M1–M4: structural prose-slot fix refuses any conn
     "bench 185 5/2 then 3 sets of Ben's 8 at 165",
     "bench 185 5/2 then 3 sets of 8's at 165",
     'bench 185 5/2 then 3 sets (8 at 165',
-    // Fusion boundary holds, pre-review fix: a letter↔letter fusion is
-    // one word, not a boundary (`threesets`, `totalsets`); an atom between
-    // the count and `sets` (`3x sets`) still logs, as does a word fused to
-    // a wrapped count (`of**8**`) and a wrapped count fused to `sets`
-    // (`**3**sets`). A five-token connector is beyond the gate's bound —
-    // the parser refuses it pre-gate in the real route, so the gate itself
-    // leaves it standing here.
+    // Fusion boundary holds under the design's scanner, which finds a
+    // word-quantity inside a fused segment: `three` in `threesets` and
+    // `sets` in `totalsets` are still Q and S in source order.
     'bench 185 5/2 then threesets of 8 at 165',
     'bench 185 5/2 then 3 totalsets of 8 at 165',
     'bench 185 5/2 then 3x sets of 8 at 165',
     'bench 185 5/2 then 3 sets of**8** at 165',
     'bench 185 5/2 then **3**sets of 8 at 165',
     'bench 185 5/2 then 3 sets ✕ of about roughly maybe 8 at 165',
-    // A lone multiplier `x` fused to the count is a repeat token the
-    // parser consumes whole (`3 sets x8 at 165` logs eight repeats of the
-    // slash group), not a connector — the fusion seam excludes it.
+    // A lone multiplier `x` fused to the count is no longer a carve-out:
+    // `3 sets x8 at 165` is a Q-S-Q frame with no covering native form.
     'bench 185 5/2 then 3 sets x8 at 165',
     'bench 185 5/2 then 3 sets, x8 at 165',
   ]) {
     const out = applyFullConsumptionGate(logSets([{ weight: 185, reps: 5, rir: 2 }]), text);
-    assert.equal(out.intent, 'log_sets', text);
+    assert.equal(out.intent, 'needs_clarification', text);
+    assert.ok(out.warnings.includes('repeated_set_group'), text);
+    assert.equal(out.sets, undefined, text);
   }
 });
 

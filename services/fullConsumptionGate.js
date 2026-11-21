@@ -79,6 +79,18 @@
 // drift apart again.
 const { normalizeParserText, normalizeWeightUnits, looksLikeSetToken, isNameLikeWord } = require('./workoutTextParser');
 
+// The prose-slot detector (Astra 6.2 design of record, #1765 comment
+// 7049597345): the shared R2 boolean + whole-span affirmative coverage.
+// The gate passes the boolean into the repeated-group slot (last, after
+// the other repeat checks) and into the zero-directive contribution; the
+// detector never sees the gate's normalized text — it builds its own three
+// views from the ORIGINAL span text, so the caller passes the boolean in.
+const {
+  namesFrom,
+  hasUnaccountedProseFrame,
+  hasUnaccountedProseInMultiWindows,
+} = require('./proseGateDetector');
+
 // The barbell sets-first form `NxM@W`. A leading digit must sit immediately before
 // `x` (word boundary), so the dumbbell form `55s x8 @2` — where `s ` precedes `x`
 // — is NOT matched, and its `@` correctly stays an RIR. Global: the scan must
@@ -135,216 +147,15 @@ const TRAILING_REPEAT_TOKEN = /\bx\d+\b/;
 // pattern allows them while still excluding value 1 (`x 01` keeps logging).
 const SPACED_OR_DASHED_REPEAT_TOKEN = /\bx[\s\-\u2010\u2011\u2012\u2013\u2014\u2212]+(?:0*[2-9]|0*[1-9]\d+)\b/;
 const DUMBBELL_GROUP = /\b\d+(?:\.\d+)?s\s+(?:\d+\s*\/\s*\d+|x\d+\s*@\s*\d+)/;
-// P4 (pack-only, #1790 follow-up) — a prose set group: `N sets of M at W`
-// (`3 sets of 8 at 165`, `3 sets of 8 reps @ 165`). No parser grammar consumes
-// it (`parseNaturalSets` matches only `\d+ for \d+`), so beside any other
-// group it is a dropped second group. A lone prose group never reaches the
-// gate: the parser refuses it first (needs_clarification), so the gate only
-// ever sees it beside a consumed group.
-// Round 2 (pre-review on 3a9eff2c, F1–F4): the same group spelled with a
-// `with` weight preposition (`3 sets of 8 with 165`), an `x` separator
-// (`3 sets x 8 at 165`), or number-words in the count/rep slots
-// (`three sets of 8 at 165`, `3 sets of eight at 165`) dropped just as
-// silently. The count and rep slots accept digits or number-words zero–
-// twenty; the rep slot must still be numeric, so `did 3 sets of bench`
-// (a word after "of") is not a prose group.
-// Round 4 (pre-review on 1e83793e, H2): a dash as the weight separator
-// (`3 sets of 8 - 165`, en/em dash, any spacing with whitespace on at
-// least one side of the dash) dropped just as silently — a dash is the most
-// ordinary free-text separator. The fully-tight form (`8-165`) reads as a
-// range and stays out of scope: both dash alternatives require whitespace
-// on at least one side. The weight slot still requires digits, so
-// `3 sets of 8 - felt good` is not a prose group.
-// Round 6 (pre-review on b3298d8f, J1/J2): `*` (U+002A, the ASCII
-// multiplication sign) in both prose slots — the count/reps separator
-// (`3 sets * 8 at 165`) and the weight preposition with `reps`
-// (`3 sets of 8 reps * 165`). `*` is listed in the gate's own
-// multiplier-glyph comment and in UNRECOGNIZED_MULTIPLIER, and its
-// siblings `x`/`×` already refuse in both slots, so the ASCII form
-// dropping is a glyph-level gap in an accepted family — same class as
-// the round-3 dash and round-4 unicode-x findings. The weight slot
-// still requires digits, so `3 sets of 8 reps * time` is not a prose
-// group, and the rep slot still requires digits or a number-word, so
-// stray asterisks (markdown emphasis, bullets) cannot form a group.
-// The bare `8 * 165` form already refuses via `unrecognized_set_notation`
-// and is unaffected; the tight/half-spaced forms (`3 sets*8`,
-// `3 sets *8`) stay out of scope, parallel to tight-`x`.
-// Round 7 (Hammy BLOCKING on f5e4d374, K1): the gate's own enumerated
-// multiplier glyphs (`✕` U+2715, `✗` U+2717, `✖` U+2716, `＊` U+FF0A,
-// `Ｘ` U+FF38, `ｘ` U+FF58 — the UNRECOGNIZED_MULTIPLIER class) in both
-// prose slots, plus runs of `*` (`**`, `***`, `* *`, `x*`, `×*`) and
-// markdown-bolded numbers (`**8**` in the count slot, `**165**` in the
-// weight slot). A single glyph still needs the space the J1 form has,
-// so the disclosed tight forms (`3 sets *8`, `3 sets*8`) stay out of
-// scope; only a run of two or more glyphs may abut the count, because
-// `**8**` is bolded reps, not a tight multiplier. The count and weight
-// slots still require digits or a number-word, so stray asterisks
-// (markdown emphasis, bullets) cannot form a group, and the weight slot
-// still requires digits, so `3 sets of 8 reps ✕ time` is not a prose
-// group. `*x`/`*×` already refuse and are unaffected. The bold wrap
-// around the count allows whitespace on either side (`3 sets of 8 ** at
-// 165`, `3 sets of ** 8 at 165`) — a bold marker separated from its
-// number by a space is the same dropped group, not a tight multiplier:
-// the tight forms above have one marker tight against the number,
-// these have two.
-// Round 8 (Hammy BLOCKING on d1c77884, L1–L3): the round-7 enumeration is
-// replaced by a generic separator class — the multiplier-like glyphs are
-// open-ended in Unicode (✘ ❌ ∗ ✳ ✱ ╳ ⨯ ⋅ · in L1 alone), so the durable
-// fix is a generic non-alphanumeric separator treatment, not one more
-// enumeration. A separator atom is any character that is not a letter, not a
-// number, and not whitespace (Unicode property classes, so the `u` flag) —
-// plus fullwidth x/X, which are letters but multipliers here (the gate text
-// is lowercased, so Ｘ arrives as ｘ). The run rule, unchanged from round 7:
-// a run of one atom must be spaced from the number it separates (a single
-// atom abutting a number stays the disclosed tight form), while a run of two
-// or more atoms may abut it (`**8**` is bolded reps, not a tight multiplier).
-// The run may also sit after the word separator (`of ✘ 8`) — the count slot
-// takes an optional run before the count — and after the word/dash weight
-// preposition (`with ✕ 165`, `- ✕ 165`, L3). L2: a count or weight wrapped in
-// one or two `*`/`_` markers on BOTH sides (`*8*`, `_8_`, `__8__`,
-// `**8 reps**`, `*165*`) is the same stated group — the wrap arm requires
-// the closer, so a lone opener (`*8`, `*165`) still logs, and a wrapped count
-// needs no separator of its own (the lookahead alternative). Consequence of
-// the generic class: sentence punctuation in a separator slot (`.`, `,`, `:`)
-// now refuses too — fail-closed, the user re-sends. The tight forms stay out
-// of scope (`*8`, `with✕165`, `8-165`); `-✕165` refuses, because `-✕` is a
-// two-atom run and two-atom runs may abut the weight, parallel to `**165`.
-const PROSE_SYMBOL = '[^\\p{L}\\p{N}\\s]';
-const PROSE_MULT_ATOM = `(?:${PROSE_SYMBOL}|[\\uFF38\\uFF58])`;
-const PROSE_MULT_SPACED = `(?:[x×]?${PROSE_MULT_ATOM}(?:\\s*${PROSE_MULT_ATOM})*\\s+)`;
-const PROSE_MULT_MULTI = `(?:${PROSE_MULT_ATOM}(?:\\s*${PROSE_MULT_ATOM})+\\s*)`;
-const NUMBER_WORD = '(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)';
-const PROSE_COUNT = `(?:\\d+|${NUMBER_WORD})`;
-const PROSE_DASH = '[\\-\\u2010\\u2011\\u2012\\u2013\\u2014\\u2212]';
-// Pre-review (round 8) findings, fixed on this head before handback:
-// (1) Bracket-wrapped numbers — `(8)`, `[8]`, `{8}`, `(165)` — are the same
-// L2 class as the markdown wraps: a stated count/weight in brackets, not
-// emphasis. The wrap arm takes bracket pairs as well as `*`/`_` markers.
-// (2) Clause punctuation tight against the word it follows — `sets: 8`,
-// `sets, 8`, `sets. 8`, `reps: 165` — is the same L1 separator class with
-// the space on the wrong side of the mark: `: , . ; ! ?` end a clause and
-// never multiply, so they may abut the word (`sets:`) where a multiplier
-// glyph may not (`sets* 8` still logs — the seam lookahead admits only
-// clause punctuation, never `*`/`×`/glyphs). The seams are after `sets`,
-// after `of`/`for`/`x`, and after `reps`. (A word followed by a glyph and
-// then the number — `at: 165`, `with: 165` — already refused via the
-// word+run arm, verified firsthand.) Fullwidth digits are NOT a hole: the
-// parser itself returns needs_clarification with no sets for fullwidth
-// input, so no partial preview is emitted — disclosed, no gate change.
-// `8 x 165` refuses via the pre-existing spaced-repeat arm (verified with a
-// `for` group in place of the slash group), not the prose arm.
-// (3) Quoted numbers — `"8"`, `'8'`, `"165"` (curly quotes fold to straight
-// ones in normalization) — are the same L2 class: the wrap takes quotes.
-// (4) Wraps around the structural words themselves — `**sets**`, `**of**`,
-// `**reps**`, `**at**` (and the quoted/paren forms `"of"`, `(at)`), and the
-// sets-count (`**3**`, `(3)`, `"3"`) — are the same L2 class one position
-// out: every position in the prose pattern (sets-count, `sets`, separator,
-// count, `reps`, preposition, weight) may carry a wrap. The word arms take
-// optional wrap markers; the anchor takes an optional wrapped count. The
-// whole-phrase wrap (`**3 sets of 8 at 165**`) already refused via the `\b`
-// anchor. A possessive before the count (`Ben's 8`) and a parenthetical note
-// after it (`8 (warm-up)`) still log — neither is a structural word or a
-// wrapped number.
-// Round 9 (Hammy BLOCKING on 7544ac18, M1–M4; Dale direction 2026-11-18
-// 12:18:52 MST — "the enumeration stops here"): the prose slots are no
-// longer enumerations. Rounds 1–8 each widened a spelling list (word lists
-// `of`/`for`/`x` and `at`/`with`/`for`, glyph lists, wrap lists); every round
-// the reviewer listed more spellings in the same slots — the exact failure
-// mode the outside review named. The fix is structural: a prose set group is
-// defined by its skeleton — COUNT, the word `sets`, a reps number, a weight
-// number — joined by connectors, and a connector is ANY short run of
-// connector tokens (words, multiplier atoms, clause punctuation), at most
-// four tokens. An unlisted word (`by`, `via`, `approx`, `around`) or glyph
-// (`÷`, `→`, `≠`, `~`) in a connector slot is a prose group by construction,
-// so it fails closed instead of reopening the hole. What still keeps a shape
-// out is structure, not spelling:
-// - a connector must be present (at least one token) between `sets` and the
-//   reps number — `3 sets 8 at 165` (no connector) is not a multiplier
-//   expression, it logs;
-// - a connector is at most four tokens — a four-word preposition (`at a
-//   weight of 165`) already refuses via `unattributable_trailing_sets`,
-//   and a mixed glyph+word four-unit connector (`✕ of about roughly`) is
-//   the longest a multiplier phrase runs; five or more tokens is a clause,
-//   not a connector;
-// - tight-abut rules, unchanged in kind from round 8: a single atom may
-//   abut the number it separates only when it IS the whole connector — a
-//   bare glyph preposition (`reps ✕165`, `reps *165`, M1/M2 — round 7
-//   allowed this, round 8 narrowed it, the regression is restored here) or
-//   a run of two or more atoms (`**8**`, `-✕165`); a single atom tight
-//   against a number after a WORD preposition (`at *165`, `with✕165`,
-//   `at ~165`) still logs, as do clause punctuation tight against a number
-//   (`sets.8`, `sets:8`, `of:8`, `reps:165`, `8-165`);
-// - clause punctuation MAY join the numbers when spaced from the following
-//   one (`sets: 8`, `reps: 165`, and now `8: 165`, `8, 165` — the O3
-//   colon/dash/`per` continuum closes: a spaced colon between the reps and
-//   the weight is a connector, same as a spaced word);
-// - a connector may sit between the sets-count and `sets` (`3 ✕ sets`,
-//   M4; `3 total sets`) — the count and the keyword are anchors, and junk
-//   between them is still the same group.
-// Pre-review (round 9) findings, fixed on this head before handback:
-// (1) P4 sibling gap — the prose arm fired only beside a sibling group
-// token, but the parser consumes a bare `W R` pair (`225 3`) as a set while
-// no group token counts it, so a prose group beside a bare pair dropped
-// silently (`bench 185 3 sets of 8 at 165` logged 185x3). The prose arm
-// now fires on a prose group beside ANY emitted set, not only beside a
-// sibling token — the sets array is the ground truth for what the parser
-// consumed, and no parser grammar consumes the prose numbers themselves
-// (the `for` overlap, `8 for 165`, still drops the `3 sets of`, so
-// refusing there stays correct).
-// (2) Word↔number fusion — a letter↔digit transition is a token boundary
-// by itself: a word may abut a number (`of8`, `8reps`, `3sets`, `8reps165`
-// — `reps` then reads as the preposition word) because the characters
-// delimit the tokens; an atom may not (`*8`, `✕8`, `of:8` still log).
-// The seams are digit→letter at the count↔`sets` join and before the
-// weight part, and letter→digit at the separator↔count join — except a
-// lone multiplier `x`: `x8` is a repeat token the parser consumes (`3
-// sets x8 at 165` logs eight repeats of the slash group whole), so a
-// standalone `x` fused to the count is not a connector. A
-// letter↔letter fusion (`threesets`, `totalsets`) is one word, not a
-// boundary, so it still logs.
-// (3) Clause punctuation before a WORD preposition (`8, at 165`, `8: at
-// 165`, `8. at 165`) — the punct weight arm now takes an optional word
-// preposition after the mark, same as the punct-before-weight arm.
-// Disclosed, not fixed here: a weight spelled out in words (`at one
-// hundred sixty-five`) needs number-word weights — a design item for the
-// coordinator; a weightless prose group (`3 sets of 8, then squat 225 x3`)
-// is the same R2 family.
-// The anchors stay enumerated (`sets`, `reps`, the number-words, the
-// digits) — they are the shape, not the spelling list. The weight slot
-// still requires digits, so `3 sets of 8 reps ✕ time` is not a prose
-// group; the rep slot still requires digits or a number-word.
-const PROSE_CLAUSE_PUNCT = '[:,.;!?]';
-const PROSE_WRAP_OPEN = `(?:[*_]{1,2}|["'\\u0028\\u005B\\u007B])`;
-const PROSE_WRAP_CLOSE = `(?:[*_]{1,2}|["'\\u0029\\u005D\\u007D])`;
-const PROSE_MARK_OPEN = `(?:${PROSE_WRAP_OPEN})?`;
-const PROSE_MARK_CLOSE = `(?:${PROSE_WRAP_CLOSE})?`;
-// A connector token: one word (optionally wrapped, any spelling — the
-// word lists are gone) or a run of multiplier atoms (glyphs, dashes,
-// clause punctuation — the glyph lists are gone, the generic class from
-// round 8 stays). A connector is 1–4 tokens. In the separator slot the
-// connector must be followed by whitespace (or a clause-punctuation seam)
-// before the reps number, so a single atom abutting the count still logs
-// (`3 sets *8`, `3 sets of *8`); a run of two or more atoms may abut it
-// (`**8**`), as in round 8. In the weight slot the connector is spelled
-// out instead of reused, because the tight-abut rule differs there: a
-// single atom may abut the weight only when it IS the whole preposition
-// (M1/M2, below) or part of a two-atom run — never tight after a word
-// (`at *165`, `with✕165` still log).
-const PROSE_CONN_WORD = `(?:${PROSE_MARK_OPEN}[a-z]+${PROSE_MARK_CLOSE})`;
-const PROSE_CONN_WORDS = `(?:${PROSE_CONN_WORD}(?:\\s+${PROSE_CONN_WORD}){0,2})`;
-const PROSE_CONN_ATOMS = `(?:${PROSE_MULT_ATOM}(?:\\s*${PROSE_MULT_ATOM})*)`;
-const PROSE_CONN_UNIT = `(?:${PROSE_CONN_WORD}|${PROSE_CONN_ATOMS})`;
-const PROSE_CONNECTOR = `(?:${PROSE_CONN_UNIT}(?:\\s+${PROSE_CONN_UNIT}){0,3})`;
-// A single multiplier atom that is NOT clause punctuation, allowed to abut
-// the weight when it is the whole preposition (M1/M2). Clause punctuation
-// (`:`, `,`, `.`) may join the numbers only when spaced — `reps:165` still
-// logs, `reps: 165` still refuses.
-const PROSE_MULT_ATOM_TIGHT = `(?:[^\\p{L}\\p{N}\\s:,.;!?]|[\\uFF38\\uFF58])`;
-const PROSE_MULT_TIGHT = `(?:${PROSE_MULT_ATOM_TIGHT}\\s*)`;
-const PROSE_COUNT_SLOT = `(?:(?:${PROSE_MULT_SPACED}|${PROSE_MULT_MULTI})?(?:${PROSE_WRAP_OPEN}\\s*${PROSE_COUNT}(?:\\s+reps?)?\\s*${PROSE_WRAP_CLOSE}|(?:\\s*\\*\\*\\s*)?${PROSE_COUNT}(?:\\s*\\*\\*)?))`;
-const PROSE_WEIGHT_SLOT = `(?:${PROSE_WRAP_OPEN}\\s*\\d+(?:\\.\\d+)?\\s*${PROSE_WRAP_CLOSE}|(?:\\*\\*)?\\d+(?:\\.\\d+)?\\b)`;
-const PROSE_SET_GROUP = new RegExp(`(?:\\b|(?=${PROSE_WRAP_OPEN}))(?:${PROSE_WRAP_OPEN}\\s*)?${PROSE_COUNT}(?:\\s*${PROSE_WRAP_CLOSE})?(?:\\s+${PROSE_CONNECTOR})?(?:\\s+|(?<=\\d)(?=[a-z]))${PROSE_MARK_OPEN}sets?${PROSE_MARK_CLOSE}(?:\\s+|(?=${PROSE_CLAUSE_PUNCT}))(?:${PROSE_CONNECTOR}(?:\\s+|(?=${PROSE_CLAUSE_PUNCT})|(?<=[a-z])(?=\\d)(?<!\\sx))|${PROSE_MULT_MULTI}|(?=${PROSE_WRAP_OPEN}))${PROSE_COUNT_SLOT}(?:(?:\\s+|(?<=\\d)(?=[a-z]))(?:${PROSE_MARK_OPEN}reps?${PROSE_MARK_CLOSE}(?:\\s+|(?=${PROSE_CLAUSE_PUNCT})))?(?:${PROSE_CONN_WORDS}(?:\\s*${PROSE_MULT_SPACED}|\\s*${PROSE_MULT_MULTI})?|@|${PROSE_MULT_SPACED}(?:${PROSE_CONN_WORDS})?|${PROSE_MULT_MULTI}(?:${PROSE_CONN_WORDS})?|${PROSE_MULT_TIGHT})\\s*|\\s*(?:${PROSE_MARK_OPEN}reps?${PROSE_MARK_CLOSE}(?:\\s+|(?=${PROSE_CLAUSE_PUNCT})))?${PROSE_DASH}\\s+(?:${PROSE_MULT_SPACED}|${PROSE_MULT_MULTI})?|\\s+(?:${PROSE_MARK_OPEN}reps?${PROSE_MARK_CLOSE}(?:\\s+|(?=${PROSE_CLAUSE_PUNCT})))?${PROSE_DASH}\\s*(?:${PROSE_MULT_SPACED}|${PROSE_MULT_MULTI})?|\\s*(?:${PROSE_MARK_OPEN}reps?${PROSE_MARK_CLOSE}(?:\\s+|(?=${PROSE_CLAUSE_PUNCT})))?${PROSE_CLAUSE_PUNCT}\\s+(?:${PROSE_CONN_WORDS}\\s+)?)${PROSE_WEIGHT_SLOT}`, 'u');
-const PROSE_SET_GROUP_GLOBAL = new RegExp(PROSE_SET_GROUP.source, 'gu');
+// Prose set groups — RETIRED as an enumeration (Astra 6.2 design of record,
+// #1765 comment 7049597345). The round-1–9 prose regexes above (PROSE_*,
+// PROSE_SET_GROUP) are replaced by the shared boolean in
+// services/proseGateDetector.js: a quantity, a set label and another
+// quantity in source order (R2) in any of three lowercase views, unless the
+// entire span matches a documented native / plan-backed form accounting
+// for the parser's actual rows. The detector supplies the boolean; the
+// gate below passes it into the repeated-group slot (last, after the other
+// repeat checks) and into the zero-directive contribution.
 // P8/P9 (pack-only, #1790 follow-up) — zero-quantity directives the parser
 // drops: a trailing `x0` repeat, and prose `for zero sets` / `zero sets` /
 // `0 sets`. The shorthand consumes a trailing `xN` as the slash group's own
@@ -477,7 +288,7 @@ function repeatedSetGroupMessage() {
 // counts as a group token of the same family), or a dumbbell group beside
 // any barbell group (`parseDumbbellGroups` is tried first and claims the
 // text: `bench 185 5/2 55s x10 @3`, `bench 3x8@165 55s x10 @3`).
-function hasRepeatedSetGroup(text, sets) {
+function hasRepeatedSetGroup(text, sets, proseVeto) {
   const t = String(text || '');
   // A slash set is `weight reps/rir` — the shorthand path consumes the pair
   // whole, so its digits must not participate in any other group's count:
@@ -557,18 +368,15 @@ function hasRepeatedSetGroup(text, sets) {
     const hasNonDumbbellSlash = FAMILY_SLASH.test(withoutDumbbell);
     if (setsFirst.length >= 1 || wxrN.length >= 1 || bareWxr.length >= 1 || hasNonDumbbellSlash || hasFor) return 'repeated_set_group';
   }
-  // P4: a prose set group beside any other group token — no grammar consumes
-  // the prose form, so the second group drops (`bench 185 5/2 then 3 sets of
-  // 8 at 165` logs only 185x5; `bench 3 sets of 8 at 165 and 2x5@185` logs
-  // only the 185 sets). The `at` form is the gap: the `@` form already
-  // refuses via the stray-@ arm above. Pre-review round 9: beside ANY
-  // emitted set, not only a sibling token — a bare `W R` pair (`225 3`)
-  // is consumed as a set by the parser but no group token counts it, so
-  // `squat 225 3 sets of 8 at 165` logged 225x3 and dropped the prose
-  // group. The sets array is the ground truth, so it is the trigger.
-  const proseGroups = [...t.matchAll(PROSE_SET_GROUP_GLOBAL)];
-  const emittedSets = Array.isArray(sets) && sets.length > 0;
-  if (proseGroups.length >= 1 && (setsFirst.length >= 1 || wxrN.length >= 1 || bareWxr.length >= 1 || hasSlash || hasFor || hasDumbbell || emittedSets)) return 'repeated_set_group';
+  // Prose arm (Astra design, spec 6): the local unaccounted-prose boolean,
+  // evaluated here last, after the other repeat checks. A prose set group
+  // (`3 sets of 8 at 165`) is a dropped second group beside any emitted
+  // set — a bare `W R` pair (`225 3`) is consumed as a set by the parser
+  // but no group token counts it, so the sets array is the ground truth.
+  // The boolean already accounts for the documented native / plan-backed
+  // forms that cover the parser's actual rows; it is inactive when no
+  // rows are emitted.
+  if (proseVeto) return 'repeated_set_group';
   return null;
 }
 
@@ -589,7 +397,7 @@ function hasUnrecognizedSetNotation(text) {
 // for 0 sets` refuses as `mixed_set_format`: the `5/2` + `2 for 0` families
 // fire before the zero-value arm. The zero-directive arm only fires when the
 // parser dropped the directive entirely.)
-function zeroSetDirectiveMessage(text) {
+function zeroSetDirectiveMessage(text, proseVeto) {
   const t = String(text || '');
   const hasZeroRepeat = ZERO_REPEAT_DIRECTIVE.test(t);
   const hasZeroSets = ZERO_SETS_PROSE.test(t);
@@ -604,22 +412,26 @@ function zeroSetDirectiveMessage(text) {
     || [...g.matchAll(X_AT_GROUP_GLOBAL)].length > 0
     || [...g.matchAll(WXR_N_GROUP_GLOBAL)].length > 0
     || [...withoutWxrN.matchAll(BARE_WXR_TOKEN_GLOBAL)].length > 0
-    || PROSE_SET_GROUP.test(t);
+    || proseVeto;
   if (!hasGroup) return null;
   return hasZeroRepeat ? zeroRepeatMessage() : zeroSetsMessage();
 }
 
 // The single-exercise checks (PARSE-4, PARSE-5, zero-value) over one span of
 // normalized text and the sets emitted from it. Returns the refusal, or null.
-function checkSpan(parsed, rawText, text, sets) {
+// proseVeto is the span's unaccounted-prose boolean, computed by the caller
+// from the ORIGINAL span text (the detector builds its own three views);
+// checkSpan keeps the warning order — the prose arm fires in the existing
+// repeated-group slot, after the other repeat checks.
+function checkSpan(parsed, rawText, text, sets, proseVeto) {
   if (hasUnrecognizedSetNotation(text)) return ask(unrecognizedSetNotationMessage(), 'unrecognized_set_notation', parsed, rawText);
   const atValue = findAmbiguousAt(text, sets);
   if (atValue) return ask(ambiguousAtMessage(atValue), 'ambiguous_at_value', parsed, rawText);
-  const repeated = hasRepeatedSetGroup(text, sets);
+  const repeated = hasRepeatedSetGroup(text, sets, proseVeto);
   if (repeated) return ask(repeatedSetGroupMessage(), repeated, parsed, rawText);
   if (countFamilies(text) >= 2) return ask(mixedFormatMessage(), 'mixed_set_format', parsed, rawText);
   if (hasZeroValueSet(sets)) return ask(zeroValueMessage(), 'zero_set_value', parsed, rawText);
-  const zdm = zeroSetDirectiveMessage(text);
+  const zdm = zeroSetDirectiveMessage(text, proseVeto);
   if (zdm) return ask(zdm, 'zero_set_directive', parsed, rawText);
   return null;
 }
@@ -634,10 +446,13 @@ function applyMultiGate(parsed, rawText) {
 
   // (1) Per-child checks, over each child's own consumed span (its raw_text)
   // with that child's emitted sets — the precise mirror of the per-segment parse.
+  // The prose boolean is the child's own: its raw_text with its own rows.
   for (const child of exercises) {
     const childText = normalizeGateText(child.raw_text || '');
     if (!childText) continue;
-    const refused = checkSpan(parsed, rawText, childText, child.sets);
+    const childSets = Array.isArray(child.sets) ? child.sets : [];
+    const childProse = hasUnaccountedProseFrame(child.raw_text || '', childSets, namesFrom(child));
+    const refused = checkSpan(parsed, rawText, childText, childSets, childProse);
     if (refused) return refused;
   }
 
@@ -675,13 +490,28 @@ function applyMultiGate(parsed, rawText) {
       if (uncovered.includes(childText)) uncovered = uncovered.replace(childText, ' ');
     }
     if (!uncovered.trim()) continue;
-    const refused = checkSpan(parsed, rawText, uncovered, allSets);
+    // Non-prose checks only here (spec 6): the prose predicate runs in the
+    // supplemental windows below, over located child intervals, not over
+    // this uncovered remainder — a prose frame in uncovered text is a
+    // window matter, and a line-level prose veto here would refuse turns
+    // whose frame lives inside a surfaced unresolved line.
+    const refused = checkSpan(parsed, rawText, uncovered, allSets, false);
     if (refused) return refused;
   }
 
   // (3) Zero-value sets across all children (already covered per-child above,
   // but a child without raw_text skips step 1 — catch its sets here).
   if (hasZeroValueSet(allSets)) return ask(zeroValueMessage(), 'zero_set_value', parsed, rawText);
+
+  // (4) Supplemental prose windows (spec 6): per-view flattened windows
+  // around the located children, with positively surfaced unresolved lines
+  // as hard cuts. A window veto refuses the turn the same way.
+  const unresolvedOriginals = (Array.isArray(parsed.unresolved) ? parsed.unresolved : [])
+    .map(u => u.line || '')
+    .filter(Boolean);
+  if (hasUnaccountedProseInMultiWindows(rawText, exercises, unresolvedOriginals, allSets)) {
+    return ask(repeatedSetGroupMessage(), 'repeated_set_group', parsed, rawText);
+  }
 
   return parsed;
 }
@@ -740,6 +570,12 @@ function applyFullConsumptionGate(parsed, rawText) {
   if (!text) return parsed;
 
   const sets = Array.isArray(parsed.sets) ? parsed.sets : [];
+  const names = namesFrom(parsed);
+  // The complete-entry prose decision (spec 6): the whole span's
+  // unaccounted-prose boolean, from the ORIGINAL text — the detector
+  // builds its own three views. A whole refusal caused by this boolean
+  // survives the rescue suppression below.
+  const wholeProseVeto = hasUnaccountedProseFrame(rawText, sets, names);
   // Multiline turns resolve per-line when the blob dead-ends (rescue): each
   // line is the parser's consumption unit, so check each line on its own
   // first — a within-line drop (two x@ groups on one line, a WxRxN beside a
@@ -751,20 +587,29 @@ function applyFullConsumptionGate(parsed, rawText) {
   // A blob-flattened turn keeps its whole-text refusal: x@-first (no rescue
   // shape — x@ is not a set token) and a contextual-alias-only repeat
   // (`press` alone) both still drop.
-  const lines = String(rawText || '')
+  // A line's prose boolean is enabled only when BOTH the complete-entry
+  // decision and the local line decision veto it (spec 6); a whole refusal
+  // with an unaccounted prose frame survives the rescue suppression.
+  const linePairs = String(rawText || '')
     .split(/\r?\n/)
-    .map(line => normalizeGateText(line).trim())
-    .filter(Boolean);
-  if (lines.length > 1) {
-    for (const line of lines) {
-      const refused = checkSpan(parsed, rawText, line, sets);
+    .map(line => ({ original: line, normalized: normalizeGateText(line).trim() }))
+    .filter(pair => pair.normalized);
+  if (linePairs.length > 1) {
+    for (const pair of linePairs) {
+      const localProse = hasUnaccountedProseFrame(pair.original, sets, names);
+      const refused = checkSpan(parsed, rawText, pair.normalized, sets,
+        wholeProseVeto && localProse);
       if (refused) return refused;
     }
-    const whole = checkSpan(parsed, rawText, text, sets);
-    if (whole && !isMultilineRescueShape(text)) return whole;
+    const whole = checkSpan(parsed, rawText, text, sets, wholeProseVeto);
+    const wholeProseCaused = wholeProseVeto
+      && !hasUnrecognizedSetNotation(text)
+      && !findAmbiguousAt(text, sets)
+      && !hasRepeatedSetGroup(text, sets, false);
+    if (whole && (!isMultilineRescueShape(text) || wholeProseCaused)) return whole;
     return parsed;
   }
-  return checkSpan(parsed, rawText, text, sets) || parsed;
+  return checkSpan(parsed, rawText, text, sets, wholeProseVeto) || parsed;
 }
 
 module.exports = { applyFullConsumptionGate };
