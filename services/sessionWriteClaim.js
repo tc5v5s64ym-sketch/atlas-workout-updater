@@ -1,7 +1,9 @@
 'use strict';
 
 // #1629 — a session-scoped uniqueness claim for /api/log-workout's
-// read-check-append sequence.
+// read-check-append sequence, extended by #1801 to /api/complete-workout.
+// (The #1801 keys are namespaced — see the boundary note below — so the
+// two routes never serialize against each other.)
 //
 // The write_id idempotency store (services/idempotency.js) admits one record
 // per write_id, so two overlapping saves carrying DIFFERENT write_ids are
@@ -24,21 +26,31 @@
 //     its new rows, serialized, because the row partition filters exact
 //     duplicates only.
 //   · Release is explicit at every exit of the guarded section, next to the
-//     existing completeWrite/failWrite call. Two backstops bound a missed
+//     existing completeWrite/failWrite call (in /api/log-workout;
+//     /api/complete-workout releases once from the handler's outer finally
+//     instead — see the #1801 block in index.js). Two backstops bound a missed
 //     release: a waiter times out to 409 in-progress (the old behavior),
 //     and a claim older than STALE_CLAIM_MS is evicted by the next
 //     acquirer, so a wedged claim cannot block a session forever.
 //   · The claim is session-scoped, not global and not content-scoped:
 //     different sessions never block each other, and the row-level
 //     partition — not the claim — decides which rows are duplicates.
+//     For /api/complete-workout's server-minted path the key is the
+//     session DATE, because the allocation the claim protects is per-date
+//     and the id does not exist before the claim.
 //
-// Deliberate boundary: this serializes /api/log-workout only. Other routes
-// that append to the same tabs (e.g. /api/complete-workout) are out of
-// #1629's scope; a cross-route claim is a larger design question, not a
-// bounded fix. Likewise, if the deployment ever scales past one web
-// process, an in-process claim no longer serializes across instances —
-// that is the durable operation-receipt schema decision, which stays
-// Dale's call and is NOT taken here.
+// Deliberate boundary: this serializes /api/log-workout (#1629, bare
+// session-id keys) and /api/complete-workout (#1801, namespaced keys:
+// `complete-workout:session:<id>` when the client supplied an id, plus
+// `complete-workout:date:<date>` on every live call — the date key is
+// what serializes allocation; see the #1801 block in index.js). The
+// namespaces keep the routes' contention separate — a complete-workout
+// never blocks a log-workout and vice versa. A cross-route claim (one
+// claim spanning both routes for the same session) is a larger design
+// question, not a bounded fix. Likewise, if the deployment ever scales
+// past one web process, an in-process claim no longer serializes across
+// instances — that is the durable operation-receipt schema decision,
+// which stays Dale's call and is NOT taken here.
 
 const SESSION_CLAIM_WAIT_MS = 30000;
 const STALE_CLAIM_MS = 120000;

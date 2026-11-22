@@ -3442,6 +3442,10 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
   // flips true once the full response is recorded via completeWrite.
   let writeCommitted = false;
   let liveWriteRecorded = false;
+  // #1801 — the session claims held by this request (empty until acquired
+  // below, just before step 4). Declared here so the outer finally can
+  // release them.
+  const sessionClaims = [];
 
   // log_rows_json is required
   if (!formFields.log_rows_json) {
@@ -3628,6 +3632,60 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       manualDate: manualDateRaw
     });
     const dateSource = manualDateGiven ? 'manual' : 'today_fallback';
+
+    // #1801 — session claim BEFORE any allocation. beginWrite admits one
+    // record per write_id, so two overlapping completions carrying DIFFERENT
+    // write_ids are both admitted and both run read-check-allocate-append
+    // against the same pre-append snapshot: the same-session race appends
+    // twice (B01) and the same-date race mints one session id for two
+    // workouts (B02). The claim serializes the whole read-check-allocate-
+    // append window, so the waiter re-reads fresh state after the holder
+    // releases and lands on the route's existing truthful verdict instead
+    // of a copy. Keys: BOTH, always — the session key when the client
+    // supplied an id, plus the date key. Either-or keys leave a seam: a
+    // supplied-id call and a server-minted call take different keys, so
+    // nothing serializes them and the minted call mints the supplied id
+    // out from under it (V5). The date key is needed because allocation
+    // is per-date and a minted id does not exist before the claim. Keys
+    // are namespaced to this route, so the claim never serializes against
+    // /api/log-workout — cross-route serialization stays the write-identity
+    // design question, not this fix. Acquire session first, then date, with
+    // no await between the two synchronous acquisitions: ordered
+    // acquisition is deadlock-free (a waiter on the date key holds at most
+    // the session key; a waiter on the session key holds nothing; a minted
+    // call never waits on a session key — so no wait cycle exists). Each
+    // key waits and retries in turn; a timeout on either key (30s) refuses
+    // 409 in-progress, the log-workout behaviour, and the outer finally
+    // releases any key already held. Previews (test_mode) never acquire:
+    // they write nothing. Release is the outer finally below — one release
+    // point for every exit after this line, so a missed return cannot leak
+    // a claim. Nothing is admitted before the claim, so a timeout needs no
+    // failWrite.
+    if (!testMode) {
+      const claimKeys = [];
+      if (formFields.session_id) {
+        claimKeys.push({
+          key: `complete-workout:session:${String(formFields.session_id).trim().toLowerCase()}`,
+          busyMessage: 'Duplicate session; another completion for this session is already in progress. Retry after it completes.',
+        });
+      }
+      claimKeys.push({
+        key: `complete-workout:date:${dateValue}`,
+        busyMessage: 'Another completion for this date is already in progress. Retry after it completes.',
+      });
+      for (const { key, busyMessage } of claimKeys) {
+        let claim = acquireSessionClaim(key);
+        while (!claim.acquired) {
+          const holderReleased = await waitForSessionClaim(claim.wait);
+          if (!holderReleased) {
+            if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
+            return standardError(req, res, busyMessage, null, 409);
+          }
+          claim = acquireSessionClaim(key);
+        }
+        sessionClaims.push({ key, token: claim.token });
+      }
+    }
 
     // 4) Check duplicate session protection — fetch existing IDs first so we
     // can auto-increment the counter when two sessions share the same day/period.
@@ -4493,6 +4551,11 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
     }
     return standardError(req, res, 'Failed to complete workout ingestion', { error: error.message, safeWrite: true }, 500);
   } finally {
+    // #1801 — release every session claim held by this request. The
+    // finally runs on every exit from the try (returns and throws alike),
+    // so no return path after the claim can leak one; previews and
+    // pre-acquisition exits hold no claim and the loop is a no-op.
+    for (const held of sessionClaims) releaseSessionClaim(held.key, held.token);
     if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
   }
 });
