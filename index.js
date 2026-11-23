@@ -73,7 +73,8 @@ const {
   evaluateCurrentDeload,
 } = require('./services/deloadEngine');
 // eslint-disable-next-line no-unused-vars -- roundLoad imported here; phase-2 deload wiring will use it
-const { selectProtocol, roundLoad, computePrescription } = require('./services/deloadProtocols');
+const { selectProtocol, roundLoad } = require('./services/deloadProtocols');
+const { applyDeloadOverlay } = require('./services/deloadOverlay');
 const {
   beginWrite,
   peekWrite,
@@ -2828,20 +2829,13 @@ app.get('/api/recommend/next/:liftCode', async (req, res) => {
     // normal day: cut the load by the protocol's load_multiplier and show the
     // protocol's target RIR. Weight + RIR only — the set count and the non-deload
     // path are untouched. (The card RIR is the top-level target_rir; app.js:1126.)
+    // The overlay is one choke point (services/deloadOverlay): it re-renders the
+    // prescription prose from the final decision too (#1773) — a numbers-only
+    // overlay left "Repeat 185 x 8" beside a 170 lb RIR 5 target. When
+    // next_target.weight is missing/non-positive there is no prescription and
+    // nothing is applied — surfacing a deload RIR without a deload weight is confusing.
     const activeDeload = recommendation.deload;
-    if (activeDeload && activeDeload.in_deload === true && activeDeload.protocol) {
-      const nt = recommendation.next_target;
-      const prescription = nt
-        ? computePrescription(activeDeload.protocol, { working_weight: nt.weight })
-        : null;
-      // When next_target.weight is missing/non-positive, prescription is null and
-      // neither weight nor target_rir is applied (old code set target_rir unconditionally).
-      // This is intentional: surfacing a deload RIR without a deload weight is confusing.
-      if (prescription) {
-        nt.weight = prescription.weight;
-        recommendation.target_rir = prescription.target_rir;
-      }
-    }
+    applyDeloadOverlay(recommendation, activeDeload);
     const normalizedRows = allLog
       .filter(row => Array.isArray(row) && String(row[0] || '') !== 'date_clean')
       .map(normalizeAnalyticsLogRow);
