@@ -10,6 +10,7 @@
 
 const { CARDS, getCardById } = require('./trainingKnowledgeCards');
 const { selectResponseDepth } = require('./trainingQuestionClassifier');
+const { analyzeOneRepMaxTurn } = require('./estimatedOneRepMax');
 
 function normalize(value) {
   return String(value == null ? '' : value).toLowerCase();
@@ -111,6 +112,29 @@ function renderCompare(cards) {
  */
 function buildTrainingSMEAnswer({ question, depth, cards, context } = {}) {
   const resolvedDepth = depth || selectResponseDepth(question);
+
+  // #1777 — the estimated-1RM lane claims the question FIRST, before the log_only
+  // quiet path and before card matching: a 1RM question carrying weight + reps is a
+  // computation, not a log entry and not generic education. Only a CLAIMABLE turn
+  // is served (a question or an explicit request — a statement such as "my 1RM
+  // attempt: bench 225x6" is a log line and falls through to be logged). With a
+  // set, the answer is the Epley value; without one (and not history-flavoured —
+  // that is #1778's lane), the answer asks for the set and serves NO number.
+  const oneRepMax = analyzeOneRepMaxTurn(question);
+  if (oneRepMax && oneRepMax.claimable && oneRepMax.answer) {
+    return {
+      depth: 'coach_brief',
+      answer: oneRepMax.answer,
+      cards: ['estimated_1rm_epley'],
+      confidenceLevel: 'high',
+    };
+  }
+  // A history-flavoured 1RM question with no set belongs to the history lane
+  // (#1778 owns the history-based estimate) — serve nothing here so the client
+  // falls through to /api/coach/chat, instead of the Epley card's ask-for-the-set.
+  if (oneRepMax && oneRepMax.claimable && !oneRepMax.answer) {
+    return { depth: resolvedDepth, answer: null, cards: [], confidenceLevel: null, note: 'no_matching_card' };
+  }
 
   // Stay quiet during logging — no lecture.
   if (resolvedDepth === 'log_only') {

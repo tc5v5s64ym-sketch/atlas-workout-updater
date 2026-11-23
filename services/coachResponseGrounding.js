@@ -2050,6 +2050,57 @@ function detectUngroundedHistoryNumbers(reply, facts) {
   return out;
 }
 
+/**
+ * detectUngroundedOneRepMaxNumbers(reply, facts) → [number]
+ *
+ * #1777 — flags a 1RM number a model reply states that the deterministic Epley
+ * calculator does not support. `facts` is the bound 1RM turn ({ value, weight,
+ * reps }) or null — null means the turn is not a 1RM question and nothing is
+ * judged. Empty array = grounded.
+ *
+ * Judged sentences are the ones that STATE a max: 1RM phrasing, or a max/lift
+ * verb ("hit 285", "lift 285", "bench 315"). A "3 sets of 5" prescription
+ * elsewhere in the reply carries no such verb and is not judged. With a computed
+ * value, the value, the input weight, and the input reps are the grounded
+ * numbers; any other number in a judged sentence is an ungrounded claimed max.
+ * With NO computed value (a 1RM question with no set), ANY number in a judged
+ * sentence is ungrounded — no number may be served without a set. Returns the
+ * offending numbers (not segments) so the caller can name exactly what was
+ * rejected. Pure.
+ */
+function detectUngroundedOneRepMaxNumbers(reply, facts) {
+  const f = facts && typeof facts === 'object' ? facts : null;
+  if (!f) return [];
+  const value = Number(f.value);
+  const hasValue = Number.isFinite(value);
+  const grounded = new Set([value, Number(f.weight), Number(f.reps)].filter((n) => Number.isFinite(n)));
+  const ONE_RM_PHRASE = /1\s?rm|one[\s-]?rep(?:etition)?s?\s+max(?:imum)?|estimat(?:ed|e)\s+(?:one[\s-]?rep(?:etition)?\s+)?max(?:imum)?|your\s+max|as a single|max single/i;
+  // A sentence that states a lift result without 1RM wording ("you might hit
+  // 285", "you could probably lift 285") is still a claimed max. "press on"
+  // is excluded — it is encouragement, not a lift.
+  const LIFT_VERB = /\b(max|lift\w*|hit\w*|press(?! on)|squat\w*|deadlift\w*|bench\w*|curl\w*)\b/i;
+  const out = [];
+  const seen = new Set();
+  for (const segment of segments(reply)) {
+    if (!ONE_RM_PHRASE.test(segment) && !LIFT_VERB.test(segment)) continue;
+    // Strip the term itself ("1RM" carries a digit that is not a number) and the
+    // Epley formula fragment — "(1 + 6/30)" or the bare "1 + 6/30" — the 1 and
+    // the 30 are the formula, not claimed values.
+    const clean = segment
+      .replace(/\b1\s?rm\b/gi, '')
+      .replace(/\(?1\s*\+\s*\d+\s*\/\s*30\)?/g, '');
+    const numbers = clean.match(/\d+(?:\.\d+)?/g) || [];
+    for (const raw of numbers) {
+      const n = Number(raw);
+      if (hasValue && grounded.has(n)) continue;
+      if (seen.has(n)) continue;
+      seen.add(n);
+      out.push(n);
+    }
+  }
+  return out;
+}
+
 module.exports = {
   normalize,
   nameKey,
@@ -2074,6 +2125,7 @@ module.exports = {
   detectUngroundedRecapNumbers,
   detectUngroundedPrescriptionNumbers,
   detectUngroundedHistoryNumbers,
+  detectUngroundedOneRepMaxNumbers,
   buildCoachMessageGroundingContext,
   detectUngroundedMessageNumbers,
   buildGroundedSessionStateStatement,
