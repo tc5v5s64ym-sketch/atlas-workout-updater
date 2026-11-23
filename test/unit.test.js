@@ -1603,14 +1603,21 @@ test('proposed edit: applyProposedEdit always calls invalidatePreview and never 
 // the next log's reconcile, replacing the athlete's honestly-logged value.
 // The programmatic .value set fires no 'input' event, so dropping the mark
 // leaves the field with no user-typed provenance at all.
+// #1769 (D06) refines the rule: the marker must be CLEARED, not merely left
+// unstamped — a marker the athlete stamped earlier, by hand-editing the
+// field before the model edit arrived, survived the programmatic set and
+// still blessed the replacement. So the test forbids STAMPING the marker
+// (assignment) and requires CLEARING it (delete) on a programmatic set.
 test('proposed edit: applyProposedEdit never marks a model-applied value user-edited', () => {
   const ccSource = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
   const applyBlock = ccSource.slice(
     ccSource.indexOf('function applyProposedEdit(edit)'),
     ccSource.indexOf('function getChatReply')
   );
-  assert.doesNotMatch(applyBlock, /dataset\.userEdited/,
+  assert.doesNotMatch(applyBlock, /dataset\.userEdited\s*=/,
     'applyProposedEdit must not stamp userEdited on model-applied values (B-02 buffer poisoning)');
+  assert.match(applyBlock, /delete\s+\w+\.dataset\.userEdited/,
+    'applyProposedEdit must clear a pre-existing userEdited marker when it sets a value programmatically (#1769 stale provenance)');
 });
 
 test('routine ack: the in-session reaction is tier-gated (kind:block); a completed on-plan block gets a grounded line, an intermediate set stays silent', () => {
