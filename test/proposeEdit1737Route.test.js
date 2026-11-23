@@ -156,8 +156,7 @@ test('A1706-2. Route — delete_set is identity-only: valid index passes, bad in
   assert.equal(dropped.json.data.propose_edit, null, 'an index with no row never reaches the client');
 });
 
-test('A1706-3. Route — add_set on an empty preview is dropped (no exercise-less row)', async () => {
-  resetCoach();
+test('A1706-3. Route — add_set on an empty preview is dropped (no exercise-less row)', async () => {  resetCoach();
   coachState.propose_edit = { action: 'add_set', weight: 410, reps: 12, rir: 0 };
   const emptyCtx = { ...ROUTE_CTX, current_preview: [] };
   const { res, json } = await post({ message: 'add one at 140x8', context: emptyCtx });
@@ -173,4 +172,27 @@ test('A1706-3. Route — add_set on an empty preview is dropped (no exercise-les
     { action: 'add_set', weight: 140, reps: 8 },
     'with a preview row to attach to, the athlete-stated values survive',
   );
+});
+
+// Issue #1769 (Astra D06) — the route resolves the correction through the
+// real resolver: the friend's number never reaches the client, and a purely
+// past statement drops the edit instead of binding its number.
+test('D06-R1. Route — the friend\'s number never reaches the client; the athlete\'s own does', async () => {
+  resetCoach();
+  coachState.propose_edit = { action: 'update_set', index: 0, weight: 410, reps: 12, rir: 0 };
+  const { res, json } = await post({ message: 'my friend lifted 315 lb; my set was actually 140 lb', context: ROUTE_CTX });
+  assert.equal(res.status, 200);
+  assert.deepEqual(
+    json.data.propose_edit,
+    { action: 'update_set', index: 0, weight: 140 },
+    '315 belongs to the friend; only the athlete-stated 140 survives',
+  );
+});
+
+test('D06-R2. Route — a purely past statement drops the edit (no current correction to bind)', async () => {
+  resetCoach();
+  coachState.propose_edit = { action: 'update_set', index: 0, weight: 410, reps: 12, rir: 0 };
+  const { res, json } = await post({ message: 'yesterday I did 315 lb', context: ROUTE_CTX });
+  assert.equal(res.status, 200);
+  assert.equal(json.data.propose_edit, null, 'yesterday\'s number is not today\'s correction');
 });

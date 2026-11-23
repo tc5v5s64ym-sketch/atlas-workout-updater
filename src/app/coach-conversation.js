@@ -2475,7 +2475,15 @@ import { findPlanEntry, planMismatchForLift, formatPlanMismatchLine } from './pl
       // into the buffer, so logging another set first rebuilds from the
       // buffer and the accepted value drops. Hand-edits still set userEdited
       // via the input listener (app.js) and still fold.
-      const markEdit = (cls, value) => { const i = row.querySelector(cls); i.value = String(value); };
+      // #1769 (D06): the marker is cleared, not merely left unstamped.
+      // #1732 stopped STAMPING the marker on a model-applied value, but a
+      // marker the athlete stamped EARLIER — by hand-editing this field
+      // before the model edit arrived — survived the programmatic set (no
+      // 'input' event fires, so nothing cleared it) and still blessed the
+      // replacement at the next reconcile. Provenance belongs to a
+      // value/version, not permanently to the input element: when the value
+      // is replaced programmatically, the old marker dies with the old value.
+      const markEdit = (cls, value) => { const i = row.querySelector(cls); i.value = String(value); if (i.dataset) delete i.dataset.userEdited; };
       if (edit.weight != null) markEdit('.set-weight', edit.weight);
       if (edit.reps != null) markEdit('.set-reps', edit.reps);
       if (edit.rir != null) markEdit('.set-rir', edit.rir);
