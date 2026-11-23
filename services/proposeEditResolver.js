@@ -75,7 +75,7 @@ const NUM = '(\\d+(?:\\.\\d+)?)';
 // - "8 reps" → reps.
 // - "rir 2" / "rir: 2" → rir.
 // - Correction shorthand — "really 140", "actually 140", "change set 1 to
-//   235", "make it 140": a single stated number read as the load. The
+//   235", "make it 140x8": a single stated number read as the load. The
 //   audit pins "really 140" → weight 140; athletes correcting reps say
 //   "8 reps", which the reps pattern claims first, so the shorthand never
 //   steals a number already claimed as reps/RIR.
@@ -85,7 +85,7 @@ const NUM = '(\\d+(?:\\.\\d+)?)';
 // Split on clause boundaries, never inside a decimal (140.5) or a thousands
 // group (1,000) — and never inside 'and a half/quarter' ('140 and a half'
 // is one mixed fraction, not two clauses).
-const CLAUSE_SPLIT = /[;]+|\.(?!\d)|,(?!\d)|\s+and\s+(?!a\s+(?:half|quarter)\b)|\s+but\s+|\s+so\s+|\s+then\s+|\s+yet\s+/;
+const CLAUSE_SPLIT = /[;]+|\.(?!\d)|,(?!\d)(?!\s+or\b)|\s+and\s+(?!a\s+(?:half|quarter)\b)|\s+but\s+|\s+so\s+|\s+then\s+|\s+yet\s+/;
 // A clause attributes its number to someone other than the athlete — a named
 // other ('my friend', 'the spotter', 'my training partner'), a third-person
 // pronoun, or the group ('we', 'our': the group's lift is not the athlete's
@@ -93,7 +93,7 @@ const CLAUSE_SPLIT = /[;]+|\.(?!\d)|,(?!\d)|\s+and\s+(?!a\s+(?:half|quarter)\b)|
 // role ('my old gym buddy'). Bare 'coach' is not listed: 'coach, my set was
 // 140' addresses the coach, and the comma split already separates that
 // vocative from the correction.
-const OTHER_ACTOR = /\b(?:my|the|their|his|her)\s+(?:[a-z]+\s+){0,2}(?:friend|partner|buddy|mate|spotter|brother|sister|sibling|roommate|teammate|coach|trainer|lifter|guy|girl|wife|husband|spouse|son|daughter|child|kid)s?\b|\b(?:he|she|they|him|her|them|their|his|we|us|our)\b/;
+const OTHER_ACTOR = /\b(?:my|the|their|his|her)\s+(?:[a-z]+\s+){0,3}(?:friend|partner|buddy|mate|spotter|brother|sister|sibling|roommate|teammate|coach|trainer|lifter|guy|girl|wife|husband|spouse|son|daughter|child|kid)s?\b|\b(?:he|she|they|him|her|them|their|his|we|us|our)\b/;
 // A first-person subject in the clause ('I', 'mine') makes it mixed-actor,
 // not purely other-actor — the clause survives and its numbers compete (a
 // conflicting athlete number then refuses the edit, and a sole athlete
@@ -121,7 +121,7 @@ function isNegated(text, idx) {
 function isSigned(text, idx) {
   let i = idx - 1;
   while (i >= 0 && text[i] === ' ') i -= 1;
-  return i >= 0 && text[i] === '-';
+  return i >= 0 && (text[i] === '-' || text[i] === '\u2013' || text[i] === '\u2014' || text[i] === '\u2212');
 }
 // The number is the head of a thousands group ('1,000') — not the whole
 // number. ('140, 8 reps' has a space after the comma, so it is unaffected.)
@@ -148,6 +148,15 @@ function isFraction(text, idx, len) {
   if (/^\s+and\s+a\s+(?:half|quarter)\b/.test(text.slice(j))) return true;
   // 'half of 140' / 'a quarter of 140' — the number is the fraction's base, not the weight.
   if (/(?:half|quarter)\s+of\s+$/.test(text.slice(0, idx))) return true;
+  // Digit form: '1/2 of 140' / '3/4 of 200'.
+  if (/\d+\s*\/\s*\d+\s+of\s+$/.test(text.slice(0, idx))) return true;
+  return false;
+}
+// The number sits in an 'N or M' alternative ('140 or 150') — the athlete
+// expressed uncertainty between two values, so neither binds.
+function isOrAmbiguous(text, idx, len) {
+  if (/^\s*,?\s*or\s+\d/.test(text.slice(idx + len))) return true;
+  if (/\d\s*,?\s*or\s+$/.test(text.slice(0, idx))) return true;
   return false;
 }
 // The number is stated in kilograms ('140 kg') — not a pound weight.
@@ -163,6 +172,7 @@ function isKg(text, endIdx) {
 function extractClauseValues(clause, claimed) {
   const values = {};
   const conflicts = new Set();
+  const wxrRepsIdx = new Set();
   const take = (field, value) => {
     if (value === undefined) return;
     if (values[field] === undefined) values[field] = value;
@@ -175,37 +185,49 @@ function extractClauseValues(clause, claimed) {
     if (isKg(clause, wIdx + m[1].length)) continue;
     const rIdx = m.index + m[0].lastIndexOf(m[2]);
     if (isFraction(clause, rIdx, m[2].length)) continue;
+    if (isKg(clause, m.index + m[0].length)) continue;
+    if (isOrAmbiguous(clause, wIdx, m[1].length) || isOrAmbiguous(clause, rIdx, m[2].length)) continue;
+    wxrRepsIdx.add(rIdx);
     take('weight', Number(m[1]));
     take('reps', Number(m[2]));
   }
   // Weight with a unit — '140 lb' / '137.5 pounds'.
   for (const m of clause.matchAll(new RegExp(`${NUM}\\s*(?:lb|lbs|pounds?)\\b`, 'g'))) {
     const wIdx = numberIndex(m);
+    if (wxrRepsIdx.has(wIdx)) continue;
+    if (claimed && claimed.reps.has(Number(m[1]))) continue;
     if (isNegated(clause, wIdx) || isSigned(clause, wIdx) || isFraction(clause, wIdx, m[1].length) || isThousandsHead(clause, wIdx, m[1].length)) continue;
+    if (isOrAmbiguous(clause, wIdx, m[1].length)) continue;
     take('weight', Number(m[1]));
   }
   // Reps — '8 reps'.
   for (const m of clause.matchAll(/(\d+)\s*reps?\b/g)) {
     const rIdx = numberIndex(m);
     if (isNegated(clause, rIdx) || isSigned(clause, rIdx) || isFraction(clause, rIdx, m[1].length) || isThousandsHead(clause, rIdx, m[1].length)) continue;
+    if (isOrAmbiguous(clause, rIdx, m[1].length)) continue;
     take('reps', Number(m[1]));
   }
   // RIR — 'rir 2' / 'rir: 2'.
   for (const m of clause.matchAll(/rir\s*(?:of|:|=)?\s*(\d+(?:\.\d+)?)/g)) {
     const rIdx = numberIndex(m);
     if (isNegated(clause, rIdx) || isSigned(clause, rIdx) || isFraction(clause, rIdx, m[1].length) || isThousandsHead(clause, rIdx, m[1].length)) continue;
+    if (isOrAmbiguous(clause, rIdx, m[1].length)) continue;
     take('rir', Number(m[1]));
   }
   // Correction shorthand — 'really 140', 'actually 140', 'change set 1 to
-  // 235', 'make it 140', 'no wait 150' (a self-correction: the 'no wait'
+  // 235', 'make it 140x8', 'no wait 150' (a self-correction: the 'no wait'
   // number supersedes, so it competes with — and can refuse — an earlier
   // number in the message): a single stated number read as the load. Never
   // steal a number already claimed as reps/RIR — in this clause or anywhere
   // else in the surviving message ('that was 8 reps' / 'really 8').
   for (const m of clause.matchAll(/(?:really|actually|meant|should be|was|it was|to|at|no\s+wait)\s+(\d+(?:\.\d+)?)\b/g)) {
     const wIdx = numberIndex(m);
+    if (wxrRepsIdx.has(wIdx)) continue;
     if (isNegated(clause, wIdx) || isSigned(clause, wIdx) || isFraction(clause, wIdx, m[1].length) || isThousandsHead(clause, wIdx, m[1].length)) continue;
     if (isKg(clause, wIdx + m[1].length)) continue;
+    if (isOrAmbiguous(clause, wIdx, m[1].length)) continue;
+    // 'was 140 x 8 kg' — the number heads a WxR phrase stated in kg.
+    if (/^\s*[x\u00d7]\s*\d+\s*(?:kg|kgs|kilo|kilos|kilogram|kilograms)\b/.test(clause.slice(wIdx + m[1].length))) continue;
     const v = Number(m[1]);
     if (v === values.reps || v === values.rir) continue;
     if (claimed && (claimed.reps.has(v) || claimed.rir.has(v))) continue;

@@ -174,3 +174,60 @@ test('D06-C1. controls — the #1737 pinned behaviors still bind', () => {
     'the athlete\'s own WxR still binds beside a friend clause',
   );
 });
+
+// Pre-review regressions (fresh-context adversarial pass on head 9f893a07:
+// NOT READY, 5 blocking + 3 advisory). Each P-probe failed on 9f893a07
+// (verified by direct execution) and passes with the fixes in
+// services/proposeEditResolver.js. A1 (bare proper name binds) is a
+// documented limitation, not a probe: the text is lowercased first, so no
+// deterministic fix exists. A4 (applyUpdateToLastRow keeps the marker) is
+// intentionally not fixed: that value is deterministic athlete-parsed text,
+// and clearing the marker there would drop the athlete's update on rebuild.
+
+test('D06-P1. REGRESSION (pre-review B1): a WxR weight with a trailing unit keeps the weight', () => {
+  assert.deepEqual(extractAthleteValues('my set was 140x8 lb'), { weight: 140, reps: 8 });
+  assert.deepEqual(extractAthleteValues('my set was 140 x 8 lb'), { weight: 140, reps: 8 });
+  assert.deepEqual(extractAthleteValues('my set was 140x8 pounds'), { weight: 140, reps: 8 });
+  assert.deepEqual(extractAthleteValues('my set was 140x8lb'), { weight: 140, reps: 8 });
+  assert.deepEqual(extractAthleteValues('my set was 140x8, 8 lb'), { weight: 140, reps: 8 });
+  assert.deepEqual(
+    resolveProposeEdit(MODEL_EDIT, 'my set was 140x8 lb', PREVIEW),
+    { action: 'update_set', index: 0, weight: 140, reps: 8 },
+  );
+});
+
+test('D06-P2. kg via WxR (pre-review B2): a WxR stated in kg never binds as lb', () => {
+  assert.deepEqual(extractAthleteValues('my set was 140x8 kg'), {});
+  assert.deepEqual(extractAthleteValues('my set was 140 x 8 kg'), {});
+});
+
+test('D06-P3. digit fraction-of (pre-review B3): "1/2 of 140 lb" is 70 lb, never 140', () => {
+  assert.deepEqual(extractAthleteValues('my set was 1/2 of 140 lb'), {});
+  assert.deepEqual(extractAthleteValues('my set was 3/4 of 200 lb'), {});
+});
+
+test('D06-P4. "or" ambiguity (pre-review B4): "140 or 150" binds neither', () => {
+  assert.deepEqual(extractAthleteValues('my set was 140 or 150'), {});
+  assert.deepEqual(extractAthleteValues('my set was 140, or 150'), {});
+  assert.deepEqual(
+    extractAthleteValues('my set was 140 lb or 8 reps'),
+    { weight: 140, reps: 8 },
+    'an "or" across different fields still binds both',
+  );
+});
+
+test('D06-P5. longer role phrases (pre-review B5): a three-word role still belongs to the other actor', () => {
+  assert.equal(
+    resolveProposeEdit(MODEL_EDIT, 'my very old gym buddy did 315 lb', PREVIEW),
+    null,
+  );
+  assert.deepEqual(
+    resolveProposeEdit(MODEL_EDIT, 'my very old gym buddy did 315 lb; my set was 140 lb', PREVIEW),
+    { action: 'update_set', index: 0, weight: 140 },
+  );
+});
+
+test('D06-P6. unicode minus (pre-review A2): an en-dash/minus-signed number is dropped like ASCII "-"', () => {
+  assert.deepEqual(extractAthleteValues('my set was –140 lb'), {});
+  assert.deepEqual(extractAthleteValues('my set was −140 lb'), {});
+});
