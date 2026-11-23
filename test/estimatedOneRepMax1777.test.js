@@ -12,7 +12,7 @@ const assert = require('node:assert/strict');
 process.env.ATLAS_API_KEY = 'test-key-1777';
 process.env.GOOGLE_SHEETS_ID = 'stub-sheet';
 process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = 'stub@example.com';
-process.env.GOOGLE_PRIVATE_KEY = '-----BEGIN PRIVATE KEY-----\nstub\n-----END PRIVATE KEY-----';
+process.env.GOOGLE_PRIVATE_KEY = 'stub-private-key-sheets-is-stubbed';
 delete process.env.ATLAS_INTERACTION_TRACE;
 process.env.ATLAS_PROFILE_GOAL = 'strength';
 
