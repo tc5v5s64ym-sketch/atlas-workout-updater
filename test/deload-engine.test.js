@@ -181,7 +181,9 @@ test('resolvePostDeload returns to NORMAL, and rejects from any other state', as
   assert.equal(back.training_state, STATES.NORMAL);
 
   await assert.rejects(
-    () => resolvePostDeload({ currentState: { training_state: STATES.DELOAD_ACTIVE } }),
+    // A complete active state (valid protocol) so the lifecycle rejection —
+    // not the soundness check — is what fires.
+    () => resolvePostDeload({ currentState: { training_state: STATES.DELOAD_ACTIVE, deload_protocol: 'STRENGTH_DELOAD_V1', deload_sessions_remaining: 1 } }),
     /not in POST_DELOAD_EVALUATION/
   );
 });

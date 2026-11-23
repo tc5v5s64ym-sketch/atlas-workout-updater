@@ -80,6 +80,15 @@ const PROTOCOLS = Object.freeze({
   ENDURANCE_DELOAD_V1
 });
 
+// A persisted or in-memory protocol id is recognized only when it names one of
+// the frozen protocols, exactly (case-sensitive). Anything else — empty, typo,
+// lowercase, numeric, JSON-shaped — is damaged data, never a protocol (#1771,
+// C-02). The hasOwnProperty check matters: `in` would also match inherited
+// Object members ('toString', ...), which must never read as a protocol.
+function isRecognizedProtocol(value) {
+  return typeof value === 'string' && Object.prototype.hasOwnProperty.call(PROTOCOLS, value);
+}
+
 // Map a training focus to its protocol. Strength is the default fallback for an
 // unknown/missing focus — it is the most conservative cut (0.92 load), so an
 // unclassified lifter is never over-deloaded. Selection is the engine's job;
@@ -145,6 +154,7 @@ module.exports = {
   POWER_DELOAD_V1,
   ENDURANCE_DELOAD_V1,
   PROTOCOLS,
+  isRecognizedProtocol,
   selectProtocol,
   computePrescription,
   roundLoad

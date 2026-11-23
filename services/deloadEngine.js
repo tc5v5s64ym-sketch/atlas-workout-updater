@@ -21,7 +21,7 @@ const { evaluate } = require('./deloadEscalationLadder');
 const { PROTOCOLS } = require('./deloadProtocols');
 const { STATES, isState, isActiveDeload, transition } = require('./deloadStateMachine');
 const {
-  defaultDeloadState, readCurrentDeloadState, appendDeloadState
+  defaultDeloadState, readCurrentDeloadState, appendDeloadState, assertDeloadStateSound
 } = require('./deloadState');
 
 /* ============================ adapter ============================ */
@@ -115,7 +115,16 @@ function normalizeCurrentState(currentState) {
       `Unrecognized Deload_State training_state: ${JSON.stringify(ts)} (refusing to evaluate as NORMAL)`
     );
   }
-  return { ...base, ...currentState, training_state: currentState.training_state || base.training_state };
+  const merged = { ...base, ...currentState, training_state: currentState.training_state || base.training_state };
+  // The protocol and counter are validated the same way as on the read/write
+  // paths (#1771, C-02): an active deload with an empty/typo/lowercase/numeric/
+  // JSON-shaped protocol must never reach the active branch below, where it
+  // would resolve to protocol:null and every consumer would fill the gap with
+  // the full-load prescription. A garbage counter must never read as 0 and end
+  // the deload early. This is the choke point for every engine entry point —
+  // evaluate, begin, record, resolve — including states built in-memory.
+  assertDeloadStateSound(merged);
+  return merged;
 }
 
 // The session focus that selects the protocol when a deload is offered: the focus
