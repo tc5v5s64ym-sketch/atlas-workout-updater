@@ -25,6 +25,7 @@ const {
 } = require('../sheets');
 const coach = require('../services/coach');
 const trainingSME = require('../services/trainingSME');
+const { analyzeOneRepMaxTurn } = require('../services/estimatedOneRepMax');
 const { scoreIntents, buildRecentSessions, detectStalls, computeFatigueStatus, recommendNextSet, suggestDeloads, todayIso, normalizeLogRow } = require('../services/analytics');
 const { enrichCoachFacts, confirmTodayNewGround, cleanLogForLift, buildLiveSetContext, flightRecorderContext } = require('../services/liveIntelligence');
 const { buildAthleteIdentity } = require('../services/athleteIdentity');
@@ -1299,6 +1300,15 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
       : null;
     const history = Array.isArray(req.body && req.body.history) ? req.body.history : [];
 
+    // #1777 — the estimated-1RM turn analysis, computed ONCE here (message-only,
+    // pure) and reused by the deterministic lane, the model-down fallback, and
+    // the 1RM backstop below, so all three judge the same parse. Null when the
+    // message is not a 1RM question. When it has an answer, that answer is the
+    // calculator's value (or the ask-for-the-set when no set was given); when
+    // the answer is null the question is history-flavoured and belongs to the
+    // history lane, not this one.
+    const oneRepMaxTurn = analyzeOneRepMaxTurn(message);
+
     // Fable fix 13 (#1719): the current in-progress session id for the history
     // lane — an explicit client session id first, else the canonical
     // session's id. Null when the client supplies neither (the common case:
@@ -1390,6 +1400,23 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
     // would otherwise swallow it as a terse fact instead of letting it reach the
     // reassure voice. A tired message is NOT bypassed here — recovery still owns it.
     if (!reassureBypass && !warmupDefer) {
+      // #1777 — estimated-1RM lane, FIRST among the deterministic lift-answer
+      // lanes: a 1RM question carrying weight + reps is a computation from the
+      // message itself, so it is answered from the Epley value before the model
+      // is consulted — the model can never word a different number for it. A
+      // 1RM question with no set is answered by asking for the set (no number).
+      // A history-flavoured 1RM question (answer null) is NOT claimed here; it
+      // falls through to the history lane below. Guarded by the reassure bypass
+      // like the other lift-answer lanes (Owner Decision 1): an explicitly
+      // discouraged 1RM question reaches the reassure voice, and the 1RM
+      // backstop below guards the number on that path instead.
+      if (oneRepMaxTurn && oneRepMaxTurn.claimable && oneRepMaxTurn.answer) {
+        return standardSuccess(req, res, 'Coach chat — estimated 1RM (deterministic)', {
+          message: oneRepMaxTurn.answer, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
+          configured: coach.isConfigured(), model: coach.coachModel(), source: 'engine'
+        });
+      }
+
       // P0 follow-up (2026-06-21): BARE in-session shorthand ("RIR?", "Reps?",
       // "How much?", "How many sets?") is answered deterministically from the CURRENT
       // lift — whether or not Gemini is up — so the lifter gets the current-lift fact,
@@ -1545,6 +1572,13 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
         today: todayIso(),
       });
       if (historyAns) return historyAns.text;
+      // #1777 — estimated-1RM lane on the model-down path, after the history
+      // lane (a past-tense 1RM question belongs to history, not to this lane)
+      // and before buildSessionQuestionAnswer (which would otherwise answer a
+      // 1RM question with the recommended next target — a prescription, not an
+      // estimate). The reassure bypass does not apply here: the model already
+      // failed or is down, so the deterministic value is the honest answer.
+      if (oneRepMaxTurn && oneRepMaxTurn.claimable && oneRepMaxTurn.answer) return oneRepMaxTurn.answer;
       const valueAnswer = buildSessionQuestionAnswer(message, {
         history,
         clientContext: clientCtx,
@@ -2025,6 +2059,28 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
         const grounded = coachResponseGrounding.buildGroundedSessionStateStatement(llmContext);
         return standardSuccess(req, res, 'Coach chat — grounded (ungrounded prescription numbers rejected)', {
           message: grounded, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
+          configured: true, model: coach.coachModel(), source: 'engine'
+        });
+      }
+      // Estimated-1RM BACKSTOP (#1777). A 1RM turn that reaches the model does so
+      // only via the reassure bypass (an explicitly discouraged question) — the
+      // deterministic lane claims every other 1RM turn above. On that path the
+      // model may word the estimate, but it may never state a different 1RM
+      // number: a reply claiming a max other than the calculator's value is
+      // replaced with the deterministic Epley answer, and any proposal is
+      // dropped — a turn that misstates the estimate is not a trustworthy
+      // proposal. With no set parsed, ANY number in a 1RM sentence is
+      // ungrounded (no number may be served without a set) and the reply is
+      // replaced with the ask-for-the-set. A history-flavoured 1RM question
+      // (answer null) carries no 1RM turn to judge and is not caught here.
+      if (hasSafeReply && oneRepMaxTurn && oneRepMaxTurn.answer
+        && coachResponseGrounding.detectUngroundedOneRepMaxNumbers(reply, {
+          value: oneRepMaxTurn.value,
+          weight: oneRepMaxTurn.set ? oneRepMaxTurn.set.weight : null,
+          reps: oneRepMaxTurn.set ? oneRepMaxTurn.set.reps : null,
+        }).length > 0) {
+        return standardSuccess(req, res, 'Coach chat — grounded (ungrounded 1RM number rejected)', {
+          message: oneRepMaxTurn.answer, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
           configured: true, model: coach.coachModel(), source: 'engine'
         });
       }

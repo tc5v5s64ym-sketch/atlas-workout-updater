@@ -27,6 +27,7 @@ const EXPECTED_IDS = [
   'plateaus',
   'pain_vs_soreness',
   'program_splits',
+  'estimated_1rm_epley',
 ];
 
 const REQUIRED_FIELDS = [
@@ -45,7 +46,7 @@ const REQUIRED_FIELDS = [
 
 const ALLOWED_CONFIDENCE = new Set(['high', 'moderate', 'emerging', 'context_dependent']);
 
-test('all 20 expected card ids exist', () => {
+test('all 21 expected card ids exist', () => {
   assert.equal(CARDS.length, EXPECTED_IDS.length);
   for (const id of EXPECTED_IDS) {
     assert.ok(getCardById(id), `missing card: ${id}`);
