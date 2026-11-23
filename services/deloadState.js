@@ -20,6 +20,7 @@
 const sheets = require('../sheets');
 const { deloadStateColumns } = require('../config/columns');
 const { STATES, isState } = require('./deloadStateMachine');
+const { isRecognizedProtocol } = require('./deloadProtocols');
 
 const DELOAD_STATE_TAB = process.env.DELOAD_STATE_SHEET_NAME || 'Deload_State';
 
@@ -46,15 +47,50 @@ function cell(value) {
   return s === '' ? null : s;
 }
 
+// A state object is sound only when its protocol and counter can be trusted:
+//   - a non-null protocol must name a frozen protocol, exactly; an active
+//     deload additionally REQUIRES one (#1771, C-02). An empty / typo /
+//     lowercase / numeric / JSON-shaped protocol on an otherwise active deload
+//     used to read as "no protocol", and every consumer filled the gap with
+//     the full-load prescription. A damaged protocol now fails closed here,
+//     at the read, write, and in-memory choke points alike — never silently
+//     as "no deload".
+//   - sessions_remaining must be a finite non-negative integer (null/undefined
+//     means "not specified" and reads as 0). A present-but-garbage counter
+//     used to read as 0, which ends the deload after one session and restores
+//     full load early — the same defect class, so it fails closed too.
+// Throws on any violation; callers let the throw propagate (never a default).
+function assertDeloadStateSound(state) {
+  const protocol = state.deload_protocol;
+  if (protocol !== null && protocol !== undefined && !isRecognizedProtocol(protocol)) {
+    throw new Error(
+      `Unrecognized Deload_State deload_protocol: ${JSON.stringify(protocol)} (an active deload requires a complete recognized protocol; refusing to evaluate as NORMAL)`
+    );
+  }
+  if (state.training_state === STATES.DELOAD_ACTIVE && (protocol === null || protocol === undefined)) {
+    throw new Error(
+      'DELOAD_ACTIVE state requires a recognized deload_protocol (got null; refusing to evaluate as NORMAL)'
+    );
+  }
+  const sessionsRaw = state.deload_sessions_remaining;
+  const n = sessionsRaw === null || sessionsRaw === undefined ? 0 : Number(sessionsRaw);
+  if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) {
+    throw new Error(
+      `Unrecognized Deload_State deload_sessions_remaining: ${JSON.stringify(state.deload_sessions_remaining)} (counter must be a finite non-negative integer; refusing to read it as 0)`
+    );
+  }
+}
+
 // A sheet row (array, in deloadStateColumns order) → a state object.
 function rowToState(row) {
   const arr = Array.isArray(row) ? row : [];
   const state = {};
   deloadStateColumns.forEach((col, i) => { state[col] = cell(arr[i]); });
 
-  // sessions_remaining is numeric; a missing/garbage value reads as 0.
-  const n = Number(state.deload_sessions_remaining);
-  state.deload_sessions_remaining = Number.isFinite(n) ? n : 0;
+  // sessions_remaining is numeric; a missing/empty cell reads as 0. A present
+  // cell is kept as its number (NaN included) so the soundness check below can
+  // fail closed on garbage instead of masking it as 0 (#1771, C-02).
+  state.deload_sessions_remaining = Number(state.deload_sessions_remaining);
   // training_state must be a real state. An unrecognized cell is DAMAGED persisted
   // data — fail closed (throw) rather than silently reading it as NORMAL: a
   // damaged last row mid-deload would otherwise lift the deload and serve a
@@ -68,6 +104,7 @@ function rowToState(row) {
       `Unrecognized Deload_State training_state: ${JSON.stringify(state.training_state)} (last row is damaged; refusing to assume NORMAL)`
     );
   }
+  assertDeloadStateSound(state);
   return state;
 }
 
@@ -101,19 +138,27 @@ async function ensureHeaderRow() {
 
 // Read the lifter's current training state — the last row of Deload_State, or the
 // default NORMAL state when the tab is empty/absent. Deload_State is an OPTIONAL
-// tab (config/sheetContract.js): a missing or unreadable tab is simply "no deload
-// yet", so degrade to NORMAL rather than throw — otherwise read-only callers that
-// now consult deload state (e.g. /api/recommend/next) would 500 on a spreadsheet
-// where the tab was never created. A present last row whose training_state is
-// unrecognized is different: that is damaged persisted data, and rowToState fails
-// closed (throws) rather than reading it as NORMAL (#1734, probe B3-08) — the
-// throw propagates from here so no caller can prescribe as if no deload existed.
+// tab (config/sheetContract.js): a tab CONFIRMED missing is "no deload yet", so
+// it degrades to NORMAL. Any other read failure is unreadable state — it must
+// never authorize a normal-load prescription (#1771, C-02), so it throws and
+// the caller fails closed (500 on /api/recommend/next, edit dropped on the
+// plan-edit path). Absence is established only by confirmTabMissing (metadata
+// read + tab not listed), never inferred from the error wording: the same
+// "Unable to parse range" also fires for a malformed range on an existing tab.
+// A present last row whose training_state/protocol/counter is unrecognized is
+// damaged persisted data, and rowToState fails closed (throws) rather than
+// reading it as NORMAL (#1734, probe B3-08; #1771, C-02) — the throw
+// propagates from here so no caller can prescribe as if no deload existed.
 async function readCurrentDeloadState() {
   let rows;
   try {
     rows = await sheets.getSheetRows(DELOAD_STATE_TAB);
-  } catch {
-    return defaultDeloadState();
+  } catch (error) {
+    if (typeof sheets.confirmTabMissing === 'function'
+      && await sheets.confirmTabMissing(error, DELOAD_STATE_TAB)) {
+      return defaultDeloadState();
+    }
+    throw error;
   }
   if (!Array.isArray(rows) || rows.length === 0) return defaultDeloadState();
   return rowToState(rows[rows.length - 1]);
@@ -121,7 +166,10 @@ async function readCurrentDeloadState() {
 
 // Append a new state record. Stamps updated_at (ISO) when absent and validates
 // training_state — persisting an unknown state would be a loud bug, not a silent
-// NORMAL. Returns the normalized record that was written.
+// NORMAL. The protocol and counter are validated the same way before anything is
+// written (not even the header): a damaged protocol or counter must never reach
+// the sheet, where the next read would have to fail closed on it (#1771, C-02).
+// Returns the normalized record that was written.
 async function appendDeloadState(state = {}) {
   if (!isState(state.training_state)) {
     throw new Error(`Cannot persist unknown training_state: ${JSON.stringify(state.training_state)}`);
@@ -131,6 +179,7 @@ async function appendDeloadState(state = {}) {
     ...state,
     updated_at: state.updated_at || new Date().toISOString()
   };
+  assertDeloadStateSound(record);
   await ensureHeaderRow();
   await sheets.appendRows(DELOAD_STATE_TAB, [stateToRow(record)]);
   return record;
@@ -138,6 +187,7 @@ async function appendDeloadState(state = {}) {
 
 module.exports = {
   DELOAD_STATE_TAB,
+  assertDeloadStateSound,
   defaultDeloadState,
   rowToState,
   stateToRow,

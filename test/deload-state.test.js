@@ -6,13 +6,16 @@ const assert = require('node:assert/strict');
 const sheetsPath = require.resolve('../sheets');
 const fakeSheetsState = {
   rows: [],          // current Deload_State rows (data rows only, no header)
-  appendCalls: []    // { tabName, rows }
+  appendCalls: [],   // { tabName, rows }
+  readError: null,   // when set, getSheetRows throws this
+  confirmMissing: false // answer for confirmTabMissing (tab confirmed absent)
 };
 const fakeSheets = {
   // Mirrors the real getSheetRows: strips row 0 (header) and returns [] when only
   // a header (or nothing) exists. Tests seed a header row so appends read back.
   getSheetRows: async (tabName) => {
     fakeSheetsState.lastReadTab = tabName;
+    if (fakeSheetsState.readError) throw fakeSheetsState.readError;
     if (fakeSheetsState.rows.length <= 1) return [];
     return fakeSheetsState.rows.slice(1).map(r => [...r]);
   },
@@ -22,7 +25,10 @@ const fakeSheets = {
     fakeSheetsState.appendCalls.push({ tabName, rows });
     for (const r of rows) fakeSheetsState.rows.push([...r]);
     return { data: { updates: { updatedRows: rows.length } } };
-  }
+  },
+  // Mirrors the real confirmTabMissing: only a confirmed-absent tab reads as
+  // "never deloaded"; anything else is an unreadable state (#1771, C-02).
+  confirmTabMissing: async () => fakeSheetsState.confirmMissing
 };
 require.cache[sheetsPath] = { id: sheetsPath, filename: sheetsPath, loaded: true, exports: fakeSheets };
 
@@ -39,6 +45,8 @@ const { deloadStateColumns } = require('../config/columns');
 beforeEach(() => {
   fakeSheetsState.rows = [[...deloadStateColumns]];
   fakeSheetsState.appendCalls = [];
+  fakeSheetsState.readError = null;
+  fakeSheetsState.confirmMissing = false;
 });
 
 test('appendDeloadState provisions a header row on a truly empty tab so the first state is not swallowed', async () => {
@@ -63,15 +71,25 @@ test('an empty tab reads as the default NORMAL state', async () => {
   assert.equal(fakeSheetsState.lastReadTab, DELOAD_STATE_TAB);
 });
 
-test('readCurrentDeloadState degrades to NORMAL when the tab read throws (optional/missing tab)', async () => {
-  const original = fakeSheets.getSheetRows;
-  fakeSheets.getSheetRows = async () => { throw new Error('Unable to parse range: Deload_State'); };
-  try {
-    const state = await readCurrentDeloadState();
-    assert.equal(state.training_state, STATES.NORMAL);
-  } finally {
-    fakeSheets.getSheetRows = original;
-  }
+// #1771 (C-02): a Deload_State read failure is unreadable state, never a
+// NORMAL read — only a tab CONFIRMED missing (via metadata, never inferred
+// from the error wording) reads as "never deloaded". The old behaviour
+// (any read throw degrades to NORMAL) is the defect this issue closes.
+test('readCurrentDeloadState reads NORMAL only when the tab is confirmed missing (C-02)', async () => {
+  fakeSheetsState.readError = new Error('Unable to parse range: Deload_State!A:Z');
+  fakeSheetsState.confirmMissing = true;
+  const state = await readCurrentDeloadState();
+  assert.equal(state.training_state, STATES.NORMAL);
+});
+
+test('readCurrentDeloadState rejects on a read error the tab check cannot confirm missing (C-02)', async () => {
+  fakeSheetsState.readError = new Error('sheets 500');
+  fakeSheetsState.confirmMissing = false;
+  await assert.rejects(() => readCurrentDeloadState(), /sheets 500/);
+
+  fakeSheetsState.readError = new Error('Unable to parse range: Deload_State!A:Z');
+  fakeSheetsState.confirmMissing = false; // tab exists; the range itself is bad
+  await assert.rejects(() => readCurrentDeloadState(), /Unable to parse range/);
 });
 
 test('defaultDeloadState returns a fresh object each call (no shared mutation)', () => {
@@ -145,10 +163,16 @@ test('rowToState maps columns and coerces sessions_remaining', () => {
   assert.equal(s.training_state, STATES.DELOAD_ACTIVE);
   assert.equal(s.deload_sessions_remaining, 2); // numeric, not the string '2'
 
-  // Empty cells → null; non-numeric sessions → 0.
-  const sparse = rowToState(['', STATES.DELOAD_ACTIVE, '', '', '', 'n/a', '']);
+  // Empty cells → null; a present-but-garbage counter is damaged data and
+  // fails closed (C-02) instead of reading as 0. (The sparse row is NORMAL:
+  // an ACTIVE row with no protocol is itself damaged and throws, C-02.)
+  const sparse = rowToState(['', STATES.NORMAL, '', '', '', '', '']);
   assert.equal(sparse.deload_protocol, null);
   assert.equal(sparse.deload_sessions_remaining, 0);
+  assert.throws(
+    () => rowToState(['', STATES.DELOAD_ACTIVE, 'STRENGTH_DELOAD_V1', '', '', 'n/a', '']),
+    /deload_sessions_remaining/
+  );
 });
 
 // B3-08 (#1734, Fable B-16): a damaged last Deload_State row must FAIL CLOSED —

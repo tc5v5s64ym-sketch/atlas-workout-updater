@@ -330,6 +330,17 @@ const fakeSheets = {
     if (!fakeSheetsState.hideModalityLogTab) base.push('Modality_Log');
     return base;
   },
+  // Mirror the real confirmTabMissing (sheets.js): absence is established only
+  // by a range-unresolved error PLUS the tab missing from the metadata — never
+  // from the error wording alone (#1771, C-02).
+  confirmTabMissing: async (error, tabName) => {
+    if (!/unable to parse range/i.test(String((error && error.message) || ''))) return false;
+    const name = tabName === null || tabName === undefined ? '' : String(tabName).trim();
+    if (!name) return false;
+    const tabs = await fakeSheets.getSpreadsheetTabs().catch(() => null);
+    if (!Array.isArray(tabs)) return false;
+    return !tabs.includes(name);
+  },
   logSheetName: 'Log_Cleaned',
   effortSheetName: 'Effort'
 };
@@ -7901,12 +7912,27 @@ test('api smoke: deload routes are registered in the manifest', async () => {
   }
 });
 
-test('api smoke: recommend degrades gracefully when Deload_State is missing/unreadable (no 500)', async () => {
+test('api smoke: recommend degrades gracefully when Deload_State is missing (no 500)', async () => {
+  // Missing tab, CONFIRMED via metadata → "never deloaded", NORMAL default, 200.
   fakeSheetsState.failDeloadRead = true;
+  fakeSheetsState.hideDeloadStateTab = true;
   try {
     const { response, body } = await requestJson('/api/recommend/next/BEN01');
     assert.equal(response.status, 200);
     assert.equal(body.data.deload.in_deload, false); // defaults to NORMAL, no active deload
+  } finally {
+    fakeSheetsState.failDeloadRead = false;
+    fakeSheetsState.hideDeloadStateTab = false;
+  }
+});
+
+test('api smoke: recommend fails closed (500) when Deload_State is unreadable (C-02)', async () => {
+  // Tab exists but the read fails → unreadable state can never authorize a
+  // prescription; the route 500s instead of serving full load as if NORMAL.
+  fakeSheetsState.failDeloadRead = true;
+  try {
+    const { response } = await requestJson('/api/recommend/next/BEN01');
+    assert.equal(response.status, 500);
   } finally {
     fakeSheetsState.failDeloadRead = false;
   }

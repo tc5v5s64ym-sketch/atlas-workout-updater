@@ -1250,13 +1250,13 @@ test('a deload state change is visible to the next recommendation request', asyn
   assert.equal(before?.in_deload, false, 'precondition: the session starts outside a deload');
 
   // begin — appended straight to the sheet, exactly as the lifecycle does.
-  SHEET.Deload_State.push(['2026-08-05T10:00:00.000Z', 'DELOAD_ACTIVE', 'volume_cut_40', 'fatigue', '2026-08-05', '2', '']);
+  SHEET.Deload_State.push(['2026-08-05T10:00:00.000Z', 'DELOAD_ACTIVE', 'STRENGTH_DELOAD_V1', 'fatigue', '2026-08-05', '2', '']);
   const during = await stateSeenBy();
   assert.equal(during?.in_deload, true,
     'the recommendation after begin read a stale Deload_State — a cached training state is exactly what must never happen');
 
   // advance — still active, one session left.
-  SHEET.Deload_State.push(['2026-08-05T11:00:00.000Z', 'DELOAD_ACTIVE', 'volume_cut_40', 'fatigue', '2026-08-05', '1', '']);
+  SHEET.Deload_State.push(['2026-08-05T11:00:00.000Z', 'DELOAD_ACTIVE', 'STRENGTH_DELOAD_V1', 'fatigue', '2026-08-05', '1', '']);
   assert.equal((await stateSeenBy())?.in_deload, true, 'advance must remain visible as an active deload');
 
   // resolve — back to NORMAL.
