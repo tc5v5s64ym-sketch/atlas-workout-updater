@@ -807,6 +807,14 @@ function validateOptionalNumberField(name, rawValue, min, max) {
 // so a stamped row is validated exactly like any other.
 function formatEffortRow(effortRow, canonicalSessionId) {
   const row = normalizeEffortRow(effortRow);
+  // #1775 (Sunny BLOCKING on PR #1807): the log-workout Effort row takes
+  // its duration straight from the JSON payload — route it through the
+  // same grammar as /api/complete-workout (normalizeAndValidateParsedMetrics),
+  // so a numeric -30 or a collapsed '1::30' is refused here too instead of
+  // landing on the Effort row verbatim. A valid form is canonicalized to
+  // HH:MM:SS, exactly like the complete-workout path. The throw is caught
+  // by the /api/log-workout handler and returned as a 400 before any write.
+  row[effortColumns.indexOf('duration')] = normalizeDurationString(row[effortColumns.indexOf('duration')]);
   if (canonicalSessionId) row[effortColumns.indexOf('session_id')] = canonicalSessionId;
   validateEffortRowBounds(row);
   return row;
