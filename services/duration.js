@@ -4,22 +4,35 @@ function pad2(n) {
 
 function normalizeDurationString(value) {
   if (value === null || value === undefined) throw new Error('duration is required');
-  if (typeof value === 'number' && Number.isFinite(value)) {
+  // #1775 (Astra A-03): one grammar for string and numeric inputs. A number
+  // is minutes; it must be finite and non-negative — a negative number used
+  // to flow through the arithmetic and come out as a negative HH:MM:SS
+  // ('-30' -> '-1:-30:00'), while the string '-30' was already rejected.
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || value < 0) throw new Error(`Invalid duration values: ${value}`);
     const totalSeconds = Math.round(value * 60);
     const hours = Math.floor(totalSeconds / 3600);
     const minutes = Math.floor((totalSeconds % 3600) / 60);
     const seconds = totalSeconds % 60;
     return `${pad2(hours)}:${pad2(minutes)}:${pad2(seconds)}`;
   }
+  // Anything that is neither a number nor a string (boolean, object, array,
+  // ...) is not a duration: a JSON array used to coerce through String()
+  // ('[30]' -> '00:30:00'). Never coerce a non-string type.
+  if (typeof value !== 'string') throw new Error(`Invalid duration format: ${value}`);
 
-  const s = String(value).trim();
+  const s = value.trim();
   if (!s) throw new Error('duration is required');
 
   if (/^\d+(?:\.\d+)?$/.test(s)) {
     return normalizeDurationString(Number(s));
   }
 
-  const parts = s.split(':').map(p => p.trim()).filter(Boolean);
+  // #1775 (Astra A-03): empty components never disappear during validation.
+  // The old `.filter(Boolean)` collapsed '1::30' to '00:01:30' and '::30:00'
+  // to '00:30:00'. Every component must be present and non-empty.
+  const parts = s.split(':').map(p => p.trim());
+  if (parts.some(p => p === '')) throw new Error(`Invalid duration format: ${value}`);
   if (parts.length === 2) {
     const [mm, ss] = parts;
     if (!/^\d+$/.test(mm) || !/^\d+$/.test(ss)) throw new Error(`Invalid duration format: ${value}`);
