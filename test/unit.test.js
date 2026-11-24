@@ -2851,6 +2851,40 @@ test('recommendNextSet: stable reps ACROSS two sessions (multi-set) still progre
   assert.equal(rec.sessions_analyzed, 2);
 });
 
+// ── Comparable-session selector (#1338) ───────────────────────────────────────
+// The "stable reps over two sessions" bump must compare against the nearest
+// COMPARABLE prior session (nearest rep/RIR band, same context class), not
+// merely the most recent prior session.
+
+test('recommendNextSet: no bump from an incomparable prior session (#1338 P1)', () => {
+  // The only prior session is 135x6 @RIR 5 against today's 225x6 @RIR 2:
+  // same rep count, but 40% lighter by e1RM and RIR 3 apart — not a valid
+  // comparison, so the load holds and the rep target steps up instead.
+  const rows = [
+    ['2026-05-10', 'S1', 'Bench Press', 'Bench Press', 'Chest', 'BENCH', '1', '135', '6', '5', ''],
+    ['2026-05-12', 'S2', 'Bench Press', 'Bench Press', 'Chest', 'BENCH', '1', '225', '6', '2', '']
+  ];
+  const rec = recommendNextSet(rows, 'BENCH', { today: '2026-05-13' });
+  assert.doesNotMatch(rec.recommendation, /Increase to/, 'incomparable prior session must not authorize a bump');
+  assert.equal(rec.next_target.weight, 225, 'weight held, not bumped');
+  assert.equal(rec.next_target.reps, 7, 'rep target steps up instead');
+});
+
+test('recommendNextSet: comparable session behind a different-band session still progresses (#1338 P2)', () => {
+  // S1 (225x6 @RIR 2) is comparable to today; the most recent prior session
+  // S2 (225x10 @RIR 2) is a different rep band. The selector looks past S2
+  // to S1, so the stable 6-rep performance across two comparable sessions
+  // still earns the bump.
+  const rows = [
+    ['2026-05-01', 'S1', 'Bench Press', 'Bench Press', 'Chest', 'BENCH', '1', '225', '6', '2', ''],
+    ['2026-05-05', 'S2', 'Bench Press', 'Bench Press', 'Chest', 'BENCH', '1', '225', '10', '2', ''],
+    ['2026-05-08', 'S3', 'Bench Press', 'Bench Press', 'Chest', 'BENCH', '1', '225', '6', '2', '']
+  ];
+  const rec = recommendNextSet(rows, 'BENCH', { today: '2026-05-09' });
+  assert.match(rec.recommendation, /Increase to/, 'comparable session behind a different-band session progresses');
+  assert.equal(rec.next_target.weight, 230, 'upper body adds 5 lb');
+});
+
 // ── Recommendation staleness guard ────────────────────────────────────────────
 
 test('recommendNextSet: fresh data (3 days) still progresses, no age tacked on', () => {

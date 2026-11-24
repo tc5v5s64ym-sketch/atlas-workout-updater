@@ -9,6 +9,7 @@ const { effortVerdict, recommendFromJustLoggedSet } = require('./justLoggedAncho
 const { applyStalenessGuard } = require('./stalenessGuard');
 const { bodyweightRepProgression } = require('./bodyweightProgression');
 const { isWarmupNote } = require('./warmupTag');
+const { selectComparableSession } = require('./comparableSessionSelector');
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
@@ -589,13 +590,16 @@ function recommendNextSet(logRows, liftCode, options = {}) {
   }
   const lastSets = anchorRows.slice(-5).map(formatSet);
   const lastSet = lastSets[lastSets.length - 1];
-  // Compare against the previous DISTINCT session's last working set — not merely
-  // the prior set, which is usually in the same session. This makes the
-  // "stable reps across two sessions" progression check a true session-over-session
-  // signal, so a single session of equal-rep sets no longer triggers a load bump.
+  // Compare against the nearest COMPARABLE prior session (#1338) — not merely
+  // the previous distinct session, which may be a different rep/RIR band or
+  // a different context class (deload / re-entry) and must never justify a
+  // load bump. The selector returns null when no prior session qualifies, so
+  // a missing comparison holds the load instead of borrowing the most recent
+  // session. The "stable reps across two sessions" check below is unchanged:
+  // it now runs against two genuinely comparable sessions.
   const lastSessionId = lastSet ? lastSet.session_id : null;
-  const priorSessionRows = anchorRows.filter(row => row.session_id !== lastSessionId);
-  const priorSet = priorSessionRows.length ? formatSet(priorSessionRows[priorSessionRows.length - 1]) : null;
+  const comparable = lastSet ? selectComparableSession(anchorRows, normalizedCode, lastSet) : null;
+  const priorSet = comparable ? comparable.set : null;
   const muscleGroup = lastSet.muscle_group || '';
   const lowerBody = isLowerBodyGroup(muscleGroup);
   const increaseAmount = lowerBody ? 10 : 5;
