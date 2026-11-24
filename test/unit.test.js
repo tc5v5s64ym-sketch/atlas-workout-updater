@@ -236,7 +236,7 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v146/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v147/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('bug report captures rich diagnostic context on a single tap', () => {
@@ -1632,8 +1632,8 @@ test('routine ack: the in-session reaction is tier-gated (kind:block); a complet
   assert.match(ccSource, /data\.note_tier === 'ack_only'/);
   assert.match(ccSource, /facts\.exercise_complete\s*\n?\s*\?\s*coachVoiceTemplates\.templatedOnPlanWrapLine\(facts\)/,
     'a completed on-plan block renders the grounded wrap line');
-  assert.match(ccSource, /return \{ note: wrap, effort_note: null, reroute: null, voice: null, ack_only: true \}/,
-    'the ack_only render stays minimal and flagged for the caller (wrap is the line or null silence)');
+  assert.match(ccSource, /return \{ note: wrap, effort_note: null, reroute: null, voice: null, ack_only: true, turn_id: turnId, server_message: serverMessage, final_source: 'deterministic_wrap' \}/,
+    'the ack_only render stays minimal and flagged for the caller (wrap is the line or null silence); #1124 adds the turn correlation fields so the final-render report can fire');
   // The completion signal (batch = two or more sets) is computed and passed for both the
   // primary and additional lifts. It must NOT depend on the eager getSessionCompleted list.
   assert.match(ccSource, /exercise_complete: exerciseIsComplete\(primary\.sets\)/,
@@ -6081,8 +6081,8 @@ test('recovery intent is sourced from an engaged Coach\'s Pick, not just a start
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v146/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v145/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v147/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v146/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');

@@ -73,5 +73,5 @@ test('exactly the two explicit closeout emit sites exist, both abandoned (finali
 
 test('the module is precached and the shell cache is bumped', () => {
   assert.match(sw, /\/app\/planCloseout\.js/, 'planCloseout.js is in SHELL_ASSETS');
-  assert.match(sw, /atlas-shell-v146/, 'SW cache version bumped');
+  assert.match(sw, /atlas-shell-v147/, 'SW cache version bumped');
 });

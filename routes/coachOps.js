@@ -36,6 +36,7 @@ const { detectDiscouragement } = require('../services/discouragementSignal');
 const interactionTraceShadow = require('../services/interactionTraceShadow');
 const coachTurnPacketShadow = require('../services/coachTurnPacketShadow');
 const coachResponseSheet = require('../services/coachResponseSheet');
+const coachFinalRender = require('../services/coachFinalRender');
 const { resolvePlanEdit } = require('../services/planEditResolver');
 const { resolveProposeEdit } = require('../services/proposeEditResolver');
 // Fixed, privacy-safe suppression classification. Only enum codes cross this boundary —
@@ -1077,6 +1078,50 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
         message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: true, model: coach.coachModel(), error: error.message, ...noteMeta, ...effortExtras, flight_recorder_context
       });
     }
+  });
+
+  // #1124 — bounded authenticated final-render report. The client posts the exact
+  // text it rendered for a coach turn, correlated by the SAME canonical turn_id
+  // the server minted (x-atlas-turn-id response header). The server-stage
+  // Coach_Response row is never replaced or erased; this appends one correlated
+  // Coach_Render row for the final-render truth, and only the client reports
+  // when its rendered outcome diverged from the server record. Observational
+  // only: validation failures are 400s, persistence is best-effort off the
+  // served path, and the response never waits on the sheet. Under the existing
+  // /api API-key gate + rate limit (index.js); no new schema on existing tabs.
+  router.post('/api/coach/final-render', async (req, res) => {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const turnId = typeof body.turn_id === 'string' ? body.turn_id.trim() : '';
+    const finalMessage = body.final_message;
+    const finalSource = body.final_source;
+    const finalKind = body.final_kind;
+    const replacedServerVisible = body.replaced_server_visible;
+    const serverVisiblePresent = body.server_visible_present;
+    if (!turnCorrelation.isWellFormedTurnId(turnId)
+      || typeof finalMessage !== 'string'
+      || !coachFinalRender.FINAL_SOURCES.includes(finalSource)
+      || !coachFinalRender.FINAL_KINDS.includes(finalKind)
+      || typeof replacedServerVisible !== 'boolean'
+      || typeof serverVisiblePresent !== 'boolean') {
+      return standardError(req, res, 'invalid final-render report', null, 400);
+    }
+    // Synthetic containment (owner ruling 2026-07-31): an agent/CI/Playwright
+    // turn must not append to Coach_Render — the tab has no provenance columns,
+    // so an untagged synthetic row is indistinguishable from owner evidence.
+    const syntheticTurn = SYNTHETIC_ORIGINS.has(evidenceForRequest(req).request_origin);
+    coachFinalRender.persist({
+      synthetic: syntheticTurn,
+      turnId,
+      sessionId: typeof body.session_id === 'string' ? body.session_id : null,
+      route: typeof body.route === 'string' ? body.route : '/api/coach/message',
+      finalMessage,
+      finalSource,
+      finalKind,
+      replacedServerVisible,
+      serverVisiblePresent,
+      appVersion: typeof body.app_version === 'string' ? body.app_version : null,
+    });
+    return standardSuccess(req, res, 'Final render recorded', { turn_id: turnId });
   });
 
   // Assemble a compact, read-only training snapshot for the chat coach from the

@@ -87,7 +87,7 @@ import {
   waitForTurnResponse,
 } from './turnCorrelation.js';
 
-const ATLAS_SHELL_BUILD = 'v146';
+const ATLAS_SHELL_BUILD = 'v147';
 
 
 
