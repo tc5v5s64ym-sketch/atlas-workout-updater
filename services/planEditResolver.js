@@ -108,23 +108,36 @@ function canonicalNameFor(liftCode, rows, fallbackName) {
   return fallbackName;
 }
 
-// Saved avoid rules as a normalized-name set, via resolveConstraints — the
-// same merge the Session Generator consumes (kind=preference, rule=avoid →
-// exclude_exercises). Malformed input or a resolver failure yields no
-// exclusions rather than dropping the edit.
-function excludedExerciseKeys(constraintRows) {
-  const out = new Set();
-  if (!Array.isArray(constraintRows) || !constraintRows.length) return out;
+// Saved avoid rules as a normalized-name set AND a lift-code set, via
+// resolveConstraints — the same merge the Session Generator consumes
+// (kind=preference, rule=avoid → exclude_exercises). The name keys keep
+// the original behavior for targets that carry no lift code; the codes
+// are what bind an avoid to the exercise it names when the stored target
+// is an ALIAS (Fable re-audit #3, finding C05 on #1739: an avoid on "RDL"
+// must exclude "Romanian Deadlift" — both are RDL01 — and an avoid on
+// "Bench" must exclude "Bench Press" — both are BEN01). Each excluded
+// name resolves its code the same way a proposed name does: history rows
+// first, then the catalog override table (resolveLiftCode). A name that
+// resolves to no code contributes its key only. Malformed input or a
+// resolver failure yields no exclusions rather than dropping the edit.
+function excludedExercises(constraintRows, rows) {
+  const keys = new Set();
+  const codes = new Set();
+  if (!Array.isArray(constraintRows) || !constraintRows.length) return { keys, codes };
   let resolved = null;
-  try { resolved = resolveConstraints({ stored: constraintRows }); } catch { return out; }
+  try { resolved = resolveConstraints({ stored: constraintRows }); } catch { return { keys, codes }; }
   const list = resolved && resolved.constraints
     && Array.isArray(resolved.constraints.exclude_exercises)
     ? resolved.constraints.exclude_exercises : [];
   for (const name of list) {
     const key = normalizeExerciseKey(name);
-    if (key) out.add(key);
+    if (key) keys.add(key);
+    if (typeof name === 'string' && name.trim()) {
+      const code = resolveLiftCode(name, rows);
+      if (code) codes.add(code);
+    }
   }
-  return out;
+  return { keys, codes };
 }
 
 // Resolve the deload overlay for one working weight, mirroring
@@ -164,13 +177,18 @@ function resolvePlanEdit(edit, logRows, asOf, opts) {
   if (!asOf) return null;
 
   const rows = Array.isArray(logRows) ? logRows : [];
-  const excluded = excludedExerciseKeys(options.constraints);
+  const excluded = excludedExercises(options.constraints, rows);
   const resolved = [];
   for (const raw of edit.exercises) {
     const name = _nameOf(raw);
     if (!name) continue;
     const liftCode = resolveLiftCode(name, rows);
     if (!liftCode) continue;
+    // Fable re-audit #3, finding C05 (#1739): the avoid binds by exercise
+    // identity — a stored target naming the lift by alias ("RDL", "Bench")
+    // resolves to the same lift code as the proposed exercise (RDL01,
+    // BEN01), so the edit drops even though the raw name strings differ.
+    if (excluded.codes.has(liftCode)) continue;
     // Fable fix 14 (#1739): the prescription comes from recommendNextSet —
     // the same deterministic engine /api/recommend/next serves — so a plan
     // edit can no longer disagree with the Next card for the same lift and
@@ -183,9 +201,20 @@ function resolvePlanEdit(edit, logRows, asOf, opts) {
     const canonicalName = canonicalNameFor(liftCode, rows, name);
     // A saved avoid rule excludes the lift — match on the canonical name
     // the athlete's log uses, or the proposed name (a shorthand resolves
-    // to the same canonical lift, so the avoid still applies).
-    if (excluded.has(normalizeExerciseKey(canonicalName))
-      || excluded.has(normalizeExerciseKey(name))) continue;
+    // to the same canonical lift, so the avoid still applies). This is the
+    // name-string fallback for targets that carry no lift code; the
+    // lift-code check above already caught every alias that resolves.
+    // C05, second half: a lift is known by TWO codes when the history
+    // code and the curated catalog code disagree — Back Squat logs as
+    // BSQ01 while the catalog override says SQ01 — so the avoid also
+    // binds the catalog code of the canonical name. An avoid on "Squat"
+    // (SQ01) then excludes a "Back Squat" edit (BSQ01), the same identity
+    // the override table itself asserts. A name with no curated code
+    // contributes nothing here, so unrelated lifts never match.
+    if (excluded.keys.has(normalizeExerciseKey(canonicalName))
+      || excluded.keys.has(normalizeExerciseKey(name))) continue;
+    const catalogCode = canonicalLiftCodeFor(canonicalName);
+    if (catalogCode && excluded.codes.has(catalogCode)) continue;
     let weight = Number(target.weight);
     const reps = Number(target.reps);
     let rir = Number.isFinite(Number(rec.target_rir)) ? Number(rec.target_rir) : DEFAULT_TARGET_RIR;

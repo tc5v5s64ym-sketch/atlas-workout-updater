@@ -237,3 +237,92 @@ test('A1707-4 C1. a model-supplied plan label is discarded, never rendered', () 
   assert.equal(out.exercises.length, 1);
   assert.equal(out.exercises[0].weight, 185);
 });
+
+// Fable re-audit #3, finding C05 (P2) — REGRESSION of the #1739 fix, graded
+// REGRESSED-NEW-VARIANT: valid deload and canonical avoid rules hold, but
+// an avoid rule naming the lift by an ALIAS does not bind the exercise it
+// names, so the plan edit adds the lift anyway. The avoid must bind by
+// exercise identity (lift code), not by the raw name string: "RDL" and
+// "Romanian Deadlift" are the same lift (RDL01), "Bench" and "Bench Press"
+// are the same lift (BEN01).
+const AVOID_RDL_ALIAS_ROWS = [['2026-11-01', 'preference', 'RDL', 'avoid', '']];
+const AVOID_BENCH_ALIAS_ROWS = [['2026-11-01', 'preference', 'Bench', 'avoid', '']];
+
+test('C05-1. an avoid rule naming the lift by alias stops the plan edit', () => {
+  assert.equal(
+    resolvePlanEdit(RDL_EDIT, LOG_ROWS, ASOF, { constraints: AVOID_RDL_ALIAS_ROWS }), null);
+  // Alias edit name, alias avoid: same identity, still blocked.
+  assert.equal(resolvePlanEdit(
+    { action: 'add_exercises', exercises: [{ name: 'RDL' }] },
+    LOG_ROWS, ASOF, { constraints: AVOID_RDL_ALIAS_ROWS }), null);
+  // Case/whitespace in the stored target must not matter.
+  assert.equal(resolvePlanEdit(RDL_EDIT, LOG_ROWS, ASOF, {
+    constraints: [['2026-11-01', 'preference', ' rdl ', 'avoid', '']],
+  }), null);
+});
+
+test('C05-2. avoid-by-alias drops the lift while a prescribable one survives', () => {
+  const rows = [...LOG_ROWS, ...SQUAT_ROWS];
+  const out = resolvePlanEdit({
+    action: 'add_exercises',
+    exercises: [
+      { name: 'Romanian Deadlift', weight: 225, reps: 12, sets: 5, rir: 0 },
+      { name: 'Back Squat', weight: 315, reps: 3, sets: 5, rir: 0 },
+    ],
+  }, rows, ASOF, { constraints: AVOID_RDL_ALIAS_ROWS });
+  assert.ok(out);
+  assert.equal(out.exercises.length, 1);
+  assert.equal(out.exercises[0].name, 'Back Squat');
+});
+
+test('C05-3. avoid-by-alias binds a second lift (Bench → Bench Press)', () => {
+  assert.equal(resolvePlanEdit({
+    action: 'add_exercises',
+    exercises: [{ name: 'Bench Press', weight: 200, reps: 5, sets: 5, rir: 0 }],
+  }, LOG_ROWS, ASOF, { constraints: AVOID_BENCH_ALIAS_ROWS }), null);
+});
+
+test('C05-4. avoid-by-alias stops a replace_plan of that lift', () => {
+  const out = resolvePlanEdit({
+    action: 'replace_plan',
+    exercises: [
+      { name: 'Romanian Deadlift', weight: 225, reps: 12, sets: 5, rir: 0 },
+      { name: 'Bench Press', weight: 200, reps: 5, sets: 5, rir: 0 },
+    ],
+  }, LOG_ROWS, ASOF, { constraints: AVOID_RDL_ALIAS_ROWS });
+  assert.ok(out);
+  assert.equal(out.exercises.length, 1);
+  assert.equal(out.exercises[0].name, 'Bench Press');
+});
+
+test('C05-5. avoid-by-alias binds when history and catalog codes disagree', () => {
+  // The fixture logs Back Squat as BSQ01 while the curated catalog
+  // override says SQ01 — one lift, two codes. An avoid on "Squat"
+  // (SQ01) must still exclude a "Back Squat" edit (BSQ01).
+  const rows = [...LOG_ROWS, ...SQUAT_ROWS];
+  assert.equal(resolvePlanEdit({
+    action: 'add_exercises',
+    exercises: [{ name: 'Back Squat', weight: 315, reps: 3, sets: 5, rir: 0 }],
+  }, rows, ASOF, {
+    constraints: [['2026-11-01', 'preference', 'Squat', 'avoid', '']],
+  }), null);
+});
+
+test('C05-6. the catalog-code match never binds an unrelated lift', () => {
+  // "Front Squat" is a different lift from "Back Squat" and carries no
+  // curated code — an avoid on it must not exclude a Back Squat edit,
+  // and an avoid on "Deadlift" (DL01) must not exclude Romanian
+  // Deadlift (RDL01).
+  const rows = [...LOG_ROWS, ...SQUAT_ROWS];
+  const out = resolvePlanEdit({
+    action: 'add_exercises',
+    exercises: [{ name: 'Back Squat', weight: 315, reps: 3, sets: 5, rir: 0 }],
+  }, rows, ASOF, {
+    constraints: [['2026-11-01', 'preference', 'Front Squat', 'avoid', '']],
+  });
+  assert.ok(out);
+  assert.equal(out.exercises.length, 1);
+  assert.ok(resolvePlanEdit(RDL_EDIT, LOG_ROWS, ASOF, {
+    constraints: [['2026-11-01', 'preference', 'Deadlift', 'avoid', '']],
+  }));
+});
