@@ -1270,7 +1270,7 @@ import { buildFinalRenderPayload } from './finalRenderReport.js';
       // severity (block / caution / on_target) is consistent with backing off and keeps
       // the headline; the advisories then follow as complementary lines.
       if (recoveryLine && voice.severity === 'bump') {
-        return { note: withSub(joinLines(recoveryLine, nextMoveLine)), effort_note, reroute, voice, turn_id: turnId, server_message: serverMessage, final_source: 'voice_primary_line' };
+        return { note: withSub(joinLines(recoveryLine, nextMoveLine)), effort_note, reroute, voice, turn_id: turnId, server_message: serverMessage, final_source: 'templated_fallback' };
       }
       return { note: withSub(joinLines(voice.primary_line, nextMoveLine, recoveryLine)), effort_note, reroute, voice, turn_id: turnId, server_message: serverMessage, final_source: 'voice_primary_line' };
     }

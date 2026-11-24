@@ -182,6 +182,47 @@ describe('coachFinalRender service', () => {
   });
 });
 
+describe('getInWorkoutNote final_source mapping (source pin)', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+
+  // The six getInWorkoutNote return paths each name the producer of the final
+  // rendered text. The source is telemetry metadata on the Coach_Render row, so
+  // a mislabel silently corrupts the record — pin the mapping at the source
+  // (the function lives inside an IIFE, so the repo's source-text pattern is
+  // the way to test it; see test/unit.test.js 'routine ack').
+  it('names the headline producer on every return path', () => {
+    const src = fs.readFileSync(
+      path.join(__dirname, '..', 'src', 'app', 'coach-conversation.js'), 'utf8');
+    const block = src.slice(
+      src.indexOf('async function getInWorkoutNote('),
+      src.indexOf('async function getLlmCoachingMessage('));
+    assert.ok(block.length > 0, 'getInWorkoutNote block must be found');
+
+    const count = (re) => (block.match(re) || []).length;
+
+    // ack_only wrap line (case B): the deterministic wrap.
+    assert.equal(count(/final_source: 'deterministic_wrap'/g), 1);
+    // Recovery-advisory headline (bump+recovery override AND LLM-down recovery
+    // path): the templated fallback. The bump branch MUST NOT claim
+    // voice_primary_line — the primary line is deliberately dropped there.
+    assert.equal(
+      count(/joinLines\(recoveryLine, nextMoveLine\)\), effort_note, reroute, voice, turn_id: turnId, server_message: serverMessage, final_source: 'templated_fallback'/g),
+      2);
+    assert.equal(count(/final_source: 'voice_primary_line'/g), 1); // suppressed-prose headline (the fallback opener names it via a ternary, pinned below)
+    assert.ok(
+      /joinLines\(voice\.primary_line, nextMoveLine, recoveryLine\)\), effort_note, reroute, voice, turn_id: turnId, server_message: serverMessage, final_source: 'voice_primary_line'/.test(block),
+      'the suppressed-prose headline is the voice primary line');
+    assert.ok(
+      /\(voice && voice\.primary_line\) \? 'voice_primary_line' : 'templated_opener'/.test(block),
+      'the fallback opener names its producer');
+    // LLM prose shown verbatim.
+    assert.equal(count(/note: llm, effort_note, reroute, voice, turn_id: turnId, server_message: serverMessage, final_source: 'llm'/g), 1);
+    // Every return carries the correlation fields.
+    assert.equal(count(/turn_id: turnId, server_message: serverMessage, final_source: /g), 6);
+  });
+});
+
 describe('finalRenderReport client decision', () => {
   let decide;
   const test = require('node:test');
