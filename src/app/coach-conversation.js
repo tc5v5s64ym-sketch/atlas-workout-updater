@@ -26,6 +26,7 @@
 import * as coachVoiceTemplates from './coachVoiceTemplates.js';
 import * as sessionQuestion from './sessionQuestion.js';
 import {
+  TURN_ID_HEADER,
   beginTurnResponse,
   cancelTurnResponse,
   completeTurnResponse,
@@ -33,6 +34,7 @@ import {
   mayContinueTurnResponse,
 } from './turnCorrelation.js';
 import { findPlanEntry, planMismatchForLift, formatPlanMismatchLine } from './planConformance.js';
+import { buildFinalRenderPayload } from './finalRenderReport.js';
 
 (function () {
   'use strict';
@@ -1203,7 +1205,12 @@ import { findPlanEntry, planMismatchForLift, formatPlanMismatchLine } from './pl
   // (PR 477 wiring) — present whether or not Gemini answered, and rendered as
   // their own short line so the engine's read is never lost to an LLM outage.
   async function getInWorkoutNote(facts, sessionId, responseTicket) {
-    const data = await getLlmCoachingMessage(facts, sessionId, responseTicket).catch(() => null);
+    // #1124 — the turn id + server message ride back with the note so the caller
+    // can report the final rendered text when it diverges from the server record.
+    const llmResult = await getLlmCoachingMessage(facts, sessionId, responseTicket).catch(() => null);
+    const data = llmResult && llmResult.data;
+    const turnId = llmResult && llmResult.turnId;
+    const serverMessage = data && typeof data.message === 'string' ? data.message : null;
     // Soul Recovery (Issue #1073) + owner gate ruling (2026-07-20): a routine on-plan
     // block's voice is timed to the EXERCISE, not to every set. A COMPLETED on-plan
     // exercise (a batch of sets, or the finishing set — `facts.exercise_complete`) gets
@@ -1219,9 +1226,9 @@ import { findPlanEntry, planMismatchForLift, formatPlanMismatchLine } from './pl
       const wrap = facts.exercise_complete
         ? coachVoiceTemplates.templatedOnPlanWrapLine(facts)
         : null;
-      return { note: wrap, effort_note: null, reroute: null, voice: null, ack_only: true };
+      return { note: wrap, effort_note: null, reroute: null, voice: null, ack_only: true, turn_id: turnId, server_message: serverMessage, final_source: 'deterministic_wrap' };
     }
-    const llm = data && typeof data.message === 'string' ? data.message : null;
+    const llm = serverMessage;
     const effort_note = data && typeof data.effort_note === 'string' && data.effort_note.trim()
       ? data.effort_note.trim() : null;
     const reroute = data && data.reroute && typeof data.reroute === 'object' ? data.reroute : null;
@@ -1263,27 +1270,47 @@ import { findPlanEntry, planMismatchForLift, formatPlanMismatchLine } from './pl
       // severity (block / caution / on_target) is consistent with backing off and keeps
       // the headline; the advisories then follow as complementary lines.
       if (recoveryLine && voice.severity === 'bump') {
-        return { note: withSub(joinLines(recoveryLine, nextMoveLine)), effort_note, reroute, voice };
+        return { note: withSub(joinLines(recoveryLine, nextMoveLine)), effort_note, reroute, voice, turn_id: turnId, server_message: serverMessage, final_source: 'voice_primary_line' };
       }
-      return { note: withSub(joinLines(voice.primary_line, nextMoveLine, recoveryLine)), effort_note, reroute, voice };
+      return { note: withSub(joinLines(voice.primary_line, nextMoveLine, recoveryLine)), effort_note, reroute, voice, turn_id: turnId, server_message: serverMessage, final_source: 'voice_primary_line' };
     }
     // LLM prose present means the server did NOT suppress it (no good-pivot lecture);
     // it already addresses the swap AND the advisories in one integrated voice — trust as-is.
-    if (llm && llm.trim()) return { note: llm, effort_note, reroute, voice };
+    if (llm && llm.trim()) return { note: llm, effort_note, reroute, voice, turn_id: turnId, server_message: serverMessage, final_source: 'llm' };
     // LLM down: conclusion-first. A recovery read is the headline and OVERRIDES a
     // progression-invite opener so the fallback never pairs "add load" with "back off".
     if (recoveryLine) {
-      return { note: withSub(joinLines(recoveryLine, nextMoveLine)), effort_note, reroute, voice };
+      return { note: withSub(joinLines(recoveryLine, nextMoveLine)), effort_note, reroute, voice, turn_id: turnId, server_message: serverMessage, final_source: 'templated_fallback' };
     }
     // LLM down / suppressed (incl. a good pivot): prefer the engine's correct-effort
     // line (on-target praise) when offered, else the templated opener, then the
     // next-move heads-up, then the swap.
     const opener = (voice && voice.primary_line) || coachOpener(facts.todaySets || [], facts.rec, data && data.set_grade);
-    return { note: withSub(joinLines(opener, nextMoveLine)), effort_note, reroute, voice };
+    return { note: withSub(joinLines(opener, nextMoveLine)), effort_note, reroute, voice, turn_id: turnId, server_message: serverMessage, final_source: (voice && voice.primary_line) ? 'voice_primary_line' : 'templated_opener' };
   }
 
-  // Returns the full /api/coach/message data object ({ message, effort_note,
-  // reroute }) or null — the caller pulls the prose and the engine extras from it.
+  // #1124 — report the final rendered coach text when it diverges from the
+  // server-stage record (Coach_Response). Fire-and-forget: never throws, never
+  // blocks the render, never retries (the server dedupes by turn_id). The
+  // payload builder returns null on agreement, so most turns report nothing.
+  function reportFinalRenderIfDiverged({ turnId, sessionId, serverMessage, renderedNote, finalSource, finalKind }) {
+    try {
+      const payload = buildFinalRenderPayload({ turnId, sessionId, serverMessage, renderedNote, finalSource, finalKind });
+      if (!payload) return;
+      if (typeof api !== 'function') return;
+      Promise.resolve(api('/api/coach/final-render', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })).catch(() => {});
+    } catch (_) { /* telemetry must never affect the render */ }
+  }
+
+  // Returns { data, turnId } — the full /api/coach/message data object
+  // ({ message, effort_note, reroute }) or null data, plus the canonical turn id
+  // from the x-atlas-turn-id response header (null when the request never
+  // completed: timeout, offline, or no response). The caller needs the turn id
+  // to report the final rendered text (#1124); a missing id means no report.
   async function getLlmCoachingMessage(facts, sessionId, responseTicket) {
     if (typeof api !== 'function' || (typeof isConnected === 'function' && !isConnected())) return null;
     const correlationSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
@@ -1302,15 +1329,22 @@ import { findPlanEntry, planMismatchForLift, formatPlanMismatchLine } from './pl
         kind: 'block',
         ...(correlationSessionId ? { session_id: correlationSessionId } : {}),
       }),
-      ...(responseTicket ? {
-        responseHeaders: responseHeaders => { selectedHeaders = responseHeaders; },
-      } : {}),
+      // #1124 — capture the response headers on EVERY call (not only the
+      // ticketed last exercise) so the turn id is available for the
+      // final-render report. Reading headers never alters the response.
+      responseHeaders: responseHeaders => { selectedHeaders = responseHeaders; },
     }).then(res => ({ selected: true, data: (res && res.data) || null }));
     const winner = await Promise.race([request, timeout]);
     if (responseTicket && typeof completeTurnResponse === 'function') {
       completeTurnResponse(responseTicket, selectedHeaders);
     }
-    return winner.data;
+    let turnId = null;
+    try {
+      const raw = selectedHeaders && typeof selectedHeaders.get === 'function'
+        ? selectedHeaders.get(TURN_ID_HEADER) : null;
+      turnId = typeof raw === 'string' && raw.trim() ? raw.trim() : null;
+    } catch (_) { turnId = null; }
+    return { data: winner.data, turnId };
   }
 
   // De-templating: several phrasings per verdict level so the SAME verdict never
@@ -1695,6 +1729,17 @@ import { findPlanEntry, planMismatchForLift, formatPlanMismatchLine } from './pl
     } else if (!responseMayContinue()) {
       return;
     }
+    // #1124 — report the final rendered text when it diverges from the
+    // server-stage record (deliberate-silence wrap, suppressed-prose primary
+    // line, LLM-down opener). Agreement and true silence report nothing.
+    reportFinalRenderIfDiverged({
+      turnId: reaction && reaction.turn_id,
+      sessionId,
+      serverMessage: reaction && reaction.server_message,
+      renderedNote: note,
+      finalSource: reaction && reaction.final_source,
+      finalKind: 'block',
+    });
 
 
     // Deterministic, engine-backed set-effort line (PR 477). One short line only —
@@ -1759,6 +1804,16 @@ import { findPlanEntry, planMismatchForLift, formatPlanMismatchLine } from './pl
       } else if (!responseMayContinue()) {
         return;
       }
+      // #1124 — the screen text carries the exercise prefix; report that exact
+      // text when it diverges from the server-stage record.
+      reportFinalRenderIfDiverged({
+        turnId: exReaction && exReaction.turn_id,
+        sessionId,
+        serverMessage: exReaction && exReaction.server_message,
+        renderedNote: exReaction && exReaction.note ? `${ex.exercise}: ${exReaction.note}` : null,
+        finalSource: exReaction && exReaction.final_source,
+        finalKind: 'block',
+      });
       // G2 follow-up (owner 2026-06-28): per-lift effort-line parity. Each additional
       // lift now renders its OWN deterministic, engine-backed effort line — the same
       // treatment the primary lift gets above — so a stacked entry surfaces every

@@ -25,6 +25,7 @@ const routeDefinitions = [
   { path: '/api/health/openai', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/health/gemini', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/coach/message', methods: ['POST'], public: false, authRequired: true, readOnly: true, writeCapable: false },
+  { path: '/api/coach/final-render', methods: ['POST'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/coach/chat', methods: ['POST'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/coach/ask', methods: ['POST'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/coach/health', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
