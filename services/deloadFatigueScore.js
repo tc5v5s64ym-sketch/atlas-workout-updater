@@ -25,6 +25,8 @@
 // Every weight is pinned by hand-computed golden fixtures, so tuning a weight is
 // a one-line change with a visible test delta.
 
+const { estimateE1RM } = require('./intensityModule'); // #1339: the single e1RM method
+
 // Max point contribution of each signal. Sum is clamped to 100.
 const SIGNAL_WEIGHTS = Object.freeze({
   A_STAGNATION: 30,
@@ -56,14 +58,19 @@ function isFiniteNumber(n) {
   return typeof n === 'number' && Number.isFinite(n);
 }
 
-// Epley estimated 1RM from a top set. Captures load AND reps in one number, so
-// "same weight, more reps" reads as a real strength gain (the anti-false-stall
-// guard). Returns null for unusable input.
-function estimateE1rm(weight, reps) {
+// Estimated 1RM from a top set — the single engine method (#1339: reps+RIR →
+// %1RM lookup). Captures load AND reps in one number, so "same weight, more
+// reps" reads as a real strength gain (the anti-false-stall guard). Returns
+// null for unusable input.
+function estimateE1rm(weight, reps, rir) {
   const w = Number(weight);
   const r = Number(reps);
-  if (!isFiniteNumber(w) || !isFiniteNumber(r) || w <= 0 || r <= 0) return null;
-  return w * (1 + r / 30);
+  if (!isFiniteNumber(w) || !isFiniteNumber(r) || w <= 0 || r < 1) return null;
+  try {
+    return estimateE1RM(w, r, rir);
+  } catch {
+    return null;
+  }
 }
 
 // Top-set volume proxy. Used alongside e1RM so a hypertrophy "more volume at the
@@ -108,7 +115,7 @@ function analyzeLift(lift, frequencyPerWeek) {
   let maxVolume = -Infinity;
   let trailingStall = 0;
   for (const ex of exposures) {
-    const e1rm = estimateE1rm(ex.weight, ex.reps);
+    const e1rm = estimateE1rm(ex.weight, ex.reps, ex.rir);
     const vol = exposureVolume(ex);
     const progressed =
       (e1rm != null && e1rm > maxE1rm + 1e-9) ||
@@ -127,7 +134,7 @@ function analyzeLift(lift, frequencyPerWeek) {
   // --- B: regression. Worst of (a) e1RM dropped ≥5% from the peak, or (b) the
   // newest exposure does fewer reps than an earlier set at the SAME weight.
   const latest = exposures[exposures.length - 1];
-  const latestE1rm = estimateE1rm(latest.weight, latest.reps);
+  const latestE1rm = estimateE1rm(latest.weight, latest.reps, latest.rir);
   if (latestE1rm != null && maxE1rm > 0) {
     const dropPct = (maxE1rm - latestE1rm) / maxE1rm;
     if (dropPct >= 0.05) {

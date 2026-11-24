@@ -11,7 +11,8 @@
  * Algorithm:
  *   1. Parse the lift's rows, group into sessions, filter warm-ups (same heuristic
  *      as exerciseBenchmark.js: weight < 60 % of session max OR RIR ≥ 4 → warm-up).
- *   2. Compute the best Epley e1RM across each session's working sets.
+ *   2. Compute the best single-method e1RM (#1339: reps+RIR → %1RM lookup,
+ *      intensityModule.estimateE1RM) across each session's working sets.
  *   3. Slice to the last SESSION_WINDOW sessions; require MIN_SESSIONS.
  *   4. Coefficient of variation > NOISY_CV_THRESHOLD → 'noisy' (high variance,
  *      no clear direction).
@@ -25,6 +26,7 @@
 'use strict';
 
 const { isWarmupNote } = require('./warmupTag');
+const { estimateE1RM } = require('./intensityModule');
 
 const COL_DATE    = 0;
 const COL_SESSION = 1;
@@ -41,11 +43,6 @@ const SESSION_WINDOW       = 8;    // look back up to this many sessions
 const MIN_SESSIONS         = 4;    // minimum required for a trend verdict
 const NOISY_CV_THRESHOLD   = 0.10; // coefficient of variation > 10 % → noisy
 const TREND_DELTA_FRACTION = 0.025; // 2.5 % of mean e1RM = meaningful direction
-
-// Epley formula: estimated one-rep max from a multi-rep set.
-function epley(weight, reps) {
-  return weight * (1 + reps / 30);
-}
 
 function meanOf(arr) {
   return arr.reduce((s, v) => s + v, 0) / arr.length;
@@ -74,7 +71,7 @@ function detectTrend(liftCode, rows) {
     const weight = Number(row[COL_WEIGHT]);
     const reps   = Number(row[COL_REPS]);
     if (!Number.isFinite(weight) || weight <= 0) continue;
-    if (!Number.isFinite(reps)   || reps   <= 0) continue;
+    if (!Number.isFinite(reps)   || reps   <  1) continue; // sub-1-rep rows are not estimable (#1339)
     const rirRaw = row[COL_RIR];
     const rir = (rirRaw == null || rirRaw === '') ? null : Number(rirRaw);
     const warmup = isWarmupNote(row[COL_NOTES]);
@@ -104,7 +101,8 @@ function detectTrend(liftCode, rows) {
       (s.rir === null || !Number.isFinite(s.rir) || s.rir < WARMUP_RIR_THRESHOLD)
     );
     if (!working.length) working = sets;
-    const sessionE1rm = Math.max(...working.map(s => epley(s.weight, s.reps)));
+    // #1339: the single method — the RIR parsed above is part of the estimate.
+    const sessionE1rm = Math.max(...working.map(s => estimateE1RM(s.weight, s.reps, s.rir)));
     sessionEntries.push({ date, e1rm: sessionE1rm });
   }
 

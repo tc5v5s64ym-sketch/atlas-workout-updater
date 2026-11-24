@@ -144,13 +144,15 @@ test('analytics valid-input characterization', () => {
   const progress = computeExerciseProgress(logRows, 'BEN01');
   assert.equal(progress.sessions.length, 2);
   assert.deepEqual(progress.best_weight_over_time.map(item => item.best_weight), [185, 195]);
-  assert.deepEqual(progress.estimated_1rm_over_time.map(item => item.estimated_1rm), [215.83, 227.5]);
+  // #1339: single method — the rows carry RIR 2, so 185×5 @2 → 185×(1+7/30)
+  // = 228.17 (rep-only Epley said 215.83) and 195×5 @2 → 240.5 (was 227.5).
+  assert.deepEqual(progress.estimated_1rm_over_time.map(item => item.estimated_1rm), [228.17, 240.5]);
   assert.equal(progress.recent_trend, 'up');
 
   const prs = detectRecentPrs(logRows);
   const benchPr = prs.find(item => item.liftCode === 'BEN01');
   assert.equal(benchPr.bestWeightSet.weight, 195);
-  assert.equal(benchPr.bestEstimated1RMSet.estimated_1rm, 227.5);
+  assert.equal(benchPr.bestEstimated1RMSet.estimated_1rm, 240.5); // #1339: 195×5 @ RIR 2
 
   const recommendation = recommendNextSet(logRows, 'BEN01', { today: '2026-06-10' });
   assert.equal(recommendation.next_target.weight, 200);

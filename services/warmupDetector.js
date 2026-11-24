@@ -1,5 +1,7 @@
 'use strict';
 
+const { estimateE1RM } = require('./intensityModule'); // #1339: the single e1RM method
+
 // Warm-up pattern detector — learns a lifter's OWN warm-up ramp from logged history.
 //
 // Atlas already prescribes a generic warm-up ramp on main compounds (50/70/85%,
@@ -78,9 +80,12 @@ function readRow(row) {
   return null;
 }
 
-// e1RM (Epley) — same formula as recommendNextSet / detectStalls.
-function e1rm(weight, reps) {
-  return weight * (1 + reps / 30);
+// Top working set = max single-method e1RM (#1339) — the heaviest effort,
+// not the first logged set. Sets carry their RIR; sub-1-rep sets are not
+// estimable and never win the top slot.
+function e1rm(weight, reps, rir) {
+  if (!(weight > 0) || !(reps >= 1)) return -Infinity;
+  return estimateE1RM(weight, reps, rir);
 }
 
 // Split one session's ordered sets into { warmups, top }. Returns null when there
@@ -102,7 +107,7 @@ function rampInSession(sets, opts) {
   // Top working set = max e1RM (the heaviest effort, not the first logged set).
   let topIdx = 0;
   for (let i = 1; i < ordered.length; i++) {
-    if (e1rm(ordered[i].weight, ordered[i].reps) > e1rm(ordered[topIdx].weight, ordered[topIdx].reps)) topIdx = i;
+    if (e1rm(ordered[i].weight, ordered[i].reps, ordered[i].rir) > e1rm(ordered[topIdx].weight, ordered[topIdx].reps, ordered[topIdx].rir)) topIdx = i;
   }
   const top = ordered[topIdx];
   if (topIdx === 0) return null; // top set is first → nothing logged before it to ramp

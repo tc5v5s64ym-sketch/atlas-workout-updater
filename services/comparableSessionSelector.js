@@ -10,7 +10,7 @@
 //
 // This module picks the NEAREST COMPARABLE prior session for a lift:
 //   - nearest rep/RIR band: |Δreps| ≤ 2, |ΔRIR| ≤ 1, e1RM within ±15% (the
-//     one Epley calculator, services/estimatedOneRepMax.js — never a second
+//     single engine method, services/intensityModule.js — never a second
 //     1RM formula);
 //   - same fresh/fatigued context class: 'working' | 'deload' | 're-entry'.
 //     'deload' reuses the engine's own rule (services/deloadPolicy.js): a
@@ -30,14 +30,14 @@
 // weight, reps, rir, notes, set_number); the module never normalizes raw
 // sheet arrays itself, so it stays free of a require cycle with analytics.
 
-const { estimateOneRepMax } = require('./estimatedOneRepMax');
+const { estimateE1RM } = require('./intensityModule'); // #1339: the single e1RM method
 const { isWarmupNote } = require('./warmupTag');
 
 // The selector's own bands, pinned by test/comparableSessionSelector.test.js.
 const COMPARABLE_BANDS = {
   maxRepDelta: 2, // same rep band (corpus §F: a 6-rep and an 8-rep block read as comparable)
   maxRirDelta: 1, // same RIR band
-  maxE1rmDeltaPct: 15, // same load band, in Epley e1RM terms
+  maxE1rmDeltaPct: 15, // same load band, in single-method e1RM terms (#1339)
   deloadDropPct: 7, // engine's deload rule (services/deloadPolicy.js)
   reentryGapDays: 14, // engine's layoff band (services/layoffGuard.js)
 };
@@ -107,10 +107,18 @@ function sessionContextClass(session, earlierSessions) {
 }
 
 function e1rmDeltaPct(a, b) {
-  // estimateOneRepMax throws on a non-positive weight / reps < 1; both sets
-  // are guarded positive before this is called.
-  const ea = estimateOneRepMax({ weight: a.weight, reps: a.reps }).value;
-  const eb = estimateOneRepMax({ weight: b.weight, reps: b.reps }).value;
+  // #1339: the single method — each set's own RIR is part of its estimate.
+  // estimateE1RM throws on a non-positive weight / reps < 1; both sets are
+  // guarded positive before this is called.
+  if (!(Number(a.reps) >= 1) || !(Number(b.reps) >= 1)) return null;
+  let ea;
+  let eb;
+  try {
+    ea = estimateE1RM(Number(a.weight), Number(a.reps), Number(a.rir));
+    eb = estimateE1RM(Number(b.weight), Number(b.reps), Number(b.rir));
+  } catch {
+    return null;
+  }
   if (!isPositiveFinite(eb)) return null;
   return Math.abs(ea - eb) / eb * 100;
 }

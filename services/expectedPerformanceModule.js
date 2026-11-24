@@ -15,6 +15,7 @@
 const { computeExpectedPerformance } = require('./expectedPerformance');
 const { scoreReadiness }             = require('./fatigueAssessmentModule');
 const { isWarmupNote }               = require('./warmupTag');
+const { estimateE1RM }               = require('./intensityModule'); // #1339: the single e1RM method
 
 // Column indices for the 12-col Log_Cleaned positional format expected by
 // computeExpectedPerformance (mirrors constants in expectedPerformance.js).
@@ -78,9 +79,9 @@ function assessExpectedPerformance(liftCode, logEntries, targetWeight) {
 
 // Detect plateau / stall conditions across all lifts in the entry list.
 //
-// A lift is stalled when its best e1RM (Epley: w * (1 + r/30)) across the
-// last `minSessions` sessions has not improved beyond the first session's
-// e1RM by more than STALL_EPSILON (1e-6). Warm-up sets are excluded so that
+// A lift is stalled when its best e1RM (#1339: the single method, reps+RIR →
+// %1RM lookup) across the last `minSessions` sessions has not improved beyond
+// the first session's e1RM by more than STALL_EPSILON (1e-6). Warm-up sets are excluded so that
 // tagged feeler sets do not inflate the e1RM and mask a true stall.
 //
 // logEntries        — array of Log_Cleaned structured row objects.
@@ -105,7 +106,7 @@ function detectLiftPlateaus(logEntries, opts) {
     const w = Number(e.weight);
     const r = Number(e.reps);
     if (!Number.isFinite(w) || w <= 0) return false;
-    if (!Number.isFinite(r) || r <= 0) return false;
+    if (!Number.isFinite(r) || r < 1) return false; // sub-1-rep rows are not estimable (#1339)
     return !isWarmupNote(e.notes);
   });
 
@@ -132,13 +133,13 @@ function detectLiftPlateaus(logEntries, opts) {
       return String(a.session_id || '').localeCompare(String(b.session_id || ''));
     });
 
-    // Aggregate per session: best weight and best Epley e1RM.
+    // Aggregate per session: best weight and best single-method e1RM (#1339).
     const sessionMap = new Map();
     for (const entry of sorted) {
       const key  = `${entry.session_id || ''}||${entry.date_clean || ''}`;
       const w    = Number(entry.weight);
       const r    = Number(entry.reps);
-      const e1rm = w * (1 + r / 30);
+      const e1rm = estimateE1RM(w, r, (entry.rir !== null && entry.rir !== undefined) ? Number(entry.rir) : null);
       const prev = sessionMap.get(key) || {
         date: entry.date_clean || null,
         best_weight: 0,

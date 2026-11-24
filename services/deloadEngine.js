@@ -33,7 +33,7 @@ function topSetOfSession(rows) {
   let best = null;
   let bestE1rm = -Infinity;
   for (const r of rows) {
-    const e1rm = estimateE1rm(r.weight, r.reps);
+    const e1rm = estimateE1rm(r.weight, r.reps, r.rir); // #1339: the exposure's RIR is part of the estimate
     if (e1rm != null && e1rm > bestE1rm) { bestE1rm = e1rm; best = r; }
   }
   return best;

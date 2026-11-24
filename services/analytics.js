@@ -10,6 +10,7 @@ const { applyStalenessGuard } = require('./stalenessGuard');
 const { bodyweightRepProgression } = require('./bodyweightProgression');
 const { isWarmupNote } = require('./warmupTag');
 const { selectComparableSession } = require('./comparableSessionSelector');
+const { estimateE1RM } = require('./intensityModule'); // #1339: the single e1RM method
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
@@ -292,7 +293,10 @@ function computeExerciseProgress(logRows, liftCode) {
     const key = `${row.session_id}||${row.date_clean}`;
     const existing = sessionBestByCode.get(key) || { best_weight: 0, best_1rm: 0 };
     existing.best_weight = Math.max(existing.best_weight, row.weight || 0);
-    existing.best_1rm = Math.max(existing.best_1rm, row.weight * (1 + (row.reps || 0) / 30));
+    // #1339: the single method — the row's RIR is part of the estimate.
+    // Degenerate sub-1-rep rows keep the old rep-only value (the weight itself).
+    existing.best_1rm = Math.max(existing.best_1rm,
+      row.reps >= 1 ? estimateE1RM(row.weight, row.reps, row.rir) : (row.weight || 0));
     sessionBestByCode.set(key, existing);
   });
 
@@ -401,7 +405,11 @@ function detectRecentPrs(logRows) {
       existing.exercise = row.canonical_exercise || row.exercise;
     }
 
-    const estimated1RM = row.weight * (1 + (row.reps || 0) / 30);
+    // #1339: the single method — the row's RIR is part of the estimate.
+    // Degenerate sub-1-rep rows keep the old rep-only value (the weight itself).
+    const estimated1RM = row.reps >= 1
+      ? estimateE1RM(row.weight, row.reps, row.rir)
+      : (row.weight || 0);
     const rowSet = formatSet(row);
 
     if (!existing.bestWeightSet || row.weight > existing.bestWeightSet.weight) {
@@ -613,11 +621,12 @@ function recommendNextSet(logRows, liftCode, options = {}) {
   const sessionBestMap = new Map();
   const sessionBestOrder = [];
   for (const row of rows) {
-    if (!row.weight || !row.reps) continue;
+    if (!row.weight || !row.reps || row.reps < 1) continue; // sub-1-rep rows are not estimable (#1339)
     // Exclude note-tagged warm-ups from the e1RM trend (same leak trendDetector
     // was wired to prevent) — a heavy tagged feeler must not spike a session best.
     if (isWarmupNote(row.notes)) continue;
-    const e1rm = Math.round(row.weight * (1 + row.reps / 30) * 100) / 100;
+    // #1339: the single method — the row's RIR is part of the estimate.
+    const e1rm = estimateE1RM(row.weight, row.reps, row.rir);
     if (!sessionBestMap.has(row.session_id)) sessionBestOrder.push(row.session_id);
     sessionBestMap.set(row.session_id, Math.max(sessionBestMap.get(row.session_id) || 0, e1rm));
   }
@@ -845,10 +854,13 @@ function detectStalls(logRows, minSessions = 3) {
       const key = `${row.session_id}||${row.date_clean}`;
       const current = sessionMap.get(key) || { session_id: row.session_id, date: row.date_clean, best_weight: 0, best_e1rm: 0 };
       current.best_weight = Math.max(current.best_weight, row.weight || 0);
-      // Estimated 1RM (Epley, the same formula used elsewhere in this file) so the
-      // stall decision counts reps, not just top weight: adding reps at a fixed
-      // weight (205×5 → 205×6 → 205×7) is real progress, not a stall.
-      const e1rm = row.weight * (1 + row.reps / 30);
+      // Estimated 1RM (#1339: the single method — the row's RIR is part of the
+      // estimate) so the stall decision counts reps, not just top weight:
+      // adding reps at a fixed weight (205×5 → 205×6 → 205×7) is real progress,
+      // not a stall. Degenerate sub-1-rep rows keep the old value (the weight).
+      const e1rm = row.reps >= 1
+        ? estimateE1RM(row.weight, row.reps, row.rir)
+        : (row.weight || 0);
       current.best_e1rm = Math.max(current.best_e1rm, e1rm || 0);
       sessionMap.set(key, current);
     });
