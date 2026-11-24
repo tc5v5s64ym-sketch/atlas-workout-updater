@@ -284,9 +284,12 @@ test('F10D-A: one approved confirmation writes and seals everything — exact pa
     const appendedKey = appended.map(r => `${String(r[3] || r[2]).toLowerCase()}|${r[7]}|${r[8]}`).sort();
     expect(appendedKey).toEqual(visible.sort());
     // Effort parity: the one approval carried the typed effort row.
+    // #1775 rework: /api/log-workout now stores the canonical HH:MM:SS
+    // form, like /api/complete-workout — the typed '52:10' is normalized
+    // to '00:52:10' by formatEffortRow, not stored verbatim.
     const effort = rowsFor(st, 'Effort');
     expect(effort).toHaveLength(1);
-    expect(String(effort[0][2])).toBe('52:10');
+    expect(String(effort[0][2])).toBe('00:52:10');
     expect(String(effort[0][5])).toBe('128');   // average_hr and peak_hr stay distinct
     expect(String(effort[0][6])).toBe('166');
     // Plan-truth immutability: the sealed ledger keeps the ORIGINAL planned codes —
