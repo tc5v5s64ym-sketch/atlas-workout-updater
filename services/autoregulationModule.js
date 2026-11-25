@@ -49,7 +49,7 @@
 //   readinessInputs object | null    — forwarded to scoreReadiness; null = no adjustment
 //   bodyRegion      string           — 'upper_body' | 'lower_body' (default 'upper_body')
 
-const { estimateE1RM, targetWeightForRIR, percentOf1RM } = require('./intensityModule');
+const { estimateE1RM, targetWeightForRIR } = require('./intensityModule');
 const { scoreReadiness }     = require('./fatigueAssessmentModule');
 const { detectLiftPlateaus } = require('./expectedPerformanceModule');
 const { isWarmupNote }       = require('./warmupTag');
@@ -76,7 +76,9 @@ function _roundToPlate(weight, bodyRegion) {
 }
 
 // Estimate e1RM from one structured log entry.
-// Uses RIR-adjusted formula when RIR is valid (0–4); otherwise plain Epley.
+// #1339: the single method — RIR is part of the estimate; an absent or
+// invalid RIR is RIR 0 (a to-failure set), which reproduces the old rep-only
+// fallback exactly.
 function _entryE1rm(entry) {
   const weight = Number(entry.weight);
   const reps   = Number(entry.reps);
@@ -87,11 +89,7 @@ function _entryE1rm(entry) {
   const rir = (Number.isFinite(rawRir) && rawRir >= 0 && rawRir <= 4) ? rawRir : null;
 
   try {
-    if (rir !== null) {
-      const pct = percentOf1RM(reps, rir);
-      if (pct > 0) return weight / pct;
-    }
-    return estimateE1RM(weight, reps);
+    return estimateE1RM(weight, reps, rir);
   } catch {
     return null;
   }

@@ -7,6 +7,10 @@
  * nearest whole unit. The engine computes; the model only words the value. Pure,
  * no I/O, no Sheets, no LLM.
  *
+ * #1339: the Epley math lives in the single engine method
+ * (intensityModule.estimateE1RM, RIR 0 for a to-failure set); this module keeps
+ * only the question parsing, the whole-unit rounding, and the answer wording.
+ *
  * Rules (issue #1777):
  *   - Inputs: weight + reps, unit as stated (lb or kg; no silent conversion, and
  *     no unit invented when none was stated).
@@ -18,6 +22,8 @@
  *   - Nothing is stored as a record, PR, or training max (non-goal; #1778 owns the
  *     history-based estimate from logged rows).
  */
+
+const { estimateE1RM } = require('./intensityModule');
 
 const WORD_NUMBERS = {
   one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9,
@@ -197,6 +203,9 @@ function isHistoryFlavored(text) {
 
 /**
  * Epley estimate. Reps = 1 returns the weight itself. Reps > 12 is flagged rough.
+ * #1339: the math is the single engine method (intensityModule.estimateE1RM)
+ * with RIR 0 — a reps-to-failure set. The value is identical to the old local
+ * Epley copy; only the duplicate implementation is retired.
  * @returns {{value:number, rough:boolean}}
  */
 function estimateOneRepMax({ weight, reps }) {
@@ -204,7 +213,7 @@ function estimateOneRepMax({ weight, reps }) {
   const r = Number(reps);
   if (!(w > 0) || !(r >= 1)) throw new Error('estimateOneRepMax needs a positive weight and reps >= 1');
   if (r === 1) return { value: Math.round(w), rough: false };
-  return { value: Math.round(w * (1 + r / 30)), rough: r > 12 };
+  return { value: Math.round(estimateE1RM(w, r, 0)), rough: r > 12 };
 }
 
 function formatUnit(unit) {

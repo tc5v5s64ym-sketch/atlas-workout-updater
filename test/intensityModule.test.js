@@ -9,18 +9,17 @@ const {
   targetWeightForRIR,
   targetWeightForRPE,
   estimateRIR,
-  FORMULAS,
-  DEFAULT_FORMULA,
 } = require('../services/intensityModule');
 
-// --- estimateE1RM ---
+// --- estimateE1RM (the single engine method, #1339) ---
 
-test('estimateE1RM: Epley default — 100lb × 10 reps → 133.33', () => {
+test('estimateE1RM: RIR 0 — 100lb × 10 reps → 133.33', () => {
   // 100 × (1 + 10/30) = 100 × 1.333... = 133.33
   assert.strictEqual(estimateE1RM(100, 10), 133.33);
+  assert.strictEqual(estimateE1RM(100, 10, 0), 133.33);
 });
 
-test('estimateE1RM: Epley default — 225lb × 5 reps → 262.5', () => {
+test('estimateE1RM: RIR 0 — 225lb × 5 reps → 262.5', () => {
   // 225 × (1 + 5/30) = 225 × 1.1667 = 262.5
   assert.strictEqual(estimateE1RM(225, 5), 262.5);
 });
@@ -30,20 +29,30 @@ test('estimateE1RM: 1 rep — Epley still adds 1/30 (no exact passthrough)', () 
   assert.strictEqual(estimateE1RM(200, 1), 206.67);
 });
 
-test('estimateE1RM: Brzycki formula gives correct result at 5 reps', () => {
-  // 100 × (36 / (37 - 5)) = 100 × (36/32) = 112.5
-  assert.strictEqual(estimateE1RM(100, 5, 'brzycki'), 112.5);
+test('estimateE1RM: RIR honored — 225lb × 6 @ RIR 2 → 285', () => {
+  // 225 / percentOf1RM(6, 2) = 225 × (1 + 8/30) = 285
+  assert.strictEqual(estimateE1RM(225, 6, 2), 285);
 });
 
-test('estimateE1RM: Lombardi formula gives correct result', () => {
-  // 100 × 10^0.10 = 100 × 1.2589... = 125.89
-  const result = estimateE1RM(100, 10, 'lombardi');
-  assert.ok(result > 125 && result < 126, `expected ~125.89, got ${result}`);
+test('estimateE1RM: absent RIR is RIR 0', () => {
+  assert.strictEqual(estimateE1RM(225, 6, null), 270);
+  assert.strictEqual(estimateE1RM(225, 6, undefined), 270);
 });
 
-test('estimateE1RM: DEFAULT_FORMULA is epley', () => {
-  assert.strictEqual(DEFAULT_FORMULA, 'epley');
-  assert.ok('epley' in FORMULAS);
+test('estimateE1RM: out-of-range RIR is treated as absent (RIR 0)', () => {
+  // Standing fallback policy: an RIR outside 0–4 carries no information.
+  assert.strictEqual(estimateE1RM(225, 6, 5), 270);
+  assert.strictEqual(estimateE1RM(225, 6, -1), 270);
+});
+
+test('estimateE1RM: non-number RIR throws TypeError', () => {
+  assert.throws(() => estimateE1RM(100, 5, 'brzycki'), TypeError);
+});
+
+test('estimateE1RM: no upper reps cap — the single method serves every logged rep count', () => {
+  // 100 × (1 + 25/30) = 183.33; per-module caps (userState/autoregulation)
+  // stay in the calling module, not in the method.
+  assert.strictEqual(estimateE1RM(100, 25), 183.33);
 });
 
 test('estimateE1RM: throws on zero weight', () => {
@@ -56,14 +65,6 @@ test('estimateE1RM: throws on negative weight', () => {
 
 test('estimateE1RM: throws on reps below minimum', () => {
   assert.throws(() => estimateE1RM(100, 0), RangeError);
-});
-
-test('estimateE1RM: throws on reps above maximum', () => {
-  assert.throws(() => estimateE1RM(100, 21), RangeError);
-});
-
-test('estimateE1RM: throws on unknown formula', () => {
-  assert.throws(() => estimateE1RM(100, 5, 'unknown'), TypeError);
 });
 
 // --- percentOf1RM ---
@@ -187,24 +188,10 @@ test('estimateRIR: throws on invalid inputs', () => {
   assert.throws(() => estimateRIR(100, 5, 0), RangeError);
 });
 
-// --- FORMULAS catalog ---
+// --- no second formula (#1339) ---
 
-test('FORMULAS: contains epley, brzycki, lombardi', () => {
-  assert.ok('epley' in FORMULAS);
-  assert.ok('brzycki' in FORMULAS);
-  assert.ok('lombardi' in FORMULAS);
-});
-
-test('FORMULAS: all entries are functions', () => {
-  for (const [key, fn] of Object.entries(FORMULAS)) {
-    assert.strictEqual(typeof fn, 'function', `FORMULAS.${key} must be a function`);
-  }
-});
-
-test('FORMULAS: all formulas produce higher e1RM for more reps at same weight', () => {
-  for (const [key, fn] of Object.entries(FORMULAS)) {
-    const at5 = fn(100, 5);
-    const at10 = fn(100, 10);
-    assert.ok(at10 > at5, `FORMULAS.${key}: e1RM at 10 reps should exceed e1RM at 5 reps`);
-  }
+test('single method: no formula catalog is exported', () => {
+  const intensity = require('../services/intensityModule');
+  assert.ok(!('FORMULAS' in intensity), 'FORMULAS is retired: one method only');
+  assert.ok(!('DEFAULT_FORMULA' in intensity), 'DEFAULT_FORMULA is retired: one method only');
 });

@@ -3258,15 +3258,31 @@ test('previewTestRows matches session-20YY ids beyond 2026 (no year hardcode)', 
 });
 
 test('detectStalls flags lifts with no weight progression over minSessions', () => {
+  // Same weight, reps AND RIR across all three sessions: the single method
+  // (#1339) reads a flat e1RM (222), so this is a stall. (Varying the RIR
+  // would be real e1RM movement, not a stall.)
   const rows = [
     ['2026-04-01', 'S1', 'Bench Press', 'Bench Press', 'Chest', 'BP', '1', '185', '5', '1', ''],
-    ['2026-04-05', 'S2', 'Bench Press', 'Bench Press', 'Chest', 'BP', '1', '185', '5', '2', ''],
+    ['2026-04-05', 'S2', 'Bench Press', 'Bench Press', 'Chest', 'BP', '1', '185', '5', '1', ''],
     ['2026-04-10', 'S3', 'Bench Press', 'Bench Press', 'Chest', 'BP', '1', '185', '5', '1', ''],
   ];
   const stalls = detectStalls(rows, 3);
   assert.equal(stalls.length, 1);
   assert.equal(stalls[0].liftCode, 'BP');
   assert.equal(stalls[0].sessions_stalled, 3);
+});
+
+test('#1339: detectStalls does NOT flag identical weight/reps when the RIR varies', () => {
+  // 185×5 @ RIR 1 → 2 → 1: same weight and reps, but the single method reads
+  // e1RM 222 → 228.17 → 222 — session 2 exceeds session 1, so this is
+  // movement, not a stall. Under the retired rep-only figure all three sets
+  // read 215.83 and this flagged as a stall.
+  const rows = [
+    ['2026-04-01', 'S1', 'Bench Press', 'Bench Press', 'Chest', 'BP', '1', '185', '5', '1', ''],
+    ['2026-04-05', 'S2', 'Bench Press', 'Bench Press', 'Chest', 'BP', '1', '185', '5', '2', ''],
+    ['2026-04-10', 'S3', 'Bench Press', 'Bench Press', 'Chest', 'BP', '1', '185', '5', '1', ''],
+  ];
+  assert.equal(detectStalls(rows, 3).length, 0);
 });
 
 test('detectStalls does not flag progresssing lifts', () => {

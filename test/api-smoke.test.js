@@ -8245,8 +8245,9 @@ test('api smoke: GET /api/exercises/:liftCode returns aggregated detail for a kn
   assert.deepEqual(body.data.exerciseNames, ['Bench Press']);
   assert.equal(body.data.totalSets, 3, 'three BEN01 sets in the fixture');
   assert.equal(body.data.bestWeightSet.weight, '225', 'heaviest working set is the 225 top set');
-  // estimated1RM = max(w*(1+reps/30)); 225×5 → 262.5 is the highest.
-  assert.ok(Math.abs(body.data.estimated1RM - 262.5) < 0.01, 'e1RM from the 225×5 set');
+  // estimated1RM = single method (#1339): 225×5 @ RIR 2 → 225×(1+7/30) = 277.5
+  // is the highest (205×5 @3 → 259.67; 215×6 @2 → 272.33).
+  assert.ok(Math.abs(body.data.estimated1RM - 277.5) < 0.01, 'e1RM from the 225×5 @ RIR 2 set');
   assert.ok(Array.isArray(body.data.recentWorkingSets));
 });
 

@@ -21,6 +21,7 @@
 
 const { computeBenchmark } = require('./exerciseBenchmark');
 const { isWarmupNote } = require('./warmupTag');
+const { estimateE1RM } = require('./intensityModule'); // #1339: the single e1RM method
 
 // eslint-disable-next-line no-unused-vars -- column index constants; COL_DATE reserved for future date filtering
 const COL_DATE    = 0;
@@ -49,9 +50,7 @@ const MISSED_LIFT_MIN_COUNT        = 1;
 // counts as "below expected" for the consistent_underperformance pattern.
 const UNDERPERFORMANCE_E1RM_DEFICIT = 0.05; // 5 %
 
-function epley(weight, reps) {
-  return weight * (1 + reps / 30);
-}
+// #1339: no local epley — the single method lives in intensityModule.
 
 // Group rows by session and filter to the target liftCode.
 // Returns an array of sessions (chronological order), each being an array of rows.
@@ -79,7 +78,8 @@ function workingSets(sessionRows) {
   if (sessionMax === 0) return sessionRows;
   const working = sessionRows.filter(r => {
     const w = parseFloat(r[COL_WEIGHT]) || 0;
-    const rir = r[COL_RIR] != null && r[COL_RIR] !== '' ? parseFloat(r[COL_RIR]) : null;
+    const rawRir = r[COL_RIR];
+    const rir = (rawRir !== null && rawRir !== undefined && rawRir !== '') ? parseFloat(rawRir) : null;
     // An explicit warm-up tag (notes) is authoritative — excluded even if heavy
     // or low-RIR; the weight/RIR checks remain as a fallback for untagged rows.
     if (isWarmupNote(r[COL_NOTES])) return false;
@@ -97,7 +97,11 @@ function sessionTopE1RM(sessionRows) {
   for (const r of ws) {
     const w = parseFloat(r[COL_WEIGHT]) || 0;
     const reps = parseFloat(r[COL_REPS]) || 0;
-    if (w > 0 && reps > 0) best = Math.max(best, epley(w, reps));
+    const rawRir = r[COL_RIR];
+    const rir = (rawRir !== null && rawRir !== undefined && rawRir !== '') ? parseFloat(rawRir) : null;
+    // #1339: the single method — the row's RIR is part of the estimate.
+    // Sub-1-rep rows are not estimable.
+    if (w > 0 && reps >= 1) best = Math.max(best, estimateE1RM(w, reps, rir));
   }
   return best > 0 ? best : null;
 }
@@ -109,9 +113,10 @@ function detectUnderperformance(liftCode, rows) {
   const benchmark = computeBenchmark(liftCode, rows);
   // Need a working weight to compute benchmark e1RM.
   if (!benchmark || !benchmark.workingWeight || !benchmark.repRange) return null;
-  const benchE1RM = epley(
+  const benchE1RM = estimateE1RM(
     benchmark.workingWeight,
-    benchmark.repRange.min + Math.round((benchmark.repRange.max - benchmark.repRange.min) / 2)
+    benchmark.repRange.min + Math.round((benchmark.repRange.max - benchmark.repRange.min) / 2),
+    0 // benchmark rep-range midpoint carries no RIR: a to-failure reference (#1339)
   );
   if (benchE1RM <= 0) return null;
 

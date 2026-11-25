@@ -17,8 +17,9 @@ const ex = (weight, reps, rir) => ({ weight, reps, rir });
 
 /* ===== estimateE1rm (Epley) ===== */
 
-test('estimateE1rm uses Epley and guards bad input', () => {
-  assert.equal(estimateE1rm(225, 5), 225 * (1 + 5 / 30)); // 262.5
+test('estimateE1rm uses the single method and guards bad input', () => {
+  assert.equal(estimateE1rm(225, 5), 225 * (1 + 5 / 30)); // 262.5, RIR absent = RIR 0
+  assert.equal(estimateE1rm(225, 6, 2), 285); // #1339: the exposure's RIR is honored
   assert.equal(estimateE1rm(100, 0), null);
   assert.equal(estimateE1rm(0, 5), null);
   assert.equal(estimateE1rm(null, 5), null);
@@ -101,15 +102,34 @@ test('an e1RM drop of ≥5% flags regression (20 points at the 5% edge)', () => 
 /* ===== C: RIR drift at stable performance ===== */
 
 test('falling RIR at identical performance flags drift, isolated from stagnation', () => {
-  // 225×5 at RIR 3 → 2 → 1. Same weight & reps, effort rising. Only 2 stalled
-  // exposures (< threshold 3) so A stays 0; drift = 3 − 1 = 2 → C = 8 + 8 = 16.
+  // 225×10 at RIR 3 → 2 → 1. Same weight & reps, effort rising. Only 2 stalled
+  // exposures (< threshold 3) so A stays 0; e1RM 322.5 → 315 → 307.5 is a 4.65%
+  // drop (< 5%), so B stays 0; drift = 3 − 1 = 2 → C = 8 + 8 = 16.
+  // (10 reps, not 5: at 5 reps the same 2-point RIR fall is a 5.26% e1RM drop
+  // and B fires too — see the next test. That is the #1339 fix, not a bug.)
+  const out = computeFatigueScore({
+    frequency_per_week: 5,
+    lifts: [lift('BENCH', 'strength', [ex(225, 10, 3), ex(225, 10, 2), ex(225, 10, 1)])]
+  });
+  assert.equal(out.signals.C, 16);
+  assert.equal(out.signals.A, 0);
+  assert.equal(out.signals.B, 0);
+  assert.equal(out.score, 16);
+});
+
+test('#1339: falling RIR at identical performance is also a regression when the e1RM drop clears 5%', () => {
+  // 225×5 at RIR 3 → 2 → 1. Same weight & reps, effort rising. The single
+  // method sees the e1RM fall 285 → 277.5 → 270 (5.26% from the peak), so B
+  // fires at 20 alongside the drift C = 16; A stays 0 (2 stalled < 3).
+  // Under the retired rep-only figure all three sets read 262.5 and B was blind.
   const out = computeFatigueScore({
     frequency_per_week: 5,
     lifts: [lift('BENCH', 'strength', [ex(225, 5, 3), ex(225, 5, 2), ex(225, 5, 1)])]
   });
   assert.equal(out.signals.C, 16);
+  assert.equal(out.signals.B, 20);
   assert.equal(out.signals.A, 0);
-  assert.equal(out.score, 16);
+  assert.equal(out.score, 36);
 });
 
 /* ===== D: multiple lifts stalling at once ===== */

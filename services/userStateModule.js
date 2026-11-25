@@ -14,7 +14,7 @@
 // opts.asOf is required and makes the function fully deterministic — pass
 // the current date so staleness and window calculations are reproducible in tests.
 
-const { estimateE1RM, percentOf1RM } = require('./intensityModule');
+const { estimateE1RM } = require('./intensityModule');
 const { classifyMuscleVolume } = require('./volumeAssessmentModule');
 
 const TREND_THRESHOLD     = 0.02; // 2 % change required to declare a trend
@@ -39,8 +39,9 @@ function _daysBetween(earlier, later) {
 }
 
 // Estimate e1RM from a single log entry.
-// Uses RIR-adjusted Epley (weight / percentOf1RM) when rir is valid (0–4).
-// Falls back to plain Epley (estimateE1RM) when rir is absent or out of range.
+// #1339: the single method — RIR is part of the estimate; an absent or
+// invalid RIR is RIR 0 (a to-failure set), which reproduces the old rep-only
+// fallback exactly.
 // Returns null if weight/reps are invalid or estimation throws.
 function _entryE1rm(entry) {
   const weight = Number(entry.weight);
@@ -52,10 +53,7 @@ function _entryE1rm(entry) {
   const rir = isFinite(rawRir) && rawRir >= 0 && rawRir <= 4 ? rawRir : null;
 
   try {
-    if (rir !== null) {
-      return Math.round((weight / percentOf1RM(reps, rir)) * 100) / 100;
-    }
-    return estimateE1RM(weight, reps);
+    return estimateE1RM(weight, reps, rir);
   } catch {
     return null;
   }

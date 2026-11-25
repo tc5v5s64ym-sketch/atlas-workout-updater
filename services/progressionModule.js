@@ -90,9 +90,10 @@ function recommendProgression(scenarioId, context) {
   switch (scenario.default_action) {
     case 'increase_load': {
       // Prefer e1RM-derived target if RIR > 0; fall back to increment step.
+      // #1339: the single method — the current set's RIR is part of the estimate.
       const e1rm = (typeof context.e1rm === 'number' && context.e1rm > 0)
         ? context.e1rm
-        : estimateE1RM(currentWeight, currentReps);
+        : estimateE1RM(currentWeight, currentReps, currentRIR);
       let targetW;
       if (currentRIR > 0) {
         // Target the same reps at one less RIR as a load-increase signal

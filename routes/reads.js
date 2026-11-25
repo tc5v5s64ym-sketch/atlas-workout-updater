@@ -30,6 +30,7 @@ const {
   detectStalls,
 } = require('../services/analytics');
 const trainingStore = require('../services/trainingStore');
+const { estimateE1RM } = require('../services/intensityModule'); // #1339: the single e1RM method
 
 // ── One truthful terminal status for a failed read ────────────────────────────
 //
@@ -260,8 +261,10 @@ module.exports = function registerReadRoutes({ getSheetRows }) {
       const estimated1RM = workingSets.reduce((max, r) => {
         const w = Number(r[7]);
         const reps = Number(r[8]);
-        if (!Number.isFinite(w) || !Number.isFinite(reps)) return max;
-        return Math.max(max, w * (1 + reps / 30));
+        // #1339: the single method — the row's RIR (col 9) is part of the
+        // estimate. Sub-1-rep rows are not estimable and are skipped.
+        if (!Number.isFinite(w) || !Number.isFinite(reps) || w <= 0 || reps < 1) return max;
+        return Math.max(max, estimateE1RM(w, reps, Number(r[9])));
       }, 0);
 
       const recentWorkingSets = matching.filter(r => Number(r[7]) > 0).slice(-10).map(rowToSet);

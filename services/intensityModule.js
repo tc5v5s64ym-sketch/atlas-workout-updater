@@ -3,43 +3,41 @@
 // IntensityModule — pure read-only functions for e1RM estimation and
 // RIR/%1RM conversion. No Sheets access, no side effects.
 //
-// Atlas logs sets as weight × reps / RIR (slash notation). The Epley
-// formula is the default because it matches the inline usage already in
-// analytics.js. Do not change the default formula without a coordinated
-// update to analytics.js and the coaching knowledge config.
-
-const FORMULAS = Object.freeze({
-  // weight × (1 + reps/30)
-  epley: (w, r) => w * (1 + r / 30),
-  // weight × (36 / (37 − reps)); clamps reps to 36 to avoid asymptote
-  brzycki: (w, r) => w * (36 / (37 - Math.min(r, 36))),
-  // weight × reps^0.10
-  lombardi: (w, r) => w * Math.pow(r, 0.10),
-});
-
-const DEFAULT_FORMULA = 'epley';
+// #1339 — SINGLE-METHOD RULE: `estimateE1RM(weight, reps, rir)` is the one
+// engine method for estimated 1RM: reps+RIR → %1RM lookup
+// (weight / percentOf1RM(reps, rir)). Every e1RM in the engine answers from
+// it; no local Epley copy, no alternate formula, no rep-only figure may
+// coexist. An absent or out-of-range RIR is RIR 0 (a to-failure set), which
+// reproduces the old rep-only Epley value exactly — so the standardization
+// changes nothing where no RIR was ever recorded, and corrects every set
+// that carries one. A non-number RIR is a caller bug and throws TypeError.
+//
+// Atlas logs sets as weight × reps / RIR (slash notation).
 
 const MIN_REPS = 1;
-const MAX_REPS = 20; // Epley/Brzycki are unreliable beyond this range
 const MIN_RPE = 6;
 const MAX_RPE = 10;
 const MIN_RIR = 0;
 const MAX_RIR = 4; // RIR > 4 means the set is too easy to be informative
 
-// Estimate one-rep max from a performed set.
+// The single engine method for estimated 1RM: reps+RIR → %1RM lookup.
 // Rounds to 2 decimal places to avoid floating-point noise in downstream
-// comparisons.
-function estimateE1RM(weight, reps, formula) {
+// comparisons. rir may be null/undefined (absent → 0); a finite number
+// outside 0–4 is treated as absent, per the standing fallback policy
+// (userStateModule / autoregulationModule); a non-number rir throws.
+function estimateE1RM(weight, reps, rir) {
   if (typeof weight !== 'number' || !isFinite(weight) || weight <= 0) {
     throw new RangeError('weight must be a positive finite number');
   }
-  if (typeof reps !== 'number' || !isFinite(reps) || reps < MIN_REPS || reps > MAX_REPS) {
-    throw new RangeError(`reps must be ${MIN_REPS}–${MAX_REPS}`);
+  if (typeof reps !== 'number' || !isFinite(reps) || reps < MIN_REPS) {
+    throw new RangeError(`reps must be a finite number >= ${MIN_REPS}`);
   }
-  const formulaKey = formula || DEFAULT_FORMULA;
-  const fn = FORMULAS[formulaKey];
-  if (!fn) throw new TypeError(`Unknown e1RM formula: "${formulaKey}". Valid: ${Object.keys(FORMULAS).join(', ')}`);
-  return Math.round(fn(weight, reps) * 100) / 100;
+  if (rir !== null && rir !== undefined && typeof rir !== 'number') {
+    throw new TypeError('rir must be a number, null, or undefined');
+  }
+  const r = (typeof rir === 'number' && Number.isFinite(rir) && rir >= MIN_RIR && rir <= MAX_RIR)
+    ? rir : MIN_RIR;
+  return Math.round((weight / percentOf1RM(reps, r)) * 100) / 100;
 }
 
 // Fraction of 1RM represented by performing R reps with rir reps in reserve.
@@ -101,8 +99,6 @@ function estimateRIR(weight, reps, e1rm) {
 }
 
 module.exports = {
-  FORMULAS,
-  DEFAULT_FORMULA,
   estimateE1RM,
   percentOf1RM,
   percentOf1RMByRPE,
