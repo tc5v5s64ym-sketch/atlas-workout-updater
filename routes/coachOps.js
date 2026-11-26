@@ -770,6 +770,19 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
     turn.stage('session_snapshot', enrichmentFailed ? 'error' : 'ok');
     const flight_recorder_context = isSetLike ? flightRecorderContext(facts.live_set_context) : null;
 
+    // #1342 — in-session working-weight finder (Corpus V2 §F.8). Best-effort and
+    // fail-closed: a history read failure or a malformed shape yields null (no
+    // finder signal), never a finder claim without evidence. Engine-overwritten
+    // into facts (like stimulus_grade) so the model can word the ruling and
+    // the corpus detector can read finder_mode off the response data.
+    let finderState = null;
+    if (isSetLike) {
+      try {
+        finderState = await computeFinderState({ facts, engineLiftLogRows, enrichmentFailed });
+      } catch (_) { finderState = null; }
+    }
+    if (finderState) facts = { ...facts, finder: finderState };
+
     // PR-3 block-note tier: engine-owned classification of the just-logged block via
     // the pure batchNoteFacts → coachNoteTier fold (over the block's own sets plus any
     // caller-supplied rec/flags). Returned to the client to gate rendering; it is
@@ -1024,10 +1037,23 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
       noteMeta.note_reason_code = noteMeta.note_reason_code || selectedBlockMode;
       surfacedSignalBlock = true;
     }
+    // #1342 — a finder ruling is signal-carrying too: a block that identified
+    // the working weight, named an overshoot, or confirmed the baseline must
+    // not collapse to silent ack — the athlete has to hear the ruling. A
+    // still-ascending finder ('finding', no conclusion yet) stays silent.
+    const finderRuling = finderState && ['identified', 'overshot', 'baselined'].includes(finderState.status);
+    let surfacedFinderBlock = false;
+    if (kind === 'block' && noteMeta.note_tier === 'ack_only' && finderRuling) {
+      noteMeta.note_tier = 'short';
+      noteMeta.note_trigger = noteMeta.note_trigger || 'finder';
+      noteMeta.note_reason_code = noteMeta.note_reason_code || finderState.status;
+      surfacedFinderBlock = true;
+    }
     const ackOnlyBlockResponse = () => standardSuccess(req, res, 'Routine block — acknowledgment only', {
       message: null, voice: null, sub_voice: null, configured: coach.isConfigured(), model: coach.coachModel(), kind,
       ...noteMeta, note_tier: 'ack_only', note_trigger: null, note_reason_code: null,
-      effort_note: null, reroute: null, set_grade: null, next_move_advisory: null, recovery_advisory: null, flight_recorder_context
+      effort_note: null, reroute: null, set_grade: null, next_move_advisory: null, recovery_advisory: null, flight_recorder_context,
+      finder_mode: finderState !== null, finder: finderState
     });
     // LT-010 degraded-path guard: a block surfaced ONLY because of its mode (bumped off
     // ack_only) carries no set-effort signal — its coaching content comes solely from the
@@ -1044,9 +1070,10 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
       const fin = finalizeCoachVoice(null, voiceBase, subVoiceBase);
       res.locals.coachSuppressionCode = fin.suppression_code || null;
       validatorRan = true; // the deterministic validator ran; the model was skipped (outage)
-      if (surfacedSignalBlock) return ackOnlyBlockResponse();
+      if (surfacedSignalBlock || surfacedFinderBlock) return ackOnlyBlockResponse();
       return standardSuccess(req, res, 'Coach voice unavailable — use templated fallback', {
-        message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: false, model: coach.coachModel(), ...noteMeta, ...effortExtras, flight_recorder_context
+        message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: false, model: coach.coachModel(), ...noteMeta, ...effortExtras, flight_recorder_context,
+        finder_mode: finderState !== null, finder: finderState
       });
     }
 
@@ -1065,7 +1092,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
       const fin = finalizeCoachVoice(message, voiceBase, subVoiceBase, registerCtx, numericFindings);
       res.locals.coachSuppressionCode = fin.suppression_code || null;
       validatorRan = true;
-      return standardSuccess(req, res, 'Coach message', { message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: true, model: coach.coachModel(), source: 'gemini', kind, ...noteMeta, ...effortExtras, flight_recorder_context });
+      return standardSuccess(req, res, 'Coach message', { message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: true, model: coach.coachModel(), source: 'gemini', kind, ...noteMeta, ...effortExtras, flight_recorder_context, finder_mode: finderState !== null, finder: finderState });
     } catch (error) {
       modelStatus = 'error'; // the LLM was called but threw
       // Degrade gracefully: tell the client to use its templated fallback rather
@@ -1073,9 +1100,10 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
       const fin = finalizeCoachVoice(null, voiceBase, subVoiceBase);
       res.locals.coachSuppressionCode = fin.suppression_code || null;
       validatorRan = true;
-      if (surfacedSignalBlock) return ackOnlyBlockResponse();
+      if (surfacedSignalBlock || surfacedFinderBlock) return ackOnlyBlockResponse();
       return standardSuccess(req, res, 'Coach generation failed — use templated fallback', {
-        message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: true, model: coach.coachModel(), error: error.message, ...noteMeta, ...effortExtras, flight_recorder_context
+        message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: true, model: coach.coachModel(), error: error.message, ...noteMeta, ...effortExtras, flight_recorder_context,
+        finder_mode: finderState !== null, finder: finderState
       });
     }
   });
@@ -1123,6 +1151,69 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
     });
     return standardSuccess(req, res, 'Final render recorded', { turn_id: turnId });
   });
+
+  // #1342 — in-session working-weight finder state (services/workingWeightFinder.js).
+  // Pure evaluation over the turn's sets; this wrapper owns only the history
+  // question (does the logged lift have any prior session?) and the criterion
+  // source. Returns null when this turn is not a finder turn. Best-effort and
+  // fail-closed: any read failure yields null, never a finder claim.
+  async function computeFinderState({ facts, engineLiftLogRows, enrichmentFailed }) {
+    const { evaluateWorkingWeightFinder, substitutionIsFinderEntry } = require('../services/workingWeightFinder');
+    const substitution = facts && typeof facts.substitution === 'object' ? facts.substitution : null;
+    const priorSets = Array.isArray(facts.finder_prior_sets) ? facts.finder_prior_sets : [];
+    if (!substitutionIsFinderEntry(substitution) && priorSets.length === 0) return null;
+    const exerciseName = typeof facts.exerciseName === 'string' ? facts.exerciseName.trim() : '';
+    if (!exerciseName) return null;
+    // A finder already in progress (forwarded priors) is not re-gated on
+    // history — entry already happened, and the sets logged this session are
+    // not in the sheet yet, so a re-check could only misfire.
+    let hasHistory = false;
+    if (priorSets.length === 0) {
+      try {
+        if (Array.isArray(engineLiftLogRows) && facts.liftCode) {
+          const { computeBenchmark } = require('../services/exerciseBenchmark');
+          hasHistory = computeBenchmark(String(facts.liftCode), engineLiftLogRows).confidence !== 'none';
+        } else if (!enrichmentFailed) {
+          const allLog = await getSheetRows(logSheetName);
+          hasHistory = hasLoggedHistoryForExercise(allLog, exerciseName);
+        } else {
+          return null;
+        }
+      } catch (_) { return null; }
+      if (hasHistory !== false) return null;
+    }
+    const rec = facts.rec && typeof facts.rec === 'object' ? facts.rec : {};
+    const numOrNull = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
+    const targetRir = numOrNull(facts.targetRir) ?? numOrNull(rec.target_rir) ?? 2;
+    const targetReps = numOrNull(facts.targetReps) ?? numOrNull(rec.target_reps) ?? 8;
+    return evaluateWorkingWeightFinder({
+      exercise: exerciseName,
+      substitution,
+      todaySets: facts.todaySets,
+      priorSets,
+      hasHistory,
+      targetReps,
+      targetRir,
+    });
+  }
+
+  // Name-matched history check for the no-liftCode path: any prior session
+  // (distinct session id, falling back to date) with a row for this exercise
+  // by canonical or raw name. Same normalization as cleanLogForLift
+  // (services/liveIntelligence.js): Log_Cleaned columns 2 (exercise) / 3
+  // (canonical_exercise), 1 (session_id), 0 (date).
+  function hasLoggedHistoryForExercise(allLog, exerciseName) {
+    const { normalizeExerciseKey } = require('../services/exerciseEnrichment');
+    const want = normalizeExerciseKey(exerciseName);
+    if (!want || !Array.isArray(allLog)) return false;
+    const sessions = new Set();
+    for (const r of allLog) {
+      if (!Array.isArray(r)) continue;
+      if (normalizeExerciseKey(r[3] || r[2]) !== want) continue;
+      sessions.add(String(r[1] || '') || String(r[0] || ''));
+    }
+    return sessions.size > 0;
+  }
 
   // Assemble a compact, read-only training snapshot for the chat coach from the
   // deterministic engine — recent sessions, movement-pattern readiness, today's

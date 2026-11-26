@@ -841,3 +841,40 @@ test('F10S6a: bare "what should I do" stays OFF the pick route (mid-session stat
     assert.equal(fn(t), false, `must NOT route to the pick: "${t}"`);
   }
 });
+
+// --- #1342 — in-session working-weight finder carry-over ---
+//
+// The server's finder state lives only in the /api/coach/message response.
+// The NEXT block for the same exercise forwards the finder turn's RAW sets
+// (finder_prior_sets) so the server can re-derive the confirmation — the
+// client never forwards a verdict, only sets. Source-level wiring tests (the
+// file's own pattern): the live proof is test/coach-message-finder.test.js
+// (P2 posts finder_prior_sets to the real route) plus the E2E suite.
+
+test('#1342: getInWorkoutNote notes the finder state for carry-over', () => {
+  const cc = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'coach-conversation.js'), 'utf8');
+  const fn = cc.slice(cc.indexOf('async function getInWorkoutNote'), cc.indexOf('async function getLlmCoachingMessage'));
+  assert.match(fn, /noteFinderState\(facts && facts\.exerciseName, sessionId, facts && facts\.todaySets, data\)/,
+    'every block turn updates the finder carry-over from the server response');
+});
+
+test('#1342: both block call sites forward the open finder sets', () => {
+  const cc = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'coach-conversation.js'), 'utf8');
+  const hits = [...cc.matchAll(/finder_prior_sets: finderPriorSetsFor\(([^,]+), sessionId\)/g)];
+  assert.equal(hits.length, 2, 'primary + additional-lift block call sites forward priors');
+  assert.ok(hits.some((m) => m[1].trim() === 'primary.exercise'), 'primary lift forwards its own priors');
+  assert.ok(hits.some((m) => m[1].trim() === 'ex.exercise'), 'additional lifts forward their own priors');
+});
+
+test('#1342: the carry-over is keyed by exercise + session and clears on baseline', () => {
+  const cc = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'coach-conversation.js'), 'utf8');
+  const start = cc.indexOf('function noteFinderState');
+  assert.ok(start !== -1, 'noteFinderState must exist');
+  const fn = cc.slice(start, cc.indexOf('async function getLlmCoachingMessage', start));
+  assert.match(fn, /finderCarryoverKey\(exerciseName, sessionId\)/, 'keyed by exercise + session id');
+  assert.match(fn, /finder\.status === 'baselined'/, 'a baselined finder clears the carry-over');
+  assert.match(fn, /data\.finder_mode === true/, 'only a real finder response is stashed');
+  assert.match(fn, /weight: Number\(s\.weight\), reps: Number\(s\.reps\), rir: Number\(s\.rir\)/,
+    'only raw set numbers are carried — never a client-computed verdict');
+  assert.doesNotMatch(fn, /working_weight|overshoot|baseline:/, 'the stash carries sets, never verdict fields');
+});

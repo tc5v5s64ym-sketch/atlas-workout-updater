@@ -75,6 +75,7 @@ function buildCoachSystemPrompt() {
     '- The facts may include "session_intent" — the PRESCRIBED objective of today\'s session (the plan the lifter is following). When it is "recovery_pump" or "deload_reset", today is a planned recovery/pump day: the light loads and high RIR are BY DESIGN — they are what the plan asked for. A below-range or easy read here is ON-PLAN compliance, NOT under-effort: do NOT call the session light as a criticism, and do NOT tell them to add weight, push harder, or get "back in the groove" / back to their working range — not in the opening line and not anywhere. Word progression_verdict "under_shot" as intentional ("light by design today"), never as a shortfall. Like an active deload, session_intent OVERRIDES the add-weight steer of effort_verdict ("easy"/"far_easy" is the goal today). The forward-looking line is about banking recovery and returning to normal loads next session — never a load target. Still never invent numbers, and never contradict the other verdicts.',
     '- The facts may include "substitution" {classification, decision, quality, reason_code, prescribed, logged} — the engine\'s read of a swapped exercise. WORD it, never derive it: your read MUST agree with `decision` — "approve" = a sound pivot that kept the intent (preserved/baseline), "warn" = the objective was changed or abandoned, so push back honestly. You may name the prescribed and logged lifts and restate `reason_code` in plain words; you NEVER decide the classification yourself, never contradict or relabel it, and never invent a movement/muscle claim or a reason beyond `reason_code`.',
     '- `substitution.quality` (when present) is the engine\'s read of how well the swap preserves the stimulus: "poor" → VOLUNTEER it — say plainly what muscle or training intent today\'s swap missed (e.g. the prescribed lift\'s target did not get trained); "acceptable" → at most one line on the tradeoff (lighter / still covers the area), no warning; "excellent" → a clean equivalent, a brief acknowledgement is fine. NEVER call a swap good, equivalent, or say it "counts" unless quality is "excellent" or "acceptable". If quality is absent or "unknown", do NOT judge the swap\'s quality at all — only restate the decision. No praise for ordinary compliance.',
+    '- The facts may include "finder" {exercise, prescribed_exercise, criterion {reps, rir}, status, working_weight {weight, reps, rir}, overshoot {weight, reps, rir}, baseline {exercise, weight, reps, rir, sets}} — the engine\'s in-session working-weight-finder ruling for a substituted lift with no history. WORD it, never derive it: when `status` is "identified" or later, name the working weight as the criterion load; when `status` is "overshot", name the overshoot and the drop-back to the working weight, and NEVER present the overshoot load as the working weight or the baseline; when `status` is "baselined", state the baseline exactly as given (weight, reps, RIR, sets) — and name the overshoot it replaces when one is present. State the drop-back LOAD only — never a set count for the correction (the engine does not own the remaining-set count). Never name a load outside `finder`.',
     '- The facts may include "evidence_context" {reference_sets[], date_range, benchmark, confidence} — the engine\'s historical record behind today\'s verdict. When evidence_context is present you MUST ground at least one statement in it: cite `trend.sessions_analyzed` as the session count ("Based on your last N sessions…") when present, the date span, the benchmark, or a specific reference weight/reps. Every figure you cite must appear in the facts; never fabricate a number. NEVER derive a session count by counting the `reference_sets` array — those are individual sets, not sessions, and counting them would give the wrong number.',
     '- The facts may include "deviation" {verdict, delta, magnitude} — the engine\'s read of today\'s reps vs. the lifter\'s historical expectation at this weight. "above_expected" = logged more reps than usual (positive delta); "below_expected" = fewer reps than usual (negative delta); "on_target" = consistent with history; "insufficient_data" = not enough history to judge. When deviation is present and is not "insufficient_data", weave it into the reaction once: name whether today was better or worse than their norm at this load, and name the magnitude when it is significant. Never contradict the deviation verdict, and never use a single below_expected result to call fatigue — that belongs to readiness_signal.',
     '- You MAY reference ONE history number from the facts (working_weight, first_weight, best_weight, the range/ceiling, or the most recent entry from last_working_sets) to ground progress, e.g. "right at your working weight of {working_weight}" or "up from {first_weight}" or "right in your {range_low}–{range_high}" — but only when it is present and only if it is truthful given the sets. Never invent a past number.',
@@ -165,6 +166,11 @@ function sanitizeFacts(facts) {
     // baseline + approve/warn) when the logged lift was a swap. The model WORDS this
     // decision — it never decides the classification itself or invents a reason.
     substitution: sanitizeSubstitution(f.substitution || rec.substitution),
+    // #1342 — the in-session working-weight-finder ruling (services/
+    // workingWeightFinder.js): criterion, working weight, overshoot, baseline.
+    // Engine-only; the model WORDS this ruling and never derives its own
+    // working weight or names a load outside it.
+    finder: sanitizeFinder(f.finder),
     target_rir: numOrNull(rec.target_rir),
     // Lift history so a note can ground progress in a real number, not "great work".
     // working_weight: the RIR-zone–anchored current working weight (from resolveWorkingWeight).
@@ -649,6 +655,43 @@ function sanitizeSubstitution(s) {
       ? s.evidence.slice(0, 8).map(e => clampText(e, 160)).filter(Boolean)
       : [],
     ...(s.reason != null ? { reason: clampText(String(s.reason), 200) } : {}),
+  };
+}
+
+// #1342 — whitelist the in-session working-weight-finder ruling
+// (services/workingWeightFinder.js). Only the engine's known fields survive:
+// criterion (reps + RIR, both required), a status from the frozen vocabulary,
+// and the working-weight / overshoot / baseline set shapes. Anything else → null.
+const FINDER_STATUSES = ['finding', 'identified', 'overshot', 'baselined'];
+function sanitizeFinder(f) {
+  if (!f || typeof f !== 'object') return null;
+  const set = (s) => (s && typeof s === 'object' ? {
+    weight: numOrNull(s.weight),
+    reps: numOrNull(s.reps),
+    // numOrNull(null) is 0 (Number(null) === 0) — guard null explicitly.
+    rir: s.rir === null || s.rir === undefined ? null : numOrNull(s.rir),
+  } : null);
+  const criterion = f.criterion && typeof f.criterion === 'object'
+    ? { reps: numOrNull(f.criterion.reps), rir: f.criterion.rir === null || f.criterion.rir === undefined ? null : numOrNull(f.criterion.rir) }
+    : null;
+  if (!criterion || criterion.reps === null || criterion.reps === undefined || criterion.rir === null || criterion.rir === undefined) return null;
+  if (!FINDER_STATUSES.includes(f.status)) return null;
+  return {
+    exercise: strOrNull(f.exercise),
+    prescribed_exercise: strOrNull(f.prescribed_exercise),
+    criterion,
+    status: f.status,
+    working_weight: set(f.working_weight),
+    overshoot: set(f.overshoot),
+    baseline: f.baseline && typeof f.baseline === 'object'
+      ? {
+          exercise: strOrNull(f.baseline.exercise),
+          weight: numOrNull(f.baseline.weight),
+          reps: numOrNull(f.baseline.reps),
+          rir: f.baseline.rir === null || f.baseline.rir === undefined ? null : numOrNull(f.baseline.rir),
+          sets: numOrNull(f.baseline.sets),
+        }
+      : null,
   };
 }
 

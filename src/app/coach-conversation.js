@@ -1209,6 +1209,10 @@ import { buildFinalRenderPayload } from './finalRenderReport.js';
     // can report the final rendered text when it diverges from the server record.
     const llmResult = await getLlmCoachingMessage(facts, sessionId, responseTicket).catch(() => null);
     const data = llmResult && llmResult.data;
+    // #1342 — carry the finder forward: stash this turn's raw sets when the
+    // server says the finder is still open for this exercise, so the next
+    // block for it can forward them for the confirmation read.
+    noteFinderState(facts && facts.exerciseName, sessionId, facts && facts.todaySets, data);
     const turnId = llmResult && llmResult.turnId;
     const serverMessage = data && typeof data.message === 'string' ? data.message : null;
     // Soul Recovery (Issue #1073) + owner gate ruling (2026-07-20): a routine on-plan
@@ -1304,6 +1308,47 @@ import { buildFinalRenderPayload } from './finalRenderReport.js';
         body: JSON.stringify(payload),
       })).catch(() => {});
     } catch (_) { /* telemetry must never affect the render */ }
+  }
+
+  // #1342 — in-session finder carry-over. The server's finder state for an
+  // exercise lives only in the /api/coach/message response; the NEXT block for
+  // the same exercise forwards the finder turn's RAW sets so the server can
+  // re-derive the confirmation (baseline) — the client never forwards a
+  // verdict, only sets. Keyed by normalized exercise name + session id, so a
+  // stale entry can never leak into another session or lift. Cleared when the
+  // finder baselines (complete); a still-ascending finder keeps carrying.
+  const finderCarryoverByExercise = new Map();
+  function finderCarryoverKey(exerciseName, sessionId) {
+    const name = typeof exerciseName === 'string' ? exerciseName.trim().toLowerCase() : '';
+    const sid = typeof sessionId === 'string' ? sessionId.trim() : '';
+    return name && sid ? `${sid}::${name}` : null;
+  }
+  function finderPriorSetsFor(exerciseName, sessionId) {
+    const key = finderCarryoverKey(exerciseName, sessionId);
+    if (!key) return undefined;
+    const sets = finderCarryoverByExercise.get(key);
+    return sets ? sets.map(s => ({ ...s })) : undefined;
+  }
+  function noteFinderState(exerciseName, sessionId, todaySets, data) {
+    const key = finderCarryoverKey(exerciseName, sessionId);
+    if (!key) return;
+    const finder = data && data.finder_mode === true && data.finder && typeof data.finder === 'object' ? data.finder : null;
+    if (!finder || finder.status === 'baselined') {
+      finderCarryoverByExercise.delete(key);
+      return;
+    }
+    const sets = (Array.isArray(todaySets) ? todaySets : [])
+      .map(s => {
+        if (Array.isArray(s)) return { weight: Number(s[0]), reps: Number(s[1]), rir: Number(s[2]) };
+        if (s && typeof s === 'object') return { weight: Number(s.weight), reps: Number(s.reps), rir: Number(s.rir) };
+        return null;
+      })
+      .filter(s => s && Number.isFinite(s.weight) && s.weight > 0 && Number.isFinite(s.reps) && s.reps > 0);
+    if (!sets.length) {
+      finderCarryoverByExercise.delete(key);
+      return;
+    }
+    finderCarryoverByExercise.set(key, sets);
   }
 
   // Returns { data, turnId } — the full /api/coach/message data object
@@ -1714,7 +1759,11 @@ import { buildFinalRenderPayload } from './finalRenderReport.js';
       // (activePlannedSession still null) keeps its intent.
       intentId: (typeof getActiveIntentId === 'function' ? getActiveIntentId() : (activeSession && activeSession.intentId)) || null,
       planned_queue: liveQueue,
-      substitution: primarySub
+      substitution: primarySub,
+      // #1342 — forward the open finder's raw sets (if any) so the server can
+      // re-derive the confirmation for this exercise. Raw sets only — the
+      // server never trusts a client-computed finder verdict.
+      finder_prior_sets: finderPriorSetsFor(primary.exercise, sessionId)
     }, sessionId, exercises.length === 1 ? responseTicket : null);
     if (!responseMayRenderSelectedProse()) return;
     const note = reaction.note;
@@ -1790,7 +1839,9 @@ import { buildFinalRenderPayload } from './finalRenderReport.js';
         exercise_complete: exerciseIsComplete(ex.sets),
         intentId: (typeof getActiveIntentId === 'function' ? getActiveIntentId() : (activeSession && activeSession.intentId)) || null,
         planned_queue: [],
-        substitution: undefined
+        substitution: undefined,
+        // #1342 — same finder carry-over as the primary lift (raw sets only).
+        finder_prior_sets: finderPriorSetsFor(ex.exercise, sessionId)
       }, sessionId, ex === exercises[exercises.length - 1] ? responseTicket : null);
       if (!responseMayRenderSelectedProse()) return;
       if (exReaction && exReaction.note) {
