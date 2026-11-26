@@ -7,7 +7,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
-  EVENT_TYPES, OUTCOMES, ITEM_OUTCOMES, CLOSEOUT_STATUSES,
+  EVENT_TYPES, OUTCOMES, ITEM_OUTCOMES, CLOSEOUT_STATUSES, SKIP_CATEGORIES,
   idempotencyKey, toRow,
   buildPlanAcceptedEvents, buildItemOutcomeEvent, buildSessionCloseoutEvent,
 } = require('../services/sessionPlanEvents');
@@ -19,11 +19,12 @@ const IDX = Object.fromEntries(sessionPlansColumns.map((c, i) => [c, i]));
 
 // ── Contract ──────────────────────────────────────────────────────────────────
 
-test('contract: owner-approved column order (13), exact', () => {
+test('contract: owner-approved column order (14), exact', () => {
   assert.deepEqual(sessionPlansColumns, [
     'idempotency_key', 'session_id', 'session_date', 'plan_version', 'event_type',
     'plan_item_id', 'planned_order', 'planned_lift_code', 'movement_pattern',
     'outcome', 'performed_lift_code', 'closeout_status', 'recorded_at',
+    'skip_category',
   ]);
 });
 
@@ -36,7 +37,8 @@ test('contract: frozen vocabularies', () => {
   assert.deepEqual(OUTCOMES, ['planned', 'completed', 'skipped', 'substituted']);
   assert.deepEqual(ITEM_OUTCOMES, ['completed', 'skipped', 'substituted']);
   assert.deepEqual(CLOSEOUT_STATUSES, ['finalized', 'abandoned']);
-  for (const frozen of [EVENT_TYPES, OUTCOMES, CLOSEOUT_STATUSES]) {
+  assert.deepEqual(SKIP_CATEGORIES, ['deliberate', 'time', 'truncated']);
+  for (const frozen of [EVENT_TYPES, OUTCOMES, CLOSEOUT_STATUSES, SKIP_CATEGORIES]) {
     assert.throws(() => frozen.push('x'), 'vocabularies must be frozen');
   }
 });
@@ -161,4 +163,63 @@ test('idempotency: golden hashes are pinned (any delimiter/field/order change is
   assert.equal(buildPlanAcceptedEvents(SESSION, [{ plan_item_id: 'i1', planned_order: 1, planned_lift_code: 'BEN01', movement_pattern: 'horizontal_push' }])[0][IDX.idempotency_key], 'b66f4b794ea54b23');
   assert.equal(buildItemOutcomeEvent(SESSION, { plan_item_id: 'i1', planned_lift_code: 'BEN01', outcome: 'completed' })[IDX.idempotency_key], 'e9b9f567a59f0014');
   assert.equal(buildSessionCloseoutEvent(SESSION, 'finalized')[IDX.idempotency_key], 'e0344432eee1f7ec');
+});
+
+// ── skip_category (#1341 follow-up — Dale-approved additive column 14) ──────
+// An explicit skip carries its reason: deliberate (athlete chose to skip) |
+// time (ran out of time) | truncated (session cut short). Only meaningful on a
+// skipped outcome; absent/blank = uncategorized (pre-migration rows + old clients).
+
+test('skip_category: a skipped outcome carries its category in column 14', () => {
+  for (const cat of ['deliberate', 'time', 'truncated']) {
+    const row = buildItemOutcomeEvent(SESSION, { plan_item_id: 'i1', planned_lift_code: 'BEN01', outcome: 'skipped', skip_category: cat });
+    assert.equal(row.length, sessionPlansColumns.length);
+    assert.equal(row[IDX.skip_category], cat);
+    assert.equal(row[IDX.outcome], 'skipped');
+  }
+});
+
+test('skip_category: absent on a skipped outcome means uncategorized (blank, back-compat)', () => {
+  const row = buildItemOutcomeEvent(SESSION, { plan_item_id: 'i1', planned_lift_code: 'BEN01', outcome: 'skipped' });
+  assert.equal(row[IDX.skip_category], '', 'no category recorded, no throw — old clients keep working');
+  const blank = buildItemOutcomeEvent(SESSION, { plan_item_id: 'i1', planned_lift_code: 'BEN01', outcome: 'skipped', skip_category: '' });
+  assert.equal(blank[IDX.skip_category], '');
+});
+
+test('skip_category: an out-of-vocabulary category throws; a category on a non-skipped outcome throws', () => {
+  assert.throws(() => buildItemOutcomeEvent(SESSION, { plan_item_id: 'i1', planned_lift_code: 'BEN01', outcome: 'skipped', skip_category: 'bored' }), /deliberate\|time\|truncated/);
+  assert.throws(() => buildItemOutcomeEvent(SESSION, { plan_item_id: 'i1', planned_lift_code: 'BEN01', outcome: 'completed', skip_category: 'deliberate' }), /only valid when outcome is skipped/);
+  assert.throws(() => buildItemOutcomeEvent(SESSION, { plan_item_id: 'i1', planned_lift_code: 'BEN01', outcome: 'substituted', performed_lift_code: 'DBP01', skip_category: 'time' }), /only valid when outcome is skipped/);
+});
+
+test('skip_category: non-skip events carry a blank category (column present, empty)', () => {
+  const accepted = buildPlanAcceptedEvents(SESSION, [{ plan_item_id: 'i1', planned_lift_code: 'BEN01' }])[0];
+  assert.equal(accepted[IDX.skip_category], '');
+  const completed = buildItemOutcomeEvent(SESSION, { plan_item_id: 'i1', planned_lift_code: 'BEN01', outcome: 'completed' });
+  assert.equal(completed[IDX.skip_category], '');
+  const closeout = buildSessionCloseoutEvent(SESSION, 'finalized');
+  assert.equal(closeout[IDX.skip_category], '');
+});
+
+test('skip_category: the idempotency key is unchanged for every pre-existing event (golden hashes hold)', () => {
+  // The category enters the key ONLY on a categorized skip — so a retry of any
+  // pre-category event (plan_accepted, completed, uncategorized skip, closeout)
+  // still dedups against its already-written row across the deploy boundary.
+  assert.equal(buildPlanAcceptedEvents(SESSION, [{ plan_item_id: 'i1', planned_order: 1, planned_lift_code: 'BEN01', movement_pattern: 'horizontal_push' }])[0][IDX.idempotency_key], 'b66f4b794ea54b23');
+  assert.equal(buildItemOutcomeEvent(SESSION, { plan_item_id: 'i1', planned_lift_code: 'BEN01', outcome: 'completed' })[IDX.idempotency_key], 'e9b9f567a59f0014');
+  assert.equal(buildSessionCloseoutEvent(SESSION, 'finalized')[IDX.idempotency_key], 'e0344432eee1f7ec');
+});
+
+test('skip_category: a categorized skip keys differently from the same uncategorized skip; a re-categorization is a new append', () => {
+  const base = { plan_item_id: 'i1', planned_lift_code: 'BEN01', outcome: 'skipped' };
+  const uncategorized = buildItemOutcomeEvent(SESSION, base)[IDX.idempotency_key];
+  const deliberate = buildItemOutcomeEvent(SESSION, { ...base, skip_category: 'deliberate' })[IDX.idempotency_key];
+  const time = buildItemOutcomeEvent(SESSION, { ...base, skip_category: 'time' })[IDX.idempotency_key];
+  const deliberateAgain = buildItemOutcomeEvent(SESSION, { ...base, skip_category: 'deliberate' })[IDX.idempotency_key];
+  assert.notEqual(deliberate, uncategorized, 'a categorized skip is a different logical event from the uncategorized one');
+  assert.notEqual(deliberate, time, 'different categories are different events');
+  assert.equal(deliberate, deliberateAgain, 'same skip + same category retries to the same key');
+  // The uncategorized key is the pre-category key: a pre-deploy skip retried
+  // post-deploy (still uncategorized) dedups instead of double-writing.
+  assert.equal(uncategorized, idempotencyKey({ event_type: 'item_outcome', session_id: SESSION.session_id, plan_version: SESSION.plan_version, plan_item_id: 'i1', outcome: 'skipped', performed_lift_code: '', closeout_status: '' }));
 });

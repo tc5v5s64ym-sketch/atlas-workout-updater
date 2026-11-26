@@ -119,7 +119,7 @@ Three narrow authenticated endpoints. All are **`writeCapable: true`** in `confi
 ### 4.0 Shared middleware / guards (every endpoint)
 1. **Auth:** require the Atlas API key (`x-atlas-api-key`), same as all `/api/*`.
 2. **Feature flag:** `ATLAS_SESSION_PLANS_WRITE` (accepts `1`/`true`/`on`; default **OFF**). OFF ⇒ **no Sheets access at all**, return `{ status: "disabled", captured: false }`. (Mirrors `isFlightRecorderEnabled()` `services/flightRecorder.js:81`.)
-3. **Exact-header validation before any write:** read `Session_Plans!A1:M1`; if the tab is missing ⇒ `{ status: "tab_missing", captured: false }`; if the header differs **position-by-position** from `config/columns.js sessionPlansColumns` ⇒ `{ status: "header_mismatch", captured: false }` + a clear server log diagnostic. **Never guess column positions.**
+3. **Exact-header validation before any write:** read `Session_Plans!A1:N1`; if the tab is missing ⇒ `{ status: "tab_missing", captured: false }`; if the header differs **position-by-position** from `config/columns.js sessionPlansColumns` ⇒ `{ status: "header_mismatch", captured: false }` + a clear server log diagnostic. **Never guess column positions.** Migration tolerance (#1341 follow-up): the exact legacy 13-column header is also accepted — it matches the first 13 contract columns position-by-position, and the appended column is, by the contract's own rule, the next position.
 4. **Builders + writer only:** construct rows via `sessionPlanEvents.js` builders; persist via `sessionPlanStore.js` (`writePlanAccepted` / `writeItemOutcome` / `writeSessionCloseout`). `recorded_at` is stamped non-empty by the writer (`_nowIso()`) — pinned by test.
 5. **Sidecar isolation:** the entire capture is wrapped so it can **never throw to a caller**. These endpoints are **standalone** (the client calls them separately from the workout save), so a failure here is structurally incapable of affecting `/api/log-workout`. Response always carries explicit proof; a caught failure returns `{ status: "error", captured: false, reason }` (HTTP 200 with `ok:false`, never a 5xx that the client might mistake for a workout-save failure).
 6. **Idempotency & collisions:** the writer's deterministic `idempotency_key` de-dups retries; a revision collision (same key, different content) **fails closed** (`{ status: "error", reason: "revision_collision" }`) — the client must bump `plan_version`.
@@ -277,5 +277,5 @@ Wiring (PR-F…PR-H) progressively removes the three `sessionPlan*` entries from
 ## 10. Cross-references
 
 - Data contract & builders: `services/sessionPlanEvents.js`; writer: `services/sessionPlanStore.js`; reader/fold: `services/sessionPlanReader.js`; schema: `config/columns.js` `sessionPlansColumns`; optional tab: `config/sheetContract.js`.
-- Trust contract & tab rules: `CLAUDE.md` (12-col `Log_Cleaned`, 13-col `Session_Plans`), `docs/INVARIANTS.md`.
+- Trust contract & tab rules: `CLAUDE.md` (12-col `Log_Cleaned`, 14-col `Session_Plans`), `docs/INVARIANTS.md`.
 - Decision provenance: Decision Desk #952 (Option A), STOP-&-REPORT finding + owner Option-A authorization (2026-07-10), `BACKLOG.md` → "Session_Plans persistence lane".

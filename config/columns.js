@@ -73,6 +73,13 @@ const deloadStateColumns = [
 // preview→approve→write, carry no write_id, and never touch Log_Cleaned/Effort.
 // Canonical lift CODES only (never free-text lift identity); no loads/reps/RIR/
 // progression data in this first version.
+// Column 14 `skip_category` (#1341 follow-up): the reason a skipped item was
+// skipped — deliberate | time | truncated — blank when uncategorized (pre-migration
+// rows + old clients). Added by Dale's approval 2026-11-25 (GitHub #1341 comment
+// 7179767099; Slack ts 1795656362.324849): ONE additive column, appended at the
+// end, no existing column changed. The reader tolerates pre-migration 13-cell rows
+// (missing only this trailing column); the capture layer accepts the exact legacy
+// 13-column header until the owner names the N1 cell.
 const sessionPlansColumns = [
   'idempotency_key',
   'session_id',
@@ -86,7 +93,8 @@ const sessionPlansColumns = [
   'outcome',
   'performed_lift_code',
   'closeout_status',
-  'recorded_at'
+  'recorded_at',
+  'skip_category'
 ];
 
 // Session_Plan_Sets — the SET-LEVEL recommendation ledger (F10A, owner-approved

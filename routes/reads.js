@@ -32,6 +32,36 @@ const {
 const trainingStore = require('../services/trainingStore');
 const { estimateE1RM } = require('../services/intensityModule'); // #1339: the single e1RM method
 
+// Lift-code → canonical exercise name from the Exercise_Catalog rows (same
+// header-index pattern as the closeout summary in index.js: first match wins,
+// empty map when the catalog is unreadable or lacks the columns). Best-effort by
+// design — the caller treats an empty map as "no names resolved".
+//
+// Canonical first: on the legacy catalog header (Exercise | … | Canonical_Exercise)
+// the display column sorts before the canonical one, and the display name is NOT
+// the name the muscle resolver matches on — a code resolved to its display name
+// lands in 'unknown'. The canonical variants are therefore searched first and
+// 'exercise' is only the fallback when no canonical column exists.
+function _codeToName(catalogRows) {
+  const map = {};
+  try {
+    const rows = Array.isArray(catalogRows) ? catalogRows : [];
+    if (rows.length === 0) return map;
+    const header = (rows[0] || []).map(c => String(c || '').trim().toLowerCase());
+    const codeIdx = header.findIndex(v => ['lift code', 'lift_code', 'liftcode'].includes(v));
+    const canonicalIdx = header.findIndex(v => ['canonical_exercise', 'canonical exercise', 'canonical_name', 'canonical name'].includes(v));
+    const exerciseIdx = header.findIndex(v => v === 'exercise');
+    const nameIdx = canonicalIdx !== -1 ? canonicalIdx : exerciseIdx;
+    if (codeIdx === -1 || nameIdx === -1) return map;
+    for (let i = 1; i < rows.length; i += 1) {
+      const code = String((rows[i] || [])[codeIdx] || '').trim();
+      const nm = String((rows[i] || [])[nameIdx] || '').trim();
+      if (code && nm && !map[code]) map[code] = nm;
+    }
+  } catch (_) { /* empty map — the caller degrades to uncategorized counts */ }
+  return map;
+}
+
 // ── One truthful terminal status for a failed read ────────────────────────────
 //
 // Every handler in this router used to answer ANY thrown error with a hard 500 —
@@ -327,8 +357,39 @@ module.exports = function registerReadRoutes({ getSheetRows }) {
       // surplus + redirect candidates). The ledger window is always 7 days: the
       // MUSCLE_TARGETS band is defined per 7 days, independent of this route's
       // `days` param (which sizes the tonnage `groups` summary only).
+      // #1341 follow-up — the skip accounting rides the same ledger: folded
+      // Session_Plans sessions + the catalog's lift-code → canonical-name map,
+      // both best-effort. A missing/unreadable plan tab costs only the skip
+      // counts (planDataAvailable:false) — never the route, never the set
+      // accounting. The catalog is a SEPARATE best-effort read: a catalog
+      // failure must not discard folded plan rows — without names every skip
+      // lands in 'unknown' (never dropped), and planDataAvailable stays true
+      // because plan data WAS read. The chat/coach paths deliberately do NOT
+      // load plan data (zero additional Sheets reads there); this read route
+      // is the surface where skip accounting is populated.
       const { buildVolumeLedger } = require('../services/volumeLedger');
-      const volume_ledger = buildVolumeLedger(allLog, { days: 7 });
+      const { foldSessionPlans } = require('../services/sessionPlanReader');
+      const { SESSION_PLANS_TAB } = require('../services/sessionPlanStore');
+      let planSessions = null;
+      let liftNameFor = null;
+      try {
+        const planRows = await getSheetRows(SESSION_PLANS_TAB);
+        if (Array.isArray(planRows) && planRows.length > 0) {
+          planSessions = foldSessionPlans(planRows);
+        }
+      } catch (_) {
+        planSessions = null;
+      }
+      try {
+        if (planSessions) {
+          const catalogRows = await getExerciseCatalog();
+          const codeToName = _codeToName(catalogRows);
+          liftNameFor = (code) => codeToName[String(code || '').trim()] || null;
+        }
+      } catch (_) {
+        liftNameFor = null;
+      }
+      const volume_ledger = buildVolumeLedger(allLog, { days: 7, planSessions, liftNameFor });
       return standardSuccess(req, res, 'Muscle group volume summary', { days, groups, volume_ledger });
     } catch (error) {
       return readFailure(req, res, 'Failed to fetch muscle group volume', error);

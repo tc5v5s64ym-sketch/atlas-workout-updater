@@ -30,7 +30,7 @@
 //     authoritative-dedup carry-over) so a doubled write is invisible downstream.
 
 const { sessionPlansColumns } = require('../config/columns');
-const { EVENT_TYPES, ITEM_OUTCOMES, CLOSEOUT_STATUSES } = require('./sessionPlanEvents');
+const { EVENT_TYPES, ITEM_OUTCOMES, CLOSEOUT_STATUSES, SKIP_CATEGORIES } = require('./sessionPlanEvents');
 
 const IDX = Object.fromEntries(sessionPlansColumns.map((c, i) => [c, i]));
 // Composite-key delimiter for (session_id, plan_version). A NUL can never appear in
@@ -41,6 +41,11 @@ const _skey = (sid, ver) => `${sid}${SEP}${ver}`;
 
 // Parse a raw sheet row into a typed event, or flag it malformed. Structural
 // validation only — the vocab must match the frozen contract.
+//
+// Migration tolerance (#1341 follow-up): a row missing ONLY the appended
+// skip_category column (exactly one trailing cell short) is a pre-migration row,
+// not corruption — it parses with skip_category ''. A row missing anything
+// earlier is still malformed, so the #959 fail-closed behavior is unchanged.
 function _parseRow(row) {
   if (!Array.isArray(row)) return { malformed: true, sid: null, ver: null };
   const get = (c) => String(row[IDX[c]] == null ? '' : row[IDX[c]]).trim();
@@ -50,7 +55,7 @@ function _parseRow(row) {
   // instead of fail closed (status:'error'). (#959 review.)
   const sid = get('session_id') || null;
   const ver = get('plan_version') || null;
-  if (row.length < sessionPlansColumns.length) return { malformed: true, sid, ver };
+  if (row.length < sessionPlansColumns.length - 1) return { malformed: true, sid, ver };
   const e = {
     idempotency_key: get('idempotency_key'),
     session_id: get('session_id'),
@@ -64,6 +69,7 @@ function _parseRow(row) {
     outcome: get('outcome'),
     performed_lift_code: get('performed_lift_code'),
     closeout_status: get('closeout_status'),
+    skip_category: get('skip_category'),
   };
   const bad = () => ({ malformed: true, sid: e.session_id || null, ver: e.plan_version || null });
   if (!e.idempotency_key || !e.session_id || !e.plan_version) return bad();
@@ -75,6 +81,12 @@ function _parseRow(row) {
     if (e.outcome === 'substituted' && !e.performed_lift_code) return bad();
   } else { // session_closeout
     if (!CLOSEOUT_STATUSES.includes(e.closeout_status)) return bad();
+  }
+  // skip_category is meaningful only on a skipped item_outcome, and only
+  // in-vocabulary — a category anywhere else is corrupt data, fail closed.
+  if (e.skip_category) {
+    if (e.event_type !== 'item_outcome' || e.outcome !== 'skipped') return bad();
+    if (!SKIP_CATEGORIES.includes(e.skip_category)) return bad();
   }
   return { malformed: false, event: e };
 }
@@ -115,7 +127,7 @@ function foldSessionPlans(rows) {
     const sess = sessions.get(sk);
     if (e.session_date && !sess.date) sess.date = e.session_date;
     if (e.event_type === 'session_closeout') { sess.closeout_status = e.closeout_status; continue; } // last-wins
-    const cur = sess.items.get(e.plan_item_id) || { plan_item_id: e.plan_item_id, planned_lift_code: null, movement_pattern: null, outcome: 'planned', performed_lift_code: null };
+    const cur = sess.items.get(e.plan_item_id) || { plan_item_id: e.plan_item_id, planned_lift_code: null, movement_pattern: null, outcome: 'planned', performed_lift_code: null, skip_category: null };
     if (e.event_type === 'plan_accepted') {
       cur.planned_lift_code = e.planned_lift_code;
       cur.movement_pattern = e.movement_pattern || null;
@@ -127,6 +139,10 @@ function foldSessionPlans(rows) {
       // the deviation invisible to drift), cleared by a `skipped` (nothing performed).
       if (e.outcome === 'substituted') cur.performed_lift_code = e.performed_lift_code;
       else if (e.outcome === 'skipped') cur.performed_lift_code = null;
+      // The skip category rides the outcome last-wins: a later non-skipped outcome
+      // clears it (the item is no longer skipped); a later skip sets it (even to
+      // null for an uncategorized skip, so a re-categorization replaces the old one).
+      cur.skip_category = e.outcome === 'skipped' ? (e.skip_category || null) : null;
       if (e.planned_lift_code && !cur.planned_lift_code) cur.planned_lift_code = e.planned_lift_code;
       if (e.movement_pattern && !cur.movement_pattern) cur.movement_pattern = e.movement_pattern;
     }

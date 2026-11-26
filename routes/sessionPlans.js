@@ -21,7 +21,7 @@ const { success: standardSuccess, error: standardError } = require('../response'
 const capture = require('../services/sessionPlanCapture');
 const setsCapture = require('../services/sessionPlanSetsCapture');
 const { deriveImplicitRecommendation } = require('../services/implicitRecommendation');
-const { ITEM_OUTCOMES, CLOSEOUT_STATUSES } = require('../services/sessionPlanEvents');
+const { ITEM_OUTCOMES, CLOSEOUT_STATUSES, SKIP_CATEGORIES } = require('../services/sessionPlanEvents');
 const { resolveLedgerOperationId } = require('../services/writeOutcomes');
 const { isSessionFinalized } = require('../services/closeoutFinality');
 const { CONFIDENCE, REVISION_SOURCES } = require('../services/sessionPlanLedger');
@@ -221,6 +221,17 @@ module.exports = function registerSessionPlanRoutes(deps = {}) {
     if (!ITEM_OUTCOMES.includes(outcome)) return standardError(req, res, `item.outcome must be one of ${ITEM_OUTCOMES.join('|')}`, null, 400);
     if (outcome === 'substituted' && !LIFT_CODE_SHAPE.test(_str(item.performed_lift_code))) {
       return standardError(req, res, 'a substituted outcome requires a canonical performed_lift_code (non-empty, no spaces)', null, 400);
+    }
+    // #1341 follow-up — the skip category: absent/blank is uncategorized (old
+    // clients keep working); present it must be in-vocabulary AND the outcome
+    // must be 'skipped' (a category on a completed/substituted outcome is a
+    // client bug — 400 here, rather than a 400 from the builder or a lost skip).
+    const skipCategory = _str(item.skip_category);
+    if (skipCategory && !SKIP_CATEGORIES.includes(skipCategory)) {
+      return standardError(req, res, `item.skip_category must be one of ${SKIP_CATEGORIES.join('|')}`, null, 400);
+    }
+    if (skipCategory && outcome !== 'skipped') {
+      return standardError(req, res, 'item.skip_category is only valid when outcome is skipped', null, 400);
     }
     // #1780 — an outcome may carry the operation_id the client minted for
     // the Write_Outcomes ledger. Absent, the legacy path runs unchanged.

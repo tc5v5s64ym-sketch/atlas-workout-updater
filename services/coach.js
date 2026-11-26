@@ -951,7 +951,7 @@ function buildChatSystemPrompt(context) {
     'You are having a conversation with the lifter.',
     "You are given a read-only TRAINING SNAPSHOT (recent sessions, movement-pattern readiness, today's recommended focus, current workout plan, stalled lifts, and under-coverage gaps) as JSON, then the conversation so far. Answer the latest message in a natural, conversational coaching voice.",
     "- `muscle_gaps` in the snapshot lists muscles below their weekly minimum effective sets. When the lifter asks what to train or you're suggesting accessories, weave in a nudge toward 1–2 of the most under-served muscles with a concrete lift suggestion. Keep it to one sentence, only when it fits naturally — never recite the full list unprompted.",
-    "- `volume_ledger` in the snapshot is the weekly hard-sets ledger: per-muscle sets vs the target band, the `surplus` muscles over band, and `redirectCandidates` naming where surplus volume could move. When the lifter asks about balance or overtraining a muscle, use ONLY its numbers — name the surplus muscle and the under-target candidate it could feed, one sentence, only when it fits naturally — never recite the ledger unprompted.",
+    "- `volume_ledger` in the snapshot is the weekly hard-sets ledger: per-muscle sets vs the target band, the `surplus` muscles over band, and `redirectCandidates` naming where surplus volume could move. Its `skips` section counts categorized skips per muscle per week (deliberate / time / truncated / uncategorized) when plan data was available (`planDataAvailable:false` means no skip facts were consulted, not zero skips). When the lifter asks about balance or overtraining a muscle, use ONLY its numbers — name the surplus muscle and the under-target candidate it could feed, one sentence, only when it fits naturally — never recite the ledger unprompted.",
     "- `memory_patterns` (if present) lists engine-detected recurring patterns for specific lifts — e.g. consistent underperformance or a repeated substitution. Reference these naturally when discussing the relevant lift. Never recite the full list unprompted, and never invent a pattern that is not in the snapshot.",
     "- CHALLENGE MODE: when `coach_mode` is \"challenge\", the engine has detected a recurring pattern worth naming from `memory_patterns` (e.g. consistent_underperformance on a specific lift — the lift and how many recent sessions came in below its recent benchmark). This is a BENCHMARK/TREND comparison against the lift's own established performance, NOT a missed plan — no per-session prescription was stored, so NEVER say \"under target\", \"missed target\", \"failed the plan\", or \"beat expectations\"; say \"below your recent benchmark\" / \"below your established range\" or state the factual trend. Name that pattern plainly using ONLY the numbers in `memory_patterns` (which lift; sessions_below of sessions_checked), then ask ONE open question about what is behind it — e.g. \"Bench has come in below your recent benchmark 3 of the last 4 sessions. What's going on there — the load feels off, recovery, or just not feeling it lately?\" State the evidence and ASK; never lecture, pile on, or moralize — one honest observation and one question. If the lifter pushes back or brushes it off, do NOT cave or apologize it away: restate the pattern's facts once, neutrally, and leave the door open — you are on their side, not scolding. Keep it in the ordinary direct register: challenge is honesty, not heat — no escalation, no harsh language. Never invent a pattern that is not in `memory_patterns`, and raise a challenge ONLY when `coach_mode` is \"challenge\" — for any other mode, do not.",
     "- REASSURE MODE: when `coach_mode` is \"reassure\", the lifter has voiced explicit discouragement or frustration (e.g. \"bench is stuck, I feel like I'm going backwards\"). Acknowledge it in ONE brief clause — do not dwell, over-empathize, or pile on sympathy — then ZOOM OUT using ONLY facts actually present in the snapshot: a per-lift trend that is up, an `athlete_identity` streak / tenure / dated PR, or the stalled lift's own longer arc. State the specific numbers/dates that are there (e.g. \"squat's up 15 since June, and you haven't missed a Monday in 8 weeks\") — CITE, never invent. Then give ONE concrete next move (a rep-scheme change, a small planned deload, a focus lift) — one, not a program. THIN HISTORY = SAY LESS, NOT WARMER: if the snapshot has no genuine positive fact to point to, do NOT manufacture one and do NOT pad with warmth — a short honest \"early days yet — keep stacking sessions and it'll show\" is right; never invent progress that isn't in the facts. NEVER use empty-affirmation filler ('believe in yourself', 'you've got this', 'stay positive'). If the message also mentions pain, injury, or real fatigue, that takes precedence — address the safety/recovery read instead of zooming out. No profanity; you never logged, saved, or changed anything. Reassure ONLY when `coach_mode` is \"reassure\".",
@@ -1201,12 +1201,48 @@ function sanitizeVolumeLedger(value) {
       suggestedSets: numOrNull(r && r.suggestedSets),
     })).filter(r => r.fromMuscle && r.toMuscle)
     : [];
+  // #1341 follow-up — the skip accounting: totals + per-category counts + a
+  // bounded per-muscle breakdown. Bounded like the rest of this sanitizer:
+  // at most 18 muscle buckets (17 taxonomy + 'unknown'), 12 lift codes each.
+  const rawSkips = value.skips && typeof value.skips === 'object' ? value.skips : {};
+  const rawSkipsByCategory = rawSkips.byCategory && typeof rawSkips.byCategory === 'object' ? rawSkips.byCategory : {};
+  const rawSkipsByMuscle = rawSkips.byMuscle && typeof rawSkips.byMuscle === 'object' ? rawSkips.byMuscle : {};
+  const skipsByMuscle = {};
+  for (const muscle of Object.keys(rawSkipsByMuscle).slice(0, 18)) {
+    const m = rawSkipsByMuscle[muscle];
+    if (!m || typeof m !== 'object') continue;
+    const name = strOrNull(muscle);
+    if (!name) continue;
+    const mbc = m.byCategory && typeof m.byCategory === 'object' ? m.byCategory : {};
+    skipsByMuscle[name] = {
+      total: numOrNull(m.total),
+      byCategory: {
+        deliberate: numOrNull(mbc.deliberate),
+        time: numOrNull(mbc.time),
+        truncated: numOrNull(mbc.truncated),
+        uncategorized: numOrNull(mbc.uncategorized),
+      },
+      lifts: Array.isArray(m.lifts) ? m.lifts.slice(0, 12).map(strOrNull).filter(Boolean) : [],
+    };
+  }
+  const skips = {
+    total: numOrNull(rawSkips.total),
+    byCategory: {
+      deliberate: numOrNull(rawSkipsByCategory.deliberate),
+      time: numOrNull(rawSkipsByCategory.time),
+      truncated: numOrNull(rawSkipsByCategory.truncated),
+      uncategorized: numOrNull(rawSkipsByCategory.uncategorized),
+    },
+    byMuscle: skipsByMuscle,
+    planDataAvailable: rawSkips.planDataAvailable === true,
+  };
   return {
     windowDays: numOrNull(value.windowDays),
     asOf: strOrNull(value.asOf),
     muscles,
     surplus,
     redirectCandidates,
+    skips,
   };
 }
 

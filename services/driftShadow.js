@@ -40,7 +40,7 @@ const SESSION_PLANS_TAB = store.SESSION_PLANS_TAB;
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 min — collapses a chat burst to ≤1 refresh
 const CACHE_KEY = 'drift_inputs';
 
-// A1 last column for the frozen 13-column contract (A..M) — the exact-header read.
+// A1 last column for the 14-column contract (A..N) — the exact-header read.
 function _lastCol(n) { let s = ''; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = (n - m - 1) / 26; } return s; }
 const FULL_RANGE = `${SESSION_PLANS_TAB}!A:${_lastCol(sessionPlansColumns.length)}`;
 
@@ -58,10 +58,16 @@ function isEnabled() {
   return v === '1' || v === 'true' || v === 'on';
 }
 
-// Exact position-by-position match to the frozen 13-column header.
+// Exact position-by-position match to the 14-column header — or to the exact
+// legacy 13-column header (#1341 follow-up migration tolerance, same rule as the
+// capture layer: a legacy header matches the first 13 contract columns, so no
+// position is guessed; the reader tolerates the short rows). Anything else is a
+// mismatch and the drift read fails closed.
 function _headerOk(header) {
-  return Array.isArray(header) && header.length === sessionPlansColumns.length
-    && sessionPlansColumns.every((c, i) => String(header[i] == null ? '' : header[i]).trim() === c);
+  if (!Array.isArray(header)) return false;
+  const match = (cols) => header.length === cols.length
+    && cols.every((c, i) => String(header[i] == null ? '' : header[i]).trim() === c);
+  return match(sessionPlansColumns) || match(sessionPlansColumns.slice(0, -1));
 }
 
 // Cached, fail-closed load of the drift inputs. Returns

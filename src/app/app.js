@@ -2342,7 +2342,10 @@ function skipPlannedExercise(name) {
   if (next >= getActivePlannedSession().exercises.length) next = Math.max(0, getActivePlannedSession().exercises.length - 1);
   getActivePlannedSession().index = Math.max(0, next);
   renderActiveSessionBanner();
-  if (removedItemId) emitPlanItemOutcome({ plan_item_id: removedItemId, outcome: 'skipped' });
+  // #1341 follow-up — an explicit skip records its category: the skip tap (and
+  // "Next" on a not-yet-logged slot, which funnels through here) is an explicit
+  // athlete choice, so it is 'deliberate'.
+  if (removedItemId) emitPlanItemOutcome({ plan_item_id: removedItemId, outcome: 'skipped', skip_category: 'deliberate' });
   return true;
 }
 

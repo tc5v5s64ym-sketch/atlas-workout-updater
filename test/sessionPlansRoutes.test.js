@@ -137,6 +137,39 @@ test('outcome: missing item → 400', async () => {
   assert.equal((await post('/api/session-plans/outcome', { ...BASE })).status, 400);
 });
 
+// ── outcome skip_category (#1341 follow-up) ─────────────────────────────────
+
+test('outcome: a skipped item with a valid skip_category forwards it to the capture layer', async () => {
+  for (const cat of ['deliberate', 'time', 'truncated']) {
+    const { status, body } = await post('/api/session-plans/outcome', { ...BASE, item: { plan_item_id: PI, planned_lift_code: 'BEN01', outcome: 'skipped', skip_category: cat } });
+    assert.equal(status, 200);
+    assert.equal(body.data.session_plans.status, 'written');
+    assert.equal(captureCalls.at(-1).item.skip_category, cat);
+  }
+});
+
+test('outcome: a skipped item without a category still forwards (uncategorized, back-compat)', async () => {
+  const { status } = await post('/api/session-plans/outcome', { ...BASE, item: { plan_item_id: PI, planned_lift_code: 'BEN01', outcome: 'skipped' } });
+  assert.equal(status, 200);
+  assert.equal(captureCalls.at(-1).item.skip_category, undefined);
+});
+
+test('outcome: an out-of-vocabulary skip_category → 400, capture not called', async () => {
+  const { status } = await post('/api/session-plans/outcome', { ...BASE, item: { plan_item_id: PI, planned_lift_code: 'BEN01', outcome: 'skipped', skip_category: 'bored' } });
+  assert.equal(status, 400);
+  assert.equal(captureCalls.length, 0);
+});
+
+test('outcome: a skip_category on a non-skipped outcome → 400, capture not called', async () => {
+  for (const outcome of ['completed', 'substituted']) {
+    const item = { plan_item_id: PI, planned_lift_code: 'BEN01', outcome, skip_category: 'deliberate' };
+    if (outcome === 'substituted') item.performed_lift_code = 'DBP01';
+    const { status } = await post('/api/session-plans/outcome', { ...BASE, item });
+    assert.equal(status, 400);
+  }
+  assert.equal(captureCalls.length, 0);
+});
+
 // ── closeout ────────────────────────────────────────────────────────────────--
 
 test('closeout: finalized / abandoned forward and return the envelope', async () => {

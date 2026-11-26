@@ -21,6 +21,11 @@
 // snapshot is never mutated.
 
 export const ITEM_OUTCOMES = Object.freeze(['completed', 'skipped', 'substituted']);
+// Skip categories (#1341 follow-up): the reason a skipped item was skipped.
+// The client only ever sends 'deliberate' — the skip tap / "Next" is an explicit
+// athlete choice. 'time' / 'truncated' are closeout-derived categories with no
+// client emitter in this slice; the server accepts and counts them.
+export const SKIP_CATEGORIES = Object.freeze(['deliberate', 'time', 'truncated']);
 const CANONICAL_CODE = /^\S+$/;
 
 function _str(v) { return v == null ? '' : String(v).trim(); }
@@ -38,7 +43,11 @@ export function resolveItemForOutcome(activePlan, planItemId) {
 // (fail closed) when the plan is not an accepted, identifiable session. `outcome` ∈
 // skipped | substituted (PR-G1). `substituted` requires a canonical performed code
 // and preserves the item's planned_lift_code; `skipped` carries no performed code.
-export function buildOutcomePayload(activePlan, { plan_item_id, outcome, performed_lift_code } = {}) {
+// `skipped` may carry skip_category (#1341 follow-up); an invalid category is
+// DROPPED, never forwarded — the skip itself is the primary fact, and forwarding
+// a bad category would make the server 400 the whole outcome and lose the skip.
+// A category on a non-skipped outcome is likewise dropped, never forwarded.
+export function buildOutcomePayload(activePlan, { plan_item_id, outcome, performed_lift_code, skip_category } = {}) {
   const plan = activePlan && typeof activePlan === 'object' ? activePlan : null;
   if (!plan || plan.accepted !== true) return null;
   const session_id = _str(plan.session_id);
@@ -65,6 +74,10 @@ export function buildOutcomePayload(activePlan, { plan_item_id, outcome, perform
     const performed = _str(performed_lift_code);
     if (!CANONICAL_CODE.test(performed)) return null; // substituted REQUIRES a valid performed code
     outItem.performed_lift_code = performed;
+  }
+  if (oc === 'skipped') {
+    const cat = _str(skip_category);
+    if (cat && SKIP_CATEGORIES.includes(cat)) outItem.skip_category = cat;
   }
   return { session_id, session_date, plan_version, item: outItem };
 }

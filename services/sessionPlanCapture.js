@@ -36,7 +36,7 @@ const store = require('./sessionPlanStore');
 
 const SESSION_PLANS_TAB = store.SESSION_PLANS_TAB; // 'Session_Plans' (env-overridable, shared with the writer)
 
-// A1 column letter for the Nth (1-based) column — 13 columns ⇒ A..M.
+// A1 column letter for the Nth (1-based) column — 14 columns ⇒ A..N.
 function _colLetter(n) {
   let s = '';
   while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = (n - m - 1) / 26; }
@@ -66,6 +66,15 @@ function _envelope(status, captured, extra = {}) {
 
 // Read row 1 and compare it to the contract, position by position. Returns
 // { ok:true } or { ok:false, status:'tab_missing'|'header_mismatch'|'error', reason }.
+//
+// Migration tolerance (#1341 follow-up): the exact 14-column contract OR the
+// exact legacy 13-column contract is accepted. A legacy header matches the first
+// 13 contract columns position-by-position, so no position is guessed — the
+// appended column is, by the contract's own rule ("new columns are only ever
+// appended at the end"), the next position, and the writer's 14-cell rows land
+// the category there positionally. The header cell is named by the owner on the
+// migration step; the system works correctly with it blank until then. Any other
+// difference is still header_mismatch, fail closed.
 async function validateHeader() {
   let rows;
   try {
@@ -86,10 +95,16 @@ async function validateHeader() {
   if (header.length === 0) {
     return { ok: false, status: 'tab_missing', reason: 'Session_Plans tab has no header row' };
   }
+  const legacy = sessionPlansColumns.slice(0, -1);
+  // One shared cell comparison (the == null idiom is this file's existing
+  // pattern for blank cells) so the two header checks stay identical.
+  const cellEq = (v, col) => String(v == null ? '' : v).trim() === col;
   const exact = header.length === sessionPlansColumns.length
-    && sessionPlansColumns.every((col, i) => String(header[i] == null ? '' : header[i]).trim() === col);
-  if (!exact) {
-    return { ok: false, status: 'header_mismatch', reason: 'Session_Plans header does not match the exact 13-column contract' };
+    && sessionPlansColumns.every((col, i) => cellEq(header[i], col));
+  const legacyOk = header.length === legacy.length
+    && legacy.every((col, i) => cellEq(header[i], col));
+  if (!exact && !legacyOk) {
+    return { ok: false, status: 'header_mismatch', reason: 'Session_Plans header does not match the exact 14-column contract (or the legacy 13-column contract)' };
   }
   return { ok: true };
 }
