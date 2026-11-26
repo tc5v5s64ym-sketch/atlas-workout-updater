@@ -1862,6 +1862,23 @@ function buildCoachMessageGroundingContext(facts, kind) {
     const name = queueEntryName(item);
     if (name) plan.push({ name });
   }
+  // #1342 — the finder's working weight is the engine's prescribed load for
+  // the remainder of the block, so a "drop back to {weight}" correction binds
+  // to it instead of flagging as an ungrounded prescription. Appended AFTER
+  // next_target, so an existing next-target entry still wins the dedupe below.
+  // Sets stay null: the engine does not own the remaining-set count, and the
+  // prompt forbids the model from stating one for the correction.
+  const finder = f.finder && typeof f.finder === 'object' ? f.finder : null;
+  if (exerciseName && finder && finder.working_weight && typeof finder.working_weight === 'object') {
+    const crit = finder.criterion && typeof finder.criterion === 'object' ? finder.criterion : null;
+    plan.push({
+      name: exerciseName,
+      weight: numOrNullValue(finder.working_weight.weight),
+      reps: numOrNullValue(finder.working_weight.reps),
+      sets: null,
+      rir: crit ? numOrNullValue(crit.rir) : null,
+    });
+  }
   // Dedupe by name key, keeping the first (numbered) entry for a name.
   const seenPlan = new Set();
   ctx.current_plan = plan.filter((e) => {

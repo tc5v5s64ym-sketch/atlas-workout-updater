@@ -60,6 +60,12 @@ test('replay runs against the real code and scores a well-formed, honest baselin
   // sessions (S1, S14).
   const volume = result.capabilities.find((c) => c.num === 21);
   assert.equal(volume.status, 'partial', '#21 weekly volume accounting is partial (volume_ledger emitted)');
+
+  // #1342 — the in-session working-weight finder is emitted on /api/coach/message
+  // block turns, so capability 14 flips from absent to partial on its demonstrating
+  // sessions (S4, S11).
+  const finder = result.capabilities.find((c) => c.num === 14);
+  assert.equal(finder.status, 'partial', '#14 working-weight finder is partial (finder_mode emitted)');
 });
 
 test('the replay NEVER attempts a Sheets write (segregation + absolute data safety)', async () => {
