@@ -77,6 +77,40 @@ test('buildOutcomePayload: an unknown outcome is still rejected', () => {
   assert.equal(mod.buildOutcomePayload(PLAN, { plan_item_id: 'pi_a', outcome: 'planned' }), null);
 });
 
+// ── skip_category (#1341 follow-up) ──────────────────────────────────────────
+// An explicit skip carries its reason; the client only ever sends 'deliberate'
+// (the skip tap / "Next" is an explicit athlete choice). time/truncated are
+// server-side categories for closeout-derived skips, which have no client write
+// path in this slice.
+
+test('buildOutcomePayload: a skipped outcome with skip_category carries it', () => {
+  for (const cat of ['deliberate', 'time', 'truncated']) {
+    const p = mod.buildOutcomePayload(PLAN, { plan_item_id: 'pi_a', outcome: 'skipped', skip_category: cat });
+    assert.equal(p.item.outcome, 'skipped');
+    assert.equal(p.item.skip_category, cat);
+  }
+});
+
+test('buildOutcomePayload: a skipped outcome without a category stays uncategorized (no field)', () => {
+  const p = mod.buildOutcomePayload(PLAN, { plan_item_id: 'pi_a', outcome: 'skipped' });
+  assert.ok(!('skip_category' in p.item), 'uncategorized skips carry no category field');
+});
+
+test('buildOutcomePayload: an invalid category is dropped, never blocks the skip', () => {
+  // The skip itself is the primary fact; a bad category must not lose it (and
+  // must never reach the server, which would 400 the whole outcome).
+  const p = mod.buildOutcomePayload(PLAN, { plan_item_id: 'pi_a', outcome: 'skipped', skip_category: 'bored' });
+  assert.ok(p, 'the skip still emits');
+  assert.ok(!('skip_category' in p.item), 'the invalid category is dropped, not forwarded');
+});
+
+test('buildOutcomePayload: a category on a non-skipped outcome is dropped, never forwarded', () => {
+  const completed = mod.buildOutcomePayload(PLAN, { plan_item_id: 'pi_a', outcome: 'completed', skip_category: 'deliberate' });
+  assert.ok(!('skip_category' in completed.item), 'completed carries no category');
+  const substituted = mod.buildOutcomePayload(PLAN, { plan_item_id: 'pi_a', outcome: 'substituted', performed_lift_code: 'DBP01', skip_category: 'time' });
+  assert.ok(!('skip_category' in substituted.item), 'substituted carries no category');
+});
+
 // ── orchestration ─────────────────────────────────────────────────────────────
 
 test('runOutcome: happy path posts the payload and reports captured', async () => {

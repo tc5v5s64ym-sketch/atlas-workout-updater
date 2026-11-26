@@ -224,6 +224,20 @@ test('a header mismatch fails closed (evaluated:false, no fabricated drift)', as
   assert.equal(emitted[0].suppressed_reason, 'header_mismatch');
 });
 
+// #1341 follow-up — the additive skip_category column (14) migrates behind the
+// live tab: a tab whose header is still the exact pre-migration 13-column
+// contract keeps the dark drift signal alive (the reader tolerates the short
+// rows); a wrong-order header still fails closed.
+test('a legacy 13-column header (pre-migration contract) still evaluates drift', async () => {
+  on();
+  const rows = deviationHistoryRows();
+  const legacyHeader = [...sessionPlansColumns].slice(0, 13);
+  const { emitted } = harness({ readRangeImpl: async () => [legacyHeader, ...rows] });
+  await driftShadow.observeDrift({ logRows: [], memoryPatterns: [], asOf: '2026-07-06' });
+  assert.equal(emitted[0].evaluated, true, 'the legacy header must not go dark during the migration');
+  assert.equal(emitted[0].sessions_considered, 3);
+});
+
 test('a missing tab (empty read) fails closed as tab_missing', async () => {
   on();
   const { emitted } = harness({ readRangeImpl: async () => [] });

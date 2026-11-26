@@ -41,6 +41,13 @@ const ITEM_OUTCOMES = Object.freeze(['completed', 'skipped', 'substituted']);
 // from inactivity/timeout/redeploy/missing data; null on plan_accepted/item_outcome
 // events and while a session is still open.
 const CLOSEOUT_STATUSES = Object.freeze(['finalized', 'abandoned']);
+// skip_category vocabulary — the reason a skipped item was skipped (#1341
+// follow-up, Dale-approved additive Session_Plans column 14, 2026-11-25).
+// `deliberate` = the athlete explicitly chose to skip it (skip tap / "Next" on a
+// not-yet-logged slot); `time` = ran out of time; `truncated` = session cut short.
+// Valid ONLY when outcome==='skipped'; blank = uncategorized (pre-migration rows
+// + old clients). The vocabulary is frozen alongside event_type + outcome.
+const SKIP_CATEGORIES = Object.freeze(['deliberate', 'time', 'truncated']);
 
 // Field delimiter for the idempotency hash input. A NUL (0x00) can never appear in
 // the joined string fields, so it is a collision-proof separator (a|b vs a + |b can
@@ -67,6 +74,13 @@ function _requireLiftCode(value, label) {
 // Deterministic idempotency key over the event's semantic identity — NEVER the
 // timestamp. Same logical event (retry) → same key; a different outcome/substitute
 // → different key (a new fold-last-wins append).
+//
+// The skip_category enters the key ONLY on a categorized skip: every
+// pre-existing event (plan_accepted, completed, substituted, closeout, and an
+// UNCATEGORIZED skip) hashes exactly as before, so a retry of any of those still
+// dedups against its already-written row across the deploy boundary. A categorized
+// skip is a different logical event from the same uncategorized skip, and a
+// re-categorization (deliberate → time) is a new append the reader folds last-wins.
 function idempotencyKey(fields) {
   const parts = [
     fields.event_type,
@@ -77,6 +91,9 @@ function idempotencyKey(fields) {
     fields.performed_lift_code,
     fields.closeout_status
   ].map(_str);
+  if (_str(fields.outcome) === 'skipped' && _str(fields.skip_category)) {
+    parts.push(_str(fields.skip_category));
+  }
   return crypto.createHash('sha256').update(parts.join(KEY_DELIM)).digest('hex').slice(0, 16);
 }
 
@@ -133,6 +150,8 @@ function buildPlanAcceptedEvents(session, items, opts = {}) {
 
 // Build a single item_outcome event. outcome ∈ completed|skipped|substituted;
 // performed_lift_code is REQUIRED (and only meaningful) when outcome==='substituted'.
+// skip_category ∈ deliberate|time|truncated is REQUIRED-optional (and only
+// meaningful) when outcome==='skipped': absent/blank = uncategorized.
 function buildItemOutcomeEvent(session, item, opts = {}) {
   const { session_id, plan_version, session_date } = _requireSession(session);
   const it = item && typeof item === 'object' ? item : {};
@@ -148,6 +167,15 @@ function buildItemOutcomeEvent(session, item, opts = {}) {
   } else if (it.performed_lift_code != null && _str(it.performed_lift_code)) {
     throw new Error('sessionPlanEvents: performed_lift_code is only valid when outcome is substituted');
   }
+  let skip_category = '';
+  if (outcome === 'skipped') {
+    skip_category = _str(it.skip_category);
+    if (skip_category && !SKIP_CATEGORIES.includes(skip_category)) {
+      throw new Error(`sessionPlanEvents: skip_category must be one of ${SKIP_CATEGORIES.join('|')}, got ${JSON.stringify(it.skip_category)}`);
+    }
+  } else if (_str(it.skip_category)) {
+    throw new Error('sessionPlanEvents: skip_category is only valid when outcome is skipped');
+  }
   const fields = {
     session_id,
     session_date,
@@ -160,7 +188,8 @@ function buildItemOutcomeEvent(session, item, opts = {}) {
     outcome,
     performed_lift_code,
     closeout_status: '',
-    recorded_at: _str(opts.recordedAt)
+    recorded_at: _str(opts.recordedAt),
+    skip_category
   };
   return toRow(fields);
 }
@@ -195,6 +224,7 @@ module.exports = Object.freeze({
   OUTCOMES,
   ITEM_OUTCOMES,
   CLOSEOUT_STATUSES,
+  SKIP_CATEGORIES,
   idempotencyKey,
   toRow,
   buildPlanAcceptedEvents,

@@ -9,7 +9,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { buildVolumeLedger } = require('../services/volumeLedger');
+const { buildVolumeLedger, countSkips } = require('../services/volumeLedger');
+const { foldSessionPlans } = require('../services/sessionPlanReader');
+const { buildPlanAcceptedEvents, buildItemOutcomeEvent, buildSessionCloseoutEvent } = require('../services/sessionPlanEvents');
 const { weeklyMuscleVolume } = require('../services/muscleVolume');
 const { TAXONOMY } = require('../services/muscleCoverage');
 const { sanitizeChatContext } = require('../services/coach');
@@ -134,4 +136,169 @@ test('#1341 ledger: sanitizeChatContext forwards volume_ledger, sanitized', () =
 test('#1341 ledger: sanitizeChatContext yields a null volume_ledger when absent', () => {
   const clean = sanitizeChatContext({});
   assert.equal(clean.volume_ledger, null);
+});
+
+// ── skip-category accounting (#1341 follow-up) ───────────────────────────────
+// The ledger counts categorized skips per muscle per week from folded
+// Session_Plans sessions. Muscle attribution reuses musclesFor on the resolved
+// lift NAME (the catalog resolves planned_lift_code → name at the call site);
+// a skip counts 1 against EACH primary muscle, mirroring how a performed set
+// credits each primary. Totals count skipped ITEMS (a multi-primary skip is one
+// item, counted once in total). Error sessions never contribute.
+
+const SKIP_TODAY = '2026-07-10';
+const SKIP_NAMES = { BEN01: 'Bench Press', SQ01: 'Back Squat', OHP01: 'Overhead Press' };
+const liftNameFor = (code) => SKIP_NAMES[code] || null;
+
+// Build folded sessions from builder rows: items are { plan_item_id,
+// planned_lift_code, outcome, skip_category? }.
+function foldedSkips(sessions) {
+  const rows = [];
+  for (const s of sessions) {
+    const session = { session_id: s.id, session_date: s.date, plan_version: 'v1' };
+    const items = s.items.map((it) => ({ plan_item_id: it.plan_item_id, planned_order: 1, planned_lift_code: it.planned_lift_code, movement_pattern: 'horizontal_push' }));
+    rows.push(...buildPlanAcceptedEvents(session, items, { recordedAt: 'r0' }));
+    for (const it of s.items) {
+      rows.push(buildItemOutcomeEvent(session, { ...it, movement_pattern: 'horizontal_push' }, { recordedAt: 'r1' }));
+    }
+    rows.push(buildSessionCloseoutEvent(session, 'finalized', { recordedAt: 'rz' }));
+  }
+  return foldSessionPlans(rows);
+}
+
+test('#1341 skips: countSkips totals + byCategory from folded sessions', () => {
+  const planSessions = foldedSkips([{
+    id: 'S1', date: '2026-07-08', items: [
+      { plan_item_id: 'i1', planned_lift_code: 'BEN01', outcome: 'skipped', skip_category: 'deliberate' },
+      { plan_item_id: 'i2', planned_lift_code: 'BEN01', outcome: 'skipped', skip_category: 'deliberate' },
+      { plan_item_id: 'i3', planned_lift_code: 'SQ01', outcome: 'skipped', skip_category: 'time' },
+      { plan_item_id: 'i4', planned_lift_code: 'OHP01', outcome: 'skipped' }, // uncategorized
+      { plan_item_id: 'i5', planned_lift_code: 'BEN01', outcome: 'completed' }, // not a skip
+    ],
+  }]);
+  const skips = countSkips(planSessions, { days: 7, today: SKIP_TODAY, liftNameFor });
+  assert.equal(skips.total, 4, 'four skipped items (the completed one is not a skip)');
+  assert.deepEqual(skips.byCategory, { deliberate: 2, time: 1, truncated: 0, uncategorized: 1 });
+  assert.equal(skips.planDataAvailable, true);
+});
+
+test('#1341 skips: byMuscle attributes each primary muscle (mirrors set credit)', () => {
+  const planSessions = foldedSkips([{
+    id: 'S1', date: '2026-07-08', items: [
+      { plan_item_id: 'i1', planned_lift_code: 'BEN01', outcome: 'skipped', skip_category: 'deliberate' },
+      { plan_item_id: 'i2', planned_lift_code: 'SQ01', outcome: 'skipped', skip_category: 'time' },
+    ],
+  }]);
+  const skips = countSkips(planSessions, { days: 7, today: SKIP_TODAY, liftNameFor });
+  // Bench Press → chest primary; Back Squat → quads + glutes primary.
+  assert.equal(skips.byMuscle.chest.total, 1);
+  assert.deepEqual(skips.byMuscle.chest.byCategory, { deliberate: 1, time: 0, truncated: 0, uncategorized: 0 });
+  assert.deepEqual(skips.byMuscle.chest.lifts, ['BEN01']);
+  assert.equal(skips.byMuscle.quads.total, 1);
+  assert.equal(skips.byMuscle.glutes.total, 1, 'a multi-primary skip counts against each primary');
+  assert.deepEqual(skips.byMuscle.quads.lifts, ['SQ01']);
+  assert.equal(skips.total, 2, 'total counts skipped ITEMS, not muscle attributions');
+});
+
+test('#1341 skips: an unresolvable lift code lands in the unknown bucket (never dropped)', () => {
+  const planSessions = foldedSkips([{
+    id: 'S1', date: '2026-07-08', items: [
+      { plan_item_id: 'i1', planned_lift_code: 'XXX01', outcome: 'skipped', skip_category: 'truncated' },
+    ],
+  }]);
+  const withoutResolver = countSkips(planSessions, { days: 7, today: SKIP_TODAY });
+  assert.equal(withoutResolver.total, 1);
+  assert.equal(withoutResolver.byMuscle.unknown.total, 1);
+  assert.deepEqual(withoutResolver.byMuscle.unknown.lifts, ['XXX01']);
+  const withResolver = countSkips(planSessions, { days: 7, today: SKIP_TODAY, liftNameFor });
+  assert.equal(withResolver.byMuscle.unknown.total, 1, 'an unknown code stays unknown even with a resolver');
+  // A code the catalog DOES name, but to a lift no muscle pattern matches, is
+  // equally unknown — never guessed into a muscle.
+  const namedUnknown = countSkips(planSessions, {
+    days: 7, today: SKIP_TODAY, liftNameFor: (code) => (code === 'XXX01' ? 'Zanzibar Press' : SKIP_NAMES[code] || null),
+  });
+  assert.equal(namedUnknown.byMuscle.unknown.total, 1, 'an unmapped lift name stays unknown');
+  assert.equal(namedUnknown.byMuscle.unknown.byCategory.truncated, 1);
+});
+
+test('#1341 skips: sessions outside the window and error sessions do not count', () => {
+  const inWindow = foldedSkips([{
+    id: 'S1', date: '2026-07-08', items: [
+      { plan_item_id: 'i1', planned_lift_code: 'BEN01', outcome: 'skipped', skip_category: 'deliberate' },
+    ],
+  }]);
+  const old = foldedSkips([{
+    id: 'S0', date: '2026-07-01', items: [
+      { plan_item_id: 'i1', planned_lift_code: 'BEN01', outcome: 'skipped', skip_category: 'deliberate' },
+    ],
+  }]);
+  const future = foldedSkips([{
+    id: 'S2', date: '2026-07-11', items: [
+      { plan_item_id: 'i1', planned_lift_code: 'BEN01', outcome: 'skipped', skip_category: 'deliberate' },
+    ],
+  }]);
+  // An error session: corrupt data must never feed the accounting (fail closed).
+  const errorSession = [{ session_id: 'SERR', plan_version: 'v1', date: '2026-07-08', status: 'error', items: [{ plan_item_id: 'i1', planned_lift_code: 'BEN01', movement_pattern: 'horizontal_push', outcome: 'skipped', performed_lift_code: null, skip_category: 'deliberate' }], planned: ['BEN01'], completed: [] }];
+  const skips = countSkips([...inWindow, ...old, ...future, ...errorSession], { days: 7, today: SKIP_TODAY, liftNameFor });
+  assert.equal(skips.total, 1, 'only the in-window, non-error skip counts');
+  assert.equal(skips.byMuscle.chest.total, 1);
+});
+
+test('#1341 skips: buildVolumeLedger carries the skips section when plan data is supplied', () => {
+  const planSessions = foldedSkips([{
+    id: 'S1', date: '2026-07-08', items: [
+      { plan_item_id: 'i1', planned_lift_code: 'BEN01', outcome: 'skipped', skip_category: 'deliberate' },
+    ],
+  }]);
+  // Log rows dated against the same anchor (PROBE1_ROWS are dated relative to
+  // real-now, which is after this fixed anchor and would fall outside the window).
+  const logRows = [row('2026-07-08', 'Bench Press', '1'), row('2026-07-08', 'Bench Press', '2')];
+  const ledger = buildVolumeLedger(logRows, { days: 7, today: SKIP_TODAY, planSessions, liftNameFor });
+  assert.equal(ledger.skips.total, 1);
+  assert.equal(ledger.skips.byCategory.deliberate, 1);
+  assert.equal(ledger.skips.byMuscle.chest.total, 1);
+  assert.equal(ledger.skips.planDataAvailable, true);
+  // The set accounting is untouched by the skip input.
+  assert.equal(ledger.muscles.chest.directSets, 2);
+});
+
+test('#1341 skips: buildVolumeLedger without plan data reports zero skips, planDataAvailable:false', () => {
+  const ledger = buildVolumeLedger(PROBE1_ROWS, { days: 7, today: SKIP_TODAY });
+  assert.deepEqual(ledger.skips, {
+    total: 0,
+    byCategory: { deliberate: 0, time: 0, truncated: 0, uncategorized: 0 },
+    byMuscle: {},
+    planDataAvailable: false,
+  });
+});
+
+test('#1341 skips: sanitizeChatContext forwards skips, sanitized and bounded', () => {
+  const clean = sanitizeChatContext({
+    volume_ledger: {
+      windowDays: 7,
+      muscles: {
+        chest: { currentEffectiveSets: 2, targetRange: { min: 4, max: 12 }, status: 'under' },
+      },
+      surplus: [],
+      redirectCandidates: [],
+      skips: {
+        total: 2,
+        byCategory: { deliberate: 2, time: 0, truncated: 0, uncategorized: 0, injected: 9 },
+        byMuscle: {
+          chest: { total: 2, byCategory: { deliberate: 2, time: 0, truncated: 0, uncategorized: 0 }, lifts: ['BEN01'], secret: 'INJECTED' },
+        },
+        planDataAvailable: true,
+        secret: 'INJECTED',
+      },
+    },
+  });
+  assert.ok(clean.volume_ledger, 'volume_ledger survives sanitization');
+  assert.equal(clean.volume_ledger.skips.total, 2);
+  assert.equal(clean.volume_ledger.skips.byCategory.deliberate, 2);
+  assert.ok(!('injected' in clean.volume_ledger.skips.byCategory), 'unknown category keys do not leak through');
+  assert.equal(clean.volume_ledger.skips.byMuscle.chest.total, 2);
+  assert.deepEqual(clean.volume_ledger.skips.byMuscle.chest.lifts, ['BEN01']);
+  assert.ok(!('secret' in clean.volume_ledger.skips.byMuscle.chest), 'unknown muscle keys do not leak through');
+  assert.ok(!('secret' in clean.volume_ledger.skips), 'unknown skips keys do not leak through');
+  assert.equal(clean.volume_ledger.skips.planDataAvailable, true);
 });

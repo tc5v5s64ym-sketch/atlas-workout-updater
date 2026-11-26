@@ -173,6 +173,9 @@ test('full Session_Plans lifecycle fires accept + completed/substituted/skipped 
   expect(substituted.item.plan_item_id).toBe(B);
   expect(substituted.item.performed_lift_code).toBe('LEP01');
   expect(skipped.item.plan_item_id).toBe(C);
+  // #1341 follow-up — an explicit skip carries its category: the skip tap /
+  // "Next" is an explicit athlete choice, so it records 'deliberate'.
+  expect(skipped.item.skip_category).toBe('deliberate');
 
   // One session identity across the whole lifecycle.
   for (const b of [completed, substituted, skipped]) {

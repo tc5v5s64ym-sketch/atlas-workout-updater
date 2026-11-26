@@ -53,7 +53,7 @@ const CONSTRAINTS_ROWS = 'Constraints!A:Z';
 const COACHING_NOTES_ROWS = 'Coaching_Notes!A:Z';
 const PLANS_ROWS = 'Session_Plans!A:Z';
 const PLANS_HEADER_PROBE = 'Session_Plans!A1:A1';
-const PLANS_HEADER = 'Session_Plans!A1:M1';
+const PLANS_HEADER = 'Session_Plans!A1:N1'; // 14-column contract (#1341 follow-up adds skip_category)
 const PLAN_SETS_ROWS = 'Session_Plan_Sets!A:Z';
 const PLAN_SETS_HEADER_PROBE = 'Session_Plan_Sets!A1:A1';
 const PLAN_SETS_HEADER = 'Session_Plan_Sets!A1:P1';
@@ -125,6 +125,10 @@ const DECLARATIONS = [
   { method: 'GET', pattern: /^\/api\/stalls$/, ranges: [LOG_ROWS] },
   { method: 'GET', pattern: /^\/api\/coaching\/insights$/, ranges: [LOG_ROWS, EFFORT_ROWS, CONSTRAINTS_ROWS] },
   { method: 'GET', pattern: /^\/api\/exercises\/last-session$/, ranges: [LOG_ROWS] },
+  // The volume route reads the log for set accounting and Session_Plans for the
+  // skip accounting; the catalog rides its own approved cross-request cache and
+  // stays undeclared here.
+  { method: 'GET', pattern: /^\/api\/volume\/muscle-groups$/, ranges: [LOG_ROWS, PLANS_ROWS] },
   { method: 'GET', pattern: /^\/api\/session\/[^/]+$/, ranges: [LOG_ROWS, EFFORT_ROWS] },
   { method: 'GET', pattern: /^\/api\/session\/[^/]+\/summary$/, ranges: [LOG_ROWS, EFFORT_ROWS] },
 ];

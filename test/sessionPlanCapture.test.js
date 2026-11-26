@@ -127,6 +127,28 @@ test('exact valid header permits the sidecar write', async () => {
   });
 });
 
+// #1341 follow-up — the additive skip_category column (14) migrates behind the
+// live tab: a tab whose header is still the exact pre-migration 13-column
+// contract keeps writing (the 14th value lands positionally in column N, whose
+// header cell the owner names on the migration step). Refusing it would halt
+// every Session_Plans write on existing tabs until a manual header edit.
+test('legacy 13-column header (pre-migration contract) still permits the sidecar write', async () => {
+  reset({ header: sessionPlansColumns.slice(0, 13) });
+  await withFlag('1', async () => {
+    const r = await capture.captureAccept(SESSION, ITEMS);
+    assert.equal(r.status, 'written');
+    assert.equal(r.captured, true);
+    assert.equal(r.written, 2);
+    assert.ok(state.appends.length > 0);
+  });
+});
+
+test('a legacy 13-column header still validates as ok (validateHeader)', async () => {
+  reset({ header: sessionPlansColumns.slice(0, 13) });
+  const hv = await capture.validateHeader();
+  assert.equal(hv.ok, true);
+});
+
 test('missing tab fails safely: tab_missing, captured:false, no write', async () => {
   reset({ tabs: [] });
   await withFlag('1', async () => {

@@ -295,3 +295,133 @@ test('PR-B5a-2a: identical replay rows deduplicate (no double-count)', () => {
   assert.deepEqual(drift[0].planned, ['BEN01', 'SQ01']);
   assert.deepEqual(drift[0].completed, ['BEN01']); // i2 skipped contributes nothing
 });
+
+// ── skip_category (#1341 follow-up — Dale-approved additive column 14) ──────
+// The appended column (0-based index 13) carries the skip reason on item_outcome
+// rows. Pre-migration 13-cell rows fold with skip_category null (uncategorized);
+// rows shorter than 13 cells are still malformed (#959 preserved).
+
+const SKIP_IDX = 13; // sessionPlansColumns index of the appended skip_category column
+
+function skipRow(session, item, category, recordedAt = 'r1') {
+  return buildItemOutcomeEvent(session, { ...item, outcome: 'skipped', skip_category: category }, { recordedAt });
+}
+
+test('skip_category: a categorized skip folds with its category on the item', () => {
+  const rows = [
+    ...buildPlanAcceptedEvents(S(), items, { recordedAt: 'r0' }),
+    skipRow(S(), items[1], 'deliberate'),
+    buildSessionCloseoutEvent(S(), 'finalized', { recordedAt: 'rz' }),
+  ];
+  const [f] = foldSessionPlans(rows);
+  assert.equal(f.status, 'finalized');
+  const it = f.items.find(i => i.plan_item_id === 'i2');
+  assert.equal(it.outcome, 'skipped');
+  assert.equal(it.skip_category, 'deliberate');
+  assert.deepEqual(f.completed, [], 'a skipped item still contributes nothing to completed');
+});
+
+test('skip_category: all three categories fold distinctly', () => {
+  for (const cat of ['deliberate', 'time', 'truncated']) {
+    const rows = [
+      ...buildPlanAcceptedEvents(S(), [items[0]], { recordedAt: 'r0' }),
+      skipRow(S(), items[0], cat),
+    ];
+    const [f] = foldSessionPlans(rows);
+    assert.equal(f.items.find(i => i.plan_item_id === 'i1').skip_category, cat);
+  }
+});
+
+test('skip_category: a pre-migration 13-cell skip row folds as uncategorized (null), NOT malformed', () => {
+  // A 13-cell row is missing ONLY the appended column: every pre-existing field
+  // is present and valid, so the fold tolerates it. (A genuinely truncated row —
+  // missing recorded_at or earlier — still fails closed; see below.)
+  const legacy = skipRow(S(), items[1], 'deliberate').slice(0, 13);
+  assert.equal(legacy.length, 13);
+  const rows = [
+    ...buildPlanAcceptedEvents(S(), items, { recordedAt: 'r0' }),
+    legacy,
+    buildSessionCloseoutEvent(S(), 'finalized', { recordedAt: 'rz' }),
+  ];
+  const [f] = foldSessionPlans(rows);
+  assert.equal(f.status, 'finalized', 'a legacy 13-cell row must not poison the session');
+  assert.equal(f.items.find(i => i.plan_item_id === 'i2').outcome, 'skipped');
+  assert.equal(f.items.find(i => i.plan_item_id === 'i2').skip_category, null, 'no category cell → uncategorized');
+});
+
+test('skip_category: a row missing more than the appended column still fails closed (#959 preserved)', () => {
+  const truncated = skipRow(S(), items[1], 'deliberate').slice(0, 12); // drops recorded_at too
+  const rows = [
+    ...buildPlanAcceptedEvents(S(), items, { recordedAt: 'r0' }),
+    truncated,
+    buildSessionCloseoutEvent(S(), 'finalized', { recordedAt: 'rz' }),
+  ];
+  const folded = foldSessionPlans(rows);
+  assert.equal(folded.find(s => s.session_id === 'S1').status, 'error');
+  assert.equal(toPlannedVsCompleted(folded).length, 0, 'a session with a truncated row never reaches drift');
+});
+
+test('skip_category: an out-of-vocabulary category is malformed (fail closed)', () => {
+  const bad = skipRow(S(), items[1], 'deliberate');
+  bad[SKIP_IDX] = 'bored'; // hand-edit: the builder would throw, the reader must fail closed
+  const rows = [
+    ...buildPlanAcceptedEvents(S(), items, { recordedAt: 'r0' }),
+    bad,
+    buildSessionCloseoutEvent(S(), 'finalized', { recordedAt: 'rz' }),
+  ];
+  const folded = foldSessionPlans(rows);
+  assert.equal(folded.find(s => s.session_id === 'S1').status, 'error');
+  assert.equal(toPlannedVsCompleted(folded).length, 0);
+});
+
+test('skip_category: a category on a non-skipped event is malformed (fail closed)', () => {
+  const completed = buildItemOutcomeEvent(S(), { ...items[0], outcome: 'completed' }, { recordedAt: 'r1' });
+  completed[SKIP_IDX] = 'deliberate'; // hand-edit: the builder never writes this
+  const rows = [
+    ...buildPlanAcceptedEvents(S(), items, { recordedAt: 'r0' }),
+    completed,
+    buildSessionCloseoutEvent(S(), 'finalized', { recordedAt: 'rz' }),
+  ];
+  const folded = foldSessionPlans(rows);
+  assert.equal(folded.find(s => s.session_id === 'S1').status, 'error');
+});
+
+test('skip_category: last-wins — a later outcome clears or replaces the category', () => {
+  // skipped deliberate → completed: the item is done, the skip reason is gone.
+  const done = [
+    ...buildPlanAcceptedEvents(S(), [items[0]], { recordedAt: 'r0' }),
+    skipRow(S(), items[0], 'deliberate', 'r1'),
+    buildItemOutcomeEvent(S(), { ...items[0], outcome: 'completed' }, { recordedAt: 'r2' }),
+  ];
+  const fDone = foldSessionPlans(done)[0];
+  assert.equal(fDone.items.find(i => i.plan_item_id === 'i1').outcome, 'completed');
+  assert.equal(fDone.items.find(i => i.plan_item_id === 'i1').skip_category, null);
+  // completed → skipped time: the later skip wins with its category.
+  const skipped = [
+    ...buildPlanAcceptedEvents(S(), [items[0]], { recordedAt: 'r0' }),
+    buildItemOutcomeEvent(S(), { ...items[0], outcome: 'completed' }, { recordedAt: 'r1' }),
+    skipRow(S(), items[0], 'time', 'r2'),
+  ];
+  const fSkipped = foldSessionPlans(skipped)[0];
+  assert.equal(fSkipped.items.find(i => i.plan_item_id === 'i1').outcome, 'skipped');
+  assert.equal(fSkipped.items.find(i => i.plan_item_id === 'i1').skip_category, 'time');
+  // skipped deliberate → skipped time (re-categorization): the later category wins.
+  const recat = [
+    ...buildPlanAcceptedEvents(S(), [items[0]], { recordedAt: 'r0' }),
+    skipRow(S(), items[0], 'deliberate', 'r1'),
+    skipRow(S(), items[0], 'time', 'r2'),
+  ];
+  assert.equal(foldSessionPlans(recat)[0].items.find(i => i.plan_item_id === 'i1').skip_category, 'time');
+});
+
+test('skip_category: same idempotency_key with a different category fails closed (conflict)', () => {
+  const row = skipRow(S(), items[1], 'deliberate', 'r1');
+  const conflict = row.slice(); conflict[SKIP_IDX] = 'time'; // same key, changed category
+  const rows = [
+    ...buildPlanAcceptedEvents(S(), items, { recordedAt: 'r0' }),
+    row, conflict,
+    buildSessionCloseoutEvent(S(), 'finalized', { recordedAt: 'rz' }),
+  ];
+  const folded = foldSessionPlans(rows);
+  assert.equal(folded.find(s => s.session_id === 'S1').status, 'error');
+});

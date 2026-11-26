@@ -31,7 +31,9 @@ test('skip captures the plan_item_id off the slot BEFORE splicing, then emits a 
     'identity is read off the slot before the splice destroys position');
   // the capture precedes the splice
   assert.ok(skipBlock.indexOf('removedItemId') < skipBlock.indexOf('.splice('), 'id captured before splice');
-  assert.match(skipBlock, /emitPlanItemOutcome\(\{ plan_item_id: removedItemId, outcome: 'skipped' \}\)/);
+  // #1341 follow-up — the explicit skip carries its category ('deliberate': the
+  // skip tap / "Next" is an explicit athlete choice).
+  assert.match(skipBlock, /emitPlanItemOutcome\(\{ plan_item_id: removedItemId, outcome: 'skipped', skip_category: 'deliberate' \}\)/);
 });
 
 test('substitution keeps the original plan_item_id on the slot and emits a substituted outcome with the performed code', () => {

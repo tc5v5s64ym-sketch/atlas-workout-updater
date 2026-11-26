@@ -55,10 +55,10 @@ updated_at | training_state | deload_protocol | deload_reason | deload_start_dat
 
 Append-only system state.
 
-### `Session_Plans` — 13 columns
+### `Session_Plans` — 14 columns
 
 ```text
-idempotency_key | session_id | session_date | plan_version | event_type | plan_item_id | planned_order | planned_lift_code | movement_pattern | outcome | performed_lift_code | closeout_status | recorded_at
+idempotency_key | session_id | session_date | plan_version | event_type | plan_item_id | planned_order | planned_lift_code | movement_pattern | outcome | performed_lift_code | closeout_status | recorded_at | skip_category
 ```
 
-Append-only, deterministic idempotency, canonical lift codes, and plan-item identity. It does not pass through the logged-set preview/write loop.
+Append-only, deterministic idempotency, canonical lift codes, and plan-item identity. It does not pass through the logged-set preview/write loop. Column 14 `skip_category` (#1341 follow-up, Dale-approved 2026-11-25) records the reason a skipped item was skipped — `deliberate | time | truncated`, blank when uncategorized (pre-migration rows + old clients). The reader tolerates pre-migration 13-cell rows (missing only the appended column); the capture layer and drift shadow accept the exact legacy 13-column header until the owner names the N1 cell.
