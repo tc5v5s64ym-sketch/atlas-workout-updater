@@ -2672,9 +2672,22 @@ test('S5 B4-4: coach/chat wires an engine coach_mode and deterministic register 
   // challenge) is pinned in test/chatCoachMode.test.js. Here we assert the route
   // WIRING: coach_mode and its engine-granted register are both present. A forged
   // client mode/register must be overwritten by the server-derived values.
+  // #1343: the shared fixture's history is June 2026 — a 100+ day gap, so the
+  // layoff read now routes this chat to 'reassure' instead of 'silent'. This
+  // test pins the no-pattern floor, so it plants RECENT rows (relative to
+  // today, so the test never rots into a layoff) and restores the fixture.
   fakeCoachState.configured = true;
   fakeCoachState.lastChatContext = null;
   fakeCoachState.lastRegisterContext = null;
+  const d2 = getLocalDateString(new Date(Date.now() - 2 * 86400000));
+  const d4 = getLocalDateString(new Date(Date.now() - 4 * 86400000));
+  const d8 = getLocalDateString(new Date(Date.now() - 8 * 86400000));
+  fakeSheetsState.logRowsOverride = [
+    [d2, 'SESSION-NEW', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '225', '5', '2', 'top set'],
+    [d2, 'SESSION-NEW', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '2', '215', '6', '2', 'backoff'],
+    [d4, 'SESSION-MID', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '220', '5', '2', ''],
+    [d8, 'SESSION-OLD', 'Back Squat', 'Back Squat', 'Legs', 'SQ01', '1', '315', '3', '2', ''],
+  ];
   try {
     const { response } = await requestJson('/api/coach/chat', {
       method: 'POST',
@@ -2708,6 +2721,7 @@ test('S5 B4-4: coach/chat wires an engine coach_mode and deterministic register 
       personal_best_facts: expectedPersonalBestFacts
     }, 'Gemini chat prose is checked against the full engine grant and engine-owned personal-best facts');
   } finally {
+    fakeSheetsState.logRowsOverride = null;
     fakeCoachState.configured = false;
     fakeCoachState.lastChatContext = null;
     fakeCoachState.lastRegisterContext = null;
@@ -2729,6 +2743,36 @@ test('B5b Part 2: coach/chat routes an explicit discouragement message to reassu
     assert.ok(ctx, 'buildChatContext output must reach the coach');
     assert.equal(ctx.coach_mode, 'reassure', 'explicit discouragement → reassure');
     assert.equal(ctx.register.profanity_ok, false, 'chat profanity remains staged OFF');
+  } finally {
+    fakeCoachState.configured = false;
+    fakeCoachState.lastChatContext = null;
+  }
+});
+
+// #1343 — the layoff read reaches chat-path mode selection: the shared
+// fixture's history ends 2026-06-10, a 100+ day gap from today, so a neutral
+// message on the default fixture now routes to 'reassure' (the softer
+// layoff-return reassure, below a standing challenge) instead of the old
+// 'silent' the S5 B4-4 test pinned when the trigger was dark on chat turns.
+test('#1343: coach/chat routes a layoff return to reassure mode', async () => {
+  fakeCoachState.configured = true;
+  fakeCoachState.lastChatContext = null;
+  try {
+    const { response } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'how is my training going?' })
+    });
+    assert.equal(response.status, 200);
+    const ctx = fakeCoachState.lastChatContext;
+    assert.ok(ctx, 'buildChatContext output must reach the coach');
+    assert.equal(ctx.coach_mode, 'reassure', 'layoff return (June history, 100+ day gap) → reassure');
+    assert.ok(ctx.layoff && ctx.layoff.returning_from_layoff === true, 'the layoff read rides the context');
+    // The neutral message carries no sentiment/truncation/sensitivity cue, but
+    // the history-derived gap flag fires: this IS a return turn (100+ days).
+    assert.equal(ctx.signal_flags.length, 1, 'one flag: the history-derived gap');
+    assert.equal(ctx.signal_flags[0].kind, 'gap_return');
+    assert.equal(ctx.signal_flags[0].source, 'history');
+    assert.ok(ctx.signal_flags[0].days_since_last_session >= 100, 'the gap length is the real one');
   } finally {
     fakeCoachState.configured = false;
     fakeCoachState.lastChatContext = null;

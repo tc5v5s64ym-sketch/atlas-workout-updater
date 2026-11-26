@@ -245,7 +245,9 @@ function narrowContextForRecommendationExplanation(context, targetEntry, opts = 
     .filter((p) => p && code && p.liftCode === code)
     .map((p) => ({ ...p, patterns: (Array.isArray(p.patterns) ? p.patterns : []).filter((x) => x && x.type !== 'consistent_underperformance') }))
     .filter((p) => p.patterns.length > 0);
-  const coach_mode = deriveChatCoachMode({ memory_patterns }, { discouraged: opts.discouraged === true });
+  // #1343 — the layoff read is athlete-level, not lift-level: it survives the
+  // per-lift narrowing so a layoff-return reassure still reaches the model.
+  const coach_mode = deriveChatCoachMode({ memory_patterns, layoff: c.layoff }, { discouraged: opts.discouraged === true });
 
   return { ...c, stalls, memory_patterns, muscle_gaps: [], coach_mode };
 }
@@ -292,6 +294,12 @@ function isClarificationTurn(message) {
 function narrowContextForClarification(context, opts = {}) {
   const c = context && typeof context === 'object' ? context : {};
   const memory_patterns = [];
+  // NOTE (#1343): the layoff read is deliberately NOT forwarded here. This
+  // narrowing drops standing diagnostics so a clarification is answered
+  // plainly — the layoff-return reassure is a standing read like `challenge`
+  // (unlike the message-scoped explicit-discouragement reassure, which is
+  // still honored). The plan-turn and recommendation-explanation narrowings
+  // DO forward it: the layoff read is athlete-level, not lift-level.
   const coach_mode = deriveChatCoachMode({ memory_patterns }, { discouraged: opts.discouraged === true });
   return { ...c, stalls: [], memory_patterns, muscle_gaps: [], coach_mode };
 }

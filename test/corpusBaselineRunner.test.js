@@ -66,6 +66,15 @@ test('replay runs against the real code and scores a well-formed, honest baselin
   // sessions (S4, S11).
   const finder = result.capabilities.find((c) => c.num === 14);
   assert.equal(finder.status, 'partial', '#14 working-weight finder is partial (finder_mode emitted)');
+
+  // #1343 — the §F.11 signal flags are emitted on configured-path coach chat
+  // replies, so capabilities 27/28 flip from absent to partial on their
+  // demonstrating sessions (S12 via the message-stated 9-day gap turn; S9 via
+  // the "tones dropped, had to bail" truncation turn).
+  const emotion = result.capabilities.find((c) => c.num === 27);
+  assert.equal(emotion.status, 'partial', '#27 emotional recognition is partial (signal_flags emitted)');
+  const adherence = result.capabilities.find((c) => c.num === 28);
+  assert.equal(adherence.status, 'partial', '#28 adherence-first coaching is partial (signal_flags emitted)');
 });
 
 test('the replay NEVER attempts a Sheets write (segregation + absolute data safety)', async () => {

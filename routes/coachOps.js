@@ -1293,8 +1293,28 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
     const { detectFailureSets, sessionSetsFromContext } = require('../services/failureSets');
     const failure_sets = detectFailureSets(sessionSetsFromContext(cc));
 
+    // #1343 — §F.11 signal flags + the layoff read, computed from the SAME
+    // logRows this context is already built from (zero additional Sheets
+    // reads). The layoff read is what the chat path's mode derivation was
+    // missing: deriveChatCoachMode now receives it, so the layoff-return
+    // `reassure` trigger in selectCoachMode fires on chat turns instead of
+    // staying dark (previously only memory_patterns + discouraged were
+    // forwarded). The flags themselves are NOT passed to the model — the
+    // model already receives coach_mode + athlete_identity + the layoff
+    // prompt rules; the flags are engine signals for strategy selection and
+    // the corpus detector, emitted on the response below.
+    const { assessLayoff } = require('../services/layoffGuard');
+    const layoff = assessLayoff(logRows, { today: todayIso() });
+    const { detectSignalFlags } = require('../services/signalFlags');
+    const signal_flags = detectSignalFlags({
+      message: typeof modeOpts.message === 'string' ? modeOpts.message : '',
+      stalls,
+      layoff,
+      constraints,
+    });
+
     const coach_mode = deriveChatCoachMode(
-      { memory_patterns },
+      { memory_patterns, layoff },
       { discouraged: modeOpts.discouraged === true }
     );
     // S5 / B4-4: the chat voice receives the same engine-owned register contract
@@ -1357,7 +1377,12 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
       // ever rides the non-tired turn — recovery/safety are never softened into
       // reassurance.
       coach_mode,
-      register
+      register,
+      // #1343 — §F.11 signal flags + the layoff read, for the response (the
+      // chat handler attaches signal_flags to every post-context reply) and
+      // for any consumer that needs the engine's return-after-layoff read.
+      layoff,
+      signal_flags
     };
   }
 
@@ -1773,6 +1798,10 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
 
     let allLog = [];
     let chatError = null;
+    // #1343 — §F.11 signal flags, hoisted so the deterministic fallback below
+    // (outside the try) can emit them even when the try throws before the
+    // chat context is built: `[]` then, the computed flags otherwise.
+    let signalFlagsOut = [];
     // A recommendation-explanation turn ("why only 175 for bench") grounds the reply in the
     // displayed recommendation. SEEDED from the client-forwarded context (current_plan)
     // BEFORE the Sheets read, so the deterministic fallback still explains the displayed
@@ -1801,7 +1830,8 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
       // lanes above are already bypassed for it). Pure tiredness never fires it — that
       // stays the recovery read below, which short-circuits before the LLM, so recovery
       // outranks reassure (Owner Decision 1: safety and recovery stay above reassure).
-      const context = buildChatContext(allLog, allEffort, clientCtx, coachingNotes, constraints, { discouraged, constraintRows });
+      const context = buildChatContext(allLog, allEffort, clientCtx, coachingNotes, constraints, { discouraged, constraintRows, message });
+      signalFlagsOut = Array.isArray(context.signal_flags) ? context.signal_flags : [];
       // ── Discussion-referent: resolve + record ONCE, defined here, invoked once ──
       // Criterion 4 step (a). This closure carries the ORIGINAL resolution verbatim (the full
       // context, unchanged — the gate proved narrowing it regresses custom off-plan lifts).
@@ -1900,7 +1930,8 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
         res.locals.coachRecoveryDecision = recoveryDecisionSignal;
         const recoveryReply = wordRecoveryReply(recoveryDecisionSignal);
         return standardSuccess(req, res, 'Coach chat — recovery routing', {
-          message: recoveryReply, configured: true, model: coach.coachModel(), source: 'engine'
+          message: recoveryReply, configured: true, model: coach.coachModel(), source: 'engine',
+          signal_flags: context.signal_flags || []
         });
       }
 
@@ -1921,7 +1952,8 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
         const disputeAnswer = coachResponseGrounding.buildDisputeAnswer(message, context, history, { lastDiscussedLift });
         return standardSuccess(req, res, 'Coach chat — grounded active-plan dispute (deterministic)', {
           message: disputeAnswer, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
-          configured: true, model: coach.coachModel(), source: 'engine'
+          configured: true, model: coach.coachModel(), source: 'engine',
+          signal_flags: context.signal_flags || []
         });
       }
       // FAIL-CLOSED SUBSTITUTION TURN (F-SB3, owner ruling 2026-08-02). This route is
@@ -1939,7 +1971,8 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
         const substitutionAnswer = coachResponseGrounding.buildSubstitutionAnswer(message, context);
         return standardSuccess(req, res, 'Coach chat — grounded substitution turn (deterministic)', {
           message: substitutionAnswer, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
-          configured: true, model: coach.coachModel(), source: 'engine'
+          configured: true, model: coach.coachModel(), source: 'engine',
+          signal_flags: context.signal_flags || []
         });
       }
       // FAIL-CLOSED REMAINING-WORK QUESTION (F-SB4 Session 3). "What do I have left?"
@@ -1956,7 +1989,8 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
         const remainingAnswer = coachResponseGrounding.buildGroundedSessionStateStatement(context);
         return standardSuccess(req, res, 'Coach chat — grounded remaining work (deterministic)', {
           message: remainingAnswer, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
-          configured: true, model: coach.coachModel(), source: 'engine'
+          configured: true, model: coach.coachModel(), source: 'engine',
+          signal_flags: context.signal_flags || []
         });
       }
       // Fable fix 13 (#1719, design A + C): the deterministic history lane, in
@@ -1990,7 +2024,8 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
       if (historyAnswer && historyQuestion) {
         return standardSuccess(req, res, 'Coach chat — deterministic history answer', {
           message: historyAnswer.text, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
-          configured: true, model: coach.coachModel(), source: 'engine'
+          configured: true, model: coach.coachModel(), source: 'engine',
+          signal_flags: context.signal_flags || []
         });
       }
       // Recommendation-explanation grounding (2026-07-22 production, FR-20260722231349).
@@ -2136,7 +2171,8 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
       if (hasSafeReply && historyAnswer && historyAnswer.facts && coachResponseGrounding.detectUngroundedHistoryNumbers(reply, historyAnswer.facts).length > 0) {
         return standardSuccess(req, res, 'Coach chat — grounded (ungrounded history numbers rejected)', {
           message: historyAnswer.text, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
-          configured: true, model: coach.coachModel(), source: 'engine'
+          configured: true, model: coach.coachModel(), source: 'engine',
+          signal_flags: context.signal_flags || []
         });
       }
       // Mutation-truth BACKSTOP (defense-in-depth). Factual disputes are now answered
@@ -2156,7 +2192,8 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
         });
         return standardSuccess(req, res, 'Coach chat — grounded (unsupported mutation claim rejected)', {
           message: grounded, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
-          configured: true, model: coach.coachModel(), source: 'engine'
+          configured: true, model: coach.coachModel(), source: 'engine',
+          signal_flags: context.signal_flags || []
         });
       }
       // Recap-number BACKSTOP (Astra #1662, P1-4). The completion backstop below
@@ -2170,7 +2207,8 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
         const grounded = coachResponseGrounding.buildGroundedSessionStateStatement(llmContext);
         return standardSuccess(req, res, 'Coach chat — grounded (ungrounded recap numbers rejected)', {
           message: grounded, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
-          configured: true, model: coach.coachModel(), source: 'engine'
+          configured: true, model: coach.coachModel(), source: 'engine',
+          signal_flags: context.signal_flags || []
         });
       }
       // Completed-work BACKSTOP (Soul Corpus V2 S12). The engine owns completion: the
@@ -2187,7 +2225,8 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
         const grounded = coachResponseGrounding.buildGroundedSessionStateStatement(llmContext);
         return standardSuccess(req, res, 'Coach chat — grounded (ungrounded completion claim rejected)', {
           message: grounded, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
-          configured: true, model: coach.coachModel(), source: 'engine'
+          configured: true, model: coach.coachModel(), source: 'engine',
+          signal_flags: context.signal_flags || []
         });
       }
       // Prescription-number BACKSTOP (#1709). A forward-looking numeric
@@ -2202,7 +2241,8 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
         const grounded = coachResponseGrounding.buildGroundedSessionStateStatement(llmContext);
         return standardSuccess(req, res, 'Coach chat — grounded (ungrounded prescription numbers rejected)', {
           message: grounded, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
-          configured: true, model: coach.coachModel(), source: 'engine'
+          configured: true, model: coach.coachModel(), source: 'engine',
+          signal_flags: context.signal_flags || []
         });
       }
       // Estimated-1RM BACKSTOP (#1777). A 1RM turn that reaches the model does so
@@ -2224,7 +2264,8 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
         }).length > 0) {
         return standardSuccess(req, res, 'Coach chat — grounded (ungrounded 1RM number rejected)', {
           message: oneRepMaxTurn.answer, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
-          configured: true, model: coach.coachModel(), source: 'engine'
+          configured: true, model: coach.coachModel(), source: 'engine',
+          signal_flags: context.signal_flags || []
         });
       }
       // Return the Gemini result when it has usable prose OR carries a structured
@@ -2236,7 +2277,8 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
           message: hasSafeReply ? reply : null, propose_edit: resolvedEdit || null, propose_note: safeNote, propose_constraint: safeConstraint, propose_plan_edit: resolvedPlanEdit || null, configured: true, model: coach.coachModel(), source: 'gemini',
           // #1341 — weekly volume ledger, from the chat context built from the
           // log rows already fetched for this turn (zero additional Sheets read).
-          volume_ledger: context.volume_ledger || null
+          volume_ledger: context.volume_ledger || null,
+          signal_flags: context.signal_flags || []
         });
       }
       // Empty reply and no proposal → fall through to the deterministic fallback below.
@@ -2262,6 +2304,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
       : 'Coach chat failed — use fallback', {
       message: answer, configured: true, model: coach.coachModel(),
       volume_ledger: buildVolumeLedgerForFallback(allLog, { days: 7 }),
+      signal_flags: signalFlagsOut,
       ...(answer ? { source: 'engine' } : (chatError ? { error: chatError } : {}))
     });
   });

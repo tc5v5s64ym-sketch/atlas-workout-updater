@@ -3,8 +3,9 @@
 // Soul Plan B5 foundation — chat-path coach-mode derivation.
 //
 // deriveChatCoachMode maps the chat TRAINING SNAPSHOT onto selectCoachMode's
-// EXISTING inputs and adds no new detection. Pins: (1) the one live chat trigger
-// (memory_patterns → challenge) fires; (2) everything else floors to silent — this
+// EXISTING inputs and adds no new detection. Pins: (1) the live chat triggers
+// (memory_patterns → challenge; discouraged → reassure; layoff → reassure
+// below challenge) fire; (2) everything else floors to silent — this
 // is the honest current state (drift/discouragement are Part 2, plan-history kinds
 // stay dark until persistence exists); (3) totality (garbage never throws, always a
 // frozen-vocabulary mode); (4) the derived mode round-trips through the chat
@@ -76,4 +77,22 @@ test('reassure: an explicit discouragement signal routes the chat mode to reassu
   assert.equal(deriveChatCoachMode({}, {}), 'silent');
   assert.equal(deriveChatCoachMode({}), 'silent');
   assert.equal(deriveChatCoachMode({}, { discouraged: false }), 'silent');
+});
+
+// #1343 — the layoff read reaches chat-path mode selection: a return after a
+// layoff is a softer reassure BELOW a standing challenge pattern (only the
+// explicit-message trigger above was promoted past challenge), and a
+// non-layoff read never moves the mode.
+test('reassure: a layoff return routes the chat mode to reassure, below challenge', () => {
+  const LAYOFF = { days_since_last_session: 21, returning_from_layoff: true, severity: 'significant', volume_factor: 0.66, watch: null };
+  const NO_LAYOFF = { days_since_last_session: 2, returning_from_layoff: false, severity: 'none', volume_factor: 1.0, watch: null };
+  assert.equal(deriveChatCoachMode({ layoff: LAYOFF }), 'reassure');
+  // A standing challenge pattern still outranks the softer layoff reassure.
+  assert.equal(deriveChatCoachMode({ ...UNDERPERF, layoff: LAYOFF }), 'challenge');
+  // An explicit discouragement message outranks both.
+  assert.equal(deriveChatCoachMode({ ...UNDERPERF, layoff: LAYOFF }, { discouraged: true }), 'reassure');
+  // No layoff → no move; a malformed layoff floors instead of throwing.
+  assert.equal(deriveChatCoachMode({ layoff: NO_LAYOFF }), 'silent');
+  assert.equal(deriveChatCoachMode({ layoff: null }), 'silent');
+  assert.equal(deriveChatCoachMode({ layoff: 'x' }), 'silent');
 });
