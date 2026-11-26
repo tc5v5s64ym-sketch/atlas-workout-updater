@@ -121,6 +121,6 @@ test('read budget: the chat route derives athlete_goals from the ALREADY-FETCHED
   assert.equal(constraintReads.length, 1, 'exactly one Constraints read — goals add none');
   assert.match(coachOpsSrc, /athlete_goals:\s*readAthleteGoals\(modeOpts\.constraintRows\)/,
     'goals must derive from the raw constraintRows the route already fetched');
-  assert.match(coachOpsSrc, /buildChatContext\([^)]*\{\s*discouraged,\s*constraintRows\s*\}\)/,
-    'the route must thread the already-fetched constraintRows into buildChatContext');
+  assert.match(coachOpsSrc, /buildChatContext\([^)]*\{\s*discouraged,\s*constraintRows\b/,
+    'the route must thread the already-fetched constraintRows into buildChatContext (further fields may follow)');
 });

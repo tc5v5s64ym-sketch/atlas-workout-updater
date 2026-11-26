@@ -12,9 +12,11 @@
 //
 // This helper is that attachment point. It maps the deterministic chat TRAINING
 // SNAPSHOT onto selectCoachMode's EXISTING inputs and returns the mode string. It
-// adds NO new detection: today the only mode trigger the chat snapshot carries is
+// adds NO new detection: the mode triggers the chat snapshot carries are
 // `memory_patterns` (services/coachMemory.js) → `challenge` on a
-// consistent_underperformance pattern; every other shape floors to `silent`. The
+// consistent_underperformance pattern, the message-derived `discouraged` flag →
+// `reassure` (B5b Part 2), and the `layoff` read → `reassure` below challenge
+// (#1343); every other shape floors to `silent`. The
 // route already resolves the higher-precedence recovery/tiredness moment BEFORE the
 // LLM (isTirednessExpression → recovery routing), so this only ever runs on the
 // non-tired chat turn — it does not disturb that precedence.
@@ -49,6 +51,12 @@ function deriveChatCoachMode(context, opts = {}) {
     // and the route still resolves tiredness/recovery before the LLM, so recovery and
     // safety stay above reassure.
     discouraged: o.discouraged === true,
+    // #1343 — return after a layoff (services/layoffGuard.assessLayoff, computed
+    // by the chat route from the same log rows as the context). selectCoachMode
+    // places this softer reassure BELOW a standing challenge pattern — only the
+    // explicit-message trigger above was promoted past challenge. Absent on
+    // turns the route built without a layoff read; selectCoachMode floors it.
+    ...(c.layoff && typeof c.layoff === 'object' ? { layoff: c.layoff } : {}),
   };
   return selectCoachMode(facts, {}).mode;
 }

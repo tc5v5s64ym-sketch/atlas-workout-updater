@@ -256,7 +256,9 @@ function narrowContextToPlanTurn(context, message, opts = {}) {
     .filter((s) => s && isTarget(liftCodeOf(s.exercise) || s.liftCode || null, s.exercise));
   const memory_patterns = (Array.isArray(c.memory_patterns) ? c.memory_patterns : [])
     .filter((p) => p && targetCodes.has(p.liftCode));
-  const coach_mode = deriveChatCoachMode({ memory_patterns }, { discouraged: opts.discouraged === true });
+  // #1343 — the layoff read is athlete-level, not lift-level: it survives the
+  // per-lift narrowing so a layoff-return reassure still reaches the model.
+  const coach_mode = deriveChatCoachMode({ memory_patterns, layoff: c.layoff }, { discouraged: opts.discouraged === true });
 
   return { ...c, stalls, memory_patterns, muscle_gaps: [], coach_mode };
 }

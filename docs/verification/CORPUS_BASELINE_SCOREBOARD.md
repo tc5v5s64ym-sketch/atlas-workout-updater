@@ -13,8 +13,8 @@
 Of **35** capabilities the corpus demonstrates, the current read-only code scores:
 
 - ✅ **pass — 1** (2.9%)
-- 🟡 **partial — 3** (8.6%)
-- ⬜ **absent — 31** (88.6%)
+- 🟡 **partial — 5** (14.3%)
+- ⬜ **absent — 29** (82.9%)
 
 A low baseline is expected and honest — most coaching capabilities live in later phases (packet consumption in Phase 4; identity/safety/context in Phase 5; knowledge in Phase 6). Each absent row names the phase (or BACKLOG intake) that builds it, so re-running at the close of Phases 4, 6, and 7 shows movement against a fixed rubric.
 
@@ -48,8 +48,8 @@ A low baseline is expected and honest — most coaching capabilities live in lat
 | 24 | Evidence-threshold declarations | extended | S2, S11 | ⬜ absent | Phase 4 (decision gates verdict on pre-stated evidence) + Phase 6 (validator) |
 | 25 | Conditional forecasting | extended | S11, S14, S15 | ⬜ absent | Phase 4 (decision emits rule+condition) + Phase 6 (validator carries the condition) |
 | 26 | Uncertainty communication | core | S1, S2, S5, S8, S11 | ⬜ absent | Phase 4 (packet marks fact/inference/unknown) + Phase 6 (validator) · H-16 |
-| 27 | Emotional recognition & data-grounded response | extended | S1, S7, S11, S12, S13, S14 | ⬜ absent | BACKLOG §F.11 (engine-side emotion signal flags) + Phase 6/7 |
-| 28 | Adherence-first coaching | extended | S12, S9 | ⬜ absent | BACKLOG §F.11 (adherence signal flags) + Phase 7 |
+| 27 | Emotional recognition & data-grounded response | extended | S1, S7, S11, S12, S13, S14 | 🟡 partial | BACKLOG §F.11 (engine-side emotion signal flags) + Phase 6/7 |
+| 28 | Adherence-first coaching | extended | S12, S9 | 🟡 partial | BACKLOG §F.11 (adherence signal flags) + Phase 7 |
 | 29 | Pain/symptom-informed modification | extended | S13, S10, S9 | ⬜ absent | Phase 5d (one SafetyDecision: stop rules, green-list, symptom log, referral flag) · H-12 |
 | 30 | Education moments | extended | S7, S8, S14, S3 | ⬜ absent | Phase 6 (wire the research into retrievable knowledge records) · H-06/H-16 |
 | 31 | Praise economy | core | S1, S7, S12, S14 | ⬜ absent | Present: the scarcity gate refuses client-claimed elevation. Itemized-from-log praise needs Phase 4 (packet decision). |
@@ -72,10 +72,10 @@ Each session is scored only on the capabilities the synthesis says it demonstrat
 | S6 Marcus — strength purist, moves fast | extended | 5 | 1 | 0 | 7 | #32 ✅ |
 | S7 Priya — beginner who needs the words | extended | 5 | 0 | 0 | 6 | — |
 | S8 Jonas — runner, two sports | extended | 4 | 0 | 0 | 7 | — |
-| S9 Ray — two-a-days on shift | extended | 4 | 0 | 1 | 7 | #32 🟡 |
+| S9 Ray — two-a-days on shift | extended | 4 | 0 | 2 | 6 | #28 🟡, #32 🟡 |
 | S10 Ellen — 61, patient, getting stronger | extended | 3 | 0 | 1 | 6 | #13 🟡 |
 | S11 Dev — ten weeks away | extended | 4 | 0 | 1 | 9 | #14 🟡 |
-| S12 Sam — the streak that keeps not starting | extended | 4 | 0 | 1 | 6 | #32 🟡 |
+| S12 Sam — the streak that keeps not starting | extended | 4 | 0 | 3 | 4 | #27 🟡, #28 🟡, #32 🟡 |
 | S13 Tara — training around a shoulder | extended | 4 | 0 | 1 | 5 | #13 🟡 |
 | S14 Leo — hypertrophy, new video to discuss | extended | 4 | 0 | 1 | 9 | #21 🟡 |
 | S15 Nadia — in-season, match Sunday | extended | 4 | 0 | 0 | 6 | — |
@@ -85,6 +85,8 @@ Each session is scored only on the capabilities the synthesis says it demonstrat
 - 🟡 partial — **#13 Substitution compatibility.** Present: swap is surfaced. Full compatibility/emphasis needs Phase 5b ExerciseIdentity · H-11
 - 🟡 partial — **#14 Working-weight finder.** BACKLOG §F.8 (in-session finder sub-state) + existing onboarding finder
 - 🟡 partial — **#21 Weekly volume accounting.** BACKLOG §F.6 (weekly volume ledger) + Phase 6 (volume_and_frequency knowledge)
+- 🟡 partial — **#27 Emotional recognition & data-grounded response.** BACKLOG §F.11 (engine-side emotion signal flags) + Phase 6/7
+- 🟡 partial — **#28 Adherence-first coaching.** BACKLOG §F.11 (adherence signal flags) + Phase 7
 - ✅ pass — **#32 Deliberate brevity / silence.** Built in Phase 1 (the receipt died; routine → silence, signal → surface). Register-matching by athlete needs Phase 6/7.
 
 ## Rerun cadence (phase-boundary instrument)
