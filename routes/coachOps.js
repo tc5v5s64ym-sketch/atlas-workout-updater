@@ -1140,6 +1140,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
     // Lazily required to avoid a load-time cycle possibility; under-coverage is
     // a read-only data layer with no dependency on index.js.
     const { computeUnderCoverage } = require('../services/underCoverage');
+    const { buildVolumeLedger } = require('../services/volumeLedger');
     const muscle_gaps = computeUnderCoverage(logRows)
       .filter(r => r.status === 'under')
       .sort((a, b) => (a.currentEffectiveSets - a.targetRange.min) - (b.currentEffectiveSets - b.targetRange.min))
@@ -1224,6 +1225,12 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
       })),
       stalls: stalls.map(s => ({ exercise: s.exercise || s.liftCode, weight: s.last_best_weight, sessions_stalled: s.sessions_stalled })),
       muscle_gaps,
+      // #1341 — weekly volume ledger (hard sets/muscle/week vs the target band,
+      // surplus + redirect candidates), computed from the SAME logRows this
+      // context is already built from (zero additional Sheets reads). Bounded
+      // again by coach.sanitizeChatContext's explicit whitelist. The LLM words
+      // it; the numbers stay engine-owned.
+      volume_ledger: buildVolumeLedger(logRows, { days: 7 }),
       memory_patterns,
       plan_state,
       current_preview: Array.isArray(cc.current_preview) ? cc.current_preview : [],
@@ -2135,7 +2142,10 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
       // proposal) falls through to the deterministic engine fallback below.
       if (hasSafeReply || resolvedEdit || safeNote || safeConstraint || resolvedPlanEdit) {
         return standardSuccess(req, res, 'Coach chat reply', {
-          message: hasSafeReply ? reply : null, propose_edit: resolvedEdit || null, propose_note: safeNote, propose_constraint: safeConstraint, propose_plan_edit: resolvedPlanEdit || null, configured: true, model: coach.coachModel(), source: 'gemini'
+          message: hasSafeReply ? reply : null, propose_edit: resolvedEdit || null, propose_note: safeNote, propose_constraint: safeConstraint, propose_plan_edit: resolvedPlanEdit || null, configured: true, model: coach.coachModel(), source: 'gemini',
+          // #1341 — weekly volume ledger, from the chat context built from the
+          // log rows already fetched for this turn (zero additional Sheets read).
+          volume_ledger: context.volume_ledger || null
         });
       }
       // Empty reply and no proposal → fall through to the deterministic fallback below.
@@ -2151,10 +2161,16 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
     // an invented number. Falls back to the generic engine answer for every other turn.
     const answer = (recExplain && wordRecommendationExplanation(recExplain.snapshot))
       || deterministicAnswer(allLog);
+    // #1341 — weekly volume ledger on the deterministic fallback too, so the
+    // corpus detector (and the client) sees it on every configured-path chat
+    // reply. Computed from the log rows already fetched for this turn; an empty
+    // log still yields a non-null all-under ledger.
+    const { buildVolumeLedger: buildVolumeLedgerForFallback } = require('../services/volumeLedger');
     return standardSuccess(req, res, answer
       ? 'Coach chat — deterministic engine answer'
       : 'Coach chat failed — use fallback', {
       message: answer, configured: true, model: coach.coachModel(),
+      volume_ledger: buildVolumeLedgerForFallback(allLog, { days: 7 }),
       ...(answer ? { source: 'engine' } : (chatError ? { error: chatError } : {}))
     });
   });

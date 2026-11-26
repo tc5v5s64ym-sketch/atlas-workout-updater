@@ -323,7 +323,13 @@ module.exports = function registerReadRoutes({ getSheetRows }) {
     try {
       const allLog = await getSheetRows(logSheetName);
       const groups = computeMuscleGroupVolume(allLog, days);
-      return standardSuccess(req, res, 'Muscle group volume summary', { days, groups });
+      // #1341 — weekly volume ledger (hard sets/muscle/week vs the target band,
+      // surplus + redirect candidates). The ledger window is always 7 days: the
+      // MUSCLE_TARGETS band is defined per 7 days, independent of this route's
+      // `days` param (which sizes the tonnage `groups` summary only).
+      const { buildVolumeLedger } = require('../services/volumeLedger');
+      const volume_ledger = buildVolumeLedger(allLog, { days: 7 });
+      return standardSuccess(req, res, 'Muscle group volume summary', { days, groups, volume_ledger });
     } catch (error) {
       return readFailure(req, res, 'Failed to fetch muscle group volume', error);
     }

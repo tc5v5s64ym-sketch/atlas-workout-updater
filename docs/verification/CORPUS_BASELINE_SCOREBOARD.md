@@ -6,15 +6,15 @@
 >
 > Reference input: [`docs/reference/ATLAS_SOUL_CORPUS_V2_SESSIONS.md`](../reference/ATLAS_SOUL_CORPUS_V2_SESSIONS.md) · [`…_SYNTHESIS.md`](../reference/ATLAS_SOUL_CORPUS_V2_SYNTHESIS.md) · [`…_SECTION_F_RECONCILIATION.md`](../reference/ATLAS_SOUL_CORPUS_V2_SECTION_F_RECONCILIATION.md). This is a **measurement**, not a work-selection plan — the execution plan governs.
 
-**Run:** BASELINE (pre-Phase-4)  ·  **Recorded:** 2026-07-22
+**Run:** BASELINE (pre-Phase-4)  ·  **Recorded:** 2026-11-26
 
 ## Headline
 
 Of **35** capabilities the corpus demonstrates, the current read-only code scores:
 
 - ✅ **pass — 1** (2.9%)
-- 🟡 **partial — 1** (2.9%)
-- ⬜ **absent — 33** (94.3%)
+- 🟡 **partial — 2** (5.7%)
+- ⬜ **absent — 32** (91.4%)
 
 A low baseline is expected and honest — most coaching capabilities live in later phases (packet consumption in Phase 4; identity/safety/context in Phase 5; knowledge in Phase 6). Each absent row names the phase (or BACKLOG intake) that builds it, so re-running at the close of Phases 4, 6, and 7 shows movement against a fixed rubric.
 
@@ -42,7 +42,7 @@ A low baseline is expected and honest — most coaching capabilities live in lat
 | 18 | Conversational log correction | core | S5, S6 | ⬜ absent | Phase 4 (session repair + re-derivation; discussion_referent promoted to a packet field) |
 | 19 | Log-discrepancy verification | core | S6 | ⬜ absent | Phase 4 (packet session vs. plan delta triggers a neutral question) |
 | 20 | Batch-log and truncation handling | extended | S9 | ⬜ absent | Phase 4 (session) + BACKLOG §F.6 (category-aware adherence accounting) |
-| 21 | Weekly volume accounting | core | S1, S14 | ⬜ absent | BACKLOG §F.6 (weekly volume ledger) + Phase 6 (volume_and_frequency knowledge) |
+| 21 | Weekly volume accounting | core | S1, S14 | 🟡 partial | BACKLOG §F.6 (weekly volume ledger) + Phase 6 (volume_and_frequency knowledge) |
 | 22 | Exercise-order reasoning | core | S3 | ⬜ absent | Phase 6 (order-principle knowledge) + Phase 4 (decision) |
 | 23 | Better-than-expected management | core | S6, S14 | ⬜ absent | Phase 4 (decision) + BACKLOG §F.12 (armed-item scheduler for the booked test) |
 | 24 | Evidence-threshold declarations | extended | S2, S11 | ⬜ absent | Phase 4 (decision gates verdict on pre-stated evidence) + Phase 6 (validator) |
@@ -64,7 +64,7 @@ Each session is scored only on the capabilities the synthesis says it demonstrat
 
 | Session | Part | Turns | ✅ | 🟡 | ⬜ | Present today (per-session) |
 |---|---|---|---|---|---|---|
-| S1 On-target bench work that means something | core | 6 | 0 | 0 | 13 | — |
+| S1 On-target bench work that means something | core | 6 | 0 | 1 | 12 | #21 🟡 |
 | S2 14-day layoff changes the plan | core | 6 | 0 | 0 | 7 | — |
 | S3 Fatigue from earlier lifts changes the rest | core | 6 | 0 | 0 | 7 | — |
 | S4 Equipment substitution without fake equivalence | core | 5 | 1 | 1 | 4 | #13 🟡, #32 ✅ |
@@ -77,26 +77,18 @@ Each session is scored only on the capabilities the synthesis says it demonstrat
 | S11 Dev — ten weeks away | extended | 4 | 0 | 0 | 10 | — |
 | S12 Sam — the streak that keeps not starting | extended | 4 | 0 | 1 | 6 | #32 🟡 |
 | S13 Tara — training around a shoulder | extended | 4 | 0 | 1 | 5 | #13 🟡 |
-| S14 Leo — hypertrophy, new video to discuss | extended | 4 | 0 | 0 | 10 | — |
+| S14 Leo — hypertrophy, new video to discuss | extended | 4 | 0 | 1 | 9 | #21 🟡 |
 | S15 Nadia — in-season, match Sunday | extended | 4 | 0 | 0 | 6 | — |
 
 ## What the current code already does
 
 - 🟡 partial — **#13 Substitution compatibility.** Present: swap is surfaced. Full compatibility/emphasis needs Phase 5b ExerciseIdentity · H-11
+- 🟡 partial — **#21 Weekly volume accounting.** BACKLOG §F.6 (weekly volume ledger) + Phase 6 (volume_and_frequency knowledge)
 - ✅ pass — **#32 Deliberate brevity / silence.** Built in Phase 1 (the receipt died; routine → silence, signal → surface). Register-matching by athlete needs Phase 6/7.
 
 ## Rerun cadence (phase-boundary instrument)
 
 Per the owner side-instrument insertion recorded in the execution plan's `CAMPAIGN STATE`, the runner reruns and **appends a new dated section below** at the close of **Phase 4**, **Phase 6**, and **Phase 7** — the same rubric against the same real code, so the deltas are honest. The absent→partial→pass movement is the campaign converging on the corpus.
-
-## Rerun — Phase 4 pre-AI operational acceptance (2026-07-31)
-
-Headline: ✅ pass **1** · 🟡 partial **1** · ⬜ absent **33** of 35.
-
-| # | Capability | Status |
-|---|---|---|
-| 13 | Substitution compatibility | 🟡 partial |
-| 32 | Deliberate brevity / silence | ✅ pass |
 
 ---
 _This scoreboard is generated. Segregation invariant: corpus-synthetic, test-mode, no live write, no real shadow/divergence contamination._

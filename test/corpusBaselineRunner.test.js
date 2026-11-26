@@ -54,6 +54,12 @@ test('replay runs against the real code and scores a well-formed, honest baselin
   // The one capability Phase 1 actually built (the receipt died) must not be absent.
   const brevity = result.capabilities.find((c) => c.num === 32);
   assert.notEqual(brevity.status, 'absent', '#32 deliberate brevity/silence is present (Phase 1)');
+
+  // #1341 — the weekly volume ledger is emitted on configured-path coach chat
+  // replies, so capability 21 flips from absent to partial on its demonstrating
+  // sessions (S1, S14).
+  const volume = result.capabilities.find((c) => c.num === 21);
+  assert.equal(volume.status, 'partial', '#21 weekly volume accounting is partial (volume_ledger emitted)');
 });
 
 test('the replay NEVER attempts a Sheets write (segregation + absolute data safety)', async () => {
