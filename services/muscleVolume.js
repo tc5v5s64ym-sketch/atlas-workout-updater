@@ -11,6 +11,7 @@
 
 const { normalizeLogRow } = require('./analytics');
 const { musclesFor, TAXONOMY } = require('./muscleCoverage');
+const { isWarmupNote } = require('./warmupTag');
 
 function emptyMuscleTally() {
   const result = {};
@@ -30,7 +31,11 @@ function emptyMuscleTally() {
 // options.excludeLiftCode — optional lift_code to drop entirely, so a muscle's
 //   volume can be measured FROM OTHER LIFTS (used to ask "is this stalled lift's
 //   muscle already covered without it?").
-function weeklyMuscleVolume(logRows, { days = 7, today = null, excludeLiftCode = null } = {}) {
+// options.excludeWarmups — when true, note-tagged warm-up sets are excluded, so
+//   the count is HARD (working) sets only. Default false: warm-ups still count
+//   toward volume generally (owner rule 2026-06-25) — only the hard-set ledger
+//   (#1341) opts out, never the general volume path.
+function weeklyMuscleVolume(logRows, { days = 7, today = null, excludeLiftCode = null, excludeWarmups = false } = {}) {
   if (!Array.isArray(logRows) || logRows.length === 0) return emptyMuscleTally();
 
   const windowDays = Math.max(1, Number(days) || 7);
@@ -55,6 +60,7 @@ function weeklyMuscleVolume(logRows, { days = 7, today = null, excludeLiftCode =
     if (!row.date_clean || row.date_clean < cutoffIso) continue;
     if (anchored && row.date_clean > anchorIso) continue;  // upper bound only when explicitly anchored
     if (exclude && row.lift_code === exclude) continue;
+    if (excludeWarmups && isWarmupNote(row.notes)) continue;
 
     const liftName = row.canonical_exercise || row.exercise;
     if (!liftName) continue;

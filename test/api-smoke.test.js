@@ -8266,6 +8266,13 @@ test('api smoke: GET /api/volume/muscle-groups returns a volume summary and reje
   assert.equal(response.status, 200);
   assert.equal(body.data.days, 3650);
   assert.ok(body.data.groups !== undefined, 'groups summary present');
+  // #1341 — weekly volume ledger rides the same response (7-day window; the
+  // MUSCLE_TARGETS band is defined per 7 days, independent of `days`).
+  assert.ok(body.data.volume_ledger, 'volume_ledger present');
+  assert.equal(body.data.volume_ledger.windowDays, 7, 'ledger window is 7 days');
+  assert.ok(body.data.volume_ledger.muscles && typeof body.data.volume_ledger.muscles === 'object', 'ledger muscles present');
+  assert.ok(Array.isArray(body.data.volume_ledger.surplus), 'ledger surplus present');
+  assert.ok(Array.isArray(body.data.volume_ledger.redirectCandidates), 'ledger redirect candidates present');
 
   const { response: rZero } = await requestJson('/api/volume/muscle-groups?days=0');
   assert.equal(rZero.status, 400, 'days must be a positive integer');

@@ -951,6 +951,7 @@ function buildChatSystemPrompt(context) {
     'You are having a conversation with the lifter.',
     "You are given a read-only TRAINING SNAPSHOT (recent sessions, movement-pattern readiness, today's recommended focus, current workout plan, stalled lifts, and under-coverage gaps) as JSON, then the conversation so far. Answer the latest message in a natural, conversational coaching voice.",
     "- `muscle_gaps` in the snapshot lists muscles below their weekly minimum effective sets. When the lifter asks what to train or you're suggesting accessories, weave in a nudge toward 1–2 of the most under-served muscles with a concrete lift suggestion. Keep it to one sentence, only when it fits naturally — never recite the full list unprompted.",
+    "- `volume_ledger` in the snapshot is the weekly hard-sets ledger: per-muscle sets vs the target band, the `surplus` muscles over band, and `redirectCandidates` naming where surplus volume could move. When the lifter asks about balance or overtraining a muscle, use ONLY its numbers — name the surplus muscle and the under-target candidate it could feed, one sentence, only when it fits naturally — never recite the ledger unprompted.",
     "- `memory_patterns` (if present) lists engine-detected recurring patterns for specific lifts — e.g. consistent underperformance or a repeated substitution. Reference these naturally when discussing the relevant lift. Never recite the full list unprompted, and never invent a pattern that is not in the snapshot.",
     "- CHALLENGE MODE: when `coach_mode` is \"challenge\", the engine has detected a recurring pattern worth naming from `memory_patterns` (e.g. consistent_underperformance on a specific lift — the lift and how many recent sessions came in below its recent benchmark). This is a BENCHMARK/TREND comparison against the lift's own established performance, NOT a missed plan — no per-session prescription was stored, so NEVER say \"under target\", \"missed target\", \"failed the plan\", or \"beat expectations\"; say \"below your recent benchmark\" / \"below your established range\" or state the factual trend. Name that pattern plainly using ONLY the numbers in `memory_patterns` (which lift; sessions_below of sessions_checked), then ask ONE open question about what is behind it — e.g. \"Bench has come in below your recent benchmark 3 of the last 4 sessions. What's going on there — the load feels off, recovery, or just not feeling it lately?\" State the evidence and ASK; never lecture, pile on, or moralize — one honest observation and one question. If the lifter pushes back or brushes it off, do NOT cave or apologize it away: restate the pattern's facts once, neutrally, and leave the door open — you are on their side, not scolding. Keep it in the ordinary direct register: challenge is honesty, not heat — no escalation, no harsh language. Never invent a pattern that is not in `memory_patterns`, and raise a challenge ONLY when `coach_mode` is \"challenge\" — for any other mode, do not.",
     "- REASSURE MODE: when `coach_mode` is \"reassure\", the lifter has voiced explicit discouragement or frustration (e.g. \"bench is stuck, I feel like I'm going backwards\"). Acknowledge it in ONE brief clause — do not dwell, over-empathize, or pile on sympathy — then ZOOM OUT using ONLY facts actually present in the snapshot: a per-lift trend that is up, an `athlete_identity` streak / tenure / dated PR, or the stalled lift's own longer arc. State the specific numbers/dates that are there (e.g. \"squat's up 15 since June, and you haven't missed a Monday in 8 weeks\") — CITE, never invent. Then give ONE concrete next move (a rep-scheme change, a small planned deload, a focus lift) — one, not a program. THIN HISTORY = SAY LESS, NOT WARMER: if the snapshot has no genuine positive fact to point to, do NOT manufacture one and do NOT pad with warmth — a short honest \"early days yet — keep stacking sessions and it'll show\" is right; never invent progress that isn't in the facts. NEVER use empty-affirmation filler ('believe in yourself', 'you've got this', 'stay positive'). If the message also mentions pain, injury, or real fatigue, that takes precedence — address the safety/recovery read instead of zooming out. No profanity; you never logged, saved, or changed anything. Reassure ONLY when `coach_mode` is \"reassure\".",
@@ -1156,6 +1157,59 @@ function sanitizeConstraint(v) {
   return { kind, target, rule };
 }
 
+// #1341 — sanitize a weekly volume ledger (services/volumeLedger.js) for the
+// chat snapshot. Same explicit whitelist as muscle_gaps: only known fields
+// survive, statuses are restricted to the ledger vocabulary, and the muscle
+// map is bounded to the 17 taxonomy muscles. Null when absent or malformed.
+function sanitizeVolumeLedger(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const muscles = {};
+  const rawMuscles = value.muscles && typeof value.muscles === 'object' ? value.muscles : {};
+  for (const muscle of Object.keys(rawMuscles).slice(0, 17)) {
+    const m = rawMuscles[muscle];
+    if (!m || typeof m !== 'object') continue;
+    const name = strOrNull(muscle);
+    if (!name) continue;
+    const status = strOrNull(m.status);
+    if (!['under', 'adequate', 'surplus'].includes(status)) continue;
+    const targetRange = m.targetRange && typeof m.targetRange === 'object' ? m.targetRange : {};
+    muscles[name] = {
+      directSets: numOrNull(m.directSets),
+      indirectSets: numOrNull(m.indirectSets),
+      totalEffectiveSets: numOrNull(m.totalEffectiveSets),
+      currentEffectiveSets: numOrNull(m.currentEffectiveSets),
+      targetRange: { min: numOrNull(targetRange.min), max: numOrNull(targetRange.max) },
+      status,
+      surplusSets: numOrNull(m.surplusSets),
+      deficitSets: numOrNull(m.deficitSets),
+      liftsContributing: Array.isArray(m.liftsContributing)
+        ? m.liftsContributing.slice(0, 12).map(strOrNull).filter(Boolean)
+        : [],
+    };
+  }
+  if (Object.keys(muscles).length === 0) return null;
+  const surplus = Array.isArray(value.surplus) ? value.surplus.slice(0, 17).map(s => ({
+    muscle: strOrNull(s && s.muscle),
+    surplusSets: numOrNull(s && s.surplusSets),
+  })).filter(s => s.muscle) : [];
+  const redirectCandidates = Array.isArray(value.redirectCandidates)
+    ? value.redirectCandidates.slice(0, 17).map(r => ({
+      fromMuscle: strOrNull(r && r.fromMuscle),
+      surplusSets: numOrNull(r && r.surplusSets),
+      toMuscle: strOrNull(r && r.toMuscle),
+      deficitSets: numOrNull(r && r.deficitSets),
+      suggestedSets: numOrNull(r && r.suggestedSets),
+    })).filter(r => r.fromMuscle && r.toMuscle)
+    : [];
+  return {
+    windowDays: numOrNull(value.windowDays),
+    asOf: strOrNull(value.asOf),
+    muscles,
+    surplus,
+    redirectCandidates,
+  };
+}
+
 // Forward ONLY a known, bounded snapshot — never arbitrary client object keys.
 function sanitizeChatContext(context) {
   const c = context && typeof context === 'object' ? context : {};
@@ -1229,6 +1283,12 @@ function sanitizeChatContext(context) {
         targetMin: numOrNull(g && g.targetMin)
       })).filter(g => g.muscle)
     : [];
+  // #1341 — weekly volume ledger (services/volumeLedger.js), computed by the
+  // deterministic engine in buildChatContext from the log rows the route
+  // already fetched. Same explicit whitelist as muscle_gaps: per-muscle hard-set
+  // actuals vs the target band, the surplus list, and redirect candidates.
+  // Null when the route hasn't computed it yet (additive).
+  const volume_ledger = sanitizeVolumeLedger(c.volume_ledger);
   // Whitelist known pattern types; pick only the expected detail fields per type.
   const memory_patterns = Array.isArray(c.memory_patterns)
     ? c.memory_patterns.slice(0, 5).map(item => {
@@ -1333,6 +1393,7 @@ function sanitizeChatContext(context) {
     recent_sessions,
     stalls,
     muscle_gaps,
+    volume_ledger,
     memory_patterns: coachMode === 'reassure' ? [] : memory_patterns,
     plan_state,
     current_preview,
