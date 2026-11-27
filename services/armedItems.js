@@ -71,10 +71,21 @@ const NO_SLEEP_PATTERN = /\b(?:no|zero|didn'?t get any|not any)\s+sleep\b/i;
 // the engine can trust — never fires. Same discipline as signalFlags.
 const NEGATION_BEFORE = /(?:didn'?t|did not|never|not|no need to|don'?t have to)\s+[^.]{0,20}$/i;
 // A sleep report tied to a PAST session ("last week I only got 5 hours
-// sleep") is history, not this session's check-in. "Yesterday"/"last night"
-// do NOT suppress: last night's sleep IS today's readiness input (S5 is
-// reported the morning after).
+// sleep") is history, not this session's check-in — the marker may sit
+// BEFORE the report or AFTER it ("I slept 5 hours last week"), so the
+// guard checks a 30-char window on both sides of the match (B1, PR #1816).
+// "Yesterday"/"last night" do NOT suppress: last night's sleep IS today's
+// readiness input (S5 is reported the morning after).
 const PAST_SESSION_MARKERS = /\b(last week|last session|last time)\b/i;
+const PAST_SESSION_WINDOW = 30;
+
+// True when a past-session marker sits within the window on either side
+// of the match [matchStart, matchEnd).
+function _tiedToPastSession(t, matchStart, matchEnd) {
+  const beforeStart = Math.max(0, matchStart - PAST_SESSION_WINDOW);
+  if (PAST_SESSION_MARKERS.test(t.slice(beforeStart, matchStart))) return true;
+  return PAST_SESSION_MARKERS.test(t.slice(matchEnd, matchEnd + PAST_SESSION_WINDOW));
+}
 
 function _numValue(s) {
   if (/^\d+$/.test(s)) return parseInt(s, 10);
@@ -93,8 +104,7 @@ function detectReadinessLimited(message) {
     if (!m) continue;
     const before = t.slice(0, m.index);
     if (NEGATION_BEFORE.test(before)) continue;
-    const windowStart = Math.max(0, m.index - 30);
-    if (PAST_SESSION_MARKERS.test(t.slice(windowStart, m.index))) continue;
+    if (_tiedToPastSession(t, m.index, m.index + m[0].length)) continue;
     const hours = _numValue(m[1]);
     if (hours === null || hours === undefined) return { limited: false, hours: null, source: null };
     // A stated above-threshold night is a definite non-fire, not "try next
@@ -108,7 +118,8 @@ function detectReadinessLimited(message) {
   const noSleep = t.match(NO_SLEEP_PATTERN);
   if (noSleep) {
     const before = t.slice(0, noSleep.index);
-    if (!NEGATION_BEFORE.test(before)) {
+    if (!NEGATION_BEFORE.test(before)
+      && !_tiedToPastSession(t, noSleep.index, noSleep.index + noSleep[0].length)) {
       return { limited: true, hours: 0, source: 'reported_sleep' };
     }
   }

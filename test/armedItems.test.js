@@ -102,6 +102,27 @@ test('readiness: a past-session sleep report is history, not this check-in', () 
     { limited: false, hours: null, source: null });
 });
 
+// B1 (PR #1816 rework): the marker may trail the report — a trailing
+// 'last week' / 'last session' / 'last time' is the same rule, on both
+// sleep patterns and the no-sleep branch. All six are Sunny's executed
+// probes (verdict comment 7207975110).
+test('readiness: a trailing past-session marker is history, not this check-in', () => {
+  assert.deepEqual(detectReadinessLimited('I slept 5 hours last week before that session'),
+    { limited: false, hours: null, source: null });
+  assert.deepEqual(detectReadinessLimited('only got 5 hours of sleep last week'),
+    { limited: false, hours: null, source: null });
+  assert.deepEqual(detectReadinessLimited('I got 5 hours sleep last time'),
+    { limited: false, hours: null, source: null });
+  assert.deepEqual(detectReadinessLimited('5 hours of sleep, same as last week'),
+    { limited: false, hours: null, source: null });
+  assert.deepEqual(detectReadinessLimited('I got no sleep last week'),
+    { limited: false, hours: null, source: null });
+  assert.deepEqual(detectReadinessLimited('no sleep last session, but last night I slept fine'),
+    { limited: false, hours: null, source: null });
+  assert.deepEqual(detectReadinessLimited('last week I got no sleep'),
+    { limited: false, hours: null, source: null });
+});
+
 test('readiness: yesterday’s sleep IS today’s readiness input', () => {
   assert.deepEqual(detectReadinessLimited('yesterday I got 5 hours sleep'),
     { limited: true, hours: 5, source: 'reported_sleep' });
