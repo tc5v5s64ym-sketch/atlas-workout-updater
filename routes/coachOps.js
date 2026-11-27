@@ -783,6 +783,29 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
     }
     if (finderState) facts = { ...facts, finder: finderState };
 
+    // #1344 — §F.12 armed-item scheduler on block/set replies. Best-effort
+    // and fail-closed like the finder: a history read failure yields [] (no
+    // arming without evidence), never an armed claim without history. Computed
+    // from the SAME history the enrichment already read (zero additional
+    // Sheets reads); todaySets are this turn's logged sets. Block turns carry
+    // no free text, so the message is empty here: only history-derived and
+    // tally-derived arms fire (top-single from a better-than-expected top set,
+    // progression bump one clean session away). The limiter test needs the
+    // athlete's spoken grip report, which arrives on the chat route.
+    let blockArmedItems = [];
+    try {
+      const { buildArmedItems } = require('../services/armedItems');
+      const blockSets = Array.isArray(rawFacts.todaySets) ? rawFacts.todaySets : [];
+      blockArmedItems = buildArmedItems({
+        message: '',
+        logRows: Array.isArray(engineLogRows) ? engineLogRows : [],
+        sessionTally: blockSets.length && facts.exerciseName
+          ? { exercises: [{ exercise: facts.exerciseName, per_set: blockSets }], total_working_sets: blockSets.length }
+          : null,
+        today: todayIso(),
+      }).armed_items;
+    } catch (_) { blockArmedItems = []; }
+
     // PR-3 block-note tier: engine-owned classification of the just-logged block via
     // the pure batchNoteFacts → coachNoteTier fold (over the block's own sets plus any
     // caller-supplied rec/flags). Returned to the client to gate rendering; it is
@@ -1053,7 +1076,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
       message: null, voice: null, sub_voice: null, configured: coach.isConfigured(), model: coach.coachModel(), kind,
       ...noteMeta, note_tier: 'ack_only', note_trigger: null, note_reason_code: null,
       effort_note: null, reroute: null, set_grade: null, next_move_advisory: null, recovery_advisory: null, flight_recorder_context,
-      finder_mode: finderState !== null, finder: finderState
+      finder_mode: finderState !== null, finder: finderState, armed_items: blockArmedItems
     });
     // LT-010 degraded-path guard: a block surfaced ONLY because of its mode (bumped off
     // ack_only) carries no set-effort signal — its coaching content comes solely from the
@@ -1073,7 +1096,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
       if (surfacedSignalBlock || surfacedFinderBlock) return ackOnlyBlockResponse();
       return standardSuccess(req, res, 'Coach voice unavailable — use templated fallback', {
         message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: false, model: coach.coachModel(), ...noteMeta, ...effortExtras, flight_recorder_context,
-        finder_mode: finderState !== null, finder: finderState
+        finder_mode: finderState !== null, finder: finderState, armed_items: blockArmedItems
       });
     }
 
@@ -1092,7 +1115,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
       const fin = finalizeCoachVoice(message, voiceBase, subVoiceBase, registerCtx, numericFindings);
       res.locals.coachSuppressionCode = fin.suppression_code || null;
       validatorRan = true;
-      return standardSuccess(req, res, 'Coach message', { message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: true, model: coach.coachModel(), source: 'gemini', kind, ...noteMeta, ...effortExtras, flight_recorder_context, finder_mode: finderState !== null, finder: finderState });
+      return standardSuccess(req, res, 'Coach message', { message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: true, model: coach.coachModel(), source: 'gemini', kind, ...noteMeta, ...effortExtras, flight_recorder_context, finder_mode: finderState !== null, finder: finderState, armed_items: blockArmedItems });
     } catch (error) {
       modelStatus = 'error'; // the LLM was called but threw
       // Degrade gracefully: tell the client to use its templated fallback rather
@@ -1103,7 +1126,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
       if (surfacedSignalBlock || surfacedFinderBlock) return ackOnlyBlockResponse();
       return standardSuccess(req, res, 'Coach generation failed — use templated fallback', {
         message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: true, model: coach.coachModel(), error: error.message, ...noteMeta, ...effortExtras, flight_recorder_context,
-        finder_mode: finderState !== null, finder: finderState
+        finder_mode: finderState !== null, finder: finderState, armed_items: blockArmedItems
       });
     }
   });
@@ -1313,6 +1336,26 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
       constraints,
     });
 
+    // #1344 — §F.12 evidence quarantine + armed-item scheduler, computed
+    // from the SAME logRows this context is already built from (zero
+    // additional Sheets reads). The items are NOT passed to the model — the
+    // model already receives coach_mode + athlete_identity + the readiness
+    // prompt rules; the items are engine signals for strategy selection and
+    // the corpus detector, emitted on the response below. readiness_applied
+    // is true only when this turn applied a reported readiness input (a
+    // low-sleep report flags the session readiness-limited); the quarantine
+    // itself is applied inside the builder (a better-than-expected read from
+    // a flagged session banks no top-single test).
+    const { buildArmedItems } = require('../services/armedItems');
+    const armedState = buildArmedItems({
+      message: typeof modeOpts.message === 'string' ? modeOpts.message : '',
+      logRows,
+      sessionTally: cc.session_tally,
+      today: todayIso(),
+    });
+    const armed_items = armedState.armed_items;
+    const readiness_applied = armedState.readiness_applied;
+
     const coach_mode = deriveChatCoachMode(
       { memory_patterns, layoff },
       { discouraged: modeOpts.discouraged === true }
@@ -1381,8 +1424,12 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
       // #1343 — §F.11 signal flags + the layoff read, for the response (the
       // chat handler attaches signal_flags to every post-context reply) and
       // for any consumer that needs the engine's return-after-layoff read.
+      // #1344 — §F.12 armed items + the readiness-applied flag, attached to
+      // every post-context reply the same way (always emitted, [] when none).
       layoff,
-      signal_flags
+      signal_flags,
+      armed_items,
+      readiness_applied
     };
   }
 
@@ -1802,6 +1849,9 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
     // (outside the try) can emit them even when the try throws before the
     // chat context is built: `[]` then, the computed flags otherwise.
     let signalFlagsOut = [];
+    // #1344 — same fallback shape for the armed items + readiness flag.
+    let armedItemsOut = [];
+    let readinessAppliedOut = false;
     // A recommendation-explanation turn ("why only 175 for bench") grounds the reply in the
     // displayed recommendation. SEEDED from the client-forwarded context (current_plan)
     // BEFORE the Sheets read, so the deterministic fallback still explains the displayed
@@ -1832,6 +1882,8 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
       // outranks reassure (Owner Decision 1: safety and recovery stay above reassure).
       const context = buildChatContext(allLog, allEffort, clientCtx, coachingNotes, constraints, { discouraged, constraintRows, message });
       signalFlagsOut = Array.isArray(context.signal_flags) ? context.signal_flags : [];
+      armedItemsOut = Array.isArray(context.armed_items) ? context.armed_items : [];
+      readinessAppliedOut = context.readiness_applied === true;
       // ── Discussion-referent: resolve + record ONCE, defined here, invoked once ──
       // Criterion 4 step (a). This closure carries the ORIGINAL resolution verbatim (the full
       // context, unchanged — the gate proved narrowing it regresses custom off-plan lifts).
@@ -1931,7 +1983,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
         const recoveryReply = wordRecoveryReply(recoveryDecisionSignal);
         return standardSuccess(req, res, 'Coach chat — recovery routing', {
           message: recoveryReply, configured: true, model: coach.coachModel(), source: 'engine',
-          signal_flags: context.signal_flags || []
+          signal_flags: context.signal_flags || [], armed_items: context.armed_items || [], readiness_applied: context.readiness_applied === true
         });
       }
 
@@ -1953,7 +2005,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
         return standardSuccess(req, res, 'Coach chat — grounded active-plan dispute (deterministic)', {
           message: disputeAnswer, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
           configured: true, model: coach.coachModel(), source: 'engine',
-          signal_flags: context.signal_flags || []
+          signal_flags: context.signal_flags || [], armed_items: context.armed_items || [], readiness_applied: context.readiness_applied === true
         });
       }
       // FAIL-CLOSED SUBSTITUTION TURN (F-SB3, owner ruling 2026-08-02). This route is
@@ -1972,7 +2024,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
         return standardSuccess(req, res, 'Coach chat — grounded substitution turn (deterministic)', {
           message: substitutionAnswer, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
           configured: true, model: coach.coachModel(), source: 'engine',
-          signal_flags: context.signal_flags || []
+          signal_flags: context.signal_flags || [], armed_items: context.armed_items || [], readiness_applied: context.readiness_applied === true
         });
       }
       // FAIL-CLOSED REMAINING-WORK QUESTION (F-SB4 Session 3). "What do I have left?"
@@ -1990,7 +2042,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
         return standardSuccess(req, res, 'Coach chat — grounded remaining work (deterministic)', {
           message: remainingAnswer, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
           configured: true, model: coach.coachModel(), source: 'engine',
-          signal_flags: context.signal_flags || []
+          signal_flags: context.signal_flags || [], armed_items: context.armed_items || [], readiness_applied: context.readiness_applied === true
         });
       }
       // Fable fix 13 (#1719, design A + C): the deterministic history lane, in
@@ -2025,7 +2077,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
         return standardSuccess(req, res, 'Coach chat — deterministic history answer', {
           message: historyAnswer.text, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
           configured: true, model: coach.coachModel(), source: 'engine',
-          signal_flags: context.signal_flags || []
+          signal_flags: context.signal_flags || [], armed_items: context.armed_items || [], readiness_applied: context.readiness_applied === true
         });
       }
       // Recommendation-explanation grounding (2026-07-22 production, FR-20260722231349).
@@ -2172,7 +2224,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
         return standardSuccess(req, res, 'Coach chat — grounded (ungrounded history numbers rejected)', {
           message: historyAnswer.text, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
           configured: true, model: coach.coachModel(), source: 'engine',
-          signal_flags: context.signal_flags || []
+          signal_flags: context.signal_flags || [], armed_items: context.armed_items || [], readiness_applied: context.readiness_applied === true
         });
       }
       // Mutation-truth BACKSTOP (defense-in-depth). Factual disputes are now answered
@@ -2193,7 +2245,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
         return standardSuccess(req, res, 'Coach chat — grounded (unsupported mutation claim rejected)', {
           message: grounded, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
           configured: true, model: coach.coachModel(), source: 'engine',
-          signal_flags: context.signal_flags || []
+          signal_flags: context.signal_flags || [], armed_items: context.armed_items || [], readiness_applied: context.readiness_applied === true
         });
       }
       // Recap-number BACKSTOP (Astra #1662, P1-4). The completion backstop below
@@ -2208,7 +2260,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
         return standardSuccess(req, res, 'Coach chat — grounded (ungrounded recap numbers rejected)', {
           message: grounded, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
           configured: true, model: coach.coachModel(), source: 'engine',
-          signal_flags: context.signal_flags || []
+          signal_flags: context.signal_flags || [], armed_items: context.armed_items || [], readiness_applied: context.readiness_applied === true
         });
       }
       // Completed-work BACKSTOP (Soul Corpus V2 S12). The engine owns completion: the
@@ -2226,7 +2278,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
         return standardSuccess(req, res, 'Coach chat — grounded (ungrounded completion claim rejected)', {
           message: grounded, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
           configured: true, model: coach.coachModel(), source: 'engine',
-          signal_flags: context.signal_flags || []
+          signal_flags: context.signal_flags || [], armed_items: context.armed_items || [], readiness_applied: context.readiness_applied === true
         });
       }
       // Prescription-number BACKSTOP (#1709). A forward-looking numeric
@@ -2242,7 +2294,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
         return standardSuccess(req, res, 'Coach chat — grounded (ungrounded prescription numbers rejected)', {
           message: grounded, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
           configured: true, model: coach.coachModel(), source: 'engine',
-          signal_flags: context.signal_flags || []
+          signal_flags: context.signal_flags || [], armed_items: context.armed_items || [], readiness_applied: context.readiness_applied === true
         });
       }
       // Estimated-1RM BACKSTOP (#1777). A 1RM turn that reaches the model does so
@@ -2265,7 +2317,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
         return standardSuccess(req, res, 'Coach chat — grounded (ungrounded 1RM number rejected)', {
           message: oneRepMaxTurn.answer, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null,
           configured: true, model: coach.coachModel(), source: 'engine',
-          signal_flags: context.signal_flags || []
+          signal_flags: context.signal_flags || [], armed_items: context.armed_items || [], readiness_applied: context.readiness_applied === true
         });
       }
       // Return the Gemini result when it has usable prose OR carries a structured
@@ -2278,7 +2330,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
           // #1341 — weekly volume ledger, from the chat context built from the
           // log rows already fetched for this turn (zero additional Sheets read).
           volume_ledger: context.volume_ledger || null,
-          signal_flags: context.signal_flags || []
+          signal_flags: context.signal_flags || [], armed_items: context.armed_items || [], readiness_applied: context.readiness_applied === true
         });
       }
       // Empty reply and no proposal → fall through to the deterministic fallback below.
@@ -2305,6 +2357,8 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows, refuseIfWritesF
       message: answer, configured: true, model: coach.coachModel(),
       volume_ledger: buildVolumeLedgerForFallback(allLog, { days: 7 }),
       signal_flags: signalFlagsOut,
+      armed_items: armedItemsOut,
+      readiness_applied: readinessAppliedOut,
       ...(answer ? { source: 'engine' } : (chatError ? { error: chatError } : {}))
     });
   });
