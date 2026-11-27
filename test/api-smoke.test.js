@@ -2779,6 +2779,96 @@ test('#1343: coach/chat routes a layoff return to reassure mode', async () => {
   }
 });
 
+// #1344 — the §F.12 armed-item scheduler rides chat replies: a
+// better-than-expected top set (315 3/4 vs last week's 315 3/3) arms the top
+// single for next week, and two clean bench sessions at 185 (2 of 3) arm the
+// 190 bump — both from the same history the context already reads. Dates are
+// relative so the fixture stays fresh regardless of the run date.
+test('#1344: coach/chat emits armed_items + readiness_applied on the reply', async () => {
+  fakeCoachState.configured = true;
+  fakeCoachState.lastChatContext = null;
+  const d2 = getLocalDateString(new Date(Date.now() - 2 * 86400000));
+  const d7 = getLocalDateString(new Date(Date.now() - 7 * 86400000));
+  const d9 = getLocalDateString(new Date(Date.now() - 9 * 86400000));
+  fakeSheetsState.logRowsOverride = [
+    [d2, 'SESSION-B2', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '185', '6', '2', ''],
+    [d2, 'SESSION-B2', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '2', '185', '6', '2', ''],
+    [d2, 'SESSION-B2', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '3', '185', '6', '2', ''],
+    [d7, 'SESSION-SQ', 'Back Squat', 'Back Squat', 'Legs', 'SQ01', '1', '315', '3', '3', ''],
+    [d9, 'SESSION-B1', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '185', '6', '2', ''],
+    [d9, 'SESSION-B1', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '2', '185', '6', '2', ''],
+    [d9, 'SESSION-B1', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '3', '185', '6', '2', ''],
+  ];
+  try {
+    const { response, body } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({
+        message: 'Back Squat 315 3/4',
+        context: {
+          current_plan: [{ name: 'Back Squat', sets: 3 }],
+          session_tally: {
+            exercises: [{ exercise: 'Back Squat', sets: 1, per_set: [{ weight: 315, reps: 3, rir: 4 }], planned: true }],
+            total_working_sets: 1,
+          },
+        },
+      }),
+    });
+    assert.equal(response.status, 200);
+    const items = body.data.armed_items;
+    assert.ok(Array.isArray(items), 'armed_items must ride the reply');
+    const kinds = items.map((i) => i.kind);
+    assert.ok(kinds.includes('top_single_test'), 'better-than-expected top set arms the top single');
+    assert.ok(kinds.includes('progression_bump'), 'two clean bench sessions arm the 190 bump');
+    assert.equal(body.data.readiness_applied, false, 'no readiness report on this turn');
+    const ctx = fakeCoachState.lastChatContext;
+    assert.ok(ctx, 'buildChatContext output must reach the coach');
+    assert.ok(Array.isArray(ctx.armed_items), 'armed_items rides the context too');
+  } finally {
+    fakeSheetsState.logRowsOverride = null;
+    fakeCoachState.configured = false;
+    fakeCoachState.lastChatContext = null;
+  }
+});
+
+// #1344 — the same arming surfaces on the block turn that logs the set:
+// the S6 turn (315 3/4 against last week's 315 3/3) arms the top single on
+// the /api/coach/message reply itself, not only on a later chat turn.
+test('#1344: coach/message block reply carries armed_items', async () => {
+  fakeCoachState.configured = false; // arming rides along on every path; use the simple one
+  const d2 = getLocalDateString(new Date(Date.now() - 2 * 86400000));
+  const d7 = getLocalDateString(new Date(Date.now() - 7 * 86400000));
+  const d9 = getLocalDateString(new Date(Date.now() - 9 * 86400000));
+  fakeSheetsState.logRowsOverride = [
+    [d2, 'SESSION-B2', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '185', '6', '2', ''],
+    [d2, 'SESSION-B2', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '2', '185', '6', '2', ''],
+    [d2, 'SESSION-B2', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '3', '185', '6', '2', ''],
+    [d7, 'SESSION-SQ', 'Back Squat', 'Back Squat', 'Legs', 'SQ01', '1', '315', '3', '3', ''],
+    [d9, 'SESSION-B1', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '185', '6', '2', ''],
+    [d9, 'SESSION-B1', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '2', '185', '6', '2', ''],
+    [d9, 'SESSION-B1', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '3', '185', '6', '2', ''],
+  ];
+  try {
+    const { response, body } = await requestJson('/api/coach/message', {
+      method: 'POST',
+      body: JSON.stringify({ facts: {
+        exerciseName: 'Back Squat',
+        liftCode: 'SQ01',
+        muscleGroup: 'Legs',
+        todaySets: [{ weight: 315, reps: 3, rir: 4 }],
+        rec: { target_rir: 2 },
+      } }),
+    });
+    assert.equal(response.status, 200);
+    const items = body.data.armed_items;
+    assert.ok(Array.isArray(items), 'armed_items must ride the block reply');
+    assert.ok(items.map((i) => i.kind).includes('top_single_test'), 'better-than-expected top set arms the top single on the block turn');
+    assert.ok(items.map((i) => i.kind).includes('progression_bump'), 'the history-derived bump resurfaces on the block turn too');
+  } finally {
+    fakeSheetsState.logRowsOverride = null;
+    fakeCoachState.configured = false;
+  }
+});
+
 test('S5 B4-4: coach/chat fails quiet when Gemini prose violates the staged-OFF register', async () => {
   const originalMessage = fakeCoachState.chatMessage;
   fakeCoachState.configured = true;

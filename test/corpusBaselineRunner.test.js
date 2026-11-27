@@ -77,6 +77,29 @@ test('replay runs against the real code and scores a well-formed, honest baselin
   assert.equal(adherence.status, 'partial', '#28 adherence-first coaching is partial (signal_flags emitted)');
 });
 
+// #1344 — the armedScheduler detector reads armed_items off a reply. This is
+// a detector-level proof (no replay): the runner seeds no history, so no
+// replayed turn can arm an item, and caps 12/23 gate on a second signal each
+// — cap 12 also needs Phase-6 knowledge retrieval (knowledge_ids, which no
+// route emits today) and cap 23 also needs a canonical packet decision
+// (Phase 4, H-03 — the shadow packet deliberately leaves decision null).
+// Both stay absent until their other halves land; the armed half alone must
+// not flip them (no false green).
+test('#1344: the armedScheduler detector reads armed_items off a reply', () => {
+  const turn = { kind: 'chat', text: 'Squat 315 3/4' };
+  const response = { ok: true, data: { message: 'x', armed_items: [{ kind: 'top_single_test', lift: 'Squat', weight: 315, reps: 3, due: 'next_week' }] } };
+  const obs = deriveTurnObservation(turn, response, null);
+  assert.equal(obs.armed_items, true, 'the observation carries the armed signal');
+  const det = buildDetectors([obs]);
+  assert.equal(det.armedScheduler, true, 'armed_items on a reply sets the armedScheduler detector');
+  const cap12 = CAPABILITIES.find((c) => c.num === 12);
+  const cap23 = CAPABILITIES.find((c) => c.num === 23);
+  assert.equal(cap12.score(det), 'absent', '#12 stays absent without knowledge retrieval');
+  assert.equal(cap23.score(det), 'absent', '#23 stays absent without a packet decision');
+  assert.equal(cap12.score({ ...det, knowledgeRetrieved: true }), 'partial', '#12 flips to partial once knowledge retrieval lands');
+  assert.equal(cap23.score({ ...det, packet: { ...det.packet, decision: true } }), 'partial', '#23 flips to partial once the packet decision lands');
+});
+
 test('the replay NEVER attempts a Sheets write (segregation + absolute data safety)', async () => {
   runner._sheetState.appendCalls.length = 0;
   await runner.replayAll();
